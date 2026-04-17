@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Treatment Plans</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📋</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-6">
+        <div class="flex items-center justify-between">
+          <h3 class="font-bold text-lg">Treatment Plans</h3>
+          <button onclick="openModal()" class="bg-navy text-white text-sm px-4 py-2 rounded-lg font-semibold">+ Plan Baru</button>
+        </div>
+        <div id="plans-list" class="grid md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- Create Plan Modal -->
+<div id="modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/50" onclick="closeModal()"></div>
+  <div class="relative bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+    <div class="p-5 border-b border-ink/10 flex items-center justify-between">
+      <h3 class="font-bold text-lg">Cipta Treatment Plan</h3>
+      <button onclick="closeModal()" class="text-ink/60 text-xl">×</button>
+    </div>
+    <div class="p-5 overflow-y-auto space-y-3">
+      <div>
+        <label class="text-xs font-semibold">Pesakit</label>
+        <select id="m-patient" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"></select>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="text-xs font-semibold">Nama Plan</label>
+          <input id="m-name" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="cth: BPS-S Plan 12 minggu">
+        </div>
+        <div>
+          <label class="text-xs font-semibold">Tempoh (minggu)</label>
+          <input id="m-weeks" type="number" value="12" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+        </div>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-bio">🧬 Bio Goals (1 per baris)</label>
+        <textarea id="m-bio" rows="3" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"></textarea>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-psycho">🧠 Psycho Goals</label>
+        <textarea id="m-psycho" rows="3" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"></textarea>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-social">👥 Social Goals</label>
+        <textarea id="m-social" rows="3" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"></textarea>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-spiritual">🕌 Spiritual Goals</label>
+        <textarea id="m-spiritual" rows="3" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"></textarea>
+      </div>
+    </div>
+    <div class="p-5 border-t border-ink/10 flex justify-end gap-2">
+      <button onclick="closeModal()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm">Batal</button>
+      <button onclick="savePlan()" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+function openModal() { document.getElementById('modal').classList.remove('hidden'); }
+function closeModal() { document.getElementById('modal').classList.add('hidden'); }
+
+async function savePlan() {
+  const patient_id = document.getElementById('m-patient').value;
+  const name = document.getElementById('m-name').value.trim();
+  if (!patient_id || !name) { banner('Sila isi semua field', 'error'); return; }
+
+  await dbInsert('treatment_plans', {
+    patient_id, doctor_id: currentUser.id,
+    name, duration_weeks: parseInt(document.getElementById('m-weeks').value) || 12,
+    current_week: 1,
+    bio_goals: document.getElementById('m-bio').value.split('\n').filter(Boolean),
+    psycho_goals: document.getElementById('m-psycho').value.split('\n').filter(Boolean),
+    social_goals: document.getElementById('m-social').value.split('\n').filter(Boolean),
+    spiritual_goals: document.getElementById('m-spiritual').value.split('\n').filter(Boolean),
+    status: 'active',
+  });
+  await auditLog('plan.created', patient_id);
+  banner('Plan dicipta');
+  closeModal();
+  loadPlans();
+}
+
+async function loadPlans() {
+  const [plans, patients] = await Promise.all([
+    dbQuery('treatment_plans', { order: { col: 'created_at' } }),
+    dbQuery('patients'),
+  ]);
+  const patientMap = {};
+  patients.forEach(p => patientMap[p.id] = p.mrn);
+
+  document.getElementById('plans-list').innerHTML = plans.length
+    ? plans.map(p => `
+      <div class="bg-white rounded-xl p-5 border border-ink/10">
+        <div class="flex items-center justify-between mb-2">
+          <h4 class="font-bold text-sm">${p.name}</h4>
+          ${statusChip(p.status)}
+        </div>
+        <p class="text-xs text-ink/60">${patientMap[p.patient_id] || '—'} · Week ${p.current_week}/${p.duration_weeks}</p>
+        <div class="flex gap-2 mt-3 text-[10px] flex-wrap">
+          ${p.bio_goals?.length ? `<span class="chip bg-bio/10 text-bio">Bio (${p.bio_goals.length})</span>` : ''}
+          ${p.psycho_goals?.length ? `<span class="chip bg-psycho/10 text-psycho">Psycho (${p.psycho_goals.length})</span>` : ''}
+          ${p.social_goals?.length ? `<span class="chip bg-social/10 text-social">Social (${p.social_goals.length})</span>` : ''}
+          ${p.spiritual_goals?.length ? `<span class="chip bg-spiritual/10 text-spiritual">Spiritual (${p.spiritual_goals.length})</span>` : ''}
+        </div>
+      </div>`).join('')
+    : '<p class="text-ink/40 text-sm text-center py-8 col-span-3">Tiada plans</p>';
+}
+
+(async () => {
+  const user = await initStaff('plans', 'BPS-S Wellness Core 90');
+  if (!user) return;
+  const patients = await dbQuery('patients', { eq: { status: 'active' } });
+  document.getElementById('m-patient').innerHTML = '<option value="">— Pilih pesakit —</option>' +
+    patients.map(p => `<option value="${p.id}">${p.mrn}</option>`).join('');
+  loadPlans();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Vitals Capture</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📊</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-4">
+        <div class="bg-white rounded-xl p-4 border border-ink/10">
+          <label class="text-xs font-semibold mb-2 block">Pilih pesakit</label>
+          <select id="patient-select" class="w-full border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none focus:border-navy">
+            <option value="">— Pilih pesakit —</option>
+          </select>
+        </div>
+
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div class="vital-input"><div class="text-[10px] text-ink/50 uppercase">BP Systolic</div><input id="v-sys" type="number" placeholder="120"></div>
+          <div class="vital-input"><div class="text-[10px] text-ink/50 uppercase">BP Diastolic</div><input id="v-dia" type="number" placeholder="80"></div>
+          <div class="vital-input"><div class="text-[10px] text-ink/50 uppercase">Heart Rate</div><input id="v-hr" type="number" placeholder="72"></div>
+          <div class="vital-input"><div class="text-[10px] text-ink/50 uppercase">SpO2 (%)</div><input id="v-spo2" type="number" placeholder="98"></div>
+          <div class="vital-input"><div class="text-[10px] text-ink/50 uppercase">Suhu (°C)</div><input id="v-temp" type="number" step="0.1" placeholder="36.8"></div>
+          <div class="vital-input"><div class="text-[10px] text-ink/50 uppercase">Berat (kg)</div><input id="v-weight" type="number" step="0.1" placeholder="70"></div>
+          <div class="vital-input"><div class="text-[10px] text-ink/50 uppercase">Tinggi (cm)</div><input id="v-height" type="number" placeholder="167"></div>
+          <div class="vital-input"><div class="text-[10px] text-ink/50 uppercase">Lilitan Perut</div><input id="v-waist" type="number" placeholder="90"></div>
+        </div>
+
+        <div class="grid lg:grid-cols-2 gap-4">
+          <div class="bg-white rounded-xl p-4 border border-ink/10">
+            <h4 class="font-bold mb-2 text-sm">Point-of-Care</h4>
+            <div class="grid grid-cols-2 gap-3 text-sm">
+              <div><label class="text-xs">RBS (mmol/L)</label><input id="v-rbs" type="number" step="0.1" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"></div>
+              <div><label class="text-xs">PHQ-2</label><input id="v-phq2" type="number" max="6" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"></div>
+            </div>
+          </div>
+          <div class="bg-white rounded-xl p-4 border border-ink/10">
+            <h4 class="font-bold mb-2 text-sm">Observasi</h4>
+            <textarea id="v-notes" rows="3" placeholder="Nota pemerhatian..." class="w-full px-3 py-2 border border-ink/20 rounded-lg text-sm"></textarea>
+          </div>
+        </div>
+
+        <div class="flex gap-2">
+          <button onclick="saveVitals()" class="bg-green text-white font-semibold px-6 py-2.5 rounded-lg">Simpan Vitals</button>
+          <button onclick="resetForm()" class="bg-cream px-6 py-2.5 rounded-lg">Reset</button>
+        </div>
+
+        <div class="pt-6 border-t border-ink/10">
+          <h3 class="font-bold mb-3">Vitals Terkini · Hari Ini</h3>
+          <div class="bg-white rounded-xl border border-ink/10 overflow-x-auto">
+            <table class="data">
+              <thead><tr><th>Patient</th><th>BP</th><th>HR</th><th>BMI</th><th>Notes</th><th>Time</th></tr></thead>
+              <tbody id="recent-vitals-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+async function saveVitals() {
+  const patientId = document.getElementById('patient-select').value;
+  if (!patientId) { banner('Sila pilih pesakit', 'error'); return; }
+
+  const w = parseFloat(document.getElementById('v-weight').value);
+  const h = parseFloat(document.getElementById('v-height').value);
+  const bmi = w && h ? parseFloat((w / ((h/100) ** 2)).toFixed(1)) : null;
+
+  await dbInsert('vitals', {
+    patient_id: patientId,
+    recorded_by: currentUser.id,
+    bp_systolic: parseInt(document.getElementById('v-sys').value) || null,
+    bp_diastolic: parseInt(document.getElementById('v-dia').value) || null,
+    heart_rate: parseInt(document.getElementById('v-hr').value) || null,
+    spo2: parseFloat(document.getElementById('v-spo2').value) || null,
+    temperature: parseFloat(document.getElementById('v-temp').value) || null,
+    weight: w || null,
+    height: h || null,
+    bmi,
+    waist_cm: parseFloat(document.getElementById('v-waist').value) || null,
+    rbs: parseFloat(document.getElementById('v-rbs').value) || null,
+    phq2_score: parseInt(document.getElementById('v-phq2').value) || null,
+    notes: document.getElementById('v-notes').value,
+  });
+  await auditLog('vitals.recorded', patientId);
+  banner('Vitals disimpan');
+  resetForm();
+  loadRecent();
+}
+
+function resetForm() {
+  document.querySelectorAll('input[id^="v-"], #v-notes').forEach(i => i.value = '');
+}
+
+async function loadRecent() {
+  const today = new Date().toISOString().split('T')[0];
+  const data = await dbQuery('vitals', { order: { col: 'created_at' }, limit: 20 });
+  const todayData = data.filter(v => v.created_at?.startsWith(today));
+
+  const patients = await dbQuery('patients');
+  const patientMap = {};
+  patients.forEach(p => patientMap[p.id] = p.mrn);
+
+  document.getElementById('recent-vitals-body').innerHTML = todayData.length
+    ? todayData.map(v => `<tr>
+        <td><strong>${patientMap[v.patient_id] || '—'}</strong></td>
+        <td>${v.bp_systolic ? `${v.bp_systolic}/${v.bp_diastolic}` : '—'}</td>
+        <td>${v.heart_rate || '—'}</td>
+        <td>${v.bmi || '—'}</td>
+        <td class="text-xs">${(v.notes || '').slice(0, 40)}</td>
+        <td class="text-xs">${formatTime(v.created_at)}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="6" class="text-center text-ink/40 py-6">Tiada vitals direkodkan hari ini</td></tr>';
+}
+
+(async () => {
+  const user = await initStaff('vitals', 'Bacaan klinikal pesakit');
+  if (!user) return;
+
+  const patients = await dbQuery('patients', { eq: { status: 'active' } });
+  document.getElementById('patient-select').innerHTML = '<option value="">— Pilih pesakit —</option>' +
+    patients.map(p => `<option value="${p.id}">${p.mrn} · ${p.gender || '—'}</option>`).join('');
+
+  loadRecent();
+})();
+</script>
+</body>
+</html>

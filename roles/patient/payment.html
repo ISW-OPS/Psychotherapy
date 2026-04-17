@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Payment & Receipt</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">💳</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-6">
+          <!-- Invoice / Checkout Section -->
+          <div id="checkout-section">
+
+            <!-- Summary -->
+            <div id="invoice-box" class="bg-white rounded-xl p-5 mb-6 border border-ink/10">
+              <div id="invoice-content" class="text-sm">
+                <p class="text-ink/60 text-center py-4">Tiada invois belum bayar</p>
+              </div>
+            </div>
+
+            <!-- Payment Methods -->
+            <div id="payment-methods" class="hidden">
+              <h3 class="font-semibold mb-3">Kaedah pembayaran</h3>
+              <div class="space-y-2 mb-6">
+                <label class="flex items-center gap-3 border-2 border-navy bg-navy-light rounded-lg p-3 cursor-pointer">
+                  <input type="radio" name="pm" value="fpx" checked>
+                  <span class="flex-1 font-semibold text-sm">FPX Online Banking (ToyyibPay)</span>
+                  <span class="text-xs text-ink/60">Instant</span>
+                </label>
+                <label class="flex items-center gap-3 border-2 border-ink/10 rounded-lg p-3 cursor-pointer hover:border-navy">
+                  <input type="radio" name="pm" value="card">
+                  <span class="flex-1 font-semibold text-sm">Credit / Debit Card</span>
+                  <span class="text-xs text-ink/60">Visa / Master</span>
+                </label>
+                <label class="flex items-center gap-3 border-2 border-ink/10 rounded-lg p-3 cursor-pointer hover:border-navy">
+                  <input type="radio" name="pm" value="transfer">
+                  <span class="flex-1 font-semibold text-sm">Bank Transfer (manual)</span>
+                  <span class="text-xs text-ink/60">Verify 1–2 hrs</span>
+                </label>
+              </div>
+
+              <button onclick="processPayment()" id="btn-pay" class="w-full bg-navy text-white py-3 rounded-lg font-semibold text-base hover:bg-navy-dark">
+                Pay RM 0 →
+              </button>
+
+              <button onclick="cancelAll()" class="w-full mt-2 border border-terracotta text-terracotta py-2.5 rounded-lg text-sm font-semibold hover:bg-terracotta hover:text-white">
+                Batal Semua
+              </button>
+            </div>
+          </div>
+
+          <!-- Receipt history -->
+          <div>
+            <h3 class="font-bold text-lg mb-3">Resit Terdahulu</h3>
+            <div id="receipts-list" class="space-y-3"></div>
+          </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+const SERVICE_CHARGE = 5.00;
+const SST_RATE = 0.06;
+
+let pendingItems = [];
+let grandTotal = 0;
+
+function extractPrice(note) {
+  const m = note?.match(/RM\s*([0-9.]+)/);
+  return m ? parseFloat(m[1]) : 0;
+}
+
+function checkPendingPayment() {
+  const raw = localStorage.getItem('isw_pending_payment');
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+async function loadPayments() {
+  pendingItems = [];
+
+  // Check localStorage for pending payment (from pakej/appointment redirect)
+  const pendingItem = checkPendingPayment();
+  if (pendingItem && pendingItem.amount > 0) {
+    pendingItems.push(pendingItem);
+  }
+
+  // DB-based pending items (only if patient record exists)
+  let appts = [], pkgPurchases = [];
+  if (patientRecord) {
+    [appts, pkgPurchases] = await Promise.all([
+      dbQuery('appointments', { eq: { patient_id: patientRecord.id } }).catch(() => []),
+      dbQuery('package_purchases', { eq: { patient_id: patientRecord.id } }).catch(() => []),
+    ]);
+  }
+
+  appts.filter(a => a.notes?.includes('[PENDING PAYMENT]')).forEach(a => {
+    pendingItems.push({
+      type: 'appointment', id: a.id, title: a.service,
+      date: formatDate(a.appointment_time),
+      amount: extractPrice(a.notes), raw: a,
+    });
+  });
+
+  pkgPurchases.filter(p => p.status === 'pending_payment').forEach(p => {
+    const alreadyFromUrl = pendingItem && pendingItem.packageId === p.package_id;
+    if (!alreadyFromUrl) {
+      pendingItems.push({
+        type: 'package_existing', id: p.id,
+        title: `Pakej: ${p.package_name}`,
+        amount: Number(p.price), raw: p,
+      });
+    }
+  });
+
+  renderInvoice();
+  loadReceipts();
+}
+
+function renderInvoice() {
+  const box = document.getElementById('invoice-content');
+  const methods = document.getElementById('payment-methods');
+
+  if (pendingItems.length === 0) {
+    box.innerHTML = '<p class="text-green-dark text-center py-4 font-semibold">✓ Tiada bayaran tertunggak</p>';
+    methods.classList.add('hidden');
+    return;
+  }
+
+  const subtotal = pendingItems.reduce((s, i) => s + i.amount, 0);
+  const sst = subtotal * SST_RATE;
+  grandTotal = subtotal + SERVICE_CHARGE + sst;
+
+  let html = `<div class="font-semibold mb-3">Ringkasan bayaran (${pendingItems.length} invois belum bayar)</div>`;
+
+  pendingItems.forEach(item => {
+    html += `<div class="flex justify-between py-1">
+      <span>${item.title}${item.date ? ' · ' + item.date : ''}</span>
+      <span class="font-semibold">RM ${item.amount.toFixed(2)}</span>
+    </div>`;
+  });
+
+  html += `
+    <div class="flex justify-between py-1 text-ink/60">
+      <span>Service charge</span>
+      <span>RM ${SERVICE_CHARGE.toFixed(2)}</span>
+    </div>
+    <div class="flex justify-between py-1 text-ink/60">
+      <span>SST 6%</span>
+      <span>RM ${sst.toFixed(2)}</span>
+    </div>
+    <div class="flex justify-between pt-3 mt-2 border-t border-ink/20">
+      <span class="font-bold text-base">Jumlah</span>
+      <span class="font-bold text-base text-navy">RM ${grandTotal.toFixed(2)}</span>
+    </div>
+  `;
+
+  box.innerHTML = html;
+  methods.classList.remove('hidden');
+  document.getElementById('btn-pay').textContent = `Pay RM ${grandTotal.toFixed(2)} →`;
+}
+
+async function processPayment() {
+  if (pendingItems.length === 0) return;
+  const method = document.querySelector('input[name="pm"]:checked').value;
+  const btn = document.getElementById('btn-pay');
+  btn.disabled = true;
+  btn.textContent = 'Memproses...';
+
+  try {
+    await new Promise(r => setTimeout(r, 1200));
+    const receiptRef = 'RCP-' + Date.now().toString(36).toUpperCase();
+
+    for (const item of pendingItems) {
+      if (item.type === 'appointment') {
+        const cleanNotes = (item.raw.notes || '').replace('[PENDING PAYMENT]', '').trim();
+        await dbUpdate('appointments', item.id, { notes: `[PAID · ${receiptRef}] ${cleanNotes}` });
+
+      } else if (item.type === 'package') {
+        const expiresAt = new Date();
+        expiresAt.setMonth(expiresAt.getMonth() + 3);
+        await dbInsert('package_purchases', {
+          patient_id: patientRecord.id,
+          package_id: item.packageId,
+          package_name: item.packageName,
+          price: item.amount,
+          expires_at: expiresAt.toISOString(),
+          status: 'active',
+          payment_method: method,
+        });
+        await dbUpdate('patients', patientRecord.id, {
+          active_package_id: item.packageId,
+          active_package_name: item.packageName,
+          package_purchased_at: new Date().toISOString(),
+          package_expires_at: expiresAt.toISOString(),
+        });
+
+      } else if (item.type === 'package_existing') {
+        await dbUpdate('package_purchases', item.id, { status: 'active', payment_method: method });
+      }
+    }
+
+    await auditLog('payment.received', receiptRef, {
+      ref: receiptRef,
+      items: pendingItems.map(i => ({ title: i.title, amount: i.amount })),
+      service_charge: SERVICE_CHARGE,
+      sst: grandTotal - pendingItems.reduce((s,i) => s + i.amount, 0) - SERVICE_CHARGE,
+      total: grandTotal,
+      method,
+    });
+
+    localStorage.removeItem('isw_pending_payment');
+
+    banner(`Pembayaran berjaya! Resit: ${receiptRef}`);
+    pendingItems = [];
+    loadPayments();
+  } catch (err) {
+    banner('Ralat: ' + err.message, 'error');
+    btn.disabled = false;
+    btn.textContent = `Pay RM ${grandTotal.toFixed(2)} →`;
+  }
+}
+
+async function cancelAll() {
+  if (!confirm('Pasti nak batal semua bayaran tertunggak?')) return;
+  try {
+    for (const item of pendingItems) {
+      if (item.type === 'appointment') {
+        await dbUpdate('appointments', item.id, { status: 'cancelled', notes: '[CANCELLED]' });
+      } else if (item.type === 'package_existing') {
+        await dbDelete('package_purchases', item.id);
+      }
+    }
+
+    localStorage.removeItem('isw_pending_payment');
+
+    await auditLog('payment.cancelled', currentUser.id, {
+      items: pendingItems.map(i => i.title),
+    });
+
+    banner('Semua bayaran dibatalkan');
+    pendingItems = [];
+    loadPayments();
+  } catch (err) {
+    banner('Ralat: ' + err.message, 'error');
+  }
+}
+
+async function loadReceipts() {
+  const logs = await dbQuery('audit_log', {
+    eq: { actor_id: currentUser.id },
+    order: { col: 'created_at' },
+    limit: 50,
+  });
+  const receipts = logs.filter(l => l.action === 'payment.received');
+
+  document.getElementById('receipts-list').innerHTML = receipts.length
+    ? receipts.map(r => {
+        const meta = r.meta || {};
+        return `<div class="bg-white rounded-xl border border-ink/10 p-4 md:p-5">
+          <div class="flex items-start justify-between gap-3 flex-wrap mb-2">
+            <div>
+              <div class="font-semibold">${meta.ref || 'Receipt'}</div>
+              <div class="text-xs text-ink/60">${new Date(r.created_at).toLocaleString('ms-MY')}</div>
+            </div>
+            <span class="chip bg-green-light text-green-dark">PAID ✓</span>
+          </div>
+          ${(meta.items || []).map(it => `
+            <div class="flex justify-between text-sm py-0.5">
+              <span>${it.title}</span>
+              <span>RM ${Number(it.amount).toFixed(2)}</span>
+            </div>`).join('')}
+          ${meta.service_charge ? `<div class="flex justify-between text-xs text-ink/60 py-0.5"><span>Service charge</span><span>RM ${Number(meta.service_charge).toFixed(2)}</span></div>` : ''}
+          ${meta.sst ? `<div class="flex justify-between text-xs text-ink/60 py-0.5"><span>SST 6%</span><span>RM ${Number(meta.sst).toFixed(2)}</span></div>` : ''}
+          <div class="flex justify-between font-bold text-sm pt-2 mt-2 border-t border-ink/10">
+            <span>Total</span>
+            <span class="text-green-dark">RM ${Number(meta.total || 0).toFixed(2)}</span>
+          </div>
+          <div class="text-xs text-ink/50 mt-2">Kaedah: ${meta.method === 'fpx' ? 'FPX Online Banking' : meta.method === 'card' ? 'Credit/Debit Card' : 'Bank Transfer'}</div>
+        </div>`;
+      }).join('')
+    : '<div class="bg-white rounded-xl border border-ink/10 p-6 text-center text-ink/40 text-sm">Tiada resit lagi</div>';
+}
+
+(async () => {
+  const user = await initPatient('payment', 'Selesaikan bayaran · resit');
+  if (!user) return;
+  loadPayments();
+})();
+</script>
+</body>
+</html>

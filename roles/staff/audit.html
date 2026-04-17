@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Audit Log</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🔒</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-4">
+        <div class="bg-navy-light rounded-xl p-4 text-sm flex items-start gap-3">
+          <span class="text-xl">🔒</span>
+          <div>
+            <strong>PDPA Audit Log</strong>
+            <p class="text-xs text-ink/70 mt-1">Immutable trail · semua tindakan staff direkodkan untuk pematuhan</p>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          <input id="search-audit" placeholder="Cari action / actor..." oninput="renderAudit()" class="flex-1 px-3 py-2 border border-ink/20 rounded-lg text-sm outline-none focus:border-navy">
+          <select id="filter-action" onchange="renderAudit()" class="border border-ink/20 rounded-lg px-3 py-2 text-sm">
+            <option value="">Semua action</option>
+            <option value="kyc">KYC</option>
+            <option value="soap">SOAP</option>
+            <option value="vitals">Vitals</option>
+            <option value="appointment">Appointment</option>
+            <option value="risk">Risk</option>
+            <option value="coaching">Coaching</option>
+          </select>
+        </div>
+
+        <div class="bg-white rounded-xl border border-ink/10 overflow-x-auto">
+          <table class="data">
+            <thead><tr><th>Timestamp</th><th>Actor</th><th>Action</th><th>Target</th><th>Meta</th></tr></thead>
+            <tbody id="audit-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+let allLogs = [];
+
+function renderAudit() {
+  const q = document.getElementById('search-audit').value.toLowerCase();
+  const filter = document.getElementById('filter-action').value;
+  let filtered = allLogs;
+  if (q) filtered = filtered.filter(l => (l.action || '').toLowerCase().includes(q) || (l.actor_name || '').toLowerCase().includes(q));
+  if (filter) filtered = filtered.filter(l => l.action?.startsWith(filter));
+
+  document.getElementById('audit-body').innerHTML = filtered.length
+    ? filtered.map(l => `<tr>
+        <td class="text-xs whitespace-nowrap">${new Date(l.created_at).toLocaleString('en-GB')}</td>
+        <td>${l.actor_name || '—'} <span class="text-xs text-ink/50">(${l.actor_role || '—'})</span></td>
+        <td><span class="chip bg-navy-light text-navy">${l.action}</span></td>
+        <td class="text-xs text-ink/60">${l.target?.slice(0, 12) || '—'}</td>
+        <td class="text-xs text-ink/60 max-w-xs truncate">${l.meta ? JSON.stringify(l.meta).slice(0, 60) : '—'}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="5" class="text-center text-ink/40 py-8">Tiada log</td></tr>';
+}
+
+(async () => {
+  const user = await initStaff('audit', 'PDPA immutable trail');
+  if (!user) return;
+  allLogs = await dbQuery('audit_log', { order: { col: 'created_at' }, limit: 200 });
+  renderAudit();
+})();
+</script>
+</body>
+</html>

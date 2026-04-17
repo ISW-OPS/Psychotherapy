@@ -1,0 +1,117 @@
+// ============================================================
+// PASTE INI DALAM SUPABASE EDGE FUNCTIONS EDITOR
+// Function name: invite-staff
+// ============================================================
+
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+
+interface InviteRequest {
+  email: string;
+  full_name: string;
+  specialization?: string;
+  registration_no?: string;
+  phone?: string;
+  send_invite?: boolean;
+  temp_password?: string;
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
+  try {
+    const authHeader = req.headers.get('Authorization')
+    if (!authHeader) throw new Error('Missing authorization')
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+    const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+
+    const userClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } }
+    })
+    const { data: { user }, error: userErr } = await userClient.auth.getUser()
+    if (userErr || !user) throw new Error('Tidak sah: sila log masuk semula')
+
+    const { data: callerProfile } = await userClient
+      .from('profiles').select('role').eq('id', user.id).single()
+
+    if (!callerProfile || callerProfile.role !== 'staff') {
+      throw new Error('Akses ditolak: hanya staff boleh daftar staff baru')
+    }
+
+    const body: InviteRequest = await req.json()
+    if (!body.email || !body.full_name) {
+      throw new Error('Email dan nama wajib diisi')
+    }
+
+    const adminClient = createClient(supabaseUrl, serviceKey, {
+      auth: { autoRefreshToken: false, persistSession: false }
+    })
+
+    let newUserId: string
+
+    if (body.send_invite !== false) {
+      const { data, error } = await adminClient.auth.admin.inviteUserByEmail(body.email, {
+        data: { full_name: body.full_name, role: 'staff' },
+      })
+      if (error) throw error
+      newUserId = data.user.id
+    } else {
+      if (!body.temp_password || body.temp_password.length < 6) {
+        throw new Error('Temp password mestilah min 6 aksara')
+      }
+      const { data, error } = await adminClient.auth.admin.createUser({
+        email: body.email,
+        password: body.temp_password,
+        email_confirm: true,
+        user_metadata: { full_name: body.full_name, role: 'staff' },
+      })
+      if (error) throw error
+      newUserId = data.user.id
+    }
+
+    if (body.specialization || body.registration_no || body.phone) {
+      await new Promise(r => setTimeout(r, 500))
+      await adminClient.from('profiles').update({
+        specialization: body.specialization || null,
+        registration_no: body.registration_no || null,
+        phone: body.phone || null,
+      }).eq('id', newUserId)
+    }
+
+    const { data: callerName } = await userClient
+      .from('profiles').select('full_name').eq('id', user.id).single()
+
+    await adminClient.from('audit_log').insert({
+      actor_id: user.id,
+      actor_name: callerName?.full_name,
+      actor_role: 'staff',
+      action: 'staff.invited',
+      target: newUserId,
+      meta: { email: body.email, name: body.full_name, send_invite: body.send_invite !== false },
+    })
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        user_id: newUserId,
+        message: body.send_invite !== false ? 'Email invite dihantar' : 'Akaun dicipta dengan password sementara'
+      }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  } catch (err) {
+    console.error(err)
+    return new Response(
+      JSON.stringify({ error: (err as Error).message }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  }
+})

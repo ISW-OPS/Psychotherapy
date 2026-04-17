@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Treatment Plan</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">💊</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div id="content" class="p-4 md:p-8 space-y-6">
+        <div id="plan-hero" class="bg-gradient-to-r from-green-dark to-green rounded-2xl p-6 text-white">
+          <div class="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <div class="text-xs opacity-80">Pelan Rawatan Aktif</div>
+              <div id="plan-name" class="text-2xl font-bold mt-1">—</div>
+              <div id="plan-meta" class="text-sm opacity-80 mt-1"></div>
+            </div>
+            <div class="text-right">
+              <div id="plan-pct-big" class="text-3xl font-bold">0%</div>
+              <div id="plan-week-full" class="text-xs opacity-80"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div class="bg-white rounded-xl p-5 border-t-4 border-navy">
+            <div class="text-xs text-navy font-semibold mb-1">🧬 BIO</div>
+            <div class="font-bold text-sm">Fizikal & Ubatan</div>
+            <ul id="plan-bio" class="text-xs text-ink/70 mt-3 space-y-1.5"></ul>
+          </div>
+          <div class="bg-white rounded-xl p-5 border-t-4 border-terracotta">
+            <div class="text-xs text-terracotta font-semibold mb-1">🧠 PSYCHO</div>
+            <div class="font-bold text-sm">Mental & Emosi</div>
+            <ul id="plan-psycho" class="text-xs text-ink/70 mt-3 space-y-1.5"></ul>
+          </div>
+          <div class="bg-white rounded-xl p-5 border-t-4 border-gold-dark">
+            <div class="text-xs text-gold-dark font-semibold mb-1">👥 SOCIAL</div>
+            <div class="font-bold text-sm">Sosial & Keluarga</div>
+            <ul id="plan-social" class="text-xs text-ink/70 mt-3 space-y-1.5"></ul>
+          </div>
+          <div class="bg-white rounded-xl p-5 border-t-4 border-green-dark">
+            <div class="text-xs text-green-dark font-semibold mb-1">🕌 SPIRITUAL</div>
+            <div class="font-bold text-sm">Rohani & Ibadah</div>
+            <ul id="plan-spiritual" class="text-xs text-ink/70 mt-3 space-y-1.5"></ul>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-xl p-5 border border-ink/10">
+          <h3 class="font-bold mb-4">Bacaan Vitals Terkini</h3>
+          <div id="vitals-grid" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <nav class="mobile-nav fixed bottom-0 left-0 right-0 bg-navy-dark text-white py-2 justify-around z-20">
+    <a href="dashboard.html" class="flex flex-col items-center text-[10px] gap-0.5 p-2"><span>🏠</span>Home</a>
+    <a href="appointments.html" class="flex flex-col items-center text-[10px] gap-0.5 p-2"><span>📅</span>Book</a>
+    <a href="plan.html" class="flex flex-col items-center text-[10px] gap-0.5 p-2"><span>💊</span>Plan</a>
+    <a href="shop.html" class="flex flex-col items-center text-[10px] gap-0.5 p-2"><span>🛒</span>Shop</a>
+    <a href="profile.html" class="flex flex-col items-center text-[10px] gap-0.5 p-2"><span>👤</span>Profile</a>
+  </nav>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+let activePlan = null;
+let checkInState = {};
+
+async function loadPlan() {
+  if (!patientRecord) return;
+  const [plans, vitals, checkIns] = await Promise.all([
+    dbQuery('treatment_plans', { eq: { patient_id: patientRecord.id } }),
+    dbQuery('vitals', { eq: { patient_id: patientRecord.id }, order: { col: 'created_at' }, limit: 1 }),
+    dbQuery('plan_check_ins', { eq: { patient_id: patientRecord.id } }).catch(() => []),
+  ]);
+
+  activePlan = plans.find(p => p.status === 'active') || plans[0];
+
+  if (!activePlan) {
+    document.getElementById('plan-name').textContent = 'Tiada pelan rawatan';
+    document.getElementById('plan-meta').textContent = 'Hubungi doktor untuk pelan rawatan';
+    ['bio','psycho','social','spiritual'].forEach(k => {
+      document.getElementById('plan-' + k).innerHTML = '<li class="text-ink/40">—</li>';
+    });
+    return;
+  }
+
+  checkInState = {};
+  checkIns.filter(c => c.plan_id === activePlan.id).forEach(c => {
+    checkInState[`${c.pillar}_${c.goal_index}`] = c.id;
+  });
+
+  renderPlanChecklists();
+  updatePlanProgress();
+
+  document.getElementById('plan-name').textContent = activePlan.name;
+  document.getElementById('plan-meta').textContent = `Mula ${new Date(activePlan.created_at).toLocaleDateString('ms-MY')} · Week ${activePlan.current_week}/${activePlan.duration_weeks}`;
+
+  const v = vitals[0];
+  document.getElementById('vitals-grid').innerHTML = v ? [
+    vitalBox('BP', v.bp_systolic && v.bp_diastolic ? `${v.bp_systolic}/${v.bp_diastolic}` : '—'),
+    vitalBox('Heart Rate', v.heart_rate ? v.heart_rate + ' bpm' : '—'),
+    vitalBox('BMI', v.bmi || '—'),
+    vitalBox('Weight', v.weight ? v.weight + ' kg' : '—'),
+  ].join('') : '<p class="col-span-4 text-ink/40 text-sm text-center">Tiada bacaan vitals</p>';
+}
+
+function renderPlanChecklists() {
+  const pillarColors = { bio:'text-navy', psycho:'text-terracotta', social:'text-gold-dark', spiritual:'text-green-dark' };
+  ['bio','psycho','social','spiritual'].forEach(k => {
+    const goals = activePlan[k + '_goals'] || [];
+    document.getElementById('plan-' + k).innerHTML = goals.length
+      ? goals.map((g, i) => {
+          const goalText = typeof g === 'string' ? g : (g.goal || g.description || '');
+          const isChecked = !!checkInState[`${k}_${i}`];
+          return `<li class="flex items-start gap-2 cursor-pointer hover:bg-cream/50 -mx-1 px-1 py-0.5 rounded" onclick="toggleCheckIn('${k}',${i},\`${goalText.replace(/`/g,'\\`').replace(/'/g,"\\'")}\`)">
+            <span class="mt-0.5 ${pillarColors[k]}">${isChecked ? '✅' : '☐'}</span>
+            <span class="${isChecked ? 'line-through text-ink/40' : ''}">${goalText}</span>
+          </li>`;
+        }).join('')
+      : '<li class="text-ink/40">Tiada goal</li>';
+  });
+}
+
+function updatePlanProgress() {
+  let total = 0, done = 0;
+  ['bio','psycho','social','spiritual'].forEach(k => {
+    const goals = activePlan[k + '_goals'] || [];
+    total += goals.length;
+    goals.forEach((_, i) => { if (checkInState[`${k}_${i}`]) done++; });
+  });
+  const pct = total > 0 ? Math.round(done / total * 100) : 0;
+  document.getElementById('plan-pct-big').textContent = pct + '%';
+  document.getElementById('plan-week-full').textContent = `${done} / ${total} goals selesai`;
+}
+
+async function toggleCheckIn(pillar, index, goalText) {
+  if (!activePlan || !patientRecord) return;
+  const key = `${pillar}_${index}`;
+  const existingId = checkInState[key];
+  try {
+    if (existingId) {
+      await dbDelete('plan_check_ins', existingId);
+      delete checkInState[key];
+    } else {
+      const row = await dbInsert('plan_check_ins', {
+        plan_id: activePlan.id, patient_id: patientRecord.id,
+        pillar, goal_index: index, goal_text: goalText,
+      });
+      checkInState[key] = row.id;
+    }
+    renderPlanChecklists();
+    updatePlanProgress();
+  } catch (err) {
+    banner('Ralat: ' + err.message, 'error');
+  }
+}
+
+(async () => {
+  const user = await initPatient('plan', 'Pelan BPS-S · 4 pillar · checklist');
+  if (!user) return;
+  loadPlan();
+})();
+</script>
+</body>
+</html>

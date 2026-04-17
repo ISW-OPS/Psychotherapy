@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="ms">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ibnu Sina Wellness</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="../../shared/theme.js"></script>
+  <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="_styles.css" rel="stylesheet">
+</head>
+
+<body class="min-h-screen">
+
+  <div id="app-loading" class="min-h-screen flex items-center justify-center">
+    <div class="text-center">
+      <div class="text-4xl mb-3">🛒</div>
+      <p class="text-ink/60 text-sm">Memuatkan...</p>
+    </div>
+  </div>
+
+  <div id="app-shell" class="hidden">
+    <div class="flex min-h-screen">
+      <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+      <main class="main-content flex-1 min-w-0">
+        <header id="page-header"
+          class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4">
+        </header>
+        <div id="content" class="p-4 md:p-8 space-y-6"></div>
+      </main>
+    </div>
+
+    <button id="cart-fab" onclick="openCart()"
+      class="hidden fixed bottom-6 right-6 bg-navy text-white rounded-full shadow-xl px-5 py-3 font-semibold text-sm z-30 flex items-center gap-2">
+      🛒 <span id="cart-count">0</span> · <span id="cart-total-mini">RM 0</span>
+    </button>
+
+    <div id="cart-drawer" class="hidden fixed inset-0 z-40">
+      <div class="absolute inset-0 bg-black/40" onclick="closeCart()"></div>
+      <div class="absolute right-0 top-0 bottom-0 w-full max-w-md bg-white flex flex-col">
+        <div class="p-4 border-b border-ink/10 flex items-center justify-between">
+          <h3 class="font-bold">Cart Anda</h3>
+          <button onclick="closeCart()" class="text-ink/60 text-xl">×</button>
+        </div>
+        <div id="cart-items" class="flex-1 overflow-y-auto p-4 space-y-3"></div>
+        <div class="border-t border-ink/10 p-4 space-y-3">
+          <div class="flex justify-between text-sm"><span>Subtotal</span><span id="cart-subtotal" class="font-bold">RM
+              0</span></div>
+          <button onclick="checkout()" class="w-full bg-navy text-white py-3 rounded-lg font-semibold">Checkout via GHL
+            →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="../../config/supabase.js"></script>
+  <script src="../../shared/authGuard.js"></script>
+  <script src="../../shared/logout.js"></script>
+  <script src="../../shared/navbar.js"></script>
+  <script src="_shared.js"></script>
+  <script src="_products.js"></script>
+  <script>
+    let activeCategory = 'All';
+
+    function renderShop() {
+      document.getElementById('content').innerHTML = `
+    <div class="bg-navy-light rounded-xl p-4 text-sm flex items-start gap-3 mb-2">
+      <span class="text-xl">💡</span>
+      <div>
+        <strong>Top-up produk individual</strong>
+        <p class="text-xs text-ink/70 mt-1">Untuk pakej rawatan utama, sila ke <a href="pakej.html" class="text-navy underline">Pakej Rawatan</a>.</p>
+      </div>
+    </div>
+    <div id="shop-categories" class="flex gap-2 overflow-x-auto pb-2"></div>
+    <div id="shop-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4"></div>
+    <div class="pt-6 border-t border-ink/10">
+      <h3 class="font-bold text-lg mb-3">Orders & Tracking</h3>
+      <div id="orders-list" class="space-y-3"></div>
+    </div>
+  `;
+      loadShop();
+      loadOrders();
+    }
+
+    function loadShop() {
+      document.getElementById('shop-categories').innerHTML = CATEGORIES.map(c =>
+        `<button onclick="setCategory('${c}')" class="px-4 py-2 rounded-full text-sm whitespace-nowrap ${c === activeCategory ? 'bg-navy text-white' : 'bg-white border border-ink/20'}">${c}</button>`
+      ).join('');
+
+      const filtered = activeCategory === 'All' ? PRODUCTS : PRODUCTS.filter(p => p.cat === activeCategory);
+      document.getElementById('shop-grid').innerHTML = filtered.map(p => `
+    <div class="bg-white rounded-xl overflow-hidden border border-ink/10 hover:shadow-md flex flex-col">
+      <div class="h-32 ${p.bg} flex items-center justify-center text-5xl">${p.icon}</div>
+      <div class="p-4 flex-1 flex flex-col">
+        <div class="font-semibold text-sm">${p.name}</div>
+        <div class="text-xs text-ink/60 mt-1 flex-1">${p.desc}</div>
+        <div class="flex items-center justify-between mt-3 pt-3 border-t border-ink/5">
+          <div class="font-bold text-sm">RM ${p.price.toFixed(2)}</div>
+          <button onclick="addToCart('${p.id}')" class="bg-navy text-white text-xs px-3 py-1.5 rounded-lg hover:bg-navy-dark">+ Add</button>
+        </div>
+      </div>
+    </div>`).join('');
+      updateCartBadge();
+    }
+
+    function setCategory(c) { activeCategory = c; loadShop(); }
+
+    function openCart() { document.getElementById('cart-drawer').classList.remove('hidden'); renderCart(); }
+    function closeCart() { document.getElementById('cart-drawer').classList.add('hidden'); }
+
+    function renderCart() {
+      const cartItems = getCart();
+      document.getElementById('cart-items').innerHTML = cartItems.length
+        ? cartItems.map(i => `
+      <div class="flex items-center gap-3 p-3 border border-ink/10 rounded-lg">
+        <div class="w-12 h-12 ${i.bg} rounded-lg flex items-center justify-center text-2xl">${i.icon}</div>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-semibold truncate">${i.name}</div>
+          <div class="text-xs text-ink/60">RM ${i.price.toFixed(2)} × ${i.qty}</div>
+        </div>
+        <div class="flex items-center gap-1">
+          <button onclick="updateQty('${i.id}',-1)" class="w-7 h-7 rounded bg-cream">−</button>
+          <span class="w-6 text-center text-sm">${i.qty}</span>
+          <button onclick="updateQty('${i.id}',1)" class="w-7 h-7 rounded bg-cream">+</button>
+        </div>
+      </div>`).join('')
+        : '<p class="text-ink/40 text-center py-8 text-sm">Cart kosong</p>';
+      const total = cartItems.reduce((s, i) => s + i.qty * i.price, 0);
+      document.getElementById('cart-subtotal').textContent = 'RM ' + total.toFixed(2);
+    }
+
+    async function checkout() {
+      const cartItems = getCart();
+      if (cartItems.length === 0) { banner('Cart kosong', 'error'); return; }
+      const total = cartItems.reduce((s, i) => s + i.qty * i.price, 0);
+      const orderRef = 'ORD-' + Date.now().toString(36).toUpperCase();
+
+      await auditLog('order.placed', currentUser.id, {
+        order_ref: orderRef,
+        items: cartItems.map(i => ({ id: i.id, name: i.name, qty: i.qty, price: i.price })),
+        total,
+      });
+
+      clearCart();
+      closeCart();
+      banner(`Order ${orderRef} dihantar. Bayar via GHL checkout.`);
+      loadOrders();
+    }
+
+    async function loadOrders() {
+      const logs = await dbQuery('audit_log', { eq: { actor_id: currentUser.id }, order: { col: 'created_at' }, limit: 50 });
+      const orders = logs.filter(l => l.action === 'order.placed');
+
+      document.getElementById('orders-list').innerHTML = orders.length
+        ? orders.map(o => {
+          const meta = o.meta || {};
+          return `<div class="bg-white rounded-xl border border-ink/10 p-5">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <div>
+              <div class="font-bold">${meta.order_ref || 'Order'}</div>
+              <div class="text-xs text-ink/60">${new Date(o.created_at).toLocaleString('ms-MY')}</div>
+            </div>
+            <span class="chip bg-gold-light text-gold-dark">Pending Payment</span>
+          </div>
+          <div class="space-y-1 text-sm">
+            ${(meta.items || []).map(it => `<div class="flex justify-between"><span>${it.name} × ${it.qty}</span><span>RM ${(it.price * it.qty).toFixed(2)}</span></div>`).join('')}
+          </div>
+          <div class="border-t border-ink/10 mt-3 pt-3 flex justify-between font-bold">
+            <span>Total</span><span>RM ${(meta.total || 0).toFixed(2)}</span>
+          </div>
+        </div>`;
+        }).join('')
+        : '<div class="bg-white rounded-xl border border-ink/10 p-6 text-center text-ink/60 text-sm">Tiada orders lagi</div>';
+    }
+
+    (async () => {
+      const user = await initPatient('shop', 'À la carte · beli individu tanpa pakej');
+      if (!user) return;
+      renderShop();
+    })();
+  </script>
+</body>
+
+</html>

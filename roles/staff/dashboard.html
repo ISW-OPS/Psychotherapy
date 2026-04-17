@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Staff Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">⚕</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-6">
+        <div id="risk-banner" class="hidden bg-terracotta text-white rounded-2xl p-4 flex items-center gap-4 risk-pulse">
+          <div class="text-3xl">⚠</div>
+          <div class="flex-1">
+            <div id="risk-banner-text" class="font-bold"></div>
+            <div id="risk-banner-detail" class="text-xs opacity-90"></div>
+          </div>
+          <a href="risk.html" class="bg-white text-terracotta font-semibold px-4 py-2 rounded-lg text-sm">Buka Risk Queue</a>
+        </div>
+
+        <div id="kpi-grid" class="grid grid-cols-2 lg:grid-cols-5 gap-3"></div>
+
+        <div class="grid lg:grid-cols-3 gap-6">
+          <div class="lg:col-span-2 bg-white rounded-xl p-5 border border-ink/10">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-bold">Schedule Hari Ini</h3>
+              <a href="appointments.html" class="text-xs text-navy hover:underline">Semua →</a>
+            </div>
+            <div id="schedule-list" class="space-y-2"></div>
+          </div>
+          <div class="space-y-4">
+            <div class="bg-white rounded-xl p-5 border border-ink/10">
+              <h3 class="font-bold mb-3">Risk Alerts</h3>
+              <div id="risk-summary" class="space-y-2 text-sm"></div>
+            </div>
+            <div class="bg-white rounded-xl p-5 border border-ink/10">
+              <h3 class="font-bold mb-3">KYC Pending</h3>
+              <div id="kyc-summary" class="space-y-2 text-sm"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+(async () => {
+  const user = await initStaff('dashboard', new Date().toLocaleDateString('ms-MY', { weekday:'long', day:'2-digit', month:'long', year:'numeric' }));
+  if (!user) return;
+
+  const today = new Date().toISOString().split('T')[0];
+  const [appts, risks, kyc, patients, vitalsToday] = await Promise.all([
+    dbQuery('appointments', { order: { col: 'appointment_time', asc: true } }),
+    dbQuery('risk_alerts', { eq: { status: 'open' } }),
+    dbQuery('kyc_submissions', { eq: { status: 'pending' } }),
+    dbQuery('patients', { eq: { status: 'active' } }),
+    dbQuery('vitals', { order: { col: 'created_at' }, limit: 50 }),
+  ]);
+
+  const todayAppts = appts.filter(a => a.appointment_time?.startsWith(today));
+  const completed = todayAppts.filter(a => a.status === 'completed').length;
+  const todayVitals = vitalsToday.filter(v => v.created_at?.startsWith(today)).length;
+
+  if (risks.length > 0) {
+    document.getElementById('risk-banner').classList.remove('hidden');
+    document.getElementById('risk-banner-text').textContent = `${risks.length} Risk Alert(s) menunggu triage`;
+    document.getElementById('risk-banner-detail').textContent = risks.slice(0, 3).map(r => `${r.patient_name || 'Patient'} — ${r.severity}`).join(' · ');
+  }
+
+  document.getElementById('kpi-grid').innerHTML = [
+    statCard('Appts Hari Ini', todayAppts.length, `${completed} selesai`, 'navy'),
+    statCard('Pesakit Aktif', patients.length, '', 'green'),
+    statCard('KYC Pending', kyc.length, kyc.length ? 'Perlu review' : 'Clear', 'gold'),
+    statCard('Risk Alerts', risks.length, risks.length ? 'Buka queue' : 'Tiada', 'terracotta'),
+    statCard('Vitals Hari Ini', todayVitals, '', 'teal'),
+  ].join('');
+
+  document.getElementById('schedule-list').innerHTML = todayAppts.length
+    ? todayAppts.map(a => {
+        const time = formatTime(a.appointment_time);
+        const isDone = a.status === 'completed';
+        return `<div class="flex items-center gap-3 p-3 border ${isDone ? 'border-green/40 bg-green-light/40' : 'border-ink/10'} rounded-lg">
+          <div class="text-center w-12"><div class="text-xs font-semibold ${isDone ? 'text-green-dark' : ''}">${time}</div></div>
+          <div class="flex-1">
+            <div class="text-sm font-semibold">${a.patient_name || 'Patient'}</div>
+            <div class="text-[11px] text-ink/60">${a.service} · ${a.staff_name || ''}</div>
+          </div>
+          ${statusChip(a.status)}
+        </div>`;
+      }).join('')
+    : '<p class="text-ink/40 text-sm">Tiada appointment hari ini</p>';
+
+  document.getElementById('risk-summary').innerHTML = risks.length
+    ? risks.slice(0, 3).map(r => `
+      <div class="p-2 ${r.severity === 'critical' || r.severity === 'high' ? 'bg-terracotta-light' : 'bg-gold-light'} rounded-lg text-xs">
+        <strong>${r.severity?.toUpperCase()}</strong> · ${r.patient_name || 'Patient'}<br>
+        <span class="text-ink/60">${r.description?.slice(0, 60)}...</span>
+      </div>`).join('')
+    : '<p class="text-ink/40 text-xs">Tiada risk alerts</p>';
+
+  document.getElementById('kyc-summary').innerHTML = kyc.length
+    ? kyc.slice(0, 3).map(k => `
+      <div class="p-2 border border-ink/10 rounded-lg text-xs">
+        <strong>${k.patient_name}</strong><br>
+        <span class="text-ink/60">${timeAgo(k.created_at)}</span>
+      </div>`).join('') + (kyc.length > 3 ? `<a href="patients.html" class="text-xs text-navy">+ ${kyc.length - 3} lagi →</a>` : '')
+    : '<p class="text-ink/40 text-xs">Tiada KYC pending</p>';
+})();
+</script>
+</body>
+</html>

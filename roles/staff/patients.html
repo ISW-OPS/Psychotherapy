@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Patients & KYC</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">👥</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-6">
+        <div class="flex gap-2 flex-wrap">
+          <button onclick="showTab('list')" id="tab-list" class="px-4 py-2 rounded-full bg-navy text-white text-sm font-semibold">Patient List</button>
+          <button onclick="showTab('kyc')" id="tab-kyc" class="px-4 py-2 rounded-full bg-white border border-ink/20 text-sm">KYC Pending <span id="kyc-badge" class="ml-1"></span></button>
+        </div>
+
+        <!-- Patient List -->
+        <div id="list-section">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <input id="search-patient" placeholder="Cari MRN / nama..." oninput="filterPatients()" class="px-3 py-2 border border-ink/20 rounded-lg text-sm w-64 outline-none focus:border-navy">
+            <span id="patient-count" class="text-xs text-ink/60"></span>
+          </div>
+          <div class="bg-white rounded-xl border border-ink/10 overflow-x-auto">
+            <table class="data">
+              <thead><tr><th>MRN</th><th>Sex</th><th>Status</th><th>Phone</th><th></th></tr></thead>
+              <tbody id="patients-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- KYC Queue -->
+        <div id="kyc-section" class="hidden">
+          <div class="grid lg:grid-cols-3 gap-4">
+            <div id="kyc-list" class="space-y-2"></div>
+            <div id="kyc-detail" class="lg:col-span-2 bg-white rounded-xl border border-ink/10 p-5">
+              <p class="text-ink/40 text-sm">Pilih submission dari senarai</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+let allPatients = [];
+let allKYC = [];
+
+function showTab(tab) {
+  document.getElementById('list-section').classList.toggle('hidden', tab !== 'list');
+  document.getElementById('kyc-section').classList.toggle('hidden', tab !== 'kyc');
+  document.getElementById('tab-list').className = tab === 'list' ? 'px-4 py-2 rounded-full bg-navy text-white text-sm font-semibold' : 'px-4 py-2 rounded-full bg-white border border-ink/20 text-sm';
+  document.getElementById('tab-kyc').className = tab === 'kyc' ? 'px-4 py-2 rounded-full bg-navy text-white text-sm font-semibold' : 'px-4 py-2 rounded-full bg-white border border-ink/20 text-sm';
+}
+
+function renderPatients(list) {
+  document.getElementById('patient-count').textContent = `${list.length} pesakit`;
+  document.getElementById('patients-body').innerHTML = list.length
+    ? list.map(p => `<tr>
+        <td><strong>${p.mrn}</strong></td>
+        <td>${p.gender || '—'}</td>
+        <td>${statusChip(p.status)}</td>
+        <td class="text-xs">${p.emergency_contact_phone || '—'}</td>
+        <td><a href="consultation.html?patient=${p.id}" class="text-navy text-xs font-semibold">Open Chart →</a></td>
+      </tr>`).join('')
+    : '<tr><td colspan="5" class="text-center text-ink/40 py-8">Tiada pesakit</td></tr>';
+}
+
+function filterPatients() {
+  const q = document.getElementById('search-patient').value.toLowerCase();
+  const filtered = allPatients.filter(p => p.mrn.toLowerCase().includes(q) || (p.ic_number || '').includes(q));
+  renderPatients(filtered);
+}
+
+function renderKYCList() {
+  document.getElementById('kyc-badge').innerHTML = allKYC.length ? `<span class="chip bg-terracotta text-white">${allKYC.length}</span>` : '';
+  document.getElementById('kyc-list').innerHTML = allKYC.length
+    ? allKYC.map(k => `
+      <div onclick="showKYCDetail('${k.id}')" class="bg-white border-l-4 border-gold rounded-lg p-3 cursor-pointer hover:shadow">
+        <strong class="text-sm">${k.patient_name}</strong>
+        <div class="text-[10px] text-ink/50">IC: ${k.ic_number || '—'} · ${formatDate(k.created_at)}</div>
+      </div>`).join('')
+    : '<p class="text-ink/40 text-sm">Tiada KYC pending</p>';
+}
+
+async function showKYCDetail(id) {
+  const k = await dbQuery('kyc_submissions', { eq: { id }, single: true });
+  document.getElementById('kyc-detail').innerHTML = `
+    <h3 class="font-bold text-lg">${k.patient_name}</h3>
+    <p class="text-xs text-ink/60">IC: ${k.ic_number || '—'} · Tel: ${k.phone || '—'}</p>
+    <div class="mt-4 space-y-2 text-sm">
+      <div><strong>Email:</strong> ${k.email || '—'}</div>
+      <div><strong>Alamat:</strong> ${k.address || '—'}</div>
+      <div><strong>Rujukan:</strong> ${k.referral_source || '—'}</div>
+      <div class="mt-3"><strong>Consent:</strong></div>
+      <div class="text-xs">${k.consent_data_processing ? '✅' : '❌'} Data processing · ${k.consent_health_records ? '✅' : '❌'} Health records · ${k.consent_research ? '✅' : '❌'} Research</div>
+    </div>
+    <div class="flex gap-2 mt-4">
+      <button onclick="reviewKYC('${k.id}','approved')" class="bg-green text-white text-sm px-5 py-2 rounded-lg font-semibold">Lulus</button>
+      <button onclick="reviewKYC('${k.id}','rejected')" class="bg-terracotta text-white text-sm px-5 py-2 rounded-lg">Tolak</button>
+    </div>`;
+}
+
+async function reviewKYC(id, status) {
+  await dbUpdate('kyc_submissions', id, { status, reviewed_by: currentUser.id });
+  await auditLog('kyc.' + status, id);
+  banner(`KYC ${status === 'approved' ? 'diluluskan' : 'ditolak'}`);
+  await loadAll();
+  document.getElementById('kyc-detail').innerHTML = '<p class="text-ink/40 text-sm">Pilih submission dari senarai</p>';
+}
+
+async function loadAll() {
+  [allPatients, allKYC] = await Promise.all([
+    dbQuery('patients', { eq: { status: 'active' }, order: { col: 'created_at' } }),
+    dbQuery('kyc_submissions', { eq: { status: 'pending' }, order: { col: 'created_at' } }),
+  ]);
+  renderPatients(allPatients);
+  renderKYCList();
+}
+
+(async () => {
+  const user = await initStaff('patients', 'Patient roster · KYC review');
+  if (!user) return;
+  loadAll();
+})();
+</script>
+</body>
+</html>

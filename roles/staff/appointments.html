@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Appointments</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📅</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="flex gap-2 items-center">
+            <input id="appt-date" type="date" class="border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none focus:border-navy">
+            <select id="appt-status" class="border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none">
+              <option value="">Semua status</option>
+              <option value="scheduled">Scheduled</option>
+              <option value="completed">Completed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+          <span id="appts-count" class="text-sm text-ink/60"></span>
+        </div>
+        <div class="bg-white rounded-xl border border-ink/10 overflow-x-auto">
+          <table class="data">
+            <thead><tr><th>Time</th><th>Patient</th><th>Service</th><th>Practitioner</th><th>Status</th><th>Room</th><th></th></tr></thead>
+            <tbody id="appts-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+let allAppts = [];
+
+async function loadAppts() {
+  allAppts = await dbQuery('appointments', { order: { col: 'appointment_time', asc: true } });
+  renderAppts();
+}
+
+function renderAppts() {
+  const date = document.getElementById('appt-date').value;
+  const status = document.getElementById('appt-status').value;
+  let filtered = allAppts;
+  if (date) filtered = filtered.filter(a => a.appointment_time.startsWith(date));
+  if (status) filtered = filtered.filter(a => a.status === status);
+
+  document.getElementById('appts-count').textContent = `${filtered.length} appointments`;
+  document.getElementById('appts-body').innerHTML = filtered.length
+    ? filtered.map(a => `<tr>
+        <td class="font-semibold">${formatDateTime(a.appointment_time)}</td>
+        <td>${a.patient_name || '—'}</td>
+        <td>${a.service}</td>
+        <td>${a.staff_name || '—'}</td>
+        <td>${statusChip(a.status)}</td>
+        <td>${a.room || '—'}</td>
+        <td>
+          ${a.status === 'scheduled' ? `<button onclick="markComplete('${a.id}')" class="bg-green text-white text-xs px-3 py-1.5 rounded-lg">Selesai</button>` : ''}
+          ${a.status === 'scheduled' ? `<button onclick="cancelAppt('${a.id}')" class="text-terracotta text-xs ml-1">Batal</button>` : ''}
+        </td>
+      </tr>`).join('')
+    : '<tr><td colspan="7" class="text-center text-ink/40 py-8">Tiada appointment</td></tr>';
+}
+
+async function markComplete(id) {
+  await dbUpdate('appointments', id, { status: 'completed' });
+  await auditLog('appointment.completed', id);
+  banner('Appointment selesai');
+  loadAppts();
+}
+
+async function cancelAppt(id) {
+  if (!confirm('Pasti nak batal appointment ni?')) return;
+  await dbUpdate('appointments', id, { status: 'cancelled' });
+  await auditLog('appointment.cancelled', id);
+  banner('Appointment dibatalkan');
+  loadAppts();
+}
+
+(async () => {
+  const user = await initStaff('appointments', 'Schedule management');
+  if (!user) return;
+  document.getElementById('appt-date').value = new Date().toISOString().split('T')[0];
+  document.getElementById('appt-date').addEventListener('change', renderAppts);
+  document.getElementById('appt-status').addEventListener('change', renderAppts);
+  loadAppts();
+})();
+</script>
+</body>
+</html>

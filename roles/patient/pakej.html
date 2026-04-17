@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Pakej Rawatan</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📦</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-6">
+        <!-- Active package banner -->
+        <div id="active-banner" class="hidden bg-gradient-to-r from-green to-green-dark text-white rounded-2xl p-5">
+          <div class="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <div class="text-xs opacity-80">Pakej Aktif Anda</div>
+              <div id="active-name" class="text-xl font-bold mt-1"></div>
+              <div id="active-expiry" class="text-sm opacity-80 mt-1"></div>
+            </div>
+            <span class="chip bg-white text-green-dark font-bold">✓ AKTIF</span>
+          </div>
+        </div>
+
+        <!-- No package banner -->
+        <div id="no-package-banner" class="bg-gradient-to-r from-gold to-gold-dark text-white rounded-2xl p-6">
+          <div class="flex items-center gap-4 flex-wrap">
+            <div class="text-5xl">📦</div>
+            <div class="flex-1 min-w-0">
+              <h2 class="text-xl font-bold">Pilih Pakej Rawatan Anda</h2>
+              <p class="text-sm opacity-90 mt-1">Akses penuh ke sistem ISW (Treatment Plan, Coaching, Library) hanya tersedia selepas anda memilih pakej rawatan.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Package grid -->
+        <div>
+          <h3 class="font-bold text-lg mb-3">Pakej Tersedia</h3>
+          <div id="packages-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4"></div>
+        </div>
+
+        <!-- Purchase history -->
+        <div id="history-section" class="hidden">
+          <h3 class="font-bold text-lg mb-3 mt-8">Sejarah Pembelian</h3>
+          <div id="history-list" class="space-y-2"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script src="_packages.js"></script>
+<script>
+function renderPackages() {
+  const activeId = patientRecord?.active_package_id;
+  document.getElementById('packages-grid').innerHTML = PACKAGES.map(p => {
+    const isActive = p.id === activeId;
+    const priceDisplay = p.price === 0 ? 'PERCUMA' : `RM ${p.price.toFixed(2)}`;
+    const tierBadge = p.tier === 'vip' ? '<span class="chip bg-gold text-white absolute top-2 right-2">VIP</span>' :
+                      p.tier === 'free' ? '<span class="chip bg-green text-white absolute top-2 right-2">FREE</span>' : '';
+
+    return `<div class="bg-white rounded-xl overflow-hidden border ${isActive ? 'border-green border-2 ring-2 ring-green/30' : 'border-ink/10'} hover:shadow-md flex flex-col relative transition">
+      ${tierBadge}
+      ${isActive ? '<span class="chip bg-green text-white absolute top-2 left-2 z-10">✓ AKTIF</span>' : ''}
+      <div onclick="showPackageDetail('${p.id}')" class="cursor-pointer">
+        <div class="h-32 ${p.bg} flex items-center justify-center text-5xl">${p.icon}</div>
+        <div class="p-4">
+          <div class="font-bold text-sm">${p.name}</div>
+          <div class="text-xs text-ink/60 mt-1 line-clamp-2">${p.desc}</div>
+          <div class="text-[10px] text-navy mt-2 font-semibold">📦 ${p.inclusions.length} item dalam pakej</div>
+        </div>
+      </div>
+      <div class="p-4 pt-0 mt-auto">
+        <div class="flex items-center justify-between gap-2 pt-3 border-t border-ink/5">
+          <div class="font-bold text-navy text-sm">${priceDisplay}</div>
+          ${isActive
+            ? '<span class="text-xs text-green-dark font-semibold">Pakej Anda</span>'
+            : `<button onclick="purchasePackage('${p.id}')" class="bg-navy text-white text-xs px-3 py-1.5 rounded-lg hover:bg-navy-dark">+ Tempah</button>`}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function showPackageDetail(id) {
+  const p = PACKAGES.find(x => x.id === id);
+  if (!p) return;
+  const priceDisplay = p.price === 0 ? 'PERCUMA' : `RM ${p.price.toFixed(2)}`;
+  const isActive = p.id === patientRecord?.active_package_id;
+
+  const modal = document.createElement('div');
+  modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
+  modal.innerHTML = `
+    <div class="absolute inset-0 bg-black/50" onclick="this.parentElement.remove()"></div>
+    <div class="relative bg-white rounded-2xl max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col">
+      <div class="${p.bg} p-6 text-center">
+        <div class="text-6xl">${p.icon}</div>
+        <h2 class="text-xl font-bold mt-3">${p.name}</h2>
+        <p class="text-sm text-ink/70 mt-1">${p.desc}</p>
+      </div>
+      <div class="flex-1 overflow-y-auto p-6">
+        <h3 class="font-bold text-sm mb-3">Kandungan Pakej:</h3>
+        <ul class="space-y-2">
+          ${p.inclusions.map(i => `<li class="flex items-start gap-2 text-sm"><span class="text-green mt-0.5">✓</span><span>${i}</span></li>`).join('')}
+        </ul>
+      </div>
+      <div class="p-6 border-t border-ink/10 flex items-center justify-between gap-3 flex-wrap">
+        <div class="font-bold text-lg text-navy">${priceDisplay}</div>
+        <div class="flex gap-2">
+          <button onclick="this.closest('.fixed').remove()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm">Tutup</button>
+          ${isActive
+            ? '<span class="bg-green-light text-green-dark px-4 py-2 rounded-lg text-sm font-semibold">✓ Pakej Aktif Anda</span>'
+            : `<button onclick="purchasePackage('${p.id}');this.closest('.fixed').remove()" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold">+ Tempah Pakej</button>`}
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+async function purchasePackage(id) {
+  const p = PACKAGES.find(x => x.id === id);
+  if (!p) return;
+
+  if (p.price === 0) {
+    // Free package — activate immediately
+    if (!confirm(`Aktifkan pakej ${p.name} (PERCUMA)?`)) return;
+
+    const expiresAt = new Date();
+    expiresAt.setMonth(expiresAt.getMonth() + 3);
+
+    await dbInsert('package_purchases', {
+      patient_id: patientRecord.id, package_id: p.id,
+      package_name: p.name, price: 0,
+      expires_at: expiresAt.toISOString(), status: 'active',
+    });
+    await dbUpdate('patients', patientRecord.id, {
+      active_package_id: p.id, active_package_name: p.name,
+      package_purchased_at: new Date().toISOString(),
+      package_expires_at: expiresAt.toISOString(),
+    });
+    await auditLog('package.activated', patientRecord.id, { package: p.name });
+    banner(`Pakej ${p.name} diaktifkan!`);
+    setTimeout(() => location.reload(), 1500);
+  } else {
+    // Paid package — save to localStorage and go to payment
+    localStorage.setItem('isw_pending_payment', JSON.stringify({
+      type: 'package',
+      packageId: p.id,
+      packageName: p.name,
+      title: `Pakej: ${p.name}`,
+      amount: p.price,
+    }));
+    window.location.href = 'payment.html';
+  }
+}
+
+async function loadHistory() {
+  const data = await dbQuery('package_purchases', { eq: { patient_id: patientRecord.id }, order: { col: 'purchased_at' } }).catch(() => []);
+  if (data.length === 0) return;
+
+  document.getElementById('history-section').classList.remove('hidden');
+  document.getElementById('history-list').innerHTML = data.map(h => `
+    <div class="bg-white rounded-xl border border-ink/10 p-4 flex items-center justify-between gap-3 flex-wrap">
+      <div>
+        <div class="font-semibold">${h.package_name}</div>
+        <div class="text-xs text-ink/60">${formatDate(h.purchased_at)} ${h.expires_at ? '· habis ' + formatDate(h.expires_at) : ''}</div>
+      </div>
+      <div class="flex items-center gap-3">
+        <div class="font-bold text-navy">${h.price === 0 ? 'PERCUMA' : 'RM ' + Number(h.price).toFixed(2)}</div>
+        <span class="chip ${h.status === 'active' ? 'bg-green-light text-green-dark' : h.status === 'pending_payment' ? 'bg-gold/30 text-gold-dark' : 'bg-ink/10 text-ink/60'}">${h.status}</span>
+      </div>
+    </div>`).join('');
+}
+
+(async () => {
+  const user = await initPatient('pakej', 'Pilih pakej rawatan untuk akses penuh');
+  if (!user || !patientRecord) return;
+
+  if (patientRecord.active_package_id) {
+    document.getElementById('active-banner').classList.remove('hidden');
+    document.getElementById('no-package-banner').classList.add('hidden');
+    document.getElementById('active-name').textContent = patientRecord.active_package_name || patientRecord.active_package_id;
+    document.getElementById('active-expiry').textContent = patientRecord.package_expires_at
+      ? `Sah hingga ${formatDate(patientRecord.package_expires_at)}`
+      : 'Tiada tarikh tamat';
+  }
+
+  renderPackages();
+  loadHistory();
+})();
+</script>
+</body>
+</html>

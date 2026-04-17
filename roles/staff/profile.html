@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Profile</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">👤</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8">
+        <div class="max-w-2xl mx-auto space-y-6">
+          <div class="bg-white rounded-2xl border border-ink/10 p-6">
+            <div class="flex items-center gap-4 mb-5">
+              <div id="prof-avatar" class="w-16 h-16 bg-navy rounded-full flex items-center justify-center text-white text-2xl font-bold">—</div>
+              <div>
+                <div id="prof-full-name" class="font-bold text-lg">—</div>
+                <div id="prof-role" class="text-sm text-ink/60"></div>
+              </div>
+            </div>
+            <div class="grid md:grid-cols-2 gap-4 text-sm">
+              <div><label class="text-xs text-ink/60">Nama penuh</label><input id="p-name" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"></div>
+              <div><label class="text-xs text-ink/60">No. Telefon</label><input id="p-phone" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"></div>
+              <div><label class="text-xs text-ink/60">Email</label><input id="p-email" disabled class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-cream"></div>
+              <div><label class="text-xs text-ink/60">Reg. No. (MMC/APC/dll)</label><input id="p-regno" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"></div>
+              <div class="md:col-span-2"><label class="text-xs text-ink/60">Specialization / Bidang</label><input id="p-spec" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="cth: Doctor · Family Medicine, atau Coach · Wellness"></div>
+            </div>
+            <button onclick="saveProfile()" class="bg-navy text-white text-sm px-5 py-2 rounded-lg mt-4">Simpan</button>
+          </div>
+
+          <div class="bg-white rounded-2xl border border-ink/10 p-6">
+            <h3 class="font-bold mb-3">Statistik Kerja</h3>
+            <div id="stats-grid" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+async function saveProfile() {
+  await dbUpdate('profiles', currentUser.id, {
+    full_name: document.getElementById('p-name').value,
+    phone: document.getElementById('p-phone').value,
+    registration_no: document.getElementById('p-regno').value,
+    specialization: document.getElementById('p-spec').value,
+  });
+  banner('Profil dikemaskini');
+}
+
+(async () => {
+  const user = await initStaff('profile', 'Maklumat staff & statistik kerja');
+  if (!user) return;
+
+  const initials = (user.full_name || 'U').split(' ').map(w => w[0]).join('').slice(0, 2);
+  document.getElementById('prof-avatar').textContent = initials;
+  document.getElementById('prof-full-name').textContent = user.full_name;
+  document.getElementById('prof-role').textContent = `Staff · ${user.specialization || user.role}`;
+  document.getElementById('p-name').value = user.full_name || '';
+  document.getElementById('p-phone').value = user.phone || '';
+  document.getElementById('p-email').value = user.email || '';
+  document.getElementById('p-regno').value = user.registration_no || '';
+  document.getElementById('p-spec').value = user.specialization || '';
+
+  const [soaps, vitals, sessions, kyc] = await Promise.all([
+    dbQuery('soap_notes', { eq: { doctor_id: user.id } }),
+    dbQuery('vitals', { eq: { recorded_by: user.id } }),
+    dbQuery('coaching_sessions', { eq: { coach_id: user.id } }),
+    dbQuery('kyc_submissions', { eq: { reviewed_by: user.id } }),
+  ]);
+
+  document.getElementById('stats-grid').innerHTML = [
+    statCard('SOAP Notes', soaps.length, '', 'navy'),
+    statCard('Vitals Captured', vitals.length, '', 'green'),
+    statCard('Coaching Sessions', sessions.length, '', 'teal'),
+    statCard('KYC Reviewed', kyc.length, '', 'gold'),
+  ].join('');
+})();
+</script>
+</body>
+</html>
