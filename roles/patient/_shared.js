@@ -7,6 +7,29 @@ window.patientRecord = null;
 
 // NAV_ITEMS sekarang dalam shared/navbar.js (NAV_ITEMS_BY_ROLE.patient)
 
+// ==================== KYC GATING ====================
+function hasCompletedKyc() {
+  if (!window.patientRecord) return false;
+  const p = window.patientRecord;
+  return !!(p.ic_number && p.address);
+}
+
+async function enforceKyc(currentPageId) {
+  if (currentPageId === 'kyc' || currentPageId === 'profile') return true;
+  if (hasCompletedKyc()) return true;
+
+  const subs = await dbQuery('kyc_submissions', {
+    eq: { user_id: window.currentUser.id },
+    order: { col: 'created_at' },
+    limit: 1,
+  }).catch(() => []);
+  const latest = subs[0];
+  if (latest && latest.status === 'pending') return true;
+
+  window.location.href = 'kyc.html';
+  return false;
+}
+
 // ==================== PACKAGE GATING ====================
 function hasActivePackage() {
   if (!window.patientRecord) return false;
@@ -34,7 +57,23 @@ async function initPatient(pageId, titleSub) {
   window.currentUser = await checkAuth('patient');
   if (!window.currentUser) return null;
 
-  const patients = await dbQuery('patients', { eq: { user_id: window.currentUser.id } });
+  let patients = await dbQuery('patients', { eq: { user_id: window.currentUser.id } });
+
+  // Auto-create patient record if not exists
+  if (patients.length === 0) {
+    try {
+      const mrn = 'P-' + new Date().getFullYear() + '-' + String(Math.floor(Math.random() * 9999)).padStart(4, '0');
+      const newPatient = await dbInsert('patients', {
+        user_id: window.currentUser.id,
+        mrn: mrn,
+        status: 'active',
+      });
+      patients = [newPatient];
+    } catch (e) {
+      console.warn('Auto-create patient failed:', e.message);
+    }
+  }
+
   window.patientRecord = patients[0] || null;
 
   document.getElementById('app-loading')?.classList.add('hidden');
@@ -47,6 +86,11 @@ async function initPatient(pageId, titleSub) {
   renderHeader(nav?.label || '', titleSub || '');
 
   updateCartBadge();
+
+  // KYC gate — redirect new patients to complete KYC before accessing other pages
+  const allowed = await enforceKyc(pageId);
+  if (!allowed) return null;
+
   return window.currentUser;
 }
 

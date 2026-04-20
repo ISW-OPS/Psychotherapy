@@ -105,13 +105,38 @@ function renderKYCList() {
 
 async function showKYCDetail(id) {
   const k = await dbQuery('kyc_submissions', { eq: { id }, single: true });
+  const reports = k.documents?.reports || [];
+
+  const reportLinks = await Promise.all(reports.map(async r => {
+    const { data } = await window.db.storage.from('medical-reports').createSignedUrl(r.path, 3600);
+    return { name: r.name, url: data?.signedUrl };
+  }));
+
   document.getElementById('kyc-detail').innerHTML = `
     <h3 class="font-bold text-lg">${k.patient_name}</h3>
     <p class="text-xs text-ink/60">IC: ${k.ic_number || '—'} · Tel: ${k.phone || '—'}</p>
     <div class="mt-4 space-y-2 text-sm">
       <div><strong>Email:</strong> ${k.email || '—'}</div>
+      <div><strong>Tarikh Lahir:</strong> ${k.date_of_birth || '—'} · <strong>Jantina:</strong> ${k.gender || '—'}</div>
       <div><strong>Alamat:</strong> ${k.address || '—'}</div>
+      <div><strong>Kontak Kecemasan:</strong> ${k.emergency_contact_name || '—'} (${k.emergency_contact_phone || '—'})</div>
       <div><strong>Rujukan:</strong> ${k.referral_source || '—'}</div>
+
+      <div class="mt-3 p-3 bg-cream/50 rounded-lg">
+        <div class="font-semibold text-sm mb-1">🩺 Sejarah Kesihatan</div>
+        <div><strong>Kondisi:</strong> ${k.medical_condition || '—'}</div>
+        <div><strong>Tempoh:</strong> ${k.condition_duration || '—'}</div>
+        ${k.medical_notes ? `<div class="mt-1 text-xs italic">💬 ${k.medical_notes}</div>` : ''}
+      </div>
+
+      ${reportLinks.length ? `
+        <div class="mt-3">
+          <div class="font-semibold text-sm mb-1">📎 Laporan Perubatan</div>
+          <div class="space-y-1">
+            ${reportLinks.map(r => `<a href="${r.url}" target="_blank" class="block text-xs text-navy hover:underline bg-white border border-ink/10 px-2 py-1 rounded">📄 ${r.name}</a>`).join('')}
+          </div>
+        </div>` : ''}
+
       <div class="mt-3"><strong>Consent:</strong></div>
       <div class="text-xs">${k.consent_data_processing ? '✅' : '❌'} Data processing · ${k.consent_health_records ? '✅' : '❌'} Health records · ${k.consent_research ? '✅' : '❌'} Research</div>
     </div>
@@ -122,7 +147,30 @@ async function showKYCDetail(id) {
 }
 
 async function reviewKYC(id, status) {
-  await dbUpdate('kyc_submissions', id, { status, reviewed_by: currentUser.id });
+  const k = await dbQuery('kyc_submissions', { eq: { id }, single: true });
+  await dbUpdate('kyc_submissions', id, { status, reviewed_by: currentUser.id, reviewed_at: new Date().toISOString() });
+
+  if (status === 'approved' && k?.user_id) {
+    const linked = await dbQuery('patients', { eq: { user_id: k.user_id } });
+    if (linked[0]) {
+      await dbUpdate('patients', linked[0].id, {
+        ic_number: k.ic_number,
+        date_of_birth: k.date_of_birth,
+        gender: k.gender,
+        address: k.address,
+        emergency_contact_name: k.emergency_contact_name,
+        emergency_contact_phone: k.emergency_contact_phone,
+        referral_source: k.referral_source,
+        medical_condition: k.medical_condition,
+        condition_duration: k.condition_duration,
+        medical_notes: k.medical_notes,
+      });
+      if (k.phone || k.patient_name) {
+        await dbUpdate('profiles', k.user_id, { full_name: k.patient_name, phone: k.phone });
+      }
+    }
+  }
+
   await auditLog('kyc.' + status, id);
   banner(`KYC ${status === 'approved' ? 'diluluskan' : 'ditolak'}`);
   await loadAll();

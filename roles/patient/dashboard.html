@@ -40,7 +40,6 @@
               <div class="text-2xl font-bold mt-1"><span id="hero-name">—</span> 🌿</div>
               <div id="hero-sub" class="text-sm opacity-80 mt-2"></div>
             </div>
-            <a href="appointments.html" class="bg-white text-navy px-5 py-2.5 rounded-lg text-sm font-semibold hover:bg-cream">+ Book Appointment</a>
           </div>
         </div>
 
@@ -50,7 +49,7 @@
           <div class="bg-white rounded-xl p-5 border border-ink/10 md:col-span-2">
             <div class="flex items-center justify-between mb-4">
               <h3 class="font-bold">Upcoming Appointment</h3>
-              <a href="appointments.html" class="text-xs text-navy hover:underline">View all →</a>
+              <a href="plan.html" class="text-xs text-navy hover:underline">View plan →</a>
             </div>
             <div id="upcoming-card"></div>
           </div>
@@ -64,38 +63,12 @@
           </div>
         </div>
 
-        <div>
-          <h3 class="font-bold mb-3">Tindakan Pantas</h3>
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <a href="appointments.html" class="bg-white border border-ink/10 rounded-xl p-4 hover:border-navy hover:shadow-sm">
-              <div class="w-10 h-10 bg-navy-light rounded-lg flex items-center justify-center mb-2">📅</div>
-              <div class="font-semibold text-sm">Book Appointment</div>
-              <div class="text-xs text-ink/60 mt-0.5">Dr / Nurse / Coach</div>
-            </a>
-            <a href="plan.html" class="bg-white border border-ink/10 rounded-xl p-4 hover:border-navy hover:shadow-sm">
-              <div class="w-10 h-10 bg-green-light rounded-lg flex items-center justify-center mb-2">💊</div>
-              <div class="font-semibold text-sm">Treatment Plan</div>
-              <div class="text-xs text-ink/60 mt-0.5">BPS-S progress</div>
-            </a>
-            <a href="library.html" class="bg-white border border-ink/10 rounded-xl p-4 hover:border-navy hover:shadow-sm">
-              <div class="w-10 h-10 bg-gold-light rounded-lg flex items-center justify-center mb-2">📚</div>
-              <div class="font-semibold text-sm">Self-Help</div>
-              <div class="text-xs text-ink/60 mt-0.5">Artikel, video, zikir</div>
-            </a>
-            <a href="issue.html" class="bg-white border border-ink/10 rounded-xl p-4 hover:border-navy hover:shadow-sm">
-              <div class="w-10 h-10 bg-terracotta-light rounded-lg flex items-center justify-center mb-2">⚠️</div>
-              <div class="font-semibold text-sm">Report Issue</div>
-              <div class="text-xs text-ink/60 mt-0.5">Lapor masalah</div>
-            </a>
-          </div>
-        </div>
       </section>
     </main>
   </div>
 
   <nav class="mobile-nav fixed bottom-0 left-0 right-0 bg-navy-dark text-white py-2 justify-around z-20">
     <a href="dashboard.html" class="flex flex-col items-center text-[10px] gap-0.5 p-2"><span>🏠</span>Home</a>
-    <a href="appointments.html" class="flex flex-col items-center text-[10px] gap-0.5 p-2"><span>📅</span>Book</a>
     <a href="plan.html" class="flex flex-col items-center text-[10px] gap-0.5 p-2"><span>💊</span>Plan</a>
     <a href="shop.html" class="flex flex-col items-center text-[10px] gap-0.5 p-2"><span>🛒</span>Shop</a>
     <a href="profile.html" class="flex flex-col items-center text-[10px] gap-0.5 p-2"><span>👤</span>Profile</a>
@@ -109,6 +82,27 @@
 <script src="../../shared/navbar.js"></script>
 <script src="_shared.js"></script>
 <script>
+async function rescheduleAppt(id) {
+  if (!confirm('Nak reschedule appointment ni? Anda akan dibawa ke Treatment Plan.')) return;
+  window.location.href = 'plan.html';
+}
+
+async function cancelAppt(id) {
+  if (!confirm('Pasti nak batal appointment ni?')) return;
+  try {
+    await dbUpdate('appointments', id, { status: 'cancelled' });
+    await auditLog('appointment.cancelled', id);
+    banner('Appointment dibatalkan');
+    setTimeout(() => location.reload(), 1000);
+  } catch (err) {
+    banner('Ralat: ' + err.message, 'error');
+  }
+}
+
+function getDirections() {
+  window.open('https://www.google.com/maps/search/Ibnu+Sina+Wellness', '_blank');
+}
+
 (async () => {
   const user = await initPatient('dashboard', 'Overview rawatan & appointment anda');
   if (!user) return;
@@ -121,59 +115,142 @@
     return;
   }
 
-  const [appts, plans, rx] = await Promise.all([
+  const today = new Date().toISOString().split('T')[0];
+
+  const [appts, plans, checkinRes, ordersRes] = await Promise.all([
     dbQuery('appointments', { eq: { patient_id: patientRecord.id }, order: { col: 'appointment_time', asc: true } }),
     dbQuery('treatment_plans', { eq: { patient_id: patientRecord.id } }),
-    dbQuery('prescriptions', { eq: { patient_id: patientRecord.id, status: 'active' } }),
+    window.db.from('daily_checkins').select('id,mood_score').eq('patient_id', patientRecord.id).eq('checkin_date', today).maybeSingle(),
+    window.db.from('orders').select('id,status').eq('patient_id', currentUser.id).not('status', 'in', '("delivered","cancelled")'),
   ]);
 
   const upcoming = appts.filter(a => a.status === 'scheduled' && new Date(a.appointment_time) > new Date());
   const dashPlan = plans.find(p => p.status === 'active');
   const nextAppt = upcoming[0];
+  const checkinToday = checkinRes.data;
+  const activeOrders = (ordersRes.data || []).length;
 
-  document.getElementById('hero-sub').textContent = dashPlan ? `Minggu ${dashPlan.current_week}/${dashPlan.duration_weeks} · BPS-S Plan` : 'Tiada pelan aktif';
+  const hasActivePkg = patientRecord.active_package_id &&
+    (!patientRecord.package_expires_at || new Date(patientRecord.package_expires_at) >= new Date());
+  const activePackageName = patientRecord.active_package_name;
 
-  let progressPct = 0, totalGoals = 0, doneGoals = 0;
-  if (dashPlan) {
-    const checkIns = await dbQuery('plan_check_ins', { eq: { plan_id: dashPlan.id, patient_id: patientRecord.id } }).catch(() => []);
-    ['bio_goals','psycho_goals','social_goals','spiritual_goals'].forEach(k => totalGoals += (dashPlan[k] || []).length);
-    doneGoals = checkIns.length;
-    progressPct = totalGoals > 0 ? Math.round(doneGoals / totalGoals * 100) : 0;
+  // Show no-package banner when no active package
+  document.getElementById('no-package-banner').classList.toggle('hidden', !!hasActivePkg);
+
+  if (hasActivePkg) {
+    document.getElementById('hero-sub').textContent = dashPlan
+      ? `${activePackageName} · Minggu ${dashPlan.current_week}/${dashPlan.duration_weeks}`
+      : `${activePackageName} aktif`;
+  } else {
+    document.getElementById('hero-sub').textContent = 'Tiada pakej aktif · Sila pilih pakej rawatan';
+  }
+
+  let progressScore = 0, progressTrend = '';
+
+  // Update quick-action check-in card
+  if (checkinToday) {
+    document.getElementById('qa-checkin-label').textContent = '✓ Sudah Check-in';
+    document.getElementById('qa-checkin-sub').textContent = `Mood ${checkinToday.mood_score}/10 hari ini`;
+  }
+
+  const MOOD_EMOJI = ['','😭','😢','😔','😟','😐','🙂','😊','😁','🤩','🌟'];
+
+  const dashStatCard = (label, value, sub, subColor = 'text-ink/60', href = '#') => `
+    <a href="${href}" class="bg-white rounded-xl p-4 border border-ink/10 hover:border-navy hover:shadow-sm transition-all block">
+      <div class="text-xs text-ink/60">${label}</div>
+      <div class="text-lg font-bold mt-1">${value}</div>
+      <div class="text-xs ${subColor} mt-1">${sub || '—'}</div>
+    </a>`;
+
+  const weeklyAll = dashPlan
+    ? await dbQuery('plan_weekly_progress', { eq: { plan_id: dashPlan.id } }).catch(() => [])
+    : [];
+  const hadirCount = weeklyAll.filter(w => w.status === 'hadir').length;
+  const scores = weeklyAll.filter(w => w.score && w.status === 'hadir').map(w => w.score);
+  if (scores.length > 0) {
+    progressScore = (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1);
+    if (scores.length >= 2) {
+      const delta = (scores[scores.length - 1] - scores[scores.length - 2]).toFixed(1);
+      progressTrend = delta >= 0 ? `▲ +${delta} minggu ini` : `▼ ${delta} minggu ini`;
+    }
   }
 
   document.getElementById('stat-grid').innerHTML = [
-    statCard('Next Appointment', nextAppt ? formatDate(nextAppt.appointment_time) : '—', nextAppt ? `${nextAppt.staff_name || 'Practitioner'} · ${formatTime(nextAppt.appointment_time)}` : 'Belum tempah'),
-    statCard('Active Treatment', dashPlan ? 'BPS-S Plan' : '—', dashPlan ? `Week ${dashPlan.current_week}/${dashPlan.duration_weeks}` : 'Tiada'),
-    statCard('Active Medications', rx.length, rx.length ? 'Ubat diresepkan' : 'Tiada'),
-    statCard('Progress Goals', progressPct + '%', dashPlan ? `${doneGoals} / ${totalGoals} selesai` : ''),
+    dashStatCard(
+      'Check-in Hari Ini',
+      checkinToday ? `${MOOD_EMOJI[checkinToday.mood_score] || '😊'} ${checkinToday.mood_score}/10` : '—',
+      checkinToday ? 'Sudah check-in' : 'Belum check-in',
+      checkinToday ? 'text-green-dark' : 'text-gold-dark',
+      'checkin.html'
+    ),
+    dashStatCard(
+      'Sesi Hadir',
+      dashPlan ? `${hadirCount} / ${dashPlan.duration_weeks}` : '—',
+      dashPlan ? `Minggu semasa: ${dashPlan.current_week}` : 'Tiada plan aktif',
+      hadirCount > 0 ? 'text-teal' : 'text-ink/60',
+      'plan.html'
+    ),
+    dashStatCard(
+      'Progress Score',
+      progressScore > 0 ? `${progressScore} / 10` : '—',
+      progressTrend || 'Belum direkod',
+      progressTrend.startsWith('▲') ? 'text-green-dark' : progressTrend.startsWith('▼') ? 'text-terracotta' : 'text-ink/60',
+      'plan.html'
+    ),
+    dashStatCard(
+      'Active Orders',
+      activeOrders > 0 ? `${activeOrders} order` : '—',
+      activeOrders > 0 ? 'Dalam proses' : 'Tiada order aktif',
+      activeOrders > 0 ? 'text-navy' : 'text-ink/60',
+      'orders.html'
+    ),
   ].join('');
 
   document.getElementById('upcoming-card').innerHTML = nextAppt
-    ? `<div class="border border-navy/20 bg-navy-light rounded-lg p-4 flex items-start gap-4">
-        <div class="text-center">
-          <div class="text-xs text-navy">${new Date(nextAppt.appointment_time).toLocaleDateString('en-GB',{weekday:'short'}).toUpperCase()}</div>
-          <div class="text-2xl font-bold text-navy">${new Date(nextAppt.appointment_time).getDate()}</div>
-          <div class="text-xs text-navy">${new Date(nextAppt.appointment_time).toLocaleDateString('en-GB',{month:'short'}).toUpperCase()}</div>
-        </div>
-        <div class="flex-1">
-          <div class="font-semibold">${nextAppt.service}</div>
-          <div class="text-sm text-ink/70 mt-1">${nextAppt.staff_name || 'Practitioner'}</div>
-          <div class="text-xs text-ink/60 mt-2">${formatTime(nextAppt.appointment_time)} ${nextAppt.room ? '· ' + nextAppt.room : ''}</div>
-        </div>
-      </div>`
+    ? (() => {
+        const d = new Date(nextAppt.appointment_time);
+        const endTime = new Date(d.getTime() + (nextAppt.duration_min || 45) * 60000);
+        return `<div class="border border-navy/20 bg-navy-light rounded-lg p-4">
+          <div class="flex items-start gap-4 flex-wrap">
+            <div class="text-center min-w-[48px]">
+              <div class="text-xs text-navy">${d.toLocaleDateString('en-GB',{weekday:'short'}).toUpperCase()}</div>
+              <div class="text-2xl font-bold text-navy">${d.getDate()}</div>
+              <div class="text-xs text-navy">${d.toLocaleDateString('en-GB',{month:'short'}).toUpperCase()}</div>
+            </div>
+            <div class="flex-1 min-w-[180px]">
+              <div class="font-semibold">${nextAppt.service}</div>
+              <div class="text-sm text-ink/70 mt-1">${nextAppt.staff_name || 'Practitioner'}</div>
+              <div class="text-xs text-ink/60 mt-1">${formatTime(nextAppt.appointment_time)} — ${formatTime(endTime)} ${nextAppt.room ? '· ' + nextAppt.room : ''}</div>
+              <div class="flex gap-2 mt-3 flex-wrap">
+                <button onclick="rescheduleAppt('${nextAppt.id}')" class="text-xs px-3 py-1.5 rounded-lg border border-navy text-navy hover:bg-navy hover:text-white">Reschedule</button>
+                <button onclick="cancelAppt('${nextAppt.id}')" class="text-xs px-3 py-1.5 rounded-lg border border-terracotta text-terracotta hover:bg-terracotta hover:text-white">Cancel</button>
+                <button onclick="getDirections()" class="text-xs px-3 py-1.5 rounded-lg bg-green text-white hover:bg-green-dark">Get Directions</button>
+              </div>
+            </div>
+          </div>
+        </div>`;
+      })()
     : '<p class="text-ink/40 text-sm text-center py-6">Tiada appointment akan datang</p>';
 
   document.getElementById('plan-summary').innerHTML = dashPlan
     ? `<div class="mb-3">
+        <div class="font-semibold text-sm text-navy mb-2">${dashPlan.name}</div>
         <div class="flex justify-between text-xs mb-1">
-          <span class="text-ink/60">Goals Progress</span>
-          <span class="font-semibold">${doneGoals} / ${totalGoals} (${progressPct}%)</span>
+          <span class="text-ink/60">Progress</span>
+          <span class="font-semibold">Week ${dashPlan.current_week} / ${dashPlan.duration_weeks}</span>
         </div>
-        <div class="h-2 bg-ink/10 rounded-full overflow-hidden"><div class="h-full bg-green transition-all" style="width:${progressPct}%"></div></div>
+        <div class="h-2 bg-ink/10 rounded-full overflow-hidden"><div class="h-full bg-green transition-all" style="width:${Math.round(dashPlan.current_week / dashPlan.duration_weeks * 100)}%"></div></div>
       </div>
-      <p class="text-xs text-ink/60 mb-2">Minggu ${dashPlan.current_week} dari ${dashPlan.duration_weeks}</p>
       <a href="plan.html" class="block w-full bg-cream hover:bg-green-light text-sm font-semibold py-2 rounded-lg text-center">Buka Checklist →</a>`
-    : '<p class="text-ink/40 text-sm">Tiada pelan aktif</p>';
+    : (hasActivePkg
+        ? `<div class="text-center py-3">
+             <p class="text-sm text-ink/70 mb-2">Plan akan dicipta untuk pakej <strong>${activePackageName}</strong></p>
+             <p class="text-xs text-ink/50">Sila refresh atau hubungi coach</p>
+           </div>`
+        : `<div class="text-center py-3">
+             <p class="text-sm text-ink/70 mb-3">Tiada pakej aktif</p>
+             <a href="pakej.html" class="block w-full bg-navy text-white text-sm font-semibold py-2 rounded-lg">📦 Pilih Pakej →</a>
+           </div>`);
 })();
 </script>
 </body>

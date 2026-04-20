@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ibnu Sina Wellness — Appointments</title>
+<title>Ibnu Sina Wellness — Jadual Sesi</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="../../shared/theme.js"></script>
 <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
@@ -24,21 +24,24 @@
 
       <div class="p-4 md:p-8 space-y-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
-          <div class="flex gap-2 items-center">
-            <input id="appt-date" type="date" class="border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none focus:border-navy">
-            <select id="appt-status" class="border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none">
+          <div class="flex gap-2 items-center flex-wrap">
+            <input id="f-date" type="date" class="border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none focus:border-navy">
+            <select id="f-status" class="border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none">
               <option value="">Semua status</option>
-              <option value="scheduled">Scheduled</option>
-              <option value="completed">Completed</option>
-              <option value="cancelled">Cancelled</option>
+              <option value="booked">📅 Ditempah</option>
+              <option value="hadir">✅ Hadir</option>
+              <option value="cancel">❌ Cancel</option>
+              <option value="reschedule">🔄 Reschedule</option>
             </select>
+            <button onclick="clearDate()" class="text-xs text-navy hover:underline">Tunjuk semua</button>
           </div>
-          <span id="appts-count" class="text-sm text-ink/60"></span>
+          <span id="count" class="text-sm text-ink/60"></span>
         </div>
+
         <div class="bg-white rounded-xl border border-ink/10 overflow-x-auto">
           <table class="data">
-            <thead><tr><th>Time</th><th>Patient</th><th>Service</th><th>Practitioner</th><th>Status</th><th>Room</th><th></th></tr></thead>
-            <tbody id="appts-body"></tbody>
+            <thead><tr><th>Tarikh & Masa</th><th>Pesakit</th><th>Plan · Minggu</th><th>Status</th><th>Skor</th><th>Nota</th><th>Tindakan</th></tr></thead>
+            <tbody id="tbody"></tbody>
           </table>
         </div>
       </div>
@@ -53,59 +56,103 @@
 <script src="../../shared/navbar.js"></script>
 <script src="_shared.js"></script>
 <script>
-let allAppts = [];
+let allSessions = [], patientMap = {}, planMap = {};
 
-async function loadAppts() {
-  allAppts = await dbQuery('appointments', { order: { col: 'appointment_time', asc: true } });
-  renderAppts();
+const statusChipMap = {
+  booked: '<span class="chip bg-navy-light text-navy">📅 Ditempah</span>',
+  hadir: '<span class="chip bg-green-light text-green-dark">✅ Hadir</span>',
+  cancel: '<span class="chip bg-terracotta-light text-terracotta">❌ Cancel</span>',
+  reschedule: '<span class="chip bg-gold-light text-gold-dark">🔄 Reschedule</span>',
+};
+
+async function loadSessions() {
+  const [sessions, patients, plans] = await Promise.all([
+    dbQuery('plan_weekly_progress', { order: { col: 'session_date', asc: true } }),
+    dbQuery('patients'),
+    dbQuery('treatment_plans'),
+  ]);
+  allSessions = sessions;
+  patients.forEach(p => patientMap[p.id] = p);
+  plans.forEach(p => planMap[p.id] = p);
+  render();
 }
 
-function renderAppts() {
-  const date = document.getElementById('appt-date').value;
-  const status = document.getElementById('appt-status').value;
-  let filtered = allAppts;
-  if (date) filtered = filtered.filter(a => a.appointment_time.startsWith(date));
-  if (status) filtered = filtered.filter(a => a.status === status);
+function render() {
+  const date = document.getElementById('f-date').value;
+  const status = document.getElementById('f-status').value;
+  let filtered = allSessions;
+  if (date) filtered = filtered.filter(s => s.session_date?.startsWith(date));
+  if (status) filtered = filtered.filter(s => s.status === status);
 
-  document.getElementById('appts-count').textContent = `${filtered.length} appointments`;
-  document.getElementById('appts-body').innerHTML = filtered.length
-    ? filtered.map(a => `<tr>
-        <td class="font-semibold">${formatDateTime(a.appointment_time)}</td>
-        <td>${a.patient_name || '—'}</td>
-        <td>${a.service}</td>
-        <td>${a.staff_name || '—'}</td>
-        <td>${statusChip(a.status)}</td>
-        <td>${a.room || '—'}</td>
-        <td>
-          ${a.status === 'scheduled' ? `<button onclick="markComplete('${a.id}')" class="bg-green text-white text-xs px-3 py-1.5 rounded-lg">Selesai</button>` : ''}
-          ${a.status === 'scheduled' ? `<button onclick="cancelAppt('${a.id}')" class="text-terracotta text-xs ml-1">Batal</button>` : ''}
-        </td>
-      </tr>`).join('')
-    : '<tr><td colspan="7" class="text-center text-ink/40 py-8">Tiada appointment</td></tr>';
+  document.getElementById('count').textContent = `${filtered.length} sesi`;
+
+  document.getElementById('tbody').innerHTML = filtered.length
+    ? filtered.map(s => {
+        const dt = s.session_date ? new Date(s.session_date) : null;
+        const patient = patientMap[s.patient_id];
+        const plan = planMap[s.plan_id];
+        return `<tr>
+          <td class="font-semibold">${dt ? dt.toLocaleDateString('ms-MY', { day: '2-digit', month: 'short' }) + ' · ' + dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+          <td>${patient?.mrn || '—'}</td>
+          <td class="text-xs">${plan?.name || '—'}<br><span class="text-ink/60">Minggu ${s.week_number}</span></td>
+          <td>${statusChipMap[s.status] || s.status}</td>
+          <td>${s.score ? `<strong>${s.score}/10</strong>` : '—'}</td>
+          <td class="text-xs max-w-[200px] truncate">${s.notes || '—'}</td>
+          <td>
+            ${s.status !== 'hadir' ? `<button onclick="markHadir('${s.id}','${s.plan_id}',${s.week_number})" class="bg-green text-white text-xs px-3 py-1.5 rounded-lg">Hadir</button>` : ''}
+            ${s.status === 'booked' ? `<button onclick="markCancel('${s.id}')" class="text-terracotta text-xs ml-1">Cancel</button>` : ''}
+          </td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="7" class="text-center text-ink/40 py-8">Tiada sesi</td></tr>';
 }
 
-async function markComplete(id) {
-  await dbUpdate('appointments', id, { status: 'completed' });
-  await auditLog('appointment.completed', id);
-  banner('Appointment selesai');
-  loadAppts();
+async function markHadir(id, planId, week) {
+  try {
+    await dbUpdate('plan_weekly_progress', id, {
+      status: 'hadir',
+      updated_by: currentUser.id,
+      updated_by_name: currentUser.full_name,
+      updated_at: new Date().toISOString(),
+    });
+    await window.db.from('treatment_plans').update({ current_week: week }).eq('id', planId);
+    await auditLog('plan.week_hadir', planId, { week });
+    banner(`Minggu ${week}: Hadir`);
+    loadSessions();
+  } catch (err) {
+    banner('Ralat: ' + err.message, 'error');
+  }
 }
 
-async function cancelAppt(id) {
-  if (!confirm('Pasti nak batal appointment ni?')) return;
-  await dbUpdate('appointments', id, { status: 'cancelled' });
-  await auditLog('appointment.cancelled', id);
-  banner('Appointment dibatalkan');
-  loadAppts();
+async function markCancel(id) {
+  if (!confirm('Tandakan sesi sebagai cancel? Patient perlu tempah semula.')) return;
+  try {
+    await dbUpdate('plan_weekly_progress', id, {
+      status: 'cancel',
+      updated_by: currentUser.id,
+      updated_by_name: currentUser.full_name,
+      updated_at: new Date().toISOString(),
+    });
+    await auditLog('plan.week_cancel', id);
+    banner('Sesi dibatalkan');
+    loadSessions();
+  } catch (err) {
+    banner('Ralat: ' + err.message, 'error');
+  }
+}
+
+function clearDate() {
+  document.getElementById('f-date').value = '';
+  render();
 }
 
 (async () => {
-  const user = await initStaff('appointments', 'Schedule management');
+  const user = await initStaff('appointments', 'Jadual sesi rawatan mingguan');
   if (!user) return;
-  document.getElementById('appt-date').value = new Date().toISOString().split('T')[0];
-  document.getElementById('appt-date').addEventListener('change', renderAppts);
-  document.getElementById('appt-status').addEventListener('change', renderAppts);
-  loadAppts();
+  document.getElementById('f-date').value = new Date().toISOString().split('T')[0];
+  document.getElementById('f-date').addEventListener('change', render);
+  document.getElementById('f-status').addEventListener('change', render);
+  loadSessions();
 })();
 </script>
 </body>

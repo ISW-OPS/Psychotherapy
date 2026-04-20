@@ -28,8 +28,62 @@
           <button onclick="openModal()" class="bg-navy text-white text-sm px-4 py-2 rounded-lg font-semibold">+ Plan Baru</button>
         </div>
         <div id="plans-list" class="grid md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+
+        <!-- Weekly Progress Tracker (appears when plan selected) -->
+        <div id="tracker-section" class="hidden mt-6">
+          <div class="bg-gradient-to-r from-navy to-navy-dark rounded-2xl p-5 text-white mb-4">
+            <div class="text-xs opacity-80">Attendance Tracker</div>
+            <h3 id="tracker-plan-name" class="text-xl font-bold mt-1"></h3>
+            <p id="tracker-patient" class="text-sm opacity-80 mt-1"></p>
+          </div>
+          <div id="tracker-weeks" class="space-y-2"></div>
+        </div>
       </div>
     </main>
+  </div>
+</div>
+
+<!-- Compliance Modal -->
+<div id="compliance-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/50" onclick="closeCompliance()"></div>
+  <div class="relative bg-white rounded-2xl max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col">
+    <div class="p-5 border-b border-ink/10 flex items-center justify-between">
+      <div>
+        <h3 class="font-bold text-lg">🌿 Kepatuhan Rawatan</h3>
+        <p id="cmp-subtitle" class="text-xs text-ink/60"></p>
+      </div>
+      <button onclick="closeCompliance()" class="text-ink/60 text-xl">×</button>
+    </div>
+    <div class="p-5 overflow-y-auto">
+      <div class="grid grid-cols-2 gap-3 text-sm">
+        <div><label class="text-xs font-semibold">🍯 Madu (sudu/hari)</label><input id="cmp-madu" type="number" min="0" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"></div>
+        <div><label class="text-xs font-semibold">🌬️ Nafas fitrah (kali/hari)</label><input id="cmp-nafas" type="number" min="0" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"></div>
+        <div><label class="text-xs font-semibold">🌍 Terapi bumi (min/hari)</label><input id="cmp-bumi" type="number" min="0" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"></div>
+        <div><label class="text-xs font-semibold">🥥 Air kelapa (kali/mgg)</label><input id="cmp-kelapa" type="number" min="0" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"></div>
+        <div><label class="text-xs font-semibold">💧 Terapi kolon (kali)</label><input id="cmp-kolon" type="number" min="0" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"></div>
+        <div class="col-span-2 grid grid-cols-2 gap-3">
+          <div class="flex items-center justify-between bg-cream/50 px-3 py-2 rounded-lg">
+            <span class="text-xs font-semibold">☀️ Berjemur</span>
+            <div class="flex gap-3 text-xs">
+              <label class="cursor-pointer"><input type="radio" name="cmp-jemur" value="true"> Ya</label>
+              <label class="cursor-pointer"><input type="radio" name="cmp-jemur" value="false"> Tidak</label>
+            </div>
+          </div>
+          <div class="flex items-center justify-between bg-cream/50 px-3 py-2 rounded-lg">
+            <span class="text-xs font-semibold">🍽️ Pantang</span>
+            <div class="flex gap-3 text-xs">
+              <label class="cursor-pointer"><input type="radio" name="cmp-pantang" value="true"> Ya</label>
+              <label class="cursor-pointer"><input type="radio" name="cmp-pantang" value="false"> Tidak</label>
+            </div>
+          </div>
+        </div>
+        <div class="col-span-2"><label class="text-xs font-semibold">📝 Nota coach</label><textarea id="cmp-notes" rows="2" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"></textarea></div>
+      </div>
+    </div>
+    <div class="p-5 border-t border-ink/10 flex justify-end gap-2">
+      <button onclick="closeCompliance()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm">Batal</button>
+      <button onclick="saveCompliance()" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold">Simpan</button>
+    </div>
   </div>
 </div>
 
@@ -116,12 +170,13 @@ async function loadPlans() {
     dbQuery('treatment_plans', { order: { col: 'created_at' } }),
     dbQuery('patients'),
   ]);
+  allPlans = plans;
   const patientMap = {};
-  patients.forEach(p => patientMap[p.id] = p.mrn);
+  patients.forEach(p => { patientMap[p.id] = p.mrn; allPatientsMap[p.id] = p.mrn; });
 
   document.getElementById('plans-list').innerHTML = plans.length
     ? plans.map(p => `
-      <div class="bg-white rounded-xl p-5 border border-ink/10">
+      <div onclick="openTracker('${p.id}')" class="bg-white rounded-xl p-5 border border-ink/10 cursor-pointer hover:border-navy hover:shadow-md transition">
         <div class="flex items-center justify-between mb-2">
           <h4 class="font-bold text-sm">${p.name}</h4>
           ${statusChip(p.status)}
@@ -133,14 +188,199 @@ async function loadPlans() {
           ${p.social_goals?.length ? `<span class="chip bg-social/10 text-social">Social (${p.social_goals.length})</span>` : ''}
           ${p.spiritual_goals?.length ? `<span class="chip bg-spiritual/10 text-spiritual">Spiritual (${p.spiritual_goals.length})</span>` : ''}
         </div>
+        <div class="text-xs text-navy font-semibold mt-3">Klik untuk update progress →</div>
       </div>`).join('')
     : '<p class="text-ink/40 text-sm text-center py-8 col-span-3">Tiada plans</p>';
 }
 
+let allPlans = [];
+let allPatientsMap = {};
+
+async function openTracker(planId) {
+  const plan = allPlans.find(p => p.id === planId);
+  if (!plan) return;
+
+  document.getElementById('tracker-section').classList.remove('hidden');
+  document.getElementById('tracker-plan-name').textContent = plan.name;
+  document.getElementById('tracker-patient').textContent = `${allPatientsMap[plan.patient_id] || '—'} · ${plan.duration_weeks} minggu`;
+
+  const progress = await dbQuery('plan_weekly_progress', { eq: { plan_id: planId }, order: { col: 'week_number', asc: true } }).catch(() => []);
+  const progressMap = {};
+  progress.forEach(p => { progressMap[p.week_number] = p; });
+
+  const statusColors = {
+    hadir: 'bg-green-light border-green text-green-dark',
+    reschedule: 'bg-gold-light border-gold text-gold-dark',
+    cancel: 'bg-terracotta-light border-terracotta text-terracotta',
+    pending: 'bg-white border-ink/20 text-ink/60',
+  };
+
+  let html = '';
+  for (let w = 1; w <= plan.duration_weeks; w++) {
+    const entry = progressMap[w];
+    const status = entry?.status || 'pending';
+    const score = entry?.score || '';
+    const notes = entry?.notes || '';
+
+    html += `<div class="bg-white rounded-xl border border-ink/10 p-4 flex items-center gap-4 flex-wrap">
+      <div class="w-14 text-center">
+        <div class="text-xs text-ink/50">Minggu</div>
+        <div class="text-2xl font-bold text-navy">${w}</div>
+      </div>
+      <div class="flex-1 min-w-[200px]">
+        <div class="flex gap-2 flex-wrap">
+          <button onclick="markWeek('${planId}','${plan.patient_id}',${w},'hadir')" class="px-3 py-1.5 rounded-lg text-xs font-semibold border-2 ${status === 'hadir' ? statusColors.hadir : 'border-ink/10 hover:border-green'}">✅ Hadir</button>
+          <button onclick="markWeek('${planId}','${plan.patient_id}',${w},'reschedule')" class="px-3 py-1.5 rounded-lg text-xs font-semibold border-2 ${status === 'reschedule' ? statusColors.reschedule : 'border-ink/10 hover:border-gold'}">🔄 Reschedule</button>
+          <button onclick="markWeek('${planId}','${plan.patient_id}',${w},'cancel')" class="px-3 py-1.5 rounded-lg text-xs font-semibold border-2 ${status === 'cancel' ? statusColors.cancel : 'border-ink/10 hover:border-terracotta'}">❌ Cancel</button>
+        </div>
+        ${status !== 'pending' ? `<div class="text-xs text-ink/50 mt-1">Dikemaskini oleh ${entry?.updated_by_name || 'staff'} · ${entry ? formatDate(entry.updated_at) : ''}</div>` : ''}
+      </div>
+      <div class="flex items-center gap-2">
+        <div>
+          <label class="text-[10px] text-ink/50">Score</label>
+          <input type="number" min="0" max="10" value="${score}" onchange="updateScore('${planId}','${plan.patient_id}',${w},this.value)" class="w-14 border border-ink/20 rounded px-2 py-1 text-sm text-center">
+        </div>
+        <div>
+          <label class="text-[10px] text-ink/50">Nota</label>
+          <input type="text" value="${notes}" placeholder="..." onchange="updateNotes('${planId}','${plan.patient_id}',${w},this.value)" class="w-32 border border-ink/20 rounded px-2 py-1 text-xs">
+        </div>
+        <button onclick="openCompliance('${planId}','${plan.patient_id}',${w})" class="bg-green-light text-green-dark text-xs px-3 py-1.5 rounded-lg font-semibold hover:bg-green hover:text-white">🌿 Kepatuhan</button>
+      </div>
+    </div>`;
+  }
+
+  document.getElementById('tracker-weeks').innerHTML = html;
+  document.getElementById('tracker-section').scrollIntoView({ behavior: 'smooth' });
+}
+
+async function markWeek(planId, patientId, week, status) {
+  try {
+    const existing = await dbQuery('plan_weekly_progress', { eq: { plan_id: planId, week_number: week } }).catch(() => []);
+
+    if (existing.length > 0) {
+      await dbUpdate('plan_weekly_progress', existing[0].id, {
+        status,
+        updated_by: currentUser.id,
+        updated_by_name: currentUser.full_name,
+        updated_at: new Date().toISOString(),
+      });
+    } else {
+      const { error } = await window.db.from('plan_weekly_progress').insert({
+        plan_id: planId,
+        patient_id: patientId,
+        week_number: week,
+        status,
+        updated_by: currentUser.id,
+        updated_by_name: currentUser.full_name,
+        session_date: new Date().toISOString(),
+      });
+      if (error) throw error;
+    }
+
+    // Update current_week on treatment plan
+    if (status === 'hadir') {
+      const { error } = await window.db.from('treatment_plans').update({ current_week: week }).eq('id', planId);
+      if (error) console.warn(error);
+    }
+
+    await auditLog('plan.week_updated', planId, { week, status, patient: patientId });
+    banner(`Minggu ${week}: ${status}`);
+    openTracker(planId);
+  } catch (err) {
+    banner('Ralat: ' + err.message, 'error');
+  }
+}
+
+let cmpCtx = { planId: null, patientId: null, week: null, rowId: null };
+
+async function openCompliance(planId, patientId, week) {
+  cmpCtx = { planId, patientId, week, rowId: null };
+  document.getElementById('cmp-subtitle').textContent = `${allPatientsMap[patientId] || '—'} · Minggu ${week}`;
+
+  // Reset form
+  ['cmp-madu','cmp-nafas','cmp-bumi','cmp-kelapa','cmp-kolon','cmp-notes'].forEach(id => document.getElementById(id).value = '');
+  document.querySelectorAll('input[name="cmp-jemur"],input[name="cmp-pantang"]').forEach(i => i.checked = false);
+
+  const rows = await dbQuery('plan_compliance', { eq: { plan_id: planId, week_number: week } }).catch(() => []);
+  const c = rows[0];
+  if (c) {
+    cmpCtx.rowId = c.id;
+    const setN = (id, v) => { if (v != null) document.getElementById(id).value = v; };
+    setN('cmp-madu', c.madu_sudu);
+    setN('cmp-nafas', c.nafas_kali);
+    setN('cmp-bumi', c.bumi_minit);
+    setN('cmp-kelapa', c.kelapa_kali);
+    setN('cmp-kolon', c.kolon_kali);
+    setN('cmp-notes', c.notes);
+    if (c.berjemur !== null) document.querySelector(`input[name="cmp-jemur"][value="${c.berjemur}"]`)?.click();
+    if (c.pantang !== null) document.querySelector(`input[name="cmp-pantang"][value="${c.pantang}"]`)?.click();
+  }
+
+  document.getElementById('compliance-modal').classList.remove('hidden');
+}
+
+function closeCompliance() {
+  document.getElementById('compliance-modal').classList.add('hidden');
+}
+
+async function saveCompliance() {
+  const numOrNull = id => {
+    const v = document.getElementById(id).value;
+    return v === '' ? null : parseInt(v);
+  };
+  const radioBool = name => {
+    const el = document.querySelector(`input[name="${name}"]:checked`);
+    return el ? el.value === 'true' : null;
+  };
+
+  const data = {
+    plan_id: cmpCtx.planId,
+    patient_id: cmpCtx.patientId,
+    week_number: cmpCtx.week,
+    madu_sudu: numOrNull('cmp-madu'),
+    nafas_kali: numOrNull('cmp-nafas'),
+    bumi_minit: numOrNull('cmp-bumi'),
+    berjemur: radioBool('cmp-jemur'),
+    pantang: radioBool('cmp-pantang'),
+    kelapa_kali: numOrNull('cmp-kelapa'),
+    kolon_kali: numOrNull('cmp-kolon'),
+    notes: document.getElementById('cmp-notes').value || null,
+    updated_at: new Date().toISOString(),
+  };
+
+  try {
+    if (cmpCtx.rowId) {
+      await dbUpdate('plan_compliance', cmpCtx.rowId, data);
+    } else {
+      await dbInsert('plan_compliance', data);
+    }
+    await auditLog('plan.compliance_updated', cmpCtx.planId, { week: cmpCtx.week });
+    banner('Kepatuhan disimpan');
+    closeCompliance();
+  } catch (err) {
+    banner('Ralat: ' + err.message, 'error');
+  }
+}
+
+async function updateScore(planId, patientId, week, score) {
+  const existing = await dbQuery('plan_weekly_progress', { eq: { plan_id: planId, week_number: week } }).catch(() => []);
+  if (existing.length > 0) {
+    await dbUpdate('plan_weekly_progress', existing[0].id, { score: parseInt(score) || null });
+  }
+}
+
+async function updateNotes(planId, patientId, week, notes) {
+  const existing = await dbQuery('plan_weekly_progress', { eq: { plan_id: planId, week_number: week } }).catch(() => []);
+  if (existing.length > 0) {
+    await dbUpdate('plan_weekly_progress', existing[0].id, { notes });
+  }
+}
+
 (async () => {
-  const user = await initStaff('plans', 'BPS-S Wellness Core 90');
+  const user = await initStaff('plans', 'BPS-S · Attendance & Progress Tracker');
   if (!user) return;
   const patients = await dbQuery('patients', { eq: { status: 'active' } });
+  patients.forEach(p => allPatientsMap[p.id] = p.mrn);
   document.getElementById('m-patient').innerHTML = '<option value="">— Pilih pesakit —</option>' +
     patients.map(p => `<option value="${p.id}">${p.mrn}</option>`).join('');
   loadPlans();

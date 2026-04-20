@@ -9,6 +9,16 @@
 <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="_styles.css" rel="stylesheet">
+<style>
+  @media print {
+    body * { visibility: hidden; }
+    #receipt-print, #receipt-print * { visibility: visible; }
+    #receipt-print { position: absolute; left: 0; top: 0; width: 100%; background: white; padding: 40px; }
+    #receipt-print .no-print { display: none !important; }
+    #pdf-modal { position: static !important; background: white !important; }
+    #pdf-modal .absolute.inset-0 { display: none; }
+  }
+</style>
 </head>
 <body class="min-h-screen">
 
@@ -80,6 +90,21 @@
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
 <script src="_shared.js"></script>
+<script>
+async function getPlanTemplate(packageId, packageName) {
+  const rows = await dbQuery('packages', { eq: { package_id: packageId } }).catch(() => []);
+  if (!rows.length) return { name: packageName + ' Plan', duration_weeks: 12, bio:[], psycho:[], social:[], spiritual:[] };
+  const p = rows[0];
+  return {
+    name: `${p.name} Treatment Plan`,
+    duration_weeks: p.duration_weeks || 12,
+    bio: p.bio_goals || [],
+    psycho: p.psycho_goals || [],
+    social: p.social_goals || [],
+    spiritual: p.spiritual_goals || [],
+  };
+}
+</script>
 <script>
 const SERVICE_CHARGE = 5.00;
 const SST_RATE = 0.06;
@@ -156,9 +181,14 @@ function renderInvoice() {
   let html = `<div class="font-semibold mb-3">Ringkasan bayaran (${pendingItems.length} invois belum bayar)</div>`;
 
   pendingItems.forEach(item => {
-    html += `<div class="flex justify-between py-1">
-      <span>${item.title}${item.date ? ' · ' + item.date : ''}</span>
-      <span class="font-semibold">RM ${item.amount.toFixed(2)}</span>
+    const sub = item.type === 'shop_order' ? `
+      <div class="text-xs text-ink/50 mt-0.5 mb-1">${item.subtitle || ''}</div>
+      ${item.deliveryFee > 0 ? `<div class="flex justify-between text-ink/60 text-xs py-0.5"><span>Penghantaran (${item.deliveryMethod === 'pos' ? 'Courier' : 'Pickup'})</span><span>RM ${item.deliveryFee.toFixed(2)}</span></div>` : `<div class="text-xs text-ink/50">Pickup Klinik · Penghantaran Percuma</div>`}` : '';
+    html += `<div class="py-1">
+      <div class="flex justify-between">
+        <span>${item.title}${item.date ? ' · ' + item.date : ''}</span>
+        <span class="font-semibold">RM ${item.amount.toFixed(2)}</span>
+      </div>${sub}
     </div>`;
   });
 
@@ -190,18 +220,33 @@ async function processPayment() {
   btn.textContent = 'Memproses...';
 
   try {
+    // CRITICAL: Fresh DB check — prevent duplicate package subscription
+    const hasPackageInCart = pendingItems.some(i => i.type === 'package');
+    if (hasPackageInCart && patientRecord) {
+      const fresh = await dbQuery('patients', { eq: { id: patientRecord.id }, single: true }).catch(() => null);
+      if (fresh?.active_package_id &&
+          (!fresh.package_expires_at || new Date(fresh.package_expires_at) >= new Date())) {
+        banner(`Anda sudah ada pakej aktif: ${fresh.active_package_name}. Bayaran dibatalkan.`, 'error');
+        localStorage.removeItem('isw_pending_payment');
+        setTimeout(() => { window.location.href = 'plan.html'; }, 2000);
+        return;
+      }
+    }
+
     await new Promise(r => setTimeout(r, 1200));
     const receiptRef = 'RCP-' + Date.now().toString(36).toUpperCase();
 
     for (const item of pendingItems) {
       if (item.type === 'appointment') {
-        const cleanNotes = (item.raw.notes || '').replace('[PENDING PAYMENT]', '').trim();
+        const cleanNotes = (item.raw?.notes || '').replace('[PENDING PAYMENT]', '').trim();
         await dbUpdate('appointments', item.id, { notes: `[PAID · ${receiptRef}] ${cleanNotes}` });
 
       } else if (item.type === 'package') {
         const expiresAt = new Date();
         expiresAt.setMonth(expiresAt.getMonth() + 3);
-        await dbInsert('package_purchases', {
+
+        // Insert without .single() to avoid RLS read-back issue
+        const { error: insertErr } = await window.db.from('package_purchases').insert({
           patient_id: patientRecord.id,
           package_id: item.packageId,
           package_name: item.packageName,
@@ -210,32 +255,96 @@ async function processPayment() {
           status: 'active',
           payment_method: method,
         });
-        await dbUpdate('patients', patientRecord.id, {
+        if (insertErr) throw insertErr;
+
+        // Activate package on patient record
+        const { error: updateErr } = await window.db.from('patients').update({
           active_package_id: item.packageId,
           active_package_name: item.packageName,
           package_purchased_at: new Date().toISOString(),
           package_expires_at: expiresAt.toISOString(),
-        });
+        }).eq('id', patientRecord.id);
+        if (updateErr) throw updateErr;
 
       } else if (item.type === 'package_existing') {
         await dbUpdate('package_purchases', item.id, { status: 'active', payment_method: method });
+
+      } else if (item.type === 'shop_order') {
+        const { error } = await window.db.from('orders').insert({
+          order_ref: item.orderRef,
+          patient_id: currentUser.id,
+          items: item.items,
+          total: item.amount,
+          status: 'paid',
+          paid_at: new Date().toISOString(),
+          courier: item.deliveryMethod === 'pos' ? 'JNT' : null,
+          notes: item.deliveryAddress ? `Alamat: ${item.deliveryAddress}` : (item.deliveryMethod === 'pickup' ? 'Pickup Klinik' : null),
+        });
+        if (error) throw error;
+        clearCart();
       }
     }
 
+    const subtotal = pendingItems.reduce((s, i) => s + i.amount, 0);
+    const sstAmount = grandTotal - subtotal - SERVICE_CHARGE;
+
+    // Insert proper payment record
+    await window.db.from('payments').insert({
+      receipt_ref: receiptRef,
+      patient_id: patientRecord?.id,
+      user_id: currentUser.id,
+      items: pendingItems.map(i => ({
+        type: i.type,
+        title: i.title,
+        amount: i.amount,
+        reference_id: i.id || i.packageId,
+      })),
+      subtotal,
+      service_charge: SERVICE_CHARGE,
+      sst: sstAmount,
+      total: grandTotal,
+      payment_method: method,
+      status: 'completed',
+      paid_at: new Date().toISOString(),
+    });
+
     await auditLog('payment.received', receiptRef, {
       ref: receiptRef,
-      items: pendingItems.map(i => ({ title: i.title, amount: i.amount })),
-      service_charge: SERVICE_CHARGE,
-      sst: grandTotal - pendingItems.reduce((s,i) => s + i.amount, 0) - SERVICE_CHARGE,
       total: grandTotal,
       method,
     });
 
     localStorage.removeItem('isw_pending_payment');
 
+    // Auto-create treatment plan if package was purchased
+    let createdPlan = false;
+    for (const item of pendingItems) {
+      if (item.type === 'package' && item.packageId && patientRecord) {
+        const template = await getPlanTemplate(item.packageId, item.packageName);
+        const { error: planErr } = await window.db.from('treatment_plans').insert({
+          patient_id: patientRecord.id,
+          doctor_id: currentUser.id,
+          name: template.name,
+          duration_weeks: template.duration_weeks,
+          current_week: 1,
+          bio_goals: template.bio,
+          psycho_goals: template.psycho,
+          social_goals: template.social,
+          spiritual_goals: template.spiritual,
+          status: 'active',
+        });
+        if (!planErr) createdPlan = true;
+      }
+    }
+
     banner(`Pembayaran berjaya! Resit: ${receiptRef}`);
     pendingItems = [];
-    loadPayments();
+
+    if (createdPlan) {
+      setTimeout(() => { window.location.href = 'plan.html'; }, 2000);
+    } else {
+      loadPayments();
+    }
   } catch (err) {
     banner('Ralat: ' + err.message, 'error');
     btn.disabled = false;
@@ -268,39 +377,153 @@ async function cancelAll() {
   }
 }
 
+function viewReceiptPDF(id) {
+  const r = (window._receipts || []).find(x => x.id === id);
+  if (!r) return;
+
+  const methodLabels = { fpx: 'FPX Online Banking', card: 'Credit/Debit Card', transfer: 'Bank Transfer', ghl: 'GHL Payment', manual: 'Manual' };
+
+  const modal = document.createElement('div');
+  modal.id = 'pdf-modal';
+  modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
+  modal.innerHTML = `
+    <div class="absolute inset-0 bg-black/50" onclick="this.parentElement.remove()"></div>
+    <div class="relative bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+      <div class="no-print p-4 border-b border-ink/10 flex items-center justify-between">
+        <h3 class="font-bold">Resit Pembayaran</h3>
+        <div class="flex gap-2">
+          <button onclick="window.print()" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold">🖨 Print / Save PDF</button>
+          <button onclick="this.closest('.fixed').remove()" class="text-ink/60 text-xl px-2">×</button>
+        </div>
+      </div>
+
+      <div id="receipt-print" class="flex-1 overflow-y-auto p-8">
+        <!-- Header -->
+        <div class="text-center border-b-2 border-navy pb-4 mb-6">
+          <div class="text-3xl mb-2">🏥</div>
+          <h1 class="text-2xl font-bold text-navy">Ibnu Sina Wellness</h1>
+          <p class="text-xs text-ink/60 mt-1">Shifa Hub · Holistic Healthcare</p>
+        </div>
+
+        <!-- Receipt Info -->
+        <div class="flex justify-between mb-4 flex-wrap gap-2">
+          <div>
+            <div class="text-xs text-ink/60 uppercase font-semibold">Receipt No.</div>
+            <div class="font-bold text-lg">${r.receipt_ref}</div>
+          </div>
+          <div class="text-right">
+            <div class="text-xs text-ink/60 uppercase font-semibold">Date</div>
+            <div class="font-semibold">${new Date(r.paid_at).toLocaleString('en-GB')}</div>
+          </div>
+        </div>
+
+        <!-- Patient Info -->
+        <div class="bg-cream rounded-lg p-3 mb-4 text-sm">
+          <div><strong>Patient:</strong> ${currentUser.full_name}</div>
+          <div><strong>MRN:</strong> ${patientRecord?.mrn || '—'}</div>
+          <div><strong>Email:</strong> ${currentUser.email || '—'}</div>
+        </div>
+
+        <!-- Items -->
+        <table class="w-full text-sm mb-4">
+          <thead>
+            <tr class="border-b-2 border-ink">
+              <th class="text-left py-2">Item</th>
+              <th class="text-right py-2">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${(r.items || []).map(it => `
+              <tr class="border-b border-ink/10">
+                <td class="py-2">${it.title}</td>
+                <td class="text-right py-2">RM ${Number(it.amount).toFixed(2)}</td>
+              </tr>`).join('')}
+            ${Number(r.service_charge) > 0 ? `
+              <tr class="border-b border-ink/10 text-ink/60">
+                <td class="py-2 text-xs">Service charge</td>
+                <td class="text-right py-2 text-xs">RM ${Number(r.service_charge).toFixed(2)}</td>
+              </tr>` : ''}
+            ${Number(r.sst) > 0 ? `
+              <tr class="border-b border-ink/10 text-ink/60">
+                <td class="py-2 text-xs">SST 6%</td>
+                <td class="text-right py-2 text-xs">RM ${Number(r.sst).toFixed(2)}</td>
+              </tr>` : ''}
+          </tbody>
+          <tfoot>
+            <tr class="font-bold text-lg">
+              <td class="py-3">TOTAL</td>
+              <td class="text-right py-3 text-navy">RM ${Number(r.total).toFixed(2)}</td>
+            </tr>
+          </tfoot>
+        </table>
+
+        <!-- Payment info -->
+        <div class="bg-green-light rounded-lg p-3 mb-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-xs text-ink/60">Payment Method</div>
+              <div class="font-semibold">${methodLabels[r.payment_method] || r.payment_method}</div>
+            </div>
+            <div>
+              <div class="text-xs text-ink/60">Status</div>
+              <div class="font-bold text-green-dark">${r.status.toUpperCase()} ✓</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="text-xs text-ink/50 text-center mt-8 pt-4 border-t border-ink/10">
+          <p>Terima kasih atas kepercayaan anda kepada Ibnu Sina Wellness.</p>
+          <p class="mt-1">Ini adalah resit rasmi yang dijana secara automatik.</p>
+          <p class="mt-2">Pertanyaan: info@ibnusinawellness.com</p>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
 async function loadReceipts() {
-  const logs = await dbQuery('audit_log', {
-    eq: { actor_id: currentUser.id },
-    order: { col: 'created_at' },
+  if (!patientRecord) {
+    document.getElementById('receipts-list').innerHTML = '<div class="bg-white rounded-xl border border-ink/10 p-6 text-center text-ink/40 text-sm">Tiada resit lagi</div>';
+    return;
+  }
+
+  const receipts = await dbQuery('payments', {
+    eq: { patient_id: patientRecord.id },
+    order: { col: 'paid_at' },
     limit: 50,
-  });
-  const receipts = logs.filter(l => l.action === 'payment.received');
+  }).catch(() => []);
+
+  const methodLabels = { fpx: 'FPX Online Banking', card: 'Credit/Debit Card', transfer: 'Bank Transfer', ghl: 'GHL Payment', manual: 'Manual' };
+
+  window._receipts = receipts;
 
   document.getElementById('receipts-list').innerHTML = receipts.length
-    ? receipts.map(r => {
-        const meta = r.meta || {};
-        return `<div class="bg-white rounded-xl border border-ink/10 p-4 md:p-5">
-          <div class="flex items-start justify-between gap-3 flex-wrap mb-2">
-            <div>
-              <div class="font-semibold">${meta.ref || 'Receipt'}</div>
-              <div class="text-xs text-ink/60">${new Date(r.created_at).toLocaleString('ms-MY')}</div>
-            </div>
-            <span class="chip bg-green-light text-green-dark">PAID ✓</span>
+    ? receipts.map(r => `
+      <div class="bg-white rounded-xl border border-ink/10 p-4 md:p-5">
+        <div class="flex items-start justify-between gap-3 flex-wrap mb-2">
+          <div>
+            <div class="font-semibold">${r.receipt_ref}</div>
+            <div class="text-xs text-ink/60">${new Date(r.paid_at).toLocaleString('ms-MY')}</div>
           </div>
-          ${(meta.items || []).map(it => `
-            <div class="flex justify-between text-sm py-0.5">
-              <span>${it.title}</span>
-              <span>RM ${Number(it.amount).toFixed(2)}</span>
-            </div>`).join('')}
-          ${meta.service_charge ? `<div class="flex justify-between text-xs text-ink/60 py-0.5"><span>Service charge</span><span>RM ${Number(meta.service_charge).toFixed(2)}</span></div>` : ''}
-          ${meta.sst ? `<div class="flex justify-between text-xs text-ink/60 py-0.5"><span>SST 6%</span><span>RM ${Number(meta.sst).toFixed(2)}</span></div>` : ''}
-          <div class="flex justify-between font-bold text-sm pt-2 mt-2 border-t border-ink/10">
-            <span>Total</span>
-            <span class="text-green-dark">RM ${Number(meta.total || 0).toFixed(2)}</span>
+          <div class="flex items-center gap-2">
+            <span class="chip ${r.status === 'completed' ? 'bg-green-light text-green-dark' : r.status === 'refunded' ? 'bg-terracotta/20 text-terracotta' : 'bg-gold/30 text-gold-dark'}">${r.status.toUpperCase()}</span>
+            <button onclick="viewReceiptPDF('${r.id}')" class="text-xs text-navy font-semibold border border-navy/30 px-3 py-1 rounded-lg hover:bg-navy hover:text-white">📄 PDF</button>
           </div>
-          <div class="text-xs text-ink/50 mt-2">Kaedah: ${meta.method === 'fpx' ? 'FPX Online Banking' : meta.method === 'card' ? 'Credit/Debit Card' : 'Bank Transfer'}</div>
-        </div>`;
-      }).join('')
+        </div>
+        ${(r.items || []).map(it => `
+          <div class="flex justify-between text-sm py-0.5">
+            <span>${it.title}</span>
+            <span>RM ${Number(it.amount).toFixed(2)}</span>
+          </div>`).join('')}
+        ${Number(r.service_charge) > 0 ? `<div class="flex justify-between text-xs text-ink/60 py-0.5"><span>Service charge</span><span>RM ${Number(r.service_charge).toFixed(2)}</span></div>` : ''}
+        ${Number(r.sst) > 0 ? `<div class="flex justify-between text-xs text-ink/60 py-0.5"><span>SST 6%</span><span>RM ${Number(r.sst).toFixed(2)}</span></div>` : ''}
+        <div class="flex justify-between font-bold text-sm pt-2 mt-2 border-t border-ink/10">
+          <span>Total</span>
+          <span class="text-green-dark">RM ${Number(r.total).toFixed(2)}</span>
+        </div>
+        <div class="text-xs text-ink/50 mt-2">Kaedah: ${methodLabels[r.payment_method] || r.payment_method}</div>
+      </div>`).join('')
     : '<div class="bg-white rounded-xl border border-ink/10 p-6 text-center text-ink/40 text-sm">Tiada resit lagi</div>';
 }
 

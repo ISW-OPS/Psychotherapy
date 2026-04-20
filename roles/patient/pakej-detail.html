@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Pakej Detail</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📦</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-6">
+        <!-- Back button -->
+        <a href="pakej.html" class="inline-flex items-center gap-2 text-sm text-navy hover:underline">← Kembali ke senarai pakej</a>
+
+        <!-- Hero -->
+        <div id="detail-hero" class="rounded-2xl p-8 text-center"></div>
+
+        <!-- Info grid -->
+        <div class="grid md:grid-cols-3 gap-4">
+          <div class="bg-white rounded-xl p-5 border border-ink/10 text-center">
+            <div class="text-xs text-ink/60 uppercase font-semibold">Tempoh</div>
+            <div id="detail-duration" class="text-xl font-bold mt-1 text-navy"></div>
+          </div>
+          <div class="bg-white rounded-xl p-5 border border-ink/10 text-center">
+            <div class="text-xs text-ink/60 uppercase font-semibold">Jumlah Item</div>
+            <div id="detail-items-count" class="text-xl font-bold mt-1 text-navy"></div>
+          </div>
+          <div class="bg-white rounded-xl p-5 border border-ink/10 text-center">
+            <div class="text-xs text-ink/60 uppercase font-semibold">Harga</div>
+            <div id="detail-price" class="text-xl font-bold mt-1 text-navy"></div>
+          </div>
+        </div>
+
+        <!-- Products -->
+        <div class="bg-white rounded-xl p-5 border border-ink/10">
+          <h3 class="font-bold mb-3">🎁 Produk yang anda terima</h3>
+          <div id="detail-products" class="grid md:grid-cols-2 gap-2"></div>
+        </div>
+
+        <!-- Bimbingan -->
+        <div class="bg-white rounded-xl p-5 border border-ink/10">
+          <h3 class="font-bold mb-3">🎯 Bimbingan & Terapi</h3>
+          <div id="detail-bimbingan" class="grid md:grid-cols-2 gap-2"></div>
+        </div>
+
+        <!-- Treatment Plan Preview (BPS-S) -->
+        <div id="plan-preview" class="hidden">
+          <h3 class="font-bold mb-3">📋 Treatment Plan yang akan dicipta</h3>
+          <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div class="bg-white rounded-xl p-4 border-t-4 border-navy">
+              <div class="text-xs text-navy font-semibold mb-2">🧬 BIO · Fizikal</div>
+              <ul id="preview-bio" class="text-xs text-ink/70 space-y-1"></ul>
+            </div>
+            <div class="bg-white rounded-xl p-4 border-t-4 border-terracotta">
+              <div class="text-xs text-terracotta font-semibold mb-2">🧠 PSYCHO · Mental</div>
+              <ul id="preview-psycho" class="text-xs text-ink/70 space-y-1"></ul>
+            </div>
+            <div class="bg-white rounded-xl p-4 border-t-4 border-gold-dark">
+              <div class="text-xs text-gold-dark font-semibold mb-2">👥 SOCIAL · Komuniti</div>
+              <ul id="preview-social" class="text-xs text-ink/70 space-y-1"></ul>
+            </div>
+            <div class="bg-white rounded-xl p-4 border-t-4 border-green-dark">
+              <div class="text-xs text-green-dark font-semibold mb-2">🕌 SPIRITUAL · Rohani</div>
+              <ul id="preview-spiritual" class="text-xs text-ink/70 space-y-1"></ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- CTA -->
+        <div id="cta-section" class="bg-white rounded-xl p-6 border border-ink/10 sticky bottom-0">
+          <div class="flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <div id="cta-name" class="font-bold text-lg"></div>
+              <div id="cta-price" class="text-navy font-bold text-xl"></div>
+            </div>
+            <button onclick="tempahPakej()" id="btn-tempah" class="bg-navy text-white px-8 py-3 rounded-xl font-semibold text-base hover:bg-navy-dark">
+              + Tempah Pakej
+            </button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+// Load package from DB
+async function loadPackageFromDB(pkgId) {
+  const rows = await dbQuery('packages', { eq: { package_id: pkgId } }).catch(() => []);
+  if (!rows.length) return null;
+  const r = rows[0];
+  return {
+    id: r.package_id, name: r.name, desc: r.description, price: Number(r.price),
+    duration: r.duration, duration_weeks: r.duration_weeks, icon: r.icon,
+    bg: r.bg_color, tier: r.tier,
+    products: r.products || [], bimbingan: r.bimbingan || [],
+    inclusions: r.inclusions || [],
+    bio_goals: r.bio_goals || [], psycho_goals: r.psycho_goals || [],
+    social_goals: r.social_goals || [], spiritual_goals: r.spiritual_goals || [],
+  };
+}
+
+// Inline template getter — reads from package data directly
+function getPlanTemplate(packageId, packageName, pkg) {
+  if (!pkg) return null;
+  return {
+    name: `${pkg.name} Treatment Plan`,
+    duration_weeks: pkg.duration_weeks || 12,
+    bio: pkg.bio_goals,
+    psycho: pkg.psycho_goals,
+    social: pkg.social_goals,
+    spiritual: pkg.spiritual_goals,
+  };
+}
+window.getPlanTemplate = getPlanTemplate;
+</script>
+<script>
+let currentPkg = null;
+
+function renderDetail(p) {
+  currentPkg = p;
+  const priceDisplay = p.price === 0 ? 'PERCUMA' : `RM ${p.price.toFixed(2)}`;
+  const tierBadge = p.tier === 'vip' ? '<span class="chip bg-gold text-white">VIP</span>' :
+                    p.tier === 'free' ? '<span class="chip bg-green text-white">FREE</span>' : '';
+
+  document.getElementById('detail-hero').className = `${p.bg} rounded-2xl p-8 text-center`;
+  document.getElementById('detail-hero').innerHTML = `
+    <div class="text-7xl mb-4">${p.icon}</div>
+    <div class="flex items-center justify-center gap-2">${tierBadge}</div>
+    <h1 class="text-2xl font-bold mt-2">${p.name}</h1>
+    <p class="text-sm text-ink/70 mt-1">${p.desc}</p>
+  `;
+
+  document.getElementById('detail-duration').textContent = p.duration || '—';
+  document.getElementById('detail-items-count').textContent = p.inclusions.length + ' item';
+  document.getElementById('detail-price').textContent = priceDisplay;
+
+  document.getElementById('detail-products').innerHTML = (p.products || []).length
+    ? p.products.map(pr => `<div class="flex items-start gap-2 p-2 bg-green-light/30 rounded-lg text-sm"><span class="text-green mt-0.5">✓</span><span>${pr}</span></div>`).join('')
+    : '<p class="text-ink/40 text-sm">Tiada produk fizikal</p>';
+
+  document.getElementById('detail-bimbingan').innerHTML = (p.bimbingan || []).length
+    ? p.bimbingan.map(b => `<div class="flex items-start gap-2 p-2 bg-navy-light/30 rounded-lg text-sm"><span class="text-navy mt-0.5">●</span><span>${b}</span></div>`).join('')
+    : '<p class="text-ink/40 text-sm">Tiada bimbingan</p>';
+
+  // Show treatment plan preview
+  const template = getPlanTemplate(p.id, p.name, p);
+  if (template) {
+    document.getElementById('plan-preview').classList.remove('hidden');
+    ['bio','psycho','social','spiritual'].forEach(k => {
+      const goals = template[k] || [];
+      document.getElementById('preview-' + k).innerHTML = goals.map(g => `<li>• ${g}</li>`).join('');
+    });
+  }
+
+  document.getElementById('cta-name').textContent = p.name;
+  document.getElementById('cta-price').textContent = priceDisplay;
+
+  // Check subscription status
+  const activeId = patientRecord?.active_package_id;
+  const hasActive = !!activeId && (!patientRecord?.package_expires_at || new Date(patientRecord.package_expires_at) >= new Date());
+  const isThisActive = activeId === p.id;
+  const isDifferentActive = hasActive && !isThisActive;
+
+  const btn = document.getElementById('btn-tempah');
+  if (isThisActive) {
+    btn.textContent = '✓ Pakej Anda (Aktif)';
+    btn.disabled = true;
+    btn.className = 'bg-green text-white px-8 py-3 rounded-xl font-semibold text-base cursor-not-allowed';
+  } else if (isDifferentActive) {
+    btn.innerHTML = '🔒 Selesai pakej aktif dulu';
+    btn.disabled = true;
+    btn.className = 'bg-ink/20 text-ink/60 px-8 py-3 rounded-xl font-semibold text-base cursor-not-allowed';
+
+    // Show warning banner above CTA
+    const cta = document.getElementById('cta-section');
+    const warning = document.createElement('div');
+    warning.className = 'bg-terracotta-light border border-terracotta rounded-xl p-4 mb-4';
+    warning.innerHTML = `
+      <div class="flex items-start gap-3">
+        <span class="text-xl">⚠️</span>
+        <div class="flex-1">
+          <strong class="text-terracotta">Anda sudah ada pakej aktif</strong>
+          <p class="text-xs text-ink/70 mt-1">Pakej ${patientRecord.active_package_name} sedang aktif sehingga ${patientRecord.package_expires_at ? new Date(patientRecord.package_expires_at).toLocaleDateString('ms-MY') : '—'}. Sila selesaikan pakej tersebut sebelum tempah pakej baru.</p>
+          <a href="plan.html" class="inline-block mt-2 text-xs text-navy font-semibold underline">Lihat progress pakej aktif →</a>
+        </div>
+      </div>`;
+    cta.parentElement.insertBefore(warning, cta);
+  }
+}
+
+function tempahPakej() {
+  if (!currentPkg) return;
+
+  // Double-check: prevent duplicate subscription
+  const activeId = patientRecord?.active_package_id;
+  const hasActive = !!activeId && (!patientRecord?.package_expires_at || new Date(patientRecord.package_expires_at) >= new Date());
+  if (hasActive && activeId !== currentPkg.id) {
+    banner('Anda sudah ada pakej aktif. Selesaikan dulu sebelum tempah baru.', 'error');
+    return;
+  }
+
+  if (currentPkg.price === 0) {
+    // Free — activate immediately (need purchasePackage from pakej.html logic)
+    if (!confirm(`Aktifkan pakej ${currentPkg.name} (PERCUMA)?`)) return;
+    activateFreePackage();
+  } else {
+    if (!confirm(`Tempah pakej ${currentPkg.name} (RM ${currentPkg.price.toFixed(2)})? Akan redirect ke payment.`)) return;
+    localStorage.setItem('isw_pending_payment', JSON.stringify({
+      type: 'package',
+      packageId: currentPkg.id,
+      packageName: currentPkg.name,
+      title: `Pakej: ${currentPkg.name}`,
+      amount: currentPkg.price,
+    }));
+    window.location.href = 'payment.html';
+  }
+}
+
+async function activateFreePackage() {
+  if (!patientRecord) { banner('Rekod pesakit belum aktif', 'error'); return; }
+  const expiresAt = new Date();
+  expiresAt.setMonth(expiresAt.getMonth() + 3);
+
+  const { error } = await window.db.from('package_purchases').insert({
+    patient_id: patientRecord.id,
+    package_id: currentPkg.id,
+    package_name: currentPkg.name,
+    price: 0,
+    expires_at: expiresAt.toISOString(),
+    status: 'active',
+  });
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+
+  await window.db.from('patients').update({
+    active_package_id: currentPkg.id,
+    active_package_name: currentPkg.name,
+    package_purchased_at: new Date().toISOString(),
+    package_expires_at: expiresAt.toISOString(),
+  }).eq('id', patientRecord.id);
+
+  // Auto-create treatment plan
+  const template = getPlanTemplate(currentPkg.id, currentPkg.name, currentPkg);
+  await window.db.from('treatment_plans').insert({
+    patient_id: patientRecord.id,
+    doctor_id: currentUser.id,
+    name: template.name,
+    duration_weeks: template.duration_weeks,
+    current_week: 1,
+    bio_goals: template.bio,
+    psycho_goals: template.psycho,
+    social_goals: template.social,
+    spiritual_goals: template.spiritual,
+    status: 'active',
+  });
+
+  banner(`Pakej ${currentPkg.name} diaktifkan!`);
+  setTimeout(() => { window.location.href = 'plan.html'; }, 1500);
+}
+
+(async () => {
+  const user = await initPatient('pakej', 'Detail pakej rawatan');
+  if (!user) return;
+
+  // Support both query string (?id=xxx) and hash (#id=xxx) for compatibility
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const pkgId = new URLSearchParams(window.location.search).get('id') || hashParams.get('id');
+  if (!pkgId) { window.location.href = 'pakej.html'; return; }
+
+  const pkg = await loadPackageFromDB(pkgId);
+  if (!pkg) { window.location.href = 'pakej.html'; return; }
+
+  renderHeader(pkg.name, pkg.desc);
+  renderDetail(pkg);
+})();
+</script>
+</body>
+</html>

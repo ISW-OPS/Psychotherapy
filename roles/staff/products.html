@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Products</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🛒</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-6">
+        <div class="flex items-center justify-between flex-wrap gap-3">
+          <h3 class="font-bold text-lg">Senarai Produk Shop</h3>
+          <button onclick="openForm()" class="bg-navy text-white text-sm px-4 py-2 rounded-lg font-semibold">+ Tambah Produk</button>
+        </div>
+
+        <div class="bg-white rounded-xl border border-ink/10 overflow-x-auto">
+          <table class="data">
+            <thead><tr><th>Icon</th><th>Nama</th><th>Kategori</th><th>Harga</th><th>Stock</th><th>Status</th><th></th></tr></thead>
+            <tbody id="products-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<div id="prod-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/50" onclick="closeForm()"></div>
+  <div class="relative bg-white rounded-2xl max-w-lg w-full overflow-hidden">
+    <div class="p-5 border-b border-ink/10 flex items-center justify-between">
+      <h3 id="form-title" class="font-bold text-lg">Tambah Produk</h3>
+      <button onclick="closeForm()" class="text-ink/60 text-xl">×</button>
+    </div>
+    <div class="p-5 space-y-3">
+      <input id="edit-id" type="hidden">
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="text-xs font-semibold">Product ID *</label>
+          <input id="f-pid" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="cth: madu-shifa">
+        </div>
+        <div>
+          <label class="text-xs font-semibold">Kategori</label>
+          <select id="f-cat" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+            <option>Madu</option><option>Herba</option><option>Supplements</option>
+            <option>Santapan Fitrah</option><option>Books</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label class="text-xs font-semibold">Nama *</label>
+        <input id="f-name" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+      </div>
+      <div>
+        <label class="text-xs font-semibold">Description</label>
+        <input id="f-desc" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+      </div>
+      <div class="grid grid-cols-3 gap-3">
+        <div>
+          <label class="text-xs font-semibold">Harga (RM)</label>
+          <input id="f-price" type="number" step="0.01" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+        </div>
+        <div>
+          <label class="text-xs font-semibold">Stock</label>
+          <input id="f-stock" type="number" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="optional">
+        </div>
+        <div>
+          <label class="text-xs font-semibold">Icon</label>
+          <input id="f-icon" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" value="📦">
+        </div>
+      </div>
+    </div>
+    <div class="p-5 border-t border-ink/10 flex justify-end gap-2">
+      <button onclick="closeForm()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm">Batal</button>
+      <button onclick="saveProduct()" class="bg-navy text-white px-5 py-2 rounded-lg text-sm font-semibold">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+const BG_MAP = { 'Madu':'bg-gold-light', 'Herba':'bg-green-light', 'Supplements':'bg-navy-light', 'Santapan Fitrah':'bg-terracotta-light', 'Books':'bg-navy-light' };
+
+function openForm(p) {
+  document.getElementById('form-title').textContent = p ? 'Edit Produk' : 'Tambah Produk';
+  document.getElementById('edit-id').value = p?.id || '';
+  document.getElementById('f-pid').value = p?.product_id || '';
+  document.getElementById('f-cat').value = p?.category || 'Madu';
+  document.getElementById('f-name').value = p?.name || '';
+  document.getElementById('f-desc').value = p?.description || '';
+  document.getElementById('f-price').value = p?.price || '';
+  document.getElementById('f-stock').value = p?.stock || '';
+  document.getElementById('f-icon').value = p?.icon || '📦';
+  document.getElementById('prod-modal').classList.remove('hidden');
+}
+function closeForm() { document.getElementById('prod-modal').classList.add('hidden'); }
+
+async function saveProduct() {
+  const editId = document.getElementById('edit-id').value;
+  const cat = document.getElementById('f-cat').value;
+  const data = {
+    product_id: document.getElementById('f-pid').value.trim(),
+    name: document.getElementById('f-name').value.trim(),
+    description: document.getElementById('f-desc').value.trim(),
+    category: cat,
+    price: parseFloat(document.getElementById('f-price').value) || 0,
+    stock: parseInt(document.getElementById('f-stock').value) || null,
+    icon: document.getElementById('f-icon').value || '📦',
+    bg_color: BG_MAP[cat] || 'bg-cream',
+    updated_at: new Date().toISOString(),
+  };
+  if (!data.product_id || !data.name) { banner('ID & Nama wajib', 'error'); return; }
+
+  try {
+    if (editId) await dbUpdate('products', editId, data);
+    else {
+      const { error } = await window.db.from('products').insert(data);
+      if (error) throw error;
+    }
+    await auditLog(editId ? 'product.updated' : 'product.created', data.product_id);
+    banner('Disimpan');
+    closeForm();
+    loadProducts();
+  } catch (err) {
+    banner('Ralat: ' + err.message, 'error');
+  }
+}
+
+async function toggleProduct(id, isActive) {
+  await dbUpdate('products', id, { is_active: !isActive });
+  loadProducts();
+}
+
+async function deleteProduct(id, name) {
+  if (!confirm(`Padam "${name}"?`)) return;
+  await dbDelete('products', id);
+  await auditLog('product.deleted', id, { name });
+  loadProducts();
+}
+
+async function loadProducts() {
+  const data = await dbQuery('products', { order: { col: 'sort_order', asc: true } });
+  document.getElementById('products-body').innerHTML = data.length
+    ? data.map(p => `<tr class="${!p.is_active ? 'opacity-50' : ''}">
+        <td class="text-2xl">${p.icon}</td>
+        <td><strong>${p.name}</strong><div class="text-[10px] text-ink/50">${p.product_id}</div></td>
+        <td><span class="chip bg-cream text-ink/70">${p.category || '—'}</span></td>
+        <td class="font-bold">RM ${Number(p.price).toFixed(2)}</td>
+        <td>${p.stock !== null ? p.stock : '—'}</td>
+        <td>${p.is_active ? '<span class="chip bg-green-light text-green-dark">Active</span>' : '<span class="chip bg-ink/10 text-ink/60">Inactive</span>'}</td>
+        <td class="space-x-2 whitespace-nowrap">
+          <button onclick='openForm(${JSON.stringify(p).replace(/'/g,"&#39;")})' class="text-navy text-xs font-semibold">Edit</button>
+          <button onclick="toggleProduct('${p.id}',${p.is_active})" class="text-xs font-semibold ${p.is_active ? 'text-gold-dark' : 'text-green-dark'}">${p.is_active ? 'Off' : 'On'}</button>
+          <button onclick="deleteProduct('${p.id}','${p.name}')" class="text-terracotta text-xs font-semibold">Padam</button>
+        </td>
+      </tr>`).join('')
+    : '<tr><td colspan="7" class="text-center text-ink/40 py-8">Tiada produk</td></tr>';
+}
+
+(async () => {
+  const user = await initStaff('products', 'Urus produk shop · harga & stock');
+  if (!user) return;
+  loadProducts();
+})();
+</script>
+</body>
+</html>

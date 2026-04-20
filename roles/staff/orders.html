@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Orders</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📦</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-4">
+        <!-- Filters -->
+        <div class="flex items-center gap-2 flex-wrap">
+          <button onclick="setFilter('all')" id="f-all" class="px-4 py-2 rounded-full text-sm font-medium bg-navy text-white">Semua</button>
+          <button onclick="setFilter('pending')" id="f-pending" class="px-4 py-2 rounded-full text-sm font-medium bg-white border border-ink/20">Pending</button>
+          <button onclick="setFilter('paid')" id="f-paid" class="px-4 py-2 rounded-full text-sm font-medium bg-white border border-ink/20">Dibayar</button>
+          <button onclick="setFilter('packed')" id="f-packed" class="px-4 py-2 rounded-full text-sm font-medium bg-white border border-ink/20">Dibungkus</button>
+          <button onclick="setFilter('shipped')" id="f-shipped" class="px-4 py-2 rounded-full text-sm font-medium bg-white border border-ink/20">Dihantar</button>
+          <button onclick="setFilter('delivered')" id="f-delivered" class="px-4 py-2 rounded-full text-sm font-medium bg-white border border-ink/20">Diterima</button>
+        </div>
+
+        <div id="orders-list" class="space-y-3"></div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- Ship modal -->
+<div id="ship-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/50" onclick="closeShipModal()"></div>
+  <div class="relative bg-white rounded-2xl max-w-md w-full overflow-hidden">
+    <div class="p-5 border-b border-ink/10 flex items-center justify-between">
+      <h3 class="font-bold text-lg">📤 Hantar Parsel</h3>
+      <button onclick="closeShipModal()" class="text-ink/60 text-xl">×</button>
+    </div>
+    <div class="p-5 space-y-4">
+      <input id="ship-order-id" type="hidden">
+      <div>
+        <label class="text-xs font-semibold">Kurier</label>
+        <select id="ship-courier" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white">
+          <option value="JNT">J&T Express</option>
+          <option value="Poslaju">Pos Laju</option>
+          <option value="DHL">DHL</option>
+          <option value="Ninja">Ninja Van</option>
+          <option value="Grab">Grab Express</option>
+          <option value="Lain">Lain-lain</option>
+        </select>
+      </div>
+      <div>
+        <label class="text-xs font-semibold">Tracking Number *</label>
+        <input id="ship-tracking" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="cth: JT1234567890">
+      </div>
+      <div>
+        <label class="text-xs font-semibold">Gambar Parsel (optional)</label>
+        <label for="ship-photo" class="flex items-center gap-3 mt-1 border border-dashed border-ink/20 rounded-lg p-3 cursor-pointer hover:border-navy">
+          <span class="text-xl">📷</span>
+          <div>
+            <div id="ship-photo-label" class="text-sm font-medium text-ink">Klik untuk upload</div>
+            <div class="text-xs text-ink/50">JPG, PNG</div>
+          </div>
+          <input id="ship-photo" type="file" accept="image/*" class="hidden" onchange="previewShipPhoto(event)">
+        </label>
+        <div id="ship-photo-preview" class="hidden mt-2">
+          <img id="ship-photo-img" class="h-24 rounded-lg border border-ink/10 object-cover">
+        </div>
+      </div>
+    </div>
+    <div class="p-5 border-t border-ink/10 flex justify-end gap-2">
+      <button onclick="closeShipModal()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm">Batal</button>
+      <button onclick="confirmShip()" class="bg-green text-white px-5 py-2 rounded-lg text-sm font-semibold">Tandakan Dihantar</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+let activeFilter = 'all';
+let shipPhotoFile = null;
+
+const STATUS_META = {
+  pending:   { label: 'Pending',            chip: 'bg-gold-light text-gold-dark' },
+  paid:      { label: 'Dibayar',            chip: 'bg-navy-light text-navy' },
+  packed:    { label: 'Dibungkus',          chip: 'bg-teal/10 text-teal' },
+  shipped:   { label: 'Dihantar',           chip: 'bg-green-light text-green-dark' },
+  delivered: { label: 'Diterima',           chip: 'bg-ink/10 text-ink/60' },
+  cancelled: { label: 'Dibatalkan',         chip: 'bg-terracotta-light text-terracotta' },
+};
+
+function setFilter(f) {
+  activeFilter = f;
+  document.querySelectorAll('[id^="f-"]').forEach(b => {
+    b.className = 'px-4 py-2 rounded-full text-sm font-medium ' + (b.id === 'f-' + f ? 'bg-navy text-white' : 'bg-white border border-ink/20');
+  });
+  loadOrders();
+}
+
+async function markStatus(orderId, status, extra = {}) {
+  const ts = {};
+  if (status === 'paid')    ts.paid_at = new Date().toISOString();
+  if (status === 'packed')  ts.packed_at = new Date().toISOString();
+  if (status === 'delivered') ts.delivered_at = new Date().toISOString();
+  await window.db.from('orders').update({ status, updated_at: new Date().toISOString(), ...ts, ...extra }).eq('id', orderId);
+  banner('Status dikemaskini: ' + status);
+  loadOrders();
+}
+
+function openShipModal(orderId) {
+  document.getElementById('ship-order-id').value = orderId;
+  document.getElementById('ship-tracking').value = '';
+  document.getElementById('ship-photo-label').textContent = 'Klik untuk upload';
+  document.getElementById('ship-photo-preview').classList.add('hidden');
+  document.getElementById('ship-modal').classList.remove('hidden');
+  shipPhotoFile = null;
+}
+function closeShipModal() { document.getElementById('ship-modal').classList.add('hidden'); }
+
+function previewShipPhoto(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  shipPhotoFile = file;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    document.getElementById('ship-photo-img').src = ev.target.result;
+    document.getElementById('ship-photo-preview').classList.remove('hidden');
+    document.getElementById('ship-photo-label').textContent = '✓ ' + file.name;
+  };
+  reader.readAsDataURL(file);
+}
+
+async function confirmShip() {
+  const orderId = document.getElementById('ship-order-id').value;
+  const tracking = document.getElementById('ship-tracking').value.trim();
+  const courier = document.getElementById('ship-courier').value;
+  if (!tracking) { banner('Masukkan tracking number', 'error'); return; }
+
+  let photoUrl = null;
+  if (shipPhotoFile) {
+    try {
+      const path = `orders/${orderId}/${Date.now()}_${shipPhotoFile.name}`;
+      const { error } = await window.db.storage.from('order-photos').upload(path, shipPhotoFile);
+      if (!error) {
+        const { data } = window.db.storage.from('order-photos').getPublicUrl(path);
+        photoUrl = data.publicUrl;
+      }
+    } catch (e) { console.warn('Photo upload skipped:', e.message); }
+  }
+
+  await markStatus(orderId, 'shipped', {
+    tracking_number: tracking,
+    courier,
+    tracking_photo_url: photoUrl,
+    shipped_at: new Date().toISOString(),
+  });
+  closeShipModal();
+}
+
+async function loadOrders() {
+  let query = window.db.from('orders').select('*, profiles(full_name, phone)').order('created_at', { ascending: false });
+  if (activeFilter !== 'all') query = query.eq('status', activeFilter);
+  const { data: orders } = await query;
+  const list = orders || [];
+
+  document.getElementById('orders-list').innerHTML = list.length ? list.map(o => {
+    const sm = STATUS_META[o.status] || STATUS_META.pending;
+    const items = Array.isArray(o.items) ? o.items : [];
+    const patient = o.profiles?.full_name || 'Patient';
+    const phone = o.profiles?.phone || '';
+
+    const actions = (() => {
+      if (o.status === 'pending') return `
+        <button onclick="markStatus('${o.id}','paid')" class="bg-navy text-white px-4 py-2 rounded-lg text-xs font-semibold">✓ Bayaran Diterima</button>`;
+      if (o.status === 'paid') return `
+        <button onclick="markStatus('${o.id}','packed')" class="bg-teal text-white px-4 py-2 rounded-lg text-xs font-semibold">📦 Tandakan Bungkus</button>`;
+      if (o.status === 'packed') return `
+        <button onclick="openShipModal('${o.id}')" class="bg-green text-white px-4 py-2 rounded-lg text-xs font-semibold">🚚 Hantar + Tracking</button>`;
+      if (o.status === 'shipped') return `
+        <div class="text-xs text-ink/50 italic">Menunggu patient confirm...</div>
+        <button onclick="markStatus('${o.id}','delivered')" class="border border-ink/20 px-3 py-1.5 rounded-lg text-xs">Force Delivered</button>`;
+      return '';
+    })();
+
+    return `
+    <div class="bg-white rounded-xl border border-ink/10 overflow-hidden">
+      <div class="px-5 py-4 flex items-center justify-between flex-wrap gap-2">
+        <div class="flex items-center gap-3">
+          <div>
+            <div class="font-bold text-sm">${o.order_ref}</div>
+            <div class="text-xs text-ink/50">${new Date(o.created_at).toLocaleString('ms-MY')} · ${patient}${phone ? ' · ' + phone : ''}</div>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="chip text-xs ${sm.chip}">${sm.label}</span>
+          <span class="font-bold text-sm">RM ${Number(o.total).toFixed(2)}</span>
+        </div>
+      </div>
+
+      <div class="px-5 pb-4 space-y-3">
+        <div class="flex flex-wrap gap-1.5">
+          ${items.map(it => `<span class="chip bg-cream text-ink/70 text-xs">${it.name} × ${it.qty}</span>`).join('')}
+        </div>
+
+        ${o.tracking_number ? `
+          <div class="flex items-center gap-3 bg-green-light rounded-lg px-3 py-2">
+            <div class="flex-1 min-w-0">
+              <div class="text-[10px] text-ink/60">Tracking · ${o.courier || 'JNT'}</div>
+              <div class="font-bold text-sm">${o.tracking_number}</div>
+            </div>
+            ${o.tracking_photo_url ? `<img src="${o.tracking_photo_url}" class="h-12 w-12 rounded object-cover border border-ink/10 cursor-pointer" onclick="window.open('${o.tracking_photo_url}','_blank')">` : ''}
+          </div>` : ''}
+
+        ${actions ? `<div class="flex items-center gap-2 pt-1">${actions}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('') : '<div class="bg-white rounded-xl border border-ink/10 p-8 text-center text-ink/40 text-sm">Tiada orders</div>';
+}
+
+(async () => {
+  const user = await initStaff('orders', 'Urus orders & penghantaran');
+  if (!user) return;
+  loadOrders();
+})();
+</script>
+</body>
+</html>

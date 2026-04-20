@@ -25,9 +25,18 @@
       <div class="p-4 md:p-8 space-y-4">
         <div class="bg-white rounded-xl p-4 border border-ink/10">
           <label class="text-xs font-semibold mb-2 block">Pilih pesakit</label>
-          <select id="patient-select" class="w-full border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none focus:border-navy">
+          <select id="patient-select" onchange="loadPatientVitalsHistory()" class="w-full border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none focus:border-navy">
             <option value="">— Pilih pesakit —</option>
           </select>
+        </div>
+
+        <!-- Patient vitals history (shown when patient selected) -->
+        <div id="patient-history-section" class="hidden bg-white rounded-xl p-5 border border-ink/10">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h4 class="font-bold text-sm">Sejarah Vitals Pesakit</h4>
+            <span id="history-count" class="text-xs text-ink/60"></span>
+          </div>
+          <div id="patient-history-list" class="space-y-2 max-h-80 overflow-y-auto"></div>
         </div>
 
         <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -109,10 +118,51 @@ async function saveVitals() {
   banner('Vitals disimpan');
   resetForm();
   loadRecent();
+  loadPatientVitalsHistory();
 }
 
 function resetForm() {
   document.querySelectorAll('input[id^="v-"], #v-notes').forEach(i => i.value = '');
+}
+
+async function loadPatientVitalsHistory() {
+  const patientId = document.getElementById('patient-select').value;
+  const section = document.getElementById('patient-history-section');
+
+  if (!patientId) {
+    section.classList.add('hidden');
+    return;
+  }
+
+  section.classList.remove('hidden');
+  const data = await dbQuery('vitals', {
+    eq: { patient_id: patientId },
+    order: { col: 'created_at' },
+  }).catch(() => []);
+
+  document.getElementById('history-count').textContent = `${data.length} bacaan`;
+
+  document.getElementById('patient-history-list').innerHTML = data.length
+    ? data.map((v, idx) => `
+      <div class="border border-ink/10 rounded-lg p-3">
+        <div class="flex items-center justify-between mb-2 flex-wrap gap-1">
+          <div class="text-xs text-ink/60">${new Date(v.created_at).toLocaleString('ms-MY')}</div>
+          ${idx === 0 ? '<span class="chip bg-green-light text-green-dark">Latest</span>' : ''}
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+          ${v.bp_systolic ? `<div><span class="text-ink/50">BP:</span> <strong>${v.bp_systolic}/${v.bp_diastolic}</strong></div>` : ''}
+          ${v.heart_rate ? `<div><span class="text-ink/50">HR:</span> <strong>${v.heart_rate} bpm</strong></div>` : ''}
+          ${v.bmi ? `<div><span class="text-ink/50">BMI:</span> <strong>${v.bmi}</strong></div>` : ''}
+          ${v.weight ? `<div><span class="text-ink/50">Weight:</span> <strong>${v.weight} kg</strong></div>` : ''}
+          ${v.spo2 ? `<div><span class="text-ink/50">SpO2:</span> <strong>${v.spo2}%</strong></div>` : ''}
+          ${v.temperature ? `<div><span class="text-ink/50">Temp:</span> <strong>${v.temperature}°C</strong></div>` : ''}
+          ${v.waist_cm ? `<div><span class="text-ink/50">Waist:</span> <strong>${v.waist_cm} cm</strong></div>` : ''}
+          ${v.rbs ? `<div><span class="text-ink/50">RBS:</span> <strong>${v.rbs}</strong></div>` : ''}
+          ${v.phq2_score !== null && v.phq2_score !== undefined ? `<div><span class="text-ink/50">PHQ-2:</span> <strong>${v.phq2_score}</strong></div>` : ''}
+        </div>
+        ${v.notes ? `<div class="text-xs text-ink/60 mt-2 italic">💬 ${v.notes}</div>` : ''}
+      </div>`).join('')
+    : '<p class="text-ink/40 text-sm text-center py-4">Tiada sejarah bacaan untuk pesakit ini</p>';
 }
 
 async function loadRecent() {

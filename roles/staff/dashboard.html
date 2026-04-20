@@ -38,7 +38,7 @@
           <div class="lg:col-span-2 bg-white rounded-xl p-5 border border-ink/10">
             <div class="flex items-center justify-between mb-3">
               <h3 class="font-bold">Schedule Hari Ini</h3>
-              <a href="appointments.html" class="text-xs text-navy hover:underline">Semua →</a>
+              <a href="plans.html" class="text-xs text-navy hover:underline">Semua →</a>
             </div>
             <div id="schedule-list" class="space-y-2"></div>
           </div>
@@ -70,17 +70,23 @@
   if (!user) return;
 
   const today = new Date().toISOString().split('T')[0];
-  const [appts, risks, kyc, patients, vitalsToday] = await Promise.all([
-    dbQuery('appointments', { order: { col: 'appointment_time', asc: true } }),
+  const [weeklyAll, risks, kyc, patients, vitalsToday, plans] = await Promise.all([
+    dbQuery('plan_weekly_progress', { order: { col: 'session_date', asc: true } }),
     dbQuery('risk_alerts', { eq: { status: 'open' } }),
     dbQuery('kyc_submissions', { eq: { status: 'pending' } }),
     dbQuery('patients', { eq: { status: 'active' } }),
     dbQuery('vitals', { order: { col: 'created_at' }, limit: 50 }),
+    dbQuery('treatment_plans'),
   ]);
 
-  const todayAppts = appts.filter(a => a.appointment_time?.startsWith(today));
-  const completed = todayAppts.filter(a => a.status === 'completed').length;
+  const todaySessions = weeklyAll.filter(w => w.session_date?.startsWith(today));
+  const completed = todaySessions.filter(w => w.status === 'hadir').length;
   const todayVitals = vitalsToday.filter(v => v.created_at?.startsWith(today)).length;
+
+  const patientMap = {};
+  patients.forEach(p => { patientMap[p.id] = p; });
+  const planMap = {};
+  plans.forEach(p => { planMap[p.id] = p; });
 
   if (risks.length > 0) {
     document.getElementById('risk-banner').classList.remove('hidden');
@@ -89,27 +95,37 @@
   }
 
   document.getElementById('kpi-grid').innerHTML = [
-    statCard('Appts Hari Ini', todayAppts.length, `${completed} selesai`, 'navy'),
+    statCard('Sesi Hari Ini', todaySessions.length, `${completed} hadir`, 'navy'),
     statCard('Pesakit Aktif', patients.length, '', 'green'),
     statCard('KYC Pending', kyc.length, kyc.length ? 'Perlu review' : 'Clear', 'gold'),
     statCard('Risk Alerts', risks.length, risks.length ? 'Buka queue' : 'Tiada', 'terracotta'),
     statCard('Vitals Hari Ini', todayVitals, '', 'teal'),
   ].join('');
 
-  document.getElementById('schedule-list').innerHTML = todayAppts.length
-    ? todayAppts.map(a => {
-        const time = formatTime(a.appointment_time);
-        const isDone = a.status === 'completed';
+  const statusChipMap = {
+    booked: '<span class="chip bg-navy-light text-navy">📅 Ditempah</span>',
+    hadir: '<span class="chip bg-green-light text-green-dark">✅ Hadir</span>',
+    cancel: '<span class="chip bg-terracotta-light text-terracotta">❌ Cancel</span>',
+    reschedule: '<span class="chip bg-gold-light text-gold-dark">🔄 Resched</span>',
+  };
+
+  document.getElementById('schedule-list').innerHTML = todaySessions.length
+    ? todaySessions.map(s => {
+        const time = new Date(s.session_date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        const patient = patientMap[s.patient_id];
+        const plan = planMap[s.plan_id];
+        const isDone = s.status === 'hadir';
         return `<div class="flex items-center gap-3 p-3 border ${isDone ? 'border-green/40 bg-green-light/40' : 'border-ink/10'} rounded-lg">
-          <div class="text-center w-12"><div class="text-xs font-semibold ${isDone ? 'text-green-dark' : ''}">${time}</div></div>
-          <div class="flex-1">
-            <div class="text-sm font-semibold">${a.patient_name || 'Patient'}</div>
-            <div class="text-[11px] text-ink/60">${a.service} · ${a.staff_name || ''}</div>
+          <div class="text-center w-14"><div class="text-sm font-bold ${isDone ? 'text-green-dark' : 'text-navy'}">${time}</div></div>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-semibold">${patient?.mrn || 'Patient'}</div>
+            <div class="text-[11px] text-ink/60">${plan?.name || 'Plan'} · Minggu ${s.week_number}</div>
           </div>
-          ${statusChip(a.status)}
+          ${statusChipMap[s.status] || ''}
+          <a href="plans.html" class="text-xs text-navy font-semibold hover:underline ml-2">Urus →</a>
         </div>`;
       }).join('')
-    : '<p class="text-ink/40 text-sm">Tiada appointment hari ini</p>';
+    : '<p class="text-ink/40 text-sm">Tiada sesi hari ini</p>';
 
   document.getElementById('risk-summary').innerHTML = risks.length
     ? risks.slice(0, 3).map(r => `
