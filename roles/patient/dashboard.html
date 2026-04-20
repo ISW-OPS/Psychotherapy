@@ -33,35 +33,15 @@
           <a href="pakej.html" class="bg-white text-terracotta font-semibold px-4 py-2 rounded-lg text-sm whitespace-nowrap">📦 Pilih Pakej →</a>
         </div>
 
-        <div class="bg-gradient-to-r from-navy to-green-dark rounded-2xl p-6 text-white">
-          <div class="flex items-start justify-between flex-wrap gap-4">
-            <div>
-              <div class="text-sm opacity-80">Assalamualaikum,</div>
-              <div class="text-2xl font-bold mt-1"><span id="hero-name">—</span> 🌿</div>
-              <div id="hero-sub" class="text-sm opacity-80 mt-2"></div>
-            </div>
-          </div>
+        <!-- Promo carousel -->
+        <div class="relative overflow-hidden rounded-2xl" id="promo-carousel" style="min-height:140px">
+          <div id="promo-track" class="flex transition-transform duration-500 ease-in-out h-full"></div>
+          <div id="promo-dots" class="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5"></div>
         </div>
 
         <div id="stat-grid" class="grid grid-cols-2 lg:grid-cols-4 gap-3"></div>
 
-        <div class="grid md:grid-cols-3 gap-6">
-          <div class="bg-white rounded-xl p-5 border border-ink/10 md:col-span-2">
-            <div class="flex items-center justify-between mb-4">
-              <h3 class="font-bold">Upcoming Appointment</h3>
-              <a href="plan.html" class="text-xs text-navy hover:underline">View plan →</a>
-            </div>
-            <div id="upcoming-card"></div>
-          </div>
-
-          <div class="bg-white rounded-xl p-5 border border-ink/10">
-            <div class="flex items-center justify-between mb-4">
-              <h3 class="font-bold">Treatment Plan</h3>
-              <a href="plan.html" class="text-xs text-navy hover:underline">Details →</a>
-            </div>
-            <div id="plan-summary"></div>
-          </div>
-        </div>
+        <div id="upcoming-section"></div>
 
       </section>
     </main>
@@ -82,32 +62,10 @@
 <script src="../../shared/navbar.js"></script>
 <script src="_shared.js"></script>
 <script>
-async function rescheduleAppt(id) {
-  if (!confirm('Nak reschedule appointment ni? Anda akan dibawa ke Treatment Plan.')) return;
-  window.location.href = 'plan.html';
-}
-
-async function cancelAppt(id) {
-  if (!confirm('Pasti nak batal appointment ni?')) return;
-  try {
-    await dbUpdate('appointments', id, { status: 'cancelled' });
-    await auditLog('appointment.cancelled', id);
-    banner('Appointment dibatalkan');
-    setTimeout(() => location.reload(), 1000);
-  } catch (err) {
-    banner('Ralat: ' + err.message, 'error');
-  }
-}
-
-function getDirections() {
-  window.open('https://www.google.com/maps/search/Ibnu+Sina+Wellness', '_blank');
-}
 
 (async () => {
   const user = await initPatient('dashboard', 'Overview rawatan & appointment anda');
   if (!user) return;
-
-  document.getElementById('hero-name').textContent = user.full_name;
 
   if (!patientRecord) {
     document.getElementById('hero-sub').textContent = 'Akaun anda belum di-link dengan rekod pesakit.';
@@ -125,8 +83,8 @@ function getDirections() {
   ]);
 
   const upcoming = appts.filter(a => a.status === 'scheduled' && new Date(a.appointment_time) > new Date());
-  const dashPlan = plans.find(p => p.status === 'active');
   const nextAppt = upcoming[0];
+  const dashPlan = plans.find(p => p.status === 'active');
   const checkinToday = checkinRes.data;
   const activeOrders = (ordersRes.data || []).length;
 
@@ -137,13 +95,38 @@ function getDirections() {
   // Show no-package banner when no active package
   document.getElementById('no-package-banner').classList.toggle('hidden', !!hasActivePkg);
 
-  if (hasActivePkg) {
-    document.getElementById('hero-sub').textContent = dashPlan
-      ? `${activePackageName} · Minggu ${dashPlan.current_week}/${dashPlan.duration_weeks}`
-      : `${activePackageName} aktif`;
-  } else {
-    document.getElementById('hero-sub').textContent = 'Tiada pakej aktif · Sila pilih pakej rawatan';
-  }
+  // Promo carousel
+  const promos = await window.db.from('announcements')
+    .select('*').eq('is_active', true).order('sort_order', { ascending: true })
+    .then(r => r.data || []).catch(() => []);
+
+  const slides = promos.length ? promos : [
+    { title: 'Selamat Datang ke ISW', body: 'Program rawatan holistik BPS-S untuk kesejahteraan anda.', bg: 'from-navy to-green-dark', cta_label: null, cta_url: null },
+  ];
+
+  const track = document.getElementById('promo-track');
+  const dots = document.getElementById('promo-dots');
+  track.innerHTML = slides.map(s => `
+    <div class="min-w-full bg-gradient-to-r ${s.bg || 'from-navy to-green-dark'} rounded-2xl p-6 text-white flex items-center justify-between gap-4 flex-wrap">
+      <div>
+        ${s.tag ? `<div class="text-[10px] font-semibold uppercase tracking-widest opacity-70 mb-1">${s.tag}</div>` : ''}
+        <div class="text-xl font-bold leading-snug">${s.title}</div>
+        ${s.body ? `<div class="text-sm opacity-80 mt-1 max-w-sm">${s.body}</div>` : ''}
+      </div>
+      ${s.cta_label && s.cta_url ? `<a href="${s.cta_url}" class="bg-white/20 hover:bg-white/30 text-white font-semibold text-sm px-5 py-2.5 rounded-lg whitespace-nowrap backdrop-blur-sm">${s.cta_label} →</a>` : ''}
+    </div>`).join('');
+
+  dots.innerHTML = slides.map((_, i) => `<button onclick="goSlide(${i})" id="dot-${i}" class="w-2 h-2 rounded-full transition-all ${i === 0 ? 'bg-white w-4' : 'bg-white/40'}"></button>`).join('');
+
+  let curSlide = 0;
+  window.goSlide = (i) => {
+    curSlide = i;
+    track.style.transform = `translateX(-${i * 100}%)`;
+    dots.querySelectorAll('button').forEach((d, idx) => {
+      d.className = `w-2 h-2 rounded-full transition-all ${idx === i ? 'bg-white w-4' : 'bg-white/40'}`;
+    });
+  };
+  if (slides.length > 1) setInterval(() => goSlide((curSlide + 1) % slides.length), 5000);
 
   let progressScore = 0, progressTrend = '';
 
@@ -206,51 +189,37 @@ function getDirections() {
     ),
   ].join('');
 
-  document.getElementById('upcoming-card').innerHTML = nextAppt
-    ? (() => {
-        const d = new Date(nextAppt.appointment_time);
-        const endTime = new Date(d.getTime() + (nextAppt.duration_min || 45) * 60000);
-        return `<div class="border border-navy/20 bg-navy-light rounded-lg p-4">
-          <div class="flex items-start gap-4 flex-wrap">
-            <div class="text-center min-w-[48px]">
-              <div class="text-xs text-navy">${d.toLocaleDateString('en-GB',{weekday:'short'}).toUpperCase()}</div>
-              <div class="text-2xl font-bold text-navy">${d.getDate()}</div>
-              <div class="text-xs text-navy">${d.toLocaleDateString('en-GB',{month:'short'}).toUpperCase()}</div>
-            </div>
-            <div class="flex-1 min-w-[180px]">
-              <div class="font-semibold">${nextAppt.service}</div>
-              <div class="text-sm text-ink/70 mt-1">${nextAppt.staff_name || 'Practitioner'}</div>
-              <div class="text-xs text-ink/60 mt-1">${formatTime(nextAppt.appointment_time)} — ${formatTime(endTime)} ${nextAppt.room ? '· ' + nextAppt.room : ''}</div>
-              <div class="flex gap-2 mt-3 flex-wrap">
-                <button onclick="rescheduleAppt('${nextAppt.id}')" class="text-xs px-3 py-1.5 rounded-lg border border-navy text-navy hover:bg-navy hover:text-white">Reschedule</button>
-                <button onclick="cancelAppt('${nextAppt.id}')" class="text-xs px-3 py-1.5 rounded-lg border border-terracotta text-terracotta hover:bg-terracotta hover:text-white">Cancel</button>
-                <button onclick="getDirections()" class="text-xs px-3 py-1.5 rounded-lg bg-green text-white hover:bg-green-dark">Get Directions</button>
-              </div>
-            </div>
-          </div>
-        </div>`;
-      })()
-    : '<p class="text-ink/40 text-sm text-center py-6">Tiada appointment akan datang</p>';
-
-  document.getElementById('plan-summary').innerHTML = dashPlan
-    ? `<div class="mb-3">
-        <div class="font-semibold text-sm text-navy mb-2">${dashPlan.name}</div>
-        <div class="flex justify-between text-xs mb-1">
-          <span class="text-ink/60">Progress</span>
-          <span class="font-semibold">Week ${dashPlan.current_week} / ${dashPlan.duration_weeks}</span>
+  // Upcoming appointment from appointments table
+  if (nextAppt) {
+    const d = new Date(nextAppt.appointment_time);
+    const endTime = new Date(d.getTime() + (nextAppt.duration_min || 60) * 60000);
+    const dayName = d.toLocaleDateString('ms-MY', { weekday: 'long' });
+    const dateStr = d.toLocaleDateString('ms-MY', { day: '2-digit', month: 'long', year: 'numeric' });
+    document.getElementById('upcoming-section').innerHTML = `
+      <div class="bg-white rounded-xl border border-ink/10 overflow-hidden">
+        <div class="px-5 py-3 border-b border-ink/5 flex items-center justify-between">
+          <h3 class="font-bold text-sm">Appointment Seterusnya</h3>
+          <a href="plan.html" class="text-xs text-navy hover:underline">Semua sesi →</a>
         </div>
-        <div class="h-2 bg-ink/10 rounded-full overflow-hidden"><div class="h-full bg-green transition-all" style="width:${Math.round(dashPlan.current_week / dashPlan.duration_weeks * 100)}%"></div></div>
-      </div>
-      <a href="plan.html" class="block w-full bg-cream hover:bg-green-light text-sm font-semibold py-2 rounded-lg text-center">Buka Checklist →</a>`
-    : (hasActivePkg
-        ? `<div class="text-center py-3">
-             <p class="text-sm text-ink/70 mb-2">Plan akan dicipta untuk pakej <strong>${activePackageName}</strong></p>
-             <p class="text-xs text-ink/50">Sila refresh atau hubungi coach</p>
-           </div>`
-        : `<div class="text-center py-3">
-             <p class="text-sm text-ink/70 mb-3">Tiada pakej aktif</p>
-             <a href="pakej.html" class="block w-full bg-navy text-white text-sm font-semibold py-2 rounded-lg">📦 Pilih Pakej →</a>
-           </div>`);
+        <div class="p-5 flex items-center gap-5 flex-wrap">
+          <div class="bg-navy-light rounded-xl px-5 py-4 text-center min-w-[80px]">
+            <div class="text-[10px] font-semibold text-navy uppercase">${d.toLocaleDateString('en-GB',{month:'short'})}</div>
+            <div class="text-3xl font-bold text-navy leading-none my-1">${d.getDate()}</div>
+            <div class="text-[10px] text-navy/70">${d.getFullYear()}</div>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="font-semibold">${nextAppt.service}</div>
+            <div class="text-sm text-ink/60 mt-0.5">${nextAppt.staff_name || ''}</div>
+            <div class="text-xs text-ink/50 mt-1">${dayName} · ${formatTime(nextAppt.appointment_time)} — ${formatTime(endTime)}${nextAppt.room ? ' · ' + nextAppt.room : ''}</div>
+          </div>
+          <a href="https://www.google.com/maps/search/Ibnu+Sina+Wellness" target="_blank"
+            class="bg-green text-white text-xs px-4 py-2 rounded-lg font-semibold hover:bg-green-dark whitespace-nowrap">
+            📍 Get Directions
+          </a>
+        </div>
+      </div>`;
+  }
+
 })();
 </script>
 </body>

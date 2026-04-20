@@ -195,6 +195,7 @@ async function loadPlans() {
 
 let allPlans = [];
 let allPatientsMap = {};
+let patientUserIdMap = {};
 
 async function openTracker(planId) {
   const plan = allPlans.find(p => p.id === planId);
@@ -284,6 +285,13 @@ async function markWeek(planId, patientId, week, status) {
     }
 
     await auditLog('plan.week_updated', planId, { week, status, patient: patientId });
+    const patUid = patientUserIdMap[patientId];
+    if (patUid && status === 'hadir')
+      await notify(patUid, 'plan', `Kehadiran Minggu ${week} direkod ✅`, `Coach ${currentUser.full_name} telah mengesahkan kehadiran anda.`, 'plan.html');
+    if (patUid && status === 'reschedule')
+      await notify(patUid, 'plan', `Minggu ${week} perlu dijadual semula`, `Sila tempah sesi baharu untuk Minggu ${week}.`, 'plan.html');
+    if (patUid && status === 'cancel')
+      await notify(patUid, 'plan', `Sesi Minggu ${week} dibatalkan`, `Hubungi klinik untuk maklumat lanjut.`, 'plan.html');
     banner(`Minggu ${week}: ${status}`);
     openTracker(planId);
   } catch (err) {
@@ -365,7 +373,12 @@ async function saveCompliance() {
 async function updateScore(planId, patientId, week, score) {
   const existing = await dbQuery('plan_weekly_progress', { eq: { plan_id: planId, week_number: week } }).catch(() => []);
   if (existing.length > 0) {
-    await dbUpdate('plan_weekly_progress', existing[0].id, { score: parseInt(score) || null });
+    const parsed = parseInt(score) || null;
+    await dbUpdate('plan_weekly_progress', existing[0].id, { score: parsed });
+    if (parsed) {
+      const uid = patientUserIdMap[patientId];
+      if (uid) await notify(uid, 'plan', `Skor Minggu ${week}: ${parsed}/10`, `Coach ${currentUser.full_name} telah merekod skor anda.`, 'plan.html');
+    }
   }
 }
 
@@ -380,7 +393,7 @@ async function updateNotes(planId, patientId, week, notes) {
   const user = await initStaff('plans', 'BPS-S · Attendance & Progress Tracker');
   if (!user) return;
   const patients = await dbQuery('patients', { eq: { status: 'active' } });
-  patients.forEach(p => allPatientsMap[p.id] = p.mrn);
+  patients.forEach(p => { allPatientsMap[p.id] = p.mrn; patientUserIdMap[p.id] = p.user_id; });
   document.getElementById('m-patient').innerHTML = '<option value="">— Pilih pesakit —</option>' +
     patients.map(p => `<option value="${p.id}">${p.mrn}</option>`).join('');
   loadPlans();

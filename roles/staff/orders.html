@@ -115,10 +115,21 @@ function setFilter(f) {
 
 async function markStatus(orderId, status, extra = {}) {
   const ts = {};
-  if (status === 'paid')    ts.paid_at = new Date().toISOString();
-  if (status === 'packed')  ts.packed_at = new Date().toISOString();
+  if (status === 'paid')      ts.paid_at = new Date().toISOString();
+  if (status === 'packed')    ts.packed_at = new Date().toISOString();
   if (status === 'delivered') ts.delivered_at = new Date().toISOString();
-  await window.db.from('orders').update({ status, updated_at: new Date().toISOString(), ...ts, ...extra }).eq('id', orderId);
+  const { data: updated } = await window.db.from('orders')
+    .update({ status, updated_at: new Date().toISOString(), ...ts, ...extra })
+    .eq('id', orderId).select('order_ref,patient_id,tracking_number').single();
+  const uid = updated?.patient_id;
+  const ref = updated?.order_ref || '';
+  const NOTIF = {
+    paid:      ['Bayaran diterima ✓', `Pesanan ${ref} telah disahkan. Kami sedang menyediakan parsel anda.`],
+    packed:    ['Pesanan sedang dibungkus 📦', `Pesanan ${ref} sedang disediakan untuk penghantaran.`],
+    shipped:   ['Pesanan dalam perjalanan 🚚', `Pesanan ${ref} telah dihantar. No. tracking: ${extra.tracking_number || '—'}`],
+    delivered: ['Pesanan diterima ✅', `Pesanan ${ref} telah ditanda diterima. Terima kasih!`],
+  };
+  if (uid && NOTIF[status]) await notify(uid, 'order', NOTIF[status][0], NOTIF[status][1], 'orders.html');
   banner('Status dikemaskini: ' + status);
   loadOrders();
 }

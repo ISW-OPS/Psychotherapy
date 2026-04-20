@@ -106,11 +106,110 @@ function renderHeader(title, subtitle) {
       <p id="page-sub" class="text-[11px] text-ink/60">${subtitle}</p>
     </div>
     <div class="flex items-center gap-3">
-      <button class="relative p-2 hover:bg-gray-100 rounded-lg">
+      <button id="notif-btn" onclick="toggleNotifPanel()" class="relative p-2 hover:bg-gray-100 rounded-lg">
         <span class="text-lg">🔔</span>
+        <span id="notif-badge" class="hidden absolute -top-0.5 -right-0.5 min-w-[16px] h-4 bg-terracotta text-white text-[9px] font-bold rounded-full flex items-center justify-center px-0.5"></span>
       </button>
     </div>
   `;
+  // Inject panel into body once
+  if (!document.getElementById('notif-panel')) {
+    const panel = document.createElement('div');
+    panel.id = 'notif-panel';
+    panel.className = 'hidden fixed inset-0 z-50';
+    panel.innerHTML = `
+      <div class="absolute inset-0" onclick="closeNotifPanel()"></div>
+      <div id="notif-drawer" class="absolute top-0 right-0 bottom-0 w-full max-w-sm bg-white shadow-2xl flex flex-col translate-x-full transition-transform duration-300">
+        <div class="px-5 py-4 border-b border-ink/10 flex items-center justify-between">
+          <h3 class="font-bold">Notifikasi</h3>
+          <div class="flex items-center gap-3">
+            <button onclick="markAllRead()" class="text-xs text-navy hover:underline">Baca semua</button>
+            <button onclick="closeNotifPanel()" class="text-ink/50 text-xl leading-none">×</button>
+          </div>
+        </div>
+        <div id="notif-list" class="flex-1 overflow-y-auto divide-y divide-ink/5"></div>
+      </div>`;
+    document.body.appendChild(panel);
+  }
+  loadNotifBadge();
+}
+
+const NOTIF_ICONS = { appointment: '📅', order: '📦', plan: '💊', system: '📢', default: '🔔' };
+
+async function loadNotifBadge() {
+  if (!window.db) return;
+  const { data } = await window.db.from('notifications')
+    .select('id', { count: 'exact' }).eq('user_id', (await window.db.auth.getUser()).data.user?.id).eq('is_read', false);
+  const count = data?.length || 0;
+  const badge = document.getElementById('notif-badge');
+  if (!badge) return;
+  if (count > 0) { badge.textContent = count > 9 ? '9+' : count; badge.classList.remove('hidden'); }
+  else badge.classList.add('hidden');
+}
+
+async function loadNotifPanel() {
+  const list = document.getElementById('notif-list');
+  if (!list) return;
+  list.innerHTML = '<div class="p-4 text-sm text-ink/40 text-center py-10">Memuatkan...</div>';
+  const uid = (await window.db.auth.getUser()).data.user?.id;
+  const { data: notifs } = await window.db.from('notifications')
+    .select('*').eq('user_id', uid).order('created_at', { ascending: false }).limit(30);
+  const items = notifs || [];
+  list.innerHTML = items.length ? items.map(n => `
+    <div onclick="readNotif('${n.id}','${n.link || ''}')"
+      class="px-5 py-4 cursor-pointer hover:bg-cream transition-colors ${n.is_read ? 'opacity-60' : 'bg-navy-light/30'}">
+      <div class="flex items-start gap-3">
+        <span class="text-xl flex-shrink-0 mt-0.5">${NOTIF_ICONS[n.type] || NOTIF_ICONS.default}</span>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-semibold leading-snug">${n.title}</div>
+          ${n.body ? `<div class="text-xs text-ink/60 mt-0.5">${n.body}</div>` : ''}
+          <div class="text-[10px] text-ink/40 mt-1">${new Date(n.created_at).toLocaleString('ms-MY',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+        </div>
+        ${!n.is_read ? '<span class="w-2 h-2 bg-navy rounded-full flex-shrink-0 mt-2"></span>' : ''}
+      </div>
+    </div>`).join('')
+    : '<div class="text-sm text-ink/40 text-center py-16">Tiada notifikasi</div>';
+}
+
+async function readNotif(id, link) {
+  await window.db.from('notifications').update({ is_read: true }).eq('id', id);
+  loadNotifBadge();
+  if (link) { closeNotifPanel(); window.location.href = link; }
+  else loadNotifPanel();
+}
+
+async function markAllRead() {
+  const uid = (await window.db.auth.getUser()).data.user?.id;
+  await window.db.from('notifications').update({ is_read: true }).eq('user_id', uid).eq('is_read', false);
+  loadNotifBadge();
+  loadNotifPanel();
+}
+
+function toggleNotifPanel() {
+  const panel = document.getElementById('notif-panel');
+  const drawer = document.getElementById('notif-drawer');
+  if (!panel || !drawer) return;
+  const isHidden = panel.classList.contains('hidden');
+  panel.classList.toggle('hidden', !isHidden);
+  requestAnimationFrame(() => {
+    drawer.style.transform = isHidden ? 'translateX(0)' : 'translateX(100%)';
+  });
+  if (isHidden) loadNotifPanel();
+}
+
+// Helper — insert a notification row (fire-and-forget)
+async function notify(userId, type, title, body, link) {
+  if (!window.db || !userId) return;
+  try { await window.db.from('notifications').insert({ user_id: userId, type, title, body: body || null, link: link || null }); }
+  catch (e) { console.warn('notify failed:', e.message); }
+}
+
+function closeNotifPanel() {
+  const panel = document.getElementById('notif-panel');
+  const drawer = document.getElementById('notif-drawer');
+  if (!panel || !drawer) return;
+  drawer.style.transform = 'translateX(100%)';
+  setTimeout(() => panel.classList.add('hidden'), 300);
 }
 
 function goTo(screen) {

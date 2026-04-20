@@ -360,22 +360,50 @@ async function confirmBooking() {
   }
 
   try {
+    const existing = weeklyProgressRows.find(r => r.week_number === pendingBookWeek);
+
+    // Create or update appointment record (single source of truth)
+    let apptId = existing?.appointment_id || null;
+    if (apptId) {
+      await window.db.from('appointments').update({
+        appointment_time: sessionAt.toISOString(),
+        status: 'scheduled',
+      }).eq('id', apptId);
+    } else {
+      const { data: newAppt } = await window.db.from('appointments').insert({
+        patient_id: patientRecord.id,
+        patient_name: currentUser.full_name,
+        service: `${activePlan.name} · Minggu ${pendingBookWeek}`,
+        appointment_time: sessionAt.toISOString(),
+        duration_min: 60,
+        status: 'scheduled',
+      }).select('id').single();
+      apptId = newAppt?.id;
+    }
+
+    const progressData = {
+      session_date: sessionAt.toISOString(),
+      status: 'booked',
+      updated_at: new Date().toISOString(),
+      ...(apptId ? { appointment_id: apptId } : {}),
+    };
+
     if (pendingBookExistingId) {
-      await dbUpdate('plan_weekly_progress', pendingBookExistingId, {
-        session_date: sessionAt.toISOString(),
-        status: 'booked',
-        updated_at: new Date().toISOString(),
-      });
+      await dbUpdate('plan_weekly_progress', pendingBookExistingId, progressData);
     } else {
       await dbInsert('plan_weekly_progress', {
         plan_id: activePlan.id,
         patient_id: patientRecord.id,
         week_number: pendingBookWeek,
-        status: 'booked',
-        session_date: sessionAt.toISOString(),
+        ...progressData,
       });
     }
+
     await auditLog('plan.week_booked', activePlan.id, { week: pendingBookWeek, at: sessionAt.toISOString() });
+    await notify(currentUser.id, 'appointment',
+      `Appointment Minggu ${pendingBookWeek} ditempah`,
+      `${sessionAt.toLocaleDateString('ms-MY',{weekday:'long',day:'2-digit',month:'long'})} · ${sessionAt.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}`,
+      'plan.html');
     banner(`Minggu ${pendingBookWeek} ditempah: ${sessionAt.toLocaleString('ms-MY')}`);
     closeBookModal();
     await loadWeeklyProgress();
