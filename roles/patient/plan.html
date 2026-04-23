@@ -141,17 +141,17 @@ async function loadPlan() {
     return;
   }
 
-  const plans = await dbQuery('treatment_plans', { eq: { patient_id: patientRecord.id } });
+  const plans = await dbQuery('psy_treatment_plans', { eq: { patient_id: patientRecord.id } });
 
   activePlan = plans.find(p => p.status === 'active') || plans[0];
 
   if (!activePlan) {
     // Has active package but no plan — auto-create from DB package data
     try {
-      const pkgRows = await dbQuery('packages', { eq: { package_id: patientRecord.active_package_id } }).catch(() => []);
+      const pkgRows = await dbQuery('psy_packages', { eq: { package_id: patientRecord.active_package_id } }).catch(() => []);
       if (pkgRows.length > 0) {
         const pkg = pkgRows[0];
-        const { data: newPlan, error } = await window.db.from('treatment_plans').insert({
+        const { data: newPlan, error } = await window.db.from('psy_treatment_plans').insert({
           patient_id: patientRecord.id,
           doctor_id: currentUser.id,
           name: `${pkg.name} Treatment Plan`,
@@ -210,7 +210,7 @@ let pendingBookExistingId = null;
 async function loadWeeklyProgress() {
   if (!activePlan) return;
   const weeks = activePlan.duration_weeks || 12;
-  weeklyProgressRows = await dbQuery('plan_weekly_progress', {
+  weeklyProgressRows = await dbQuery('psy_plan_weekly_progress', {
     eq: { plan_id: activePlan.id },
     order: { col: 'week_number', asc: true },
   }).catch(() => []);
@@ -365,12 +365,12 @@ async function confirmBooking() {
     // Create or update appointment record (single source of truth)
     let apptId = existing?.appointment_id || null;
     if (apptId) {
-      await window.db.from('appointments').update({
+      await window.db.from('psy_appointments').update({
         appointment_time: sessionAt.toISOString(),
         status: 'scheduled',
       }).eq('id', apptId);
     } else {
-      const { data: newAppt } = await window.db.from('appointments').insert({
+      const { data: newAppt } = await window.db.from('psy_appointments').insert({
         patient_id: patientRecord.id,
         patient_name: currentUser.full_name,
         service: `${activePlan.name} · Minggu ${pendingBookWeek}`,
@@ -389,9 +389,9 @@ async function confirmBooking() {
     };
 
     if (pendingBookExistingId) {
-      await dbUpdate('plan_weekly_progress', pendingBookExistingId, progressData);
+      await dbUpdate('psy_plan_weekly_progress', pendingBookExistingId, progressData);
     } else {
-      await dbInsert('plan_weekly_progress', {
+      await dbInsert('psy_plan_weekly_progress', {
         plan_id: activePlan.id,
         patient_id: patientRecord.id,
         week_number: pendingBookWeek,

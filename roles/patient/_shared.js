@@ -15,10 +15,10 @@ function hasCompletedKyc() {
 }
 
 async function enforceKyc(currentPageId) {
-  if (currentPageId === 'kyc' || currentPageId === 'profile') return true;
+  if (currentPageId === 'kyc' || currentPageId === 'profile' || currentPageId === 'dashboard') return true;
   if (hasCompletedKyc()) return true;
 
-  const subs = await dbQuery('kyc_submissions', {
+  const subs = await dbQuery('psy_kyc_submissions', {
     eq: { user_id: window.currentUser.id },
     order: { col: 'created_at' },
     limit: 1,
@@ -57,13 +57,13 @@ async function initPatient(pageId, titleSub) {
   window.currentUser = await checkAuth('patient');
   if (!window.currentUser) return null;
 
-  let patients = await dbQuery('patients', { eq: { user_id: window.currentUser.id } });
+  let patients = await dbQuery('psy_patients', { eq: { user_id: window.currentUser.id } });
 
   // Auto-create patient record if not exists
   if (patients.length === 0) {
     try {
       const mrn = 'P-' + new Date().getFullYear() + '-' + String(Math.floor(Math.random() * 9999)).padStart(4, '0');
-      const newPatient = await dbInsert('patients', {
+      const newPatient = await dbInsert('psy_patients', {
         user_id: window.currentUser.id,
         mrn: mrn,
         status: 'active',

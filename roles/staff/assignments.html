@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Approved Patients Queue</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+  body { background: #f5f6f8; }
+  .tab-wrap  { background:#e9ebee; border-radius:8px; padding:3px; display:inline-flex; gap:2px; }
+  .tab-pill  { padding:5px 14px; border-radius:6px; font-size:13px; font-weight:500; color:#6b7280; cursor:pointer; transition:all .15s; border:none; background:transparent; }
+  .tab-pill.active { background:white; color:#111; box-shadow:0 1px 3px rgba(0,0,0,.12); }
+  thead th   { font-size:11px; font-weight:600; color:#9ca3af; text-transform:uppercase; letter-spacing:.04em; }
+  .patient-row:hover td { background:#f9fafb; }
+  .patient-row td { transition:background .1s; }
+  .assign-btn { padding:5px 14px; border-radius:6px; font-size:12px; font-weight:600;
+    background:#1a3a5c; color:white; border:none; cursor:pointer; white-space:nowrap; transition:background .15s; }
+  .assign-btn:hover:not(:disabled) { background:#142d4a; }
+  .assign-btn.mine { background:#e5e7eb; color:#6b7280; cursor:default; }
+  .assign-btn.view { background:#f0f4f8; color:#1a3a5c; border:1px solid #c8d6e5; }
+  .assign-btn.unassign { background:#fff0f0; color:#c0392b; border:1px solid #f5c6c6; padding:5px 9px; }
+  .assign-btn.unassign:hover { background:#fde0e0; }
+  .risk-badge { display:inline-flex; align-items:center; gap:3px; padding:3px 9px;
+    border-radius:4px; font-size:11px; font-weight:600; }
+  .risk-none  { color:#9ca3af; font-size:12px; }
+  .wait-green { color:#16a34a; font-weight:700; font-size:13px; }
+  .wait-gold  { color:#b45309; font-weight:700; font-size:13px; }
+  .wait-red   { color:#dc2626; font-weight:700; font-size:13px; }
+  .cap-bar    { height:5px; border-radius:3px; background:#e5e7eb; margin-top:8px; overflow:hidden; }
+  .cap-fill   { height:100%; border-radius:3px; background:#22c55e; transition:width .4s; }
+  .kyc-clear  { color:#16a34a; font-size:12px; font-weight:600; }
+  .kyc-pend   { color:#b45309; font-size:12px; font-weight:600; }
+  .kyc-other  { color:#9ca3af; font-size:12px; font-weight:600; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🤝</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-6 md:p-8 space-y-5">
+
+        <!-- Page title -->
+        <div class="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-2xl font-bold text-ink">Approved Patients Queue</h1>
+            <p class="text-sm text-ink/50 mt-0.5">Review, assign, and manage incoming approved patients.</p>
+          </div>
+          <div class="flex gap-3">
+            <button onclick="exportList()" class="flex items-center gap-2 border border-ink/20 text-ink/60 bg-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50">
+              📤 Export List
+            </button>
+          </div>
+        </div>
+
+        <!-- Stats -->
+        <div class="grid grid-cols-3 gap-4">
+          <!-- Unassigned Queue -->
+          <div class="bg-white rounded-xl border border-ink/10 p-5">
+            <div class="flex items-start justify-between">
+              <div class="text-xs text-ink/50 font-semibold">Unassigned Queue</div>
+              <div class="w-8 h-8 bg-green/10 rounded-lg flex items-center justify-center">📥</div>
+            </div>
+            <div class="text-3xl font-bold text-ink mt-2" id="stat-pending">—</div>
+            <div class="text-xs text-ink/40 mt-1">patients awaiting assignment</div>
+          </div>
+          <!-- My Caseload -->
+          <div class="bg-white rounded-xl border border-ink/10 p-5">
+            <div class="flex items-start justify-between">
+              <div class="text-xs text-ink/50 font-semibold" id="stat-mine-lbl">My Active Caseload</div>
+              <div class="w-8 h-8 bg-navy/10 rounded-lg flex items-center justify-center">👤</div>
+            </div>
+            <div class="text-3xl font-bold text-ink mt-2" id="stat-mine">—</div>
+            <div class="cap-bar" id="cap-bar-wrap"><div class="cap-fill" id="cap-fill" style="width:0%"></div></div>
+            <div class="text-xs text-ink/40 mt-1" id="stat-cap">Capacity: 0%</div>
+          </div>
+          <!-- Total -->
+          <div class="bg-white rounded-xl border border-ink/10 p-5">
+            <div class="flex items-start justify-between">
+              <div class="text-xs text-ink/50 font-semibold">Jumlah Pesakit Aktif</div>
+              <div class="w-8 h-8 bg-teal/10 rounded-lg flex items-center justify-center">📋</div>
+            </div>
+            <div class="text-3xl font-bold text-ink mt-2" id="stat-total">—</div>
+            <div class="text-xs text-ink/40 mt-1">dengan pakej aktif</div>
+          </div>
+        </div>
+
+        <!-- Tabs + Search -->
+        <div class="flex items-center justify-between gap-4 flex-wrap">
+          <div class="tab-wrap">
+            <button onclick="setTab('pending')" id="tab-pending" class="tab-pill active">
+              Unassigned (<span id="c-pending">0</span>)
+            </button>
+            <button onclick="setTab('mine')" id="tab-mine" class="tab-pill">
+              Assigned to me (<span id="c-mine">0</span>)
+            </button>
+            <button onclick="setTab('all')" id="tab-all" class="tab-pill hidden">
+              All Patients (<span id="c-all">0</span>)
+            </button>
+          </div>
+          <div class="flex items-center gap-2">
+            <div class="relative">
+              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-ink/30 text-sm pointer-events-none">🔍</span>
+              <input id="search-box" type="text" placeholder="Search patients..."
+                class="border border-ink/20 bg-white rounded-lg pl-8 pr-3 py-2 text-sm outline-none focus:border-navy w-52 transition-colors"
+                oninput="renderTable()">
+            </div>
+          </div>
+        </div>
+
+        <!-- Table -->
+        <div class="bg-white rounded-xl border border-ink/10 overflow-hidden">
+          <table class="w-full">
+            <thead class="border-b border-ink/10 bg-gray-50">
+              <tr>
+                <th class="w-10 py-3 px-4 text-left"><input type="checkbox" class="rounded"></th>
+                <th class="py-3 px-3 text-left">Patient Info</th>
+                <th class="py-3 px-3 text-left">Approval Status</th>
+                <th class="py-3 px-3 text-left">Package Selected</th>
+                <th class="py-3 px-3 text-left">Risk Flags</th>
+                <th class="py-3 px-3 text-left">Wait Time</th>
+                <th class="py-3 px-3 text-left">Ditugaskan Kepada</th>
+                <th class="py-3 px-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="table-body"></tbody>
+          </table>
+          <div id="table-empty" class="hidden py-16 text-center">
+            <div class="text-4xl mb-3" id="empty-icon">🎉</div>
+            <p class="text-ink/50 text-sm" id="empty-msg">Tiada pesakit menunggu penugasan.</p>
+          </div>
+          <div class="border-t border-ink/10 px-4 py-3 text-xs text-ink/40" id="table-footer"></div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+let allPatients = [];
+let currentTab  = 'pending';
+let myRole      = null;
+const MAX_CASELOAD = 20;
+
+// ── Tab ───────────────────────────────────────────────
+function setTab(t) {
+  currentTab = t;
+  ['pending','mine','all'].forEach(k => {
+    document.getElementById('tab-' + k)?.classList.toggle('active', k === t);
+  });
+  renderTable();
+}
+
+// ── Wait time ─────────────────────────────────────────
+function waitLabel(purchasedAt) {
+  if (!purchasedAt) return { text: '—', cls: 'risk-none' };
+  const h = Math.floor((Date.now() - new Date(purchasedAt)) / 3600000);
+  if (h < 24) return { text: h + ' hrs',           cls: 'wait-green' };
+  const d = Math.floor(h / 24);
+  if (d < 3)  return { text: d + (d === 1 ? ' day' : ' days'), cls: 'wait-gold'  };
+  return         { text: d + ' days',              cls: 'wait-red'   };
+}
+
+// ── Risk badge ────────────────────────────────────────
+function riskBadge(p) {
+  const txt = ((p.medical_condition || '') + ' ' + (p.medical_notes || '')).toLowerCase();
+  if (txt.match(/self.?harm|bahaya diri/))
+    return '<span class="risk-badge" style="background:#fee2e2;color:#dc2626">⚠ Self-Harm Risk</span>';
+  if (txt.match(/depress|kemurungan/))
+    return '<span class="risk-badge" style="background:#fee2e2;color:#dc2626">⚠ Depression</span>';
+  if (txt.match(/anxiet|kebimbangan/))
+    return '<span class="risk-badge" style="background:#fef9c3;color:#b45309">⚠ Anxiety</span>';
+  if (txt.match(/stress|tekanan/))
+    return '<span class="risk-badge" style="background:#fef9c3;color:#b45309">⚠ Stress</span>';
+  return '<span class="risk-none">None</span>';
+}
+
+// ── Render table ──────────────────────────────────────
+function renderTable() {
+  const uid   = window.currentUser?.id;
+  const q     = document.getElementById('search-box').value.toLowerCase().trim();
+  const isAdmin = myRole === 'admin' || myRole === 'manager';
+
+  let list = allPatients;
+  if      (currentTab === 'pending') list = list.filter(p => !p.coach_id);
+  else if (currentTab === 'mine')    list = list.filter(p => p.coach_id === uid);
+  // 'all' tab — show everyone, no filter
+
+  if (q) list = list.filter(p =>
+    (p.psy_profiles?.full_name || '').toLowerCase().includes(q) ||
+    (p.mrn || '').toLowerCase().includes(q)
+  );
+
+  const tbody  = document.getElementById('table-body');
+  const empty  = document.getElementById('table-empty');
+  const footer = document.getElementById('table-footer');
+
+  if (!list.length) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    document.getElementById('empty-icon').textContent = currentTab === 'pending' ? '🎉' : '📭';
+    document.getElementById('empty-msg').textContent  = currentTab === 'pending'
+      ? 'Semua pesakit sudah ditugaskan!' : 'Tiada rekod ditemui.';
+    footer.textContent = 'Showing 0 entries';
+    return;
+  }
+  empty.classList.add('hidden');
+
+  tbody.innerHTML = list.map((p, i) => {
+    const name     = p.psy_profiles?.full_name || '—';
+    const initials = name.split(' ').slice(0,2).map(w => w[0]).join('').toUpperCase() || '?';
+    const ageYrs   = p.date_of_birth
+      ? Math.floor((Date.now() - new Date(p.date_of_birth)) / 31557600000) + ' yrs' : '';
+    const mrn      = p.mrn || '—';
+    const pkg      = p.active_package_name || '—';
+    const wait     = waitLabel(p.package_purchased_at);
+    const risk     = riskBadge(p);
+    const isMe         = p.coach_id === uid;
+    const isAssigned   = !!p.coach_id && !isMe;
+    const coachName    = p.coach?.full_name || null;
+
+    const kycHtml = p.status === 'active'
+      ? '<span class="kyc-clear">● KYC Cleared</span>'
+      : p.status === 'pending_kyc'
+      ? '<span class="kyc-pend">● KYC Pending</span>'
+      : `<span class="kyc-other">● ${p.status || '—'}</span>`;
+
+    const coachHtml = isMe
+      ? `<span class="text-xs font-semibold text-green-700">Saya</span>`
+      : coachName
+      ? `<span class="text-xs text-ink">${coachName}</span>`
+      : `<span class="text-xs text-gray-400">—</span>`;
+
+    const canUnassign = isAssigned && isAdmin;
+    const btnHtml = isMe
+      ? `<div class="flex items-center gap-1.5 justify-end">
+           <button class="assign-btn mine" disabled>✅ Saya</button>
+           <button class="assign-btn unassign" onclick="event.stopPropagation();doUnassign('${p.id}',this)" title="Tarik balik penugasan">✕</button>
+         </div>`
+      : canUnassign
+      ? `<div class="flex items-center gap-1.5 justify-end">
+           <button class="assign-btn view" onclick="event.stopPropagation();location.href='assignment-review.html?id=${p.id}'">👁 Lihat</button>
+           <button class="assign-btn unassign" onclick="event.stopPropagation();doUnassign('${p.id}',this)" title="Tarik balik penugasan">✕</button>
+         </div>`
+      : isAssigned
+      ? `<button class="assign-btn view" onclick="event.stopPropagation();location.href='assignment-review.html?id=${p.id}'">👁 Lihat</button>`
+      : `<button class="assign-btn" onclick="event.stopPropagation();quickAssign('${p.id}',this)">Assign to me</button>`;
+
+    const since = p.package_purchased_at
+      ? new Date(p.package_purchased_at).toLocaleDateString('en-GB', { day:'numeric', month:'short' })
+      : '—';
+
+    return `<tr class="patient-row border-b border-gray-100 last:border-0"
+        onclick="location.href='assignment-review.html?id=${p.id}'" style="cursor:pointer">
+      <td class="py-3.5 px-4">
+        <input type="checkbox" class="rounded" onclick="event.stopPropagation()">
+      </td>
+      <td class="py-3.5 px-3">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-full bg-navy text-white flex items-center justify-center text-xs font-bold flex-shrink-0">${initials}</div>
+          <div>
+            <div class="font-semibold text-sm text-ink">${name}</div>
+            <div class="text-xs text-gray-400">ID: ${mrn}${ageYrs ? ' · ' + ageYrs : ''}</div>
+          </div>
+        </div>
+      </td>
+      <td class="py-3.5 px-3">${kycHtml}</td>
+      <td class="py-3.5 px-3">
+        <div class="font-medium text-sm text-ink leading-snug">${pkg}</div>
+        <div class="text-xs text-gray-400">Since ${since}</div>
+      </td>
+      <td class="py-3.5 px-3">${risk}</td>
+      <td class="py-3.5 px-3">
+        <div class="${wait.cls}">${wait.text}</div>
+        <div class="text-xs text-gray-400">Since approval</div>
+      </td>
+      <td class="py-3.5 px-3">${coachHtml}</td>
+      <td class="py-3.5 px-4 text-right">${btnHtml}</td>
+    </tr>`;
+  }).join('');
+
+  footer.textContent = `Showing 1 to ${list.length} of ${list.length} entries`;
+}
+
+// ── Quick assign (inline) ─────────────────────────────
+async function quickAssign(pid, btn) {
+  btn.disabled    = true;
+  btn.textContent = '...';
+  const uid  = window.currentUser.id;
+  const name = window.currentUser.full_name;
+
+  const { error } = await window.db.from('psy_patients')
+    .update({ coach_id: uid, assigned_at: new Date().toISOString() })
+    .eq('id', pid);
+
+  if (error) {
+    btn.textContent = '⚠ Ralat';
+    btn.disabled = false;
+    return;
+  }
+
+  await window.db.from('psy_audit_log').insert({
+    actor_id: uid, actor_name: name,
+    actor_role: window.currentUser.role || 'staff',
+    action: 'patient.assigned', target: pid,
+    meta: { coach_id: uid, coach_name: name },
+  });
+
+  const p = allPatients.find(x => x.id === pid);
+  if (p) { p.coach_id = uid; p.coach = { full_name: window.currentUser.full_name }; }
+  loadStats();
+  renderTable();
+  banner('Pesakit berjaya ditugaskan kepada anda ✅');
+}
+
+// ── Unassign ──────────────────────────────────────────
+async function doUnassign(pid, btn) {
+  if (!confirm('Tarik balik penugasan pesakit ini?')) return;
+  btn.disabled = true;
+  btn.textContent = '...';
+
+  const uid  = window.currentUser.id;
+  const name = window.currentUser.full_name;
+
+  const { error } = await window.db.from('psy_patients')
+    .update({ coach_id: null, assigned_at: null })
+    .eq('id', pid);
+
+  if (error) {
+    btn.textContent = '⚠';
+    btn.disabled = false;
+    return;
+  }
+
+  await window.db.from('psy_audit_log').insert({
+    actor_id: uid, actor_name: name,
+    actor_role: window.currentUser.role || 'staff',
+    action: 'patient.unassigned', target: pid,
+    meta: { unassigned_by: name },
+  });
+
+  const p = allPatients.find(x => x.id === pid);
+  if (p) { p.coach_id = null; p.assigned_at = null; p.coach = null; }
+  loadStats();
+  renderTable();
+  banner('Penugasan pesakit telah ditarik balik');
+}
+
+// ── Stats ─────────────────────────────────────────────
+function loadStats() {
+  const uid     = window.currentUser?.id;
+  const isAdmin = myRole === 'admin' || myRole === 'manager';
+  const pending  = allPatients.filter(p => !p.coach_id);
+  const mine     = allPatients.filter(p => p.coach_id === uid);
+  const assigned = allPatients.filter(p => p.coach_id);
+
+  document.getElementById('stat-pending').textContent = pending.length;
+  document.getElementById('stat-mine').textContent    = isAdmin ? assigned.length : mine.length;
+  document.getElementById('stat-total').textContent   = allPatients.length;
+  document.getElementById('c-pending').textContent    = pending.length;
+  document.getElementById('c-mine').textContent       = isAdmin ? assigned.length : mine.length;
+  document.getElementById('c-all').textContent        = allPatients.length;
+
+  if (isAdmin) {
+    document.getElementById('stat-mine-lbl').textContent = 'Sudah Ditugaskan';
+    document.getElementById('cap-bar-wrap').style.display = 'none';
+    document.getElementById('stat-cap').textContent = '';
+  } else {
+    const cap = Math.min(100, Math.round(mine.length / MAX_CASELOAD * 100));
+    document.getElementById('cap-fill').style.width = cap + '%';
+    document.getElementById('stat-cap').textContent = `Capacity: ${cap}%`;
+  }
+}
+
+// ── Export ────────────────────────────────────────────
+function exportList() {
+  const uid = window.currentUser?.id;
+  let list  = allPatients;
+  if (currentTab === 'pending') list = list.filter(p => !p.coach_id);
+  else if (currentTab === 'mine') list = list.filter(p => p.coach_id === uid);
+
+  const csv = [
+    'Name,MRN,Status,Package,Purchased At',
+    ...list.map(p => [
+      `"${p.psy_profiles?.full_name || ''}"`,
+      p.mrn || '',
+      p.status || '',
+      `"${p.active_package_name || ''}"`,
+      p.package_purchased_at || '',
+    ].join(','))
+  ].join('\n');
+
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = `patients-queue-${Date.now()}.csv`;
+  a.click();
+}
+
+// ── Load ──────────────────────────────────────────────
+async function loadData() {
+  myRole = window.currentUser.staff_role;
+  if (myRole === 'admin' || myRole === 'manager') {
+    document.getElementById('tab-all').classList.remove('hidden');
+  }
+
+  const { data } = await window.db
+    .from('psy_patients')
+    .select('*, psy_profiles!psy_patients_user_id_fkey(full_name, phone, email, role), coach:psy_profiles!psy_patients_coach_id_fkey(full_name)')
+    .not('active_package_id', 'is', null)
+    .order('package_purchased_at', { ascending: false });
+
+  allPatients = (data || []).filter(p => p.psy_profiles?.role === 'patient');
+  loadStats();
+  renderTable();
+}
+
+(async () => {
+  const user = await initStaff('assignments', 'Patient Review & Assignment');
+  if (!user) return;
+  loadData();
+})();
+</script>
+</body>
+</html>

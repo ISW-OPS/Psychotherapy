@@ -10,49 +10,119 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'checkin', url: 'checkin.html', icon: '✅', label: 'Daily Check-in' },
     { id: 'library', url: 'library.html', icon: '📚', label: 'Self-Help Library' },
     { id: 'pakej', url: 'pakej.html', icon: '📦', label: 'Pakej Rawatan' },
-    { id: 'shop', url: 'shop.html', icon: '🛒', label: 'Shop' },
+    { id: 'shop', url: 'shop.html', icon: '🛒', label: 'Product' },
     { id: 'payment', url: 'payment.html', icon: '💳', label: 'Payment' },
-    { id: 'orders', url: 'orders.html', icon: '📦', label: 'Orders & Tracking' },
+    { id: 'psy_orders', url: 'orders.html', icon: '📦', label: 'Orders & Tracking' },
     { id: 'issue', url: 'issue.html', icon: '⚠️', label: 'Report Issue' },
     { id: 'kyc', url: 'kyc.html', icon: '🆔', label: 'KYC Form' },
     { id: 'profile', url: 'profile.html', icon: '👤', label: 'Profile' },
   ],
+
+  // Staff: Admin — system management focus
+  staff_admin: [
+    { id: 'dashboard',    url: 'dashboard.html',        icon: '🏥', label: 'Dashboard' },
+    { id: 'psy_patients', url: 'patients.html',         icon: '👥', label: 'Patients' },
+    { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
+    { id: 'pakej',        url: 'pakej.html',            icon: '📦', label: 'Pakej Rawatan' },
+    { id: 'psy_products', url: 'products.html',         icon: '🛒', label: 'Products' },
+    { id: 'psy_orders',   url: 'orders.html',           icon: '📦', label: 'Orders & Tracking' },
+    { id: 'library',      url: 'library.html',          icon: '📚', label: 'Self-Help Library' },
+    { id: 'audit',        url: 'audit.html',            icon: '🔒', label: 'Audit Log' },
+    { id: 'staff_mgmt',   url: 'staff_management.html', icon: '👨‍⚕️', label: 'Manage Staff' },
+    { id: 'issue',        url: 'issue.html',            icon: '⚠️', label: 'Report Issue' },
+    { id: 'profile',      url: 'profile.html',          icon: '👤', label: 'Profile' },
+  ],
+
+  // Staff: Coach — patient & clinical access only
+  staff_coach: [
+    { id: 'dashboard',    url: 'dashboard.html',        icon: '🏥', label: 'Dashboard' },
+    { id: 'assignments',  url: 'assignments.html',       icon: '🤝', label: 'Patients' },
+    { id: 'psy_patients', url: 'patients.html',         icon: '👥', label: 'Pesakit Saya' },
+    { id: 'plans',        url: 'plans.html',            icon: '📋', label: 'Treatment Plans' },
+    { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
+    { id: 'consultation', url: 'consultation.html',     icon: '🩺', label: 'Consultation' },
+    { id: 'psy_vitals',   url: 'vitals.html',           icon: '📊', label: 'Vitals Capture' },
+    { id: 'coaching',     url: 'coaching.html',         icon: '🎯', label: 'Coaching Sessions' },
+    { id: 'risk',         url: 'risk.html',             icon: '⚠️', label: 'Risk Assessment' },
+    { id: 'issue',        url: 'issue.html',            icon: '⚠️', label: 'Report Issue' },
+    { id: 'profile',      url: 'profile.html',          icon: '👤', label: 'Profile' },
+  ],
+
+  // Staff: Doctor — clinical + KYC review
+  staff_doctor: [
+    { id: 'dashboard',       url: 'dashboard.html',    icon: '🏥', label: 'Dashboard' },
+    { id: 'psy_patients',    url: 'patients.html',     icon: '👥', label: 'Patients & KYC' },
+    { id: 'plans',           url: 'plans.html',        icon: '📋', label: 'Treatment Plans' },
+    { id: 'psy_appointments',url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
+    { id: 'consultation',    url: 'consultation.html', icon: '🩺', label: 'Consultation' },
+    { id: 'psy_vitals',      url: 'vitals.html',       icon: '📊', label: 'Vitals Capture' },
+    { id: 'risk',            url: 'risk.html',         icon: '⚠️', label: 'Risk Assessment' },
+    { id: 'library',         url: 'library.html',      icon: '📚', label: 'Self-Help Library' },
+    { id: 'issue',           url: 'issue.html',        icon: '📣', label: 'Report Issue' },
+    { id: 'profile',         url: 'profile.html',      icon: '👤', label: 'Profile' },
+  ],
+
+  // Staff: Manager — oversight & reports only
+  staff_manager: [
+    { id: 'dashboard',    url: 'dashboard.html',        icon: '🏥', label: 'Dashboard' },
+    { id: 'assignments',  url: 'assignments.html',       icon: '🤝', label: 'Penugasan Pesakit' },
+    { id: 'psy_patients', url: 'patients.html',         icon: '👥', label: 'Patients & KYC' },
+    { id: 'plans',        url: 'plans.html',            icon: '📋', label: 'Treatment Plans' },
+    { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
+    { id: 'psy_orders',   url: 'orders.html',           icon: '📦', label: 'Orders & Tracking' },
+    { id: 'audit',        url: 'audit.html',            icon: '🔒', label: 'Audit Log' },
+    { id: 'issue',        url: 'issue.html',            icon: '⚠️', label: 'Report Issue' },
+    { id: 'profile',      url: 'profile.html',          icon: '👤', label: 'Profile' },
+  ],
+
+  // Fallback jika staff_role tidak diset
   staff: [
     { id: 'dashboard', url: 'dashboard.html', icon: '🏥', label: 'Dashboard' },
-    { id: 'pakej', url: 'pakej.html', icon: '📦', label: 'Pakej Rawatan' },
-    { id: 'services', url: 'services.html', icon: '⚕', label: 'Services' },
-    { id: 'products', url: 'products.html', icon: '🛒', label: 'Products' },
-    { id: 'orders', url: 'orders.html', icon: '📦', label: 'Orders & Tracking' },
-    { id: 'library', url: 'library.html', icon: '📚', label: 'Self-Help Library' },
-    { id: 'patients', url: 'patients.html', icon: '👥', label: 'Patients & KYC' },
-    { id: 'appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
-    { id: 'consultation', url: 'consultation.html', icon: '🩺', label: 'Consultation' },
-    { id: 'vitals', url: 'vitals.html', icon: '📊', label: 'Vitals Capture' },
-    { id: 'coaching', url: 'coaching.html', icon: '🎯', label: 'Coaching Sessions' },
-    { id: 'plans', url: 'plans.html', icon: '📋', label: 'My Treatment Plans' },
-    { id: 'risk', url: 'risk.html', icon: '⚠️', label: 'Risk Alerts' },
-    { id: 'audit', url: 'audit.html', icon: '🔒', label: 'Audit Log' },
-    { id: 'staff_mgmt', url: 'staff_management.html', icon: '👨‍⚕️', label: 'Manage Staff' },
     { id: 'profile', url: 'profile.html', icon: '👤', label: 'Profile' },
   ],
 };
 
 const ROLE_CONFIG = {
   patient: { label: 'My Health', icon: '🏥' },
+  staff_admin: { label: 'Admin Portal', icon: '⚕' },
+  staff_coach: { label: 'Coach Portal', icon: '⚕' },
+  staff_doctor: { label: 'Doctor Portal', icon: '⚕' },
+  staff_manager: { label: 'Manager Portal', icon: '⚕' },
   staff: { label: 'Staff Portal', icon: '⚕' },
 };
 
-// Get nav items for a role (used by _shared.js for backwards compat)
-function getNavItems(role) {
+const STAFF_ROLE_BADGE = {
+  admin:   { label: 'Admin',   cls: 'bg-terracotta/20 text-terracotta' },
+  coach:   { label: 'Coach',   cls: 'bg-teal/20 text-teal' },
+  doctor:  { label: 'Doctor',  cls: 'bg-navy/20 text-navy' },
+  manager: { label: 'Manager', cls: 'bg-gold/30 text-gold-dark' },
+};
+
+// Get nav items for a role — pass staffRole for staff sub-roles
+function getNavItems(role, staffRole) {
+  if (role === 'staff' && staffRole) {
+    return NAV_ITEMS_BY_ROLE[`staff_${staffRole}`] || NAV_ITEMS_BY_ROLE.staff;
+  }
   return NAV_ITEMS_BY_ROLE[role] || [];
 }
 
-function renderNavbar(role, user, navItems, activeScreen) {
-  // If navItems not passed, look up from central config
-  if (!navItems) navItems = NAV_ITEMS_BY_ROLE[role] || [];
+// Check if staff has access to a page
+function staffCanAccess(staffRole, pageId) {
+  const items = getNavItems('staff', staffRole);
+  return items.some(n => n.id === pageId);
+}
 
-  const cfg = ROLE_CONFIG[role] || ROLE_CONFIG.patient;
+function renderNavbar(role, user, navItems, activeScreen) {
+  // Determine effective role key for staff sub-roles
+  const staffRole = user.staff_role || null;
+  const roleKey = (role === 'staff' && staffRole) ? `staff_${staffRole}` : role;
+
+  // If navItems not passed, look up from central config
+  if (!navItems) navItems = getNavItems(role, staffRole);
+
+  const cfg = ROLE_CONFIG[roleKey] || ROLE_CONFIG[role] || ROLE_CONFIG.patient;
   const initials = (user.full_name || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  const badge = role === 'staff' && staffRole ? STAFF_ROLE_BADGE[staffRole] : null;
 
   const sidebar = document.getElementById('sidebar');
   if (!sidebar) return;
@@ -74,7 +144,10 @@ function renderNavbar(role, user, navItems, activeScreen) {
       <div class="flex items-center gap-3">
         <div class="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center font-bold text-white flex-shrink-0" title="${user.full_name || 'User'}">${initials}</div>
         <div class="flex-1 min-w-0 nav-text-block">
-          <div class="text-sm font-semibold text-white truncate">${user.full_name || 'User'}</div>
+          <div class="flex items-center gap-1.5">
+            <div class="text-sm font-semibold text-white truncate">${user.full_name || 'User'}</div>
+            ${badge ? `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ${badge.cls}">${badge.label}</span>` : ''}
+          </div>
           <div class="text-[11px] text-white/60">${user.specialization || user.role}</div>
         </div>
       </div>
@@ -138,7 +211,7 @@ const NOTIF_ICONS = { appointment: '📅', order: '📦', plan: '💊', system: 
 
 async function loadNotifBadge() {
   if (!window.db) return;
-  const { data } = await window.db.from('notifications')
+  const { data } = await window.db.from('psy_notifications')
     .select('id', { count: 'exact' }).eq('user_id', (await window.db.auth.getUser()).data.user?.id).eq('is_read', false);
   const count = data?.length || 0;
   const badge = document.getElementById('notif-badge');
@@ -152,7 +225,7 @@ async function loadNotifPanel() {
   if (!list) return;
   list.innerHTML = '<div class="p-4 text-sm text-ink/40 text-center py-10">Memuatkan...</div>';
   const uid = (await window.db.auth.getUser()).data.user?.id;
-  const { data: notifs } = await window.db.from('notifications')
+  const { data: notifs } = await window.db.from('psy_notifications')
     .select('*').eq('user_id', uid).order('created_at', { ascending: false }).limit(30);
   const items = notifs || [];
   list.innerHTML = items.length ? items.map(n => `
@@ -172,7 +245,7 @@ async function loadNotifPanel() {
 }
 
 async function readNotif(id, link) {
-  await window.db.from('notifications').update({ is_read: true }).eq('id', id);
+  await window.db.from('psy_notifications').update({ is_read: true }).eq('id', id);
   loadNotifBadge();
   if (link) { closeNotifPanel(); window.location.href = link; }
   else loadNotifPanel();
@@ -180,7 +253,7 @@ async function readNotif(id, link) {
 
 async function markAllRead() {
   const uid = (await window.db.auth.getUser()).data.user?.id;
-  await window.db.from('notifications').update({ is_read: true }).eq('user_id', uid).eq('is_read', false);
+  await window.db.from('psy_notifications').update({ is_read: true }).eq('user_id', uid).eq('is_read', false);
   loadNotifBadge();
   loadNotifPanel();
 }
@@ -200,7 +273,7 @@ function toggleNotifPanel() {
 // Helper — insert a notification row (fire-and-forget)
 async function notify(userId, type, title, body, link) {
   if (!window.db || !userId) return;
-  try { await window.db.from('notifications').insert({ user_id: userId, type, title, body: body || null, link: link || null }); }
+  try { await window.db.from('psy_notifications').insert({ user_id: userId, type, title, body: body || null, link: link || null }); }
   catch (e) { console.warn('notify failed:', e.message); }
 }
 

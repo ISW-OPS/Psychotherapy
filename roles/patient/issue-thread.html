@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Thread Isu</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">💬</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex" style="height:100vh; overflow:hidden;">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col flex-shrink-0" style="height:100vh; overflow-y:auto;"></aside>
+
+    <div class="flex-1 flex flex-col min-w-0" style="height:100vh;">
+
+      <!-- Top bar -->
+      <div class="bg-white border-b border-ink/10 px-6 py-3 flex items-center gap-4 flex-shrink-0">
+        <a href="issue.html" class="text-ink/50 hover:text-navy text-sm font-medium">← Kembali</a>
+        <div class="w-px h-5 bg-ink/20"></div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span id="hdr-type" class="font-bold text-sm">—</span>
+            <span id="hdr-status"></span>
+          </div>
+          <p id="hdr-date" class="text-xs text-ink/50">—</p>
+        </div>
+      </div>
+
+      <!-- Chat -->
+      <div id="chat-area" class="flex-1 overflow-y-auto px-6 py-5 space-y-4" style="background:#f8f5f0;"></div>
+
+      <!-- Reply input -->
+      <div class="bg-white border-t border-ink/10 px-6 py-4 flex-shrink-0">
+        <div id="reply-error" class="hidden text-xs text-terracotta mb-2"></div>
+        <div class="flex gap-3 items-end">
+          <textarea id="reply-text" rows="2"
+            placeholder="Tulis balasan anda... (Ctrl+Enter untuk hantar)"
+            class="flex-1 border border-ink/20 rounded-xl px-4 py-3 text-sm outline-none focus:border-terracotta resize-none"></textarea>
+          <button id="btn-send"
+            class="bg-terracotta text-white px-5 py-3 rounded-xl text-sm font-semibold whitespace-nowrap hover:bg-terracotta/90 transition-colors">
+            Hantar ↩
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+const issueId = new URLSearchParams(location.search).get('id');
+let currentIssue = null;
+
+const TYPE_LABEL = {
+  produk_rosak:  '📦 Produk rosak',
+  salah_produk:  '🔄 Salah produk',
+  kurang_jumlah: '⚖️ Kurang jumlah',
+  tidak_sampai:  '🚚 Tidak sampai',
+  appointment:   '📅 Masalah appointment',
+  lain_lain:     '💬 Lain-lain',
+};
+
+async function loadThread() {
+  if (!issueId) { window.location.href = 'issue.html'; return; }
+
+  const { data: rows } = await window.db
+    .from('psy_audit_log').select('*').eq('id', issueId).limit(1);
+
+  currentIssue = rows?.[0];
+  if (!currentIssue) { window.location.href = 'issue.html'; return; }
+
+  const uid = window.currentUser.id;
+  const [staffRes, followRes] = await Promise.all([
+    window.db.from('psy_audit_log').select('*')
+      .eq('action', 'issue.responded').eq('target', uid)
+      .order('created_at', { ascending: true }),
+    window.db.from('psy_audit_log').select('*')
+      .eq('action', 'issue.followup').eq('actor_id', uid)
+      .order('created_at', { ascending: true }),
+  ]);
+
+  const staffReplies   = (staffRes.data  || []).filter(r => r.meta?.issue_id === issueId);
+  const patientReplies = (followRes.data || []).filter(r => r.meta?.issue_id === issueId);
+  const allMsgs = [...staffReplies, ...patientReplies]
+    .sort((a,b) => new Date(a.created_at) - new Date(b.created_at));
+
+  const type    = currentIssue.meta?.type || 'lain_lain';
+  const replied = staffReplies.length > 0;
+
+  document.getElementById('hdr-type').textContent = TYPE_LABEL[type] || type;
+  document.getElementById('hdr-date').textContent =
+    new Date(currentIssue.created_at).toLocaleString('ms-MY', { dateStyle:'medium', timeStyle:'short' });
+  document.getElementById('hdr-status').innerHTML = replied
+    ? '<span class="chip bg-green-light text-green-dark text-[10px]">✅ Dijawab</span>'
+    : '<span class="chip bg-terracotta/15 text-terracotta text-[10px]">⏳ Menunggu</span>';
+
+  renderChat(currentIssue, allMsgs);
+}
+
+function bubble(side, name, text, time, photoUrl) {
+  const isMe     = side === 'patient';
+  const initial  = (name || '?')[0].toUpperCase();
+  const photo    = photoUrl
+    ? `<img src="${photoUrl}" alt="foto" class="mt-2 rounded-xl max-h-48 object-contain border border-ink/10">`
+    : '';
+  const avatarCls = isMe ? 'bg-terracotta/20 text-terracotta' : 'bg-navy text-white';
+  const avatar = `<div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${avatarCls}">${initial}</div>`;
+  const bubbleCls = isMe
+    ? 'bg-terracotta text-white rounded-tr-none'
+    : 'bg-white text-ink rounded-tl-none';
+
+  return `<div class="flex ${isMe ? 'justify-end' : 'justify-start'} gap-2 items-end">
+    ${!isMe ? avatar : ''}
+    <div class="max-w-[70%]">
+      <div class="text-[10px] text-ink/40 mb-1 ${isMe ? 'text-right' : ''}">${name} · ${time}</div>
+      <div class="rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap shadow-sm ${bubbleCls}">
+        ${text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}${photo}
+      </div>
+    </div>
+    ${isMe ? avatar : ''}
+  </div>`;
+}
+
+function renderChat(issue, messages) {
+  const t0 = new Date(issue.created_at).toLocaleString('ms-MY', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+  let html = bubble('patient', issue.actor_name || 'Saya', issue.meta?.description || '—', t0, issue.meta?.photo_url || null);
+
+  messages.forEach(m => {
+    const t    = new Date(m.created_at).toLocaleString('ms-MY', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+    const isFollowup = m.action === 'issue.followup';
+    const name = isFollowup ? (issue.actor_name || 'Saya') : (m.actor_name || 'Staff');
+    const text = isFollowup ? (m.meta?.message || '') : (m.meta?.response || '');
+    html += bubble(isFollowup ? 'patient' : 'staff', name, text, t, null);
+  });
+
+  const el = document.getElementById('chat-area');
+  el.innerHTML = html;
+  el.scrollTop = el.scrollHeight;
+}
+
+async function sendReply() {
+  if (!currentIssue) return;
+  const text  = document.getElementById('reply-text').value.trim();
+  const errEl = document.getElementById('reply-error');
+  errEl.classList.add('hidden');
+
+  if (!text) {
+    errEl.textContent = 'Sila tulis balasan terlebih dahulu.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  const btn = document.getElementById('btn-send');
+  btn.disabled = true; btn.textContent = 'Menghantar...';
+
+  try {
+    const { error } = await window.db.from('psy_audit_log').insert({
+      actor_id:   window.currentUser.id,
+      actor_name: window.currentUser.full_name,
+      actor_role: 'patient',
+      action:     'issue.followup',
+      target:     currentIssue.actor_id === window.currentUser.id ? null : currentIssue.actor_id,
+      meta: {
+        issue_id: currentIssue.id,
+        message:  text,
+      },
+    });
+
+    if (error) throw error;
+
+    document.getElementById('reply-text').value = '';
+    loadThread();
+  } catch (err) {
+    errEl.textContent = 'Ralat: ' + (err.message || JSON.stringify(err));
+    errEl.classList.remove('hidden');
+    console.error('followup error:', err);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Hantar ↩';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('btn-send').addEventListener('click', sendReply);
+  document.getElementById('reply-text').addEventListener('keydown', e => {
+    if (e.ctrlKey && e.key === 'Enter') sendReply();
+  });
+});
+
+(async () => {
+  const user = await initPatient('issue', 'Thread Isu');
+  if (!user) return;
+  loadThread();
+})();
+</script>
+</body>
+</html>

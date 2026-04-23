@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ibnu Sina Wellness — Orders</title>
+<title>Ibnu Sina Wellness — Orders & Tracking</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="../../shared/theme.js"></script>
 <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
@@ -22,15 +22,36 @@
     <main class="main-content flex-1 min-w-0">
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
-      <div class="p-4 md:p-8 space-y-4">
-        <!-- Filters -->
-        <div class="flex items-center gap-2 flex-wrap">
-          <button onclick="setFilter('all')" id="f-all" class="px-4 py-2 rounded-full text-sm font-medium bg-navy text-white">Semua</button>
-          <button onclick="setFilter('pending')" id="f-pending" class="px-4 py-2 rounded-full text-sm font-medium bg-white border border-ink/20">Pending</button>
-          <button onclick="setFilter('paid')" id="f-paid" class="px-4 py-2 rounded-full text-sm font-medium bg-white border border-ink/20">Dibayar</button>
-          <button onclick="setFilter('packed')" id="f-packed" class="px-4 py-2 rounded-full text-sm font-medium bg-white border border-ink/20">Dibungkus</button>
-          <button onclick="setFilter('shipped')" id="f-shipped" class="px-4 py-2 rounded-full text-sm font-medium bg-white border border-ink/20">Dihantar</button>
-          <button onclick="setFilter('delivered')" id="f-delivered" class="px-4 py-2 rounded-full text-sm font-medium bg-white border border-ink/20">Diterima</button>
+      <div class="p-4 md:p-8 space-y-5">
+
+        <!-- Stat Cards -->
+        <div id="stat-row" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+
+        <!-- Search + Filter -->
+        <div class="flex flex-col sm:flex-row gap-3">
+          <div class="relative flex-1">
+            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-ink/40 text-sm">🔍</span>
+            <input id="search-input" type="text" placeholder="Cari nama patient atau no. order..."
+              class="w-full pl-9 pr-3 py-2.5 border border-ink/20 rounded-xl text-sm focus:border-navy outline-none bg-white"
+              oninput="renderOrders()">
+          </div>
+          <select id="sort-select" onchange="renderOrders()"
+            class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
+            <option value="newest">Terbaru dulu</option>
+            <option value="oldest">Terlama dulu</option>
+            <option value="amount_desc">Jumlah ↓</option>
+          </select>
+        </div>
+
+        <!-- Status Filter Tabs -->
+        <div class="flex gap-2 flex-wrap">
+          <button onclick="setFilter('all')"       id="f-all"       class="filter-btn active">Semua</button>
+          <button onclick="setFilter('pending')"   id="f-pending"   class="filter-btn">⏳ Pending</button>
+          <button onclick="setFilter('paid')"      id="f-paid"      class="filter-btn">💳 Dibayar</button>
+          <button onclick="setFilter('packed')"    id="f-packed"    class="filter-btn">📦 Dibungkus</button>
+          <button onclick="setFilter('shipped')"   id="f-shipped"   class="filter-btn">🚚 Dihantar</button>
+          <button onclick="setFilter('delivered')" id="f-delivered" class="filter-btn">✅ Diterima</button>
+          <button onclick="setFilter('cancelled')" id="f-cancelled" class="filter-btn">❌ Batal</button>
         </div>
 
         <div id="orders-list" class="space-y-3"></div>
@@ -39,12 +60,12 @@
   </div>
 </div>
 
-<!-- Ship modal -->
+<!-- ── Ship Modal ──────────────────────────────────── -->
 <div id="ship-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
   <div class="absolute inset-0 bg-black/50" onclick="closeShipModal()"></div>
   <div class="relative bg-white rounded-2xl max-w-md w-full overflow-hidden">
     <div class="p-5 border-b border-ink/10 flex items-center justify-between">
-      <h3 class="font-bold text-lg">📤 Hantar Parsel</h3>
+      <h3 class="font-bold text-lg">🚚 Hantar Parsel</h3>
       <button onclick="closeShipModal()" class="text-ink/60 text-xl">×</button>
     </div>
     <div class="p-5 space-y-4">
@@ -61,11 +82,11 @@
         </select>
       </div>
       <div>
-        <label class="text-xs font-semibold">Tracking Number *</label>
+        <label class="text-xs font-semibold">Tracking Number <span class="text-terracotta">*</span></label>
         <input id="ship-tracking" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="cth: JT1234567890">
       </div>
       <div>
-        <label class="text-xs font-semibold">Gambar Parsel (optional)</label>
+        <label class="text-xs font-semibold">Gambar Parsel / Resit (optional)</label>
         <label for="ship-photo" class="flex items-center gap-3 mt-1 border border-dashed border-ink/20 rounded-lg p-3 cursor-pointer hover:border-navy">
           <span class="text-xl">📷</span>
           <div>
@@ -81,10 +102,27 @@
     </div>
     <div class="p-5 border-t border-ink/10 flex justify-end gap-2">
       <button onclick="closeShipModal()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm">Batal</button>
-      <button onclick="confirmShip()" class="bg-green text-white px-5 py-2 rounded-lg text-sm font-semibold">Tandakan Dihantar</button>
+      <button onclick="confirmShip()" id="ship-btn" class="bg-green text-white px-5 py-2 rounded-lg text-sm font-semibold">Tandakan Dihantar</button>
     </div>
   </div>
 </div>
+
+<!-- ── Order Detail Modal ──────────────────────────── -->
+<div id="detail-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/50" onclick="closeDetailModal()"></div>
+  <div class="relative bg-white rounded-2xl max-w-lg w-full max-h-[90vh] flex flex-col overflow-hidden">
+    <div class="p-5 border-b border-ink/10 flex items-center justify-between">
+      <h3 class="font-bold text-lg" id="detail-title">Detail Order</h3>
+      <button onclick="closeDetailModal()" class="text-ink/60 text-xl">×</button>
+    </div>
+    <div id="detail-body" class="p-5 space-y-4 overflow-y-auto"></div>
+  </div>
+</div>
+
+<style>
+.filter-btn { @apply px-4 py-2 rounded-full text-sm font-medium bg-white border border-ink/20 transition-colors; }
+.filter-btn.active { @apply bg-navy text-white border-navy; }
+</style>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../../config/supabase.js"></script>
@@ -94,51 +132,213 @@
 <script src="_shared.js"></script>
 <script>
 let activeFilter = 'all';
+let allOrders = [];
 let shipPhotoFile = null;
 
 const STATUS_META = {
-  pending:   { label: 'Pending',            chip: 'bg-gold-light text-gold-dark' },
-  paid:      { label: 'Dibayar',            chip: 'bg-navy-light text-navy' },
-  packed:    { label: 'Dibungkus',          chip: 'bg-teal/10 text-teal' },
-  shipped:   { label: 'Dihantar',           chip: 'bg-green-light text-green-dark' },
-  delivered: { label: 'Diterima',           chip: 'bg-ink/10 text-ink/60' },
-  cancelled: { label: 'Dibatalkan',         chip: 'bg-terracotta-light text-terracotta' },
+  pending:   { label: 'Pending',           chip: 'bg-gold/30 text-gold-dark',           icon: '⏳' },
+  paid:      { label: 'Dibayar',           chip: 'bg-navy-light text-navy',             icon: '💳' },
+  packed:    { label: 'Dibungkus',         chip: 'bg-teal/10 text-teal',                icon: '📦' },
+  shipped:   { label: 'Dihantar',          chip: 'bg-green-light text-green-dark',      icon: '🚚' },
+  delivered: { label: 'Diterima',          chip: 'bg-ink/10 text-ink/60',              icon: '✅' },
+  cancelled: { label: 'Dibatalkan',        chip: 'bg-terracotta/20 text-terracotta',    icon: '❌' },
 };
 
+// ── Filters & Search ─────────────────────────────────
 function setFilter(f) {
   activeFilter = f;
-  document.querySelectorAll('[id^="f-"]').forEach(b => {
-    b.className = 'px-4 py-2 rounded-full text-sm font-medium ' + (b.id === 'f-' + f ? 'bg-navy text-white' : 'bg-white border border-ink/20');
-  });
-  loadOrders();
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.id === 'f-' + f));
+  renderOrders();
 }
 
+function renderOrders() {
+  const q = document.getElementById('search-input').value.toLowerCase();
+  const sort = document.getElementById('sort-select').value;
+
+  let list = allOrders.filter(o => {
+    if (activeFilter !== 'all' && o.status !== activeFilter) return false;
+    if (q) {
+      const name = (o.psy_profiles?.full_name || '').toLowerCase();
+      const ref  = (o.order_ref || '').toLowerCase();
+      if (!name.includes(q) && !ref.includes(q)) return false;
+    }
+    return true;
+  });
+
+  if (sort === 'oldest')      list.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  else if (sort === 'amount_desc') list.sort((a, b) => b.total - a.total);
+  else list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  const el = document.getElementById('orders-list');
+  el.innerHTML = list.length ? list.map(orderCard).join('') :
+    '<div class="bg-white rounded-xl border border-ink/10 p-10 text-center text-ink/40 text-sm">Tiada orders ditemui</div>';
+}
+
+// ── Stat Cards ───────────────────────────────────────
+function renderStats(orders) {
+  const today    = new Date().toDateString();
+  const total    = orders.filter(o => o.status !== 'cancelled').length;
+  const toship   = orders.filter(o => o.status === 'paid' || o.status === 'packed').length;
+  const shippedToday = orders.filter(o =>
+    (o.status === 'shipped' || o.status === 'delivered') &&
+    o.shipped_at && new Date(o.shipped_at).toDateString() === today
+  ).length;
+  const revenue  = orders.filter(o => o.status !== 'cancelled').reduce((s, o) => s + Number(o.total || 0), 0);
+
+  document.getElementById('stat-row').innerHTML = [
+    statCard('Jumlah Order',    total,                    'tidak termasuk batal', 'gold'),
+    statCard('Perlu Dihantar',  toship,                   'paid + packed',        'teal'),
+    statCard('Dihantar Hari Ini', shippedToday,           'hari ini',             'green'),
+    statCard('Jumlah Jualan',   `RM ${revenue.toFixed(2)}`, 'semua orders aktif', 'navy'),
+  ].join('');
+}
+
+function statCard(label, value, sub, color) {
+  const colors = { gold: 'border-gold', teal: 'border-teal', green: 'border-green', navy: 'border-navy' };
+  return `<div class="bg-white rounded-xl p-4 border-t-4 ${colors[color] || 'border-navy'}">
+    <div class="text-[10px] uppercase text-ink/60 font-semibold">${label}</div>
+    <div class="text-2xl font-bold mt-1">${value}</div>
+    <div class="text-[10px] text-ink/50 mt-1">${sub}</div>
+  </div>`;
+}
+
+// ── Order Card ───────────────────────────────────────
+function orderCard(o) {
+  const sm      = STATUS_META[o.status] || STATUS_META.pending;
+  const items   = Array.isArray(o.items) ? o.items : [];
+  const patient = o.psy_profiles?.full_name || 'Patient';
+  const phone   = o.psy_profiles?.phone || '';
+
+  const actions = buildActions(o);
+
+  return `
+  <div class="bg-white rounded-xl border border-ink/10 overflow-hidden hover:shadow-md transition-shadow">
+    <!-- Header -->
+    <div class="px-5 py-4 flex items-start justify-between gap-3 flex-wrap border-b border-ink/5">
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="font-bold text-sm">${o.order_ref}</span>
+          <span class="chip text-xs ${sm.chip}">${sm.icon} ${sm.label}</span>
+          ${o.delivery_method === 'pickup' ? '<span class="chip bg-ink/10 text-ink/60 text-xs">Pickup</span>' : '<span class="chip bg-navy-light text-navy text-xs">Pos</span>'}
+        </div>
+        <div class="text-xs text-ink/50 mt-0.5">
+          ${formatDateTime(o.created_at)} · <strong class="text-ink/70">${patient}</strong>${phone ? ' · ' + phone : ''}
+        </div>
+      </div>
+      <div class="text-right">
+        <div class="font-bold text-base">RM ${Number(o.total).toFixed(2)}</div>
+        <button onclick="openDetailModal('${o.id}')" class="text-[10px] text-navy underline mt-0.5">Lihat Detail</button>
+      </div>
+    </div>
+
+    <!-- Items -->
+    <div class="px-5 py-3 flex flex-wrap gap-1.5">
+      ${items.map(it => `<span class="chip bg-cream text-ink/70 text-xs">${it.name} × ${it.qty}</span>`).join('')}
+    </div>
+
+    <!-- Delivery Address -->
+    ${o.delivery_method !== 'pickup' && o.delivery_address ? `
+    <div class="px-5 pb-3">
+      <div class="bg-cream rounded-lg px-3 py-2 text-xs text-ink/70">
+        <span class="font-semibold text-ink/50">📍 Alamat:</span> ${o.delivery_address}
+      </div>
+    </div>` : ''}
+
+    <!-- Tracking Info -->
+    ${o.tracking_number ? `
+    <div class="px-5 pb-3">
+      <div class="flex items-center gap-3 bg-green-light rounded-lg px-3 py-2">
+        <div class="flex-1 min-w-0">
+          <div class="text-[10px] text-ink/60 font-semibold">${o.courier || 'Kurier'} · TRACKING</div>
+          <div class="font-bold text-sm font-mono">${o.tracking_number}</div>
+          ${o.shipped_at ? `<div class="text-[10px] text-ink/50">Dihantar: ${formatDate(o.shipped_at)}</div>` : ''}
+        </div>
+        ${o.tracking_photo_url ? `<img src="${o.tracking_photo_url}" class="h-14 w-14 rounded-lg object-cover border border-ink/10 cursor-pointer" onclick="window.open('${o.tracking_photo_url}','_blank')">` : ''}
+      </div>
+    </div>` : ''}
+
+    <!-- Actions -->
+    ${actions ? `<div class="px-5 pb-4 flex items-center gap-2 flex-wrap">${actions}</div>` : ''}
+  </div>`;
+}
+
+function buildActions(o) {
+  const id       = o.id;
+  const isPickup = o.delivery_method === 'pickup';
+
+  if (o.status === 'pending') return `
+    <button onclick="markStatus('${id}','paid')" class="bg-navy text-white px-4 py-2 rounded-lg text-xs font-semibold">✓ Sahkan Bayaran</button>
+    <button onclick="markStatus('${id}','cancelled')" class="border border-terracotta text-terracotta px-3 py-2 rounded-lg text-xs">Batalkan</button>`;
+
+  if (o.status === 'paid') return isPickup ? `
+    <button onclick="markStatus('${id}','packed')" class="bg-teal text-white px-4 py-2 rounded-lg text-xs font-semibold">✅ Tandakan Sedia Pickup</button>` : `
+    <button onclick="markStatus('${id}','packed')" class="bg-teal text-white px-4 py-2 rounded-lg text-xs font-semibold">📦 Tandakan Dibungkus</button>`;
+
+  if (o.status === 'packed') return isPickup ? `
+    <div class="text-xs text-green-dark bg-green-light rounded-lg px-3 py-2 flex-1">📍 Sedia untuk diambil di klinik</div>
+    <button onclick="markStatus('${id}','delivered')" class="bg-green text-white px-4 py-2 rounded-lg text-xs font-semibold">✅ Sedia Pickup</button>` : `
+    <button onclick="openShipModal('${id}')" class="bg-green text-white px-4 py-2 rounded-lg text-xs font-semibold">🚚 Hantar + Tracking</button>`;
+
+  if (o.status === 'shipped') return `
+    <div class="text-xs text-ink/40 italic flex-1">Menunggu patient confirm penerimaan...</div>
+    <button onclick="markStatus('${id}','delivered')" class="border border-ink/20 px-3 py-1.5 rounded-lg text-xs text-ink/60">Force Diterima</button>`;
+
+  return '';
+}
+
+// ── Status Update ────────────────────────────────────
 async function markStatus(orderId, status, extra = {}) {
   const ts = {};
-  if (status === 'paid')      ts.paid_at = new Date().toISOString();
-  if (status === 'packed')    ts.packed_at = new Date().toISOString();
+  if (status === 'paid')      ts.paid_at      = new Date().toISOString();
+  if (status === 'packed')    ts.packed_at    = new Date().toISOString();
   if (status === 'delivered') ts.delivered_at = new Date().toISOString();
-  const { data: updated } = await window.db.from('orders')
+
+  const { data: updated, error } = await window.db.from('psy_orders')
     .update({ status, updated_at: new Date().toISOString(), ...ts, ...extra })
-    .eq('id', orderId).select('order_ref,patient_id,tracking_number').single();
-  const uid = updated?.patient_id;
-  const ref = updated?.order_ref || '';
+    .eq('id', orderId).select('order_ref, patient_id, tracking_number').single()
+    .then(r => r, r => r);
+
+  if (error) { banner('Gagal: ' + (error.message || 'Ralat'), 'error'); return; }
+
+  // Notify patient
+  const ref      = updated?.order_ref || '';
+  const uid      = updated?.patient_id;
+  const order    = allOrders.find(x => x.id === orderId);
+  const isPickup = order?.delivery_method === 'pickup';
   const NOTIF = {
-    paid:      ['Bayaran diterima ✓', `Pesanan ${ref} telah disahkan. Kami sedang menyediakan parsel anda.`],
-    packed:    ['Pesanan sedang dibungkus 📦', `Pesanan ${ref} sedang disediakan untuk penghantaran.`],
-    shipped:   ['Pesanan dalam perjalanan 🚚', `Pesanan ${ref} telah dihantar. No. tracking: ${extra.tracking_number || '—'}`],
-    delivered: ['Pesanan diterima ✅', `Pesanan ${ref} telah ditanda diterima. Terima kasih!`],
+    paid:      ['Bayaran disahkan ✓',          isPickup
+                  ? `Pesanan ${ref} disahkan. Kami akan maklumkan bila sedia untuk diambil.`
+                  : `Pesanan ${ref} telah disahkan. Kami sedang menyediakan parsel anda.`],
+    packed:    [isPickup ? 'Pesanan sedia untuk diambil 📍' : 'Pesanan sedang dibungkus 📦',
+                isPickup
+                  ? `Pesanan ${ref} sedia untuk diambil di klinik. Datang pada waktu operasi.`
+                  : `Pesanan ${ref} sedang disediakan untuk penghantaran.`],
+    shipped:   ['Pesanan dalam perjalanan 🚚',  `Pesanan ${ref} telah dihantar. No. tracking: ${extra.tracking_number || '—'}`],
+    delivered: ['Pesanan selesai ✅',           `Pesanan ${ref} telah selesai. Terima kasih!`],
+    cancelled: ['Pesanan dibatalkan',           `Pesanan ${ref} telah dibatalkan. Hubungi kami untuk maklumat lanjut.`],
   };
-  if (uid && NOTIF[status]) await notify(uid, 'order', NOTIF[status][0], NOTIF[status][1], 'orders.html');
+  if (uid && NOTIF[status]) {
+    await window.db.from('psy_notifications').insert({
+      user_id: uid, type: 'order',
+      title: NOTIF[status][0], body: NOTIF[status][1],
+      link: 'orders.html',
+    }).then(() => {}, () => {});
+  }
+
   banner('Status dikemaskini: ' + status);
-  loadOrders();
+  await loadOrders();
 }
 
+// ── Ship Modal ───────────────────────────────────────
 function openShipModal(orderId) {
   document.getElementById('ship-order-id').value = orderId;
   document.getElementById('ship-tracking').value = '';
+  document.getElementById('ship-courier').value  = 'JNT';
   document.getElementById('ship-photo-label').textContent = 'Klik untuk upload';
   document.getElementById('ship-photo-preview').classList.add('hidden');
+  document.getElementById('ship-photo').value = '';
+  document.getElementById('ship-btn').disabled = false;
+  document.getElementById('ship-btn').textContent = 'Tandakan Dihantar';
   document.getElementById('ship-modal').classList.remove('hidden');
   shipPhotoFile = null;
 }
@@ -158,10 +358,13 @@ function previewShipPhoto(e) {
 }
 
 async function confirmShip() {
-  const orderId = document.getElementById('ship-order-id').value;
+  const orderId  = document.getElementById('ship-order-id').value;
   const tracking = document.getElementById('ship-tracking').value.trim();
-  const courier = document.getElementById('ship-courier').value;
-  if (!tracking) { banner('Masukkan tracking number', 'error'); return; }
+  const courier  = document.getElementById('ship-courier').value;
+  if (!tracking) { banner('Masukkan tracking number dahulu', 'error'); return; }
+
+  const btn = document.getElementById('ship-btn');
+  btn.disabled = true; btn.textContent = 'Menghantar...';
 
   let photoUrl = null;
   if (shipPhotoFile) {
@@ -176,76 +379,112 @@ async function confirmShip() {
   }
 
   await markStatus(orderId, 'shipped', {
-    tracking_number: tracking,
-    courier,
+    tracking_number: tracking, courier,
     tracking_photo_url: photoUrl,
     shipped_at: new Date().toISOString(),
   });
   closeShipModal();
 }
 
+// ── Detail Modal ─────────────────────────────────────
+function openDetailModal(orderId) {
+  const o = allOrders.find(x => x.id === orderId);
+  if (!o) return;
+  const sm    = STATUS_META[o.status] || STATUS_META.pending;
+  const items = Array.isArray(o.items) ? o.items : [];
+
+  document.getElementById('detail-title').textContent = o.order_ref;
+  document.getElementById('detail-body').innerHTML = `
+    <div class="flex items-center gap-2 flex-wrap">
+      <span class="chip text-sm ${sm.chip}">${sm.icon} ${sm.label}</span>
+      ${o.delivery_method === 'pickup'
+        ? '<span class="chip bg-ink/10 text-ink/60 text-xs">Self Pickup</span>'
+        : '<span class="chip bg-navy-light text-navy text-xs">Pos / Delivery</span>'}
+    </div>
+
+    <div class="space-y-1 text-sm">
+      <div class="flex justify-between"><span class="text-ink/60">Patient</span><strong>${o.psy_profiles?.full_name || '—'}</strong></div>
+      <div class="flex justify-between"><span class="text-ink/60">Telefon</span><span>${o.psy_profiles?.phone || '—'}</span></div>
+      <div class="flex justify-between"><span class="text-ink/60">Tarikh Order</span><span>${formatDateTime(o.created_at)}</span></div>
+      ${o.paid_at      ? `<div class="flex justify-between"><span class="text-ink/60">Dibayar</span><span>${formatDateTime(o.paid_at)}</span></div>` : ''}
+      ${o.packed_at    ? `<div class="flex justify-between"><span class="text-ink/60">Dibungkus</span><span>${formatDateTime(o.packed_at)}</span></div>` : ''}
+      ${o.shipped_at   ? `<div class="flex justify-between"><span class="text-ink/60">Dihantar</span><span>${formatDateTime(o.shipped_at)}</span></div>` : ''}
+      ${o.delivered_at ? `<div class="flex justify-between"><span class="text-ink/60">Diterima</span><span>${formatDateTime(o.delivered_at)}</span></div>` : ''}
+    </div>
+
+    ${o.delivery_address ? `
+    <div>
+      <div class="text-xs font-semibold text-ink/60 mb-1">📍 Alamat Penghantaran</div>
+      <div class="bg-cream rounded-lg p-3 text-sm">${o.delivery_address}</div>
+    </div>` : ''}
+
+    <div>
+      <div class="text-xs font-semibold text-ink/60 mb-2">🛍 Item Ditempah</div>
+      <div class="space-y-1">
+        ${items.map(it => `
+          <div class="flex justify-between text-sm">
+            <span>${it.name} × ${it.qty}</span>
+            <span class="font-medium">RM ${(Number(it.price || 0) * it.qty).toFixed(2)}</span>
+          </div>`).join('')}
+        <div class="flex justify-between text-sm font-bold border-t border-ink/10 pt-2 mt-2">
+          <span>Jumlah</span><span>RM ${Number(o.total).toFixed(2)}</span>
+        </div>
+      </div>
+    </div>
+
+    ${o.tracking_number ? `
+    <div>
+      <div class="text-xs font-semibold text-ink/60 mb-1">🚚 Maklumat Tracking</div>
+      <div class="bg-green-light rounded-lg p-3 space-y-1">
+        <div class="flex justify-between text-sm"><span class="text-ink/60">Kurier</span><strong>${o.courier || '—'}</strong></div>
+        <div class="flex justify-between text-sm"><span class="text-ink/60">No. Tracking</span><strong class="font-mono">${o.tracking_number}</strong></div>
+        ${o.tracking_photo_url ? `<img src="${o.tracking_photo_url}" class="w-full mt-2 rounded-lg border border-ink/10 cursor-pointer max-h-40 object-cover" onclick="window.open('${o.tracking_photo_url}','_blank')">` : ''}
+      </div>
+    </div>` : ''}
+
+    ${o.notes ? `<div><div class="text-xs font-semibold text-ink/60 mb-1">📝 Nota</div><div class="bg-cream rounded-lg p-3 text-sm">${o.notes}</div></div>` : ''}
+  `;
+  document.getElementById('detail-modal').classList.remove('hidden');
+}
+function closeDetailModal() { document.getElementById('detail-modal').classList.add('hidden'); }
+
+// ── Load Data ────────────────────────────────────────
 async function loadOrders() {
-  let query = window.db.from('orders').select('*, profiles(full_name, phone)').order('created_at', { ascending: false });
-  if (activeFilter !== 'all') query = query.eq('status', activeFilter);
-  const { data: orders } = await query;
-  const list = orders || [];
+  const { data: orders, error } = await window.db
+    .from('psy_orders')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .then(r => r, r => r);
 
-  document.getElementById('orders-list').innerHTML = list.length ? list.map(o => {
-    const sm = STATUS_META[o.status] || STATUS_META.pending;
-    const items = Array.isArray(o.items) ? o.items : [];
-    const patient = o.profiles?.full_name || 'Patient';
-    const phone = o.profiles?.phone || '';
+  if (error || !orders?.length) {
+    allOrders = [];
+    renderStats([]);
+    renderOrders();
+    return;
+  }
 
-    const actions = (() => {
-      if (o.status === 'pending') return `
-        <button onclick="markStatus('${o.id}','paid')" class="bg-navy text-white px-4 py-2 rounded-lg text-xs font-semibold">✓ Bayaran Diterima</button>`;
-      if (o.status === 'paid') return `
-        <button onclick="markStatus('${o.id}','packed')" class="bg-teal text-white px-4 py-2 rounded-lg text-xs font-semibold">📦 Tandakan Bungkus</button>`;
-      if (o.status === 'packed') return `
-        <button onclick="openShipModal('${o.id}')" class="bg-green text-white px-4 py-2 rounded-lg text-xs font-semibold">🚚 Hantar + Tracking</button>`;
-      if (o.status === 'shipped') return `
-        <div class="text-xs text-ink/50 italic">Menunggu patient confirm...</div>
-        <button onclick="markStatus('${o.id}','delivered')" class="border border-ink/20 px-3 py-1.5 rounded-lg text-xs">Force Delivered</button>`;
-      return '';
-    })();
+  // Fetch profiles separately (no FK constraint on patient_id)
+  const ids = [...new Set(orders.map(o => o.patient_id).filter(Boolean))];
+  let profileMap = {};
+  if (ids.length) {
+    const { data: profiles } = await window.db
+      .from('psy_profiles')
+      .select('id, full_name, phone')
+      .in('id', ids)
+      .then(r => r, () => ({ data: [] }));
+    (profiles || []).forEach(p => { profileMap[p.id] = p; });
+  }
 
-    return `
-    <div class="bg-white rounded-xl border border-ink/10 overflow-hidden">
-      <div class="px-5 py-4 flex items-center justify-between flex-wrap gap-2">
-        <div class="flex items-center gap-3">
-          <div>
-            <div class="font-bold text-sm">${o.order_ref}</div>
-            <div class="text-xs text-ink/50">${new Date(o.created_at).toLocaleString('ms-MY')} · ${patient}${phone ? ' · ' + phone : ''}</div>
-          </div>
-        </div>
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="chip text-xs ${sm.chip}">${sm.label}</span>
-          <span class="font-bold text-sm">RM ${Number(o.total).toFixed(2)}</span>
-        </div>
-      </div>
-
-      <div class="px-5 pb-4 space-y-3">
-        <div class="flex flex-wrap gap-1.5">
-          ${items.map(it => `<span class="chip bg-cream text-ink/70 text-xs">${it.name} × ${it.qty}</span>`).join('')}
-        </div>
-
-        ${o.tracking_number ? `
-          <div class="flex items-center gap-3 bg-green-light rounded-lg px-3 py-2">
-            <div class="flex-1 min-w-0">
-              <div class="text-[10px] text-ink/60">Tracking · ${o.courier || 'JNT'}</div>
-              <div class="font-bold text-sm">${o.tracking_number}</div>
-            </div>
-            ${o.tracking_photo_url ? `<img src="${o.tracking_photo_url}" class="h-12 w-12 rounded object-cover border border-ink/10 cursor-pointer" onclick="window.open('${o.tracking_photo_url}','_blank')">` : ''}
-          </div>` : ''}
-
-        ${actions ? `<div class="flex items-center gap-2 pt-1">${actions}</div>` : ''}
-      </div>
-    </div>`;
-  }).join('') : '<div class="bg-white rounded-xl border border-ink/10 p-8 text-center text-ink/40 text-sm">Tiada orders</div>';
+  allOrders = orders.map(o => ({ ...o, psy_profiles: profileMap[o.patient_id] || null }));
+  renderStats(allOrders);
+  renderOrders();
 }
 
+function formatDate(d)     { return new Date(d).toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric' }); }
+function formatDateTime(d) { return new Date(d).toLocaleString('ms-MY', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }); }
+
 (async () => {
-  const user = await initStaff('orders', 'Urus orders & penghantaran');
+  const user = await initStaff('psy_orders', 'Urus orders & penghantaran');
   if (!user) return;
   loadOrders();
 })();

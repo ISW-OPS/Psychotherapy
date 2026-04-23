@@ -9,6 +9,7 @@ import { corsHeaders } from '../_shared/cors.ts'
 interface InviteRequest {
   email: string;
   full_name: string;
+  staff_role: 'admin' | 'doctor' | 'coach' | 'manager';
   specialization?: string;
   registration_no?: string;
   phone?: string;
@@ -39,7 +40,7 @@ Deno.serve(async (req: Request) => {
     if (userErr || !user) throw new Error('Tidak sah: sila log masuk semula')
 
     const { data: callerProfile } = await userClient
-      .from('profiles')
+      .from('psy_profiles')
       .select('role')
       .eq('id', user.id)
       .single()
@@ -47,11 +48,17 @@ Deno.serve(async (req: Request) => {
     if (!callerProfile || callerProfile.role !== 'staff') {
       throw new Error('Akses ditolak: hanya staff boleh daftar staff baru')
     }
+    if (callerProfile.staff_role !== 'admin') {
+      throw new Error('Akses ditolak: hanya Admin boleh daftar staff baru')
+    }
 
     // Parse request body
     const body: InviteRequest = await req.json()
     if (!body.email || !body.full_name) {
       throw new Error('Email dan nama wajib diisi')
+    }
+    if (!['admin', 'doctor', 'coach', 'manager'].includes(body.staff_role)) {
+      throw new Error('Staff role mesti admin, doctor, coach, atau manager')
     }
 
     // Use service role key for admin operations
@@ -83,28 +90,26 @@ Deno.serve(async (req: Request) => {
       newUserId = data.user.id
     }
 
-    // Update profile with extra info (specialization, regno, phone)
-    if (body.specialization || body.registration_no || body.phone) {
-      // Wait briefly for trigger to create profile
-      await new Promise(r => setTimeout(r, 500))
-      await adminClient
-        .from('profiles')
-        .update({
-          specialization: body.specialization || null,
-          registration_no: body.registration_no || null,
-          phone: body.phone || null,
-        })
-        .eq('id', newUserId)
-    }
+    // Update profile with staff_role and extra info
+    await new Promise(r => setTimeout(r, 500))
+    await adminClient
+      .from('psy_profiles')
+      .update({
+        staff_role: body.staff_role,
+        specialization: body.specialization || null,
+        registration_no: body.registration_no || null,
+        phone: body.phone || null,
+      })
+      .eq('id', newUserId)
 
     // Audit log
-    await adminClient.from('audit_log').insert({
+    await adminClient.from('psy_audit_log').insert({
       actor_id: user.id,
-      actor_name: (await userClient.from('profiles').select('full_name').eq('id', user.id).single()).data?.full_name,
+      actor_name: (await userClient.from('psy_profiles').select('full_name').eq('id', user.id).single()).data?.full_name,
       actor_role: 'staff',
       action: 'staff.invited',
       target: newUserId,
-      meta: { email: body.email, name: body.full_name, send_invite: body.send_invite !== false },
+      meta: { email: body.email, name: body.full_name, staff_role: body.staff_role, send_invite: body.send_invite !== false },
     })
 
     return new Response(

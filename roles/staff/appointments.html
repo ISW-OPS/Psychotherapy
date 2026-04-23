@@ -9,6 +9,35 @@
 <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="_styles.css" rel="stylesheet">
+<style>
+.cal-day { min-height: 90px; }
+.cal-day.other-month { opacity: 0.35; }
+.cal-day.today { background: #f0f4ff; }
+.session-chip {
+  display: block; font-size: 10px; padding: 2px 5px; border-radius: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: pointer; margin-bottom: 2px; line-height: 1.4;
+}
+.chip-booked     { background:#dbeafe; color:#1e3a5f; }
+.chip-hadir      { background:#d1fae5; color:#065f46; }
+.chip-cancel     { background:#fee2e2; color:#991b1b; }
+.chip-reschedule { background:#fef3c7; color:#92400e; }
+
+@media print {
+  #sidebar, #page-header, .print-hide, nav, .mobile-nav,
+  #book-modal, #reschedule-modal, #day-modal { display: none !important; }
+  #app-shell { display: block !important; }
+  body { background: white; }
+  .main-content { padding: 0 !important; }
+  #print-appt-header { display: block !important; }
+  #view-list { display: block !important; }
+  #view-calendar { display: none !important; }
+  table { font-size: 11px; }
+  th, td { padding: 6px 8px !important; }
+  .chip { border: 1px solid #ccc !important; background: transparent !important; color: #333 !important; }
+}
+#print-appt-header { display: none; }
+</style>
 </head>
 <body class="min-h-screen">
 
@@ -23,8 +52,78 @@
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
       <div class="p-4 md:p-8 space-y-4">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div class="flex gap-2 items-center flex-wrap">
+
+        <!-- Print-only header -->
+        <div id="print-appt-header" class="mb-4">
+          <h1 class="text-xl font-bold">Ibnu Sina Wellness — Jadual Sesi</h1>
+          <p class="text-xs text-gray-500" id="print-appt-date"></p>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="flex flex-wrap items-center justify-between gap-3 print-hide">
+          <div class="flex gap-1 bg-white border border-ink/20 rounded-xl p-1">
+            <button id="btn-view-cal"  onclick="setView('calendar')"
+              class="px-4 py-1.5 rounded-lg text-sm font-medium transition-colors bg-navy text-white">
+              📅 Kalendar
+            </button>
+            <button id="btn-view-list" onclick="setView('list')"
+              class="px-4 py-1.5 rounded-lg text-sm font-medium transition-colors text-ink/60 hover:text-ink">
+              📋 Senarai
+            </button>
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="count" class="text-sm text-ink/60"></span>
+            <button onclick="printSchedule()" class="flex items-center gap-1.5 px-4 py-2 border border-ink/20 rounded-xl text-sm bg-white hover:border-navy hover:text-navy transition-colors">
+              🖨️ Print
+            </button>
+            <button onclick="openBookModal()" class="flex items-center gap-1.5 bg-navy text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-navy-dark">
+              + Buat Sesi
+            </button>
+          </div>
+        </div>
+
+        <!-- ── CALENDAR VIEW ──────────────────────────── -->
+        <div id="view-calendar">
+          <!-- Month nav -->
+          <div class="flex items-center justify-between mb-3 print-hide">
+            <button onclick="changeMonth(-1)" class="px-3 py-1.5 border border-ink/20 rounded-lg text-sm hover:border-navy">← Sebelum</button>
+            <div class="text-center">
+              <h2 id="cal-month-label" class="font-bold text-lg"></h2>
+            </div>
+            <div class="flex gap-2">
+              <button onclick="goToday()" class="px-3 py-1.5 border border-ink/20 rounded-lg text-sm hover:border-navy text-navy">Hari Ini</button>
+              <button onclick="changeMonth(1)" class="px-3 py-1.5 border border-ink/20 rounded-lg text-sm hover:border-navy">Berikut →</button>
+            </div>
+          </div>
+
+          <!-- Legend -->
+          <div class="flex gap-3 mb-3 flex-wrap print-hide">
+            <span class="flex items-center gap-1 text-xs"><span class="w-3 h-3 rounded bg-[#dbeafe] inline-block"></span>Ditempah</span>
+            <span class="flex items-center gap-1 text-xs"><span class="w-3 h-3 rounded bg-[#d1fae5] inline-block"></span>Hadir</span>
+            <span class="flex items-center gap-1 text-xs"><span class="w-3 h-3 rounded bg-[#fef3c7] inline-block"></span>Reschedule</span>
+            <span class="flex items-center gap-1 text-xs"><span class="w-3 h-3 rounded bg-[#fee2e2] inline-block"></span>Cancel</span>
+          </div>
+
+          <!-- Calendar grid -->
+          <div class="overflow-x-auto rounded-xl border border-ink/10">
+          <div class="bg-white min-w-[560px]">
+            <div class="grid grid-cols-7 border-b border-ink/10">
+              <div class="text-center text-xs font-semibold text-ink/50 py-2">Isn</div>
+              <div class="text-center text-xs font-semibold text-ink/50 py-2">Sel</div>
+              <div class="text-center text-xs font-semibold text-ink/50 py-2">Rab</div>
+              <div class="text-center text-xs font-semibold text-ink/50 py-2">Kha</div>
+              <div class="text-center text-xs font-semibold text-ink/50 py-2">Jum</div>
+              <div class="text-center text-xs font-semibold text-ink/50 py-2">Sab</div>
+              <div class="text-center text-xs font-semibold text-ink/50 py-2">Ahd</div>
+            </div>
+            <div id="cal-grid" class="grid grid-cols-7"></div>
+          </div>
+          </div>
+        </div>
+
+        <!-- ── LIST VIEW ──────────────────────────────── -->
+        <div id="view-list" class="hidden">
+          <div class="flex gap-2 items-center flex-wrap mb-3 print-hide">
             <input id="f-date" type="date" class="border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none focus:border-navy">
             <select id="f-status" class="border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none">
               <option value="">Semua status</option>
@@ -33,19 +132,113 @@
               <option value="cancel">❌ Cancel</option>
               <option value="reschedule">🔄 Reschedule</option>
             </select>
-            <button onclick="clearDate()" class="text-xs text-navy hover:underline">Tunjuk semua</button>
+            <button onclick="clearFilter()" class="text-xs text-navy hover:underline">Tunjuk semua</button>
           </div>
-          <span id="count" class="text-sm text-ink/60"></span>
+          <div class="bg-white rounded-xl border border-ink/10 overflow-x-auto">
+            <table class="data">
+              <thead><tr><th>Tarikh & Masa</th><th>Pesakit</th><th>Plan · Minggu</th><th>Status</th><th>Skor</th><th>Nota</th><th class="print-hide">Tindakan</th></tr></thead>
+              <tbody id="tbody"></tbody>
+            </table>
+          </div>
         </div>
 
-        <div class="bg-white rounded-xl border border-ink/10 overflow-x-auto">
-          <table class="data">
-            <thead><tr><th>Tarikh & Masa</th><th>Pesakit</th><th>Plan · Minggu</th><th>Status</th><th>Skor</th><th>Nota</th><th>Tindakan</th></tr></thead>
-            <tbody id="tbody"></tbody>
-          </table>
-        </div>
       </div>
     </main>
+  </div>
+</div>
+
+<!-- ── Day Sessions Modal ─────────────────────────── -->
+<div id="day-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] flex flex-col">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-ink/10 flex-shrink-0">
+      <h3 class="font-bold" id="day-modal-title">—</h3>
+      <button onclick="document.getElementById('day-modal').classList.add('hidden')" class="text-ink/40 hover:text-ink text-2xl leading-none">&times;</button>
+    </div>
+    <div id="day-modal-body" class="p-4 overflow-y-auto space-y-3"></div>
+    <div class="px-6 py-3 border-t border-ink/10 flex-shrink-0">
+      <button onclick="openBookFromDay()" class="w-full bg-navy text-white py-2.5 rounded-xl text-sm font-semibold">+ Tambah Sesi Pada Tarikh Ini</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Book New Session Modal ──────────────────────── -->
+<div id="book-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-md">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-ink/10">
+      <h3 class="font-bold text-lg">📅 Buat Sesi Baru</h3>
+      <button onclick="closeBookModal()" class="text-ink/40 hover:text-ink text-xl leading-none">&times;</button>
+    </div>
+    <div class="p-6 space-y-4">
+      <div>
+        <label class="label">Pesakit</label>
+        <select id="bk-patient" onchange="autoFillPlan()" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+          <option value="">-- Pilih pesakit --</option>
+        </select>
+      </div>
+      <div id="bk-plan-row">
+        <label class="label">Plan Rawatan</label>
+        <div id="bk-plan-display" class="w-full border border-ink/10 bg-cream/40 rounded-xl px-3 py-2.5 text-sm text-ink/50 italic">
+          Pilih pesakit dahulu
+        </div>
+        <input type="hidden" id="bk-plan-id">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="label">Tarikh Sesi</label>
+          <input id="bk-date" type="date" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+        </div>
+        <div>
+          <label class="label">Masa</label>
+          <input id="bk-time" type="time" value="10:00" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+        </div>
+      </div>
+      <div>
+        <label class="label">Minggu ke-</label>
+        <input id="bk-week" type="number" min="1" max="52" placeholder="Cth: 3"
+          class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+      </div>
+      <div>
+        <label class="label">Nota (optional)</label>
+        <textarea id="bk-notes" rows="2" placeholder="Nota tambahan..."
+          class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy resize-none"></textarea>
+      </div>
+      <div id="book-error" class="hidden text-xs text-terracotta bg-terracotta/10 px-3 py-2 rounded-lg"></div>
+    </div>
+    <div class="px-6 pb-5 flex gap-3">
+      <button onclick="closeBookModal()" class="flex-1 border border-ink/20 text-ink/60 py-2.5 rounded-xl text-sm">Batal</button>
+      <button onclick="saveSession()" id="btn-save-session" class="flex-1 bg-navy text-white py-2.5 rounded-xl text-sm font-semibold">Simpan Sesi</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Reschedule Modal ────────────────────────────── -->
+<div id="reschedule-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-ink/10">
+      <h3 class="font-bold">🔄 Reschedule Sesi</h3>
+      <button onclick="closeReschedule()" class="text-ink/40 hover:text-ink text-xl leading-none">&times;</button>
+    </div>
+    <div class="p-6 space-y-4">
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="label">Tarikh Baru</label>
+          <input id="rs-date" type="date" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+        </div>
+        <div>
+          <label class="label">Masa Baru</label>
+          <input id="rs-time" type="time" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+        </div>
+      </div>
+      <div>
+        <label class="label">Sebab Reschedule</label>
+        <input id="rs-reason" type="text" placeholder="Cth: Pesakit tidak sihat"
+          class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+      </div>
+    </div>
+    <div class="px-6 pb-5 flex gap-3">
+      <button onclick="closeReschedule()" class="flex-1 border border-ink/20 text-ink/60 py-2.5 rounded-xl text-sm">Batal</button>
+      <button onclick="confirmReschedule()" id="btn-rs-confirm" class="flex-1 bg-gold text-white py-2.5 rounded-xl text-sm font-semibold">Reschedule</button>
+    </div>
   </div>
 </div>
 
@@ -56,102 +249,387 @@
 <script src="../../shared/navbar.js"></script>
 <script src="_shared.js"></script>
 <script>
-let allSessions = [], patientMap = {}, planMap = {};
+let allSessions = [], patientMap = {}, planMap = {}, profileMap = {};
+let allPatientsList = [], allPlansList = [];
+let rescheduleId = null;
+let currentView  = 'calendar';
+let calYear, calMonth; // 0-based month
+let selectedDayDate = null;
 
 const statusChipMap = {
-  booked: '<span class="chip bg-navy-light text-navy">📅 Ditempah</span>',
-  hadir: '<span class="chip bg-green-light text-green-dark">✅ Hadir</span>',
-  cancel: '<span class="chip bg-terracotta-light text-terracotta">❌ Cancel</span>',
+  booked:     '<span class="chip bg-navy-light text-navy">📅 Ditempah</span>',
+  hadir:      '<span class="chip bg-green-light text-green-dark">✅ Hadir</span>',
+  cancel:     '<span class="chip bg-terracotta-light text-terracotta">❌ Cancel</span>',
   reschedule: '<span class="chip bg-gold-light text-gold-dark">🔄 Reschedule</span>',
 };
+const chipClass = { booked:'chip-booked', hadir:'chip-hadir', cancel:'chip-cancel', reschedule:'chip-reschedule' };
 
+// ── Load ─────────────────────────────────────────────
 async function loadSessions() {
-  const [sessions, patients, plans] = await Promise.all([
-    dbQuery('plan_weekly_progress', { order: { col: 'session_date', asc: true } }),
-    dbQuery('patients'),
-    dbQuery('treatment_plans'),
+  const [sessionsRes, patientsRes, plans] = await Promise.all([
+    dbQuery('psy_plan_weekly_progress', { order: { col: 'session_date', asc: true } }),
+    window.db.from('psy_patients')
+      .select('*, psy_profiles(id, full_name, role)')
+      .then(r => r, () => ({ data: [] })),
+    dbQuery('psy_treatment_plans'),
   ]);
-  allSessions = sessions;
-  patients.forEach(p => patientMap[p.id] = p);
+
+  allSessions  = sessionsRes;
+  allPlansList = plans;
+
+  const patients = (patientsRes.data || []).filter(p => p.psy_profiles?.role === 'patient');
+  allPatientsList = patients;
+
+  patients.forEach(p => {
+    patientMap[p.id] = p;
+    if (p.psy_profiles) profileMap[p.psy_profiles.id] = p.psy_profiles;
+  });
   plans.forEach(p => planMap[p.id] = p);
-  render();
+
+  document.getElementById('count').textContent = `${allSessions.length} sesi`;
+  renderCalendar();
+  renderList();
+  populatePatientDropdown();
 }
 
-function render() {
-  const date = document.getElementById('f-date').value;
-  const status = document.getElementById('f-status').value;
-  let filtered = allSessions;
-  if (date) filtered = filtered.filter(s => s.session_date?.startsWith(date));
-  if (status) filtered = filtered.filter(s => s.status === status);
+function patientName(p) {
+  if (!p) return '—';
+  return p.psy_profiles?.full_name || profileMap[p.user_id]?.full_name || p.mrn || '—';
+}
 
-  document.getElementById('count').textContent = `${filtered.length} sesi`;
+// ── View toggle ───────────────────────────────────────
+function setView(v) {
+  currentView = v;
+  document.getElementById('view-calendar').classList.toggle('hidden', v !== 'calendar');
+  document.getElementById('view-list').classList.toggle('hidden', v !== 'list');
+  document.getElementById('btn-view-cal').className  = `px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${v === 'calendar' ? 'bg-navy text-white' : 'text-ink/60 hover:text-ink'}`;
+  document.getElementById('btn-view-list').className = `px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${v === 'list' ? 'bg-navy text-white' : 'text-ink/60 hover:text-ink'}`;
+}
+
+// ── Calendar ──────────────────────────────────────────
+function changeMonth(dir) { calMonth += dir; if (calMonth > 11) { calMonth = 0; calYear++; } else if (calMonth < 0) { calMonth = 11; calYear--; } renderCalendar(); }
+function goToday() { const t = new Date(); calYear = t.getFullYear(); calMonth = t.getMonth(); renderCalendar(); }
+
+function renderCalendar() {
+  const now      = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const months   = ['Januari','Februari','Mac','April','Mei','Jun','Julai','Ogos','September','Oktober','November','Disember'];
+  document.getElementById('cal-month-label').textContent = `${months[calMonth]} ${calYear}`;
+
+  // First cell = Monday of the week containing 1st of month
+  const firstDay = new Date(calYear, calMonth, 1);
+  // getDay(): 0=Sun,1=Mon...6=Sat. We want Mon=0
+  const startOffset = (firstDay.getDay() + 6) % 7;
+  const startDate   = new Date(firstDay);
+  startDate.setDate(startDate.getDate() - startOffset);
+
+  // Build session map: dateStr → [sessions]
+  const sessionMap = {};
+  allSessions.forEach(s => {
+    if (!s.session_date) return;
+    const d = s.session_date.slice(0, 10);
+    if (!sessionMap[d]) sessionMap[d] = [];
+    sessionMap[d].push(s);
+  });
+
+  // Mon=1, Tue=2 are clinic off-days (JS getDay: 0=Sun,1=Mon,2=Tue)
+  const CLOSED = new Set([1, 2]);
+
+  let html = '';
+  for (let i = 0; i < 42; i++) {
+    const d        = new Date(startDate);
+    d.setDate(d.getDate() + i);
+    const dateStr  = d.toISOString().slice(0, 10);
+    const isOther  = d.getMonth() !== calMonth;
+    const isToday  = dateStr === todayStr;
+    const isClosed = CLOSED.has(d.getDay());
+    const daySessions = sessionMap[dateStr] || [];
+
+    if (isClosed) {
+      html += `<div class="cal-day border-b border-r border-ink/10 p-1.5 cursor-not-allowed select-none bg-ink/[0.04] ${isOther ? 'other-month' : ''}">
+        <div class="text-xs font-semibold mb-1 text-ink/25">${d.getDate()}</div>
+        <div class="text-[9px] text-ink/25 font-medium mt-1">Tutup</div>
+      </div>`;
+      continue;
+    }
+
+    const chips = daySessions.slice(0, 3).map(s => {
+      const p    = patientMap[s.patient_id];
+      const name = patientName(p).split(' ')[0];
+      const cls  = chipClass[s.status] || 'chip-booked';
+      return `<span class="session-chip ${cls}" onclick="event.stopPropagation(); openDayModal('${dateStr}')">${name}</span>`;
+    }).join('');
+
+    const more = daySessions.length > 3
+      ? `<span class="text-[9px] text-ink/50 pl-1">+${daySessions.length - 3} lagi</span>` : '';
+
+    html += `<div class="cal-day border-b border-r border-ink/10 p-1.5 cursor-pointer hover:bg-navy-light/30 transition-colors ${isOther ? 'other-month' : ''} ${isToday ? 'today' : ''}"
+      onclick="openDayModal('${dateStr}')">
+      <div class="text-xs font-semibold mb-1 ${isToday ? 'text-navy' : 'text-ink/70'}">${d.getDate()}</div>
+      ${chips}${more}
+    </div>`;
+  }
+  document.getElementById('cal-grid').innerHTML = html;
+}
+
+// ── Day Modal ─────────────────────────────────────────
+function openDayModal(dateStr) {
+  selectedDayDate = dateStr;
+  const d = new Date(dateStr + 'T00:00:00');
+  document.getElementById('day-modal-title').textContent =
+    d.toLocaleDateString('ms-MY', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+
+  const daySessions = allSessions.filter(s => s.session_date?.startsWith(dateStr));
+  const isClosed    = [1, 2].includes(d.getDay()); // Mon/Tue closed
+  const addBtn      = document.querySelector('#day-modal > div > div:last-child');
+  if (addBtn) addBtn.style.display = isClosed ? 'none' : '';
+
+  document.getElementById('day-modal-body').innerHTML = daySessions.length
+    ? daySessions.map(s => {
+        const dt      = new Date(s.session_date);
+        const patient = patientMap[s.patient_id];
+        const plan    = planMap[s.plan_id];
+        const name    = patientName(patient);
+        const time    = dt.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+        return `<div class="bg-white border border-ink/10 rounded-xl p-3">
+          <div class="flex items-start justify-between gap-2">
+            <div>
+              <div class="font-semibold text-sm">${name}</div>
+              <div class="text-xs text-ink/50">${patient?.mrn || ''} · ${time} · Minggu ${s.week_number}</div>
+              <div class="text-xs text-ink/60 mt-0.5">${plan?.name || '—'}</div>
+              ${s.notes ? `<div class="text-xs text-ink/50 italic mt-1">${s.notes}</div>` : ''}
+            </div>
+            <div>${statusChipMap[s.status] || ''}</div>
+          </div>
+          <div class="flex gap-2 mt-2 flex-wrap">
+            ${s.status === 'booked' || s.status === 'reschedule'
+              ? `<button onclick="markHadir('${s.id}','${s.plan_id}',${s.week_number})" class="bg-green text-white text-xs px-3 py-1 rounded-lg">✅ Hadir</button>
+                 <button onclick="openReschedule('${s.id}')" class="border border-gold text-gold-dark text-xs px-3 py-1 rounded-lg">🔄 Reschedule</button>
+                 <button onclick="markCancel('${s.id}')" class="border border-terracotta text-terracotta text-xs px-3 py-1 rounded-lg">❌ Cancel</button>` : ''}
+          </div>
+        </div>`;
+      }).join('')
+    : '<p class="text-ink/40 text-sm text-center py-6">Tiada sesi pada tarikh ini.</p>';
+
+  document.getElementById('day-modal').classList.remove('hidden');
+}
+
+function openBookFromDay() {
+  document.getElementById('day-modal').classList.add('hidden');
+  openBookModal(selectedDayDate);
+}
+
+// ── List View ─────────────────────────────────────────
+function renderList() {
+  const date   = document.getElementById('f-date')?.value || '';
+  const status = document.getElementById('f-status')?.value || '';
+  let filtered = allSessions;
+  if (date)   filtered = filtered.filter(s => s.session_date?.startsWith(date));
+  if (status) filtered = filtered.filter(s => s.status === status);
 
   document.getElementById('tbody').innerHTML = filtered.length
     ? filtered.map(s => {
-        const dt = s.session_date ? new Date(s.session_date) : null;
+        const dt      = s.session_date ? new Date(s.session_date) : null;
         const patient = patientMap[s.patient_id];
-        const plan = planMap[s.plan_id];
+        const plan    = planMap[s.plan_id];
+        const name    = patientName(patient);
         return `<tr>
-          <td class="font-semibold">${dt ? dt.toLocaleDateString('ms-MY', { day: '2-digit', month: 'short' }) + ' · ' + dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
-          <td>${patient?.mrn || '—'}</td>
+          <td class="font-semibold">${dt
+            ? dt.toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric' })
+              + ' · ' + dt.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' })
+            : '—'}</td>
+          <td>
+            <div class="font-medium text-sm">${name}</div>
+            <div class="text-[10px] text-ink/50 font-mono">${patient?.mrn || '—'}</div>
+          </td>
           <td class="text-xs">${plan?.name || '—'}<br><span class="text-ink/60">Minggu ${s.week_number}</span></td>
           <td>${statusChipMap[s.status] || s.status}</td>
           <td>${s.score ? `<strong>${s.score}/10</strong>` : '—'}</td>
-          <td class="text-xs max-w-[200px] truncate">${s.notes || '—'}</td>
-          <td>
-            ${s.status !== 'hadir' ? `<button onclick="markHadir('${s.id}','${s.plan_id}',${s.week_number})" class="bg-green text-white text-xs px-3 py-1.5 rounded-lg">Hadir</button>` : ''}
-            ${s.status === 'booked' ? `<button onclick="markCancel('${s.id}')" class="text-terracotta text-xs ml-1">Cancel</button>` : ''}
+          <td class="text-xs max-w-[180px] truncate">${s.notes || '—'}</td>
+          <td class="whitespace-nowrap print-hide">
+            ${s.status === 'booked' || s.status === 'reschedule'
+              ? `<button onclick="markHadir('${s.id}','${s.plan_id}',${s.week_number})" class="bg-green text-white text-xs px-3 py-1.5 rounded-lg">Hadir</button>
+                 <button onclick="openReschedule('${s.id}')" class="text-gold-dark text-xs ml-1 hover:underline">Reschedule</button>
+                 <button onclick="markCancel('${s.id}')" class="text-terracotta text-xs ml-1 hover:underline">Cancel</button>` : ''}
           </td>
         </tr>`;
       }).join('')
     : '<tr><td colspan="7" class="text-center text-ink/40 py-8">Tiada sesi</td></tr>';
 }
 
+// ── Actions ──────────────────────────────────────────
 async function markHadir(id, planId, week) {
   try {
-    await dbUpdate('plan_weekly_progress', id, {
-      status: 'hadir',
-      updated_by: currentUser.id,
-      updated_by_name: currentUser.full_name,
-      updated_at: new Date().toISOString(),
+    await dbUpdate('psy_plan_weekly_progress', id, {
+      status: 'hadir', updated_by: currentUser.id,
+      updated_by_name: currentUser.full_name, updated_at: new Date().toISOString(),
     });
-    await window.db.from('treatment_plans').update({ current_week: week }).eq('id', planId);
+    await window.db.from('psy_treatment_plans').update({ current_week: week }).eq('id', planId);
     await auditLog('plan.week_hadir', planId, { week });
     banner(`Minggu ${week}: Hadir`);
+    document.getElementById('day-modal').classList.add('hidden');
     loadSessions();
-  } catch (err) {
-    banner('Ralat: ' + err.message, 'error');
-  }
+  } catch (err) { banner('Ralat: ' + err.message, 'error'); }
 }
 
 async function markCancel(id) {
-  if (!confirm('Tandakan sesi sebagai cancel? Patient perlu tempah semula.')) return;
+  if (!confirm('Tandakan sesi sebagai cancel?')) return;
   try {
-    await dbUpdate('plan_weekly_progress', id, {
-      status: 'cancel',
-      updated_by: currentUser.id,
-      updated_by_name: currentUser.full_name,
-      updated_at: new Date().toISOString(),
+    await dbUpdate('psy_plan_weekly_progress', id, {
+      status: 'cancel', updated_by: currentUser.id,
+      updated_by_name: currentUser.full_name, updated_at: new Date().toISOString(),
     });
     await auditLog('plan.week_cancel', id);
     banner('Sesi dibatalkan');
+    document.getElementById('day-modal').classList.add('hidden');
+    loadSessions();
+  } catch (err) { banner('Ralat: ' + err.message, 'error'); }
+}
+
+// ── Reschedule ────────────────────────────────────────
+function openReschedule(id) {
+  rescheduleId = id;
+  document.getElementById('rs-date').value   = '';
+  document.getElementById('rs-time').value   = '';
+  document.getElementById('rs-reason').value = '';
+  document.getElementById('day-modal').classList.add('hidden');
+  document.getElementById('reschedule-modal').classList.remove('hidden');
+}
+function closeReschedule() {
+  rescheduleId = null;
+  document.getElementById('reschedule-modal').classList.add('hidden');
+}
+async function confirmReschedule() {
+  const date   = document.getElementById('rs-date').value;
+  const time   = document.getElementById('rs-time').value;
+  const reason = document.getElementById('rs-reason').value.trim();
+  if (!date || !time) { alert('Sila pilih tarikh dan masa baru.'); return; }
+  const btn = document.getElementById('btn-rs-confirm');
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
+  try {
+    await dbUpdate('psy_plan_weekly_progress', rescheduleId, {
+      status: 'reschedule', session_date: new Date(`${date}T${time}:00`).toISOString(),
+      notes: reason || null, updated_by: currentUser.id,
+      updated_by_name: currentUser.full_name, updated_at: new Date().toISOString(),
+    });
+    await auditLog('plan.reschedule', rescheduleId, { date, reason });
+    banner('Sesi dijadualkan semula');
+    closeReschedule();
     loadSessions();
   } catch (err) {
     banner('Ralat: ' + err.message, 'error');
+  } finally { btn.disabled = false; btn.textContent = 'Reschedule'; }
+}
+
+// ── Book New Session ──────────────────────────────────
+function populatePatientDropdown() {
+  const sel  = document.getElementById('bk-patient');
+  const opts = allPatientsList.map(p => `<option value="${p.id}">${patientName(p)} · ${p.mrn}</option>`);
+  sel.innerHTML = '<option value="">-- Pilih pesakit --</option>' + opts.join('');
+}
+
+function autoFillPlan() {
+  const patientId = document.getElementById('bk-patient').value;
+  const display   = document.getElementById('bk-plan-display');
+  const hiddenId  = document.getElementById('bk-plan-id');
+  document.getElementById('book-error').classList.add('hidden');
+
+  if (!patientId) {
+    display.textContent = 'Pilih pesakit dahulu';
+    display.className   = 'w-full border border-ink/10 bg-cream/40 rounded-xl px-3 py-2.5 text-sm text-ink/50 italic';
+    hiddenId.value = '';
+    return;
+  }
+
+  // Find from already-loaded plans (avoids RLS issue with fresh query)
+  const plan = allPlansList.find(p =>
+    p.patient_id === patientId && p.status !== 'completed' && p.status !== 'cancelled'
+  );
+
+  if (plan) {
+    display.textContent = `${plan.name} · Minggu ${plan.current_week || 0}/${plan.total_weeks || '?'}`;
+    display.className   = 'w-full border border-navy/20 bg-navy-light/30 rounded-xl px-3 py-2.5 text-sm text-navy font-medium';
+    hiddenId.value = plan.id;
+    document.getElementById('bk-week').value = (plan.current_week || 0) + 1;
+  } else {
+    display.textContent = 'Tiada plan aktif untuk pesakit ini';
+    display.className   = 'w-full border border-ink/10 bg-cream/40 rounded-xl px-3 py-2.5 text-sm text-ink/40 italic';
+    hiddenId.value = '';
   }
 }
 
-function clearDate() {
-  document.getElementById('f-date').value = '';
-  render();
+function openBookModal(prefillDate) {
+  document.getElementById('bk-patient').value = '';
+  document.getElementById('bk-plan-id').value = '';
+  document.getElementById('bk-plan-display').textContent = 'Pilih pesakit dahulu';
+  document.getElementById('bk-plan-display').className = 'w-full border border-ink/10 bg-cream/40 rounded-xl px-3 py-2.5 text-sm text-ink/50 italic';
+  document.getElementById('bk-date').value  = prefillDate || new Date().toISOString().split('T')[0];
+  document.getElementById('bk-time').value  = '10:00';
+  document.getElementById('bk-week').value  = '';
+  document.getElementById('bk-notes').value = '';
+  document.getElementById('book-error').classList.add('hidden');
+  document.getElementById('book-modal').classList.remove('hidden');
+}
+function closeBookModal() { document.getElementById('book-modal').classList.add('hidden'); }
+
+async function saveSession() {
+  const patientId = document.getElementById('bk-patient').value;
+  const planId    = document.getElementById('bk-plan-id').value;
+  const date      = document.getElementById('bk-date').value;
+  const time      = document.getElementById('bk-time').value;
+  const week      = parseInt(document.getElementById('bk-week').value);
+  const notes     = document.getElementById('bk-notes').value.trim();
+  const errEl     = document.getElementById('book-error');
+  errEl.classList.add('hidden');
+
+  if (!patientId) { errEl.textContent = 'Sila pilih pesakit.'; errEl.classList.remove('hidden'); return; }
+  if (!planId)    { errEl.textContent = 'Sila pilih plan rawatan.'; errEl.classList.remove('hidden'); return; }
+  if (!date)      { errEl.textContent = 'Sila pilih tarikh sesi.'; errEl.classList.remove('hidden'); return; }
+  if (!week || week < 1) { errEl.textContent = 'Sila masukkan nombor minggu yang sah.'; errEl.classList.remove('hidden'); return; }
+
+  const btn = document.getElementById('btn-save-session');
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
+  try {
+    await window.db.from('psy_plan_weekly_progress').insert({
+      patient_id: patientId, plan_id: planId,
+      session_date: new Date(`${date}T${time || '10:00'}:00`).toISOString(),
+      week_number: week, status: 'booked',
+      notes: notes || null, created_by: currentUser.id,
+    });
+    await auditLog('plan.session_booked', planId, { patientId, week, date });
+    banner('Sesi berjaya dibuat ✅');
+    closeBookModal();
+    loadSessions();
+  } catch (err) {
+    errEl.textContent = 'Ralat: ' + err.message;
+    errEl.classList.remove('hidden');
+  } finally { btn.disabled = false; btn.textContent = 'Simpan Sesi'; }
+}
+
+// ── Print ─────────────────────────────────────────────
+function printSchedule() {
+  setView('list');
+  const date  = document.getElementById('f-date').value;
+  const label = date ? new Date(date).toLocaleDateString('ms-MY', { dateStyle: 'full' }) : 'Semua Tarikh';
+  document.getElementById('print-appt-date').textContent =
+    `${label} · Dicetak: ${new Date().toLocaleString('ms-MY', { timeStyle: 'short' })}`;
+  setTimeout(() => window.print(), 100);
+}
+
+function clearFilter() {
+  document.getElementById('f-date').value   = '';
+  document.getElementById('f-status').value = '';
+  renderList();
 }
 
 (async () => {
-  const user = await initStaff('appointments', 'Jadual sesi rawatan mingguan');
+  const user = await initStaff('psy_appointments', 'Jadual sesi rawatan mingguan');
   if (!user) return;
-  document.getElementById('f-date').value = new Date().toISOString().split('T')[0];
-  document.getElementById('f-date').addEventListener('change', render);
-  document.getElementById('f-status').addEventListener('change', render);
+  const now = new Date();
+  calYear  = now.getFullYear();
+  calMonth = now.getMonth();
+  document.getElementById('f-date').addEventListener('change', renderList);
+  document.getElementById('f-status').addEventListener('change', renderList);
   loadSessions();
 })();
 </script>

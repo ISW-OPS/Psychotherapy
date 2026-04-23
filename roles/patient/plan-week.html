@@ -48,7 +48,7 @@
               <div class="text-xs text-navy">→</div>
             </div>
           </button>
-          <button onclick="openReviewModal('vitals')" class="text-left bg-white rounded-xl p-4 border border-ink/10 hover:border-navy hover:shadow-sm transition">
+          <button onclick="openReviewModal('psy_vitals')" class="text-left bg-white rounded-xl p-4 border border-ink/10 hover:border-navy hover:shadow-sm transition">
             <div class="flex items-center gap-3">
               <div class="w-10 h-10 rounded-lg bg-green/10 flex items-center justify-center text-lg">📊</div>
               <div class="flex-1 min-w-0">
@@ -173,7 +173,7 @@ function computeWeekRange(plan, w) {
 }
 
 async function loadWeekDetail() {
-  const plans = await dbQuery('treatment_plans', { eq: { patient_id: patientRecord.id } });
+  const plans = await dbQuery('psy_treatment_plans', { eq: { patient_id: patientRecord.id } });
   activePlan = plans.find(p => p.status === 'active') || plans[0];
   if (!activePlan) {
     document.getElementById('content').innerHTML = '<div class="text-center p-10">Tiada pelan rawatan aktif.</div>';
@@ -186,7 +186,7 @@ async function loadWeekDetail() {
   weekEnd = range.end;
 
   // Week entry (coach-recorded)
-  const progress = await dbQuery('plan_weekly_progress', {
+  const progress = await dbQuery('psy_plan_weekly_progress', {
     eq: { plan_id: activePlan.id, week_number: weekNumber },
   }).catch(() => []);
   weekEntry = progress[0] || null;
@@ -201,7 +201,7 @@ async function loadWeekDetail() {
 let weekSoap = [];
 
 async function loadSoap() {
-  const all = await dbQuery('soap_notes', { eq: { patient_id: patientRecord.id }, order: { col: 'created_at' } }).catch(() => []);
+  const all = await dbQuery('psy_soap_notes', { eq: { patient_id: patientRecord.id }, order: { col: 'created_at' } }).catch(() => []);
   weekSoap = all.filter(n => {
     const t = new Date(n.created_at);
     return t >= weekStart && t < weekEnd;
@@ -219,7 +219,7 @@ async function loadSoap() {
 }
 
 async function loadCompliance() {
-  const rows = await dbQuery('plan_compliance', {
+  const rows = await dbQuery('psy_plan_compliance', {
     eq: { plan_id: activePlan.id, week_number: weekNumber },
   }).catch(() => []);
   const c = rows[0];
@@ -312,7 +312,7 @@ function renderCoachNotes() {
 }
 
 async function loadVitals() {
-  const all = await dbQuery('vitals', { eq: { patient_id: patientRecord.id }, order: { col: 'created_at' } });
+  const all = await dbQuery('psy_vitals', { eq: { patient_id: patientRecord.id }, order: { col: 'created_at' } });
   weekVitals = all.filter(v => {
     const t = new Date(v.created_at);
     return t >= weekStart && t < weekEnd;
@@ -334,7 +334,7 @@ async function loadVitals() {
 }
 
 async function loadSessions() {
-  const all = await dbQuery('coaching_sessions', { eq: { patient_id: patientRecord.id }, order: { col: 'scheduled_at' } }).catch(() => []);
+  const all = await dbQuery('psy_coaching_sessions', { eq: { patient_id: patientRecord.id }, order: { col: 'scheduled_at' } }).catch(() => []);
   weekSessions = all.filter(s => {
     const d = s.scheduled_at ? new Date(s.scheduled_at) : new Date(s.created_at);
     return d >= weekStart && d < weekEnd;
@@ -361,7 +361,7 @@ function openReviewModal(kind) {
       ? `<div class="bg-cream/40 rounded-lg p-4 text-sm leading-relaxed whitespace-pre-wrap">${weekEntry.notes}</div>
          ${weekEntry.updated_by_name ? `<p class="text-xs text-ink/50 mt-3">— ${weekEntry.updated_by_name}${weekEntry.updated_at ? ' · ' + new Date(weekEntry.updated_at).toLocaleDateString('ms-MY') : ''}</p>` : ''}`
       : '<p class="text-sm text-ink/40 italic text-center py-6">Coach belum tinggalkan nota untuk minggu ini.</p>';
-  } else if (kind === 'vitals') {
+  } else if (kind === 'psy_vitals') {
     title.textContent = `📊 Bacaan Vitals (${weekVitals.length})`;
     body.innerHTML = weekVitals.length
       ? `<div class="space-y-2">${weekVitals.map(v => `
@@ -417,7 +417,7 @@ function closeReviewModal() {
 }
 
 async function loadCheckIns() {
-  const rows = await dbQuery('plan_check_ins', {
+  const rows = await dbQuery('psy_plan_check_ins', {
     eq: { plan_id: activePlan.id, week_number: weekNumber },
   }).catch(() => []);
   checkInState = {};
@@ -467,10 +467,10 @@ async function toggleCheckIn(pillar, index, goalText) {
   const existingId = checkInState[key];
   try {
     if (existingId) {
-      await dbDelete('plan_check_ins', existingId);
+      await dbDelete('psy_plan_check_ins', existingId);
       delete checkInState[key];
     } else {
-      const row = await dbInsert('plan_check_ins', {
+      const row = await dbInsert('psy_plan_check_ins', {
         plan_id: activePlan.id,
         patient_id: patientRecord.id,
         pillar,
@@ -526,10 +526,10 @@ async function submitWeekFeedback() {
   try {
     const data = { feedback_rating: weekRating, feedback_comment: comment || null, feedback_at: new Date().toISOString() };
     if (weekEntry?.id) {
-      await dbUpdate('plan_weekly_progress', weekEntry.id, data);
+      await dbUpdate('psy_plan_weekly_progress', weekEntry.id, data);
       weekEntry = { ...weekEntry, ...data };
     } else {
-      const row = await dbInsert('plan_weekly_progress', {
+      const row = await dbInsert('psy_plan_weekly_progress', {
         plan_id: activePlan.id,
         patient_id: patientRecord.id,
         week_number: weekNumber,

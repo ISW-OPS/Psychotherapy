@@ -4,18 +4,36 @@
 
 window.currentUser = null;
 
-// NAV_ITEMS sekarang dalam shared/navbar.js (NAV_ITEMS_BY_ROLE.staff)
+// Pages yang boleh diakses oleh setiap staff_role
+const STAFF_ROLE_ACCESS = {
+  admin:   ['dashboard','assignments','psy_patients','psy_appointments','pakej','psy_products','psy_orders','library','services','audit','staff_mgmt','issue','profile'],
+  doctor:  ['dashboard','psy_patients','plans','psy_appointments','consultation','psy_vitals','risk','library','issue','profile'],
+  coach:   ['dashboard','assignments','psy_patients','plans','psy_appointments','consultation','psy_vitals','coaching','risk','issue','profile'],
+  manager: ['dashboard','assignments','psy_patients','plans','psy_appointments','psy_orders','audit','issue','profile'],
+};
 
 async function initStaff(pageId, titleSub) {
   window.currentUser = await checkAuth('staff');
   if (!window.currentUser) return null;
+
+  const staffRole = window.currentUser.staff_role;
+
+  // Semak akses — redirect ke dashboard jika tak ada kebenaran
+  if (staffRole && pageId !== 'dashboard') {
+    const allowed = STAFF_ROLE_ACCESS[staffRole] || [];
+    if (!allowed.includes(pageId)) {
+      alert('Akses ditolak. Anda tidak mempunyai kebenaran untuk halaman ini.');
+      window.location.href = 'dashboard.html';
+      return null;
+    }
+  }
 
   document.getElementById('app-loading')?.classList.add('hidden');
   document.getElementById('app-shell')?.classList.remove('hidden');
 
   renderNavbar('staff', window.currentUser, null, pageId);
 
-  const nav = getNavItems('staff').find(n => n.id === pageId);
+  const nav = getNavItems('staff', staffRole).find(n => n.id === pageId);
   renderHeader(nav?.label || '', titleSub || '');
 
   return window.currentUser;

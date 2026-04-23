@@ -92,7 +92,7 @@
 <script src="_shared.js"></script>
 <script>
 async function getPlanTemplate(packageId, packageName) {
-  const rows = await dbQuery('packages', { eq: { package_id: packageId } }).catch(() => []);
+  const rows = await dbQuery('psy_packages', { eq: { package_id: packageId } }).catch(() => []);
   if (!rows.length) return { name: packageName + ' Plan', duration_weeks: 12, bio:[], psycho:[], social:[], spiritual:[] };
   const p = rows[0];
   return {
@@ -136,8 +136,8 @@ async function loadPayments() {
   let appts = [], pkgPurchases = [];
   if (patientRecord) {
     [appts, pkgPurchases] = await Promise.all([
-      dbQuery('appointments', { eq: { patient_id: patientRecord.id } }).catch(() => []),
-      dbQuery('package_purchases', { eq: { patient_id: patientRecord.id } }).catch(() => []),
+      dbQuery('psy_appointments', { eq: { patient_id: patientRecord.id } }).catch(() => []),
+      dbQuery('psy_package_purchases', { eq: { patient_id: patientRecord.id } }).catch(() => []),
     ]);
   }
 
@@ -223,7 +223,7 @@ async function processPayment() {
     // CRITICAL: Fresh DB check — prevent duplicate package subscription
     const hasPackageInCart = pendingItems.some(i => i.type === 'package');
     if (hasPackageInCart && patientRecord) {
-      const fresh = await dbQuery('patients', { eq: { id: patientRecord.id }, single: true }).catch(() => null);
+      const fresh = await dbQuery('psy_patients', { eq: { id: patientRecord.id }, single: true }).catch(() => null);
       if (fresh?.active_package_id &&
           (!fresh.package_expires_at || new Date(fresh.package_expires_at) >= new Date())) {
         banner(`Anda sudah ada pakej aktif: ${fresh.active_package_name}. Bayaran dibatalkan.`, 'error');
@@ -239,14 +239,14 @@ async function processPayment() {
     for (const item of pendingItems) {
       if (item.type === 'appointment') {
         const cleanNotes = (item.raw?.notes || '').replace('[PENDING PAYMENT]', '').trim();
-        await dbUpdate('appointments', item.id, { notes: `[PAID · ${receiptRef}] ${cleanNotes}` });
+        await dbUpdate('psy_appointments', item.id, { notes: `[PAID · ${receiptRef}] ${cleanNotes}` });
 
       } else if (item.type === 'package') {
         const expiresAt = new Date();
         expiresAt.setMonth(expiresAt.getMonth() + 3);
 
         // Insert without .single() to avoid RLS read-back issue
-        const { error: insertErr } = await window.db.from('package_purchases').insert({
+        const { error: insertErr } = await window.db.from('psy_package_purchases').insert({
           patient_id: patientRecord.id,
           package_id: item.packageId,
           package_name: item.packageName,
@@ -258,7 +258,7 @@ async function processPayment() {
         if (insertErr) throw insertErr;
 
         // Activate package on patient record
-        const { error: updateErr } = await window.db.from('patients').update({
+        const { error: updateErr } = await window.db.from('psy_patients').update({
           active_package_id: item.packageId,
           active_package_name: item.packageName,
           package_purchased_at: new Date().toISOString(),
@@ -267,18 +267,20 @@ async function processPayment() {
         if (updateErr) throw updateErr;
 
       } else if (item.type === 'package_existing') {
-        await dbUpdate('package_purchases', item.id, { status: 'active', payment_method: method });
+        await dbUpdate('psy_package_purchases', item.id, { status: 'active', payment_method: method });
 
       } else if (item.type === 'shop_order') {
-        const { error } = await window.db.from('orders').insert({
+        const { error } = await window.db.from('psy_orders').insert({
           order_ref: item.orderRef,
           patient_id: currentUser.id,
           items: item.items,
           total: item.amount,
           status: 'paid',
           paid_at: new Date().toISOString(),
+          delivery_method: item.deliveryMethod,
+          delivery_address: item.deliveryAddress || null,
           courier: item.deliveryMethod === 'pos' ? 'JNT' : null,
-          notes: item.deliveryAddress ? `Alamat: ${item.deliveryAddress}` : (item.deliveryMethod === 'pickup' ? 'Pickup Klinik' : null),
+          notes: item.deliveryMethod === 'pickup' ? 'Pickup Klinik' : null,
         });
         if (error) throw error;
         clearCart();
@@ -289,7 +291,7 @@ async function processPayment() {
     const sstAmount = grandTotal - subtotal - SERVICE_CHARGE;
 
     // Insert proper payment record
-    await window.db.from('payments').insert({
+    await window.db.from('psy_payments').insert({
       receipt_ref: receiptRef,
       patient_id: patientRecord?.id,
       user_id: currentUser.id,
@@ -321,7 +323,7 @@ async function processPayment() {
     for (const item of pendingItems) {
       if (item.type === 'package' && item.packageId && patientRecord) {
         const template = await getPlanTemplate(item.packageId, item.packageName);
-        const { error: planErr } = await window.db.from('treatment_plans').insert({
+        const { error: planErr } = await window.db.from('psy_treatment_plans').insert({
           patient_id: patientRecord.id,
           doctor_id: currentUser.id,
           name: template.name,
@@ -357,9 +359,9 @@ async function cancelAll() {
   try {
     for (const item of pendingItems) {
       if (item.type === 'appointment') {
-        await dbUpdate('appointments', item.id, { status: 'cancelled', notes: '[CANCELLED]' });
+        await dbUpdate('psy_appointments', item.id, { status: 'cancelled', notes: '[CANCELLED]' });
       } else if (item.type === 'package_existing') {
-        await dbDelete('package_purchases', item.id);
+        await dbDelete('psy_package_purchases', item.id);
       }
     }
 
@@ -488,7 +490,7 @@ async function loadReceipts() {
     return;
   }
 
-  const receipts = await dbQuery('payments', {
+  const receipts = await dbQuery('psy_payments', {
     eq: { patient_id: patientRecord.id },
     order: { col: 'paid_at' },
     limit: 50,

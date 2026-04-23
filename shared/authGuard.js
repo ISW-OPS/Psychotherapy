@@ -7,7 +7,7 @@ async function checkAuth(requiredRole) {
   }
 
   const { data: profile } = await window.db
-    .from('profiles')
+    .from('psy_profiles')
     .select('*')
     .eq('id', session.user.id)
     .single();

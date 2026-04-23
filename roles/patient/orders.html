@@ -43,15 +43,15 @@
 <script src="_shared.js"></script>
 <script>
 const STATUS_META = {
-  pending:   { label: 'Menunggu Pembayaran', chip: 'bg-gold-light text-gold-dark',       step: 0 },
-  paid:      { label: 'Dibayar',             chip: 'bg-navy-light text-navy',            step: 1 },
-  packed:    { label: 'Sedang Dibungkus',    chip: 'bg-teal/10 text-teal',               step: 2 },
-  shipped:   { label: 'Dalam Penghantaran',  chip: 'bg-green-light text-green-dark',     step: 3 },
-  delivered: { label: 'Diterima',            chip: 'bg-ink/10 text-ink/60',              step: 4 },
-  cancelled: { label: 'Dibatalkan',          chip: 'bg-terracotta-light text-terracotta',step: -1 },
+  pending:   { label: 'Menunggu Pembayaran', chip: 'bg-gold/30 text-gold-dark',          stepDelivery: 0, stepPickup: 0 },
+  paid:      { label: 'Dibayar',             chip: 'bg-navy-light text-navy',            stepDelivery: 1, stepPickup: 1 },
+  packed:    { label: 'Sedang Disediakan',   chip: 'bg-teal/10 text-teal',               stepDelivery: 2, stepPickup: 2 },
+  shipped:   { label: 'Dalam Penghantaran',  chip: 'bg-green-light text-green-dark',     stepDelivery: 3, stepPickup: 3 },
+  delivered: { label: 'Selesai',             chip: 'bg-ink/10 text-ink/60',              stepDelivery: 4, stepPickup: 3 },
+  cancelled: { label: 'Dibatalkan',          chip: 'bg-terracotta/20 text-terracotta',   stepDelivery: -1, stepPickup: -1 },
 };
 
-const STEPS = [
+const STEPS_DELIVERY = [
   { icon: '🛒', label: 'Order Dibuat' },
   { icon: '💳', label: 'Bayaran Diterima' },
   { icon: '📦', label: 'Dibungkus' },
@@ -59,17 +59,28 @@ const STEPS = [
   { icon: '✅', label: 'Diterima' },
 ];
 
+const STEPS_PICKUP = [
+  { icon: '🛒', label: 'Order Dibuat' },
+  { icon: '💳', label: 'Bayaran Diterima' },
+  { icon: '📍', label: 'Sedia Pickup' },
+  { icon: '✅', label: 'Diambil' },
+];
+
 function renderTimeline(order) {
-  const curStep = (STATUS_META[order.status] || STATUS_META.pending).step;
-  return STEPS.map((s, i) => {
-    const done = i < curStep;
+  const isPickup = order.delivery_method === 'pickup';
+  const steps    = isPickup ? STEPS_PICKUP : STEPS_DELIVERY;
+  const meta     = STATUS_META[order.status] || STATUS_META.pending;
+  const curStep  = isPickup ? meta.stepPickup : meta.stepDelivery;
+
+  return steps.map((s, i) => {
+    const done   = i < curStep;
     const active = i === curStep;
     const circle = done ? 'bg-green text-white' : active ? 'bg-navy text-white ring-4 ring-navy/20' : 'bg-ink/10 text-ink/40';
-    const line = i < STEPS.length - 1
+    const line   = i < steps.length - 1
       ? `<div class="flex-1 h-0.5 mx-1 mt-[-12px] ${i < curStep ? 'bg-green' : 'bg-ink/10'}"></div>`
       : '';
     return `
-      <div class="flex items-start ${i < STEPS.length - 1 ? 'flex-1' : ''}">
+      <div class="flex items-start ${i < steps.length - 1 ? 'flex-1' : ''}">
         <div class="flex flex-col items-center gap-1 flex-shrink-0">
           <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${circle}">${done ? '✓' : s.icon}</div>
           <div class="text-[10px] text-center leading-tight ${active ? 'font-semibold text-navy' : done ? 'text-ink/60' : 'text-ink/30'} w-14">${s.label}</div>
@@ -81,23 +92,24 @@ function renderTimeline(order) {
 
 async function confirmDelivered(orderId) {
   try {
-    await window.db.from('orders').update({ status: 'delivered', delivered_at: new Date().toISOString() }).eq('id', orderId);
+    await window.db.from('psy_orders').update({ status: 'delivered', delivered_at: new Date().toISOString() }).eq('id', orderId);
     banner('Terima kasih! Status order dikemaskini.');
     loadOrders();
   } catch (e) { banner('Ralat: ' + e.message, 'error'); }
 }
 
 async function loadOrders() {
-  const { data: orders } = await window.db.from('orders')
+  const { data: orders } = await window.db.from('psy_orders')
     .select('*').eq('patient_id', currentUser.id).order('created_at', { ascending: false });
 
   const list = orders || [];
   document.getElementById('orders-list').innerHTML = list.length
     ? list.map(o => {
-      const sm = STATUS_META[o.status] || STATUS_META.pending;
-      const items = Array.isArray(o.items) ? o.items : [];
-      const jtUrl = o.tracking_number ? `https://www.jtexpress.my/index/query/gzquery.html?bills=${o.tracking_number}` : null;
-      const deliveryBadge = o.notes?.includes('Pickup') ? '🏥 Pickup Klinik' : o.delivery_method === 'pos' ? '🚚 Penghantaran' : '';
+      const sm       = STATUS_META[o.status] || STATUS_META.pending;
+      const items    = Array.isArray(o.items) ? o.items : [];
+      const isPickup = o.delivery_method === 'pickup';
+      const jtUrl    = o.tracking_number ? `https://www.jtexpress.my/index/query/gzquery.html?bills=${o.tracking_number}` : null;
+      const deliveryBadge = isPickup ? '🏥 Ambil Sendiri di Klinik' : '🚚 Penghantaran';
 
       return `
       <div class="bg-white rounded-xl border border-ink/10 overflow-hidden">
@@ -124,23 +136,32 @@ async function loadOrders() {
             ${items.map(it => `<span class="chip bg-cream text-ink/70 text-xs">${it.name} × ${it.qty}</span>`).join('')}
           </div>
 
-          ${o.tracking_number ? `
-            <div class="flex items-center gap-3 bg-green-light rounded-lg px-4 py-3">
+          ${isPickup && o.status === 'packed' ? `
+            <div class="flex items-center gap-3 bg-teal/10 rounded-xl px-4 py-3 border border-teal/20">
+              <span class="text-2xl">📍</span>
+              <div>
+                <div class="font-semibold text-sm text-teal">Parsel Sedia untuk Diambil</div>
+                <div class="text-xs text-ink/60 mt-0.5">Sila datang ke klinik pada waktu operasi untuk mengambil pesanan anda.</div>
+              </div>
+            </div>` : ''}
+
+          ${!isPickup && o.tracking_number ? `
+            <div class="flex items-center gap-3 bg-green-light rounded-xl px-4 py-3">
               <div class="flex-1 min-w-0">
                 <div class="text-[10px] font-semibold text-ink/60 uppercase tracking-wide">${o.courier || 'Courier'} · Tracking No.</div>
-                <div class="font-bold">${o.tracking_number}</div>
+                <div class="font-bold font-mono">${o.tracking_number}</div>
               </div>
               ${jtUrl ? `<a href="${jtUrl}" target="_blank" rel="noopener" class="bg-green text-white text-xs px-3 py-2 rounded-lg font-semibold whitespace-nowrap">Track →</a>` : ''}
             </div>` : ''}
 
-          ${o.tracking_photo_url ? `
+          ${!isPickup && o.tracking_photo_url ? `
             <div>
               <div class="text-[10px] font-semibold text-ink/60 uppercase tracking-wide mb-2">Gambar Parsel</div>
               <img src="${o.tracking_photo_url}" class="h-28 rounded-lg border border-ink/10 object-cover cursor-pointer" onclick="window.open('${o.tracking_photo_url}','_blank')">
             </div>` : ''}
 
           ${o.status === 'shipped' ? `
-            <button onclick="confirmDelivered('${o.id}')" class="w-full bg-green text-white py-3 rounded-xl font-semibold hover:bg-green-dark">
+            <button onclick="confirmDelivered('${o.id}')" class="w-full bg-green text-white py-3 rounded-xl font-semibold">
               ✅ Saya Dah Terima Parsel
             </button>` : ''}
         </div>
@@ -154,7 +175,7 @@ async function loadOrders() {
 }
 
 (async () => {
-  const user = await initPatient('orders', 'Status penghantaran anda');
+  const user = await initPatient('psy_orders', 'Status penghantaran anda');
   if (!user) return;
   loadOrders();
 })();

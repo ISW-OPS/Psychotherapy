@@ -36,19 +36,21 @@ async function dbDelete(table, id) {
 async function getCurrentUser() {
   const { data: { user } } = await window.db.auth.getUser();
   if (!user) return null;
-  const profile = await dbQuery('profiles', { eq: { id: user.id }, single: true });
+  const profile = await dbQuery('psy_profiles', { eq: { id: user.id }, single: true });
   return { ...user, ...profile };
 }
 
 async function auditLog(action, target, meta = {}) {
-  const user = await getCurrentUser();
-  if (!user) return;
-  await dbInsert('audit_log', {
-    actor_id: user.id,
-    actor_name: user.full_name,
-    actor_role: user.role,
-    action,
-    target,
-    meta
-  });
+  try {
+    const user = await getCurrentUser();
+    if (!user) return;
+    await window.db.from('psy_audit_log').insert({
+      actor_id: user.id,
+      actor_name: user.full_name,
+      actor_role: user.role,
+      action,
+      target,
+      meta
+    });
+  } catch (_) {}
 }

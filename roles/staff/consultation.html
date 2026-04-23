@@ -120,21 +120,32 @@ async function loadPatientChart() {
   const patientId = document.getElementById('patient-select').value;
   if (!patientId) { document.getElementById('soap-form').classList.add('hidden'); return; }
 
-  currentPatient = await dbQuery('patients', { eq: { id: patientId }, single: true });
+  const { data: patData } = await window.db.from('psy_patients')
+    .select('*, psy_profiles(full_name, phone)')
+    .eq('id', patientId).single().then(r => r, r => r);
+  currentPatient = patData;
+  if (!currentPatient) return;
+
+  const name = currentPatient.psy_profiles?.full_name || currentPatient.mrn;
+  const phone = currentPatient.psy_profiles?.phone || currentPatient.emergency_contact_phone || '—';
+
   document.getElementById('soap-form').classList.remove('hidden');
-  document.getElementById('patient-info').textContent = `${currentPatient.mrn} · ${currentPatient.gender || '—'}`;
+  document.getElementById('patient-info').textContent = `${name} · ${currentPatient.mrn}`;
 
   const [vitals, notes] = await Promise.all([
-    dbQuery('vitals', { eq: { patient_id: patientId }, order: { col: 'created_at' }, limit: 1 }),
-    dbQuery('soap_notes', { eq: { patient_id: patientId }, order: { col: 'created_at' }, limit: 5 }),
+    dbQuery('psy_vitals', { eq: { patient_id: patientId }, order: { col: 'created_at' }, limit: 1 }),
+    dbQuery('psy_soap_notes', { eq: { patient_id: patientId }, order: { col: 'created_at' }, limit: 5 }),
   ]);
 
   document.getElementById('chart-info').innerHTML = `
+    <div><strong>Nama:</strong> ${name}</div>
     <div><strong>MRN:</strong> ${currentPatient.mrn}</div>
     <div><strong>IC:</strong> ${currentPatient.ic_number || '—'}</div>
-    <div><strong>Sex:</strong> ${currentPatient.gender || '—'}</div>
+    <div><strong>Jantina:</strong> ${currentPatient.gender === 'M' ? 'Lelaki' : currentPatient.gender === 'F' ? 'Perempuan' : '—'}</div>
     <div><strong>DOB:</strong> ${currentPatient.date_of_birth || '—'}</div>
-    <div><strong>Phone:</strong> ${currentPatient.emergency_contact_phone || '—'}</div>`;
+    <div><strong>Telefon:</strong> ${phone}</div>
+    ${currentPatient.active_package_name ? `<div><strong>Pakej:</strong> ${currentPatient.active_package_name}</div>` : ''}
+    ${currentPatient.medical_condition ? `<div class="mt-1 pt-1 border-t border-ink/10"><strong>Kondisi:</strong> ${currentPatient.medical_condition}</div>` : ''}`;
 
   const v = vitals[0];
   document.getElementById('latest-vitals').innerHTML = v ? `
@@ -169,7 +180,7 @@ async function saveSoap(status) {
     signed_at: status === 'signed' ? new Date().toISOString() : null,
   };
   try {
-    await dbInsert('soap_notes', note);
+    await dbInsert('psy_soap_notes', note);
     await auditLog('soap.' + status, currentPatient.id);
     banner(status === 'signed' ? 'SOAP ditandatangan' : 'Draf disimpan');
     document.querySelectorAll('#soap-form input, #soap-form textarea').forEach(i => i.value = '');
@@ -183,9 +194,13 @@ async function saveSoap(status) {
   const user = await initStaff('consultation', 'SOAP note · clinical chart');
   if (!user) return;
 
-  const patients = await dbQuery('patients', { eq: { status: 'active' } });
+  const { data: patients } = await window.db.from('psy_patients')
+    .select('id, mrn, gender, psy_profiles(full_name)')
+    .eq('status', 'active')
+    .order('created_at', { ascending: false })
+    .then(r => r, () => ({ data: [] }));
   document.getElementById('patient-select').innerHTML = '<option value="">— Pilih pesakit —</option>' +
-    patients.map(p => `<option value="${p.id}">${p.mrn} · ${p.gender || '—'}</option>`).join('');
+    (patients || []).map(p => `<option value="${p.id}">${p.psy_profiles?.full_name || p.mrn} · ${p.mrn}</option>`).join('');
 
   // Auto-select if URL has ?patient=ID
   const urlPatient = new URLSearchParams(location.search).get('patient');

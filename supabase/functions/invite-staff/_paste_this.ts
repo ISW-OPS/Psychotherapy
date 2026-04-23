@@ -1,117 +1,138 @@
 // ============================================================
 // PASTE INI DALAM SUPABASE EDGE FUNCTIONS EDITOR
 // Function name: invite-staff
+// Handles: create | update | delete staff
 // ============================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-const corsHeaders = {
+const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-interface InviteRequest {
-  email: string;
-  full_name: string;
-  specialization?: string;
-  registration_no?: string;
-  phone?: string;
-  send_invite?: boolean;
-  temp_password?: string;
-}
+const ok   = (b: object) => new Response(JSON.stringify(b), { status: 200, headers: { ...cors, 'Content-Type': 'application/json' } })
+const fail = (msg: string) => new Response(JSON.stringify({ success: false, error: msg }), { status: 200, headers: { ...cors, 'Content-Type': 'application/json' } })
 
 Deno.serve(async (req: Request) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
 
   try {
     const authHeader = req.headers.get('Authorization')
-    if (!authHeader) throw new Error('Missing authorization')
+    if (!authHeader) return fail('Missing authorization header')
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-    const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!
-    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    const URL  = Deno.env.get('SUPABASE_URL')!
+    const ANON = Deno.env.get('SUPABASE_ANON_KEY')!
+    const SVC  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
-    const userClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: authHeader } }
-    })
-    const { data: { user }, error: userErr } = await userClient.auth.getUser()
-    if (userErr || !user) throw new Error('Tidak sah: sila log masuk semula')
+    const userClient  = createClient(URL, ANON, { global: { headers: { Authorization: authHeader } } })
+    const adminClient = createClient(URL, SVC,  { auth: { autoRefreshToken: false, persistSession: false } })
 
-    const { data: callerProfile } = await userClient
-      .from('profiles').select('role').eq('id', user.id).single()
+    // Verify caller
+    const { data: { user }, error: authErr } = await userClient.auth.getUser()
+    if (authErr || !user) return fail('Tidak sah: sila log masuk semula')
 
-    if (!callerProfile || callerProfile.role !== 'staff') {
-      throw new Error('Akses ditolak: hanya staff boleh daftar staff baru')
+    const { data: profile } = await userClient.from('psy_profiles').select('role, staff_role').eq('id', user.id).single()
+    if (!profile || profile.role !== 'staff') return fail('Akses ditolak: bukan staff')
+    if (profile.staff_role && profile.staff_role !== 'admin') return fail('Akses ditolak: hanya Admin')
+
+    let body: any
+    try { body = await req.json() } catch { return fail('Request body tidak sah') }
+
+    const action = body.action || 'create'
+
+    // ── UPDATE ────────────────────────────────────────────────
+    if (action === 'update') {
+      const { target_id, full_name, staff_role, specialization, registration_no, phone, is_active } = body
+      if (!target_id) return fail('target_id diperlukan')
+
+      const updates: any = {}
+      if (full_name      !== undefined) updates.full_name       = full_name
+      if (staff_role     !== undefined) updates.staff_role      = staff_role
+      if (specialization !== undefined) updates.specialization  = specialization
+      if (registration_no!== undefined) updates.registration_no = registration_no
+      if (phone          !== undefined) updates.phone           = phone
+      if (is_active      !== undefined) updates.is_active       = is_active
+
+      await adminClient.from('psy_profiles').update(updates).eq('id', target_id)
+
+      // Update email/name in auth if name changed
+      if (full_name) {
+        await adminClient.auth.admin.updateUserById(target_id, {
+          user_metadata: { full_name }
+        })
+      }
+
+      await adminClient.from('psy_audit_log').insert({
+        actor_id: user.id, actor_role: 'staff', action: 'staff.updated',
+        target: target_id, meta: updates
+      }).then(() => {}, () => {})
+
+      return ok({ success: true, message: 'Staff dikemaskini' })
     }
 
-    const body: InviteRequest = await req.json()
-    if (!body.email || !body.full_name) {
-      throw new Error('Email dan nama wajib diisi')
+    // ── DELETE ────────────────────────────────────────────────
+    if (action === 'delete') {
+      const { target_id } = body
+      if (!target_id) return fail('target_id diperlukan')
+      if (target_id === user.id) return fail('Tidak boleh padam akaun sendiri')
+
+      // Delete auth user (cascade deletes psy_profiles via FK)
+      const { error: delErr } = await adminClient.auth.admin.deleteUser(target_id)
+      if (delErr) return fail(delErr.message)
+
+      await adminClient.from('psy_audit_log').insert({
+        actor_id: user.id, actor_role: 'staff', action: 'staff.deleted',
+        target: target_id, meta: {}
+      }).then(() => {}, () => {})
+
+      return ok({ success: true, message: 'Akaun staff dipadam' })
     }
 
-    const adminClient = createClient(supabaseUrl, serviceKey, {
-      auth: { autoRefreshToken: false, persistSession: false }
-    })
+    // ── CREATE ────────────────────────────────────────────────
+    if (!body.email || !body.full_name) return fail('Email dan nama wajib diisi')
+    if (!['admin','coach','manager'].includes(body.staff_role)) return fail('Staff role tidak sah')
 
     let newUserId: string
 
     if (body.send_invite !== false) {
       const { data, error } = await adminClient.auth.admin.inviteUserByEmail(body.email, {
-        data: { full_name: body.full_name, role: 'staff' },
+        data: { full_name: body.full_name, role: 'staff', staff_role: body.staff_role }
       })
-      if (error) throw error
+      if (error) return fail(error.message)
       newUserId = data.user.id
     } else {
-      if (!body.temp_password || body.temp_password.length < 6) {
-        throw new Error('Temp password mestilah min 6 aksara')
-      }
+      if (!body.temp_password || body.temp_password.length < 6) return fail('Password min 6 aksara')
       const { data, error } = await adminClient.auth.admin.createUser({
-        email: body.email,
-        password: body.temp_password,
-        email_confirm: true,
-        user_metadata: { full_name: body.full_name, role: 'staff' },
+        email: body.email, password: body.temp_password, email_confirm: true,
+        user_metadata: { full_name: body.full_name, role: 'staff', staff_role: body.staff_role }
       })
-      if (error) throw error
+      if (error) return fail(error.message)
       newUserId = data.user.id
     }
 
-    if (body.specialization || body.registration_no || body.phone) {
-      await new Promise(r => setTimeout(r, 500))
-      await adminClient.from('profiles').update({
-        specialization: body.specialization || null,
-        registration_no: body.registration_no || null,
-        phone: body.phone || null,
-      }).eq('id', newUserId)
-    }
+    await new Promise(r => setTimeout(r, 600))
+    await adminClient.from('psy_profiles').update({
+      staff_role: body.staff_role,
+      specialization:   body.specialization   || null,
+      registration_no:  body.registration_no  || null,
+      phone:            body.phone            || null,
+    }).eq('id', newUserId)
 
-    const { data: callerName } = await userClient
-      .from('profiles').select('full_name').eq('id', user.id).single()
+    const { data: callerName } = await userClient.from('psy_profiles').select('full_name').eq('id', user.id).single()
+    await adminClient.from('psy_audit_log').insert({
+      actor_id: user.id, actor_name: callerName?.full_name, actor_role: 'staff',
+      action: 'staff.invited', target: newUserId,
+      meta: { email: body.email, name: body.full_name, staff_role: body.staff_role }
+    }).then(() => {}, () => {})
 
-    await adminClient.from('audit_log').insert({
-      actor_id: user.id,
-      actor_name: callerName?.full_name,
-      actor_role: 'staff',
-      action: 'staff.invited',
-      target: newUserId,
-      meta: { email: body.email, name: body.full_name, send_invite: body.send_invite !== false },
+    return ok({ success: true, user_id: newUserId,
+      message: body.send_invite !== false ? 'Email invite dihantar' : 'Akaun dicipta dengan password sementara'
     })
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        user_id: newUserId,
-        message: body.send_invite !== false ? 'Email invite dihantar' : 'Akaun dicipta dengan password sementara'
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
-  } catch (err) {
-    console.error(err)
-    return new Response(
-      JSON.stringify({ error: (err as Error).message }),
-      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+  } catch (err: any) {
+    console.error('invite-staff error:', err)
+    return fail(err?.message || 'Ralat tidak diketahui')
   }
 })

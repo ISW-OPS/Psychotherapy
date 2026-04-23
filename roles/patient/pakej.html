@@ -82,7 +82,11 @@
 let PACKAGES = [];
 
 async function loadPackagesFromDB() {
-  const rows = await dbQuery('packages', { eq: { is_active: true }, order: { col: 'sort_order', asc: true } }).catch(() => []);
+  const rows = await dbQuery('psy_packages', { eq: { is_active: true }, order: { col: 'sort_order', asc: true } }).catch(err => {
+    console.error('[pakej] gagal load packages:', err?.message || err);
+    document.getElementById('packages-grid').innerHTML = `<p class="text-sm text-terracotta col-span-full">Ralat: ${err?.message || 'Tidak dapat memuatkan pakej. Sila refresh.'}</p>`;
+    return [];
+  });
   // Map DB rows to frontend format (package_id → id, bg_color → bg)
   PACKAGES = rows.map(r => ({
     id: r.package_id,
@@ -189,12 +193,12 @@ async function purchasePackage(id) {
     const expiresAt = new Date();
     expiresAt.setMonth(expiresAt.getMonth() + 3);
 
-    await dbInsert('package_purchases', {
+    await dbInsert('psy_package_purchases', {
       patient_id: patientRecord.id, package_id: p.id,
       package_name: p.name, price: 0,
       expires_at: expiresAt.toISOString(), status: 'active',
     });
-    await dbUpdate('patients', patientRecord.id, {
+    await dbUpdate('psy_patients', patientRecord.id, {
       active_package_id: p.id, active_package_name: p.name,
       package_purchased_at: new Date().toISOString(),
       package_expires_at: expiresAt.toISOString(),
@@ -216,7 +220,7 @@ async function purchasePackage(id) {
 }
 
 async function loadHistory() {
-  const data = await dbQuery('package_purchases', { eq: { patient_id: patientRecord.id }, order: { col: 'purchased_at' } }).catch(() => []);
+  const data = await dbQuery('psy_package_purchases', { eq: { patient_id: patientRecord.id }, order: { col: 'purchased_at' } }).catch(() => []);
   if (data.length === 0) return;
 
   document.getElementById('history-section').classList.remove('hidden');
@@ -248,10 +252,10 @@ async function loadHistory() {
       : 'Tiada tarikh tamat';
 
     // Load treatment plan progress
-    const plans = await dbQuery('treatment_plans', { eq: { patient_id: patientRecord.id, status: 'active' } }).catch(() => []);
+    const plans = await dbQuery('psy_treatment_plans', { eq: { patient_id: patientRecord.id, status: 'active' } }).catch(() => []);
     if (plans.length > 0) {
       const p = plans[0];
-      const weekly = await dbQuery('plan_weekly_progress', { eq: { plan_id: p.id } }).catch(() => []);
+      const weekly = await dbQuery('psy_plan_weekly_progress', { eq: { plan_id: p.id } }).catch(() => []);
       const done = weekly.filter(w => w.status === 'hadir').length;
       document.getElementById('active-progress').textContent = `Progress: ${done} / ${p.duration_weeks} minggu selesai`;
     }

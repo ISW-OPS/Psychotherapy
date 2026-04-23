@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Report Issue</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">⚠️</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-5">
+
+        <!-- Stat cards -->
+        <div class="grid grid-cols-3 gap-4">
+          <div class="bg-white rounded-xl border border-ink/10 p-4 text-center">
+            <div class="text-2xl font-bold text-ink" id="stat-total">—</div>
+            <div class="text-xs text-ink/50 mt-1">Jumlah Isu</div>
+          </div>
+          <div class="bg-white rounded-xl border border-terracotta/30 p-4 text-center">
+            <div class="text-2xl font-bold text-terracotta" id="stat-open">—</div>
+            <div class="text-xs text-ink/50 mt-1">Belum Dijawab</div>
+          </div>
+          <div class="bg-white rounded-xl border border-green/30 p-4 text-center">
+            <div class="text-2xl font-bold text-green-dark" id="stat-resolved">—</div>
+            <div class="text-xs text-ink/50 mt-1">Selesai</div>
+          </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="flex gap-2 flex-wrap">
+          <button onclick="setFilter('all')"      id="f-all"      class="filter-btn active">Semua</button>
+          <button onclick="setFilter('open')"     id="f-open"     class="filter-btn">⚠️ Belum Dijawab</button>
+          <button onclick="setFilter('resolved')" id="f-resolved" class="filter-btn">✅ Selesai</button>
+        </div>
+
+        <!-- Issue list -->
+        <div id="issue-list" class="space-y-3"></div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<style>
+.filter-btn { padding: 0.5rem 1rem; border-radius: 9999px; font-size: 0.875rem; font-weight: 500; background: white; border: 1px solid rgba(0,0,0,0.12); transition: all .15s; }
+.filter-btn.active { background: var(--color-navy, #1a3a5c); color: white; border-color: var(--color-navy, #1a3a5c); }
+</style>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+let allIssues   = [];
+let responseMap = {};
+let currentFilter = 'all';
+
+const TYPE_LABEL = {
+  produk_rosak:  '📦 Produk rosak',
+  salah_produk:  '🔄 Salah produk',
+  kurang_jumlah: '⚖️ Kurang jumlah',
+  tidak_sampai:  '🚚 Tidak sampai',
+  appointment:   '📅 Masalah appointment',
+  lain_lain:     '💬 Lain-lain',
+};
+
+async function loadIssues() {
+  const [issueRes, responseRes] = await Promise.all([
+    window.db.from('psy_audit_log')
+      .select('*').eq('action', 'issue.reported')
+      .order('created_at', { ascending: false }),
+    window.db.from('psy_audit_log')
+      .select('id, meta')
+      .eq('action', 'issue.responded'),
+  ]);
+
+  allIssues = issueRes.data || [];
+
+  responseMap = {};
+  (responseRes.data || []).forEach(r => {
+    const iid = r.meta?.issue_id;
+    if (iid && !responseMap[iid]) responseMap[iid] = true;
+  });
+
+  renderStats();
+  renderList();
+}
+
+function isResolved(issue) { return !!responseMap[issue.id]; }
+
+function renderStats() {
+  const open     = allIssues.filter(i => !isResolved(i)).length;
+  const resolved = allIssues.filter(i =>  isResolved(i)).length;
+  document.getElementById('stat-total').textContent    = allIssues.length;
+  document.getElementById('stat-open').textContent     = open;
+  document.getElementById('stat-resolved').textContent = resolved;
+}
+
+function setFilter(f) {
+  currentFilter = f;
+  ['all','open','resolved'].forEach(k =>
+    document.getElementById('f-' + k).classList.toggle('active', k === f)
+  );
+  renderList();
+}
+
+function renderList() {
+  let list = allIssues;
+  if (currentFilter === 'open')     list = list.filter(i => !isResolved(i));
+  if (currentFilter === 'resolved') list = list.filter(i =>  isResolved(i));
+
+  const el = document.getElementById('issue-list');
+  if (!list.length) {
+    el.innerHTML = `<div class="bg-white rounded-xl border border-ink/10 p-10 text-center">
+      <div class="text-4xl mb-3">📭</div>
+      <p class="text-ink/50 text-sm">Tiada isu ${currentFilter === 'open' ? 'belum dijawab' : currentFilter === 'resolved' ? 'selesai' : ''}</p>
+    </div>`;
+    return;
+  }
+
+  el.innerHTML = list.map(issue => {
+    const resolved = isResolved(issue);
+    const type = issue.meta?.type || 'lain_lain';
+    const desc = (issue.meta?.description || '').replace(/</g,'&lt;');
+    const date = new Date(issue.created_at).toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+
+    return `<div class="bg-white rounded-xl border ${resolved ? 'border-ink/10' : 'border-terracotta/30'} p-4 hover:shadow-md transition-all">
+      <div class="flex items-center gap-3">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 mb-1 flex-wrap">
+            <span class="text-sm font-semibold">${TYPE_LABEL[type] || type}</span>
+            ${resolved
+              ? '<span class="chip bg-green-light text-green-dark text-[10px]">✅ Selesai</span>'
+              : '<span class="chip bg-terracotta/15 text-terracotta text-[10px]">⚠️ Belum dijawab</span>'}
+            ${issue.meta?.photo_url ? '<span class="text-base">📷</span>' : ''}
+          </div>
+          <p class="text-xs text-ink/60 truncate">${desc}</p>
+          <div class="text-[10px] text-ink/40 mt-1 flex gap-3">
+            <span>👤 ${issue.actor_name || '—'}</span>
+            <span>📅 ${date}</span>
+          </div>
+        </div>
+        <a href="issue-detail.html?id=${issue.id}"
+          class="px-4 py-2 rounded-xl text-xs font-semibold flex-shrink-0 ${resolved ? 'bg-ink/10 text-ink/60 hover:bg-ink/20' : 'bg-navy text-white hover:bg-navy-dark'}">
+          ${resolved ? '👁 Lihat' : '↩ Balas'}
+        </a>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+(async () => {
+  const user = await initStaff('issue', 'Isu & aduan dari pesakit');
+  if (!user) return;
+  loadIssues();
+})();
+</script>
+</body>
+</html>

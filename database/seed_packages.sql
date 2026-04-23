@@ -1,13 +1,12 @@
 -- ============================================================
--- SEED PACKAGES — migrate from _packages.js to database
--- Run sekali dalam Supabase SQL Editor
+-- SEED PACKAGES
+-- Run selepas step5_packages.sql
 -- ============================================================
 
--- Clear existing (in case re-seed)
-DELETE FROM packages;
+DELETE FROM psy_packages;
 
 -- 777 FREE
-INSERT INTO packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, tier, is_active, sort_order,
+INSERT INTO psy_packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, tier, is_active, sort_order,
   products, bimbingan, inclusions, bio_goals, psycho_goals, social_goals, spiritual_goals
 ) VALUES (
   'pkg-777-free', '777 FREE', '7 hari starter · percuma', 0, '7 Hari', 1, '🎁', 'bg-cream', 'free', true, 1,
@@ -21,7 +20,7 @@ INSERT INTO packages (package_id, name, description, price, duration, duration_w
 );
 
 -- 777 VIP
-INSERT INTO packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, tier, is_active, sort_order,
+INSERT INTO psy_packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, tier, is_active, sort_order,
   products, bimbingan, inclusions, bio_goals, psycho_goals, social_goals, spiritual_goals
 ) VALUES (
   'pkg-777-vip', '777 VIP', '7 hari VIP · coaching & support', 999, '7 Hari', 1, '⭐', 'bg-gold-light', 'vip', true, 2,
@@ -35,7 +34,7 @@ INSERT INTO packages (package_id, name, description, price, duration, duration_w
 );
 
 -- EOL
-INSERT INTO packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, is_active, sort_order,
+INSERT INTO psy_packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, is_active, sort_order,
   products, bimbingan, inclusions, bio_goals, psycho_goals, social_goals, spiritual_goals
 ) VALUES (
   'pkg-eol', 'EOL', 'Entry-level · 4 minggu · 1 madu + coaching', 299, '4 Minggu', 4, '🍯', 'bg-navy-light', true, 3,
@@ -49,7 +48,7 @@ INSERT INTO packages (package_id, name, description, price, duration, duration_w
 );
 
 -- EOL+
-INSERT INTO packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, is_active, sort_order,
+INSERT INTO psy_packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, is_active, sort_order,
   products, bimbingan, inclusions, bio_goals, psycho_goals, social_goals, spiritual_goals
 ) VALUES (
   'pkg-eol-plus', 'EOL+', 'Enhanced · 4 minggu · 2 madu + coaching', 499, '4 Minggu', 4, '🍯', 'bg-navy-light', true, 4,
@@ -63,7 +62,7 @@ INSERT INTO packages (package_id, name, description, price, duration, duration_w
 );
 
 -- OBP 1
-INSERT INTO packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, is_active, sort_order,
+INSERT INTO psy_packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, is_active, sort_order,
   products, bimbingan, inclusions, bio_goals, psycho_goals, social_goals, spiritual_goals
 ) VALUES (
   'pkg-obp1', 'OBP 1', '12 minggu · 6 KG IB + full terapi', 2999, '12 Minggu', 12, '💎', 'bg-navy-light', true, 5,
@@ -76,8 +75,8 @@ INSERT INTO packages (package_id, name, description, price, duration, duration_w
   '["Bimbingan Terapi Zikir Bersanad","Bimbingan Terapi Penyucian Aura","Perubatan Rohani Online bersama Coach Fares","Solat hajat mingguan","Doa syifa harian"]'::jsonb
 );
 
--- OBPX 1 (abbreviated for brevity - same structure, 12 KG + extension)
-INSERT INTO packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, is_active, sort_order,
+-- OBPX 1
+INSERT INTO psy_packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, is_active, sort_order,
   products, bimbingan, inclusions, bio_goals, psycho_goals, social_goals, spiritual_goals
 ) VALUES (
   'pkg-obpx1', 'OBPX 1', '12 minggu + 3 bulan ext · 12 KG IB', 5499, '12 Minggu + 3 Bulan (1 kali) + 3 Bulan (1 kali)', 24, '💎', 'bg-teal/10', true, 6,
@@ -91,7 +90,7 @@ INSERT INTO packages (package_id, name, description, price, duration, duration_w
 );
 
 -- OBPY 1
-INSERT INTO packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, is_active, sort_order,
+INSERT INTO psy_packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, is_active, sort_order,
   products, bimbingan, inclusions, bio_goals, psycho_goals, social_goals, spiritual_goals
 ) VALUES (
   'pkg-obpy1', 'OBPY 1', '12 minggu + multi ext · 21 KG IB elite', 8999, '12 Minggu + 3 Bulan (1 kali) + 3 Bulan (3 bulan sekali) + 6 Bulan (3 bulan sekali)', 48, '👑', 'bg-gold-light', true, 7,
@@ -105,7 +104,7 @@ INSERT INTO packages (package_id, name, description, price, duration, duration_w
 );
 
 -- OBD 1
-INSERT INTO packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, is_active, sort_order,
+INSERT INTO psy_packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, is_active, sort_order,
   products, bimbingan, inclusions, bio_goals, psycho_goals, social_goals, spiritual_goals
 ) VALUES (
   'pkg-obd1', 'OBD 1', '12 minggu · 6 KG LTH detox', 1999, '12 Minggu', 12, '🌱', 'bg-terracotta-light', true, 8,
@@ -118,8 +117,8 @@ INSERT INTO packages (package_id, name, description, price, duration, duration_w
   '["Bimbingan Terapi Zikir Bersanad","Bimbingan Terapi Penyucian Aura","Perubatan Rohani Online bersama Coach Fares","Solat hajat mingguan","Doa syifa harian"]'::jsonb
 );
 
--- OBDX 1 & OBDY 1 (abbreviated for brevity)
-INSERT INTO packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, is_active, sort_order, products, bimbingan, inclusions, bio_goals, psycho_goals, social_goals, spiritual_goals) VALUES
+-- OBDX 1 & OBDY 1
+INSERT INTO psy_packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, is_active, sort_order, products, bimbingan, inclusions, bio_goals, psycho_goals, social_goals, spiritual_goals) VALUES
 ('pkg-obdx1', 'OBDX 1', '12 minggu + 3 bulan ext · 12 KG LTH', 3499, '12 Minggu + 3 Bulan (1 kali) + 3 Bulan (1 kali)', 24, '🌱', 'bg-gold-light', true, 9,
   '["12 KG LTH","12 KG LTHPG","Starter Kit","21 Botol Air Afiyah","7 Botol Air Za''afaran","4 Set Herba Kolon","1 Set Enema Kit","1 Set Mesin Ozon","4 Set IV Saline Drip","1 Set DNA Test Kit"]'::jsonb,
   '["26 Sesi Herba Thoharah","6 Kelas Online New Life Challenge","Bimbingan Terapi Peminuman LTH, LTHPG","Bimbingan Terapi Zikir Bersanad","Bimbingan Terapi Diet dan Nutrisi"]'::jsonb,
@@ -139,7 +138,7 @@ INSERT INTO packages (package_id, name, description, price, duration, duration_w
   '["Zikir Bersanad","Perubatan Rohani","Solat hajat"]'::jsonb);
 
 -- OBG
-INSERT INTO packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, is_active, sort_order, products, bimbingan, inclusions, bio_goals, psycho_goals, social_goals, spiritual_goals) VALUES
+INSERT INTO psy_packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, is_active, sort_order, products, bimbingan, inclusions, bio_goals, psycho_goals, social_goals, spiritual_goals) VALUES
 ('pkg-obg', 'OBG', '22 minggu · comprehensive cleansing', 1499, '22 Minggu', 22, '🌿', 'bg-green-light', true, 11,
   '["10 KG IB","8 KG YHPG","Starter Kit","12 Botol Air Afiyah","7 Botol Air Za''afaran","1 Set Herba Kolon","1 Set Enema Kit","1 Set Mesin Ozon","4 Set IV Saline Drip","1 Set DNA Test Kit"]'::jsonb,
   '["20 Sesi Herba Thoharah","6 Kelas Online New Life Challenge","Bimbingan Terapi lengkap"]'::jsonb,
@@ -150,7 +149,7 @@ INSERT INTO packages (package_id, name, description, price, duration, duration_w
   '["Zikir Bersanad","Perubatan Rohani","Solat hajat"]'::jsonb);
 
 -- Jump Start
-INSERT INTO packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, is_active, sort_order, products, bimbingan, inclusions, bio_goals, psycho_goals, social_goals, spiritual_goals, phases) VALUES
+INSERT INTO psy_packages (package_id, name, description, price, duration, duration_weeks, icon, bg_color, is_active, sort_order, products, bimbingan, inclusions, bio_goals, psycho_goals, social_goals, spiritual_goals, phases) VALUES
 ('pkg-js', 'Jump Start (JS)', 'Program berfasa · Ripple → Spark → Light Up', 799, 'Berfasa (3 fasa × 3 program)', 4, '🚀', 'bg-terracotta-light', true, 12,
   '["Young & Healthy Honey"]'::jsonb,
   '["4 Video Mingguan","Workbook Refleksi","Latihan Kesedaran Emosi","Latihan Fitrah Harian","Coaching Online Mingguan","Pantauan Kaunselor","Group sokongan Jump Start","1 Sesi kaunseling"]'::jsonb,
@@ -170,3 +169,5 @@ INSERT INTO packages (package_id, name, description, price, duration, duration_w
   '["Group sokongan Jump Start","Pantauan Kaunselor","Akses Portal VIP"]'::jsonb,
   '["Latihan Neuropsikologi & Kerohanian","Kaunseling berdaftar"]'::jsonb,
   '["Ripple","Spark","Light Up"]'::jsonb);
+
+SELECT COUNT(*) AS total_packages FROM psy_packages;

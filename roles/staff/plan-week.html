@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Detail Minggu</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+  .status-btn { padding:6px 14px; border-radius:8px; font-size:12px; font-weight:600; border:2px solid #e2e8f0; background:white; cursor:pointer; transition:all .15s; white-space:nowrap; }
+  .status-btn.active-hadir    { background:#d1fae5; border-color:#10b981; color:#065f46; }
+  .status-btn.active-reschedule { background:#fef9c3; border-color:#eab308; color:#713f12; }
+  .status-btn.active-cancel   { background:#fee2e2; border-color:#ef4444; color:#7f1d1d; }
+  .status-btn:hover:not(.active-hadir):not(.active-reschedule):not(.active-cancel) { border-color:#1a3a5c; }
+  .save-indicator { font-size:11px; color:#10b981; opacity:0; transition:opacity .3s; }
+  .save-indicator.show { opacity:1; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📅</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-5">
+
+        <!-- Breadcrumb + Week Navigation -->
+        <div class="flex items-center justify-between flex-wrap gap-3">
+          <div class="flex items-center gap-2 text-sm flex-wrap">
+            <a href="plans.html" class="text-navy hover:underline font-medium">← Treatment Plans</a>
+            <span class="text-ink/30">/</span>
+            <span id="plan-name-crumb" class="text-ink/60"></span>
+            <span class="text-ink/30">/</span>
+            <span id="week-crumb" class="font-semibold text-ink"></span>
+          </div>
+          <div class="flex gap-2">
+            <button id="btn-prev" onclick="goWeek(-1)" class="px-3 py-1.5 rounded-lg border border-ink/20 text-xs font-medium hover:bg-cream disabled:opacity-30">← Sebelum</button>
+            <button id="btn-next" onclick="goWeek(1)"  class="px-3 py-1.5 rounded-lg border border-ink/20 text-xs font-medium hover:bg-cream disabled:opacity-30">Seterusnya →</button>
+          </div>
+        </div>
+
+        <!-- Hero -->
+        <div id="week-hero" class="bg-white rounded-xl p-5 border border-ink/10"></div>
+
+        <!-- 4 Quick Preview Cards -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div class="bg-white rounded-xl p-4 border border-ink/10">
+            <div class="flex items-center gap-2 mb-1">
+              <div class="w-8 h-8 rounded-lg bg-navy/10 flex items-center justify-center text-base">🎯</div>
+              <div class="font-semibold text-sm">Nota Coach</div>
+            </div>
+            <div id="preview-notes" class="text-[11px] text-ink/60 italic truncate">Belum ada nota</div>
+          </div>
+          <div class="bg-white rounded-xl p-4 border border-ink/10">
+            <div class="flex items-center gap-2 mb-1">
+              <div class="w-8 h-8 rounded-lg bg-teal/10 flex items-center justify-center text-base">⚕</div>
+              <div class="font-semibold text-sm">Nota Doktor</div>
+            </div>
+            <div id="preview-soap" class="text-[11px] text-ink/60 italic truncate">Tiada catatan</div>
+          </div>
+          <div class="bg-white rounded-xl p-4 border border-ink/10">
+            <div class="flex items-center gap-2 mb-1">
+              <div class="w-8 h-8 rounded-lg bg-green/10 flex items-center justify-center text-base">📊</div>
+              <div class="font-semibold text-sm">Bacaan Vitals</div>
+            </div>
+            <div id="preview-vitals" class="text-[11px] text-ink/60 italic truncate">—</div>
+          </div>
+          <div class="bg-white rounded-xl p-4 border border-ink/10">
+            <div class="flex items-center gap-2 mb-1">
+              <div class="w-8 h-8 rounded-lg bg-gold/10 flex items-center justify-center text-base">📝</div>
+              <div class="font-semibold text-sm">Sesi Coaching</div>
+            </div>
+            <div id="preview-sessions" class="text-[11px] text-ink/60 italic truncate">Tiada sesi</div>
+          </div>
+        </div>
+
+        <!-- Main Edit Area -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+          <!-- LEFT: Attendance + Coach Notes -->
+          <div class="bg-white rounded-xl p-5 border border-ink/10 space-y-4">
+            <h3 class="font-bold text-base flex items-center gap-2">🎯 Nota Coach</h3>
+
+            <!-- Attendance status -->
+            <div>
+              <div class="text-[11px] font-semibold text-ink/50 uppercase tracking-wide mb-2">Status Kehadiran</div>
+              <div class="flex gap-2 flex-wrap">
+                <button id="sbtn-hadir"      onclick="markStatus('hadir')"      class="status-btn">✅ Hadir</button>
+                <button id="sbtn-reschedule" onclick="markStatus('reschedule')" class="status-btn">🔄 Reschedule</button>
+                <button id="sbtn-cancel"     onclick="markStatus('cancel')"     class="status-btn">❌ Tidak Hadir</button>
+              </div>
+            </div>
+
+            <!-- Session date + Score -->
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-[11px] font-semibold text-ink/50 uppercase">Tarikh &amp; Masa Sesi</label>
+                <input id="session-date" type="datetime-local"
+                  class="w-full mt-1 border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none"
+                  onchange="saveSessionDate()">
+              </div>
+              <div>
+                <label class="text-[11px] font-semibold text-ink/50 uppercase">Score (0–10)</label>
+                <input id="session-score" type="number" min="0" max="10" placeholder="—"
+                  class="w-full mt-1 border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none"
+                  onchange="saveScore()">
+              </div>
+            </div>
+
+            <!-- Coach notes textarea -->
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label class="text-[11px] font-semibold text-ink/50 uppercase">Nota Minggu Ini</label>
+                <span id="notes-saved" class="save-indicator">✓ Tersimpan</span>
+              </div>
+              <textarea id="coach-notes" rows="6"
+                placeholder="Tulis pemerhatian, perkembangan, atau arahan untuk pesakit minggu ini..."
+                class="w-full border border-ink/20 rounded-lg px-3 py-2 text-sm resize-none focus:border-navy outline-none"></textarea>
+            </div>
+            <button onclick="saveCoachNotes()" class="bg-navy text-white px-4 py-2.5 rounded-lg text-sm font-semibold w-full hover:bg-navy-dark">
+              💾 Simpan Nota
+            </button>
+          </div>
+
+          <!-- RIGHT: Kepatuhan Rawatan (editable) -->
+          <div class="bg-white rounded-xl p-5 border border-ink/10">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-bold text-base flex items-center gap-2">🌿 Kepatuhan Rawatan</h3>
+              <span id="compliance-saved" class="save-indicator">✓ Tersimpan</span>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-[11px] font-semibold text-ink/50">🍯 Madu (sudu/hari)</label>
+                <input id="cmp-madu" type="number" min="0"
+                  class="w-full mt-1 border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none">
+              </div>
+              <div>
+                <label class="text-[11px] font-semibold text-ink/50">🌬️ Nafas fitrah (kali/hari)</label>
+                <input id="cmp-nafas" type="number" min="0"
+                  class="w-full mt-1 border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none">
+              </div>
+              <div>
+                <label class="text-[11px] font-semibold text-ink/50">🌍 Terapi bumi (min/hari)</label>
+                <input id="cmp-bumi" type="number" min="0"
+                  class="w-full mt-1 border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none">
+              </div>
+              <div>
+                <label class="text-[11px] font-semibold text-ink/50">🥥 Air kelapa (kali/mgg)</label>
+                <input id="cmp-kelapa" type="number" min="0"
+                  class="w-full mt-1 border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none">
+              </div>
+              <div>
+                <label class="text-[11px] font-semibold text-ink/50">💧 Terapi kolon (kali)</label>
+                <input id="cmp-kolon" type="number" min="0"
+                  class="w-full mt-1 border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none">
+              </div>
+              <div class="flex items-center justify-between bg-cream/50 rounded-lg px-3 py-2.5">
+                <span class="text-xs font-semibold">☀️ Berjemur</span>
+                <div class="flex gap-3 text-xs">
+                  <label class="cursor-pointer"><input type="radio" name="cmp-jemur" value="true"> Ya</label>
+                  <label class="cursor-pointer"><input type="radio" name="cmp-jemur" value="false"> Tidak</label>
+                </div>
+              </div>
+              <div class="col-span-2 flex items-center justify-between bg-cream/50 rounded-lg px-3 py-2.5">
+                <span class="text-xs font-semibold">🍽️ Pantang makanan</span>
+                <div class="flex gap-3 text-xs">
+                  <label class="cursor-pointer"><input type="radio" name="cmp-pantang" value="true"> Ya</label>
+                  <label class="cursor-pointer"><input type="radio" name="cmp-pantang" value="false"> Tidak</label>
+                </div>
+              </div>
+            </div>
+            <button onclick="saveCompliance()" class="mt-4 bg-green text-white px-4 py-2.5 rounded-lg text-sm font-semibold w-full hover:bg-green-dark">
+              🌿 Simpan Kepatuhan
+            </button>
+          </div>
+        </div>
+
+        <!-- BPS-S Goals (patient self-check, read-only) + Patient Feedback (read-only) -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+          <div class="bg-white rounded-xl p-5 border border-ink/10">
+            <h3 class="font-bold mb-1 flex items-center gap-2">✅ Matlamat BPS-S Pesakit</h3>
+            <p class="text-xs text-ink/60 mb-4">Matlamat yang ditanda oleh pesakit untuk minggu ini.</p>
+            <div id="goals-view"></div>
+          </div>
+
+          <div class="bg-white rounded-xl p-5 border border-ink/10">
+            <h3 class="font-bold mb-1 flex items-center gap-2">⭐ Feedback Pesakit</h3>
+            <p class="text-xs text-ink/60 mb-4">Maklum balas pesakit bagi minggu ini (baca sahaja).</p>
+            <div id="feedback-view"></div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+let activePlan   = null;
+let weekNumber   = 1;
+let weekEntry    = null;   // psy_plan_weekly_progress row
+let cmpRowId     = null;   // psy_plan_compliance row id
+let patientId    = null;   // psy_patients.id
+let patientUserId = null;  // psy_profiles.id (for notify)
+let weekStart    = null;
+let weekEnd      = null;
+
+// ── Boot ──────────────────────────────────────────────
+document.addEventListener('ISW_READY', async () => {
+  const params   = new URLSearchParams(location.search);
+  const planId   = params.get('plan_id');
+  weekNumber     = parseInt(params.get('week') || '1');
+
+  if (!planId) { location.href = 'plans.html'; return; }
+
+  const { data: plan } = await window.db.from('psy_treatment_plans').select('*').eq('id', planId).single();
+  if (!plan) { location.href = 'plans.html'; return; }
+
+  activePlan  = plan;
+  patientId   = plan.patient_id;
+
+  // Fetch patient's user_id for notifications
+  const { data: pt } = await window.db.from('psy_patients').select('user_id').eq('id', patientId).single();
+  patientUserId = pt?.user_id || null;
+
+  weekNumber = Math.max(1, Math.min(weekNumber, plan.duration_weeks || 48));
+
+  await loadWeek();
+});
+
+// ── Load week data ────────────────────────────────────
+async function loadWeek() {
+  const range = computeWeekRange(activePlan, weekNumber);
+  weekStart = range.start;
+  weekEnd   = range.end;
+
+  // Weekly progress (attendance + coach notes)
+  const { data: prog } = await window.db.from('psy_plan_weekly_progress')
+    .select('*').eq('plan_id', activePlan.id).eq('week_number', weekNumber);
+  weekEntry = prog?.[0] || null;
+
+  updateBreadcrumb();
+  renderHero();
+  fillCoachForm();
+  await Promise.all([loadCompliance(), loadSoap(), loadVitals(), loadSessions(), loadGoals(), loadFeedback()]);
+}
+
+function computeWeekRange(plan, w) {
+  const start = new Date(plan.created_at);
+  start.setDate(start.getDate() + (w - 1) * 7);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 7);
+  return { start, end };
+}
+
+function updateBreadcrumb() {
+  document.getElementById('plan-name-crumb').textContent = activePlan.name;
+  document.getElementById('week-crumb').textContent = `Minggu ${weekNumber}`;
+  document.getElementById('btn-prev').disabled = weekNumber <= 1;
+  document.getElementById('btn-next').disabled = weekNumber >= activePlan.duration_weeks;
+}
+
+// ── Hero ──────────────────────────────────────────────
+function renderHero() {
+  const status = weekEntry?.status || 'pending';
+  const statusMap = {
+    hadir:      { color: 'text-green-dark', icon: '✅', label: 'Hadir' },
+    reschedule: { color: 'text-gold-dark',  icon: '🔄', label: 'Reschedule' },
+    cancel:     { color: 'text-terracotta', icon: '❌', label: 'Tidak Hadir' },
+    pending:    { color: 'text-ink/50',     icon: '⏳', label: 'Pending' },
+  };
+  const s = statusMap[status] || statusMap.pending;
+  const total = activePlan.duration_weeks || 48;
+  const pct   = Math.round((weekNumber / total) * 100);
+
+  document.getElementById('week-hero').innerHTML = `
+    <div class="flex items-start justify-between gap-4 flex-wrap">
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center gap-2 flex-wrap mb-1">
+          <span class="text-[11px] uppercase tracking-wider text-ink/50 font-semibold">${activePlan.name}</span>
+          ${weekNumber === activePlan.current_week ? '<span class="bg-gold text-ink text-[10px] font-bold px-2 py-0.5 rounded-full">SEMASA</span>' : ''}
+          <span class="${s.color} text-xs font-semibold">· ${s.icon} ${s.label}</span>
+        </div>
+        <h2 class="text-2xl md:text-3xl font-bold text-ink">Minggu ${weekNumber}</h2>
+        <div class="text-sm text-ink/70 mt-1">
+          ${weekEntry?.session_date
+            ? `📅 ${new Date(weekEntry.session_date).toLocaleDateString('ms-MY', { weekday:'long', day:'2-digit', month:'long', year:'numeric' })} · 🕐 ${new Date(weekEntry.session_date).toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' })}`
+            : 'Tarikh sesi belum ditetapkan'}
+          ${weekEntry?.score != null ? ` · ⭐ ${weekEntry.score}/10` : ''}
+        </div>
+      </div>
+      ${weekEntry?.updated_by_name ? `<div class="text-xs text-ink/40 text-right">Dikemaskini oleh<br><span class="font-semibold text-ink/60">${weekEntry.updated_by_name}</span></div>` : ''}
+    </div>
+    <div class="mt-4 flex items-center gap-3 text-[11px] text-ink/60">
+      <span>Minggu ${weekNumber}/${total}</span>
+      <div class="flex-1 bg-ink/10 rounded-full h-1.5">
+        <div class="bg-navy rounded-full h-1.5 transition-all" style="width:${pct}%"></div>
+      </div>
+      <span>${pct}%</span>
+    </div>`;
+}
+
+// ── Fill editable coach form ──────────────────────────
+function fillCoachForm() {
+  // Attendance buttons
+  const st = weekEntry?.status;
+  ['hadir','reschedule','cancel'].forEach(k => {
+    const btn = document.getElementById('sbtn-' + k);
+    btn.className = 'status-btn' + (st === k ? ` active-${k}` : '');
+  });
+
+  // Session date
+  if (weekEntry?.session_date) {
+    const d = new Date(weekEntry.session_date);
+    const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    document.getElementById('session-date').value = local;
+  }
+
+  // Score
+  if (weekEntry?.score != null) document.getElementById('session-score').value = weekEntry.score;
+
+  // Notes
+  const notes = weekEntry?.notes || '';
+  document.getElementById('coach-notes').value = notes;
+  const preview = document.getElementById('preview-notes');
+  if (notes) { preview.textContent = notes.slice(0, 60) + (notes.length > 60 ? '…' : ''); preview.classList.remove('italic'); }
+  else { preview.textContent = 'Belum ada nota'; preview.classList.add('italic'); }
+}
+
+// ── Attendance ────────────────────────────────────────
+async function markStatus(status) {
+  ['hadir','reschedule','cancel'].forEach(k => {
+    document.getElementById('sbtn-' + k).className = 'status-btn' + (k === status ? ` active-${k}` : '');
+  });
+
+  await upsertProgress({ status });
+  if (!weekEntry) weekEntry = {};
+  weekEntry.status = status;
+  renderHero();
+
+  // Notify patient
+  const msgs = {
+    hadir:      [`Kehadiran Minggu ${weekNumber} disahkan ✅`, `Coach ${currentUser.full_name} telah mengesahkan kehadiran anda.`],
+    reschedule: [`Minggu ${weekNumber} perlu dijadual semula`, `Sila tempah sesi baharu untuk Minggu ${weekNumber}.`],
+    cancel:     [`Sesi Minggu ${weekNumber} dibatalkan`, `Hubungi klinik untuk maklumat lanjut.`],
+  };
+  if (patientUserId && msgs[status]) {
+    await notify(patientUserId, 'plan', msgs[status][0], msgs[status][1], 'plan-week.html');
+  }
+  banner(`Minggu ${weekNumber}: ${status}`);
+}
+
+// ── Session date ──────────────────────────────────────
+async function saveSessionDate() {
+  const val = document.getElementById('session-date').value;
+  if (!val) return;
+  await upsertProgress({ session_date: new Date(val).toISOString() });
+  renderHero();
+}
+
+// ── Score ─────────────────────────────────────────────
+async function saveScore() {
+  const val = document.getElementById('session-score').value;
+  const score = val === '' ? null : parseInt(val);
+  await upsertProgress({ score });
+  renderHero();
+}
+
+// ── Coach notes ───────────────────────────────────────
+async function saveCoachNotes() {
+  const notes = document.getElementById('coach-notes').value.trim();
+  await upsertProgress({ notes });
+  if (!weekEntry) weekEntry = {};
+  weekEntry.notes = notes;
+  fillCoachForm();
+  flashSaved('notes-saved');
+}
+
+// ── Generic progress upsert ───────────────────────────
+async function upsertProgress(fields) {
+  const base = {
+    plan_id:      activePlan.id,
+    patient_id:   patientId,
+    week_number:  weekNumber,
+    updated_by:      currentUser.id,
+    updated_by_name: currentUser.full_name,
+    updated_at:   new Date().toISOString(),
+  };
+
+  if (weekEntry?.id) {
+    await window.db.from('psy_plan_weekly_progress').update({ ...fields, ...base }).eq('id', weekEntry.id);
+  } else {
+    const { data } = await window.db.from('psy_plan_weekly_progress').insert({ ...base, ...fields }).select().single();
+    weekEntry = data;
+  }
+
+  if (fields.status === 'hadir') {
+    await window.db.from('psy_treatment_plans').update({ current_week: weekNumber }).eq('id', activePlan.id);
+  }
+  await auditLog('plan.week_updated', activePlan.id, { week: weekNumber, ...fields });
+}
+
+// ── Compliance ────────────────────────────────────────
+async function loadCompliance() {
+  const { data } = await window.db.from('psy_plan_compliance')
+    .select('*').eq('plan_id', activePlan.id).eq('week_number', weekNumber);
+  const c = data?.[0];
+  cmpRowId = c?.id || null;
+
+  if (!c) return;
+  const setN = (id, v) => { if (v != null) document.getElementById(id).value = v; };
+  setN('cmp-madu', c.madu_sudu);
+  setN('cmp-nafas', c.nafas_kali);
+  setN('cmp-bumi',  c.bumi_minit);
+  setN('cmp-kelapa',c.kelapa_kali);
+  setN('cmp-kolon', c.kolon_kali);
+  if (c.berjemur !== null) document.querySelector(`input[name="cmp-jemur"][value="${c.berjemur}"]`)?.click();
+  if (c.pantang  !== null) document.querySelector(`input[name="cmp-pantang"][value="${c.pantang}"]`)?.click();
+}
+
+async function saveCompliance() {
+  const numOrNull = id => { const v = document.getElementById(id).value; return v === '' ? null : parseInt(v); };
+  const radioBool = name => { const el = document.querySelector(`input[name="${name}"]:checked`); return el ? el.value === 'true' : null; };
+
+  const data = {
+    plan_id:     activePlan.id,
+    patient_id:  patientId,
+    week_number: weekNumber,
+    madu_sudu:   numOrNull('cmp-madu'),
+    nafas_kali:  numOrNull('cmp-nafas'),
+    bumi_minit:  numOrNull('cmp-bumi'),
+    kelapa_kali: numOrNull('cmp-kelapa'),
+    kolon_kali:  numOrNull('cmp-kolon'),
+    berjemur:    radioBool('cmp-jemur'),
+    pantang:     radioBool('cmp-pantang'),
+    updated_at:  new Date().toISOString(),
+    updated_by:  currentUser.id,
+  };
+
+  if (cmpRowId) {
+    await window.db.from('psy_plan_compliance').update(data).eq('id', cmpRowId);
+  } else {
+    const { data: row } = await window.db.from('psy_plan_compliance').insert(data).select().single();
+    cmpRowId = row?.id;
+  }
+  flashSaved('compliance-saved');
+  banner('Kepatuhan disimpan ✅');
+}
+
+// ── Soap (doctor notes) ───────────────────────────────
+async function loadSoap() {
+  const { data } = await window.db.from('psy_soap_notes')
+    .select('*').eq('patient_id', patientId).order('created_at', { ascending: false });
+  const week = (data || []).filter(n => {
+    const t = new Date(n.created_at);
+    return t >= weekStart && t < weekEnd;
+  });
+  const preview = document.getElementById('preview-soap');
+  if (week.length) {
+    preview.textContent = week[0].chief_complaint?.slice(0, 50) || `${week.length} catatan`;
+    preview.classList.remove('italic');
+  } else {
+    preview.textContent = 'Tiada catatan';
+  }
+}
+
+// ── Vitals ────────────────────────────────────────────
+async function loadVitals() {
+  const { data } = await window.db.from('psy_vitals')
+    .select('*').eq('patient_id', patientId).order('created_at', { ascending: false });
+  const week = (data || []).filter(v => {
+    const t = new Date(v.created_at);
+    return t >= weekStart && t < weekEnd;
+  });
+  const preview = document.getElementById('preview-vitals');
+  if (week.length) {
+    const bits = [];
+    if (week[0].bp_systolic) bits.push(`BP ${week[0].bp_systolic}/${week[0].bp_diastolic}`);
+    if (week[0].heart_rate)  bits.push(`HR ${week[0].heart_rate}`);
+    if (week[0].bmi)         bits.push(`BMI ${week[0].bmi}`);
+    preview.textContent = `${week.length} bacaan${bits.length ? ' · ' + bits.join(' · ') : ''}`;
+    preview.classList.remove('italic');
+  }
+}
+
+// ── Coaching sessions ─────────────────────────────────
+async function loadSessions() {
+  const { data } = await window.db.from('psy_coaching_sessions')
+    .select('*').eq('patient_id', patientId).order('scheduled_at', { ascending: false }).catch(() => ({ data: [] }));
+  const week = (data || []).filter(s => {
+    const d = s.scheduled_at ? new Date(s.scheduled_at) : new Date(s.created_at);
+    return d >= weekStart && d < weekEnd;
+  });
+  const preview = document.getElementById('preview-sessions');
+  if (week.length) {
+    preview.textContent = `${week.length} sesi minggu ini`;
+    preview.classList.remove('italic');
+  }
+}
+
+// ── BPS-S Goals (patient's self-check, read-only) ─────
+async function loadGoals() {
+  const host = document.getElementById('goals-view');
+  const categories = [
+    { key:'bio_goals',      label:'🧬 Bio',      color:'text-bio' },
+    { key:'psycho_goals',   label:'🧠 Psycho',   color:'text-psycho' },
+    { key:'social_goals',   label:'👥 Social',   color:'text-social' },
+    { key:'spiritual_goals',label:'🕌 Spiritual',color:'text-spiritual' },
+  ];
+
+  // Try to read patient's weekly goal check-ins
+  const { data: checkIns } = await window.db.from('psy_plan_checkin_week')
+    .select('*').eq('plan_id', activePlan.id).eq('week_number', weekNumber).catch(() => ({ data: [] }));
+
+  const checked = new Set((checkIns || []).map(c => c.goal_key));
+  let total = 0, done = 0;
+  let html = '';
+
+  categories.forEach(cat => {
+    const goals = activePlan[cat.key] || [];
+    if (!goals.length) return;
+    html += `<div class="mb-3"><div class="text-[11px] font-bold ${cat.color} mb-1">${cat.label}</div><div class="space-y-1">`;
+    goals.forEach((g, i) => {
+      total++;
+      const key = `${cat.key}_${i}`;
+      const isChecked = checked.has(key);
+      if (isChecked) done++;
+      html += `<div class="flex items-center gap-2 text-xs ${isChecked ? 'text-ink' : 'text-ink/40'}">
+        <span>${isChecked ? '✅' : '⬜'}</span><span>${g}</span></div>`;
+    });
+    html += '</div></div>';
+  });
+
+  if (!total) {
+    host.innerHTML = '<p class="text-xs text-ink/40 italic text-center py-4">Tiada matlamat dalam plan ini.</p>';
+  } else {
+    host.innerHTML = `<div class="flex items-center justify-between text-xs text-ink/60 mb-3">
+      <span>Pesakit tanda: <strong class="text-ink">${done}/${total}</strong> matlamat</span>
+      <span>${Math.round((done/total)*100)}%</span>
+    </div>
+    <div class="w-full bg-ink/10 rounded-full h-1.5 mb-4">
+      <div class="bg-green rounded-full h-1.5" style="width:${Math.round((done/total)*100)}%"></div>
+    </div>` + html;
+  }
+}
+
+// ── Patient Feedback (read-only) ──────────────────────
+async function loadFeedback() {
+  const host = document.getElementById('feedback-view');
+  const { data } = await window.db.from('psy_weekly_feedback')
+    .select('*').eq('plan_id', activePlan.id).eq('week_number', weekNumber).single().catch(() => ({ data: null }));
+
+  if (!data) {
+    host.innerHTML = '<p class="text-xs text-ink/40 italic text-center py-4">Pesakit belum hantar feedback minggu ini.</p>';
+    return;
+  }
+
+  const stars = '⭐'.repeat(data.rating || 0) + '☆'.repeat(5 - (data.rating || 0));
+  host.innerHTML = `
+    <div class="text-center mb-4">
+      <div class="text-3xl">${stars}</div>
+      <div class="text-lg font-bold text-ink mt-1">${data.rating || 0}/5</div>
+    </div>
+    ${data.comment ? `<div class="bg-cream/50 rounded-lg p-3 text-sm italic text-ink/70">"${data.comment}"</div>` : ''}
+    <p class="text-[10px] text-ink/40 mt-3 text-right">Dihantar: ${new Date(data.created_at).toLocaleDateString('ms-MY')}</p>`;
+}
+
+// ── Week navigation ───────────────────────────────────
+function goWeek(delta) {
+  const next = weekNumber + delta;
+  if (next < 1 || next > activePlan.duration_weeks) return;
+  const params = new URLSearchParams(location.search);
+  params.set('week', next);
+  location.search = params.toString();
+}
+
+// ── Helpers ───────────────────────────────────────────
+function flashSaved(id) {
+  const el = document.getElementById(id);
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+async function notify(userId, type, title, body, link) {
+  await window.db.from('psy_notifications').insert({ user_id: userId, type, title, body, link }).catch(() => {});
+}
+</script>
+</body>
+</html>

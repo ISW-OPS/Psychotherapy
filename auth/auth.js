@@ -19,13 +19,20 @@ async function handleLogin(e) {
     const { data, error } = await window.db.auth.signInWithPassword({ email, password });
     if (error) throw error;
 
-    const { data: profile, error: profileErr } = await window.db
-      .from('profiles')
+    const { data: profile } = await window.db
+      .from('psy_profiles')
       .select('role, full_name')
       .eq('id', data.user.id)
-      .single();
+      .maybeSingle();
 
-    if (profileErr) throw profileErr;
+    if (!profile) {
+      errEl.textContent = 'Profil tidak dijumpai. Sila hubungi admin atau daftar semula.';
+      errEl.classList.remove('hidden');
+      await window.db.auth.signOut();
+      btn.disabled = false;
+      btn.textContent = 'Log Masuk';
+      return;
+    }
 
     localStorage.setItem('isw_role', profile.role);
     localStorage.setItem('isw_name', profile.full_name);

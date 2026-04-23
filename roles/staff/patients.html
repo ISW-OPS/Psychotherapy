@@ -9,6 +9,27 @@
 <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="_styles.css" rel="stylesheet">
+<style>
+.tab-btn { padding: 0.5rem 1rem; border-radius: 9999px; font-size: 0.875rem; font-weight: 500; background: white; border: 1px solid rgba(60,79,92,0.2); transition: colors 0.15s; }
+.tab-btn.active { background: #1a3a5c; color: white; border-color: #1a3a5c; }
+
+@media print {
+  #sidebar, #page-header, .tab-btn, #search-patient, #filter-status,
+  #patient-count, .print-hide, nav, .mobile-nav,
+  #patient-modal, #print-patient-hidden { display: none !important; }
+  #app-shell { display: block !important; }
+  #list-section { display: block !important; }
+  #kyc-section  { display: none !important; }
+  body { background: white; }
+  .main-content { padding: 0 !important; }
+  #print-header { display: block !important; }
+  table { font-size: 11px; }
+  th, td { padding: 6px 8px !important; }
+  .chip { border: 1px solid #ccc !important; background: transparent !important; color: #333 !important; }
+  a[href] { color: black; text-decoration: none; }
+}
+#print-header { display: none; }
+</style>
 </head>
 <body class="min-h-screen">
 
@@ -22,37 +43,95 @@
     <main class="main-content flex-1 min-w-0">
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
-      <div class="p-4 md:p-8 space-y-6">
-        <div class="flex gap-2 flex-wrap">
-          <button onclick="showTab('list')" id="tab-list" class="px-4 py-2 rounded-full bg-navy text-white text-sm font-semibold">Patient List</button>
-          <button onclick="showTab('kyc')" id="tab-kyc" class="px-4 py-2 rounded-full bg-white border border-ink/20 text-sm">KYC Pending <span id="kyc-badge" class="ml-1"></span></button>
+      <div class="p-4 md:p-8 space-y-5">
+
+        <!-- Print-only list header -->
+        <div id="print-header" class="mb-4">
+          <h1 class="text-xl font-bold">Ibnu Sina Wellness — Senarai Pesakit</h1>
+          <p class="text-xs text-gray-500" id="print-date"></p>
         </div>
 
-        <!-- Patient List -->
+        <!-- Tabs (KYC tab hidden for admin, shown only for coach/manager) -->
+        <div class="flex gap-2 flex-wrap print-hide">
+          <button onclick="showTab('list')" id="tab-list" class="tab-btn active">👥 Patient List</button>
+          <button onclick="showTab('kyc')"  id="tab-kyc"  class="tab-btn hidden">📋 KYC Pending <span id="kyc-badge"></span></button>
+        </div>
+
+        <!-- ── Patient List ─────────────────────────────── -->
         <div id="list-section">
-          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-            <input id="search-patient" placeholder="Cari MRN / nama..." oninput="filterPatients()" class="px-3 py-2 border border-ink/20 rounded-lg text-sm w-64 outline-none focus:border-navy">
-            <span id="patient-count" class="text-xs text-ink/60"></span>
+          <div class="flex items-center gap-3 mb-3 flex-wrap print-hide">
+            <div class="relative flex-1 min-w-48">
+              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-ink/40 text-sm">🔍</span>
+              <input id="search-patient" type="text" placeholder="Cari nama, MRN atau IC..."
+                oninput="filterPatients()"
+                class="w-full pl-9 pr-3 py-2.5 border border-ink/20 rounded-xl text-sm focus:border-navy outline-none bg-white">
+            </div>
+            <select id="filter-status" onchange="filterPatients()"
+              class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
+              <option value="">Semua Status</option>
+              <option value="active">Aktif</option>
+              <option value="pending_kyc">Pending KYC</option>
+              <option value="inactive">Tidak Aktif</option>
+            </select>
+            <span id="patient-count" class="text-xs text-ink/50 whitespace-nowrap"></span>
+            <button onclick="exportCSV()" class="flex items-center gap-1.5 px-4 py-2.5 border border-ink/20 rounded-xl text-sm bg-white hover:border-navy hover:text-navy transition-colors">
+              ⬇ Export CSV
+            </button>
+            <button onclick="printList()" class="flex items-center gap-1.5 px-4 py-2.5 bg-navy text-white rounded-xl text-sm hover:bg-navy-dark transition-colors">
+              🖨️ Print Senarai
+            </button>
           </div>
+
           <div class="bg-white rounded-xl border border-ink/10 overflow-x-auto">
             <table class="data">
-              <thead><tr><th>MRN</th><th>Sex</th><th>Status</th><th>Phone</th><th></th></tr></thead>
+              <thead>
+                <tr>
+                  <th>Nama</th>
+                  <th>MRN</th>
+                  <th>Jantina</th>
+                  <th>Pakej Aktif</th>
+                  <th>Status</th>
+                  <th>Telefon</th>
+                  <th class="print-hide"></th>
+                </tr>
+              </thead>
               <tbody id="patients-body"></tbody>
             </table>
           </div>
         </div>
 
-        <!-- KYC Queue -->
-        <div id="kyc-section" class="hidden">
-          <div class="grid lg:grid-cols-3 gap-4">
-            <div id="kyc-list" class="space-y-2"></div>
-            <div id="kyc-detail" class="lg:col-span-2 bg-white rounded-xl border border-ink/10 p-5">
-              <p class="text-ink/40 text-sm">Pilih submission dari senarai</p>
-            </div>
+        <!-- ── KYC Queue ──────────────────────────────── -->
+        <div id="kyc-section" class="hidden print-hide space-y-3">
+          <!-- KYC status tabs -->
+          <div class="flex gap-2 flex-wrap">
+            <button onclick="setKYCTab('pending')"  id="ktab-pending"  class="tab-btn active">⏳ Pending <span id="kc-pending"  class="ml-1 text-[10px] font-bold bg-terracotta text-white rounded-full px-1.5 py-0.5"></span></button>
+            <button onclick="setKYCTab('approved')" id="ktab-approved" class="tab-btn">✅ Diluluskan <span id="kc-approved" class="ml-1 text-[10px] font-bold bg-green text-white rounded-full px-1.5 py-0.5"></span></button>
+            <button onclick="setKYCTab('rejected')" id="ktab-rejected" class="tab-btn">❌ Ditolak <span id="kc-rejected" class="ml-1 text-[10px] font-bold bg-ink/40 text-white rounded-full px-1.5 py-0.5"></span></button>
           </div>
+          <div id="kyc-list" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
         </div>
+
       </div>
     </main>
+  </div>
+</div>
+
+<!-- ── Patient Detail Modal ───────────────────────── -->
+<div id="patient-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-ink/10 flex-shrink-0">
+      <div>
+        <h3 class="font-bold text-lg" id="modal-pt-name">—</h3>
+        <p class="text-xs text-ink/50" id="modal-pt-mrn">—</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="printPatientReport()" class="flex items-center gap-1.5 bg-navy text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-navy-dark">
+          🖨️ Print Laporan
+        </button>
+        <button onclick="closePatientModal()" class="text-ink/40 hover:text-ink text-2xl leading-none px-1">&times;</button>
+      </div>
+    </div>
+    <div id="modal-pt-body" class="p-6 overflow-y-auto space-y-4"></div>
   </div>
 </div>
 
@@ -63,132 +142,477 @@
 <script src="../../shared/navbar.js"></script>
 <script src="_shared.js"></script>
 <script>
-let allPatients = [];
-let allKYC = [];
+let allPatients     = [];
+let allKYC          = [];
+let currentFiltered = [];
+let currentDetailPt = null;
 
+// ── Tabs ─────────────────────────────────────────────
 function showTab(tab) {
   document.getElementById('list-section').classList.toggle('hidden', tab !== 'list');
   document.getElementById('kyc-section').classList.toggle('hidden', tab !== 'kyc');
-  document.getElementById('tab-list').className = tab === 'list' ? 'px-4 py-2 rounded-full bg-navy text-white text-sm font-semibold' : 'px-4 py-2 rounded-full bg-white border border-ink/20 text-sm';
-  document.getElementById('tab-kyc').className = tab === 'kyc' ? 'px-4 py-2 rounded-full bg-navy text-white text-sm font-semibold' : 'px-4 py-2 rounded-full bg-white border border-ink/20 text-sm';
+  document.getElementById('tab-list').classList.toggle('active', tab === 'list');
+  document.getElementById('tab-kyc').classList.toggle('active', tab === 'kyc');
 }
 
+// ── Patient List ─────────────────────────────────────
 function renderPatients(list) {
+  currentFiltered = list;
   document.getElementById('patient-count').textContent = `${list.length} pesakit`;
   document.getElementById('patients-body').innerHTML = list.length
-    ? list.map(p => `<tr>
-        <td><strong>${p.mrn}</strong></td>
-        <td>${p.gender || '—'}</td>
-        <td>${statusChip(p.status)}</td>
-        <td class="text-xs">${p.emergency_contact_phone || '—'}</td>
-        <td><a href="consultation.html?patient=${p.id}" class="text-navy text-xs font-semibold">Open Chart →</a></td>
-      </tr>`).join('')
-    : '<tr><td colspan="5" class="text-center text-ink/40 py-8">Tiada pesakit</td></tr>';
+    ? list.map(p => {
+        const name  = p.psy_profiles?.full_name || '—';
+        const phone = p.psy_profiles?.phone || p.emergency_contact_phone || '—';
+        return `<tr>
+          <td><strong>${name}</strong></td>
+          <td class="text-xs font-mono">${p.mrn}</td>
+          <td>${p.gender === 'M' ? '♂ Lelaki' : p.gender === 'F' ? '♀ Perempuan' : '—'}</td>
+          <td class="text-xs">${p.active_package_name
+            ? `<span class="chip bg-navy-light text-navy">${p.active_package_name}</span>`
+            : '<span class="text-ink/40">—</span>'}</td>
+          <td>${statusChip(p.status)}</td>
+          <td class="text-xs">${phone}</td>
+          <td class="whitespace-nowrap print-hide">
+            <button onclick="openPatientDetail('${p.id}')" class="text-navy text-xs font-semibold hover:underline">📄 Detail</button>
+          </td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="7" class="text-center text-ink/40 py-8">Tiada pesakit ditemui</td></tr>';
 }
 
 function filterPatients() {
-  const q = document.getElementById('search-patient').value.toLowerCase();
-  const filtered = allPatients.filter(p => p.mrn.toLowerCase().includes(q) || (p.ic_number || '').includes(q));
-  renderPatients(filtered);
+  const q      = document.getElementById('search-patient').value.toLowerCase();
+  const status = document.getElementById('filter-status').value;
+  const list   = allPatients.filter(p => {
+    const name = (p.psy_profiles?.full_name || '').toLowerCase();
+    const matchQ = !q || name.includes(q) || (p.mrn || '').toLowerCase().includes(q) || (p.ic_number || '').includes(q);
+    const matchS = !status || p.status === status;
+    return matchQ && matchS;
+  });
+  renderPatients(list);
+}
+
+// ── Patient Detail Modal ──────────────────────────────
+function openPatientDetail(id) {
+  const p = allPatients.find(x => x.id === id);
+  if (!p) return;
+  currentDetailPt = p;
+
+  const name  = p.psy_profiles?.full_name || '—';
+  const phone = p.psy_profiles?.phone || '—';
+  const email = p.psy_profiles?.email || '—';
+
+  document.getElementById('modal-pt-name').textContent = name;
+  document.getElementById('modal-pt-mrn').textContent  = `MRN: ${p.mrn}`;
+
+  document.getElementById('modal-pt-body').innerHTML = `
+    <!-- Status banner -->
+    <div class="flex gap-3 items-center flex-wrap">
+      ${statusChip(p.status)}
+      ${p.active_package_name ? `<span class="chip bg-navy-light text-navy text-xs">${p.active_package_name}</span>` : ''}
+    </div>
+
+    <!-- Personal info -->
+    <div class="grid md:grid-cols-2 gap-3 text-sm">
+      <div class="bg-cream/40 rounded-xl p-4 space-y-2">
+        <div class="text-[10px] font-bold text-ink/50 uppercase tracking-wide mb-1">Maklumat Peribadi</div>
+        <div class="flex justify-between"><span class="text-ink/60">No. IC</span><strong>${p.ic_number || '—'}</strong></div>
+        <div class="flex justify-between"><span class="text-ink/60">Tarikh Lahir</span><strong>${p.date_of_birth || '—'}</strong></div>
+        <div class="flex justify-between"><span class="text-ink/60">Jantina</span><strong>${p.gender === 'M' ? 'Lelaki' : p.gender === 'F' ? 'Perempuan' : '—'}</strong></div>
+        <div class="flex justify-between"><span class="text-ink/60">Rujukan</span><strong>${p.referral_source || '—'}</strong></div>
+      </div>
+      <div class="bg-cream/40 rounded-xl p-4 space-y-2">
+        <div class="text-[10px] font-bold text-ink/50 uppercase tracking-wide mb-1">Hubungi</div>
+        <div class="flex justify-between"><span class="text-ink/60">Telefon</span><strong>${phone}</strong></div>
+        <div class="flex justify-between"><span class="text-ink/60">Email</span><strong class="text-xs">${email}</strong></div>
+        <div class="flex justify-between"><span class="text-ink/60">Alamat</span><strong class="text-xs text-right max-w-[60%]">${p.address || '—'}</strong></div>
+      </div>
+    </div>
+
+    <!-- Emergency contact -->
+    <div class="bg-gold/10 rounded-xl p-4 text-sm space-y-1">
+      <div class="text-[10px] font-bold text-ink/50 uppercase tracking-wide mb-1">🚨 Hubungi Kecemasan</div>
+      <div class="flex gap-6 flex-wrap">
+        <span><strong>${p.emergency_contact_name || '—'}</strong></span>
+        <span class="text-ink/60">${p.emergency_contact_phone || '—'}</span>
+      </div>
+    </div>
+
+    <!-- Medical info -->
+    <div class="bg-terracotta/5 rounded-xl p-4 text-sm space-y-2">
+      <div class="text-[10px] font-bold text-ink/50 uppercase tracking-wide mb-1">🩺 Maklumat Perubatan</div>
+      <div class="flex justify-between"><span class="text-ink/60">Kondisi</span><strong>${p.medical_condition || '—'}</strong></div>
+      <div class="flex justify-between"><span class="text-ink/60">Tempoh</span><strong>${p.condition_duration || '—'}</strong></div>
+      ${p.medical_notes ? `<div class="text-xs text-ink/70 italic border-t border-ink/10 pt-2 mt-2">${p.medical_notes}</div>` : ''}
+    </div>
+
+    <!-- Consent -->
+    <div class="text-xs text-ink/50 flex gap-4 flex-wrap pt-1">
+      <span>Consent daftar: ${new Date(p.created_at).toLocaleDateString('ms-MY')}</span>
+    </div>`;
+
+  document.getElementById('patient-modal').classList.remove('hidden');
+}
+
+function closePatientModal() {
+  document.getElementById('patient-modal').classList.add('hidden');
+  currentDetailPt = null;
+}
+
+// ── Print per-patient report in new window ────────────
+function printPatientReport() {
+  const p = currentDetailPt;
+  if (!p) return;
+  const name  = p.psy_profiles?.full_name || '—';
+  const phone = p.psy_profiles?.phone || '—';
+  const email = p.psy_profiles?.email || '—';
+  const now   = new Date().toLocaleString('ms-MY', { dateStyle: 'full', timeStyle: 'short' });
+
+  const html = `<!DOCTYPE html><html lang="ms"><head><meta charset="UTF-8">
+  <title>Laporan Pesakit — ${name}</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 12px; color: #1a1a2e; margin: 0; padding: 24px; }
+    .header { border-bottom: 2px solid #1a1a2e; padding-bottom: 12px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: flex-end; }
+    .header h1 { font-size: 18px; margin: 0 0 4px; }
+    .header p  { font-size: 10px; color: #666; margin: 0; }
+    .badge { display: inline-block; font-size: 10px; padding: 2px 8px; border: 1px solid #ccc; border-radius: 20px; margin-right: 4px; }
+    .section { margin-bottom: 16px; }
+    .section-title { font-size: 9px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.05em; color: #888; margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid #eee; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+    .row span { color: #666; }
+    .row strong { text-align: right; max-width: 60%; }
+    .footer { margin-top: 40px; border-top: 1px solid #eee; padding-top: 10px; font-size: 9px; color: #999; display: flex; justify-content: space-between; }
+    @media print { body { padding: 16px; } }
+  </style>
+  </head><body>
+  <div class="header">
+    <div>
+      <h1>Laporan Pesakit</h1>
+      <p>Ibnu Sina Wellness · Sulit &amp; Rahsia</p>
+    </div>
+    <div style="text-align:right">
+      <strong style="font-size:15px">${name}</strong><br>
+      <span style="font-size:10px;color:#666">MRN: ${p.mrn}</span>
+    </div>
+  </div>
+
+  <div style="margin-bottom:14px">
+    <span class="badge">${p.status === 'active' ? 'Aktif' : p.status === 'pending_kyc' ? 'Pending KYC' : p.status || '—'}</span>
+    ${p.active_package_name ? `<span class="badge">${p.active_package_name}</span>` : ''}
+  </div>
+
+  <div class="grid">
+    <div class="section">
+      <div class="section-title">Maklumat Peribadi</div>
+      <div class="row"><span>No. IC</span><strong>${p.ic_number || '—'}</strong></div>
+      <div class="row"><span>Tarikh Lahir</span><strong>${p.date_of_birth || '—'}</strong></div>
+      <div class="row"><span>Jantina</span><strong>${p.gender === 'M' ? 'Lelaki' : p.gender === 'F' ? 'Perempuan' : '—'}</strong></div>
+      <div class="row"><span>Rujukan</span><strong>${p.referral_source || '—'}</strong></div>
+    </div>
+    <div class="section">
+      <div class="section-title">Maklumat Hubungan</div>
+      <div class="row"><span>Telefon</span><strong>${phone}</strong></div>
+      <div class="row"><span>Email</span><strong>${email}</strong></div>
+      <div class="row"><span>Alamat</span><strong>${p.address || '—'}</strong></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Hubungi Kecemasan</div>
+    <div class="row"><span>Nama</span><strong>${p.emergency_contact_name || '—'}</strong></div>
+    <div class="row"><span>Telefon</span><strong>${p.emergency_contact_phone || '—'}</strong></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Maklumat Perubatan</div>
+    <div class="row"><span>Kondisi</span><strong>${p.medical_condition || '—'}</strong></div>
+    <div class="row"><span>Tempoh</span><strong>${p.condition_duration || '—'}</strong></div>
+    ${p.medical_notes ? `<div style="margin-top:6px;font-style:italic;color:#555;font-size:11px">${p.medical_notes}</div>` : ''}
+  </div>
+
+  <div class="footer">
+    <span>Dicetak: ${now}</span>
+    <span>Dokumen ini adalah SULIT. Dilarang berkongsi tanpa kebenaran.</span>
+  </div>
+  <script>window.onload = function(){ window.print(); }<\/script>
+  </body></html>`;
+
+  const w = window.open('', '_blank', 'width=800,height=700');
+  w.document.write(html);
+  w.document.close();
+}
+
+// ── Print patient list ────────────────────────────────
+function printList() {
+  document.getElementById('print-date').textContent =
+    'Dicetak: ' + new Date().toLocaleString('ms-MY', { dateStyle: 'full', timeStyle: 'short' });
+  window.print();
+}
+
+// ── Export CSV ────────────────────────────────────────
+function exportCSV() {
+  const rows = [['Nama', 'MRN', 'IC', 'Jantina', 'Pakej Aktif', 'Status', 'Telefon', 'Kondisi']];
+  currentFiltered.forEach(p => {
+    rows.push([
+      p.psy_profiles?.full_name || '',
+      p.mrn || '',
+      p.ic_number || '',
+      p.gender === 'M' ? 'Lelaki' : p.gender === 'F' ? 'Perempuan' : '',
+      p.active_package_name || '',
+      p.status || '',
+      p.psy_profiles?.phone || p.emergency_contact_phone || '',
+      p.medical_condition || '',
+    ]);
+  });
+  const csv  = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `senarai_pesakit_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── KYC Queue ────────────────────────────────────────
+let currentKYCTab = 'pending';
+
+function setKYCTab(tab) {
+  currentKYCTab = tab;
+  ['pending','approved','rejected'].forEach(k => {
+    document.getElementById('ktab-' + k)?.classList.toggle('active', k === tab);
+  });
+  renderKYCList();
 }
 
 function renderKYCList() {
-  document.getElementById('kyc-badge').innerHTML = allKYC.length ? `<span class="chip bg-terracotta text-white">${allKYC.length}</span>` : '';
-  document.getElementById('kyc-list').innerHTML = allKYC.length
-    ? allKYC.map(k => `
-      <div onclick="showKYCDetail('${k.id}')" class="bg-white border-l-4 border-gold rounded-lg p-3 cursor-pointer hover:shadow">
-        <strong class="text-sm">${k.patient_name}</strong>
-        <div class="text-[10px] text-ink/50">IC: ${k.ic_number || '—'} · ${formatDate(k.created_at)}</div>
+  const pending  = allKYC.filter(k => k.status === 'pending');
+  const approved = allKYC.filter(k => k.status === 'approved');
+  const rejected = allKYC.filter(k => k.status === 'rejected');
+
+  // Update counts
+  document.getElementById('kc-pending').textContent  = pending.length  || '';
+  document.getElementById('kc-approved').textContent = approved.length || '';
+  document.getElementById('kc-rejected').textContent = rejected.length || '';
+
+  // Main tab badge (pending only)
+  document.getElementById('kyc-badge').innerHTML = pending.length
+    ? `<span class="chip bg-terracotta text-white ml-1">${pending.length}</span>` : '';
+
+  const list = currentKYCTab === 'pending' ? pending
+             : currentKYCTab === 'approved' ? approved : rejected;
+
+  const borderMap = { pending:'border-gold', approved:'border-green', rejected:'border-terracotta' };
+  const chipMap   = {
+    pending:  '<span class="chip bg-gold/20 text-gold-dark text-[10px]">⏳ Pending</span>',
+    approved: '<span class="chip bg-green-light text-green-dark text-[10px]">✅ Diluluskan</span>',
+    rejected: '<span class="chip bg-terracotta/15 text-terracotta text-[10px]">❌ Ditolak</span>',
+  };
+
+  document.getElementById('kyc-list').innerHTML = list.length
+    ? list.map(k => `
+      <div onclick="showKYCDetail('${k.id}')"
+        class="bg-white border border-ink/10 border-l-4 ${borderMap[k.status]} rounded-xl p-4 cursor-pointer hover:shadow-md transition-shadow">
+        <div class="flex items-start justify-between gap-2 mb-2">
+          <strong class="text-sm leading-snug">${k.patient_name || '—'}</strong>
+          ${chipMap[k.status] || ''}
+        </div>
+        <div class="text-[11px] text-ink/50">🆔 ${k.ic_number || '—'}</div>
+        <div class="text-[11px] text-ink/50">📞 ${k.phone || '—'}</div>
+        <div class="text-[11px] text-ink/40 mt-1">📅 ${formatDate(k.created_at)}</div>
       </div>`).join('')
-    : '<p class="text-ink/40 text-sm">Tiada KYC pending</p>';
+    : `<div class="col-span-3 bg-white rounded-xl border border-ink/10 p-10 text-center text-ink/40 text-sm">
+        ${currentKYCTab === 'pending' ? '🎉 Tiada KYC menunggu semakan' : '📭 Tiada rekod'}
+      </div>`;
 }
 
 async function showKYCDetail(id) {
-  const k = await dbQuery('kyc_submissions', { eq: { id }, single: true });
-  const reports = k.documents?.reports || [];
+  location.href = 'kyc-review.html?id=' + id;
+}
 
+async function _showKYCDetailOld(id) {
+  const k = allKYC.find(x => x.id === id);
+  if (!k) return;
+
+  const reports = k.documents?.reports || [];
   const reportLinks = await Promise.all(reports.map(async r => {
     const { data } = await window.db.storage.from('medical-reports').createSignedUrl(r.path, 3600);
     return { name: r.name, url: data?.signedUrl };
   }));
 
   document.getElementById('kyc-detail').innerHTML = `
-    <h3 class="font-bold text-lg">${k.patient_name}</h3>
-    <p class="text-xs text-ink/60">IC: ${k.ic_number || '—'} · Tel: ${k.phone || '—'}</p>
-    <div class="mt-4 space-y-2 text-sm">
-      <div><strong>Email:</strong> ${k.email || '—'}</div>
-      <div><strong>Tarikh Lahir:</strong> ${k.date_of_birth || '—'} · <strong>Jantina:</strong> ${k.gender || '—'}</div>
-      <div><strong>Alamat:</strong> ${k.address || '—'}</div>
-      <div><strong>Kontak Kecemasan:</strong> ${k.emergency_contact_name || '—'} (${k.emergency_contact_phone || '—'})</div>
-      <div><strong>Rujukan:</strong> ${k.referral_source || '—'}</div>
-
-      <div class="mt-3 p-3 bg-cream/50 rounded-lg">
-        <div class="font-semibold text-sm mb-1">🩺 Sejarah Kesihatan</div>
-        <div><strong>Kondisi:</strong> ${k.medical_condition || '—'}</div>
-        <div><strong>Tempoh:</strong> ${k.condition_duration || '—'}</div>
-        ${k.medical_notes ? `<div class="mt-1 text-xs italic">💬 ${k.medical_notes}</div>` : ''}
+    <div class="flex items-start justify-between mb-4">
+      <div>
+        <h3 class="font-bold text-lg">${k.patient_name}</h3>
+        <p class="text-xs text-ink/60">IC: ${k.ic_number || '—'} · Tel: ${k.phone || '—'} · ${k.email || '—'}</p>
       </div>
-
-      ${reportLinks.length ? `
-        <div class="mt-3">
-          <div class="font-semibold text-sm mb-1">📎 Laporan Perubatan</div>
-          <div class="space-y-1">
-            ${reportLinks.map(r => `<a href="${r.url}" target="_blank" class="block text-xs text-navy hover:underline bg-white border border-ink/10 px-2 py-1 rounded">📄 ${r.name}</a>`).join('')}
-          </div>
-        </div>` : ''}
-
-      <div class="mt-3"><strong>Consent:</strong></div>
-      <div class="text-xs">${k.consent_data_processing ? '✅' : '❌'} Data processing · ${k.consent_health_records ? '✅' : '❌'} Health records · ${k.consent_research ? '✅' : '❌'} Research</div>
+      <span class="chip bg-gold/30 text-gold-dark text-xs">Pending</span>
     </div>
-    <div class="flex gap-2 mt-4">
-      <button onclick="reviewKYC('${k.id}','approved')" class="bg-green text-white text-sm px-5 py-2 rounded-lg font-semibold">Lulus</button>
-      <button onclick="reviewKYC('${k.id}','rejected')" class="bg-terracotta text-white text-sm px-5 py-2 rounded-lg">Tolak</button>
+
+    <div class="grid md:grid-cols-2 gap-3 text-sm mb-4">
+      <div class="bg-cream/50 rounded-lg p-3 space-y-1">
+        <div class="text-[10px] font-semibold text-ink/50 uppercase">Maklumat Peribadi</div>
+        <div><strong>Tarikh Lahir:</strong> ${k.date_of_birth || '—'}</div>
+        <div><strong>Jantina:</strong> ${k.gender || '—'}</div>
+        <div><strong>Alamat:</strong> ${k.address || '—'}</div>
+        <div><strong>Rujukan:</strong> ${k.referral_source || '—'}</div>
+      </div>
+      <div class="bg-cream/50 rounded-lg p-3 space-y-1">
+        <div class="text-[10px] font-semibold text-ink/50 uppercase">Kecemasan</div>
+        <div><strong>Nama:</strong> ${k.emergency_contact_name || '—'}</div>
+        <div><strong>Tel:</strong> ${k.emergency_contact_phone || '—'}</div>
+        <div class="text-[10px] font-semibold text-ink/50 uppercase mt-2">Consent</div>
+        <div class="flex gap-3 text-xs">
+          <span>${k.consent_data_processing ? '✅' : '❌'} Data</span>
+          <span>${k.consent_health_records  ? '✅' : '❌'} Records</span>
+          <span>${k.consent_research        ? '✅' : '❌'} Research</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-terracotta/5 rounded-lg p-3 text-sm mb-4">
+      <div class="text-[10px] font-semibold text-ink/50 uppercase mb-1">🩺 Sejarah Kesihatan</div>
+      <div><strong>Kondisi:</strong> ${k.medical_condition || '—'}</div>
+      <div><strong>Tempoh:</strong> ${k.condition_duration || '—'}</div>
+      ${k.medical_notes ? `<div class="mt-1 text-xs text-ink/70 italic">${k.medical_notes}</div>` : ''}
+    </div>
+
+    ${reportLinks.length ? `
+    <div class="mb-4">
+      <div class="text-xs font-semibold text-ink/60 mb-1">📎 Laporan Perubatan</div>
+      <div class="space-y-1">
+        ${reportLinks.map(r => r.url
+          ? `<a href="${r.url}" target="_blank" class="flex items-center gap-2 text-xs text-navy bg-white border border-ink/10 px-3 py-1.5 rounded-lg hover:border-navy">📄 ${r.name}</a>`
+          : '').join('')}
+      </div>
+    </div>` : ''}
+
+    <div class="mb-3">
+      <label class="text-xs font-semibold">Nota Semakan (optional)</label>
+      <textarea id="review-notes" rows="2" placeholder="Cth: Dokumen lengkap. Lulus." class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"></textarea>
+    </div>
+
+    <div class="flex gap-2">
+      <button onclick="reviewKYC('${k.id}','approved')" id="btn-approve"
+        class="flex-1 bg-green text-white text-sm py-2.5 rounded-xl font-semibold">✅ Lulus KYC</button>
+      <button onclick="reviewKYC('${k.id}','rejected')" id="btn-reject"
+        class="flex-1 bg-terracotta text-white text-sm py-2.5 rounded-xl font-semibold">❌ Tolak</button>
     </div>`;
 }
 
 async function reviewKYC(id, status) {
-  const k = await dbQuery('kyc_submissions', { eq: { id }, single: true });
-  await dbUpdate('kyc_submissions', id, { status, reviewed_by: currentUser.id, reviewed_at: new Date().toISOString() });
+  const k = allKYC.find(x => x.id === id);
+  if (!k) return;
 
-  if (status === 'approved' && k?.user_id) {
-    const linked = await dbQuery('patients', { eq: { user_id: k.user_id } });
-    if (linked[0]) {
-      await dbUpdate('patients', linked[0].id, {
-        ic_number: k.ic_number,
-        date_of_birth: k.date_of_birth,
-        gender: k.gender,
-        address: k.address,
-        emergency_contact_name: k.emergency_contact_name,
-        emergency_contact_phone: k.emergency_contact_phone,
-        referral_source: k.referral_source,
-        medical_condition: k.medical_condition,
-        condition_duration: k.condition_duration,
-        medical_notes: k.medical_notes,
-      });
-      if (k.phone || k.patient_name) {
-        await dbUpdate('profiles', k.user_id, { full_name: k.patient_name, phone: k.phone });
+  const notes = document.getElementById('review-notes')?.value || '';
+  const btnA  = document.getElementById('btn-approve');
+  const btnR  = document.getElementById('btn-reject');
+  if (btnA) { btnA.disabled = true; btnR.disabled = true; }
+
+  try {
+    await dbUpdate('psy_kyc_submissions', id, {
+      status,
+      reviewed_by: currentUser.id,
+      reviewed_at: new Date().toISOString(),
+      review_notes: notes || null,
+    });
+
+    if (status === 'approved' && k?.user_id) {
+      const { data: patients } = await window.db.from('psy_patients')
+        .select('id').eq('user_id', k.user_id).then(r => r, () => ({ data: [] }));
+
+      if (patients?.[0]) {
+        await dbUpdate('psy_patients', patients[0].id, {
+          status: 'active',
+          ic_number: k.ic_number,
+          date_of_birth: k.date_of_birth,
+          gender: k.gender,
+          address: k.address,
+          emergency_contact_name: k.emergency_contact_name,
+          emergency_contact_phone: k.emergency_contact_phone,
+          referral_source: k.referral_source,
+          medical_condition: k.medical_condition,
+          condition_duration: k.condition_duration,
+          medical_notes: k.medical_notes,
+        });
       }
-    }
-  }
 
-  await auditLog('kyc.' + status, id);
-  banner(`KYC ${status === 'approved' ? 'diluluskan' : 'ditolak'}`);
-  await loadAll();
-  document.getElementById('kyc-detail').innerHTML = '<p class="text-ink/40 text-sm">Pilih submission dari senarai</p>';
+      if (k.patient_name || k.phone) {
+        await window.db.from('psy_profiles')
+          .update({ full_name: k.patient_name || undefined, phone: k.phone || undefined })
+          .eq('id', k.user_id).then(() => {}, () => {});
+      }
+
+      await window.db.from('psy_notifications').insert({
+        user_id: k.user_id, type: 'kyc',
+        title: 'KYC Diluluskan ✅',
+        body: 'Akaun anda telah disahkan. Anda kini boleh menggunakan semua fungsi sistem.',
+        link: 'dashboard.html',
+      }).then(() => {}, () => {});
+    } else if (status === 'rejected' && k?.user_id) {
+      await window.db.from('psy_notifications').insert({
+        user_id: k.user_id, type: 'kyc',
+        title: 'KYC Memerlukan Semakan',
+        body: notes || 'Permohonan KYC anda memerlukan semakan lanjut. Sila hubungi klinik.',
+        link: 'kyc.html',
+      }).then(() => {}, () => {});
+    }
+
+    await auditLog('kyc.' + status, id, { notes });
+    banner(`KYC ${status === 'approved' ? 'diluluskan ✅' : 'ditolak'}`);
+    await loadAll();
+    document.getElementById('kyc-detail').innerHTML =
+      '<p class="text-ink/40 text-sm text-center py-8">Pilih submission dari senarai untuk semak</p>';
+  } catch (err) {
+    banner('Ralat: ' + err.message, 'error');
+    if (btnA) { btnA.disabled = false; btnR.disabled = false; }
+  }
 }
 
+// ── Load ─────────────────────────────────────────────
 async function loadAll() {
-  [allPatients, allKYC] = await Promise.all([
-    dbQuery('patients', { eq: { status: 'active' }, order: { col: 'created_at' } }),
-    dbQuery('kyc_submissions', { eq: { status: 'pending' }, order: { col: 'created_at' } }),
+  const isCoach = window.currentUser?.staff_role === 'coach';
+
+  let patQuery = window.db.from('psy_patients')
+    .select('*, psy_profiles!psy_patients_user_id_fkey(full_name, phone, email, role, avatar_url)')
+    .order('created_at', { ascending: false });
+
+  // Coach only sees their own assigned patients
+  if (isCoach) patQuery = patQuery.eq('coach_id', window.currentUser.id);
+
+  const [patRes, kycRes] = await Promise.all([
+    patQuery,
+    window.db.from('psy_kyc_submissions')
+      .select('*')
+      .order('created_at', { ascending: false }),
   ]);
-  renderPatients(allPatients);
+
+  if (patRes.error) console.error('[patients] load error:', patRes.error);
+  if (kycRes.error) console.error('[kyc] load error:', kycRes.error);
+
+  allPatients = (patRes.data || []).filter(p => p.psy_profiles?.role === 'patient' || !p.psy_profiles);
+  allKYC      = kycRes.data || [];
+  allKYC      = kycRes.data || [];
+
+  filterPatients();
   renderKYCList();
 }
 
+function formatDate(d) { return new Date(d).toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric' }); }
+
 (async () => {
-  const user = await initStaff('patients', 'Patient roster · KYC review');
+  const user = await initStaff('psy_patients', 'Patient roster · KYC review');
   if (!user) return;
+  // KYC approve/reject — admin, manager, and doctor only (not coach)
+  if (['admin', 'manager', 'doctor'].includes(user.staff_role)) {
+    document.getElementById('tab-kyc').classList.remove('hidden');
+  }
+  
+  const urlParams = new URLSearchParams(window.location.search);
+  const initialTab = urlParams.get('tab') || 'list';
+  showTab(initialTab);
+
   loadAll();
 })();
 </script>

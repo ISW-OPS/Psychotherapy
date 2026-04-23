@@ -109,35 +109,54 @@ function getYouTubeId(url) {
   const m = url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([A-Za-z0-9_-]{11})/);
   return m ? m[1] : null;
 }
-function isPdf(url) {
-  return url && (url.toLowerCase().includes('.pdf') || url.toLowerCase().includes('drive.google.com/file'));
-}
+function isImage(url) { return url && /\.(jpg|jpeg|png|gif|webp)/i.test(url); }
+function isVideoFile(url) { return url && /\.(mp4|webm|mov)/i.test(url); }
+function isPdf(url) { return url && (/\.pdf/i.test(url) || url.includes('drive.google.com/file')); }
 
 function renderDetail(item) {
   document.getElementById('detail-loading').classList.add('hidden');
 
-  const url = item.content_url || '';
+  const url  = item.content_url || '';
   const body = item.content_body || '';
   const ytId = url ? getYouTubeId(url) : null;
 
   if (ytId) {
-    // YouTube video — YouTube-style layout
-    document.getElementById('video-frame').src = `https://www.youtube.com/embed/${ytId}`;
-    document.getElementById('v-type').textContent = item.content_type || '';
+    // YouTube embed
+    document.getElementById('video-frame').src = `https://www.youtube.com/embed/${ytId}?rel=0`;
+    document.getElementById('v-type').textContent  = item.content_type || '';
     document.getElementById('v-title').textContent = item.title || '';
-    document.getElementById('v-desc').textContent = item.description || '';
-    if (body) {
-      document.getElementById('v-body').textContent = body;
-      document.getElementById('v-body-wrap').classList.remove('hidden');
-    }
+    document.getElementById('v-desc').textContent  = item.description || '';
+    if (body) { document.getElementById('v-body').textContent = body; document.getElementById('v-body-wrap').classList.remove('hidden'); }
     document.getElementById('layout-video').classList.remove('hidden');
+
+  } else if (isVideoFile(url)) {
+    // Uploaded video file — replace iframe with <video> tag
+    const vWrap = document.getElementById('layout-video');
+    const iframeWrap = vWrap.querySelector('.aspect-video');
+    iframeWrap.innerHTML = `<video src="${url}" controls class="w-full h-full rounded-2xl bg-black" style="max-height:360px"></video>`;
+    document.getElementById('v-type').textContent  = item.content_type || '';
+    document.getElementById('v-title').textContent = item.title || '';
+    document.getElementById('v-desc').textContent  = item.description || '';
+    if (body) { document.getElementById('v-body').textContent = body; document.getElementById('v-body-wrap').classList.remove('hidden'); }
+    vWrap.classList.remove('hidden');
+
+  } else if (isImage(url)) {
+    // Uploaded image — show in article layout with big image on top
+    const hero = document.getElementById('a-hero');
+    hero.className = 'rounded-2xl overflow-hidden mb-5';
+    hero.innerHTML = `<img src="${url}" class="w-full max-h-96 object-contain bg-black/5" alt="${item.title}">`;
+    document.getElementById('a-type').textContent  = item.content_type || '';
+    document.getElementById('a-title').textContent = item.title || '';
+    document.getElementById('a-desc').textContent  = item.description || '';
+    if (body) { document.getElementById('a-body').textContent = body; document.getElementById('a-body-wrap').classList.remove('hidden'); }
+    document.getElementById('layout-article').classList.remove('hidden');
 
   } else if (isPdf(url)) {
     // PDF viewer
     const embedUrl = url.includes('drive.google.com/file') ? url.replace('/view', '/preview') : url;
-    document.getElementById('pdf-frame').src = embedUrl;
-    document.getElementById('pdf-download').href = url;
-    document.getElementById('p-type').textContent = item.content_type || '';
+    document.getElementById('pdf-frame').src       = embedUrl;
+    document.getElementById('pdf-download').href   = url;
+    document.getElementById('p-type').textContent  = item.content_type || '';
     document.getElementById('p-title').textContent = item.title || '';
     document.getElementById('layout-pdf').classList.remove('hidden');
 
@@ -145,22 +164,15 @@ function renderDetail(item) {
     // Article / Doa / Exercise / Link layout
     const hero = document.getElementById('a-hero');
     hero.className = `rounded-2xl flex items-center gap-5 px-6 py-5 mb-5 bg-gradient-to-br ${item.gradient || 'from-navy to-teal'}`;
-    document.getElementById('a-icon').textContent = item.icon || '📄';
-    document.getElementById('a-type').textContent = item.content_type || '';
-    document.getElementById('a-title').textContent = item.title || '';
-    document.getElementById('a-desc').textContent = item.description || '';
-
-    if (body) {
-      document.getElementById('a-body').textContent = body;
-      document.getElementById('a-body-wrap').classList.remove('hidden');
-    }
-    if (url) {
-      document.getElementById('a-link').href = url;
-      document.getElementById('a-link-wrap').classList.remove('hidden');
-    }
-    if (!body && !url) {
-      document.getElementById('a-empty').classList.remove('hidden');
-    }
+    hero.innerHTML = `<div id="a-icon" class="text-5xl flex-shrink-0">${item.icon || '📄'}</div>
+      <div>
+        <span id="a-type" class="chip bg-white/30 text-white text-xs mb-2 inline-block">${item.content_type || ''}</span>
+        <h1 id="a-title" class="font-bold text-xl text-white leading-snug">${item.title || ''}</h1>
+        <p id="a-desc" class="text-white/70 text-sm mt-1">${item.description || ''}</p>
+      </div>`;
+    if (body) { document.getElementById('a-body').textContent = body; document.getElementById('a-body-wrap').classList.remove('hidden'); }
+    if (url)  { document.getElementById('a-link').href = url;  document.getElementById('a-link-wrap').classList.remove('hidden'); }
+    if (!body && !url) document.getElementById('a-empty').classList.remove('hidden');
     document.getElementById('layout-article').classList.remove('hidden');
   }
 }
@@ -181,7 +193,7 @@ function renderDetail(item) {
   const id = new URLSearchParams(window.location.search).get('id');
   if (!id) { window.location.href = 'library.html'; return; }
 
-  const rows = await dbQuery('library_items', { eq: { item_id: id, is_active: true }, limit: 1 }).catch(() => []);
+  const rows = await dbQuery('psy_library_items', { eq: { item_id: id, is_active: true }, limit: 1 }).catch(() => []);
   if (!rows.length) {
     document.getElementById('detail-loading').textContent = 'Kandungan tidak dijumpai.';
     return;

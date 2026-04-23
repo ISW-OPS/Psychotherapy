@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Detail Isu</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+  #chat-area { background: #f8f5f0; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">💬</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex" style="height:100vh; overflow:hidden;">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col flex-shrink-0" style="height:100vh; overflow-y:auto;"></aside>
+
+    <div class="flex-1 flex flex-col min-w-0" style="height:100vh;">
+
+      <!-- Top bar -->
+      <div class="bg-white border-b border-ink/10 px-6 py-3 flex items-center gap-4 flex-shrink-0">
+        <a href="issue.html" class="text-ink/50 hover:text-navy text-sm font-medium">← Kembali</a>
+        <div class="w-px h-5 bg-ink/20"></div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span id="hdr-type" class="font-bold text-sm">—</span>
+            <span id="hdr-status"></span>
+          </div>
+          <p id="hdr-meta" class="text-xs text-ink/50">—</p>
+        </div>
+        <button id="btn-replacement"
+          class="px-4 py-2 bg-gold/20 text-gold-dark border border-gold/30 rounded-xl text-xs font-semibold hover:bg-gold/30 transition-colors whitespace-nowrap">
+          📦 Buat Penggantian
+        </button>
+      </div>
+
+      <!-- Chat messages -->
+      <div id="chat-area" class="flex-1 overflow-y-auto px-6 py-5 space-y-4"></div>
+
+      <!-- Reply input -->
+      <div class="bg-white border-t border-ink/10 px-6 py-4 flex-shrink-0">
+        <div id="reply-error" class="hidden text-xs text-terracotta mb-2"></div>
+        <div class="flex gap-3 items-end">
+          <textarea id="reply-text" rows="2"
+            placeholder="Tulis jawapan kepada patient... (Ctrl+Enter untuk hantar)"
+            class="flex-1 border border-ink/20 rounded-xl px-4 py-3 text-sm outline-none focus:border-navy resize-none"></textarea>
+          <button id="btn-send"
+            class="bg-navy text-white px-5 py-3 rounded-xl text-sm font-semibold whitespace-nowrap hover:bg-navy-dark transition-colors">
+            Hantar ↩
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ── Replacement Modal ───────────────────────────── -->
+<div id="replacement-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-md">
+    <div class="px-6 py-4 border-b border-ink/10 flex items-center justify-between">
+      <h3 class="font-bold text-sm">📦 Buat Penggantian Produk</h3>
+      <button id="btn-close-rep" class="text-ink/40 hover:text-ink text-2xl leading-none">&times;</button>
+    </div>
+
+    <div class="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+
+      <!-- Patient -->
+      <div class="bg-ink/5 rounded-xl px-4 py-3">
+        <div class="text-[10px] text-ink/50 uppercase font-bold mb-0.5">Patient</div>
+        <div id="rep-patient-name" class="text-sm font-semibold">—</div>
+      </div>
+
+      <!-- Product -->
+      <div>
+        <label class="text-xs font-bold text-ink/50 uppercase mb-1.5 block">Produk Ganti</label>
+        <select id="rep-product" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+          <option value="">-- Pilih produk --</option>
+        </select>
+      </div>
+
+      <!-- Qty -->
+      <div>
+        <label class="text-xs font-bold text-ink/50 uppercase mb-1.5 block">Kuantiti</label>
+        <input type="number" id="rep-qty" value="1" min="1"
+          class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+      </div>
+
+      <!-- Delivery method -->
+      <div>
+        <label class="text-xs font-bold text-ink/50 uppercase mb-1.5 block">Kaedah Penghantaran</label>
+        <select id="rep-delivery" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+          <option value="pos">📮 Pos / Courier</option>
+          <option value="pickup">🏥 Pickup Klinik</option>
+        </select>
+      </div>
+
+      <!-- Address -->
+      <div id="rep-address-wrap">
+        <label class="text-xs font-bold text-ink/50 uppercase mb-1.5 block">Alamat Penghantaran</label>
+        <textarea id="rep-address" rows="2" placeholder="No, Jalan, Bandar, Poskod, Negeri"
+          class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy resize-none"></textarea>
+      </div>
+
+      <!-- Note -->
+      <div>
+        <label class="text-xs font-bold text-ink/50 uppercase mb-1.5 block">Nota Dalaman (optional)</label>
+        <input type="text" id="rep-note" placeholder="cth: ganti kerana produk rosak semasa penghantaran"
+          class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+      </div>
+
+      <div id="rep-error" class="hidden text-xs text-terracotta bg-terracotta/10 rounded-lg px-3 py-2"></div>
+    </div>
+
+    <div class="px-6 py-4 border-t border-ink/10 flex gap-3">
+      <button id="btn-rep-cancel" class="flex-1 border border-ink/20 text-ink/60 py-2.5 rounded-xl text-sm">Batal</button>
+      <button id="btn-rep-confirm" class="flex-1 bg-navy text-white py-2.5 rounded-xl text-sm font-semibold">✅ Sahkan Penggantian</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+const issueId = new URLSearchParams(location.search).get('id');
+let currentIssue  = null;
+let productsList  = [];
+
+const TYPE_LABEL = {
+  produk_rosak:  '📦 Produk rosak',
+  salah_produk:  '🔄 Salah produk',
+  kurang_jumlah: '⚖️ Kurang jumlah',
+  tidak_sampai:  '🚚 Tidak sampai',
+  appointment:   '📅 Masalah appointment',
+  lain_lain:     '💬 Lain-lain',
+};
+
+// ── Load detail ───────────────────────────────────────
+async function loadDetail() {
+  if (!issueId) { window.location.href = 'issue.html'; return; }
+
+  const { data: rows } = await window.db
+    .from('psy_audit_log').select('*').eq('id', issueId).limit(1);
+
+  currentIssue = rows?.[0];
+  if (!currentIssue) { window.location.href = 'issue.html'; return; }
+
+  const [staffRes, followRes] = await Promise.all([
+    window.db.from('psy_audit_log').select('*')
+      .eq('action', 'issue.responded').order('created_at', { ascending: true }),
+    window.db.from('psy_audit_log').select('*')
+      .eq('action', 'issue.followup').order('created_at', { ascending: true }),
+  ]);
+
+  const responses = (staffRes.data  || []).filter(r => r.meta?.issue_id === issueId);
+  const followups = (followRes.data || []).filter(r => r.meta?.issue_id === issueId);
+  const allMsgs   = [...responses, ...followups].sort((a,b) => new Date(a.created_at) - new Date(b.created_at));
+  const resolved  = responses.length > 0;
+
+  const type = currentIssue.meta?.type || 'lain_lain';
+  document.getElementById('hdr-type').textContent = TYPE_LABEL[type] || type;
+  document.getElementById('hdr-meta').textContent =
+    `Daripada: ${currentIssue.actor_name || '—'} · ${new Date(currentIssue.created_at).toLocaleString('ms-MY', { dateStyle:'medium', timeStyle:'short' })}`;
+  document.getElementById('hdr-status').innerHTML = resolved
+    ? '<span class="chip bg-green-light text-green-dark text-[10px]">✅ Selesai</span>'
+    : '<span class="chip bg-terracotta/15 text-terracotta text-[10px]">⚠️ Belum dijawab</span>';
+
+  renderChat(currentIssue, allMsgs);
+}
+
+// ── Chat render ───────────────────────────────────────
+function msgBubble(side, name, text, time, photoUrl) {
+  const isPatient = side === 'patient';
+  const initial   = (name || '?')[0].toUpperCase();
+  const photo     = photoUrl
+    ? `<img src="${photoUrl}" alt="foto" class="mt-2 rounded-xl max-h-48 object-contain border border-ink/10">`
+    : '';
+  const avatar = `<div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0
+    ${isPatient ? 'bg-terracotta/20 text-terracotta' : 'bg-navy text-white'}">${initial}</div>`;
+  const bubble = `<div class="max-w-[70%]">
+    <div class="text-[10px] text-ink/40 mb-1 ${isPatient ? '' : 'text-right'}">${name} · ${time}</div>
+    <div class="rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap shadow-sm
+      ${isPatient ? 'bg-white text-ink rounded-tl-none' : 'bg-navy text-white rounded-tr-none'}">
+      ${text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}${photo}
+    </div>
+  </div>`;
+  return `<div class="flex ${isPatient ? 'justify-start' : 'justify-end'} gap-2 items-end">
+    ${isPatient ? avatar : ''}${bubble}${!isPatient ? avatar : ''}
+  </div>`;
+}
+
+function renderChat(issue, messages) {
+  const t0 = new Date(issue.created_at).toLocaleString('ms-MY', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+  let html = msgBubble('patient', issue.actor_name || 'Patient', issue.meta?.description || '—', t0, issue.meta?.photo_url || null);
+
+  messages.forEach(m => {
+    const t = new Date(m.created_at).toLocaleString('ms-MY', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+    if (m.action === 'issue.followup') {
+      html += msgBubble('patient', m.actor_name || 'Patient', m.meta?.message || '—', t, null);
+    } else {
+      html += msgBubble('staff', m.actor_name || 'Staff', m.meta?.response || '—', t, null);
+    }
+  });
+
+  const el = document.getElementById('chat-area');
+  el.innerHTML = html;
+  el.scrollTop = el.scrollHeight;
+}
+
+// ── Send reply ────────────────────────────────────────
+async function sendReply() {
+  if (!currentIssue) return;
+  const text  = document.getElementById('reply-text').value.trim();
+  const errEl = document.getElementById('reply-error');
+  errEl.classList.add('hidden');
+
+  if (!text) {
+    errEl.textContent = 'Sila tulis jawapan terlebih dahulu.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  const btn = document.getElementById('btn-send');
+  btn.disabled = true; btn.textContent = 'Menghantar...';
+
+  try {
+    const { error } = await window.db.from('psy_audit_log').insert({
+      actor_id:   window.currentUser.id,
+      actor_name: window.currentUser.full_name,
+      actor_role: window.currentUser.role,
+      action:     'issue.responded',
+      target:     currentIssue.actor_id,
+      meta: { issue_id: currentIssue.id, issue_type: currentIssue.meta?.type, response: text, patient_name: currentIssue.actor_name },
+    });
+
+    if (error) throw error;
+
+    if (currentIssue.actor_id)
+      await notify(currentIssue.actor_id, 'system', 'Isu Anda Telah Dijawab ✅', text, 'issue.html');
+
+    document.getElementById('reply-text').value = '';
+    loadDetail();
+  } catch (err) {
+    errEl.textContent = 'Ralat: ' + (err.message || JSON.stringify(err));
+    errEl.classList.remove('hidden');
+    console.error('sendReply error:', err);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Hantar ↩';
+  }
+}
+
+// ── Replacement ───────────────────────────────────────
+async function openReplacement() {
+  if (!currentIssue) return;
+
+  // Load products once
+  if (!productsList.length) {
+    const { data } = await window.db.from('psy_products')
+      .select('*').eq('is_active', true).order('sort_order');
+    productsList = data || [];
+    const sel = document.getElementById('rep-product');
+    productsList.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = `${p.icon} ${p.name} — RM${p.price}`;
+      opt.dataset.price = p.price;
+      opt.dataset.name  = p.name;
+      opt.dataset.icon  = p.icon;
+      sel.appendChild(opt);
+    });
+  }
+
+  document.getElementById('rep-patient-name').textContent = currentIssue.actor_name || '—';
+  document.getElementById('rep-product').value  = '';
+  document.getElementById('rep-qty').value      = '1';
+  document.getElementById('rep-delivery').value = 'pos';
+  document.getElementById('rep-address').value  = '';
+  document.getElementById('rep-note').value     = '';
+  document.getElementById('rep-address-wrap').classList.remove('hidden');
+  document.getElementById('rep-error').classList.add('hidden');
+  document.getElementById('replacement-modal').classList.remove('hidden');
+}
+
+function closeReplacement() {
+  document.getElementById('replacement-modal').classList.add('hidden');
+}
+
+async function confirmReplacement() {
+  const sel      = document.getElementById('rep-product');
+  const qty      = Math.max(1, parseInt(document.getElementById('rep-qty').value) || 1);
+  const delivery = document.getElementById('rep-delivery').value;
+  const address  = document.getElementById('rep-address').value.trim();
+  const note     = document.getElementById('rep-note').value.trim();
+  const errEl    = document.getElementById('rep-error');
+  errEl.classList.add('hidden');
+
+  if (!sel.value) {
+    errEl.textContent = 'Sila pilih produk penggantian.';
+    errEl.classList.remove('hidden'); return;
+  }
+  if (delivery === 'pos' && !address) {
+    errEl.textContent = 'Sila isi alamat penghantaran.';
+    errEl.classList.remove('hidden'); return;
+  }
+
+  const opt   = sel.options[sel.selectedIndex];
+  const price = parseFloat(opt.dataset.price) || 0;
+  const name  = opt.dataset.name;
+  const icon  = opt.dataset.icon;
+  const total = price * qty;
+
+  const btn = document.getElementById('btn-rep-confirm');
+  btn.disabled = true; btn.textContent = 'Memproses...';
+
+  try {
+    const orderRef = `REP-${Date.now()}`;
+
+    const { error: orderErr } = await window.db.from('psy_orders').insert({
+      order_ref:        orderRef,
+      patient_id:       currentIssue.actor_id,
+      items:            [{ product_id: sel.value, name, icon, qty, price }],
+      total,
+      status:           'packed',
+      delivery_method:  delivery,
+      delivery_address: delivery === 'pos' ? address : 'Pickup Klinik',
+      notes:            `Penggantian — Isu #${currentIssue.id.slice(0,8)}${note ? ' · ' + note : ''}`,
+    });
+
+    if (orderErr) throw orderErr;
+
+    // Audit log
+    await window.db.from('psy_audit_log').insert({
+      actor_id:   window.currentUser.id,
+      actor_name: window.currentUser.full_name,
+      actor_role: window.currentUser.role,
+      action:     'order.replacement',
+      target:     currentIssue.actor_id,
+      meta:       { issue_id: currentIssue.id, order_ref: orderRef, product: name, qty },
+    });
+
+    // Notify patient
+    if (currentIssue.actor_id) {
+      await notify(
+        currentIssue.actor_id, 'order',
+        '📦 Penggantian Sedang Diproses',
+        `${icon} ${name} (x${qty}) akan dihantar kepada anda. Ref: ${orderRef}`,
+        'orders.html'
+      );
+    }
+
+    banner('Penggantian berjaya dibuat ✅');
+    closeReplacement();
+  } catch (err) {
+    errEl.textContent = 'Ralat: ' + (err.message || JSON.stringify(err));
+    errEl.classList.remove('hidden');
+    console.error('replacement error:', err);
+  } finally {
+    btn.disabled = false; btn.textContent = '✅ Sahkan Penggantian';
+  }
+}
+
+// ── Init ──────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('btn-send').addEventListener('click', sendReply);
+  document.getElementById('reply-text').addEventListener('keydown', e => {
+    if (e.ctrlKey && e.key === 'Enter') sendReply();
+  });
+  document.getElementById('btn-replacement').addEventListener('click', openReplacement);
+  document.getElementById('btn-close-rep').addEventListener('click', closeReplacement);
+  document.getElementById('btn-rep-cancel').addEventListener('click', closeReplacement);
+  document.getElementById('btn-rep-confirm').addEventListener('click', confirmReplacement);
+  document.getElementById('rep-delivery').addEventListener('change', function () {
+    document.getElementById('rep-address-wrap').classList.toggle('hidden', this.value === 'pickup');
+  });
+});
+
+(async () => {
+  const user = await initStaff('issue', 'Detail Isu');
+  if (!user) return;
+  loadDetail();
+})();
+</script>
+</body>
+</html>
