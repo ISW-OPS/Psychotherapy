@@ -40,7 +40,7 @@
               <a href="checkin.html" class="bg-white/20 text-white font-semibold px-4 py-2 rounded-lg text-sm hover:bg-white/30">✅ Daily Check-in</a>
             </div>
           </div>
-          <div class="mt-3 pt-3 border-t border-white/20 text-xs opacity-90">
+          <div id="active-banner-note" class="mt-3 pt-3 border-t border-white/20 text-xs opacity-90">
             ℹ️ Anda tidak boleh tempah pakej baru sehingga pakej ini selesai/tamat tempoh.
           </div>
         </div>
@@ -112,19 +112,26 @@ async function loadPackagesFromDB() {
 function renderPackages() {
   const activeId = patientRecord?.active_package_id;
   const hasActive = !!activeId && (!patientRecord?.package_expires_at || new Date(patientRecord.package_expires_at) >= new Date());
+  const activePkg = PACKAGES.find(x => x.id === activeId);
+  const activeIsFree = activePkg ? activePkg.price === 0 : false;
 
   document.getElementById('packages-grid').innerHTML = PACKAGES.map(p => {
     const isActive = p.id === activeId;
-    const isBlocked = hasActive && !isActive;
+    // Free plan active → paid packages can still be added on; only free+free is blocked
+    const isBlocked = hasActive && !isActive && !(activeIsFree && p.price > 0);
+    const isAddOn   = hasActive && !isActive && activeIsFree && p.price > 0;
     const priceDisplay = p.price === 0 ? 'PERCUMA' : `RM ${p.price.toFixed(2)}`;
     const tierBadge = p.tier === 'vip' ? '<span class="chip bg-gold text-white absolute top-2 right-2">VIP</span>' :
                       p.tier === 'free' ? '<span class="chip bg-green text-white absolute top-2 right-2">FREE</span>' : '';
 
-    const borderClass = isActive ? 'border-green border-2 ring-2 ring-green/30' : isBlocked ? 'border-ink/10 opacity-50' : 'border-ink/10';
+    const borderClass = isActive ? 'border-green border-2 ring-2 ring-green/30'
+                      : isAddOn  ? 'border-navy border-2 ring-2 ring-navy/20'
+                      : isBlocked ? 'border-ink/10 opacity-50' : 'border-ink/10';
 
     return `<div class="bg-white rounded-xl overflow-hidden border ${borderClass} hover:shadow-md flex flex-col relative transition">
       ${tierBadge}
       ${isActive ? '<span class="chip bg-green text-white absolute top-2 left-2 z-10">✓ AKTIF</span>' : ''}
+      ${isAddOn  ? '<span class="chip bg-navy text-white absolute top-2 left-2 z-10">+ ADD-ON</span>' : ''}
       <a href="pakej-detail.html#id=${p.id}" class="block cursor-pointer">
         <div class="h-32 ${p.bg} flex items-center justify-center text-5xl">${p.icon}</div>
         <div class="p-4">
@@ -140,7 +147,9 @@ function renderPackages() {
             ? '<span class="text-xs text-green-dark font-semibold">✓ Aktif</span>'
             : isBlocked
               ? '<span class="text-[10px] text-terracotta font-semibold">🔒 Selesai pakej aktif dulu</span>'
-              : `<a href="pakej-detail.html#id=${p.id}" class="bg-navy text-white text-xs px-3 py-1.5 rounded-lg hover:bg-navy-dark inline-block">Details →</a>`}
+              : isAddOn
+                ? `<a href="pakej-detail.html#id=${p.id}" class="bg-navy text-white text-xs px-3 py-1.5 rounded-lg hover:bg-navy-dark inline-block">+ Tambah →</a>`
+                : `<a href="pakej-detail.html#id=${p.id}" class="bg-navy text-white text-xs px-3 py-1.5 rounded-lg hover:bg-navy-dark inline-block">Details →</a>`}
         </div>
       </div>
     </div>`;
@@ -259,6 +268,13 @@ async function loadHistory() {
       const done = weekly.filter(w => w.status === 'hadir').length;
       document.getElementById('active-progress').textContent = `Progress: ${done} / ${p.duration_weeks} minggu selesai`;
     }
+  }
+
+  // Update banner note for free plan
+  const activePkg = PACKAGES.find(x => x.id === patientRecord.active_package_id);
+  if (activePkg?.price === 0) {
+    document.getElementById('active-banner-note').textContent =
+      'ℹ️ Pakej percuma aktif — anda boleh tambah pakej berbayar sebagai add-on bila-bila masa.';
   }
 
   renderPackages();

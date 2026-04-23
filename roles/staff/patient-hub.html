@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Patient Hub</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+  .tab-bar { display:flex; gap:2px; background:#f1f5f9; border-radius:12px; padding:3px; }
+  .tab-btn { flex:1; padding:7px 12px; border-radius:9px; font-size:12px; font-weight:600; border:none; cursor:pointer; background:transparent; color:#3c4f5c99; transition:all .15s; white-space:nowrap; }
+  .tab-btn.active { background:white; color:#1a3a5c; box-shadow:0 1px 4px rgba(0,0,0,.08); }
+  .tab-content { display:none; }
+  .tab-content.active { display:block; }
+  .stat-card { background:white; border-radius:12px; padding:16px; border:1px solid #e2e8f0; }
+  .vital-field label { font-size:11px; font-weight:600; color:#3c4f5c80; text-transform:uppercase; }
+  .vital-field input { width:100%; margin-top:4px; border:1px solid #e2e8f0; border-radius:8px; padding:8px 12px; font-size:14px; outline:none; }
+  .vital-field input:focus { border-color:#1a3a5c; }
+  .checkin-bar { height:8px; border-radius:4px; background:#e2e8f0; overflow:hidden; }
+  .checkin-bar-fill { height:100%; border-radius:4px; transition:width .3s; }
+  .mood-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+  .session-card { background:white; border-radius:10px; border:1px solid #e2e8f0; padding:14px 16px; }
+  .avatar-lg { width:56px; height:56px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:22px; font-weight:700; flex-shrink:0; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">👤</div><p class="text-ink/60 text-sm">Memuatkan data pesakit...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-6 space-y-4">
+
+        <!-- Patient Header Card -->
+        <div class="bg-white rounded-2xl border border-ink/10 p-5">
+          <div class="flex items-center gap-4 flex-wrap">
+            <div id="patient-avatar" class="avatar-lg bg-navy text-white">?</div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <h1 id="patient-name" class="text-xl font-bold text-ink">—</h1>
+                <span id="patient-status-chip" class="chip bg-ink/10 text-ink/60 text-xs">—</span>
+                <span id="patient-kyc-chip" class="chip text-xs"></span>
+              </div>
+              <div class="flex gap-4 mt-1 text-xs text-ink/60 flex-wrap">
+                <span id="patient-mrn"></span>
+                <span id="patient-age"></span>
+                <span id="patient-phone"></span>
+                <span id="patient-package"></span>
+              </div>
+            </div>
+            <div class="flex gap-2">
+              <a id="patient-plan-link" href="#" class="bg-navy text-white text-xs px-4 py-2 rounded-lg font-semibold hover:bg-navy-dark">📅 Plan Minggu Ini</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab Bar -->
+        <div class="tab-bar overflow-x-auto">
+          <button class="tab-btn active" onclick="switchTab('overview')">📋 Overview</button>
+          <button class="tab-btn" onclick="switchTab('checkin')">✅ Check-in</button>
+          <button class="tab-btn" onclick="switchTab('vitals')">📊 Vitals</button>
+          <button class="tab-btn" onclick="switchTab('sessions')">📝 Sesi</button>
+          <button class="tab-btn" onclick="switchTab('profile')">👤 Profil</button>
+        </div>
+
+        <!-- ═══════════════ TAB: OVERVIEW ═══════════════ -->
+        <div id="tab-overview" class="tab-content active space-y-4">
+
+          <!-- Quick Stats -->
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div class="stat-card text-center">
+              <div class="text-2xl font-bold text-navy" id="ov-week">—</div>
+              <div class="text-xs text-ink/60 mt-0.5">Minggu Semasa</div>
+            </div>
+            <div class="stat-card text-center">
+              <div class="text-2xl font-bold text-green" id="ov-attendance">—</div>
+              <div class="text-xs text-ink/60 mt-0.5">Kehadiran</div>
+            </div>
+            <div class="stat-card text-center">
+              <div class="text-2xl font-bold text-gold" id="ov-checkin-streak">—</div>
+              <div class="text-xs text-ink/60 mt-0.5">Check-in (7 hari)</div>
+            </div>
+            <div class="stat-card text-center">
+              <div class="text-2xl font-bold text-psycho" id="ov-avg-mood">—</div>
+              <div class="text-xs text-ink/60 mt-0.5">Avg Mood</div>
+            </div>
+          </div>
+
+          <!-- Plan Progress + Latest Checkin -->
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div class="stat-card space-y-3">
+              <h3 class="font-bold text-sm">📅 Plan Rawatan</h3>
+              <div id="ov-plan-block" class="text-sm text-ink/50 italic">Tiada plan aktif</div>
+            </div>
+            <div class="stat-card space-y-3">
+              <h3 class="font-bold text-sm">🧠 Mood Trend (7 hari)</h3>
+              <div id="ov-mood-chart" class="flex items-end gap-1 h-16"></div>
+              <div id="ov-mood-labels" class="flex gap-1 text-[9px] text-ink/40 justify-between"></div>
+            </div>
+          </div>
+
+          <!-- Active Package -->
+          <div class="stat-card">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-bold text-sm">📦 Pakej Aktif</h3>
+            </div>
+            <div id="ov-package-block" class="text-sm text-ink/50 italic">Tiada pakej aktif</div>
+          </div>
+
+          <!-- Latest Vitals -->
+          <div class="stat-card">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-bold text-sm">📊 Vitals Terkini</h3>
+              <button onclick="switchTab('vitals')" class="text-xs text-navy font-semibold hover:underline">Lihat semua →</button>
+            </div>
+            <div id="ov-vitals-block" class="text-sm text-ink/50 italic">Belum ada bacaan vitals</div>
+          </div>
+        </div>
+
+        <!-- ═══════════════ TAB: CHECK-IN ═══════════════ -->
+        <div id="tab-checkin" class="tab-content space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="font-bold">Daily Check-in Pesakit</h3>
+            <span class="text-xs text-ink/50">30 hari terkini</span>
+          </div>
+          <div id="checkin-list" class="space-y-2"></div>
+        </div>
+
+        <!-- ═══════════════ TAB: VITALS ═══════════════ -->
+        <div id="tab-vitals" class="tab-content space-y-4">
+
+          <!-- Input Form -->
+          <div class="bg-white rounded-2xl border border-ink/10 p-5">
+            <h3 class="font-bold mb-4 text-sm">📊 Rekod Vitals Baru</h3>
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+              <div class="vital-field">
+                <label>Tekanan Darah Systolic</label>
+                <input id="v-sys" type="number" placeholder="120">
+              </div>
+              <div class="vital-field">
+                <label>Tekanan Darah Diastolic</label>
+                <input id="v-dia" type="number" placeholder="80">
+              </div>
+              <div class="vital-field">
+                <label>Kadar Nadi (bpm)</label>
+                <input id="v-hr" type="number" placeholder="72">
+              </div>
+              <div class="vital-field">
+                <label>Berat Badan (kg)</label>
+                <input id="v-weight" type="number" step="0.1" placeholder="60">
+              </div>
+              <div class="vital-field">
+                <label>Tinggi (cm)</label>
+                <input id="v-height" type="number" placeholder="165">
+              </div>
+              <div class="vital-field">
+                <label>Suhu Badan (°C)</label>
+                <input id="v-temp" type="number" step="0.1" placeholder="36.5">
+              </div>
+              <div class="vital-field col-span-2 md:col-span-3">
+                <label>Nota (optional)</label>
+                <input id="v-notes" type="text" placeholder="Pemerhatian semasa bacaan...">
+              </div>
+            </div>
+            <button onclick="saveVitals()" class="mt-4 bg-navy text-white px-6 py-2.5 rounded-lg text-sm font-semibold hover:bg-navy-dark w-full">
+              💾 Simpan Vitals
+            </button>
+          </div>
+
+          <!-- History -->
+          <div class="bg-white rounded-2xl border border-ink/10 p-5">
+            <h3 class="font-bold mb-4 text-sm">📈 Sejarah Vitals</h3>
+            <div class="overflow-x-auto">
+              <table class="data w-full">
+                <thead><tr>
+                  <th>Tarikh</th><th>BP</th><th>Nadi</th><th>Berat</th><th>BMI</th><th>Suhu</th><th>Dicatat oleh</th>
+                </tr></thead>
+                <tbody id="vitals-tbody"><tr><td colspan="7" class="text-center py-6 text-ink/40 italic">Tiada rekod vitals</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ═══════════════ TAB: SESSIONS ═══════════════ -->
+        <div id="tab-sessions" class="tab-content space-y-4">
+
+          <!-- Add Session Note -->
+          <div class="bg-white rounded-2xl border border-ink/10 p-5">
+            <h3 class="font-bold mb-4 text-sm">📝 Tambah Nota Sesi</h3>
+            <div class="space-y-3">
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="text-[11px] font-semibold text-ink/50 uppercase">Tarikh Sesi</label>
+                  <input id="sn-date" type="datetime-local" class="w-full mt-1 border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none focus:border-navy">
+                </div>
+                <div>
+                  <label class="text-[11px] font-semibold text-ink/50 uppercase">Pillar Sesi</label>
+                  <select id="sn-type" class="w-full mt-1 border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none focus:border-navy">
+                    <option value="psycho">🧠 Psycho (Mental)</option>
+                    <option value="bio">🌿 Bio (Fizikal)</option>
+                    <option value="social">👥 Social</option>
+                    <option value="spiritual">🌙 Spiritual</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label class="text-[11px] font-semibold text-ink/50 uppercase">Nota / Pemerhatian</label>
+                <textarea id="sn-notes" rows="4" placeholder="Ringkasan sesi, perkembangan pesakit, arahan seterusnya..."
+                  class="w-full mt-1 border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none focus:border-navy resize-none"></textarea>
+              </div>
+            </div>
+            <button onclick="saveSessionNote()" class="mt-3 bg-navy text-white px-6 py-2.5 rounded-lg text-sm font-semibold hover:bg-navy-dark w-full">
+              💾 Simpan Nota Sesi
+            </button>
+          </div>
+
+          <!-- Session History -->
+          <div>
+            <h3 class="font-bold mb-3 text-sm">Sejarah Sesi</h3>
+            <div id="sessions-list" class="space-y-2"></div>
+          </div>
+        </div>
+
+        <!-- ═══════════════ TAB: PROFILE ═══════════════ -->
+        <div id="tab-profile" class="tab-content space-y-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+            <div class="bg-white rounded-2xl border border-ink/10 p-5 space-y-3">
+              <h3 class="font-bold text-sm">👤 Maklumat Peribadi</h3>
+              <div id="profile-personal" class="space-y-2 text-sm"></div>
+            </div>
+
+            <div class="bg-white rounded-2xl border border-ink/10 p-5 space-y-3">
+              <h3 class="font-bold text-sm">🆘 Maklumat Waris / Kecemasan</h3>
+              <div id="profile-emergency" class="space-y-2 text-sm"></div>
+            </div>
+
+            <div class="bg-white rounded-2xl border border-ink/10 p-5 space-y-3 md:col-span-2">
+              <h3 class="font-bold text-sm">🏥 Maklumat Perubatan</h3>
+              <div id="profile-medical" class="space-y-2 text-sm"></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+let patient   = null;   // psy_patients row
+let profile   = null;   // psy_profiles row
+let kyc       = null;   // psy_kyc_submissions row
+let activePlan = null;
+let canEdit    = false; // true if user is admin/doctor/manager OR assigned coach
+
+const params    = new URLSearchParams(location.search);
+const patientId = params.get('patient_id');
+
+// ── Boot ──────────────────────────────────────────────
+(async () => {
+  const user = await initStaff('psy_patients', '');
+  if (!user) return;
+  if (!patientId) { location.href = 'patients.html'; return; }
+  await loadPatient();
+})();
+
+async function loadPatient() {
+  // Patient + profile via FK join (same approach that works in assignments.html)
+  const { data: pt, error: ptErr } = await window.db.from('psy_patients')
+    .select('*, psy_profiles!psy_patients_user_id_fkey(full_name, phone, email, avatar_url)')
+    .eq('id', patientId).single();
+
+  if (ptErr) console.error('[hub] patient error:', ptErr);
+  if (!pt) { location.href = 'patients.html'; return; }
+  patient = pt;
+  profile = pt.psy_profiles || null;
+
+  // KYC + Plan in parallel
+  const [kycRes, planRes] = await Promise.all([
+    pt.user_id
+      ? window.db.from('psy_kyc_submissions').select('*').eq('user_id', pt.user_id).order('created_at', { ascending: false })
+      : Promise.resolve({ data: [] }),
+    window.db.from('psy_treatment_plans').select('*').eq('patient_id', patientId).order('created_at', { ascending: false }),
+  ]);
+
+  if (kycRes.error)  console.error('[hub] kyc error:', kycRes.error);
+  if (planRes.error) console.error('[hub] plan error:', planRes.error);
+
+  kyc        = kycRes.data?.[0] || null;
+  // prefer active plan, fallback to any plan
+  const plans = planRes.data || [];
+  activePlan  = plans.find(p => p.status === 'active') || plans[0] || null;
+
+  // Fallback: if profile join failed, try direct query
+  if (!profile && pt.user_id) {
+    const { data: prof } = await window.db.from('psy_profiles')
+      .select('full_name, phone, email, avatar_url').eq('id', pt.user_id).single();
+    profile = prof || null;
+  }
+
+  // Determine edit access
+  const role = window.currentUser.staff_role;
+  canEdit = ['admin','doctor','manager'].includes(role)
+    || (role === 'coach' && patient.coach_id === window.currentUser.id);
+
+  renderPatientHeader();
+  applyAccessControl();
+  await loadTabData('overview');
+}
+
+function renderPatientHeader() {
+  const name     = profile?.full_name || kyc?.patient_name || patient.medical_notes?.split('\n')[0] || `Pesakit ${patient.mrn}`;
+  const initials = name.split(' ').slice(0,2).map(w => w[0]).join('').toUpperCase() || '?';
+  document.getElementById('patient-avatar').textContent = initials;
+  document.getElementById('patient-name').textContent   = name;
+  document.getElementById('patient-mrn').textContent    = `🪪 ${patient.mrn || '—'}`;
+  document.getElementById('patient-age').textContent    = patient.date_of_birth
+    ? `🎂 ${Math.floor((Date.now() - new Date(patient.date_of_birth)) / 31557600000)} tahun` : '';
+  document.getElementById('patient-phone').textContent  = profile?.phone || kyc?.phone
+    ? `📞 ${profile?.phone || kyc?.phone}` : '';
+  document.getElementById('patient-package').textContent = patient.active_package_name
+    ? `📦 ${patient.active_package_name}` : '';
+
+  const statusChips = {
+    active:     'bg-green-light text-green-dark',
+    pending_kyc:'bg-gold-light text-gold-dark',
+    inactive:   'bg-ink/10 text-ink/50',
+  };
+  const sc = document.getElementById('patient-status-chip');
+  sc.textContent  = patient.status || '—';
+  sc.className    = `chip text-xs ${statusChips[patient.status] || 'bg-ink/10 text-ink/50'}`;
+
+  const kycChip = document.getElementById('patient-kyc-chip');
+  if (kyc) {
+    const kMap = { pending:'bg-gold-light text-gold-dark', approved:'bg-green-light text-green-dark', rejected:'bg-terracotta-light text-terracotta' };
+    kycChip.textContent = `KYC ${kyc.status}`;
+    kycChip.className   = `chip text-xs ${kMap[kyc.status] || 'bg-ink/10 text-ink/50'}`;
+  }
+
+  if (activePlan) {
+    document.getElementById('patient-plan-link').href =
+      `plan-week.html?plan_id=${activePlan.id}&week=${activePlan.current_week || 1}`;
+  } else {
+    document.getElementById('patient-plan-link').style.display = 'none';
+  }
+}
+
+// ── Access control ────────────────────────────────────
+function applyAccessControl() {
+  if (canEdit) return; // full access, nothing to hide
+
+  // Show view-only banner
+  const banner = document.createElement('div');
+  banner.className = 'bg-gold/20 border border-gold/40 rounded-xl px-4 py-2.5 text-sm text-gold-dark font-medium flex items-center gap-2';
+  banner.innerHTML = '👁 Mod Paparan Sahaja — pesakit ini tidak ditugaskan kepada anda. Anda boleh lihat rekod tetapi tidak boleh menambah data.';
+  document.querySelector('.p-4.md\\:p-6.space-y-4').insertBefore(banner, document.querySelector('.tab-bar'));
+
+  // Disable vitals form
+  document.querySelectorAll('#tab-vitals input, #tab-vitals textarea').forEach(el => el.disabled = true);
+  const vitalsBtn = document.querySelector('#tab-vitals button[onclick="saveVitals()"]');
+  if (vitalsBtn) vitalsBtn.style.display = 'none';
+
+  // Disable session note form
+  document.querySelectorAll('#tab-sessions input, #tab-sessions textarea, #tab-sessions select').forEach(el => el.disabled = true);
+  const sessionBtn = document.querySelector('#tab-sessions button[onclick="saveSessionNote()"]');
+  if (sessionBtn) sessionBtn.style.display = 'none';
+}
+
+// ── Tab switching ─────────────────────────────────────
+let loadedTabs = new Set(['overview']);
+
+async function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach((b,i) => {
+    const tabs = ['overview','checkin','vitals','sessions','profile'];
+    b.classList.toggle('active', tabs[i] === tab);
+  });
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+
+  if (!loadedTabs.has(tab)) {
+    loadedTabs.add(tab);
+    await loadTabData(tab);
+  }
+}
+
+async function loadTabData(tab) {
+  if (tab === 'overview')  await loadOverview();
+  if (tab === 'checkin')   await loadCheckins();
+  if (tab === 'vitals')    await loadVitals();
+  if (tab === 'sessions')  await loadSessions();
+  if (tab === 'profile')   renderProfile();
+}
+
+// ── OVERVIEW ──────────────────────────────────────────
+async function loadOverview() {
+  // Plan block
+  const planBlock = document.getElementById('ov-plan-block');
+  if (activePlan) {
+    const total = activePlan.duration_weeks || 48;
+    const cur   = activePlan.current_week || 1;
+    const pct   = Math.round((cur / total) * 100);
+    planBlock.innerHTML = `
+      <div class="text-sm font-semibold text-ink">${activePlan.name}</div>
+      <div class="text-xs text-ink/60 mt-1">Minggu ${cur} / ${total} · ${pct}%</div>
+      <div class="w-full bg-ink/10 rounded-full h-1.5 mt-2">
+        <div class="bg-navy rounded-full h-1.5" style="width:${pct}%"></div>
+      </div>
+      <div class="flex gap-3 mt-3 text-[11px] flex-wrap">
+        ${activePlan.bio_goals?.length ? `<span class="chip bg-bio/10 text-bio">Bio (${activePlan.bio_goals.length})</span>` : ''}
+        ${activePlan.psycho_goals?.length ? `<span class="chip bg-psycho/10 text-psycho">Psycho (${activePlan.psycho_goals.length})</span>` : ''}
+        ${activePlan.social_goals?.length ? `<span class="chip bg-social/10 text-social">Social (${activePlan.social_goals.length})</span>` : ''}
+        ${activePlan.spiritual_goals?.length ? `<span class="chip bg-spiritual/10 text-spiritual">Spiritual (${activePlan.spiritual_goals.length})</span>` : ''}
+      </div>`;
+
+    // Attendance count
+    const { data: prog } = await window.db.from('psy_plan_weekly_progress')
+      .select('status').eq('plan_id', activePlan.id);
+    const hadir = (prog || []).filter(p => p.status === 'hadir').length;
+    document.getElementById('ov-week').textContent = `M${cur}`;
+    document.getElementById('ov-attendance').textContent = `${hadir}/${cur}`;
+  } else {
+    document.getElementById('ov-week').textContent = '—';
+    document.getElementById('ov-attendance').textContent = '—';
+  }
+
+  // Check-in last 7 days
+  const since = new Date(); since.setDate(since.getDate() - 7);
+  const { data: checkins } = await window.db.from('psy_daily_checkins')
+    .select('*').eq('patient_id', patientId)
+    .gte('checkin_date', since.toISOString().slice(0,10))
+    .order('checkin_date', { ascending: true });
+
+  const ci = checkins || [];
+  document.getElementById('ov-checkin-streak').textContent = ci.length + '/7';
+  const avgMood = ci.length ? (ci.reduce((a,c) => a + (c.mood_score||0), 0) / ci.length).toFixed(1) : '—';
+  document.getElementById('ov-avg-mood').textContent = avgMood;
+
+  // Mood mini-bar chart
+  const chartHost  = document.getElementById('ov-mood-chart');
+  const labelHost  = document.getElementById('ov-mood-labels');
+  const moodColors = ['','#ef4444','#f97316','#eab308','#84cc16','#22c55e'];
+  const days = Array.from({length:7}, (_,i) => {
+    const d = new Date(); d.setDate(d.getDate() - (6-i));
+    return d.toISOString().slice(0,10);
+  });
+  const ciMap = {};
+  ci.forEach(c => { ciMap[c.checkin_date?.slice(0,10)] = c; });
+
+  chartHost.innerHTML = days.map(d => {
+    const c = ciMap[d];
+    const h = c ? Math.round((c.mood_score / 5) * 100) : 0;
+    const col = c ? (moodColors[c.mood_score] || '#94a3b8') : '#e2e8f0';
+    return `<div class="flex-1 flex flex-col justify-end">
+      <div style="height:${h}%;background:${col};border-radius:4px;min-height:${c?'4px':'4px'}"></div>
+    </div>`;
+  }).join('');
+
+  labelHost.innerHTML = days.map(d => {
+    const dt = new Date(d + 'T00:00:00');
+    return `<span class="flex-1 text-center">${['Ah','Is','Se','Ra','Kh','Ju','Sa'][dt.getDay()]}</span>`;
+  }).join('');
+
+  // Active package block
+  const pkgBlock = document.getElementById('ov-package-block');
+  if (patient.active_package_id) {
+    const expiry = patient.package_expires_at
+      ? `Sah hingga ${new Date(patient.package_expires_at).toLocaleDateString('ms-MY',{day:'2-digit',month:'short',year:'numeric'})}`
+      : 'Tiada tarikh tamat';
+    pkgBlock.innerHTML = `
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <div class="font-semibold text-sm text-ink">${patient.active_package_name || patient.active_package_id}</div>
+          <div class="text-xs text-ink/50 mt-0.5">${expiry}</div>
+        </div>
+        <button onclick="cancelPackage()" class="text-xs text-terracotta border border-terracotta/40 px-3 py-1.5 rounded-lg hover:bg-terracotta hover:text-white transition font-semibold">
+          ✕ Batalkan Pakej
+        </button>
+      </div>`;
+    pkgBlock.classList.remove('italic');
+  }
+
+  // Latest vitals
+  const { data: vit } = await window.db.from('psy_vitals')
+    .select('*').eq('patient_id', patientId).order('created_at', { ascending: false }).limit(1);
+  const v = vit?.[0];
+  const vitBlock = document.getElementById('ov-vitals-block');
+  if (v) {
+    vitBlock.innerHTML = `
+      <div class="grid grid-cols-3 md:grid-cols-6 gap-3 text-center">
+        ${v.bp_systolic ? `<div class="bg-cream/40 rounded-lg p-2"><div class="text-[10px] text-ink/50">BP</div><div class="font-bold text-sm">${v.bp_systolic}/${v.bp_diastolic}</div></div>` : ''}
+        ${v.heart_rate  ? `<div class="bg-cream/40 rounded-lg p-2"><div class="text-[10px] text-ink/50">Nadi</div><div class="font-bold text-sm">${v.heart_rate} bpm</div></div>` : ''}
+        ${v.bmi         ? `<div class="bg-cream/40 rounded-lg p-2"><div class="text-[10px] text-ink/50">BMI</div><div class="font-bold text-sm">${v.bmi}</div></div>` : ''}
+        ${v.weight      ? `<div class="bg-cream/40 rounded-lg p-2"><div class="text-[10px] text-ink/50">Berat</div><div class="font-bold text-sm">${v.weight} kg</div></div>` : ''}
+        ${v.temperature ? `<div class="bg-cream/40 rounded-lg p-2"><div class="text-[10px] text-ink/50">Suhu</div><div class="font-bold text-sm">${v.temperature}°C</div></div>` : ''}
+        <div class="bg-cream/40 rounded-lg p-2 col-span-1"><div class="text-[10px] text-ink/50">Tarikh</div><div class="font-bold text-sm">${new Date(v.created_at).toLocaleDateString('ms-MY',{day:'2-digit',month:'short'})}</div></div>
+      </div>`;
+    vitBlock.classList.remove('italic');
+  }
+}
+
+// ── CHECK-IN ──────────────────────────────────────────
+async function loadCheckins() {
+  const { data } = await window.db.from('psy_daily_checkins')
+    .select('*').eq('patient_id', patientId)
+    .order('checkin_date', { ascending: false }).limit(30);
+
+  const host = document.getElementById('checkin-list');
+  const MOODS = ['','😭','😢','😐','🙂','😄'];
+  host.innerHTML = (data || []).length
+    ? (data || []).map(c => `
+      <div class="bg-white rounded-xl border border-ink/10 p-4 flex items-center gap-4 flex-wrap">
+        <div class="text-2xl">${MOODS[c.mood_score] || '—'}</div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="font-semibold text-sm">${new Date(c.checkin_date).toLocaleDateString('ms-MY',{weekday:'short',day:'2-digit',month:'short'})}</span>
+            <span class="text-xs text-ink/50">Mood ${c.mood_score}/5</span>
+          </div>
+          <div class="flex gap-4 mt-2 flex-wrap">
+            <div class="text-xs">
+              <span class="text-ink/50">Tenaga: </span>
+              <div class="inline-flex items-center gap-1 align-middle">
+                <div class="checkin-bar w-16"><div class="checkin-bar-fill bg-gold" style="width:${(c.energy_score||0)*10}%"></div></div>
+                <span class="font-semibold">${c.energy_score||'—'}/10</span>
+              </div>
+            </div>
+            <div class="text-xs"><span class="text-ink/50">Tidur: </span><span class="font-semibold">${c.sleep_hours ? c.sleep_hours + 'j' : '—'}</span></div>
+          </div>
+          ${c.note ? `<div class="text-xs text-ink/60 mt-1 italic">"${c.note}"</div>` : ''}
+        </div>
+      </div>`).join('')
+    : '<div class="text-center py-10 text-ink/40 text-sm">Tiada rekod check-in</div>';
+}
+
+// ── VITALS ────────────────────────────────────────────
+function vitalRow(v) {
+  const date = new Date(v.created_at).toLocaleDateString('ms-MY',{day:'2-digit',month:'short',year:'numeric'});
+  const actions = canEdit ? `
+    <td class="text-right">
+      <button onclick="openEditVitals('${v.id}')" class="text-navy text-xs font-semibold hover:underline mr-2">Edit</button>
+      <button onclick="deleteVitals('${v.id}')" class="text-terracotta text-xs font-semibold hover:underline">Padam</button>
+    </td>` : '<td></td>';
+  return `<tr data-vid="${v.id}">
+    <td class="text-xs">${date}</td>
+    <td>${v.bp_systolic ? `${v.bp_systolic}/${v.bp_diastolic}` : '—'}</td>
+    <td>${v.heart_rate ? v.heart_rate + ' bpm' : '—'}</td>
+    <td>${v.weight ? v.weight + ' kg' : '—'}</td>
+    <td>${v.bmi || '—'}</td>
+    <td>${v.temperature ? v.temperature + '°C' : '—'}</td>
+    <td class="text-xs text-ink/50">${v.recorded_by_name || '—'}</td>
+    ${actions}
+  </tr>`;
+}
+
+let vitalsData = [];
+
+async function loadVitals() {
+  const { data } = await window.db.from('psy_vitals')
+    .select('*').eq('patient_id', patientId).order('created_at', { ascending: false }).limit(20);
+  vitalsData = data || [];
+
+  // Update table header to include Actions column
+  const thead = document.querySelector('#tab-vitals table thead tr');
+  if (thead && !thead.querySelector('th.actions-col')) {
+    const th = document.createElement('th');
+    th.className = 'actions-col';
+    thead.appendChild(th);
+  }
+
+  document.getElementById('vitals-tbody').innerHTML = vitalsData.length
+    ? vitalsData.map(vitalRow).join('')
+    : `<tr><td colspan="8" class="text-center py-6 text-ink/40 italic">Tiada rekod vitals</td></tr>`;
+}
+
+function getVitalsPayload(prefix = 'v') {
+  const w = parseFloat(document.getElementById(`${prefix}-weight`).value);
+  const h = parseFloat(document.getElementById(`${prefix}-height`).value);
+  return {
+    bp_systolic:  parseInt(document.getElementById(`${prefix}-sys`).value)  || null,
+    bp_diastolic: parseInt(document.getElementById(`${prefix}-dia`).value)  || null,
+    heart_rate:   parseInt(document.getElementById(`${prefix}-hr`).value)   || null,
+    weight: w || null,
+    height: h || null,
+    bmi: (w && h) ? parseFloat((w / ((h/100)**2)).toFixed(1)) : null,
+    temperature: parseFloat(document.getElementById(`${prefix}-temp`).value) || null,
+    notes: document.getElementById(`${prefix}-notes`).value || null,
+  };
+}
+
+async function saveVitals() {
+  if (!canEdit) { banner('Anda hanya boleh melihat rekod pesakit ini.', 'error'); return; }
+
+  // Check for existing record today (local date)
+  const todayLocal = new Date();
+  const startOfDay = new Date(todayLocal.getFullYear(), todayLocal.getMonth(), todayLocal.getDate()).toISOString();
+  const endOfDay   = new Date(todayLocal.getFullYear(), todayLocal.getMonth(), todayLocal.getDate(), 23, 59, 59).toISOString();
+  const { data: existing } = await window.db.from('psy_vitals').select('id')
+    .eq('patient_id', patientId).gte('created_at', startOfDay).lte('created_at', endOfDay).maybeSingle();
+
+  if (existing) {
+    banner('Vitals hari ini sudah direkod. Sila edit rekod sedia ada dalam sejarah.', 'error');
+    return;
+  }
+
+  const payload = getVitalsPayload('v');
+  const { error } = await window.db.from('psy_vitals').insert({
+    ...payload,
+    patient_id:       patientId,
+    recorded_by:      window.currentUser.id,
+    recorded_by_name: window.currentUser.full_name,
+  });
+
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  ['v-sys','v-dia','v-hr','v-weight','v-height','v-temp','v-notes'].forEach(id => document.getElementById(id).value = '');
+  loadedTabs.delete('overview');
+  await loadVitals();
+  banner('Vitals berjaya disimpan ✅');
+}
+
+// Edit vitals
+function openEditVitals(id) {
+  const v = vitalsData.find(x => x.id === id);
+  if (!v) return;
+
+  const m = document.createElement('div');
+  m.id = 'vitals-edit-modal';
+  m.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
+  m.innerHTML = `
+    <div class="absolute inset-0 bg-black/50" onclick="document.getElementById('vitals-edit-modal').remove()"></div>
+    <div class="relative bg-white rounded-2xl max-w-lg w-full p-6 space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="font-bold">Edit Vitals — ${new Date(v.created_at).toLocaleDateString('ms-MY',{day:'2-digit',month:'short',year:'numeric'})}</h3>
+        <button onclick="document.getElementById('vitals-edit-modal').remove()" class="text-ink/40 text-xl hover:text-ink">×</button>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div class="vital-field"><label>Systolic (mmHg)</label><input id="ev-sys" type="number" value="${v.bp_systolic||''}"></div>
+        <div class="vital-field"><label>Diastolic (mmHg)</label><input id="ev-dia" type="number" value="${v.bp_diastolic||''}"></div>
+        <div class="vital-field"><label>Nadi (bpm)</label><input id="ev-hr" type="number" value="${v.heart_rate||''}"></div>
+        <div class="vital-field"><label>Berat (kg)</label><input id="ev-weight" type="number" step="0.1" value="${v.weight||''}"></div>
+        <div class="vital-field"><label>Tinggi (cm)</label><input id="ev-height" type="number" value="${v.height||''}"></div>
+        <div class="vital-field"><label>Suhu (°C)</label><input id="ev-temp" type="number" step="0.1" value="${v.temperature||''}"></div>
+        <div class="vital-field col-span-2"><label>Nota</label><input id="ev-notes" type="text" value="${v.notes||''}"></div>
+      </div>
+      <button onclick="updateVitals('${id}')" class="w-full bg-navy text-white py-2.5 rounded-lg font-semibold text-sm hover:bg-navy-dark">💾 Simpan Perubahan</button>
+    </div>`;
+  document.body.appendChild(m);
+}
+
+async function updateVitals(id) {
+  const payload = getVitalsPayload('ev');
+  const { error } = await window.db.from('psy_vitals').update(payload).eq('id', id);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  document.getElementById('vitals-edit-modal')?.remove();
+  loadedTabs.delete('overview');
+  await loadVitals();
+  banner('Vitals berjaya dikemaskini ✅');
+}
+
+async function deleteVitals(id) {
+  if (!confirm('Padam rekod vitals ini?')) return;
+  const { error } = await window.db.from('psy_vitals').delete().eq('id', id);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  loadedTabs.delete('overview');
+  await loadVitals();
+  banner('Rekod vitals dipadam');
+}
+
+// ── SESSIONS ──────────────────────────────────────────
+async function loadSessions() {
+  const { data } = await window.db.from('psy_coaching_sessions')
+    .select('*').eq('patient_id', patientId).order('session_date', { ascending: false }).limit(20)
+    .then(r => r).catch(() => ({ data: [] }));
+
+  const pillarLabel = { bio:'🌿 Bio', psycho:'🧠 Psycho', social:'👥 Social', spiritual:'🌙 Spiritual' };
+  const pillarChip  = { bio:'bg-bio/10 text-bio', psycho:'bg-psycho/10 text-psycho', social:'bg-social/10 text-social', spiritual:'bg-spiritual/10 text-spiritual' };
+  const statusLabel = { completed:'Selesai', no_show:'Tidak Hadir', cancelled:'Dibatalkan' };
+  const statusChip  = { completed:'bg-green-light text-green-dark', no_show:'bg-terracotta-light text-terracotta', cancelled:'bg-ink/10 text-ink/60' };
+
+  const host = document.getElementById('sessions-list');
+  host.innerHTML = (data||[]).length
+    ? (data||[]).map(s => `
+      <div class="session-card">
+        <div class="flex items-start justify-between gap-2 flex-wrap">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="chip text-[11px] ${pillarChip[s.pillar] || 'bg-navy/10 text-navy'}">${pillarLabel[s.pillar] || 'Sesi'}</span>
+              <span class="chip text-[11px] ${statusChip[s.status] || 'bg-ink/10 text-ink/60'}">${statusLabel[s.status] || s.status || '—'}</span>
+              <span class="text-xs text-ink/50">${s.session_date ? new Date(s.session_date).toLocaleDateString('ms-MY',{weekday:'short',day:'2-digit',month:'short',year:'numeric'}) : '—'}</span>
+            </div>
+            ${s.notes ? `<p class="text-sm text-ink/70 mt-2">${s.notes}</p>` : ''}
+          </div>
+        </div>
+      </div>`).join('')
+    : '<div class="text-center py-10 text-ink/40 text-sm">Tiada rekod sesi</div>';
+
+  // Pre-fill date to now
+  const now = new Date();
+  document.getElementById('sn-date').value = new Date(now.getTime() - now.getTimezoneOffset()*60000).toISOString().slice(0,16);
+}
+
+async function saveSessionNote() {
+  if (!canEdit) { banner('Anda hanya boleh melihat rekod pesakit ini.', 'error'); return; }
+  const notes = document.getElementById('sn-notes').value.trim();
+  const date  = document.getElementById('sn-date').value;
+  const type  = document.getElementById('sn-type').value;
+  if (!notes) { banner('Sila tulis nota sesi', 'error'); return; }
+
+  const { error } = await window.db.from('psy_coaching_sessions').insert({
+    patient_id:   patientId,
+    coach_id:     window.currentUser.id,
+    patient_name: profile?.full_name || patient.mrn,
+    pillar:       type,
+    session_date: date ? new Date(date).toISOString() : new Date().toISOString(),
+    notes,
+    status: 'completed',
+  });
+
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  document.getElementById('sn-notes').value = '';
+  loadedTabs.delete('sessions');
+  await loadSessions();
+  banner('Nota sesi disimpan ✅');
+}
+
+// ── PROFILE ───────────────────────────────────────────
+// ── CANCEL PACKAGE ────────────────────────────────────
+async function cancelPackage() {
+  const pkgName = patient.active_package_name || patient.active_package_id;
+  if (!confirm(`Batalkan pakej "${pkgName}" untuk pesakit ini?\n\nTindakan ini tidak boleh dibuat alik.`)) return;
+
+  const btn = document.querySelector('[onclick="cancelPackage()"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Membatalkan...'; }
+
+  // Clear active package on patient record
+  const { error } = await window.db.from('psy_patients').update({
+    active_package_id:   null,
+    active_package_name: null,
+    package_expires_at:  null,
+  }).eq('id', patientId);
+
+  if (error) { banner('Gagal batalkan pakej: ' + error.message, 'error'); if (btn) { btn.disabled = false; btn.textContent = '✕ Batalkan Pakej'; } return; }
+
+  // Mark latest purchase as cancelled
+  await window.db.from('psy_package_purchases')
+    .update({ status: 'cancelled' })
+    .eq('patient_id', patientId)
+    .eq('package_id', patient.active_package_id)
+    .in('status', ['active','pending_payment']);
+
+  await auditLog('package.cancelled', patientId, { package: pkgName, cancelled_by: window.currentUser.full_name });
+
+  patient.active_package_id   = null;
+  patient.active_package_name = null;
+  patient.package_expires_at  = null;
+
+  document.getElementById('ov-package-block').innerHTML = '<span class="text-ink/40 italic text-sm">Tiada pakej aktif</span>';
+  document.getElementById('ov-package-block').classList.add('italic');
+  banner('Pakej berjaya dibatalkan');
+}
+
+function renderProfile() {
+  const row = (label, val) => val
+    ? `<div class="flex justify-between gap-2 py-1.5 border-b border-ink/5"><span class="text-ink/50">${label}</span><span class="font-medium text-right">${val}</span></div>`
+    : '';
+
+  const name  = profile?.full_name || kyc?.patient_name || '—';
+  const phone = profile?.phone || kyc?.phone || '—';
+  const email = profile?.email || '—';
+  const dob   = patient.date_of_birth ? new Date(patient.date_of_birth).toLocaleDateString('ms-MY') : (kyc?.date_of_birth ? new Date(kyc.date_of_birth).toLocaleDateString('ms-MY') : '—');
+  const age   = patient.date_of_birth ? Math.floor((Date.now() - new Date(patient.date_of_birth)) / 31557600000) + ' tahun' : '';
+
+  document.getElementById('profile-personal').innerHTML =
+    row('Nama Penuh', name) +
+    row('No. IC', patient.ic_number || kyc?.ic_number) +
+    row('Tarikh Lahir', dob + (age ? ` (${age})` : '')) +
+    row('Jantina', patient.gender === 'M' ? '♂ Lelaki' : patient.gender === 'F' ? '♀ Perempuan' : kyc?.gender || '—') +
+    row('No. Telefon', phone) +
+    row('Emel', email) +
+    row('Alamat', patient.address || kyc?.address) +
+    row('Sumber Rujukan', patient.referral_source || kyc?.referral_source) +
+    row('Pekerjaan', kyc?.occupation) +
+    row('Status Perkahwinan', kyc?.marital_status) ||
+    '<p class="text-xs text-ink/40 italic py-2">Tiada maklumat peribadi</p>';
+
+  document.getElementById('profile-emergency').innerHTML =
+    row('Nama Waris', patient.emergency_contact_name || kyc?.emergency_contact_name) +
+    row('No. Telefon', patient.emergency_contact_phone || kyc?.emergency_contact_phone) +
+    row('Hubungan', kyc?.emergency_contact_relationship) +
+    row('Emel', kyc?.emergency_contact_email) ||
+    '<p class="text-xs text-ink/40 italic py-2">Tiada maklumat waris</p>';
+
+  document.getElementById('profile-medical').innerHTML =
+    row('MRN', patient.mrn) +
+    row('Status', patient.status) +
+    row('Keadaan Perubatan', patient.medical_condition || kyc?.medical_condition) +
+    row('Tempoh', patient.condition_duration || kyc?.condition_duration) +
+    row('Nota Perubatan', patient.medical_notes || kyc?.medical_notes) +
+    row('Insurans', patient.insurance_provider ? `${patient.insurance_provider} · ${patient.insurance_policy || ''}` : null) +
+    row('Pakej Aktif', patient.active_package_name) ||
+    '<p class="text-xs text-ink/40 italic py-2">Tiada maklumat perubatan</p>';
+}
+</script>
+</body>
+</html>

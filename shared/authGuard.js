@@ -13,6 +13,9 @@ async function checkAuth(requiredRole) {
     .single();
 
   if (!profile || profile.role !== requiredRole) {
+    await window.db.auth.signOut();
+    localStorage.removeItem('isw_role');
+    localStorage.removeItem('isw_name');
     alert('Akses tidak dibenarkan');
     window.location.href = '../../auth/login.html';
     return null;

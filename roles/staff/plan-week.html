@@ -222,27 +222,29 @@ let weekStart    = null;
 let weekEnd      = null;
 
 // ── Boot ──────────────────────────────────────────────
-document.addEventListener('ISW_READY', async () => {
-  const params   = new URLSearchParams(location.search);
-  const planId   = params.get('plan_id');
-  weekNumber     = parseInt(params.get('week') || '1');
+(async () => {
+  const user = await initStaff('plans', 'Detail Minggu Rawatan');
+  if (!user) return;
+
+  const params = new URLSearchParams(location.search);
+  const planId = params.get('plan_id');
+  weekNumber   = parseInt(params.get('week') || '1');
 
   if (!planId) { location.href = 'plans.html'; return; }
 
   const { data: plan } = await window.db.from('psy_treatment_plans').select('*').eq('id', planId).single();
   if (!plan) { location.href = 'plans.html'; return; }
 
-  activePlan  = plan;
-  patientId   = plan.patient_id;
+  activePlan    = plan;
+  patientId     = plan.patient_id;
 
-  // Fetch patient's user_id for notifications
   const { data: pt } = await window.db.from('psy_patients').select('user_id').eq('id', patientId).single();
   patientUserId = pt?.user_id || null;
 
   weekNumber = Math.max(1, Math.min(weekNumber, plan.duration_weeks || 48));
 
   await loadWeek();
-});
+})();
 
 // ── Load week data ────────────────────────────────────
 async function loadWeek() {
@@ -356,7 +358,7 @@ async function markStatus(status) {
 
   // Notify patient
   const msgs = {
-    hadir:      [`Kehadiran Minggu ${weekNumber} disahkan ✅`, `Coach ${currentUser.full_name} telah mengesahkan kehadiran anda.`],
+    hadir:      [`Kehadiran Minggu ${weekNumber} disahkan ✅`, `Coach ${window.currentUser.full_name} telah mengesahkan kehadiran anda.`],
     reschedule: [`Minggu ${weekNumber} perlu dijadual semula`, `Sila tempah sesi baharu untuk Minggu ${weekNumber}.`],
     cancel:     [`Sesi Minggu ${weekNumber} dibatalkan`, `Hubungi klinik untuk maklumat lanjut.`],
   };
@@ -398,8 +400,8 @@ async function upsertProgress(fields) {
     plan_id:      activePlan.id,
     patient_id:   patientId,
     week_number:  weekNumber,
-    updated_by:      currentUser.id,
-    updated_by_name: currentUser.full_name,
+    updated_by:      window.currentUser.id,
+    updated_by_name: window.currentUser.full_name,
     updated_at:   new Date().toISOString(),
   };
 
@@ -450,7 +452,7 @@ async function saveCompliance() {
     berjemur:    radioBool('cmp-jemur'),
     pantang:     radioBool('cmp-pantang'),
     updated_at:  new Date().toISOString(),
-    updated_by:  currentUser.id,
+    updated_by:  window.currentUser.id,
   };
 
   if (cmpRowId) {

@@ -256,6 +256,12 @@ let currentView  = 'calendar';
 let calYear, calMonth; // 0-based month
 let selectedDayDate = null;
 
+// Local date string (YYYY-MM-DD) without UTC conversion
+function localDateStr(dt) {
+  const d = dt instanceof Date ? dt : new Date(dt);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
 const statusChipMap = {
   booked:     '<span class="chip bg-navy-light text-navy">📅 Ditempah</span>',
   hadir:      '<span class="chip bg-green-light text-green-dark">✅ Hadir</span>',
@@ -269,7 +275,7 @@ async function loadSessions() {
   const [sessionsRes, patientsRes, plans] = await Promise.all([
     dbQuery('psy_plan_weekly_progress', { order: { col: 'session_date', asc: true } }),
     window.db.from('psy_patients')
-      .select('*, psy_profiles(id, full_name, role)')
+      .select('*, psy_profiles!psy_patients_user_id_fkey(id, full_name, role)')
       .then(r => r, () => ({ data: [] })),
     dbQuery('psy_treatment_plans'),
   ]);
@@ -312,7 +318,7 @@ function goToday() { const t = new Date(); calYear = t.getFullYear(); calMonth =
 
 function renderCalendar() {
   const now      = new Date();
-  const todayStr = now.toISOString().slice(0, 10);
+  const todayStr = localDateStr(now);
   const months   = ['Januari','Februari','Mac','April','Mei','Jun','Julai','Ogos','September','Oktober','November','Disember'];
   document.getElementById('cal-month-label').textContent = `${months[calMonth]} ${calYear}`;
 
@@ -327,7 +333,7 @@ function renderCalendar() {
   const sessionMap = {};
   allSessions.forEach(s => {
     if (!s.session_date) return;
-    const d = s.session_date.slice(0, 10);
+    const d = localDateStr(s.session_date);
     if (!sessionMap[d]) sessionMap[d] = [];
     sessionMap[d].push(s);
   });
@@ -339,7 +345,7 @@ function renderCalendar() {
   for (let i = 0; i < 42; i++) {
     const d        = new Date(startDate);
     d.setDate(d.getDate() + i);
-    const dateStr  = d.toISOString().slice(0, 10);
+    const dateStr  = localDateStr(d);
     const isOther  = d.getMonth() !== calMonth;
     const isToday  = dateStr === todayStr;
     const isClosed = CLOSED.has(d.getDay());
@@ -379,7 +385,7 @@ function openDayModal(dateStr) {
   document.getElementById('day-modal-title').textContent =
     d.toLocaleDateString('ms-MY', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
 
-  const daySessions = allSessions.filter(s => s.session_date?.startsWith(dateStr));
+  const daySessions = allSessions.filter(s => s.session_date && localDateStr(s.session_date) === dateStr);
   const isClosed    = [1, 2].includes(d.getDay()); // Mon/Tue closed
   const addBtn      = document.querySelector('#day-modal > div > div:last-child');
   if (addBtn) addBtn.style.display = isClosed ? 'none' : '';
@@ -424,7 +430,7 @@ function renderList() {
   const date   = document.getElementById('f-date')?.value || '';
   const status = document.getElementById('f-status')?.value || '';
   let filtered = allSessions;
-  if (date)   filtered = filtered.filter(s => s.session_date?.startsWith(date));
+  if (date)   filtered = filtered.filter(s => s.session_date && localDateStr(s.session_date) === date);
   if (status) filtered = filtered.filter(s => s.status === status);
 
   document.getElementById('tbody').innerHTML = filtered.length

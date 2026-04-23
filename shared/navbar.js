@@ -33,19 +33,14 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'profile',      url: 'profile.html',          icon: '👤', label: 'Profile' },
   ],
 
-  // Staff: Coach — patient & clinical access only
+  // Staff: Coach — patient-centric nav (clinical details via Patient Hub)
   staff_coach: [
-    { id: 'dashboard',    url: 'dashboard.html',        icon: '🏥', label: 'Dashboard' },
-    { id: 'assignments',  url: 'assignments.html',       icon: '🤝', label: 'Patients' },
-    { id: 'psy_patients', url: 'patients.html',         icon: '👥', label: 'Pesakit Saya' },
-    { id: 'plans',        url: 'plans.html',            icon: '📋', label: 'Treatment Plans' },
-    { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
-    { id: 'consultation', url: 'consultation.html',     icon: '🩺', label: 'Consultation' },
-    { id: 'psy_vitals',   url: 'vitals.html',           icon: '📊', label: 'Vitals Capture' },
-    { id: 'coaching',     url: 'coaching.html',         icon: '🎯', label: 'Coaching Sessions' },
-    { id: 'risk',         url: 'risk.html',             icon: '⚠️', label: 'Risk Assessment' },
-    { id: 'issue',        url: 'issue.html',            icon: '⚠️', label: 'Report Issue' },
-    { id: 'profile',      url: 'profile.html',          icon: '👤', label: 'Profile' },
+    { id: 'dashboard',       url: 'dashboard.html',    icon: '🏥', label: 'Dashboard' },
+    { id: 'assignments',     url: 'assignments.html',  icon: '👥', label: 'Patients' },
+    { id: 'psy_appointments',url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
+    { id: 'risk',            url: 'risk.html',         icon: '⚠️', label: 'Risk Assessment' },
+    { id: 'issue',           url: 'issue.html',        icon: '⚠️', label: 'Report Issue' },
+    { id: 'profile',         url: 'profile.html',      icon: '👤', label: 'Profile' },
   ],
 
   // Staff: Doctor — clinical + KYC review

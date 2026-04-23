@@ -8,7 +8,7 @@ window.currentUser = null;
 const STAFF_ROLE_ACCESS = {
   admin:   ['dashboard','assignments','psy_patients','psy_appointments','pakej','psy_products','psy_orders','library','services','audit','staff_mgmt','issue','profile'],
   doctor:  ['dashboard','psy_patients','plans','psy_appointments','consultation','psy_vitals','risk','library','issue','profile'],
-  coach:   ['dashboard','assignments','psy_patients','plans','psy_appointments','consultation','psy_vitals','coaching','risk','issue','profile'],
+  coach:   ['dashboard','assignments','psy_patients','plans','psy_appointments','consultation','psy_vitals','coaching','risk','issue','profile','patient_hub','plan_week'],
   manager: ['dashboard','assignments','psy_patients','plans','psy_appointments','psy_orders','audit','issue','profile'],
 };
 
