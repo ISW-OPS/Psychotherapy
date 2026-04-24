@@ -78,7 +78,29 @@ Deno.serve(async (req: Request) => {
       if (!target_id) return fail('target_id diperlukan')
       if (target_id === user.id) return fail('Tidak boleh padam akaun sendiri')
 
-      // Delete auth user (cascade deletes psy_profiles via FK)
+      // Cek target — admin tidak boleh dipadam
+      const { data: targetProfile } = await adminClient
+        .from('psy_profiles')
+        .select('staff_role')
+        .eq('id', target_id)
+        .single()
+      if (targetProfile?.staff_role === 'admin') return fail('Akaun Admin tidak boleh dipadam')
+
+      // Bersihkan FK references dulu supaya delete tak fail
+      await Promise.allSettled([
+        adminClient.from('psy_appointments').update({ staff_id: null }).eq('staff_id', target_id),
+        adminClient.from('psy_treatment_plans').update({ doctor_id: null }).eq('doctor_id', target_id),
+        adminClient.from('psy_kyc_submissions').update({ reviewed_by: null }).eq('reviewed_by', target_id),
+        adminClient.from('psy_plan_weekly_progress').update({ updated_by: null }).eq('updated_by', target_id),
+        adminClient.from('psy_patients').update({ coach_id: null }).eq('coach_id', target_id),
+      ])
+
+      // Delete profile dulu (kerana psy_patients.user_id → psy_profiles tanpa cascade)
+      await adminClient.from('psy_patients').delete().eq('user_id', target_id)
+      await adminClient.from('psy_kyc_submissions').delete().eq('user_id', target_id)
+      await adminClient.from('psy_profiles').delete().eq('id', target_id)
+
+      // Delete auth user
       const { error: delErr } = await adminClient.auth.admin.deleteUser(target_id)
       if (delErr) return fail(delErr.message)
 
