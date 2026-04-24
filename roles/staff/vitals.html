@@ -23,11 +23,17 @@
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
       <div class="p-4 md:p-8 space-y-4">
-        <div class="bg-white rounded-xl p-4 border border-ink/10">
-          <label class="text-xs font-semibold mb-2 block">Pilih pesakit</label>
-          <select id="patient-select" onchange="loadPatientVitalsHistory()" class="w-full border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none focus:border-navy">
-            <option value="">— Pilih pesakit —</option>
-          </select>
+        <div class="grid md:grid-cols-2 gap-4">
+          <div class="bg-white rounded-xl p-4 border border-ink/10">
+            <label class="text-xs font-semibold mb-2 block">Tarikh Vitals</label>
+            <input type="date" id="entry-date" onchange="loadPatientsForDate()" class="w-full border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none focus:border-navy">
+          </div>
+          <div class="bg-white rounded-xl p-4 border border-ink/10">
+            <label class="text-xs font-semibold mb-2 block">Pilih pesakit</label>
+            <select id="patient-select" onchange="loadPatientVitalsHistory()" class="w-full border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none focus:border-navy">
+              <option value="">— Pilih pesakit —</option>
+            </select>
+          </div>
         </div>
 
         <!-- Patient vitals history (shown when patient selected) -->
@@ -98,8 +104,14 @@ async function saveVitals() {
   const h = parseFloat(document.getElementById('v-height').value);
   const bmi = w && h ? parseFloat((w / ((h/100) ** 2)).toFixed(1)) : null;
 
+  const dateVal = document.getElementById('entry-date').value;
+  const d = new Date();
+  const timeStr = [String(d.getHours()).padStart(2, '0'), String(d.getMinutes()).padStart(2, '0'), String(d.getSeconds()).padStart(2, '0')].join(':');
+  const createdAt = new Date(`${dateVal}T${timeStr}`).toISOString();
+
   await dbInsert('psy_vitals', {
     patient_id: patientId,
+    created_at: createdAt,
     recorded_by: currentUser.id,
     bp_systolic: parseInt(document.getElementById('v-sys').value) || null,
     bp_diastolic: parseInt(document.getElementById('v-dia').value) || null,
@@ -170,9 +182,10 @@ async function loadRecent() {
   const data = await dbQuery('psy_vitals', { order: { col: 'created_at' }, limit: 20 });
   const todayData = data.filter(v => v.created_at?.startsWith(today));
 
-  const patients = await dbQuery('psy_patients');
+  const patientsRes = await window.db.from('psy_patients').select('*, psy_profiles!psy_patients_user_id_fkey(full_name)');
+  const patients = patientsRes.data || [];
   const patientMap = {};
-  patients.forEach(p => patientMap[p.id] = p.mrn);
+  patients.forEach(p => patientMap[p.id] = p.psy_profiles?.full_name || p.mrn);
 
   document.getElementById('recent-vitals-body').innerHTML = todayData.length
     ? todayData.map(v => `<tr>
@@ -190,12 +203,34 @@ async function loadRecent() {
   const user = await initStaff('psy_vitals', 'Bacaan klinikal pesakit');
   if (!user) return;
 
-  const patients = await dbQuery('psy_patients', { eq: { status: 'active' } });
-  document.getElementById('patient-select').innerHTML = '<option value="">— Pilih pesakit —</option>' +
-    patients.map(p => `<option value="${p.id}">${p.mrn} · ${p.gender || '—'}</option>`).join('');
-
+  const d = new Date();
+  const localToday = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  document.getElementById('entry-date').value = localToday;
+  await loadPatientsForDate();
+  
   loadRecent();
 })();
+
+async function loadPatientsForDate() {
+  const dateStr = document.getElementById('entry-date').value;
+  if (!dateStr) return;
+
+  const { data: apps } = await window.db.from('psy_plan_weekly_progress')
+    .select('patient_id')
+    .gte('session_date', dateStr + 'T00:00:00')
+    .lte('session_date', dateStr + 'T23:59:59')
+    .in('status', ['booked', 'reschedule', 'hadir']);
+  const todayPatientIds = new Set((apps || []).map(a => a.patient_id));
+
+  const res = await window.db.from('psy_patients').select('*, psy_profiles!psy_patients_user_id_fkey(full_name)').eq('status', 'active');
+  let patients = res.data || [];
+  
+  patients = patients.filter(p => todayPatientIds.has(p.id));
+
+  document.getElementById('patient-select').innerHTML = '<option value="">— Pilih pesakit —</option>' +
+    patients.map(p => `<option value="${p.id}">${p.psy_profiles?.full_name || p.mrn} · ${p.mrn}</option>`).join('');
+  document.getElementById('patient-history-section')?.classList.add('hidden');
+}
 </script>
 </body>
 </html>

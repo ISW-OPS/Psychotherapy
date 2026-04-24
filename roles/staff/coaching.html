@@ -25,13 +25,19 @@
       <div class="p-4 md:p-8 space-y-4">
         <div class="bg-white rounded-xl p-5 border border-ink/10 space-y-3">
           <h3 class="font-bold">Mula Sesi Coaching Baru</h3>
-          <div class="grid md:grid-cols-2 gap-3">
+          <div class="grid md:grid-cols-2 gap-3 mb-3">
+            <div>
+              <label class="text-xs font-semibold">Tarikh Sesi</label>
+              <input type="date" id="entry-date" onchange="loadPatientsForDate()" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm outline-none focus:border-navy">
+            </div>
             <div>
               <label class="text-xs font-semibold">Pesakit</label>
               <select id="c-patient" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
                 <option value="">— Pilih pesakit —</option>
               </select>
             </div>
+          </div>
+          <div class="grid md:grid-cols-3 gap-3">
             <div>
               <label class="text-xs font-semibold">Pillar fokus</label>
               <select id="c-pillar" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
@@ -96,7 +102,7 @@ async function saveSession(status) {
     coach_id: currentUser.id,
     patient_name: patient.mrn,
     pillar: document.getElementById('c-pillar').value,
-    session_date: new Date().toISOString(),
+    session_date: new Date(`${document.getElementById('entry-date').value}T${new Date().toTimeString().split(' ')[0]}`).toISOString(),
     duration_min: 60,
     mood_pre: parseInt(document.getElementById('c-mood-pre').value) || null,
     mood_post: parseInt(document.getElementById('c-mood-post').value) || null,
@@ -157,11 +163,33 @@ async function loadSessions() {
 (async () => {
   const user = await initStaff('coaching', 'BPS-S coaching · session log');
   if (!user) return;
-  const patients = await dbQuery('psy_patients', { eq: { status: 'active' } });
-  document.getElementById('c-patient').innerHTML = '<option value="">— Pilih pesakit —</option>' +
-    patients.map(p => `<option value="${p.id}">${p.mrn}</option>`).join('');
+  const d = new Date();
+  const localToday = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  document.getElementById('entry-date').value = localToday;
+  await loadPatientsForDate();
+
   loadSessions();
 })();
+
+async function loadPatientsForDate() {
+  const dateStr = document.getElementById('entry-date').value;
+  if (!dateStr) return;
+
+  const { data: apps } = await window.db.from('psy_plan_weekly_progress')
+    .select('patient_id')
+    .gte('session_date', dateStr + 'T00:00:00')
+    .lte('session_date', dateStr + 'T23:59:59')
+    .in('status', ['booked', 'reschedule', 'hadir']);
+  const todayPatientIds = new Set((apps || []).map(a => a.patient_id));
+
+  const res = await window.db.from('psy_patients').select('*, psy_profiles!psy_patients_user_id_fkey(full_name)').eq('status', 'active');
+  let patients = res.data || [];
+  
+  patients = patients.filter(p => todayPatientIds.has(p.id));
+
+  document.getElementById('c-patient').innerHTML = '<option value="">— Pilih pesakit —</option>' +
+    patients.map(p => `<option value="${p.id}">${p.psy_profiles?.full_name || p.mrn}</option>`).join('');
+}
 </script>
 </body>
 </html>

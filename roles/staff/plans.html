@@ -23,11 +23,17 @@
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
       <div class="p-4 md:p-8 space-y-6">
-        <div class="flex items-center justify-between">
-          <h3 class="font-bold text-lg">Treatment Plans</h3>
-          <button onclick="openModal()" class="bg-navy text-white text-sm px-4 py-2 rounded-lg font-semibold">+ Plan Baru</button>
+        <div id="plans-header" class="flex items-center justify-between">
+          <h3 id="plans-title" class="font-bold text-lg">Treatment Plans</h3>
+          <div class="flex items-center gap-2">
+            <button id="btn-back-plans" onclick="closePlanGroup()" class="hidden text-sm px-4 py-2 border border-ink/20 rounded-lg font-semibold hover:bg-ink/5">← Kembali</button>
+            <button onclick="openModal()" class="bg-navy text-white text-sm px-4 py-2 rounded-lg font-semibold">+ Plan Baru</button>
+          </div>
         </div>
-        <div id="plans-list" class="grid md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+        <!-- Group Level: List of distinct packages -->
+        <div id="plans-group-list" class="grid md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+        <!-- Detail Level: List of patients for a selected package -->
+        <div id="plans-patient-list" class="flex flex-col gap-3 hidden"></div>
 
         <!-- Weekly Progress Tracker (appears when plan selected) -->
         <div id="tracker-section" class="hidden mt-6">
@@ -166,31 +172,87 @@ async function savePlan() {
 }
 
 async function loadPlans() {
-  const [plans, patients] = await Promise.all([
-    dbQuery('psy_treatment_plans', { order: { col: 'created_at' } }),
-    dbQuery('psy_patients'),
+  const [plansRes, patientsRes] = await Promise.all([
+    window.db.from('psy_treatment_plans').select('*').order('created_at'),
+    window.db.from('psy_patients').select('*, psy_profiles!psy_patients_user_id_fkey(full_name)')
   ]);
+  const plans = plansRes.data || [];
+  const patients = patientsRes.data || [];
+  
   allPlans = plans;
   const patientMap = {};
-  patients.forEach(p => { patientMap[p.id] = p.mrn; allPatientsMap[p.id] = p.mrn; });
+  patients.forEach(p => { 
+    const name = p.psy_profiles?.full_name || p.mrn || '—';
+    patientMap[p.id] = name; 
+    allPatientsMap[p.id] = name; 
+  });
 
-  document.getElementById('plans-list').innerHTML = plans.length
-    ? plans.map(p => `
-      <div onclick="openTracker('${p.id}')" class="bg-white rounded-xl p-5 border border-ink/10 cursor-pointer hover:border-navy hover:shadow-md transition">
-        <div class="flex items-center justify-between mb-2">
-          <h4 class="font-bold text-sm">${p.name}</h4>
-          ${statusChip(p.status)}
+  // Group plans by name
+  const grouped = {};
+  plans.forEach(p => {
+    if (!grouped[p.name]) grouped[p.name] = [];
+    grouped[p.name].push(p);
+  });
+
+  const groupNames = Object.keys(grouped);
+
+  document.getElementById('plans-group-list').innerHTML = groupNames.length
+    ? groupNames.map(gName => `
+      <div onclick="openPlanGroup('${encodeURIComponent(gName)}')" class="bg-white rounded-xl p-5 border border-ink/10 cursor-pointer hover:border-navy hover:shadow-md transition">
+        <div class="flex items-center gap-3 mb-2">
+          <div class="w-10 h-10 rounded-full bg-navy/10 flex items-center justify-center text-navy text-lg">📋</div>
+          <div>
+            <h4 class="font-bold text-sm">${gName}</h4>
+            <p class="text-xs text-ink/60">${grouped[gName].length} pesakit</p>
+          </div>
         </div>
-        <p class="text-xs text-ink/60">${patientMap[p.patient_id] || '—'} · Week ${p.current_week}/${p.duration_weeks}</p>
-        <div class="flex gap-2 mt-3 text-[10px] flex-wrap">
-          ${p.bio_goals?.length ? `<span class="chip bg-bio/10 text-bio">Bio (${p.bio_goals.length})</span>` : ''}
-          ${p.psycho_goals?.length ? `<span class="chip bg-psycho/10 text-psycho">Psycho (${p.psycho_goals.length})</span>` : ''}
-          ${p.social_goals?.length ? `<span class="chip bg-social/10 text-social">Social (${p.social_goals.length})</span>` : ''}
-          ${p.spiritual_goals?.length ? `<span class="chip bg-spiritual/10 text-spiritual">Spiritual (${p.spiritual_goals.length})</span>` : ''}
-        </div>
-        <div class="text-xs text-navy font-semibold mt-3">Klik untuk update progress →</div>
+        <div class="text-xs text-navy font-semibold mt-3">Lihat senarai pesakit →</div>
       </div>`).join('')
     : '<p class="text-ink/40 text-sm text-center py-8 col-span-3">Tiada plans</p>';
+}
+
+function openPlanGroup(encodedPlanName) {
+  const planName = decodeURIComponent(encodedPlanName);
+  const plansInGroup = allPlans.filter(p => p.name === planName);
+  
+  document.getElementById('plans-title').textContent = planName;
+  document.getElementById('btn-back-plans').classList.remove('hidden');
+  document.getElementById('plans-group-list').classList.add('hidden');
+  document.getElementById('tracker-section').classList.add('hidden');
+  
+  const patientList = document.getElementById('plans-patient-list');
+  patientList.classList.remove('hidden');
+  
+  patientList.innerHTML = plansInGroup.map(p => `
+      <div onclick="location.href='patient-hub.html?patient_id=${p.patient_id}'" class="bg-white rounded-xl p-4 border border-ink/10 cursor-pointer hover:border-navy hover:shadow-md transition flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div class="flex items-center gap-4 min-w-0">
+          <div class="w-10 h-10 rounded-full bg-ink/5 flex items-center justify-center font-bold text-ink/50 text-sm flex-shrink-0">
+            ${(allPatientsMap[p.patient_id] || 'P').substring(0, 2).toUpperCase()}
+          </div>
+          <div class="min-w-0">
+            <div class="flex items-center gap-2">
+              <h4 class="font-bold text-sm truncate">${allPatientsMap[p.patient_id] || '—'}</h4>
+              ${statusChip(p.status)}
+            </div>
+            <p class="text-xs text-ink/60 mt-0.5">Week ${p.current_week}/${p.duration_weeks}</p>
+          </div>
+        </div>
+        
+        <div class="flex items-center gap-4">
+          <div class="text-xs text-navy font-semibold flex-shrink-0 flex items-center gap-1">
+            <span>Details</span>
+            <span>→</span>
+          </div>
+        </div>
+      </div>`).join('');
+}
+
+function closePlanGroup() {
+  document.getElementById('plans-title').textContent = 'Treatment Plans';
+  document.getElementById('btn-back-plans').classList.add('hidden');
+  document.getElementById('plans-patient-list').classList.add('hidden');
+  document.getElementById('tracker-section').classList.add('hidden');
+  document.getElementById('plans-group-list').classList.remove('hidden');
 }
 
 let allPlans = [];
@@ -393,10 +455,15 @@ async function updateNotes(planId, patientId, week, notes) {
 (async () => {
   const user = await initStaff('plans', 'BPS-S · Attendance & Progress Tracker');
   if (!user) return;
-  const patients = await dbQuery('psy_patients', { eq: { status: 'active' } });
-  patients.forEach(p => { allPatientsMap[p.id] = p.mrn; patientUserIdMap[p.id] = p.user_id; });
+  const res = await window.db.from('psy_patients').select('*, psy_profiles!psy_patients_user_id_fkey(full_name)').eq('status', 'active');
+  const patients = res.data || [];
+  patients.forEach(p => { 
+    const name = p.psy_profiles?.full_name || p.mrn || '—';
+    allPatientsMap[p.id] = name; 
+    patientUserIdMap[p.id] = p.user_id; 
+  });
   document.getElementById('m-patient').innerHTML = '<option value="">— Pilih pesakit —</option>' +
-    patients.map(p => `<option value="${p.id}">${p.mrn}</option>`).join('');
+    patients.map(p => `<option value="${p.id}">${p.psy_profiles?.full_name || p.mrn}</option>`).join('');
   loadPlans();
 })();
 </script>
