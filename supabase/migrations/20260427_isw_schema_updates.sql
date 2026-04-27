@@ -17,16 +17,23 @@ ALTER TABLE psy_products
 
 -- ── 3. psy_packages — image upload ───────────────────────────
 ALTER TABLE psy_packages
-  ADD COLUMN IF NOT EXISTS image_url TEXT;
+  ADD COLUMN IF NOT EXISTS image_url TEXT,
+  ADD COLUMN IF NOT EXISTS duration_unit TEXT DEFAULT 'week',
+  ADD COLUMN IF NOT EXISTS coaching_schedule JSONB DEFAULT '[]';
 
 -- ── 4. psy_plan_weekly_progress — Google Meet link ───────────
+ALTER TABLE psy_treatment_plans
+  ADD COLUMN IF NOT EXISTS duration_unit TEXT DEFAULT 'week',
+  ADD COLUMN IF NOT EXISTS coaching_schedule JSONB DEFAULT '[]';
+
 ALTER TABLE psy_plan_weekly_progress
   ADD COLUMN IF NOT EXISTS meet_link          TEXT,
   ADD COLUMN IF NOT EXISTS feedback_rating    SMALLINT,
   ADD COLUMN IF NOT EXISTS feedback_comment   TEXT,
   ADD COLUMN IF NOT EXISTS feedback_at        TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS updated_at         TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS updated_by_name    TEXT;
+  ADD COLUMN IF NOT EXISTS updated_by_name    TEXT,
+  ADD COLUMN IF NOT EXISTS coaching_checks    JSONB DEFAULT '{}';
 
 -- ── 5. psy_notifications ─────────────────────────────────────
 CREATE TABLE IF NOT EXISTS psy_notifications (
@@ -84,10 +91,12 @@ CREATE TABLE IF NOT EXISTS psy_announcements (
   cta_label  TEXT,
   cta_url    TEXT,
   bg         TEXT DEFAULT 'from-navy to-green-dark',
+  image_url  TEXT,
   is_active  BOOLEAN NOT NULL DEFAULT TRUE,
   sort_order SMALLINT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE psy_announcements ADD COLUMN IF NOT EXISTS image_url TEXT;
 INSERT INTO psy_announcements (title, body, tag, bg, is_active, sort_order)
 VALUES (
   'Selamat Datang ke ISW',
@@ -109,6 +118,15 @@ CREATE TABLE IF NOT EXISTS psy_plan_check_ins (
   week_number SMALLINT NOT NULL,
   checked_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE psy_plan_check_ins
+  ADD COLUMN IF NOT EXISTS patient_id  UUID REFERENCES psy_patients(id) ON DELETE CASCADE,
+  ADD COLUMN IF NOT EXISTS pillar      TEXT,
+  ADD COLUMN IF NOT EXISTS goal_index  SMALLINT,
+  ADD COLUMN IF NOT EXISTS goal_text   TEXT,
+  ADD COLUMN IF NOT EXISTS week_number SMALLINT NOT NULL DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS checked_at  TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE psy_plan_check_ins
+  DROP CONSTRAINT IF EXISTS psy_plan_check_ins_plan_id_pillar_goal_index_key;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_checkin_unique
   ON psy_plan_check_ins(plan_id, week_number, pillar, goal_index);
 
@@ -130,6 +148,19 @@ CREATE TABLE IF NOT EXISTS psy_plan_compliance (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE psy_plan_compliance
+  ADD COLUMN IF NOT EXISTS patient_id   UUID REFERENCES psy_patients(id) ON DELETE CASCADE,
+  ADD COLUMN IF NOT EXISTS week_number  SMALLINT NOT NULL DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS madu_sudu    SMALLINT,
+  ADD COLUMN IF NOT EXISTS nafas_kali   SMALLINT,
+  ADD COLUMN IF NOT EXISTS bumi_minit   SMALLINT,
+  ADD COLUMN IF NOT EXISTS kelapa_kali  SMALLINT,
+  ADD COLUMN IF NOT EXISTS kolon_kali   SMALLINT,
+  ADD COLUMN IF NOT EXISTS berjemur     BOOLEAN,
+  ADD COLUMN IF NOT EXISTS pantang      BOOLEAN,
+  ADD COLUMN IF NOT EXISTS notes        TEXT,
+  ADD COLUMN IF NOT EXISTS updated_by   UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS updated_at   TIMESTAMPTZ NOT NULL DEFAULT now();
 CREATE UNIQUE INDEX IF NOT EXISTS idx_compliance_unique
   ON psy_plan_compliance(plan_id, week_number);
 
@@ -179,46 +210,55 @@ ALTER TABLE psy_plan_check_ins  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE psy_plan_compliance ENABLE ROW LEVEL SECURITY;
 
 -- psy_notifications: each user sees only their own
-CREATE POLICY IF NOT EXISTS "notif_own" ON psy_notifications
+DROP POLICY IF EXISTS "notif_own" ON psy_notifications;
+CREATE POLICY "notif_own" ON psy_notifications
   FOR ALL USING (auth.uid() = user_id);
 
 -- psy_payments: patient sees their own; staff sees all
-CREATE POLICY IF NOT EXISTS "pay_own" ON psy_payments
+DROP POLICY IF EXISTS "pay_own" ON psy_payments;
+CREATE POLICY "pay_own" ON psy_payments
   FOR SELECT USING (
     auth.uid() = user_id
     OR EXISTS (
       SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'
     )
   );
-CREATE POLICY IF NOT EXISTS "pay_insert" ON psy_payments
+DROP POLICY IF EXISTS "pay_insert" ON psy_payments;
+CREATE POLICY "pay_insert" ON psy_payments
   FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 -- psy_package_purchases: patient sees own; staff sees all
-CREATE POLICY IF NOT EXISTS "pkgpur_patient" ON psy_package_purchases
+DROP POLICY IF EXISTS "pkgpur_patient" ON psy_package_purchases;
+CREATE POLICY "pkgpur_patient" ON psy_package_purchases
   FOR SELECT USING (
     EXISTS (SELECT 1 FROM psy_patients WHERE id = patient_id AND user_id = auth.uid())
     OR EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
   );
-CREATE POLICY IF NOT EXISTS "pkgpur_insert" ON psy_package_purchases
+DROP POLICY IF EXISTS "pkgpur_insert" ON psy_package_purchases;
+CREATE POLICY "pkgpur_insert" ON psy_package_purchases
   FOR INSERT WITH CHECK (
     EXISTS (SELECT 1 FROM psy_patients WHERE id = patient_id AND user_id = auth.uid())
     OR EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
   );
-CREATE POLICY IF NOT EXISTS "pkgpur_update" ON psy_package_purchases
+DROP POLICY IF EXISTS "pkgpur_update" ON psy_package_purchases;
+CREATE POLICY "pkgpur_update" ON psy_package_purchases
   FOR UPDATE USING (
     EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
   );
 
 -- psy_announcements: anyone can read; only staff insert/update/delete
-CREATE POLICY IF NOT EXISTS "ann_read" ON psy_announcements
+DROP POLICY IF EXISTS "ann_read" ON psy_announcements;
+CREATE POLICY "ann_read" ON psy_announcements
   FOR SELECT USING (is_active = TRUE);
-CREATE POLICY IF NOT EXISTS "ann_staff" ON psy_announcements
+DROP POLICY IF EXISTS "ann_staff" ON psy_announcements;
+CREATE POLICY "ann_staff" ON psy_announcements
   FOR ALL USING (
     EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
   );
 
 -- psy_plan_check_ins: patient sees own; staff sees all
-CREATE POLICY IF NOT EXISTS "checkin_patient" ON psy_plan_check_ins
+DROP POLICY IF EXISTS "checkin_patient" ON psy_plan_check_ins;
+CREATE POLICY "checkin_patient" ON psy_plan_check_ins
   FOR ALL USING (
     auth.uid() IN (
       SELECT user_id FROM psy_patients WHERE id = patient_id
@@ -227,11 +267,13 @@ CREATE POLICY IF NOT EXISTS "checkin_patient" ON psy_plan_check_ins
   );
 
 -- psy_plan_compliance: staff full access; patient read-only
-CREATE POLICY IF NOT EXISTS "compliance_staff" ON psy_plan_compliance
+DROP POLICY IF EXISTS "compliance_staff" ON psy_plan_compliance;
+CREATE POLICY "compliance_staff" ON psy_plan_compliance
   FOR ALL USING (
     EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
   );
-CREATE POLICY IF NOT EXISTS "compliance_patient_read" ON psy_plan_compliance
+DROP POLICY IF EXISTS "compliance_patient_read" ON psy_plan_compliance;
+CREATE POLICY "compliance_patient_read" ON psy_plan_compliance
   FOR SELECT USING (
     EXISTS (
       SELECT 1 FROM psy_treatment_plans tp
@@ -253,3 +295,47 @@ CREATE POLICY IF NOT EXISTS "compliance_patient_read" ON psy_plan_compliance
 --   FOR INSERT WITH CHECK (
 --     bucket_id = 'medical-reports' AND auth.role() = 'authenticated'
 --   );
+
+-- ── 17. psy_inventory_items ──────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_inventory_items (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name              TEXT NOT NULL,
+  category          TEXT DEFAULT 'Umum',
+  unit              TEXT DEFAULT 'unit',
+  qty_in_stock      NUMERIC(10,2) NOT NULL DEFAULT 0,
+  min_qty           NUMERIC(10,2) NOT NULL DEFAULT 5,
+  requires_approval BOOLEAN NOT NULL DEFAULT FALSE,
+  notes             TEXT,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ── 18. psy_inventory_requests ───────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_inventory_requests (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  item_id       UUID NOT NULL REFERENCES psy_inventory_items(id) ON DELETE CASCADE,
+  item_name     TEXT,
+  qty_requested NUMERIC(10,2) NOT NULL,
+  unit_price    NUMERIC(10,2),
+  total_amount  NUMERIC(10,2),
+  reason        TEXT,
+  status        TEXT NOT NULL DEFAULT 'pending_approval',
+  requested_by  UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  requested_by_name TEXT,
+  approved_by   UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  approved_at   TIMESTAMPTZ,
+  purchased_at  TIMESTAMPTZ,
+  rejected_reason TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE psy_inventory_items    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_inventory_requests ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "inv_items_staff" ON psy_inventory_items;
+CREATE POLICY "inv_items_staff" ON psy_inventory_items
+  FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "inv_req_staff" ON psy_inventory_requests;
+CREATE POLICY "inv_req_staff" ON psy_inventory_requests
+  FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));

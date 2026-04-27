@@ -30,7 +30,7 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'library',      url: 'library.html',          icon: '📚', label: 'Self-Help Library' },
     { id: 'staff_mgmt',     url: 'staff_management.html', icon: '👨‍⚕️', label: 'Manage Staff' },
     { id: 'announcements', url: 'announcements.html',   icon: '📢', label: 'Pengumuman' },
-    { id: 'staff_stats',   url: 'staff-stats.html',     icon: '📈', label: 'Statistik Staff' },
+    { id: 'inventory',     url: 'inventory.html',       icon: '🏭', label: 'Inventori' },
     { id: 'issue',         url: 'issue.html',           icon: '⚠️', label: 'Report Issue' },
     { id: 'profile',       url: 'profile.html',         icon: '👤', label: 'Profile' },
   ],
@@ -68,6 +68,7 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'psy_orders',    url: 'orders.html',            icon: '📦', label: 'Orders & Tracking' },
     { id: 'announcements', url: 'announcements.html',   icon: '📢', label: 'Pengumuman' },
     { id: 'staff_stats',   url: 'staff-stats.html',     icon: '📈', label: 'Statistik Staff' },
+    { id: 'inventory',     url: 'inventory.html',       icon: '🏭', label: 'Inventori' },
     { id: 'issue',         url: 'issue.html',           icon: '⚠️', label: 'Report Issue' },
     { id: 'profile',       url: 'profile.html',         icon: '👤', label: 'Profile' },
   ],
@@ -123,6 +124,34 @@ function renderNavbar(role, user, navItems, activeScreen) {
 
   const sidebar = document.getElementById('sidebar');
   if (!sidebar) return;
+
+  // Inject mobile sidebar overlay (once per page)
+  if (!document.getElementById('mob-sidebar-overlay')) {
+    const ol = document.createElement('div');
+    ol.id = 'mob-sidebar-overlay';
+    ol.onclick = closeMobileSidebar;
+    document.body.appendChild(ol);
+  }
+
+  // Patient: inject persistent bottom nav bar (once per page)
+  if (role === 'patient' && !document.getElementById('pat-bottom-nav')) {
+    const BOT_ITEMS = [
+      { href: 'dashboard.html', icon: '🏠', label: 'Home',     id: 'dashboard' },
+      { href: 'plan.html',      icon: '💊', label: 'Plan',     id: 'plan' },
+      { href: 'checkin.html',   icon: '✅', label: 'Check-in', id: 'checkin' },
+      { href: 'shop.html',      icon: '🛒', label: 'Shop',     id: 'shop' },
+      { href: 'profile.html',   icon: '👤', label: 'Profil',   id: 'profile' },
+    ];
+    const nav = document.createElement('nav');
+    nav.id = 'pat-bottom-nav';
+    nav.className = 'mobile-nav fixed bottom-0 left-0 right-0 bg-navy-dark border-t border-white/10 text-white flex justify-around z-20';
+    nav.innerHTML = BOT_ITEMS.map(it =>
+      `<a href="${it.href}" class="flex flex-col items-center justify-center gap-0.5 py-2 px-1 flex-1 text-[10px] ${it.id === activeScreen ? 'text-gold font-semibold' : 'text-white/65'}">
+        <span class="text-lg leading-none">${it.icon}</span>${it.label}
+      </a>`
+    ).join('');
+    document.body.appendChild(nav);
+  }
 
   // Auto-detect base path for logo (works from /roles/patient/ or /roles/staff/)
   const logoPath = window.location.pathname.includes('/roles/') ? '../../image/Logo_ISW.png' : 'image/Logo_ISW.png';
@@ -184,11 +213,19 @@ function renderHeader(title, subtitle) {
   const header = document.getElementById('page-header');
   if (!header) return;
   header.innerHTML = `
-    <div>
-      <h2 id="page-title" class="font-bold text-base lg:text-lg">${title}</h2>
-      <p id="page-sub" class="text-[11px] text-ink/60">${subtitle}</p>
+    <div class="flex items-center gap-3 min-w-0">
+      <button onclick="toggleMobileSidebar()" aria-label="Menu"
+        class="flex-shrink-0 md:hidden w-9 h-9 flex items-center justify-center rounded-lg hover:bg-ink/8 text-ink/60">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M2 4h14M2 9h14M2 14h14"/>
+        </svg>
+      </button>
+      <div class="min-w-0">
+        <h2 id="page-title" class="font-bold text-base lg:text-lg truncate">${title}</h2>
+        <p id="page-sub" class="text-[11px] text-ink/60 truncate">${subtitle}</p>
+      </div>
     </div>
-    <div class="flex items-center gap-3">
+    <div class="flex items-center gap-3 flex-shrink-0">
       <button id="notif-btn" onclick="toggleNotifPanel()" class="relative p-2 hover:bg-gray-100 rounded-lg">
         <span class="text-lg">🔔</span>
         <span id="notif-badge" class="hidden absolute -top-0.5 -right-0.5 min-w-[16px] h-4 bg-terracotta text-white text-[9px] font-bold rounded-full flex items-center justify-center px-0.5"></span>
@@ -293,6 +330,23 @@ function closeNotifPanel() {
   if (!panel || !drawer) return;
   drawer.style.transform = 'translateX(100%)';
   setTimeout(() => panel.classList.add('hidden'), 300);
+}
+
+function toggleMobileSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('mob-sidebar-overlay');
+  if (!sidebar || !overlay) return;
+  const opening = !sidebar.classList.contains('mob-open');
+  sidebar.classList.toggle('mob-open', opening);
+  overlay.classList.toggle('visible', opening);
+}
+
+function closeMobileSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('mob-sidebar-overlay');
+  if (!sidebar || !overlay) return;
+  sidebar.classList.remove('mob-open');
+  overlay.classList.remove('visible');
 }
 
 function goTo(screen) {

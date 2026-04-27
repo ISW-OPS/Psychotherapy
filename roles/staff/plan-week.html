@@ -81,6 +81,17 @@
           </div>
         </div>
 
+        <div id="coaching-schedule-section" class="bg-white rounded-xl p-5 border border-ink/10 hidden">
+          <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
+            <div>
+              <h3 class="font-bold text-base">Coaching Minggu Ini</h3>
+              <p class="text-xs text-ink/60">Task dan bekalan yang ditetapkan dalam pakej rawatan.</p>
+            </div>
+            <span id="coaching-saved" class="save-indicator">✓ Tersimpan</span>
+          </div>
+          <div id="coaching-schedule-view" class="grid md:grid-cols-3 gap-3"></div>
+        </div>
+
         <!-- Main Edit Area -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
@@ -218,6 +229,9 @@ let patientId    = null;   // psy_patients.id
 let patientUserId = null;  // psy_profiles.id (for notify)
 let weekStart    = null;
 let weekEnd      = null;
+let coachingChecks = {};
+
+function escHtml(s) { const d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
 
 // ── Boot ──────────────────────────────────────────────
 (async () => {
@@ -236,6 +250,11 @@ let weekEnd      = null;
 
   activePlan    = plan;
   patientId     = plan.patient_id;
+
+  if ((!activePlan.coaching_schedule || !activePlan.coaching_schedule.length) && activePlan.template) {
+    const { data: pkg } = await window.db.from('psy_packages').select('coaching_schedule').eq('package_id', activePlan.template).maybeSingle();
+    if (pkg?.coaching_schedule?.length) activePlan.coaching_schedule = pkg.coaching_schedule;
+  }
 
   const { data: pt } = await window.db.from('psy_patients').select('user_id').eq('id', patientId).single();
   patientUserId = pt?.user_id || null;
@@ -258,8 +277,127 @@ async function loadWeek() {
 
   updateBreadcrumb();
   renderHero();
+  renderCoachingSchedule();
   fillCoachForm();
   await Promise.all([loadCompliance(), loadSoap(), loadVitals(), loadSessions(), loadGoals(), loadFeedback()]);
+}
+
+function getWeekCoachingItems() {
+  const schedule = activePlan.coaching_schedule || [];
+  const daily = schedule.filter(item => (item.period === 'day' || item.day) && !item.week);
+  if (daily.length) {
+    const startDay = (weekNumber - 1) * 7 + 1;
+    const endDay = weekNumber * 7;
+    return daily.filter(item => Number(item.day) >= startDay && Number(item.day) <= endDay);
+  }
+  return schedule.filter(item => Number(item.week || item.day) === weekNumber);
+}
+
+function renderCoachingSchedule() {
+  const items = getWeekCoachingItems();
+  const section = document.getElementById('coaching-schedule-section');
+  const host = document.getElementById('coaching-schedule-view');
+  coachingChecks = weekEntry?.coaching_checks || {};
+
+  if (!items.length || !items.some(item => (item.guidance || []).length || (item.references || []).length || (item.supplies || []).length)) {
+    section.classList.add('hidden');
+    return;
+  }
+
+  section.classList.remove('hidden');
+
+  function parseRef(text) {
+    const m = text.match(/https?:\/\/[^\s]+/);
+    if (m) {
+      const url = m[0];
+      const label = text.replace(url, '').trim().replace(/[:—\-,]+$/, '').trim();
+      return { label: label || url, url };
+    }
+    if (text.trimStart().startsWith('www.')) return { label: text, url: 'https://' + text.trim() };
+    return { label: text, url: null };
+  }
+
+  function checklistSection(title, type, values, prefix, colorClass, bgClass) {
+    if (!(values || []).length) return '<div class="rounded-lg bg-cream/30 border border-ink/10 p-3"><div class="text-xs font-bold ' + colorClass + ' mb-2">' + title + '</div><p class="text-xs text-ink/40 italic">Tiada</p></div>';
+    return `<div class="rounded-lg ${bgClass} border p-3">
+      <div class="text-xs font-bold ${colorClass} mb-2">${title}</div>
+      <div class="space-y-2">
+        ${values.map((text, idx) => {
+          const key = `${prefix}_${type}_${idx}`;
+          const checked = !!coachingChecks[key];
+          const reason = coachingChecks[key + '_reason'] || '';
+          return `<div>
+            <label class="flex items-start gap-2 text-xs cursor-pointer select-none">
+              <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleCoachingCheck('${key}', this.checked)" class="mt-0.5 flex-shrink-0">
+              <span class="${checked ? 'line-through text-ink/40' : 'text-ink/80'}">${escHtml(text)}</span>
+            </label>
+            ${!checked ? `<div class="mt-1.5 ml-5">
+              <input type="text" placeholder="Alasan belum selesai..." value="${escHtml(reason)}"
+                onblur="saveCoachingReason('${key}', this.value)"
+                class="w-full px-2 py-1.5 border border-gold/40 rounded-md text-xs bg-gold/5 placeholder-ink/30 focus:outline-none focus:border-gold">
+            </div>` : ''}
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }
+
+  function referenceSection(values) {
+    if (!(values || []).length) return '<div class="rounded-lg bg-navy/5 border border-navy/20 p-3"><div class="text-xs font-bold text-navy mb-2">Rujukan</div><p class="text-xs text-ink/40 italic">Tiada</p></div>';
+    return `<div class="rounded-lg bg-navy/5 border border-navy/20 p-3">
+      <div class="text-xs font-bold text-navy mb-2">Rujukan <span class="font-normal text-navy/60 text-[10px]">(staff sahaja)</span></div>
+      <div class="space-y-2">
+        ${values.map(text => {
+          const { label, url } = parseRef(text);
+          return `<div class="flex items-start gap-2 text-xs">
+            <span class="text-navy flex-shrink-0 mt-0.5">📎</span>
+            <div class="min-w-0">
+              <div class="text-ink/80 break-words">${escHtml(label)}</div>
+              ${url ? `<a href="${escHtml(url)}" target="_blank" rel="noopener noreferrer"
+                class="inline-flex items-center gap-1 mt-0.5 text-[10px] font-semibold text-navy hover:text-navy-dark hover:underline">
+                Buka Link →
+              </a>` : ''}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }
+
+  host.innerHTML = items.map(item => {
+    const prefix = item.period === 'day' || item.day ? `D${item.day}` : `M${item.week}`;
+    return `<div class="md:col-span-3 rounded-xl border border-ink/10 p-3">
+      ${items.length > 1 ? `<div class="text-xs font-bold text-ink/40 uppercase tracking-wide mb-3">${escHtml(prefix)}</div>` : ''}
+      <div class="grid md:grid-cols-3 gap-3">
+        ${checklistSection('Bimbingan / Calling', 'guidance', item.guidance, prefix, 'text-navy', 'bg-cream/30 border-ink/10')}
+        ${referenceSection(item.references)}
+        ${checklistSection('Bekalan', 'supplies', item.supplies, prefix, 'text-green-dark', 'bg-green/5 border-green/20')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function toggleCoachingCheck(key, checked) {
+  coachingChecks[key] = checked;
+  if (checked) delete coachingChecks[key + '_reason'];
+  await upsertProgress({ coaching_checks: coachingChecks });
+  if (!weekEntry) weekEntry = {};
+  weekEntry.coaching_checks = coachingChecks;
+  renderCoachingSchedule();
+  flashSaved('coaching-saved');
+}
+
+async function saveCoachingReason(key, value) {
+  const trimmed = value.trim();
+  if (trimmed) {
+    coachingChecks[key + '_reason'] = trimmed;
+  } else {
+    delete coachingChecks[key + '_reason'];
+  }
+  await upsertProgress({ coaching_checks: coachingChecks });
+  if (!weekEntry) weekEntry = {};
+  weekEntry.coaching_checks = coachingChecks;
+  flashSaved('coaching-saved');
 }
 
 function computeWeekRange(plan, w) {
@@ -408,7 +546,7 @@ async function upsertProgress(fields) {
   if (weekEntry?.id) {
     await window.db.from('psy_plan_weekly_progress').update({ ...fields, ...base }).eq('id', weekEntry.id);
   } else {
-    const { data } = await window.db.from('psy_plan_weekly_progress').insert({ ...base, ...fields }).select().single();
+    const { data } = await window.db.from('psy_plan_weekly_progress').insert({ ...base, status: fields.status || 'pending', ...fields }).select().single();
     weekEntry = data;
   }
 

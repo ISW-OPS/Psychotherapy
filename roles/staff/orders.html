@@ -33,28 +33,38 @@
             <span class="absolute left-3 top-1/2 -translate-y-1/2 text-ink/40 text-sm">🔍</span>
             <input id="search-input" type="text" placeholder="Cari nama patient atau no. order..."
               class="w-full pl-9 pr-3 py-2.5 border border-ink/20 rounded-xl text-sm focus:border-navy outline-none bg-white"
-              oninput="renderOrders()">
+              oninput="resetPage(); renderOrders()">
           </div>
-          <select id="sort-select" onchange="renderOrders()"
+          <select id="sort-select" onchange="resetPage(); renderOrders()"
             class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
             <option value="newest">Terbaru dulu</option>
             <option value="oldest">Terlama dulu</option>
             <option value="amount_desc">Jumlah ↓</option>
           </select>
+          <!-- View Toggle -->
+          <div class="flex rounded-xl border border-ink/20 overflow-hidden bg-white">
+            <button id="view-card" onclick="setView('card')" title="Card View"
+              class="px-3 py-2 text-xs font-semibold transition-colors bg-navy text-white">Kad</button>
+            <button id="view-table" onclick="setView('table')" title="Table View"
+              class="px-3 py-2 text-xs font-semibold transition-colors text-ink/60 hover:bg-ink/5">Jadual</button>
+          </div>
         </div>
 
-        <!-- Status Filter Tabs -->
-        <div class="flex gap-2 flex-wrap">
-          <button onclick="setFilter('all')"       id="f-all"       class="filter-btn active">Semua</button>
-          <button onclick="setFilter('pending')"   id="f-pending"   class="filter-btn">⏳ Pending</button>
-          <button onclick="setFilter('paid')"      id="f-paid"      class="filter-btn">💳 Dibayar</button>
-          <button onclick="setFilter('packed')"    id="f-packed"    class="filter-btn">📦 Dibungkus</button>
-          <button onclick="setFilter('shipped')"   id="f-shipped"   class="filter-btn">🚚 Dihantar</button>
-          <button onclick="setFilter('delivered')" id="f-delivered" class="filter-btn">✅ Diterima</button>
-          <button onclick="setFilter('cancelled')" id="f-cancelled" class="filter-btn">❌ Batal</button>
-        </div>
+        <!-- Status Filters -->
+        <div id="filter-chips" class="flex gap-2 flex-wrap"></div>
 
         <div id="orders-list" class="space-y-3"></div>
+
+        <!-- Pagination -->
+        <div id="pagination" class="hidden flex items-center justify-between gap-3 pt-1">
+          <span id="page-info" class="text-xs text-ink/50"></span>
+          <div class="flex gap-2">
+            <button id="btn-prev" onclick="changePage(-1)"
+              class="px-4 py-2 border border-ink/20 rounded-xl text-sm hover:border-navy hover:text-navy disabled:opacity-30 disabled:cursor-not-allowed transition-colors">← Sebelum</button>
+            <button id="btn-next" onclick="changePage(1)"
+              class="px-4 py-2 border border-ink/20 rounded-xl text-sm hover:border-navy hover:text-navy disabled:opacity-30 disabled:cursor-not-allowed transition-colors">Seterusnya →</button>
+          </div>
+        </div>
       </div>
     </main>
   </div>
@@ -120,8 +130,22 @@
 </div>
 
 <style>
-.filter-btn { @apply px-4 py-2 rounded-full text-sm font-medium bg-white border border-ink/20 transition-colors; }
-.filter-btn.active { @apply bg-navy text-white border-navy; }
+.filter-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border-radius: 8px; cursor: pointer;
+  border: 1.5px solid transparent; background: white;
+  font-size: 12px; font-weight: 600; color: #6b7280;
+  transition: all 0.15s; white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+}
+.filter-chip:hover { border-color: #cbd5e1; color: #1e293b; }
+.filter-chip.active { color: var(--chip-color); border-color: var(--chip-color); background: var(--chip-bg); }
+.filter-chip .count {
+  background: #f1f5f9; color: #64748b;
+  font-size: 10px; font-weight: 700; padding: 1px 6px;
+  border-radius: 999px; min-width: 20px; text-align: center;
+}
+.filter-chip.active .count { background: var(--chip-color); color: white; }
 </style>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -131,8 +155,11 @@
 <script src="../../shared/navbar.js"></script>
 <script src="_shared.js"></script>
 <script>
-let activeFilter = 'all';
-let allOrders = [];
+let activeFilter = 'toship';
+let currentPage  = 1;
+const PAGE_SIZE  = 25;
+let viewMode     = 'card';
+let allOrders    = [];
 let shipPhotoFile = null;
 
 const STATUS_META = {
@@ -144,19 +171,67 @@ const STATUS_META = {
   cancelled: { label: 'Dibatalkan',        chip: 'bg-terracotta/20 text-terracotta',    icon: '❌' },
 };
 
-// ── Filters & Search ─────────────────────────────────
-function setFilter(f) {
-  activeFilter = f;
-  document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.id === 'f-' + f));
+// ── View Toggle ──────────────────────────────────────
+function setView(mode) {
+  viewMode = mode;
+  document.getElementById('view-card').className  = `px-3 py-2 text-xs font-semibold transition-colors ${mode === 'card'  ? 'bg-navy text-white' : 'text-ink/60 hover:bg-ink/5'}`;
+  document.getElementById('view-table').className = `px-3 py-2 text-xs font-semibold transition-colors ${mode === 'table' ? 'bg-navy text-white' : 'text-ink/60 hover:bg-ink/5'}`;
   renderOrders();
 }
 
-function renderOrders() {
-  const q = document.getElementById('search-input').value.toLowerCase();
-  const sort = document.getElementById('sort-select').value;
+// ── Filters & Search ─────────────────────────────────
+const FILTER_META = [
+  { key: 'toship',    label: 'Perlu Dihantar', color: '#c0392b', bg: '#fdf2f2' },
+  { key: 'all',       label: 'Semua',          color: '#1a3a5c', bg: '#eef3f8' },
+  { key: 'pending',   label: 'Pending',         color: '#b45309', bg: '#fffbeb' },
+  { key: 'paid',      label: 'Dibayar',         color: '#1a3a5c', bg: '#eef3f8' },
+  { key: 'packed',    label: 'Dibungkus',       color: '#0f766e', bg: '#f0fdfa' },
+  { key: 'shipped',   label: 'Dihantar',        color: '#15803d', bg: '#f0fdf4' },
+  { key: 'delivered', label: 'Diterima',        color: '#475569', bg: '#f8fafc' },
+  { key: 'cancelled', label: 'Batal',           color: '#9f1239', bg: '#fff1f2' },
+];
 
+function countFor(key) {
+  if (key === 'all')    return allOrders.length;
+  if (key === 'toship') return allOrders.filter(o => o.status === 'paid' || o.status === 'packed').length;
+  return allOrders.filter(o => o.status === key).length;
+}
+
+function renderFilterChips() {
+  document.getElementById('filter-chips').innerHTML = FILTER_META.map(f => `
+    <button class="filter-chip ${activeFilter === f.key ? 'active' : ''}"
+      style="--chip-color:${f.color};--chip-bg:${f.bg}"
+      onclick="setFilter('${f.key}')">
+      ${f.label}
+      <span class="count" id="count-${f.key}">${countFor(f.key)}</span>
+    </button>`).join('');
+}
+
+function setFilter(f) {
+  activeFilter = f;
+  resetPage();
+  renderFilterChips();
+  renderOrders();
+}
+
+function resetPage() { currentPage = 1; }
+
+function changePage(dir) {
+  const q    = document.getElementById('search-input').value.toLowerCase();
+  const sort = document.getElementById('sort-select').value;
+  const list = getFilteredSorted(q, sort);
+  const pages = Math.ceil(list.length / PAGE_SIZE);
+  currentPage = Math.max(1, Math.min(pages, currentPage + dir));
+  renderOrders();
+}
+
+function getFilteredSorted(q, sort) {
   let list = allOrders.filter(o => {
-    if (activeFilter !== 'all' && o.status !== activeFilter) return false;
+    if (activeFilter === 'toship') {
+      if (o.status !== 'paid' && o.status !== 'packed') return false;
+    } else if (activeFilter !== 'all') {
+      if (o.status !== activeFilter) return false;
+    }
     if (q) {
       const name = (o.psy_profiles?.full_name || '').toLowerCase();
       const ref  = (o.order_ref || '').toLowerCase();
@@ -164,14 +239,85 @@ function renderOrders() {
     }
     return true;
   });
-
-  if (sort === 'oldest')      list.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  if (sort === 'oldest')           list.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   else if (sort === 'amount_desc') list.sort((a, b) => b.total - a.total);
-  else list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  else                             list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  return list;
+}
+
+function renderOrders() {
+  const q    = document.getElementById('search-input').value.toLowerCase();
+  const sort = document.getElementById('sort-select').value;
+  const list = getFilteredSorted(q, sort);
+
+  const pages    = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+  currentPage    = Math.min(currentPage, pages);
+  const start    = (currentPage - 1) * PAGE_SIZE;
+  const pageList = list.slice(start, start + PAGE_SIZE);
 
   const el = document.getElementById('orders-list');
-  el.innerHTML = list.length ? list.map(orderCard).join('') :
-    '<div class="bg-white rounded-xl border border-ink/10 p-10 text-center text-ink/40 text-sm">Tiada orders ditemui</div>';
+
+  if (!list.length) {
+    el.innerHTML = '<div class="bg-white rounded-xl border border-ink/10 p-10 text-center text-ink/40 text-sm">Tiada orders ditemui</div>';
+    document.getElementById('pagination').classList.add('hidden');
+    return;
+  }
+
+  el.className = viewMode === 'table' ? '' : 'space-y-3';
+  el.innerHTML = viewMode === 'table' ? renderTable(pageList) : pageList.map(orderCard).join('');
+
+  // Pagination controls
+  const pgEl = document.getElementById('pagination');
+  if (list.length > PAGE_SIZE) {
+    pgEl.classList.remove('hidden');
+    document.getElementById('page-info').textContent = `${start + 1}–${Math.min(start + PAGE_SIZE, list.length)} daripada ${list.length} order`;
+    document.getElementById('btn-prev').disabled = currentPage <= 1;
+    document.getElementById('btn-next').disabled = currentPage >= pages;
+  } else {
+    pgEl.classList.add('hidden');
+  }
+}
+
+// ── Table View ───────────────────────────────────────
+function renderTable(list) {
+  const rows = list.map(o => {
+    const sm      = STATUS_META[o.status] || STATUS_META.pending;
+    const patient = o.psy_profiles?.full_name || '—';
+    const items   = Array.isArray(o.items) ? o.items : [];
+    const method  = o.delivery_method === 'pickup'
+      ? '<span class="chip bg-ink/10 text-ink/60 text-[10px]">Pickup</span>'
+      : '<span class="chip bg-navy-light text-navy text-[10px]">Pos</span>';
+    const tracking = o.tracking_number
+      ? `<span class="font-mono text-xs text-green-dark">${o.tracking_number}</span>`
+      : '<span class="text-ink/30 text-xs">—</span>';
+    const actions = buildActions(o);
+    return `<tr class="hover:bg-cream/30 transition-colors">
+      <td class="text-xs font-mono text-ink/60 whitespace-nowrap">${o.order_ref}</td>
+      <td><strong class="text-sm">${patient}</strong>
+        <div class="text-[10px] text-ink/50">${formatDate(o.created_at)}</div></td>
+      <td>${method}</td>
+      <td class="text-xs">${items.map(i => `${i.name} ×${i.qty}`).join(', ')}</td>
+      <td><span class="chip text-[10px] ${sm.chip}">${sm.icon} ${sm.label}</span></td>
+      <td>${tracking}</td>
+      <td class="font-semibold text-sm whitespace-nowrap">RM ${Number(o.total).toFixed(2)}</td>
+      <td class="whitespace-nowrap">
+        <div class="flex items-center gap-1.5 flex-wrap">
+          ${actions || '<span class="text-ink/30 text-xs">—</span>'}
+          <button onclick="openDetailModal('${o.id}')" class="text-[10px] text-navy border border-navy/30 px-2 py-1 rounded-lg hover:bg-navy hover:text-white transition-colors">Detail</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  return `<div class="bg-white rounded-xl border border-ink/10 overflow-x-auto">
+    <table class="data text-sm">
+      <thead><tr>
+        <th>No. Order</th><th>Patient</th><th>Kaedah</th><th>Item</th>
+        <th>Status</th><th>Tracking</th><th>Jumlah</th><th></th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
 }
 
 // ── Stat Cards ───────────────────────────────────────
@@ -459,6 +605,7 @@ async function loadOrders() {
   if (error || !orders?.length) {
     allOrders = [];
     renderStats([]);
+    renderFilterChips();
     renderOrders();
     return;
   }
@@ -477,6 +624,7 @@ async function loadOrders() {
 
   allOrders = orders.map(o => ({ ...o, psy_profiles: profileMap[o.patient_id] || null }));
   renderStats(allOrders);
+  renderFilterChips();
   renderOrders();
 }
 
@@ -486,6 +634,9 @@ function formatDateTime(d) { return new Date(d).toLocaleString('ms-MY', { day:'2
 (async () => {
   const user = await initStaff('psy_orders', 'Urus orders & penghantaran');
   if (!user) return;
+  if (user.staff_role !== 'manager') {
+    document.getElementById('stat-row').classList.add('hidden');
+  }
   loadOrders();
 })();
 </script>
