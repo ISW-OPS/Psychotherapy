@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Statistik Staff</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+  .period-btn { background:white; color:#3c4f5c99; border-color:#e2e8f0; }
+  .period-btn:hover { background:#f8fafc; }
+  .period-btn.active { background:#1a3a5c; color:white; border-color:#1a3a5c; }
+  th.sortable { cursor:pointer; user-select:none; }
+  th.sortable:hover { color:#1a3a5c; }
+  th.sortable.active { color:#1a3a5c; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📈</div><p class="text-ink/60 text-sm">Memuatkan statistik...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-5">
+
+        <!-- Period filter -->
+        <div class="flex items-center gap-3 flex-wrap">
+          <span class="text-xs font-semibold text-ink/50 uppercase tracking-wide">Tempoh:</span>
+          <div class="flex gap-1 flex-wrap">
+            <button onclick="setPeriod('month')"  id="btn-month"  class="period-btn active px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors">Bulan Ini</button>
+            <button onclick="setPeriod('3month')" id="btn-3month" class="period-btn px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors">3 Bulan</button>
+            <button onclick="setPeriod('6month')" id="btn-6month" class="period-btn px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors">6 Bulan</button>
+            <button onclick="setPeriod('all')"    id="btn-all"    class="period-btn px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors">Semua Masa</button>
+          </div>
+          <span id="loading-indicator" class="hidden text-xs text-ink/40 italic">Memuatkan...</span>
+        </div>
+
+        <!-- KPI summary row -->
+        <div id="kpi-row" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></div>
+
+        <!-- Staff performance table -->
+        <div class="bg-white rounded-xl border border-ink/10 overflow-hidden">
+          <div class="p-5 border-b border-ink/10 flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h3 class="font-bold">Prestasi Semua Staff</h3>
+              <p id="period-label" class="text-xs text-ink/50 mt-0.5">Bulan Ini</p>
+            </div>
+            <p class="text-xs text-ink/40">Klik tajuk lajur untuk susun ↕</p>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="bg-ink/[0.02] border-b border-ink/10 text-left">
+                  <th class="px-4 py-3 text-[11px] font-semibold text-ink/50 uppercase tracking-wide w-8">#</th>
+                  <th class="px-4 py-3 text-[11px] font-semibold text-ink/50 uppercase tracking-wide">Nama</th>
+                  <th class="px-4 py-3 text-[11px] font-semibold text-ink/50 uppercase tracking-wide">Jawatan</th>
+                  <th id="th-patients" class="sortable px-4 py-3 text-[11px] font-semibold text-ink/50 uppercase tracking-wide text-center" onclick="sortBy('patients')">
+                    Pesakit <span id="sort-patients" class="text-navy"></span>
+                  </th>
+                  <th id="th-sessions" class="sortable active px-4 py-3 text-[11px] font-semibold text-navy uppercase tracking-wide text-center" onclick="sortBy('sessions')">
+                    Sesi <span id="sort-sessions" class="text-navy">↓</span>
+                  </th>
+                  <th id="th-vitals" class="sortable px-4 py-3 text-[11px] font-semibold text-ink/50 uppercase tracking-wide text-center" onclick="sortBy('vitals')">
+                    Vitals <span id="sort-vitals" class="text-navy"></span>
+                  </th>
+                  <th id="th-kyc" class="sortable px-4 py-3 text-[11px] font-semibold text-ink/50 uppercase tracking-wide text-center" onclick="sortBy('kyc')">
+                    KYC Disemak <span id="sort-kyc" class="text-navy"></span>
+                    <span class="text-[9px] font-normal text-ink/30 normal-case">(Total)</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody id="stats-tbody">
+                <tr><td colspan="7" class="text-center py-12 text-ink/40 text-sm italic">Memuatkan data...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Notes -->
+        <p class="text-[11px] text-ink/40">
+          * Sesi = sesi coaching (coach) + sesi weekly progress hadir (doctor) dalam tempoh yang dipilih.<br>
+          * KYC Disemak dikira secara kumulatif keseluruhan, bukan mengikut tempoh.<br>
+          * Pesakit dikira berdasarkan penugasan semasa (coach_id / plan aktif).
+        </p>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+let allRows    = [];
+let sortCol    = 'sessions';
+let sortAsc    = false;
+
+const ROLE_BADGE = {
+  admin:   'bg-terracotta/15 text-terracotta',
+  manager: 'bg-gold/20 text-gold-dark',
+  doctor:  'bg-navy/15 text-navy',
+  coach:   'bg-teal/15 text-teal',
+};
+
+const PERIOD_LABELS = {
+  month:  'Bulan Ini',
+  '3month': '3 Bulan Lepas',
+  '6month': '6 Bulan Lepas',
+  all:    'Semua Masa',
+};
+
+function getPeriodStart(period) {
+  const now = new Date();
+  if (period === 'month')  return new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  if (period === '3month') return new Date(now.getFullYear(), now.getMonth() - 2, 1).toISOString();
+  if (period === '6month') return new Date(now.getFullYear(), now.getMonth() - 5, 1).toISOString();
+  return '2000-01-01T00:00:00.000Z';
+}
+
+async function loadStats(period) {
+  document.getElementById('loading-indicator').classList.remove('hidden');
+  document.getElementById('stats-tbody').innerHTML =
+    '<tr><td colspan="7" class="text-center py-12 text-ink/40 text-sm italic">Memuatkan data...</td></tr>';
+
+  const periodStart = getPeriodStart(period);
+
+  const [
+    staffList, patientsAll, coachSessAll, vitalsAll,
+    kycAll, plansAll, weeklyHadirAll,
+  ] = await Promise.all([
+    dbQuery('psy_profiles', { eq: { role: 'staff' } }).catch(() => []),
+    window.db.from('psy_patients').select('id,coach_id').then(r => r.data||[], ()=>[]),
+    window.db.from('psy_coaching_sessions').select('coach_id')
+      .gte('session_date', periodStart).then(r => r.data||[], ()=>[]),
+    window.db.from('psy_vitals').select('recorded_by')
+      .gte('created_at', periodStart).then(r => r.data||[], ()=>[]),
+    // KYC: count all-time (no reviewed_at column available)
+    window.db.from('psy_kyc_submissions').select('reviewed_by')
+      .not('reviewed_by', 'is', null).then(r => r.data||[], ()=>[]),
+    window.db.from('psy_treatment_plans').select('id,doctor_id').then(r => r.data||[], ()=>[]),
+    window.db.from('psy_plan_weekly_progress').select('plan_id')
+      .eq('status', 'hadir').gte('session_date', periodStart).then(r => r.data||[], ()=>[]),
+  ]);
+
+  // Build lookup maps
+  const planToDoctor = {};
+  plansAll.forEach(p => { if (p.doctor_id) planToDoctor[p.id] = p.doctor_id; });
+
+  // Aggregate per staff
+  const patientsPerCoach = {};
+  patientsAll.forEach(p => {
+    if (p.coach_id) patientsPerCoach[p.coach_id] = (patientsPerCoach[p.coach_id] || 0) + 1;
+  });
+
+  // Doctor patients = count of active plans under that doctor
+  const patientsPerDoctor = {};
+  plansAll.forEach(p => {
+    if (p.doctor_id) patientsPerDoctor[p.doctor_id] = (patientsPerDoctor[p.doctor_id] || 0) + 1;
+  });
+
+  const sessPerCoach = {};
+  coachSessAll.forEach(s => {
+    if (s.coach_id) sessPerCoach[s.coach_id] = (sessPerCoach[s.coach_id] || 0) + 1;
+  });
+
+  const weeklyPerDoctor = {};
+  weeklyHadirAll.forEach(w => {
+    const docId = planToDoctor[w.plan_id];
+    if (docId) weeklyPerDoctor[docId] = (weeklyPerDoctor[docId] || 0) + 1;
+  });
+
+  const vitalsPerStaff = {};
+  vitalsAll.forEach(v => {
+    if (v.recorded_by) vitalsPerStaff[v.recorded_by] = (vitalsPerStaff[v.recorded_by] || 0) + 1;
+  });
+
+  const kycPerStaff = {};
+  kycAll.forEach(k => {
+    if (k.reviewed_by) kycPerStaff[k.reviewed_by] = (kycPerStaff[k.reviewed_by] || 0) + 1;
+  });
+
+  // Build rows
+  allRows = staffList.map(s => ({
+    id:       s.id,
+    name:     s.full_name || '—',
+    role:     s.staff_role || '—',
+    patients: s.staff_role === 'coach'  ? (patientsPerCoach[s.id]  || 0)
+            : s.staff_role === 'doctor' ? (patientsPerDoctor[s.id] || 0) : 0,
+    sessions: (sessPerCoach[s.id] || 0) + (weeklyPerDoctor[s.id] || 0),
+    vitals:   vitalsPerStaff[s.id] || 0,
+    kyc:      kycPerStaff[s.id] || 0,
+  }));
+
+  // KPI summary
+  const totals = allRows.reduce((acc, r) => ({
+    staff:    acc.staff + 1,
+    sessions: acc.sessions + r.sessions,
+    vitals:   acc.vitals + r.vitals,
+    kyc:      acc.kyc + r.kyc,
+  }), { staff: 0, sessions: 0, vitals: 0, kyc: 0 });
+
+  document.getElementById('kpi-row').innerHTML = [
+    { icon:'👨‍⚕️', label:'Jumlah Staff',      value: totals.staff,    color:'border-navy    bg-navy-light/30',    text:'text-navy' },
+    { icon:'📅',   label:'Sesi Dijalankan',    value: totals.sessions, color:'border-green   bg-green-light/30',   text:'text-green-dark' },
+    { icon:'📊',   label:'Vitals Direkod',     value: totals.vitals,   color:'border-teal    bg-teal/5',           text:'text-teal' },
+    { icon:'🆔',   label:'KYC Disemak (Total)',value: totals.kyc,      color:'border-gold    bg-gold/10',          text:'text-gold-dark' },
+  ].map(k => `
+    <div class="bg-white rounded-xl p-4 border-t-4 ${k.color}">
+      <div class="text-[10px] uppercase font-semibold text-ink/50 tracking-wide">${k.label}</div>
+      <div class="text-2xl font-bold mt-1 ${k.text}">${k.value}</div>
+    </div>`).join('');
+
+  document.getElementById('period-label').textContent = PERIOD_LABELS[period] || '';
+  document.getElementById('loading-indicator').classList.add('hidden');
+  renderTable();
+}
+
+function sortBy(col) {
+  if (sortCol === col) sortAsc = !sortAsc;
+  else { sortCol = col; sortAsc = false; }
+  renderTable();
+}
+
+function renderTable() {
+  // Update header styles
+  ['patients','sessions','vitals','kyc'].forEach(col => {
+    const th = document.getElementById('th-' + col);
+    const sp = document.getElementById('sort-' + col);
+    if (!th || !sp) return;
+    if (col === sortCol) {
+      th.classList.add('active');
+      sp.textContent = sortAsc ? '↑' : '↓';
+    } else {
+      th.classList.remove('active');
+      sp.textContent = '';
+    }
+  });
+
+  const sorted = [...allRows].sort((a, b) => {
+    const diff = b[sortCol] - a[sortCol];
+    return sortAsc ? -diff : diff;
+  });
+
+  const tbody = document.getElementById('stats-tbody');
+  if (!sorted.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center py-12 text-ink/40 text-sm">Tiada rekod staff</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = sorted.map((r, i) => {
+    const badge    = ROLE_BADGE[r.role] || 'bg-ink/10 text-ink/60';
+    const initials = r.name.split(' ').slice(0,2).map(w => w[0]).join('').toUpperCase() || '?';
+    const isTop    = i === 0 && r[sortCol] > 0;
+
+    const cell = (val, col) => {
+      const isActive = sortCol === col;
+      const color = col === 'patients' ? 'text-navy' : col === 'sessions' ? 'text-green-dark' : col === 'vitals' ? 'text-teal' : 'text-gold-dark';
+      return `<td class="px-4 py-3 text-center">
+        <span class="font-bold ${isActive ? color : val > 0 ? 'text-ink' : 'text-ink/30'}">${val > 0 ? val : '—'}</span>
+      </td>`;
+    };
+
+    return `<tr class="border-b border-ink/5 last:border-0 hover:bg-cream/30 transition-colors ${isTop ? 'bg-navy-light/20' : ''}">
+      <td class="px-4 py-3 text-xs text-ink/30 font-medium">${i + 1}</td>
+      <td class="px-4 py-3">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-full bg-navy text-white flex items-center justify-center text-xs font-bold flex-shrink-0">${initials}</div>
+          <div>
+            <div class="font-semibold text-sm text-ink leading-snug">${r.name}</div>
+            ${isTop ? '<div class="text-[10px] text-gold-dark font-semibold">🏆 Teratas</div>' : ''}
+          </div>
+        </div>
+      </td>
+      <td class="px-4 py-3"><span class="chip text-xs ${badge}">${r.role}</span></td>
+      ${cell(r.patients, 'patients')}
+      ${cell(r.sessions, 'sessions')}
+      ${cell(r.vitals, 'vitals')}
+      ${cell(r.kyc, 'kyc')}
+    </tr>`;
+  }).join('');
+}
+
+function setPeriod(period) {
+  document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('btn-' + period)?.classList.add('active');
+  loadStats(period);
+}
+
+(async () => {
+  const user = await initStaff('staff_stats', 'Papan Prestasi');
+  if (!user) return;
+  setHeaderBack('dashboard.html', 'Kembali ke Dashboard');
+  await loadStats('month');
+})();
+</script>
+</body>
+</html>

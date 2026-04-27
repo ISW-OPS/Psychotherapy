@@ -28,7 +28,12 @@
           <button onclick="openForm()" class="bg-navy text-white text-sm px-4 py-2 rounded-lg font-semibold">+ Tambah Pakej</button>
         </div>
 
-        <div id="packages-list" class="grid md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+        <div class="bg-white rounded-xl border border-ink/10 overflow-x-auto">
+          <table class="data">
+            <thead><tr><th>Gambar</th><th>Nama</th><th>Harga</th><th>Tempoh</th><th>Jadual</th><th>Status</th><th></th></tr></thead>
+            <tbody id="packages-list"></tbody>
+          </table>
+        </div>
       </div>
     </main>
   </div>
@@ -61,25 +66,59 @@
         <input id="f-desc" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="cth: 12 minggu · 6 KG IB + full terapi">
       </div>
 
-      <div class="grid md:grid-cols-3 gap-3">
+      <div class="grid md:grid-cols-2 gap-3">
         <div>
           <label class="text-xs font-semibold">Harga (RM)</label>
           <input id="f-price" type="number" step="0.01" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="2999">
         </div>
         <div>
-          <label class="text-xs font-semibold">Tempoh</label>
-          <input id="f-duration" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="cth: 12 Minggu">
-        </div>
-        <div>
           <label class="text-xs font-semibold">Tempoh (minggu)</label>
-          <input id="f-weeks" type="number" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="12">
+          <div class="relative mt-1">
+            <input id="f-weeks" type="number" min="1" class="w-full px-3 py-2 pr-16 border border-ink/20 rounded-lg text-sm" placeholder="12">
+            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-ink/40 pointer-events-none">minggu</span>
+          </div>
         </div>
+      </div>
+
+      <!-- Jadual Rawatan -->
+      <div>
+        <label class="text-xs font-semibold">Jadual Rawatan</label>
+        <div class="mt-1 flex gap-2 items-center flex-wrap">
+          <select id="f-sched-type" onchange="updateSchedUI()"
+            class="px-3 py-2 border border-ink/20 rounded-lg text-sm flex-1 min-w-40 bg-white">
+            <option value="">— Pilih jenis jadual —</option>
+            <option value="harian">Harian (datang setiap hari)</option>
+            <option value="mingguan">Mingguan</option>
+            <option value="bulanan">Bulanan</option>
+            <option value="x_bulan">Setiap beberapa bulan</option>
+          </select>
+          <div id="sched-val-wrap" style="display:none" class="items-center gap-2">
+            <input id="f-sched-val" type="number" min="1" max="31" value="1"
+              oninput="updateSchedSummary()"
+              class="w-16 px-3 py-2 border border-ink/20 rounded-lg text-sm text-center">
+            <span id="sched-unit-lbl" class="text-xs text-ink/60 whitespace-nowrap"></span>
+          </div>
+        </div>
+        <div id="sched-summary" style="display:none" class="mt-1.5 text-xs text-navy font-semibold bg-navy/5 rounded-lg px-3 py-1.5"></div>
       </div>
 
       <div class="grid md:grid-cols-2 gap-3">
         <div>
-          <label class="text-xs font-semibold">Icon (emoji)</label>
-          <input id="f-icon" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="💎" value="📦">
+          <label class="text-xs font-semibold">Gambar Pakej</label>
+          <div class="mt-1 flex items-center gap-3">
+            <div id="pkg-img-preview" class="w-20 h-20 rounded-xl border-2 border-dashed border-ink/20 flex items-center justify-center bg-cream/50 overflow-hidden flex-shrink-0 text-3xl text-ink/30">
+              📷
+            </div>
+            <div>
+              <input id="f-image" type="file" accept="image/*" onchange="previewPkgImage(this)" class="hidden">
+              <input id="f-image-url" type="hidden">
+              <button type="button" onclick="document.getElementById('f-image').click()"
+                class="px-3 py-2 border border-ink/20 rounded-lg text-xs hover:border-navy hover:text-navy transition-colors">
+                Pilih Gambar
+              </button>
+              <p class="text-[10px] text-ink/40 mt-1">JPG, PNG · maks 2MB</p>
+            </div>
+          </div>
         </div>
         <div>
           <label class="text-xs font-semibold">Tier</label>
@@ -138,6 +177,66 @@
 function toArray(text) { return text.split('\n').map(s => s.trim()).filter(Boolean); }
 function toText(arr) { return (arr || []).join('\n'); }
 
+function previewPkgImage(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (file.size > 2 * 1024 * 1024) {
+    banner('Gambar melebihi 2MB. Sila pilih gambar yang lebih kecil.', 'error');
+    input.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = e => {
+    document.getElementById('pkg-img-preview').innerHTML =
+      `<img src="${e.target.result}" class="w-full h-full object-cover">`;
+    document.getElementById('f-image-url').value = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+const SCHED_UNIT = {
+  harian:  'hari berturut-turut',
+  mingguan:'kali seminggu',
+  bulanan: 'kali sebulan',
+  x_bulan: 'bulan sekali',
+};
+
+function schedSummaryText(type, val) {
+  if (!type) return '';
+  const n = parseInt(val) || 1;
+  if (type === 'harian')   return `Setiap hari selama ${n} hari`;
+  if (type === 'mingguan') return `${n} kali seminggu`;
+  if (type === 'bulanan')  return `${n} kali sebulan`;
+  if (type === 'x_bulan')  return `Sekali setiap ${n} bulan`;
+  return '';
+}
+
+function updateSchedUI() {
+  const type = document.getElementById('f-sched-type').value;
+  const wrap = document.getElementById('sched-val-wrap');
+  if (!type) {
+    wrap.style.display = 'none';
+    document.getElementById('sched-summary').style.display = 'none';
+    return;
+  }
+  document.getElementById('sched-unit-lbl').textContent = SCHED_UNIT[type] || '';
+  wrap.style.display = 'flex';
+  updateSchedSummary();
+}
+
+function updateSchedSummary() {
+  const type = document.getElementById('f-sched-type').value;
+  const val  = document.getElementById('f-sched-val').value;
+  const el   = document.getElementById('sched-summary');
+  const text = schedSummaryText(type, val);
+  if (text) {
+    el.textContent = '📅 ' + text;
+    el.style.display = 'block';
+  } else {
+    el.style.display = 'none';
+  }
+}
+
 function openForm(pkg) {
   document.getElementById('form-title').textContent = pkg ? 'Edit Pakej' : 'Tambah Pakej Baru';
   document.getElementById('edit-id').value = pkg?.id || '';
@@ -145,16 +244,23 @@ function openForm(pkg) {
   document.getElementById('f-pkg-id').value = pkg?.package_id || '';
   document.getElementById('f-desc').value = pkg?.description || '';
   document.getElementById('f-price').value = pkg?.price || '';
-  document.getElementById('f-duration').value = pkg?.duration || '';
   document.getElementById('f-weeks').value = pkg?.duration_weeks || '';
-  document.getElementById('f-icon').value = pkg?.icon || '📦';
   document.getElementById('f-tier').value = pkg?.tier || '';
+  document.getElementById('f-image-url').value = pkg?.image_url || '';
+  document.getElementById('f-image').value = '';
+  const prev = document.getElementById('pkg-img-preview');
+  prev.innerHTML = pkg?.image_url
+    ? `<img src="${pkg.image_url}" class="w-full h-full object-cover">`
+    : '📷';
   document.getElementById('f-products').value = toText(pkg?.products);
   document.getElementById('f-bimbingan').value = toText(pkg?.bimbingan);
   document.getElementById('f-bio').value = toText(pkg?.bio_goals);
   document.getElementById('f-psycho').value = toText(pkg?.psycho_goals);
   document.getElementById('f-social').value = toText(pkg?.social_goals);
   document.getElementById('f-spiritual').value = toText(pkg?.spiritual_goals);
+  document.getElementById('f-sched-type').value = pkg?.schedule?.type || '';
+  document.getElementById('f-sched-val').value  = pkg?.schedule?.value || 1;
+  updateSchedUI();
   document.getElementById('pkg-modal').classList.remove('hidden');
 }
 
@@ -172,24 +278,34 @@ async function savePackage() {
   const bimbingan = toArray(document.getElementById('f-bimbingan').value);
   const inclusions = [...products, ...bimbingan];
 
-  const data = {
-    package_id: pkgId,
-    name,
-    description: document.getElementById('f-desc').value.trim(),
-    price: parseFloat(document.getElementById('f-price').value) || 0,
-    duration: document.getElementById('f-duration').value.trim(),
-    duration_weeks: parseInt(document.getElementById('f-weeks').value) || 12,
-    icon: document.getElementById('f-icon').value || '📦',
-    tier: document.getElementById('f-tier').value || null,
-    products, bimbingan, inclusions,
-    bio_goals: toArray(document.getElementById('f-bio').value),
-    psycho_goals: toArray(document.getElementById('f-psycho').value),
-    social_goals: toArray(document.getElementById('f-social').value),
-    spiritual_goals: toArray(document.getElementById('f-spiritual').value),
-    updated_at: new Date().toISOString(),
-  };
+  const schedType = document.getElementById('f-sched-type').value;
+  const schedVal  = parseInt(document.getElementById('f-sched-val').value) || 1;
+  const schedule  = schedType ? { type: schedType, value: schedVal } : null;
+
+  const saveBtn = document.querySelector('#pkg-modal button[onclick="savePackage()"]');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Menyimpan...'; }
 
   try {
+    const imageUrl = document.getElementById('f-image-url').value || null;
+
+    const data = {
+      package_id: pkgId,
+      name,
+      description: document.getElementById('f-desc').value.trim(),
+      price: parseFloat(document.getElementById('f-price').value) || 0,
+      duration_weeks: parseInt(document.getElementById('f-weeks').value) || 12,
+      duration: (parseInt(document.getElementById('f-weeks').value) || 12) + ' Minggu',
+      image_url: imageUrl || null,
+      tier: document.getElementById('f-tier').value || null,
+      schedule,
+      products, bimbingan, inclusions,
+      bio_goals: toArray(document.getElementById('f-bio').value),
+      psycho_goals: toArray(document.getElementById('f-psycho').value),
+      social_goals: toArray(document.getElementById('f-social').value),
+      spiritual_goals: toArray(document.getElementById('f-spiritual').value),
+      updated_at: new Date().toISOString(),
+    };
+
     if (editId) {
       await dbUpdate('psy_packages', editId, data);
       banner('Pakej dikemaskini');
@@ -203,6 +319,8 @@ async function savePackage() {
     loadPackages();
   } catch (err) {
     banner('Ralat: ' + err.message, 'error');
+  } finally {
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Simpan'; }
   }
 }
 
@@ -224,25 +342,33 @@ async function loadPackages() {
   const data = await dbQuery('psy_packages', { order: { col: 'sort_order', asc: true } });
 
   document.getElementById('packages-list').innerHTML = data.length
-    ? data.map(p => `
-      <div class="bg-white rounded-xl border border-ink/10 overflow-hidden ${!p.is_active ? 'opacity-50' : ''}">
-        <div class="h-24 ${p.bg_color || 'bg-cream'} flex items-center justify-center text-4xl">${p.icon}</div>
-        <div class="p-4">
-          <div class="flex items-center justify-between mb-1">
-            <h4 class="font-bold text-sm">${p.name}</h4>
-            ${p.tier === 'vip' ? '<span class="chip bg-gold text-white">VIP</span>' : p.tier === 'free' ? '<span class="chip bg-green text-white">FREE</span>' : ''}
+    ? data.map(p => `<tr class="${!p.is_active ? 'opacity-50' : ''}">
+        <td>
+          <div class="w-12 h-12 rounded-lg overflow-hidden ${p.bg_color || 'bg-cream'} flex items-center justify-center flex-shrink-0">
+            ${p.image_url
+              ? `<img src="${p.image_url}" class="w-full h-full object-cover">`
+              : `<span class="text-2xl">${p.icon || '📦'}</span>`}
           </div>
-          <p class="text-xs text-ink/60">${p.description || '—'}</p>
-          <div class="text-xs text-ink/50 mt-2">${p.duration || '—'} · ${(p.inclusions || []).length} items · ${(p.bio_goals || []).length + (p.psycho_goals || []).length + (p.social_goals || []).length + (p.spiritual_goals || []).length} goals</div>
-          <div class="font-bold text-navy mt-2">${p.price == 0 ? 'PERCUMA' : 'RM ' + Number(p.price).toFixed(2)}</div>
-          <div class="flex gap-2 mt-3 flex-wrap">
-            <button onclick='openForm(${JSON.stringify(p).replace(/'/g,"&#39;")})' class="text-xs text-navy font-semibold border border-navy px-3 py-1 rounded-lg">Edit</button>
-            <button onclick="togglePackage('${p.id}',${p.is_active})" class="text-xs ${p.is_active ? 'text-gold-dark' : 'text-green-dark'} font-semibold">${p.is_active ? 'Nyahaktif' : 'Aktifkan'}</button>
-            <button onclick="deletePackage('${p.id}','${p.name}')" class="text-xs text-terracotta font-semibold">Padam</button>
+        </td>
+        <td>
+          <strong>${p.name}</strong>
+          <div class="flex items-center gap-1 mt-0.5">
+            <span class="text-[10px] text-ink/40">${p.package_id}</span>
+            ${p.tier === 'vip' ? '<span class="chip bg-gold text-white text-[9px]">VIP</span>' : p.tier === 'free' ? '<span class="chip bg-green text-white text-[9px]">FREE</span>' : ''}
           </div>
-        </div>
-      </div>`).join('')
-    : '<p class="text-ink/40 text-sm text-center py-8 col-span-3">Tiada pakej. Klik "+ Tambah Pakej" untuk mula.</p>';
+          ${p.description ? `<div class="text-[11px] text-ink/50 mt-0.5 line-clamp-1">${p.description}</div>` : ''}
+        </td>
+        <td class="font-bold">${p.price == 0 ? 'PERCUMA' : 'RM ' + Number(p.price).toFixed(2)}</td>
+        <td class="text-xs text-ink/60">${p.duration || '—'}</td>
+        <td class="text-xs text-ink/60">${p.schedule ? schedSummaryText(p.schedule.type, p.schedule.value) : '—'}</td>
+        <td>${p.is_active ? '<span class="chip bg-green-light text-green-dark">Aktif</span>' : '<span class="chip bg-ink/10 text-ink/60">Tidak Aktif</span>'}</td>
+        <td class="space-x-2 whitespace-nowrap">
+          <button onclick='openForm(${JSON.stringify(p).replace(/'/g,"&#39;")})' class="text-navy text-xs font-semibold">Edit</button>
+          <button onclick="togglePackage('${p.id}',${p.is_active})" class="text-xs font-semibold ${p.is_active ? 'text-gold-dark' : 'text-green-dark'}">${p.is_active ? 'Off' : 'On'}</button>
+          <button onclick="deletePackage('${p.id}','${p.name}')" class="text-terracotta text-xs font-semibold">Padam</button>
+        </td>
+      </tr>`).join('')
+    : '<tr><td colspan="7" class="text-center text-ink/40 py-8">Tiada pakej</td></tr>';
 }
 
 (async () => {

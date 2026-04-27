@@ -11,21 +11,36 @@ window.patientRecord = null;
 function hasCompletedKyc() {
   if (!window.patientRecord) return false;
   const p = window.patientRecord;
-  return !!(p.ic_number && p.address);
+  return !!(
+    p.ic_number &&
+    p.full_name &&
+    p.address &&
+    p.phone &&
+    p.medical_condition &&
+    p.emergency_contact_name &&
+    p.emergency_contact_phone
+  );
+}
+
+// Cached after initPatient — true only when KYC is formally approved
+window.kycApproved = false;
+
+async function resolveKycApproved() {
+  const p = window.patientRecord;
+  if (!p) return false;
+  // Staff-created patients with full data are pre-approved
+  if (p.created_by_staff && hasCompletedKyc()) return true;
+  // Self-registered: must have an approved submission
+  const subs = await dbQuery('psy_kyc_submissions', {
+    eq: { user_id: window.currentUser.id },
+    limit: 1,
+  }).catch(() => []);
+  return subs[0]?.status === 'approved';
 }
 
 async function enforceKyc(currentPageId) {
-  if (currentPageId === 'kyc' || currentPageId === 'profile' || currentPageId === 'dashboard') return true;
-  if (hasCompletedKyc()) return true;
-
-  const subs = await dbQuery('psy_kyc_submissions', {
-    eq: { user_id: window.currentUser.id },
-    order: { col: 'created_at' },
-    limit: 1,
-  }).catch(() => []);
-  const latest = subs[0];
-  if (latest && latest.status === 'pending') return true;
-
+  if (['kyc', 'profile', 'dashboard'].includes(currentPageId)) return true;
+  if (window.kycApproved) return true;
   window.location.href = 'kyc.html';
   return false;
 }
@@ -76,11 +91,17 @@ async function initPatient(pageId, titleSub) {
 
   window.patientRecord = patients[0] || null;
 
+  // Resolve KYC approval once and cache
+  window.kycApproved = await resolveKycApproved();
+
   document.getElementById('app-loading')?.classList.add('hidden');
   document.getElementById('app-shell')?.classList.remove('hidden');
 
-  // navItems dari NAV_ITEMS_BY_ROLE.patient (dalam shared/navbar.js)
-  renderNavbar('patient', window.currentUser, null, pageId);
+  // Hide KYC nav item once KYC is approved
+  const navItems = getNavItems('patient').filter(item =>
+    !(item.id === 'kyc' && window.kycApproved)
+  );
+  renderNavbar('patient', window.currentUser, navItems, pageId);
 
   const nav = getNavItems('patient').find(n => n.id === pageId);
   renderHeader(nav?.label || '', titleSub || '');

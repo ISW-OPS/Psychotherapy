@@ -634,6 +634,25 @@ async function submitKYC() {
     }
 
     await auditLog('kyc.submitted', currentUser.id, { name: payload.patient_name });
+
+    // Notify all admin/doctor/manager staff
+    const { data: staffList } = await window.db.from('psy_profiles')
+      .select('id')
+      .eq('role', 'staff')
+      .in('staff_role', ['admin', 'manager', 'doctor']);
+    if (staffList?.length) {
+      const isResubmit = existingKYC?.status === 'rejected';
+      await Promise.all(staffList.map(s =>
+        window.db.from('psy_notifications').insert({
+          user_id: s.id,
+          type:    'kyc',
+          title:   isResubmit ? 'KYC Dihantar Semula' : 'KYC Baru Diterima',
+          body:    `${payload.patient_name} telah ${isResubmit ? 'menghantar semula' : 'menghantar'} borang KYC untuk semakan.`,
+          link:    'kyc-list.html',
+        })
+      ));
+    }
+
     clearDraft();
     banner('KYC berjaya dihantar! Admin akan semak dalam 24 jam. ✅');
     setTimeout(() => location.reload(), 2000);

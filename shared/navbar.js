@@ -22,15 +22,17 @@ const NAV_ITEMS_BY_ROLE = {
   staff_admin: [
     { id: 'dashboard',    url: 'dashboard.html',        icon: '🏥', label: 'Dashboard' },
     { id: 'psy_patients', url: 'patients.html',         icon: '👥', label: 'Patients' },
+    { id: 'kyc_forms',    url: 'kyc-list.html',         icon: '🆔', label: 'KYC Form' },
     { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
     { id: 'pakej',        url: 'pakej.html',            icon: '📦', label: 'Pakej Rawatan' },
     { id: 'psy_products', url: 'products.html',         icon: '🛒', label: 'Products' },
     { id: 'psy_orders',   url: 'orders.html',           icon: '📦', label: 'Orders & Tracking' },
     { id: 'library',      url: 'library.html',          icon: '📚', label: 'Self-Help Library' },
-    { id: 'audit',        url: 'audit.html',            icon: '🔒', label: 'Audit Log' },
-    { id: 'staff_mgmt',   url: 'staff_management.html', icon: '👨‍⚕️', label: 'Manage Staff' },
-    { id: 'issue',        url: 'issue.html',            icon: '⚠️', label: 'Report Issue' },
-    { id: 'profile',      url: 'profile.html',          icon: '👤', label: 'Profile' },
+    { id: 'staff_mgmt',     url: 'staff_management.html', icon: '👨‍⚕️', label: 'Manage Staff' },
+    { id: 'announcements', url: 'announcements.html',   icon: '📢', label: 'Pengumuman' },
+    { id: 'staff_stats',   url: 'staff-stats.html',     icon: '📈', label: 'Statistik Staff' },
+    { id: 'issue',         url: 'issue.html',           icon: '⚠️', label: 'Report Issue' },
+    { id: 'profile',       url: 'profile.html',         icon: '👤', label: 'Profile' },
   ],
 
   // Staff: Coach — patient-centric nav (clinical details via Patient Hub)
@@ -45,7 +47,8 @@ const NAV_ITEMS_BY_ROLE = {
   // Staff: Doctor — clinical + KYC review
   staff_doctor: [
     { id: 'dashboard',       url: 'dashboard.html',    icon: '🏥', label: 'Dashboard' },
-    { id: 'psy_patients',    url: 'patients.html',     icon: '👥', label: 'Patients & KYC' },
+    { id: 'psy_patients',    url: 'patients.html',     icon: '👥', label: 'Patients' },
+    { id: 'kyc_forms',       url: 'kyc-list.html',     icon: '🆔', label: 'KYC Form' },
     { id: 'plans',           url: 'plans.html',        icon: '📋', label: 'Treatment Plans' },
     { id: 'psy_appointments',url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
     { id: 'consultation',    url: 'consultation.html', icon: '🩺', label: 'Consultation' },
@@ -58,13 +61,15 @@ const NAV_ITEMS_BY_ROLE = {
   staff_manager: [
     { id: 'dashboard',    url: 'dashboard.html',        icon: '🏥', label: 'Dashboard' },
     { id: 'assignments',  url: 'assignments.html',       icon: '🤝', label: 'Penugasan Pesakit' },
-    { id: 'psy_patients', url: 'patients.html',         icon: '👥', label: 'Patients & KYC' },
+    { id: 'psy_patients', url: 'patients.html',         icon: '👥', label: 'Patients' },
+    { id: 'kyc_forms',    url: 'kyc-list.html',         icon: '🆔', label: 'KYC Form' },
     { id: 'plans',        url: 'plans.html',            icon: '📋', label: 'Treatment Plans' },
     { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
-    { id: 'psy_orders',   url: 'orders.html',           icon: '📦', label: 'Orders & Tracking' },
-    { id: 'audit',        url: 'audit.html',            icon: '🔒', label: 'Audit Log' },
-    { id: 'issue',        url: 'issue.html',            icon: '⚠️', label: 'Report Issue' },
-    { id: 'profile',      url: 'profile.html',          icon: '👤', label: 'Profile' },
+    { id: 'psy_orders',    url: 'orders.html',            icon: '📦', label: 'Orders & Tracking' },
+    { id: 'announcements', url: 'announcements.html',   icon: '📢', label: 'Pengumuman' },
+    { id: 'staff_stats',   url: 'staff-stats.html',     icon: '📈', label: 'Statistik Staff' },
+    { id: 'issue',         url: 'issue.html',           icon: '⚠️', label: 'Report Issue' },
+    { id: 'profile',       url: 'profile.html',         icon: '👤', label: 'Profile' },
   ],
 
   // Fallback jika staff_role tidak diset
@@ -160,6 +165,19 @@ function renderNavbar(role, user, navItems, activeScreen) {
       </button>
     </div>
   `;
+}
+
+function setHeaderBack(url, label) {
+  const rightDiv = document.querySelector('#page-header > div:last-child');
+  if (!rightDiv) return;
+  const existing = document.getElementById('header-back-btn');
+  if (existing) existing.remove();
+  const a = document.createElement('a');
+  a.id = 'header-back-btn';
+  a.href = url;
+  a.className = 'flex items-center gap-1.5 text-xs font-medium text-ink/60 hover:text-navy border border-ink/20 hover:border-navy px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap';
+  a.innerHTML = '← ' + (label || 'Kembali');
+  rightDiv.prepend(a);
 }
 
 function renderHeader(title, subtitle) {

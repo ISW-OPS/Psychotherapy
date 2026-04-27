@@ -3,18 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ibnu Sina Wellness — Patients & KYC</title>
+<title>Ibnu Sina Wellness — Patients</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="../../shared/theme.js"></script>
 <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="_styles.css" rel="stylesheet">
 <style>
-.tab-btn { padding: 0.5rem 1rem; border-radius: 9999px; font-size: 0.875rem; font-weight: 500; background: white; border: 1px solid rgba(60,79,92,0.2); transition: colors 0.15s; }
-.tab-btn.active { background: #1a3a5c; color: white; border-color: #1a3a5c; }
-
 @media print {
-  #sidebar, #page-header, .tab-btn, #search-patient, #filter-status,
+  #sidebar, #page-header, .tab-btn, #search-patient, #filter-status, #filter-pakej,
   #patient-count, .print-hide, nav, .mobile-nav,
   #patient-modal, #print-patient-hidden { display: none !important; }
   #app-shell { display: block !important; }
@@ -51,18 +48,12 @@
           <p class="text-xs text-gray-500" id="print-date"></p>
         </div>
 
-        <!-- Tabs (KYC tab hidden for admin, shown only for coach/manager) -->
-        <div class="flex gap-2 flex-wrap print-hide">
-          <button onclick="showTab('list')" id="tab-list" class="tab-btn active">👥 Patient List</button>
-          <button onclick="showTab('kyc')"  id="tab-kyc"  class="tab-btn hidden">📋 KYC Pending <span id="kyc-badge"></span></button>
-        </div>
-
         <!-- ── Patient List ─────────────────────────────── -->
         <div id="list-section">
           <div class="flex items-center gap-3 mb-3 flex-wrap print-hide">
             <div class="relative flex-1 min-w-48">
               <span class="absolute left-3 top-1/2 -translate-y-1/2 text-ink/40 text-sm">🔍</span>
-              <input id="search-patient" type="text" placeholder="Cari nama, MRN atau IC..."
+              <input id="search-patient" type="text" placeholder="Cari nama, Patient ID atau IC..."
                 oninput="filterPatients()"
                 class="w-full pl-9 pr-3 py-2.5 border border-ink/20 rounded-xl text-sm focus:border-navy outline-none bg-white">
             </div>
@@ -70,15 +61,21 @@
               class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
               <option value="">Semua Status</option>
               <option value="active">Aktif</option>
-              <option value="pending_kyc">Pending KYC</option>
               <option value="inactive">Tidak Aktif</option>
+            </select>
+            <select id="filter-pakej" onchange="filterPatients()"
+              class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
+              <option value="">Semua Pakej</option>
             </select>
             <span id="patient-count" class="text-xs text-ink/50 whitespace-nowrap"></span>
             <button onclick="exportCSV()" class="flex items-center gap-1.5 px-4 py-2.5 border border-ink/20 rounded-xl text-sm bg-white hover:border-navy hover:text-navy transition-colors">
-              ⬇ Export CSV
+              Export Excel
             </button>
             <button onclick="printList()" class="flex items-center gap-1.5 px-4 py-2.5 bg-navy text-white rounded-xl text-sm hover:bg-navy-dark transition-colors">
-              🖨️ Print Senarai
+              🖨️ Print
+            </button>
+            <button onclick="openCreatePatient()" class="flex items-center gap-1.5 px-4 py-2.5 bg-green text-white rounded-xl text-sm hover:bg-green-dark transition-colors font-semibold">
+              + Tambah Pesakit
             </button>
           </div>
 
@@ -87,7 +84,7 @@
               <thead>
                 <tr>
                   <th>Nama</th>
-                  <th>MRN</th>
+                  <th>Patient ID</th>
                   <th>Jantina</th>
                   <th>Pakej Aktif</th>
                   <th>Status</th>
@@ -100,19 +97,120 @@
           </div>
         </div>
 
-        <!-- ── KYC Queue ──────────────────────────────── -->
-        <div id="kyc-section" class="hidden print-hide space-y-3">
-          <!-- KYC status tabs -->
-          <div class="flex gap-2 flex-wrap">
-            <button onclick="setKYCTab('pending')"  id="ktab-pending"  class="tab-btn active">⏳ Pending <span id="kc-pending"  class="ml-1 text-[10px] font-bold bg-terracotta text-white rounded-full px-1.5 py-0.5"></span></button>
-            <button onclick="setKYCTab('approved')" id="ktab-approved" class="tab-btn">✅ Diluluskan <span id="kc-approved" class="ml-1 text-[10px] font-bold bg-green text-white rounded-full px-1.5 py-0.5"></span></button>
-            <button onclick="setKYCTab('rejected')" id="ktab-rejected" class="tab-btn">❌ Ditolak <span id="kc-rejected" class="ml-1 text-[10px] font-bold bg-ink/40 text-white rounded-full px-1.5 py-0.5"></span></button>
-          </div>
-          <div id="kyc-list" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
-        </div>
-
       </div>
     </main>
+  </div>
+</div>
+
+<!-- ── Create Patient Modal ──────────────────────── -->
+<div id="create-patient-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-ink/10 flex-shrink-0">
+      <h3 class="font-bold text-lg">Tambah Pesakit Baru</h3>
+      <button onclick="closeCreatePatient()" class="text-ink/40 hover:text-ink text-2xl leading-none">&times;</button>
+    </div>
+    <div class="p-6 space-y-4 overflow-y-auto">
+
+      <div>
+        <p class="text-[10px] font-bold text-ink/40 uppercase tracking-wide mb-2">Maklumat Peribadi</p>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="col-span-2">
+            <label class="text-xs font-semibold">Nama Penuh *</label>
+            <input id="cp-name" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="cth: Ahmad bin Ali">
+          </div>
+          <div>
+            <label class="text-xs font-semibold">No. IC *</label>
+            <input id="cp-ic" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="cth: 900101011234">
+          </div>
+          <div>
+            <label class="text-xs font-semibold">Jantina</label>
+            <select id="cp-gender" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+              <option value="">— Pilih —</option>
+              <option value="M">Lelaki</option>
+              <option value="F">Perempuan</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs font-semibold">Telefon *</label>
+            <input id="cp-phone" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="cth: 0123456789">
+          </div>
+          <div>
+            <label class="text-xs font-semibold">Emel</label>
+            <input id="cp-email" type="email" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="optional">
+          </div>
+          <div>
+            <label class="text-xs font-semibold">Tarikh Lahir</label>
+            <input id="cp-dob" type="date" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+          </div>
+          <div>
+            <label class="text-xs font-semibold">Status Perkahwinan</label>
+            <select id="cp-marital" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+              <option value="">— Pilih —</option>
+              <option value="Bujang">Bujang</option>
+              <option value="Berkahwin">Berkahwin</option>
+              <option value="Janda/Duda">Janda / Duda</option>
+            </select>
+          </div>
+          <div class="col-span-2">
+            <label class="text-xs font-semibold">Alamat *</label>
+            <input id="cp-address" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="No, Jalan, Bandar, Negeri">
+          </div>
+        </div>
+      </div>
+
+      <div class="border-t border-ink/10 pt-3">
+        <p class="text-[10px] font-bold text-ink/40 uppercase tracking-wide mb-2">Maklumat Perubatan</p>
+        <div>
+          <label class="text-xs font-semibold">Aduan / Kondisi *</label>
+          <input id="cp-condition" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="cth: Kemurungan, Anxieti, Tekanan">
+        </div>
+      </div>
+
+      <div class="border-t border-ink/10 pt-3">
+        <p class="text-[10px] font-bold text-ink/40 uppercase tracking-wide mb-2">Maklumat Waris / Kecemasan</p>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs font-semibold">Nama Waris *</label>
+            <input id="cp-emg-name" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+          </div>
+          <div>
+            <label class="text-xs font-semibold">No. Telefon Waris *</label>
+            <input id="cp-emg-phone" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+          </div>
+        </div>
+      </div>
+
+      <div id="cp-error" class="hidden text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2"></div>
+    </div>
+    <div class="px-6 py-4 border-t border-ink/10 flex justify-end gap-2">
+      <button onclick="closeCreatePatient()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm">Batal</button>
+      <button onclick="createPatient()" id="cp-save-btn" class="bg-navy text-white px-5 py-2 rounded-lg text-sm font-semibold">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Link Account Modal ────────────────────────── -->
+<div id="link-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-md flex flex-col">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-ink/10">
+      <div>
+        <h3 class="font-bold">Link Akaun Pesakit</h3>
+        <p id="link-patient-name" class="text-sm text-navy font-semibold"></p>
+        <p id="link-patient-ic" class="text-xs text-ink/50"></p>
+      </div>
+      <button onclick="closeLinkModal()" class="text-ink/40 hover:text-ink text-2xl">&times;</button>
+    </div>
+    <div class="p-5 space-y-3">
+      <p class="text-xs text-ink/60">Cari akaun yang telah didaftar oleh pesakit ini:</p>
+      <input id="link-search" type="text" oninput="searchLinkUsers()"
+        placeholder="Cari nama atau emel akaun patient..."
+        class="w-full px-3 py-2.5 border border-ink/20 rounded-xl text-sm focus:border-navy outline-none">
+      <div id="link-results" class="space-y-1 max-h-52 overflow-y-auto"></div>
+      <div id="link-error" class="hidden text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2"></div>
+    </div>
+    <div class="px-6 py-3 border-t border-ink/10 flex justify-end">
+      <button onclick="closeLinkModal()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm">Tutup</button>
+    </div>
   </div>
 </div>
 
@@ -126,7 +224,7 @@
       </div>
       <div class="flex items-center gap-2">
         <button onclick="printPatientReport()" class="flex items-center gap-1.5 bg-navy text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-navy-dark">
-          🖨️ Print Laporan
+          🖨️ Print
         </button>
         <button onclick="closePatientModal()" class="text-ink/40 hover:text-ink text-2xl leading-none px-1">&times;</button>
       </div>
@@ -135,6 +233,7 @@
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../../config/supabase.js"></script>
 <script src="../../shared/authGuard.js"></script>
@@ -143,16 +242,75 @@
 <script src="_shared.js"></script>
 <script>
 let allPatients     = [];
-let allKYC          = [];
 let currentFiltered = [];
 let currentDetailPt = null;
+let isAdmin         = false;
 
-// ── Tabs ─────────────────────────────────────────────
-function showTab(tab) {
-  document.getElementById('list-section').classList.toggle('hidden', tab !== 'list');
-  document.getElementById('kyc-section').classList.toggle('hidden', tab !== 'kyc');
-  document.getElementById('tab-list').classList.toggle('active', tab === 'list');
-  document.getElementById('tab-kyc').classList.toggle('active', tab === 'kyc');
+// ── Create Patient ────────────────────────────────────
+function openCreatePatient() {
+  ['cp-name','cp-ic','cp-phone','cp-email','cp-address','cp-condition','cp-emg-name','cp-emg-phone'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+  document.getElementById('cp-gender').value = '';
+  document.getElementById('cp-dob').value = '';
+  document.getElementById('cp-marital').value = '';
+  document.getElementById('cp-error').classList.add('hidden');
+  document.getElementById('create-patient-modal').classList.remove('hidden');
+}
+
+function closeCreatePatient() {
+  document.getElementById('create-patient-modal').classList.add('hidden');
+}
+
+async function createPatient() {
+  const name     = document.getElementById('cp-name').value.trim();
+  const ic       = document.getElementById('cp-ic').value.trim();
+  const phone    = document.getElementById('cp-phone').value.trim();
+  const address  = document.getElementById('cp-address').value.trim();
+  const condition= document.getElementById('cp-condition').value.trim();
+  const emgName  = document.getElementById('cp-emg-name').value.trim();
+  const emgPhone = document.getElementById('cp-emg-phone').value.trim();
+  const errEl    = document.getElementById('cp-error');
+
+  if (!name || !ic || !phone || !address || !condition || !emgName || !emgPhone) {
+    errEl.textContent = 'Semua field bertanda * wajib diisi.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  const btn = document.getElementById('cp-save-btn');
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
+
+  try {
+    const mrn = 'PSY-' + Date.now().toString().slice(-6);
+    const { error } = await window.db.from('psy_patients').insert({
+      mrn,
+      user_id:                  null,
+      full_name:                name,
+      ic_number:                ic,
+      phone,
+      email:                    document.getElementById('cp-email').value.trim() || null,
+      gender:                   document.getElementById('cp-gender').value || null,
+      date_of_birth:            document.getElementById('cp-dob').value || null,
+      marital_status:           document.getElementById('cp-marital').value || null,
+      address,
+      medical_condition:        condition,
+      emergency_contact_name:   emgName,
+      emergency_contact_phone:  emgPhone,
+      status:                   'active',
+      created_by_staff:         true,
+    });
+    if (error) throw error;
+
+    await auditLog('patient.created_by_staff', mrn, { name, ic });
+    closeCreatePatient();
+    loadAll();
+  } catch (err) {
+    errEl.textContent = 'Ralat: ' + err.message;
+    errEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Simpan';
+  }
 }
 
 // ── Patient List ─────────────────────────────────────
@@ -161,19 +319,23 @@ function renderPatients(list) {
   document.getElementById('patient-count').textContent = `${list.length} pesakit`;
   document.getElementById('patients-body').innerHTML = list.length
     ? list.map(p => {
-        const name  = p.psy_profiles?.full_name || '—';
-        const phone = p.psy_profiles?.phone || p.emergency_contact_phone || '—';
+        const name  = p.psy_profiles?.full_name || p.full_name || '—';
+        const phone = p.psy_profiles?.phone || p.phone || p.emergency_contact_phone || '—';
         return `<tr>
-          <td><strong>${name}</strong></td>
+          <td>
+            <strong>${name}</strong>
+            ${(!p.user_id) ? '<span class="text-[9px] bg-terracotta/15 text-terracotta px-1.5 py-0.5 rounded ml-1">Belum Daftar</span>' : ''}
+          </td>
           <td class="text-xs font-mono">${p.mrn}</td>
-          <td>${p.gender === 'M' ? '♂ Lelaki' : p.gender === 'F' ? '♀ Perempuan' : '—'}</td>
+          <td>${p.gender === 'M' ? 'Lelaki' : p.gender === 'F' ? 'Perempuan' : '—'}</td>
           <td class="text-xs">${p.active_package_name
             ? `<span class="chip bg-navy-light text-navy">${p.active_package_name}</span>`
             : '<span class="text-ink/40">—</span>'}</td>
           <td>${statusChip(p.status)}</td>
           <td class="text-xs">${phone}</td>
-          <td class="whitespace-nowrap print-hide">
+          <td class="whitespace-nowrap print-hide space-x-3">
             <a href="patient-hub.html?patient_id=${p.id}" class="text-navy text-xs font-semibold hover:underline">Details</a>
+            ${isAdmin ? `<button onclick="deletePatient('${p.id}','${(p.full_name || p.psy_profiles?.full_name || '').replace(/'/g,"\\'")}' )" class="text-terracotta text-xs font-semibold hover:underline">Padam</button>` : ''}
           </td>
         </tr>`;
       }).join('')
@@ -183,13 +345,24 @@ function renderPatients(list) {
 function filterPatients() {
   const q      = document.getElementById('search-patient').value.toLowerCase();
   const status = document.getElementById('filter-status').value;
+  const pakej  = document.getElementById('filter-pakej').value;
   const list   = allPatients.filter(p => {
-    const name = (p.psy_profiles?.full_name || '').toLowerCase();
+    const name = (p.psy_profiles?.full_name || p.full_name || '').toLowerCase();
     const matchQ = !q || name.includes(q) || (p.mrn || '').toLowerCase().includes(q) || (p.ic_number || '').includes(q);
     const matchS = !status || p.status === status;
-    return matchQ && matchS;
+    const matchP = !pakej
+      || (pakej === '__none__' ? !p.active_package_name : p.active_package_name === pakej);
+    return matchQ && matchS && matchP;
   });
   renderPatients(list);
+}
+
+function populatePackageFilter() {
+  const names = [...new Set(allPatients.map(p => p.active_package_name).filter(Boolean))].sort();
+  const sel   = document.getElementById('filter-pakej');
+  sel.innerHTML = '<option value="">Semua Pakej</option>'
+    + names.map(n => `<option value="${n}">${n}</option>`).join('')
+    + '<option value="__none__">Tiada Pakej</option>';
 }
 
 // ── Patient Detail Modal ──────────────────────────────
@@ -203,7 +376,7 @@ function openPatientDetail(id) {
   const email = p.psy_profiles?.email || '—';
 
   document.getElementById('modal-pt-name').textContent = name;
-  document.getElementById('modal-pt-mrn').textContent  = `MRN: ${p.mrn}`;
+  document.getElementById('modal-pt-mrn').textContent  = `Patient ID: ${p.mrn}`;
 
   document.getElementById('modal-pt-body').innerHTML = `
     <!-- Status banner -->
@@ -345,14 +518,66 @@ function printPatientReport() {
 
 // ── Print patient list ────────────────────────────────
 function printList() {
-  document.getElementById('print-date').textContent =
-    'Dicetak: ' + new Date().toLocaleString('ms-MY', { dateStyle: 'full', timeStyle: 'short' });
-  window.print();
+  const now = new Date().toLocaleString('ms-MY', { dateStyle: 'full', timeStyle: 'short' });
+  const rows = currentFiltered.map(p => {
+    const name  = p.psy_profiles?.full_name || '—';
+    const phone = p.psy_profiles?.phone || p.emergency_contact_phone || '—';
+    return `<tr>
+      <td>${name}</td>
+      <td>${p.mrn || '—'}</td>
+      <td>${p.gender === 'M' ? 'Lelaki' : p.gender === 'F' ? 'Perempuan' : '—'}</td>
+      <td>${p.active_package_name || '—'}</td>
+      <td>${p.status === 'active' ? 'Aktif' : p.status === 'inactive' ? 'Tidak Aktif' : p.status || '—'}</td>
+      <td>${phone}</td>
+    </tr>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html><html lang="ms"><head><meta charset="UTF-8">
+  <title>Senarai Pesakit — Ibnu Sina Wellness</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; font-size: 11px; color: #111; padding: 24px; }
+    .header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #1a3a5c; padding-bottom: 10px; margin-bottom: 16px; }
+    .header h1 { font-size: 16px; font-weight: bold; color: #1a3a5c; }
+    .header p  { font-size: 9px; color: #888; margin-top: 2px; }
+    .meta { font-size: 9px; color: #999; text-align: right; line-height: 1.6; }
+    table { width: 100%; border-collapse: collapse; }
+    thead tr { background: #1a3a5c; color: white; }
+    th { padding: 7px 10px; text-align: left; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+    td { padding: 7px 10px; border-bottom: 1px solid #e5e7eb; vertical-align: middle; }
+    tr:nth-child(even) td { background: #f9fafb; }
+    .footer { margin-top: 20px; border-top: 1px solid #e5e7eb; padding-top: 8px; display: flex; justify-content: space-between; font-size: 9px; color: #aaa; }
+    @media print { body { padding: 12px; } }
+  </style></head><body>
+  <div class="header">
+    <div>
+      <h1>Ibnu Sina Wellness</h1>
+      <p>Senarai Pesakit &nbsp;·&nbsp; Sulit &amp; Rahsia</p>
+    </div>
+    <div class="meta">
+      <div>Jumlah: <strong>${currentFiltered.length} pesakit</strong></div>
+      <div>Dicetak: ${now}</div>
+    </div>
+  </div>
+  <table>
+    <thead><tr><th>Nama</th><th>Patient ID</th><th>Jantina</th><th>Pakej Aktif</th><th>Status</th><th>Telefon</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <div class="footer">
+    <span>Ibnu Sina Wellness · Dokumen Sulit</span>
+    <span>Dilarang berkongsi tanpa kebenaran.</span>
+  </div>
+  <script>window.onload = function(){ window.print(); }<\/script>
+  </body></html>`;
+
+  const w = window.open('', '_blank', 'width=900,height=700');
+  w.document.write(html);
+  w.document.close();
 }
 
-// ── Export CSV ────────────────────────────────────────
+// ── Export Excel ──────────────────────────────────────
 function exportCSV() {
-  const rows = [['Nama', 'MRN', 'IC', 'Jantina', 'Pakej Aktif', 'Status', 'Telefon', 'Kondisi']];
+  const rows = [['Nama', 'Patient ID', 'No. IC', 'Jantina', 'Pakej Aktif', 'Status', 'Telefon', 'Kondisi']];
   currentFiltered.forEach(p => {
     rows.push([
       p.psy_profiles?.full_name || '',
@@ -365,254 +590,164 @@ function exportCSV() {
       p.medical_condition || '',
     ]);
   });
-  const csv  = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
-  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = `senarai_pesakit_${new Date().toISOString().slice(0,10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [{ wch: 35 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 30 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Senarai Pesakit');
+  XLSX.writeFile(wb, 'senarai_pesakit_' + new Date().toISOString().slice(0,10) + '.xlsx');
 }
 
-// ── KYC Queue ────────────────────────────────────────
-let currentKYCTab = 'pending';
+// ── Auto-link staff patients whose IC matches an existing KYC ────
+async function autoLinkStaffPatients() {
+  const unlinked = allPatients.filter(p => p.created_by_staff && !p.user_id && p.ic_number);
+  if (!unlinked.length) return false;
 
-function setKYCTab(tab) {
-  currentKYCTab = tab;
-  ['pending','approved','rejected'].forEach(k => {
-    document.getElementById('ktab-' + k)?.classList.toggle('active', k === tab);
-  });
-  renderKYCList();
-}
+  const icList = [...new Set(unlinked.map(p => p.ic_number))];
+  const { data: matches } = await window.db
+    .from('psy_kyc_submissions')
+    .select('user_id, ic_number')
+    .in('ic_number', icList);
 
-function renderKYCList() {
-  const pending  = allKYC.filter(k => k.status === 'pending');
-  const approved = allKYC.filter(k => k.status === 'approved');
-  const rejected = allKYC.filter(k => k.status === 'rejected');
+  if (!matches?.length) return false;
 
-  // Update counts
-  document.getElementById('kc-pending').textContent  = pending.length  || '';
-  document.getElementById('kc-approved').textContent = approved.length || '';
-  document.getElementById('kc-rejected').textContent = rejected.length || '';
+  const kycMap = {};
+  matches.forEach(k => { if (k.user_id) kycMap[k.ic_number] = k.user_id; });
 
-  // Main tab badge (pending only)
-  document.getElementById('kyc-badge').innerHTML = pending.length
-    ? `<span class="chip bg-terracotta text-white ml-1">${pending.length}</span>` : '';
+  const toLink = unlinked.filter(p => kycMap[p.ic_number]);
+  if (!toLink.length) return false;
 
-  const list = currentKYCTab === 'pending' ? pending
-             : currentKYCTab === 'approved' ? approved : rejected;
-
-  const borderMap = { pending:'border-gold', approved:'border-green', rejected:'border-terracotta' };
-  const chipMap   = {
-    pending:  '<span class="chip bg-gold/20 text-gold-dark text-[10px]">⏳ Pending</span>',
-    approved: '<span class="chip bg-green-light text-green-dark text-[10px]">✅ Diluluskan</span>',
-    rejected: '<span class="chip bg-terracotta/15 text-terracotta text-[10px]">❌ Ditolak</span>',
-  };
-
-  document.getElementById('kyc-list').innerHTML = list.length
-    ? list.map(k => `
-      <div onclick="showKYCDetail('${k.id}')"
-        class="bg-white border border-ink/10 border-l-4 ${borderMap[k.status]} rounded-xl p-4 cursor-pointer hover:shadow-md transition-shadow">
-        <div class="flex items-start justify-between gap-2 mb-2">
-          <strong class="text-sm leading-snug">${k.patient_name || '—'}</strong>
-          ${chipMap[k.status] || ''}
-        </div>
-        <div class="text-[11px] text-ink/50">🆔 ${k.ic_number || '—'}</div>
-        <div class="text-[11px] text-ink/50">📞 ${k.phone || '—'}</div>
-        <div class="text-[11px] text-ink/40 mt-1">📅 ${formatDate(k.created_at)}</div>
-      </div>`).join('')
-    : `<div class="col-span-3 bg-white rounded-xl border border-ink/10 p-10 text-center text-ink/40 text-sm">
-        ${currentKYCTab === 'pending' ? '🎉 Tiada KYC menunggu semakan' : '📭 Tiada rekod'}
-      </div>`;
-}
-
-async function showKYCDetail(id) {
-  location.href = 'kyc-review.html?id=' + id;
-}
-
-async function _showKYCDetailOld(id) {
-  const k = allKYC.find(x => x.id === id);
-  if (!k) return;
-
-  const reports = k.documents?.reports || [];
-  const reportLinks = await Promise.all(reports.map(async r => {
-    const { data } = await window.db.storage.from('medical-reports').createSignedUrl(r.path, 3600);
-    return { name: r.name, url: data?.signedUrl };
-  }));
-
-  document.getElementById('kyc-detail').innerHTML = `
-    <div class="flex items-start justify-between mb-4">
-      <div>
-        <h3 class="font-bold text-lg">${k.patient_name}</h3>
-        <p class="text-xs text-ink/60">IC: ${k.ic_number || '—'} · Tel: ${k.phone || '—'} · ${k.email || '—'}</p>
-      </div>
-      <span class="chip bg-gold/30 text-gold-dark text-xs">Pending</span>
-    </div>
-
-    <div class="grid md:grid-cols-2 gap-3 text-sm mb-4">
-      <div class="bg-cream/50 rounded-lg p-3 space-y-1">
-        <div class="text-[10px] font-semibold text-ink/50 uppercase">Maklumat Peribadi</div>
-        <div><strong>Tarikh Lahir:</strong> ${k.date_of_birth || '—'}</div>
-        <div><strong>Jantina:</strong> ${k.gender || '—'}</div>
-        <div><strong>Alamat:</strong> ${k.address || '—'}</div>
-        <div><strong>Rujukan:</strong> ${k.referral_source || '—'}</div>
-      </div>
-      <div class="bg-cream/50 rounded-lg p-3 space-y-1">
-        <div class="text-[10px] font-semibold text-ink/50 uppercase">Kecemasan</div>
-        <div><strong>Nama:</strong> ${k.emergency_contact_name || '—'}</div>
-        <div><strong>Tel:</strong> ${k.emergency_contact_phone || '—'}</div>
-        <div class="text-[10px] font-semibold text-ink/50 uppercase mt-2">Consent</div>
-        <div class="flex gap-3 text-xs">
-          <span>${k.consent_data_processing ? '✅' : '❌'} Data</span>
-          <span>${k.consent_health_records  ? '✅' : '❌'} Records</span>
-          <span>${k.consent_research        ? '✅' : '❌'} Research</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="bg-terracotta/5 rounded-lg p-3 text-sm mb-4">
-      <div class="text-[10px] font-semibold text-ink/50 uppercase mb-1">🩺 Sejarah Kesihatan</div>
-      <div><strong>Kondisi:</strong> ${k.medical_condition || '—'}</div>
-      <div><strong>Tempoh:</strong> ${k.condition_duration || '—'}</div>
-      ${k.medical_notes ? `<div class="mt-1 text-xs text-ink/70 italic">${k.medical_notes}</div>` : ''}
-    </div>
-
-    ${reportLinks.length ? `
-    <div class="mb-4">
-      <div class="text-xs font-semibold text-ink/60 mb-1">📎 Laporan Perubatan</div>
-      <div class="space-y-1">
-        ${reportLinks.map(r => r.url
-          ? `<a href="${r.url}" target="_blank" class="flex items-center gap-2 text-xs text-navy bg-white border border-ink/10 px-3 py-1.5 rounded-lg hover:border-navy">📄 ${r.name}</a>`
-          : '').join('')}
-      </div>
-    </div>` : ''}
-
-    <div class="mb-3">
-      <label class="text-xs font-semibold">Nota Semakan (optional)</label>
-      <textarea id="review-notes" rows="2" placeholder="Cth: Dokumen lengkap. Lulus." class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"></textarea>
-    </div>
-
-    <div class="flex gap-2">
-      <button onclick="reviewKYC('${k.id}','approved')" id="btn-approve"
-        class="flex-1 bg-green text-white text-sm py-2.5 rounded-xl font-semibold">✅ Lulus KYC</button>
-      <button onclick="reviewKYC('${k.id}','rejected')" id="btn-reject"
-        class="flex-1 bg-terracotta text-white text-sm py-2.5 rounded-xl font-semibold">❌ Tolak</button>
-    </div>`;
-}
-
-async function reviewKYC(id, status) {
-  const k = allKYC.find(x => x.id === id);
-  if (!k) return;
-
-  const notes = document.getElementById('review-notes')?.value || '';
-  const btnA  = document.getElementById('btn-approve');
-  const btnR  = document.getElementById('btn-reject');
-  if (btnA) { btnA.disabled = true; btnR.disabled = true; }
-
-  try {
-    await dbUpdate('psy_kyc_submissions', id, {
-      status,
-      reviewed_by: currentUser.id,
-      reviewed_at: new Date().toISOString(),
-      review_notes: notes || null,
-    });
-
-    if (status === 'approved' && k?.user_id) {
-      const { data: patients } = await window.db.from('psy_patients')
-        .select('id').eq('user_id', k.user_id).then(r => r, () => ({ data: [] }));
-
-      if (patients?.[0]) {
-        await dbUpdate('psy_patients', patients[0].id, {
-          status: 'active',
-          ic_number: k.ic_number,
-          date_of_birth: k.date_of_birth,
-          gender: k.gender,
-          address: k.address,
-          emergency_contact_name: k.emergency_contact_name,
-          emergency_contact_phone: k.emergency_contact_phone,
-          referral_source: k.referral_source,
-          medical_condition: k.medical_condition,
-          condition_duration: k.condition_duration,
-          medical_notes: k.medical_notes,
-        });
-      }
-
-      if (k.patient_name || k.phone) {
-        await window.db.from('psy_profiles')
-          .update({ full_name: k.patient_name || undefined, phone: k.phone || undefined })
-          .eq('id', k.user_id).then(() => {}, () => {});
-      }
-
-      await window.db.from('psy_notifications').insert({
-        user_id: k.user_id, type: 'kyc',
-        title: 'KYC Diluluskan ✅',
-        body: 'Akaun anda telah disahkan. Anda kini boleh menggunakan semua fungsi sistem.',
-        link: 'dashboard.html',
-      }).then(() => {}, () => {});
-    } else if (status === 'rejected' && k?.user_id) {
-      await window.db.from('psy_notifications').insert({
-        user_id: k.user_id, type: 'kyc',
-        title: 'KYC Memerlukan Semakan',
-        body: notes || 'Permohonan KYC anda memerlukan semakan lanjut. Sila hubungi klinik.',
-        link: 'kyc.html',
-      }).then(() => {}, () => {});
-    }
-
-    await auditLog('kyc.' + status, id, { notes });
-    banner(`KYC ${status === 'approved' ? 'diluluskan ✅' : 'ditolak'}`);
-    await loadAll();
-    document.getElementById('kyc-detail').innerHTML =
-      '<p class="text-ink/40 text-sm text-center py-8">Pilih submission dari senarai untuk semak</p>';
-  } catch (err) {
-    banner('Ralat: ' + err.message, 'error');
-    if (btnA) { btnA.disabled = false; btnR.disabled = false; }
-  }
+  await Promise.all(toLink.map(p =>
+    window.db.from('psy_patients')
+      .update({ user_id: kycMap[p.ic_number], created_by_staff: false })
+      .eq('id', p.id)
+  ));
+  return true;
 }
 
 // ── Load ─────────────────────────────────────────────
-async function loadAll() {
+async function loadAll(skipAutoLink = false) {
   const isCoach = window.currentUser?.staff_role === 'coach';
 
   let patQuery = window.db.from('psy_patients')
     .select('*, psy_profiles!psy_patients_user_id_fkey(full_name, phone, email, role, avatar_url)')
     .order('created_at', { ascending: false });
 
-  // Coach only sees their own assigned patients
   if (isCoach) patQuery = patQuery.eq('coach_id', window.currentUser.id);
 
   const [patRes, kycRes] = await Promise.all([
     patQuery,
-    window.db.from('psy_kyc_submissions')
-      .select('*')
-      .order('created_at', { ascending: false }),
+    window.db.from('psy_kyc_submissions').select('user_id').eq('status', 'pending'),
   ]);
 
   if (patRes.error) console.error('[patients] load error:', patRes.error);
-  if (kycRes.error) console.error('[kyc] load error:', kycRes.error);
 
-  allPatients = (patRes.data || []).filter(p => p.psy_profiles?.role === 'patient' || !p.psy_profiles);
-  allKYC      = kycRes.data || [];
-  allKYC      = kycRes.data || [];
+  const pendingKycUserIds = new Set((kycRes.data || []).map(k => k.user_id).filter(Boolean));
 
+  allPatients = (patRes.data || []).filter(p =>
+    (p.psy_profiles?.role === 'patient' || !p.psy_profiles)
+    && p.status !== 'pending_kyc'
+    && !pendingKycUserIds.has(p.user_id)
+  );
+
+  if (!skipAutoLink) {
+    const linked = await autoLinkStaffPatients();
+    if (linked) { await loadAll(true); return; }
+  }
+
+  populatePackageFilter();
   filterPatients();
-  renderKYCList();
 }
 
 function formatDate(d) { return new Date(d).toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric' }); }
 
-(async () => {
-  const user = await initStaff('psy_patients', 'Patient roster · KYC review');
-  if (!user) return;
-  // KYC approve/reject — admin, manager, and doctor only (not coach)
-  if (['admin', 'manager', 'doctor'].includes(user.staff_role)) {
-    document.getElementById('tab-kyc').classList.remove('hidden');
-  }
-  
-  const urlParams = new URLSearchParams(window.location.search);
-  const initialTab = urlParams.get('tab') || 'list';
-  showTab(initialTab);
+// ── Link Account ──────────────────────────────────────
+let linkPatientId = null;
 
+function openLinkModal(patientId, name, ic) {
+  linkPatientId = patientId;
+  document.getElementById('link-patient-name').textContent = name;
+  document.getElementById('link-patient-ic').textContent = ic ? `IC: ${ic}` : '';
+  document.getElementById('link-search').value = '';
+  document.getElementById('link-results').innerHTML = '';
+  document.getElementById('link-error').classList.add('hidden');
+  document.getElementById('link-modal').classList.remove('hidden');
+}
+
+function closeLinkModal() {
+  document.getElementById('link-modal').classList.add('hidden');
+  linkPatientId = null;
+}
+
+async function searchLinkUsers() {
+  const q = document.getElementById('link-search').value.trim();
+  if (q.length < 2) { document.getElementById('link-results').innerHTML = ''; return; }
+
+  const { data } = await window.db.from('psy_profiles')
+    .select('id, full_name, email, phone')
+    .eq('role', 'patient')
+    .or(`full_name.ilike.%${q}%,email.ilike.%${q}%`)
+    .limit(8);
+
+  document.getElementById('link-results').innerHTML = (data || []).length
+    ? (data).map(u => `
+        <button onclick="confirmLink('${u.id}','${(u.full_name||'').replace(/'/g,"\\'")}','${(u.email||'').replace(/'/g,"\\'")}' )"
+          class="w-full text-left px-3 py-2.5 hover:bg-cream rounded-lg text-sm flex items-center gap-3">
+          <div class="w-8 h-8 rounded-full bg-navy text-white flex items-center justify-center text-xs font-bold flex-shrink-0">
+            ${(u.full_name||'?')[0].toUpperCase()}
+          </div>
+          <div>
+            <div class="font-semibold">${u.full_name || '—'}</div>
+            <div class="text-xs text-ink/50">${u.email || '—'}</div>
+          </div>
+        </button>`).join('')
+    : '<p class="text-xs text-ink/40 text-center py-4">Tiada akaun dijumpai</p>';
+}
+
+async function confirmLink(userId, userName, userEmail) {
+  if (!linkPatientId) return;
+  if (!confirm(`Link rekod pesakit ini kepada akaun "${userName}" (${userEmail})?`)) return;
+
+  const errEl = document.getElementById('link-error');
+  try {
+    const { error } = await window.db.from('psy_patients')
+      .update({ user_id: userId, created_by_staff: false })
+      .eq('id', linkPatientId);
+    if (error) throw error;
+
+    await auditLog('patient.account_linked', linkPatientId, { linked_to: userId, user_name: userName });
+    closeLinkModal();
+    loadAll();
+  } catch (err) {
+    errEl.textContent = 'Ralat: ' + err.message;
+    errEl.classList.remove('hidden');
+  }
+}
+
+async function deletePatient(id, name) {
+  if (!confirm(`Padam rekod pesakit "${name || id}"?\n\nSemua data berkaitan (temujanji, vitals, sesi) akan turut dipadam.\nTindakan ini tidak boleh diundur.`)) return;
+  try {
+    // Delete child records first to satisfy FK constraints
+    const relatedTables = [
+      'psy_appointments', 'psy_treatment_plans', 'psy_checkins',
+      'psy_vitals', 'psy_sessions', 'psy_invoices', 'psy_notes',
+    ];
+    await Promise.all(relatedTables.map(t =>
+      window.db.from(t).delete().eq('patient_id', id)
+    ));
+    const { error } = await window.db.from('psy_patients').delete().eq('id', id);
+    if (error) throw error;
+    await auditLog('patient.deleted', id, { name });
+    banner('Rekod pesakit dipadam');
+    loadAll();
+  } catch (err) {
+    banner('Ralat: ' + err.message, 'error');
+  }
+}
+
+(async () => {
+  const user = await initStaff('psy_patients', 'Senarai Pesakit');
+  if (!user) return;
+  isAdmin = ['admin', 'manager', 'doctor'].includes(user.staff_role);
   loadAll();
 })();
 </script>

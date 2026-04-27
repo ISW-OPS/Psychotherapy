@@ -19,38 +19,60 @@
 <div id="app-shell" class="hidden">
   <div class="flex min-h-screen">
     <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
-
     <main class="main-content flex-1 min-w-0">
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
-      <section class="p-4 md:p-8 space-y-6">
-        <div id="kyc-banner" class="hidden bg-gold text-white rounded-2xl p-5 flex items-center gap-4 flex-wrap">
+      <section class="p-4 md:p-8 space-y-5">
+
+        <!-- KYC Banner -->
+        <div id="kyc-banner" class="hidden bg-gradient-to-r from-gold to-gold-dark text-white rounded-2xl p-5 flex items-center gap-4 flex-wrap">
           <div class="text-3xl">🆔</div>
           <div class="flex-1 min-w-0">
             <div class="font-bold">Sila lengkapkan KYC anda</div>
-            <div class="text-xs opacity-90 mt-1">Maklumat peribadi anda diperlukan sebelum akses penuh diberikan.</div>
+            <div class="text-xs opacity-90 mt-1">Maklumat peribadi diperlukan sebelum akses penuh diberikan.</div>
           </div>
           <a href="kyc.html" class="bg-white text-gold font-semibold px-4 py-2 rounded-lg text-sm whitespace-nowrap">Isi KYC →</a>
         </div>
 
-        <div id="no-package-banner" class="hidden bg-terracotta text-white rounded-2xl p-5 flex items-center gap-4 flex-wrap">
-          <div class="text-3xl">🔒</div>
+        <!-- KYC Pending Banner -->
+        <div id="kyc-pending-banner" class="hidden bg-gradient-to-r from-navy to-navy-dark text-white rounded-2xl p-5 flex items-center gap-4 flex-wrap">
+          <div class="text-3xl">⏳</div>
           <div class="flex-1 min-w-0">
-            <div class="font-bold">Anda belum memilih pakej rawatan</div>
-            <div class="text-xs opacity-90 mt-1">Untuk akses penuh ke Treatment Plan, Coaching, dan Library — pilih pakej dahulu.</div>
+            <div class="font-bold">KYC Sedang Disemak</div>
+            <div class="text-xs opacity-90 mt-1">Permohonan anda sedang disemak oleh admin. Anda akan diberitahu sebaik siap.</div>
           </div>
-          <a href="pakej.html" class="bg-white text-terracotta font-semibold px-4 py-2 rounded-lg text-sm whitespace-nowrap">📦 Pilih Pakej →</a>
         </div>
 
-        <!-- Promo carousel -->
-        <div class="relative overflow-hidden rounded-2xl" id="promo-carousel" style="min-height:140px">
+        <!-- No Package Banner -->
+        <div id="no-package-banner" class="hidden bg-gradient-to-r from-terracotta to-terracotta/80 text-white rounded-2xl p-5 flex items-center gap-4 flex-wrap">
+          <div class="text-3xl">📦</div>
+          <div class="flex-1 min-w-0">
+            <div class="font-bold">Pilih Pakej Rawatan</div>
+            <div class="text-xs opacity-90 mt-1">Aktifkan pakej untuk akses penuh ke Treatment Plan, Coaching, dan Library.</div>
+          </div>
+          <a href="pakej.html" class="bg-white text-terracotta font-semibold px-4 py-2 rounded-lg text-sm whitespace-nowrap">Pilih Pakej →</a>
+        </div>
+
+        <!-- Greeting + Promo -->
+        <div class="relative overflow-hidden rounded-2xl" id="promo-carousel" style="min-height:130px">
           <div id="promo-track" class="flex transition-transform duration-500 ease-in-out h-full"></div>
           <div id="promo-dots" class="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5"></div>
         </div>
 
+        <!-- Stat cards -->
         <div id="stat-grid" class="grid grid-cols-2 lg:grid-cols-4 gap-3"></div>
 
-        <div id="upcoming-section"></div>
+        <!-- Next session -->
+        <div id="next-session-section"></div>
+
+        <!-- Quick actions -->
+        <div>
+          <h3 class="font-bold text-sm text-ink/50 uppercase tracking-wide mb-3">Tindakan Pantas</h3>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3" id="quick-actions"></div>
+        </div>
+
+        <!-- Recent check-ins -->
+        <div id="checkin-history-section"></div>
 
       </section>
     </main>
@@ -71,167 +93,236 @@
 <script src="../../shared/navbar.js"></script>
 <script src="_shared.js"></script>
 <script>
+const MOOD_EMOJI = ['','😭','😢','😔','😟','😐','🙂','😊','😁','🤩','🌟'];
+
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Selamat Pagi';
+  if (h < 15) return 'Selamat Tengah Hari';
+  if (h < 19) return 'Selamat Petang';
+  return 'Selamat Malam';
+}
+
+function statCard(label, value, sub, subColor, href) {
+  return `<a href="${href || '#'}" class="bg-white rounded-xl p-4 border border-ink/10 hover:border-navy hover:shadow-sm transition-all block">
+    <div class="text-xs text-ink/50 font-medium">${label}</div>
+    <div class="text-xl font-bold mt-1 text-ink">${value}</div>
+    <div class="text-xs ${subColor || 'text-ink/50'} mt-1">${sub || '—'}</div>
+  </a>`;
+}
+
+function quickAction(icon, label, href, color) {
+  return `<a href="${href}" class="bg-white rounded-xl border border-ink/10 p-4 flex flex-col items-center gap-2 hover:border-navy hover:shadow-sm transition-all text-center">
+    <div class="text-2xl">${icon}</div>
+    <div class="text-xs font-semibold text-ink/70">${label}</div>
+  </a>`;
+}
 
 (async () => {
   try {
-  const user = await initPatient('dashboard', 'Overview rawatan & appointment anda');
-  if (!user) return;
+    const user = await initPatient('dashboard', 'Overview rawatan anda');
+    if (!user) return;
 
-  // Show KYC banner if patient record missing or KYC incomplete
-  if (!patientRecord) {
-    document.getElementById('kyc-banner').classList.remove('hidden');
-    document.getElementById('stat-grid').innerHTML = '<div class="col-span-4 bg-cream rounded-xl p-4 text-sm text-ink/60">Sila lengkapkan KYC atau hubungi admin.</div>';
-    return;
-  }
+    const firstName = (user.full_name || 'Pesakit').split(' ')[0];
 
-  if (!hasCompletedKyc()) {
-    document.getElementById('kyc-banner').classList.remove('hidden');
-  }
-
-  const today = new Date().toISOString().split('T')[0];
-
-  const [appts, plans, checkinRes, ordersRes] = await Promise.all([
-    dbQuery('psy_appointments', { eq: { patient_id: patientRecord.id }, order: { col: 'appointment_time', asc: true } }).catch(() => []),
-    dbQuery('psy_treatment_plans', { eq: { patient_id: patientRecord.id } }).catch(() => []),
-    window.db.from('psy_daily_checkins').select('id,mood_score').eq('patient_id', patientRecord.id).eq('checkin_date', today).maybeSingle().then(r => r, () => ({ data: null })),
-    window.db.from('psy_orders').select('id,status').eq('patient_id', currentUser.id).not('status', 'in', '("delivered","cancelled")').then(r => r, () => ({ data: [] })),
-  ]);
-
-  const upcoming = (appts || []).filter(a => a.status === 'scheduled' && new Date(a.appointment_time) > new Date());
-  const nextAppt = upcoming[0];
-  const dashPlan = (plans || []).find(p => p.status === 'active');
-  const checkinToday = checkinRes?.data;
-  const activeOrders = (ordersRes?.data || []).length;
-
-  const hasActivePkg = patientRecord.active_package_id &&
-    (!patientRecord.package_expires_at || new Date(patientRecord.package_expires_at) >= new Date());
-
-  document.getElementById('no-package-banner').classList.toggle('hidden', !!hasActivePkg);
-
-  // Promo carousel
-  const promos = await window.db.from('psy_announcements')
-    .select('*').eq('is_active', true).order('sort_order', { ascending: true })
-    .then(r => r.data || [], () => []);
-
-  const slides = promos.length ? promos : [
-    { title: 'Selamat Datang ke ISW', body: 'Program rawatan holistik BPS-S untuk kesejahteraan anda.', bg: 'from-navy to-green-dark', cta_label: null, cta_url: null },
-  ];
-
-  const track = document.getElementById('promo-track');
-  const dots = document.getElementById('promo-dots');
-  track.innerHTML = slides.map(s => `
-    <div class="min-w-full bg-gradient-to-r ${s.bg || 'from-navy to-green-dark'} rounded-2xl p-6 text-white flex items-center justify-between gap-4 flex-wrap">
-      <div>
-        ${s.tag ? `<div class="text-[10px] font-semibold uppercase tracking-widest opacity-70 mb-1">${s.tag}</div>` : ''}
-        <div class="text-xl font-bold leading-snug">${s.title}</div>
-        ${s.body ? `<div class="text-sm opacity-80 mt-1 max-w-sm">${s.body}</div>` : ''}
-      </div>
-      ${s.cta_label && s.cta_url ? `<a href="${s.cta_url}" class="bg-white/20 hover:bg-white/30 text-white font-semibold text-sm px-5 py-2.5 rounded-lg whitespace-nowrap backdrop-blur-sm">${s.cta_label} →</a>` : ''}
-    </div>`).join('');
-
-  dots.innerHTML = slides.map((_, i) => `<button onclick="goSlide(${i})" id="dot-${i}" class="w-2 h-2 rounded-full transition-all ${i === 0 ? 'bg-white w-4' : 'bg-white/40'}"></button>`).join('');
-
-  let curSlide = 0;
-  window.goSlide = (i) => {
-    curSlide = i;
-    track.style.transform = `translateX(-${i * 100}%)`;
-    dots.querySelectorAll('button').forEach((d, idx) => {
-      d.className = `w-2 h-2 rounded-full transition-all ${idx === i ? 'bg-white w-4' : 'bg-white/40'}`;
-    });
-  };
-  if (slides.length > 1) setInterval(() => goSlide((curSlide + 1) % slides.length), 5000);
-
-  const MOOD_EMOJI = ['','😭','😢','😔','😟','😐','🙂','😊','😁','🤩','🌟'];
-
-  const dashStatCard = (label, value, sub, subColor = 'text-ink/60', href = '#') => `
-    <a href="${href}" class="bg-white rounded-xl p-4 border border-ink/10 hover:border-navy hover:shadow-sm transition-all block">
-      <div class="text-xs text-ink/60">${label}</div>
-      <div class="text-lg font-bold mt-1">${value}</div>
-      <div class="text-xs ${subColor} mt-1">${sub || '—'}</div>
-    </a>`;
-
-  const weeklyAll = dashPlan
-    ? await dbQuery('psy_plan_weekly_progress', { eq: { plan_id: dashPlan.id } }).catch(() => [])
-    : [];
-  const hadirCount = (weeklyAll || []).filter(w => w.status === 'hadir').length;
-  const scores = (weeklyAll || []).filter(w => w.score && w.status === 'hadir').map(w => w.score);
-  let progressScore = 0, progressTrend = '';
-  if (scores.length > 0) {
-    progressScore = (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1);
-    if (scores.length >= 2) {
-      const delta = (scores[scores.length - 1] - scores[scores.length - 2]).toFixed(1);
-      progressTrend = delta >= 0 ? `▲ +${delta} minggu ini` : `▼ ${delta} minggu ini`;
+    // Banner logic
+    if (!patientRecord) {
+      document.getElementById('kyc-banner').classList.remove('hidden');
+      return;
     }
-  }
 
-  document.getElementById('stat-grid').innerHTML = [
-    dashStatCard(
-      'Check-in Hari Ini',
-      checkinToday ? `${MOOD_EMOJI[checkinToday.mood_score] || '😊'} ${checkinToday.mood_score}/10` : '—',
-      checkinToday ? 'Sudah check-in' : 'Belum check-in',
-      checkinToday ? 'text-green-dark' : 'text-amber-500',
-      'checkin.html'
-    ),
-    dashStatCard(
-      'Sesi Hadir',
-      dashPlan ? `${hadirCount} / ${dashPlan.duration_weeks}` : '—',
-      dashPlan ? `Minggu semasa: ${dashPlan.current_week}` : 'Tiada plan aktif',
-      hadirCount > 0 ? 'text-teal' : 'text-ink/60',
-      'plan.html'
-    ),
-    dashStatCard(
-      'Progress Score',
-      progressScore > 0 ? `${progressScore} / 10` : '—',
-      progressTrend || 'Belum direkod',
-      progressTrend.startsWith('▲') ? 'text-green-dark' : progressTrend.startsWith('▼') ? 'text-terracotta' : 'text-ink/60',
-      'plan.html'
-    ),
-    dashStatCard(
-      'Active Orders',
-      activeOrders > 0 ? `${activeOrders} order` : '—',
-      activeOrders > 0 ? 'Dalam proses' : 'Tiada order aktif',
-      activeOrders > 0 ? 'text-navy' : 'text-ink/60',
-      'orders.html'
-    ),
-  ].join('');
+    if (!window.kycApproved) {
+      // Check if pending or just not submitted
+      const subs = await dbQuery('psy_kyc_submissions', { eq: { user_id: user.id }, limit: 1 }).catch(() => []);
+      if (subs[0]?.status === 'pending') {
+        document.getElementById('kyc-pending-banner').classList.remove('hidden');
+      } else {
+        document.getElementById('kyc-banner').classList.remove('hidden');
+      }
+    }
 
-  // Upcoming appointment
-  if (nextAppt) {
-    const d = new Date(nextAppt.appointment_time);
-    const endTime = new Date(d.getTime() + (nextAppt.duration_min || 60) * 60000);
-    const dayName = d.toLocaleDateString('ms-MY', { weekday: 'long' });
-    const planLabel = dashPlan
-      ? `${dashPlan.plan_name || nextAppt.service || 'Sesi Rawatan'} · Minggu ${dashPlan.current_week || 1}`
-      : (nextAppt.service || 'Sesi Rawatan');
+    const hasActivePkg = patientRecord.active_package_id &&
+      (!patientRecord.package_expires_at || new Date(patientRecord.package_expires_at) >= new Date());
 
-    document.getElementById('upcoming-section').innerHTML = `
-      <div class="flex items-center justify-between mb-3">
-        <h3 class="font-bold text-base">Appointment Seterusnya</h3>
-        <a href="plan.html" class="text-sm text-navy hover:underline">Semua sesi →</a>
-      </div>
-      <div class="bg-white rounded-xl border border-ink/10 p-5">
-        <div class="flex items-center gap-5 flex-wrap">
-          <div class="bg-navy-light rounded-xl px-5 py-4 text-center min-w-[80px] flex-shrink-0">
-            <div class="text-[10px] font-semibold text-navy uppercase tracking-wider">${d.toLocaleDateString('en-GB',{month:'short'})}</div>
-            <div class="text-3xl font-bold text-navy leading-none my-1">${d.getDate()}</div>
-            <div class="text-[10px] text-navy/70">${d.getFullYear()}</div>
+    if (window.kycApproved && !hasActivePkg) {
+      document.getElementById('no-package-banner').classList.remove('hidden');
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+
+    // Fetch all data in parallel
+    const [plans, checkinToday, recentCheckins, ordersRes, promos] = await Promise.all([
+      dbQuery('psy_treatment_plans', { eq: { patient_id: patientRecord.id, status: 'active' } }).catch(() => []),
+      window.db.from('psy_daily_checkins').select('mood_score,energy_score,checkin_date')
+        .eq('patient_id', patientRecord.id).eq('checkin_date', today).maybeSingle().then(r => r.data, () => null),
+      window.db.from('psy_daily_checkins').select('mood_score,checkin_date')
+        .eq('patient_id', patientRecord.id).order('checkin_date', { ascending: false }).limit(7)
+        .then(r => r.data || [], () => []),
+      window.db.from('psy_orders').select('id,status').eq('patient_id', user.id)
+        .not('status', 'in', '("delivered","cancelled")').then(r => r.data || [], () => []),
+      window.db.from('psy_announcements').select('*').eq('is_active', true)
+        .order('sort_order', { ascending: true }).then(r => r.data || [], () => []),
+    ]);
+
+    const activePlan = plans[0] || null;
+
+    // Fetch weekly progress + next session if plan exists
+    let weeklyAll = [], nextSession = null;
+    if (activePlan) {
+      weeklyAll = await dbQuery('psy_plan_weekly_progress', { eq: { plan_id: activePlan.id } }).catch(() => []);
+      const upcoming = (weeklyAll || []).filter(w =>
+        w.session_date && new Date(w.session_date) > new Date() && w.status === 'booked'
+      ).sort((a, b) => new Date(a.session_date) - new Date(b.session_date));
+      nextSession = upcoming[0] || null;
+    }
+
+    const hadirCount  = (weeklyAll || []).filter(w => w.status === 'hadir').length;
+    const scores      = (weeklyAll || []).filter(w => w.score && w.status === 'hadir').map(w => w.score);
+    const avgScore    = scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) : null;
+    const lastScore   = scores.length ? scores[scores.length - 1] : null;
+    const prevScore   = scores.length > 1 ? scores[scores.length - 2] : null;
+    const scoreTrend  = lastScore && prevScore
+      ? (lastScore >= prevScore ? `▲ +${(lastScore - prevScore).toFixed(1)} minggu lalu` : `▼ ${(lastScore - prevScore).toFixed(1)} minggu lalu`)
+      : '';
+
+    // Promo / greeting carousel
+    const slides = promos.length ? promos : [{
+      title: `${greeting()}, ${firstName}! 👋`,
+      body: 'Semoga hari anda dipenuhi kesihatan & ketenangan.',
+      bg: 'from-navy to-green-dark',
+    }];
+
+    const track = document.getElementById('promo-track');
+    const dots  = document.getElementById('promo-dots');
+    track.innerHTML = slides.map(s => `
+      <div class="min-w-full bg-gradient-to-r ${s.bg || 'from-navy to-green-dark'} rounded-2xl p-6 text-white flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          ${s.tag ? `<div class="text-[10px] font-semibold uppercase tracking-widest opacity-70 mb-1">${s.tag}</div>` : ''}
+          <div class="text-xl font-bold leading-snug">${s.title}</div>
+          ${s.body ? `<div class="text-sm opacity-80 mt-1 max-w-sm">${s.body}</div>` : ''}
+        </div>
+        ${s.cta_label && s.cta_url ? `<a href="${s.cta_url}" class="bg-white/20 hover:bg-white/30 text-white font-semibold text-sm px-5 py-2.5 rounded-lg whitespace-nowrap">${s.cta_label} →</a>` : ''}
+      </div>`).join('');
+
+    dots.innerHTML = slides.map((_, i) =>
+      `<button onclick="goSlide(${i})" id="dot-${i}" class="w-2 h-2 rounded-full transition-all ${i === 0 ? 'bg-white w-4' : 'bg-white/40'}"></button>`
+    ).join('');
+
+    let curSlide = 0;
+    window.goSlide = i => {
+      curSlide = i;
+      track.style.transform = `translateX(-${i * 100}%)`;
+      dots.querySelectorAll('button').forEach((d, idx) => {
+        d.className = `w-2 h-2 rounded-full transition-all ${idx === i ? 'bg-white w-4' : 'bg-white/40'}`;
+      });
+    };
+    if (slides.length > 1) setInterval(() => goSlide((curSlide + 1) % slides.length), 5000);
+
+    // Stat cards
+    document.getElementById('stat-grid').innerHTML = [
+      statCard(
+        'Check-in Hari Ini',
+        checkinToday ? `${MOOD_EMOJI[checkinToday.mood_score] || '😊'} ${checkinToday.mood_score}/10` : '—',
+        checkinToday ? `Tenaga: ${checkinToday.energy_score}/10` : 'Belum check-in hari ini',
+        checkinToday ? 'text-green-dark' : 'text-gold-dark',
+        'checkin.html'
+      ),
+      statCard(
+        'Sesi Hadir',
+        activePlan ? `${hadirCount} / ${activePlan.duration_weeks}` : '—',
+        activePlan ? `Minggu ke-${activePlan.current_week || 1} daripada ${activePlan.duration_weeks}` : 'Tiada plan aktif',
+        hadirCount > 0 ? 'text-navy' : 'text-ink/50',
+        'plan.html'
+      ),
+      statCard(
+        'Progress Score',
+        avgScore ? `${avgScore} / 10` : '—',
+        scoreTrend || (scores.length ? 'Stabil' : 'Belum ada rekod'),
+        scoreTrend.startsWith('▲') ? 'text-green-dark' : scoreTrend.startsWith('▼') ? 'text-terracotta' : 'text-ink/50',
+        'plan.html'
+      ),
+      statCard(
+        'Orders Aktif',
+        ordersRes.length > 0 ? `${ordersRes.length}` : '—',
+        ordersRes.length > 0 ? 'Dalam proses penghantaran' : 'Tiada order aktif',
+        ordersRes.length > 0 ? 'text-navy' : 'text-ink/50',
+        'orders.html'
+      ),
+    ].join('');
+
+    // Next session
+    if (nextSession) {
+      const d = new Date(nextSession.session_date);
+      const diffDays = Math.ceil((d - new Date()) / 86400000);
+      const countdown = diffDays === 0 ? '<span class="text-xs font-bold text-gold-dark bg-gold/20 px-2 py-0.5 rounded-full">Hari Ini 📍</span>'
+        : diffDays === 1 ? '<span class="text-xs font-bold text-navy bg-navy-light px-2 py-0.5 rounded-full">Esok</span>'
+        : `<span class="text-xs text-ink/50">${diffDays} hari lagi</span>`;
+
+      document.getElementById('next-session-section').innerHTML = `
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="font-bold text-sm">Sesi Seterusnya</h3>
+          <a href="plan.html" class="text-xs text-navy hover:underline">Semua sesi →</a>
+        </div>
+        <div class="bg-white rounded-xl border border-ink/10 p-4 flex items-center gap-4 flex-wrap">
+          <div class="bg-navy rounded-xl px-4 py-3 text-center min-w-[64px] flex-shrink-0">
+            <div class="text-[10px] font-bold text-white/70 uppercase">${d.toLocaleDateString('en-GB',{month:'short'})}</div>
+            <div class="text-2xl font-bold text-white leading-none my-0.5">${d.getDate()}</div>
+            <div class="text-[10px] text-white/60">${d.toLocaleDateString('en-GB',{weekday:'short'})}</div>
           </div>
           <div class="flex-1 min-w-0">
-            <div class="font-semibold text-base">${planLabel}</div>
-            <div class="text-sm text-ink/50 mt-1">${dayName} · ${formatTime(nextAppt.appointment_time)} — ${formatTime(endTime)}</div>
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="font-semibold text-sm">${activePlan?.name || 'Sesi Rawatan'}</span>
+              ${countdown}
+            </div>
+            <div class="text-xs text-ink/50 mt-1">
+              🕐 ${d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})} · Minggu ${nextSession.week_number}
+            </div>
+            ${nextSession.meet_link
+              ? `<a href="${nextSession.meet_link}" target="_blank" class="inline-flex items-center gap-1 mt-2 text-xs font-semibold text-navy hover:underline">🎥 Join Google Meet →</a>`
+              : ''}
           </div>
-          <a href="https://www.google.com/maps/search/Ibnu+Sina+Wellness" target="_blank"
-            class="flex-shrink-0 bg-green text-white text-sm font-semibold px-5 py-2.5 rounded-lg hover:bg-green-dark transition-colors whitespace-nowrap">
-            📍 Get Directions
-          </a>
-        </div>
-      </div>`;
-  }
+        </div>`;
+    }
+
+    // Quick actions
+    const actions = [
+      { icon: '✅', label: 'Daily Check-in', href: 'checkin.html' },
+      { icon: '💊', label: 'Treatment Plan', href: 'plan.html' },
+      { icon: '🛒', label: 'Shop Produk', href: 'shop.html' },
+      { icon: '📚', label: 'Self-Help Library', href: 'library.html' },
+    ];
+    document.getElementById('quick-actions').innerHTML = actions.map(a =>
+      quickAction(a.icon, a.label, a.href)
+    ).join('');
+
+    // Recent check-in history (last 7 days)
+    if (recentCheckins.length > 0) {
+      const bars = recentCheckins.slice(0, 7).reverse().map(c => {
+        const h = Math.round((c.mood_score / 10) * 100);
+        const d = new Date(c.checkin_date).toLocaleDateString('en-GB', { weekday: 'short' });
+        return `<div class="flex flex-col items-center gap-1 flex-1">
+          <div class="text-[10px] font-bold text-ink/60">${c.mood_score}</div>
+          <div class="w-full rounded-t-sm bg-navy/20 overflow-hidden" style="height:40px">
+            <div class="w-full bg-navy rounded-t-sm transition-all" style="height:${h}%; margin-top:${100-h}%"></div>
+          </div>
+          <div class="text-[9px] text-ink/40">${d}</div>
+        </div>`;
+      }).join('');
+
+      document.getElementById('checkin-history-section').innerHTML = `
+        <div class="bg-white rounded-xl border border-ink/10 p-4">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-bold text-sm">Mood 7 Hari Lepas</h3>
+            <a href="checkin.html" class="text-xs text-navy hover:underline">Rekod penuh →</a>
+          </div>
+          <div class="flex items-end gap-1">${bars}</div>
+        </div>`;
+    }
 
   } catch (err) {
     console.error('Dashboard error:', err);
     document.querySelector('section').insertAdjacentHTML('afterbegin',
-      `<div class="bg-terracotta/10 text-terracotta rounded-xl p-4 text-sm">Ralat memuatkan dashboard: ${err.message}</div>`);
+      `<div class="bg-terracotta/10 text-terracotta rounded-xl p-4 text-sm">Ralat: ${err.message}</div>`);
   }
 })();
 </script>

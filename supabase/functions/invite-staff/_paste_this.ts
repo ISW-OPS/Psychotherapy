@@ -86,13 +86,18 @@ Deno.serve(async (req: Request) => {
         .single()
       if (targetProfile?.staff_role === 'admin') return fail('Akaun Admin tidak boleh dipadam')
 
-      // Bersihkan FK references dulu supaya delete tak fail
+      // Bersihkan SEMUA FK references supaya delete tak fail
       await Promise.allSettled([
         adminClient.from('psy_appointments').update({ staff_id: null }).eq('staff_id', target_id),
         adminClient.from('psy_treatment_plans').update({ doctor_id: null }).eq('doctor_id', target_id),
         adminClient.from('psy_kyc_submissions').update({ reviewed_by: null }).eq('reviewed_by', target_id),
         adminClient.from('psy_plan_weekly_progress').update({ updated_by: null }).eq('updated_by', target_id),
         adminClient.from('psy_patients').update({ coach_id: null }).eq('coach_id', target_id),
+        adminClient.from('psy_vitals').update({ recorded_by: null }).eq('recorded_by', target_id),
+        adminClient.from('psy_coaching_sessions').update({ coach_id: null }).eq('coach_id', target_id),
+        adminClient.from('psy_risk_alerts').update({ created_by: null }).eq('created_by', target_id),
+        adminClient.from('psy_risk_alerts').update({ acknowledged_by: null }).eq('acknowledged_by', target_id),
+        adminClient.from('psy_payments').update({ user_id: null }).eq('user_id', target_id),
       ])
 
       // Delete profile dulu (kerana psy_patients.user_id → psy_profiles tanpa cascade)
@@ -114,7 +119,7 @@ Deno.serve(async (req: Request) => {
 
     // ── CREATE ────────────────────────────────────────────────
     if (!body.email || !body.full_name) return fail('Email dan nama wajib diisi')
-    if (!['admin','coach','manager'].includes(body.staff_role)) return fail('Staff role tidak sah')
+    if (!['admin','doctor','coach','manager'].includes(body.staff_role)) return fail('Staff role tidak sah')
 
     let newUserId: string
 

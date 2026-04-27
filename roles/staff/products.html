@@ -30,7 +30,7 @@
 
         <div class="bg-white rounded-xl border border-ink/10 overflow-x-auto">
           <table class="data">
-            <thead><tr><th>Icon</th><th>Nama</th><th>Kategori</th><th>Harga</th><th>Stock</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>Gambar</th><th>Nama</th><th>Kategori</th><th>Harga</th><th>Stock</th><th>Status</th><th></th></tr></thead>
             <tbody id="products-body"></tbody>
           </table>
         </div>
@@ -69,7 +69,7 @@
         <label class="text-xs font-semibold">Description</label>
         <input id="f-desc" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
       </div>
-      <div class="grid grid-cols-3 gap-3">
+      <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="text-xs font-semibold">Harga (RM)</label>
           <input id="f-price" type="number" step="0.01" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
@@ -78,9 +78,22 @@
           <label class="text-xs font-semibold">Stock</label>
           <input id="f-stock" type="number" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="optional">
         </div>
-        <div>
-          <label class="text-xs font-semibold">Icon</label>
-          <input id="f-icon" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" value="📦">
+      </div>
+      <div>
+        <label class="text-xs font-semibold">Gambar Produk</label>
+        <div class="mt-1 flex items-center gap-3">
+          <div id="prod-img-preview" class="w-16 h-16 rounded-xl border-2 border-dashed border-ink/20 flex items-center justify-center bg-cream/50 overflow-hidden flex-shrink-0 text-2xl text-ink/30">
+            📷
+          </div>
+          <div>
+            <input id="f-image" type="file" accept="image/*" onchange="previewProdImage(this)" class="hidden">
+            <input id="f-image-url" type="hidden">
+            <button type="button" onclick="document.getElementById('f-image').click()"
+              class="px-3 py-2 border border-ink/20 rounded-lg text-xs hover:border-navy hover:text-navy transition-colors">
+              Pilih Gambar
+            </button>
+            <p class="text-[10px] text-ink/40 mt-1">JPG, PNG · maks 2MB</p>
+          </div>
         </div>
       </div>
     </div>
@@ -100,6 +113,19 @@
 <script>
 const BG_MAP = { 'Madu':'bg-gold-light', 'Herba':'bg-green-light', 'Supplements':'bg-navy-light', 'Santapan Fitrah':'bg-terracotta-light', 'Books':'bg-navy-light' };
 
+function previewProdImage(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (file.size > 2 * 1024 * 1024) { banner('Gambar melebihi 2MB', 'error'); input.value = ''; return; }
+  const reader = new FileReader();
+  reader.onload = e => {
+    document.getElementById('prod-img-preview').innerHTML =
+      `<img src="${e.target.result}" class="w-full h-full object-cover">`;
+    document.getElementById('f-image-url').value = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
 function openForm(p) {
   document.getElementById('form-title').textContent = p ? 'Edit Produk' : 'Tambah Produk';
   document.getElementById('edit-id').value = p?.id || '';
@@ -109,7 +135,11 @@ function openForm(p) {
   document.getElementById('f-desc').value = p?.description || '';
   document.getElementById('f-price').value = p?.price || '';
   document.getElementById('f-stock').value = p?.stock || '';
-  document.getElementById('f-icon').value = p?.icon || '📦';
+  document.getElementById('f-image-url').value = p?.image_url || '';
+  document.getElementById('f-image').value = '';
+  const prev = document.getElementById('prod-img-preview');
+  prev.innerHTML = p?.image_url
+    ? `<img src="${p.image_url}" class="w-full h-full object-cover">` : '📷';
   document.getElementById('prod-modal').classList.remove('hidden');
 }
 function closeForm() { document.getElementById('prod-modal').classList.add('hidden'); }
@@ -124,7 +154,7 @@ async function saveProduct() {
     category: cat,
     price: parseFloat(document.getElementById('f-price').value) || 0,
     stock: parseInt(document.getElementById('f-stock').value) || null,
-    icon: document.getElementById('f-icon').value || '📦',
+    image_url: document.getElementById('f-image-url').value || null,
     bg_color: BG_MAP[cat] || 'bg-cream',
     updated_at: new Date().toISOString(),
   };
@@ -161,7 +191,13 @@ async function loadProducts() {
   const data = await dbQuery('psy_products', { order: { col: 'sort_order', asc: true } });
   document.getElementById('products-body').innerHTML = data.length
     ? data.map(p => `<tr class="${!p.is_active ? 'opacity-50' : ''}">
-        <td class="text-2xl">${p.icon}</td>
+        <td>
+          <div class="w-10 h-10 rounded-lg overflow-hidden ${p.bg_color || 'bg-cream'} flex items-center justify-center flex-shrink-0">
+            ${p.image_url
+              ? `<img src="${p.image_url}" class="w-full h-full object-cover">`
+              : `<span class="text-xl">${p.icon || '📦'}</span>`}
+          </div>
+        </td>
         <td><strong>${p.name}</strong><div class="text-[10px] text-ink/50">${p.product_id}</div></td>
         <td><span class="chip bg-cream text-ink/70">${p.category || '—'}</span></td>
         <td class="font-bold">RM ${Number(p.price).toFixed(2)}</td>

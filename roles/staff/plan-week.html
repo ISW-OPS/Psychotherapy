@@ -36,8 +36,6 @@
         <!-- Breadcrumb + Week Navigation -->
         <div class="flex items-center justify-between flex-wrap gap-3">
           <div class="flex items-center gap-2 text-sm flex-wrap">
-            <a href="plans.html" class="text-navy hover:underline font-medium">← Treatment Plans</a>
-            <span class="text-ink/30">/</span>
             <span id="plan-name-crumb" class="text-ink/60"></span>
             <span class="text-ink/30">/</span>
             <span id="week-crumb" class="font-semibold text-ink"></span>
@@ -225,6 +223,7 @@ let weekEnd      = null;
 (async () => {
   const user = await initStaff('plans', 'Detail Minggu Rawatan');
   if (!user) return;
+  setHeaderBack('plans.html', 'Kembali ke Treatment Plans');
 
   const params = new URLSearchParams(location.search);
   const planId = params.get('plan_id');
@@ -305,6 +304,7 @@ function renderHero() {
             ? `📅 ${new Date(weekEntry.session_date).toLocaleDateString('ms-MY', { weekday:'long', day:'2-digit', month:'long', year:'numeric' })} · 🕐 ${new Date(weekEntry.session_date).toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' })}`
             : 'Tarikh sesi belum ditetapkan'}
           ${weekEntry?.score != null ? ` · ⭐ ${weekEntry.score}/10` : ''}
+          ${weekEntry?.meet_link ? `<br><a href="${weekEntry.meet_link}" target="_blank" class="inline-flex items-center gap-1 mt-1 text-xs font-semibold text-navy hover:underline bg-navy-light px-2 py-0.5 rounded-lg">🎥 Join Google Meet →</a>` : ''}
         </div>
       </div>
       ${weekEntry?.updated_by_name ? `<div class="text-xs text-ink/40 text-right">Dikemaskini oleh<br><span class="font-semibold text-ink/60">${weekEntry.updated_by_name}</span></div>` : ''}
@@ -520,17 +520,17 @@ async function loadSessions() {
 async function loadGoals() {
   const host = document.getElementById('goals-view');
   const categories = [
-    { key:'bio_goals',      label:'🧬 Bio',      color:'text-bio' },
-    { key:'psycho_goals',   label:'🧠 Psycho',   color:'text-psycho' },
-    { key:'social_goals',   label:'👥 Social',   color:'text-social' },
-    { key:'spiritual_goals',label:'🕌 Spiritual',color:'text-spiritual' },
+    { key:'bio_goals',      pillar:'bio',      label:'🧬 Bio',      color:'text-bio' },
+    { key:'psycho_goals',   pillar:'psycho',   label:'🧠 Psycho',   color:'text-psycho' },
+    { key:'social_goals',   pillar:'social',   label:'👥 Social',   color:'text-social' },
+    { key:'spiritual_goals',pillar:'spiritual',label:'🕌 Spiritual',color:'text-spiritual' },
   ];
 
-  // Try to read patient's weekly goal check-ins
-  const { data: checkIns } = await window.db.from('psy_plan_checkin_week')
+  // Read patient's weekly goal check-ins from psy_plan_check_ins
+  const { data: checkIns } = await window.db.from('psy_plan_check_ins')
     .select('*').eq('plan_id', activePlan.id).eq('week_number', weekNumber).catch(() => ({ data: [] }));
 
-  const checked = new Set((checkIns || []).map(c => c.goal_key));
+  const checked = new Set((checkIns || []).map(c => `${c.pillar}_${c.goal_index}`));
   let total = 0, done = 0;
   let html = '';
 
@@ -540,7 +540,7 @@ async function loadGoals() {
     html += `<div class="mb-3"><div class="text-[11px] font-bold ${cat.color} mb-1">${cat.label}</div><div class="space-y-1">`;
     goals.forEach((g, i) => {
       total++;
-      const key = `${cat.key}_${i}`;
+      const key = `${cat.pillar}_${i}`;
       const isChecked = checked.has(key);
       if (isChecked) done++;
       html += `<div class="flex items-center gap-2 text-xs ${isChecked ? 'text-ink' : 'text-ink/40'}">
@@ -563,24 +563,25 @@ async function loadGoals() {
 }
 
 // ── Patient Feedback (read-only) ──────────────────────
-async function loadFeedback() {
+function loadFeedback() {
   const host = document.getElementById('feedback-view');
-  const { data } = await window.db.from('psy_weekly_feedback')
-    .select('*').eq('plan_id', activePlan.id).eq('week_number', weekNumber).single().catch(() => ({ data: null }));
+  const rating    = weekEntry?.feedback_rating;
+  const comment   = weekEntry?.feedback_comment;
+  const feedbackAt = weekEntry?.feedback_at;
 
-  if (!data) {
+  if (!rating) {
     host.innerHTML = '<p class="text-xs text-ink/40 italic text-center py-4">Pesakit belum hantar feedback minggu ini.</p>';
     return;
   }
 
-  const stars = '⭐'.repeat(data.rating || 0) + '☆'.repeat(5 - (data.rating || 0));
+  const stars = '⭐'.repeat(rating) + '☆'.repeat(5 - rating);
   host.innerHTML = `
     <div class="text-center mb-4">
       <div class="text-3xl">${stars}</div>
-      <div class="text-lg font-bold text-ink mt-1">${data.rating || 0}/5</div>
+      <div class="text-lg font-bold text-ink mt-1">${rating}/5</div>
     </div>
-    ${data.comment ? `<div class="bg-cream/50 rounded-lg p-3 text-sm italic text-ink/70">"${data.comment}"</div>` : ''}
-    <p class="text-[10px] text-ink/40 mt-3 text-right">Dihantar: ${new Date(data.created_at).toLocaleDateString('ms-MY')}</p>`;
+    ${comment ? `<div class="bg-cream/50 rounded-lg p-3 text-sm italic text-ink/70">"${comment}"</div>` : ''}
+    <p class="text-[10px] text-ink/40 mt-3 text-right">Dihantar: ${feedbackAt ? new Date(feedbackAt).toLocaleDateString('ms-MY') : '—'}</p>`;
 }
 
 // ── Week navigation ───────────────────────────────────
