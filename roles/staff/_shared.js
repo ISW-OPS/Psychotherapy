@@ -31,6 +31,9 @@ async function initStaff(pageId, titleSub) {
   document.getElementById('app-loading')?.classList.add('hidden');
   document.getElementById('app-shell')?.classList.remove('hidden');
 
+  // Apply role colour theme
+  if (staffRole) document.body.classList.add('role-' + staffRole);
+
   renderNavbar('staff', window.currentUser, null, pageId);
 
   const nav = getNavItems('staff', staffRole).find(n => n.id === pageId);
@@ -40,8 +43,12 @@ async function initStaff(pageId, titleSub) {
 }
 
 // ==================== HELPERS ====================
-function statCard(label, value, sub, color = 'navy') {
-  return `<div class="bg-white rounded-xl p-4 border-t-4 border-${color}">
+function statCard(label, value, sub, color = 'role') {
+  const borderStyle = color === 'role'
+    ? 'style="border-top-color: var(--rpm)"'
+    : '';
+  const borderClass = color === 'role' ? 'border-t-4' : `border-t-4 border-${color}`;
+  return `<div class="bg-white rounded-xl p-4 ${borderClass}" ${borderStyle}>
     <div class="text-[10px] uppercase text-ink/60 font-semibold">${label}</div>
     <div class="text-2xl font-bold mt-1">${value}</div>
     <div class="text-[10px] text-ink/60 mt-2">${sub || ''}</div>

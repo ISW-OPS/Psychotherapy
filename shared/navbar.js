@@ -9,7 +9,7 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'plan', url: 'plan.html', icon: '💊', label: 'My Treatment Plan' },
     { id: 'checkin', url: 'checkin.html', icon: '✅', label: 'Daily Check-in' },
     { id: 'library', url: 'library.html', icon: '📚', label: 'Self-Help Library' },
-    { id: 'pakej', url: 'pakej.html', icon: '📦', label: 'Pakej Rawatan' },
+    { id: 'pakej', url: 'pakej.html', icon: '🗂️', label: 'Pakej Rawatan' },
     { id: 'shop', url: 'shop.html', icon: '🛒', label: 'Product' },
     { id: 'payment', url: 'payment.html', icon: '💳', label: 'Payment' },
     { id: 'psy_orders', url: 'orders.html', icon: '📦', label: 'Orders & Tracking' },
@@ -24,7 +24,7 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'psy_patients', url: 'patients.html',         icon: '👥', label: 'Patients' },
     { id: 'kyc_forms',    url: 'kyc-list.html',         icon: '🆔', label: 'KYC Form' },
     { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
-    { id: 'pakej',        url: 'pakej.html',            icon: '📦', label: 'Pakej Rawatan' },
+    { id: 'pakej',        url: 'pakej.html',            icon: '🗂️', label: 'Pakej Rawatan' },
     { id: 'psy_products', url: 'products.html',         icon: '🛒', label: 'Products' },
     { id: 'psy_orders',   url: 'orders.html',           icon: '📦', label: 'Orders & Tracking' },
     { id: 'library',      url: 'library.html',          icon: '📚', label: 'Self-Help Library' },
@@ -40,6 +40,8 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'dashboard',       url: 'dashboard.html',    icon: '🏥', label: 'Dashboard' },
     { id: 'assignments',     url: 'assignments.html',  icon: '👥', label: 'Patients' },
     { id: 'psy_appointments',url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
+    { id: 'coaching',        url: 'coaching.html',     icon: '🎯', label: 'Sesi Coaching' },
+    { id: 'plan_week',       url: 'plan-week.html',    icon: '📋', label: 'Weekly Plan' },
     { id: 'issue',           url: 'issue.html',        icon: '⚠️', label: 'Report Issue' },
     { id: 'profile',         url: 'profile.html',      icon: '👤', label: 'Profile' },
   ],
@@ -53,7 +55,8 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'psy_appointments',url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
     { id: 'consultation',    url: 'consultation.html', icon: '🩺', label: 'Consultation' },
     { id: 'psy_vitals',      url: 'vitals.html',       icon: '📊', label: 'Vitals Capture' },
-    { id: 'issue',           url: 'issue.html',        icon: '📣', label: 'Report Issue' },
+    { id: 'risk',            url: 'risk.html',         icon: '🚨', label: 'Risk Management' },
+    { id: 'issue',           url: 'issue.html',        icon: '⚠️', label: 'Report Issue' },
     { id: 'profile',         url: 'profile.html',      icon: '👤', label: 'Profile' },
   ],
 
@@ -90,10 +93,10 @@ const ROLE_CONFIG = {
 };
 
 const STAFF_ROLE_BADGE = {
-  admin:   { label: 'Admin',   cls: 'bg-terracotta/20 text-terracotta' },
-  coach:   { label: 'Coach',   cls: 'bg-teal/20 text-teal' },
-  doctor:  { label: 'Doctor',  cls: 'bg-navy/20 text-navy' },
-  manager: { label: 'Manager', cls: 'bg-gold/30 text-gold-dark' },
+  admin:   { label: 'Admin',   cls: 'role-accent-bg' },
+  coach:   { label: 'Coach',   cls: 'role-accent-bg' },
+  doctor:  { label: 'Doctor',  cls: 'role-accent-bg' },
+  manager: { label: 'Manager', cls: 'role-accent-bg' },
 };
 
 // Get nav items for a role — pass staffRole for staff sub-roles
@@ -156,44 +159,87 @@ function renderNavbar(role, user, navItems, activeScreen) {
   // Auto-detect base path for logo (works from /roles/patient/ or /roles/staff/)
   const logoPath = window.location.pathname.includes('/roles/') ? '../../image/Logo_ISW.png' : 'image/Logo_ISW.png';
 
-  sidebar.innerHTML = `
-    <div class="nav-brand p-4 border-b border-white/10 flex items-center gap-3">
-      <div class="w-10 h-10 bg-white rounded-xl flex items-center justify-center flex-shrink-0 p-1">
-        <img src="${logoPath}" alt="ISW" class="w-full h-full object-contain" onerror="this.outerHTML='<span class=\\'text-white text-lg\\'>${cfg.icon}</span>'">
-      </div>
-      <div class="nav-text-block">
-        <div class="font-bold text-sm text-white">Ibnu Sina Wellness</div>
-        <div class="text-[10px] text-white/60">${cfg.label} · v1.0</div>
-      </div>
-    </div>
-    <div class="nav-user p-3 border-b border-white/10">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center font-bold text-white flex-shrink-0" title="${user.full_name || 'User'}">${initials}</div>
-        <div class="flex-1 min-w-0 nav-text-block">
-          <div class="flex items-center gap-1.5">
-            <div class="text-sm font-semibold text-white truncate">${user.full_name || 'User'}</div>
-            ${badge ? `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ${badge.cls}">${badge.label}</span>` : ''}
-          </div>
-          <div class="text-[11px] text-white/60">${user.specialization || user.role}</div>
+  const isStaff = role === 'staff';
+
+  if (isStaff) {
+    // ── WHITE sidebar for staff — role colour only on active item ──
+    sidebar.innerHTML = `
+      <div class="nav-brand px-4 py-3 border-b border-ink/8 flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 p-1 overflow-hidden" style="background:var(--rpl)">
+          <img src="${logoPath}" alt="ISW" class="w-full h-full object-contain" onerror="this.outerHTML='<span style=\\'color:var(--rpm)\\' class=\\'text-lg font-bold\\'>${cfg.icon}</span>'">
+        </div>
+        <div class="nav-text-block">
+          <div class="font-bold text-sm text-ink">Ibnu Sina Wellness</div>
+          <div class="text-[10px] text-ink/40">${cfg.label}</div>
         </div>
       </div>
-    </div>
-    <nav class="flex-1 overflow-y-auto p-2 space-y-0.5">
-      ${navItems.map(item => `
-        <button onclick="goTo('${item.id}')" title="${item.label}"
-          class="nav-item ${item.id === activeScreen ? 'active' : ''} w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-white/80 hover:bg-white/10">
-          <span class="flex-shrink-0">${item.icon}</span><span class="nav-label">${item.label}</span>
-          ${item.badge ? `<span class="ml-auto nav-label inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${item.badgeClass || 'bg-white/20 text-white'}">${item.badge}</span>` : ''}
+      <div class="nav-user px-3 py-3 border-b border-ink/8">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-full flex items-center justify-center font-bold text-white text-sm flex-shrink-0"
+               style="background:var(--rpm)" title="${user.full_name || 'User'}">${initials}</div>
+          <div class="flex-1 min-w-0 nav-text-block">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <span class="text-sm font-semibold text-ink truncate">${user.full_name || 'User'}</span>
+              ${badge ? `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 role-accent-bg">${badge.label}</span>` : ''}
+            </div>
+            <div class="text-[11px] text-ink/40">${user.specialization || ''}</div>
+          </div>
+        </div>
+      </div>
+      <nav class="flex-1 overflow-y-auto p-2 space-y-0.5">
+        ${navItems.map(item => `
+          <button onclick="goTo('${item.id}')" title="${item.label}"
+            class="nav-item ${item.id === activeScreen ? 'active' : ''} w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-ink/60 hover:bg-ink/5 transition-colors">
+            <span class="flex-shrink-0 text-base">${item.icon}</span>
+            <span class="nav-label font-medium">${item.label}</span>
+            ${item.badge ? `<span class="ml-auto nav-label inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-ink/10 text-ink/60">${item.badge}</span>` : ''}
+          </button>
+        `).join('')}
+      </nav>
+      <div class="nav-footer p-3 border-t border-ink/8">
+        <button onclick="logout()" class="w-full text-xs text-ink/40 hover:text-ink/70 py-2 hover:bg-ink/5 rounded-lg transition-colors" title="Log Keluar">
+          <span class="nav-label">Log Keluar</span>
+          <span class="nav-icon-only hidden">⎋</span>
         </button>
-      `).join('')}
-    </nav>
-    <div class="nav-footer p-3 border-t border-white/10">
-      <button onclick="logout()" class="w-full text-xs text-white/70 py-2 hover:bg-white/5 rounded-lg" title="Log Keluar">
-        <span class="nav-label">Log Keluar</span>
-        <span class="nav-icon-only hidden">⎋</span>
-      </button>
-    </div>
-  `;
+      </div>
+    `;
+  } else {
+    // ── DARK sidebar for patient (original) ──
+    sidebar.innerHTML = `
+      <div class="nav-brand p-4 border-b border-white/10 flex items-center gap-3">
+        <div class="w-10 h-10 bg-white rounded-xl flex items-center justify-center flex-shrink-0 p-1">
+          <img src="${logoPath}" alt="ISW" class="w-full h-full object-contain" onerror="this.outerHTML='<span class=\\'text-white text-lg\\'>${cfg.icon}</span>'">
+        </div>
+        <div class="nav-text-block">
+          <div class="font-bold text-sm text-white">Ibnu Sina Wellness</div>
+          <div class="text-[10px] text-white/60">${cfg.label} · v1.0</div>
+        </div>
+      </div>
+      <div class="nav-user p-3 border-b border-white/10">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center font-bold text-white flex-shrink-0" title="${user.full_name || 'User'}">${initials}</div>
+          <div class="flex-1 min-w-0 nav-text-block">
+            <div class="text-sm font-semibold text-white truncate">${user.full_name || 'User'}</div>
+            <div class="text-[11px] text-white/60">${user.specialization || user.role}</div>
+          </div>
+        </div>
+      </div>
+      <nav class="flex-1 overflow-y-auto p-2 space-y-0.5">
+        ${navItems.map(item => `
+          <button onclick="goTo('${item.id}')" title="${item.label}"
+            class="nav-item ${item.id === activeScreen ? 'active' : ''} w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-white/80 hover:bg-white/10">
+            <span class="flex-shrink-0">${item.icon}</span><span class="nav-label">${item.label}</span>
+          </button>
+        `).join('')}
+      </nav>
+      <div class="nav-footer p-3 border-t border-white/10">
+        <button onclick="logout()" class="w-full text-xs text-white/70 py-2 hover:bg-white/5 rounded-lg" title="Log Keluar">
+          <span class="nav-label">Log Keluar</span>
+          <span class="nav-icon-only hidden">⎋</span>
+        </button>
+      </div>
+    `;
+  }
 }
 
 function setHeaderBack(url, label) {
