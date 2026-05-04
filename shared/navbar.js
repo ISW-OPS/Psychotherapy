@@ -196,12 +196,6 @@ function renderNavbar(role, user, navItems, activeScreen) {
           </button>
         `).join('')}
       </nav>
-      <div class="nav-footer p-3 border-t border-ink/8">
-        <button onclick="logout()" class="w-full text-xs text-ink/40 hover:text-ink/70 py-2 hover:bg-ink/5 rounded-lg transition-colors" title="Log Keluar">
-          <span class="nav-label">Log Keluar</span>
-          <span class="nav-icon-only hidden">⎋</span>
-        </button>
-      </div>
     `;
   } else {
     // ── DARK sidebar for patient (original) ──
@@ -232,12 +226,6 @@ function renderNavbar(role, user, navItems, activeScreen) {
           </button>
         `).join('')}
       </nav>
-      <div class="nav-footer p-3 border-t border-white/10">
-        <button onclick="logout()" class="w-full text-xs text-white/70 py-2 hover:bg-white/5 rounded-lg" title="Log Keluar">
-          <span class="nav-label">Log Keluar</span>
-          <span class="nav-icon-only hidden">⎋</span>
-        </button>
-      </div>
     `;
   }
 }
@@ -271,10 +259,17 @@ function renderHeader(title, subtitle) {
         <p id="page-sub" class="text-[11px] text-ink/60 truncate">${subtitle}</p>
       </div>
     </div>
-    <div class="flex items-center gap-3 flex-shrink-0">
-      <button id="notif-btn" onclick="toggleNotifPanel()" class="relative p-2 hover:bg-gray-100 rounded-lg">
+    <div class="flex items-center gap-2 flex-shrink-0">
+      <button id="notif-btn" onclick="toggleNotifPanel()" class="relative p-2 hover:bg-gray-100 rounded-lg" title="Notifikasi">
         <span class="text-lg">🔔</span>
         <span id="notif-badge" class="hidden absolute -top-0.5 -right-0.5 min-w-[16px] h-4 bg-terracotta text-white text-[9px] font-bold rounded-full flex items-center justify-center px-0.5"></span>
+      </button>
+      <button onclick="logout()" title="Log Keluar"
+        class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-ink/60 hover:text-terracotta hover:bg-terracotta/10 border border-ink/10 hover:border-terracotta/30 transition-colors">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+        </svg>
+        <span class="hidden sm:inline">Log Keluar</span>
       </button>
     </div>
   `;
