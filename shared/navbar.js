@@ -145,9 +145,15 @@ function renderNavbar(role, user, navItems, activeScreen) {
       { href: 'shop.html',      icon: '🛒', label: 'Shop',     id: 'shop' },
       { href: 'profile.html',   icon: '👤', label: 'Profil',   id: 'profile' },
     ];
+    if (!document.getElementById('pat-bottom-nav-style')) {
+      const s = document.createElement('style');
+      s.id = 'pat-bottom-nav-style';
+      s.textContent = '#pat-bottom-nav { display:flex; } @media(min-width:768px){ #pat-bottom-nav { display:none !important; } }';
+      document.head.appendChild(s);
+    }
     const nav = document.createElement('nav');
     nav.id = 'pat-bottom-nav';
-    nav.className = 'mobile-nav fixed bottom-0 left-0 right-0 bg-navy-dark border-t border-white/10 text-white flex justify-around z-20';
+    nav.className = 'fixed bottom-0 left-0 right-0 bg-navy-dark border-t border-white/10 text-white flex justify-around z-20';
     nav.innerHTML = BOT_ITEMS.map(it =>
       `<a href="${it.href}" class="flex flex-col items-center justify-center gap-0.5 py-2 px-1 flex-1 text-[10px] ${it.id === activeScreen ? 'text-gold font-semibold' : 'text-white/65'}">
         <span class="text-lg leading-none">${it.icon}</span>${it.label}
