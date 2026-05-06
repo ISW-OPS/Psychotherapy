@@ -1,175 +1,720 @@
 <!DOCTYPE html>
 <html lang="ms">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ibnu Sina Wellness — Report Issue</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="../../shared/theme.js"></script>
-<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link href="_styles.css" rel="stylesheet">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ibnu Sina Wellness — Report Issue</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="../../shared/theme.js"></script>
+  <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="_styles.css" rel="stylesheet">
+  <style>
+    .convo-item {
+      cursor: pointer;
+      transition: background .12s;
+      border-left: 3px solid transparent;
+    }
+
+    .convo-item:hover {
+      background: #f8fafc;
+    }
+
+    .convo-item.selected {
+      background: #eff6ff;
+      border-left-color: #1a3a5c;
+    }
+
+    .chat-bg {
+      background: #f0f4f8;
+    }
+
+    .filter-btn {
+      padding: 5px 12px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 600;
+      background: white;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      transition: all .15s;
+      white-space: nowrap;
+    }
+
+    .filter-btn.active {
+      background: #1a3a5c;
+      color: white;
+      border-color: #1a3a5c;
+    }
+  </style>
 </head>
+
 <body class="min-h-screen">
 
-<div id="app-loading" class="min-h-screen flex items-center justify-center">
-  <div class="text-center"><div class="text-4xl mb-3">⚠️</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
-</div>
-
-<div id="app-shell" class="hidden">
-  <div class="flex min-h-screen">
-    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
-    <main class="main-content flex-1 min-w-0">
-      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
-
-      <div class="p-4 md:p-8 space-y-5">
-
-        <!-- Stat cards -->
-        <div class="grid grid-cols-3 gap-4">
-          <div class="bg-white rounded-xl border border-ink/10 p-4 text-center">
-            <div class="text-2xl font-bold text-ink" id="stat-total">—</div>
-            <div class="text-xs text-ink/50 mt-1">Jumlah Isu</div>
-          </div>
-          <div class="bg-white rounded-xl border border-terracotta/30 p-4 text-center">
-            <div class="text-2xl font-bold text-terracotta" id="stat-open">—</div>
-            <div class="text-xs text-ink/50 mt-1">Belum Dijawab</div>
-          </div>
-          <div class="bg-white rounded-xl border border-green/30 p-4 text-center">
-            <div class="text-2xl font-bold text-green-dark" id="stat-resolved">—</div>
-            <div class="text-xs text-ink/50 mt-1">Selesai</div>
-          </div>
-        </div>
-
-        <!-- Filters -->
-        <div class="flex gap-2 flex-wrap">
-          <button onclick="setFilter('all')"      id="f-all"      class="filter-btn active">Semua</button>
-          <button onclick="setFilter('open')"     id="f-open"     class="filter-btn">⚠️ Belum Dijawab</button>
-          <button onclick="setFilter('resolved')" id="f-resolved" class="filter-btn">✅ Selesai</button>
-        </div>
-
-        <!-- Issue list -->
-        <div id="issue-list" class="space-y-3"></div>
-
-      </div>
-    </main>
+  <div id="app-loading" class="min-h-screen flex items-center justify-center">
+    <div class="text-center">
+      <div class="text-4xl mb-3">💬</div>
+      <p class="text-ink/60 text-sm">Memuatkan...</p>
+    </div>
   </div>
-</div>
 
-<style>
-.filter-btn { padding: 0.5rem 1rem; border-radius: 9999px; font-size: 0.875rem; font-weight: 500; background: white; border: 1px solid rgba(0,0,0,0.12); transition: all .15s; }
-.filter-btn.active { background: var(--color-navy, #1a3a5c); color: white; border-color: var(--color-navy, #1a3a5c); }
-</style>
+  <div id="app-shell" class="hidden">
+    <div class="flex" style="height:100vh; overflow:hidden;">
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="../../config/supabase.js"></script>
-<script src="../../shared/authGuard.js"></script>
-<script src="../../shared/logout.js"></script>
-<script src="../../shared/navbar.js"></script>
-<script src="_shared.js"></script>
-<script>
-let allIssues   = [];
-let responseMap = {};
-let currentFilter = 'all';
+      <!-- Sidebar -->
+      <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col flex-shrink-0"
+        style="height:100vh; overflow-y:auto;"></aside>
 
-const TYPE_LABEL = {
-  produk_rosak:  '📦 Produk rosak',
-  salah_produk:  '🔄 Salah produk',
-  kurang_jumlah: '⚖️ Kurang jumlah',
-  tidak_sampai:  '🚚 Tidak sampai',
-  appointment:   '📅 Masalah appointment',
-  lain_lain:     '💬 Lain-lain',
-};
+      <!-- Main area -->
+      <div class="flex-1 flex flex-col min-w-0" style="height:100vh; overflow:hidden;">
 
-async function loadIssues() {
-  const [issueRes, responseRes] = await Promise.all([
-    window.db.from('psy_audit_log')
-      .select('*').eq('action', 'issue.reported')
-      .order('created_at', { ascending: false }),
-    window.db.from('psy_audit_log')
-      .select('id, meta')
-      .eq('action', 'issue.responded'),
-  ]);
+        <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 flex-shrink-0 flex items-center justify-between gap-4"></header>
 
-  allIssues = issueRes.data || [];
+        <!-- Split panel -->
+        <div class="flex flex-1 min-h-0">
 
-  responseMap = {};
-  (responseRes.data || []).forEach(r => {
-    const iid = r.meta?.issue_id;
-    if (iid && !responseMap[iid]) responseMap[iid] = true;
-  });
+          <!-- ═══ LEFT: Conversation list ═══ -->
+          <div class="flex flex-col flex-shrink-0 bg-white border-r border-ink/10" style="width:320px;">
 
-  renderStats();
-  renderList();
-}
+            <!-- Top bar: title + live dot -->
+            <div class="px-4 py-3 border-b border-ink/10 flex items-center gap-2 flex-shrink-0">
+              <span class="font-semibold text-sm text-ink">Semua Isu</span>
+              <span id="live-dot" style="display:none" title="Sambungan langsung aktif"
+                class="w-2 h-2 rounded-full bg-green-500 inline-block animate-pulse"></span>
+            </div>
 
-function isResolved(issue) { return !!responseMap[issue.id]; }
+            <!-- Filter tabs -->
+            <div class="flex gap-1.5 px-3 py-2.5 border-b border-ink/10 flex-shrink-0">
+              <button onclick="setFilter('all')" id="f-all" class="filter-btn active">Semua</button>
+              <button onclick="setFilter('open')" id="f-open" class="filter-btn">⚠️ Belum</button>
+              <button onclick="setFilter('resolved')" id="f-resolved" class="filter-btn">✅ Selesai</button>
+            </div>
 
-function renderStats() {
-  const open     = allIssues.filter(i => !isResolved(i)).length;
-  const resolved = allIssues.filter(i =>  isResolved(i)).length;
-  document.getElementById('stat-total').textContent    = allIssues.length;
-  document.getElementById('stat-open').textContent     = open;
-  document.getElementById('stat-resolved').textContent = resolved;
-}
-
-function setFilter(f) {
-  currentFilter = f;
-  ['all','open','resolved'].forEach(k =>
-    document.getElementById('f-' + k).classList.toggle('active', k === f)
-  );
-  renderList();
-}
-
-function renderList() {
-  let list = allIssues;
-  if (currentFilter === 'open')     list = list.filter(i => !isResolved(i));
-  if (currentFilter === 'resolved') list = list.filter(i =>  isResolved(i));
-
-  const el = document.getElementById('issue-list');
-  if (!list.length) {
-    el.innerHTML = `<div class="bg-white rounded-xl border border-ink/10 p-10 text-center">
-      <div class="text-4xl mb-3">📭</div>
-      <p class="text-ink/50 text-sm">Tiada isu ${currentFilter === 'open' ? 'belum dijawab' : currentFilter === 'resolved' ? 'selesai' : ''}</p>
-    </div>`;
-    return;
-  }
-
-  el.innerHTML = list.map(issue => {
-    const resolved = isResolved(issue);
-    const type = issue.meta?.type || 'lain_lain';
-    const desc = (issue.meta?.description || '').replace(/</g,'&lt;');
-    const date = new Date(issue.created_at).toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
-
-    return `<div class="bg-white rounded-xl border ${resolved ? 'border-ink/10' : 'border-terracotta/30'} p-4 hover:shadow-md transition-all">
-      <div class="flex items-center gap-3">
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 mb-1 flex-wrap">
-            <span class="text-sm font-semibold">${TYPE_LABEL[type] || type}</span>
-            ${resolved
-              ? '<span class="chip bg-green-light text-green-dark text-[10px]">✅ Selesai</span>'
-              : '<span class="chip bg-terracotta/15 text-terracotta text-[10px]">⚠️ Belum dijawab</span>'}
-            ${issue.meta?.photo_url ? '<span class="text-base">📷</span>' : ''}
+            <!-- List -->
+            <div id="issue-list" class="flex-1 overflow-y-auto"></div>
           </div>
-          <p class="text-xs text-ink/60 truncate">${desc}</p>
-          <div class="text-[10px] text-ink/40 mt-1 flex gap-3">
-            <span>👤 ${issue.actor_name || '—'}</span>
-            <span>📅 ${date}</span>
+
+          <!-- ═══ RIGHT: Chat panel ═══ -->
+          <div class="flex-1 flex flex-col min-w-0 min-h-0">
+
+            <!-- Empty state -->
+            <div id="chat-empty" class="flex-1 chat-bg flex flex-col items-center justify-center gap-3 text-ink/30">
+              <div class="text-6xl">💬</div>
+              <p class="text-sm font-medium">Pilih isu untuk melihat perbualan</p>
+            </div>
+
+            <!-- Chat panel (hidden until issue selected) -->
+            <div id="chat-panel" class="hidden flex-1 flex flex-col min-h-0">
+
+              <!-- Chat header -->
+              <div class="bg-white border-b border-ink/10 px-5 py-3 flex items-center gap-3 flex-shrink-0">
+                <div id="chat-avatar"
+                  class="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 bg-terracotta/20 text-terracotta">
+                  ?</div>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span id="chat-name" class="font-semibold text-sm">—</span>
+                    <span id="chat-type" class="text-xs text-ink/50 font-medium">—</span>
+                    <span id="chat-status"></span>
+                  </div>
+                  <p id="chat-meta" class="text-[10px] text-ink/40 mt-0.5">—</p>
+                </div>
+                <div class="flex items-center gap-2 flex-shrink-0">
+                  <button id="btn-close-issue"
+                    class="px-3 py-1.5 bg-green-50 text-green-700 border border-green-200 rounded-lg text-xs font-semibold hover:bg-green-100 transition-colors">
+                    ✓ Tutup Isu
+                  </button>
+                  <a id="btn-goto-appt" href="appointments.html" style="display:none"
+                    class="px-3 py-1.5 bg-navy/10 text-navy border border-navy/20 rounded-lg text-xs font-semibold hover:bg-navy/20 transition-colors">
+                    📅 Lihat Temujanji
+                  </a>
+                  <button id="btn-replacement"
+                    class="px-3 py-1.5 bg-gold/15 text-gold-dark border border-gold/30 rounded-lg text-xs font-semibold hover:bg-gold/25 transition-colors">
+                    📦 Penggantian
+                  </button>
+                </div>
+              </div>
+
+              <!-- Messages -->
+              <div id="chat-area" class="flex-1 overflow-y-auto px-5 py-4 space-y-4 chat-bg"></div>
+
+              <!-- Reply input (hidden for resolved) -->
+              <div id="reply-area" class="bg-white border-t border-ink/10 px-5 py-3 flex-shrink-0">
+                <div id="reply-error" class="hidden text-xs text-terracotta mb-2"></div>
+                <div class="flex gap-2 items-end">
+                  <textarea id="reply-text" rows="2"
+                    placeholder="Tulis jawapan kepada pesakit... (Ctrl+Enter untuk hantar)"
+                    class="flex-1 border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy resize-none"></textarea>
+                  <button id="btn-send"
+                    class="bg-navy text-white px-4 py-3 rounded-xl text-sm font-semibold hover:bg-navy-dark transition-colors whitespace-nowrap">
+                    Hantar ↩
+                  </button>
+                </div>
+              </div>
+
+            </div>
           </div>
+
         </div>
-        <a href="issue-detail.html?id=${issue.id}"
-          class="px-4 py-2 rounded-xl text-xs font-semibold flex-shrink-0 ${resolved ? 'bg-ink/10 text-ink/60 hover:bg-ink/20' : 'bg-navy text-white hover:bg-navy-dark'}">
-          ${resolved ? '👁 Lihat' : '↩ Balas'}
-        </a>
       </div>
-    </div>`;
-  }).join('');
-}
+    </div>
+  </div>
 
-(async () => {
-  const user = await initStaff('issue', 'Isu & aduan dari pesakit');
-  if (!user) return;
-  loadIssues();
-})();
-</script>
+  <!-- ═══ Replacement Modal ═══ -->
+  <div id="replacement-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-xl w-full max-w-md">
+      <div class="px-6 py-4 border-b border-ink/10 flex items-center justify-between">
+        <h3 class="font-bold text-sm">📦 Buat Penggantian Produk</h3>
+        <button id="btn-close-rep" class="text-ink/40 hover:text-ink text-2xl leading-none">&times;</button>
+      </div>
+      <div class="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+        <div class="bg-ink/5 rounded-xl px-4 py-3">
+          <div class="text-[10px] text-ink/50 uppercase font-bold mb-0.5">Pesakit</div>
+          <div id="rep-patient-name" class="text-sm font-semibold">—</div>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-ink/50 uppercase mb-1.5 block">Produk Ganti</label>
+          <select id="rep-product"
+            class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+            <option value="">-- Pilih produk --</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-ink/50 uppercase mb-1.5 block">Kuantiti</label>
+          <input type="number" id="rep-qty" value="1" min="1"
+            class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+        </div>
+        <div>
+          <label class="text-xs font-bold text-ink/50 uppercase mb-1.5 block">Kaedah Penghantaran</label>
+          <select id="rep-delivery"
+            class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+            <option value="pos">📮 Pos / Courier</option>
+            <option value="pickup">🏥 Pickup Klinik</option>
+          </select>
+        </div>
+        <div id="rep-address-wrap">
+          <label class="text-xs font-bold text-ink/50 uppercase mb-1.5 block">Alamat Penghantaran</label>
+          <textarea id="rep-address" rows="2" placeholder="No, Jalan, Bandar, Poskod, Negeri"
+            class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy resize-none"></textarea>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-ink/50 uppercase mb-1.5 block">Nota Dalaman (pilihan)</label>
+          <input type="text" id="rep-note" placeholder="cth: ganti kerana produk rosak semasa penghantaran"
+            class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+        </div>
+        <div id="rep-error" class="hidden text-xs text-terracotta bg-terracotta/10 rounded-lg px-3 py-2"></div>
+      </div>
+      <div class="px-6 py-4 border-t border-ink/10 flex gap-3">
+        <button id="btn-rep-cancel"
+          class="flex-1 border border-ink/20 text-ink/60 py-2.5 rounded-xl text-sm">Batal</button>
+        <button id="btn-rep-confirm" class="flex-1 bg-navy text-white py-2.5 rounded-xl text-sm font-semibold">✅ Sahkan
+          Penggantian</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="../../config/supabase.js"></script>
+  <script src="../../shared/authGuard.js"></script>
+  <script src="../../shared/logout.js"></script>
+  <script src="../../shared/navbar.js"></script>
+  <script src="_shared.js"></script>
+  <script>
+    let allIssues = [];
+    let responseMap = {};   // issue_id → [{...response rows}]
+    let currentFilter = 'all';
+    let currentIssue = null;
+    let productsList = [];
+
+    const TYPE_LABEL = {
+      produk_rosak: '📦 Produk rosak',
+      salah_produk: '🔄 Salah produk',
+      kurang_jumlah: '⚖️ Kurang jumlah',
+      tidak_sampai: '🚚 Tidak sampai',
+      appointment: '📅 Masalah appointment',
+      lain_lain: '💬 Lain-lain',
+    };
+
+    // ── Load all issues ───────────────────────────────────
+    async function loadIssues() {
+      const [issueRes, respRes, followRes, closedRes] = await Promise.all([
+        window.db.from('psy_audit_log').select('*').eq('action', 'issue.reported').order('created_at', { ascending: false }),
+        window.db.from('psy_audit_log').select('*').eq('action', 'issue.responded').order('created_at', { ascending: true }),
+        window.db.from('psy_audit_log').select('*').eq('action', 'issue.followup').order('created_at', { ascending: true }),
+        window.db.from('psy_audit_log').select('*').eq('action', 'issue.closed').order('created_at', { ascending: true }),
+      ]);
+
+      allIssues = issueRes.data || [];
+
+      // Build responseMap: issue_id → array of message rows
+      responseMap = {};
+      [...(respRes.data || []), ...(followRes.data || []), ...(closedRes.data || [])].forEach(r => {
+        const iid = r.meta?.issue_id;
+        if (!iid) return;
+        if (!responseMap[iid]) responseMap[iid] = [];
+        responseMap[iid].push(r);
+      });
+
+      renderList();
+    }
+
+    function isResolved(issue) {
+      return (responseMap[issue.id] || []).some(r => r.action === 'issue.closed');
+    }
+
+    // ── Filter ────────────────────────────────────────────
+    function setFilter(f) {
+      currentFilter = f;
+      ['all', 'open', 'resolved'].forEach(k =>
+        document.getElementById('f-' + k).classList.toggle('active', k === f)
+      );
+      renderList();
+    }
+
+    // ── Conversation list ─────────────────────────────────
+    function renderList() {
+      let list = allIssues;
+      if (currentFilter === 'open') list = list.filter(i => !isResolved(i));
+      if (currentFilter === 'resolved') list = list.filter(i => isResolved(i));
+
+      const el = document.getElementById('issue-list');
+      if (!list.length) {
+        el.innerHTML = `<div class="p-8 text-center text-ink/40">
+      <div class="text-4xl mb-2">📭</div>
+      <p class="text-sm">Tiada isu</p>
+    </div>`;
+        return;
+      }
+
+      el.innerHTML = list.map(issue => {
+        const resolved = isResolved(issue);
+        const type = issue.meta?.type || 'lain_lain';
+        const desc = (issue.meta?.description || '').replace(/</g, '&lt;');
+        const name = issue.actor_name || 'Pesakit';
+        const initial = name[0].toUpperCase();
+        const time = new Date(issue.created_at).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+        const isActive = currentIssue?.id === issue.id;
+
+        return `<div class="convo-item px-4 py-3 flex items-center gap-3 border-b border-ink/5 ${isActive ? 'selected' : ''}"
+      onclick="selectIssue('${issue.id}')">
+      <div class="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0
+        ${resolved ? 'bg-ink/10 text-ink/50' : 'bg-terracotta/20 text-terracotta'}">${initial}</div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center justify-between gap-1 mb-0.5">
+          <span class="text-sm font-semibold text-ink truncate">${name}</span>
+          <span class="text-[10px] text-ink/40 flex-shrink-0">${time}</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="text-[10px] font-medium ${resolved ? 'text-green-dark' : 'text-terracotta'}">${resolved ? '✅' : '⚠️'}</span>
+          <span class="text-[10px] text-ink/50 truncate">${TYPE_LABEL[type] || type} · ${desc}</span>
+        </div>
+      </div>
+      ${!resolved ? '<div class="w-2 h-2 rounded-full bg-terracotta flex-shrink-0"></div>' : ''}
+    </div>`;
+      }).join('');
+    }
+
+    // ── Select issue → show chat ──────────────────────────
+    async function selectIssue(issueId) {
+      const issue = allIssues.find(i => i.id === issueId);
+      if (!issue) return;
+      currentIssue = issue;
+
+      // Update list selection highlight
+      renderList();
+
+      // Show chat panel, hide empty state
+      document.getElementById('chat-empty').classList.add('hidden');
+      document.getElementById('chat-panel').classList.remove('hidden');
+      document.getElementById('chat-panel').classList.add('flex');
+
+      const resolved = isResolved(issue);
+
+      // Header
+      const name = issue.actor_name || 'Pesakit';
+      const initial = name[0].toUpperCase();
+      const type = issue.meta?.type || 'lain_lain';
+      document.getElementById('chat-avatar').textContent = initial;
+      document.getElementById('chat-name').textContent = name;
+      document.getElementById('chat-type').textContent = TYPE_LABEL[type] || type;
+      document.getElementById('chat-meta').textContent =
+        new Date(issue.created_at).toLocaleString('ms-MY', { dateStyle: 'medium', timeStyle: 'short' });
+      document.getElementById('chat-status').innerHTML = resolved
+        ? '<span class="chip bg-green-light text-green-dark text-[10px]">✅ Selesai</span>'
+        : '<span class="chip bg-terracotta/15 text-terracotta text-[10px]">⚠️ Terbuka</span>';
+
+      // Show/hide reply area and close button
+      document.getElementById('reply-area').style.display      = resolved ? 'none' : '';
+      document.getElementById('btn-close-issue').style.display = resolved ? 'none' : '';
+
+      // Appointment issue → hide Penggantian, show calendar link
+      const isAppt = type === 'appointment';
+      document.getElementById('btn-replacement').style.display   = isAppt ? 'none' : '';
+      const apptBtn = document.getElementById('btn-goto-appt');
+      if (apptBtn) apptBtn.style.display = isAppt ? '' : 'none';
+
+      // Render chat messages
+      const messages = (responseMap[issue.id] || [])
+        .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      renderChat(issue, messages);
+    }
+
+    // ── Smart scroll (only if near bottom) ───────────────
+    function smartScroll() {
+      const el = document.getElementById('chat-area');
+      if (!el) return;
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+      if (nearBottom) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    }
+
+    // ── Chat render ───────────────────────────────────────
+    function msgBubble(side, name, text, time, photoUrl, status = null) {
+      const isPatient = side === 'patient';
+      const initial   = (name || '?')[0].toUpperCase();
+      const photo     = photoUrl
+        ? `<img src="${photoUrl}" alt="foto" class="mt-2 rounded-xl max-h-48 object-contain border border-ink/10">`
+        : '';
+
+      let tick = '';
+      if (!isPatient && status) {
+        if (status === 'sent')      tick = '<span class="text-white/50">✓</span>';
+        if (status === 'delivered') tick = '<span class="text-white/50">✓✓</span>';
+        if (status === 'read')      tick = '<span class="text-blue-300">✓✓</span>';
+      }
+
+      const avatarCls = isPatient ? 'bg-terracotta/20 text-terracotta' : 'bg-navy text-white';
+      const avatar    = `<div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${avatarCls}">${initial}</div>`;
+
+      const bubbleCls = isPatient
+        ? 'bg-white text-ink rounded-tl-none'
+        : 'bg-navy text-white rounded-tr-none';
+
+      const timeRow = isPatient
+        ? ''
+        : `<div class="text-[10px] text-ink/40 mt-1 flex items-center gap-1 self-end">${time} ${tick}</div>`;
+
+      const inner = `<div class="flex flex-col ${isPatient ? 'items-start' : 'items-end'} max-w-[75%]">
+        <div class="text-[10px] text-ink/40 mb-1 whitespace-nowrap">${name}${isPatient ? ' · ' + time : ''}</div>
+        <div class="inline-block px-3 py-2 text-[13px] leading-snug whitespace-pre-wrap break-words rounded-2xl shadow-sm w-fit max-w-full ${bubbleCls}">
+          ${text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}${photo}
+        </div>
+        ${timeRow}
+      </div>`;
+
+      return `<div class="flex ${isPatient ? 'justify-start' : 'justify-end'} gap-2 items-end">
+        ${isPatient ? avatar : ''}${inner}${!isPatient ? avatar : ''}
+      </div>`;
+    }
+
+    function renderChat(issue, messages) {
+      const t0 = new Date(issue.created_at).toLocaleString('ms-MY', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+      let html = msgBubble('patient', issue.actor_name || 'Pesakit', issue.meta?.description || '—', t0, issue.meta?.photo_url || null);
+
+      messages.forEach(m => {
+        const t = new Date(m.created_at).toLocaleString('ms-MY', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+        if (m.action === 'issue.followup') {
+          html += msgBubble('patient', m.actor_name || 'Pesakit', m.meta?.message || '—', t, null);
+        } else if (m.action === 'issue.responded') {
+          html += msgBubble('staff', m.actor_name || 'Staff', m.meta?.response || '—', t, null, m.meta?.status || 'sent');
+        } else if (m.action === 'issue.closed') {
+          html += `<div class="flex items-center gap-3 my-2">
+            <div class="flex-1 border-t border-ink/10"></div>
+            <span class="text-[10px] text-ink/40 whitespace-nowrap">Isu ditutup oleh ${m.actor_name || 'Staff'}</span>
+            <div class="flex-1 border-t border-ink/10"></div>
+          </div>`;
+        }
+      });
+
+      const el = document.getElementById('chat-area');
+      el.innerHTML = html;
+      el.scrollTo({ top: el.scrollHeight, behavior: 'instant' });
+    }
+
+    // ── Send reply ────────────────────────────────────────
+    async function sendReply() {
+      if (!currentIssue) return;
+      const text = document.getElementById('reply-text').value.trim();
+      const errEl = document.getElementById('reply-error');
+      errEl.classList.add('hidden');
+
+      if (!text) {
+        errEl.textContent = 'Sila tulis jawapan terlebih dahulu.';
+        errEl.classList.remove('hidden');
+        return;
+      }
+
+      const btn = document.getElementById('btn-send');
+      btn.disabled = true; btn.textContent = 'Menghantar...';
+
+      try {
+        const { data: saved, error } = await window.db.from('psy_audit_log').insert({
+          actor_id: window.currentUser.id,
+          actor_name: window.currentUser.full_name,
+          actor_role: window.currentUser.role,
+          action: 'issue.responded',
+          target: currentIssue.actor_id,
+          meta: { issue_id: currentIssue.id, issue_type: currentIssue.meta?.type, response: text, patient_name: currentIssue.actor_name, status: 'sent' },
+        }).select().single();
+        if (error) throw error;
+
+        // Pre-populate responseMap so realtime dedup skips it
+        if (!responseMap[currentIssue.id]) responseMap[currentIssue.id] = [];
+        if (!responseMap[currentIssue.id].find(r => r.id === saved.id)) {
+          responseMap[currentIssue.id].push(saved);
+        }
+
+        if (currentIssue.actor_id)
+          await notify(currentIssue.actor_id, 'system', 'Isu Anda Telah Dijawab ✅', text, 'issue.html');
+
+        document.getElementById('reply-text').value = '';
+
+        // Re-render chat from local state (no network round-trip needed)
+        const msgs = (responseMap[currentIssue.id] || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        renderChat(currentIssue, msgs);
+        smartScroll();
+        renderList();
+      } catch (err) {
+        errEl.textContent = 'Ralat: ' + (err.message || JSON.stringify(err));
+        errEl.classList.remove('hidden');
+      } finally {
+        btn.disabled = false; btn.textContent = 'Hantar ↩';
+      }
+    }
+
+    // ── Close issue ───────────────────────────────────────
+    async function closeIssue() {
+      if (!currentIssue) return;
+      const btn = document.getElementById('btn-close-issue');
+      btn.disabled = true; btn.textContent = 'Menutup...';
+
+      try {
+        const { data: saved, error } = await window.db.from('psy_audit_log').insert({
+          actor_id:   window.currentUser.id,
+          actor_name: window.currentUser.full_name,
+          actor_role: window.currentUser.role,
+          action:     'issue.closed',
+          target:     currentIssue.actor_id,
+          meta: { issue_id: currentIssue.id, patient_name: currentIssue.actor_name },
+        }).select().single();
+        if (error) throw error;
+
+        if (!responseMap[currentIssue.id]) responseMap[currentIssue.id] = [];
+        if (!responseMap[currentIssue.id].find(r => r.id === saved.id))
+          responseMap[currentIssue.id].push(saved);
+
+        if (currentIssue.actor_id)
+          await notify(currentIssue.actor_id, 'system', 'Isu Anda Telah Ditutup ✅', 'Isu anda telah diselesaikan oleh staff.', 'issue.html');
+
+        document.getElementById('reply-area').style.display    = 'none';
+        document.getElementById('btn-close-issue').style.display = 'none';
+        document.getElementById('chat-status').innerHTML =
+          '<span class="chip bg-green-light text-green-dark text-[10px]">✅ Selesai</span>';
+
+        // Add a system divider in chat
+        const el = document.getElementById('chat-area');
+        el.insertAdjacentHTML('beforeend', `
+          <div class="flex items-center gap-3 my-2">
+            <div class="flex-1 border-t border-ink/10"></div>
+            <span class="text-[10px] text-ink/40 whitespace-nowrap">Isu ditutup oleh ${window.currentUser.full_name}</span>
+            <div class="flex-1 border-t border-ink/10"></div>
+          </div>`);
+        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+
+        renderList();
+      } catch (err) {
+        console.error('closeIssue error:', err);
+        btn.disabled = false; btn.textContent = '✓ Tutup Isu';
+      }
+    }
+
+    // ── Replacement ───────────────────────────────────────
+    async function openReplacement() {
+      if (!currentIssue) return;
+      if (!productsList.length) {
+        const { data } = await window.db.from('psy_products').select('*').eq('is_active', true).order('sort_order');
+        productsList = data || [];
+        const sel = document.getElementById('rep-product');
+        productsList.forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = `${p.icon} ${p.name} — RM${p.price}`;
+          opt.dataset.price = p.price; opt.dataset.name = p.name; opt.dataset.icon = p.icon;
+          sel.appendChild(opt);
+        });
+      }
+      document.getElementById('rep-patient-name').textContent = currentIssue.actor_name || '—';
+      document.getElementById('rep-product').value = '';
+      document.getElementById('rep-qty').value = '1';
+      document.getElementById('rep-delivery').value = 'pos';
+      document.getElementById('rep-address').value = '';
+      document.getElementById('rep-note').value = '';
+      document.getElementById('rep-address-wrap').classList.remove('hidden');
+      document.getElementById('rep-error').classList.add('hidden');
+      document.getElementById('replacement-modal').classList.remove('hidden');
+    }
+
+    function closeReplacement() { document.getElementById('replacement-modal').classList.add('hidden'); }
+
+    async function confirmReplacement() {
+      const sel = document.getElementById('rep-product');
+      const qty = Math.max(1, parseInt(document.getElementById('rep-qty').value) || 1);
+      const delivery = document.getElementById('rep-delivery').value;
+      const address = document.getElementById('rep-address').value.trim();
+      const note = document.getElementById('rep-note').value.trim();
+      const errEl = document.getElementById('rep-error');
+      errEl.classList.add('hidden');
+
+      if (!sel.value) { errEl.textContent = 'Sila pilih produk penggantian.'; errEl.classList.remove('hidden'); return; }
+      if (delivery === 'pos' && !address) { errEl.textContent = 'Sila isi alamat penghantaran.'; errEl.classList.remove('hidden'); return; }
+
+      const opt = sel.options[sel.selectedIndex];
+      const price = parseFloat(opt.dataset.price) || 0;
+      const name = opt.dataset.name;
+      const icon = opt.dataset.icon;
+      const total = price * qty;
+      const btn = document.getElementById('btn-rep-confirm');
+      btn.disabled = true; btn.textContent = 'Memproses...';
+
+      try {
+        const orderRef = `REP-${Date.now()}`;
+        const { error: orderErr } = await window.db.from('psy_orders').insert({
+          order_ref: orderRef,
+          patient_id: currentIssue.actor_id,
+          items: [{ product_id: sel.value, name, icon, qty, price }],
+          total,
+          status: 'packed',
+          delivery_method: delivery,
+          delivery_address: delivery === 'pos' ? address : 'Pickup Klinik',
+          notes: `Penggantian — Isu #${currentIssue.id.slice(0, 8)}${note ? ' · ' + note : ''}`,
+        });
+        if (orderErr) throw orderErr;
+
+        await window.db.from('psy_audit_log').insert({
+          actor_id: window.currentUser.id,
+          actor_name: window.currentUser.full_name,
+          actor_role: window.currentUser.role,
+          action: 'order.replacement',
+          target: currentIssue.actor_id,
+          meta: { issue_id: currentIssue.id, order_ref: orderRef, product: name, qty },
+        });
+
+        if (currentIssue.actor_id)
+          await notify(currentIssue.actor_id, 'order', '📦 Penggantian Sedang Diproses',
+            `${icon} ${name} (x${qty}) akan dihantar kepada anda. Ref: ${orderRef}`, 'orders.html');
+
+        banner('Penggantian berjaya dibuat ✅');
+        closeReplacement();
+      } catch (err) {
+        errEl.textContent = 'Ralat: ' + (err.message || JSON.stringify(err));
+        errEl.classList.remove('hidden');
+      } finally {
+        btn.disabled = false; btn.textContent = '✅ Sahkan Penggantian';
+      }
+    }
+
+    // ── Realtime subscription ─────────────────────────────
+    function subscribeRealtime() {
+      window.db
+        .channel('issue-chat-live')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'psy_audit_log' }, payload => {
+          const row = payload.new;
+          if (!row) return;
+
+          if (row.action === 'issue.reported') {
+            if (allIssues.find(i => i.id === row.id)) return;
+            allIssues.unshift(row);
+            renderList();
+
+          } else if (row.action === 'issue.responded' || row.action === 'issue.followup') {
+            const iid = row.meta?.issue_id;
+            if (!iid) return;
+            if (!responseMap[iid]) responseMap[iid] = [];
+            if (responseMap[iid].find(r => r.id === row.id)) return;
+
+            // Patient followup → mark staff messages as read
+            if (row.action === 'issue.followup') {
+              (responseMap[iid] || []).forEach(m => {
+                if (m.action === 'issue.responded') m.meta = { ...m.meta, status: 'read' };
+              });
+            }
+
+            responseMap[iid].push(row);
+            renderList();
+
+            if (currentIssue?.id === iid) {
+              const t    = new Date(row.created_at).toLocaleString('ms-MY', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+              const side = row.action === 'issue.followup' ? 'patient' : 'staff';
+              const name = row.actor_name || (side === 'patient' ? 'Pesakit' : 'Staff');
+              const text = row.action === 'issue.followup' ? (row.meta?.message || '—') : (row.meta?.response || '—');
+              const stat = side === 'staff' ? (row.meta?.status || 'sent') : null;
+
+              if (row.action === 'issue.followup') {
+                const msgs = (responseMap[iid] || []).sort((a,b) => new Date(a.created_at) - new Date(b.created_at));
+                renderChat(currentIssue, msgs);
+              } else {
+                const el = document.getElementById('chat-area');
+                el.insertAdjacentHTML('beforeend', msgBubble(side, name, text, t, null, stat));
+                smartScroll();
+              }
+            }
+
+          } else if (row.action === 'issue.closed') {
+            const iid = row.meta?.issue_id;
+            if (!iid) return;
+            if (!responseMap[iid]) responseMap[iid] = [];
+            if (responseMap[iid].find(r => r.id === row.id)) return;
+            responseMap[iid].push(row);
+            renderList();
+
+            if (currentIssue?.id === iid) {
+              document.getElementById('reply-area').style.display      = 'none';
+              document.getElementById('btn-close-issue').style.display = 'none';
+              document.getElementById('chat-status').innerHTML =
+                '<span class="chip bg-green-light text-green-dark text-[10px]">✅ Selesai</span>';
+              const el = document.getElementById('chat-area');
+              el.insertAdjacentHTML('beforeend', `
+                <div class="flex items-center gap-3 my-2">
+                  <div class="flex-1 border-t border-ink/10"></div>
+                  <span class="text-[10px] text-ink/40 whitespace-nowrap">Isu ditutup oleh ${row.actor_name}</span>
+                  <div class="flex-1 border-t border-ink/10"></div>
+                </div>`);
+              el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+            }
+          }
+        })
+        .subscribe(status => {
+          const dot = document.getElementById('live-dot');
+          if (dot) dot.style.display = status === 'SUBSCRIBED' ? '' : 'none';
+        });
+    }
+
+    // ── Init ──────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('btn-send').addEventListener('click', sendReply);
+      document.getElementById('reply-text').addEventListener('keydown', e => {
+        if (e.ctrlKey && e.key === 'Enter') sendReply();
+      });
+      document.getElementById('btn-close-issue').addEventListener('click', closeIssue);
+      document.getElementById('btn-replacement').addEventListener('click', openReplacement);
+      document.getElementById('btn-close-rep').addEventListener('click', closeReplacement);
+      document.getElementById('btn-rep-cancel').addEventListener('click', closeReplacement);
+      document.getElementById('btn-rep-confirm').addEventListener('click', confirmReplacement);
+      document.getElementById('rep-delivery').addEventListener('change', function () {
+        document.getElementById('rep-address-wrap').classList.toggle('hidden', this.value === 'pickup');
+      });
+    });
+
+    (async () => {
+      const user = await initStaff('issue', 'Isu & Aduan Pesakit');
+      if (!user) return;
+      await loadIssues();
+      subscribeRealtime();
+
+      // If opened from issue-detail link with ?id=..., auto-select it
+      const preselect = new URLSearchParams(location.search).get('id');
+      if (preselect) selectIssue(preselect);
+    })();
+  </script>
 </body>
+
 </html>

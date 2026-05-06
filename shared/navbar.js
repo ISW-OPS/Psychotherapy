@@ -20,7 +20,6 @@ const NAV_ITEMS_BY_ROLE = {
 
   // Staff: Admin — system management focus
   staff_admin: [
-    { id: 'dashboard',    url: 'dashboard.html',        icon: '🏥', label: 'Dashboard' },
     { id: 'psy_patients', url: 'patients.html',         icon: '👥', label: 'Patients' },
     { id: 'kyc_forms',    url: 'kyc-list.html',         icon: '🆔', label: 'KYC Form' },
     { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
@@ -202,7 +201,21 @@ function renderNavbar(role, user, navItems, activeScreen) {
           </button>
         `).join('')}
       </nav>
+      <div class="hidden md:flex flex-shrink-0 border-t border-ink/8 p-2">
+        <button onclick="toggleSidebar()" title="Kecilkan/Besarkan"
+          class="sidebar-collapse-btn w-full flex items-center justify-center gap-2 py-2 rounded-lg text-ink/40 hover:bg-ink/5 hover:text-ink/70 transition-all text-sm">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+          <span class="nav-label text-xs font-medium">Kecilkan</span>
+        </button>
+      </div>
     `;
+  // Restore collapsed state
+  if (localStorage.getItem('isw_sidebar_collapsed') === '1') {
+    sidebar.classList.add('collapsed');
+  }
+
   } else {
     // ── DARK sidebar for patient (original) ──
     sidebar.innerHTML = `
@@ -394,6 +407,13 @@ function closeMobileSidebar() {
   if (!sidebar || !overlay) return;
   sidebar.classList.remove('mob-open');
   overlay.classList.remove('visible');
+}
+
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar) return;
+  const collapsed = sidebar.classList.toggle('collapsed');
+  localStorage.setItem('isw_sidebar_collapsed', collapsed ? '1' : '0');
 }
 
 function goTo(screen) {

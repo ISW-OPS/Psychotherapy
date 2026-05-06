@@ -125,9 +125,9 @@ function bubble(side, name, text, time, photoUrl) {
 
   return `<div class="flex ${isMe ? 'justify-end' : 'justify-start'} gap-2 items-end">
     ${!isMe ? avatar : ''}
-    <div class="max-w-[70%]">
-      <div class="text-[10px] text-ink/40 mb-1 ${isMe ? 'text-right' : ''}">${name} · ${time}</div>
-      <div class="rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap shadow-sm ${bubbleCls}">
+    <div class="max-w-[55%] flex flex-col ${isMe ? 'items-end' : 'items-start'}">
+      <div class="text-[10px] text-ink/40 mb-1 whitespace-nowrap">${name} · ${time}</div>
+      <div class="rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap shadow-sm w-fit max-w-full ${bubbleCls}">
         ${text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}${photo}
       </div>
     </div>
@@ -168,7 +168,7 @@ async function sendReply() {
   btn.disabled = true; btn.textContent = 'Menghantar...';
 
   try {
-    const { error } = await window.db.from('psy_audit_log').insert({
+    const { data: saved, error } = await window.db.from('psy_audit_log').insert({
       actor_id:   window.currentUser.id,
       actor_name: window.currentUser.full_name,
       actor_role: 'patient',
@@ -178,12 +178,21 @@ async function sendReply() {
         issue_id: currentIssue.id,
         message:  text,
       },
-    });
+    }).select().single();
 
     if (error) throw error;
 
+    // Track locally for realtime dedup
+    if (!window._sentIds) window._sentIds = new Set();
+    window._sentIds.add(saved.id);
+
     document.getElementById('reply-text').value = '';
-    loadThread();
+
+    // Optimistic append
+    const t  = new Date(saved.created_at).toLocaleString('ms-MY', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+    const el = document.getElementById('chat-area');
+    el.insertAdjacentHTML('beforeend', bubble('patient', window.currentUser.full_name || 'Saya', text, t, null));
+    el.scrollTop = el.scrollHeight;
   } catch (err) {
     errEl.textContent = 'Ralat: ' + (err.message || JSON.stringify(err));
     errEl.classList.remove('hidden');
@@ -191,6 +200,36 @@ async function sendReply() {
   } finally {
     btn.disabled = false; btn.textContent = 'Hantar ↩';
   }
+}
+
+function subscribeRealtime() {
+  window.db
+    .channel('issue-thread-live')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'psy_audit_log' }, payload => {
+      const row = payload.new;
+      if (!row) return;
+      if (row.meta?.issue_id !== issueId) return;
+
+      // Skip rows we already optimistically appended
+      if (window._sentIds?.has(row.id)) return;
+
+      if (row.action === 'issue.responded' || row.action === 'issue.followup') {
+        const t    = new Date(row.created_at).toLocaleString('ms-MY', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+        const isFollowup = row.action === 'issue.followup';
+        const name = isFollowup ? (row.actor_name || 'Pesakit') : (row.actor_name || 'Staff');
+        const text = isFollowup ? (row.meta?.message || '') : (row.meta?.response || '');
+        const side = isFollowup ? 'patient' : 'staff';
+        const el   = document.getElementById('chat-area');
+        el.insertAdjacentHTML('beforeend', bubble(side, name, text, t, null));
+        el.scrollTop = el.scrollHeight;
+
+        if (row.action === 'issue.responded') {
+          document.getElementById('hdr-status').innerHTML =
+            '<span class="chip bg-green-light text-green-dark text-[10px]">✅ Dijawab</span>';
+        }
+      }
+    })
+    .subscribe();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -203,7 +242,8 @@ document.addEventListener('DOMContentLoaded', () => {
 (async () => {
   const user = await initPatient('issue', 'Thread Isu');
   if (!user) return;
-  loadThread();
+  await loadThread();
+  subscribeRealtime();
 })();
 </script>
 </body>

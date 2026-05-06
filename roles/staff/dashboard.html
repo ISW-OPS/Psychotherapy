@@ -111,12 +111,6 @@
         <!-- KPI row -->
         <div id="kpi-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3"></div>
 
-        <!-- Quick actions -->
-        <div class="bg-white rounded-2xl border border-ink/5 shadow-sm p-5">
-          <h3 class="font-bold text-ink text-xs uppercase tracking-wider mb-4">Tindakan Pantas</h3>
-          <div class="flex overflow-x-auto pb-2 gap-4 snap-x" style="scrollbar-width: none;" id="quick-actions"></div>
-        </div>
-
         <!-- Main grid -->
         <div class="grid lg:grid-cols-3 gap-5">
           <div class="lg:col-span-2 space-y-5">
@@ -126,6 +120,13 @@
                 <a href="appointments.html" class="text-xs font-semibold text-ink/50 hover:text-ink transition-colors">Urus Jadual →</a>
               </div>
               <div id="schedule-list" class="space-y-2"></div>
+            </div>
+            <div class="bg-white rounded-2xl border border-ink/5 shadow-sm p-5">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="font-bold text-sm">Orders Tertunggak</h3>
+                <a href="orders.html" class="text-[10px] uppercase font-bold text-ink/40 hover:underline tracking-wider">Semua →</a>
+              </div>
+              <div id="orders-summary" class="space-y-2"></div>
             </div>
           </div>
           <div class="space-y-5">
@@ -145,16 +146,13 @@
             </div>
             <div class="bg-white rounded-2xl border border-ink/5 shadow-sm p-5">
               <div class="flex items-center justify-between mb-3">
-                <h3 class="font-bold text-sm">Orders Tertunggak</h3>
-                <a href="orders.html" class="text-[10px] uppercase font-bold text-ink/40 hover:underline tracking-wider">Semua →</a>
+                <h3 class="font-bold text-sm">⚠️ Isu Terbuka</h3>
+                <a href="issue.html" class="text-[10px] uppercase font-bold text-ink/40 hover:underline tracking-wider">Semua →</a>
               </div>
-              <div id="orders-summary" class="space-y-2"></div>
+              <div id="issues-summary" class="space-y-2"></div>
             </div>
           </div>
         </div>
-
-        <!-- My Work Stats -->
-        <div id="my-stats-section"></div>
 
       </div>
     </main>
@@ -348,7 +346,7 @@ async function markReschedule(sessionId) {
 async function renderDefaultDashboard(user, today, monthStart) {
   document.getElementById('default-view').classList.remove('hidden');
 
-  const [weeklyAll, risks, kyc, patients, orders, plans, profiles] = await Promise.all([
+  const [weeklyAll, risks, kyc, patients, orders, plans, profiles, issueRows, closedRows] = await Promise.all([
     dbQuery('psy_plan_weekly_progress', { order:{ col:'session_date', asc:true } }).catch(()=>[]),
     dbQuery('psy_risk_alerts', { eq:{ status:'open' } }).catch(()=>[]),
     window.db.from('psy_kyc_submissions').select('*').in('status',['pending','rejected']).order('created_at',{ascending:false}).then(r=>r.data||[]),
@@ -356,11 +354,15 @@ async function renderDefaultDashboard(user, today, monthStart) {
     window.db.from('psy_orders').select('*').not('status','in','("delivered","cancelled")').order('created_at',{ascending:false}).limit(5).then(r=>r.data||[]),
     dbQuery('psy_treatment_plans').catch(()=>[]),
     dbQuery('psy_profiles', { eq:{ role:'patient' } }).catch(()=>[]),
+    window.db.from('psy_audit_log').select('id,actor_name,meta,created_at').eq('action','issue.reported').order('created_at',{ascending:false}).then(r=>r.data||[]),
+    window.db.from('psy_audit_log').select('meta').eq('action','issue.closed').then(r=>r.data||[]),
   ]);
 
   const todaySessions = weeklyAll.filter(w => w.session_date?.startsWith(today));
   const hadirCount    = todaySessions.filter(w => w.status==='hadir').length;
   const pendingKyc    = kyc.filter(k => k.status==='pending');
+  const closedIds     = new Set(closedRows.map(r => r.meta?.issue_id).filter(Boolean));
+  const openIssues    = issueRows.filter(r => !closedIds.has(r.id));
 
   const patientMap = Object.fromEntries(patients.map(p=>[p.id,p]));
   const profileMap = Object.fromEntries((profiles||[]).map(p=>[p.id,p]));
@@ -385,6 +387,7 @@ async function renderDefaultDashboard(user, today, monthStart) {
     kpiCard('KYC Pending', pendingKyc.length, pendingKyc.length?'Perlu review':'Clear', 'gold', 'kyc-list.html'),
     kpiCard('Risk Alerts', risks.length, risks.length?'Buka queue':'Tiada', 'terracotta', 'risk.html'),
     isAdmin ? kpiCard('Orders Tertunggak', (orders||[]).length, 'Perlu diproses', 'teal', 'orders.html') : '',
+    isAdmin ? kpiCard('Isu Terbuka', openIssues.length, openIssues.length?'Belum diselesai':'Semua selesai', 'terracotta', 'issue.html') : '',
   ].join('');
 
   // Schedule
@@ -396,26 +399,20 @@ async function renderDefaultDashboard(user, today, monthStart) {
       }).join('')
     : '<div class="text-ink/40 text-sm py-8 text-center rounded-xl border border-dashed border-ink/15">Tiada sesi hari ini</div>';
 
-  // Quick actions
-  const actions = [
-    { icon:'👥', label:'Pesakit', href:'patients.html', show:true },
-    { icon:'📅', label:'Jadual', href:'appointments.html', show:true },
-    { icon:'🆔', label:'KYC', href:'kyc-list.html', show:['admin','doctor','manager'].includes(user.staff_role) },
-    { icon:'📊', label:'Vitals', href:'vitals.html', show:user.staff_role==='doctor' },
-    { icon:'📋', label:'Plans', href:'plans.html', show:['doctor','manager'].includes(user.staff_role) },
-    { icon:'🩺', label:'Konsultasi', href:'consultation.html', show:user.staff_role==='doctor' },
-    { icon:'🚨', label:'Risk', href:'risk.html', show:user.staff_role==='doctor' },
-    { icon:'📦', label:'Orders', href:'orders.html', show:isAdmin },
-    { icon:'🏭', label:'Inventori', href:'inventory.html', show:isAdmin },
-    { icon:'👨‍⚕️', label:'Staff', href:'staff_management.html', show:user.staff_role==='admin' },
-  ].filter(a=>a.show);
-
-  document.getElementById('quick-actions').innerHTML = actions.map(a=>
-    `<a href="${a.href}" class="snap-start flex-shrink-0 w-[90px] flex flex-col items-center gap-2 p-3 bg-ink/3 border border-transparent rounded-xl hover:bg-white hover:border-ink/10 hover:shadow-sm transition-all text-center group">
-      <div class="w-10 h-10 rounded-xl bg-white shadow-sm flex items-center justify-center text-xl group-hover:scale-110 transition-transform">${a.icon}</div>
-      <span class="text-[10px] font-semibold text-ink/60 leading-tight">${a.label}</span>
-    </a>`
-  ).join('');
+  // Issues summary
+  const TYPE_LABEL = { produk_rosak:'📦 Produk rosak', salah_produk:'🔄 Salah produk', kurang_jumlah:'⚖️ Kurang jumlah', tidak_sampai:'🚚 Tidak sampai', appointment:'📅 Appointment', lain_lain:'💬 Lain-lain' };
+  document.getElementById('issues-summary').innerHTML = openIssues.length
+    ? openIssues.slice(0,4).map(i => `
+        <a href="issue.html?id=${i.id}" class="flex items-center gap-2 p-2 border border-terracotta/15 rounded-lg hover:bg-terracotta/5 transition-colors">
+          <div class="w-7 h-7 rounded-full bg-terracotta/15 flex items-center justify-center text-xs font-bold text-terracotta flex-shrink-0">${(i.actor_name||'?')[0].toUpperCase()}</div>
+          <div class="flex-1 min-w-0">
+            <div class="text-xs font-semibold truncate">${i.actor_name||'—'}</div>
+            <div class="text-[10px] text-ink/40">${TYPE_LABEL[i.meta?.type]||'Isu'} · ${timeAgo(i.created_at)}</div>
+          </div>
+          <span class="chip bg-terracotta/15 text-terracotta text-[9px] whitespace-nowrap">Terbuka</span>
+        </a>`).join('')
+      + (openIssues.length>4?`<a href="issue.html" class="text-xs text-terracotta text-center block py-1 hover:underline">+ ${openIssues.length-4} lagi →</a>`:'')
+    : '<p class="text-ink/40 text-xs py-2">Tiada isu terbuka</p>';
 
   // KYC summary
   document.getElementById('kyc-summary').innerHTML = pendingKyc.length
@@ -454,6 +451,8 @@ async function renderDefaultDashboard(user, today, monthStart) {
 
   if (user.staff_role === 'coach') {
     await renderCoachDashboard(user, today, monthStart);
+  } else if (user.staff_role === 'admin') {
+    window.location.replace('patients.html');
   } else {
     await renderDefaultDashboard(user, today, monthStart);
   }

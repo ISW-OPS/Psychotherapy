@@ -185,7 +185,8 @@
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="label">Tarikh Sesi</label>
-          <input id="bk-date" type="date" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+          <input id="bk-date" type="date" onchange="checkBookDate(this)" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+          <p id="bk-date-warn" class="hidden text-[11px] text-terracotta mt-1">🚫 Klinik tutup (Isnin/Selasa)</p>
         </div>
         <div>
           <label class="label">Masa</label>
@@ -571,17 +572,31 @@ function autoFillPlan() {
   }
 }
 
+function checkBookDate(input) {
+  const day = new Date(input.value).getDay();
+  const closed = day === 1 || day === 2;
+  input.style.borderColor = closed ? '#d9534f' : '';
+  document.getElementById('bk-date-warn').classList.toggle('hidden', !closed);
+  document.getElementById('btn-save-session').disabled = closed;
+}
+
 function openBookModal(prefillDate) {
   document.getElementById('bk-patient').value = '';
   document.getElementById('bk-plan-id').value = '';
   document.getElementById('bk-plan-display').textContent = 'Pilih pesakit dahulu';
   document.getElementById('bk-plan-display').className = 'w-full border border-ink/10 bg-cream/40 rounded-xl px-3 py-2.5 text-sm text-ink/50 italic';
-  document.getElementById('bk-date').value  = prefillDate || new Date().toISOString().split('T')[0];
+  const defaultDate = prefillDate || new Date().toISOString().split('T')[0];
+  document.getElementById('bk-date').value  = defaultDate;
   document.getElementById('bk-time').value  = '10:00';
   document.getElementById('bk-week').value  = '';
   document.getElementById('bk-notes').value = '';
   document.getElementById('book-error').classList.add('hidden');
+  document.getElementById('bk-date-warn').classList.add('hidden');
+  document.getElementById('bk-date').style.borderColor = '';
+  document.getElementById('btn-save-session').disabled = false;
   document.getElementById('book-modal').classList.remove('hidden');
+  // Check if default date itself falls on a closed day
+  checkBookDate(document.getElementById('bk-date'));
 }
 function closeBookModal() { document.getElementById('book-modal').classList.add('hidden'); }
 
@@ -600,23 +615,31 @@ async function saveSession() {
   if (!date)      { errEl.textContent = 'Sila pilih tarikh sesi.'; errEl.classList.remove('hidden'); return; }
   if (!week || week < 1) { errEl.textContent = 'Sila masukkan nombor minggu yang sah.'; errEl.classList.remove('hidden'); return; }
 
+  const dayOfWeek = new Date(date).getDay(); // 0=Ahad, 1=Isnin, 2=Selasa
+  if (dayOfWeek === 1 || dayOfWeek === 2) {
+    errEl.textContent = '🚫 Klinik tutup pada hari Isnin dan Selasa. Sila pilih hari lain.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
   const btn = document.getElementById('btn-save-session');
   btn.disabled = true; btn.textContent = 'Menyimpan...';
   try {
     const meetLink = generateMeetLink();
-    await window.db.from('psy_plan_weekly_progress').insert({
+    const { error: insertErr } = await window.db.from('psy_plan_weekly_progress').insert({
       patient_id: patientId, plan_id: planId,
       session_date: new Date(`${date}T${time || '10:00'}:00`).toISOString(),
       week_number: week, status: 'booked',
-      notes: notes || null, created_by: currentUser.id,
+      notes: notes || null,
       meet_link: meetLink,
     });
+    if (insertErr) throw insertErr;
     await auditLog('plan.session_booked', planId, { patientId, week, date });
     banner('Sesi berjaya dibuat ✅');
     closeBookModal();
-    loadSessions();
+    await loadSessions();
   } catch (err) {
-    errEl.textContent = 'Ralat: ' + err.message;
+    errEl.textContent = 'Ralat: ' + (err.message || err.details || JSON.stringify(err));
     errEl.classList.remove('hidden');
   } finally { btn.disabled = false; btn.textContent = 'Simpan Sesi'; }
 }
