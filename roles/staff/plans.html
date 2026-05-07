@@ -156,7 +156,7 @@ async function savePlan() {
   if (!patient_id || !name) { banner('Sila isi semua field', 'error'); return; }
 
   await dbInsert('psy_treatment_plans', {
-    patient_id, doctor_id: currentUser.id,
+    patient_id, doctor_id: window.currentUser.id,
     name, duration_weeks: parseInt(document.getElementById('m-weeks').value) || 12,
     current_week: 1,
     bio_goals: document.getElementById('m-bio').value.split('\n').filter(Boolean),
@@ -324,8 +324,8 @@ async function markWeek(planId, patientId, week, status) {
     if (existing.length > 0) {
       await dbUpdate('psy_plan_weekly_progress', existing[0].id, {
         status,
-        updated_by: currentUser.id,
-        updated_by_name: currentUser.full_name,
+        updated_by: window.currentUser.id,
+        updated_by_name: window.currentUser.full_name,
         updated_at: new Date().toISOString(),
       });
     } else {
@@ -334,8 +334,8 @@ async function markWeek(planId, patientId, week, status) {
         patient_id: patientId,
         week_number: week,
         status,
-        updated_by: currentUser.id,
-        updated_by_name: currentUser.full_name,
+        updated_by: window.currentUser.id,
+        updated_by_name: window.currentUser.full_name,
         session_date: new Date().toISOString(),
       });
       if (error) throw error;
@@ -350,7 +350,7 @@ async function markWeek(planId, patientId, week, status) {
     await auditLog('plan.week_updated', planId, { week, status, patient: patientId });
     const patUid = patientUserIdMap[patientId];
     if (patUid && status === 'hadir')
-      await notify(patUid, 'plan', `Kehadiran Minggu ${week} direkod ✅`, `Coach ${currentUser.full_name} telah mengesahkan kehadiran anda.`, 'plan.html');
+      await notify(patUid, 'plan', `Kehadiran Minggu ${week} direkod ✅`, `Coach ${window.currentUser.full_name} telah mengesahkan kehadiran anda.`, 'plan.html');
     if (patUid && status === 'reschedule')
       await notify(patUid, 'plan', `Minggu ${week} perlu dijadual semula`, `Sila tempah sesi baharu untuk Minggu ${week}.`, 'plan.html');
     if (patUid && status === 'cancel')
@@ -440,7 +440,7 @@ async function updateScore(planId, patientId, week, score) {
     await dbUpdate('psy_plan_weekly_progress', existing[0].id, { score: parsed });
     if (parsed) {
       const uid = patientUserIdMap[patientId];
-      if (uid) await notify(uid, 'plan', `Skor Minggu ${week}: ${parsed}/10`, `Coach ${currentUser.full_name} telah merekod skor anda.`, 'plan.html');
+      if (uid) await notify(uid, 'plan', `Skor Minggu ${week}: ${parsed}/10`, `Coach ${window.currentUser.full_name} telah merekod skor anda.`, 'plan.html');
     }
   }
 }
@@ -455,6 +455,10 @@ async function updateNotes(planId, patientId, week, notes) {
 (async () => {
   const user = await initStaff('plans', 'BPS-S · Attendance & Progress Tracker');
   if (!user) return;
+  if (user.staff_role === 'coach' || user.staff_role === 'manager') {
+    const btn = document.querySelector('button[onclick="openModal()"]');
+    if (btn) btn.classList.add('hidden');
+  }
   const res = await window.db.from('psy_patients').select('*, psy_profiles!psy_patients_user_id_fkey(full_name)').eq('status', 'active');
   const patients = res.data || [];
   patients.forEach(p => { 

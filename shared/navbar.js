@@ -14,12 +14,14 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'payment', url: 'payment.html', icon: '💳', label: 'Payment' },
     { id: 'psy_orders', url: 'orders.html', icon: '📦', label: 'Orders & Tracking' },
     { id: 'issue', url: 'issue.html', icon: '⚠️', label: 'Report Issue' },
+    { id: 'feedback', url: 'feedback.html', icon: '⭐', label: 'Maklum Balas' },
     { id: 'kyc', url: 'kyc.html', icon: '🆔', label: 'KYC Form' },
     { id: 'profile', url: 'profile.html', icon: '👤', label: 'Profile' },
   ],
 
   // Staff: Admin — system management focus
   staff_admin: [
+    { id: 'dashboard',    url: 'dashboard.html',         icon: '🏠', label: 'Dashboard' },
     { id: 'psy_patients', url: 'patients.html',         icon: '👥', label: 'Patients' },
     { id: 'kyc_forms',    url: 'kyc-list.html',         icon: '🆔', label: 'KYC Form' },
     { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
@@ -30,6 +32,8 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'staff_mgmt',     url: 'staff_management.html', icon: '👨‍⚕️', label: 'Manage Staff' },
     { id: 'announcements', url: 'announcements.html',   icon: '📢', label: 'Pengumuman' },
     { id: 'inventory',     url: 'inventory.html',       icon: '🏭', label: 'Inventori' },
+    { id: 'audit',         url: 'audit.html',           icon: '🔒', label: 'Audit Log' },
+    { id: 'feedback',      url: 'feedback.html',        icon: '⭐', label: 'Maklum Balas' },
     { id: 'issue',         url: 'issue.html',           icon: '⚠️', label: 'Report Issue' },
     { id: 'profile',       url: 'profile.html',         icon: '👤', label: 'Profile' },
   ],
@@ -41,6 +45,7 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'psy_appointments',url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
     { id: 'coaching',        url: 'coaching.html',     icon: '🎯', label: 'Sesi Coaching' },
     { id: 'plan_week',       url: 'plan-week.html',    icon: '📋', label: 'Weekly Plan' },
+    { id: 'feedback',        url: 'feedback.html',     icon: '⭐', label: 'Maklum Balas' },
     { id: 'issue',           url: 'issue.html',        icon: '⚠️', label: 'Report Issue' },
     { id: 'profile',         url: 'profile.html',      icon: '👤', label: 'Profile' },
   ],
@@ -55,6 +60,8 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'consultation',    url: 'consultation.html', icon: '🩺', label: 'Consultation' },
     { id: 'psy_vitals',      url: 'vitals.html',       icon: '📊', label: 'Vitals Capture' },
     { id: 'risk',            url: 'risk.html',         icon: '🚨', label: 'Risk Management' },
+    { id: 'library',         url: 'library.html',      icon: '📚', label: 'Self-Help Library' },
+    { id: 'feedback',        url: 'feedback.html',     icon: '⭐', label: 'Maklum Balas' },
     { id: 'issue',           url: 'issue.html',        icon: '⚠️', label: 'Report Issue' },
     { id: 'profile',         url: 'profile.html',      icon: '👤', label: 'Profile' },
   ],
@@ -62,15 +69,14 @@ const NAV_ITEMS_BY_ROLE = {
   // Staff: Manager — oversight & reports only
   staff_manager: [
     { id: 'dashboard',    url: 'dashboard.html',        icon: '🏥', label: 'Dashboard' },
-    { id: 'assignments',  url: 'assignments.html',       icon: '🤝', label: 'Penugasan Pesakit' },
     { id: 'psy_patients', url: 'patients.html',         icon: '👥', label: 'Patients' },
-    { id: 'kyc_forms',    url: 'kyc-list.html',         icon: '🆔', label: 'KYC Form' },
     { id: 'plans',        url: 'plans.html',            icon: '📋', label: 'Treatment Plans' },
     { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
     { id: 'psy_orders',    url: 'orders.html',            icon: '📦', label: 'Orders & Tracking' },
     { id: 'announcements', url: 'announcements.html',   icon: '📢', label: 'Pengumuman' },
-    { id: 'staff_stats',   url: 'staff-stats.html',     icon: '📈', label: 'Statistik Staff' },
+    { id: 'staff_stats',   url: 'staff-stats.html',     icon: '📈', label: 'Statistik & Analitik' },
     { id: 'inventory',     url: 'inventory.html',       icon: '🏭', label: 'Inventori' },
+    { id: 'feedback',      url: 'feedback.html',        icon: '⭐', label: 'Maklum Balas' },
     { id: 'issue',         url: 'issue.html',           icon: '⚠️', label: 'Report Issue' },
     { id: 'profile',       url: 'profile.html',         icon: '👤', label: 'Profile' },
   ],
@@ -273,7 +279,7 @@ async function loadNavBadges(role, _staffRole, userId) {
   if (!window.db || !userId) return;
   try {
     if (role === 'staff') {
-      const [ordersRes, kycRes, issuesRes, closedRes] = await Promise.all([
+      const [ordersRes, kycRes, issuesRes, closedRes, invRes] = await Promise.all([
         // Orders perlu dihantar (paid / packed)
         window.db.from('psy_orders')
           .select('id', { count: 'exact', head: true })
@@ -290,10 +296,15 @@ async function loadNavBadges(role, _staffRole, userId) {
         window.db.from('psy_audit_log')
           .select('meta')
           .eq('action', 'issue.closed'),
+        // Inventory requests pending approval
+        window.db.from('psy_inventory_requests')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'pending_approval'),
       ]);
 
       setNavBadge('psy_orders', ordersRes.count || 0);
       setNavBadge('kyc_forms', kycRes.count || 0);
+      setNavBadge('inventory', invRes.count || 0);
 
       // Open issues = reported yang tiada dalam closed set
       const closedIds = new Set((closedRes.data || []).map(r => r.meta?.issue_id).filter(Boolean));

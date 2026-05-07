@@ -6,10 +6,10 @@ window.currentUser = null;
 
 // Pages yang boleh diakses oleh setiap staff_role
 const STAFF_ROLE_ACCESS = {
-  admin:   ['dashboard','assignments','psy_patients','kyc_forms','psy_appointments','pakej','psy_products','psy_orders','library','services','audit','staff_mgmt','announcements','inventory','issue','profile'],
-  doctor:  ['dashboard','psy_patients','kyc_forms','plans','psy_appointments','consultation','psy_vitals','risk','library','issue','profile'],
-  coach:   ['dashboard','assignments','psy_patients','plans','psy_appointments','consultation','psy_vitals','coaching','risk','issue','profile','patient_hub','plan_week'],
-  manager: ['dashboard','assignments','psy_patients','kyc_forms','plans','psy_appointments','psy_orders','audit','announcements','staff_stats','inventory','issue','profile'],
+  admin:   ['dashboard','assignments','psy_patients','kyc_forms','psy_appointments','pakej','psy_products','psy_orders','library','services','audit','staff_mgmt','announcements','inventory','issue','feedback','profile'],
+  doctor:  ['dashboard','psy_patients','kyc_forms','plans','psy_appointments','consultation','psy_vitals','risk','library','issue','feedback','profile'],
+  coach:   ['dashboard','assignments','psy_patients','plans','psy_appointments','consultation','psy_vitals','coaching','risk','issue','feedback','profile','patient_hub','plan_week'],
+  manager: ['dashboard','psy_patients','plans','psy_appointments','psy_orders','announcements','staff_stats','inventory','issue','feedback','profile'],
 };
 
 async function initStaff(pageId, titleSub) {
