@@ -104,6 +104,22 @@
           <p class="text-xs text-ink/60 mb-4">Status tugasan yang direkod oleh coach semasa sesi coaching anda.</p>
           <div id="coaching-schedule-view" class="space-y-3"></div>
         </div>
+
+        <!-- Goals & Homework dari Coach -->
+        <div id="tasks-section" class="hidden">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div id="goals-card" class="hidden bg-white rounded-xl p-5 border border-ink/10">
+              <h3 class="font-bold mb-1 flex items-center gap-2">🎯 Goals Minggu Ini</h3>
+              <p class="text-xs text-ink/60 mb-3">Tandakan goals yang telah anda capai.</p>
+              <div id="goals-checklist" class="space-y-2"></div>
+            </div>
+            <div id="homework-card" class="hidden bg-white rounded-xl p-5 border border-ink/10">
+              <h3 class="font-bold mb-1 flex items-center gap-2">📚 Homework Minggu Ini</h3>
+              <p class="text-xs text-ink/60 mb-3">Tandakan tugasan yang telah anda siapkan.</p>
+              <div id="homework-checklist" class="space-y-2"></div>
+            </div>
+          </div>
+        </div>
       </div>
 
         <!-- Feedback Minggu Ini -->
@@ -335,11 +351,15 @@ function renderHero() {
   const totalWeeks = activePlan.duration_weeks || 12;
   const pct = Math.round((weekNumber / totalWeeks) * 100);
 
+  // Determine if session is in the future
+  const sessionDate = weekEntry?.session_date ? new Date(weekEntry.session_date) : null;
+  const isFuture = sessionDate && sessionDate > new Date() && (status === 'booked' || status === 'pending');
+
   let countdown = '';
-  if (weekEntry?.session_date && status === 'booked') {
-    const diffDays = Math.ceil((new Date(weekEntry.session_date) - new Date()) / 86400000);
+  if (sessionDate && isFuture) {
+    const diffDays = Math.ceil((sessionDate - new Date()) / 86400000);
     if (diffDays > 0) countdown = `<span class="text-sm font-semibold text-navy">${diffDays} hari lagi</span>`;
-    else if (diffDays === 0) countdown = `<span class="text-sm font-semibold text-gold-dark">Hari ini 📍</span>`;
+    else countdown = `<span class="text-sm font-semibold text-gold-dark">Hari ini 📍</span>`;
   }
 
   document.getElementById('week-hero').innerHTML = `
@@ -352,11 +372,11 @@ function renderHero() {
         </div>
         <h2 class="text-2xl md:text-3xl font-bold text-ink">Minggu ${weekNumber}</h2>
         <div class="text-sm text-ink/70 mt-1">
-          ${weekEntry?.session_date
-            ? `📅 ${new Date(weekEntry.session_date).toLocaleDateString('ms-MY', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })} · 🕐 ${new Date(weekEntry.session_date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`
+          ${sessionDate
+            ? `📅 ${sessionDate.toLocaleDateString('ms-MY', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })} · 🕐 ${sessionDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`
             : 'Belum ditempah'}
           ${weekEntry?.score ? ` · ⭐ ${weekEntry.score}/10` : ''}
-          ${weekEntry?.meet_link ? `<br><a href="${weekEntry.meet_link}" target="_blank" class="inline-flex items-center gap-1.5 mt-2 text-sm font-semibold text-white bg-navy px-4 py-2 rounded-xl hover:bg-navy-dark transition-colors">🎥 Sertai Google Meet →</a>` : ''}
+          ${weekEntry?.meet_link && isFuture ? `<br><a href="${weekEntry.meet_link}" target="_blank" class="inline-flex items-center gap-1.5 mt-2 text-sm font-semibold text-white bg-navy px-4 py-2 rounded-xl hover:bg-navy-dark transition-colors">🎥 Sertai Sesi Dalam Talian →</a>` : ''}
         </div>
       </div>
       ${countdown}
@@ -368,7 +388,23 @@ function renderHero() {
         <div class="bg-navy rounded-full h-1 transition-all" style="width: ${pct}%"></div>
       </div>
       <span>${pct}%</span>
-    </div>`;
+    </div>
+
+    ${isFuture ? `
+    <div class="mt-4 bg-navy/5 border border-navy/20 rounded-xl px-4 py-3 flex items-start gap-3">
+      <span class="text-xl mt-0.5">⏳</span>
+      <div>
+        <div class="font-semibold text-sm text-navy">Sesi belum berlangsung</div>
+        <div class="text-xs text-ink/60 mt-0.5">Rekod, nota coach, dan maklumat sesi akan tersedia selepas sesi anda berlaku. Sila hadir pada tarikh yang ditetapkan.</div>
+      </div>
+    </div>` : ''}`;
+
+  // Dim content cards if session is upcoming
+  const cardsGrid = document.querySelector('#content .grid.grid-cols-2');
+  if (cardsGrid) {
+    cardsGrid.style.opacity = isFuture ? '0.45' : '';
+    cardsGrid.style.pointerEvents = isFuture ? 'none' : '';
+  }
 }
 
 let weekVitals = [];
@@ -408,9 +444,9 @@ async function loadVitals() {
 }
 
 async function loadSessions() {
-  const all = await dbQuery('psy_coaching_sessions', { eq: { patient_id: patientRecord.id }, order: { col: 'scheduled_at' } }).catch(() => []);
+  const all = await dbQuery('psy_coaching_sessions', { eq: { patient_id: patientRecord.id }, order: { col: 'session_date', asc: false } }).catch(() => []);
   weekSessions = all.filter(s => {
-    const d = s.scheduled_at ? new Date(s.scheduled_at) : new Date(s.created_at);
+    const d = s.session_date ? new Date(s.session_date) : new Date(s.created_at);
     return d >= weekStart && d < weekEnd;
   });
 
@@ -421,6 +457,60 @@ async function loadSessions() {
   } else {
     preview.textContent = 'Tiada sesi minggu ini';
     preview.classList.add('italic');
+  }
+
+  renderTasksChecklist();
+}
+
+function renderTasksChecklist() {
+  const goals    = weekSessions.flatMap(s => (s.goals_discussed || []).map((g, i) => ({ text: g, sid: s.id, idx: i, type: 'goals' })));
+  const homework = weekSessions.flatMap(s => (s.homework_given  || []).map((h, i) => ({ text: h, sid: s.id, idx: i, type: 'hw' })));
+
+  const tasksSection = document.getElementById('tasks-section');
+  const goalsCard    = document.getElementById('goals-card');
+  const hwCard       = document.getElementById('homework-card');
+
+  if (!goals.length && !homework.length) { tasksSection.classList.add('hidden'); return; }
+  tasksSection.classList.remove('hidden');
+
+  function checkKey(sid, idx, type) { return `task_check_${sid}_${type}_${idx}`; }
+
+  function renderList(items, hostId) {
+    const host = document.getElementById(hostId);
+    host.innerHTML = items.map(item => {
+      const key     = checkKey(item.sid, item.idx, item.type);
+      const checked = localStorage.getItem(key) === '1';
+      return `<label class="flex items-start gap-3 cursor-pointer group">
+        <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleTask('${key}', this)"
+          class="mt-0.5 w-4 h-4 rounded accent-navy flex-shrink-0">
+        <span class="text-sm ${checked ? 'line-through text-ink/40' : 'text-ink/80'} group-hover:text-ink transition-colors">${item.text}</span>
+      </label>`;
+    }).join('');
+  }
+
+  if (goals.length) {
+    goalsCard.classList.remove('hidden');
+    renderList(goals, 'goals-checklist');
+  } else {
+    goalsCard.classList.add('hidden');
+  }
+
+  if (homework.length) {
+    hwCard.classList.remove('hidden');
+    renderList(homework, 'homework-checklist');
+  } else {
+    hwCard.classList.add('hidden');
+  }
+}
+
+function toggleTask(key, checkbox) {
+  localStorage.setItem(key, checkbox.checked ? '1' : '0');
+  const label = checkbox.closest('label');
+  const span  = label?.querySelector('span');
+  if (span) {
+    span.classList.toggle('line-through', checkbox.checked);
+    span.classList.toggle('text-ink/40', checkbox.checked);
+    span.classList.toggle('text-ink/80', !checkbox.checked);
   }
 }
 

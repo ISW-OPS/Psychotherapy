@@ -410,12 +410,15 @@
       const t0 = new Date(issue.created_at).toLocaleString('ms-MY', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
       let html = msgBubble('patient', issue.actor_name || 'Pesakit', issue.meta?.description || '—', t0, issue.meta?.photo_url || null);
 
-      messages.forEach(m => {
+      messages.forEach((m, idx) => {
         const t = new Date(m.created_at).toLocaleString('ms-MY', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
         if (m.action === 'issue.followup') {
           html += msgBubble('patient', m.actor_name || 'Pesakit', m.meta?.message || '—', t, null);
         } else if (m.action === 'issue.responded') {
-          html += msgBubble('staff', m.actor_name || 'Staff', m.meta?.response || '—', t, null, m.meta?.status || 'sent');
+          // Read = ada patient followup yang datang SELEPAS mesej ini
+          const isRead = messages.slice(idx + 1).some(later => later.action === 'issue.followup');
+          const status = isRead ? 'read' : 'sent';
+          html += msgBubble('staff', m.actor_name || 'Staff', m.meta?.response || '—', t, null, status);
         } else if (m.action === 'issue.closed') {
           html += `<div class="flex items-center gap-3 my-2">
             <div class="flex-1 border-t border-ink/10"></div>
@@ -630,13 +633,6 @@
             if (!iid) return;
             if (!responseMap[iid]) responseMap[iid] = [];
             if (responseMap[iid].find(r => r.id === row.id)) return;
-
-            // Patient followup → mark staff messages as read
-            if (row.action === 'issue.followup') {
-              (responseMap[iid] || []).forEach(m => {
-                if (m.action === 'issue.responded') m.meta = { ...m.meta, status: 'read' };
-              });
-            }
 
             responseMap[iid].push(row);
             renderList();

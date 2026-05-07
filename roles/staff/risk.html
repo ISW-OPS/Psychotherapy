@@ -28,12 +28,30 @@
         </div>
 
         <div class="flex gap-2 flex-wrap">
-          <button onclick="filterRisk('open')" id="r-tab-open" class="px-4 py-2 rounded-full bg-terracotta text-white text-sm font-semibold">Open</button>
-          <button onclick="filterRisk('acknowledged')" id="r-tab-ack" class="px-4 py-2 rounded-full bg-white border border-ink/20 text-sm">Acknowledged</button>
-          <button onclick="filterRisk('resolved')" id="r-tab-resolved" class="px-4 py-2 rounded-full bg-white border border-ink/20 text-sm">Resolved</button>
+          <button onclick="filterRisk('open')" id="r-tab-open" class="px-4 py-2 rounded-full bg-terracotta text-white text-sm font-semibold">Open <span id="cnt-open" class="ml-1 text-xs opacity-80"></span></button>
+          <button onclick="filterRisk('acknowledged')" id="r-tab-ack" class="px-4 py-2 rounded-full bg-white border border-ink/20 text-sm">Acknowledged <span id="cnt-ack" class="ml-1 text-xs text-ink/50"></span></button>
+          <button onclick="filterRisk('resolved')" id="r-tab-resolved" class="px-4 py-2 rounded-full bg-white border border-ink/20 text-sm">Resolved <span id="cnt-resolved" class="ml-1 text-xs text-ink/50"></span></button>
         </div>
 
         <div id="risk-list" class="space-y-3"></div>
+      </div>
+
+      <!-- Notes Modal -->
+      <div id="risk-notes-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-md">
+          <div class="px-5 py-4 border-b border-ink/10 flex items-center justify-between">
+            <h3 id="notes-modal-title" class="font-bold text-sm">Tambah Nota</h3>
+            <button onclick="closeNotesModal()" class="text-ink/40 text-2xl leading-none">&times;</button>
+          </div>
+          <div class="p-5 space-y-3">
+            <textarea id="risk-notes-input" rows="3" placeholder="Catatan tindakan yang diambil (pilihan)..."
+              class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy resize-none"></textarea>
+          </div>
+          <div class="px-5 pb-5 flex gap-2">
+            <button onclick="closeNotesModal()" class="flex-1 border border-ink/20 text-ink/60 py-2.5 rounded-xl text-sm">Batal</button>
+            <button id="notes-modal-confirm" class="flex-1 bg-navy text-white py-2.5 rounded-xl text-sm font-semibold">Sahkan</button>
+          </div>
+        </div>
       </div>
     </main>
   </div>
@@ -47,15 +65,31 @@
 <script src="_shared.js"></script>
 <script>
 let allRisks = [];
+let pendingAction = null; // { type: 'ack'|'resolve', id }
+
+const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
 
 async function loadRisks() {
   allRisks = await dbQuery('psy_risk_alerts', { order: { col: 'created_at' } });
+  // Sort: severity first, then by time
+  allRisks.sort((a, b) =>
+    (SEV_ORDER[a.severity] ?? 9) - (SEV_ORDER[b.severity] ?? 9) ||
+    new Date(a.created_at) - new Date(b.created_at)
+  );
+  updateCounts();
   filterRisk('open');
+}
+
+function updateCounts() {
+  document.getElementById('cnt-open').textContent     = `(${allRisks.filter(r => r.status === 'open').length})`;
+  document.getElementById('cnt-ack').textContent      = `(${allRisks.filter(r => r.status === 'acknowledged').length})`;
+  document.getElementById('cnt-resolved').textContent = `(${allRisks.filter(r => r.status === 'resolved').length})`;
 }
 
 function filterRisk(status) {
   ['open','acknowledged','resolved'].forEach(s => {
-    const btn = document.getElementById('r-tab-' + (s === 'acknowledged' ? 'ack' : s));
+    const key = s === 'acknowledged' ? 'ack' : s;
+    const btn = document.getElementById('r-tab-' + key);
     btn.className = s === status
       ? 'px-4 py-2 rounded-full bg-terracotta text-white text-sm font-semibold'
       : 'px-4 py-2 rounded-full bg-white border border-ink/20 text-sm';
@@ -63,45 +97,94 @@ function filterRisk(status) {
 
   const filtered = allRisks.filter(r => r.status === status);
   document.getElementById('risk-list').innerHTML = filtered.length
-    ? filtered.map(r => `
-      <div class="bg-white rounded-xl p-4 border-l-4 ${r.severity === 'critical' || r.severity === 'high' ? 'border-terracotta' : 'border-gold'}">
-        <div class="flex items-start justify-between gap-3 flex-wrap">
-          <div class="flex-1 min-w-[250px]">
-            <div class="flex items-center gap-2 mb-1 flex-wrap">
-              <span class="chip ${r.severity === 'critical' || r.severity === 'high' ? 'bg-terracotta text-white' : 'bg-gold/30 text-gold-dark'}">${r.severity?.toUpperCase()}</span>
-              <span class="chip bg-cream text-ink/60">${r.category || 'general'}</span>
-              <span class="text-xs text-ink/50">${timeAgo(r.created_at)}</span>
+    ? filtered.map(r => {
+        const isHigh = r.severity === 'critical' || r.severity === 'high';
+        const notes = r.action_notes ? `<div class="text-xs text-ink/50 mt-1.5 italic">📝 ${r.action_notes}</div>` : '';
+        return `
+        <div class="bg-white rounded-xl p-4 border-l-4 ${isHigh ? 'border-terracotta' : 'border-gold'}">
+          <div class="flex items-start justify-between gap-3 flex-wrap">
+            <div class="flex-1 min-w-[250px]">
+              <div class="flex items-center gap-2 mb-1 flex-wrap">
+                <span class="chip ${isHigh ? 'bg-terracotta text-white' : 'bg-gold/30 text-gold-dark'}">${r.severity?.toUpperCase()}</span>
+                <span class="chip bg-cream text-ink/60">${r.category || 'general'}</span>
+                <span class="text-xs text-ink/50">${timeAgo(r.created_at)}</span>
+              </div>
+              <h4 class="font-bold">${r.patient_name || 'Patient'}</h4>
+              <p class="text-sm text-ink/70 mt-1">${r.description}</p>
+              <div class="text-xs text-ink/50 mt-1">Lapor oleh: ${r.created_by_name || '—'}</div>
+              ${notes}
             </div>
-            <h4 class="font-bold">${r.patient_name || 'Patient'}</h4>
-            <p class="text-sm text-ink/70 mt-1">${r.description}</p>
-            <div class="text-xs text-ink/50 mt-2">Lapor oleh: ${r.created_by_name || '—'}</div>
+            <div class="flex flex-col gap-2">
+              ${status === 'open' ? `<button onclick="promptAck('${r.id}')" class="bg-navy text-white text-sm px-4 py-2 rounded-lg font-semibold">Acknowledge</button>` : ''}
+              ${status !== 'resolved' ? `<button onclick="promptResolve('${r.id}')" class="bg-green text-white text-sm px-4 py-2 rounded-lg">Resolve</button>` : ''}
+            </div>
           </div>
-          <div class="flex flex-col gap-2">
-            ${status === 'open' ? `<button onclick="ackRisk('${r.id}')" class="bg-navy text-white text-sm px-4 py-2 rounded-lg font-semibold">Acknowledge</button>` : ''}
-            ${status !== 'resolved' ? `<button onclick="resolveRisk('${r.id}')" class="bg-green text-white text-sm px-4 py-2 rounded-lg">Resolve</button>` : ''}
-          </div>
-        </div>
-      </div>`).join('')
+        </div>`;
+      }).join('')
     : `<div class="bg-white rounded-xl border border-ink/10 p-8 text-center text-ink/40 text-sm">Tiada risk ${status}</div>`;
 }
 
-async function ackRisk(id) {
-  await dbUpdate('psy_risk_alerts', id, { status: 'acknowledged', acknowledged_by: currentUser.id });
-  await auditLog('risk.acknowledged', id);
-  banner('Risk acknowledged');
-  loadRisks();
+function promptAck(id) {
+  pendingAction = { type: 'ack', id };
+  document.getElementById('notes-modal-title').textContent = '✓ Acknowledge Risk';
+  document.getElementById('risk-notes-input').value = '';
+  document.getElementById('notes-modal-confirm').textContent = 'Acknowledge';
+  document.getElementById('notes-modal-confirm').className = 'flex-1 bg-navy text-white py-2.5 rounded-xl text-sm font-semibold';
+  document.getElementById('risk-notes-modal').classList.remove('hidden');
 }
 
-async function resolveRisk(id) {
-  await dbUpdate('psy_risk_alerts', id, { status: 'resolved', resolved_at: new Date().toISOString() });
-  await auditLog('risk.resolved', id);
-  banner('Risk resolved');
-  loadRisks();
+function promptResolve(id) {
+  pendingAction = { type: 'resolve', id };
+  document.getElementById('notes-modal-title').textContent = '✅ Resolve Risk';
+  document.getElementById('risk-notes-input').value = '';
+  document.getElementById('notes-modal-confirm').textContent = 'Resolve';
+  document.getElementById('notes-modal-confirm').className = 'flex-1 bg-green text-white py-2.5 rounded-xl text-sm font-semibold';
+  document.getElementById('risk-notes-modal').classList.remove('hidden');
+}
+
+function closeNotesModal() {
+  pendingAction = null;
+  document.getElementById('risk-notes-modal').classList.add('hidden');
+}
+
+async function confirmRiskAction() {
+  if (!pendingAction) return;
+  const notes = document.getElementById('risk-notes-input').value.trim() || null;
+  const btn = document.getElementById('notes-modal-confirm');
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
+
+  try {
+    if (pendingAction.type === 'ack') {
+      await dbUpdate('psy_risk_alerts', pendingAction.id, {
+        status: 'acknowledged',
+        acknowledged_by: currentUser.id,
+        action_notes: notes,
+      });
+      await auditLog('risk.acknowledged', pendingAction.id, { notes });
+      banner('Risk acknowledged');
+    } else {
+      await dbUpdate('psy_risk_alerts', pendingAction.id, {
+        status: 'resolved',
+        resolved_at: new Date().toISOString(),
+        action_notes: notes,
+      });
+      await auditLog('risk.resolved', pendingAction.id, { notes });
+      banner('Risk resolved ✅');
+    }
+    closeNotesModal();
+    await loadRisks();
+    filterRisk(pendingAction?.type === 'ack' ? 'acknowledged' : 'resolved');
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+    btn.disabled = false;
+    btn.textContent = pendingAction.type === 'ack' ? 'Acknowledge' : 'Resolve';
+  }
 }
 
 (async () => {
   const user = await initStaff('risk', 'SLA 15 min · triage · escalate');
   if (!user) return;
+  document.getElementById('notes-modal-confirm').addEventListener('click', confirmRiskAction);
   loadRisks();
 })();
 </script>

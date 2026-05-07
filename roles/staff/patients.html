@@ -197,7 +197,7 @@
   <div id="create-patient-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
     <div class="bg-white rounded-2xl shadow-xl w-full max-w-3xl flex flex-col max-h-[90vh]">
       <div class="flex items-center justify-between px-6 py-4 border-b border-ink/10 flex-shrink-0">
-        <h3 class="font-bold text-lg">Tambah Pesakit Baru</h3>
+        <h3 class="font-bold text-lg" id="cp-modal-title">Tambah Pesakit Baru</h3>
         <button onclick="closeCreatePatient()" class="text-ink/40 hover:text-ink text-2xl leading-none">&times;</button>
       </div>
       <div class="px-6 py-5 space-y-5 overflow-y-auto">
@@ -409,7 +409,7 @@
       </div>
       <div class="px-6 py-4 border-t border-ink/10 flex justify-end gap-2 flex-shrink-0">
         <button onclick="closeCreatePatient()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm">Batal</button>
-        <button onclick="createPatient()" id="cp-save-btn"
+        <button onclick="savePatient()" id="cp-save-btn"
           class="bg-navy text-white px-5 py-2 rounded-lg text-sm font-semibold">Simpan</button>
       </div>
     </div>
@@ -473,6 +473,7 @@
     let currentFiltered = [];
     let currentDetailPt = null;
     let isAdmin = false;
+    let editingPatientId = null;
 
     // ── Create Patient ────────────────────────────────────
     function onHubunganChange(radio) {
@@ -503,7 +504,7 @@
       document.getElementById(hiddenId).value = btn.dataset.val;
     }
 
-    function openCreatePatient() {
+    function resetCreateForm() {
       ['cp-name', 'cp-ic', 'cp-phone', 'cp-email', 'cp-address',
         'cp-emg-name', 'cp-emg-ic', 'cp-emg-phone', 'cp-occupation', 'cp-emg-rel', 'cp-emg-email'].forEach(id => {
           const el = document.getElementById(id); if (el) el.value = '';
@@ -527,6 +528,91 @@
         b.classList.remove('bg-navy', 'text-white', 'border-navy');
         b.classList.add('border-ink/20', 'text-ink/70');
       });
+    }
+
+    function openCreatePatient() {
+      editingPatientId = null;
+      resetCreateForm();
+      document.getElementById('cp-modal-title').textContent = 'Tambah Pesakit Baru';
+      document.getElementById('cp-save-btn').textContent = 'Simpan';
+      // IC field editable for new patient
+      document.getElementById('cp-ic').readOnly = false;
+      document.getElementById('cp-ic').classList.remove('bg-cream/40');
+      document.getElementById('create-patient-modal').classList.remove('hidden');
+    }
+
+    function openEditPatient(id) {
+      const p = allPatients.find(x => x.id === id);
+      if (!p) return;
+      editingPatientId = id;
+      resetCreateForm();
+
+      document.getElementById('cp-modal-title').textContent = 'Edit Maklumat Pesakit';
+      document.getElementById('cp-save-btn').textContent = 'Kemaskini';
+
+      // Fill fields
+      document.getElementById('cp-name').value        = p.full_name || p.psy_profiles?.full_name || '';
+      document.getElementById('cp-phone').value       = p.phone || p.psy_profiles?.phone || '';
+      document.getElementById('cp-email').value       = p.email || p.psy_profiles?.email || '';
+      document.getElementById('cp-address').value     = p.address || '';
+      document.getElementById('cp-occupation').value  = p.occupation || '';
+      document.getElementById('cp-dob').value         = p.date_of_birth || '';
+
+      // IC — readonly when editing (cannot change IC)
+      document.getElementById('cp-ic').value    = p.ic_number || '';
+      document.getElementById('cp-ic').readOnly = true;
+      document.getElementById('cp-ic').classList.add('bg-cream/40');
+
+      // Gender toggle
+      if (p.gender) {
+        const gBtn = document.querySelector(`#create-patient-modal .choice-btn[data-val="${p.gender}"]`);
+        if (gBtn) toggleChoice(gBtn, 'cp-gender');
+      }
+
+      // Marital status toggle
+      if (p.marital_status) {
+        const mBtn = document.querySelector(`#create-patient-modal .choice-btn[data-val="${p.marital_status}"]`);
+        if (mBtn) toggleChoice(mBtn, 'cp-marital');
+      }
+
+      // Medical conditions — tick matching checkboxes
+      const condList = (p.medical_condition || '').split(',').map(c => c.trim());
+      document.querySelectorAll('#cp-conditions-grid input[type=checkbox]').forEach(cb => {
+        if (condList.includes(cb.value)) cb.checked = true;
+      });
+      // Check for "Lain-lain" conditions
+      const otherCond = condList.find(c => c.startsWith('Lain-lain:'));
+      if (otherCond) {
+        document.getElementById('cp-cond-other-check').checked = true;
+        const otherEl = document.getElementById('cp-condition-other');
+        otherEl.value = otherCond.replace('Lain-lain:', '').trim();
+        otherEl.disabled = false;
+        otherEl.style.opacity = '1';
+        otherEl.style.cursor = 'text';
+      }
+
+      // Emergency contact
+      document.getElementById('cp-emg-name').value  = p.emergency_contact_name || '';
+      document.getElementById('cp-emg-ic').value    = p.emergency_contact_ic || '';
+      document.getElementById('cp-emg-phone').value = p.emergency_contact_phone || '';
+      document.getElementById('cp-emg-email').value = p.emergency_contact_email || '';
+
+      const rel = p.emergency_contact_relationship || '';
+      document.getElementById('cp-emg-rel').value = rel;
+      const knownRels = ['Ibu/Bapa', 'Adik-Beradik', 'Suami/Isteri', 'Anak'];
+      if (knownRels.includes(rel)) {
+        const radio = document.querySelector(`input[name="cp-emg-rel-radio"][value="${rel}"]`);
+        if (radio) { radio.checked = true; }
+      } else if (rel) {
+        const otherRadio = document.querySelector(`input[name="cp-emg-rel-radio"][value="__other__"]`);
+        if (otherRadio) { otherRadio.checked = true; }
+        const relOther = document.getElementById('cp-emg-rel-other');
+        relOther.value = rel;
+        relOther.disabled = false;
+        relOther.style.opacity = '1';
+        relOther.style.cursor = 'text';
+      }
+
       document.getElementById('create-patient-modal').classList.remove('hidden');
     }
 
@@ -534,7 +620,7 @@
       document.getElementById('create-patient-modal').classList.add('hidden');
     }
 
-    async function createPatient() {
+    async function savePatient() {
       const name = document.getElementById('cp-name').value.trim();
       const ic = document.getElementById('cp-ic').value.trim();
       const phone = document.getElementById('cp-phone').value.trim();
@@ -568,39 +654,48 @@
       const btn = document.getElementById('cp-save-btn');
       btn.disabled = true; btn.textContent = 'Menyimpan...';
 
-      try {
-        const mrn = 'PSY-' + Date.now().toString().slice(-6);
-        const { error } = await window.db.from('psy_patients').insert({
-          mrn,
-          user_id: null,
-          full_name: name,
-          ic_number: ic,
-          phone,
-          email: email || null,
-          gender: gender || null,
-          date_of_birth: dob || null,
-          marital_status: marital || null,
-          address,
-          medical_condition: condition || null,
-          emergency_contact_name: emgName,
-          emergency_contact_phone: emgPhone,
-          emergency_contact_relationship: emgRel || null,
-          emergency_contact_email: emgEmail || null,
-          emergency_contact_ic: emgIc || null,
-          occupation: occupation || null,
-          status: 'active',
-          created_by_staff: true,
-        });
-        if (error) throw error;
+      const payload = {
+        full_name: name,
+        phone,
+        email: email || null,
+        gender: gender || null,
+        date_of_birth: dob || null,
+        marital_status: marital || null,
+        address,
+        medical_condition: condition || null,
+        emergency_contact_name: emgName,
+        emergency_contact_phone: emgPhone,
+        emergency_contact_relationship: emgRel || null,
+        emergency_contact_email: emgEmail || null,
+        emergency_contact_ic: emgIc || null,
+        occupation: occupation || null,
+      };
 
-        await auditLog('patient.created_by_staff', mrn, { name, ic });
+      try {
+        if (editingPatientId) {
+          // UPDATE existing patient
+          const { error } = await window.db.from('psy_patients').update(payload).eq('id', editingPatientId);
+          if (error) throw error;
+          await auditLog('patient.updated_by_staff', editingPatientId, { name });
+          banner('Maklumat pesakit dikemaskini ✅');
+        } else {
+          // CREATE new patient
+          const mrn = 'PSY-' + Date.now().toString().slice(-6);
+          const { error } = await window.db.from('psy_patients').insert({
+            mrn, user_id: null, ic_number: ic, status: 'active', created_by_staff: true, ...payload,
+          });
+          if (error) throw error;
+          await auditLog('patient.created_by_staff', mrn, { name, ic });
+          banner('Pesakit baru berjaya ditambah ✅');
+        }
         closeCreatePatient();
         loadAll();
       } catch (err) {
         errEl.textContent = 'Ralat: ' + err.message;
         errEl.classList.remove('hidden');
       } finally {
-        btn.disabled = false; btn.textContent = 'Simpan';
+        btn.disabled = false;
+        btn.textContent = editingPatientId ? 'Kemaskini' : 'Simpan';
       }
     }
 
@@ -638,6 +733,7 @@
           <td>${statusChip(p.status)}</td>
           <td class="whitespace-nowrap print-hide space-x-3">
             <a href="patient-hub.html?patient_id=${p.id}" class="text-navy text-xs font-semibold hover:underline">Details</a>
+            ${isAdmin ? `<button onclick="openEditPatient('${p.id}')" class="text-teal text-xs font-semibold hover:underline">Edit</button>` : ''}
             ${isAdmin ? `<button onclick="deletePatient('${p.id}','${(p.full_name || p.psy_profiles?.full_name || '').replace(/'/g, "\\'")}' )" class="text-terracotta text-xs font-semibold hover:underline">Padam</button>` : ''}
           </td>
         </tr>`;

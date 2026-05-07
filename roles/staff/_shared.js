@@ -101,5 +101,5 @@ function banner(msg, type = 'ok') {
   el.className = `fixed top-4 left-1/2 -translate-x-1/2 ${color} text-white px-5 py-2.5 rounded-xl text-sm font-semibold z-50 shadow-lg`;
   el.textContent = msg;
   document.body.appendChild(el);
-  setTimeout(() => el.remove(), 2500);
+  setTimeout(() => el.remove(), type === 'error' ? 6000 : 2500);
 }

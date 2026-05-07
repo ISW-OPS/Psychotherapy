@@ -197,7 +197,7 @@ function renderNavbar(role, user, navItems, activeScreen) {
             class="nav-item ${item.id === activeScreen ? 'active' : ''} w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-ink/60 hover:bg-ink/5 transition-colors">
             <span class="flex-shrink-0 text-base">${item.icon}</span>
             <span class="nav-label font-medium">${item.label}</span>
-            ${item.badge ? `<span class="ml-auto nav-label inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-ink/10 text-ink/60">${item.badge}</span>` : ''}
+            <span id="nav-badge-${item.id}" class="hidden ml-auto nav-label min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold bg-terracotta text-white flex items-center justify-center"></span>
           </button>
         `).join('')}
       </nav>
@@ -241,11 +241,92 @@ function renderNavbar(role, user, navItems, activeScreen) {
         ${navItems.map(item => `
           <button onclick="goTo('${item.id}')" title="${item.label}"
             class="nav-item ${item.id === activeScreen ? 'active' : ''} w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-white/80 hover:bg-white/10">
-            <span class="flex-shrink-0">${item.icon}</span><span class="nav-label">${item.label}</span>
+            <span class="flex-shrink-0">${item.icon}</span>
+            <span class="nav-label">${item.label}</span>
+            <span id="nav-badge-${item.id}" class="hidden ml-auto min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold bg-terracotta text-white flex items-center justify-center"></span>
           </button>
         `).join('')}
       </nav>
     `;
+  }
+
+  // Load dynamic badge counts after render (both roles)
+  window.db?.auth.getUser().then(({ data }) => {
+    const uid = data?.user?.id;
+    if (uid) loadNavBadges(role, staffRole, uid);
+  });
+}
+
+// ── Nav Badge Counts ─────────────────────────────────
+function setNavBadge(id, count) {
+  const el = document.getElementById('nav-badge-' + id);
+  if (!el) return;
+  if (count > 0) {
+    el.textContent = count > 99 ? '99+' : String(count);
+    el.classList.remove('hidden');
+  } else {
+    el.classList.add('hidden');
+  }
+}
+
+async function loadNavBadges(role, _staffRole, userId) {
+  if (!window.db || !userId) return;
+  try {
+    if (role === 'staff') {
+      const [ordersRes, kycRes, issuesRes, closedRes] = await Promise.all([
+        // Orders perlu dihantar (paid / packed)
+        window.db.from('psy_orders')
+          .select('id', { count: 'exact', head: true })
+          .in('status', ['paid', 'packed']),
+        // KYC pending review
+        window.db.from('psy_kyc_submissions')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'pending'),
+        // Semua isu dilaporkan
+        window.db.from('psy_audit_log')
+          .select('id')
+          .eq('action', 'issue.reported'),
+        // Isu yang dah ditutup
+        window.db.from('psy_audit_log')
+          .select('meta')
+          .eq('action', 'issue.closed'),
+      ]);
+
+      setNavBadge('psy_orders', ordersRes.count || 0);
+      setNavBadge('kyc_forms', kycRes.count || 0);
+
+      // Open issues = reported yang tiada dalam closed set
+      const closedIds = new Set((closedRes.data || []).map(r => r.meta?.issue_id).filter(Boolean));
+      const openCount = (issuesRes.data || []).filter(i => !closedIds.has(i.id)).length;
+      setNavBadge('issue', openCount);
+
+    } else if (role === 'patient') {
+      const [ordersRes, issuesRes, closedRes] = await Promise.all([
+        // Orders aktif patient ini
+        window.db.from('psy_orders')
+          .select('id', { count: 'exact', head: true })
+          .eq('patient_id', userId)
+          .in('status', ['pending', 'paid', 'packed', 'shipped']),
+        // Isu patient ini
+        window.db.from('psy_audit_log')
+          .select('id, meta')
+          .eq('action', 'issue.reported')
+          .eq('user_id', userId),
+        // Isu yang dah ditutup
+        window.db.from('psy_audit_log')
+          .select('meta')
+          .eq('action', 'issue.closed'),
+      ]);
+
+      setNavBadge('psy_orders', ordersRes.count || 0);
+
+      // Open issues milik patient ini
+      const closedIds = new Set((closedRes.data || []).map(r => r.meta?.issue_id).filter(Boolean));
+      const openCount = (issuesRes.data || []).filter(i => !closedIds.has(i.id)).length;
+      setNavBadge('issue', openCount);
+    }
+  } catch (e) {
+    // Silent fail — badge just won't show
   }
 }
 

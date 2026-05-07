@@ -9,6 +9,28 @@
 <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="_styles.css" rel="stylesheet">
+<style>
+.tab-btn { padding: 8px 16px; border-radius: 8px; font-size: 12px; font-weight: 600; color: #6b7280; background: white; border: 1.5px solid #e5e7eb; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+.tab-btn:hover { border-color: #cbd5e1; color: #1e293b; }
+.tab-btn.active { background: #1a3a5c; color: white; border-color: #1a3a5c; }
+.tab-btn .badge { display: inline-flex; align-items: center; justify-content: center; background: rgba(255,255,255,0.25); color: inherit; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; min-width: 18px; margin-left: 4px; }
+.tab-btn:not(.active) .badge { background: #f1f5f9; color: #64748b; }
+.order-row { background: white; border: 1px solid rgba(0,0,0,0.08); border-radius: 12px; overflow: hidden; transition: box-shadow 0.15s; }
+.order-row:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.order-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; gap: 12px; cursor: pointer; user-select: none; }
+.order-header:active { background: #f8fafc; }
+.expand-icon { font-size: 12px; color: #94a3b8; transition: transform 0.2s; flex-shrink: 0; }
+.order-row.open .expand-icon { transform: rotate(180deg); }
+.order-detail { display: none; border-top: 1px solid rgba(0,0,0,0.06); }
+.order-row.open .order-detail { display: block; }
+.timeline-wrap { display: flex; align-items: flex-start; gap: 0; overflow-x: auto; padding: 16px 16px 4px; }
+.t-step { display: flex; align-items: flex-start; flex: 1; min-width: 0; }
+.t-step:last-child { flex: 0; }
+.t-node { display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; }
+.t-circle { width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+.t-label { font-size: 9px; text-align: center; line-height: 1.3; width: 52px; }
+.t-line { flex: 1; height: 2px; margin-top: -25px; min-width: 8px; }
+</style>
 </head>
 <body class="min-h-screen">
 
@@ -22,8 +44,24 @@
     <main class="main-content flex-1 min-w-0">
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
-      <div class="p-4 md:p-8 space-y-4">
-        <div id="orders-list" class="space-y-4"></div>
+      <div class="p-4 md:p-6 space-y-4 pb-24">
+
+        <!-- Tab Filter -->
+        <div id="tab-bar" class="flex gap-2 overflow-x-auto pb-1"></div>
+
+        <!-- Order List -->
+        <div id="orders-list" class="space-y-2.5"></div>
+
+        <!-- Pagination -->
+        <div id="pagination" class="hidden flex items-center justify-between gap-3 pt-1">
+          <span id="page-info" class="text-xs text-ink/50"></span>
+          <div class="flex gap-2">
+            <button id="btn-prev" onclick="changePage(-1)"
+              class="px-4 py-2 border border-ink/20 rounded-xl text-sm hover:border-navy hover:text-navy disabled:opacity-30 disabled:cursor-not-allowed transition-colors">← Sebelum</button>
+            <button id="btn-next" onclick="changePage(1)"
+              class="px-4 py-2 border border-ink/20 rounded-xl text-sm hover:border-navy hover:text-navy disabled:opacity-30 disabled:cursor-not-allowed transition-colors">Seterusnya →</button>
+          </div>
+        </div>
       </div>
     </main>
   </div>
@@ -42,57 +80,223 @@
 <script src="../../shared/navbar.js"></script>
 <script src="_shared.js"></script>
 <script>
+const PAGE_SIZE = 10;
+let allOrders   = [];
+let activeTab   = 'active';
+let currentPage = 1;
+
 const STATUS_META = {
-  pending:   { label: 'Menunggu Pembayaran', chip: 'bg-gold/30 text-gold-dark',          stepDelivery: 0, stepPickup: 0 },
-  paid:      { label: 'Dibayar',             chip: 'bg-navy-light text-navy',            stepDelivery: 1, stepPickup: 1 },
-  packed:    { label: 'Sedang Disediakan',   chip: 'bg-teal/10 text-teal',               stepDelivery: 2, stepPickup: 2 },
-  shipped:   { label: 'Dalam Penghantaran',  chip: 'bg-green-light text-green-dark',     stepDelivery: 3, stepPickup: 3 },
-  delivered: { label: 'Selesai',             chip: 'bg-ink/10 text-ink/60',              stepDelivery: 4, stepPickup: 3 },
-  cancelled: { label: 'Dibatalkan',          chip: 'bg-terracotta/20 text-terracotta',   stepDelivery: -1, stepPickup: -1 },
+  pending:   { label: 'Menunggu Pembayaran', chip: 'bg-gold/30 text-gold-dark',        stepD: 0, stepP: 0 },
+  paid:      { label: 'Dibayar',             chip: 'bg-navy-light text-navy',          stepD: 1, stepP: 1 },
+  packed:    { label: 'Sedang Disediakan',   chip: 'bg-teal/10 text-teal',             stepD: 2, stepP: 2 },
+  shipped:   { label: 'Dalam Penghantaran',  chip: 'bg-green-light text-green-dark',   stepD: 3, stepP: 3 },
+  delivered: { label: 'Selesai',             chip: 'bg-ink/10 text-ink/60',            stepD: 4, stepP: 3 },
+  cancelled: { label: 'Dibatalkan',          chip: 'bg-terracotta/20 text-terracotta', stepD: -1, stepP: -1 },
 };
 
-const STEPS_DELIVERY = [
+const STEPS_D = [
   { icon: '🛒', label: 'Order Dibuat' },
   { icon: '💳', label: 'Bayaran Diterima' },
   { icon: '📦', label: 'Dibungkus' },
   { icon: '🚚', label: 'Dihantar' },
   { icon: '✅', label: 'Diterima' },
 ];
-
-const STEPS_PICKUP = [
+const STEPS_P = [
   { icon: '🛒', label: 'Order Dibuat' },
   { icon: '💳', label: 'Bayaran Diterima' },
   { icon: '📍', label: 'Sedia Pickup' },
   { icon: '✅', label: 'Diambil' },
 ];
 
-function renderTimeline(order) {
-  const isPickup = order.delivery_method === 'pickup';
-  const steps    = isPickup ? STEPS_PICKUP : STEPS_DELIVERY;
-  const meta     = STATUS_META[order.status] || STATUS_META.pending;
-  const curStep  = isPickup ? meta.stepPickup : meta.stepDelivery;
+const TABS = [
+  { key: 'active',    label: 'Aktif',    filter: o => ['pending','paid','packed','shipped'].includes(o.status) },
+  { key: 'all',       label: 'Semua',    filter: () => true },
+  { key: 'delivered', label: 'Selesai',  filter: o => o.status === 'delivered' },
+  { key: 'cancelled', label: 'Batal',    filter: o => o.status === 'cancelled' },
+];
+
+function tabList() {
+  return TABS.map(t => ({
+    ...t,
+    count: allOrders.filter(t.filter).length,
+  }));
+}
+
+function renderTabs() {
+  document.getElementById('tab-bar').innerHTML = tabList().map(t => `
+    <button class="tab-btn ${activeTab === t.key ? 'active' : ''}" onclick="setTab('${t.key}')">
+      ${t.label}<span class="badge">${t.count}</span>
+    </button>`).join('');
+}
+
+function setTab(key) {
+  activeTab   = key;
+  currentPage = 1;
+  renderTabs();
+  renderOrders();
+}
+
+function getFiltered() {
+  const tab = TABS.find(t => t.key === activeTab) || TABS[0];
+  return allOrders.filter(tab.filter);
+}
+
+function changePage(dir) {
+  const pages = Math.ceil(getFiltered().length / PAGE_SIZE);
+  currentPage = Math.max(1, Math.min(pages, currentPage + dir));
+  renderOrders();
+}
+
+function renderTimeline(o) {
+  const isPickup = o.delivery_method === 'pickup';
+  const steps    = isPickup ? STEPS_P : STEPS_D;
+  const meta     = STATUS_META[o.status] || STATUS_META.pending;
+  const cur      = isPickup ? meta.stepP : meta.stepD;
 
   return steps.map((s, i) => {
-    const done   = i < curStep;
-    const active = i === curStep;
-    const circle = done ? 'bg-green text-white' : active ? 'bg-navy text-white ring-4 ring-navy/20' : 'bg-ink/10 text-ink/40';
-    const line   = i < steps.length - 1
-      ? `<div class="flex-1 h-0.5 mx-1 mt-[-12px] ${i < curStep ? 'bg-green' : 'bg-ink/10'}"></div>`
-      : '';
-    return `
-      <div class="flex items-start ${i < steps.length - 1 ? 'flex-1' : ''}">
-        <div class="flex flex-col items-center gap-1 flex-shrink-0">
-          <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${circle}">${done ? '✓' : s.icon}</div>
-          <div class="text-[10px] text-center leading-tight ${active ? 'font-semibold text-navy' : done ? 'text-ink/60' : 'text-ink/30'} w-14">${s.label}</div>
-        </div>
-        ${line}
-      </div>`;
+    const done   = i < cur;
+    const active = i === cur;
+    const circle = done   ? 'background:#16a34a;color:white'
+                 : active ? 'background:#1a3a5c;color:white;box-shadow:0 0 0 4px rgba(26,58,92,0.15)'
+                          : 'background:#f1f5f9;color:#94a3b8';
+    const lineColor = i < cur ? '#16a34a' : '#e2e8f0';
+    const labelColor = active ? '#1a3a5c;font-weight:600' : done ? '#64748b' : '#cbd5e1';
+
+    return `<div class="t-step">
+      <div class="t-node">
+        <div class="t-circle" style="${circle}">${done ? '✓' : s.icon}</div>
+        <div class="t-label" style="color:${labelColor}">${s.label}</div>
+      </div>
+      ${i < steps.length - 1 ? `<div class="t-line" style="background:${lineColor}"></div>` : ''}
+    </div>`;
   }).join('');
+}
+
+function orderRow(o) {
+  const sm       = STATUS_META[o.status] || STATUS_META.pending;
+  const items    = Array.isArray(o.items) ? o.items : [];
+  const isPickup = o.delivery_method === 'pickup';
+  const dateStr  = new Date(o.created_at).toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric' });
+  const jtUrl    = o.tracking_number ? `https://www.jtexpress.my/index/query/gzquery.html?bills=${o.tracking_number}` : null;
+
+  const confirmBtn = o.status === 'shipped'
+    ? `<button onclick="event.stopPropagation();confirmDelivered('${o.id}')"
+         class="w-full bg-green text-white py-2.5 rounded-xl text-sm font-semibold mt-1">
+         ✅ Saya Dah Terima Parsel
+       </button>`
+    : '';
+
+  const pickupNotice = isPickup && o.status === 'packed'
+    ? `<div class="flex items-center gap-3 bg-teal/10 rounded-xl px-4 py-3 border border-teal/20 mb-3">
+         <span class="text-xl">📍</span>
+         <div>
+           <div class="font-semibold text-sm text-teal">Sedia untuk Diambil</div>
+           <div class="text-xs text-ink/60 mt-0.5">Datang ke klinik pada waktu operasi.</div>
+         </div>
+       </div>`
+    : '';
+
+  const trackingBlock = !isPickup && o.tracking_number
+    ? `<div class="flex items-center gap-3 bg-green-light rounded-xl px-4 py-3 mb-3">
+         <div class="flex-1 min-w-0">
+           <div class="text-[10px] font-semibold text-ink/60 uppercase tracking-wide">${o.courier || 'Courier'} · Tracking</div>
+           <div class="font-bold font-mono text-sm">${o.tracking_number}</div>
+         </div>
+         ${jtUrl ? `<a href="${jtUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()"
+           class="bg-green text-white text-xs px-3 py-2 rounded-lg font-semibold whitespace-nowrap">Track →</a>` : ''}
+       </div>`
+    : '';
+
+  const photoBlock = !isPickup && o.tracking_photo_url
+    ? `<div class="mb-3">
+         <div class="text-[10px] font-semibold text-ink/60 uppercase tracking-wide mb-1">Gambar Parsel</div>
+         <img src="${o.tracking_photo_url}" class="h-24 rounded-xl border border-ink/10 object-cover cursor-pointer"
+           onclick="event.stopPropagation();window.open('${o.tracking_photo_url}','_blank')">
+       </div>`
+    : '';
+
+  const itemsHtml = items.length
+    ? items.map(it => `<span class="chip bg-cream text-ink/70 text-xs">${it.name} × ${it.qty}</span>`).join('')
+    : '<span class="text-xs text-ink/40">—</span>';
+
+  return `
+  <div class="order-row" id="row-${o.id}">
+    <div class="order-header" onclick="toggleRow('${o.id}')">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="font-bold text-sm">${o.order_ref}</span>
+          <span class="chip text-xs ${sm.chip}">${sm.label}</span>
+          ${isPickup ? '<span class="chip bg-ink/10 text-ink/60 text-xs">Pickup</span>' : ''}
+        </div>
+        <div class="text-xs text-ink/50 mt-0.5">${dateStr} · ${items.length} item · <strong>RM ${Number(o.total).toFixed(2)}</strong></div>
+      </div>
+      <div class="expand-icon">▼</div>
+    </div>
+
+    <div class="order-detail">
+      <!-- Timeline -->
+      <div class="timeline-wrap">${renderTimeline(o)}</div>
+
+      <!-- Items + Actions -->
+      <div class="px-4 pb-4 pt-3 space-y-3">
+        <div class="flex flex-wrap gap-1.5">${itemsHtml}</div>
+        ${pickupNotice}
+        ${trackingBlock}
+        ${photoBlock}
+        ${confirmBtn}
+      </div>
+    </div>
+  </div>`;
+}
+
+function toggleRow(id) {
+  const el = document.getElementById('row-' + id);
+  el.classList.toggle('open');
+}
+
+function renderOrders() {
+  const list  = getFiltered();
+  const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+  currentPage = Math.min(currentPage, pages);
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const slice = list.slice(start, start + PAGE_SIZE);
+
+  const el = document.getElementById('orders-list');
+
+  if (!list.length) {
+    el.innerHTML = `<div class="text-center py-16 space-y-3">
+      <div class="text-5xl">📭</div>
+      <p class="text-ink/60 text-sm">Tiada orders lagi.</p>
+      <a href="shop.html" class="inline-block bg-navy text-white px-5 py-2.5 rounded-xl text-sm font-semibold">Pergi ke Shop →</a>
+    </div>`;
+    document.getElementById('pagination').classList.add('hidden');
+    return;
+  }
+
+  el.innerHTML = slice.map(orderRow).join('');
+
+  // Auto-expand if only 1 active order
+  if (slice.length === 1) {
+    document.getElementById('row-' + slice[0].id)?.classList.add('open');
+  }
+
+  const pgEl = document.getElementById('pagination');
+  if (list.length > PAGE_SIZE) {
+    pgEl.classList.remove('hidden');
+    document.getElementById('page-info').textContent =
+      `${start + 1}–${Math.min(start + PAGE_SIZE, list.length)} daripada ${list.length} order`;
+    document.getElementById('btn-prev').disabled = currentPage <= 1;
+    document.getElementById('btn-next').disabled = currentPage >= pages;
+  } else {
+    pgEl.classList.add('hidden');
+  }
 }
 
 async function confirmDelivered(orderId) {
   try {
-    await window.db.from('psy_orders').update({ status: 'delivered', delivered_at: new Date().toISOString() }).eq('id', orderId);
+    await window.db.from('psy_orders')
+      .update({ status: 'delivered', delivered_at: new Date().toISOString() })
+      .eq('id', orderId);
     banner('Terima kasih! Status order dikemaskini.');
     loadOrders();
   } catch (e) { banner('Ralat: ' + e.message, 'error'); }
@@ -102,80 +306,13 @@ async function loadOrders() {
   const { data: orders } = await window.db.from('psy_orders')
     .select('*').eq('patient_id', currentUser.id).order('created_at', { ascending: false });
 
-  const list = orders || [];
-  document.getElementById('orders-list').innerHTML = list.length
-    ? list.map(o => {
-      const sm       = STATUS_META[o.status] || STATUS_META.pending;
-      const items    = Array.isArray(o.items) ? o.items : [];
-      const isPickup = o.delivery_method === 'pickup';
-      const jtUrl    = o.tracking_number ? `https://www.jtexpress.my/index/query/gzquery.html?bills=${o.tracking_number}` : null;
-      const deliveryBadge = isPickup ? '🏥 Ambil Sendiri di Klinik' : '🚚 Penghantaran';
-
-      return `
-      <div class="bg-white rounded-xl border border-ink/10 overflow-hidden">
-        <div class="px-5 py-4 flex items-center justify-between flex-wrap gap-2 border-b border-ink/5">
-          <div>
-            <div class="font-bold">${o.order_ref}</div>
-            <div class="text-xs text-ink/50 mt-0.5">
-              ${new Date(o.created_at).toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric' })}
-              · ${items.length} item · RM ${Number(o.total).toFixed(2)}
-              ${deliveryBadge ? `· <span class="text-ink/60">${deliveryBadge}</span>` : ''}
-            </div>
-          </div>
-          <span class="chip text-xs ${sm.chip}">${sm.label}</span>
-        </div>
-
-        <div class="px-5 py-5">
-          <div class="flex items-start gap-1 overflow-x-auto">
-            ${renderTimeline(o)}
-          </div>
-        </div>
-
-        <div class="px-5 pb-5 space-y-3">
-          <div class="flex flex-wrap gap-1.5">
-            ${items.map(it => `<span class="chip bg-cream text-ink/70 text-xs">${it.name} × ${it.qty}</span>`).join('')}
-          </div>
-
-          ${isPickup && o.status === 'packed' ? `
-            <div class="flex items-center gap-3 bg-teal/10 rounded-xl px-4 py-3 border border-teal/20">
-              <span class="text-2xl">📍</span>
-              <div>
-                <div class="font-semibold text-sm text-teal">Parsel Sedia untuk Diambil</div>
-                <div class="text-xs text-ink/60 mt-0.5">Sila datang ke klinik pada waktu operasi untuk mengambil pesanan anda.</div>
-              </div>
-            </div>` : ''}
-
-          ${!isPickup && o.tracking_number ? `
-            <div class="flex items-center gap-3 bg-green-light rounded-xl px-4 py-3">
-              <div class="flex-1 min-w-0">
-                <div class="text-[10px] font-semibold text-ink/60 uppercase tracking-wide">${o.courier || 'Courier'} · Tracking No.</div>
-                <div class="font-bold font-mono">${o.tracking_number}</div>
-              </div>
-              ${jtUrl ? `<a href="${jtUrl}" target="_blank" rel="noopener" class="bg-green text-white text-xs px-3 py-2 rounded-lg font-semibold whitespace-nowrap">Track →</a>` : ''}
-            </div>` : ''}
-
-          ${!isPickup && o.tracking_photo_url ? `
-            <div>
-              <div class="text-[10px] font-semibold text-ink/60 uppercase tracking-wide mb-2">Gambar Parsel</div>
-              <img src="${o.tracking_photo_url}" class="h-28 rounded-lg border border-ink/10 object-cover cursor-pointer" onclick="window.open('${o.tracking_photo_url}','_blank')">
-            </div>` : ''}
-
-          ${o.status === 'shipped' ? `
-            <button onclick="confirmDelivered('${o.id}')" class="w-full bg-green text-white py-3 rounded-xl font-semibold">
-              ✅ Saya Dah Terima Parsel
-            </button>` : ''}
-        </div>
-      </div>`;
-    }).join('')
-    : `<div class="text-center py-16 space-y-3">
-        <div class="text-5xl">📭</div>
-        <p class="text-ink/60 text-sm">Tiada orders lagi.</p>
-        <a href="shop.html" class="inline-block bg-navy text-white px-5 py-2.5 rounded-xl text-sm font-semibold">Pergi ke Shop →</a>
-      </div>`;
+  allOrders = orders || [];
+  renderTabs();
+  renderOrders();
 }
 
 (async () => {
-  const user = await initPatient('psy_orders', 'Status penghantaran anda');
+  const user = await initPatient('psy_orders', 'Orders & Tracking');
   if (!user) return;
   loadOrders();
 })();

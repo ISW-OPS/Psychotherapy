@@ -254,9 +254,8 @@ let allSessions = [], patientMap = {}, planMap = {}, profileMap = {};
 let allPatientsList = [], allPlansList = [];
 
 function generateMeetLink() {
-  const c = 'abcdefghijkmnpqrstuvwxyz';
-  const r = n => Array.from({length: n}, () => c[Math.floor(Math.random() * c.length)]).join('');
-  return `https://meet.google.com/${r(3)}-${r(4)}-${r(3)}`;
+  const r = n => Math.random().toString(36).slice(2, 2 + n);
+  return `https://meet.jit.si/ISW-${r(4)}-${r(4)}-${r(4)}`;
 }
 let rescheduleId = null;
 let currentView  = 'calendar';
@@ -585,7 +584,9 @@ function openBookModal(prefillDate) {
   document.getElementById('bk-plan-id').value = '';
   document.getElementById('bk-plan-display').textContent = 'Pilih pesakit dahulu';
   document.getElementById('bk-plan-display').className = 'w-full border border-ink/10 bg-cream/40 rounded-xl px-3 py-2.5 text-sm text-ink/50 italic';
-  const defaultDate = prefillDate || new Date().toISOString().split('T')[0];
+  const todayStr = new Date().toISOString().split('T')[0];
+  document.getElementById('bk-date').min = todayStr;
+  const defaultDate = prefillDate && prefillDate >= todayStr ? prefillDate : todayStr;
   document.getElementById('bk-date').value  = defaultDate;
   document.getElementById('bk-time').value  = '10:00';
   document.getElementById('bk-week').value  = '';
@@ -613,7 +614,15 @@ async function saveSession() {
   if (!patientId) { errEl.textContent = 'Sila pilih pesakit.'; errEl.classList.remove('hidden'); return; }
   if (!planId)    { errEl.textContent = 'Sila pilih plan rawatan.'; errEl.classList.remove('hidden'); return; }
   if (!date)      { errEl.textContent = 'Sila pilih tarikh sesi.'; errEl.classList.remove('hidden'); return; }
+  if (date < new Date().toISOString().split('T')[0]) { errEl.textContent = '🚫 Tarikh yang dipilih sudah lepas. Sila pilih tarikh akan datang.'; errEl.classList.remove('hidden'); return; }
   if (!week || week < 1) { errEl.textContent = 'Sila masukkan nombor minggu yang sah.'; errEl.classList.remove('hidden'); return; }
+
+  const plan = allPlansList.find(p => p.id === planId);
+  if (plan?.total_weeks && week > plan.total_weeks) {
+    errEl.textContent = `Minggu ${week} melebihi jumlah minggu plan ini (${plan.total_weeks} minggu). Sila semak semula.`;
+    errEl.classList.remove('hidden');
+    return;
+  }
 
   const dayOfWeek = new Date(date).getDay(); // 0=Ahad, 1=Isnin, 2=Selasa
   if (dayOfWeek === 1 || dayOfWeek === 2) {
