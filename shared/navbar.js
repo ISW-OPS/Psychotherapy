@@ -7,9 +7,9 @@ const NAV_ITEMS_BY_ROLE = {
   patient: [
     { id: 'dashboard', url: 'dashboard.html', icon: '🏠', label: 'Dashboard' },
     { id: 'plan', url: 'plan.html', icon: '💊', label: 'My Treatment Plan' },
+    { id: 'pakej', url: 'pakej.html', icon: '🗂️', label: 'Pakej Rawatan' },
     { id: 'checkin', url: 'checkin.html', icon: '✅', label: 'Daily Check-in' },
     { id: 'library', url: 'library.html', icon: '📚', label: 'Self-Help Library' },
-    { id: 'pakej', url: 'pakej.html', icon: '🗂️', label: 'Pakej Rawatan' },
     { id: 'shop', url: 'shop.html', icon: '🛒', label: 'Product' },
     { id: 'payment', url: 'payment.html', icon: '💳', label: 'Payment' },
     { id: 'psy_orders', url: 'orders.html', icon: '📦', label: 'Orders & Tracking' },
