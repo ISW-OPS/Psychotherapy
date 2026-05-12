@@ -28,9 +28,9 @@ window.kycApproved = false;
 async function resolveKycApproved() {
   const p = window.patientRecord;
   if (!p) return false;
-  // Staff-created patients with full data are pre-approved
-  if (p.created_by_staff && hasCompletedKyc()) return true;
-  // Self-registered: must have an approved submission
+  // Active patients (staff-created and claimed, or fully approved) skip KYC
+  if (p.status === 'active') return true;
+  // Pending patients: must have an approved KYC submission
   const subs = await dbQuery('psy_kyc_submissions', {
     eq: { user_id: window.currentUser.id },
     limit: 1,
@@ -74,10 +74,43 @@ async function initPatient(pageId, titleSub) {
 
   let patients = await dbQuery('psy_patients', { eq: { user_id: window.currentUser.id } });
 
-  // Auto-create patient record if not exists
+  // No linked record — try to claim an existing unregistered staff-created record by IC
+  if (patients.length === 0) {
+    // Get IC from the user's profile
+    const { data: profileData } = await window.db
+      .from('psy_profiles')
+      .select('ic_number')
+      .eq('id', window.currentUser.id)
+      .single();
+    const userIc = profileData?.ic_number;
+
+    if (userIc) {
+      const { data: staffPt } = await window.db
+        .from('psy_patients')
+        .select('*')
+        .eq('status', 'unregistered')
+        .is('user_id', null)
+        .eq('ic_number', userIc)
+        .limit(1);
+
+      if (staffPt?.[0]) {
+        // Staff already filled all details — claim directly, no KYC needed
+        const { data: linked } = await window.db
+          .from('psy_patients')
+          .update({ user_id: window.currentUser.id, status: 'active' })
+          .eq('id', staffPt[0].id)
+          .select()
+          .single();
+        if (linked) patients = [linked];
+      }
+    }
+  }
+
+  // Still no record — fresh signup, create a new patient record
   if (patients.length === 0) {
     try {
-      const mrn = 'P-' + new Date().getFullYear() + '-' + String(Math.floor(Math.random() * 9999)).padStart(4, '0');
+      const { count: ptCount } = await window.db.from('psy_patients').select('*', { count: 'exact', head: true });
+      const mrn = 'P-' + String((ptCount || 0) + 1).padStart(3, '0');
       const newPatient = await dbInsert('psy_patients', {
         user_id: window.currentUser.id,
         mrn: mrn,

@@ -189,7 +189,26 @@ async function saveSoap(status) {
   try {
     await dbInsert('psy_soap_notes', note);
     await auditLog('soap.' + status, currentPatient.id);
-    banner(status === 'signed' ? 'SOAP ditandatangan' : 'Draf disimpan');
+
+    // Auto-mark session as consultation_done when SOAP is signed
+    if (status === 'signed') {
+      const dateStr = document.getElementById('entry-date').value;
+      const { data: sessions } = await window.db
+        .from('psy_plan_weekly_progress')
+        .select('id')
+        .eq('patient_id', currentPatient.id)
+        .eq('status', 'hadir')
+        .gte('session_date', dateStr + 'T00:00:00')
+        .lte('session_date', dateStr + 'T23:59:59')
+        .limit(1);
+      if (sessions?.[0]) {
+        await window.db.from('psy_plan_weekly_progress')
+          .update({ status: 'consultation_done', updated_at: new Date().toISOString(), updated_by: window.currentUser.id })
+          .eq('id', sessions[0].id);
+      }
+    }
+
+    banner(status === 'signed' ? 'SOAP ditandatangan & sesi ditanda Selesai ✅' : 'Draf disimpan');
     document.querySelectorAll('#soap-form input, #soap-form textarea').forEach(i => i.value = '');
     loadPatientChart();
   } catch (err) {
@@ -200,9 +219,6 @@ async function saveSoap(status) {
 (async () => {
   const user = await initStaff('consultation', 'SOAP note · clinical chart');
   if (!user) return;
-  if (user.staff_role === 'coach') {
-    document.querySelectorAll('button[onclick^="saveSoap"]').forEach(b => b.classList.add('hidden'));
-  }
 
   const d = new Date();
   const localToday = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -230,7 +246,7 @@ async function loadPatientsForDate() {
 
   let { data: patients } = await window.db.from('psy_patients')
     .select('id, mrn, gender, psy_profiles!psy_patients_user_id_fkey(full_name)')
-    .eq('status', 'active')
+    .in('status', ['active', 'unregistered'])
     .order('created_at', { ascending: false })
     .then(r => r, () => ({ data: [] }));
     

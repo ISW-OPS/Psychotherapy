@@ -122,6 +122,7 @@
                 class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
                 <option value="">Semua Status</option>
                 <option value="active">Aktif</option>
+                <option value="unregistered">Belum Aktif</option>
                 <option value="inactive">Tidak Aktif</option>
               </select>
               <select id="filter-pakej" onchange="filterPatients()"
@@ -161,6 +162,11 @@
                 class="flex items-center gap-1.5 px-4 py-2.5 bg-green text-white rounded-xl text-sm hover:bg-green-dark transition-colors font-semibold">
                 + Tambah Pesakit
               </button>
+              <label id="archived-toggle-wrap"
+                class="hidden items-center gap-2 px-3 py-2.5 border border-terracotta/40 rounded-xl text-sm text-terracotta cursor-pointer hover:bg-terracotta/5">
+                <input type="checkbox" id="toggle-archived" onchange="loadAll()" class="accent-terracotta">
+                Rekod Diarkibkan
+              </label>
             </div>
 
             <div class="bg-white rounded-xl border border-ink/10 overflow-x-auto">
@@ -172,7 +178,8 @@
                     <th>Nama</th>
                     <th>Telefon</th>
                     <th>Pakej</th>
-                    <th>Jantina</th>
+                    <th>Kod Rujukan</th>
+                    <th>Coach</th>
                     <th>Status</th>
                     <th class="print-hide"></th>
                   </tr>
@@ -195,12 +202,27 @@
 
   <!-- ── Create Patient Modal ──────────────────────── -->
   <div id="create-patient-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-    <div class="bg-white rounded-2xl shadow-xl w-full max-w-3xl flex flex-col max-h-[90vh]">
+    <div class="bg-white rounded-2xl shadow-xl w-full max-w-5xl flex flex-col max-h-[92vh]">
       <div class="flex items-center justify-between px-6 py-4 border-b border-ink/10 flex-shrink-0">
         <h3 class="font-bold text-lg" id="cp-modal-title">Tambah Pesakit Baru</h3>
         <button onclick="closeCreatePatient()" class="text-ink/40 hover:text-ink text-2xl leading-none">&times;</button>
       </div>
-      <div class="px-6 py-5 space-y-5 overflow-y-auto">
+      <div class="px-6 py-5 space-y-5 overflow-y-auto flex-1 min-h-0">
+
+        <!-- STATUS PESAKIT -->
+        <div class="flex items-center gap-3 p-3 bg-cream rounded-xl">
+          <span class="text-xs font-semibold text-ink/60 whitespace-nowrap">Jenis rekod:</span>
+          <div class="flex gap-2 flex-wrap">
+            <label class="flex items-center gap-1.5 cursor-pointer">
+              <input type="radio" name="cp-status-radio" value="unregistered" checked onchange="onStatusChange(this.value)" class="accent-navy">
+              <span class="text-xs font-semibold">Pesakit Baru <span class="font-normal text-ink/50">(akan daftar akaun)</span></span>
+            </label>
+            <label class="flex items-center gap-1.5 cursor-pointer">
+              <input type="radio" name="cp-status-radio" value="inactive" onchange="onStatusChange(this.value)" class="accent-navy">
+              <span class="text-xs font-semibold">Rekod Lama <span class="font-normal text-ink/50">(dah habis rawatan / arwah)</span></span>
+            </label>
+          </div>
+        </div>
 
         <!-- MAKLUMAT PERIBADI -->
         <div>
@@ -216,10 +238,11 @@
             <div>
               <label class="text-xs font-semibold">No Kad Pengenalan / Passport *</label>
               <input id="cp-ic" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"
-                placeholder="cth: 900101011234">
+                placeholder="cth: 900101011234" oninput="checkIcDuplicate(this.value)">
+              <div id="cp-ic-warning" class="hidden mt-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"></div>
             </div>
             <div>
-              <label class="text-xs font-semibold">Telefon *</label>
+              <label class="text-xs font-semibold">Telefon <span id="lbl-phone-req">*</span></label>
               <input id="cp-phone" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"
                 placeholder="cth: 0123456789">
             </div>
@@ -228,7 +251,7 @@
           <!-- Row 2: Jantina | Tarikh Lahir | E-mel | Pekerjaan -->
           <div class="grid grid-cols-4 gap-3 mt-3">
             <div>
-              <label class="text-xs font-semibold">Jantina *</label>
+              <label class="text-xs font-semibold">Jantina <span id="lbl-gender-req">*</span></label>
               <div class="flex gap-1.5 mt-1">
                 <button type="button" onclick="toggleChoice(this,'cp-gender')" data-val="M"
                   class="choice-btn flex-1 py-2 border border-ink/20 rounded-lg text-xs font-medium text-ink/70 hover:border-navy transition-colors">Lelaki</button>
@@ -238,42 +261,111 @@
               <input type="hidden" id="cp-gender" value="">
             </div>
             <div>
-              <label class="text-xs font-semibold">Tarikh Lahir *</label>
+              <label class="text-xs font-semibold">Tarikh Lahir <span id="lbl-dob-req">*</span></label>
               <input id="cp-dob" type="date" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
             </div>
             <div>
-              <label class="text-xs font-semibold">E-mel *</label>
+              <label class="text-xs font-semibold">E-mel <span id="lbl-email-req">*</span></label>
               <input id="cp-email" type="email" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"
                 placeholder="cth: ahmad@gmail.com">
             </div>
             <div>
-              <label class="text-xs font-semibold">Pekerjaan *</label>
+              <label class="text-xs font-semibold">Pekerjaan <span id="lbl-occupation-req">*</span></label>
               <input id="cp-occupation" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"
                 placeholder="cth: Guru ">
-              <input id="cp-company" type="hidden" value="">
+            </div>
+          </div>
+          <!-- Row 2b: Syarikat + Kod Rujukan + Pakej -->
+          <div class="grid grid-cols-4 gap-3 mt-3">
+            <div>
+              <label class="text-xs font-semibold">Syarikat <span
+                  class="text-ink/40 font-normal">(optional)</span></label>
+              <input id="cp-company" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"
+                placeholder="cth: Syarikat ABC">
+            </div>
+            <div>
+              <label class="text-xs font-semibold">Kod Rujukan <span
+                  class="text-ink/40 font-normal">(optional)</span></label>
+              <input id="cp-ref-code" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"
+                placeholder="cth: OB'25-0710">
+            </div>
+            <div class="col-span-2">
+              <label class="text-xs font-semibold">Pakej Rawatan <span
+                  class="text-ink/40 font-normal">(optional)</span></label>
+              <div class="flex gap-2 mt-1">
+                <select id="cp-pakej" class="flex-1 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white">
+                  <option value="">— Tiada pakej —</option>
+                </select>
+                <input id="cp-pakej-date" type="date" class="w-36 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+              </div>
             </div>
           </div>
 
           <!-- Row 3: Alamat | Status Perkahwinan -->
           <div class="grid grid-cols-3 gap-3 mt-3">
-            <div>
+            <div class="col-span-2">
               <label class="text-xs font-semibold">Alamat *</label>
               <input id="cp-address" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"
                 placeholder="No, Jalan, Bandar, Negeri">
             </div>
-            <div class="col-span-2">
+            <div>
               <label class="text-xs font-semibold">Status Perkahwinan *</label>
-              <div class="flex gap-2 mt-1">
-                <button type="button" onclick="toggleChoice(this,'cp-marital')" data-val="Bujang"
-                  class="choice-btn flex-1 py-2 border border-ink/20 rounded-lg text-sm font-medium text-ink/70 hover:border-navy transition-colors">Bujang</button>
-                <button type="button" onclick="toggleChoice(this,'cp-marital')" data-val="Berkahwin"
-                  class="choice-btn flex-1 py-2 border border-ink/20 rounded-lg text-sm font-medium text-ink/70 hover:border-navy transition-colors">Berkahwin</button>
-                <button type="button" onclick="toggleChoice(this,'cp-marital')" data-val="Janda"
-                  class="choice-btn flex-1 py-2 border border-ink/20 rounded-lg text-sm font-medium text-ink/70 hover:border-navy transition-colors">Janda</button>
-                <button type="button" onclick="toggleChoice(this,'cp-marital')" data-val="Duda"
-                  class="choice-btn flex-1 py-2 border border-ink/20 rounded-lg text-sm font-medium text-ink/70 hover:border-navy transition-colors">Duda</button>
+              <select id="cp-marital" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white">
+                <option value="">— Pilih —</option>
+                <option value="Bujang">Bujang</option>
+                <option value="Berkahwin">Berkahwin</option>
+                <option value="Janda">Janda</option>
+                <option value="Duda">Duda</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Waris / Kecemasan — dalam section yang sama -->
+          <p id="lbl-waris-section" class="text-[10px] font-bold text-ink/40 uppercase tracking-wide mt-4 mb-3">Maklumat Waris / Kecemasan</p>
+          <div class="grid grid-cols-3 gap-3">
+            <div>
+              <label class="text-xs font-semibold">Nama Penuh <span id="lbl-emg-req">*</span></label>
+              <input id="cp-emg-name" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+            </div>
+            <div>
+              <label class="text-xs font-semibold">No Kad Pengenalan / Passport *</label>
+              <input id="cp-emg-ic" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"
+                placeholder="cth: 900101011234">
+            </div>
+            <div>
+              <label class="text-xs font-semibold">Telefon <span id="lbl-emg-phone-req">*</span></label>
+              <input id="cp-emg-phone" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+            </div>
+            <div class="col-span-3">
+              <label class="text-xs font-semibold">Hubungan <span id="lbl-emg-rel-req">*</span></label>
+              <div class="grid grid-cols-3 gap-x-4 gap-y-2 mt-2">
+                <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="radio"
+                    name="cp-emg-rel-radio" value="Ibu/Bapa" onchange="onHubunganChange(this)" class="rounded">
+                  Ibu/Bapa</label>
+                <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="radio"
+                    name="cp-emg-rel-radio" value="Adik-Beradik" onchange="onHubunganChange(this)" class="rounded">
+                  Adik-Beradik</label>
+                <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="radio"
+                    name="cp-emg-rel-radio" value="Suami/Isteri" onchange="onHubunganChange(this)" class="rounded">
+                  Suami/Isteri</label>
+                <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="radio"
+                    name="cp-emg-rel-radio" value="Anak" onchange="onHubunganChange(this)" class="rounded"> Anak</label>
               </div>
-              <input type="hidden" id="cp-marital" value="">
+              <div class="flex items-center gap-2 mt-2">
+                <input type="radio" name="cp-emg-rel-radio" value="__other__" onchange="onHubunganChange(this)"
+                  class="rounded">
+                <label class="text-xs font-semibold">Lain-lain:</label>
+                <input id="cp-emg-rel-other" disabled placeholder="Nyatakan..."
+                  class="flex-1 px-3 py-1.5 border border-ink/20 rounded-lg text-sm"
+                  style="opacity:0.4;cursor:not-allowed">
+              </div>
+              <input type="hidden" id="cp-emg-rel" value="">
+            </div>
+            <div class="col-span-3">
+              <label class="text-xs font-semibold">E-mel *</label>
+              <input id="cp-emg-email" type="email"
+                class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"
+                placeholder="cth: waris@gmail.com">
             </div>
           </div>
         </div>
@@ -281,7 +373,8 @@
         <!-- MAKLUMAT PERUBATAN -->
         <div class="border-t border-ink/10 pt-4">
           <p class="text-[10px] font-bold text-ink/40 uppercase tracking-wide mb-3">Maklumat Perubatan</p>
-          <label class="text-xs font-semibold">Masalah Kesihatan * <span class="text-ink/40 font-normal">(pilih sekurang-kurangnya satu)</span></label>
+          <label class="text-xs font-semibold">Masalah Kesihatan * <span class="text-ink/40 font-normal">(pilih
+              sekurang-kurangnya satu)</span></label>
           <div id="cp-conditions-grid" class="grid grid-cols-3 gap-x-4 gap-y-2 mt-2">
             <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" value="Diabetes"
                 class="rounded"> Diabetes</label>
@@ -355,56 +448,39 @@
           </div>
         </div>
 
-        <!-- MAKLUMAT WARIS -->
-        <div class="border-t border-ink/10 pt-4">
-          <p class="text-[10px] font-bold text-ink/40 uppercase tracking-wide mb-3">Maklumat Waris / Kecemasan</p>
-          <div class="grid grid-cols-3 gap-3">
-            <div>
-              <label class="text-xs font-semibold">Nama Penuh *</label>
-              <input id="cp-emg-name" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
-            </div>
-            <div>
-              <label class="text-xs font-semibold">No Kad Pengenalan / Passport *</label>
-              <input id="cp-emg-ic" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"
-                placeholder="cth: 900101011234">
-            </div>
-            <div>
-              <label class="text-xs font-semibold">Telefon *</label>
-              <input id="cp-emg-phone" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
-            </div>
-            <div class="col-span-3">
-              <label class="text-xs font-semibold">Hubungan *</label>
-              <div class="grid grid-cols-3 gap-x-4 gap-y-2 mt-2">
-                <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="radio"
-                    name="cp-emg-rel-radio" value="Ibu/Bapa" onchange="onHubunganChange(this)" class="rounded">
-                  Ibu/Bapa</label>
-                <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="radio"
-                    name="cp-emg-rel-radio" value="Adik-Beradik" onchange="onHubunganChange(this)" class="rounded">
-                  Adik-Beradik</label>
-                <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="radio"
-                    name="cp-emg-rel-radio" value="Suami/Isteri" onchange="onHubunganChange(this)" class="rounded">
-                  Suami/Isteri</label>
-                <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="radio"
-                    name="cp-emg-rel-radio" value="Anak" onchange="onHubunganChange(this)" class="rounded"> Anak</label>
-              </div>
-              <div class="flex items-center gap-2 mt-2">
-                <input type="radio" name="cp-emg-rel-radio" value="__other__" onchange="onHubunganChange(this)"
-                  class="rounded">
-                <label class="text-xs font-semibold">Lain-lain:</label>
-                <input id="cp-emg-rel-other" disabled placeholder="Nyatakan..."
-                  class="flex-1 px-3 py-1.5 border border-ink/20 rounded-lg text-sm"
-                  style="opacity:0.4;cursor:not-allowed">
-              </div>
-              <input type="hidden" id="cp-emg-rel" value="">
-            </div>
-            <div>
-              <label class="text-xs font-semibold">E-mel *</label>
-              <input id="cp-emg-email" type="email"
-                class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="cth: waris@gmail.com">
-            </div>
+        <!-- Duration + Medical Notes -->
+        <div class="grid grid-cols-2 gap-3 mt-3">
+          <div>
+            <label class="text-xs font-semibold">Berapa Lama Dialami <span
+                class="text-ink/40 font-normal">(optional)</span></label>
+            <select id="cp-duration" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white">
+              <option value="">— Pilih —</option>
+              <option>Kurang 1 bulan</option>
+              <option>1–3 bulan</option>
+              <option>3–6 bulan</option>
+              <option>6–12 bulan</option>
+              <option>1–2 tahun</option>
+              <option>2–5 tahun</option>
+              <option>Lebih 5 tahun</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs font-semibold">Ubat Yang Diambil <span
+                class="text-ink/40 font-normal">(optional)</span></label>
+            <textarea id="cp-medical-notes" rows="2"
+              class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm resize-none"
+              placeholder="cth: Sertraline 50mg, Clonazepam 0.5mg..."></textarea>
           </div>
         </div>
-
+        <!-- Medical Reports Upload -->
+        <div class="mt-3">
+          <label class="text-xs font-semibold">Laporan Perubatan <span
+              class="text-ink/40 font-normal">(optional)</span></label>
+          <input id="cp-reports" type="file" multiple accept="image/*,application/pdf"
+            class="w-full mt-1 text-sm text-ink/60 file:mr-3 file:py-1.5 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-navy file:text-white hover:file:bg-navy-dark cursor-pointer">
+          <p class="text-[11px] text-ink/40 mt-1">PDF atau gambar · Maksimum 20MB setiap fail</p>
+          <div id="cp-existing-reports" class="mt-2 space-y-1"></div>
+        </div>
         <div id="cp-error" class="hidden text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2"></div>
       </div>
       <div class="px-6 py-4 border-t border-ink/10 flex justify-end gap-2 flex-shrink-0">
@@ -461,21 +537,43 @@
     </div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="../../config/supabase.js"></script>
   <script src="../../shared/authGuard.js"></script>
   <script src="../../shared/logout.js"></script>
   <script src="../../shared/navbar.js"></script>
   <script src="_shared.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
   <script>
     let allPatients = [];
     let currentFiltered = [];
     let currentDetailPt = null;
     let isAdmin = false;
+    let isCoachUser = false;
     let editingPatientId = null;
 
     // ── Create Patient ────────────────────────────────────
+    function getSelectedStatus() {
+      return document.querySelector('input[name="cp-status-radio"]:checked')?.value || 'unregistered';
+    }
+
+    function onStatusChange(val) {
+      const isRecord = val === 'inactive';
+      // Fields only required for active/new patients
+      const optionalForRecord = ['lbl-phone-req','lbl-gender-req','lbl-dob-req','lbl-email-req','lbl-occupation-req','lbl-emg-req','lbl-emg-phone-req','lbl-emg-rel-req'];
+      optionalForRecord.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = isRecord ? '(optional)' : '*';
+        if (el) el.className = isRecord ? 'text-ink/40 font-normal' : '';
+      });
+      // Dim waris section heading for record-only
+      const warisLabel = document.getElementById('lbl-waris-section');
+      if (warisLabel) warisLabel.textContent = isRecord ? 'Maklumat Waris / Kecemasan (optional)' : 'Maklumat Waris / Kecemasan';
+      // Hide pakej for record-only (old patients won't need new package)
+      const pakejRow = document.getElementById('cp-pakej')?.closest('.grid');
+      if (pakejRow) pakejRow.style.opacity = isRecord ? '0.4' : '1';
+    }
+
     function onHubunganChange(radio) {
       const otherInput = document.getElementById('cp-emg-rel-other');
       if (radio.value === '__other__') {
@@ -504,11 +602,35 @@
       document.getElementById(hiddenId).value = btn.dataset.val;
     }
 
+    let icCheckTimer = null;
+    async function checkIcDuplicate(val) {
+      const warn = document.getElementById('cp-ic-warning');
+      const ic = val.trim();
+      if (!warn) return;
+      clearTimeout(icCheckTimer);
+      if (ic.length < 6) { warn.classList.add('hidden'); return; }
+      icCheckTimer = setTimeout(async () => {
+        const { data } = await window.db.from('psy_patients').select('id, mrn, ic_number, full_name, status')
+          .eq('ic_number', ic).neq('id', editingPatientId || '00000000-0000-0000-0000-000000000000').limit(1);
+        if (data?.[0]) {
+          const p = data[0];
+          const name = p.full_name || p.mrn;
+          warn.innerHTML = `⚠️ IC ini sudah wujud dalam sistem — <strong>${name}</strong> (${p.mrn}) · ${STATUS_LABELS[p.status] || p.status}`;
+          warn.classList.remove('hidden');
+        } else {
+          warn.classList.add('hidden');
+        }
+      }, 500);
+    }
+
     function resetCreateForm() {
-      ['cp-name', 'cp-ic', 'cp-phone', 'cp-email', 'cp-address',
+      ['cp-name', 'cp-ic', 'cp-phone', 'cp-email', 'cp-address', 'cp-ref-code', 'cp-company', 'cp-medical-notes',
         'cp-emg-name', 'cp-emg-ic', 'cp-emg-phone', 'cp-occupation', 'cp-emg-rel', 'cp-emg-email'].forEach(id => {
           const el = document.getElementById(id); if (el) el.value = '';
         });
+      const durEl = document.getElementById('cp-duration'); if (durEl) durEl.value = '';
+      const rptEl = document.getElementById('cp-reports'); if (rptEl) rptEl.value = '';
+      const existRpt = document.getElementById('cp-existing-reports'); if (existRpt) existRpt.innerHTML = '';
       document.getElementById('cp-gender').value = '';
       document.getElementById('cp-dob').value = '';
       document.getElementById('cp-marital').value = '';
@@ -522,7 +644,12 @@
       relOther.style.opacity = '0.4';
       relOther.style.cursor = 'not-allowed';
       document.querySelectorAll('#cp-conditions-grid input[type=checkbox]').forEach(cb => cb.checked = false);
+      const pakejSel = document.getElementById('cp-pakej'); if (pakejSel) pakejSel.value = '';
+      const pakejDate = document.getElementById('cp-pakej-date'); if (pakejDate) pakejDate.value = '';
       document.getElementById('cp-error').classList.add('hidden');
+      document.getElementById('cp-ic-warning')?.classList.add('hidden');
+      const defaultRadio = document.querySelector('input[name="cp-status-radio"][value="unregistered"]');
+      if (defaultRadio) { defaultRadio.checked = true; onStatusChange('unregistered'); }
       document.querySelectorAll('input[name="cp-emg-rel-radio"]').forEach(r => r.checked = false);
       document.querySelectorAll('#create-patient-modal .choice-btn').forEach(b => {
         b.classList.remove('bg-navy', 'text-white', 'border-navy');
@@ -530,14 +657,29 @@
       });
     }
 
+    async function loadPackagesDropdown(selectedPkgCode = '') {
+      const sel = document.getElementById('cp-pakej');
+      if (!sel) return;
+      const { data: pkgs } = await window.db.from('psy_packages')
+        .select('package_id, name, price, duration_weeks').order('sort_order');
+      sel.innerHTML = '<option value="">— Tiada pakej —</option>'
+        + (pkgs || []).map(p => `<option value="${p.package_id}"
+            data-name="${p.name}"
+            data-price="${p.price ?? 0}"
+            data-weeks="${p.duration_weeks ?? 0}"
+            ${p.package_id === selectedPkgCode ? 'selected' : ''}>${p.name}</option>`).join('');
+    }
+
     function openCreatePatient() {
       editingPatientId = null;
       resetCreateForm();
       document.getElementById('cp-modal-title').textContent = 'Tambah Pesakit Baru';
       document.getElementById('cp-save-btn').textContent = 'Simpan';
-      // IC field editable for new patient
+      document.querySelector('.flex.items-center.gap-3.p-3.bg-cream')?.classList.remove('hidden');
       document.getElementById('cp-ic').readOnly = false;
       document.getElementById('cp-ic').classList.remove('bg-cream/40');
+      document.getElementById('cp-pakej-date').value = new Date().toISOString().slice(0, 10);
+      loadPackagesDropdown();
       document.getElementById('create-patient-modal').classList.remove('hidden');
     }
 
@@ -549,17 +691,29 @@
 
       document.getElementById('cp-modal-title').textContent = 'Edit Maklumat Pesakit';
       document.getElementById('cp-save-btn').textContent = 'Kemaskini';
+      // Hide status selector when editing — status managed via status button in list
+      document.querySelector('.flex.items-center.gap-3.p-3.bg-cream')?.classList.add('hidden');
 
       // Fill fields
-      document.getElementById('cp-name').value        = p.full_name || p.psy_profiles?.full_name || '';
-      document.getElementById('cp-phone').value       = p.phone || p.psy_profiles?.phone || '';
-      document.getElementById('cp-email').value       = p.email || p.psy_profiles?.email || '';
-      document.getElementById('cp-address').value     = p.address || '';
-      document.getElementById('cp-occupation').value  = p.occupation || '';
-      document.getElementById('cp-dob').value         = p.date_of_birth || '';
+      document.getElementById('cp-name').value = p.full_name || p.psy_profiles?.full_name || '';
+      document.getElementById('cp-phone').value = p.phone || p.psy_profiles?.phone || '';
+      document.getElementById('cp-email').value = p.email || p.psy_profiles?.email || '';
+      document.getElementById('cp-address').value = p.address || '';
+      document.getElementById('cp-occupation').value = p.occupation || '';
+      document.getElementById('cp-dob').value = p.date_of_birth || '';
+      document.getElementById('cp-ref-code').value = p.reference_code || '';
+      document.getElementById('cp-company').value = p.company || '';
+      document.getElementById('cp-duration').value = p.condition_duration || '';
+      document.getElementById('cp-medical-notes').value = p.medical_notes || '';
+      const reports = p.documents?.reports || [];
+      const existRpt = document.getElementById('cp-existing-reports');
+      if (existRpt) existRpt.innerHTML = reports.length
+        ? '<div class="text-[11px] text-ink/60 font-semibold mb-1">Fail yang telah dimuat naik:</div>' +
+        reports.map(r => `<div class="text-xs flex items-center gap-2 bg-gray-50 px-2 py-1 rounded border border-ink/10">📎 ${r.name}</div>`).join('')
+        : '';
 
       // IC — readonly when editing (cannot change IC)
-      document.getElementById('cp-ic').value    = p.ic_number || '';
+      document.getElementById('cp-ic').value = p.ic_number || '';
       document.getElementById('cp-ic').readOnly = true;
       document.getElementById('cp-ic').classList.add('bg-cream/40');
 
@@ -569,11 +723,7 @@
         if (gBtn) toggleChoice(gBtn, 'cp-gender');
       }
 
-      // Marital status toggle
-      if (p.marital_status) {
-        const mBtn = document.querySelector(`#create-patient-modal .choice-btn[data-val="${p.marital_status}"]`);
-        if (mBtn) toggleChoice(mBtn, 'cp-marital');
-      }
+      if (p.marital_status) document.getElementById('cp-marital').value = p.marital_status;
 
       // Medical conditions — tick matching checkboxes
       const condList = (p.medical_condition || '').split(',').map(c => c.trim());
@@ -592,8 +742,8 @@
       }
 
       // Emergency contact
-      document.getElementById('cp-emg-name').value  = p.emergency_contact_name || '';
-      document.getElementById('cp-emg-ic').value    = p.emergency_contact_ic || '';
+      document.getElementById('cp-emg-name').value = p.emergency_contact_name || '';
+      document.getElementById('cp-emg-ic').value = p.emergency_contact_ic || '';
       document.getElementById('cp-emg-phone').value = p.emergency_contact_phone || '';
       document.getElementById('cp-emg-email').value = p.emergency_contact_email || '';
 
@@ -613,11 +763,32 @@
         relOther.style.cursor = 'text';
       }
 
+      // Package — load dropdown then pre-select existing package (stored as text code e.g. "M 001")
+      loadPackagesDropdown(p.active_package_id || '').then(() => {
+        if (p.package_purchased_at)
+          document.getElementById('cp-pakej-date').value = p.package_purchased_at.slice(0, 10);
+      });
+
       document.getElementById('create-patient-modal').classList.remove('hidden');
     }
 
     function closeCreatePatient() {
       document.getElementById('create-patient-modal').classList.add('hidden');
+    }
+
+    async function uploadAndSaveReports(patientId) {
+      const input = document.getElementById('cp-reports');
+      if (!input || !input.files.length) return;
+      const { data: cur } = await window.db.from('psy_patients').select('documents').eq('id', patientId).single();
+      const existing = cur?.documents?.reports || [];
+      for (const f of input.files) {
+        if (f.size > 20 * 1024 * 1024) throw new Error(`${f.name} melebihi 20MB`);
+        const path = `staff/${patientId}/${Date.now()}_${f.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+        const { error } = await window.db.storage.from('medical-reports').upload(path, f);
+        if (error) throw new Error(`Upload gagal: ${error.message}`);
+        existing.push({ name: f.name, path, size: f.size, uploaded_at: new Date().toISOString() });
+      }
+      await window.db.from('psy_patients').update({ documents: { reports: existing } }).eq('id', patientId);
     }
 
     async function savePatient() {
@@ -644,9 +815,28 @@
       const email = document.getElementById('cp-email').value.trim();
       const marital = document.getElementById('cp-marital').value;
 
-      if (!name || !ic || !phone || !gender || !dob || !email || !occupation || !address || !marital ||
-          !condition || !emgName || !emgIc || !emgPhone || !emgRel || !emgEmail) {
-        errEl.textContent = 'Semua field bertanda * wajib diisi.';
+      // Package selection
+      const pakejSel = document.getElementById('cp-pakej');
+      const pakejOpt = pakejSel?.options[pakejSel?.selectedIndex];
+      const selectedPkgCode = pakejSel?.value || null;                         // text code e.g. "M 001"
+      const selectedPkgName = (pakejOpt && selectedPkgCode) ? pakejOpt.dataset.name : null;
+      const selectedPkgPrice = (pakejOpt && selectedPkgCode) ? parseFloat(pakejOpt.dataset.price || 0) : 0;
+      const selectedPkgWeeks = (pakejOpt && selectedPkgCode) ? parseInt(pakejOpt.dataset.weeks || 0) : 0;
+      const pakejDate = document.getElementById('cp-pakej-date')?.value || null;
+      const purchasedAt = selectedPkgCode ? (pakejDate ? new Date(pakejDate).toISOString() : new Date().toISOString()) : null;
+      const expiresAt = (selectedPkgCode && selectedPkgWeeks > 0)
+        ? new Date(new Date(purchasedAt).getTime() + selectedPkgWeeks * 7 * 24 * 3600 * 1000).toISOString()
+        : null;
+
+      const selectedStatus = getSelectedStatus();
+      const isRecordOnly = selectedStatus === 'inactive';
+
+      const missingBase = !name || !ic || !condition;
+      const missingNew = !isRecordOnly && (!phone || !gender || !dob || !email || !occupation || !address || !marital || !emgName || !emgIc || !emgPhone || !emgRel || !emgEmail);
+      if (missingBase || missingNew) {
+        errEl.textContent = isRecordOnly
+          ? 'Nama, IC, dan Kondisi Kesihatan wajib diisi.'
+          : 'Semua field bertanda * wajib diisi.';
         errEl.classList.remove('hidden');
         return;
       }
@@ -669,6 +859,14 @@
         emergency_contact_email: emgEmail || null,
         emergency_contact_ic: emgIc || null,
         occupation: occupation || null,
+        company: document.getElementById('cp-company')?.value.trim() || null,
+        condition_duration: document.getElementById('cp-duration')?.value || null,
+        active_package_id: selectedPkgCode,
+        active_package_name: selectedPkgName,
+        package_purchased_at: purchasedAt,
+        package_expires_at: expiresAt,
+        medical_notes: document.getElementById('cp-medical-notes')?.value.trim() || null,
+        reference_code: document.getElementById('cp-ref-code')?.value.trim() || null,
       };
 
       try {
@@ -676,16 +874,53 @@
           // UPDATE existing patient
           const { error } = await window.db.from('psy_patients').update(payload).eq('id', editingPatientId);
           if (error) throw error;
+          await uploadAndSaveReports(editingPatientId);
+          // If package assigned/changed, create or update purchase record
+          if (selectedPkgCode) {
+            const { data: existing } = await window.db.from('psy_package_purchases')
+              .select('id').eq('patient_id', editingPatientId).eq('package_id', selectedPkgCode)
+              .in('status', ['active', 'pending_payment']).limit(1);
+            if (!existing?.length) {
+              await window.db.from('psy_package_purchases').insert({
+                patient_id: editingPatientId,
+                package_id: selectedPkgCode,
+                package_name: selectedPkgName,
+                price: selectedPkgPrice,
+                purchased_at: purchasedAt,
+                expires_at: expiresAt,
+                status: 'active',
+                payment_method: 'staff_assigned',
+              });
+            }
+          }
           await auditLog('patient.updated_by_staff', editingPatientId, { name });
           banner('Maklumat pesakit dikemaskini ✅');
         } else {
           // CREATE new patient
-          const mrn = 'PSY-' + Date.now().toString().slice(-6);
-          const { error } = await window.db.from('psy_patients').insert({
-            mrn, user_id: null, ic_number: ic, status: 'active', created_by_staff: true, ...payload,
-          });
+          const { count: ptCount } = await window.db.from('psy_patients').select('*', { count: 'exact', head: true });
+          const mrn = 'P-' + String((ptCount || 0) + 1).padStart(3, '0');
+          const coachAutoAssign = isCoachUser ? { coach_id: window.currentUser.id } : {};
+          const { data: inserted, error } = await window.db.from('psy_patients').insert({
+            mrn, user_id: null, ic_number: ic, status: selectedStatus, created_by_staff: true, ...payload, ...coachAutoAssign,
+          }).select('id').single();
           if (error) throw error;
-          await auditLog('patient.created_by_staff', mrn, { name, ic });
+          if (inserted?.id) {
+            await uploadAndSaveReports(inserted.id);
+            // Create purchase record so package history is tracked
+            if (selectedPkgCode && inserted.id) {
+              await window.db.from('psy_package_purchases').insert({
+                patient_id: inserted.id,
+                package_id: selectedPkgCode,
+                package_name: selectedPkgName,
+                price: selectedPkgPrice,
+                purchased_at: purchasedAt,
+                expires_at: expiresAt,
+                status: 'active',
+                payment_method: 'staff_assigned',
+              });
+            }
+          }
+          await auditLog('patient.created_by_staff', mrn, { name, ic, package: selectedPkgName || null });
           banner('Pesakit baru berjaya ditambah ✅');
         }
         closeCreatePatient();
@@ -696,6 +931,36 @@
       } finally {
         btn.disabled = false;
         btn.textContent = editingPatientId ? 'Kemaskini' : 'Simpan';
+      }
+    }
+
+    // ── Soft Delete ───────────────────────────────────────
+    async function deletePatient(id, name) {
+      if (!confirm(`Arkib rekod pesakit "${name || id}"?\n\nRekod akan disembunyikan dari senarai tetapi masih tersimpan dalam sistem.\nAdmin boleh pulihkan rekod ini pada bila-bila masa.`)) return;
+      try {
+        const { data: snapshot } = await window.db.from('psy_patients').select('*').eq('id', id).single();
+        const { error } = await window.db.from('psy_patients').update({ status: 'deleted' }).eq('id', id);
+        if (error) throw error;
+        await auditLog('patient.archived', id, { name, snapshot });
+        banner('Rekod pesakit diarkibkan');
+        loadAll();
+      } catch (err) {
+        banner('Ralat: ' + err.message, 'error');
+      }
+    }
+
+    async function restorePatient(id, name) {
+      if (!confirm(`Pulihkan rekod pesakit "${name || id}"?`)) return;
+      try {
+        const pt = allPatients.find(x => x.id === id);
+        const restoreStatus = pt?.user_id ? 'inactive' : 'unregistered';
+        const { error } = await window.db.from('psy_patients').update({ status: restoreStatus }).eq('id', id);
+        if (error) throw error;
+        await auditLog('patient.restored', id, { name, restoreStatus });
+        banner('Rekod pesakit berjaya dipulihkan ✅');
+        loadAll();
+      } catch (err) {
+        banner('Ralat: ' + err.message, 'error');
       }
     }
 
@@ -723,22 +988,24 @@
           <td class="text-xs font-mono">${p.mrn}</td>
           <td>
             <strong>${name}</strong>
-            ${(!p.user_id) ? '<span class="text-[9px] bg-terracotta/15 text-terracotta px-1.5 py-0.5 rounded ml-1">Belum Daftar</span>' : ''}
+            ${(!p.user_id) ? '<span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded ml-1">Belum Aktif</span>' : ''}
           </td>
           <td class="text-xs">${phone}</td>
           <td class="text-xs">${p.active_package_name
               ? `<span class="chip bg-navy-light text-navy">${p.active_package_name}</span>`
               : '<span class="text-ink/40">—</span>'}</td>
-          <td>${p.gender === 'M' ? 'Lelaki' : p.gender === 'F' ? 'Perempuan' : '—'}</td>
+          <td class="text-xs">${p.reference_code || '—'}</td>
+          <td class="text-xs">${p.coach?.full_name ? `<span class="text-navy font-medium">${p.coach.full_name}</span>` : '<span class="text-ink/30">—</span>'}</td>
           <td>${statusChip(p.status)}</td>
           <td class="whitespace-nowrap print-hide space-x-3">
-            <a href="patient-hub.html?patient_id=${p.id}" class="text-navy text-xs font-semibold hover:underline">Details</a>
-            ${isAdmin ? `<button onclick="openEditPatient('${p.id}')" class="text-teal text-xs font-semibold hover:underline">Edit</button>` : ''}
-            ${isAdmin ? `<button onclick="deletePatient('${p.id}','${(p.full_name || p.psy_profiles?.full_name || '').replace(/'/g, "\\'")}' )" class="text-terracotta text-xs font-semibold hover:underline">Padam</button>` : ''}
+            ${p.status !== 'deleted' ? `<a href="patient-hub.html?patient_id=${p.id}" class="text-navy text-xs font-semibold hover:underline">Details</a>` : ''}
+            ${(isAdmin || (isCoachUser && p.coach_id === window.currentUser?.id)) && p.status !== 'deleted' ? `<button onclick="openEditPatient('${p.id}')" class="text-teal text-xs font-semibold hover:underline">Edit</button>` : ''}
+            ${isAdmin && p.status !== 'deleted' ? `<button onclick="deletePatient('${p.id}','${(p.full_name || p.psy_profiles?.full_name || '').replace(/'/g, "\\'")}' )" class="text-terracotta text-xs font-semibold hover:underline">Padam</button>` : ''}
+            ${isAdmin && p.status === 'deleted' ? `<button onclick="restorePatient('${p.id}','${(p.full_name || p.psy_profiles?.full_name || '').replace(/'/g, "\\'")}' )" class="text-green text-xs font-semibold hover:underline">Pulihkan</button>` : ''}
           </td>
         </tr>`;
         }).join('')
-        : '<tr><td colspan="8" class="text-center text-ink/40 py-8">Tiada pesakit ditemui</td></tr>';
+        : '<tr><td colspan="9" class="text-center text-ink/40 py-8">Tiada pesakit ditemui</td></tr>';
 
       renderPagination(total, totalPages);
     }
@@ -916,7 +1183,7 @@
   </div>
 
   <div style="margin-bottom:14px">
-    <span class="badge">${p.status === 'active' ? 'Aktif' : p.status === 'pending_kyc' ? 'Pending KYC' : p.status || '—'}</span>
+    <span class="badge">${window.STATUS_LABELS?.[p.status] || p.status || '—'}</span>
     ${p.active_package_name ? `<span class="badge">${p.active_package_name}</span>` : ''}
   </div>
 
@@ -974,7 +1241,7 @@
       <td>${phone}</td>
       <td>${p.active_package_name || '—'}</td>
       <td>${p.gender === 'M' ? 'Lelaki' : p.gender === 'F' ? 'Perempuan' : '—'}</td>
-      <td>${p.status === 'active' ? 'Aktif' : p.status === 'inactive' ? 'Tidak Aktif' : p.status || '—'}</td>
+      <td>${window.STATUS_LABELS?.[p.status] || p.status || '—'}</td>
     </tr>`;
       }).join('');
 
@@ -1023,23 +1290,25 @@
 
     // ── Export Excel ──────────────────────────────────────
     function exportCSV() {
-      const rows = [['Nama', 'Patient ID', 'No. IC', 'Jantina', 'Pakej Aktif', 'Status', 'Telefon', 'Kondisi']];
-      currentFiltered.forEach(p => {
-        rows.push([
-          p.psy_profiles?.full_name || p.full_name || '',
-          p.mrn || '',
-          p.ic_number || '',
-          p.gender === 'M' ? 'Lelaki' : p.gender === 'F' ? 'Perempuan' : '',
-          p.active_package_name || '',
-          p.status || '',
-          p.psy_profiles?.phone || p.phone || p.emergency_contact_phone || '',
-          p.medical_condition || '',
-        ]);
-      });
+      if (typeof XLSX === 'undefined') { banner('XLSX belum siap, cuba lagi', 'error'); return; }
+      const rows = [
+        ['No', 'Patient ID', 'Nama', 'Telefon', 'Status', 'Pakej', 'Kod Rujukan', 'Coach', 'Tarikh Daftar'],
+        ...currentFiltered.map((p, i) => [
+          i + 1,
+          p.mrn || '—',
+          p.psy_profiles?.full_name || p.full_name || '—',
+          p.psy_profiles?.phone || p.phone || '—',
+          p.status || '—',
+          p.active_package_name || '—',
+          p.reference_code || '—',
+          p.coach?.full_name || '—',
+          p.created_at ? new Date(p.created_at).toLocaleDateString('ms-MY') : '—',
+        ])
+      ];
       const ws = XLSX.utils.aoa_to_sheet(rows);
-      ws['!cols'] = [{ wch: 35 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 30 }];
+      ws['!cols'] = [{ wch: 5 }, { wch: 12 }, { wch: 30 }, { wch: 15 }, { wch: 12 }, { wch: 20 }, { wch: 14 }, { wch: 25 }, { wch: 14 }];
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Senarai Pesakit');
+      XLSX.utils.book_append_sheet(wb, ws, 'Pesakit');
       XLSX.writeFile(wb, 'senarai_pesakit_' + new Date().toISOString().slice(0, 10) + '.xlsx');
     }
 
@@ -1072,27 +1341,23 @@
 
     // ── Load ─────────────────────────────────────────────
     async function loadAll(skipAutoLink = false) {
-      const isCoach = window.currentUser?.staff_role === 'coach';
-
-      let patQuery = window.db.from('psy_patients')
-        .select('*, psy_profiles!psy_patients_user_id_fkey(full_name, phone, email, role, avatar_url)')
-        .order('created_at', { ascending: false });
-
-      if (isCoach) patQuery = patQuery.eq('coach_id', window.currentUser.id);
-
       const [patRes, kycRes] = await Promise.all([
-        patQuery,
+        window.db.from('psy_patients')
+          .select('*, psy_profiles!psy_patients_user_id_fkey(full_name, phone, email, role, avatar_url)')
+          .order('created_at', { ascending: false }),
         window.db.from('psy_kyc_submissions').select('user_id').eq('status', 'pending'),
       ]);
 
       if (patRes.error) console.error('[patients] load error:', patRes.error);
 
       const pendingKycUserIds = new Set((kycRes.data || []).map(k => k.user_id).filter(Boolean));
+      const showArchived = document.getElementById('toggle-archived')?.checked;
 
       allPatients = (patRes.data || []).filter(p =>
         (p.psy_profiles?.role === 'patient' || !p.psy_profiles)
         && p.status !== 'pending_kyc'
         && !pendingKycUserIds.has(p.user_id)
+        && (showArchived ? p.status === 'deleted' : p.status !== 'deleted')
       );
 
       // Fallback: batch-fetch psy_profiles for registered patients where the join returned null
@@ -1107,6 +1372,16 @@
             ...p,
             psy_profiles: p.psy_profiles || profileMap[p.user_id] || null,
           }));
+        }
+      }
+
+      // Fetch coach names
+      const coachIds = [...new Set(allPatients.map(p => p.coach_id).filter(Boolean))];
+      if (coachIds.length) {
+        const { data: coaches } = await window.db.from('psy_profiles').select('id, full_name').in('id', coachIds);
+        if (coaches?.length) {
+          const coachMap = Object.fromEntries(coaches.map(c => [c.id, c]));
+          allPatients = allPatients.map(p => ({ ...p, coach: coachMap[p.coach_id] || null }));
         }
       }
 
@@ -1184,32 +1459,19 @@
       }
     }
 
-    async function deletePatient(id, name) {
-      if (!confirm(`Padam rekod pesakit "${name || id}"?\n\nSemua data berkaitan (temujanji, vitals, sesi) akan turut dipadam.\nTindakan ini tidak boleh diundur.`)) return;
-      try {
-        // Delete child records first to satisfy FK constraints
-        const relatedTables = [
-          'psy_appointments', 'psy_treatment_plans', 'psy_checkins',
-          'psy_vitals', 'psy_sessions', 'psy_invoices', 'psy_notes',
-        ];
-        await Promise.all(relatedTables.map(t =>
-          window.db.from(t).delete().eq('patient_id', id)
-        ));
-        const { error } = await window.db.from('psy_patients').delete().eq('id', id);
-        if (error) throw error;
-        await auditLog('patient.deleted', id, { name });
-        banner('Rekod pesakit dipadam');
-        loadAll();
-      } catch (err) {
-        banner('Ralat: ' + err.message, 'error');
-      }
-    }
-
     (async () => {
       const user = await initStaff('psy_patients', 'Senarai Pesakit');
       if (!user) return;
       isAdmin = ['admin', 'manager', 'doctor'].includes(user.staff_role);
+      isCoachUser = user.staff_role === 'coach';
+      if (isAdmin) {
+        const tog = document.getElementById('archived-toggle-wrap');
+        if (tog) tog.classList.replace('hidden', 'flex');
+      }
       loadAll();
+      if (new URLSearchParams(location.search).get('new') === '1') {
+        setTimeout(openCreatePatient, 500);
+      }
     })();
   </script>
 </body>

@@ -67,19 +67,56 @@ function chip(text, color = 'navy') {
   return `<span class="chip ${colors[color] || colors.grey}">${text}</span>`;
 }
 
+const STATUS_LABELS = {
+  active:       'Aktif',
+  pending_kyc:  'Pending KYC',
+  inactive:     'Tidak Aktif',
+  rejected:     'Ditolak',
+  deleted:      'Dipadam',
+  unregistered: 'Belum Aktif',
+  pending:      'Pending',
+  approved:     'Diluluskan',
+  scheduled:    'Dijadualkan',
+  completed:    'Selesai',
+  cancelled:    'Dibatalkan',
+  no_show:      'Tidak Hadir',
+  in_progress:  'Sedang Berjalan',
+  checked_in:   'Check-in',
+  draft:        'Draf',
+  signed:       'Ditandatangan',
+  open:         'Terbuka',
+  acknowledged: 'Diakui',
+  resolved:     'Diselesaikan',
+  resulted:     'Keputusan Ada',
+  reviewed:     'Disemak',
+  ordered:      'Dipesan',
+};
+
 function statusChip(s) {
   const m = {
-    scheduled:'bg-navy-light text-navy', completed:'bg-green-light text-green-dark',
-    cancelled:'bg-ink/10 text-ink/60', no_show:'bg-terracotta/20 text-terracotta',
-    pending:'bg-gold/30 text-gold-dark', approved:'bg-green-light text-green-dark',
-    rejected:'bg-terracotta/20 text-terracotta', open:'bg-terracotta/20 text-terracotta',
-    in_progress:'bg-navy-light text-navy', checked_in:'bg-gold/30 text-gold-dark',
-    active:'bg-green-light text-green-dark', resulted:'bg-gold/30 text-gold-dark',
-    reviewed:'bg-green-light text-green-dark', ordered:'bg-navy-light text-navy',
-    draft:'bg-ink/10 text-ink/60', signed:'bg-green-light text-green-dark',
-    acknowledged:'bg-navy-light text-navy', resolved:'bg-green-light text-green-dark',
+    scheduled:    'bg-navy-light text-navy',
+    completed:    'bg-green-light text-green-dark',
+    cancelled:    'bg-ink/10 text-ink/60',
+    no_show:      'bg-terracotta/20 text-terracotta',
+    pending:      'bg-gold/30 text-gold-dark',
+    approved:     'bg-green-light text-green-dark',
+    rejected:     'bg-terracotta/20 text-terracotta',
+    open:         'bg-terracotta/20 text-terracotta',
+    in_progress:  'bg-navy-light text-navy',
+    checked_in:   'bg-gold/30 text-gold-dark',
+    active:       'bg-green-light text-green-dark',
+    resulted:     'bg-gold/30 text-gold-dark',
+    reviewed:     'bg-green-light text-green-dark',
+    ordered:      'bg-navy-light text-navy',
+    draft:        'bg-ink/10 text-ink/60',
+    signed:       'bg-green-light text-green-dark',
+    acknowledged: 'bg-navy-light text-navy',
+    resolved:     'bg-green-light text-green-dark',
+    unregistered: 'bg-amber-100 text-amber-800',
+    inactive:     'bg-ink/10 text-ink/50',
   };
-  return `<span class="chip ${m[s] || 'bg-ink/10 text-ink/60'}">${s}</span>`;
+  const label = STATUS_LABELS[s] || s;
+  return `<span class="chip ${m[s] || 'bg-ink/10 text-ink/60'}">${label}</span>`;
 }
 
 function formatDate(d) { return new Date(d).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }); }

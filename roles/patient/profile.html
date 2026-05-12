@@ -88,6 +88,24 @@
             </div>
             <button onclick="changePassword()" class="mt-4 bg-ink text-white text-sm px-6 py-2 rounded-lg font-semibold hover:bg-ink/80">Tukar Kata Laluan</button>
           </div>
+
+          <!-- Dokumen Perubatan -->
+          <div class="py-8">
+            <div class="flex items-center justify-between mb-4">
+              <div>
+                <h3 class="font-bold text-base">Dokumen Perubatan</h3>
+                <p class="text-xs text-ink/50 mt-0.5">Laporan, keputusan ujian, dan dokumen kesihatan</p>
+              </div>
+              <label class="cursor-pointer text-xs font-semibold text-navy border border-navy/30 px-3 py-2 rounded-lg hover:bg-navy hover:text-white transition-colors">
+                + Upload Dokumen
+                <input id="pat-doc-upload" type="file" multiple accept="image/*,application/pdf" class="hidden" onchange="uploadPatientDocs(this)">
+              </label>
+            </div>
+            <p class="text-[11px] text-ink/40 mb-3">PDF atau gambar · Maksimum 20MB setiap fail</p>
+            <div id="pat-docs-list">
+              <p class="text-xs text-ink/40 italic">Tiada dokumen dimuat naik</p>
+            </div>
+          </div>
         </div>
       </div>
     </main>
@@ -147,10 +165,62 @@ async function changePassword() {
   banner('Kata laluan berjaya ditukar');
 }
 
+async function uploadPatientDocs(input) {
+  const files = input.files;
+  if (!files.length || !patientRecord) return;
+  const { data: cur } = await window.db.from('psy_patients').select('documents').eq('id', patientRecord.id).single();
+  const existing = cur?.documents?.reports || [];
+  try {
+    for (const f of files) {
+      if (f.size > 20 * 1024 * 1024) { banner(`${f.name} melebihi 20MB`, 'error'); continue; }
+      const path = `patient/${patientRecord.id}/${Date.now()}_${f.name.replace(/[^a-zA-Z0-9.-]/g,'_')}`;
+      const { error } = await window.db.storage.from('medical-reports').upload(path, f);
+      if (error) throw error;
+      existing.push({ name: f.name, path, size: f.size, uploaded_at: new Date().toISOString(), uploaded_by: 'patient' });
+    }
+    await window.db.from('psy_patients').update({ documents: { reports: existing } }).eq('id', patientRecord.id);
+    input.value = '';
+    banner('Dokumen berjaya dimuatnaik ✅');
+    await loadPatientDocs();
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+}
+
+async function loadPatientDocs() {
+  if (!patientRecord) return;
+  const { data: pat } = await window.db.from('psy_patients').select('documents').eq('id', patientRecord.id).single();
+  const kycRows = await window.db.from('psy_kyc_submissions').select('documents').eq('user_id', currentUser.id).limit(1).then(r => r.data?.[0]);
+  const patReports = pat?.documents?.reports || [];
+  const kycReports = kycRows?.documents?.reports || [];
+  const reports = [...patReports, ...kycReports];
+  const host = document.getElementById('pat-docs-list');
+  if (!host) return;
+  if (!reports.length) { host.innerHTML = '<p class="text-xs text-ink/40 italic">Tiada dokumen dimuat naik</p>'; return; }
+  host.innerHTML = '<p class="text-xs text-ink/40 italic">Memuatkan...</p>';
+  const links = await Promise.all(reports.map(async r => {
+    const { data } = await window.db.storage.from('medical-reports').createSignedUrl(r.path, 3600);
+    return { ...r, url: data?.signedUrl || null };
+  }));
+  host.innerHTML = `<div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+    ${links.map(r => {
+      const isPdf = /\.pdf$/i.test(r.name || '');
+      const isImg = /\.(jpe?g|png|webp)$/i.test(r.name || '');
+      const size  = r.size ? (r.size/1024/1024).toFixed(1)+' MB' : '';
+      const prev  = r.url
+        ? (isImg ? `<img src="${r.url}" class="w-full h-20 object-cover rounded-lg" alt="${r.name}">`
+                 : `<div class="w-full h-20 flex items-center justify-center text-3xl bg-gray-50 rounded-lg">${isPdf?'📄':'🖼️'}</div>`)
+        : `<div class="w-full h-20 flex items-center justify-center text-xs text-terracotta bg-terracotta/10 rounded-lg">Gagal muatkan</div>`;
+      return r.url
+        ? `<a href="${r.url}" target="_blank" class="block border border-ink/10 rounded-xl p-3 hover:border-navy transition-colors">${prev}<div class="text-xs font-semibold text-ink truncate mt-2">${r.name||'Dokumen'}</div>${size?`<div class="text-[10px] text-ink/40">${size}</div>`:''}</a>`
+        : `<div class="block border border-ink/10 rounded-xl p-3 opacity-50">${prev}<div class="text-xs font-semibold text-ink truncate mt-2">${r.name||'Dokumen'}</div></div>`;
+    }).join('')}
+  </div>`;
+}
+
 (async () => {
   const user = await initPatient('profile', 'Akaun & keselamatan');
   if (!user) return;
   loadProfileForm();
+  await loadPatientDocs();
 })();
 </script>
 </body>

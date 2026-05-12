@@ -18,10 +18,11 @@
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   cursor: pointer; margin-bottom: 2px; line-height: 1.4;
 }
-.chip-booked     { background:#dbeafe; color:#1e3a5f; }
-.chip-hadir      { background:#d1fae5; color:#065f46; }
-.chip-cancel     { background:#fee2e2; color:#991b1b; }
-.chip-reschedule { background:#fef3c7; color:#92400e; }
+.chip-booked            { background:#dbeafe; color:#1e3a5f; }
+.chip-hadir             { background:#d1fae5; color:#065f46; }
+.chip-cancel            { background:#fee2e2; color:#991b1b; }
+.chip-reschedule        { background:#fef3c7; color:#92400e; }
+.chip-consultation_done { background:#064e3b; color:#ffffff; }
 
 @media print {
   #sidebar, #page-header, .print-hide, nav, .mobile-nav,
@@ -199,6 +200,21 @@
           class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
       </div>
       <div>
+        <label class="label">Jenis Sesi</label>
+        <div class="flex gap-2">
+          <button type="button" id="bk-type-f2f" onclick="setSessionType('f2f')"
+            class="flex-1 py-2 border-2 border-navy bg-navy text-white rounded-xl text-sm font-semibold transition-colors">🏥 F2F</button>
+          <button type="button" id="bk-type-online" onclick="setSessionType('online')"
+            class="flex-1 py-2 border-2 border-ink/20 text-ink/60 rounded-xl text-sm font-semibold transition-colors">💻 Online</button>
+        </div>
+        <input type="hidden" id="bk-session-type" value="f2f">
+      </div>
+      <div id="bk-meet-row" class="hidden">
+        <label class="label">Google Meet Link <span class="text-ink/40 font-normal">(auto-jana atau isi sendiri)</span></label>
+        <input id="bk-meet-link" type="url" placeholder="https://meet.google.com/..."
+          class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+      </div>
+      <div>
         <label class="label">Nota (optional)</label>
         <textarea id="bk-notes" rows="2" placeholder="Nota tambahan..."
           class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy resize-none"></textarea>
@@ -257,6 +273,36 @@ function generateMeetLink() {
   const r = n => Math.random().toString(36).slice(2, 2 + n);
   return `https://meet.jit.si/ISW-${r(4)}-${r(4)}-${r(4)}`;
 }
+
+function setSessionType(type) {
+  document.getElementById('bk-session-type').value = type;
+  const f2fBtn    = document.getElementById('bk-type-f2f');
+  const onlineBtn = document.getElementById('bk-type-online');
+  const meetRow   = document.getElementById('bk-meet-row');
+  if (type === 'f2f') {
+    f2fBtn.className    = 'flex-1 py-2 border-2 border-navy bg-navy text-white rounded-xl text-sm font-semibold transition-colors';
+    onlineBtn.className = 'flex-1 py-2 border-2 border-ink/20 text-ink/60 rounded-xl text-sm font-semibold transition-colors';
+    meetRow.classList.add('hidden');
+  } else {
+    onlineBtn.className = 'flex-1 py-2 border-2 border-navy bg-navy text-white rounded-xl text-sm font-semibold transition-colors';
+    f2fBtn.className    = 'flex-1 py-2 border-2 border-ink/20 text-ink/60 rounded-xl text-sm font-semibold transition-colors';
+    meetRow.classList.remove('hidden');
+    if (!document.getElementById('bk-meet-link').value)
+      document.getElementById('bk-meet-link').value = generateMeetLink();
+  }
+}
+
+async function joinMeet(sessionId, planId, week, link) {
+  window.open(link, '_blank');
+  await dbUpdate('psy_plan_weekly_progress', sessionId, {
+    status: 'hadir', updated_by: window.currentUser.id,
+    updated_by_name: window.currentUser.full_name, updated_at: new Date().toISOString(),
+  });
+  if (planId && week) await advancePlanWeek(planId, week);
+  await auditLog('plan.session_hadir', sessionId);
+  await loadSessions();
+  banner('Sesi ditanda Hadir ✅');
+}
 let rescheduleId = null;
 let currentView  = 'calendar';
 let calYear, calMonth; // 0-based month
@@ -269,12 +315,13 @@ function localDateStr(dt) {
 }
 
 const statusChipMap = {
-  booked:     '<span class="chip bg-navy-light text-navy">📅 Ditempah</span>',
-  hadir:      '<span class="chip bg-green-light text-green-dark">✅ Hadir</span>',
-  cancel:     '<span class="chip bg-terracotta-light text-terracotta">❌ Cancel</span>',
-  reschedule: '<span class="chip bg-gold-light text-gold-dark">🔄 Reschedule</span>',
+  booked:              '<span class="chip bg-navy-light text-navy">📅 Ditempah</span>',
+  hadir:               '<span class="chip bg-green-light text-green-dark">✅ Hadir</span>',
+  cancel:              '<span class="chip bg-terracotta-light text-terracotta">❌ Cancel</span>',
+  reschedule:          '<span class="chip bg-gold-light text-gold-dark">🔄 Reschedule</span>',
+  consultation_done:   '<span class="chip bg-green text-white">✅ Selesai</span>',
 };
-const chipClass = { booked:'chip-booked', hadir:'chip-hadir', cancel:'chip-cancel', reschedule:'chip-reschedule' };
+const chipClass = { booked:'chip-booked', hadir:'chip-hadir', cancel:'chip-cancel', reschedule:'chip-reschedule', consultation_done:'chip-consultation_done' };
 
 // ── Load ─────────────────────────────────────────────
 async function loadSessions() {
@@ -410,15 +457,17 @@ function openDayModal(dateStr) {
               <div class="text-xs text-ink/50">${patient?.mrn || ''} · ${time} · Minggu ${s.week_number}</div>
               <div class="text-xs text-ink/60 mt-0.5">${plan?.name || '—'}</div>
               ${s.notes ? `<div class="text-xs text-ink/50 italic mt-1">${s.notes}</div>` : ''}
-              ${s.meet_link ? `<a href="${s.meet_link}" target="_blank" class="inline-flex items-center gap-1 mt-1 text-xs font-semibold text-navy hover:underline">🎥 Join Google Meet</a>` : ''}
+              ${s.session_type === 'online' ? '<span class="text-[10px] text-navy font-semibold">💻 Online</span>' : '<span class="text-[10px] text-ink/40">🏥 F2F</span>'}
             </div>
             <div>${statusChipMap[s.status] || ''}</div>
           </div>
           <div class="flex gap-2 mt-2 flex-wrap">
-            ${s.status === 'booked' || s.status === 'reschedule'
-              ? `<button onclick="markHadir('${s.id}','${s.plan_id}',${s.week_number})" class="bg-green text-white text-xs px-3 py-1 rounded-lg">✅ Hadir</button>
-                 <button onclick="openReschedule('${s.id}')" class="border border-gold text-gold-dark text-xs px-3 py-1 rounded-lg">🔄 Reschedule</button>
-                 <button onclick="markCancel('${s.id}')" class="border border-terracotta text-terracotta text-xs px-3 py-1 rounded-lg">❌ Cancel</button>` : ''}
+            ${s.status === 'booked' || s.status === 'reschedule' ? `
+              ${s.session_type === 'online' && s.meet_link
+                ? `<button onclick="joinMeet('${s.id}','${s.plan_id}',${s.week_number},'${s.meet_link}')" class="bg-navy text-white text-xs px-3 py-1 rounded-lg">🔗 Join Meet</button>`
+                : `<button onclick="markHadir('${s.id}','${s.plan_id}',${s.week_number})" class="bg-green text-white text-xs px-3 py-1 rounded-lg">✅ Hadir</button>`}
+              <button onclick="openReschedule('${s.id}')" class="border border-gold text-gold-dark text-xs px-3 py-1 rounded-lg">🔄 Reschedule</button>
+              <button onclick="markCancel('${s.id}')" class="border border-terracotta text-terracotta text-xs px-3 py-1 rounded-lg">❌ Cancel</button>` : ''}
           </div>
         </div>`;
       }).join('')
@@ -460,10 +509,12 @@ function renderList() {
           <td>${s.score ? `<strong>${s.score}/10</strong>` : '—'}</td>
           <td class="text-xs max-w-[180px] truncate">${s.notes || '—'}</td>
           <td class="whitespace-nowrap print-hide">
-            ${s.status === 'booked' || s.status === 'reschedule'
-              ? `<button onclick="markHadir('${s.id}','${s.plan_id}',${s.week_number})" class="bg-green text-white text-xs px-3 py-1.5 rounded-lg">Hadir</button>
-                 <button onclick="openReschedule('${s.id}')" class="text-gold-dark text-xs ml-1 hover:underline">Reschedule</button>
-                 <button onclick="markCancel('${s.id}')" class="text-terracotta text-xs ml-1 hover:underline">Cancel</button>` : ''}
+            ${s.status === 'booked' || s.status === 'reschedule' ? `
+              ${s.session_type === 'online' && s.meet_link
+                ? `<button onclick="joinMeet('${s.id}','${s.plan_id}',${s.week_number},'${s.meet_link}')" class="bg-navy text-white text-xs px-3 py-1.5 rounded-lg">🔗 Join Meet</button>`
+                : `<button onclick="markHadir('${s.id}','${s.plan_id}',${s.week_number})" class="bg-green text-white text-xs px-3 py-1.5 rounded-lg">✅ Hadir</button>`}
+              <button onclick="openReschedule('${s.id}')" class="text-gold-dark text-xs ml-1 hover:underline">Reschedule</button>
+              <button onclick="markCancel('${s.id}')" class="text-terracotta text-xs ml-1 hover:underline">Cancel</button>` : ''}
           </td>
         </tr>`;
       }).join('')
@@ -599,7 +650,11 @@ function openBookModal(prefillDate) {
   // Check if default date itself falls on a closed day
   checkBookDate(document.getElementById('bk-date'));
 }
-function closeBookModal() { document.getElementById('book-modal').classList.add('hidden'); }
+function closeBookModal() {
+  document.getElementById('book-modal').classList.add('hidden');
+  setSessionType('f2f');
+  document.getElementById('bk-meet-link').value = '';
+}
 
 async function saveSession() {
   const patientId = document.getElementById('bk-patient').value;
@@ -624,6 +679,23 @@ async function saveSession() {
     return;
   }
 
+  // Gate: previous session must be consultation_done before booking next
+  if (week > 1) {
+    const { data: prevSessions } = await window.db
+      .from('psy_plan_weekly_progress')
+      .select('week_number, status')
+      .eq('plan_id', planId)
+      .eq('patient_id', patientId)
+      .order('week_number', { ascending: false })
+      .limit(1);
+    const prev = prevSessions?.[0];
+    if (prev && prev.status !== 'consultation_done' && prev.status !== 'cancel') {
+      errEl.textContent = `⚠️ Sesi Minggu ${prev.week_number} belum selesai consultation. Sila sign SOAP note dahulu sebelum book sesi seterusnya.`;
+      errEl.classList.remove('hidden');
+      return;
+    }
+  }
+
   const dayOfWeek = new Date(date).getDay(); // 0=Ahad, 1=Isnin, 2=Selasa
   if (dayOfWeek === 1 || dayOfWeek === 2) {
     errEl.textContent = '🚫 Klinik tutup pada hari Isnin dan Selasa. Sila pilih hari lain.';
@@ -631,15 +703,20 @@ async function saveSession() {
     return;
   }
 
+  const sessionType = document.getElementById('bk-session-type').value || 'f2f';
+  const meetLink = sessionType === 'online'
+    ? (document.getElementById('bk-meet-link').value.trim() || generateMeetLink())
+    : null;
+
   const btn = document.getElementById('btn-save-session');
   btn.disabled = true; btn.textContent = 'Menyimpan...';
   try {
-    const meetLink = generateMeetLink();
     const { error: insertErr } = await window.db.from('psy_plan_weekly_progress').insert({
       patient_id: patientId, plan_id: planId,
       session_date: new Date(`${date}T${time || '10:00'}:00`).toISOString(),
       week_number: week, status: 'booked',
       notes: notes || null,
+      session_type: sessionType,
       meet_link: meetLink,
     });
     if (insertErr) throw insertErr;

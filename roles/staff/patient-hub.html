@@ -70,6 +70,7 @@
           <button class="tab-btn" onclick="switchTab('vitals')">📊 Vitals</button>
           <button class="tab-btn" onclick="switchTab('sessions')">📝 Sesi</button>
           <button class="tab-btn" onclick="switchTab('supply')">📦 Bekalan</button>
+          <button class="tab-btn" onclick="switchTab('dna')">🧬 DNA Report</button>
           <button class="tab-btn" onclick="switchTab('profile')">👤 Profil</button>
         </div>
 
@@ -324,11 +325,28 @@
           </div>
         </div>
 
+        <!-- ═══════════════ TAB: DNA REPORT ═══════════════ -->
+        <div id="tab-dna" class="tab-content space-y-4">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold text-ink/40 uppercase tracking-wide">Laporan DNA Pesakit</span>
+            <label class="cursor-pointer flex items-center gap-2 bg-navy text-white text-xs font-semibold px-4 py-2 rounded-lg hover:bg-navy-dark transition-colors">
+              + Upload Report
+              <input id="dna-upload-input" type="file" multiple accept="application/pdf" class="hidden" onchange="uploadDnaReports(this)">
+            </label>
+          </div>
+          <div id="dna-reports-list" class="space-y-3">
+            <p class="text-xs text-ink/40 italic py-4 text-center">Tiada laporan DNA dimuat naik</p>
+          </div>
+        </div>
+
         <!-- ═══════════════ TAB: PROFILE ═══════════════ -->
         <div id="tab-profile" class="tab-content space-y-4">
           <div class="flex items-center justify-between">
             <span class="text-xs font-semibold text-ink/40 uppercase tracking-wide">Profil Pesakit</span>
-            <button onclick="openProfileEdit()" class="text-xs font-semibold text-navy border border-navy/30 px-3 py-1.5 rounded-lg hover:bg-navy hover:text-white transition-colors">✏️ Edit Profil</button>
+            <div class="flex items-center gap-2">
+              <button onclick="openProfileEdit()" class="text-xs font-semibold text-navy border border-navy/30 px-3 py-1.5 rounded-lg hover:bg-navy hover:text-white transition-colors">✏️ Edit Profil</button>
+              <button id="btn-arkib-patient" onclick="arkibPatientFromHub()" class="text-xs font-semibold text-terracotta border border-terracotta/30 px-3 py-1.5 rounded-lg hover:bg-terracotta hover:text-white transition-colors hidden">Padam</button>
+            </div>
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 
@@ -348,7 +366,14 @@
             </div>
 
             <div class="bg-white rounded-2xl border border-ink/10 p-5 space-y-3 md:col-span-2">
-              <h3 class="font-bold text-sm">📎 Dokumen Perubatan</h3>
+              <div class="flex items-center justify-between">
+                <h3 class="font-bold text-sm">📎 Dokumen Perubatan</h3>
+                <label class="cursor-pointer text-xs font-semibold text-navy border border-navy/30 px-3 py-1.5 rounded-lg hover:bg-navy hover:text-white transition-colors">
+                  + Upload Dokumen
+                  <input id="hub-doc-upload" type="file" multiple accept="image/*,application/pdf" class="hidden" onchange="uploadHubDocs(this)">
+                </label>
+              </div>
+              <p class="text-[11px] text-ink/40 -mt-1">PDF atau gambar · Maksimum 20MB setiap fail</p>
               <div id="profile-docs">
                 <p class="text-xs text-ink/40 italic py-2">Tiada dokumen dimuat naik</p>
               </div>
@@ -455,13 +480,13 @@
             <label class="text-xs font-semibold">Pekerjaan</label>
             <input id="pe-occupation" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
           </div>
+          <div>
+            <label class="text-xs font-semibold">Syarikat</label>
+            <input id="pe-company" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="Nama syarikat">
+          </div>
           <div class="col-span-2">
             <label class="text-xs font-semibold">Alamat</label>
             <textarea id="pe-address" rows="2" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm resize-none"></textarea>
-          </div>
-          <div>
-            <label class="text-xs font-semibold">Sumber Rujukan</label>
-            <input id="pe-referral" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
           </div>
         </div>
       </div>
@@ -634,6 +659,12 @@ async function loadPatient() {
   canEdit = ['admin','doctor','manager'].includes(role)
     || (role === 'coach' && patient.coach_id === window.currentUser.id);
 
+  // Show Padam button only for admin and only if patient is not already deleted
+  if (role === 'admin' && patient.status !== 'deleted') {
+    const padamBtn = document.getElementById('btn-arkib-patient');
+    if (padamBtn) padamBtn.classList.remove('hidden');
+  }
+
   renderPatientHeader();
   applyAccessControl();
   await loadTabData('overview');
@@ -653,12 +684,14 @@ function renderPatientHeader() {
     ? `📦 ${patient.active_package_name}` : '';
 
   const statusChips = {
-    active:     'bg-green-light text-green-dark',
-    pending_kyc:'bg-gold-light text-gold-dark',
-    inactive:   'bg-ink/10 text-ink/50',
+    active:       'bg-green-light text-green-dark',
+    pending_kyc:  'bg-gold-light text-gold-dark',
+    inactive:     'bg-ink/10 text-ink/50',
+    unregistered: 'bg-amber-100 text-amber-800',
+    rejected:     'bg-terracotta/15 text-terracotta',
   };
   const sc = document.getElementById('patient-status-chip');
-  sc.textContent  = patient.status || '—';
+  sc.textContent  = window.STATUS_LABELS?.[patient.status] || patient.status || '—';
   sc.className    = `chip text-xs ${statusChips[patient.status] || 'bg-ink/10 text-ink/50'}`;
 
   const kycChip = document.getElementById('patient-kyc-chip');
@@ -702,7 +735,7 @@ let loadedTabs = new Set(['overview']);
 
 async function switchTab(tab) {
   document.querySelectorAll('.tab-btn').forEach((b,i) => {
-    const tabs = ['overview','checkin','vitals','sessions','supply','profile'];
+    const tabs = ['overview','checkin','vitals','sessions','supply','dna','profile'];
     b.classList.toggle('active', tabs[i] === tab);
   });
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -720,6 +753,7 @@ async function loadTabData(tab) {
   if (tab === 'vitals')    await loadVitals();
   if (tab === 'sessions')  await loadSessions();
   if (tab === 'supply')    await loadSupply();
+  if (tab === 'dna')       await loadDnaReports();
   if (tab === 'profile')   renderProfile();
 }
 
@@ -1244,8 +1278,7 @@ function renderProfile() {
     row('Emel', email) +
     row('Alamat', patient.address || kyc?.address) +
     row('Pekerjaan', patient.occupation || kyc?.occupation) +
-    row('Syarikat', kyc?.company) +
-    row('Sumber Rujukan', patient.referral_source || kyc?.referral_source) ||
+    row('Syarikat', patient.company || kyc?.company) ||
     '<p class="text-xs text-ink/40 italic py-2">Tiada maklumat peribadi</p>';
 
   document.getElementById('profile-emergency').innerHTML =
@@ -1268,8 +1301,32 @@ function renderProfile() {
   loadProfileDocs();
 }
 
+async function uploadHubDocs(input) {
+  const files = input.files;
+  if (!files.length) return;
+  const patId = new URLSearchParams(location.search).get('patient_id');
+  if (!patId) return;
+  const { data: cur } = await window.db.from('psy_patients').select('documents').eq('id', patId).single();
+  const existing = cur?.documents?.reports || [];
+  try {
+    for (const f of files) {
+      if (f.size > 20 * 1024 * 1024) { banner(`${f.name} melebihi 20MB`, 'error'); continue; }
+      const path = `staff/${patId}/${Date.now()}_${f.name.replace(/[^a-zA-Z0-9.-]/g,'_')}`;
+      const { error } = await window.db.storage.from('medical-reports').upload(path, f);
+      if (error) throw error;
+      existing.push({ name: f.name, path, size: f.size, uploaded_at: new Date().toISOString(), uploaded_by: 'staff' });
+    }
+    await window.db.from('psy_patients').update({ documents: { reports: existing } }).eq('id', patId);
+    input.value = '';
+    banner('Dokumen berjaya dimuatnaik ✅');
+    await loadProfileDocs();
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+}
+
 async function loadProfileDocs() {
-  const reports = kyc?.documents?.reports || [];
+  const kycReports = kyc?.documents?.reports || [];
+  const patReports = patient?.documents?.reports || [];
+  const reports = [...kycReports, ...patReports];
   const host = document.getElementById('profile-docs');
   if (!host) return;
 
@@ -1389,8 +1446,8 @@ function openProfileEdit() {
   f('pe-email',     patient.email || profile?.email);
   f('pe-marital',   patient.marital_status || kyc?.marital_status);
   f('pe-occupation',patient.occupation || kyc?.occupation);
+  f('pe-company',   patient.company || kyc?.company);
   f('pe-address',   patient.address || kyc?.address);
-  f('pe-referral',  patient.referral_source || kyc?.referral_source);
   f('pe-emg-name',  patient.emergency_contact_name || kyc?.emergency_contact_name);
   f('pe-emg-ic',    patient.emergency_contact_ic || kyc?.emergency_contact_ic);
   f('pe-emg-phone', patient.emergency_contact_phone || kyc?.emergency_contact_phone);
@@ -1551,6 +1608,25 @@ function closeProfileEdit() {
   document.getElementById('profile-edit-modal').classList.add('hidden');
 }
 
+// ── Archive Patient from Hub ───────────────────────────
+async function arkibPatientFromHub() {
+  const name = profile?.full_name || kyc?.patient_name || patient.full_name || patient.mrn;
+  if (!confirm(`Arkib rekod pesakit "${name}"?\n\nRekod akan disembunyikan dari senarai tetapi masih tersimpan dalam sistem.\nAdmin boleh pulihkan rekod ini pada bila-bila masa.`)) return;
+  const btn = document.getElementById('btn-arkib-patient');
+  btn.disabled = true; btn.textContent = 'Mengarkib...';
+  try {
+    const { data: snapshot } = await window.db.from('psy_patients').select('*').eq('id', patientId).single();
+    const { error } = await window.db.from('psy_patients').update({ status: 'deleted' }).eq('id', patientId);
+    if (error) throw error;
+    await auditLog('patient.archived', patientId, { name, snapshot });
+    banner('Rekod pesakit dipadam');
+    setTimeout(() => { location.href = 'patients.html'; }, 1200);
+  } catch (err) {
+    banner('Ralat: ' + err.message, 'error');
+    btn.disabled = false; btn.textContent = 'Padam Pesakit';
+  }
+}
+
 async function saveProfileEdit() {
   const btn = document.getElementById('pe-save-btn');
   btn.disabled = true; btn.textContent = 'Menyimpan...';
@@ -1564,8 +1640,8 @@ async function saveProfileEdit() {
       email:                   document.getElementById('pe-email').value.trim() || null,
       marital_status:          document.getElementById('pe-marital').value || null,
       occupation:              document.getElementById('pe-occupation').value.trim() || null,
+      company:                 document.getElementById('pe-company').value.trim() || null,
       address:                 document.getElementById('pe-address').value.trim() || null,
-      referral_source:         document.getElementById('pe-referral').value.trim() || null,
       emergency_contact_name:         document.getElementById('pe-emg-name').value.trim() || null,
       emergency_contact_ic:           document.getElementById('pe-emg-ic').value.trim() || null,
       emergency_contact_phone:        document.getElementById('pe-emg-phone').value.trim() || null,
@@ -1595,6 +1671,69 @@ async function saveProfileEdit() {
     banner('Ralat: ' + err.message, 'error');
   } finally {
     btn.disabled = false; btn.textContent = 'Simpan';
+  }
+}
+
+// ── DNA Reports ───────────────────────────────────────
+async function loadDnaReports() {
+  const el = document.getElementById('dna-reports-list');
+  el.innerHTML = '<p class="text-xs text-ink/40 text-center py-4">Memuatkan...</p>';
+  const { data, error } = await window.db
+    .from('psy_dna_reports')
+    .select('*')
+    .eq('patient_id', patientId)
+    .order('uploaded_at', { ascending: false });
+  if (error || !data?.length) {
+    el.innerHTML = '<p class="text-xs text-ink/40 italic py-4 text-center">Tiada laporan DNA dimuat naik</p>';
+    return;
+  }
+  el.innerHTML = data.map(r => `
+    <div class="bg-white border border-ink/10 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-3 min-w-0">
+        <div class="text-2xl">📄</div>
+        <div class="min-w-0">
+          <div class="text-sm font-semibold truncate">${escHtml(r.file_name)}</div>
+          <div class="text-xs text-ink/50 mt-0.5">${new Date(r.uploaded_at).toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric' })} · Diupload oleh ${escHtml(r.uploaded_by_name || '—')}</div>
+          ${r.notes ? `<div class="text-xs text-ink/60 mt-0.5 italic">${escHtml(r.notes)}</div>` : ''}
+        </div>
+      </div>
+      <a href="${r.file_url}" target="_blank"
+        class="flex-shrink-0 text-xs font-semibold text-navy border border-navy/30 px-3 py-1.5 rounded-lg hover:bg-navy hover:text-white transition-colors">
+        ⬇️ Download
+      </a>
+    </div>`).join('');
+}
+
+async function uploadDnaReports(input) {
+  const files = Array.from(input.files);
+  if (!files.length) return;
+  const nonPdf = files.filter(f => f.type !== 'application/pdf');
+  if (nonPdf.length) { banner('Hanya fail PDF dibenarkan', 'error'); input.value = ''; return; }
+
+  banner('Memuat naik...');
+  try {
+    for (const f of files) {
+      const path = `dna-reports/${patientId}/${Date.now()}_${f.name.replace(/\s+/g, '_')}`;
+      const { error: upErr } = await window.db.storage.from('medical-reports').upload(path, f);
+      if (upErr) throw upErr;
+      const { data: urlData } = window.db.storage.from('medical-reports').getPublicUrl(path);
+      await window.db.from('psy_dna_reports').insert({
+        patient_id: patientId,
+        file_name: f.name,
+        file_path: path,
+        file_url: urlData.publicUrl,
+        uploaded_by: window.currentUser.id,
+        uploaded_by_name: window.currentUser.full_name || window.currentUser.email,
+        uploaded_at: new Date().toISOString(),
+      });
+    }
+    await auditLog('patient.dna_report_uploaded', patientId, { count: files.length });
+    banner(`${files.length} laporan berjaya diupload ✅`);
+    input.value = '';
+    loadedTabs.delete('dna');
+    await loadDnaReports();
+  } catch (err) {
+    banner('Ralat upload: ' + err.message, 'error');
   }
 }
 </script>
