@@ -39,20 +39,6 @@
 
       <div id="content" class="p-4 md:p-8 space-y-6">
 
-        <!-- BPS-S Pillars (collapsed summary) -->
-        <div class="bg-white rounded-xl p-5 border border-ink/10">
-          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-            <h3 class="font-bold">Matlamat BPS-S</h3>
-            <span class="text-xs text-ink/60" id="pillar-summary">—</span>
-          </div>
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
-            <div class="p-3 bg-navy/5 rounded-lg"><div class="text-xs text-navy font-semibold">🧬 BIO</div><div id="count-bio" class="text-xl font-bold mt-1">0</div><div class="text-[10px] text-ink/60">goals</div></div>
-            <div class="p-3 bg-terracotta/5 rounded-lg"><div class="text-xs text-terracotta font-semibold">🧠 PSYCHO</div><div id="count-psycho" class="text-xl font-bold mt-1">0</div><div class="text-[10px] text-ink/60">goals</div></div>
-            <div class="p-3 bg-gold/10 rounded-lg"><div class="text-xs text-gold-dark font-semibold">👥 SOCIAL</div><div id="count-social" class="text-xl font-bold mt-1">0</div><div class="text-[10px] text-ink/60">goals</div></div>
-            <div class="p-3 bg-green/5 rounded-lg"><div class="text-xs text-green-dark font-semibold">🕌 SPIRITUAL</div><div id="count-spiritual" class="text-xl font-bold mt-1">0</div><div class="text-[10px] text-ink/60">goals</div></div>
-          </div>
-        </div>
-
         <!-- Weekly Progress List (clickable rows) -->
         <div class="bg-white rounded-xl p-5 border border-ink/10">
           <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
@@ -61,14 +47,20 @@
           </div>
           <p class="text-xs text-ink/60 mb-4">Klik minggu untuk lihat vitals, nota coach, dan checklist kepatuhan.</p>
 
+          <!-- Week cards grid -->
           <div id="weekly-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3"></div>
 
-          <div class="flex items-center gap-4 mt-4 text-[10px] text-ink/60 flex-wrap">
-            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-navy inline-block"></span> Ditempah</span>
-            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-green inline-block"></span> Hadir</span>
-            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-gold inline-block"></span> Reschedule</span>
-            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-terracotta inline-block"></span> Cancel</span>
-            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-ink/10 inline-block"></span> Terkunci</span>
+          <!-- Footer: legend + pagination -->
+          <div class="flex items-center justify-between mt-4 flex-wrap gap-3">
+            <div class="flex items-center gap-3 text-[10px] text-ink/60 flex-wrap">
+              <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-green-dark inline-block"></span> Selesai</span>
+              <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-green inline-block"></span> Hadir</span>
+              <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-navy inline-block"></span> Ditempah</span>
+              <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-gold inline-block"></span> Reschedule</span>
+              <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-terracotta inline-block"></span> Cancel</span>
+              <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-ink/15 inline-block"></span> Terkunci</span>
+            </div>
+            <div id="week-pagination" class="flex items-center gap-1"></div>
           </div>
         </div>
 
@@ -197,18 +189,16 @@ async function loadPlan() {
   document.getElementById('plan-name').textContent = activePlan.name;
   document.getElementById('plan-meta').textContent = `Mula ${new Date(activePlan.created_at).toLocaleDateString('ms-MY')} · Week ${activePlan.current_week}/${activePlan.duration_weeks}`;
 
-  ['bio','psycho','social','spiritual'].forEach(k => {
-    const goals = activePlan[k + '_goals'] || [];
-    document.getElementById('count-' + k).textContent = goals.length;
-  });
-
-  const totalGoals = ['bio','psycho','social','spiritual'].reduce((s, k) => s + (activePlan[k + '_goals'] || []).length, 0);
-  document.getElementById('pillar-summary').textContent = `${totalGoals} matlamat rawatan`;
 }
 
 let weeklyProgressRows = [];
 let pendingBookWeek = null;
 let pendingBookExistingId = null;
+let currentPage = 1;
+const PAGE_SIZE = 6;
+
+const fmt  = d => new Date(d).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' });
+const fmtT = d => new Date(d).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 
 async function loadWeeklyProgress() {
   if (!activePlan) return;
@@ -218,80 +208,99 @@ async function loadWeeklyProgress() {
     order: { col: 'week_number', asc: true },
   }).catch(() => []);
 
+  const done = weeklyProgressRows.filter(p => ['hadir','consultation_done'].includes(p.status)).length;
+  document.getElementById('progress-subtitle').textContent = `${done} dari ${weeks} minggu selesai`;
+  document.getElementById('plan-pct-big').textContent = Math.round(done / weeks * 100) + '%';
+  document.getElementById('plan-week-full').textContent = `Minggu ${activePlan.current_week} / ${weeks}`;
+
+  // Start pagination on the page that contains the current week
+  const cw = activePlan.current_week || 1;
+  currentPage = Math.ceil(cw / PAGE_SIZE);
+  renderWeekPage();
+}
+
+function renderWeekPage() {
+  const weeks = activePlan.duration_weeks || 12;
+  const cw    = activePlan.current_week || 1;
+  const totalPages = Math.ceil(weeks / PAGE_SIZE);
+  const start = (currentPage - 1) * PAGE_SIZE + 1;
+  const end   = Math.min(currentPage * PAGE_SIZE, weeks);
+
   const progressMap = {};
   weeklyProgressRows.forEach(p => { progressMap[p.week_number] = p; });
 
-  const hadir = weeklyProgressRows.filter(p => p.status === 'hadir').length;
-  document.getElementById('progress-subtitle').textContent = `${hadir} dari ${weeks} minggu hadir`;
-  document.getElementById('plan-pct-big').textContent = Math.round(hadir / weeks * 100) + '%';
-  document.getElementById('plan-week-full').textContent = `Week ${activePlan.current_week} / ${weeks}`;
-
-  const fmt = d => new Date(d).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' });
-  const fmtTime = d => new Date(d).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-
   let html = '';
-  for (let w = 1; w <= weeks; w++) {
+  for (let w = start; w <= end; w++) {
     const entry = progressMap[w];
-    const status = entry?.status;
-    const prev = progressMap[w - 1];
-    const isCurrent = w === activePlan.current_week;
-    const locked = w > 1 && (!prev || prev.status !== 'hadir');
+    const s     = entry?.status;
+    const prev  = progressMap[w - 1];
+    const isCurrent = w === cw;
+    const locked = w > 1 && (!prev || !['hadir','consultation_done'].includes(prev?.status));
 
-    let cardClass = 'border-ink/15';
-    let chip = '';
-    let body = '';
-    let cta = '';
-    let clickable = true;
+    let border = 'border-ink/15';
+    let chip   = '<span class="bg-cream text-ink/60 text-[10px] px-2 py-0.5 rounded-full font-semibold">Belum Tempah</span>';
+    let body   = '';
+    let cta    = '';
 
-    if (status === 'hadir') {
-      cardClass = 'border-green-dark bg-green/5';
-      chip = '<span class="bg-green text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">✅ Hadir</span>';
-      body = `<div class="text-xs text-ink/70 mt-1">📅 ${entry.session_date ? fmt(entry.session_date) + ' · ' + fmtTime(entry.session_date) : '—'}</div>
-              ${entry.score ? `<div class="text-xs text-ink/60 mt-0.5">Skor: <strong>${entry.score}/10</strong></div>` : ''}`;
-    } else if (status === 'booked') {
-      cardClass = 'border-navy bg-navy/5';
-      chip = '<span class="bg-navy text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">📅 Ditempah</span>';
-      body = `<div class="text-xs text-ink/80 mt-1 font-semibold">📅 ${fmt(entry.session_date)}</div>
-              <div class="text-[11px] text-ink/70 mt-0.5">🕐 ${fmtTime(entry.session_date)}</div>`;
-      cta = `<button onclick="event.preventDefault(); openBookModal(${w}, true)" class="text-[10px] text-gold-dark font-semibold mt-2 hover:underline">Perlu reschedule →</button>`;
-    } else if (status === 'reschedule') {
-      cardClass = 'border-gold bg-gold/5';
-      chip = '<span class="bg-gold text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">🔄 Reschedule</span>';
-      body = '<div class="text-[11px] text-ink/60 mt-1">Perlu tempah semula</div>';
-      cta = `<button onclick="event.preventDefault(); openBookModal(${w}, true)" class="text-[11px] bg-navy text-white font-semibold mt-2 px-3 py-1 rounded hover:bg-navy-dark">Tempah Semula</button>`;
-    } else if (status === 'cancel') {
-      cardClass = 'border-terracotta bg-terracotta/5';
-      chip = '<span class="bg-terracotta text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">❌ Tidak Hadir</span>';
-      body = '<div class="text-[11px] text-ink/60 mt-1">Perlu tempah semula</div>';
-      cta = `<button onclick="event.preventDefault(); openBookModal(${w}, true)" class="text-[11px] bg-navy text-white font-semibold mt-2 px-3 py-1 rounded hover:bg-navy-dark">Tempah Semula</button>`;
+    if (s === 'consultation_done') {
+      border = 'border-green-dark bg-green/5';
+      chip   = '<span class="bg-green-dark text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">✅ Selesai</span>';
+      body   = `<div class="text-xs text-ink/60 mt-1">📅 ${entry.session_date ? fmt(entry.session_date) : '—'}</div>`;
+      cta    = `<a href="plan-week.html?plan_id=${activePlan.id}&week=${w}" class="text-[10px] text-navy font-semibold mt-2 block hover:underline">Lihat butiran →</a>`;
+    } else if (s === 'hadir') {
+      border = 'border-green bg-green/5';
+      chip   = '<span class="bg-green text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">✅ Hadir</span>';
+      body   = `<div class="text-xs text-ink/60 mt-1">📅 ${entry.session_date ? fmt(entry.session_date) : '—'}</div>`;
+      cta    = `<a href="plan-week.html?plan_id=${activePlan.id}&week=${w}" class="text-[10px] text-navy font-semibold mt-2 block hover:underline">Lihat butiran →</a>`;
+    } else if (s === 'booked') {
+      border = 'border-navy bg-navy/5';
+      chip   = '<span class="bg-navy text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">📅 Ditempah</span>';
+      body   = `<div class="text-xs text-ink/80 mt-1 font-semibold">📅 ${fmt(entry.session_date)}</div>
+                <div class="text-[11px] text-ink/60">🕐 ${fmtT(entry.session_date)}</div>`;
+      cta    = `<button onclick="openBookModal(${w},true)" class="text-[10px] text-gold-dark font-semibold mt-2 hover:underline">Perlu reschedule →</button>`;
+    } else if (s === 'reschedule') {
+      border = 'border-gold bg-gold/5';
+      chip   = '<span class="bg-gold text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">🔄 Reschedule</span>';
+      body   = '<div class="text-[11px] text-ink/50 mt-1">Perlu tempah semula</div>';
+      cta    = `<button onclick="openBookModal(${w},true)" class="text-[10px] bg-navy text-white font-semibold mt-2 px-2 py-1 rounded hover:bg-navy-dark">Tempah Semula</button>`;
+    } else if (s === 'cancel') {
+      border = 'border-terracotta bg-terracotta/5';
+      chip   = '<span class="bg-terracotta text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">❌ Tidak Hadir</span>';
+      body   = '<div class="text-[11px] text-ink/50 mt-1">Perlu tempah semula</div>';
+      cta    = `<button onclick="openBookModal(${w},true)" class="text-[10px] bg-navy text-white font-semibold mt-2 px-2 py-1 rounded hover:bg-navy-dark">Tempah Semula</button>`;
     } else if (locked) {
-      cardClass = 'border-ink/10 bg-ink/[0.03]';
-      chip = '<span class="bg-ink/10 text-ink/60 text-[10px] px-2 py-0.5 rounded-full font-semibold">🔒 Terkunci</span>';
-      body = `<div class="text-[11px] text-ink/50 mt-1">Selesaikan Minggu ${w - 1} dulu</div>`;
-      clickable = false;
+      border = 'border-ink/10 bg-ink/[0.02]';
+      chip   = '<span class="bg-ink/10 text-ink/40 text-[10px] px-2 py-0.5 rounded-full font-semibold">🔒 Terkunci</span>';
+      body   = `<div class="text-[11px] text-ink/40 mt-1">Selesaikan Minggu ${w-1} dulu</div>`;
     } else {
-      // Unbooked & unlocked → show Book CTA
-      cardClass = 'border-dashed border-ink/30';
-      chip = '<span class="bg-cream text-ink/70 text-[10px] px-2 py-0.5 rounded-full font-semibold">Belum Tempah</span>';
-      body = `<div class="text-[11px] text-ink/60 mt-1">Pilih tarikh rawatan untuk Minggu ${w}</div>`;
-      cta = `<button onclick="event.preventDefault(); openBookModal(${w}, false)" class="text-[11px] bg-navy text-white font-semibold mt-2 px-3 py-1 rounded hover:bg-navy-dark">📅 Tempah Sekarang</button>`;
-      clickable = false;
+      border = 'border-dashed border-ink/25';
+      body   = `<div class="text-[11px] text-ink/50 mt-1">Belum dijadualkan</div>`;
+      cta    = `<button onclick="openBookModal(${w},false)" class="text-[10px] bg-navy text-white font-semibold mt-2 px-2 py-1 rounded hover:bg-navy-dark">📅 Tempah</button>`;
     }
 
-    const wrap = clickable && status ? 'a' : 'div';
-    const href = clickable && status ? `href="plan-week.html#week=${w}"` : '';
-    html += `<${wrap} ${href} class="block border ${cardClass} ${isCurrent ? 'ring-2 ring-navy' : ''} rounded-xl p-3 ${clickable && status ? 'hover:shadow-md' : ''} transition">
-      <div class="flex items-center justify-between mb-1 flex-wrap gap-1">
-        <div class="text-sm font-bold ${isCurrent ? 'text-navy' : 'text-ink/80'}">Minggu ${w}${isCurrent ? ' · Semasa' : ''}</div>
+    html += `<div class="border ${border} ${isCurrent ? 'ring-2 ring-navy' : ''} rounded-xl p-3 transition">
+      <div class="flex items-center justify-between mb-1 gap-1 flex-wrap">
+        <div class="text-sm font-bold ${isCurrent ? 'text-navy' : 'text-ink/80'}">Minggu ${w}${isCurrent ? ' · <span class="font-normal text-xs">Semasa</span>' : ''}</div>
         ${chip}
       </div>
       ${body}
       ${cta}
-      ${clickable && status ? `<div class="text-[10px] text-navy font-semibold mt-2">Lihat butiran →</div>` : ''}
-    </${wrap}>`;
+    </div>`;
   }
-
   document.getElementById('weekly-list').innerHTML = html;
+
+  // Pagination
+  if (totalPages <= 1) { document.getElementById('week-pagination').innerHTML = ''; return; }
+  let pg = '';
+  for (let p = 1; p <= totalPages; p++) {
+    pg += `<button onclick="goPage(${p})" class="w-7 h-7 rounded-lg text-xs font-semibold transition ${p === currentPage ? 'bg-navy text-white' : 'bg-ink/8 text-ink/60 hover:bg-ink/15'}">${p}</button>`;
+  }
+  document.getElementById('week-pagination').innerHTML = pg;
+}
+
+function goPage(p) {
+  currentPage = p;
+  renderWeekPage();
 }
 
 function bumpClosedDays(d) {

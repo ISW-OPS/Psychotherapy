@@ -191,7 +191,12 @@
         </div>
         <div>
           <label class="label">Masa</label>
-          <input id="bk-time" type="time" value="10:00" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+          <select id="bk-time" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy bg-white">
+            <option value="08:30">8:30 AM</option>
+            <option value="10:00" selected>10:00 AM</option>
+            <option value="14:00">2:00 PM</option>
+            <option value="15:30">3:30 PM</option>
+          </select>
         </div>
       </div>
       <div>
@@ -239,11 +244,17 @@
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="label">Tarikh Baru</label>
-          <input id="rs-date" type="date" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+          <input id="rs-date" type="date" onchange="checkRsDate(this)" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+          <p id="rs-date-warn" class="hidden text-[11px] text-terracotta mt-1">🚫 Klinik tutup (Isnin/Selasa)</p>
         </div>
         <div>
           <label class="label">Masa Baru</label>
-          <input id="rs-time" type="time" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+          <select id="rs-time" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy bg-white">
+            <option value="08:30">8:30 AM</option>
+            <option value="10:00" selected>10:00 AM</option>
+            <option value="14:00">2:00 PM</option>
+            <option value="15:30">3:30 PM</option>
+          </select>
         </div>
       </div>
       <div>
@@ -289,6 +300,15 @@ function setSessionType(type) {
     meetRow.classList.remove('hidden');
     if (!document.getElementById('bk-meet-link').value)
       document.getElementById('bk-meet-link').value = generateMeetLink();
+  }
+}
+
+async function advancePlanWeek(planId, week) {
+  const { data: plan } = await window.db.from('psy_treatment_plans').select('current_week, duration_weeks').eq('id', planId).maybeSingle();
+  if (!plan) return;
+  const nextWeek = week + 1;
+  if (nextWeek <= (plan.duration_weeks || 999) && nextWeek > (plan.current_week || 1)) {
+    await window.db.from('psy_treatment_plans').update({ current_week: nextWeek }).eq('id', planId);
   }
 }
 
@@ -551,11 +571,23 @@ async function markCancel(id) {
 }
 
 // ── Reschedule ────────────────────────────────────────
+function checkRsDate(input) {
+  const warn = document.getElementById('rs-date-warn');
+  const day = new Date(input.value).getDay();
+  if (day === 1 || day === 2) {
+    warn.classList.remove('hidden');
+    input.value = '';
+  } else {
+    warn.classList.add('hidden');
+  }
+}
+
 function openReschedule(id) {
   rescheduleId = id;
   document.getElementById('rs-date').value   = '';
-  document.getElementById('rs-time').value   = '';
+  document.getElementById('rs-time').value   = '10:00';
   document.getElementById('rs-reason').value = '';
+  document.getElementById('rs-date-warn').classList.add('hidden');
   document.getElementById('day-modal').classList.add('hidden');
   document.getElementById('reschedule-modal').classList.remove('hidden');
 }
@@ -567,7 +599,9 @@ async function confirmReschedule() {
   const date   = document.getElementById('rs-date').value;
   const time   = document.getElementById('rs-time').value;
   const reason = document.getElementById('rs-reason').value.trim();
-  if (!date || !time) { alert('Sila pilih tarikh dan masa baru.'); return; }
+  if (!date || !time) { banner('Sila pilih tarikh dan masa baru.', 'error'); return; }
+  const day = new Date(date).getDay();
+  if (day === 1 || day === 2) { banner('🚫 Klinik tutup Isnin & Selasa. Sila pilih hari lain.', 'error'); return; }
   const btn = document.getElementById('btn-rs-confirm');
   btn.disabled = true; btn.textContent = 'Menyimpan...';
   try {
@@ -639,7 +673,7 @@ function openBookModal(prefillDate) {
   document.getElementById('bk-date').min = todayStr;
   const defaultDate = prefillDate && prefillDate >= todayStr ? prefillDate : todayStr;
   document.getElementById('bk-date').value  = defaultDate;
-  document.getElementById('bk-time').value  = '10:00';
+  document.getElementById('bk-time').value  = '10:00'; // default slot
   document.getElementById('bk-week').value  = '';
   document.getElementById('bk-notes').value = '';
   document.getElementById('book-error').classList.add('hidden');
@@ -711,14 +745,14 @@ async function saveSession() {
   const btn = document.getElementById('btn-save-session');
   btn.disabled = true; btn.textContent = 'Menyimpan...';
   try {
-    const { error: insertErr } = await window.db.from('psy_plan_weekly_progress').insert({
+    const { error: insertErr } = await window.db.from('psy_plan_weekly_progress').upsert({
       patient_id: patientId, plan_id: planId,
       session_date: new Date(`${date}T${time || '10:00'}:00`).toISOString(),
       week_number: week, status: 'booked',
       notes: notes || null,
       session_type: sessionType,
       meet_link: meetLink,
-    });
+    }, { onConflict: 'plan_id,week_number' });
     if (insertErr) throw insertErr;
     await auditLog('plan.session_booked', planId, { patientId, week, date });
     banner('Sesi berjaya dibuat ✅');

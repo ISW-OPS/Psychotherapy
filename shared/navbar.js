@@ -354,6 +354,13 @@ function setHeaderBack(url, label) {
   rightDiv.prepend(a);
 }
 
+function setPageTitle(title, subtitle) {
+  const t = document.getElementById('page-title');
+  const s = document.getElementById('page-sub');
+  if (t && title) t.textContent = title;
+  if (s && subtitle !== undefined) s.textContent = subtitle;
+}
+
 function renderHeader(title, subtitle) {
   const header = document.getElementById('page-header');
   if (!header) return;

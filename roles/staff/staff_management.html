@@ -99,49 +99,6 @@
   </div>
 </div>
 
-<!-- ── Edit Modal ──────────────────────────────────── -->
-<div id="edit-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
-  <div class="absolute inset-0 bg-black/50" onclick="closeEditModal()"></div>
-  <div class="relative bg-white rounded-2xl max-w-md w-full overflow-hidden max-h-[90vh] flex flex-col">
-    <div class="p-5 border-b border-ink/10 flex items-center justify-between">
-      <h3 class="font-bold text-lg">Edit Staff</h3>
-      <button onclick="closeEditModal()" class="text-ink/60 text-xl">×</button>
-    </div>
-    <div class="p-5 space-y-3 overflow-y-auto">
-      <input type="hidden" id="edit-id">
-      <div>
-        <label class="text-xs font-semibold">Staff ID</label>
-        <input id="edit-staff-id" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none">
-      </div>
-      <div>
-        <label class="text-xs font-semibold">Nama Penuh</label>
-        <input id="edit-name" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none">
-      </div>
-      <div>
-        <label class="text-xs font-semibold">Staff Role</label>
-        <select id="edit-staff-role" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none">
-          <option value="admin">Admin</option>
-          <option value="doctor">Doctor</option>
-          <option value="coach">Coach</option>
-          <option value="manager">Manager</option>
-        </select>
-      </div>
-      <div>
-        <label class="text-xs font-semibold">Status</label>
-        <select id="edit-active" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none">
-          <option value="true">Aktif</option>
-          <option value="false">Dipecat / Tidak Aktif</option>
-        </select>
-      </div>
-      <div id="edit-error" class="hidden text-xs text-terracotta bg-terracotta/10 rounded-lg p-3 text-center"></div>
-    </div>
-    <div class="p-5 border-t border-ink/10 flex justify-end gap-2">
-      <button onclick="closeEditModal()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm">Batal</button>
-      <button onclick="saveEdit()" id="edit-btn" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold">Simpan</button>
-    </div>
-  </div>
-</div>
-
 <!-- ── Delete Confirm Modal ────────────────────────── -->
 <div id="delete-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
   <div class="absolute inset-0 bg-black/50" onclick="closeDeleteModal()"></div>
@@ -245,55 +202,6 @@ async function createStaff() {
   }
 }
 
-// ── Edit ─────────────────────────────────────────────
-let _editId = null;
-function openEditModal(s) {
-  _editId = s.id;
-  document.getElementById('edit-id').value        = s.id;
-  document.getElementById('edit-staff-id').value  = s.registration_no || '';
-  document.getElementById('edit-name').value      = s.full_name || '';
-  document.getElementById('edit-staff-role').value= s.staff_role || 'coach';
-  document.getElementById('edit-active').value    = String(s.is_active !== false);
-  document.getElementById('edit-error').classList.add('hidden');
-  document.getElementById('edit-modal').classList.remove('hidden');
-}
-function closeEditModal() {
-  _editId = null;
-  document.getElementById('edit-modal').classList.add('hidden');
-}
-
-async function saveEdit() {
-  const errEl = document.getElementById('edit-error');
-  errEl.classList.add('hidden');
-  
-  const currentId = document.getElementById('edit-id').value;
-  const staffId = document.getElementById('edit-staff-id').value.trim();
-  
-  if (!staffId) return showErr(errEl, 'Sila masukkan Staff ID');
-  
-  const isDuplicate = _staffData.some(s => s.id !== currentId && s.registration_no && s.registration_no.toLowerCase() === staffId.toLowerCase());
-  if (isDuplicate) return showErr(errEl, 'Staff ID sudah didaftarkan. Sila guna ID lain.');
-
-  const btn = document.getElementById('edit-btn');
-  btn.disabled = true; btn.textContent = 'Menyimpan...';
-  try {
-    await callEdgeFn({
-      action:          'update',
-      target_id:       document.getElementById('edit-id').value,
-      full_name:       document.getElementById('edit-name').value.trim(),
-      staff_role:      document.getElementById('edit-staff-role').value,
-      registration_no: document.getElementById('edit-staff-id').value.trim() || null,
-      is_active:       document.getElementById('edit-active').value === 'true',
-    });
-    banner('Staff berjaya dikemaskini');
-    closeEditModal();
-    loadStaff();
-  } catch (err) {
-    showErr(errEl, err.message);
-    btn.disabled = false; btn.textContent = 'Simpan';
-  }
-}
-
 // ── Delete ───────────────────────────────────────────
 let _deleteId = null;
 function openDeleteModal(id, name) {
@@ -335,7 +243,7 @@ async function loadStaff() {
   _staffData = await dbQuery('psy_profiles', { eq: { role: 'staff' }, order: { col: 'created_at' } });
   document.getElementById('staff-body').innerHTML = _staffData.length
     ? _staffData.map(s => `
-      <tr class="${s.is_active === false ? 'opacity-50' : ''}">
+      <tr class="cursor-pointer hover:bg-cream/30 transition-colors ${s.is_active === false ? 'opacity-50' : ''}" onclick="window.location.href='staff-detail.html?id=${s.id}'">
         <td><strong>${s.registration_no || '—'}</strong></td>
         <td><strong>${s.full_name}</strong></td>
         <td class="text-xs">${s.email || '—'}</td>
@@ -343,9 +251,9 @@ async function loadStaff() {
         <td>${s.is_active !== false
           ? '<span class="chip bg-green-light text-green-dark">Aktif</span>'
           : '<span class="chip bg-terracotta/20 text-terracotta">Dipecat</span>'}</td>
-        <td class="flex gap-2 items-center">
-          <button onclick='openEditModal(${JSON.stringify(s)})'
-            class="text-xs text-navy font-semibold hover:underline">Edit</button>
+        <td class="flex gap-2 items-center" onclick="event.stopPropagation()">
+          <button onclick="window.location.href='staff-detail.html?id=${s.id}'"
+            class="text-xs text-navy font-semibold hover:underline">Detail</button>
           <span class="text-ink/20">|</span>
           <button onclick="openDeleteModal('${s.id}','${s.full_name}')"
             class="text-xs text-terracotta font-semibold hover:underline">Padam</button>

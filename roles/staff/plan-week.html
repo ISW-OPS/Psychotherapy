@@ -510,7 +510,49 @@ async function markStatus(status) {
 async function saveSessionDate() {
   const val = document.getElementById('session-date').value;
   if (!val) return;
-  await upsertProgress({ session_date: new Date(val).toISOString() });
+  const sessionAt = new Date(val).toISOString();
+
+  // Create or update appointment record
+  let apptId = weekEntry?.appointment_id || null;
+  if (apptId) {
+    await window.db.from('psy_appointments').update({
+      appointment_time: sessionAt, status: 'scheduled',
+    }).eq('id', apptId);
+  } else {
+    const { data: appt } = await window.db.from('psy_appointments').insert({
+      patient_id: patientId,
+      staff_id: window.currentUser.id,
+      patient_name: document.getElementById('plan-name-crumb')?.textContent?.split('/')[0]?.trim() || '',
+      staff_name: window.currentUser.full_name,
+      service: `${activePlan.name} · Minggu ${weekNumber}`,
+      appointment_time: sessionAt,
+      duration_min: 60,
+      status: 'scheduled',
+    }).select('id').single();
+    apptId = appt?.id || null;
+  }
+
+  // Save progress — set status to booked if not already attended/cancelled
+  const currentStatus = weekEntry?.status;
+  const keepStatus = ['hadir','cancel'].includes(currentStatus);
+  await upsertProgress({
+    session_date: sessionAt,
+    ...(apptId ? { appointment_id: apptId } : {}),
+    ...(!keepStatus ? { status: 'booked' } : {}),
+  });
+
+  // Notify patient
+  if (patientUserId) {
+    const d = new Date(sessionAt);
+    const label = d.toLocaleDateString('ms-MY', { weekday:'long', day:'2-digit', month:'long' });
+    const time  = d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+    await notify(patientUserId, 'appointment',
+      `Sesi Minggu ${weekNumber} telah dijadualkan`,
+      `${label} · ${time} — dijadualkan oleh ${window.currentUser.full_name}`,
+      'plan.html');
+  }
+
+  flashSaved('notes-saved');
   renderHero();
 }
 
