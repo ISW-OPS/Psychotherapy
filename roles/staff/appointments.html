@@ -202,6 +202,7 @@
       <div>
         <label class="label">Minggu ke-</label>
         <input id="bk-week" type="number" min="1" max="52" placeholder="Cth: 3"
+          oninput="refreshOnlineLockHint()"
           class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
       </div>
       <div>
@@ -213,6 +214,7 @@
             class="flex-1 py-2 border-2 border-ink/20 text-ink/60 rounded-xl text-sm font-semibold transition-colors">💻 Online</button>
         </div>
         <input type="hidden" id="bk-session-type" value="f2f">
+        <p id="bk-online-lock-hint" class="hidden text-[11px] text-terracotta mt-1.5">⚠️ Pakej ini perlukan F2F mulai minggu tertentu — sila pilih F2F.</p>
       </div>
       <div id="bk-meet-row" class="hidden">
         <label class="label">Google Meet Link <span class="text-ink/40 font-normal">(auto-jana atau isi sendiri)</span></label>
@@ -284,6 +286,39 @@ let allPatientsList = [], allPlansList = [];
 function generateMeetLink() {
   const r = n => Math.random().toString(36).slice(2, 2 + n);
   return `https://meet.jit.si/ISW-${r(4)}-${r(4)}-${r(4)}`;
+}
+
+// Check active package's online lock rules and update UI hint
+async function refreshOnlineLockHint() {
+  const planId = document.getElementById('bk-plan-id').value;
+  const week = parseInt(document.getElementById('bk-week').value);
+  const hint = document.getElementById('bk-online-lock-hint');
+  const onlineBtn = document.getElementById('bk-type-online');
+  if (!planId || !week || !hint) return;
+  const plan = allPlansList.find(p => p.id === planId);
+  const pkgCode = plan?.template;
+  if (!pkgCode) { hint.classList.add('hidden'); onlineBtn.disabled = false; onlineBtn.style.opacity = ''; return; }
+  if (!window._pkgLockCache) window._pkgLockCache = {};
+  if (!window._pkgLockCache[pkgCode]) {
+    const { data: rows } = await window.db.from('psy_packages')
+      .select('allow_online_full_duration, online_lock_from_week, name')
+      .eq('package_id', pkgCode).limit(1);
+    window._pkgLockCache[pkgCode] = rows?.[0] || { allow_online_full_duration: true };
+  }
+  const pkg = window._pkgLockCache[pkgCode];
+  const isLocked = !pkg.allow_online_full_duration && week >= (pkg.online_lock_from_week || 3);
+  if (isLocked) {
+    hint.textContent = `⚠️ Pakej ${pkg.name || pkgCode} memerlukan F2F mulai Minggu ${pkg.online_lock_from_week || 3}.`;
+    hint.classList.remove('hidden');
+    onlineBtn.disabled = true;
+    onlineBtn.style.opacity = '0.4';
+    // Force back to f2f if currently online
+    if (document.getElementById('bk-session-type').value === 'online') setSessionType('f2f');
+  } else {
+    hint.classList.add('hidden');
+    onlineBtn.disabled = false;
+    onlineBtn.style.opacity = '';
+  }
 }
 
 function setSessionType(type) {
@@ -618,13 +653,47 @@ async function confirmReschedule() {
   const btn = document.getElementById('btn-rs-confirm');
   btn.disabled = true; btn.textContent = 'Menyimpan...';
   try {
+    // Fetch current session to compute date diff for cascading shift
+    const currentSession = allSessions.find(s => s.id === rescheduleId);
+    const oldDate = currentSession?.session_date ? new Date(currentSession.session_date) : null;
+    const newDate = new Date(`${date}T${time}:00`);
+
     await dbUpdate('psy_plan_weekly_progress', rescheduleId, {
-      status: 'reschedule', session_date: new Date(`${date}T${time}:00`).toISOString(),
+      status: 'reschedule', session_date: newDate.toISOString(),
       notes: reason || null, updated_by: window.currentUser.id,
       updated_by_name: window.currentUser.full_name, updated_at: new Date().toISOString(),
     });
     await auditLog('plan.reschedule', rescheduleId, { date, reason });
-    banner('Sesi dijadualkan semula');
+
+    // Auto-shift subsequent weeks if user confirms
+    let shifted = 0;
+    if (oldDate && currentSession?.plan_id && currentSession?.week_number) {
+      const diffMs = newDate.getTime() - oldDate.getTime();
+      const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+      if (Math.abs(diffDays) >= 1) {
+        const cascade = confirm(`Sesi shift ${diffDays > 0 ? '+' : ''}${diffDays} hari. Mahu shift sesi minggu seterusnya (W${currentSession.week_number + 1}+) sama jumlah?`);
+        if (cascade) {
+          const { data: subsequent } = await window.db.from('psy_plan_weekly_progress')
+            .select('id, session_date, week_number, status')
+            .eq('plan_id', currentSession.plan_id)
+            .gt('week_number', currentSession.week_number)
+            .in('status', ['booked', 'reschedule']);
+          for (const s of (subsequent || [])) {
+            if (!s.session_date) continue;
+            const shiftedDate = new Date(new Date(s.session_date).getTime() + diffMs);
+            await window.db.from('psy_plan_weekly_progress')
+              .update({ session_date: shiftedDate.toISOString(), updated_at: new Date().toISOString() })
+              .eq('id', s.id);
+            shifted++;
+          }
+          await auditLog('plan.cascade_shift', currentSession.plan_id, {
+            from_week: currentSession.week_number, shifted_count: shifted, diff_days: diffDays,
+          });
+        }
+      }
+    }
+
+    banner(shifted ? `Sesi dijadualkan semula + ${shifted} sesi seterusnya di-shift` : 'Sesi dijadualkan semula');
     closeReschedule();
     loadSessions();
   } catch (err) {
@@ -662,6 +731,7 @@ function autoFillPlan() {
     display.className   = 'w-full border border-navy/20 bg-navy-light/30 rounded-xl px-3 py-2.5 text-sm text-navy font-medium';
     hiddenId.value = plan.id;
     document.getElementById('bk-week').value = (plan.current_week || 0) + 1;
+    refreshOnlineLockHint();
   } else {
     display.textContent = 'Tiada plan aktif untuk pesakit ini';
     display.className   = 'w-full border border-ink/10 bg-cream/40 rounded-xl px-3 py-2.5 text-sm text-ink/40 italic';
@@ -760,6 +830,27 @@ async function saveSession() {
   }
 
   const sessionType = document.getElementById('bk-session-type').value || 'f2f';
+
+  // Online session lock: from week N onwards, online is locked to f2f unless package allows full duration
+  if (sessionType === 'online') {
+    const planRow = allPlansList.find(p => p.id === planId);
+    const pkgCode = planRow?.template || patientMap[patientId]?.active_package_id;
+    if (pkgCode) {
+      const { data: pkgRows } = await window.db.from('psy_packages')
+        .select('allow_online_full_duration, online_lock_from_week, name')
+        .eq('package_id', pkgCode).limit(1);
+      const pkg = pkgRows?.[0];
+      if (pkg && !pkg.allow_online_full_duration) {
+        const lockWeek = pkg.online_lock_from_week || 3;
+        if (week >= lockWeek) {
+          errEl.textContent = `🚫 Pakej ${pkg.name || pkgCode} memerlukan sesi face-to-face (F2F) mulai Minggu ${lockWeek}. Online tidak dibenarkan.`;
+          errEl.classList.remove('hidden');
+          return;
+        }
+      }
+    }
+  }
+
   const meetLink = sessionType === 'online'
     ? (document.getElementById('bk-meet-link').value.trim() || generateMeetLink())
     : null;

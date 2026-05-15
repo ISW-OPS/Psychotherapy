@@ -79,6 +79,25 @@
           </div>
         </div>
 
+        <!-- ── Section: Madu Schedule (auto from package) ── -->
+        <div id="madu-section" class="hidden bg-white rounded-2xl border border-gold/30 p-5 space-y-3">
+          <div class="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <p class="text-sm font-semibold text-ink">🍯 Peminuman Madu</p>
+              <p id="madu-target-label" class="text-xs text-ink/50 mt-0.5">Target: — kali sehari</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button type="button" onclick="adjMadu(-1)" class="w-9 h-9 rounded-full bg-cream border border-ink/15 text-lg font-bold">−</button>
+              <span id="madu-count-display" class="text-lg font-bold text-gold-dark min-w-[60px] text-center">0/0</span>
+              <button type="button" onclick="adjMadu(1)" class="w-9 h-9 rounded-full bg-gold/20 border border-gold/40 text-lg font-bold">+</button>
+            </div>
+          </div>
+          <div class="w-full h-2 bg-cream rounded-full overflow-hidden">
+            <div id="madu-progress-bar" class="h-full bg-gold transition-all" style="width:0%"></div>
+          </div>
+          <p id="madu-feedback" class="text-xs text-ink/60 hidden"></p>
+        </div>
+
         <!-- ── Section 3: Symptoms ── -->
         <div class="bg-white rounded-2xl border border-ink/10 p-5 space-y-3">
           <div>
@@ -172,6 +191,48 @@ let selectedMood = null;
 let selectedSymptoms = new Set();
 let selectedActivities = new Set();
 let todayCheckin = null;
+let maduCount = 0;
+let maduTarget = 0;
+
+function renderMaduUI() {
+  const sec = document.getElementById('madu-section');
+  if (!sec) return;
+  if (maduTarget < 1) { sec.classList.add('hidden'); return; }
+  sec.classList.remove('hidden');
+  document.getElementById('madu-count-display').textContent = `${maduCount}/${maduTarget}`;
+  const pct = Math.min(100, Math.round((maduCount / maduTarget) * 100));
+  document.getElementById('madu-progress-bar').style.width = pct + '%';
+  const fb = document.getElementById('madu-feedback');
+  if (maduCount >= maduTarget) {
+    fb.textContent = '✅ Tahniah! Target madu hari ini tercapai.';
+    fb.className = 'text-xs text-green-dark';
+    fb.classList.remove('hidden');
+  } else if (maduCount > 0) {
+    fb.textContent = `Tinggal ${maduTarget - maduCount} kali lagi untuk tercapai target hari ini.`;
+    fb.className = 'text-xs text-ink/60';
+    fb.classList.remove('hidden');
+  } else {
+    fb.classList.add('hidden');
+  }
+}
+
+function adjMadu(delta) {
+  maduCount = Math.max(0, Math.min(maduTarget * 2, maduCount + delta));
+  renderMaduUI();
+}
+
+async function loadMaduTarget() {
+  if (!patientRecord?.active_package_id) return;
+  const { data } = await window.db.from('psy_packages')
+    .select('madu_frequency_per_day, madu_schedule_label, name')
+    .eq('package_id', patientRecord.active_package_id).limit(1);
+  const pkg = data?.[0];
+  if (!pkg?.madu_frequency_per_day) return;
+  maduTarget = pkg.madu_frequency_per_day;
+  document.getElementById('madu-target-label').textContent =
+    pkg.madu_schedule_label || `Target: ${maduTarget} kali sehari (${pkg.name})`;
+  renderMaduUI();
+}
 
 function renderMoodScale() {
   document.getElementById('mood-scale').innerHTML = MOODS.map(m => `
@@ -253,6 +314,7 @@ async function submitCheckin() {
     symptoms: Array.from(selectedSymptoms),
     activities: Array.from(selectedActivities),
     notes: document.getElementById('checkin-notes').value.trim(),
+    madu_count: maduCount,
   };
   try {
     if (todayCheckin) {
@@ -294,7 +356,9 @@ async function loadCheckinData() {
     document.getElementById('sleep-hours').value  = todayCheckin.sleep_hours || '';
     document.getElementById('sleep-quality').value = todayCheckin.sleep_quality || '';
     document.getElementById('checkin-notes').value = todayCheckin.notes || '';
+    maduCount = todayCheckin.madu_count || 0;
   }
+  renderMaduUI();
 
   renderMoodScale();
   renderSymptoms();
@@ -332,6 +396,7 @@ async function loadCheckinData() {
     weekday:'long', day:'2-digit', month:'long', year:'numeric'
   });
   if (!patientRecord) { banner('Akaun pesakit belum aktif', 'error'); return; }
+  await loadMaduTarget();
   await loadCheckinData();
 })();
 </script>
