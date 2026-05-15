@@ -275,6 +275,7 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
+<script src="../../shared/utils.js"></script>
 <script src="_shared.js"></script>
 <script>
 let allSessions = [], patientMap = {}, planMap = {}, profileMap = {};
@@ -356,6 +357,13 @@ async function loadSessions() {
   allSessions  = sessionsRes;
   allPlansList = plans;
 
+  // Load clinic closures for visual lock in calendar
+  const closuresRes = await window.db.from('psy_clinic_closures')
+    .select('closure_date, label, category')
+    .then(r => r.data || [], () => []);
+  window._closureMap = {};
+  closuresRes.forEach(c => { window._closureMap[c.closure_date] = c; });
+
   const patients = (patientsRes.data || []).filter(p => p.psy_profiles?.role === 'patient');
   allPatientsList = patients;
 
@@ -422,12 +430,17 @@ function renderCalendar() {
     const isOther  = d.getMonth() !== calMonth;
     const isToday  = dateStr === todayStr;
     const isClosed = CLOSED.has(d.getDay());
+    const closure = (window._closureMap || {})[dateStr];
     const daySessions = sessionMap[dateStr] || [];
 
-    if (isClosed) {
-      html += `<div class="cal-day border-b border-r border-ink/10 p-1.5 cursor-not-allowed select-none bg-ink/[0.04] ${isOther ? 'other-month' : ''}">
-        <div class="text-xs font-semibold mb-1 text-ink/25">${d.getDate()}</div>
-        <div class="text-[9px] text-ink/25 font-medium mt-1">Tutup</div>
+    if (isClosed || closure) {
+      const labelText = closure ? closure.label : 'Tutup';
+      const safeLabel = (window.escapeHtml ? window.escapeHtml(labelText) : labelText);
+      const bgCls = closure ? 'bg-terracotta/10' : 'bg-ink/[0.04]';
+      const txtCls = closure ? 'text-terracotta/70' : 'text-ink/25';
+      html += `<div class="cal-day border-b border-r border-ink/10 p-1.5 cursor-not-allowed select-none ${bgCls} ${isOther ? 'other-month' : ''}" title="${safeLabel}">
+        <div class="text-xs font-semibold mb-1 ${txtCls}">${d.getDate()}</div>
+        <div class="text-[9px] ${txtCls} font-medium mt-1 truncate">${closure ? '🎉 ' + safeLabel : 'Tutup'}</div>
       </div>`;
       continue;
     }
@@ -733,6 +746,15 @@ async function saveSession() {
   const dayOfWeek = new Date(date).getDay(); // 0=Ahad, 1=Isnin, 2=Selasa
   if (dayOfWeek === 1 || dayOfWeek === 2) {
     errEl.textContent = '🚫 Klinik tutup pada hari Isnin dan Selasa. Sila pilih hari lain.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  // Check ad-hoc clinic closures (public holidays, Hari Raya, etc.)
+  const { data: closure } = await window.db.from('psy_clinic_closures')
+    .select('label, category').eq('closure_date', date).limit(1);
+  if (closure?.[0]) {
+    errEl.textContent = `🚫 Klinik tutup pada tarikh ini: ${closure[0].label}. Sila pilih hari lain.`;
     errEl.classList.remove('hidden');
     return;
   }
