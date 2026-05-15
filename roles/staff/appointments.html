@@ -742,12 +742,30 @@ async function saveSession() {
     ? (document.getElementById('bk-meet-link').value.trim() || generateMeetLink())
     : null;
 
+  const sessionIso = new Date(`${date}T${time || '10:00'}:00`).toISOString();
+
+  // Slot conflict check: ±30 min window around proposed time
+  const slotStart = new Date(new Date(sessionIso).getTime() - 30 * 60 * 1000).toISOString();
+  const slotEnd = new Date(new Date(sessionIso).getTime() + 30 * 60 * 1000).toISOString();
+  const { data: conflicts } = await window.db.from('psy_plan_weekly_progress')
+    .select('id, plan_id, week_number, status')
+    .gte('session_date', slotStart)
+    .lte('session_date', slotEnd)
+    .in('status', ['booked', 'hadir']);
+  // Allow conflicts only if it's the same plan/week being rebooked (upsert)
+  const realConflicts = (conflicts || []).filter(c => !(c.plan_id === planId && c.week_number === week));
+  if (realConflicts.length > 0) {
+    errEl.textContent = '⚠️ Slot waktu ini bertindih dengan sesi lain (±30 min). Sila pilih waktu lain.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
   const btn = document.getElementById('btn-save-session');
   btn.disabled = true; btn.textContent = 'Menyimpan...';
   try {
     const { error: insertErr } = await window.db.from('psy_plan_weekly_progress').upsert({
       patient_id: patientId, plan_id: planId,
-      session_date: new Date(`${date}T${time || '10:00'}:00`).toISOString(),
+      session_date: sessionIso,
       week_number: week, status: 'booked',
       notes: notes || null,
       session_type: sessionType,

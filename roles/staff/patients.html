@@ -904,13 +904,23 @@
           await auditLog('patient.updated_by_staff', editingPatientId, { name });
           banner('Maklumat pesakit dikemaskini ✅');
         } else {
-          // CREATE new patient
-          const { count: ptCount } = await window.db.from('psy_patients').select('*', { count: 'exact', head: true });
-          const mrn = 'P-' + String((ptCount || 0) + 1).padStart(3, '0');
+          // CREATE new patient — retry on MRN conflict (race-safe)
           const coachAutoAssign = isCoachUser ? { coach_id: window.currentUser.id } : {};
-          const { data: inserted, error } = await window.db.from('psy_patients').insert({
-            mrn, user_id: null, ic_number: ic, status: selectedStatus, created_by_staff: true, ...payload, ...coachAutoAssign,
-          }).select('id').single();
+          let inserted = null, error = null;
+          for (let attempt = 0; attempt < 5; attempt++) {
+            // Get current max sequence by querying latest MRN
+            const { data: latest } = await window.db.from('psy_patients')
+              .select('mrn').like('mrn', 'P-%').order('mrn', { ascending: false }).limit(1);
+            const lastNum = parseInt(latest?.[0]?.mrn?.replace(/\D/g, '')) || 0;
+            const mrn = 'P-' + String(lastNum + 1 + attempt).padStart(3, '0');
+            const res = await window.db.from('psy_patients').insert({
+              mrn, user_id: null, ic_number: ic, status: selectedStatus, created_by_staff: true, ...payload, ...coachAutoAssign,
+            }).select('id').single();
+            if (!res.error) { inserted = res.data; error = null; break; }
+            error = res.error;
+            // Only retry on duplicate-key errors
+            if (!/duplicate|unique/i.test(res.error.message || '')) break;
+          }
           if (error) throw error;
           if (inserted?.id) {
             await uploadAndSaveReports(inserted.id);

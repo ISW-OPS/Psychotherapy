@@ -106,19 +106,27 @@ async function initPatient(pageId, titleSub) {
     }
   }
 
-  // Still no record — fresh signup, create a new patient record
+  // Still no record — fresh signup, create a new patient record (retry on MRN conflict)
   if (patients.length === 0) {
-    try {
-      const { count: ptCount } = await window.db.from('psy_patients').select('*', { count: 'exact', head: true });
-      const mrn = 'P-' + String((ptCount || 0) + 1).padStart(3, '0');
-      const newPatient = await dbInsert('psy_patients', {
-        user_id: window.currentUser.id,
-        mrn: mrn,
-        status: 'pending',
-      });
-      patients = [newPatient];
-    } catch (e) {
-      console.warn('Auto-create patient failed:', e.message);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const { data: latest } = await window.db.from('psy_patients')
+          .select('mrn').like('mrn', 'P-%').order('mrn', { ascending: false }).limit(1);
+        const lastNum = parseInt(latest?.[0]?.mrn?.replace(/\D/g, '')) || 0;
+        const mrn = 'P-' + String(lastNum + 1 + attempt).padStart(3, '0');
+        const newPatient = await dbInsert('psy_patients', {
+          user_id: window.currentUser.id,
+          mrn,
+          status: 'pending',
+        });
+        patients = [newPatient];
+        break;
+      } catch (e) {
+        if (!/duplicate|unique/i.test(e.message || '')) {
+          console.warn('Auto-create patient failed:', e.message);
+          break;
+        }
+      }
     }
   }
 
