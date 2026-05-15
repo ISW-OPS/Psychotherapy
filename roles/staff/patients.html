@@ -129,6 +129,15 @@
                 class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
                 <option value="">Semua Pakej</option>
               </select>
+              <select id="filter-outcome" onchange="filterPatients()"
+                class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
+                <option value="">Semua Outcome</option>
+                <option value="otw">OTW (On-going)</option>
+                <option value="completed">Selesai Rawatan</option>
+                <option value="berhenti">Berhenti</option>
+                <option value="meninggal">Meninggal Dunia</option>
+                <option value="__none__">Belum Ditetapkan</option>
+              </select>
               <span id="patient-count" class="text-xs text-ink/50 whitespace-nowrap"></span>
               <button onclick="exportCSV()"
                 class="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-colors hover:opacity-90"
@@ -472,6 +481,23 @@
               placeholder="cth: Sertraline 50mg, Clonazepam 0.5mg..."></textarea>
           </div>
         </div>
+        <!-- Outcome status (clinical) -->
+        <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs font-semibold">Status Outcome Rawatan <span class="text-ink/40 font-normal">(reporting)</span></label>
+            <select id="cp-outcome-status" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white">
+              <option value="">— Belum Ditetapkan —</option>
+              <option value="otw">OTW (On-going Treatment)</option>
+              <option value="completed">Selesai Rawatan</option>
+              <option value="berhenti">Berhenti</option>
+              <option value="meninggal">Meninggal Dunia</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs font-semibold">Nota Outcome <span class="text-ink/40 font-normal">(optional)</span></label>
+            <input id="cp-outcome-notes" type="text" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm" placeholder="cth: Tarikh meninggal, sebab berhenti...">
+          </div>
+        </div>
         <!-- Medical Reports Upload -->
         <div class="mt-3">
           <label class="text-xs font-semibold">Laporan Perubatan <span
@@ -713,6 +739,10 @@
       document.getElementById('cp-company').value = p.company || '';
       document.getElementById('cp-duration').value = p.condition_duration || '';
       document.getElementById('cp-medical-notes').value = p.medical_notes || '';
+      const outcomeSel = document.getElementById('cp-outcome-status');
+      if (outcomeSel) outcomeSel.value = p.outcome_status || '';
+      const outcomeNotes = document.getElementById('cp-outcome-notes');
+      if (outcomeNotes) outcomeNotes.value = p.outcome_status_notes || '';
       const reports = p.documents?.reports || [];
       const existRpt = document.getElementById('cp-existing-reports');
       if (existRpt) existRpt.innerHTML = reports.length
@@ -877,6 +907,22 @@
         reference_code: document.getElementById('cp-ref-code')?.value.trim() || null,
       };
 
+      // Outcome status — track timestamp on change
+      const newOutcome = document.getElementById('cp-outcome-status')?.value || null;
+      const newOutcomeNotes = document.getElementById('cp-outcome-notes')?.value.trim() || null;
+      if (editingPatientId) {
+        const prev = allPatients.find(x => x.id === editingPatientId);
+        if ((prev?.outcome_status || null) !== newOutcome) {
+          payload.outcome_status = newOutcome;
+          payload.outcome_status_at = newOutcome ? new Date().toISOString() : null;
+        }
+        payload.outcome_status_notes = newOutcomeNotes;
+      } else if (newOutcome) {
+        payload.outcome_status = newOutcome;
+        payload.outcome_status_at = new Date().toISOString();
+        payload.outcome_status_notes = newOutcomeNotes;
+      }
+
       try {
         if (editingPatientId) {
           // UPDATE existing patient
@@ -1025,7 +1071,7 @@
               : '<span class="text-ink/40">—</span>'}</td>
           <td class="text-xs">${refCode}</td>
           <td class="text-xs">${p.coach?.full_name ? `<span class="text-navy font-medium">${coachName}</span>` : '<span class="text-ink/30">—</span>'}</td>
-          <td>${statusChip(p.status)}</td>
+          <td>${statusChip(p.status)} ${outcomeChip(p.outcome_status)}</td>
           <td class="whitespace-nowrap print-hide space-x-3">
             ${p.status !== 'deleted' ? `<a href="patient-hub.html?patient_id=${p.id}" class="text-navy text-xs font-semibold hover:underline">Details</a>` : ''}
             ${(isAdmin || (isCoachUser && p.coach_id === window.currentUser?.id)) && p.status !== 'deleted' ? `<button onclick="openEditPatient('${p.id}')" class="text-teal text-xs font-semibold hover:underline">Edit</button>` : ''}
@@ -1087,13 +1133,16 @@
       const q = document.getElementById('search-patient').value.toLowerCase();
       const status = document.getElementById('filter-status').value;
       const pakej = document.getElementById('filter-pakej').value;
+      const outcome = document.getElementById('filter-outcome')?.value || '';
       const list = allPatients.filter(p => {
         const name = (p.psy_profiles?.full_name || p.full_name || '').toLowerCase();
         const matchQ = !q || name.includes(q) || (p.mrn || '').toLowerCase().includes(q) || (p.ic_number || '').includes(q);
         const matchS = !status || p.status === status;
         const matchP = !pakej
           || (pakej === '__none__' ? !p.active_package_name : p.active_package_name === pakej);
-        return matchQ && matchS && matchP;
+        const matchO = !outcome
+          || (outcome === '__none__' ? !p.outcome_status : p.outcome_status === outcome);
+        return matchQ && matchS && matchP && matchO;
       });
       renderPatients(list);
     }

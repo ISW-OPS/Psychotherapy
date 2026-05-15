@@ -103,6 +103,47 @@ function greeting() {
   return 'Selamat Malam';
 }
 
+// Show motivasi disclaimer once per session if patient missed too many check-ins
+function showAdherenceDisclaimerIfNeeded(recentCheckins) {
+  const ADHERENCE_THRESHOLD = 4; // < 4 of 7 days = low adherence
+  const SESSION_KEY = 'isw_adherence_disclaimer_shown';
+  if (sessionStorage.getItem(SESSION_KEY)) return;
+
+  const days7 = new Set();
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 7);
+  recentCheckins.forEach(c => {
+    if (c.checkin_date && new Date(c.checkin_date) >= cutoff) days7.add(c.checkin_date);
+  });
+  if (days7.size >= ADHERENCE_THRESHOLD) return; // good adherence — no popup
+
+  sessionStorage.setItem(SESSION_KEY, '1');
+
+  const modal = document.createElement('div');
+  modal.className = 'fixed inset-0 z-[60] flex items-center justify-center p-4';
+  modal.innerHTML = `
+    <div class="absolute inset-0 bg-black/60"></div>
+    <div class="relative bg-white rounded-2xl max-w-md w-full p-6">
+      <div class="text-5xl text-center mb-3">💪</div>
+      <h3 class="font-bold text-lg text-center text-navy mb-3">Jom Konsisten Sama-sama!</h3>
+      <p class="text-sm text-ink/75 leading-relaxed">
+        Kami perasan anda <strong>${days7.size}/7 hari</strong> sahaja check-in minggu lepas.
+        Kepatuhan rawatan yang konsisten adalah kunci kepada pemulihan yang berkesan.
+      </p>
+      <div class="bg-gold/10 border border-gold/30 rounded-lg p-3 my-4 text-xs text-ink/80">
+        <strong class="text-gold-dark">⚠️ Penting:</strong> Progress pemulihan anda mungkin menjadi <em>lebih perlahan</em> jika rawatan tidak dipatuhi secara konsisten. ISW Wellness <strong>tidak bertanggungjawab</strong> terhadap outcome rawatan sekiranya rawatan tidak diikuti seperti yang disarankan.
+      </div>
+      <p class="text-xs text-ink/60 italic text-center mb-4">
+        Setiap titisan madu, setiap zikir, setiap detik berjemur — kesemuanya menyumbang kepada pemulihan anda. Anda boleh buat ini! 🌟
+      </p>
+      <div class="flex gap-2">
+        <button onclick="this.closest('.fixed').remove()" class="flex-1 px-4 py-2.5 border border-ink/20 rounded-lg text-sm font-semibold hover:bg-cream">Saya Faham</button>
+        <a href="checkin.html" class="flex-1 bg-navy text-white px-4 py-2.5 rounded-lg text-sm font-semibold text-center hover:bg-navy-dark">Check-in Sekarang →</a>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
 function statCard(label, value, sub, subColor, href) {
   return `<a href="${href || '#'}" class="bg-white rounded-xl p-4 border border-ink/10 hover:border-navy hover:shadow-sm transition-all block">
     <div class="text-xs text-ink/50 font-medium">${label}</div>
@@ -178,6 +219,9 @@ function quickAction(icon, label, href, color) {
     }
 
     const hadirCount  = (weeklyAll || []).filter(w => w.status === 'hadir').length;
+
+    // Adherence motivasi disclaimer — show once per session if low adherence in last 7 days
+    showAdherenceDisclaimerIfNeeded(recentCheckins || []);
     const scores      = (weeklyAll || []).filter(w => w.score && w.status === 'hadir').map(w => w.score);
     const avgScore    = scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) : null;
     const lastScore   = scores.length ? scores[scores.length - 1] : null;

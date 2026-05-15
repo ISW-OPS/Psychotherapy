@@ -7,7 +7,7 @@ window.currentUser = null;
 // Pages yang boleh diakses oleh setiap staff_role
 const STAFF_ROLE_ACCESS = {
   admin:   ['dashboard','assignments','psy_patients','kyc_forms','psy_appointments','pakej','psy_products','psy_orders','library','services','audit','staff_mgmt','announcements','closures','inventory','issue','feedback','profile','plans','plan_week','patient_hub','consultation','psy_vitals','coaching','risk'],
-  doctor:  ['dashboard','psy_patients','kyc_forms','plans','plan_week','psy_appointments','consultation','psy_vitals','risk','library','inventory','issue','feedback','profile','patient_hub'],
+  doctor:  ['dashboard','psy_patients','kyc_forms','plans','plan_week','psy_appointments','consultation','psy_vitals','risk','library','inventory','announcements','issue','feedback','profile','patient_hub'],
   coach:   ['dashboard','assignments','psy_patients','plans','plan_week','psy_appointments','consultation','psy_vitals','coaching','risk','inventory','issue','feedback','profile','patient_hub'],
   manager: ['dashboard','psy_patients','plans','plan_week','psy_appointments','psy_orders','announcements','staff_stats','closures','inventory','issue','feedback','profile','patient_hub'],
 };
@@ -117,6 +117,19 @@ function statusChip(s) {
   };
   const label = STATUS_LABELS[s] || s;
   return `<span class="chip ${m[s] || 'bg-ink/10 text-ink/60'}">${label}</span>`;
+}
+
+function outcomeChip(o) {
+  if (!o) return '';
+  const map = {
+    otw:       { label: 'OTW',           cls: 'bg-navy-light text-navy' },
+    completed: { label: 'Selesai',       cls: 'bg-green-light text-green-dark' },
+    berhenti:  { label: 'Berhenti',      cls: 'bg-gold/30 text-gold-dark' },
+    meninggal: { label: 'Meninggal',     cls: 'bg-ink/15 text-ink/70' },
+  };
+  const v = map[o];
+  if (!v) return '';
+  return `<span class="chip ${v.cls}" title="Outcome rawatan">${v.label}</span>`;
 }
 
 function formatDate(d) { return new Date(d).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }); }

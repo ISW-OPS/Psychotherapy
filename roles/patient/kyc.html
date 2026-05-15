@@ -646,14 +646,56 @@ async function uploadMedicalReports() {
   return uploaded;
 }
 
+// Popup: confirm form fields are for the patient themselves (not a relative/proxy)
+async function confirmProxyCheck() {
+  return new Promise(resolve => {
+    const modal = document.createElement('div');
+    modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
+    modal.innerHTML = `
+      <div class="absolute inset-0 bg-black/60"></div>
+      <div class="relative bg-white rounded-2xl max-w-md w-full p-6">
+        <div class="text-4xl text-center mb-3">⚠️</div>
+        <h3 class="font-bold text-lg text-center mb-2">Sahkan Maklumat</h3>
+        <p class="text-sm text-ink/70 text-center mb-5">
+          Maklumat dalam borang ini adalah untuk <strong>siapa</strong>?
+          Pastikan nama, IC, dan info kesihatan adalah <strong>pesakit sebenar</strong> — bukan wakil/pewaris yang mengisi borang ini.
+        </p>
+        <div class="space-y-2">
+          <button id="proxy-self" class="w-full bg-navy text-white px-4 py-3 rounded-lg text-sm font-semibold hover:bg-navy-dark">
+            ✓ Info ini adalah info <u>saya sendiri</u> (pesakit)
+          </button>
+          <button id="proxy-rep" class="w-full bg-gold/20 text-gold-dark border border-gold/40 px-4 py-3 rounded-lg text-sm font-semibold hover:bg-gold/30">
+            👥 Saya wakil/keluarga — info di atas adalah info pesakit yang saya wakili
+          </button>
+          <button id="proxy-cancel" class="w-full text-ink/50 text-xs py-2 hover:text-ink">Batal — semak semula</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#proxy-self').onclick = () => { modal.remove(); resolve('self'); };
+    modal.querySelector('#proxy-rep').onclick = () => {
+      modal.remove();
+      if (confirm('PENTING: Maklumat pesakit mesti tepat & boleh disahkan. Teruskan?')) resolve('proxy');
+      else resolve(null);
+    };
+    modal.querySelector('#proxy-cancel').onclick = () => { modal.remove(); resolve(null); };
+  });
+}
+
 // ── Submit ─────────────────────────────────────────────
 async function submitKYC() {
   if (!validateAll()) return;
+  const submitterType = await confirmProxyCheck();
+  if (!submitterType) return; // cancelled
+
   const btn = document.getElementById('btn-submit');
   btn.disabled = true; btn.textContent = 'Menghantar...';
   try {
     const reports = await uploadMedicalReports();
-    const payload = { ...buildPayload(), documents: { reports } };
+    const payload = {
+      ...buildPayload(),
+      documents: { reports },
+      submitted_by_proxy: submitterType === 'proxy',
+    };
 
     if (existingKYC && ['rejected','pending'].includes(existingKYC.status)) {
       const { error } = await window.db.from('psy_kyc_submissions')
@@ -682,7 +724,10 @@ async function submitKYC() {
       }).eq('id', currentUser.id);
     }
 
-    await auditLog('kyc.submitted', currentUser.id, { name: payload.patient_name });
+    await auditLog('kyc.submitted', currentUser.id, {
+      name: payload.patient_name,
+      submitter: submitterType, // 'self' or 'proxy'
+    });
 
     // Notify all admin/doctor/manager staff
     const { data: staffList } = await window.db.from('psy_profiles')
