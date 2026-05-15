@@ -135,8 +135,17 @@ async function loadPatientChart() {
   const name = currentPatient.psy_profiles?.full_name || currentPatient.mrn;
   const phone = currentPatient.psy_profiles?.phone || currentPatient.emergency_contact_phone || '—';
 
+  const role = window.currentUser.staff_role;
+  const canWrite = role === 'doctor' || role === 'admin';
   document.getElementById('soap-form').classList.remove('hidden');
   document.getElementById('patient-info').textContent = `${name} · ${currentPatient.mrn}`;
+  // Hide save buttons for non-doctor roles (coach can view only)
+  document.querySelectorAll('#soap-form button[onclick^="saveSoap"]').forEach(b => {
+    b.style.display = canWrite ? '' : 'none';
+  });
+  document.querySelectorAll('#soap-form input, #soap-form textarea').forEach(i => {
+    i.disabled = !canWrite;
+  });
 
   const [vitals, notes] = await Promise.all([
     dbQuery('psy_vitals', { eq: { patient_id: patientId }, order: { col: 'created_at' }, limit: 1 }),
@@ -171,6 +180,22 @@ async function loadPatientChart() {
 
 async function saveSoap(status) {
   if (!currentPatient) return;
+  const role = window.currentUser.staff_role;
+  if (role !== 'doctor' && role !== 'admin') {
+    banner('Hanya doctor atau admin dibenarkan menulis SOAP', 'error');
+    return;
+  }
+  const entryDate = document.getElementById('entry-date').value;
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  // Disallow future dates; flag backdating for audit
+  if (entryDate > todayStr) {
+    banner('Tarikh SOAP tidak boleh pada masa hadapan', 'error');
+    return;
+  }
+  const isBackdated = entryDate !== todayStr;
+  const createdAt = new Date(`${entryDate}T${now.toTimeString().split(' ')[0]}`).toISOString();
+
   const note = {
     patient_id: currentPatient.id,
     doctor_id: window.currentUser.id,
@@ -183,23 +208,26 @@ async function saveSoap(status) {
     plan_labs: document.getElementById('labs').value.split('\n').filter(Boolean),
     follow_up: document.getElementById('followup').value,
     status,
-    created_at: new Date(`${document.getElementById('entry-date').value}T${new Date().toTimeString().split(' ')[0]}`).toISOString(),
+    created_at: createdAt,
     signed_at: status === 'signed' ? new Date().toISOString() : null,
   };
   try {
     await dbInsert('psy_soap_notes', note);
-    await auditLog('soap.' + status, currentPatient.id);
+    await auditLog('soap.' + status, currentPatient.id, isBackdated ? { backdated_to: entryDate, actual_today: todayStr } : undefined);
 
     // Auto-mark session as consultation_done when SOAP is signed
     if (status === 'signed') {
       const dateStr = document.getElementById('entry-date').value;
+      // Compute UTC range for local day to avoid timezone mismatch
+      const dayStart = new Date(`${dateStr}T00:00:00`).toISOString();
+      const dayEnd = new Date(`${dateStr}T23:59:59.999`).toISOString();
       const { data: sessions } = await window.db
         .from('psy_plan_weekly_progress')
         .select('id')
         .eq('patient_id', currentPatient.id)
         .eq('status', 'hadir')
-        .gte('session_date', dateStr + 'T00:00:00')
-        .lte('session_date', dateStr + 'T23:59:59')
+        .gte('session_date', dayStart)
+        .lte('session_date', dayEnd)
         .limit(1);
       if (sessions?.[0]) {
         await window.db.from('psy_plan_weekly_progress')

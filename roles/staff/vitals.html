@@ -178,9 +178,16 @@ async function loadPatientVitalsHistory() {
 }
 
 async function loadRecent() {
-  const today = new Date().toISOString().split('T')[0];
+  const _d = new Date();
+  const today = `${_d.getFullYear()}-${String(_d.getMonth()+1).padStart(2,'0')}-${String(_d.getDate()).padStart(2,'0')}`;
   const data = await dbQuery('psy_vitals', { order: { col: 'created_at' }, limit: 20 });
-  const todayData = data.filter(v => v.created_at?.startsWith(today));
+  // Compare against local date (Malaysia UTC+8), not UTC date prefix
+  const todayData = data.filter(v => {
+    if (!v.created_at) return false;
+    const d = new Date(v.created_at);
+    const local = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    return local === today;
+  });
 
   const patientsRes = await window.db.from('psy_patients').select('*, psy_profiles!psy_patients_user_id_fkey(full_name)');
   const patients = patientsRes.data || [];

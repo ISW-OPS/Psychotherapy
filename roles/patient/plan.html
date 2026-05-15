@@ -134,19 +134,24 @@ async function loadPlan() {
     return;
   }
 
-  const plans = await dbQuery('psy_treatment_plans', { eq: { patient_id: patientRecord.id } });
+  let plans = await dbQuery('psy_treatment_plans', { eq: { patient_id: patientRecord.id } });
 
   activePlan = plans.find(p => p.status === 'active') || plans[0];
 
   if (!activePlan) {
     // Has active package but no plan — auto-create from DB package data
     try {
+      // Re-check to avoid duplicate with payment.html's auto-create (race guard)
+      plans = await dbQuery('psy_treatment_plans', { eq: { patient_id: patientRecord.id } });
+      activePlan = plans.find(p => p.status === 'active') || plans[0];
+      if (activePlan) { /* already created by another flow */ }
+      else {
       const pkgRows = await dbQuery('psy_packages', { eq: { package_id: patientRecord.active_package_id } }).catch(() => []);
       if (pkgRows.length > 0) {
         const pkg = pkgRows[0];
         const { data: newPlan, error } = await window.db.from('psy_treatment_plans').insert({
           patient_id: patientRecord.id,
-          doctor_id: currentUser.id,
+          doctor_id: null,
           name: `${pkg.name} Treatment Plan`,
           template: pkg.package_id,
           duration_unit: pkg.duration_unit || 'week',
@@ -163,6 +168,7 @@ async function loadPlan() {
         if (error) throw error;
         activePlan = newPlan;
         banner('Pelan rawatan disiapkan secara automatik', 'ok');
+      }
       }
     } catch (err) {
       document.getElementById('content').innerHTML = `

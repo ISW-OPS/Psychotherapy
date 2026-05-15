@@ -125,13 +125,83 @@ function checkPendingPayment() {
   try { return JSON.parse(raw); } catch { return null; }
 }
 
+// Re-verify shop order prices against DB to prevent localStorage tampering
+async function verifyShopOrderPrices(item) {
+  const ids = item.items.map(i => i.id).filter(Boolean);
+  if (!ids.length) return null;
+  const { data: products, error } = await window.db
+    .from('psy_products')
+    .select('id, price, is_active')
+    .in('id', ids);
+  if (error || !products) return null;
+  const priceMap = Object.fromEntries(products.map(p => [p.id, p]));
+  let verifiedSubtotal = 0;
+  const verifiedItems = [];
+  for (const cartItem of item.items) {
+    const dbProd = priceMap[cartItem.id];
+    if (!dbProd || dbProd.is_active === false) return null;
+    const qty = Math.max(1, parseInt(cartItem.qty) || 1);
+    const dbPrice = Number(dbProd.price);
+    if (!Number.isFinite(dbPrice) || dbPrice < 0) return null;
+    verifiedSubtotal += dbPrice * qty;
+    verifiedItems.push({ id: cartItem.id, name: cartItem.name, qty, price: dbPrice });
+  }
+  const deliveryFee = item.deliveryMethod === 'pos' ? 8 : 0;
+  return {
+    ...item,
+    items: verifiedItems,
+    subtotal: verifiedSubtotal,
+    deliveryFee,
+    amount: verifiedSubtotal + deliveryFee,
+  };
+}
+
+// Re-verify package price against DB
+async function verifyPackagePrice(item) {
+  const { data: rows, error } = await window.db
+    .from('psy_packages')
+    .select('package_id, name, price, is_active')
+    .eq('package_id', item.packageId)
+    .limit(1);
+  if (error || !rows || !rows.length) return null;
+  const pkg = rows[0];
+  if (pkg.is_active === false) return null;
+  const dbPrice = Number(pkg.price);
+  if (!Number.isFinite(dbPrice) || dbPrice < 0) return null;
+  return {
+    ...item,
+    packageName: pkg.name,
+    title: `Pakej: ${pkg.name}`,
+    amount: dbPrice,
+  };
+}
+
 async function loadPayments() {
   pendingItems = [];
 
   // Check localStorage for pending payment (from pakej/appointment redirect)
   const pendingItem = checkPendingPayment();
   if (pendingItem && pendingItem.amount > 0) {
-    pendingItems.push(pendingItem);
+    // For shop orders, re-verify prices from DB to prevent client-side tampering
+    if (pendingItem.type === 'shop_order' && Array.isArray(pendingItem.items)) {
+      const verified = await verifyShopOrderPrices(pendingItem);
+      if (!verified) {
+        localStorage.removeItem('isw_pending_payment');
+        banner('Harga produk tidak sah. Sila buat semula order anda.', 'error');
+      } else {
+        pendingItems.push(verified);
+      }
+    } else if (pendingItem.type === 'package' && pendingItem.packageId) {
+      const verified = await verifyPackagePrice(pendingItem);
+      if (!verified) {
+        localStorage.removeItem('isw_pending_payment');
+        banner('Harga pakej tidak sah. Sila pilih semula pakej.', 'error');
+      } else {
+        pendingItems.push(verified);
+      }
+    } else {
+      pendingItems.push(pendingItem);
+    }
   }
 
   // DB-based pending items (only if patient record exists)
@@ -324,6 +394,9 @@ async function processPayment() {
     let createdPlan = false;
     for (const item of pendingItems) {
       if (item.type === 'package' && item.packageId && patientRecord) {
+        // Race guard: skip if active plan already exists
+        const existingPlans = await dbQuery('psy_treatment_plans', { eq: { patient_id: patientRecord.id, status: 'active' } }).catch(() => []);
+        if (existingPlans.length > 0) continue;
         const template = await getPlanTemplate(item.packageId, item.packageName);
         const { error: planErr } = await window.db.from('psy_treatment_plans').insert({
           patient_id: patientRecord.id,

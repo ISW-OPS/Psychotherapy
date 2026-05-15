@@ -399,12 +399,31 @@ async function doReview(status) {
     if (upErr) throw upErr;
 
     if (kyc.user_id) {
-      // Check if there's a staff-created record with same IC to auto-link
+      // Check if there's a staff-created record with same IC to auto-link.
+      // Require name + DOB match to prevent IC-based account takeover.
       const { data: staffPt } = await window.db.from('psy_patients')
-        .select('id').eq('ic_number', kyc.ic_number).is('user_id', null).limit(1);
+        .select('id, full_name, date_of_birth')
+        .eq('ic_number', kyc.ic_number).is('user_id', null).limit(1);
       if (staffPt?.[0]) {
-        await window.db.from('psy_patients').update({ user_id: kyc.user_id, created_by_staff: false })
-          .eq('id', staffPt[0].id);
+        const normName = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+        const nameMatch = normName(staffPt[0].full_name) === normName(kyc.patient_name);
+        const dobMatch = !staffPt[0].date_of_birth || !kyc.date_of_birth
+          || String(staffPt[0].date_of_birth) === String(kyc.date_of_birth);
+        if (nameMatch && dobMatch) {
+          await window.db.from('psy_patients').update({ user_id: kyc.user_id, created_by_staff: false })
+            .eq('id', staffPt[0].id);
+        } else {
+          await window.db.from('psy_audit_log').insert({
+            actor_id: window.currentUser.id, actor_name: window.currentUser.full_name,
+            actor_role: 'staff', action: 'kyc.autolink_blocked', target: kycId,
+            meta: {
+              reason: 'name_or_dob_mismatch',
+              kyc_name: kyc.patient_name, staff_name: staffPt[0].full_name,
+              kyc_dob: kyc.date_of_birth, staff_dob: staffPt[0].date_of_birth,
+              ic: kyc.ic_number,
+            },
+          });
+        }
       }
 
       const { data: pts } = await window.db.from('psy_patients').select('id').eq('user_id', kyc.user_id).limit(1);

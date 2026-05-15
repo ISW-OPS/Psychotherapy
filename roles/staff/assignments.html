@@ -290,10 +290,18 @@ function renderTable() {
 
 // ── Quick assign (inline) ─────────────────────────────
 async function quickAssign(pid, btn) {
-  btn.disabled    = true;
-  btn.textContent = '...';
   const uid  = window.currentUser.id;
   const name = window.currentUser.full_name;
+  const role = window.currentUser.staff_role;
+  const patient = allPatients.find(x => x.id === pid);
+  // Prevent poaching: only allow assigning unassigned patients, unless admin/manager
+  if (patient && patient.coach_id && patient.coach_id !== uid
+      && role !== 'admin' && role !== 'manager') {
+    banner('Pesakit sudah ditugaskan kepada coach lain', 'error');
+    return;
+  }
+  btn.disabled    = true;
+  btn.textContent = '...';
 
   const { error } = await window.db.from('psy_patients')
     .update({ coach_id: uid, assigned_at: new Date().toISOString() })
@@ -321,12 +329,19 @@ async function quickAssign(pid, btn) {
 
 // ── Unassign ──────────────────────────────────────────
 async function doUnassign(pid, btn) {
+  const uid  = window.currentUser.id;
+  const name = window.currentUser.full_name;
+  const role = window.currentUser.staff_role;
+  const patient = allPatients.find(x => x.id === pid);
+  const isOwner = patient && patient.coach_id === uid;
+  const isAdminOrManager = role === 'admin' || role === 'manager';
+  if (!isOwner && !isAdminOrManager) {
+    banner('Anda hanya boleh tarik balik penugasan pesakit anda sendiri', 'error');
+    return;
+  }
   if (!confirm('Tarik balik penugasan pesakit ini?')) return;
   btn.disabled = true;
   btn.textContent = '...';
-
-  const uid  = window.currentUser.id;
-  const name = window.currentUser.full_name;
 
   const { error } = await window.db.from('psy_patients')
     .update({ coach_id: null, assigned_at: null })

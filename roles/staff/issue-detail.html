@@ -319,12 +319,19 @@ async function confirmReplacement() {
   const icon  = opt.dataset.icon;
   const total = price * qty;
 
+  // Replacement orders bypass payment — restrict to manager/admin only
+  const role = window.currentUser?.staff_role;
+  if (role !== 'manager' && role !== 'admin') {
+    banner('Hanya manager/admin boleh hantar penggantian (tanpa bayaran)', 'error');
+    return;
+  }
+
   const btn = document.getElementById('btn-rep-confirm');
   btn.disabled = true; btn.textContent = 'Memproses...';
 
   try {
-    const { count: repCount } = await window.db.from('psy_orders').select('*', { count: 'exact', head: true }).like('order_ref', 'REP-%');
-    const orderRef = 'REP-' + String((repCount || 0) + 1).padStart(3, '0');
+    const orderRef = 'REP-' + Date.now().toString(36).toUpperCase()
+      + '-' + Math.random().toString(36).slice(2, 6).toUpperCase();
 
     const { error: orderErr } = await window.db.from('psy_orders').insert({
       order_ref:        orderRef,
@@ -334,7 +341,7 @@ async function confirmReplacement() {
       status:           'packed',
       delivery_method:  delivery,
       delivery_address: delivery === 'pos' ? address : 'Pickup Klinik',
-      notes:            `Penggantian — Isu #${currentIssue.id.slice(0,8)}${note ? ' · ' + note : ''}`,
+      notes:            `Penggantian (TIADA BAYARAN) — Isu #${currentIssue.id.slice(0,8)}${note ? ' · ' + note : ''}`,
     });
 
     if (orderErr) throw orderErr;

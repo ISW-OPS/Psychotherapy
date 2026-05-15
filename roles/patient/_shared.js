@@ -114,7 +114,7 @@ async function initPatient(pageId, titleSub) {
       const newPatient = await dbInsert('psy_patients', {
         user_id: window.currentUser.id,
         mrn: mrn,
-        status: 'active',
+        status: 'pending',
       });
       patients = [newPatient];
     } catch (e) {

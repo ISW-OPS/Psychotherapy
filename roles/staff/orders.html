@@ -433,6 +433,33 @@ function buildActions(o) {
   return '';
 }
 
+// ── Stock helpers ────────────────────────────────────
+async function decrementStockForOrder(order) {
+  if (!order || !Array.isArray(order.items)) return;
+  for (const it of order.items) {
+    if (!it.id || !it.qty) continue;
+    const { data: prod } = await window.db.from('psy_products')
+      .select('stock').eq('id', it.id).single().then(r => r, () => ({ data: null }));
+    if (prod && prod.stock != null) {
+      const newStock = Math.max(0, Number(prod.stock) - Number(it.qty));
+      await window.db.from('psy_products').update({ stock: newStock }).eq('id', it.id);
+    }
+  }
+}
+
+async function restockForOrder(order) {
+  if (!order || !Array.isArray(order.items)) return;
+  for (const it of order.items) {
+    if (!it.id || !it.qty) continue;
+    const { data: prod } = await window.db.from('psy_products')
+      .select('stock').eq('id', it.id).single().then(r => r, () => ({ data: null }));
+    if (prod && prod.stock != null) {
+      const newStock = Number(prod.stock) + Number(it.qty);
+      await window.db.from('psy_products').update({ stock: newStock }).eq('id', it.id);
+    }
+  }
+}
+
 // ── Status Update ────────────────────────────────────
 async function markStatus(orderId, status, extra = {}) {
   const ts = {};
@@ -440,12 +467,31 @@ async function markStatus(orderId, status, extra = {}) {
   if (status === 'packed')    ts.packed_at    = new Date().toISOString();
   if (status === 'delivered') ts.delivered_at = new Date().toISOString();
 
+  const prevOrder = allOrders.find(x => x.id === orderId);
+  const prevStatus = prevOrder?.status;
+
   const { data: updated, error } = await window.db.from('psy_orders')
     .update({ status, updated_at: new Date().toISOString(), ...ts, ...extra })
     .eq('id', orderId).select('order_ref, patient_id, tracking_number').single()
     .then(r => r, r => r);
 
   if (error) { banner('Gagal: ' + (error.message || 'Ralat'), 'error'); return; }
+
+  // Decrement stock on first transition into 'packed' (committed to ship)
+  if (status === 'packed' && prevStatus !== 'packed' && prevStatus !== 'shipped' && prevStatus !== 'delivered') {
+    await decrementStockForOrder(prevOrder);
+  }
+  // Restock if order is cancelled after stock was decremented
+  if (status === 'cancelled' && (prevStatus === 'packed' || prevStatus === 'shipped')) {
+    await restockForOrder(prevOrder);
+  }
+
+  // Audit log for accountability
+  await window.db.from('psy_audit_log').insert({
+    actor_id: window.currentUser.id, actor_name: window.currentUser.full_name,
+    actor_role: 'staff', action: 'order.' + status, target: orderId,
+    meta: { order_ref: updated?.order_ref, prev_status: prevStatus, ...extra },
+  }).then(() => {}, () => {});
 
   // Notify patient
   const ref      = updated?.order_ref || '';

@@ -686,6 +686,14 @@
     function openEditPatient(id) {
       const p = allPatients.find(x => x.id === id);
       if (!p) return;
+      // Gate edit: admin/manager OR the assigned coach only
+      const role = window.currentUser?.staff_role;
+      const isAdmin = role === 'admin' || role === 'manager';
+      const isOwnerCoach = role === 'coach' && p.coach_id === window.currentUser?.id;
+      if (!isAdmin && !isOwnerCoach) {
+        banner('Anda tidak dibenarkan edit pesakit ini', 'error');
+        return;
+      }
       editingPatientId = id;
       resetCreateForm();
 
@@ -968,6 +976,10 @@
     const PAGE_SIZE = 15;
     let currentPage = 1;
 
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+
     function renderPatients(list, resetPage = true) {
       currentFiltered = list;
       if (resetPage) currentPage = 1;
@@ -981,27 +993,34 @@
 
       document.getElementById('patients-body').innerHTML = pageItems.length
         ? pageItems.map((p, i) => {
-          const name = p.psy_profiles?.full_name || p.full_name || '—';
-          const phone = p.psy_profiles?.phone || p.phone || p.emergency_contact_phone || '—';
+          const rawName = p.psy_profiles?.full_name || p.full_name || '—';
+          const name = escapeHtml(rawName);
+          const phone = escapeHtml(p.psy_profiles?.phone || p.phone || p.emergency_contact_phone || '—');
+          const pkgName = escapeHtml(p.active_package_name || '');
+          const refCode = escapeHtml(p.reference_code || '—');
+          const coachName = escapeHtml(p.coach?.full_name || '');
+          // Name used inside onclick="...,'NAME'" — escape both JS string and HTML attr
+          const nameForJs = String(rawName).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+          const nameForAttr = escapeHtml(nameForJs);
           return `<tr>
           <td class="text-xs text-ink/50 text-center">${start + i + 1}</td>
-          <td class="text-xs font-mono">${p.mrn}</td>
+          <td class="text-xs font-mono">${escapeHtml(p.mrn)}</td>
           <td>
             <strong>${name}</strong>
             ${(!p.user_id) ? '<span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded ml-1">Belum Aktif</span>' : ''}
           </td>
           <td class="text-xs">${phone}</td>
           <td class="text-xs">${p.active_package_name
-              ? `<span class="chip bg-navy-light text-navy">${p.active_package_name}</span>`
+              ? `<span class="chip bg-navy-light text-navy">${pkgName}</span>`
               : '<span class="text-ink/40">—</span>'}</td>
-          <td class="text-xs">${p.reference_code || '—'}</td>
-          <td class="text-xs">${p.coach?.full_name ? `<span class="text-navy font-medium">${p.coach.full_name}</span>` : '<span class="text-ink/30">—</span>'}</td>
+          <td class="text-xs">${refCode}</td>
+          <td class="text-xs">${p.coach?.full_name ? `<span class="text-navy font-medium">${coachName}</span>` : '<span class="text-ink/30">—</span>'}</td>
           <td>${statusChip(p.status)}</td>
           <td class="whitespace-nowrap print-hide space-x-3">
             ${p.status !== 'deleted' ? `<a href="patient-hub.html?patient_id=${p.id}" class="text-navy text-xs font-semibold hover:underline">Details</a>` : ''}
             ${(isAdmin || (isCoachUser && p.coach_id === window.currentUser?.id)) && p.status !== 'deleted' ? `<button onclick="openEditPatient('${p.id}')" class="text-teal text-xs font-semibold hover:underline">Edit</button>` : ''}
-            ${isAdmin && p.status !== 'deleted' ? `<button onclick="deletePatient('${p.id}','${(p.full_name || p.psy_profiles?.full_name || '').replace(/'/g, "\\'")}' )" class="text-terracotta text-xs font-semibold hover:underline">Padam</button>` : ''}
-            ${isAdmin && p.status === 'deleted' ? `<button onclick="restorePatient('${p.id}','${(p.full_name || p.psy_profiles?.full_name || '').replace(/'/g, "\\'")}' )" class="text-green text-xs font-semibold hover:underline">Pulihkan</button>` : ''}
+            ${isAdmin && p.status !== 'deleted' ? `<button onclick="deletePatient('${p.id}','${nameForAttr}')" class="text-terracotta text-xs font-semibold hover:underline">Padam</button>` : ''}
+            ${isAdmin && p.status === 'deleted' ? `<button onclick="restorePatient('${p.id}','${nameForAttr}')" class="text-green text-xs font-semibold hover:underline">Pulihkan</button>` : ''}
           </td>
         </tr>`;
         }).join('')
