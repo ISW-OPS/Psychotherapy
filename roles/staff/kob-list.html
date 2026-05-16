@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Senarai KOB</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🩺</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-5">
+        <div class="flex items-center justify-between flex-wrap gap-3">
+          <div class="bg-navy-light/40 border border-navy/20 rounded-xl p-4 text-sm text-navy flex-1">
+            📌 Senarai sesi KOB (Konsultasi Orang Baru). Tekan butang untuk lihat detail, tandakan Hadir & Selesai.
+          </div>
+          <a href="patients.html?add=1" class="bg-navy text-white px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-navy-dark whitespace-nowrap inline-block">+ Tambah Pesakit / Tempah KOB</a>
+        </div>
+
+        <div class="flex items-center gap-3 flex-wrap">
+          <div class="flex gap-2 flex-wrap">
+            <button onclick="setFilter('today')" id="f-today" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-navy text-white">Hari Ini</button>
+            <button onclick="setFilter('upcoming')" id="f-upcoming" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-ink/15">Akan Datang</button>
+            <button onclick="setFilter('hadir')" id="f-hadir" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-ink/15">Sedang Berlangsung</button>
+            <button onclick="setFilter('completed')" id="f-completed" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-ink/15">Selesai</button>
+            <button onclick="setFilter('all')" id="f-all" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-ink/15">Semua</button>
+          </div>
+          <select id="filter-signup" onchange="render()"
+            class="ml-auto px-3 py-1.5 border border-ink/15 rounded-lg text-xs bg-white">
+            <option value="">Semua Signup Pakej</option>
+            <option value="signed_up">✅ Signup Pakej</option>
+            <option value="not_signed">⚠️ Tak Signup Pakej</option>
+            <option value="pending">⏳ Tunggu Doktor</option>
+          </select>
+        </div>
+
+        <div class="bg-white rounded-xl border border-ink/10 overflow-x-auto">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>Tarikh & Masa</th>
+                <th>Pesakit</th>
+                <th>MRN</th>
+                <th>Mod</th>
+                <th>Doktor</th>
+                <th>Status</th>
+                <th>Signup Pakej</th>
+                <th class="text-right">Tindakan</th>
+              </tr>
+            </thead>
+            <tbody id="kob-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="../../shared/utils.js"></script>
+<script src="_shared.js"></script>
+<script>
+let allKob = [];
+let patientMap = {};
+let filterMode = 'today';
+
+const STATUS_LABEL = {
+  booked:     { label: 'Ditempah', cls: 'bg-navy-light text-navy' },
+  hadir:      { label: 'Hadir',    cls: 'bg-gold/30 text-gold-dark' },
+  completed:  { label: 'Selesai',  cls: 'bg-green-light text-green-dark' },
+  reschedule: { label: 'Reschedule', cls: 'bg-ink/10 text-ink/70' },
+  cancelled:  { label: 'Batal',    cls: 'bg-terracotta/15 text-terracotta' },
+};
+
+function setFilter(mode) {
+  filterMode = mode;
+  ['today','upcoming','hadir','completed','all'].forEach(m => {
+    const b = document.getElementById('f-' + m);
+    if (b) b.className = `px-3 py-1.5 rounded-lg text-xs font-semibold ${m === mode ? 'bg-navy text-white' : 'bg-white border border-ink/15'}`;
+  });
+  render();
+}
+
+async function loadAll() {
+  const [kobRes, patRes] = await Promise.all([
+    window.db.from('psy_kob_sessions').select('*').order('scheduled_at', { ascending: false }),
+    window.db.from('psy_patients').select('id, mrn, full_name, kob_status, active_package_id, active_package_name, psy_profiles!psy_patients_user_id_fkey(full_name, phone)'),
+  ]);
+  allKob = kobRes.data || [];
+  (patRes.data || []).forEach(p => { patientMap[p.id] = p; });
+  render();
+}
+
+function signupChip(kob, pat) {
+  // Show signup status based on patient state + kob recommendation
+  const kobDone = pat?.kob_status === 'completed';
+  const hasPkg = !!pat?.active_package_id;
+  if (kobDone && hasPkg) {
+    return `<span class="chip bg-green-light text-green-dark text-[10px]">✅ ${escapeHtml(pat.active_package_name || 'Signup')}</span>`;
+  }
+  if (kobDone && !hasPkg) {
+    return '<span class="chip bg-terracotta/15 text-terracotta text-[10px]">⚠️ Tak Signup</span>';
+  }
+  // KOB session has recommendation but not finalized
+  if (kob.recommended_package_name) {
+    return `<span class="chip bg-gold/20 text-gold-dark text-[10px]">⏳ Cadang: ${escapeHtml(kob.recommended_package_name)}</span>`;
+  }
+  return '<span class="text-[10px] text-ink/40">—</span>';
+}
+
+function signupCategory(kob, pat) {
+  const kobDone = pat?.kob_status === 'completed';
+  const hasPkg = !!pat?.active_package_id;
+  if (kobDone && hasPkg) return 'signed_up';
+  if (kobDone && !hasPkg) return 'not_signed';
+  return 'pending';
+}
+
+function localDateStr(d) {
+  const x = new Date(d);
+  return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`;
+}
+
+function render() {
+  const today = localDateStr(new Date());
+  const signupFilter = document.getElementById('filter-signup')?.value || '';
+  let list = allKob;
+  if (filterMode === 'today') {
+    list = list.filter(k => localDateStr(k.scheduled_at) === today);
+  } else if (filterMode === 'upcoming') {
+    list = list.filter(k => k.scheduled_at >= new Date().toISOString() && k.status === 'booked');
+  } else if (filterMode === 'hadir') {
+    list = list.filter(k => k.status === 'hadir');
+  } else if (filterMode === 'completed') {
+    list = list.filter(k => k.status === 'completed');
+  }
+  if (signupFilter) {
+    list = list.filter(k => signupCategory(k, patientMap[k.patient_id]) === signupFilter);
+  }
+
+  const body = document.getElementById('kob-body');
+  if (!list.length) {
+    body.innerHTML = '<tr><td colspan="8" class="text-center text-ink/40 py-8">Tiada KOB ditemui</td></tr>';
+    return;
+  }
+
+  body.innerHTML = list.map(k => {
+    const pat = patientMap[k.patient_id];
+    const patName = pat?.psy_profiles?.full_name || pat?.full_name || '—';
+    const dt = new Date(k.scheduled_at);
+    const dateStr = dt.toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric' });
+    const timeStr = dt.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+    const st = STATUS_LABEL[k.status] || STATUS_LABEL.booked;
+    const doctorInfo = [
+      k.doctor_hadir_name ? `H: ${k.doctor_hadir_name}` : null,
+      k.doctor_selesai_name ? `S: ${k.doctor_selesai_name}` : null,
+    ].filter(Boolean).join(' · ') || '—';
+    return `<tr>
+      <td class="whitespace-nowrap"><div class="font-semibold">${escapeHtml(dateStr)}</div><div class="text-xs text-ink/50">${escapeHtml(timeStr)}</div></td>
+      <td>${escapeHtml(patName)}</td>
+      <td class="text-xs font-mono">${escapeHtml(pat?.mrn || '—')}</td>
+      <td class="text-xs">${k.mode === 'online' ? '💻 Online' : '🏥 F2F'}</td>
+      <td class="text-xs text-ink/70">${escapeHtml(doctorInfo)}</td>
+      <td><span class="chip ${st.cls}">${st.label}</span></td>
+      <td>${signupChip(k, pat)}</td>
+      <td class="text-right whitespace-nowrap">
+        <a href="kob-detail.html?id=${k.id}" class="text-xs text-navy font-semibold hover:underline">Detail →</a>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+(async () => {
+  const user = await initStaff('kob_list', 'Senarai sesi KOB');
+  if (!user) return;
+  await loadAll();
+})();
+</script>
+</body>
+</html>

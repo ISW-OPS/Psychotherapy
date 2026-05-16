@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Konfigurasi Slot KOB</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">⏰</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-5">
+
+        <div class="bg-navy-light/40 border border-navy/20 rounded-xl p-4 text-sm text-navy">
+          📌 Tetapkan slot waktu KOB. Klinik tutup Isnin & Selasa. Slot yang di-off tidak akan muncul untuk patient booking.
+        </div>
+
+        <div class="bg-white rounded-2xl border border-ink/10 overflow-x-auto">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>Slot Waktu</th>
+                <th class="text-center">Rabu</th>
+                <th class="text-center">Khamis</th>
+                <th class="text-center">Jumaat</th>
+                <th class="text-center">Sabtu</th>
+                <th class="text-center">Ahad</th>
+              </tr>
+            </thead>
+            <tbody id="slot-body"></tbody>
+          </table>
+        </div>
+
+        <div class="text-xs text-ink/50">
+          💡 <strong>Tip:</strong> Tarikh-tarikh cuti (Hari Raya, dll) urus melalui page <a href="closures.html" class="text-navy hover:underline">Cuti Klinik</a> berasingan.
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="../../shared/utils.js"></script>
+<script src="_shared.js"></script>
+<script>
+let allSlots = [];
+
+const DAYS = [
+  { key: 3, label: 'Rabu' },
+  { key: 4, label: 'Khamis' },
+  { key: 5, label: 'Jumaat' },
+  { key: 6, label: 'Sabtu' },
+  { key: 0, label: 'Ahad' },
+];
+
+async function loadSlots() {
+  const { data, error } = await window.db.from('psy_kob_slot_config')
+    .select('*').order('sort_order', { ascending: true });
+  if (error) { banner('Gagal load: ' + error.message, 'error'); return; }
+  allSlots = data || [];
+  render();
+}
+
+function render() {
+  // Group by sort_order (1-4) to build rows by slot time
+  const slotsBySort = {};
+  allSlots.forEach(s => {
+    if (!slotsBySort[s.sort_order]) slotsBySort[s.sort_order] = {};
+    slotsBySort[s.sort_order][s.day_of_week] = s;
+  });
+
+  const rows = Object.keys(slotsBySort).sort((a,b) => a - b).map(order => {
+    const slots = slotsBySort[order];
+    // Use first slot's label as the row header
+    const sample = Object.values(slots)[0];
+    const cells = DAYS.map(d => {
+      const slot = slots[d.key];
+      if (!slot) return '<td class="text-center text-ink/30">—</td>';
+      return `<td class="text-center">
+        <label class="inline-flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" ${slot.is_active ? 'checked' : ''}
+            onchange="toggleSlot('${slot.id}', this.checked)"
+            class="accent-navy w-4 h-4">
+          <span class="text-xs ${slot.is_active ? 'text-green-dark font-semibold' : 'text-ink/40'}">${slot.is_active ? 'ON' : 'OFF'}</span>
+        </label>
+      </td>`;
+    }).join('');
+    return `<tr>
+      <td class="font-semibold whitespace-nowrap">${escapeHtml(sample?.label || '—')}</td>
+      ${cells}
+    </tr>`;
+  }).join('');
+
+  document.getElementById('slot-body').innerHTML = rows ||
+    '<tr><td colspan="6" class="text-center text-ink/40 py-8">Tiada slot dikonfigurasi. Run migration step36_kob_slots.sql dahulu.</td></tr>';
+}
+
+async function toggleSlot(slotId, isActive) {
+  try {
+    const { error } = await window.db.from('psy_kob_slot_config')
+      .update({ is_active: isActive, updated_at: new Date().toISOString() })
+      .eq('id', slotId);
+    if (error) throw error;
+    const slot = allSlots.find(s => s.id === slotId);
+    if (slot) slot.is_active = isActive;
+    await auditLog('kob_slot.toggled', slotId, { is_active: isActive });
+    banner(isActive ? 'Slot diaktifkan ✅' : 'Slot dinyahaktifkan ⛔');
+    render();
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+    loadSlots();
+  }
+}
+
+(async () => {
+  const user = await initStaff('kob_slots', 'Konfigurasi Slot KOB');
+  if (!user) return;
+  setHeaderBack('dashboard.html', 'Kembali ke Dashboard');
+  await loadSlots();
+})();
+</script>
+</body>
+</html>

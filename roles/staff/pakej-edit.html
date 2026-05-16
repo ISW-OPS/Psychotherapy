@@ -129,6 +129,23 @@
           </div>
         </div>
 
+        <!-- Agreement PDF Upload -->
+        <div class="p-4 bg-cream/40 rounded-xl border border-ink/10">
+          <div class="flex items-center justify-between flex-wrap gap-2 mb-2">
+            <label class="text-xs font-semibold text-ink/70">📜 Agreement PDF (Kontrak Pakej)</label>
+            <div id="f-agreement-status" class="text-[11px] text-ink/50"></div>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <input id="f-agreement-file" type="file" accept="application/pdf"
+              class="text-xs text-ink/60 file:mr-3 file:py-1.5 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-navy file:text-white hover:file:bg-navy-dark cursor-pointer">
+            <button type="button" id="btn-upload-agreement" onclick="uploadAgreement()" class="bg-navy text-white px-4 py-1.5 rounded-lg text-xs font-semibold hover:bg-navy-dark">Upload</button>
+            <a id="f-agreement-preview" href="#" target="_blank" class="hidden text-xs text-navy hover:underline">📄 Lihat PDF semasa →</a>
+            <button type="button" id="btn-remove-agreement" onclick="removeAgreement()" class="hidden text-xs text-terracotta hover:underline">🗑 Buang</button>
+          </div>
+          <input type="hidden" id="f-agreement-pdf">
+          <p class="text-[10px] text-ink/40 mt-1.5">PDF sahaja · Maksimum 10MB · Patient akan sign PDF ini selepas bayar pakej</p>
+        </div>
+
         <!-- Madu Schedule + Online Lock (Sprint 1) -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-cream/40 rounded-xl border border-ink/10">
           <div>
@@ -384,6 +401,76 @@ function populateForm(pkg) {
   document.getElementById('f-madu-label').value = pkg?.madu_schedule_label || '';
   document.getElementById('f-allow-online-full').checked = !!pkg?.allow_online_full_duration;
   document.getElementById('f-online-lock-week').value = pkg?.online_lock_from_week || 3;
+
+  // Agreement PDF
+  document.getElementById('f-agreement-pdf').value = pkg?.agreement_pdf || '';
+  renderAgreementStatus();
+}
+
+async function renderAgreementStatus() {
+  const filename = document.getElementById('f-agreement-pdf').value;
+  const statusEl = document.getElementById('f-agreement-status');
+  const previewEl = document.getElementById('f-agreement-preview');
+  const removeBtn = document.getElementById('btn-remove-agreement');
+  if (!filename) {
+    statusEl.textContent = 'Belum upload · akan guna agreement default';
+    statusEl.className = 'text-[11px] text-ink/50 italic';
+    previewEl.classList.add('hidden');
+    removeBtn.classList.add('hidden');
+    return;
+  }
+  statusEl.textContent = '✓ ' + filename;
+  statusEl.className = 'text-[11px] text-green-dark font-semibold';
+  // Try create signed URL for preview
+  try {
+    const { data } = await window.db.storage.from('agreement-templates').createSignedUrl(filename, 3600);
+    if (data?.signedUrl) {
+      previewEl.href = data.signedUrl;
+      previewEl.classList.remove('hidden');
+    }
+  } catch {}
+  removeBtn.classList.remove('hidden');
+}
+
+async function uploadAgreement() {
+  const input = document.getElementById('f-agreement-file');
+  const file = input.files?.[0];
+  if (!file) { banner('Sila pilih PDF dahulu', 'error'); return; }
+  if (file.size > 10 * 1024 * 1024) { banner('PDF terlalu besar (max 10MB)', 'error'); return; }
+  if (!file.name.toLowerCase().endsWith('.pdf')) { banner('Hanya fail PDF dibenarkan', 'error'); return; }
+
+  const editId = document.getElementById('edit-id').value;
+  const pkgCode = editId ? (document.getElementById('f-name').value || 'untitled') : 'new';
+  const safePkg = pkgCode.replace(/[^a-zA-Z0-9-_]/g, '_').slice(0, 50);
+  const path = `${safePkg}_${Date.now()}.pdf`;
+
+  const btn = document.getElementById('btn-upload-agreement');
+  btn.disabled = true; btn.textContent = 'Uploading...';
+  try {
+    const { error } = await window.db.storage.from('agreement-templates').upload(path, file, {
+      contentType: 'application/pdf',
+      upsert: false,
+    });
+    if (error) throw error;
+    document.getElementById('f-agreement-pdf').value = path;
+    input.value = '';
+    await renderAgreementStatus();
+    banner('Agreement PDF di-upload ✅ Klik Simpan untuk save pakej');
+  } catch (e) {
+    banner('Ralat upload: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Upload';
+  }
+}
+
+async function removeAgreement() {
+  if (!confirm('Buang PDF agreement untuk pakej ini? Pakej akan guna agreement default selepas ni.')) return;
+  const filename = document.getElementById('f-agreement-pdf').value;
+  if (filename) {
+    try { await window.db.storage.from('agreement-templates').remove([filename]); } catch {}
+  }
+  document.getElementById('f-agreement-pdf').value = '';
+  renderAgreementStatus();
 }
 
 async function savePackage() {
@@ -423,6 +510,7 @@ async function savePackage() {
       madu_schedule_label: document.getElementById('f-madu-label').value.trim() || null,
       allow_online_full_duration: document.getElementById('f-allow-online-full').checked,
       online_lock_from_week: parseInt(document.getElementById('f-online-lock-week').value) || 3,
+      agreement_pdf: document.getElementById('f-agreement-pdf').value || null,
       updated_at: new Date().toISOString(),
     };
 

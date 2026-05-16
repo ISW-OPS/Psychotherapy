@@ -373,6 +373,19 @@ async function renderDefaultDashboard(user, today, monthStart) {
   const closedIds     = new Set(closedRows.map(r => r.meta?.issue_id).filter(Boolean));
   const openIssues    = issueRows.filter(r => !closedIds.has(r.id));
 
+  // Signup vs Pakej Aktif tracking
+  // - Signup    = patient dah ambil pakej time KOB (pernah set active_package_id)
+  // - Aktif     = active_package_id ada DAN belum expired
+  // - Tak Signup = KOB selesai tapi tak ambil pakej langsung
+  const now = new Date();
+  const kobDone = patients.filter(p => p.kob_status === 'completed');
+  const signedUp = kobDone.filter(p => !!p.active_package_id).length;
+  const aktifPkg = patients.filter(p =>
+    p.active_package_id &&
+    (!p.package_expires_at || new Date(p.package_expires_at) >= now)
+  ).length;
+  const notSigned = kobDone.filter(p => !p.active_package_id).length;
+
   const patientMap = Object.fromEntries(patients.map(p=>[p.id,p]));
   const profileMap = Object.fromEntries((profiles||[]).map(p=>[p.id,p]));
   const planMap    = Object.fromEntries(plans.map(p=>[p.id,p]));
@@ -393,8 +406,10 @@ async function renderDefaultDashboard(user, today, monthStart) {
   document.getElementById('kpi-grid').innerHTML = [
     kpiCard('Sesi Hari Ini', todaySessions.length, `${hadirCount} hadir`, 'navy', 'appointments.html'),
     kpiCard('Pesakit Aktif', patients.length, 'Dalam sistem', 'green', 'patients.html'),
+    kpiCard('Signup Pakej', signedUp, `${kobDone.length?Math.round(signedUp/kobDone.length*100):0}% dari KOB selesai`, 'green', 'patients.html?signup=signed_up'),
+    kpiCard('Pakej Aktif', aktifPkg, 'Tengah dalam rawatan', 'teal', 'patients.html?signup=active'),
+    kpiCard('Tak Signup', notSigned, notSigned?'Perlu follow-up':'Tiada', 'terracotta', 'patients.html?signup=not_signed'),
     kpiCard('KYC Pending', pendingKyc.length, pendingKyc.length?'Perlu review':'Clear', 'gold', 'kyc-list.html'),
-    kpiCard('Risk Alerts', risks.length, risks.length?'Buka queue':'Tiada', 'terracotta', 'risk.html'),
     isAdmin ? kpiCard('Orders Tertunggak', (orders||[]).length, 'Perlu diproses', 'teal', 'orders.html') : '',
     isAdmin ? kpiCard('Isu Terbuka', openIssues.length, openIssues.length?'Belum diselesai':'Semua selesai', 'terracotta', 'issue.html') : '',
   ].join('');

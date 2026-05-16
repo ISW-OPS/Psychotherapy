@@ -6,6 +6,7 @@
 const NAV_ITEMS_BY_ROLE = {
   patient: [
     { id: 'dashboard', url: 'dashboard.html', icon: '🏠', label: 'Dashboard' },
+    { id: 'kob', url: 'kob.html', icon: '🩺', label: 'KOB' },
     { id: 'plan', url: 'plan.html', icon: '💊', label: 'My Treatment Plan' },
     { id: 'pakej', url: 'pakej.html', icon: '🗂️', label: 'Pakej Rawatan' },
     { id: 'checkin', url: 'checkin.html', icon: '✅', label: 'Daily Check-in' },
@@ -15,7 +16,6 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'payment', url: 'payment.html', icon: '💳', label: 'Payment' },
     { id: 'psy_orders', url: 'orders.html', icon: '📦', label: 'Orders & Tracking' },
     { id: 'issue', url: 'issue.html', icon: '⚠️', label: 'Report Issue' },
-    { id: 'feedback', url: 'feedback.html', icon: '⭐', label: 'Maklum Balas' },
     { id: 'kyc', url: 'kyc.html', icon: '🆔', label: 'KYC Form' },
     { id: 'profile', url: 'profile.html', icon: '👤', label: 'Profile' },
   ],
@@ -25,6 +25,7 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'dashboard',    url: 'dashboard.html',         icon: '🏠', label: 'Dashboard' },
     { id: 'psy_patients', url: 'patients.html',         icon: '👥', label: 'Patients' },
     { id: 'kyc_forms',    url: 'kyc-list.html',         icon: '🆔', label: 'KYC Form' },
+    { id: 'kob_list',     url: 'kob-list.html',         icon: '🩺', label: 'Sesi KOB' },
     { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
     { id: 'pakej',        url: 'pakej.html',            icon: '🗂️', label: 'Pakej Rawatan' },
     { id: 'psy_products', url: 'products.html',         icon: '🛒', label: 'Products' },
@@ -33,9 +34,9 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'staff_mgmt',     url: 'staff_management.html', icon: '👨‍⚕️', label: 'Manage Staff' },
     { id: 'announcements', url: 'announcements.html',   icon: '📢', label: 'Pengumuman' },
     { id: 'closures',      url: 'closures.html',        icon: '📅', label: 'Cuti Klinik' },
+    { id: 'kob_slots',     url: 'kob-slots.html',       icon: '⏰', label: 'Slot KOB' },
     { id: 'inventory',     url: 'inventory.html',       icon: '🏭', label: 'Inventori' },
     { id: 'audit',         url: 'audit.html',           icon: '🔒', label: 'Audit Log' },
-    { id: 'feedback',      url: 'feedback.html',        icon: '⭐', label: 'Maklum Balas' },
     { id: 'issue',         url: 'issue.html',           icon: '⚠️', label: 'Report Issue' },
     { id: 'profile',       url: 'profile.html',         icon: '👤', label: 'Profile' },
   ],
@@ -48,7 +49,6 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'coaching',        url: 'coaching.html',     icon: '🎯', label: 'Sesi Coaching' },
     { id: 'plan_week',       url: 'plan-week.html',    icon: '📋', label: 'Weekly Plan' },
     { id: 'inventory',       url: 'inventory.html',    icon: '🏭', label: 'Inventori' },
-    { id: 'feedback',        url: 'feedback.html',     icon: '⭐', label: 'Maklum Balas' },
     { id: 'issue',           url: 'issue.html',        icon: '⚠️', label: 'Report Issue' },
     { id: 'profile',         url: 'profile.html',      icon: '👤', label: 'Profile' },
   ],
@@ -58,15 +58,12 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'dashboard',       url: 'dashboard.html',    icon: '🏥', label: 'Dashboard' },
     { id: 'psy_patients',    url: 'patients.html',     icon: '👥', label: 'Patients' },
     { id: 'kyc_forms',       url: 'kyc-list.html',     icon: '🆔', label: 'KYC Form' },
-    { id: 'plans',           url: 'plans.html',        icon: '📋', label: 'Treatment Plans' },
+    { id: 'kob_list',        url: 'kob-list.html',     icon: '🩺', label: 'Sesi KOB' },
+    { id: 'kob_slots',       url: 'kob-slots.html',    icon: '⏰', label: 'Slot KOB' },
     { id: 'psy_appointments',url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
-    { id: 'consultation',    url: 'consultation.html', icon: '🩺', label: 'Consultation' },
-    { id: 'psy_vitals',      url: 'vitals.html',       icon: '📊', label: 'Vitals Capture' },
-    { id: 'risk',            url: 'risk.html',         icon: '🚨', label: 'Risk Management' },
     { id: 'library',         url: 'library.html',      icon: '📚', label: 'Self-Help Library' },
     { id: 'inventory',       url: 'inventory.html',    icon: '🏭', label: 'Inventori' },
     { id: 'announcements',   url: 'announcements.html',icon: '📢', label: 'Pengumuman' },
-    { id: 'feedback',        url: 'feedback.html',     icon: '⭐', label: 'Maklum Balas' },
     { id: 'issue',           url: 'issue.html',        icon: '⚠️', label: 'Report Issue' },
     { id: 'profile',         url: 'profile.html',      icon: '👤', label: 'Profile' },
   ],
@@ -75,14 +72,12 @@ const NAV_ITEMS_BY_ROLE = {
   staff_manager: [
     { id: 'dashboard',    url: 'dashboard.html',        icon: '🏥', label: 'Dashboard' },
     { id: 'psy_patients', url: 'patients.html',         icon: '👥', label: 'Patients' },
-    { id: 'plans',        url: 'plans.html',            icon: '📋', label: 'Treatment Plans' },
     { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
     { id: 'psy_orders',    url: 'orders.html',            icon: '📦', label: 'Orders & Tracking' },
     { id: 'announcements', url: 'announcements.html',   icon: '📢', label: 'Pengumuman' },
     { id: 'staff_stats',   url: 'staff-stats.html',     icon: '📈', label: 'Statistik & Analitik' },
     { id: 'closures',      url: 'closures.html',        icon: '📅', label: 'Cuti Klinik' },
     { id: 'inventory',     url: 'inventory.html',       icon: '🏭', label: 'Inventori' },
-    { id: 'feedback',      url: 'feedback.html',        icon: '⭐', label: 'Maklum Balas' },
     { id: 'issue',         url: 'issue.html',           icon: '⚠️', label: 'Report Issue' },
     { id: 'profile',       url: 'profile.html',         icon: '👤', label: 'Profile' },
   ],
@@ -285,7 +280,7 @@ async function loadNavBadges(role, _staffRole, userId) {
   if (!window.db || !userId) return;
   try {
     if (role === 'staff') {
-      const [ordersRes, kycRes, issuesRes, closedRes, invRes] = await Promise.all([
+      const [ordersRes, kycRes, issuesRes, closedRes, invRes, kobRes, patientsRes] = await Promise.all([
         // Orders perlu dihantar (paid / packed)
         window.db.from('psy_orders')
           .select('id', { count: 'exact', head: true })
@@ -306,11 +301,21 @@ async function loadNavBadges(role, _staffRole, userId) {
         window.db.from('psy_inventory_requests')
           .select('id', { count: 'exact', head: true })
           .eq('status', 'pending_approval'),
+        // KOB sesi ditempah (belum hadir/selesai)
+        window.db.from('psy_kob_sessions')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'booked'),
+        // Patient pending KYC (baru daftar, belum approve)
+        window.db.from('psy_patients')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'pending_kyc'),
       ]);
 
       setNavBadge('psy_orders', ordersRes.count || 0);
       setNavBadge('kyc_forms', kycRes.count || 0);
       setNavBadge('inventory', invRes.count || 0);
+      setNavBadge('kob_list', kobRes.count || 0);
+      setNavBadge('psy_patients', patientsRes.count || 0);
 
       // Open issues = reported yang tiada dalam closed set
       const closedIds = new Set((closedRes.data || []).map(r => r.meta?.issue_id).filter(Boolean));
@@ -318,7 +323,7 @@ async function loadNavBadges(role, _staffRole, userId) {
       setNavBadge('issue', openCount);
 
     } else if (role === 'patient') {
-      const [ordersRes, issuesRes, closedRes] = await Promise.all([
+      const [ordersRes, issuesRes, closedRes, patRes] = await Promise.all([
         // Orders aktif patient ini
         window.db.from('psy_orders')
           .select('id', { count: 'exact', head: true })
@@ -333,9 +338,25 @@ async function loadNavBadges(role, _staffRole, userId) {
         window.db.from('psy_audit_log')
           .select('meta')
           .eq('action', 'issue.closed'),
+        // Patient record untuk KOB/KYC badge
+        window.db.from('psy_patients')
+          .select('kob_status, status')
+          .eq('user_id', userId)
+          .maybeSingle(),
       ]);
 
       setNavBadge('psy_orders', ordersRes.count || 0);
+
+      // KOB action needed — booked atau apa-apa step belum 'completed'/'na'
+      const kobStatus = patRes.data?.kob_status;
+      if (kobStatus && kobStatus !== 'na' && kobStatus !== 'completed') {
+        setNavBadge('kob', 1);
+      }
+
+      // KYC action needed — patient masih pending_kyc
+      if (patRes.data?.status === 'pending_kyc') {
+        setNavBadge('kyc', 1);
+      }
 
       // Open issues milik patient ini
       const closedIds = new Set((closedRes.data || []).map(r => r.meta?.issue_id).filter(Boolean));

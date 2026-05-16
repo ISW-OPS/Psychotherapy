@@ -341,6 +341,27 @@ async function processPayment() {
       } else if (item.type === 'package_existing') {
         await dbUpdate('psy_package_purchases', item.id, { status: 'active', payment_method: method });
 
+      } else if (item.type === 'kob') {
+        // KOB payment — flip patient.kob_status from pending_payment → paid
+        const { error: kobErr } = await window.db.from('psy_patients').update({
+          kob_status: 'paid',
+        }).eq('id', patientRecord.id);
+        if (kobErr) throw kobErr;
+
+      } else if (item.type === 'kob_package') {
+        // Doctor-recommended package payment during KOB
+        // Record payment on the KOB session + advance kob_status
+        if (item.kobSessionId) {
+          await window.db.from('psy_kob_sessions').update({
+            package_payment_status: 'paid',
+            package_paid_at: new Date().toISOString(),
+            package_receipt_ref: receiptRef,
+          }).eq('id', item.kobSessionId);
+        }
+        await window.db.from('psy_patients').update({
+          kob_status: 'package_paid',
+        }).eq('id', patientRecord.id);
+
       } else if (item.type === 'shop_order') {
         const { error } = await window.db.from('psy_orders').insert({
           order_ref: item.orderRef,
@@ -416,10 +437,19 @@ async function processPayment() {
       }
     }
 
+    const paidKob = pendingItems.some(i => i.type === 'kob');
+    const paidKobPackage = pendingItems.some(i => i.type === 'kob_package');
+
     banner(`Pembayaran berjaya! Resit: ${receiptRef}`);
     pendingItems = [];
 
-    if (createdPlan) {
+    if (paidKobPackage) {
+      banner('Bayaran pakej diterima ✅ Sila sign agreement seterusnya.', 'ok');
+      setTimeout(() => { window.location.href = 'kob.html'; }, 2000);
+    } else if (paidKob) {
+      banner('Bayaran KOB diterima. Sila isi KYC seterusnya.', 'ok');
+      setTimeout(() => { window.location.href = 'kyc.html'; }, 2000);
+    } else if (createdPlan) {
       setTimeout(() => { window.location.href = 'plan.html'; }, 2000);
     } else {
       loadPayments();

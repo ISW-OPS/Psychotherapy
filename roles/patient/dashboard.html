@@ -24,12 +24,52 @@
 
       <section class="p-4 md:p-8 space-y-5">
 
-        <!-- KYC Banner -->
+        <!-- KOB Step 2: Book slot after KYC -->
+        <div id="kob-book-banner" class="hidden bg-gradient-to-r from-navy to-navy-dark text-white rounded-2xl p-5 flex items-center gap-4 flex-wrap">
+          <div class="text-3xl">📅</div>
+          <div class="flex-1 min-w-0">
+            <div class="font-bold">Langkah 2/3: Tempah Slot KOB</div>
+            <div class="text-xs opacity-90 mt-1">KYC anda telah dihantar. Sila tempah tarikh sesi KOB bersama doktor.</div>
+          </div>
+          <a href="kob.html" class="bg-white text-navy font-semibold px-4 py-2 rounded-lg text-sm whitespace-nowrap">Pilih Tarikh →</a>
+        </div>
+
+        <!-- KOB: Package recommended (need payment) -->
+        <div id="kob-pkg-banner" class="hidden bg-gradient-to-r from-terracotta to-terracotta/80 text-white rounded-2xl p-5 flex items-center gap-4 flex-wrap">
+          <div class="text-3xl">📦</div>
+          <div class="flex-1 min-w-0">
+            <div class="font-bold">Langkah 4/6: Doktor Menyarankan Pakej</div>
+            <div id="kob-pkg-detail" class="text-xs opacity-90 mt-1">—</div>
+          </div>
+          <a href="kob.html" class="bg-white text-terracotta font-semibold px-4 py-2 rounded-lg text-sm whitespace-nowrap">Bayar Sekarang →</a>
+        </div>
+
+        <!-- KOB: Awaiting agreement signing -->
+        <div id="kob-sign-banner" class="hidden bg-gradient-to-r from-green to-green-dark text-white rounded-2xl p-5 flex items-center gap-4 flex-wrap">
+          <div class="text-3xl">✍️</div>
+          <div class="flex-1 min-w-0">
+            <div class="font-bold">Langkah 5/6: Sign Agreement</div>
+            <div class="text-xs opacity-90 mt-1">Bayaran diterima. Sila sign agreement rawatan.</div>
+          </div>
+          <a href="kob.html" class="bg-white text-green-dark font-semibold px-4 py-2 rounded-lg text-sm whitespace-nowrap">Sign Sekarang →</a>
+        </div>
+
+        <!-- KOB Step 3: Booked, awaiting session -->
+        <div id="kob-booked-banner" class="hidden bg-gradient-to-r from-gold to-gold-dark text-white rounded-2xl p-5 flex items-center gap-4 flex-wrap">
+          <div class="text-3xl">⏰</div>
+          <div class="flex-1 min-w-0">
+            <div class="font-bold">Langkah 3/3: KOB Anda Ditempah</div>
+            <div id="kob-booked-detail" class="text-xs opacity-90 mt-1">—</div>
+          </div>
+          <a href="kob.html" class="bg-white text-gold-dark font-semibold px-4 py-2 rounded-lg text-sm whitespace-nowrap">Lihat Detail →</a>
+        </div>
+
+        <!-- KYC Banner — Step 1/3 -->
         <div id="kyc-banner" class="hidden bg-gradient-to-r from-gold to-gold-dark text-white rounded-2xl p-5 flex items-center gap-4 flex-wrap">
           <div class="text-3xl">🆔</div>
           <div class="flex-1 min-w-0">
-            <div class="font-bold">Sila lengkapkan KYC anda</div>
-            <div class="text-xs opacity-90 mt-1">Maklumat peribadi diperlukan sebelum akses penuh diberikan.</div>
+            <div class="font-bold">Langkah 1/3: Lengkapkan KYC</div>
+            <div class="text-xs opacity-90 mt-1">Maklumat peribadi diperlukan sebelum sesi KOB.</div>
           </div>
           <a href="kyc.html" class="bg-white text-gold font-semibold px-4 py-2 rounded-lg text-sm whitespace-nowrap">Isi KYC →</a>
         </div>
@@ -103,6 +143,8 @@ function greeting() {
   return 'Selamat Malam';
 }
 
+// (Payment via GHL — handled externally for now)
+
 // Show motivasi disclaimer once per session if patient missed too many check-ins
 function showAdherenceDisclaimerIfNeeded(recentCheckins) {
   const ADHERENCE_THRESHOLD = 4; // < 4 of 7 days = low adherence
@@ -166,14 +208,66 @@ function quickAction(icon, label, href, color) {
 
     const firstName = (user.full_name || 'Pesakit').split(' ')[0];
 
-    // Banner logic
+    // Banner logic — KOB lifecycle takes priority for self-registered patients
     if (!patientRecord) {
       document.getElementById('kyc-banner').classList.remove('hidden');
       return;
     }
 
-    if (!window.kycApproved) {
-      // Check if pending or just not submitted
+    const kobStatus = patientRecord.kob_status || 'na';
+    const isKobFlow = kobStatus !== 'na' && kobStatus !== 'completed';
+
+    if (isKobFlow) {
+      // Show ONE banner based on current KOB stage
+      if (kobStatus === 'pending_payment' || kobStatus === 'paid') {
+        // Payment external (GHL). Check if patient sudah submit KYC — kalau dah, auto-advance.
+        const subs = await dbQuery('psy_kyc_submissions', { eq: { user_id: user.id }, limit: 1 }).catch(() => []);
+        const kycExists = subs[0] && subs[0].status !== 'rejected';
+        if (kycExists) {
+          // Self-heal: KYC already submitted, advance to kyc_done
+          await window.db.from('psy_patients')
+            .update({ kob_status: 'kyc_done' })
+            .eq('id', patientRecord.id);
+          patientRecord.kob_status = 'kyc_done';
+          document.getElementById('kob-book-banner').classList.remove('hidden');
+        } else if (subs[0]?.status === 'rejected') {
+          document.getElementById('kyc-banner').classList.remove('hidden');
+        } else {
+          document.getElementById('kyc-banner').classList.remove('hidden');
+        }
+      } else if (kobStatus === 'kyc_done') {
+        document.getElementById('kob-book-banner').classList.remove('hidden');
+      } else if (kobStatus === 'booked' || kobStatus === 'hadir') {
+        const { data: kobRows } = await window.db.from('psy_kob_sessions')
+          .select('scheduled_at, mode').eq('patient_id', patientRecord.id)
+          .in('status', ['booked', 'hadir', 'reschedule'])
+          .order('scheduled_at', { ascending: true }).limit(1);
+        const kob = kobRows?.[0];
+        if (kob) {
+          const dt = new Date(kob.scheduled_at);
+          const modeLabel = kob.mode === 'online' ? '💻 Online' : '🏥 F2F di klinik';
+          document.getElementById('kob-booked-detail').textContent =
+            `${dt.toLocaleDateString('ms-MY', { weekday:'long', day:'2-digit', month:'long', year:'numeric' })} · ${dt.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})} · ${modeLabel}`;
+        }
+        document.getElementById('kob-booked-banner').classList.remove('hidden');
+      } else if (kobStatus === 'package_recommended') {
+        // Show package payment banner
+        const { data: kobRows } = await window.db.from('psy_kob_sessions')
+          .select('recommended_package_name, recommended_package_price').eq('patient_id', patientRecord.id)
+          .order('scheduled_at', { ascending: false }).limit(1);
+        const kobS = kobRows?.[0];
+        const banner = document.getElementById('kob-pkg-banner');
+        if (banner && kobS) {
+          document.getElementById('kob-pkg-detail').textContent =
+            `${kobS.recommended_package_name} · RM ${Number(kobS.recommended_package_price || 0).toFixed(2)}`;
+          banner.classList.remove('hidden');
+        }
+      } else if (kobStatus === 'package_paid') {
+        const banner = document.getElementById('kob-sign-banner');
+        if (banner) banner.classList.remove('hidden');
+      }
+    } else if (!window.kycApproved) {
+      // Non-KOB flow (existing patients, grandfathered)
       const subs = await dbQuery('psy_kyc_submissions', { eq: { user_id: user.id }, limit: 1 }).catch(() => []);
       if (subs[0]?.status === 'pending') {
         document.getElementById('kyc-pending-banner').classList.remove('hidden');
@@ -185,7 +279,8 @@ function quickAction(icon, label, href, color) {
     const hasActivePkg = patientRecord.active_package_id &&
       (!patientRecord.package_expires_at || new Date(patientRecord.package_expires_at) >= new Date());
 
-    if (window.kycApproved && !hasActivePkg) {
+    // Only show "no package" banner if KOB completed/na AND KYC approved AND no pkg
+    if ((kobStatus === 'completed' || kobStatus === 'na') && window.kycApproved && !hasActivePkg) {
       document.getElementById('no-package-banner').classList.remove('hidden');
     }
 
@@ -220,8 +315,9 @@ function quickAction(icon, label, href, color) {
 
     const hadirCount  = (weeklyAll || []).filter(w => w.status === 'hadir').length;
 
-    // Adherence motivasi disclaimer — show once per session if low adherence in last 7 days
-    showAdherenceDisclaimerIfNeeded(recentCheckins || []);
+    // Adherence motivasi disclaimer — only relevant after KOB complete + package active
+    const inTreatment = patientRecord.kob_status === 'completed' && !!patientRecord.active_package_id;
+    if (inTreatment) showAdherenceDisclaimerIfNeeded(recentCheckins || []);
     const scores      = (weeklyAll || []).filter(w => w.score && w.status === 'hadir').map(w => w.score);
     const avgScore    = scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) : null;
     const lastScore   = scores.length ? scores[scores.length - 1] : null;

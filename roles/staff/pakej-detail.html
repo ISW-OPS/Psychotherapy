@@ -190,6 +190,29 @@
           <div id="weekly-schedule-editor" class="space-y-3"></div>
         </div>
 
+        <!-- Agreement Clauses Editor -->
+        <div class="p-4 bg-cream/40 rounded-xl border border-ink/10 space-y-4">
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <label class="text-sm font-bold text-navy">📜 Kontrak Pakej (Agreement)</label>
+              <p class="text-[10px] text-ink/40 mt-0.5">Patient akan baca + sign borang ini selepas bayar pakej. Variables: <code class="bg-white px-1 rounded text-[10px]">{{patient_name}}</code>, <code class="bg-white px-1 rounded text-[10px]">{{patient_ic}}</code>, <code class="bg-white px-1 rounded text-[10px]">{{package_name}}</code>, <code class="bg-white px-1 rounded text-[10px]">{{price}}</code>, <code class="bg-white px-1 rounded text-[10px]">{{today}}</code></p>
+            </div>
+            <button type="button" onclick="addClause()" class="bg-navy text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-navy-dark">+ Tambah Klausa</button>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs font-semibold">Tajuk Kontrak</label>
+              <input id="f-agreement-title" type="text" placeholder="cth: Kontrak Pelaburan Kesihatan" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+            </div>
+            <div>
+              <label class="text-xs font-semibold">Version</label>
+              <input id="f-agreement-version" type="text" placeholder="cth: ISW.SOP OB KOB FORM 03 CONTRACT 250711" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+            </div>
+          </div>
+          <div id="f-clauses-list" class="space-y-3"></div>
+          <input type="hidden" id="f-agreement-clauses">
+        </div>
+
       </div>
     </main>
   </div>
@@ -461,6 +484,65 @@ function populateEditForm(p) {
   document.getElementById('f-sched-type').value = p.schedule?.type || '';
   document.getElementById('f-sched-val').value  = p.schedule?.value || 1;
   updateSchedUI();
+
+  // Agreement clauses
+  document.getElementById('f-agreement-title').value = p.agreement_title || 'Kontrak Pelaburan Kesihatan';
+  document.getElementById('f-agreement-version').value = p.agreement_version || '';
+  const clauses = Array.isArray(p.agreement_clauses) ? p.agreement_clauses : [];
+  renderClauses(clauses);
+}
+
+function renderClauses(clauses) {
+  const list = document.getElementById('f-clauses-list');
+  if (!clauses.length) {
+    list.innerHTML = '<p class="text-xs text-ink/40 italic p-4 text-center bg-white rounded-lg">Tiada klausa. Klik "+ Tambah Klausa" untuk mula.</p>';
+    return;
+  }
+  list.innerHTML = clauses.map((c, i) => `
+    <div class="bg-white border border-ink/10 rounded-lg p-3 space-y-2" data-clause-idx="${i}">
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-[10px] text-ink/50 font-semibold">KLAUSA #${i + 1}</span>
+        <div class="flex items-center gap-1">
+          <button type="button" onclick="moveClause(${i}, -1)" ${i === 0 ? 'disabled' : ''} class="text-xs px-2 py-0.5 hover:bg-cream rounded ${i === 0 ? 'opacity-30' : ''}" title="Naik">↑</button>
+          <button type="button" onclick="moveClause(${i}, 1)" ${i === clauses.length - 1 ? 'disabled' : ''} class="text-xs px-2 py-0.5 hover:bg-cream rounded ${i === clauses.length - 1 ? 'opacity-30' : ''}" title="Turun">↓</button>
+          <button type="button" onclick="removeClause(${i})" class="text-xs px-2 py-0.5 text-terracotta hover:bg-terracotta/10 rounded">🗑</button>
+        </div>
+      </div>
+      <input type="text" class="clause-title w-full px-2 py-1.5 border border-ink/15 rounded text-sm font-semibold" placeholder="Tajuk klausa" value="${escapeAttr(c.title || '')}">
+      <textarea class="clause-body w-full px-2 py-1.5 border border-ink/15 rounded text-sm" rows="3" placeholder="Isi klausa...">${escapeText(c.body || '')}</textarea>
+    </div>
+  `).join('');
+}
+
+function escapeAttr(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escapeText(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function collectClauses() {
+  const rows = document.querySelectorAll('#f-clauses-list [data-clause-idx]');
+  return Array.from(rows).map(r => ({
+    title: r.querySelector('.clause-title')?.value.trim() || '',
+    body: r.querySelector('.clause-body')?.value.trim() || '',
+  })).filter(c => c.title || c.body);
+}
+
+function addClause() {
+  const current = collectClauses();
+  current.push({ title: '', body: '' });
+  renderClauses(current);
+}
+
+function removeClause(idx) {
+  const current = collectClauses();
+  current.splice(idx, 1);
+  renderClauses(current);
+}
+
+function moveClause(idx, dir) {
+  const current = collectClauses();
+  const target = idx + dir;
+  if (target < 0 || target >= current.length) return;
+  [current[idx], current[target]] = [current[target], current[idx]];
+  renderClauses(current);
 }
 
 // ── Save ──────────────────────────────────────────────
@@ -488,6 +570,9 @@ async function savePackage() {
       image_url: document.getElementById('f-image-url').value || null,
       schedule, products, bimbingan, inclusions: [...products, ...bimbingan],
       coaching_schedule: collectCoachingSchedule(),
+      agreement_title: document.getElementById('f-agreement-title').value.trim() || 'Kontrak Pelaburan Kesihatan',
+      agreement_version: document.getElementById('f-agreement-version').value.trim() || null,
+      agreement_clauses: collectClauses(),
       updated_at: new Date().toISOString(),
     };
     await dbUpdate('psy_packages', editId, data);

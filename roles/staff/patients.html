@@ -138,6 +138,14 @@
                 <option value="meninggal">Meninggal Dunia</option>
                 <option value="__none__">Belum Ditetapkan</option>
               </select>
+              <select id="filter-signup" onchange="filterPatients()"
+                class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
+                <option value="">Semua Signup</option>
+                <option value="signed_up">✅ Signup Pakej</option>
+                <option value="active">💊 Pakej Aktif</option>
+                <option value="not_signed">⚠️ Tak Signup Pakej</option>
+                <option value="pre_kob">⏳ Belum Selesai KOB</option>
+              </select>
               <span id="patient-count" class="text-xs text-ink/50 whitespace-nowrap"></span>
               <button onclick="exportCSV()"
                 class="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-colors hover:opacity-90"
@@ -218,18 +226,60 @@
       </div>
       <div class="px-6 py-5 space-y-5 overflow-y-auto flex-1 min-h-0">
 
-        <!-- STATUS PESAKIT -->
-        <div class="flex items-center gap-3 p-3 bg-cream rounded-xl">
-          <span class="text-xs font-semibold text-ink/60 whitespace-nowrap">Jenis rekod:</span>
+        <!-- JENIS PATIENT -->
+        <div class="p-3 bg-cream rounded-xl">
+          <p class="text-xs font-semibold text-ink/60 mb-2">Jenis Pesakit:</p>
           <div class="flex gap-2 flex-wrap">
-            <label class="flex items-center gap-1.5 cursor-pointer">
-              <input type="radio" name="cp-status-radio" value="unregistered" checked onchange="onStatusChange(this.value)" class="accent-navy">
-              <span class="text-xs font-semibold">Pesakit Baru <span class="font-normal text-ink/50">(akan daftar akaun)</span></span>
+            <label class="flex items-start gap-1.5 cursor-pointer flex-1 min-w-[200px] p-2 border border-ink/15 rounded-lg hover:bg-white">
+              <input type="radio" name="cp-status-radio" value="unregistered" checked onchange="onStatusChange(this.value)" class="accent-navy mt-0.5">
+              <div>
+                <div class="text-xs font-semibold">Pesakit Baru</div>
+                <div class="text-[10px] text-ink/50">Belum KOB · akan ikut flow KOB</div>
+              </div>
             </label>
-            <label class="flex items-center gap-1.5 cursor-pointer">
-              <input type="radio" name="cp-status-radio" value="inactive" onchange="onStatusChange(this.value)" class="accent-navy">
-              <span class="text-xs font-semibold">Rekod Lama <span class="font-normal text-ink/50">(dah habis rawatan / arwah)</span></span>
+            <label class="flex items-start gap-1.5 cursor-pointer flex-1 min-w-[200px] p-2 border border-ink/15 rounded-lg hover:bg-white">
+              <input type="radio" name="cp-status-radio" value="active" onchange="onStatusChange(this.value)" class="accent-navy mt-0.5">
+              <div>
+                <div class="text-xs font-semibold">Pesakit Aktif</div>
+                <div class="text-[10px] text-ink/50">Sudah lalui KOB · sedang rawatan</div>
+              </div>
             </label>
+            <label class="flex items-start gap-1.5 cursor-pointer flex-1 min-w-[200px] p-2 border border-ink/15 rounded-lg hover:bg-white">
+              <input type="radio" name="cp-status-radio" value="inactive" onchange="onStatusChange(this.value)" class="accent-navy mt-0.5">
+              <div>
+                <div class="text-xs font-semibold">Pesakit Inactive</div>
+                <div class="text-[10px] text-ink/50">Berhenti / habis / meninggal</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- KOB SLOT (only for Pesakit Baru) -->
+        <div id="kob-slot-section" class="p-3 bg-navy-light/30 rounded-xl border border-navy/20">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" id="cp-kob-book" onchange="toggleKobSlot(this.checked)" class="accent-navy">
+            <span class="text-xs font-semibold">Tempah Slot KOB Sekali</span>
+            <span class="text-[10px] text-ink/50">(jika tak ditick, patient boleh tempah sendiri later)</span>
+          </label>
+          <div id="kob-slot-fields" class="hidden mt-3 grid grid-cols-3 gap-2">
+            <div>
+              <label class="text-[10px] font-semibold text-ink/70">Mod Sesi</label>
+              <select id="cp-kob-mode" class="w-full mt-0.5 px-2 py-1.5 border border-ink/20 rounded-lg text-xs bg-white">
+                <option value="f2f">🏥 F2F di Klinik</option>
+                <option value="online">💻 Online</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-[10px] font-semibold text-ink/70">Tarikh</label>
+              <input id="cp-kob-date" type="date" onchange="loadCpKobSlots()" class="w-full mt-0.5 px-2 py-1.5 border border-ink/20 rounded-lg text-xs">
+            </div>
+            <div>
+              <label class="text-[10px] font-semibold text-ink/70">Slot Waktu</label>
+              <select id="cp-kob-slot-select" onchange="selectCpKobSlot(this.value)" class="w-full mt-0.5 px-2 py-1.5 border border-ink/20 rounded-lg text-xs bg-white">
+                <option value="">— Pilih tarikh dahulu —</option>
+              </select>
+              <input type="hidden" id="cp-kob-slot-start">
+            </div>
           </div>
         </div>
 
@@ -584,20 +634,89 @@
     }
 
     function onStatusChange(val) {
-      const isRecord = val === 'inactive';
-      // Fields only required for active/new patients
-      const optionalForRecord = ['lbl-phone-req','lbl-gender-req','lbl-dob-req','lbl-email-req','lbl-occupation-req','lbl-emg-req','lbl-emg-ic-req','lbl-emg-phone-req','lbl-emg-rel-req','lbl-emg-email-req'];
-      optionalForRecord.forEach(id => {
+      const isNew = val === 'unregistered';   // Pesakit Baru — will go through KOB
+      const isActive = val === 'active';      // Pesakit Aktif — already in treatment
+      const isInactive = val === 'inactive';  // Pesakit Inactive — legacy record
+      const relaxed = !isNew; // active/inactive: relax field requirements
+
+      const optionalLabels = ['lbl-phone-req','lbl-gender-req','lbl-dob-req','lbl-email-req','lbl-occupation-req','lbl-emg-req','lbl-emg-ic-req','lbl-emg-phone-req','lbl-emg-rel-req','lbl-emg-email-req'];
+      optionalLabels.forEach(id => {
         const el = document.getElementById(id);
-        if (el) el.textContent = isRecord ? '(optional)' : '*';
-        if (el) el.className = isRecord ? 'text-ink/40 font-normal' : '';
+        if (el) {
+          el.textContent = relaxed ? '(optional)' : '*';
+          el.className = relaxed ? 'text-ink/40 font-normal' : '';
+        }
       });
-      // Dim waris section heading for record-only
       const warisLabel = document.getElementById('lbl-waris-section');
-      if (warisLabel) warisLabel.textContent = isRecord ? 'Maklumat Waris / Kecemasan (optional)' : 'Maklumat Waris / Kecemasan';
-      // Hide pakej for record-only (old patients won't need new package)
+      if (warisLabel) warisLabel.textContent = relaxed ? 'Maklumat Waris / Kecemasan (optional)' : 'Maklumat Waris / Kecemasan';
+
+      // Show pakej selection for Aktif only (Aktif sudah ada/perlu pakej)
       const pakejRow = document.getElementById('cp-pakej')?.closest('.grid');
-      if (pakejRow) pakejRow.style.opacity = isRecord ? '0.4' : '1';
+      if (pakejRow) pakejRow.style.opacity = isInactive ? '0.4' : '1';
+
+      // KOB slot booking only for Pesakit Baru
+      const kobSlot = document.getElementById('kob-slot-section');
+      if (kobSlot) kobSlot.style.display = isNew ? '' : 'none';
+      if (!isNew) {
+        const cb = document.getElementById('cp-kob-book');
+        if (cb) cb.checked = false;
+        const fields = document.getElementById('kob-slot-fields');
+        if (fields) fields.classList.add('hidden');
+      }
+    }
+
+    function toggleKobSlot(checked) {
+      const fields = document.getElementById('kob-slot-fields');
+      if (!fields) return;
+      if (checked) {
+        fields.classList.remove('hidden');
+        if (!document.getElementById('cp-kob-date').value) {
+          const t = new Date(); t.setDate(t.getDate() + 1);
+          const pad = n => String(n).padStart(2,'0');
+          document.getElementById('cp-kob-date').value = `${t.getFullYear()}-${pad(t.getMonth()+1)}-${pad(t.getDate())}`;
+          loadCpKobSlots();
+        }
+      } else {
+        fields.classList.add('hidden');
+      }
+    }
+
+    let cpKobSlots = [];
+    async function loadCpKobSlots() {
+      const date = document.getElementById('cp-kob-date').value;
+      const sel = document.getElementById('cp-kob-slot-select');
+      document.getElementById('cp-kob-slot-start').value = '';
+      cpKobSlots = [];
+      if (!date) {
+        sel.innerHTML = '<option value="">— Pilih tarikh dahulu —</option>';
+        return;
+      }
+      const day = new Date(date + 'T00:00:00').getDay();
+      if (day === 1 || day === 2) {
+        sel.innerHTML = '<option value="">🚫 Klinik tutup Isnin/Selasa</option>';
+        return;
+      }
+      const { data: closure } = await window.db.from('psy_clinic_closures')
+        .select('label').eq('closure_date', date).limit(1);
+      if (closure?.[0]) {
+        sel.innerHTML = `<option value="">🚫 ${closure[0].label}</option>`;
+        return;
+      }
+      const { data: slots } = await window.db.from('psy_kob_slot_config')
+        .select('*').eq('day_of_week', day).eq('is_active', true)
+        .order('sort_order', { ascending: true });
+      cpKobSlots = slots || [];
+      if (!cpKobSlots.length) {
+        sel.innerHTML = '<option value="">— Tiada slot tersedia —</option>';
+        return;
+      }
+      sel.innerHTML = '<option value="">— Pilih slot —</option>' +
+        cpKobSlots.map(s => `<option value="${s.id}">${s.label}</option>`).join('');
+    }
+
+    function selectCpKobSlot(slotId) {
+      const s = cpKobSlots.find(x => x.id === slotId);
+      document.getElementById('cp-kob-slot-start').value = s ? s.slot_start : '';
     }
 
     function onHubunganChange(radio) {
@@ -867,16 +986,41 @@
         : null;
 
       const selectedStatus = getSelectedStatus();
-      const isRecordOnly = selectedStatus === 'inactive';
+      const isNew = selectedStatus === 'unregistered';   // Pesakit Baru — akan lalui KOB
+      const isActive = selectedStatus === 'active';      // Pesakit Aktif — dalam rawatan
+      const isInactive = selectedStatus === 'inactive';  // Pesakit Inactive — legacy
 
-      const missingBase = !name || !ic || !condition;
-      const missingNew = !isRecordOnly && (!phone || !gender || !dob || !email || !occupation || !address || !marital || !emgName || !emgIc || !emgPhone || !emgRel || !emgEmail);
-      if (missingBase || missingNew) {
-        errEl.textContent = isRecordOnly
-          ? 'Nama, IC, dan Kondisi Kesihatan wajib diisi.'
-          : 'Semua field bertanda * wajib diisi.';
+      // Validation
+      const missingBase = !name || !ic;
+      const missingNew = isNew && (!phone || !gender || !dob || !email || !occupation || !address || !marital || !condition || !emgName || !emgIc || !emgPhone || !emgRel || !emgEmail);
+      const missingActiveBasic = !isNew && (!phone);
+      if (missingBase || missingNew || missingActiveBasic) {
+        errEl.textContent = isNew
+          ? 'Semua field bertanda * wajib diisi untuk Pesakit Baru.'
+          : 'Nama, IC, dan Telefon wajib diisi.';
         errEl.classList.remove('hidden');
         return;
+      }
+
+      // KOB slot validation
+      const kobBook = isNew && document.getElementById('cp-kob-book')?.checked;
+      const kobMode = document.getElementById('cp-kob-mode')?.value || 'f2f';
+      const kobDate = document.getElementById('cp-kob-date')?.value || '';
+      const kobSlotStart = document.getElementById('cp-kob-slot-start')?.value || '';
+      if (kobBook) {
+        if (!kobDate) {
+          errEl.textContent = 'Sila pilih tarikh slot KOB.';
+          errEl.classList.remove('hidden'); return;
+        }
+        const day = new Date(kobDate + 'T00:00:00').getDay();
+        if (day === 1 || day === 2) {
+          errEl.textContent = '🚫 Klinik tutup Isnin & Selasa. Sila pilih hari lain.';
+          errEl.classList.remove('hidden'); return;
+        }
+        if (!kobSlotStart) {
+          errEl.textContent = 'Sila pilih slot waktu KOB.';
+          errEl.classList.remove('hidden'); return;
+        }
       }
 
       const btn = document.getElementById('cp-save-btn');
@@ -950,28 +1094,45 @@
           await auditLog('patient.updated_by_staff', editingPatientId, { name });
           banner('Maklumat pesakit dikemaskini ✅');
         } else {
-          // CREATE new patient — retry on MRN conflict (race-safe)
+          // CREATE new patient — branch by jenis pesakit
           const coachAutoAssign = isCoachUser ? { coach_id: window.currentUser.id } : {};
+
+          // Map jenis pesakit → status + kob_status
+          let statusVal, kobStatusVal;
+          if (isNew) {
+            statusVal = 'unregistered';        // patient will claim by IC on signup
+            kobStatusVal = kobBook ? 'booked' : 'kyc_done';
+          } else if (isActive) {
+            statusVal = 'unregistered';        // still need claim, but already grandfathered
+            kobStatusVal = 'na';
+          } else {
+            statusVal = 'inactive';
+            kobStatusVal = 'na';
+          }
+
           let inserted = null, error = null;
           for (let attempt = 0; attempt < 5; attempt++) {
-            // Get current max sequence by querying latest MRN
             const { data: latest } = await window.db.from('psy_patients')
               .select('mrn').like('mrn', 'P-%').order('mrn', { ascending: false }).limit(1);
             const lastNum = parseInt(latest?.[0]?.mrn?.replace(/\D/g, '')) || 0;
             const mrn = 'P-' + String(lastNum + 1 + attempt).padStart(3, '0');
             const res = await window.db.from('psy_patients').insert({
-              mrn, user_id: null, ic_number: ic, status: selectedStatus, created_by_staff: true, ...payload, ...coachAutoAssign,
-            }).select('id').single();
+              mrn, user_id: null, ic_number: ic,
+              status: statusVal,
+              kob_status: kobStatusVal,
+              created_by_staff: true,
+              ...payload, ...coachAutoAssign,
+            }).select('id, mrn').single();
             if (!res.error) { inserted = res.data; error = null; break; }
             error = res.error;
-            // Only retry on duplicate-key errors
             if (!/duplicate|unique/i.test(res.error.message || '')) break;
           }
           if (error) throw error;
           if (inserted?.id) {
             await uploadAndSaveReports(inserted.id);
-            // Create purchase record so package history is tracked
-            if (selectedPkgCode && inserted.id) {
+
+            // Create package purchase record if assigned
+            if (selectedPkgCode) {
               await window.db.from('psy_package_purchases').insert({
                 patient_id: inserted.id,
                 package_id: selectedPkgCode,
@@ -983,9 +1144,52 @@
                 payment_method: 'staff_assigned',
               });
             }
+
+            // Pesakit Baru: auto-create approved KYC submission + optional KOB session
+            if (isNew) {
+              await window.db.from('psy_kyc_submissions').insert({
+                user_id: null,
+                patient_name: name,
+                ic_number: ic,
+                date_of_birth: dob || null,
+                gender: gender || null,
+                phone, email: email || null,
+                address,
+                occupation: occupation || null,
+                company: document.getElementById('cp-company')?.value.trim() || null,
+                marital_status: marital || null,
+                emergency_contact_name: emgName,
+                emergency_contact_phone: emgPhone,
+                emergency_contact_relationship: emgRel || null,
+                emergency_contact_email: emgEmail || null,
+                emergency_contact_ic: emgIc || null,
+                medical_condition: condition || null,
+                condition_duration: document.getElementById('cp-duration')?.value || null,
+                medical_notes: document.getElementById('cp-medical-notes')?.value.trim() || null,
+                status: 'approved',
+                reviewed_by: window.currentUser.id,
+              });
+
+              // Optional: create KOB session if doctor pre-booked slot
+              if (kobBook) {
+                const meetLink = kobMode === 'online'
+                  ? `https://meet.jit.si/ISW-KOB-${Math.random().toString(36).slice(2,8).toUpperCase()}`
+                  : null;
+                await window.db.from('psy_kob_sessions').insert({
+                  patient_id: inserted.id,
+                  scheduled_at: new Date(`${kobDate}T${kobSlotStart}`).toISOString(),
+                  mode: kobMode,
+                  meet_link: meetLink,
+                  status: 'booked',
+                });
+                await auditLog('kob.staff_booked', inserted.id, { date: kobDate, slot: kobSlotStart, mode: kobMode });
+              }
+            }
           }
-          await auditLog('patient.created_by_staff', mrn, { name, ic, package: selectedPkgName || null });
-          banner('Pesakit baru berjaya ditambah ✅');
+          await auditLog('patient.created_by_staff', inserted?.mrn || ic, {
+            name, ic, jenis: selectedStatus, package: selectedPkgName || null, kob_booked: kobBook,
+          });
+          banner(`Pesakit ${isNew ? 'baru' : isActive ? 'aktif' : 'inactive'} berjaya ditambah ✅`);
         }
         closeCreatePatient();
         loadAll();
@@ -1134,6 +1338,7 @@
       const status = document.getElementById('filter-status').value;
       const pakej = document.getElementById('filter-pakej').value;
       const outcome = document.getElementById('filter-outcome')?.value || '';
+      const signup = document.getElementById('filter-signup')?.value || '';
       const list = allPatients.filter(p => {
         const name = (p.psy_profiles?.full_name || p.full_name || '').toLowerCase();
         const matchQ = !q || name.includes(q) || (p.mrn || '').toLowerCase().includes(q) || (p.ic_number || '').includes(q);
@@ -1142,7 +1347,19 @@
           || (pakej === '__none__' ? !p.active_package_name : p.active_package_name === pakej);
         const matchO = !outcome
           || (outcome === '__none__' ? !p.outcome_status : p.outcome_status === outcome);
-        return matchQ && matchS && matchP && matchO;
+        let matchSU = true;
+        if (signup) {
+          const now = new Date();
+          const hasPkg = !!p.active_package_id;
+          const hasActivePkg = hasPkg &&
+            (!p.package_expires_at || new Date(p.package_expires_at) >= now);
+          const kobDone = p.kob_status === 'completed' || p.kob_status === 'na';
+          if (signup === 'signed_up') matchSU = kobDone && hasPkg;
+          else if (signup === 'active') matchSU = hasActivePkg;
+          else if (signup === 'not_signed') matchSU = kobDone && !hasPkg;
+          else if (signup === 'pre_kob') matchSU = !kobDone;
+        }
+        return matchQ && matchS && matchP && matchO && matchSU;
       });
       renderPatients(list);
     }
@@ -1547,8 +1764,14 @@
         if (tog) tog.classList.replace('hidden', 'flex');
       }
       loadAll();
-      if (new URLSearchParams(location.search).get('new') === '1') {
+      const qs = new URLSearchParams(location.search);
+      if (qs.get('new') === '1' || qs.get('add') === '1') {
         setTimeout(openCreatePatient, 500);
+      }
+      const signupQ = qs.get('signup');
+      if (signupQ) {
+        const sel = document.getElementById('filter-signup');
+        if (sel) { sel.value = signupQ; filterPatients(); }
       }
     })();
   </script>

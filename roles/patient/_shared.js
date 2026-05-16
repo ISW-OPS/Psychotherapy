@@ -39,7 +39,26 @@ async function resolveKycApproved() {
 }
 
 async function enforceKyc(currentPageId) {
-  if (['kyc', 'profile', 'dashboard'].includes(currentPageId)) return true;
+  // Always-allowed pages (patient can browse packages + pay during KOB flow)
+  if (['kyc', 'profile', 'dashboard', 'kob', 'pakej', 'payment'].includes(currentPageId)) return true;
+
+  // KOB flow gating: must complete KOB before accessing other features
+  const p = window.patientRecord;
+  const kobStatus = p?.kob_status || 'na';
+  if (kobStatus !== 'na' && kobStatus !== 'completed') {
+    // Payment is external (GHL). KYC is Step 1.
+    if (kobStatus === 'pending_payment' || kobStatus === 'paid') {
+      window.location.href = 'kyc.html';
+    } else {
+      // kyc_done / booked / hadir → tempah / lihat KOB
+      window.location.href = 'kob.html';
+    }
+    return false;
+  }
+
+  // KOB completed → unlock everything (KYC admin approval no longer mandatory)
+  if (kobStatus === 'completed') return true;
+
   if (window.kycApproved) return true;
   window.location.href = 'kyc.html';
   return false;
@@ -117,7 +136,7 @@ async function initPatient(pageId, titleSub) {
         const newPatient = await dbInsert('psy_patients', {
           user_id: window.currentUser.id,
           mrn,
-          status: 'pending',
+          status: 'pending_kyc',
         });
         patients = [newPatient];
         break;
@@ -138,10 +157,17 @@ async function initPatient(pageId, titleSub) {
   document.getElementById('app-loading')?.classList.add('hidden');
   document.getElementById('app-shell')?.classList.remove('hidden');
 
-  // Hide KYC nav item once KYC is approved
-  const navItems = getNavItems('patient').filter(item =>
-    !(item.id === 'kyc' && window.kycApproved)
-  );
+  // Hide KYC + KOB nav items conditionally
+  const kobStatus = window.patientRecord?.kob_status || 'na';
+  // Hide nav items conditionally:
+  // - kyc: hide after approved
+  // - kob: hide for grandfathered patients only
+  // Pakej Rawatan kekal visible — patient boleh browse continuity / pakej seterusnya
+  const navItems = getNavItems('patient').filter(item => {
+    if (item.id === 'kyc' && window.kycApproved) return false;
+    if (item.id === 'kob' && kobStatus === 'na') return false;
+    return true;
+  });
   renderNavbar('patient', window.currentUser, navItems, pageId);
 
   const nav = getNavItems('patient').find(n => n.id === pageId);

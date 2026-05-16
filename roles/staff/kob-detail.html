@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — KOB Detail</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🩺</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-5">
+
+        <a href="kob-list.html" class="text-xs text-navy hover:underline">← Kembali ke senarai KOB</a>
+
+        <!-- Header summary (flat) -->
+        <div class="pb-4 border-b border-ink/10">
+          <div class="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <div class="text-xs text-ink/50">PESAKIT</div>
+              <h2 id="patient-name" class="text-xl font-bold text-navy mt-1">—</h2>
+              <div id="patient-meta" class="text-xs text-ink/60 mt-1">—</div>
+            </div>
+            <div class="text-right">
+              <div class="text-xs text-ink/50">SLOT KOB</div>
+              <div id="kob-datetime" class="font-bold mt-1">—</div>
+              <div id="kob-mode" class="text-xs text-ink/60">—</div>
+            </div>
+            <div>
+              <div class="text-xs text-ink/50">STATUS</div>
+              <div id="status-chip" class="mt-1">—</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tindakan Doktor (top) → Maklumat Pesakit (below) -->
+        <div class="space-y-8">
+          <!-- TOP: Doctor actions -->
+          <div class="min-w-0 space-y-3">
+            <div class="flex items-center justify-between flex-wrap gap-2 border-b border-ink/10 pb-2">
+              <h3 class="font-bold text-navy text-base">Tindakan Doktor</h3>
+              <div id="action-buttons" class="flex items-center gap-2"></div>
+            </div>
+            <div id="doctor-info" class="text-xs text-ink/60"></div>
+
+            <!-- Cadangan Pakej Rawatan (only visible when status=hadir) -->
+            <div id="package-rec-card" class="hidden border-t border-ink/10 pt-4 space-y-3 mt-4">
+              <div class="flex items-center justify-between flex-wrap gap-2">
+                <h4 class="font-bold text-sm text-navy">📦 Cadangan Pakej Rawatan</h4>
+                <button onclick="saveRecommendation()" id="btn-save-rec" class="bg-navy text-white px-6 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">Sahkan Cadangan</button>
+              </div>
+              <div class="space-y-2 text-xs">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="rec-mode" value="package" onchange="onRecModeChange()" class="accent-navy">
+                  <span>Cadangkan pakej</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="rec-mode" value="skip" onchange="onRecModeChange()" class="accent-navy">
+                  <span>Tidak perlu pakej rawatan</span>
+                </label>
+              </div>
+              <div id="rec-package-picker" class="hidden">
+                <label class="text-xs font-semibold text-ink/70">Pilih Pakej</label>
+                <select id="rec-package-select" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
+                  <option value="">— Loading —</option>
+                </select>
+                <p id="rec-package-info" class="text-[11px] text-ink/50 mt-1.5"></p>
+              </div>
+              <div id="rec-saved-info" class="hidden bg-green-light/50 border border-green/30 rounded p-2 text-xs"></div>
+            </div>
+
+            <!-- Meeting Link (Online sessions only) -->
+            <div id="meet-link-card" class="hidden border-t border-ink/10 pt-4 space-y-3 mt-4">
+              <div class="flex items-center justify-between flex-wrap gap-2">
+                <h4 class="font-bold text-sm text-navy">🎥 Link Mesyuarat</h4>
+                <div class="flex items-center gap-3">
+                  <a id="meet-link-open" href="#" target="_blank" class="text-xs text-navy hover:underline font-semibold">Buka Link →</a>
+                  <button onclick="saveMeetLink()" id="btn-save-meet" class="bg-navy text-white px-6 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">Simpan Link</button>
+                </div>
+              </div>
+              <p class="text-[11px] text-ink/50">Patient akan join melalui link ini. Anda boleh ganti dengan Google Meet rasmi.</p>
+              <input id="meet-link-input" type="url" placeholder="https://meet.google.com/xxx-xxxx-xxx"
+                class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
+            </div>
+          </div>
+
+          <!-- BELOW: Patient info -->
+          <div class="min-w-0 space-y-3">
+            <h3 class="font-bold text-navy text-base border-b border-ink/10 pb-2">Maklumat Pesakit</h3>
+            <div id="patient-details" class="text-sm space-y-2 text-ink/80">—</div>
+            <!-- Kondisi / Laporan / Agreement — 3-col -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 border-t border-ink/10 pt-4">
+              <div>
+                <div class="text-xs font-semibold text-ink/60 mb-2">Kondisi Kesihatan</div>
+                <div id="medical-info" class="text-sm text-ink/70 whitespace-pre-wrap">—</div>
+              </div>
+              <div>
+                <div class="text-xs font-semibold text-ink/60 mb-2">Laporan Perubatan (dari KYC)</div>
+                <div id="kyc-reports" class="space-y-1 text-xs">—</div>
+              </div>
+              <div>
+                <div class="text-xs font-semibold text-ink/60 mb-2">Agreement Status</div>
+                <div id="agreement-status" class="text-sm">—</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- KOB Questionnaire — full width, flat -->
+        <div class="space-y-5 pt-5 border-t border-ink/10">
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <h3 class="font-bold text-navy text-base">📋 Soalan Sesi KOB</h3>
+              <p class="text-xs text-ink/50 mt-0.5">Isi jawapan semasa sesi konsultasi. Boleh simpan & sambung edit kemudian.</p>
+            </div>
+            <button onclick="saveQuestionnaire()" id="btn-save-q" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">💾 Simpan Soalan</button>
+          </div>
+
+          <!-- Section 1: Anak & Bersalin -->
+          <div class="border-l-4 border-navy/30 pl-4 space-y-3">
+            <h4 class="font-bold text-sm text-navy">1. Anak & Bersalin</h4>
+            <div>
+              <label class="text-xs font-semibold">Anak (Orang)</label>
+              <input id="q-anak-bil" type="number" min="0" max="20" oninput="renderAnakRows()" class="w-full md:w-32 mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm">
+              <p class="text-[10px] text-ink/40 mt-1">Masukkan bilangan anak — borang nama & umur akan muncul di bawah</p>
+            </div>
+            <div id="q-anak-list" class="space-y-2 hidden">
+              <label class="text-xs font-semibold">Senarai Anak</label>
+              <div id="q-anak-rows" class="space-y-2"></div>
+            </div>
+            <div>
+              <label class="text-xs font-semibold">Bersalin</label>
+              <div class="flex gap-3 mt-1">
+                <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="radio" name="q-bersalin" value="normal" class="accent-navy"> Normal</label>
+                <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="radio" name="q-bersalin" value="csec" class="accent-navy"> C-Sec</label>
+                <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="radio" name="q-bersalin" value="both" class="accent-navy"> Kedua-dua</label>
+                <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="radio" name="q-bersalin" value="na" class="accent-navy"> Tidak berkenaan</label>
+              </div>
+            </div>
+            <div>
+              <label class="text-xs font-semibold">Pantang</label>
+              <div class="flex gap-3 flex-wrap mt-1">
+                <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" id="q-pantang-herba" class="accent-navy"> Herba/Jamu</label>
+                <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" id="q-pantang-urut" class="accent-navy"> Urut</label>
+                <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" id="q-pantang-makan" class="accent-navy"> Pantang Makan/Minum</label>
+              </div>
+              <input id="q-pantang-notes" type="text" placeholder="Nota tambahan..." class="w-full mt-2 px-3 py-2 border border-ink/15 rounded-lg text-sm">
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-semibold">Gugur (Kali)</label>
+                <input id="q-gugur-bil" type="number" min="0" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm">
+              </div>
+              <div>
+                <label class="text-xs font-semibold">Buat D&C?</label>
+                <div class="flex gap-3 mt-2">
+                  <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="radio" name="q-dnc" value="ya" class="accent-navy"> Ya</label>
+                  <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="radio" name="q-dnc" value="tidak" class="accent-navy"> Tidak</label>
+                  <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="radio" name="q-dnc" value="na" class="accent-navy"> Tidak berkenaan</label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 2: Tidur -->
+          <div class="border-l-4 border-gold/40 pl-4 space-y-3">
+            <h4 class="font-bold text-sm text-navy">2. Tidur</h4>
+            <div>
+              <label class="text-xs font-semibold">Tidur</label>
+              <div class="flex gap-3 mt-1">
+                <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="radio" name="q-tidur" value="senang" class="accent-navy"> Senang</label>
+                <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="radio" name="q-tidur" value="susah" class="accent-navy"> Susah</label>
+              </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label class="text-xs font-semibold">Terjaga ke tandas?</label>
+                <div class="flex gap-3 mt-2">
+                  <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="radio" name="q-tandas" value="ya" class="accent-navy"> Ya</label>
+                  <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="radio" name="q-tandas" value="tidak" class="accent-navy"> Tidak</label>
+                </div>
+              </div>
+              <div>
+                <label class="text-xs font-semibold">Berapa kali?</label>
+                <input id="q-tandas-kali" type="number" min="0" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm">
+              </div>
+              <div>
+                <label class="text-xs font-semibold">Senang tidur balik?</label>
+                <div class="flex gap-3 mt-2">
+                  <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="radio" name="q-tidur-balik" value="ya" class="accent-navy"> Ya</label>
+                  <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="radio" name="q-tidur-balik" value="tidak" class="accent-navy"> Tidak</label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 3: Gaya Hidup -->
+          <div class="border-l-4 border-green/40 pl-4 space-y-3">
+            <h4 class="font-bold text-sm text-navy">3. Gaya Hidup</h4>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-semibold">Pergerakan</label>
+                <select id="q-pergerakan" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
+                  <option value="">— Pilih —</option>
+                  <option value="normal">Normal</option>
+                  <option value="papah">Papah</option>
+                  <option value="tongkat">Tongkat</option>
+                  <option value="wheelchair">Wheelchair</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-xs font-semibold">Solat</label>
+                <select id="q-solat" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
+                  <option value="">— Pilih —</option>
+                  <option value="biasa">Biasa</option>
+                  <option value="kerusi">Kerusi</option>
+                  <option value="baring">Baring</option>
+                  <option value="tidak_solat">Tidak solat</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-xs font-semibold">Aktif</label>
+                <input id="q-aktif" type="text" placeholder="cth: Senaman 3x/minggu, Berjalan harian..." class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm">
+              </div>
+              <div>
+                <label class="text-xs font-semibold">Selera Makan</label>
+                <input id="q-selera" type="text" placeholder="cth: Baik, Sederhana, Kurang..." class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm">
+              </div>
+              <div>
+                <label class="text-xs font-semibold">Diet</label>
+                <input id="q-diet" type="text" placeholder="cth: Diet keto, Vegetarian..." class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm">
+              </div>
+              <div>
+                <label class="text-xs font-semibold">Merokok / Vape</label>
+                <input id="q-merokok" type="text" placeholder="cth: Tidak / Vape sejak 2020..." class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm">
+              </div>
+              <div class="md:col-span-2">
+                <label class="text-xs font-semibold">Kerja</label>
+                <input id="q-kerja" type="text" placeholder="cth: Cikgu sekolah, Pekerja bangunan, Stay-at-home..." class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm">
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 4: Masalah Kesihatan -->
+          <div class="border-l-4 border-terracotta/40 pl-4 space-y-3">
+            <h4 class="font-bold text-sm text-navy">4. Senarai Masalah Kesihatan</h4>
+            <div>
+              <label class="text-xs font-semibold">Penyakit / Kondisi (sejak bila, rawatan apa, kos?)</label>
+              <textarea id="q-penyakit" rows="3" placeholder="cth: Diabetes sejak 2018, ambil Metformin, kos RM150/bulan..." class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm"></textarea>
+            </div>
+            <div>
+              <label class="text-xs font-semibold">Rawatan semasa</label>
+              <textarea id="q-rawatan" rows="2" placeholder="Adakah menjalani rawatan sekarang? Rawatan apa?" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm"></textarea>
+            </div>
+            <div>
+              <label class="text-xs font-semibold">Ubat / Pil yang diambil</label>
+              <textarea id="q-ubat" rows="2" placeholder="Ubat, pil hormon perancang, supplement, dll..." class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm"></textarea>
+            </div>
+          </div>
+
+          <p id="q-saved-info" class="text-xs text-ink/50 italic"></p>
+        </div>
+
+        <!-- Bottom row: Notes | Upload -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 pt-5 border-t border-ink/10">
+          <!-- Notes -->
+          <div class="space-y-3">
+            <div class="flex items-center justify-between flex-wrap gap-2 border-b border-ink/10 pb-2">
+              <h3 class="font-bold text-navy text-base">Notes Doktor</h3>
+              <button onclick="saveNotes()" id="btn-save-notes" class="bg-navy text-white px-6 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">Simpan Notes</button>
+            </div>
+            <textarea id="notes-input" rows="8" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white" placeholder="Diagnosis awal, observation, saranan..."></textarea>
+          </div>
+
+          <!-- Documents upload -->
+          <div class="space-y-3">
+            <div class="flex items-center justify-between flex-wrap gap-2 border-b border-ink/10 pb-2">
+              <h3 class="font-bold text-navy text-base">Upload Dokumen</h3>
+              <button onclick="uploadDocs()" id="btn-upload" class="bg-navy text-white px-6 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">📤 Upload</button>
+            </div>
+            <input id="doc-upload" type="file" multiple accept="image/*,application/pdf"
+              class="w-full text-sm text-ink/60 file:mr-3 file:py-1.5 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-navy file:text-white">
+            <div id="docs-list" class="space-y-1 text-xs"></div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="../../shared/utils.js"></script>
+<script src="_shared.js"></script>
+<script>
+let kobId = null;
+let kob = null;
+let patient = null;
+
+async function loadKob() {
+  const params = new URLSearchParams(location.search);
+  kobId = params.get('id');
+  if (!kobId) { document.getElementById('app-shell').innerHTML = '<p class="p-8 text-terracotta">KOB ID tiada</p>'; return; }
+
+  const { data } = await window.db.from('psy_kob_sessions').select('*').eq('id', kobId).single().then(r => r, () => ({ data: null }));
+  if (!data) { document.getElementById('app-shell').innerHTML = '<p class="p-8 text-terracotta">KOB tidak ditemui</p>'; return; }
+  kob = data;
+
+  const { data: patData } = await window.db.from('psy_patients')
+    .select('*, psy_profiles!psy_patients_user_id_fkey(full_name, phone, email)')
+    .eq('id', kob.patient_id).single().then(r => r, () => ({ data: null }));
+  patient = patData;
+
+  render();
+}
+
+const STATUS_LABEL = {
+  booked:     { label: 'Ditempah',   cls: 'bg-navy-light text-navy' },
+  hadir:      { label: 'Sedang Berlangsung', cls: 'bg-gold/30 text-gold-dark' },
+  completed:  { label: 'Selesai',    cls: 'bg-green-light text-green-dark' },
+  reschedule: { label: 'Reschedule', cls: 'bg-ink/10 text-ink/70' },
+  cancelled:  { label: 'Batal',      cls: 'bg-terracotta/15 text-terracotta' },
+};
+
+async function render() {
+  // Header
+  const patName = patient?.psy_profiles?.full_name || patient?.full_name || '—';
+  document.getElementById('patient-name').textContent = patName;
+  document.getElementById('patient-meta').textContent = `MRN: ${patient?.mrn || '—'} · ${patient?.psy_profiles?.phone || patient?.phone || '—'}`;
+  const dt = new Date(kob.scheduled_at);
+  document.getElementById('kob-datetime').textContent =
+    `${dt.toLocaleDateString('ms-MY', { weekday:'long', day:'2-digit', month:'short', year:'numeric' })} · ${dt.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}`;
+  document.getElementById('kob-mode').textContent = kob.mode === 'online' ? '💻 Online' : '🏥 F2F';
+  const st = STATUS_LABEL[kob.status] || STATUS_LABEL.booked;
+  document.getElementById('status-chip').innerHTML = `<span class="chip ${st.cls}">${st.label}</span>`;
+
+  // Patient details — full-width layout (3-col on desktop)
+  const field = (label, val, fullCol) => `
+    <div class="min-w-0${fullCol ? ' md:col-span-3' : ''}">
+      <div class="text-[10px] font-semibold text-ink/50 uppercase tracking-wide">${label}</div>
+      <div class="text-sm text-ink mt-0.5 break-words">${escapeHtml(val || '—')}</div>
+    </div>`;
+  document.getElementById('patient-details').innerHTML = `
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-3">
+      ${field('No. IC', patient?.ic_number)}
+      ${field('Tarikh Lahir', patient?.date_of_birth)}
+      ${field('Jantina', patient?.gender === 'M' ? 'Lelaki' : patient?.gender === 'F' ? 'Perempuan' : null)}
+      ${field('Telefon', patient?.psy_profiles?.phone || patient?.phone)}
+      ${field('Email', patient?.psy_profiles?.email)}
+      ${field('Pekerjaan', patient?.occupation)}
+      ${field('Alamat', patient?.address, true)}
+      ${field('Syarikat', patient?.company)}
+      ${field('Kontak Waris', patient?.emergency_contact_name)}
+      ${field('Telefon Waris', patient?.emergency_contact_phone)}
+    </div>
+  `;
+
+  document.getElementById('medical-info').textContent = [
+    patient?.medical_condition && `Kondisi: ${patient.medical_condition}`,
+    patient?.condition_duration && `Tempoh: ${patient.condition_duration}`,
+    patient?.medical_notes && `Ubat/Notes: ${patient.medical_notes}`,
+  ].filter(Boolean).join('\n') || '—';
+
+  // KYC reports
+  const { data: kycData } = await window.db.from('psy_kyc_submissions')
+    .select('documents').eq('user_id', patient.user_id).order('created_at', { ascending: false }).limit(1);
+  const reports = kycData?.[0]?.documents?.reports || [];
+  document.getElementById('kyc-reports').innerHTML = reports.length
+    ? reports.map(r => `<div class="flex items-center gap-2 bg-cream/40 px-2 py-1 rounded"><span>📎</span><span class="truncate">${escapeHtml(r.name)}</span></div>`).join('')
+    : '<span class="text-ink/40">Tiada laporan dari KYC</span>';
+
+  // Agreement
+  const { data: agr } = await window.db.from('psy_kob_agreements')
+    .select('signed_at, signature_url, signed_pdf_url').eq('patient_id', patient.id)
+    .order('signed_at', { ascending: false }).limit(1);
+  const agreement = agr?.[0];
+  if (agreement) {
+    document.getElementById('agreement-status').innerHTML = `
+      <span class="chip bg-green-light text-green-dark">✅ Telah Sign</span>
+      <span class="text-xs text-ink/50 ml-2">${escapeHtml(new Date(agreement.signed_at).toLocaleString('ms-MY'))}</span>
+      ${agreement.signed_pdf_url ? `<a href="${escapeHtml(agreement.signed_pdf_url)}" target="_blank" class="text-xs text-navy hover:underline ml-2">📄 Lihat PDF</a>` : ''}
+    `;
+  } else {
+    document.getElementById('agreement-status').innerHTML = '<span class="chip bg-terracotta/15 text-terracotta">⚠️ Belum Sign</span><div class="text-[11px] text-ink/50 mt-1">Patient mesti sign sebelum doktor tekan Selesai.</div>';
+  }
+
+  // Notes
+  document.getElementById('notes-input').value = kob.notes || '';
+
+  // Meeting link (online sessions only, not after completed)
+  const meetCard = document.getElementById('meet-link-card');
+  if (kob.mode === 'online' && kob.status !== 'completed' && kob.status !== 'cancelled') {
+    meetCard.classList.remove('hidden');
+    document.getElementById('meet-link-input').value = kob.meet_link || '';
+    const openLink = document.getElementById('meet-link-open');
+    if (kob.meet_link) { openLink.href = kob.meet_link; openLink.classList.remove('hidden'); }
+    else openLink.classList.add('hidden');
+  } else {
+    meetCard.classList.add('hidden');
+  }
+
+  // Doctor info
+  let doctorInfo = '';
+  if (kob.doctor_hadir_name) doctorInfo += `Hadir oleh: <strong>${escapeHtml(kob.doctor_hadir_name)}</strong> · ${new Date(kob.hadir_at).toLocaleString('en-GB')}<br>`;
+  if (kob.doctor_selesai_name) doctorInfo += `Selesai oleh: <strong>${escapeHtml(kob.doctor_selesai_name)}</strong> · ${new Date(kob.selesai_at).toLocaleString('en-GB')}`;
+  document.getElementById('doctor-info').innerHTML = doctorInfo;
+
+  // Action buttons based on status
+  const actEl = document.getElementById('action-buttons');
+  const role = window.currentUser?.staff_role;
+  const canAct = role === 'doctor' || role === 'admin';
+  if (!canAct) {
+    actEl.innerHTML = '<p class="text-xs text-ink/40 italic">Hanya doktor/admin boleh tindakan</p>';
+  } else if (kob.status === 'booked' || kob.status === 'reschedule') {
+    actEl.innerHTML = `<button onclick="markHadir()" id="btn-hadir" class="bg-gold-dark text-white px-6 py-2.5 rounded-lg text-sm font-semibold hover:opacity-90">✅ Tandakan Hadir</button>`;
+  } else if (kob.status === 'hadir') {
+    // Check progress: package recommended? package paid? agreement signed?
+    const hasRec = !!kob.recommended_package_id || kob.package_payment_status === 'skipped';
+    const paid = kob.package_payment_status === 'paid' || kob.package_payment_status === 'skipped';
+    const needsAgreement = !agreement;
+    const canFinish = hasRec && paid && !needsAgreement;
+
+    // Button only — goes in header right
+    actEl.innerHTML = canFinish
+      ? `<button onclick="markSelesai()" id="btn-selesai" class="bg-green text-white px-6 py-2.5 rounded-lg text-sm font-semibold hover:bg-green-dark">🎯 Tandakan Selesai</button>`
+      : `<button onclick="markSelesai()" id="btn-selesai" disabled class="bg-ink/20 text-ink/40 px-6 py-2.5 rounded-lg text-sm font-semibold cursor-not-allowed">🎯 Tandakan Selesai</button>`;
+
+    // Warning info — goes below in doctor-info area
+    let warning = '';
+    if (!hasRec) {
+      warning = `<div class="text-xs text-navy bg-navy-light/40 p-2 rounded mt-2">📋 Sila pilih/cadangkan pakej rawatan di bawah dahulu.</div>`;
+    } else if (!paid) {
+      const pkgName = escapeHtml(kob.recommended_package_name || '');
+      warning = `<div class="text-xs text-gold-dark bg-gold/15 p-2 rounded mt-2">💰 Menunggu patient bayar pakej: <strong>${pkgName}</strong></div>`;
+    } else if (needsAgreement) {
+      warning = `<div class="text-xs text-terracotta bg-terracotta/10 p-2 rounded mt-2">⚠️ Patient mesti sign agreement dahulu sebelum boleh tekan Selesai</div>`;
+    }
+    // Append warning to doctor-info area
+    if (warning) {
+      document.getElementById('doctor-info').insertAdjacentHTML('beforeend', warning);
+    }
+  } else if (kob.status === 'completed') {
+    actEl.innerHTML = '<span class="chip bg-green-light text-green-dark text-xs">✅ KOB Selesai</span>';
+    document.getElementById('doctor-info').insertAdjacentHTML('beforeend',
+      '<div class="bg-green-light text-green-dark text-xs p-2 rounded mt-2">Pakej rawatan telah dibuka untuk patient.</div>');
+  }
+
+  // Documents
+  renderDocs();
+
+  // Questionnaire
+  loadQuestionnaire();
+
+  // Package recommendation card
+  renderPackageRecCard();
+}
+
+function renderDocs() {
+  const docs = kob.documents || [];
+  document.getElementById('docs-list').innerHTML = docs.length
+    ? docs.map((d, i) => `<div class="flex items-center justify-between bg-cream/40 px-2 py-1 rounded">
+        <span class="truncate">📎 ${escapeHtml(d.name)}</span>
+        <a href="${escapeHtml(d.url || '#')}" target="_blank" class="text-navy hover:underline text-[10px] font-semibold">Lihat</a>
+      </div>`).join('')
+    : '<span class="text-ink/40">Tiada dokumen di-upload</span>';
+}
+
+async function markHadir() {
+  if (!confirm('Tandakan kehadiran pesakit?')) return;
+  const btn = document.getElementById('btn-hadir');
+  btn.disabled = true; btn.textContent = 'Memproses...';
+  try {
+    const { error } = await window.db.from('psy_kob_sessions').update({
+      status: 'hadir',
+      doctor_hadir_id: window.currentUser.id,
+      doctor_hadir_name: window.currentUser.full_name,
+      hadir_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', kobId);
+    if (error) throw error;
+    await window.db.from('psy_patients').update({ kob_status: 'hadir' }).eq('id', patient.id);
+    await auditLog('kob.hadir', kobId, { patient_id: patient.id });
+    banner('Kehadiran ditandakan ✅');
+    setTimeout(() => location.reload(), 800);
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+    btn.disabled = false; btn.textContent = '✅ Tandakan Hadir';
+  }
+}
+
+async function markSelesai() {
+  const hasPackage = !!kob.recommended_package_id;
+  const msg = hasPackage
+    ? `Tandakan KOB selesai? Pakej "${kob.recommended_package_name}" akan diaktifkan untuk patient.`
+    : 'Tandakan KOB selesai? (tiada pakej dicadangkan)';
+  if (!confirm(msg)) return;
+
+  const btn = document.getElementById('btn-selesai');
+  btn.disabled = true; btn.textContent = 'Memproses...';
+  try {
+    const { error } = await window.db.from('psy_kob_sessions').update({
+      status: 'completed',
+      doctor_selesai_id: window.currentUser.id,
+      doctor_selesai_name: window.currentUser.full_name,
+      selesai_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', kobId);
+    if (error) throw error;
+
+    // Activate recommended package (if any)
+    const patientUpdates = { kob_status: 'completed' };
+    if (hasPackage) {
+      // Fetch package metadata for plan creation + expiry
+      const { data: pkgRows } = await window.db.from('psy_packages')
+        .select('*').eq('package_id', kob.recommended_package_id).limit(1);
+      const pkg = pkgRows?.[0];
+      const weeks = pkg?.duration_weeks || 12;
+      const expiresAt = new Date(); expiresAt.setDate(expiresAt.getDate() + weeks * 7);
+
+      patientUpdates.active_package_id = kob.recommended_package_id;
+      patientUpdates.active_package_name = kob.recommended_package_name;
+      patientUpdates.package_purchased_at = kob.package_paid_at || new Date().toISOString();
+      patientUpdates.package_expires_at = expiresAt.toISOString();
+
+      // Record package purchase
+      await window.db.from('psy_package_purchases').insert({
+        patient_id: patient.id,
+        package_id: kob.recommended_package_id,
+        package_name: kob.recommended_package_name,
+        price: kob.recommended_package_price || pkg?.price || 0,
+        expires_at: expiresAt.toISOString(),
+        status: 'active',
+        payment_method: 'kob_assigned',
+      });
+
+      // Auto-create treatment plan
+      if (pkg) {
+        await window.db.from('psy_treatment_plans').insert({
+          patient_id: patient.id,
+          doctor_id: null,
+          name: `${pkg.name} Treatment Plan`,
+          template: pkg.package_id,
+          duration_unit: pkg.duration_unit || 'week',
+          duration_weeks: weeks,
+          current_week: 1,
+          bio_goals: pkg.bio_goals || [],
+          psycho_goals: pkg.psycho_goals || [],
+          social_goals: pkg.social_goals || [],
+          spiritual_goals: pkg.spiritual_goals || [],
+          coaching_schedule: pkg.coaching_schedule || [],
+          status: 'active',
+        });
+      }
+    }
+
+    await window.db.from('psy_patients').update(patientUpdates).eq('id', patient.id);
+    await auditLog('kob.completed', kobId, { patient_id: patient.id, package: kob.recommended_package_name });
+    banner(hasPackage
+      ? `KOB selesai ✅ Pakej ${kob.recommended_package_name} aktif.`
+      : 'KOB selesai ✅');
+    setTimeout(() => location.reload(), 1500);
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+    btn.disabled = false; btn.textContent = '🎯 Tandakan Selesai';
+  }
+}
+
+// ── Questionnaire helpers ──────────────────────────
+function setRadio(name, val) {
+  if (!val) return;
+  const r = document.querySelector(`input[name="${name}"][value="${val}"]`);
+  if (r) r.checked = true;
+}
+function getRadio(name) {
+  return document.querySelector(`input[name="${name}"]:checked`)?.value || null;
+}
+
+// Dynamic anak rows: render N input rows based on bilangan
+function renderAnakRows(prefill) {
+  const bil = Math.min(20, Math.max(0, parseInt(document.getElementById('q-anak-bil').value) || 0));
+  const list = document.getElementById('q-anak-list');
+  const rows = document.getElementById('q-anak-rows');
+  if (bil <= 0) { list.classList.add('hidden'); rows.innerHTML = ''; return; }
+  list.classList.remove('hidden');
+  const existing = prefill || (function () {
+    const out = [];
+    rows.querySelectorAll('.anak-row').forEach(r => {
+      out.push({
+        name: r.querySelector('.anak-name')?.value || '',
+        age: r.querySelector('.anak-age')?.value || '',
+      });
+    });
+    return out;
+  })();
+  rows.innerHTML = '';
+  for (let i = 0; i < bil; i++) {
+    const item = existing[i] || { name: '', age: '' };
+    rows.insertAdjacentHTML('beforeend', `
+      <div class="anak-row grid grid-cols-12 gap-2 items-center">
+        <span class="col-span-1 text-xs text-ink/50 text-right">#${i+1}</span>
+        <input class="anak-name col-span-7 px-3 py-1.5 border border-ink/15 rounded-lg text-sm" placeholder="Nama anak ${i+1}" value="${escapeHtml(item.name)}">
+        <input class="anak-age col-span-4 px-3 py-1.5 border border-ink/15 rounded-lg text-sm" placeholder="Umur" value="${escapeHtml(item.age)}">
+      </div>
+    `);
+  }
+}
+
+function loadQuestionnaire() {
+  const q = kob.questionnaire || {};
+  // Section 1 — Anak (list + bil)
+  const anakList = Array.isArray(q.anak_list) ? q.anak_list : null;
+  if (anakList && anakList.length > 0) {
+    document.getElementById('q-anak-bil').value = anakList.length;
+    renderAnakRows(anakList);
+  } else {
+    document.getElementById('q-anak-bil').value = q.anak_bil ?? '';
+    if (q.anak_bil) renderAnakRows();
+  }
+  setRadio('q-bersalin', q.bersalin);
+  if (q.pantang) {
+    document.getElementById('q-pantang-herba').checked = !!q.pantang.herba;
+    document.getElementById('q-pantang-urut').checked = !!q.pantang.urut;
+    document.getElementById('q-pantang-makan').checked = !!q.pantang.makan;
+    document.getElementById('q-pantang-notes').value = q.pantang.notes ?? '';
+  }
+  document.getElementById('q-gugur-bil').value = q.gugur_bil ?? '';
+  setRadio('q-dnc', q.dnc);
+  // Section 2
+  setRadio('q-tidur', q.tidur);
+  setRadio('q-tandas', q.terjaga_tandas);
+  document.getElementById('q-tandas-kali').value = q.tandas_kali ?? '';
+  setRadio('q-tidur-balik', q.tidur_balik);
+  // Section 3
+  document.getElementById('q-pergerakan').value = q.pergerakan ?? '';
+  document.getElementById('q-solat').value = q.solat ?? '';
+  document.getElementById('q-aktif').value = q.aktif ?? '';
+  document.getElementById('q-selera').value = q.selera ?? '';
+  document.getElementById('q-diet').value = q.diet ?? '';
+  document.getElementById('q-merokok').value = q.merokok ?? '';
+  document.getElementById('q-kerja').value = q.kerja ?? '';
+  // Section 4
+  document.getElementById('q-penyakit').value = q.penyakit ?? '';
+  document.getElementById('q-rawatan').value = q.rawatan_semasa ?? '';
+  document.getElementById('q-ubat').value = q.ubat ?? '';
+
+  if (q.updated_at) {
+    document.getElementById('q-saved-info').textContent =
+      `Kemaskini terakhir: ${new Date(q.updated_at).toLocaleString('ms-MY')} oleh ${q.updated_by_name || '—'}`;
+  }
+}
+
+async function saveQuestionnaire() {
+  const anakRows = [];
+  document.querySelectorAll('#q-anak-rows .anak-row').forEach(r => {
+    anakRows.push({
+      name: r.querySelector('.anak-name')?.value.trim() || '',
+      age: r.querySelector('.anak-age')?.value.trim() || '',
+    });
+  });
+  const payload = {
+    anak_bil: parseInt(document.getElementById('q-anak-bil').value) || null,
+    anak_list: anakRows.length ? anakRows : null,
+    bersalin: getRadio('q-bersalin'),
+    pantang: {
+      herba: document.getElementById('q-pantang-herba').checked,
+      urut: document.getElementById('q-pantang-urut').checked,
+      makan: document.getElementById('q-pantang-makan').checked,
+      notes: document.getElementById('q-pantang-notes').value.trim() || null,
+    },
+    gugur_bil: parseInt(document.getElementById('q-gugur-bil').value) || null,
+    dnc: getRadio('q-dnc'),
+    tidur: getRadio('q-tidur'),
+    terjaga_tandas: getRadio('q-tandas'),
+    tandas_kali: parseInt(document.getElementById('q-tandas-kali').value) || null,
+    tidur_balik: getRadio('q-tidur-balik'),
+    pergerakan: document.getElementById('q-pergerakan').value || null,
+    solat: document.getElementById('q-solat').value || null,
+    aktif: document.getElementById('q-aktif').value.trim() || null,
+    selera: document.getElementById('q-selera').value.trim() || null,
+    diet: document.getElementById('q-diet').value.trim() || null,
+    merokok: document.getElementById('q-merokok').value.trim() || null,
+    kerja: document.getElementById('q-kerja').value.trim() || null,
+    penyakit: document.getElementById('q-penyakit').value.trim() || null,
+    rawatan_semasa: document.getElementById('q-rawatan').value.trim() || null,
+    ubat: document.getElementById('q-ubat').value.trim() || null,
+    updated_at: new Date().toISOString(),
+    updated_by: window.currentUser.id,
+    updated_by_name: window.currentUser.full_name,
+  };
+
+  const btn = document.getElementById('btn-save-q');
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
+  try {
+    const { error } = await window.db.from('psy_kob_sessions').update({
+      questionnaire: payload, updated_at: new Date().toISOString(),
+    }).eq('id', kobId);
+    if (error) throw error;
+    kob.questionnaire = payload;
+    await auditLog('kob.questionnaire_saved', kobId);
+    document.getElementById('q-saved-info').textContent =
+      `Kemaskini terakhir: ${new Date().toLocaleString('ms-MY')} oleh ${window.currentUser.full_name || '—'}`;
+    banner('Soalan KOB disimpan ✅');
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+  } finally { btn.disabled = false; btn.textContent = '💾 Simpan Soalan'; }
+}
+
+// ── Package recommendation ─────────────────────────
+let allPackagesCache = [];
+
+async function renderPackageRecCard() {
+  const card = document.getElementById('package-rec-card');
+  if (!card) return;
+  // Show only when hadir, hide after completed/cancelled
+  if (kob.status !== 'hadir' && kob.status !== 'reschedule' && kob.status !== 'booked') {
+    card.classList.add('hidden');
+    return;
+  }
+  // For booked/reschedule states, hide too (need to be Hadir first)
+  if (kob.status !== 'hadir') {
+    card.classList.add('hidden');
+    return;
+  }
+  card.classList.remove('hidden');
+
+  // Load packages
+  if (!allPackagesCache.length) {
+    const { data } = await window.db.from('psy_packages')
+      .select('package_id, name, price, duration, is_active')
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true });
+    allPackagesCache = data || [];
+  }
+  const sel = document.getElementById('rec-package-select');
+  sel.innerHTML = '<option value="">— Pilih pakej —</option>' +
+    allPackagesCache.map(p => `<option value="${p.package_id}" data-name="${escapeHtml(p.name)}" data-price="${p.price || 0}">${escapeHtml(p.name)} · RM ${Number(p.price || 0).toFixed(2)}</option>`).join('');
+  sel.onchange = () => {
+    const opt = sel.options[sel.selectedIndex];
+    const info = document.getElementById('rec-package-info');
+    info.textContent = opt?.value ? `Pakej: ${opt.dataset.name} · Harga: RM ${Number(opt.dataset.price).toFixed(2)}` : '';
+  };
+
+  // Pre-fill from existing recommendation
+  if (kob.recommended_package_id) {
+    document.querySelector('input[name="rec-mode"][value="package"]').checked = true;
+    onRecModeChange();
+    sel.value = kob.recommended_package_id;
+    sel.onchange();
+    const savedInfo = document.getElementById('rec-saved-info');
+    savedInfo.classList.remove('hidden');
+    savedInfo.innerHTML = `✓ Pakej dicadangkan: <strong>${escapeHtml(kob.recommended_package_name || '')}</strong>${kob.package_payment_status === 'paid' ? ' · 💰 Patient sudah bayar' : ' · ⏳ Menunggu bayaran patient'}`;
+  } else if (kob.package_payment_status === 'skipped') {
+    document.querySelector('input[name="rec-mode"][value="skip"]').checked = true;
+    onRecModeChange();
+    const savedInfo = document.getElementById('rec-saved-info');
+    savedInfo.classList.remove('hidden');
+    savedInfo.innerHTML = '✓ Doktor cadangkan tiada pakej rawatan';
+  }
+}
+
+function onRecModeChange() {
+  const mode = document.querySelector('input[name="rec-mode"]:checked')?.value;
+  const picker = document.getElementById('rec-package-picker');
+  if (mode === 'package') picker.classList.remove('hidden');
+  else picker.classList.add('hidden');
+}
+
+async function saveRecommendation() {
+  const mode = document.querySelector('input[name="rec-mode"]:checked')?.value;
+  if (!mode) { banner('Sila pilih cadangan dahulu', 'error'); return; }
+
+  const btn = document.getElementById('btn-save-rec');
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
+  try {
+    let updates;
+    if (mode === 'skip') {
+      updates = {
+        recommended_package_id: null,
+        recommended_package_name: null,
+        recommended_package_price: null,
+        recommended_at: new Date().toISOString(),
+        recommended_by: window.currentUser.id,
+        recommended_by_name: window.currentUser.full_name,
+        package_payment_status: 'skipped',
+        updated_at: new Date().toISOString(),
+      };
+    } else {
+      const sel = document.getElementById('rec-package-select');
+      const pkgId = sel.value;
+      if (!pkgId) { banner('Sila pilih pakej', 'error'); btn.disabled = false; btn.textContent = 'Sahkan Cadangan'; return; }
+      const opt = sel.options[sel.selectedIndex];
+      updates = {
+        recommended_package_id: pkgId,
+        recommended_package_name: opt.dataset.name,
+        recommended_package_price: parseFloat(opt.dataset.price) || 0,
+        recommended_at: new Date().toISOString(),
+        recommended_by: window.currentUser.id,
+        recommended_by_name: window.currentUser.full_name,
+        package_payment_status: 'pending',
+        updated_at: new Date().toISOString(),
+      };
+    }
+    const { error } = await window.db.from('psy_kob_sessions').update(updates).eq('id', kobId);
+    if (error) throw error;
+
+    // Update patient kob_status
+    await window.db.from('psy_patients')
+      .update({ kob_status: mode === 'skip' ? 'package_paid' : 'package_recommended' })
+      .eq('id', patient.id);
+
+    Object.assign(kob, updates);
+    await auditLog('kob.package_recommended', kobId, { mode, package_id: updates.recommended_package_id });
+    banner(mode === 'skip' ? 'Cadangan disimpan (tiada pakej)' : 'Pakej dicadangkan ✅ Patient akan dimaklumkan untuk bayar');
+    setTimeout(() => location.reload(), 1000);
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+    btn.disabled = false; btn.textContent = 'Sahkan Cadangan';
+  }
+}
+
+async function saveMeetLink() {
+  const link = document.getElementById('meet-link-input').value.trim();
+  if (link && !/^https?:\/\//i.test(link)) {
+    banner('Link mesti bermula dengan http:// atau https://', 'error');
+    return;
+  }
+  const btn = document.getElementById('btn-save-meet');
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
+  try {
+    const { error } = await window.db.from('psy_kob_sessions').update({
+      meet_link: link || null, updated_at: new Date().toISOString(),
+    }).eq('id', kobId);
+    if (error) throw error;
+    kob.meet_link = link || null;
+    await auditLog('kob.meet_link_updated', kobId, { has_link: !!link });
+    banner('Link mesyuarat disimpan ✅');
+    render(); // re-render to show updated link
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+  } finally { btn.disabled = false; btn.textContent = 'Simpan Link'; }
+}
+
+async function saveNotes() {
+  const notes = document.getElementById('notes-input').value.trim();
+  const btn = document.getElementById('btn-save-notes');
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
+  try {
+    const { error } = await window.db.from('psy_kob_sessions').update({
+      notes: notes || null, updated_at: new Date().toISOString(),
+    }).eq('id', kobId);
+    if (error) throw error;
+    kob.notes = notes;
+    await auditLog('kob.notes_updated', kobId);
+    banner('Notes disimpan');
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+  } finally { btn.disabled = false; btn.textContent = 'Simpan Notes'; }
+}
+
+async function uploadDocs() {
+  const files = document.getElementById('doc-upload').files;
+  if (!files.length) { banner('Sila pilih fail', 'error'); return; }
+  const btn = document.getElementById('btn-upload');
+  btn.disabled = true; btn.textContent = 'Uploading...';
+  try {
+    const uploaded = [...(kob.documents || [])];
+    for (const f of files) {
+      if (f.size > 20 * 1024 * 1024) throw new Error(`${f.name} melebihi 20MB`);
+      const path = `${patient.id}/${kobId}/${Date.now()}_${f.name.replace(/[^a-zA-Z0-9.-]/g,'_')}`;
+      const { error: upErr } = await window.db.storage.from('kob-documents').upload(path, f);
+      if (upErr) throw upErr;
+      const { data: signed } = await window.db.storage.from('kob-documents').createSignedUrl(path, 3600 * 24 * 7);
+      uploaded.push({
+        name: f.name, path,
+        url: signed?.signedUrl || null,
+        size: f.size,
+        uploaded_at: new Date().toISOString(),
+        uploaded_by: window.currentUser.full_name,
+      });
+    }
+    const { error } = await window.db.from('psy_kob_sessions').update({
+      documents: uploaded, updated_at: new Date().toISOString(),
+    }).eq('id', kobId);
+    if (error) throw error;
+    kob.documents = uploaded;
+    renderDocs();
+    document.getElementById('doc-upload').value = '';
+    await auditLog('kob.docs_uploaded', kobId, { count: files.length });
+    banner(`${files.length} fail di-upload ✅`);
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+  } finally { btn.disabled = false; btn.textContent = '📤 Upload'; }
+}
+
+(async () => {
+  const user = await initStaff('kob_list', 'KOB Detail');
+  if (!user) return;
+  await loadKob();
+})();
+</script>
+</body>
+</html>
