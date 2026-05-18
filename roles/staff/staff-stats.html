@@ -126,6 +126,56 @@
             </div>
           </div>
 
+          <!-- ⭐ COACH RATING — from patient weekly feedback -->
+          <div class="bg-white rounded-2xl border border-ink/8 p-5">
+            <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <div>
+                <h3 class="font-bold text-base">⭐ Rating Coach (Weekly Feedback)</h3>
+                <p class="text-xs text-ink/50 mt-0.5">Daripada feedback patient setiap minggu</p>
+              </div>
+              <div class="seg-tray">
+                <button onclick="setRatingPeriod(30)"  id="rb-30"  class="seg-btn active">30 hari</button>
+                <button onclick="setRatingPeriod(90)"  id="rb-90"  class="seg-btn">90 hari</button>
+                <button onclick="setRatingPeriod(365)" id="rb-365" class="seg-btn">1 tahun</button>
+                <button onclick="setRatingPeriod(0)"   id="rb-all" class="seg-btn">Semua</button>
+              </div>
+            </div>
+
+            <div id="rating-empty" class="hidden text-center text-sm text-ink/40 py-10">Belum ada weekly feedback dengan rating coach.</div>
+
+            <div id="rating-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-5"></div>
+
+            <div class="overflow-x-auto">
+              <table class="data w-full" id="rating-table">
+                <thead>
+                  <tr>
+                    <th>Coach</th>
+                    <th class="text-center">Total Feedback</th>
+                    <th class="text-center">Avg Rating</th>
+                    <th class="text-center">% 4-5⭐</th>
+                    <th>Last Activity</th>
+                  </tr>
+                </thead>
+                <tbody id="rating-tbody">
+                  <tr><td colspan="5" class="text-center py-6 text-ink/40 text-sm italic">Memuatkan...</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Recent comments -->
+            <div class="mt-6 pt-5 border-t border-ink/10">
+              <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+                <h4 class="font-bold text-sm">💬 Komen Terkini</h4>
+                <select id="comment-filter" onchange="renderComments()" class="px-3 py-1.5 border border-ink/20 rounded text-xs bg-white">
+                  <option value="all">Semua</option>
+                  <option value="high">⭐⭐⭐⭐+ (Positif)</option>
+                  <option value="low">⭐⭐⭐ ke bawah (Perlu perhatian)</option>
+                </select>
+              </div>
+              <div id="recent-comments" class="space-y-2"></div>
+            </div>
+          </div>
+
         </div><!-- /pane-staff -->
 
         <!-- ============================================================ -->
@@ -594,11 +644,128 @@ function renderRegChart(pts) {
   }).join('');
 }
 
+// ──────── COACH RATING (from weekly feedback) ─────────
+let ratingPeriodDays = 30;
+let ratingData = [];
+
+function setRatingPeriod(days) {
+  ratingPeriodDays = days;
+  ['30','90','365','all'].forEach(id => {
+    const btn = document.getElementById('rb-' + id);
+    if (!btn) return;
+    const match = (id === 'all' && days === 0) || (parseInt(id) === days);
+    btn.classList.toggle('active', match);
+  });
+  loadCoachRating();
+}
+
+async function loadCoachRating() {
+  let q = window.db.from('psy_feedback')
+    .select('coach_id, coach_name, rating, coach_rating, supply_rating, comment, created_at, week_number')
+    .eq('feedback_type', 'weekly')
+    .order('created_at', { ascending: false });
+
+  if (ratingPeriodDays > 0) {
+    const since = new Date(); since.setDate(since.getDate() - ratingPeriodDays);
+    q = q.gte('created_at', since.toISOString());
+  }
+
+  const { data } = await q;
+  ratingData = data || [];
+
+  if (!ratingData.length) {
+    document.getElementById('rating-empty').classList.remove('hidden');
+    document.getElementById('rating-cards').innerHTML = '';
+    document.getElementById('rating-tbody').innerHTML = '<tr><td colspan="5" class="text-center py-6 text-ink/40 text-sm italic">Tiada data</td></tr>';
+    document.getElementById('recent-comments').innerHTML = '<p class="text-xs text-ink/40 text-center py-4">Tiada komen</p>';
+    return;
+  }
+  document.getElementById('rating-empty').classList.add('hidden');
+
+  // Group by coach
+  const byCoach = new Map();
+  ratingData.forEach(r => {
+    const key = r.coach_id || ('name:' + (r.coach_name || 'Unknown'));
+    if (!byCoach.has(key)) byCoach.set(key, { id: r.coach_id, name: r.coach_name || 'Unknown', items: [] });
+    byCoach.get(key).items.push(r);
+  });
+
+  // Compute stats per coach
+  const coaches = Array.from(byCoach.values()).map(c => {
+    const ratings = c.items.map(i => i.coach_rating).filter(v => v != null && v > 0);
+    const total = ratings.length;
+    const avg = total ? ratings.reduce((s,v) => s+v, 0) / total : 0;
+    const high = ratings.filter(v => v >= 4).length;
+    const highPct = total ? Math.round(high / total * 100) : 0;
+    const lastAt = c.items[0]?.created_at;
+    return { ...c, total, avg, highPct, lastAt };
+  }).filter(c => c.total > 0).sort((a, b) => b.avg - a.avg);
+
+  // KPI cards (top 6)
+  document.getElementById('rating-cards').innerHTML = coaches.slice(0, 6).map((c, i) => {
+    const stars = '⭐'.repeat(Math.round(c.avg));
+    const cls = i === 0 ? 'border-t-4 border-gold' : 'border border-ink/10';
+    return `<div class="bg-white rounded-xl p-4 ${cls}">
+      <div class="flex items-center gap-2 mb-1">
+        ${i === 0 ? '<span class="text-[10px] font-bold text-gold-dark">🏆 TOP</span>' : ''}
+        <div class="font-semibold text-sm truncate flex-1">${escapeHtml(c.name)}</div>
+      </div>
+      <div class="text-2xl font-bold text-navy">${c.avg.toFixed(1)}<span class="text-xs text-ink/40 font-normal"> / 5</span></div>
+      <div class="text-[10px] text-gold-dark">${stars}</div>
+      <div class="text-[10px] text-ink/50 mt-2">${c.total} feedback · ${c.highPct}% positif</div>
+      <div class="w-full h-1.5 bg-ink/10 rounded-full overflow-hidden mt-1.5">
+        <div class="h-full bg-green" style="width:${c.highPct}%"></div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Table
+  document.getElementById('rating-tbody').innerHTML = coaches.map(c => `
+    <tr>
+      <td class="font-semibold">${escapeHtml(c.name)}</td>
+      <td class="text-center">${c.total}</td>
+      <td class="text-center font-bold text-navy">${c.avg.toFixed(2)}</td>
+      <td class="text-center">${c.highPct}%</td>
+      <td class="text-xs text-ink/60">${c.lastAt ? timeAgo(c.lastAt) : '—'}</td>
+    </tr>
+  `).join('');
+
+  renderComments();
+}
+
+function renderComments() {
+  const filter = document.getElementById('comment-filter')?.value || 'all';
+  let items = ratingData.filter(r => (r.comment || '').trim());
+  if (filter === 'high') items = items.filter(r => (r.coach_rating || r.rating || 0) >= 4);
+  else if (filter === 'low') items = items.filter(r => (r.coach_rating || r.rating || 0) <= 3);
+
+  const list = document.getElementById('recent-comments');
+  if (!items.length) {
+    list.innerHTML = '<p class="text-xs text-ink/40 text-center py-4">Tiada komen sepadan</p>';
+    return;
+  }
+  list.innerHTML = items.slice(0, 10).map(r => {
+    const r1 = r.coach_rating || r.rating || 0;
+    const cls = r1 >= 4 ? 'bg-green-light/30 border-green/20'
+      : r1 <= 2 ? 'bg-terracotta/10 border-terracotta/20'
+      : 'bg-cream border-ink/10';
+    return `<div class="border ${cls} rounded-lg p-3 text-sm">
+      <div class="flex items-center justify-between text-[10px] mb-1">
+        <span class="font-semibold text-ink">${escapeHtml(r.coach_name || '—')} · M${r.week_number || '?'}</span>
+        <span class="text-gold-dark">${'⭐'.repeat(r1)}</span>
+      </div>
+      <div class="text-xs text-ink/80">${escapeHtml(r.comment)}</div>
+      <div class="text-[10px] text-ink/40 mt-1">${timeAgo(r.created_at)}</div>
+    </div>`;
+  }).join('');
+}
+
 // ── Boot ──────────────────────────────────────────────────────
 (async () => {
   const user = await initStaff('staff_stats', 'Statistik & Analitik');
   if (!user) return;
   await loadStats('month');
+  await loadCoachRating();
 })();
 </script>
 </body>

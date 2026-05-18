@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Jadual Harian</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🕐</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-5">
+        <!-- Tabs -->
+        <div class="flex gap-2 border-b border-ink/10">
+          <button id="tab-today" onclick="switchTab('today')" class="px-4 py-2 text-sm font-semibold border-b-2 border-navy text-navy">Hari Ini</button>
+          <button id="tab-history" onclick="switchTab('history')" class="px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-ink/50 hover:text-ink">Sejarah</button>
+          <button id="tab-stats" onclick="switchTab('stats')" class="px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-ink/50 hover:text-ink">Statistik</button>
+        </div>
+
+        <!-- TODAY tab -->
+        <div id="pane-today">
+          <div id="no-schedule" class="hidden bg-cream rounded-xl p-8 text-center">
+            <div class="text-4xl mb-3">📅</div>
+            <p class="text-sm text-ink/60">Jadual harian tiada — perlu pakej aktif untuk akses ciri ini.</p>
+          </div>
+
+          <div id="daily-schedule-card" class="hidden bg-white rounded-xl p-5 border border-ink/10">
+            <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <div>
+                <h3 class="font-bold text-lg">🕐 Jadual Hari Ini</h3>
+                <p class="text-xs text-ink/60 mt-0.5">Tick aktiviti bila selesai · reminder muncul ikut masa</p>
+              </div>
+              <div class="flex gap-2 flex-wrap">
+                <button id="btn-edit-daily" onclick="enterDailyEdit()" class="text-xs font-semibold text-navy border border-navy/30 px-3 py-1.5 rounded hover:bg-navy hover:text-white">✏️ Edit Jadual</button>
+                <button id="btn-save-daily" onclick="saveDailyEdit()" class="hidden text-xs font-semibold text-white bg-navy px-3 py-1.5 rounded hover:bg-navy-dark">💾 Simpan</button>
+                <button id="btn-cancel-daily" onclick="cancelDailyEdit()" class="hidden text-xs font-semibold text-ink/60 border border-ink/15 px-3 py-1.5 rounded hover:bg-ink/5">Batal</button>
+                <button id="btn-reset-daily" onclick="resetDailyToTemplate()" class="hidden text-xs font-semibold text-terracotta border border-terracotta/30 px-3 py-1.5 rounded hover:bg-terracotta/10">↺ Reset Default</button>
+              </div>
+            </div>
+            <div id="daily-customized-note" class="hidden text-[11px] text-gold-dark bg-gold/10 px-3 py-2 rounded mb-3">ℹ️ Jadual ini telah anda ubah suai. Tekan "Reset Default" untuk ikut pakej semula.</div>
+            <div id="daily-progress" class="mb-4"></div>
+            <div id="daily-list" class="space-y-1.5"></div>
+          </div>
+        </div>
+
+        <!-- HISTORY tab -->
+        <div id="pane-history" class="hidden">
+          <div class="bg-white rounded-xl p-5 border border-ink/10">
+            <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <h3 class="font-bold text-lg">📋 Sejarah 30 Hari</h3>
+              <select id="history-range" onchange="loadHistory()" class="px-3 py-1.5 border border-ink/20 rounded text-xs">
+                <option value="7">7 hari</option>
+                <option value="14">14 hari</option>
+                <option value="30" selected>30 hari</option>
+                <option value="90">90 hari</option>
+              </select>
+            </div>
+            <div id="history-list" class="space-y-2"></div>
+          </div>
+        </div>
+
+        <!-- STATS tab -->
+        <div id="pane-stats" class="hidden space-y-4">
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div class="bg-white rounded-xl p-4 border-t-4 border-green">
+              <div class="text-[10px] uppercase font-semibold text-ink/50 tracking-wide">Kepatuhan 7 Hari</div>
+              <div id="stat-7d" class="text-2xl font-bold mt-1 text-green-dark">—</div>
+              <div class="text-[10px] text-ink/50 mt-1">Purata aktiviti selesai</div>
+            </div>
+            <div class="bg-white rounded-xl p-4 border-t-4 border-navy">
+              <div class="text-[10px] uppercase font-semibold text-ink/50 tracking-wide">Kepatuhan 30 Hari</div>
+              <div id="stat-30d" class="text-2xl font-bold mt-1 text-navy">—</div>
+              <div class="text-[10px] text-ink/50 mt-1">Purata aktiviti selesai</div>
+            </div>
+            <div class="bg-white rounded-xl p-4 border-t-4 border-gold-dark">
+              <div class="text-[10px] uppercase font-semibold text-ink/50 tracking-wide">Streak Terpanjang</div>
+              <div id="stat-streak" class="text-2xl font-bold mt-1 text-gold-dark">—</div>
+              <div class="text-[10px] text-ink/50 mt-1">Hari berturut ≥50%</div>
+            </div>
+          </div>
+
+          <!-- Activity breakdown -->
+          <div class="bg-white rounded-xl p-5 border border-ink/10">
+            <h3 class="font-bold mb-3">Aktiviti Paling Kerap Tertinggal</h3>
+            <p class="text-xs text-ink/50 mb-3">Berdasarkan 30 hari terakhir</p>
+            <div id="stat-missed" class="space-y-2"></div>
+          </div>
+
+          <!-- 30-day heatmap -->
+          <div class="bg-white rounded-xl p-5 border border-ink/10">
+            <h3 class="font-bold mb-3">Heatmap 30 Hari</h3>
+            <div id="stat-heatmap" class="grid grid-cols-10 gap-1"></div>
+            <div class="flex items-center gap-3 text-[10px] text-ink/60 mt-3">
+              <span>Rendah</span>
+              <div class="flex gap-0.5">
+                <div class="w-4 h-4 rounded bg-ink/10"></div>
+                <div class="w-4 h-4 rounded bg-green/30"></div>
+                <div class="w-4 h-4 rounded bg-green/60"></div>
+                <div class="w-4 h-4 rounded bg-green"></div>
+                <div class="w-4 h-4 rounded bg-green-dark"></div>
+              </div>
+              <span>Tinggi</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="../../shared/utils.js"></script>
+<script src="_shared.js"></script>
+<script>
+let dailyTemplate = [];
+let dailyCurrent = [];
+let dailyEditBackup = null;
+let dailyEditMode = false;
+let dailyDoneSet = new Set();
+const todayKey = () => new Date().toISOString().slice(0, 10);
+
+function switchTab(tab) {
+  ['today','history','stats'].forEach(t => {
+    document.getElementById('pane-' + t).classList.toggle('hidden', t !== tab);
+    const btn = document.getElementById('tab-' + t);
+    if (t === tab) {
+      btn.className = 'px-4 py-2 text-sm font-semibold border-b-2 border-navy text-navy';
+    } else {
+      btn.className = 'px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-ink/50 hover:text-ink';
+    }
+  });
+  if (tab === 'history') loadHistory();
+  if (tab === 'stats') loadStats();
+}
+
+async function loadDailySchedule() {
+  if (!patientRecord?.active_package_id) {
+    document.getElementById('no-schedule').classList.remove('hidden');
+    return;
+  }
+  const pkgRows = await dbQuery('psy_packages', { eq: { package_id: patientRecord.active_package_id } }).catch(() => []);
+  dailyTemplate = Array.isArray(pkgRows[0]?.daily_schedule) ? pkgRows[0].daily_schedule : [];
+  const customized = Array.isArray(patientRecord.daily_schedule) ? patientRecord.daily_schedule : null;
+  dailyCurrent = customized || dailyTemplate.map(x => ({ ...x }));
+
+  if (!dailyCurrent.length) {
+    document.getElementById('no-schedule').classList.remove('hidden');
+    return;
+  }
+
+  const { data: doneRows } = await window.db.from('psy_daily_completions')
+    .select('item_time')
+    .eq('patient_id', patientRecord.id)
+    .eq('log_date', todayKey());
+  dailyDoneSet = new Set((doneRows || []).map(r => r.item_time));
+
+  document.getElementById('daily-schedule-card').classList.remove('hidden');
+  document.getElementById('daily-customized-note').classList.toggle('hidden', !customized);
+  document.getElementById('btn-reset-daily').classList.toggle('hidden', !customized);
+  renderDailyList();
+  updateDailyProgress();
+}
+
+function updateDailyProgress() {
+  const total = dailyCurrent.length;
+  const done = dailyDoneSet.size;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  document.getElementById('daily-progress').innerHTML = `
+    <div class="flex items-center justify-between text-xs mb-1">
+      <span class="text-ink/70 font-semibold">Selesai hari ini: ${done} / ${total}</span>
+      <span class="text-navy font-bold text-base">${pct}%</span>
+    </div>
+    <div class="w-full h-3 bg-ink/10 rounded-full overflow-hidden">
+      <div class="h-full bg-gradient-to-r from-green to-green-dark transition-all" style="width:${pct}%"></div>
+    </div>`;
+}
+
+async function toggleDailyDone(time, activity, checked) {
+  if (checked) {
+    dailyDoneSet.add(time);
+    try {
+      await window.db.from('psy_daily_completions').upsert({
+        patient_id: patientRecord.id, log_date: todayKey(), item_time: time, activity,
+      }, { onConflict: 'patient_id,log_date,item_time' });
+    } catch (e) { dailyDoneSet.delete(time); banner('Ralat: ' + e.message, 'error'); }
+  } else {
+    dailyDoneSet.delete(time);
+    try {
+      await window.db.from('psy_daily_completions').delete()
+        .eq('patient_id', patientRecord.id).eq('log_date', todayKey()).eq('item_time', time);
+    } catch (e) { dailyDoneSet.add(time); banner('Ralat: ' + e.message, 'error'); }
+  }
+  updateDailyProgress();
+  renderDailyList();
+}
+
+function renderDailyList() {
+  const list = document.getElementById('daily-list');
+  const now = new Date();
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  list.innerHTML = dailyCurrent.map((it, i) => {
+    const [h, m] = (it.time || '00:00').split(':').map(Number);
+    const itMins = h * 60 + m;
+    const diff = itMins - nowMins;
+    const isPast = diff < -30;
+    const isSoon = diff >= -30 && diff <= 30;
+    const isDone = dailyDoneSet.has(it.time);
+    if (dailyEditMode) {
+      return `<div class="flex items-center gap-2">
+        <input type="time" value="${it.time || ''}" oninput="dailyCurrent[${i}].time = this.value"
+          class="px-2 py-1.5 border border-ink/20 rounded text-sm w-28">
+        <input type="text" value="${(it.activity || '').replace(/"/g,'&quot;')}" oninput="dailyCurrent[${i}].activity = this.value"
+          class="flex-1 px-2 py-1.5 border border-ink/20 rounded text-sm">
+        <button onclick="dailyCurrent.splice(${i},1); renderDailyList();" class="px-2 text-terracotta hover:bg-terracotta/10 rounded">×</button>
+      </div>`;
+    }
+    const rowCls = isDone
+      ? 'bg-green-light/40 border border-green/30'
+      : isSoon ? 'bg-gold/20 border border-gold/40'
+      : isPast ? 'bg-cream opacity-60'
+      : 'bg-cream';
+    const escActivity = (it.activity || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    return `<label class="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer ${rowCls}">
+      <input type="checkbox" ${isDone ? 'checked' : ''}
+        onchange="toggleDailyDone('${it.time}', '${escActivity}', this.checked)"
+        class="w-5 h-5 accent-green cursor-pointer flex-shrink-0">
+      <span class="font-mono text-sm font-bold ${isDone ? 'text-green-dark line-through' : isSoon ? 'text-gold-dark' : 'text-navy'} w-16">${it.time || ''}</span>
+      <span class="text-sm flex-1 ${isDone ? 'text-ink/50 line-through' : 'text-ink'}">${escapeHtml(it.activity || '')}</span>
+      ${isDone ? '<span class="text-[10px] text-green-dark font-semibold">✓ Selesai</span>'
+        : isSoon ? '<span class="text-[10px] text-gold-dark font-semibold">⏰ Sekarang</span>' : ''}
+    </label>`;
+  }).join('') + (dailyEditMode
+    ? `<button onclick="dailyCurrent.push({time:'06:00',activity:''}); renderDailyList();" class="w-full mt-2 text-xs font-semibold text-navy border border-dashed border-navy/30 px-2 py-2 rounded hover:bg-navy hover:text-white">+ Tambah aktiviti</button>`
+    : '');
+}
+
+function enterDailyEdit() {
+  dailyEditBackup = JSON.parse(JSON.stringify(dailyCurrent));
+  dailyEditMode = true;
+  document.getElementById('btn-edit-daily').classList.add('hidden');
+  document.getElementById('btn-save-daily').classList.remove('hidden');
+  document.getElementById('btn-cancel-daily').classList.remove('hidden');
+  renderDailyList();
+}
+
+function cancelDailyEdit() {
+  dailyCurrent = dailyEditBackup || dailyCurrent;
+  dailyEditMode = false;
+  document.getElementById('btn-edit-daily').classList.remove('hidden');
+  document.getElementById('btn-save-daily').classList.add('hidden');
+  document.getElementById('btn-cancel-daily').classList.add('hidden');
+  renderDailyList();
+}
+
+async function saveDailyEdit() {
+  const cleaned = dailyCurrent
+    .map(x => ({ time: (x.time || '').trim(), activity: (x.activity || '').trim() }))
+    .filter(x => x.time && x.activity)
+    .sort((a, b) => a.time.localeCompare(b.time));
+  try {
+    await dbUpdate('psy_patients', patientRecord.id, { daily_schedule: cleaned });
+    patientRecord.daily_schedule = cleaned;
+    dailyCurrent = cleaned;
+    dailyEditMode = false;
+    document.getElementById('btn-edit-daily').classList.remove('hidden');
+    document.getElementById('btn-save-daily').classList.add('hidden');
+    document.getElementById('btn-cancel-daily').classList.add('hidden');
+    document.getElementById('btn-reset-daily').classList.remove('hidden');
+    document.getElementById('daily-customized-note').classList.remove('hidden');
+    renderDailyList();
+    banner('Jadual harian disimpan');
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+}
+
+async function resetDailyToTemplate() {
+  if (!confirm('Reset jadual ke default pakej? Perubahan anda akan hilang.')) return;
+  try {
+    await dbUpdate('psy_patients', patientRecord.id, { daily_schedule: null });
+    patientRecord.daily_schedule = null;
+    dailyCurrent = dailyTemplate.map(x => ({ ...x }));
+    document.getElementById('btn-reset-daily').classList.add('hidden');
+    document.getElementById('daily-customized-note').classList.add('hidden');
+    renderDailyList();
+    banner('Jadual direset ke default');
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+}
+
+// ──────── HISTORY ─────────
+async function loadHistory() {
+  if (!patientRecord) return;
+  const days = parseInt(document.getElementById('history-range').value) || 30;
+  const since = new Date(); since.setDate(since.getDate() - days + 1);
+  const sinceStr = since.toISOString().slice(0, 10);
+
+  const { data } = await window.db.from('psy_daily_completions')
+    .select('log_date, item_time, activity, completed_at')
+    .eq('patient_id', patientRecord.id)
+    .gte('log_date', sinceStr)
+    .order('log_date', { ascending: false })
+    .order('item_time', { ascending: true });
+
+  // Group by date
+  const byDate = new Map();
+  (data || []).forEach(r => {
+    if (!byDate.has(r.log_date)) byDate.set(r.log_date, []);
+    byDate.get(r.log_date).push(r);
+  });
+
+  const total = dailyCurrent.length || 1;
+  const list = document.getElementById('history-list');
+  if (!byDate.size) {
+    list.innerHTML = '<div class="text-center text-sm text-ink/40 py-10">Tiada rekod dalam tempoh ini</div>';
+    return;
+  }
+
+  list.innerHTML = Array.from(byDate.entries()).map(([date, items]) => {
+    const pct = Math.round((items.length / total) * 100);
+    const colorCls = pct >= 80 ? 'bg-green-light text-green-dark'
+      : pct >= 50 ? 'bg-gold/20 text-gold-dark'
+      : 'bg-terracotta/15 text-terracotta';
+    const d = new Date(date);
+    const dateStr = d.toLocaleDateString('ms-MY', { weekday: 'short', day: '2-digit', month: 'short' });
+    return `<details class="bg-cream rounded-lg">
+      <summary class="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-cream/80">
+        <div>
+          <div class="font-semibold text-sm">${dateStr}</div>
+          <div class="text-xs text-ink/50">${items.length} / ${total} aktiviti selesai</div>
+        </div>
+        <span class="chip ${colorCls} text-[10px] font-bold">${pct}%</span>
+      </summary>
+      <div class="px-4 py-2 border-t border-ink/5 space-y-1">
+        ${items.map(it => `
+          <div class="flex items-center gap-2 text-xs">
+            <span class="text-green-dark">✓</span>
+            <span class="font-mono text-ink/60">${it.item_time}</span>
+            <span class="flex-1">${escapeHtml(it.activity || '')}</span>
+            <span class="text-[10px] text-ink/40">${new Date(it.completed_at).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}</span>
+          </div>`).join('')}
+      </div>
+    </details>`;
+  }).join('');
+}
+
+// ──────── STATS ─────────
+async function loadStats() {
+  if (!patientRecord) return;
+  const since30 = new Date(); since30.setDate(since30.getDate() - 29);
+  const since30Str = since30.toISOString().slice(0, 10);
+
+  const { data } = await window.db.from('psy_daily_completions')
+    .select('log_date, item_time, activity')
+    .eq('patient_id', patientRecord.id)
+    .gte('log_date', since30Str);
+
+  const total = dailyCurrent.length || 1;
+  const rows = data || [];
+
+  // Count per date
+  const countByDate = new Map();
+  rows.forEach(r => countByDate.set(r.log_date, (countByDate.get(r.log_date) || 0) + 1));
+
+  // 7-day vs 30-day average pct
+  const today = new Date();
+  function avgPctSince(daysBack) {
+    let sum = 0;
+    for (let i = 0; i < daysBack; i++) {
+      const d = new Date(today); d.setDate(d.getDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      const cnt = countByDate.get(key) || 0;
+      sum += (cnt / total) * 100;
+    }
+    return Math.round(sum / daysBack);
+  }
+  document.getElementById('stat-7d').textContent  = avgPctSince(7)  + '%';
+  document.getElementById('stat-30d').textContent = avgPctSince(30) + '%';
+
+  // Streak: consecutive days where pct >= 50%
+  let streak = 0, maxStreak = 0;
+  for (let i = 0; i < 90; i++) {
+    const d = new Date(today); d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    const cnt = countByDate.get(key) || 0;
+    if ((cnt / total) >= 0.5) { streak++; maxStreak = Math.max(maxStreak, streak); }
+    else { streak = 0; }
+  }
+  document.getElementById('stat-streak').textContent = maxStreak + ' hari';
+
+  // Activity miss-rate — which items skipped most
+  const itemDoneCount = new Map();   // time -> count done
+  rows.forEach(r => itemDoneCount.set(r.item_time, (itemDoneCount.get(r.item_time) || 0) + 1));
+  // Total possible per item across 30 days = 30
+  const missed = dailyCurrent.map(it => {
+    const done = itemDoneCount.get(it.time) || 0;
+    return { time: it.time, activity: it.activity, missRate: Math.round(((30 - done) / 30) * 100), done };
+  }).sort((a, b) => b.missRate - a.missRate).slice(0, 5);
+
+  const missList = document.getElementById('stat-missed');
+  if (!missed.length || missed[0].missRate === 0) {
+    missList.innerHTML = '<p class="text-xs text-ink/40 text-center py-3">Bagus! Tiada aktiviti yang kerap ditinggalkan.</p>';
+  } else {
+    missList.innerHTML = missed.map(m => `
+      <div class="flex items-center gap-3">
+        <span class="font-mono text-xs font-bold text-ink/60 w-16">${m.time}</span>
+        <span class="text-sm flex-1 truncate">${escapeHtml(m.activity || '')}</span>
+        <div class="w-32">
+          <div class="w-full h-2 bg-ink/10 rounded-full overflow-hidden">
+            <div class="h-full bg-terracotta" style="width:${m.missRate}%"></div>
+          </div>
+        </div>
+        <span class="text-xs font-semibold text-terracotta w-12 text-right">${m.missRate}%</span>
+      </div>`).join('');
+  }
+
+  // Heatmap 30 days
+  const heat = document.getElementById('stat-heatmap');
+  const cells = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(today); d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    const cnt = countByDate.get(key) || 0;
+    const pct = cnt / total;
+    const cls = pct >= 0.8 ? 'bg-green-dark'
+      : pct >= 0.6 ? 'bg-green'
+      : pct >= 0.3 ? 'bg-green/60'
+      : pct > 0    ? 'bg-green/30'
+      : 'bg-ink/10';
+    const label = `${d.toLocaleDateString('ms-MY',{day:'2-digit',month:'short'})}: ${cnt}/${total} (${Math.round(pct*100)}%)`;
+    cells.push(`<div class="w-full aspect-square rounded ${cls}" title="${label}"></div>`);
+  }
+  heat.innerHTML = cells.join('');
+}
+
+// ──────── REMINDER ─────────
+let _reminderShown = new Set();
+function checkReminders() {
+  if (!dailyCurrent.length) return;
+  const now = new Date();
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  const tk = todayKey();
+  dailyCurrent.forEach((it, i) => {
+    if (dailyDoneSet.has(it.time)) return;
+    const [h, m] = (it.time || '00:00').split(':').map(Number);
+    const diff = (h * 60 + m) - nowMins;
+    if (diff >= 0 && diff <= 5) {
+      const key = `${tk}_${it.time}_${i}`;
+      if (_reminderShown.has(key)) return;
+      _reminderShown.add(key);
+      showReminderBanner(it);
+    }
+  });
+  if (!dailyEditMode) renderDailyList();
+}
+
+function showReminderBanner(item) {
+  const el = document.createElement('div');
+  el.className = 'fixed top-4 left-1/2 -translate-x-1/2 bg-gold-dark text-white px-5 py-3 rounded-xl text-sm font-semibold z-50 shadow-2xl flex items-center gap-3 max-w-md';
+  el.innerHTML = `
+    <span class="text-2xl">⏰</span>
+    <div class="flex-1">
+      <div class="text-xs opacity-80">Reminder · ${item.time}</div>
+      <div>${escapeHtml(item.activity || '')}</div>
+    </div>
+    <button onclick="this.parentElement.remove()" class="text-xl leading-none ml-2 opacity-70 hover:opacity-100">×</button>
+  `;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 30000);
+}
+
+(async () => {
+  const user = await initPatient('routine', 'Jadual harian & sejarah kepatuhan');
+  if (!user) return;
+  await loadDailySchedule();
+  checkReminders();
+  setInterval(checkReminders, 60000);
+})();
+</script>
+</body>
+</html>

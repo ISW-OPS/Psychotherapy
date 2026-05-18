@@ -26,9 +26,11 @@
 
         <input id="edit-id" type="hidden">
 
-        <!-- Action bar -->
-        <div class="flex items-center justify-end gap-2">
-          <button onclick="window.location.href='pakej.html'" class="px-4 py-2 border border-ink/20 rounded-lg text-sm text-ink/70 hover:bg-ink/5 transition-colors">Batal</button>
+        <!-- Action bar (sticky top so save button always visible) -->
+        <div class="flex items-center justify-end gap-2 sticky top-[68px] z-20 bg-cream/90 backdrop-blur-sm -mx-4 md:-mx-6 px-4 md:px-6 py-2 border-b border-ink/10">
+          <span id="draft-indicator" class="hidden text-[10px] text-ink/40 italic">Draf disimpan</span>
+          <button onclick="clearDraft(true)" class="px-3 py-2 border border-terracotta/30 rounded-lg text-xs text-terracotta hover:bg-terracotta/10 transition-colors">🗑️ Clear Draf</button>
+          <button onclick="cancelEdit()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm text-ink/70 hover:bg-ink/5 transition-colors">Batal</button>
           <button id="btn-save" onclick="savePackage()" class="bg-navy text-white px-6 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark transition-colors">Simpan Pakej</button>
         </div>
 
@@ -62,7 +64,7 @@
               <div>
                 <label class="text-xs font-semibold text-ink/70">Tempoh</label>
                 <div class="mt-1 grid grid-cols-[1fr_auto] gap-2">
-                  <input id="f-weeks" type="number" min="1" class="w-full px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-navy" placeholder="12">
+                  <input id="f-weeks" type="number" min="1" class="w-full px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-navy" placeholder="2">
                   <select id="f-duration-unit" onchange="renderCoachingScheduleEditor(true)" class="px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:outline-none focus:border-navy">
                     <option value="week">Minggu</option>
                     <option value="day">Hari</option>
@@ -117,72 +119,68 @@
           <!-- RIGHT: produk + bimbingan -->
           <div class="space-y-3">
             <div>
-              <label class="text-xs font-semibold text-ink/70">🎁 Produk yang diterima</label>
-              <p class="text-[10px] text-ink/40 mb-1">1 item per baris</p>
+              <div class="flex items-center justify-between gap-2 mb-1">
+                <label class="text-xs font-semibold text-ink/70">🎁 Produk yang diterima</label>
+                <button type="button" onclick="autoFillProducts()" class="text-[10px] font-semibold text-navy border border-navy/30 px-2 py-1 rounded hover:bg-navy hover:text-white">🔄 Auto-isi dari minggu</button>
+              </div>
+              <p class="text-[10px] text-ink/40 mb-1">1 item per baris · auto-jumlah dari kolum Bekalan</p>
               <textarea id="f-products" rows="8" class="w-full px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-navy resize-none" placeholder="6 KG IB&#10;6 KG YHPG&#10;Starter Kit&#10;12 Botol Air Afiyah"></textarea>
             </div>
             <div>
-              <label class="text-xs font-semibold text-ink/70">🧘 Bimbingan & Terapi</label>
-              <p class="text-[10px] text-ink/40 mb-1">1 item per baris</p>
+              <div class="flex items-center justify-between gap-2 mb-1">
+                <label class="text-xs font-semibold text-ink/70">🧘 Bimbingan & Terapi</label>
+                <button type="button" onclick="autoFillBimbingan()" class="text-[10px] font-semibold text-navy border border-navy/30 px-2 py-1 rounded hover:bg-navy hover:text-white">🔄 Auto-isi dari minggu</button>
+              </div>
+              <p class="text-[10px] text-ink/40 mb-1">1 item per baris · auto-kumpul dari kolum Bimbingan</p>
               <textarea id="f-bimbingan" rows="8" class="w-full px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-navy resize-none" placeholder="Bimbingan Terapi Peminuman IB&#10;Bimbingan Terapi Zikir Bersanad"></textarea>
             </div>
           </div>
         </div>
 
-        <!-- Agreement PDF Upload -->
-        <div class="p-4 bg-cream/40 rounded-xl border border-ink/10">
-          <div class="flex items-center justify-between flex-wrap gap-2 mb-2">
-            <label class="text-xs font-semibold text-ink/70">📜 Agreement PDF (Kontrak Pakej)</label>
-            <div id="f-agreement-status" class="text-[11px] text-ink/50"></div>
-          </div>
-          <div class="flex items-center gap-2 flex-wrap">
-            <input id="f-agreement-file" type="file" accept="application/pdf"
-              class="text-xs text-ink/60 file:mr-3 file:py-1.5 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-navy file:text-white hover:file:bg-navy-dark cursor-pointer">
-            <button type="button" id="btn-upload-agreement" onclick="uploadAgreement()" class="bg-navy text-white px-4 py-1.5 rounded-lg text-xs font-semibold hover:bg-navy-dark">Upload</button>
-            <a id="f-agreement-preview" href="#" target="_blank" class="hidden text-xs text-navy hover:underline">📄 Lihat PDF semasa →</a>
-            <button type="button" id="btn-remove-agreement" onclick="removeAgreement()" class="hidden text-xs text-terracotta hover:underline">🗑 Buang</button>
-          </div>
-          <input type="hidden" id="f-agreement-pdf">
-          <p class="text-[10px] text-ink/40 mt-1.5">PDF sahaja · Maksimum 10MB · Patient akan sign PDF ini selepas bayar pakej</p>
-        </div>
+        <input type="hidden" id="f-agreement-pdf">
 
-        <!-- Madu Schedule + Online Lock (Sprint 1) -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-cream/40 rounded-xl border border-ink/10">
-          <div>
-            <label class="text-xs font-semibold text-ink/70">🍯 Madu Frequency / hari</label>
-            <input id="f-madu-freq" type="number" min="0" max="20" placeholder="cth: 10"
-              class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
-            <p class="text-[10px] text-ink/40 mt-1">0 atau kosong = tiada madu schedule</p>
+        <!-- Agreement Clauses Editor -->
+        <div class="p-4 bg-cream/40 rounded-xl border border-ink/10 space-y-4">
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <label class="text-sm font-bold text-navy">📜 Kontrak Pakej (Agreement)</label>
+              <p class="text-[10px] text-ink/40 mt-0.5">Patient akan baca + sign borang ini selepas bayar pakej. Variables: <code class="bg-white px-1 rounded text-[10px]">{{patient_name}}</code>, <code class="bg-white px-1 rounded text-[10px]">{{patient_ic}}</code>, <code class="bg-white px-1 rounded text-[10px]">{{package_name}}</code>, <code class="bg-white px-1 rounded text-[10px]">{{price}}</code>, <code class="bg-white px-1 rounded text-[10px]">{{today}}</code></p>
+            </div>
+            <button type="button" onclick="addClause()" class="bg-navy text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-navy-dark">+ Tambah Klausa</button>
           </div>
-          <div>
-            <label class="text-xs font-semibold text-ink/70">Label Madu Schedule</label>
-            <input id="f-madu-label" type="text" placeholder="cth: 10x sehari (12 minggu)"
-              class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
-          </div>
-          <div>
-            <label class="text-xs font-semibold text-ink/70">💻 Online Session Policy</label>
-            <div class="mt-1 space-y-1.5">
-              <label class="flex items-center gap-2 text-xs">
-                <input type="checkbox" id="f-allow-online-full" class="accent-navy">
-                <span>Benarkan online sepanjang rawatan</span>
-              </label>
-              <div class="flex items-center gap-1.5">
-                <span class="text-[10px] text-ink/50">Lock dari Minggu</span>
-                <input id="f-online-lock-week" type="number" min="1" max="52" value="3"
-                  class="w-16 px-2 py-1 border border-ink/20 rounded text-xs">
-                <span class="text-[10px] text-ink/50">ke atas</span>
-              </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs font-semibold">Tajuk Kontrak</label>
+              <input id="f-agreement-title" type="text" placeholder="cth: Kontrak Pelaburan Kesihatan" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+            </div>
+            <div>
+              <label class="text-xs font-semibold">Version</label>
+              <input id="f-agreement-version" type="text" placeholder="cth: ISW.SOP OB KOB FORM 03 CONTRACT 250711" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
             </div>
           </div>
+          <div id="f-clauses-list" class="space-y-3"></div>
+          <input type="hidden" id="f-agreement-clauses">
         </div>
 
         <!-- Coaching — full width -->
         <div>
-          <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
+          <div class="mb-3">
             <span class="text-xs font-semibold text-ink/60">📅 Coaching Mingguan</span>
-            <button type="button" onclick="renderCoachingScheduleEditor(true)" class="text-xs font-semibold text-navy border border-navy/30 px-3 py-1.5 rounded-lg hover:bg-navy hover:text-white transition-colors">Jana minggu</button>
+            <span class="text-[10px] text-ink/40 ml-2">(akan ikut tempoh pakej)</span>
           </div>
           <div id="weekly-schedule-editor" class="space-y-3"></div>
+        </div>
+
+        <!-- Daily Schedule template -->
+        <div>
+          <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
+            <div>
+              <span class="text-xs font-semibold text-ink/60">🕐 Jadual Harian (Default)</span>
+              <span class="text-[10px] text-ink/40 ml-2">patient boleh ubah selepas subscribe</span>
+            </div>
+            <button type="button" onclick="addDailyItem()" class="text-[11px] font-semibold text-navy border border-navy/30 px-3 py-1.5 rounded hover:bg-navy hover:text-white">+ Tambah Aktiviti</button>
+          </div>
+          <div id="daily-schedule-list" class="space-y-1.5"></div>
         </div>
 
       </div>
@@ -313,7 +311,7 @@ function updateSchedSummary() {
 }
 
 function getDurationUnit() { return document.getElementById('f-duration-unit')?.value || 'week'; }
-function getScheduleCount() { return Math.max(1, parseInt(document.getElementById('f-weeks').value) || 12); }
+function getScheduleCount() { return Math.max(1, parseInt(document.getElementById('f-weeks').value) || 2); }
 
 function normalizeCoachingSchedule(schedule, count, unit = getDurationUnit()) {
   const keyName = unit === 'day' ? 'day' : 'week';
@@ -322,8 +320,31 @@ function normalizeCoachingSchedule(schedule, count, unit = getDurationUnit()) {
   return Array.from({ length: count }, (_, i) => {
     const n = i + 1;
     const item = existing[n] || {};
-    return { period: unit, [keyName]: n, guidance: item.guidance || item.bimbingan || [], references: item.references || item.rujukan || [], supplies: item.supplies || item.bekalan || [] };
+    return {
+      period: unit,
+      [keyName]: n,
+      guidance:   item.guidance || item.bimbingan || [],
+      aktiviti:   item.aktiviti || [],
+      supplies:   item.supplies || item.bekalan || [],
+      mode:       item.mode || 'both',
+      rujukan_files: item.rujukan_files || [],
+    };
   });
+}
+
+function renderItemList(wk, field, items, placeholder) {
+  const list = (items || []).map((val, i) => `
+    <div class="flex gap-1 mb-1">
+      <input type="text" value="${escapeHtmlAttr(val)}" placeholder="${placeholder}"
+        oninput="updateItem(${wk}, '${field}', ${i}, this.value)"
+        class="flex-1 px-2 py-1 border border-ink/20 rounded text-xs focus:outline-none focus:border-navy">
+      <button type="button" onclick="removeItem(${wk}, '${field}', ${i})"
+        class="px-2 text-terracotta hover:bg-terracotta/10 rounded text-xs">×</button>
+    </div>
+  `).join('');
+  return `${list}
+    <button type="button" onclick="addItem(${wk}, '${field}')"
+      class="text-[10px] font-semibold text-navy border border-dashed border-navy/30 px-2 py-1 rounded hover:bg-navy hover:text-white w-full mt-1">+ Tambah</button>`;
 }
 
 function renderCoachingScheduleEditor(forceRebuild = false) {
@@ -332,40 +353,315 @@ function renderCoachingScheduleEditor(forceRebuild = false) {
   const keyName = unit === 'day' ? 'day' : 'week';
   const prefix = unit === 'day' ? 'D' : 'M';
   if (forceRebuild || coachingSchedule.length !== count || coachingSchedule.some(x => (x.period || 'week') !== unit)) {
-    coachingSchedule = normalizeCoachingSchedule(collectCoachingSchedule(), count, unit);
+    coachingSchedule = normalizeCoachingSchedule(coachingSchedule, count, unit);
   }
-  document.getElementById('weekly-schedule-editor').innerHTML = coachingSchedule.map(item => `
-    <div class="rounded-lg border border-ink/10 bg-cream/30 p-3">
-      <div class="font-bold text-xs text-navy mb-2">${prefix}${item[keyName]}</div>
-      <div class="grid md:grid-cols-3 gap-3">
-        <div>
-          <label class="text-[11px] font-semibold text-ink/60">Bimbingan / Calling</label>
-          <textarea data-index="${item[keyName]}" data-field="guidance" rows="4" class="weekly-field w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-xs" placeholder="Satu item per baris">${toText(item.guidance)}</textarea>
-        </div>
-        <div>
-          <label class="text-[11px] font-semibold text-ink/60">Rujukan</label>
-          <textarea data-index="${item[keyName]}" data-field="references" rows="4" class="weekly-field w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-xs" placeholder="Skrip / link / dokumen">${toText(item.references)}</textarea>
-        </div>
-        <div>
-          <label class="text-[11px] font-semibold text-ink/60">Bekalan</label>
-          <textarea data-index="${item[keyName]}" data-field="supplies" rows="4" class="weekly-field w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-xs" placeholder="Barang rawatan minggu ini">${toText(item.supplies)}</textarea>
+  document.getElementById('weekly-schedule-editor').innerHTML = coachingSchedule.map(item => {
+    const wk = item[keyName];
+    const mode = item.mode || 'both';
+    const files = item.rujukan_files || [];
+    return `
+    <div class="rounded-lg border border-ink/10 bg-cream/30 p-3" data-week="${wk}">
+      <div class="flex items-center justify-between gap-3 flex-wrap mb-2">
+        <div class="font-bold text-sm text-navy">${prefix}${wk}</div>
+        <div class="flex items-center gap-2 text-[11px]">
+          <span class="text-ink/60 font-semibold">Mode:</span>
+          <label class="flex items-center gap-1"><input type="radio" name="mode-${wk}" value="f2f" ${mode==='f2f'?'checked':''} onchange="updateMode(${wk}, 'f2f')"> 🏥 F2F</label>
+          <label class="flex items-center gap-1"><input type="radio" name="mode-${wk}" value="online" ${mode==='online'?'checked':''} onchange="updateMode(${wk}, 'online')"> 💻 Online</label>
+          <label class="flex items-center gap-1"><input type="radio" name="mode-${wk}" value="both" ${mode==='both'?'checked':''} onchange="updateMode(${wk}, 'both')"> 🔀 Both</label>
         </div>
       </div>
-    </div>`).join('');
+      <div class="grid md:grid-cols-3 gap-3">
+        <div>
+          <label class="text-[11px] font-semibold text-ink/60 block mb-1">💡 Bimbingan / Calling</label>
+          ${renderItemList(wk, 'guidance', item.guidance, 'cth: Bimbingan Reaksi')}
+        </div>
+        <div>
+          <label class="text-[11px] font-semibold text-ink/60 block mb-1">🩺 Aktiviti / Rawatan</label>
+          ${renderItemList(wk, 'aktiviti', item.aktiviti, 'cth: Herba Thoharah')}
+        </div>
+        <div>
+          <label class="text-[11px] font-semibold text-ink/60 block mb-1">📦 Bekalan</label>
+          ${renderItemList(wk, 'supplies', item.supplies, 'cth: 1 kg LTH')}
+        </div>
+      </div>
+      <div class="mt-3 pt-3 border-t border-ink/10">
+        <div class="flex items-center justify-between mb-2">
+          <label class="text-[11px] font-semibold text-ink/60">📎 Rujukan (staff only)</label>
+          <label class="text-[11px] font-semibold text-navy border border-navy/30 px-2 py-1 rounded cursor-pointer hover:bg-navy hover:text-white transition-colors">
+            + Upload
+            <input type="file" multiple class="hidden" onchange="uploadRujukan(${wk}, this)">
+          </label>
+        </div>
+        <div id="rujukan-list-${wk}" class="flex flex-wrap gap-1.5">
+          ${files.map((f, i) => `
+            <span class="inline-flex items-center gap-1 px-2 py-1 bg-white border border-ink/15 rounded text-[10px]">
+              <a href="${escapeHtmlAttr(f.url)}" target="_blank" class="text-navy hover:underline truncate max-w-[140px]">${escapeHtml(f.name)}</a>
+              <button type="button" onclick="removeRujukan(${wk}, ${i})" class="text-terracotta hover:text-terracotta-dark">×</button>
+            </span>
+          `).join('') || '<span class="text-[10px] text-ink/40">Tiada fail</span>'}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function getWeekItem(wk) {
+  const unit = getDurationUnit();
+  const keyName = unit === 'day' ? 'day' : 'week';
+  return coachingSchedule.find(x => x[keyName] === wk);
+}
+
+function updateItem(wk, field, idx, value) {
+  const item = getWeekItem(wk);
+  if (!item) return;
+  item[field] = item[field] || [];
+  item[field][idx] = value;
+}
+
+function addItem(wk, field) {
+  const item = getWeekItem(wk);
+  if (!item) return;
+  item[field] = item[field] || [];
+  item[field].push('');
+  renderCoachingScheduleEditor();
+  // Focus new input
+  setTimeout(() => {
+    const inputs = document.querySelectorAll(`[data-week="${wk}"] input[oninput*="'${field}'"]`);
+    inputs[inputs.length - 1]?.focus();
+  }, 50);
+}
+
+function removeItem(wk, field, idx) {
+  const item = getWeekItem(wk);
+  if (!item?.[field]) return;
+  item[field].splice(idx, 1);
+  renderCoachingScheduleEditor();
+}
+
+function updateMode(wk, mode) {
+  const item = getWeekItem(wk);
+  if (item) item.mode = mode;
+}
+
+// ──────── DAILY SCHEDULE ─────────
+let dailySchedule = [];
+
+function renderDailySchedule() {
+  const list = document.getElementById('daily-schedule-list');
+  if (!list) return;
+  if (!dailySchedule.length) {
+    list.innerHTML = '<p class="text-xs text-ink/40 text-center py-4 italic">Tiada aktiviti. Tekan + Tambah untuk mula.</p>';
+    return;
+  }
+  list.innerHTML = dailySchedule.map((it, i) => `
+    <div class="flex items-center gap-2">
+      <input type="time" value="${it.time || ''}"
+        oninput="updateDaily(${i}, 'time', this.value)"
+        class="px-2 py-1.5 border border-ink/20 rounded text-xs w-28 focus:outline-none focus:border-navy">
+      <input type="text" value="${escapeHtmlAttr(it.activity || '')}" placeholder="cth: minum madu LTHPG"
+        oninput="updateDaily(${i}, 'activity', this.value)"
+        class="flex-1 px-2 py-1.5 border border-ink/20 rounded text-xs focus:outline-none focus:border-navy">
+      <button type="button" onclick="removeDaily(${i})"
+        class="px-2 py-1 text-terracotta hover:bg-terracotta/10 rounded text-xs">×</button>
+    </div>
+  `).join('');
+}
+
+function updateDaily(idx, field, value) {
+  if (!dailySchedule[idx]) return;
+  dailySchedule[idx][field] = value;
+}
+
+function addDailyItem() {
+  // Smart default time: last item + 30min, or 06:00
+  let defaultTime = '06:00';
+  const last = dailySchedule[dailySchedule.length - 1];
+  if (last?.time) {
+    const [h, m] = last.time.split(':').map(Number);
+    const next = new Date(0, 0, 0, h, m + 30);
+    defaultTime = `${String(next.getHours()).padStart(2,'0')}:${String(next.getMinutes()).padStart(2,'0')}`;
+  }
+  dailySchedule.push({ time: defaultTime, activity: '' });
+  renderDailySchedule();
+  // Focus new activity input
+  setTimeout(() => {
+    const inputs = document.querySelectorAll('#daily-schedule-list input[type="text"]');
+    inputs[inputs.length - 1]?.focus();
+  }, 50);
+}
+
+function removeDaily(idx) {
+  dailySchedule.splice(idx, 1);
+  renderDailySchedule();
+}
+
+function sortDailySchedule() {
+  dailySchedule.sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
+}
+
+function collectDailySchedule() {
+  return dailySchedule
+    .map(it => ({ time: (it.time || '').trim(), activity: (it.activity || '').trim() }))
+    .filter(it => it.time && it.activity)
+    .sort((a, b) => a.time.localeCompare(b.time));
+}
+
+function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escapeHtmlAttr(s) { return escapeHtml(s); }
+function escapeAttr(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escapeText(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ──────── AGREEMENT CLAUSES ─────────
+function renderClauses(clauses) {
+  const list = document.getElementById('f-clauses-list');
+  if (!clauses.length) {
+    list.innerHTML = '<p class="text-xs text-ink/40 italic p-4 text-center bg-white rounded-lg">Tiada klausa. Klik "+ Tambah Klausa" untuk mula.</p>';
+    return;
+  }
+  list.innerHTML = clauses.map((c, i) => `
+    <div class="bg-white border border-ink/10 rounded-lg p-3 space-y-2" data-clause-idx="${i}">
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-[10px] text-ink/50 font-semibold">KLAUSA #${i + 1}</span>
+        <div class="flex items-center gap-1">
+          <button type="button" onclick="moveClause(${i}, -1)" ${i === 0 ? 'disabled' : ''} class="text-xs px-2 py-0.5 hover:bg-cream rounded ${i === 0 ? 'opacity-30' : ''}" title="Naik">↑</button>
+          <button type="button" onclick="moveClause(${i}, 1)" ${i === clauses.length - 1 ? 'disabled' : ''} class="text-xs px-2 py-0.5 hover:bg-cream rounded ${i === clauses.length - 1 ? 'opacity-30' : ''}" title="Turun">↓</button>
+          <button type="button" onclick="removeClause(${i})" class="text-xs px-2 py-0.5 text-terracotta hover:bg-terracotta/10 rounded">🗑</button>
+        </div>
+      </div>
+      <input type="text" class="clause-title w-full px-2 py-1.5 border border-ink/15 rounded text-sm font-semibold" placeholder="Tajuk klausa" value="${escapeAttr(c.title || '')}">
+      <textarea class="clause-body w-full px-2 py-1.5 border border-ink/15 rounded text-sm" rows="3" placeholder="Isi klausa...">${escapeText(c.body || '')}</textarea>
+    </div>
+  `).join('');
+}
+
+function collectClauses() {
+  const rows = document.querySelectorAll('#f-clauses-list [data-clause-idx]');
+  return Array.from(rows).map(r => ({
+    title: r.querySelector('.clause-title')?.value.trim() || '',
+    body: r.querySelector('.clause-body')?.value.trim() || '',
+  })).filter(c => c.title || c.body);
+}
+
+function addClause() {
+  const current = collectClauses();
+  current.push({ title: '', body: '' });
+  renderClauses(current);
+}
+
+function removeClause(idx) {
+  const current = collectClauses();
+  current.splice(idx, 1);
+  renderClauses(current);
+}
+
+function moveClause(idx, dir) {
+  const current = collectClauses();
+  const target = idx + dir;
+  if (target < 0 || target >= current.length) return;
+  [current[idx], current[target]] = [current[target], current[idx]];
+  renderClauses(current);
+}
+
+// Parse "1 kg LTH" / "3 botol Air Afiyah" / "Starter Kit"
+// Returns { qty, unit, name } — qty=null kalau takda nombor
+function parseSupplyLine(raw) {
+  const line = String(raw || '').trim();
+  if (!line) return null;
+  const m = line.match(/^(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?\s+(.+)$/);
+  if (m) {
+    return { qty: parseFloat(m[1]), unit: (m[2] || '').toLowerCase(), name: m[3].trim() };
+  }
+  return { qty: null, unit: '', name: line };
+}
+
+function aggregateLines(allLines) {
+  // Group by lowercase(name + unit) — sum qty if both have numbers, else count occurrences
+  const groups = new Map();
+  for (const raw of allLines) {
+    const p = parseSupplyLine(raw);
+    if (!p) continue;
+    const key = `${p.name.toLowerCase()}|${p.unit}`;
+    if (!groups.has(key)) groups.set(key, { name: p.name, unit: p.unit, totalQty: 0, occurrences: 0, hasQty: false });
+    const g = groups.get(key);
+    g.occurrences++;
+    if (p.qty != null) { g.totalQty += p.qty; g.hasQty = true; }
+  }
+  // Format output lines
+  return Array.from(groups.values()).map(g => {
+    if (g.hasQty) {
+      const qty = Number.isInteger(g.totalQty) ? g.totalQty : g.totalQty.toFixed(2).replace(/\.?0+$/, '');
+      return g.unit ? `${qty} ${g.unit} ${g.name}` : `${qty} ${g.name}`;
+    }
+    return g.occurrences > 1 ? `${g.name} × ${g.occurrences}` : g.name;
+  });
+}
+
+function autoFillProducts() {
+  collectCoachingSchedule();
+  const allSupplies = [];
+  coachingSchedule.forEach(w => (w.supplies || []).forEach(s => allSupplies.push(s)));
+  if (!allSupplies.length) { banner('Tiada item dalam kolum Bekalan minggu-minggu', 'error'); return; }
+  document.getElementById('f-products').value = aggregateLines(allSupplies).join('\n');
+  banner('Produk diisi dari Bekalan mingguan');
+}
+
+function autoFillBimbingan() {
+  collectCoachingSchedule();
+  const all = [];
+  coachingSchedule.forEach(w => {
+    (w.guidance || []).forEach(s => all.push(s));
+    (w.aktiviti || []).forEach(s => all.push(s));
+  });
+  if (!all.length) { banner('Tiada item dalam Bimbingan/Aktiviti mingguan', 'error'); return; }
+  document.getElementById('f-bimbingan').value = aggregateLines(all).join('\n');
+  banner('Bimbingan diisi dari Coaching Mingguan');
+}
+
+async function uploadRujukan(week, input) {
+  const files = Array.from(input.files || []);
+  if (!files.length) return;
+  collectCoachingSchedule();
+  const item = coachingSchedule.find(x => (x.week || x.day) === week);
+  if (!item) return;
+  for (const file of files) {
+    if (file.size > 20 * 1024 * 1024) { banner(`${file.name} > 20MB. Lompat.`, 'error'); continue; }
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const path = `pkg-${document.getElementById('f-pkg-id').value || 'new'}/wk${week}/${Date.now()}_${safeName}`;
+    const { error } = await window.db.storage.from('pakej-rujukan').upload(path, file);
+    if (error) { banner('Upload gagal: ' + error.message, 'error'); continue; }
+    const { data: signed } = await window.db.storage.from('pakej-rujukan').createSignedUrl(path, 3600 * 24 * 365);
+    item.rujukan_files = item.rujukan_files || [];
+    item.rujukan_files.push({ name: file.name, path, url: signed?.signedUrl || path });
+  }
+  input.value = '';
+  renderCoachingScheduleEditor();
+  banner('Fail dimuat naik');
+}
+
+async function removeRujukan(week, idx) {
+  collectCoachingSchedule();
+  const item = coachingSchedule.find(x => (x.week || x.day) === week);
+  if (!item?.rujukan_files?.[idx]) return;
+  const file = item.rujukan_files[idx];
+  if (file.path) {
+    await window.db.storage.from('pakej-rujukan').remove([file.path]).catch(() => {});
+  }
+  item.rujukan_files.splice(idx, 1);
+  renderCoachingScheduleEditor();
 }
 
 function collectCoachingSchedule() {
-  const unit = getDurationUnit();
-  const count = getScheduleCount();
-  const keyName = unit === 'day' ? 'day' : 'week';
-  const schedule = normalizeCoachingSchedule(coachingSchedule, count, unit);
-  document.querySelectorAll('.weekly-field').forEach(el => {
-    const idx = parseInt(el.dataset.index);
-    const field = el.dataset.field;
-    const item = schedule.find(x => x[keyName] === idx);
-    if (item) item[field] = toArray(el.value);
-  });
-  return schedule.filter(item => item.guidance.length || item.references.length || item.supplies.length);
+  // State already kept in coachingSchedule via oninput handlers
+  // Just normalize + filter empty rows
+  return coachingSchedule.map(item => ({
+    ...item,
+    guidance: (item.guidance || []).map(s => String(s).trim()).filter(Boolean),
+    aktiviti: (item.aktiviti || []).map(s => String(s).trim()).filter(Boolean),
+    supplies: (item.supplies || []).map(s => String(s).trim()).filter(Boolean),
+  })).filter(item =>
+    item.guidance.length || item.aktiviti.length || item.supplies.length ||
+    (item.rujukan_files && item.rujukan_files.length) || (item.mode && item.mode !== 'both')
+  );
 }
 
 function populateForm(pkg) {
@@ -392,15 +688,16 @@ function populateForm(pkg) {
   document.getElementById('f-bimbingan').value = toText(pkg?.bimbingan);
   coachingSchedule = normalizeCoachingSchedule(pkg?.coaching_schedule || [], getScheduleCount(), getDurationUnit());
   renderCoachingScheduleEditor();
+  dailySchedule = Array.isArray(pkg?.daily_schedule) ? pkg.daily_schedule.map(x => ({ ...x })) : [];
+  renderDailySchedule();
+
+  // Agreement clauses
+  document.getElementById('f-agreement-title').value = pkg?.agreement_title || 'Kontrak Pelaburan Kesihatan';
+  document.getElementById('f-agreement-version').value = pkg?.agreement_version || '';
+  renderClauses(Array.isArray(pkg?.agreement_clauses) ? pkg.agreement_clauses : []);
   document.getElementById('f-sched-type').value = pkg?.schedule?.type || '';
   document.getElementById('f-sched-val').value  = pkg?.schedule?.value || 1;
   updateSchedUI();
-
-  // Sprint 1 fields
-  document.getElementById('f-madu-freq').value = pkg?.madu_frequency_per_day || '';
-  document.getElementById('f-madu-label').value = pkg?.madu_schedule_label || '';
-  document.getElementById('f-allow-online-full').checked = !!pkg?.allow_online_full_duration;
-  document.getElementById('f-online-lock-week').value = pkg?.online_lock_from_week || 3;
 
   // Agreement PDF
   document.getElementById('f-agreement-pdf').value = pkg?.agreement_pdf || '';
@@ -506,11 +803,11 @@ async function savePackage() {
       schedule,
       products, bimbingan, inclusions,
       coaching_schedule: collectCoachingSchedule(),
-      madu_frequency_per_day: parseInt(document.getElementById('f-madu-freq').value) || null,
-      madu_schedule_label: document.getElementById('f-madu-label').value.trim() || null,
-      allow_online_full_duration: document.getElementById('f-allow-online-full').checked,
-      online_lock_from_week: parseInt(document.getElementById('f-online-lock-week').value) || 3,
+      daily_schedule: collectDailySchedule(),
       agreement_pdf: document.getElementById('f-agreement-pdf').value || null,
+      agreement_title: document.getElementById('f-agreement-title')?.value.trim() || 'Kontrak Pelaburan Kesihatan',
+      agreement_version: document.getElementById('f-agreement-version')?.value.trim() || null,
+      agreement_clauses: collectClauses(),
       updated_at: new Date().toISOString(),
     };
 
@@ -524,6 +821,7 @@ async function savePackage() {
       banner('Pakej baru ditambah');
     }
     await auditLog(editId ? 'package.updated' : 'package.created', editId || data.package_id, { name });
+    clearDraft();
     setTimeout(() => { window.location.href = 'pakej.html'; }, 800);
   } catch (err) {
     if (err.message?.includes('duration_unit') && data) {
@@ -537,6 +835,7 @@ async function savePackage() {
           if (error) throw error;
         }
         await auditLog(editId ? 'package.updated' : 'package.created', editId || fallbackData.package_id, { name });
+        clearDraft();
         banner('Disimpan');
         setTimeout(() => { window.location.href = 'pakej.html'; }, 800);
       } catch (err2) { banner('Ralat: ' + err2.message, 'error'); }
@@ -554,6 +853,7 @@ async function savePackage() {
 
   const params = new URLSearchParams(location.search);
   const editId = params.get('id');
+  window._draftKey = `isw_pkg_draft_${editId || 'new'}`;
 
   if (editId) {
     setPageTitle('Edit Pakej', 'Kemaskini maklumat pakej rawatan');
@@ -568,8 +868,136 @@ async function savePackage() {
     renderCoachingScheduleEditor();
   }
 
-  document.getElementById('f-weeks').addEventListener('change', () => renderCoachingScheduleEditor(true));
+  // Restore draft if exists (always overlay over loaded/blank form)
+  restoreDraft();
+
+  document.getElementById('f-weeks').addEventListener('input', () => { renderCoachingScheduleEditor(true); saveDraftDebounced(); });
+  attachDraftAutoSave();
 })();
+
+// ──────── DRAFT AUTO-SAVE ─────────
+let _draftTimer = null;
+function saveDraftDebounced() {
+  clearTimeout(_draftTimer);
+  _draftTimer = setTimeout(saveDraft, 500);
+}
+
+function saveDraft() {
+  try {
+    const snap = {
+      f_pkg_id:        document.getElementById('f-pkg-id')?.value,
+      f_name:          document.getElementById('f-name')?.value,
+      f_desc:          document.getElementById('f-desc')?.value,
+      f_price:         document.getElementById('f-price')?.value,
+      f_weeks:         document.getElementById('f-weeks')?.value,
+      f_duration_unit: document.getElementById('f-duration-unit')?.value,
+      f_image_url:     document.getElementById('f-image-url')?.value,
+      f_image_raw:     document.getElementById('f-image-raw')?.value,
+      f_sched_type:    document.getElementById('f-sched-type')?.value,
+      f_sched_val:     document.getElementById('f-sched-val')?.value,
+      f_products:      document.getElementById('f-products')?.value,
+      f_bimbingan:     document.getElementById('f-bimbingan')?.value,
+      f_agreement_pdf: document.getElementById('f-agreement-pdf')?.value,
+      f_agreement_title:   document.getElementById('f-agreement-title')?.value,
+      f_agreement_version: document.getElementById('f-agreement-version')?.value,
+      agreement_clauses:   collectClauses(),
+      coaching_schedule: coachingSchedule,
+      daily_schedule: dailySchedule,
+      saved_at: Date.now(),
+    };
+    localStorage.setItem(window._draftKey, JSON.stringify(snap));
+    const ind = document.getElementById('draft-indicator');
+    if (ind) {
+      ind.classList.remove('hidden');
+      ind.textContent = '💾 Draf disimpan';
+      clearTimeout(ind._t);
+      ind._t = setTimeout(() => ind.classList.add('hidden'), 2000);
+    }
+  } catch (e) { /* localStorage full / unavailable */ }
+}
+
+function restoreDraft() {
+  try {
+    const raw = localStorage.getItem(window._draftKey);
+    if (!raw) return;
+    const snap = JSON.parse(raw);
+    if (!snap) return;
+    // Apply text fields
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
+    setVal('f-pkg-id', snap.f_pkg_id);
+    setVal('f-name', snap.f_name);
+    setVal('f-desc', snap.f_desc);
+    setVal('f-price', snap.f_price);
+    setVal('f-weeks', snap.f_weeks);
+    setVal('f-duration-unit', snap.f_duration_unit);
+    setVal('f-image-url', snap.f_image_url);
+    setVal('f-image-raw', snap.f_image_raw);
+    setVal('f-sched-type', snap.f_sched_type);
+    setVal('f-sched-val', snap.f_sched_val);
+    setVal('f-products', snap.f_products);
+    setVal('f-bimbingan', snap.f_bimbingan);
+    setVal('f-agreement-pdf', snap.f_agreement_pdf);
+    setVal('f-agreement-title', snap.f_agreement_title);
+    setVal('f-agreement-version', snap.f_agreement_version);
+    if (Array.isArray(snap.agreement_clauses)) renderClauses(snap.agreement_clauses);
+    if (snap.coaching_schedule?.length) {
+      coachingSchedule = snap.coaching_schedule;
+      renderCoachingScheduleEditor();
+    }
+    if (Array.isArray(snap.daily_schedule)) {
+      dailySchedule = snap.daily_schedule;
+      renderDailySchedule();
+    }
+    if (typeof updateSchedUI === 'function') updateSchedUI();
+    if (typeof renderAgreementStatus === 'function') renderAgreementStatus();
+    banner('Draf dimuat semula');
+  } catch (e) { /* ignore */ }
+}
+
+function clearDraft(askConfirm = false) {
+  if (askConfirm && !confirm('Padam draf dan reload?')) return;
+  try { localStorage.removeItem(window._draftKey); } catch (e) {}
+  if (askConfirm) location.reload();
+}
+
+function cancelEdit() {
+  if (confirm('Batal & buang perubahan?')) {
+    clearDraft();
+    window.location.href = 'pakej.html';
+  }
+}
+
+function attachDraftAutoSave() {
+  // Wire all form inputs to debounced save
+  const ids = ['f-pkg-id','f-name','f-desc','f-price','f-weeks','f-duration-unit',
+               'f-image-url','f-image-raw','f-sched-type','f-sched-val',
+               'f-products','f-bimbingan','f-agreement-pdf',
+               'f-agreement-title','f-agreement-version'];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', saveDraftDebounced);
+    el.addEventListener('change', saveDraftDebounced);
+  });
+  // Item repeater + mode + rujukan changes update coachingSchedule in-memory — save when they fire
+  document.getElementById('weekly-schedule-editor')?.addEventListener('input', saveDraftDebounced);
+  document.getElementById('weekly-schedule-editor')?.addEventListener('change', saveDraftDebounced);
+  document.getElementById('daily-schedule-list')?.addEventListener('input', saveDraftDebounced);
+  document.getElementById('f-clauses-list')?.addEventListener('input', saveDraftDebounced);
+}
+
+// Wrap item ops to trigger save
+['updateItem','addItem','removeItem','updateMode','uploadRujukan','removeRujukan','updateDaily','addDailyItem','removeDaily','addClause','removeClause','moveClause'].forEach(name => {
+  const orig = window[name];
+  if (typeof orig === 'function') {
+    window[name] = function (...args) {
+      const r = orig.apply(this, args);
+      if (r && typeof r.then === 'function') return r.then(v => { saveDraftDebounced(); return v; });
+      saveDraftDebounced();
+      return r;
+    };
+  }
+});
 </script>
 </body>
 </html>

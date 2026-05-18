@@ -40,7 +40,7 @@ async function resolveKycApproved() {
 
 async function enforceKyc(currentPageId) {
   // Always-allowed pages (patient can browse packages + pay during KOB flow)
-  if (['kyc', 'profile', 'dashboard', 'kob', 'pakej', 'payment'].includes(currentPageId)) return true;
+  if (['kyc', 'profile', 'dashboard', 'kob', 'pakej', 'payment', 'routine'].includes(currentPageId)) return true;
 
   // KOB flow gating: must complete KOB before accessing other features
   const p = window.patientRecord;

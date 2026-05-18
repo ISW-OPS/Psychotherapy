@@ -23,14 +23,26 @@
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
       <div class="p-4 md:p-8 space-y-6">
-        <!-- Info: doctor-driven package selection -->
-        <div class="bg-navy-light/40 border border-navy/20 rounded-xl p-4 text-sm text-navy">
-          📌 Pakej rawatan akan dipilih oleh doktor semasa sesi KOB. Anda boleh lihat semua jenis pakej yang tersedia di bawah sebagai rujukan.
+        <!-- Info: doctor-driven first time, self-renewal after -->
+        <div id="info-banner" class="bg-navy-light/40 border border-navy/20 rounded-xl p-4 text-sm text-navy">
+          📌 Pakej rawatan pertama akan dipilih oleh doktor semasa sesi KOB. Selepas pakej tamat, anda boleh sambung sendiri dengan pakej baru.
+        </div>
+
+        <!-- Expired banner — pakej dah habis, boleh sambung -->
+        <div id="expired-banner" class="hidden bg-gradient-to-r from-gold to-gold-dark text-white rounded-2xl p-5">
+          <div class="flex items-center gap-4 flex-wrap">
+            <div class="text-5xl">⏰</div>
+            <div class="flex-1 min-w-0">
+              <h2 class="text-xl font-bold">Pakej Sebelumnya Dah Tamat</h2>
+              <p class="text-sm opacity-90 mt-1">Pakej terakhir anda: <span id="expired-name" class="font-semibold"></span> · tamat <span id="expired-date"></span></p>
+              <p class="text-xs opacity-90 mt-2">Pilih pakej baru di bawah untuk sambung rawatan, atau biarkan kalau dah tak perlu.</p>
+            </div>
+          </div>
         </div>
 
         <!-- Active package banner -->
         <div id="active-banner" class="hidden bg-gradient-to-r from-green to-green-dark text-white rounded-2xl p-5">
-          <div class="flex items-center justify-between flex-wrap gap-4">
+          <div class="flex items-start justify-between flex-wrap gap-4">
             <div class="flex-1 min-w-[200px]">
               <div class="flex items-center gap-2">
                 <span class="chip bg-white text-green-dark font-bold">✓ AKTIF</span>
@@ -38,13 +50,31 @@
               </div>
               <div id="active-name" class="text-2xl font-bold mt-2"></div>
               <div id="active-expiry" class="text-sm opacity-80 mt-1"></div>
-              <div id="active-progress" class="text-xs opacity-80 mt-1"></div>
             </div>
             <div class="flex gap-2 flex-wrap">
               <a href="plan.html" class="bg-white text-green-dark font-semibold px-4 py-2 rounded-lg text-sm hover:bg-cream">💊 Lihat Plan →</a>
-              <a href="checkin.html" class="bg-white/20 text-white font-semibold px-4 py-2 rounded-lg text-sm hover:bg-white/30">✅ Daily Check-in</a>
+              <a href="checkin.html" class="bg-white/20 text-white font-semibold px-4 py-2 rounded-lg text-sm hover:bg-white/30">✅ Check-in</a>
+              <a id="btn-view-agreement" href="#" target="_blank" class="hidden bg-white/20 text-white font-semibold px-4 py-2 rounded-lg text-sm hover:bg-white/30">📄 Agreement</a>
             </div>
           </div>
+
+          <!-- Progress bar -->
+          <div id="active-progress-wrap" class="hidden mt-4">
+            <div class="flex items-center justify-between text-xs opacity-90 mb-1.5">
+              <span id="active-progress-label"></span>
+              <span id="active-progress-percent" class="font-semibold"></span>
+            </div>
+            <div class="w-full h-2 bg-white/20 rounded-full overflow-hidden">
+              <div id="active-progress-bar" class="h-full bg-white rounded-full transition-all" style="width:0%"></div>
+            </div>
+          </div>
+
+          <!-- Countdown -->
+          <div id="active-countdown" class="hidden mt-3 flex items-center gap-2 text-sm">
+            <span class="text-xl">⏳</span>
+            <span>Tinggal <span id="active-days-left" class="font-bold"></span></span>
+          </div>
+
           <div id="active-banner-note" class="mt-3 pt-3 border-t border-white/20 text-xs opacity-90">
             ℹ️ Anda tidak boleh tempah pakej baru sehingga pakej ini selesai/tamat tempoh.
           </div>
@@ -67,10 +97,13 @@
           <div id="packages-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4"></div>
         </div>
 
-        <!-- Purchase history -->
+        <!-- History timeline — KOB + Pakej + Treatment -->
         <div id="history-section" class="hidden">
-          <h3 class="font-bold text-lg mb-3 mt-8">Sejarah Pembelian</h3>
-          <div id="history-list" class="space-y-2"></div>
+          <div class="flex items-center justify-between mt-8 mb-3">
+            <h3 class="font-bold text-lg">📋 Sejarah Rawatan Saya</h3>
+            <span id="history-count" class="text-xs text-ink/50"></span>
+          </div>
+          <div id="history-timeline" class="space-y-3"></div>
         </div>
       </div>
     </main>
@@ -120,6 +153,8 @@ function renderPackages() {
   const hasActive = !!activeId && (!patientRecord?.package_expires_at || new Date(patientRecord.package_expires_at) >= new Date());
   const activePkg = PACKAGES.find(x => x.id === activeId);
   const activeIsFree = activePkg ? activePkg.price === 0 : false;
+  const kobDone = patientRecord?.kob_status === 'completed';
+  const canSelfPurchase = kobDone && !hasActive;
 
   document.getElementById('packages-grid').innerHTML = PACKAGES.map(p => {
     const isActive = p.id === activeId;
@@ -155,7 +190,9 @@ function renderPackages() {
           <div class="font-bold text-navy text-sm">${priceDisplay}</div>
           ${isActive
             ? '<span class="text-xs text-green-dark font-semibold">✓ Aktif</span>'
-            : `<a href="pakej-detail.html#id=${p.id}" class="bg-cream border border-ink/20 text-ink/70 text-xs px-3 py-1.5 rounded-lg hover:border-navy hover:text-navy inline-block">Lihat Details →</a>`}
+            : canSelfPurchase
+              ? `<a href="pakej-detail.html#id=${p.id}" class="bg-navy text-white text-xs px-3 py-1.5 rounded-lg hover:bg-navy-dark font-semibold inline-block">${p.price === 0 ? 'Aktifkan' : 'Beli'} →</a>`
+              : `<a href="pakej-detail.html#id=${p.id}" class="bg-cream border border-ink/20 text-ink/70 text-xs px-3 py-1.5 rounded-lg hover:border-navy hover:text-navy inline-block">Lihat Details →</a>`}
         </div>
       </div>
     </div>`;
@@ -235,21 +272,108 @@ async function purchasePackage(id) {
 }
 
 async function loadHistory() {
-  const data = await dbQuery('psy_package_purchases', { eq: { patient_id: patientRecord.id }, order: { col: 'purchased_at' } }).catch(() => []);
-  if (data.length === 0) return;
+  const [purchases, kobs, plans] = await Promise.all([
+    dbQuery('psy_package_purchases', { eq: { patient_id: patientRecord.id }, order: { col: 'purchased_at' } }).catch(() => []),
+    dbQuery('psy_kob_sessions', { eq: { patient_id: patientRecord.id }, order: { col: 'scheduled_at' } }).catch(() => []),
+    dbQuery('psy_treatment_plans', { eq: { patient_id: patientRecord.id } }).catch(() => []),
+  ]);
+
+  if (purchases.length === 0 && kobs.length === 0) return;
+
+  // Fetch weekly progress for all plans
+  const planIds = plans.map(p => p.id);
+  let allProgress = [];
+  if (planIds.length > 0) {
+    const { data } = await window.db.from('psy_plan_weekly_progress').select('plan_id, status').in('plan_id', planIds);
+    allProgress = data || [];
+  }
+  const progressByPlan = {};
+  allProgress.forEach(w => {
+    progressByPlan[w.plan_id] = progressByPlan[w.plan_id] || { total: 0, hadir: 0 };
+    progressByPlan[w.plan_id].total++;
+    if (w.status === 'hadir') progressByPlan[w.plan_id].hadir++;
+  });
+
+  // Build unified timeline events
+  const now = new Date();
+  const events = [];
+  kobs.forEach(k => events.push({ type: 'kob', date: k.scheduled_at, data: k }));
+  purchases.forEach(p => events.push({ type: 'pakej', date: p.purchased_at, data: p }));
+  events.sort((a, b) => new Date(b.date) - new Date(a.date));
 
   document.getElementById('history-section').classList.remove('hidden');
-  document.getElementById('history-list').innerHTML = data.map(h => `
-    <div class="bg-white rounded-xl border border-ink/10 p-4 flex items-center justify-between gap-3 flex-wrap">
-      <div>
-        <div class="font-semibold">${h.package_name}</div>
-        <div class="text-xs text-ink/60">${formatDate(h.purchased_at)} ${h.expires_at ? '· habis ' + formatDate(h.expires_at) : ''}</div>
+  document.getElementById('history-count').textContent = `${events.length} rekod`;
+
+  document.getElementById('history-timeline').innerHTML = events.map(ev => {
+    if (ev.type === 'kob') return renderKobEvent(ev.data);
+    return renderPakejEvent(ev.data, plans, progressByPlan, now);
+  }).join('');
+}
+
+function renderKobEvent(k) {
+  const dt = new Date(k.scheduled_at);
+  const dateStr = dt.toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' });
+  const timeStr = dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  const statusMap = {
+    booked:    { label: 'Ditempah', cls: 'bg-navy-light text-navy' },
+    hadir:     { label: 'Hadir', cls: 'bg-gold/30 text-gold-dark' },
+    completed: { label: 'Selesai', cls: 'bg-green-light text-green-dark' },
+    cancelled: { label: 'Batal', cls: 'bg-terracotta/15 text-terracotta' },
+  };
+  const st = statusMap[k.status] || statusMap.booked;
+  const doctor = k.doctor_selesai_name || k.doctor_hadir_name || '—';
+  return `<div class="bg-white rounded-xl border border-navy/20 p-4 flex gap-4">
+    <div class="w-10 h-10 rounded-lg bg-navy-light flex items-center justify-center flex-shrink-0 text-xl">🩺</div>
+    <div class="flex-1 min-w-0">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="font-semibold text-sm">Sesi KOB</span>
+        <span class="chip ${st.cls} text-[10px]">${st.label}</span>
       </div>
-      <div class="flex items-center gap-3">
-        <div class="font-bold text-navy">${h.price === 0 ? 'PERCUMA' : 'RM ' + Number(h.price).toFixed(2)}</div>
-        <span class="chip ${h.status === 'active' ? 'bg-green-light text-green-dark' : h.status === 'pending_payment' ? 'bg-gold/30 text-gold-dark' : 'bg-ink/10 text-ink/60'}">${h.status}</span>
+      <div class="text-xs text-ink/60 mt-1">${dateStr} · ${timeStr} · ${k.mode === 'online' ? '💻 Online' : '🏥 F2F'}</div>
+      <div class="text-xs text-ink/60 mt-0.5">Doktor: ${doctor}</div>
+      ${k.recommended_package_name ? `<div class="text-xs text-navy mt-1">Cadangan pakej: <span class="font-semibold">${k.recommended_package_name}</span></div>` : ''}
+      ${k.doctor_notes ? `<div class="text-xs text-ink/70 mt-2 p-2 bg-cream rounded">📝 ${k.doctor_notes}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+function renderPakejEvent(h, plans, progressByPlan, now) {
+  const purchased = formatDate(h.purchased_at);
+  const expires = h.expires_at ? formatDate(h.expires_at) : null;
+  const isExpired = h.expires_at && new Date(h.expires_at) < now;
+  const isActive = h.status === 'active' && !isExpired;
+  const priceStr = h.price === 0 ? 'PERCUMA' : 'RM ' + Number(h.price).toFixed(2);
+
+  const statusChip = isActive
+    ? '<span class="chip bg-green-light text-green-dark text-[10px]">✓ Aktif</span>'
+    : isExpired
+      ? '<span class="chip bg-ink/10 text-ink/60 text-[10px]">Tamat</span>'
+      : h.status === 'pending_payment'
+        ? '<span class="chip bg-gold/30 text-gold-dark text-[10px]">Tunggu Bayaran</span>'
+        : `<span class="chip bg-ink/10 text-ink/60 text-[10px]">${h.status}</span>`;
+
+  // Find plan for this package
+  const plan = plans.find(pl => pl.name === h.package_name || pl.package_id === h.package_id);
+  let progressStr = '';
+  if (plan && progressByPlan[plan.id]) {
+    const { hadir } = progressByPlan[plan.id];
+    progressStr = `<div class="text-xs text-ink/60 mt-1">Progress: ${hadir} / ${plan.duration_weeks || '?'} minggu</div>`;
+  }
+
+  return `<div class="bg-white rounded-xl border ${isActive ? 'border-green/30' : 'border-ink/10'} p-4 flex gap-4">
+    <div class="w-10 h-10 rounded-lg ${isActive ? 'bg-green-light' : 'bg-cream'} flex items-center justify-center flex-shrink-0 text-xl">📦</div>
+    <div class="flex-1 min-w-0">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="font-semibold text-sm">${h.package_name}</span>
+        ${statusChip}
+        <span class="ml-auto font-bold text-navy text-sm">${priceStr}</span>
       </div>
-    </div>`).join('');
+      <div class="text-xs text-ink/60 mt-1">
+        Beli: ${purchased}${expires ? ` · ${isExpired ? 'tamat' : 'sah hingga'} ${expires}` : ''}
+      </div>
+      ${progressStr}
+    </div>
+  </div>`;
 }
 
 (async () => {
@@ -258,7 +382,11 @@ async function loadHistory() {
 
   await loadPackagesFromDB();
 
-  if (patientRecord.active_package_id) {
+  const hasActive = !!patientRecord.active_package_id &&
+    (!patientRecord.package_expires_at || new Date(patientRecord.package_expires_at) >= new Date());
+  const isExpired = !!patientRecord.active_package_id && !hasActive;
+
+  if (hasActive) {
     document.getElementById('active-banner').classList.remove('hidden');
     document.getElementById('no-package-banner').classList.add('hidden');
     document.getElementById('active-name').textContent = patientRecord.active_package_name || patientRecord.active_package_id;
@@ -266,14 +394,52 @@ async function loadHistory() {
       ? `Sah hingga ${formatDate(patientRecord.package_expires_at)}`
       : 'Tiada tarikh tamat';
 
-    // Load treatment plan progress
+    // Countdown — hari tinggal
+    if (patientRecord.package_expires_at) {
+      const daysLeft = Math.ceil((new Date(patientRecord.package_expires_at) - new Date()) / 86400000);
+      if (daysLeft >= 0) {
+        document.getElementById('active-countdown').classList.remove('hidden');
+        document.getElementById('active-days-left').textContent =
+          daysLeft === 0 ? 'tamat hari ini' : `${daysLeft} hari`;
+      }
+    }
+
+    // Progress bar
     const plans = await dbQuery('psy_treatment_plans', { eq: { patient_id: patientRecord.id, status: 'active' } }).catch(() => []);
     if (plans.length > 0) {
       const p = plans[0];
       const weekly = await dbQuery('psy_plan_weekly_progress', { eq: { plan_id: p.id } }).catch(() => []);
       const done = weekly.filter(w => w.status === 'hadir').length;
-      document.getElementById('active-progress').textContent = `Progress: ${done} / ${p.duration_weeks} minggu selesai`;
+      const total = p.duration_weeks || weekly.length || 1;
+      const pct = Math.min(100, Math.round((done / total) * 100));
+      document.getElementById('active-progress-wrap').classList.remove('hidden');
+      document.getElementById('active-progress-label').textContent = `Minggu ${done} / ${total}`;
+      document.getElementById('active-progress-percent').textContent = `${pct}%`;
+      document.getElementById('active-progress-bar').style.width = `${pct}%`;
     }
+
+    // View Agreement link
+    const agreements = await dbQuery('psy_kob_agreements', {
+      eq: { patient_id: patientRecord.id },
+      order: { col: 'signed_at', asc: false },
+      limit: 1,
+    }).catch(() => []);
+    const signedUrl = agreements[0]?.signed_pdf_url;
+    if (signedUrl) {
+      const btn = document.getElementById('btn-view-agreement');
+      // signed_pdf_url stored as full signed URL (1yr expiry) — fall back to fresh signed URL if it's a path
+      let href = signedUrl;
+      if (!signedUrl.startsWith('http')) {
+        const { data } = await window.db.storage.from('kob-signatures').createSignedUrl(signedUrl, 3600).catch(() => ({ data: null }));
+        href = data?.signedUrl;
+      }
+      if (href) { btn.href = href; btn.classList.remove('hidden'); }
+    }
+  } else if (isExpired) {
+    document.getElementById('expired-banner').classList.remove('hidden');
+    document.getElementById('no-package-banner').classList.add('hidden');
+    document.getElementById('expired-name').textContent = patientRecord.active_package_name || patientRecord.active_package_id;
+    document.getElementById('expired-date').textContent = formatDate(patientRecord.package_expires_at);
   }
 
   // Update banner note for free plan

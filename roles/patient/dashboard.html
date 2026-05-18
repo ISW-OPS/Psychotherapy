@@ -24,6 +24,21 @@
 
       <section class="p-4 md:p-8 space-y-5">
 
+        <!-- Daily Schedule widget — next 3 upcoming activities -->
+        <div id="daily-widget" class="hidden bg-gradient-to-br from-navy to-navy-dark text-white rounded-2xl p-5">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <div class="flex items-center gap-2">
+              <span class="text-2xl">🕐</span>
+              <div>
+                <div class="font-bold">Jadual Harian</div>
+                <div class="text-xs opacity-70">Aktiviti seterusnya</div>
+              </div>
+            </div>
+            <a href="routine.html" class="text-xs font-semibold bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg whitespace-nowrap">Lihat penuh →</a>
+          </div>
+          <div id="daily-widget-list" class="space-y-1.5"></div>
+        </div>
+
         <!-- KOB Step 2: Book slot after KYC -->
         <div id="kob-book-banner" class="hidden bg-gradient-to-r from-navy to-navy-dark text-white rounded-2xl p-5 flex items-center gap-4 flex-wrap">
           <div class="text-3xl">📅</div>
@@ -495,12 +510,79 @@ function quickAction(icon, label, href, color) {
         </div>`;
     }
 
+    // Daily schedule widget
+    await loadDailyWidget();
+
   } catch (err) {
     console.error('Dashboard error:', err);
     document.querySelector('section').insertAdjacentHTML('afterbegin',
       `<div class="bg-terracotta/10 text-terracotta rounded-xl p-4 text-sm">Ralat: ${err.message}</div>`);
   }
 })();
+
+async function loadDailyWidget() {
+  if (!patientRecord?.active_package_id) return;
+  let schedule = Array.isArray(patientRecord.daily_schedule) ? patientRecord.daily_schedule : null;
+  if (!schedule) {
+    const pkgRows = await dbQuery('psy_packages', { eq: { package_id: patientRecord.active_package_id } }).catch(() => []);
+    schedule = Array.isArray(pkgRows[0]?.daily_schedule) ? pkgRows[0].daily_schedule : [];
+  }
+  if (!schedule.length) return;
+
+  // Today's completions
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const { data: doneRows } = await window.db.from('psy_daily_completions')
+    .select('item_time')
+    .eq('patient_id', patientRecord.id)
+    .eq('log_date', todayKey);
+  const doneSet = new Set((doneRows || []).map(r => r.item_time));
+  const total = schedule.length;
+  const done = doneSet.size;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+
+  // Sort + pick next 3 upcoming (or today's remaining)
+  const now = new Date();
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  const upcoming = schedule
+    .map(it => {
+      const [h, m] = (it.time || '00:00').split(':').map(Number);
+      return { ...it, mins: h * 60 + m };
+    })
+    .sort((a, b) => a.mins - b.mins);
+  const next3 = upcoming.filter(it => it.mins >= nowMins - 15 && !doneSet.has(it.time)).slice(0, 3);
+  const display = next3.length ? next3 : upcoming.slice(0, 3);
+  if (!display.length) return;
+
+  document.getElementById('daily-widget').classList.remove('hidden');
+  // Inject progress bar at top of widget
+  const widget = document.getElementById('daily-widget');
+  const headerDiv = widget.querySelector('.flex.items-center.justify-between');
+  if (headerDiv && !document.getElementById('dw-progress')) {
+    const progEl = document.createElement('div');
+    progEl.id = 'dw-progress';
+    progEl.className = 'mb-3';
+    progEl.innerHTML = `
+      <div class="flex items-center justify-between text-xs mb-1">
+        <span class="opacity-80">Selesai hari ini</span>
+        <span class="font-bold">${done} / ${total} · ${pct}%</span>
+      </div>
+      <div class="w-full h-2 bg-white/15 rounded-full overflow-hidden">
+        <div class="h-full bg-green transition-all" style="width:${pct}%"></div>
+      </div>`;
+    headerDiv.insertAdjacentElement('afterend', progEl);
+  }
+  document.getElementById('daily-widget-list').innerHTML = display.map(it => {
+    const diff = it.mins - nowMins;
+    const isSoon = diff >= -15 && diff <= 30;
+    const isDone = doneSet.has(it.time);
+    return `<div class="flex items-center gap-3 px-3 py-2 rounded-lg ${isDone ? 'bg-green/20' : isSoon ? 'bg-gold/30' : 'bg-white/10'}">
+      <span class="font-mono text-sm font-bold w-16 ${isDone ? 'opacity-50 line-through' : isSoon ? 'text-gold' : ''}">${it.time || ''}</span>
+      <span class="text-sm flex-1 ${isDone ? 'opacity-50 line-through' : ''}">${(it.activity || '').replace(/[<>]/g,'')}</span>
+      ${isDone ? '<span class="text-[10px] font-semibold">✓</span>'
+        : isSoon ? '<span class="text-[10px] font-semibold bg-gold text-navy-dark px-1.5 py-0.5 rounded">⏰ Soon</span>' : ''}
+    </div>`;
+  }).join('');
+}
 </script>
 </body>
 </html>
