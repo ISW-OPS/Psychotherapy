@@ -60,6 +60,10 @@
                 <div id="view-duration" class="text-xl font-bold text-navy mt-0.5"></div>
               </div>
             </div>
+            <div class="pt-3 border-t border-ink/8">
+              <div class="text-[11px] text-ink/40 uppercase font-semibold tracking-wide mb-1.5">Bekalan diguna per session</div>
+              <div id="view-supplies" class="text-sm space-y-1"></div>
+            </div>
           </div>
 
         </div>
@@ -102,6 +106,15 @@
               <input id="f-duration" type="number" class="w-full mt-1 px-3 py-2.5 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none">
             </div>
           </div>
+
+          <div class="pt-3 border-t border-ink/8">
+            <div class="flex items-center justify-between mb-2">
+              <label class="text-xs font-semibold text-ink/60">Bekalan diguna per session</label>
+              <button type="button" onclick="addSupplyRow()" class="text-xs font-semibold text-navy hover:underline">+ Tambah Bekalan</button>
+            </div>
+            <div id="supplies-rows" class="space-y-2"></div>
+            <p class="text-[10px] text-ink/40 mt-1.5">Sistem auto-kira demand inventory berdasarkan bilangan service ini dijadualkan.</p>
+          </div>
         </div>
 
       </div>
@@ -117,6 +130,7 @@
 <script src="_shared.js"></script>
 <script>
 let currentSvc = null;
+let allInvItems = [];
 
 function renderView(s) {
   currentSvc = s;
@@ -135,6 +149,43 @@ function renderView(s) {
   document.getElementById('view-desc').textContent     = s.description || '';
   document.getElementById('view-price').textContent    = s.price != null ? `RM ${Number(s.price).toFixed(2)}` : '—';
   document.getElementById('view-duration').textContent = s.duration_min ? `${s.duration_min} min` : '—';
+
+  const sup = Array.isArray(s.supplies) ? s.supplies : [];
+  document.getElementById('view-supplies').innerHTML = sup.length
+    ? sup.map(x => `<div class="flex justify-between"><span class="text-ink/70">${escapeHtml(x.item_name || '—')}</span><span class="font-semibold">${x.qty || 0}</span></div>`).join('')
+    : '<div class="text-ink/40 italic text-xs">Tiada bekalan ditetapkan.</div>';
+}
+
+function escapeHtml(s) { return String(s || '').replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
+
+function addSupplyRow(item_id, qty) {
+  const wrap = document.getElementById('supplies-rows');
+  const idx  = wrap.children.length;
+  const optHtml = allInvItems.map(i => `<option value="${i.id}" ${i.id === item_id ? 'selected' : ''}>${escapeHtml(i.name)} (${i.unit || 'unit'})</option>`).join('');
+  const row = document.createElement('div');
+  row.className = 'flex items-center gap-2';
+  row.innerHTML = `
+    <select class="supply-item flex-1 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white">
+      <option value="">— Pilih bekalan —</option>
+      ${optHtml}
+    </select>
+    <input type="number" min="0" step="0.01" placeholder="Qty" value="${qty ?? ''}" class="supply-qty w-20 px-2 py-2 border border-ink/20 rounded-lg text-sm">
+    <button type="button" onclick="this.parentElement.remove()" class="text-terracotta text-lg leading-none px-2">×</button>`;
+  wrap.appendChild(row);
+}
+
+function readSupplies() {
+  const rows = document.querySelectorAll('#supplies-rows > div');
+  const out = [];
+  rows.forEach(r => {
+    const id = r.querySelector('.supply-item').value;
+    const qty = parseFloat(r.querySelector('.supply-qty').value);
+    if (id && qty > 0) {
+      const inv = allInvItems.find(x => x.id === id);
+      out.push({ item_id: id, item_name: inv?.name || '', qty });
+    }
+  });
+  return out;
 }
 
 async function toggleStatus() {
@@ -153,6 +204,9 @@ function enterEdit() {
   document.getElementById('f-desc').value     = currentSvc.description || '';
   document.getElementById('f-price').value    = currentSvc.price ?? '';
   document.getElementById('f-duration').value = currentSvc.duration_min ?? 30;
+
+  document.getElementById('supplies-rows').innerHTML = '';
+  (Array.isArray(currentSvc.supplies) ? currentSvc.supplies : []).forEach(s => addSupplyRow(s.item_id, s.qty));
 
   document.getElementById('view-card').classList.add('hidden');
   document.getElementById('edit-content').classList.remove('hidden');
@@ -177,6 +231,7 @@ async function saveService() {
     price:        parseFloat(document.getElementById('f-price').value) || 0,
     duration_min: parseInt(document.getElementById('f-duration').value) || 30,
     icon:         document.getElementById('f-icon').value || '⚕️',
+    supplies:     readSupplies(),
     updated_at:   new Date().toISOString(),
   };
   if (!data.service_id || !data.name) { banner('Service ID dan Nama wajib diisi', 'error'); return; }
@@ -203,7 +258,11 @@ async function saveService() {
   const id = new URLSearchParams(location.search).get('id');
   if (!id) { banner('ID tidak ditemui', 'error'); return; }
   setHeaderBack('services.html', 'Kembali ke Services');
-  const { data: s } = await window.db.from('psy_services').select('*').eq('id', id).single();
+  const [{ data: s }, { data: inv }] = await Promise.all([
+    window.db.from('psy_services').select('*').eq('id', id).single(),
+    window.db.from('psy_inventory_items').select('id,name,unit').order('name'),
+  ]);
+  allInvItems = inv || [];
   if (!s) { banner('Service tidak ditemui', 'error'); return; }
   setPageTitle(s.name, 'Detail service');
   renderView(s);

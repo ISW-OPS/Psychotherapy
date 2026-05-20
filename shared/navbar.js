@@ -1,8 +1,8 @@
 // ============================================================
 // NAVBAR — central nav config & renderer for ALL roles
-// Edit NAV_ITEMS_BY_ROLE untuk tukar/tambah menu items
 // ============================================================
 
+// ── Patient nav (flat list) ──────────────────────────────
 const NAV_ITEMS_BY_ROLE = {
   patient: [
     { id: 'dashboard', url: 'dashboard.html', icon: '🏠', label: 'Dashboard' },
@@ -10,95 +10,149 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'plan', url: 'plan.html', icon: '💊', label: 'My Treatment Plan' },
     { id: 'routine', url: 'routine.html', icon: '🕐', label: 'Jadual Harian' },
     { id: 'pakej', url: 'pakej.html', icon: '🗂️', label: 'Pakej Rawatan' },
-    { id: 'checkin', url: 'checkin.html', icon: '✅', label: 'Daily Check-in' },
-    { id: 'vitals', url: 'vitals.html', icon: '📊', label: 'Bacaan Saya' },
+    { id: 'checkin',    url: 'checkin.html',    icon: '✅', label: 'Daily Check-in' },
+    { id: 'kepatuhan', url: 'kepatuhan.html', icon: '📊', label: 'Kepatuhan Saya' },
+    { id: 'vitals',    url: 'vitals.html',    icon: '📉', label: 'Bacaan Saya' },
     { id: 'library', url: 'library.html', icon: '📚', label: 'Self-Help Library' },
     { id: 'shop', url: 'shop.html', icon: '🛒', label: 'Product' },
     { id: 'payment', url: 'payment.html', icon: '💳', label: 'Payment' },
     { id: 'psy_orders', url: 'orders.html', icon: '📦', label: 'Orders & Tracking' },
     { id: 'issue', url: 'issue.html', icon: '⚠️', label: 'Report Issue' },
+    { id: 'pulangan', url: 'pulangan.html', icon: '🍯', label: 'Pulangan Botol' },
+    { id: 'surat', url: 'surat.html', icon: '📜', label: 'Surat Rasmi' },
     { id: 'kyc', url: 'kyc.html', icon: '🆔', label: 'KYC Form' },
     { id: 'profile', url: 'profile.html', icon: '👤', label: 'Profile' },
   ],
-
-  // Staff: Admin — system management focus
-  staff_admin: [
-    { id: 'dashboard',    url: 'dashboard.html',         icon: '🏠', label: 'Dashboard' },
-    { id: 'psy_patients', url: 'patients.html',         icon: '👥', label: 'Patients' },
-    { id: 'kyc_forms',    url: 'kyc-list.html',         icon: '🆔', label: 'KYC Form' },
-    { id: 'kob_list',     url: 'kob-list.html',         icon: '🩺', label: 'Sesi KOB' },
-    { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
-    { id: 'pakej',        url: 'pakej.html',            icon: '🗂️', label: 'Pakej Rawatan' },
-    { id: 'psy_products', url: 'products.html',         icon: '🛒', label: 'Products' },
-    { id: 'psy_orders',   url: 'orders.html',           icon: '📦', label: 'Orders & Tracking' },
-    { id: 'library',      url: 'library.html',          icon: '📚', label: 'Self-Help Library' },
-    { id: 'staff_mgmt',     url: 'staff_management.html', icon: '👨‍⚕️', label: 'Manage Staff' },
-    { id: 'staff_stats',   url: 'staff-stats.html',     icon: '📈', label: 'Statistik & Analitik' },
-    { id: 'announcements', url: 'announcements.html',   icon: '📢', label: 'Pengumuman' },
-    { id: 'closures',      url: 'closures.html',        icon: '📅', label: 'Cuti Klinik' },
-    { id: 'kob_slots',     url: 'kob-slots.html',       icon: '⏰', label: 'Slot Klinik' },
-    { id: 'inventory',     url: 'inventory.html',       icon: '🏭', label: 'Inventori' },
-    { id: 'audit',         url: 'audit.html',           icon: '🔒', label: 'Audit Log' },
-    { id: 'issue',         url: 'issue.html',           icon: '⚠️', label: 'Report Issue' },
-    { id: 'profile',       url: 'profile.html',         icon: '👤', label: 'Profile' },
-  ],
-
-  // Staff: Coach — patient-centric nav (clinical details via Patient Hub)
-  staff_coach: [
-    { id: 'dashboard',       url: 'dashboard.html',    icon: '🏥', label: 'Dashboard' },
-    { id: 'assignments',     url: 'assignments.html',  icon: '👥', label: 'Patients' },
-    { id: 'psy_appointments',url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
-    { id: 'coaching',        url: 'coaching.html',     icon: '🎯', label: 'Sesi Coaching' },
-    { id: 'plan_week',       url: 'plan-week.html',    icon: '📋', label: 'Weekly Plan' },
-    { id: 'inventory',       url: 'inventory.html',    icon: '🏭', label: 'Inventori' },
-    { id: 'issue',           url: 'issue.html',        icon: '⚠️', label: 'Report Issue' },
-    { id: 'profile',         url: 'profile.html',      icon: '👤', label: 'Profile' },
-  ],
-
-  // Staff: Doctor — clinical + KYC review
-  staff_doctor: [
-    { id: 'dashboard',       url: 'dashboard.html',    icon: '🏥', label: 'Dashboard' },
-    { id: 'psy_patients',    url: 'patients.html',     icon: '👥', label: 'Patients' },
-    { id: 'kyc_forms',       url: 'kyc-list.html',     icon: '🆔', label: 'KYC Form' },
-    { id: 'kob_list',        url: 'kob-list.html',     icon: '🩺', label: 'Sesi KOB' },
-    { id: 'kob_slots',       url: 'kob-slots.html',    icon: '⏰', label: 'Slot Klinik' },
-    { id: 'psy_appointments',url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
-    { id: 'library',         url: 'library.html',      icon: '📚', label: 'Self-Help Library' },
-    { id: 'inventory',       url: 'inventory.html',    icon: '🏭', label: 'Inventori' },
-    { id: 'staff_stats',     url: 'staff-stats.html',  icon: '📈', label: 'Statistik' },
-    { id: 'announcements',   url: 'announcements.html',icon: '📢', label: 'Pengumuman' },
-    { id: 'issue',           url: 'issue.html',        icon: '⚠️', label: 'Report Issue' },
-    { id: 'profile',         url: 'profile.html',      icon: '👤', label: 'Profile' },
-  ],
-
-  // Staff: Manager — oversight & reports only
-  staff_manager: [
-    { id: 'dashboard',    url: 'dashboard.html',        icon: '🏥', label: 'Dashboard' },
-    { id: 'psy_patients', url: 'patients.html',         icon: '👥', label: 'Patients' },
-    { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
-    { id: 'psy_orders',    url: 'orders.html',            icon: '📦', label: 'Orders & Tracking' },
-    { id: 'announcements', url: 'announcements.html',   icon: '📢', label: 'Pengumuman' },
-    { id: 'staff_stats',   url: 'staff-stats.html',     icon: '📈', label: 'Statistik & Analitik' },
-    { id: 'closures',      url: 'closures.html',        icon: '📅', label: 'Cuti Klinik' },
-    { id: 'inventory',     url: 'inventory.html',       icon: '🏭', label: 'Inventori' },
-    { id: 'issue',         url: 'issue.html',           icon: '⚠️', label: 'Report Issue' },
-    { id: 'profile',       url: 'profile.html',         icon: '👤', label: 'Profile' },
-  ],
-
-  // Fallback jika staff_role tidak diset
   staff: [
     { id: 'dashboard', url: 'dashboard.html', icon: '🏥', label: 'Dashboard' },
     { id: 'profile', url: 'profile.html', icon: '👤', label: 'Profile' },
   ],
 };
 
+// ── Staff nav (grouped) ──────────────────────────────────
+const NAV_GROUPS_BY_ROLE = {
+
+  staff_admin: [
+    { group: 'UTAMA', collapsible: false, items: [
+      { id: 'dashboard',        url: 'dashboard.html',    icon: '🏠', label: 'Dashboard' },
+      { id: 'psy_patients',     url: 'patients.html',     icon: '👥', label: 'Pesakit' },
+      { id: 'kyc_forms',        url: 'kyc-list.html',     icon: '🆔', label: 'KYC & Onboarding' },
+      { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Kalendar & Jadual' },
+      { id: 'kob_slots',        url: 'kob-slots.html',    icon: '⏰', label: 'Slot Klinik' },
+      { id: 'kepatuhan',        url: 'kepatuhan.html',    icon: '📊', label: 'Kepatuhan' },
+    ]},
+    { group: 'OPERASI', collapsible: true, items: [
+      { id: 'pakej',         url: 'pakej.html',         icon: '🗂️', label: 'Pakej Rawatan' },
+      { id: 'psy_products',  url: 'products.html',      icon: '🛍️', label: 'Produk' },
+      { id: 'inventory',     url: 'inventory.html',     icon: '🏭', label: 'Inventori' },
+      { id: 'kit_prosedur',  url: 'kit-prosedur.html',  icon: '🧰', label: 'Kit Prosedur' },
+      { id: 'psy_orders',    url: 'orders.html',        icon: '📦', label: 'Orders & Tracking' },
+      { id: 'surat',         url: 'surat.html',         icon: '📜', label: 'Surat Rasmi' },
+    ]},
+    { group: 'KOMUNIKASI', collapsible: true, items: [
+      { id: 'announcements', url: 'announcements.html', icon: '📢', label: 'Pengumuman' },
+      { id: 'library',       url: 'library.html',       icon: '📚', label: 'Self-Help Library' },
+    ]},
+    { group: 'KEWANGAN', collapsible: true, items: [
+      { id: 'payment_admin', url: 'payment-admin.html', icon: '💳', label: 'Pembayaran' },
+    ]},
+    { group: 'LAPORAN', collapsible: true, items: [
+      { id: 'governance',    url: 'governance.html',    icon: '📈', label: 'Governance' },
+      { id: 'staff_stats',   url: 'staff-stats.html',   icon: '📊', label: 'Statistik & Analitik' },
+      { id: 'pakej_laporan', url: 'pakej-laporan.html', icon: '📦', label: 'Laporan Pakej' },
+      { id: 'audit',         url: 'audit.html',         icon: '🔒', label: 'Audit Log' },
+    ]},
+    { group: 'SISTEM', collapsible: true, items: [
+      { id: 'staff_mgmt', url: 'staff_management.html', icon: '👨‍⚕️', label: 'Manage Staff' },
+      { id: 'issue',      url: 'issue.html',            icon: '⚠️', label: 'Report Issue' },
+      { id: 'profile',    url: 'profile.html',          icon: '👤', label: 'Profile' },
+    ]},
+  ],
+
+  staff_manager: [
+    { group: 'UTAMA', collapsible: false, items: [
+      { id: 'dashboard',        url: 'dashboard.html',    icon: '🏠', label: 'Dashboard' },
+      { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
+      { id: 'staff_stats',      url: 'staff-stats.html',  icon: '📈', label: 'Laporan Ringkas' },
+    ]},
+    { group: 'OPERASI KLINIK', collapsible: true, items: [
+      { id: 'psy_patients', url: 'patients.html', icon: '👥', label: 'Pesakit' },
+    ]},
+    { group: 'INVENTORI & BEKALAN', collapsible: true, items: [
+      { id: 'inventory',    url: 'inventory.html',    icon: '🏭', label: 'Inventori' },
+      { id: 'kit_prosedur', url: 'kit-prosedur.html', icon: '🧰', label: 'Kit Prosedur' },
+      { id: 'psy_orders',   url: 'orders.html',       icon: '📦', label: 'Pesanan & Bekalan' },
+      { id: 'pulangan',     url: 'pulangan.html',     icon: '🍯', label: 'Pulangan Botol' },
+    ]},
+    { group: 'KANDUNGAN', collapsible: true, items: [
+      { id: 'announcements', url: 'announcements.html', icon: '📢', label: 'Pengumuman' },
+      { id: 'surat',         url: 'surat.html',         icon: '📜', label: 'Surat Rasmi' },
+    ]},
+    { group: 'SISTEM', collapsible: true, items: [
+      { id: 'issue',   url: 'issue.html',   icon: '⚠️', label: 'Report Issue' },
+      { id: 'profile', url: 'profile.html', icon: '👤', label: 'Profile' },
+    ]},
+  ],
+
+  staff_coach: [
+    { group: 'UTAMA', collapsible: false, items: [
+      { id: 'dashboard',        url: 'dashboard.html',    icon: '🏠', label: 'Dashboard' },
+      { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
+      { id: 'plan_week',        url: 'plan-week.html',    icon: '📋', label: 'Weekly Plan' },
+    ]},
+    { group: 'OPERASI KLINIK', collapsible: true, items: [
+      { id: 'assignments', url: 'assignments.html', icon: '👥', label: 'Patients' },
+      { id: 'coaching',    url: 'coaching.html',    icon: '🎯', label: 'Sesi Coaching' },
+    ]},
+    { group: 'INVENTORI & BEKALAN', collapsible: true, items: [
+      { id: 'inventory',    url: 'inventory.html',    icon: '🏭', label: 'Inventori' },
+      { id: 'kit_prosedur', url: 'kit-prosedur.html', icon: '🧰', label: 'Kit Prosedur' },
+      { id: 'pulangan',     url: 'pulangan.html',     icon: '🍯', label: 'Pulangan Botol' },
+    ]},
+    { group: 'KANDUNGAN', collapsible: true, items: [
+      { id: 'surat', url: 'surat.html', icon: '📜', label: 'Surat Rasmi' },
+    ]},
+    { group: 'SISTEM', collapsible: true, items: [
+      { id: 'issue',   url: 'issue.html',   icon: '⚠️', label: 'Report Issue' },
+      { id: 'profile', url: 'profile.html', icon: '👤', label: 'Profile' },
+    ]},
+  ],
+
+  staff_doctor: [
+    { group: 'UTAMA', collapsible: false, items: [
+      { id: 'dashboard',        url: 'dashboard.html',    icon: '🏠', label: 'Dashboard' },
+      { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
+      { id: 'staff_stats',      url: 'staff-stats.html',  icon: '📈', label: 'Laporan Ringkas' },
+    ]},
+    { group: 'OPERASI KLINIK', collapsible: true, items: [
+      { id: 'psy_patients', url: 'patients.html',  icon: '👥', label: 'Pesakit' },
+      { id: 'kyc_forms',    url: 'kyc-list.html',  icon: '🆔', label: 'KYC Form' },
+      { id: 'kob_list',     url: 'kob-list.html',  icon: '🩺', label: 'Rawatan & Sesi' },
+      { id: 'kob_slots',    url: 'kob-slots.html', icon: '⏰', label: 'Slot Klinik' },
+    ]},
+    { group: 'INVENTORI & BEKALAN', collapsible: true, items: [
+      { id: 'inventory',    url: 'inventory.html',    icon: '🏭', label: 'Inventori' },
+      { id: 'kit_prosedur', url: 'kit-prosedur.html', icon: '🧰', label: 'Kit Prosedur' },
+    ]},
+    { group: 'KANDUNGAN', collapsible: true, items: [
+      { id: 'library',       url: 'library.html',       icon: '📖', label: 'Self-Help Library' },
+      { id: 'announcements', url: 'announcements.html', icon: '📢', label: 'Pengumuman' },
+      { id: 'surat',         url: 'surat.html',         icon: '📜', label: 'Surat Rasmi' },
+    ]},
+    { group: 'SISTEM', collapsible: true, items: [
+      { id: 'issue',   url: 'issue.html',   icon: '⚠️', label: 'Report Issue' },
+      { id: 'profile', url: 'profile.html', icon: '👤', label: 'Profile' },
+    ]},
+  ],
+};
+
 const ROLE_CONFIG = {
-  patient: { label: 'My Health', icon: '🏥' },
-  staff_admin: { label: 'Admin Portal', icon: '⚕' },
-  staff_coach: { label: 'Coach Portal', icon: '⚕' },
-  staff_doctor: { label: 'Doctor Portal', icon: '⚕' },
-  staff_manager: { label: 'Manager Portal', icon: '⚕' },
-  staff: { label: 'Staff Portal', icon: '⚕' },
+  patient:      { label: 'My Health',      icon: '🏥' },
+  staff_admin:  { label: 'Admin Portal',   icon: '⚕' },
+  staff_coach:  { label: 'Coach Portal',   icon: '⚕' },
+  staff_doctor: { label: 'Doctor Portal',  icon: '⚕' },
+  staff_manager:{ label: 'Manager Portal', icon: '⚕' },
+  staff:        { label: 'Staff Portal',   icon: '⚕' },
 };
 
 const STAFF_ROLE_BADGE = {
@@ -108,36 +162,80 @@ const STAFF_ROLE_BADGE = {
   manager: { label: 'Manager', cls: 'role-accent-bg' },
 };
 
-// Get nav items for a role — pass staffRole for staff sub-roles
+// Get flat nav items for a role (for goTo, staffCanAccess, badge counts)
 function getNavItems(role, staffRole) {
   if (role === 'staff' && staffRole) {
-    return NAV_ITEMS_BY_ROLE[`staff_${staffRole}`] || NAV_ITEMS_BY_ROLE.staff;
+    const groups = NAV_GROUPS_BY_ROLE[`staff_${staffRole}`];
+    if (groups) return groups.flatMap(g => g.items);
   }
-  return NAV_ITEMS_BY_ROLE[role] || [];
+  return NAV_ITEMS_BY_ROLE[role === 'staff' ? 'staff' : role] || [];
 }
 
-// Check if staff has access to a page
 function staffCanAccess(staffRole, pageId) {
-  const items = getNavItems('staff', staffRole);
-  return items.some(n => n.id === pageId);
+  return getNavItems('staff', staffRole).some(n => n.id === pageId);
 }
 
-function renderNavbar(role, user, navItems, activeScreen) {
-  // Determine effective role key for staff sub-roles
-  const staffRole = user.staff_role || null;
-  const roleKey = (role === 'staff' && staffRole) ? `staff_${staffRole}` : role;
+// ── Render one nav group (staff sidebar) ─────────────────
+function renderNavGroup(group, roleKey, activeScreen) {
+  const safeId    = `${roleKey}_${group.group.replace(/[^a-zA-Z0-9]/g, '_')}`;
+  const lsKey     = `isw_nav_${safeId}`;
+  const hasActive = group.items.some(i => i.id === activeScreen);
+  const collapsed = group.collapsible && !hasActive && localStorage.getItem(lsKey) === '1';
 
-  // If navItems not passed, look up from central config
+  const header = group.collapsible
+    ? `<button onclick="toggleNavGroup('${safeId}')"
+         class="w-full flex items-center justify-between px-3 py-1.5 rounded-lg hover:bg-ink/5 transition-colors">
+         <span class="nav-label text-[9px] font-bold text-ink/30 uppercase tracking-widest">${group.group}</span>
+         <svg id="ngc-${safeId}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+           class="nav-label w-3 h-3 text-ink/25 transition-transform duration-200 flex-shrink-0 ${collapsed ? '-rotate-90' : ''}">
+           <polyline points="6 9 12 15 18 9"/>
+         </svg>
+       </button>`
+    : `<div class="px-3 py-1.5">
+         <span class="nav-label text-[9px] font-bold text-ink/30 uppercase tracking-widest">${group.group}</span>
+       </div>`;
+
+  const items = group.items.map(item => `
+    <button onclick="goTo('${item.id}')" title="${item.label}"
+      class="nav-item ${item.id === activeScreen ? 'active' : ''} w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-ink/60 hover:bg-ink/5 transition-colors">
+      <span class="flex-shrink-0 text-base">${item.icon}</span>
+      <span class="nav-label font-medium">${item.label}</span>
+      <span id="nav-badge-${item.id}" class="hidden ml-auto nav-label min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold bg-terracotta text-white flex items-center justify-center"></span>
+    </button>`).join('');
+
+  return `
+    <div class="mb-1">
+      ${header}
+      <div id="ngi-${safeId}" class="${collapsed ? 'hidden' : ''} space-y-0.5 mt-0.5">
+        ${items}
+      </div>
+    </div>`;
+}
+
+function toggleNavGroup(safeId) {
+  const lsKey   = `isw_nav_${safeId}`;
+  const items   = document.getElementById('ngi-' + safeId);
+  const chevron = document.getElementById('ngc-' + safeId);
+  if (!items) return;
+  const isNowCollapsed = items.classList.toggle('hidden');
+  if (chevron) chevron.classList.toggle('-rotate-90', isNowCollapsed);
+  localStorage.setItem(lsKey, isNowCollapsed ? '1' : '0');
+}
+
+// ── Main navbar renderer ──────────────────────────────────
+function renderNavbar(role, user, navItems, activeScreen) {
+  const staffRole = user.staff_role || null;
+  const roleKey   = (role === 'staff' && staffRole) ? `staff_${staffRole}` : role;
+
   if (!navItems) navItems = getNavItems(role, staffRole);
 
-  const cfg = ROLE_CONFIG[roleKey] || ROLE_CONFIG[role] || ROLE_CONFIG.patient;
+  const cfg      = ROLE_CONFIG[roleKey] || ROLE_CONFIG[role] || ROLE_CONFIG.patient;
   const initials = (user.full_name || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
-  const badge = role === 'staff' && staffRole ? STAFF_ROLE_BADGE[staffRole] : null;
+  const badge    = role === 'staff' && staffRole ? STAFF_ROLE_BADGE[staffRole] : null;
 
   const sidebar = document.getElementById('sidebar');
   if (!sidebar) return;
 
-  // Inject mobile sidebar overlay (once per page)
   if (!document.getElementById('mob-sidebar-overlay')) {
     const ol = document.createElement('div');
     ol.id = 'mob-sidebar-overlay';
@@ -145,7 +243,7 @@ function renderNavbar(role, user, navItems, activeScreen) {
     document.body.appendChild(ol);
   }
 
-  // Patient: inject persistent bottom nav bar (once per page)
+  // Patient: persistent bottom nav bar
   if (role === 'patient' && !document.getElementById('pat-bottom-nav')) {
     const BOT_ITEMS = [
       { href: 'dashboard.html', icon: '🏠', label: 'Home',     id: 'dashboard' },
@@ -171,13 +269,21 @@ function renderNavbar(role, user, navItems, activeScreen) {
     document.body.appendChild(nav);
   }
 
-  // Auto-detect base path for logo (works from /roles/patient/ or /roles/staff/)
   const logoPath = window.location.pathname.includes('/roles/') ? '../../image/Logo_ISW.png' : 'image/Logo_ISW.png';
-
-  const isStaff = role === 'staff';
+  const isStaff  = role === 'staff';
 
   if (isStaff) {
-    // ── WHITE sidebar for staff — role colour only on active item ──
+    const groups   = NAV_GROUPS_BY_ROLE[roleKey] || [];
+    const navHtml  = groups.length
+      ? groups.map(g => renderNavGroup(g, roleKey, activeScreen)).join('')
+      : navItems.map(item => `
+          <button onclick="goTo('${item.id}')" title="${item.label}"
+            class="nav-item ${item.id === activeScreen ? 'active' : ''} w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-ink/60 hover:bg-ink/5 transition-colors">
+            <span class="flex-shrink-0 text-base">${item.icon}</span>
+            <span class="nav-label font-medium">${item.label}</span>
+            <span id="nav-badge-${item.id}" class="hidden ml-auto nav-label min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold bg-terracotta text-white flex items-center justify-center"></span>
+          </button>`).join('');
+
     sidebar.innerHTML = `
       <div class="nav-brand px-4 py-3 border-b border-ink/8 flex items-center gap-3">
         <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 p-1 overflow-hidden" style="background:var(--rpl)">
@@ -201,15 +307,8 @@ function renderNavbar(role, user, navItems, activeScreen) {
           </div>
         </div>
       </div>
-      <nav class="flex-1 overflow-y-auto p-2 space-y-0.5">
-        ${navItems.map(item => `
-          <button onclick="goTo('${item.id}')" title="${item.label}"
-            class="nav-item ${item.id === activeScreen ? 'active' : ''} w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-ink/60 hover:bg-ink/5 transition-colors">
-            <span class="flex-shrink-0 text-base">${item.icon}</span>
-            <span class="nav-label font-medium">${item.label}</span>
-            <span id="nav-badge-${item.id}" class="hidden ml-auto nav-label min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold bg-terracotta text-white flex items-center justify-center"></span>
-          </button>
-        `).join('')}
+      <nav class="flex-1 overflow-y-auto p-2 pt-3">
+        ${navHtml}
       </nav>
       <div class="hidden md:flex flex-shrink-0 border-t border-ink/8 p-2">
         <button onclick="toggleSidebar()" title="Kecilkan/Besarkan"
@@ -221,13 +320,13 @@ function renderNavbar(role, user, navItems, activeScreen) {
         </button>
       </div>
     `;
-  // Restore collapsed state
-  if (localStorage.getItem('isw_sidebar_collapsed') === '1') {
-    sidebar.classList.add('collapsed');
-  }
+
+    if (localStorage.getItem('isw_sidebar_collapsed') === '1') {
+      sidebar.classList.add('collapsed');
+    }
 
   } else {
-    // ── DARK sidebar for patient (original) ──
+    // Dark sidebar for patient
     sidebar.innerHTML = `
       <div class="nav-brand p-4 border-b border-white/10 flex items-center gap-3">
         <div class="w-10 h-10 bg-white rounded-xl flex items-center justify-center flex-shrink-0 p-1">
@@ -260,14 +359,13 @@ function renderNavbar(role, user, navItems, activeScreen) {
     `;
   }
 
-  // Load dynamic badge counts after render (both roles)
   window.db?.auth.getUser().then(({ data }) => {
     const uid = data?.user?.id;
     if (uid) loadNavBadges(role, staffRole, uid);
   });
 }
 
-// ── Nav Badge Counts ─────────────────────────────────
+// ── Nav Badge Counts ─────────────────────────────────────
 function setNavBadge(id, count) {
   const el = document.getElementById('nav-badge-' + id);
   if (!el) return;
@@ -284,34 +382,13 @@ async function loadNavBadges(role, _staffRole, userId) {
   try {
     if (role === 'staff') {
       const [ordersRes, kycRes, issuesRes, closedRes, invRes, kobRes, patientsRes] = await Promise.all([
-        // Orders perlu dihantar (paid / packed)
-        window.db.from('psy_orders')
-          .select('id', { count: 'exact', head: true })
-          .in('status', ['paid', 'packed']),
-        // KYC pending review
-        window.db.from('psy_kyc_submissions')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'pending'),
-        // Semua isu dilaporkan
-        window.db.from('psy_audit_log')
-          .select('id')
-          .eq('action', 'issue.reported'),
-        // Isu yang dah ditutup
-        window.db.from('psy_audit_log')
-          .select('meta')
-          .eq('action', 'issue.closed'),
-        // Inventory requests pending approval
-        window.db.from('psy_inventory_requests')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'pending_approval'),
-        // KOB sesi ditempah (belum hadir/selesai)
-        window.db.from('psy_kob_sessions')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'booked'),
-        // Patient pending KYC (baru daftar, belum approve)
-        window.db.from('psy_patients')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'pending_kyc'),
+        window.db.from('psy_orders').select('id', { count: 'exact', head: true }).in('status', ['paid', 'packed']),
+        window.db.from('psy_kyc_submissions').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+        window.db.from('psy_audit_log').select('id').eq('action', 'issue.reported'),
+        window.db.from('psy_audit_log').select('meta').eq('action', 'issue.closed'),
+        window.db.from('psy_inventory_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending_approval'),
+        window.db.from('psy_kob_sessions').select('id', { count: 'exact', head: true }).eq('status', 'booked'),
+        window.db.from('psy_patients').select('id', { count: 'exact', head: true }).eq('status', 'pending_kyc'),
       ]);
 
       setNavBadge('psy_orders', ordersRes.count || 0);
@@ -320,55 +397,29 @@ async function loadNavBadges(role, _staffRole, userId) {
       setNavBadge('kob_list', kobRes.count || 0);
       setNavBadge('psy_patients', patientsRes.count || 0);
 
-      // Open issues = reported yang tiada dalam closed set
       const closedIds = new Set((closedRes.data || []).map(r => r.meta?.issue_id).filter(Boolean));
       const openCount = (issuesRes.data || []).filter(i => !closedIds.has(i.id)).length;
       setNavBadge('issue', openCount);
 
     } else if (role === 'patient') {
       const [ordersRes, issuesRes, closedRes, patRes] = await Promise.all([
-        // Orders aktif patient ini
-        window.db.from('psy_orders')
-          .select('id', { count: 'exact', head: true })
-          .eq('patient_id', userId)
-          .in('status', ['pending', 'paid', 'packed', 'shipped']),
-        // Isu patient ini
-        window.db.from('psy_audit_log')
-          .select('id, meta')
-          .eq('action', 'issue.reported')
-          .eq('user_id', userId),
-        // Isu yang dah ditutup
-        window.db.from('psy_audit_log')
-          .select('meta')
-          .eq('action', 'issue.closed'),
-        // Patient record untuk KOB/KYC badge
-        window.db.from('psy_patients')
-          .select('kob_status, status')
-          .eq('user_id', userId)
-          .maybeSingle(),
+        window.db.from('psy_orders').select('id', { count: 'exact', head: true }).eq('patient_id', userId).in('status', ['pending', 'paid', 'packed', 'shipped']),
+        window.db.from('psy_audit_log').select('id, meta').eq('action', 'issue.reported').eq('user_id', userId),
+        window.db.from('psy_audit_log').select('meta').eq('action', 'issue.closed'),
+        window.db.from('psy_patients').select('kob_status, status').eq('user_id', userId).maybeSingle(),
       ]);
 
       setNavBadge('psy_orders', ordersRes.count || 0);
 
-      // KOB action needed — booked atau apa-apa step belum 'completed'/'na'
       const kobStatus = patRes.data?.kob_status;
-      if (kobStatus && kobStatus !== 'na' && kobStatus !== 'completed') {
-        setNavBadge('kob', 1);
-      }
+      if (kobStatus && kobStatus !== 'na' && kobStatus !== 'completed') setNavBadge('kob', 1);
+      if (patRes.data?.status === 'pending_kyc') setNavBadge('kyc', 1);
 
-      // KYC action needed — patient masih pending_kyc
-      if (patRes.data?.status === 'pending_kyc') {
-        setNavBadge('kyc', 1);
-      }
-
-      // Open issues milik patient ini
       const closedIds = new Set((closedRes.data || []).map(r => r.meta?.issue_id).filter(Boolean));
       const openCount = (issuesRes.data || []).filter(i => !closedIds.has(i.id)).length;
       setNavBadge('issue', openCount);
     }
-  } catch (e) {
-    // Silent fail — badge just won't show
-  }
+  } catch (e) {}
 }
 
 function setHeaderBack(url, label) {
@@ -421,7 +472,6 @@ function renderHeader(title, subtitle) {
       </button>
     </div>
   `;
-  // Inject panel into body once
   if (!document.getElementById('notif-panel')) {
     const panel = document.createElement('div');
     panel.id = 'notif-panel';
@@ -495,18 +545,15 @@ async function markAllRead() {
 }
 
 function toggleNotifPanel() {
-  const panel = document.getElementById('notif-panel');
+  const panel  = document.getElementById('notif-panel');
   const drawer = document.getElementById('notif-drawer');
   if (!panel || !drawer) return;
   const isHidden = panel.classList.contains('hidden');
   panel.classList.toggle('hidden', !isHidden);
-  requestAnimationFrame(() => {
-    drawer.style.transform = isHidden ? 'translateX(0)' : 'translateX(100%)';
-  });
+  requestAnimationFrame(() => { drawer.style.transform = isHidden ? 'translateX(0)' : 'translateX(100%)'; });
   if (isHidden) loadNotifPanel();
 }
 
-// Helper — insert a notification row (fire-and-forget)
 async function notify(userId, type, title, body, link) {
   if (!window.db || !userId) return;
   try { await window.db.from('psy_notifications').insert({ user_id: userId, type, title, body: body || null, link: link || null }); }
@@ -514,7 +561,7 @@ async function notify(userId, type, title, body, link) {
 }
 
 function closeNotifPanel() {
-  const panel = document.getElementById('notif-panel');
+  const panel  = document.getElementById('notif-panel');
   const drawer = document.getElementById('notif-drawer');
   if (!panel || !drawer) return;
   drawer.style.transform = 'translateX(100%)';
@@ -546,16 +593,18 @@ function toggleSidebar() {
 }
 
 function goTo(screen) {
-  // Multi-page mode: look up URL from central nav config
-  for (const role of Object.keys(NAV_ITEMS_BY_ROLE)) {
-    const item = NAV_ITEMS_BY_ROLE[role].find(n => n.id === screen);
-    if (item && item.url) {
-      window.location.href = item.url;
-      return;
+  // Search in grouped staff nav
+  for (const groups of Object.values(NAV_GROUPS_BY_ROLE)) {
+    for (const g of groups) {
+      const found = g.items.find(n => n.id === screen);
+      if (found?.url) { window.location.href = found.url; return; }
     }
   }
+  // Patient flat nav
+  const patItem = (NAV_ITEMS_BY_ROLE.patient || []).find(n => n.id === screen);
+  if (patItem?.url) { window.location.href = patItem.url; return; }
 
-  // SPA fallback: switch sections within same page
+  // SPA fallback
   document.querySelectorAll('main .screen').forEach(s => s.classList.remove('active'));
   const target = document.getElementById(screen);
   if (target) target.classList.add('active');

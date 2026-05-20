@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Pulangan Botol</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🍯</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-4">
+
+        <!-- Filter tabs -->
+        <div class="flex gap-2 flex-wrap">
+          <button onclick="setFilter('pending')"  id="f-pending"  class="filter-btn active">⏳ Pending <span id="cnt-pending" class="ml-1 px-1.5 py-0.5 bg-white/30 rounded-full text-[10px]">0</span></button>
+          <button onclick="setFilter('all')"      id="f-all"      class="filter-btn">Semua <span id="cnt-all" class="ml-1 px-1.5 py-0.5 bg-ink/10 rounded-full text-[10px]">0</span></button>
+          <button onclick="setFilter('received')" id="f-received" class="filter-btn">✅ Diterima <span id="cnt-received" class="ml-1 px-1.5 py-0.5 bg-ink/10 rounded-full text-[10px]">0</span></button>
+          <button onclick="setFilter('rejected')" id="f-rejected" class="filter-btn">❌ Ditolak <span id="cnt-rejected" class="ml-1 px-1.5 py-0.5 bg-ink/10 rounded-full text-[10px]">0</span></button>
+        </div>
+
+        <div id="list" class="space-y-3">
+          <div class="text-center text-ink/40 text-sm py-10">Memuatkan...</div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<style>
+.filter-btn { padding: 0.5rem 1rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; background: white; border: 1px solid rgba(0,0,0,0.12); transition: all .15s; display: inline-flex; align-items: center; }
+.filter-btn.active { background: #1e3a5f; color: white; border-color: #1e3a5f; }
+</style>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+function openPhotoLightbox(url) {
+  const overlay = document.createElement('div');
+  overlay.className = 'fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-4 cursor-zoom-out';
+  overlay.onclick = () => overlay.remove();
+  overlay.innerHTML = `
+    <button class="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white text-xl flex items-center justify-center" onclick="event.stopPropagation(); this.parentElement.remove()">×</button>
+    <a href="${url}" target="_blank" onclick="event.stopPropagation()" class="absolute bottom-4 right-4 text-white/70 hover:text-white text-xs underline bg-black/30 px-3 py-1.5 rounded-full">Buka tab baru ↗</a>
+    <img src="${url}" alt="foto" class="max-w-full max-h-full object-contain rounded-lg" onclick="event.stopPropagation()">`;
+  document.body.appendChild(overlay);
+  const onEsc = e => { if (e.key === 'Escape') overlay.remove(); };
+  document.addEventListener('keydown', onEsc, { once: true });
+}
+
+let allReturns = [];
+let allMsgs = [];
+let currentFilter = 'pending';
+
+const CRITERIA_LABEL = {
+  tidak_berkarat: 'Tidak berkarat',
+  bersih:         'Bersih',
+  getah_ada:      'Getah ada',
+  besi_kemas:     'Besi penutup kemas',
+};
+
+function setFilter(f) {
+  currentFilter = f;
+  ['pending','all','received','rejected'].forEach(k =>
+    document.getElementById('f-' + k).classList.toggle('active', k === f));
+  renderList();
+}
+
+async function loadReturns() {
+  const [retRes, msgRes] = await Promise.all([
+    window.db.from('psy_bottle_returns').select('*').order('created_at', { ascending: false }),
+    window.db.from('psy_audit_log').select('*').eq('action', 'bottle_return.message').order('created_at', { ascending: true }),
+  ]);
+  allReturns = retRes.data || [];
+  allMsgs = msgRes.data || [];
+
+  // Update counts
+  document.getElementById('cnt-all').textContent      = allReturns.length;
+  document.getElementById('cnt-pending').textContent  = allReturns.filter(r => r.status === 'pending').length;
+  document.getElementById('cnt-received').textContent = allReturns.filter(r => r.status === 'received').length;
+  document.getElementById('cnt-rejected').textContent = allReturns.filter(r => r.status === 'rejected').length;
+
+  renderList();
+}
+
+function renderList() {
+  const filtered = currentFilter === 'all' ? allReturns : allReturns.filter(r => r.status === currentFilter);
+  const list = document.getElementById('list');
+  if (!filtered.length) {
+    list.innerHTML = `<div class="text-center text-ink/40 text-sm py-10">Tiada pulangan dalam kategori "${currentFilter}"</div>`;
+    return;
+  }
+
+  list.innerHTML = filtered.map(r => {
+    const msgs = allMsgs.filter(m => m.meta?.return_id === r.id);
+    const date = new Date(r.created_at).toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+    const statusChip = r.status === 'received'
+      ? '<span class="chip bg-green-light text-green-dark text-[10px]">✅ Diterima</span>'
+      : r.status === 'rejected'
+        ? '<span class="chip bg-terracotta/15 text-terracotta text-[10px]">❌ Ditolak</span>'
+        : '<span class="chip bg-gold/15 text-gold-dark text-[10px]">⏳ Pending Verify</span>';
+
+    const photos = (r.photo_urls || []).map(url =>
+      `<img src="${url}" onclick="openPhotoLightbox('${url}')" class="h-20 w-20 object-cover rounded border border-ink/10 cursor-zoom-in hover:opacity-90">`
+    ).join('');
+
+    const criteria = Object.entries(r.criteria_confirmed || {}).map(([k, v]) =>
+      `<span class="inline-flex items-center gap-1 text-[11px] ${v ? 'text-green-dark' : 'text-terracotta'}">
+        ${v ? '✓' : '✗'} ${CRITERIA_LABEL[k] || k}
+      </span>`
+    ).join(' · ');
+
+    const verifyInfo = r.verified_at ? `
+      <div class="text-[11px] text-ink/50 mt-2">
+        Diverify oleh <span class="font-semibold">${r.verified_by_name || '—'}</span> pada ${new Date(r.verified_at).toLocaleDateString('ms-MY',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}
+      </div>` : '';
+
+    const rejectReason = r.status === 'rejected' && r.reject_reason ? `
+      <div class="mt-3 text-xs bg-terracotta/10 text-terracotta px-3 py-2 rounded-lg">
+        <span class="font-semibold">Alasan tolak:</span> ${(r.reject_reason || '').replace(/</g,'&lt;')}
+      </div>` : '';
+
+    const msgsHtml = msgs.length ? `
+      <div class="mt-3 space-y-2">
+        ${msgs.map(m => {
+          const fromStaff = m.actor_role === 'staff';
+          const t = new Date(m.created_at).toLocaleString('ms-MY', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+          return `<div class="${fromStaff ? 'bg-navy/5 border-navy/10' : 'bg-cream border-ink/10'} border rounded-xl p-3">
+            <div class="text-[10px] ${fromStaff ? 'text-navy' : 'text-ink/60'} font-bold mb-1">${fromStaff ? '↩ Staff' : 'Patient'} · ${m.actor_name} · ${t}</div>
+            <p class="text-sm whitespace-pre-wrap">${(m.meta?.message || '').replace(/</g,'&lt;')}</p>
+          </div>`;
+        }).join('')}
+      </div>` : '';
+
+    const actions = r.status === 'pending' ? `
+      <div class="flex gap-2 mt-3 pt-3 border-t border-ink/10 flex-wrap">
+        <input id="msg-${r.id}" type="text" placeholder="Sembang dengan patient..."
+          class="flex-1 min-w-[200px] border border-ink/20 rounded-lg px-3 py-2 text-xs outline-none focus:border-navy"
+          onkeydown="if(event.key==='Enter')sendMessage('${r.id}')">
+        <button onclick="sendMessage('${r.id}')" class="bg-navy text-white px-3 py-2 rounded-lg text-xs font-semibold">Hantar</button>
+        <button onclick="verifyReturn('${r.id}', 'received')" class="bg-green-dark text-white px-3 py-2 rounded-lg text-xs font-semibold hover:opacity-90">✅ Terima</button>
+        <button onclick="verifyReturn('${r.id}', 'rejected')" class="bg-terracotta text-white px-3 py-2 rounded-lg text-xs font-semibold hover:opacity-90">❌ Tolak</button>
+      </div>` : '';
+
+    return `<div class="bg-white rounded-xl border border-ink/15 p-4">
+      <div class="flex items-center justify-between gap-2 flex-wrap mb-2">
+        <div>
+          <div class="font-semibold text-sm">🍯 ${r.patient_name} · ${r.qty} botol</div>
+          <div class="text-[11px] text-ink/50">${date}</div>
+        </div>
+        ${statusChip}
+      </div>
+      <div class="text-[11px] mt-1">${criteria}</div>
+      ${r.notes ? `<p class="text-xs text-ink/60 mt-2 italic">"${(r.notes || '').replace(/</g,'&lt;')}"</p>` : ''}
+      <div class="flex gap-2 mt-3 flex-wrap">${photos}</div>
+      ${verifyInfo}
+      ${rejectReason}
+      ${msgsHtml}
+      ${actions}
+    </div>`;
+  }).join('');
+}
+
+async function sendMessage(returnId) {
+  const input = document.getElementById('msg-' + returnId);
+  const text = input.value.trim();
+  if (!text) return;
+  try {
+    await window.db.from('psy_audit_log').insert({
+      actor_id: window.currentUser.id,
+      actor_name: window.currentUser.full_name,
+      actor_role: window.currentUser.role,
+      action: 'bottle_return.message',
+      target: returnId,
+      meta: { return_id: returnId, message: text },
+    });
+    // Notify patient
+    const ret = allReturns.find(r => r.id === returnId);
+    if (ret) {
+      const { data: patientRow } = await window.db.from('psy_patients').select('user_id').eq('id', ret.patient_id).single();
+      if (patientRow?.user_id) {
+        await notify(patientRow.user_id, 'system', '🍯 Mesej Baru — Pulangan Botol', text, 'pulangan.html');
+      }
+    }
+    input.value = '';
+    loadReturns();
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+}
+
+async function verifyReturn(returnId, action) {
+  const isReject = action === 'rejected';
+  let reason = null;
+  if (isReject) {
+    reason = prompt('Alasan tolak (wajib):');
+    if (!reason || !reason.trim()) return;
+  } else {
+    if (!confirm('Sahkan botol dah diterima & memenuhi syarat?')) return;
+  }
+
+  try {
+    await window.db.from('psy_bottle_returns').update({
+      status: action,
+      reject_reason: isReject ? reason.trim() : null,
+      verified_by: window.currentUser.id,
+      verified_by_name: window.currentUser.full_name,
+      verified_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', returnId);
+
+    // Notify patient
+    const ret = allReturns.find(r => r.id === returnId);
+    if (ret) {
+      const { data: patientRow } = await window.db.from('psy_patients').select('user_id').eq('id', ret.patient_id).single();
+      if (patientRow?.user_id) {
+        await notify(
+          patientRow.user_id, 'system',
+          isReject ? '❌ Pulangan Ditolak' : '✅ Pulangan Diterima',
+          isReject ? `Alasan: ${reason.trim()}` : `Terima kasih — ${ret.qty} botol diterima.`,
+          'pulangan.html'
+        );
+      }
+    }
+
+    banner(isReject ? 'Pulangan ditolak' : 'Pulangan diterima ✅');
+    loadReturns();
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+}
+
+(async () => {
+  const user = await initStaff('pulangan', 'Senarai pulangan botol madu');
+  if (!user) return;
+  loadReturns();
+})();
+</script>
+</body>
+</html>

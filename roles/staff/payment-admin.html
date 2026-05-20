@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Pembayaran</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+@media print {
+  body > *:not(#invoice-overlay) { display: none !important; }
+  #invoice-overlay { position: static !important; background: white !important; padding: 0 !important; }
+  #invoice-overlay .no-print { display: none !important; }
+  #invoice-paper { box-shadow: none !important; border: 0 !important; max-width: 100% !important; margin: 0 !important; padding: 0 !important; }
+  @page { size: A4; margin: 15mm; }
+}
+</style>
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">💳</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-6">
+
+        <!-- Page Header -->
+        <div class="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-xl font-bold text-ink">Pembayaran</h1>
+            <p class="text-sm text-ink/45 mt-0.5">Semua transaksi pembayaran klinik</p>
+          </div>
+          <button onclick="openManualModal()" class="bg-navy text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-dark transition-colors flex items-center gap-2">
+            <span>+</span> Bayaran Manual
+          </button>
+        </div>
+
+        <!-- KPI Row -->
+        <div id="kpi-row" class="grid grid-cols-2 lg:grid-cols-4 gap-4"></div>
+
+        <!-- Filters -->
+        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4 flex flex-wrap items-center gap-3">
+          <input id="search-input" type="text" placeholder="Cari receipt / nama pesakit..." oninput="renderTable()"
+            class="flex-1 min-w-[200px] px-3 py-2 border border-ink/15 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-navy/20">
+          <select id="status-filter" onchange="renderTable()"
+            class="px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-navy/20">
+            <option value="">Semua Status</option>
+            <option value="completed">Selesai</option>
+            <option value="pending">Pending</option>
+            <option value="failed">Gagal</option>
+          </select>
+          <select id="method-filter" onchange="renderTable()"
+            class="px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-navy/20">
+            <option value="">Semua Kaedah</option>
+            <option value="fpx">FPX</option>
+            <option value="card">Kad</option>
+            <option value="transfer">Transfer</option>
+            <option value="ghl">GHL</option>
+            <option value="manual">Manual</option>
+          </select>
+          <select id="period-filter" onchange="loadData()"
+            class="px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-navy/20">
+            <option value="7">7 Hari</option>
+            <option value="30" selected>30 Hari</option>
+            <option value="90">90 Hari</option>
+            <option value="365">1 Tahun</option>
+            <option value="all">Semua</option>
+          </select>
+          <button onclick="exportCsv()" class="px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white hover:bg-ink/5 transition-colors flex items-center gap-1.5">
+            📥 Export CSV
+          </button>
+        </div>
+
+        <!-- Table -->
+        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden">
+          <div class="px-5 py-2 border-b border-ink/5 grid gap-3 items-center" style="grid-template-columns:120px 1fr 100px 110px 100px 100px 90px">
+            <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Receipt</span>
+            <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Pesakit</span>
+            <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Kaedah</span>
+            <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider text-right">Jumlah</span>
+            <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Status</span>
+            <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Tarikh</span>
+            <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider text-right">Tindakan</span>
+          </div>
+          <div id="pay-table" class="divide-y divide-ink/5"></div>
+          <div id="pay-empty" class="hidden px-5 py-12 text-center text-sm text-ink/35">Tiada pembayaran ditemui</div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- Invoice Overlay (printable) -->
+<div id="invoice-overlay" class="hidden fixed inset-0 z-[60] bg-cream overflow-y-auto p-4 md:p-8">
+  <div class="max-w-4xl mx-auto">
+    <div class="flex items-center justify-between gap-3 mb-4 no-print">
+      <button onclick="closeInvoice()" class="text-sm text-ink/65 hover:text-ink flex items-center gap-1.5">← Kembali</button>
+      <button onclick="window.print()" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark transition-colors flex items-center gap-1.5">🖨️ Cetak / PDF</button>
+    </div>
+    <div id="invoice-paper" class="bg-white rounded-2xl shadow-md p-8 md:p-12 border border-ink/10">
+      <div class="flex items-start justify-between gap-4 pb-6 border-b border-ink/15">
+        <div>
+          <div class="text-2xl font-bold text-navy">Ibnu Sina Wellness</div>
+          <div class="text-xs text-ink/55 mt-1 leading-relaxed">
+            Klinik Psikoterapi &amp; Rawatan Holistik<br>
+            Email: admin@isw.my · Tel: +60 12-345 6789
+          </div>
+        </div>
+        <div class="text-right">
+          <div class="text-2xl font-bold text-ink">INVOIS</div>
+          <div class="text-xs text-ink/55 mt-1" id="inv-no"></div>
+          <div class="text-xs text-ink/55" id="inv-date"></div>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-6 py-6 border-b border-ink/15">
+        <div>
+          <div class="text-[10px] font-bold text-ink/45 uppercase tracking-wider mb-2">Untuk Pesakit</div>
+          <div id="bill-to" class="text-sm text-ink/75 leading-relaxed"></div>
+        </div>
+        <div class="text-right">
+          <div class="text-[10px] font-bold text-ink/45 uppercase tracking-wider mb-2">Status &amp; Kaedah Bayaran</div>
+          <div id="bill-meta" class="text-sm text-ink/75 leading-relaxed"></div>
+        </div>
+      </div>
+      <div class="py-6">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-ink/15">
+              <th class="text-left py-2 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Penerangan</th>
+              <th class="text-center py-2 text-[10px] font-bold text-ink/45 uppercase tracking-wider w-20">Qty</th>
+              <th class="text-right py-2 text-[10px] font-bold text-ink/45 uppercase tracking-wider w-28">Harga</th>
+              <th class="text-right py-2 text-[10px] font-bold text-ink/45 uppercase tracking-wider w-28">Jumlah</th>
+            </tr>
+          </thead>
+          <tbody id="inv-items" class="divide-y divide-ink/8"></tbody>
+        </table>
+      </div>
+      <div class="pt-6 border-t border-ink/15">
+        <div class="ml-auto max-w-xs space-y-1.5 text-sm">
+          <div class="flex justify-between text-ink/65"><span>Subtotal</span><span id="t-sub">RM 0.00</span></div>
+          <div id="t-svc-row" class="hidden justify-between text-ink/65"><span>Service Charge</span><span id="t-svc">RM 0.00</span></div>
+          <div id="t-sst-row" class="hidden justify-between text-ink/65"><span>SST</span><span id="t-sst">RM 0.00</span></div>
+          <div class="flex justify-between font-bold text-ink text-lg pt-2 border-t border-ink/15"><span>JUMLAH</span><span id="t-total">RM 0.00</span></div>
+        </div>
+      </div>
+      <div id="inv-notes-wrap" class="hidden mt-6 pt-4 border-t border-ink/10">
+        <div class="text-[10px] font-bold text-ink/45 uppercase tracking-wider mb-1">Nota</div>
+        <div id="inv-notes" class="text-sm text-ink/65"></div>
+      </div>
+      <div class="mt-12 pt-6 border-t border-ink/10 text-center text-xs text-ink/45">
+        Terima kasih atas kepercayaan anda terhadap Ibnu Sina Wellness.<br>
+        Invois ini dijana secara automatik.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Detail Modal -->
+<div id="detail-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/50" onclick="closeDetailModal()"></div>
+  <div class="relative bg-white rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+    <div class="p-5 border-b border-ink/10 flex items-center justify-between sticky top-0 bg-white">
+      <h3 class="font-bold text-lg">Butiran Pembayaran</h3>
+      <button onclick="closeDetailModal()" class="text-ink/60 text-2xl leading-none hover:text-ink">×</button>
+    </div>
+    <div id="detail-body" class="p-5 space-y-4"></div>
+  </div>
+</div>
+
+<!-- Manual Payment Modal -->
+<div id="manual-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/50" onclick="closeManualModal()"></div>
+  <div class="relative bg-white rounded-2xl max-w-md w-full overflow-hidden">
+    <div class="p-5 border-b border-ink/10 flex items-center justify-between">
+      <h3 class="font-bold text-lg">Rekod Bayaran Manual</h3>
+      <button onclick="closeManualModal()" class="text-ink/60 text-2xl leading-none hover:text-ink">×</button>
+    </div>
+    <div class="p-5 space-y-3">
+      <div>
+        <label class="text-xs font-semibold text-ink/65">Pesakit</label>
+        <select id="m-patient" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
+          <option value="">— Pilih pesakit —</option>
+        </select>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-ink/65">Penerangan</label>
+        <input id="m-desc" type="text" placeholder="cth: Pakej Asas (1x)" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="text-xs font-semibold text-ink/65">Jumlah (RM)</label>
+          <input id="m-total" type="number" step="0.01" min="0" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm">
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-ink/65">Kaedah</label>
+          <select id="m-method" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
+            <option value="transfer">Transfer</option>
+            <option value="card">Kad</option>
+            <option value="fpx">FPX</option>
+            <option value="manual">Manual</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-ink/65">Nota (opsyenal)</label>
+        <textarea id="m-notes" rows="2" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm"></textarea>
+      </div>
+      <button onclick="saveManual()" class="w-full bg-navy text-white font-semibold py-2.5 rounded-lg hover:bg-navy-dark transition-colors">
+        Simpan Bayaran
+      </button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+let allPayments = [];
+let patientLookup = {};
+
+function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtRM(n) { return 'RM ' + Number(n||0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtDate(d) { return new Date(d).toLocaleDateString('ms-MY',{day:'2-digit',month:'short',year:'numeric'}); }
+function fmtTime(d) { return new Date(d).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}); }
+
+const STATUS_META = {
+  completed: { label: 'Selesai',  cls: 'bg-green-100 text-green-700' },
+  pending:   { label: 'Pending',  cls: 'bg-amber-100 text-amber-700' },
+  failed:    { label: 'Gagal',    cls: 'bg-red-100 text-red-600' },
+};
+
+const METHOD_LABEL = { fpx:'FPX', card:'Kad', transfer:'Transfer', ghl:'GHL', manual:'Manual' };
+
+function renderKpi() {
+  const today = new Date().toISOString().split('T')[0];
+  const monthStart = today.slice(0,8) + '01';
+
+  const todayTotal  = allPayments.filter(p => p.status==='completed' && p.paid_at >= today).reduce((s,p)=>s+Number(p.total||0),0);
+  const monthTotal  = allPayments.filter(p => p.status==='completed' && p.paid_at >= monthStart).reduce((s,p)=>s+Number(p.total||0),0);
+  const pendingCount = allPayments.filter(p => p.status==='pending').length;
+  const txCount      = allPayments.filter(p => p.status==='completed').length;
+
+  const card = (label, value, sub, icon, bg, clr) => `
+    <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex items-center gap-4">
+      <div class="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${bg}">
+        <svg class="w-5 h-5 ${clr}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="${icon}"/></svg>
+      </div>
+      <div>
+        <div class="text-[11px] text-ink/45 font-medium">${label}</div>
+        <div class="text-2xl font-bold text-ink mt-0.5">${value}</div>
+        <div class="text-[11px] text-ink/40 mt-0.5">${sub}</div>
+      </div>
+    </div>`;
+
+  document.getElementById('kpi-row').innerHTML = [
+    card('Kutipan Hari Ini', fmtRM(todayTotal), 'Pembayaran selesai sahaja',
+      'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
+      'bg-green-50','text-green-600'),
+    card('Kutipan Bulan Ini', fmtRM(monthTotal), 'Dari awal bulan',
+      'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z',
+      'bg-[#6366f1]/10','text-[#6366f1]'),
+    card('Pending', pendingCount, pendingCount ? 'Perlu disahkan' : 'Tiada pending',
+      'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
+      pendingCount ? 'bg-amber-50' : 'bg-ink/5', pendingCount ? 'text-amber-500' : 'text-ink/30'),
+    card('Jumlah Transaksi', txCount, 'Pembayaran selesai',
+      'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
+      'bg-[#6366f1]/10','text-[#6366f1]'),
+  ].join('');
+}
+
+function renderTable() {
+  const search   = (document.getElementById('search-input').value || '').toLowerCase().trim();
+  const statusF  = document.getElementById('status-filter').value;
+  const methodF  = document.getElementById('method-filter').value;
+
+  const filtered = allPayments.filter(p => {
+    if (statusF && p.status !== statusF) return false;
+    if (methodF && p.payment_method !== methodF) return false;
+    if (search) {
+      const name = patientLookup[p.patient_id]?.name || '';
+      if (!p.receipt_ref?.toLowerCase().includes(search) && !name.toLowerCase().includes(search)) return false;
+    }
+    return true;
+  });
+
+  const tbody = document.getElementById('pay-table');
+  const empty = document.getElementById('pay-empty');
+
+  if (!filtered.length) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  tbody.innerHTML = filtered.map(p => {
+    const pt   = patientLookup[p.patient_id];
+    const name = pt?.name || '—';
+    const mrn  = pt?.mrn || '';
+    const info = STATUS_META[p.status] || STATUS_META.completed;
+    return `<div class="grid gap-3 items-center px-5 py-3 hover:bg-ink/[0.015] transition-colors" style="grid-template-columns:120px 1fr 100px 110px 100px 100px 90px">
+      <div class="text-xs font-mono text-ink/70 truncate">${escHtml(p.receipt_ref || '—')}</div>
+      <div class="min-w-0">
+        <div class="text-sm font-semibold text-ink truncate">${escHtml(name)}</div>
+        <div class="text-[10px] text-ink/40">${escHtml(mrn)}</div>
+      </div>
+      <div class="text-xs text-ink/65">${METHOD_LABEL[p.payment_method] || p.payment_method || '—'}</div>
+      <div class="text-sm font-bold text-ink text-right">${fmtRM(p.total)}</div>
+      <div><span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${info.cls}">${info.label}</span></div>
+      <div class="text-[11px] text-ink/55">
+        <div>${fmtDate(p.paid_at || p.created_at)}</div>
+        <div class="text-[10px] text-ink/35">${fmtTime(p.paid_at || p.created_at)}</div>
+      </div>
+      <div class="text-right">
+        <button onclick="openDetail('${p.id}')" class="text-xs font-semibold text-navy hover:underline">Lihat</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function openDetail(id) {
+  const p = allPayments.find(x => x.id === id);
+  if (!p) return;
+  const pt = patientLookup[p.patient_id];
+  const items = Array.isArray(p.items) ? p.items : [];
+  const info = STATUS_META[p.status] || STATUS_META.completed;
+
+  document.getElementById('detail-body').innerHTML = `
+    <div class="flex items-start justify-between gap-3">
+      <div>
+        <div class="text-xs text-ink/45">Receipt</div>
+        <div class="text-sm font-mono font-bold text-ink">${escHtml(p.receipt_ref || '—')}</div>
+      </div>
+      <span class="text-[10px] font-bold px-2 py-1 rounded-full ${info.cls}">${info.label}</span>
+    </div>
+    <div class="grid grid-cols-2 gap-3 text-sm">
+      <div><div class="text-xs text-ink/45">Pesakit</div><div class="font-semibold">${escHtml(pt?.name || '—')}</div><div class="text-xs text-ink/50">${escHtml(pt?.mrn || '')}</div></div>
+      <div><div class="text-xs text-ink/45">Tarikh</div><div class="font-semibold">${fmtDate(p.paid_at || p.created_at)}</div><div class="text-xs text-ink/50">${fmtTime(p.paid_at || p.created_at)}</div></div>
+      <div><div class="text-xs text-ink/45">Kaedah</div><div class="font-semibold">${METHOD_LABEL[p.payment_method] || '—'}</div></div>
+      <div><div class="text-xs text-ink/45">Ref GHL</div><div class="font-mono text-xs">${escHtml(p.ghl_transaction_id || '—')}</div></div>
+    </div>
+    ${items.length ? `<div>
+      <div class="text-xs font-bold text-ink/55 uppercase tracking-wider mb-2">Item</div>
+      <div class="divide-y divide-ink/5 border border-ink/10 rounded-lg">
+        ${items.map(it => `<div class="flex justify-between items-center px-3 py-2 text-sm">
+          <div>
+            <div class="font-medium">${escHtml(it.name || it.title || 'Item')}</div>
+            ${it.qty ? `<div class="text-[11px] text-ink/45">Qty: ${it.qty}</div>` : ''}
+          </div>
+          <div class="font-semibold">${fmtRM((it.price || 0) * (it.qty || 1))}</div>
+        </div>`).join('')}
+      </div>
+    </div>` : ''}
+    <div class="border-t border-ink/10 pt-3 space-y-1.5 text-sm">
+      <div class="flex justify-between text-ink/65"><span>Subtotal</span><span>${fmtRM(p.subtotal)}</span></div>
+      ${Number(p.service_charge) ? `<div class="flex justify-between text-ink/65"><span>Service Charge</span><span>${fmtRM(p.service_charge)}</span></div>` : ''}
+      ${Number(p.sst) ? `<div class="flex justify-between text-ink/65"><span>SST</span><span>${fmtRM(p.sst)}</span></div>` : ''}
+      <div class="flex justify-between font-bold text-ink text-base pt-1 border-t border-ink/10"><span>Total</span><span>${fmtRM(p.total)}</span></div>
+    </div>
+    ${p.notes ? `<div class="bg-cream rounded-lg p-3"><div class="text-[10px] font-bold text-ink/45 uppercase mb-1">Nota</div><div class="text-sm text-ink/75">${escHtml(p.notes)}</div></div>` : ''}
+    <div class="flex gap-2 pt-2 border-t border-ink/10">
+      <button onclick="openInvoice('${p.id}')" class="flex-1 text-center text-sm font-semibold bg-navy text-white py-2 rounded-lg hover:bg-navy-dark transition-colors">🧾 Jana Invois</button>
+      ${p.status === 'pending' ? `<button onclick="markComplete('${p.id}')" class="flex-1 text-sm font-semibold bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition-colors">Sahkan Selesai</button>` : ''}
+    </div>
+  `;
+  document.getElementById('detail-modal').classList.remove('hidden');
+}
+
+function closeDetailModal() { document.getElementById('detail-modal').classList.add('hidden'); }
+
+function invNo(p) {
+  const d = new Date(p.paid_at || p.created_at);
+  const ym = d.getFullYear() + String(d.getMonth()+1).padStart(2,'0');
+  return 'INV-' + ym + '-' + p.id.slice(-6).toUpperCase();
+}
+
+async function openInvoice(id) {
+  const p = allPayments.find(x => x.id === id);
+  if (!p) return;
+  let pt = patientLookup[p.patient_id];
+  // Fetch phone if not cached
+  if (!pt?.phone) {
+    const { data } = await window.db.from('psy_patients').select('phone').eq('id', p.patient_id).single();
+    pt = { ...pt, phone: data?.phone };
+  }
+  const items = Array.isArray(p.items) ? p.items : [];
+
+  document.getElementById('inv-no').textContent   = '#' + invNo(p);
+  document.getElementById('inv-date').textContent = fmtDate(p.paid_at || p.created_at);
+
+  document.getElementById('bill-to').innerHTML = `
+    <div class="font-semibold text-ink">${escHtml(pt?.name || '—')}</div>
+    <div>MRN: ${escHtml(pt?.mrn || '—')}</div>
+    ${pt?.phone ? `<div>Tel: ${escHtml(pt.phone)}</div>` : ''}
+  `;
+
+  const methodLabel = { fpx:'FPX', card:'Kad Kredit/Debit', transfer:'Transfer Bank', ghl:'GHL Payment', manual:'Manual' }[p.payment_method] || p.payment_method || '—';
+  const statusBadge = p.status === 'completed'
+    ? '<span class="inline-block px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-[10px] font-bold">DIBAYAR</span>'
+    : `<span class="inline-block px-2 py-0.5 rounded-full ${STATUS_META[p.status]?.cls || ''} text-[10px] font-bold">${(STATUS_META[p.status]?.label || p.status).toUpperCase()}</span>`;
+  document.getElementById('bill-meta').innerHTML = `
+    <div>${statusBadge}</div>
+    <div class="mt-1">${escHtml(methodLabel)}</div>
+    ${p.receipt_ref ? `<div class="text-xs text-ink/55">Resit: ${escHtml(p.receipt_ref)}</div>` : ''}
+  `;
+
+  const itemsHtml = items.length
+    ? items.map(it => {
+        const qty = Number(it.qty || 1);
+        const price = Number(it.price || 0);
+        return `<tr>
+          <td class="py-3 text-ink/80">${escHtml(it.name || it.title || 'Item')}</td>
+          <td class="py-3 text-center text-ink/65">${qty}</td>
+          <td class="py-3 text-right text-ink/65">${fmtRM(price)}</td>
+          <td class="py-3 text-right font-semibold">${fmtRM(price * qty)}</td>
+        </tr>`;
+      }).join('')
+    : `<tr>
+        <td class="py-3 text-ink/80">Khidmat Rawatan</td>
+        <td class="py-3 text-center text-ink/65">1</td>
+        <td class="py-3 text-right text-ink/65">${fmtRM(p.total)}</td>
+        <td class="py-3 text-right font-semibold">${fmtRM(p.total)}</td>
+      </tr>`;
+
+  document.getElementById('inv-items').innerHTML = itemsHtml;
+  document.getElementById('t-sub').textContent   = fmtRM(p.subtotal || p.total);
+  document.getElementById('t-total').textContent = fmtRM(p.total);
+
+  const svcRow = document.getElementById('t-svc-row');
+  const sstRow = document.getElementById('t-sst-row');
+  svcRow.classList.add('hidden'); svcRow.classList.remove('flex');
+  sstRow.classList.add('hidden'); sstRow.classList.remove('flex');
+  if (Number(p.service_charge)) { svcRow.classList.remove('hidden'); svcRow.classList.add('flex'); document.getElementById('t-svc').textContent = fmtRM(p.service_charge); }
+  if (Number(p.sst))            { sstRow.classList.remove('hidden'); sstRow.classList.add('flex'); document.getElementById('t-sst').textContent = fmtRM(p.sst); }
+
+  const notesWrap = document.getElementById('inv-notes-wrap');
+  if (p.notes) { notesWrap.classList.remove('hidden'); document.getElementById('inv-notes').textContent = p.notes; }
+  else notesWrap.classList.add('hidden');
+
+  closeDetailModal();
+  document.getElementById('invoice-overlay').classList.remove('hidden');
+}
+
+function closeInvoice() { document.getElementById('invoice-overlay').classList.add('hidden'); }
+
+async function markComplete(id) {
+  if (!confirm('Sahkan pembayaran ini sebagai selesai?')) return;
+  try {
+    await window.db.from('psy_payments').update({ status: 'completed', paid_at: new Date().toISOString() }).eq('id', id);
+    banner('Pembayaran disahkan');
+    closeDetailModal();
+    await loadData();
+  } catch(e) { banner('Ralat: ' + e.message, 'error'); }
+}
+
+function openManualModal() { document.getElementById('manual-modal').classList.remove('hidden'); }
+function closeManualModal() { document.getElementById('manual-modal').classList.add('hidden'); }
+
+async function saveManual() {
+  const patientId = document.getElementById('m-patient').value;
+  const desc      = document.getElementById('m-desc').value.trim();
+  const total     = Number(document.getElementById('m-total').value);
+  const method    = document.getElementById('m-method').value;
+  const notes     = document.getElementById('m-notes').value.trim();
+
+  if (!patientId) return banner('Pilih pesakit dahulu', 'error');
+  if (!total || total <= 0) return banner('Masukkan jumlah yang sah', 'error');
+
+  try {
+    const ref = 'RCP-' + Date.now().toString(36).toUpperCase();
+    await window.db.from('psy_payments').insert({
+      receipt_ref: ref,
+      patient_id: patientId,
+      items: desc ? [{ name: desc, price: total, qty: 1 }] : [],
+      subtotal: total,
+      total,
+      payment_method: method,
+      status: 'completed',
+      notes: notes || null,
+      paid_at: new Date().toISOString(),
+    });
+    banner('Bayaran manual direkod');
+    closeManualModal();
+    document.getElementById('m-desc').value = '';
+    document.getElementById('m-total').value = '';
+    document.getElementById('m-notes').value = '';
+    await loadData();
+  } catch(e) { banner('Ralat: ' + e.message, 'error'); }
+}
+
+function exportCsv() {
+  const rows = [['Receipt','Pesakit','MRN','Kaedah','Status','Subtotal','Service','SST','Total','Tarikh']];
+  const search   = (document.getElementById('search-input').value || '').toLowerCase().trim();
+  const statusF  = document.getElementById('status-filter').value;
+  const methodF  = document.getElementById('method-filter').value;
+
+  allPayments.filter(p => {
+    if (statusF && p.status !== statusF) return false;
+    if (methodF && p.payment_method !== methodF) return false;
+    if (search) {
+      const name = patientLookup[p.patient_id]?.name || '';
+      if (!p.receipt_ref?.toLowerCase().includes(search) && !name.toLowerCase().includes(search)) return false;
+    }
+    return true;
+  }).forEach(p => {
+    const pt = patientLookup[p.patient_id];
+    rows.push([
+      p.receipt_ref || '',
+      pt?.name || '',
+      pt?.mrn || '',
+      METHOD_LABEL[p.payment_method] || p.payment_method || '',
+      STATUS_META[p.status]?.label || p.status,
+      Number(p.subtotal||0).toFixed(2),
+      Number(p.service_charge||0).toFixed(2),
+      Number(p.sst||0).toFixed(2),
+      Number(p.total||0).toFixed(2),
+      new Date(p.paid_at || p.created_at).toISOString(),
+    ]);
+  });
+
+  const csv = '﻿' + rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `pembayaran-${new Date().toISOString().split('T')[0]}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function loadData() {
+  const period = document.getElementById('period-filter').value;
+  let query = window.db.from('psy_payments').select('*').order('created_at', { ascending: false }).limit(1000);
+
+  if (period !== 'all') {
+    const d = new Date(); d.setDate(d.getDate() - Number(period));
+    query = query.gte('created_at', d.toISOString());
+  }
+
+  const [payRes, patRes] = await Promise.all([
+    query,
+    window.db.from('psy_patients').select('id, mrn, psy_profiles(full_name)').eq('status','active'),
+  ]);
+
+  allPayments = payRes.data || [];
+  patientLookup = {};
+  (patRes.data || []).forEach(p => {
+    patientLookup[p.id] = { name: p.psy_profiles?.full_name || p.mrn || 'Pesakit', mrn: p.mrn };
+  });
+
+  // Populate manual modal patient select
+  const sel = document.getElementById('m-patient');
+  sel.innerHTML = '<option value="">— Pilih pesakit —</option>' +
+    Object.entries(patientLookup).map(([id, p]) =>
+      `<option value="${id}">${escHtml(p.name)} (${escHtml(p.mrn || '')})</option>`).join('');
+
+  renderKpi();
+  renderTable();
+}
+
+async function init() {
+  const user = await initStaff('payment_admin', 'Pembayaran');
+  if (!user) return;
+  await loadData();
+}
+
+init();
+</script>
+</body>
+</html>

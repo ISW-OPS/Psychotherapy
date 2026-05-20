@@ -98,6 +98,16 @@
           </div>
         </div>
 
+        <!-- Extension payment banner (terlepas sesi) -->
+        <div id="dash-extension-banner" class="hidden bg-gradient-to-r from-gold to-gold-dark text-white rounded-2xl p-5 flex items-center gap-4 flex-wrap">
+          <div class="text-3xl">⚠️</div>
+          <div class="flex-1 min-w-0">
+            <div class="font-bold">Sesi Terlepas — Bayar untuk Lanjutkan</div>
+            <div class="text-xs opacity-90 mt-1" id="dash-extension-detail"></div>
+          </div>
+          <a href="payment.html" class="bg-white text-gold-dark font-semibold px-4 py-2 rounded-lg text-sm whitespace-nowrap">Bayar Sekarang →</a>
+        </div>
+
         <!-- No Package Banner -->
         <div id="no-package-banner" class="hidden bg-gradient-to-r from-terracotta to-terracotta/80 text-white rounded-2xl p-5 flex items-center gap-4 flex-wrap">
           <div class="text-3xl">📦</div>
@@ -146,6 +156,7 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
+<script src="../../shared/adherence.js"></script>
 <script src="_shared.js"></script>
 <script>
 const MOOD_EMOJI = ['','😭','😢','😔','😟','😐','🙂','😊','😁','🤩','🌟'];
@@ -159,6 +170,28 @@ function greeting() {
 }
 
 // (Payment via GHL — handled externally for now)
+
+// Show banner kalau madu adherence buruk
+function showMaduAdherenceBanner(adherence) {
+  const existing = document.getElementById('madu-adherence-banner');
+  if (existing) return;
+  const banner = document.createElement('div');
+  banner.id = 'madu-adherence-banner';
+  banner.className = 'bg-terracotta/10 border-2 border-terracotta/30 rounded-2xl p-4 flex items-start gap-3 mb-4';
+  banner.innerHTML = `
+    <div class="text-3xl">⚠️</div>
+    <div class="flex-1 min-w-0">
+      <div class="font-bold text-sm text-terracotta">Kepatuhan Peminuman Madu Rendah</div>
+      <div class="text-xs text-ink/70 mt-1">
+        Anda hanya minum madu kurang dari ${adherence.target} kali sehari untuk <strong>${adherence.daysBelow} hari berturut</strong>.
+        Coach telah dimaklumkan. Sila tingkatkan untuk kesinambungan rawatan yang berkesan.
+      </div>
+      <div class="text-[11px] text-ink/55 mt-2">Target: ${adherence.target}/hari · Dipantau ${ADHERENCE_LOOKBACK_DAYS} hari terakhir</div>
+    </div>`;
+  // Insert atas content area
+  const content = document.querySelector('section');
+  if (content) content.insertBefore(banner, content.firstChild);
+}
 
 // Show motivasi disclaimer once per session if patient missed too many check-ins
 function showAdherenceDisclaimerIfNeeded(recentCheckins) {
@@ -319,7 +352,7 @@ function quickAction(icon, label, href, color) {
     const activePlan = plans[0] || null;
 
     // Fetch weekly progress + next session if plan exists
-    let weeklyAll = [], nextSession = null;
+    let weeklyAll = [], nextSession = null, activePkg = null;
     if (activePlan) {
       weeklyAll = await dbQuery('psy_plan_weekly_progress', { eq: { plan_id: activePlan.id } }).catch(() => []);
       const upcoming = (weeklyAll || []).filter(w =>
@@ -327,12 +360,75 @@ function quickAction(icon, label, href, color) {
       ).sort((a, b) => new Date(a.session_date) - new Date(b.session_date));
       nextSession = upcoming[0] || null;
     }
+    if (patientRecord?.active_package_id) {
+      const pkgRows = await dbQuery('psy_packages', { eq: { package_id: patientRecord.active_package_id } }).catch(() => []);
+      activePkg = pkgRows[0] || null;
+    }
+
+    // Auto-mark missed sessions + create extension — DISABLED (Phase 2, belum priority)
+    if (false && activePlan && activePlan.preferred_pair && activePkg) {
+      const extPrice = Number(activePkg.extension_price_per_week) || 50;
+      const now = new Date();
+      const missed = (weeklyAll || []).filter(r => {
+        if (r.is_extension) return false;
+        if (r.status !== 'booked') return false;
+        if (!r.session_date) return false;
+        const eod = new Date(r.session_date); eod.setHours(23, 59, 59, 999);
+        return eod < now;
+      });
+      if (missed.length) {
+        let nextExtWeek = Math.max(activePlan.duration_weeks || 12, ...(weeklyAll || []).map(r => r.week_number || 0)) + 1;
+        for (const sess of missed) {
+          try {
+            await dbUpdate('psy_plan_weekly_progress', sess.id, { status: 'cancel', updated_at: new Date().toISOString() });
+          } catch (e) { console.error('mark miss:', e); continue; }
+          const hasExt = (weeklyAll || []).some(r =>
+            r.is_extension && r.extension_for_week === sess.week_number && (r.session_day || 1) === (sess.session_day || 1)
+          );
+          if (hasExt) continue;
+          try {
+            await window.db.from('psy_plan_weekly_progress').insert([1, 2].map(d => ({
+              plan_id: activePlan.id, patient_id: patientRecord.id,
+              week_number: nextExtWeek, session_day: d,
+              status: 'extension_pending_payment', is_extension: true,
+              extension_for_week: sess.week_number, extension_price: extPrice,
+            })));
+            nextExtWeek++;
+          } catch (e) { console.error('create ext:', e); }
+        }
+        // Re-fetch
+        weeklyAll = await dbQuery('psy_plan_weekly_progress', { eq: { plan_id: activePlan.id } }).catch(() => weeklyAll);
+      }
+    }
+
+    // Tunjuk banner extension kalau ada sesi terlepas yang belum dibayar
+    if (activePlan) {
+      const pendingExt = (weeklyAll || []).filter(w => w.is_extension && w.status === 'extension_pending_payment');
+      const extWeeks = new Set(pendingExt.map(w => w.week_number));
+      if (extWeeks.size) {
+        const price = pendingExt[0]?.extension_price || 50;
+        const total = price * extWeeks.size;
+        document.getElementById('dash-extension-detail').textContent =
+          `${extWeeks.size} minggu tambahan dibuka · Jumlah RM ${total.toFixed(2)}`;
+        document.getElementById('dash-extension-banner').classList.remove('hidden');
+      }
+    }
 
     const hadirCount  = (weeklyAll || []).filter(w => w.status === 'hadir').length;
 
     // Adherence motivasi disclaimer — only relevant after KOB complete + package active
     const inTreatment = patientRecord.kob_status === 'completed' && !!patientRecord.active_package_id;
-    if (inTreatment) showAdherenceDisclaimerIfNeeded(recentCheckins || []);
+    if (inTreatment) {
+      showAdherenceDisclaimerIfNeeded(recentCheckins || []);
+      // Check madu adherence — trigger alert ke coach kalau kurang
+      if (window.checkMaduAdherence) {
+        const adherence = await window.checkMaduAdherence(patientRecord.id, patientRecord.active_package_id);
+        if (adherence?.isLowAdherence) {
+          await window.triggerMaduAlert(patientRecord, adherence);
+          showMaduAdherenceBanner(adherence);
+        }
+      }
+    }
     const scores      = (weeklyAll || []).filter(w => w.score && w.status === 'hadir').map(w => w.score);
     const avgScore    = scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) : null;
     const lastScore   = scores.length ? scores[scores.length - 1] : null;
@@ -419,6 +515,14 @@ function quickAction(icon, label, href, color) {
     // Next session
     if (nextSession) {
       const d = new Date(nextSession.session_date);
+      // Pakej meet_link sebagai fallback bila minggu nextSession mode online/both
+      let pkgMeetLink = null;
+      if (activePkg?.meet_link && Array.isArray(activePkg.coaching_schedule)) {
+        const weekEntry = activePkg.coaching_schedule.find(s => (s.week ?? s.day) === nextSession.week_number);
+        const mode = weekEntry?.mode;
+        if (mode === 'online' || mode === 'both') pkgMeetLink = activePkg.meet_link;
+      }
+      const meetLink = nextSession.meet_link || pkgMeetLink;
       const diffDays = Math.ceil((d - new Date()) / 86400000);
       const countdown = diffDays === 0 ? '<span class="text-xs font-bold text-gold-dark bg-gold/20 px-2 py-0.5 rounded-full">Hari Ini 📍</span>'
         : diffDays === 1 ? '<span class="text-xs font-bold text-navy bg-navy-light px-2 py-0.5 rounded-full">Esok</span>'
@@ -443,8 +547,8 @@ function quickAction(icon, label, href, color) {
             <div class="text-xs text-ink/50 mt-1">
               🕐 ${d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})} · Minggu ${nextSession.week_number}
             </div>
-            ${nextSession.meet_link
-              ? `<a href="${nextSession.meet_link}" target="_blank" class="inline-flex items-center gap-1 mt-2 text-xs font-semibold text-navy hover:underline">🎥 Join Google Meet →</a>`
+            ${meetLink
+              ? `<a href="${meetLink}" target="_blank" class="inline-flex items-center gap-1 mt-2 text-xs font-semibold text-navy hover:underline">🎥 Join Google Meet →</a>`
               : ''}
           </div>
         </div>`;

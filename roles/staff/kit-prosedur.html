@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Kit Prosedur</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🧰</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-6">
+
+        <!-- Page Header -->
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <h1 class="text-xl font-bold text-ink">Kit Prosedur</h1>
+            <p class="text-sm text-ink/45 mt-0.5">Set item yang diperlukan untuk setiap prosedur — auto-deduct bila sesi ditanda Hadir</p>
+          </div>
+          <button onclick="location.href='kit-edit.html'" class="flex items-center gap-2 bg-navy text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-dark transition-colors shadow-sm">
+            + Tambah Kit
+          </button>
+        </div>
+
+        <!-- Kit List -->
+        <div id="kit-list" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+
+        <!-- Empty State -->
+        <div id="empty-state" class="hidden bg-white rounded-2xl border border-ink/10 shadow-sm flex flex-col items-center justify-center py-20 text-center">
+          <div class="text-5xl mb-4 opacity-20">🧰</div>
+          <p class="text-base font-semibold text-ink/40">Belum ada kit prosedur</p>
+          <p class="text-sm text-ink/30 mt-1 mb-5">Cipta kit pertama untuk mula auto-deduct inventori</p>
+          <button onclick="location.href='kit-edit.html'" class="bg-navy text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-dark transition-colors">
+            + Tambah Kit Pertama
+          </button>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+async function init() {
+  const user = await initStaff('kit_prosedur', 'Kit Prosedur');
+  if (!user) return;
+
+  const { data: kits } = await window.db
+    .from('psy_procedure_kits')
+    .select('*')
+    .order('name');
+
+  renderKits(kits || []);
+}
+
+function renderKits(kits) {
+  const list  = document.getElementById('kit-list');
+  const empty = document.getElementById('empty-state');
+
+  if (!kits.length) {
+    list.classList.add('hidden');
+    empty.classList.remove('hidden');
+    return;
+  }
+
+  list.classList.remove('hidden');
+  empty.classList.add('hidden');
+
+  list.innerHTML = kits.map(k => {
+    const items = k.items || [];
+    const preview = items.slice(0, 3).map(i => escHtml(i.item_name)).join(', ');
+    const extra   = items.length > 3 ? ` +${items.length - 3} lagi` : '';
+    return `
+      <div class="bg-white rounded-2xl border border-ink/10 shadow-sm hover:shadow-md transition-shadow overflow-hidden group cursor-pointer"
+           onclick="location.href='kit-edit.html?id=${k.id}'">
+        <div class="px-5 py-4 border-b border-ink/8 flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="font-semibold text-sm text-ink truncate">${escHtml(k.name)}</div>
+            <div class="text-[11px] text-ink/40 mt-0.5">${escHtml(k.category || 'Umum')}</div>
+          </div>
+          <span class="flex-shrink-0 text-[10px] font-bold px-2 py-1 bg-teal/10 text-teal rounded-full">${items.length} item</span>
+        </div>
+        <div class="px-5 py-3.5">
+          ${k.description
+            ? `<p class="text-[11px] text-ink/50 mb-2 line-clamp-2">${escHtml(k.description)}</p>`
+            : ''}
+          ${items.length
+            ? `<p class="text-[11px] text-ink/35 truncate">${preview}${extra}</p>`
+            : '<p class="text-[11px] text-ink/25 italic">Belum ada item</p>'}
+        </div>
+        <div class="px-5 py-3 border-t border-ink/8 bg-ink/[0.012] flex items-center justify-between">
+          <span class="text-[10px] text-ink/30">Klik untuk edit</span>
+          <button onclick="event.stopPropagation(); deleteKit('${k.id}','${escHtml(k.name)}')"
+            class="text-[10px] font-semibold text-ink/30 hover:text-terracotta transition-colors px-2 py-1 rounded hover:bg-terracotta/8">
+            Padam
+          </button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function deleteKit(id, name) {
+  if (!confirm(`Padam kit "${name}"? Tindakan ini tidak boleh dibatalkan.`)) return;
+  try {
+    await window.db.from('psy_procedure_kits').delete().eq('id', id);
+    banner('Kit dipadam');
+    init();
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+  }
+}
+
+function escHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+init();
+</script>
+</body>
+</html>

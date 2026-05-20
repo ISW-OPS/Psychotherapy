@@ -24,6 +24,22 @@
 .chip-reschedule        { background:#fef3c7; color:#92400e; }
 .chip-consultation_done { background:#064e3b; color:#ffffff; }
 
+/* Weekly time grid */
+.wk-day-col   { border-left: 1px solid rgba(30,30,60,0.06); }
+.wk-hour-row  { border-top: 1px solid rgba(30,30,60,0.05); }
+.wk-event { position: absolute; left: 4px; right: 4px; border-radius: 8px; padding: 5px 7px; font-size: 11px; line-height: 1.3; overflow: hidden; cursor: pointer; transition: all .15s; }
+.wk-event:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 5; }
+.wk-type-fizikal    { background:#d1fae5; border-left:3px solid #10b981; color:#065f46; }
+.wk-type-konsultasi { background:#dbeafe; border-left:3px solid #3b82f6; color:#1e3a8a; }
+.wk-type-hakeema    { background:#ede9fe; border-left:3px solid #8b5cf6; color:#5b21b6; }
+.wk-type-program    { background:#fef3c7; border-left:3px solid #f59e0b; color:#92400e; }
+.wk-type-closure    { background:#fee2e2; border-left:3px solid #ef4444; color:#991b1b; }
+.mini-day { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 8px; font-size: 12px; cursor: pointer; }
+.mini-day:hover:not(.mini-today):not(.mini-selected) { background: rgba(30,30,60,0.05); }
+.mini-today    { background: #fef3c7; color: #92400e; font-weight: 700; }
+.mini-selected { background: #1e2b4a; color: white; font-weight: 700; }
+.mini-otherMonth { color: rgba(30,30,60,0.25); }
+
 @media print {
   #sidebar, #page-header, .print-hide, nav, .mobile-nav,
   #book-modal, #reschedule-modal, #day-modal { display: none !important; }
@@ -32,7 +48,7 @@
   .main-content { padding: 0 !important; }
   #print-appt-header { display: block !important; }
   #view-list { display: block !important; }
-  #view-calendar { display: none !important; }
+  #view-calendar, #view-week { display: none !important; }
   table { font-size: 11px; }
   th, td { padding: 6px 8px !important; }
   .chip { border: 1px solid #ccc !important; background: transparent !important; color: #333 !important; }
@@ -65,7 +81,11 @@
           <div class="flex gap-1 bg-white border border-ink/20 rounded-xl p-1">
             <button id="btn-view-cal"  onclick="setView('calendar')"
               class="px-4 py-1.5 rounded-lg text-sm font-medium transition-colors bg-navy text-white">
-              📅 Kalendar
+              📅 Bulan
+            </button>
+            <button id="btn-view-week" onclick="setView('week')"
+              class="px-4 py-1.5 rounded-lg text-sm font-medium transition-colors text-ink/60 hover:text-ink">
+              🗓️ Minggu
             </button>
             <button id="btn-view-list" onclick="setView('list')"
               class="px-4 py-1.5 rounded-lg text-sm font-medium transition-colors text-ink/60 hover:text-ink">
@@ -119,6 +139,67 @@
             </div>
             <div id="cal-grid" class="grid grid-cols-7"></div>
           </div>
+          </div>
+        </div>
+
+        <!-- ── WEEK VIEW ──────────────────────────────── -->
+        <div id="view-week" class="hidden">
+          <div class="flex gap-5">
+            <div class="flex-1 min-w-0 space-y-3">
+              <!-- Week nav -->
+              <div class="flex items-center justify-between print-hide">
+                <button onclick="changeWeek(-1)" class="px-3 py-1.5 border border-ink/20 rounded-lg text-sm hover:border-navy">← Sebelum</button>
+                <div id="week-label" class="text-center font-bold text-base"></div>
+                <div class="flex gap-2">
+                  <button onclick="goThisWeek()" class="px-3 py-1.5 border border-ink/20 rounded-lg text-sm hover:border-navy text-navy">Hari Ini</button>
+                  <button onclick="changeWeek(1)" class="px-3 py-1.5 border border-ink/20 rounded-lg text-sm hover:border-navy">Berikut →</button>
+                </div>
+              </div>
+
+              <!-- Legend -->
+              <div class="flex items-center gap-4 flex-wrap text-xs print-hide">
+                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-green-500"></span><span class="text-ink/65">Rawatan Fizikal</span></div>
+                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span><span class="text-ink/65">Konsultasi / Online</span></div>
+                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-purple-500"></span><span class="text-ink/65">Hakeema 1:1</span></div>
+                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span><span class="text-ink/65">Program / Kelas</span></div>
+                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-red-400"></span><span class="text-ink/65">Cuti / Cuti Umum</span></div>
+              </div>
+
+              <!-- Grid -->
+              <div class="bg-white rounded-xl border border-ink/10 overflow-hidden">
+                <div id="wk-day-headers" class="grid border-b border-ink/10" style="grid-template-columns:60px repeat(7, 1fr)"></div>
+                <div id="wk-grid-body" class="grid relative" style="grid-template-columns:60px repeat(7, 1fr); min-height: 720px;"></div>
+              </div>
+            </div>
+
+            <!-- Right sidebar -->
+            <aside class="w-72 flex-shrink-0 space-y-4 hidden lg:block print-hide">
+              <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
+                <div class="text-sm font-bold text-ink mb-3">Kalendar Mini</div>
+                <div class="flex items-center justify-between mb-2">
+                  <button onclick="changeMiniMonth(-1)" class="w-7 h-7 flex items-center justify-center text-ink/65 hover:bg-ink/5 rounded-lg">‹</button>
+                  <div id="mini-month-label" class="text-sm font-semibold"></div>
+                  <button onclick="changeMiniMonth(1)" class="w-7 h-7 flex items-center justify-center text-ink/65 hover:bg-ink/5 rounded-lg">›</button>
+                </div>
+                <div class="grid grid-cols-7 gap-1 text-[10px] text-ink/45 font-semibold text-center mb-1">
+                  <div>Isn</div><div>Sel</div><div>Rab</div><div>Kha</div><div>Jum</div><div>Sab</div><div>Aha</div>
+                </div>
+                <div id="mini-grid" class="grid grid-cols-7 gap-1"></div>
+              </div>
+
+              <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
+                <div class="text-sm font-bold text-ink mb-3">Status Kalendar</div>
+                <div id="wk-status-stats" class="space-y-2.5"></div>
+              </div>
+
+              <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
+                <div class="flex items-center justify-between mb-3">
+                  <div class="text-sm font-bold text-ink">Peringatan</div>
+                  <span id="wk-alert-count" class="hidden text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600"></span>
+                </div>
+                <div id="wk-alert-list" class="space-y-2"></div>
+              </div>
+            </aside>
           </div>
         </div>
 
@@ -278,6 +359,7 @@
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
 <script src="../../shared/utils.js"></script>
+<script src="../../shared/inventoryDeduct.js"></script>
 <script src="_shared.js"></script>
 <script>
 let allSessions = [], patientMap = {}, planMap = {}, profileMap = {};
@@ -423,9 +505,207 @@ function patientName(p) {
 function setView(v) {
   currentView = v;
   document.getElementById('view-calendar').classList.toggle('hidden', v !== 'calendar');
-  document.getElementById('view-list').classList.toggle('hidden', v !== 'list');
-  document.getElementById('btn-view-cal').className  = `px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${v === 'calendar' ? 'bg-navy text-white' : 'text-ink/60 hover:text-ink'}`;
-  document.getElementById('btn-view-list').className = `px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${v === 'list' ? 'bg-navy text-white' : 'text-ink/60 hover:text-ink'}`;
+  document.getElementById('view-week').classList.toggle('hidden',     v !== 'week');
+  document.getElementById('view-list').classList.toggle('hidden',     v !== 'list');
+  const baseCls = 'px-4 py-1.5 rounded-lg text-sm font-medium transition-colors';
+  document.getElementById('btn-view-cal').className  = `${baseCls} ${v === 'calendar' ? 'bg-navy text-white' : 'text-ink/60 hover:text-ink'}`;
+  document.getElementById('btn-view-week').className = `${baseCls} ${v === 'week'     ? 'bg-navy text-white' : 'text-ink/60 hover:text-ink'}`;
+  document.getElementById('btn-view-list').className = `${baseCls} ${v === 'list'     ? 'bg-navy text-white' : 'text-ink/60 hover:text-ink'}`;
+  if (v === 'week') renderWeekView();
+}
+
+// ═══════════ WEEK VIEW ═══════════
+const WK_DAY_FULL  = ['Aha','Isn','Sel','Rab','Kha','Jum','Sab'];
+const WK_MONTHS    = ['Jan','Feb','Mac','Apr','Mei','Jun','Jul','Ogo','Sep','Okt','Nov','Dis'];
+const WK_HOUR_START = 7, WK_HOUR_END = 19, WK_ROW_PX = 60;
+const WK_HOURS = WK_HOUR_END - WK_HOUR_START;
+let currentWeekStart = wkStartOfWeek(new Date());
+let miniMonth = new Date();
+
+function wkStartOfWeek(d) {
+  const x = new Date(d);
+  const day = x.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  x.setDate(x.getDate() + diff);
+  x.setHours(0,0,0,0);
+  return x;
+}
+function wkAddDays(d, n) { const x = new Date(d); x.setDate(x.getDate()+n); return x; }
+function wkYmd(d)     { return d.toISOString().split('T')[0]; }
+function wkSame(a, b) { return wkYmd(a) === wkYmd(b); }
+
+function wkClassify(s) {
+  if (s.session_type === 'online') return 'konsultasi';
+  const n = (s.notes || '').toLowerCase();
+  if (n.includes('online') || n.includes('konsult')) return 'konsultasi';
+  if (n.includes('hakeema') || n.includes('1:1'))    return 'hakeema';
+  if (n.includes('kelas') || n.includes('program') || n.includes('group')) return 'program';
+  return 'fizikal';
+}
+
+function changeWeek(d) { currentWeekStart = wkAddDays(currentWeekStart, d * 7); renderWeekView(); }
+function goThisWeek()  { currentWeekStart = wkStartOfWeek(new Date()); miniMonth = new Date(currentWeekStart); renderWeekView(); }
+function changeMiniMonth(d) { miniMonth = new Date(miniMonth.getFullYear(), miniMonth.getMonth()+d, 1); renderMiniCal(); }
+function jumpToDate(ymd) { currentWeekStart = wkStartOfWeek(new Date(ymd+'T00:00:00')); miniMonth = new Date(currentWeekStart); renderWeekView(); }
+
+function renderWeekView() {
+  const end = wkAddDays(currentWeekStart, 6);
+  const sameMonth = currentWeekStart.getMonth() === end.getMonth();
+  const lbl = sameMonth
+    ? `${currentWeekStart.getDate()} – ${end.getDate()} ${WK_MONTHS[end.getMonth()]} ${end.getFullYear()}`
+    : `${currentWeekStart.getDate()} ${WK_MONTHS[currentWeekStart.getMonth()]} – ${end.getDate()} ${WK_MONTHS[end.getMonth()]} ${end.getFullYear()}`;
+  document.getElementById('week-label').textContent = lbl;
+
+  // Headers
+  const today = new Date();
+  const hdrCells = ['<div class="px-2 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-wider text-center">Waktu</div>'];
+  for (let i = 0; i < 7; i++) {
+    const d = wkAddDays(currentWeekStart, i);
+    const isToday = wkSame(d, today);
+    hdrCells.push(`<div class="px-2 py-3 text-center wk-day-col ${isToday ? 'bg-navy/5' : ''}">
+      <div class="text-[10px] font-bold text-ink/45 uppercase">${WK_DAY_FULL[d.getDay()]}</div>
+      <div class="text-lg font-bold ${isToday ? 'text-navy' : 'text-ink'} mt-0.5">${d.getDate()}${isToday ? '<span class="inline-block w-1.5 h-1.5 bg-navy rounded-full ml-0.5 align-middle"></span>' : ''}</div>
+      <div class="text-[10px] text-ink/40">${WK_MONTHS[d.getMonth()]}</div>
+    </div>`);
+  }
+  document.getElementById('wk-day-headers').innerHTML = hdrCells.join('');
+
+  // Time column
+  const timeCol = [];
+  for (let h = 0; h < WK_HOURS; h++) {
+    const hour = WK_HOUR_START + h;
+    const lab = (hour > 12 ? hour - 12 : hour) + ' ' + (hour >= 12 ? 'PM' : 'AM');
+    timeCol.push(`<div class="wk-hour-row text-right pr-2 pt-1 text-[10px] text-ink/45" style="height:${WK_ROW_PX}px">${lab}</div>`);
+  }
+
+  // Day columns
+  const closureMap = window._closureMap || {};
+  const dayCols = [];
+  for (let i = 0; i < 7; i++) {
+    const d = wkAddDays(currentWeekStart, i);
+    const ymd = wkYmd(d);
+    const closure = closureMap[ymd];
+    const isOff = !closure && [1, 2].includes(d.getDay()); // Mon/Tue clinic-off (existing rule)
+
+    const daySessions = allSessions.filter(s => s.session_date && wkSame(new Date(s.session_date), d));
+
+    const hourRows = [];
+    for (let h = 0; h < WK_HOURS; h++) hourRows.push(`<div class="wk-hour-row" style="height:${WK_ROW_PX}px"></div>`);
+
+    let events = '';
+    if (closure) {
+      events = `<div class="wk-event wk-type-closure" style="top:4px; bottom:4px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;">
+        <div class="text-lg">🔒</div>
+        <div class="font-bold mt-1">${(window.escapeHtml||(x=>x))(closure.label)}</div>
+      </div>`;
+    } else if (isOff) {
+      events = `<div class="wk-event" style="top:4px; bottom:4px; background:rgba(30,30,60,0.04); border:0; color:rgba(30,30,60,0.3); display:flex; align-items:center; justify-content:center; font-size:11px;">Klinik Tutup</div>`;
+    } else {
+      events = daySessions.map(s => {
+        const sd = new Date(s.session_date);
+        const hf = sd.getHours() + sd.getMinutes()/60;
+        if (hf < WK_HOUR_START || hf >= WK_HOUR_END) return '';
+        const top = (hf - WK_HOUR_START) * WK_ROW_PX;
+        const height = WK_ROW_PX - 4;
+        const type = wkClassify(s);
+        const time = sd.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+        const p = patientMap[s.patient_id];
+        const name = patientName(p);
+        const plan = planMap[s.plan_id]?.name || 'Rawatan';
+        return `<div class="wk-event wk-type-${type}" style="top:${top+2}px; height:${height}px" onclick="openDayModal('${ymd}')">
+          <div class="font-bold">${time}</div>
+          <div class="truncate">${name}</div>
+          <div class="truncate opacity-75 text-[10px]">${plan}</div>
+        </div>`;
+      }).join('');
+    }
+
+    const todayCls = wkSame(d, today) ? 'bg-navy/[0.015]' : '';
+    dayCols.push(`<div class="wk-day-col relative ${todayCls}" style="height:${WK_HOURS * WK_ROW_PX}px">
+      ${hourRows.join('')}${events}
+    </div>`);
+  }
+  document.getElementById('wk-grid-body').innerHTML = `<div>${timeCol.join('')}</div>` + dayCols.join('');
+
+  renderMiniCal();
+  renderWeekStats();
+}
+
+function renderMiniCal() {
+  document.getElementById('mini-month-label').textContent = WK_MONTHS[miniMonth.getMonth()] + ' ' + miniMonth.getFullYear();
+  const first = new Date(miniMonth.getFullYear(), miniMonth.getMonth(), 1);
+  const start = wkStartOfWeek(first);
+  const today = new Date();
+  const cells = [];
+  for (let i = 0; i < 42; i++) {
+    const d = wkAddDays(start, i);
+    const isToday    = wkSame(d, today);
+    const isSelected = d >= currentWeekStart && d < wkAddDays(currentWeekStart, 7);
+    const otherMonth = d.getMonth() !== miniMonth.getMonth();
+    const cls = [];
+    if (isSelected) cls.push('mini-selected');
+    else if (isToday) cls.push('mini-today');
+    if (otherMonth) cls.push('mini-otherMonth');
+    cells.push(`<button class="mini-day ${cls.join(' ')}" onclick="jumpToDate('${wkYmd(d)}')">${d.getDate()}</button>`);
+  }
+  document.getElementById('mini-grid').innerHTML = cells.join('');
+}
+
+function renderWeekStats() {
+  const weekEnd = wkAddDays(currentWeekStart, 7);
+  const wkSess = allSessions.filter(s => {
+    if (!s.session_date) return false;
+    const d = new Date(s.session_date);
+    return d >= currentWeekStart && d < weekEnd;
+  });
+  const total = wkSess.length;
+  const closures = Object.values(window._closureMap || {}).filter(c => {
+    const d = new Date(c.closure_date + 'T00:00:00');
+    return d >= currentWeekStart && d < weekEnd;
+  });
+  const closedDays = closures.length + 2; // +Mon/Tue
+  const totalSlots = Math.max(0, (7 - closedDays) * WK_HOURS);
+  const filledPct  = totalSlots > 0 ? Math.min(100, Math.round(total / totalSlots * 100)) : 0;
+  const availPct   = Math.max(0, 100 - filledPct);
+  const nextClosure = closures[0];
+
+  const row = (icon, label, val, cls = 'text-ink') => `
+    <div class="flex items-center justify-between text-xs">
+      <div class="flex items-center gap-2"><span>${icon}</span><span class="text-ink/65">${label}</span></div>
+      <span class="font-bold ${cls}">${val}</span>
+    </div>`;
+
+  document.getElementById('wk-status-stats').innerHTML = [
+    row('📅', 'Jumlah Temujanji', total),
+    row('🟢', 'Slot Tersedia', availPct + '%', 'text-green-600'),
+    row('🔵', 'Penggunaan', filledPct + '%', 'text-blue-600'),
+    nextClosure ? row('🚫', 'Cuti Umum', new Date(nextClosure.closure_date+'T00:00:00').toLocaleDateString('ms-MY',{day:'2-digit',month:'short'}), 'text-amber-600') : '',
+  ].filter(Boolean).join('');
+
+  // Alerts
+  const today = new Date(); today.setHours(0,0,0,0);
+  const nextWk = wkAddDays(today, 7);
+  const reschedule = allSessions.filter(s => s.status === 'reschedule').length;
+  const upcoming = allSessions.filter(s => s.status === 'booked' && s.session_date && new Date(s.session_date) >= today && new Date(s.session_date) < nextWk).length;
+
+  const items = [];
+  if (reschedule) items.push({ icon: '🟡', label: `${reschedule} perlu reschedule`, count: reschedule, cls: 'bg-amber-50 text-amber-700' });
+  if (upcoming)   items.push({ icon: '🔵', label: `${upcoming} temujanji minggu ini`,  count: upcoming,   cls: 'bg-blue-50 text-blue-700' });
+
+  const list = document.getElementById('wk-alert-list');
+  const badge = document.getElementById('wk-alert-count');
+  if (!items.length) {
+    list.innerHTML = '<div class="text-xs text-ink/40 text-center py-3">Tiada peringatan</div>';
+    badge.classList.add('hidden');
+  } else {
+    badge.textContent = items.reduce((s,i)=>s+i.count,0);
+    badge.classList.remove('hidden');
+    list.innerHTML = items.map(i => `
+      <div class="flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg ${i.cls}">
+        <div class="flex items-center gap-2 text-xs"><span>${i.icon}</span><span>${i.label}</span></div>
+        <span class="text-xs font-bold">${i.count}</span>
+      </div>`).join('');
+  }
 }
 
 // ── Calendar ──────────────────────────────────────────
@@ -599,6 +879,13 @@ async function markHadir(id, planId, week) {
     await window.db.from('psy_treatment_plans').update({ current_week: week }).eq('id', planId);
     await auditLog('plan.week_hadir', planId, { week });
     banner(`Minggu ${week}: Hadir`);
+
+    // Auto-deduct F2F supplies
+    if (window.deductSessionSupplies) {
+      const ded = await window.deductSessionSupplies(id);
+      window.showDeductSummary?.(ded);
+    }
+
     document.getElementById('day-modal').classList.add('hidden');
     loadSessions();
   } catch (err) { banner('Ralat: ' + err.message, 'error'); }

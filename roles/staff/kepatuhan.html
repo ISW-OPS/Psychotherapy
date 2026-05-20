@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Kepatuhan</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📊</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-6">
+
+        <!-- Page Header -->
+        <div class="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-xl font-bold text-ink">Kepatuhan Pesakit</h1>
+            <p class="text-sm text-ink/45 mt-0.5">Kadar kehadiran sesi dan kepatuhan madu — 7 hari terakhir</p>
+          </div>
+          <!-- Period selector -->
+          <div class="flex items-center gap-2 bg-white border border-ink/15 rounded-xl p-1">
+            <button onclick="setPeriod(7)"  id="btn-7"  class="period-btn active text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors">7 Hari</button>
+            <button onclick="setPeriod(14)" id="btn-14" class="period-btn text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors">14 Hari</button>
+            <button onclick="setPeriod(30)" id="btn-30" class="period-btn text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors">30 Hari</button>
+          </div>
+        </div>
+
+        <!-- 3 KPI cards -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4" id="kpi-row"></div>
+
+        <!-- Alerts + Patient Table -->
+        <div class="grid lg:grid-cols-3 gap-5">
+
+          <!-- Alert list -->
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden">
+            <div class="px-5 py-4 border-b border-ink/8 flex items-center justify-between">
+              <h3 class="font-semibold text-sm text-ink">Alert Kepatuhan Madu</h3>
+              <span id="alert-badge" class="hidden text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600"></span>
+            </div>
+            <div id="alert-list" class="divide-y divide-ink/5"></div>
+          </div>
+
+          <!-- Patient table (wide) -->
+          <div class="lg:col-span-2 bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden">
+            <div class="px-5 py-4 border-b border-ink/8 flex items-center justify-between gap-3">
+              <h3 class="font-semibold text-sm text-ink">Kepatuhan Sesi Mengikut Pesakit</h3>
+              <div class="flex items-center gap-2">
+                <select id="status-filter" onchange="renderTable()" class="text-xs border border-ink/15 rounded-lg px-2 py-1.5 bg-white text-ink focus:outline-none focus:ring-2 focus:ring-navy/20">
+                  <option value="">Semua</option>
+                  <option value="low">Rendah (&lt;60%)</option>
+                  <option value="mid">Sederhana (60–79%)</option>
+                  <option value="high">Baik (≥80%)</option>
+                </select>
+                <input type="text" id="patient-search" oninput="renderTable()" placeholder="Cari pesakit..." class="text-xs border border-ink/15 rounded-lg px-3 py-1.5 bg-white text-ink focus:outline-none focus:ring-2 focus:ring-navy/20 w-36">
+              </div>
+            </div>
+            <!-- Table header -->
+            <div class="px-5 py-2 border-b border-ink/5 grid gap-3 items-center" style="grid-template-columns:1fr 80px 80px 80px 110px">
+              <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Pesakit</span>
+              <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider text-center">Hadir</span>
+              <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider text-center">Terlepas</span>
+              <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider text-center">Kadar</span>
+              <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Status</span>
+            </div>
+            <div id="patient-table" class="divide-y divide-ink/5"></div>
+            <div id="patient-empty" class="hidden px-5 py-12 text-center text-sm text-ink/35">Tiada pesakit ditemui</div>
+          </div>
+
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<style>
+.period-btn        { color: rgba(30,30,60,0.45); }
+.period-btn.active { background: #1e2b4a; color: #fff; }
+</style>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+let periodDays = 7;
+let patientRows = [];   // computed per patient
+
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function setPeriod(days) {
+  periodDays = days;
+  document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('btn-' + days).classList.add('active');
+  loadData();
+}
+
+function statusBadge(pct) {
+  if (pct >= 80) return { label: 'Baik',      cls: 'bg-green-100 text-green-700' };
+  if (pct >= 60) return { label: 'Sederhana', cls: 'bg-amber-100 text-amber-700' };
+  return              { label: 'Rendah',     cls: 'bg-red-100 text-red-600' };
+}
+
+function progressBar(pct) {
+  const color = pct >= 80 ? 'bg-green-400' : pct >= 60 ? 'bg-amber-400' : 'bg-red-400';
+  return `<div class="w-full bg-ink/8 rounded-full h-1.5 mt-1">
+    <div class="${color} h-1.5 rounded-full" style="width:${Math.min(pct,100)}%"></div>
+  </div>`;
+}
+
+function renderTable() {
+  const statusF = document.getElementById('status-filter').value;
+  const search  = (document.getElementById('patient-search').value || '').toLowerCase().trim();
+
+  const rows = patientRows.filter(r => {
+    if (search && !r.name.toLowerCase().includes(search) && !(r.mrn||'').toLowerCase().includes(search)) return false;
+    if (statusF === 'low')  return r.pct < 60;
+    if (statusF === 'mid')  return r.pct >= 60 && r.pct < 80;
+    if (statusF === 'high') return r.pct >= 80;
+    return true;
+  });
+
+  const tbody = document.getElementById('patient-table');
+  const empty = document.getElementById('patient-empty');
+
+  if (!rows.length) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  tbody.innerHTML = rows.map(r => {
+    const badge = statusBadge(r.pct);
+    const initials = r.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+    return `<a href="patient-hub.html?patient_id=${r.id}" class="grid gap-3 items-center px-5 py-3.5 hover:bg-ink/[0.015] transition-colors" style="grid-template-columns:1fr 80px 80px 80px 110px">
+      <div class="flex items-center gap-2.5 min-w-0">
+        <div class="w-8 h-8 rounded-full bg-ink/8 flex items-center justify-center text-[11px] font-bold text-ink/60 flex-shrink-0">${initials}</div>
+        <div class="min-w-0">
+          <div class="text-sm font-semibold text-ink truncate">${escHtml(r.name)}</div>
+          <div class="text-[10px] text-ink/40">${escHtml(r.mrn||'—')}</div>
+        </div>
+      </div>
+      <div class="text-center">
+        <div class="text-sm font-bold text-green-700">${r.hadir}</div>
+        <div class="text-[10px] text-ink/35">sesi</div>
+      </div>
+      <div class="text-center">
+        <div class="text-sm font-bold ${r.missed > 0 ? 'text-red-500' : 'text-ink/30'}">${r.missed}</div>
+        <div class="text-[10px] text-ink/35">sesi</div>
+      </div>
+      <div class="text-center">
+        <div class="text-sm font-bold text-ink">${r.pct}%</div>
+        ${progressBar(r.pct)}
+      </div>
+      <div><span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${badge.cls}">${badge.label}</span></div>
+    </a>`;
+  }).join('');
+}
+
+async function loadData() {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - (periodDays - 1));
+  const fromDate = cutoff.toISOString().split('T')[0];
+  const today    = new Date().toISOString().split('T')[0];
+
+  // Show loading state
+  document.getElementById('patient-table').innerHTML = '<div class="px-5 py-8 text-center text-sm text-ink/35">Memuatkan...</div>';
+
+  const [sessionsRes, patientsRes, alertsRes] = await Promise.all([
+    window.db.from('psy_plan_weekly_progress')
+      .select('patient_id, status')
+      .gte('session_date', fromDate + 'T00:00:00')
+      .lte('session_date', today + 'T23:59:59')
+      .in('status', ['hadir','tidak_hadir','cancel']),
+    window.db.from('psy_patients')
+      .select('id, mrn, psy_profiles(full_name)')
+      .eq('status','active'),
+    window.db.from('psy_adherence_alerts')
+      .select('id, patient_id, details, created_at, psy_patients(id, mrn, psy_profiles(full_name))')
+      .is('acknowledged_at', null)
+      .order('created_at', { ascending: false })
+      .limit(20),
+  ]);
+
+  const sessions  = sessionsRes.data || [];
+  const patients  = patientsRes.data || [];
+  const alerts    = alertsRes.data || [];
+
+  // Build per-patient stats
+  const statsMap = {};
+  sessions.forEach(s => {
+    if (!statsMap[s.patient_id]) statsMap[s.patient_id] = { hadir: 0, missed: 0 };
+    if (s.status === 'hadir') statsMap[s.patient_id].hadir++;
+    else statsMap[s.patient_id].missed++;
+  });
+
+  // Only patients with at least 1 session in period
+  patientRows = patients
+    .filter(p => statsMap[p.id])
+    .map(p => {
+      const s     = statsMap[p.id];
+      const total = s.hadir + s.missed;
+      const pct   = total > 0 ? Math.round(s.hadir / total * 100) : 100;
+      return {
+        id: p.id, mrn: p.mrn,
+        name: p.psy_profiles?.full_name || p.mrn || 'Pesakit',
+        hadir: s.hadir, missed: s.missed, pct,
+      };
+    })
+    .sort((a, b) => a.pct - b.pct);  // lowest first
+
+  // KPI row
+  const totalSess   = sessions.length;
+  const totalHadir  = sessions.filter(s => s.status === 'hadir').length;
+  const totalMissed = sessions.filter(s => s.status !== 'hadir').length;
+  const overallPct  = totalSess > 0 ? Math.round(totalHadir / totalSess * 100) : 100;
+  const lowCount    = patientRows.filter(r => r.pct < 60).length;
+
+  const kpiCard = (icon, label, value, sub, color) => `
+    <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex items-center gap-4">
+      <div class="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${color.bg}">
+        <svg class="w-6 h-6 ${color.icon}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="${icon}"/></svg>
+      </div>
+      <div>
+        <div class="text-[11px] text-ink/45 font-medium">${label}</div>
+        <div class="text-2xl font-bold ${color.text} mt-0.5">${value}</div>
+        <div class="text-[11px] text-ink/40 mt-0.5">${sub}</div>
+      </div>
+    </div>`;
+
+  document.getElementById('kpi-row').innerHTML = [
+    kpiCard(
+      'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',
+      `Kadar Kepatuhan (${periodDays} Hari)`, `${overallPct}%`,
+      `${totalHadir} hadir / ${totalSess} sesi`,
+      overallPct >= 80
+        ? { bg: 'bg-green-50', icon: 'text-green-600', text: 'text-green-700' }
+        : { bg: 'bg-amber-50', icon: 'text-amber-500', text: 'text-amber-600' }
+    ),
+    kpiCard(
+      'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z',
+      'Pesakit Kepatuhan Rendah', lowCount,
+      lowCount ? 'Kadar hadir < 60%' : 'Semua pesakit OK',
+      lowCount
+        ? { bg: 'bg-red-50',  icon: 'text-red-500',   text: 'text-red-600' }
+        : { bg: 'bg-green-50',icon: 'text-green-600',  text: 'text-green-700' }
+    ),
+    kpiCard(
+      'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
+      'Alert Madu Belum Diselesai', alerts.length,
+      alerts.length ? 'Kepatuhan peminuman rendah' : 'Tiada alert aktif',
+      alerts.length
+        ? { bg: 'bg-amber-50', icon: 'text-amber-500', text: 'text-amber-600' }
+        : { bg: 'bg-green-50', icon: 'text-green-600', text: 'text-green-700' }
+    ),
+  ].join('');
+
+  // Madu alerts
+  const alertBadge = document.getElementById('alert-badge');
+  if (alerts.length) {
+    alertBadge.textContent = alerts.length;
+    alertBadge.classList.remove('hidden');
+  }
+
+  const alertList = document.getElementById('alert-list');
+  if (!alerts.length) {
+    alertList.innerHTML = `<div class="px-5 py-10 text-center">
+      <div class="text-3xl mb-2 opacity-20">✅</div>
+      <p class="text-sm text-ink/35">Tiada alert aktif</p>
+    </div>`;
+  } else {
+    alertList.innerHTML = alerts.map(a => {
+      const p      = a.psy_patients;
+      const name   = p?.psy_profiles?.full_name || p?.mrn || 'Pesakit';
+      const details= a.details || {};
+      const days   = details.days_below || '?';
+      const target = details.target || '?';
+      const initials = name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+      return `<div class="flex items-start gap-3 px-5 py-3.5 hover:bg-ink/[0.015] transition-colors">
+        <div class="w-8 h-8 rounded-full bg-red-50 flex items-center justify-center text-[11px] font-bold text-red-500 flex-shrink-0 mt-0.5">${initials}</div>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-semibold text-ink truncate">${escHtml(name)}</div>
+          <div class="text-[11px] text-ink/50 mt-0.5">${days} hari kurang dari target ${target}×/hari</div>
+        </div>
+        <button onclick="ackAlert('${a.id}', this)" class="text-[10px] font-bold text-ink/35 hover:text-terracotta transition-colors px-2 py-1 rounded hover:bg-terracotta/8 flex-shrink-0 mt-0.5">Dilihat</button>
+      </div>`;
+    }).join('');
+  }
+
+  // Render table
+  renderTable();
+}
+
+async function ackAlert(id, btn) {
+  try {
+    await window.db.from('psy_adherence_alerts')
+      .update({ acknowledged_by: window.currentUser?.id, acknowledged_at: new Date().toISOString() })
+      .eq('id', id);
+    btn.closest('div.flex').remove();
+    banner('Alert ditanda dilihat');
+  } catch(e) { banner('Ralat: ' + e.message, 'error'); }
+}
+
+async function init() {
+  const user = await initStaff('kepatuhan', 'Kepatuhan Pesakit');
+  if (!user) return;
+  await loadData();
+}
+
+init();
+</script>
+</body>
+</html>

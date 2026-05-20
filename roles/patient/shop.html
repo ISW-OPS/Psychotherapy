@@ -96,19 +96,32 @@
     let CATEGORIES = ['All'];
 
     async function loadProductsFromDB() {
-      const rows = await dbQuery('psy_products', { eq: { is_active: true }, order: { col: 'sort_order', asc: true } }).catch(() => []);
-      PRODUCTS = rows.map(r => ({
-        id: r.product_id,
-        cat: r.category,
-        name: r.name,
-        desc: r.description,
-        price: Number(r.price),
-        icon: r.icon,
-        image_url: r.image_url || null,
-        bg: r.bg_color,
-      }));
+      const { data: rows } = await window.db.from('psy_products')
+        .select('*, inv:inventory_item_id (id, qty_in_stock, unit)')
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true });
+      const arr = rows || [];
+      PRODUCTS = arr.map(r => {
+        const linked = !!r.inv;
+        const liveStock = linked ? Number(r.inv.qty_in_stock) : null;
+        const legacyStock = r.stock != null ? Number(r.stock) : null;
+        const stock = linked ? liveStock : legacyStock;  // null = unlimited
+        return {
+          id: r.product_id,
+          cat: r.category,
+          name: r.name,
+          desc: r.description,
+          price: Number(r.price),
+          icon: r.icon,
+          image_url: r.image_url || null,
+          bg: r.bg_color,
+          stock,
+          stockUnit: r.inv?.unit || '',
+          linked,
+        };
+      });
       // Derive unique categories from DB
-      const cats = [...new Set(rows.map(r => r.category).filter(Boolean))];
+      const cats = [...new Set(arr.map(r => r.category).filter(Boolean))];
       CATEGORIES = ['All', ...cats];
       window.PRODUCTS = PRODUCTS;
       window.CATEGORIES = CATEGORIES;
@@ -141,20 +154,33 @@
       ).join('');
 
       const filtered = activeCategory === 'All' ? PRODUCTS : PRODUCTS.filter(p => p.cat === activeCategory);
-      document.getElementById('shop-grid').innerHTML = filtered.map(p => `
-    <div class="bg-white rounded-xl overflow-hidden border border-ink/10 hover:shadow-md flex flex-col">
-      <div class="h-32 ${p.bg || 'bg-cream'} flex items-center justify-center overflow-hidden">
+      document.getElementById('shop-grid').innerHTML = filtered.map(p => {
+        const outOfStock = p.stock != null && p.stock <= 0;
+        const lowStock   = p.stock != null && p.stock > 0 && p.stock <= 5;
+        const stockBadge = outOfStock
+          ? '<span class="absolute top-2 right-2 chip bg-terracotta/15 text-terracotta text-[10px]">Habis Stok</span>'
+          : lowStock
+          ? `<span class="absolute top-2 right-2 chip bg-gold/30 text-gold-dark text-[10px]">Tinggal ${p.stock}</span>`
+          : '';
+        const btn = outOfStock
+          ? '<button disabled class="bg-ink/15 text-ink/40 text-xs px-3 py-1.5 rounded-lg cursor-not-allowed">Habis</button>'
+          : `<button onclick="addToCart('${p.id}')" class="bg-navy text-white text-xs px-3 py-1.5 rounded-lg hover:bg-navy-dark">+ Add</button>`;
+        return `
+    <div class="bg-white rounded-xl overflow-hidden border border-ink/10 hover:shadow-md flex flex-col ${outOfStock ? 'opacity-60' : ''}">
+      <div class="relative h-32 ${p.bg || 'bg-cream'} flex items-center justify-center overflow-hidden">
         ${p.image_url ? `<img src="${p.image_url}" class="w-full h-full object-cover">` : `<span class="text-5xl">${p.icon || '📦'}</span>`}
+        ${stockBadge}
       </div>
       <div class="p-4 flex-1 flex flex-col">
         <div class="font-semibold text-sm">${p.name}</div>
         <div class="text-xs text-ink/60 mt-1 flex-1">${p.desc}</div>
         <div class="flex items-center justify-between mt-3 pt-3 border-t border-ink/5">
           <div class="font-bold text-sm">RM ${p.price.toFixed(2)}</div>
-          <button onclick="addToCart('${p.id}')" class="bg-navy text-white text-xs px-3 py-1.5 rounded-lg hover:bg-navy-dark">+ Add</button>
+          ${btn}
         </div>
       </div>
-    </div>`).join('');
+    </div>`;
+      }).join('');
       updateCartBadge();
     }
 

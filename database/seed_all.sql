@@ -1,4 +1,17 @@
 -- ============================================================
+-- SEED ALL — Master seed untuk ISW System
+-- Jalankan ini SEKALI sahaja untuk reset & populate semua demo data.
+-- Pre-requisite: Semua step migrations (step1 - step_*) sudah dijalankan.
+-- ============================================================
+-- DEMO LOGIN:
+--   Staff/Admin    : admin@ibnusinawellness.com / Demo@1234
+--   Patient demo   : demo.patient@isw.my        / Demo@1234
+--                    hafizuddin@demo.isw         / Demo@1234
+--                    rashidah@demo.isw           / Demo@1234
+--                    khalid@demo.isw             / Demo@1234
+-- ============================================================
+
+-- ============================================================
 -- SEED DEMO DATA — ISW System Management
 -- Jalankan dalam Supabase SQL Editor
 -- ============================================================
@@ -769,3 +782,764 @@ UNION ALL SELECT '== ORDERS ==',     COUNT(*) FROM psy_orders
 UNION ALL SELECT '== PAKEJ ==',      COUNT(*) FROM psy_packages
 UNION ALL SELECT '== PRODUK ==',     COUNT(*) FROM psy_products
 UNION ALL SELECT '== INVENTORI ==',  COUNT(*) FROM psy_inventory_items;
+
+-- ============================================================
+-- SECTION B: Treatment Plans & Weekly Progress (new schema)
+-- ============================================================
+-- ============================================================
+-- SEED DATA: Treatment Plans + Weekly Progress
+-- New flow: 2 sesi/minggu — pair Jum+Sab atau Sab+Ahad.
+-- Anchor: Jumaat/Sabtu/Ahad minggu semasa = current_week.
+-- Tarikh dikira tepat pada hari & jam yang dipilih.
+-- ============================================================
+
+
+-- ── STEP 1: Set current_week + preferred_pair setiap plan ────
+
+UPDATE psy_treatment_plans SET
+  current_week = 5, preferred_pair = 'fri_sat',
+  preferred_time_day1 = '14:00', preferred_time_day2 = '10:00',
+  schedule_setup_at = now() - interval '5 weeks'
+WHERE name ILIKE '%OBP1%' AND status = 'active';
+
+UPDATE psy_treatment_plans SET
+  current_week = 3, preferred_pair = 'sat_sun',
+  preferred_time_day1 = '10:00', preferred_time_day2 = '14:00',
+  schedule_setup_at = now() - interval '3 weeks'
+WHERE name ILIKE '%EOL+%' AND status = 'active';
+
+UPDATE psy_treatment_plans SET
+  current_week = 2, preferred_pair = 'fri_sat',
+  preferred_time_day1 = '15:00', preferred_time_day2 = '10:00',
+  schedule_setup_at = now() - interval '2 weeks'
+WHERE name ILIKE '%EOL %' AND status = 'active';
+
+UPDATE psy_treatment_plans SET
+  current_week = 7, preferred_pair = 'sat_sun',
+  preferred_time_day1 = '14:00', preferred_time_day2 = '16:00',
+  schedule_setup_at = now() - interval '7 weeks'
+WHERE name ILIKE '%777 VIP%' AND status = 'active';
+
+UPDATE psy_treatment_plans SET
+  current_week = 1, preferred_pair = 'fri_sat',
+  preferred_time_day1 = '10:00', preferred_time_day2 = '14:00',
+  schedule_setup_at = now() - interval '3 days'
+WHERE name ILIKE '%777 FREE%' AND status = 'active';
+
+
+-- ── STEP 2: Assign coach ─────────────────────────────────────
+
+UPDATE psy_patients
+SET coach_id = (
+  SELECT id FROM psy_profiles
+  WHERE role = 'staff' AND staff_role = 'coach'
+  ORDER BY created_at LIMIT 1
+)
+WHERE status IN ('active', 'unregistered')
+  AND coach_id IS NULL;
+
+
+-- ── STEP 3: Buang progress lama (clean re-seed) ──────────────
+
+DELETE FROM psy_plan_weekly_progress
+WHERE plan_id IN (
+  SELECT id FROM psy_treatment_plans
+  WHERE status = 'active'
+    AND name ILIKE ANY (ARRAY['%OBP1%','%EOL+%','%EOL %','%777 VIP%','%777 FREE%'])
+);
+
+
+-- ── STEP 4: OBP1 — fri_sat, current_week=5 ───────────────────
+-- M5 = Jum/Sab minggu semasa. Anchor: date_trunc('week', now())
+-- date_trunc('week', x) = Monday (ISO). +4d = Friday, +5d = Saturday.
+
+DO $$
+DECLARE
+  v_plan_id UUID; v_patient_id UUID;
+  v_anchor_fri TIMESTAMPTZ;  -- Jumaat untuk current_week (M5)
+  v_t1 INTERVAL := interval '14 hours';   -- jam Jumaat
+  v_t2 INTERVAL := interval '10 hours';   -- jam Sabtu
+  v_cw INT := 5;
+BEGIN
+  SELECT id, patient_id INTO v_plan_id, v_patient_id
+  FROM psy_treatment_plans WHERE name ILIKE '%OBP1%' AND status = 'active'
+  ORDER BY created_at LIMIT 1;
+  IF v_plan_id IS NULL THEN RAISE NOTICE 'Tiada plan OBP1'; RETURN; END IF;
+
+  v_anchor_fri := date_trunc('week', now()) + interval '4 days';  -- Fri minggu semasa
+
+  INSERT INTO psy_plan_weekly_progress
+    (plan_id, patient_id, week_number, session_day, status, score, notes, session_date, updated_by_name, updated_at)
+  VALUES
+    -- M1
+    (v_plan_id, v_patient_id, 1, 1, 'hadir', 8, 'Pesakit positif, mula peminuman IB.',  v_anchor_fri - interval '4 weeks' + v_t1, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 1, 2, 'hadir', 8, 'Sesi kedua — adapt jadual.',           v_anchor_fri - interval '4 weeks' + interval '1 day' + v_t2, 'Aqilah (Coach)', now()),
+    -- M2
+    (v_plan_id, v_patient_id, 2, 1, 'hadir', 7, 'Sedikit reaksi pemulihan.',            v_anchor_fri - interval '3 weeks' + v_t1, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 2, 2, 'hadir', 7, 'Stabil selepas Friday session.',       v_anchor_fri - interval '3 weeks' + interval '1 day' + v_t2, 'Aqilah (Coach)', now()),
+    -- M3
+    (v_plan_id, v_patient_id, 3, 1, 'hadir', 9, 'Mood meningkat, berat turun 1.2kg.',   v_anchor_fri - interval '2 weeks' + v_t1, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 3, 2, 'hadir', 9, 'Konsistensi tinggi.',                  v_anchor_fri - interval '2 weeks' + interval '1 day' + v_t2, 'Aqilah (Coach)', now()),
+    -- M4
+    (v_plan_id, v_patient_id, 4, 1, 'hadir', 8, 'Konsisten dengan jadual minum.',       v_anchor_fri - interval '1 week' + v_t1, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 4, 2, 'hadir', 8, 'Reflection bagus.',                    v_anchor_fri - interval '1 week' + interval '1 day' + v_t2, 'Aqilah (Coach)', now()),
+    -- M5 (semasa)
+    (v_plan_id, v_patient_id, 5, 1, 'booked', NULL, NULL,                                v_anchor_fri + v_t1, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 5, 2, 'booked', NULL, NULL,                                v_anchor_fri + interval '1 day' + v_t2, 'Aqilah (Coach)', now());
+END $$;
+
+
+-- ── STEP 5: EOL+ — sat_sun, current_week=3 ───────────────────
+
+DO $$
+DECLARE
+  v_plan_id UUID; v_patient_id UUID;
+  v_anchor_sat TIMESTAMPTZ;
+  v_t1 INTERVAL := interval '10 hours';   -- Sabtu
+  v_t2 INTERVAL := interval '14 hours';   -- Ahad
+BEGIN
+  SELECT id, patient_id INTO v_plan_id, v_patient_id
+  FROM psy_treatment_plans WHERE name ILIKE '%EOL+%' AND status = 'active'
+  ORDER BY created_at LIMIT 1;
+  IF v_plan_id IS NULL THEN RAISE NOTICE 'Tiada plan EOL+'; RETURN; END IF;
+
+  v_anchor_sat := date_trunc('week', now()) + interval '5 days';  -- Sabtu minggu semasa
+
+  INSERT INTO psy_plan_weekly_progress
+    (plan_id, patient_id, week_number, session_day, status, score, notes, session_date, updated_by_name, updated_at)
+  VALUES
+    (v_plan_id, v_patient_id, 1, 1, 'hadir', 7, 'Sesi pertama lancar.',                 v_anchor_sat - interval '2 weeks' + v_t1, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 1, 2, 'hadir', 7, 'Continuation hari Ahad.',              v_anchor_sat - interval '2 weeks' + interval '1 day' + v_t2, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 2, 1, 'hadir', 8, 'Pesakit aktif join terapi.',           v_anchor_sat - interval '1 week' + v_t1, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 2, 2, 'hadir', 8, 'Improvement nyata.',                   v_anchor_sat - interval '1 week' + interval '1 day' + v_t2, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 3, 1, 'booked', NULL, NULL,                                v_anchor_sat + v_t1, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 3, 2, 'booked', NULL, NULL,                                v_anchor_sat + interval '1 day' + v_t2, 'Aqilah (Coach)', now());
+END $$;
+
+
+-- ── STEP 6: EOL — fri_sat, current_week=2 ────────────────────
+
+DO $$
+DECLARE
+  v_plan_id UUID; v_patient_id UUID;
+  v_anchor_fri TIMESTAMPTZ;
+  v_t1 INTERVAL := interval '15 hours';
+  v_t2 INTERVAL := interval '10 hours';
+BEGIN
+  SELECT id, patient_id INTO v_plan_id, v_patient_id
+  FROM psy_treatment_plans WHERE name ILIKE '%EOL %' AND status = 'active'
+  ORDER BY created_at LIMIT 1;
+  IF v_plan_id IS NULL THEN RAISE NOTICE 'Tiada plan EOL'; RETURN; END IF;
+
+  v_anchor_fri := date_trunc('week', now()) + interval '4 days';
+
+  INSERT INTO psy_plan_weekly_progress
+    (plan_id, patient_id, week_number, session_day, status, score, notes, session_date, updated_by_name, updated_at)
+  VALUES
+    (v_plan_id, v_patient_id, 1, 1, 'hadir', 8, 'Mula program — faham objektif.',       v_anchor_fri - interval '1 week' + v_t1, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 1, 2, 'hadir', 8, 'Sesi Sabtu mantap.',                   v_anchor_fri - interval '1 week' + interval '1 day' + v_t2, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 2, 1, 'booked', NULL, NULL,                                v_anchor_fri + v_t1, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 2, 2, 'booked', NULL, NULL,                                v_anchor_fri + interval '1 day' + v_t2, 'Aqilah (Coach)', now());
+END $$;
+
+
+-- ── STEP 7: 777 VIP — sat_sun, current_week=7 ────────────────
+
+DO $$
+DECLARE
+  v_plan_id UUID; v_patient_id UUID;
+  v_anchor_sat TIMESTAMPTZ;
+  v_t1 INTERVAL := interval '14 hours';
+  v_t2 INTERVAL := interval '16 hours';
+BEGIN
+  SELECT id, patient_id INTO v_plan_id, v_patient_id
+  FROM psy_treatment_plans WHERE name ILIKE '%777 VIP%' AND status = 'active'
+  ORDER BY created_at LIMIT 1;
+  IF v_plan_id IS NULL THEN RAISE NOTICE 'Tiada plan 777 VIP'; RETURN; END IF;
+
+  v_anchor_sat := date_trunc('week', now()) + interval '5 days';
+
+  INSERT INTO psy_plan_weekly_progress
+    (plan_id, patient_id, week_number, session_day, status, score, notes, session_date, updated_by_name, updated_at)
+  VALUES
+    (v_plan_id, v_patient_id, 1, 1, 'hadir', 9, 'Semangat tinggi.',                     v_anchor_sat - interval '6 weeks' + v_t1, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 1, 2, 'hadir', 9, 'Target jelas.',                        v_anchor_sat - interval '6 weeks' + interval '1 day' + v_t2, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 2, 1, 'hadir', 8, 'Konsisten.',                           v_anchor_sat - interval '5 weeks' + v_t1, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 2, 2, 'hadir', 8, 'Routine settled.',                     v_anchor_sat - interval '5 weeks' + interval '1 day' + v_t2, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 3, 1, 'hadir', 8, 'Berat turun 2kg.',                     v_anchor_sat - interval '4 weeks' + v_t1, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 3, 2, 'hadir', 8, 'Progress stabil.',                     v_anchor_sat - interval '4 weeks' + interval '1 day' + v_t2, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 4, 1, 'hadir', 7, 'Pulih dari demam.',                    v_anchor_sat - interval '3 weeks' + v_t1, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 4, 2, 'hadir', 7, 'Energi balik normal.',                 v_anchor_sat - interval '3 weeks' + interval '1 day' + v_t2, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 5, 1, 'hadir', 9, 'Mood baik.',                           v_anchor_sat - interval '2 weeks' + v_t1, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 5, 2, 'hadir', 9, 'Terapi zikir berjalan.',               v_anchor_sat - interval '2 weeks' + interval '1 day' + v_t2, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 6, 1, 'hadir', 8, 'Stabil.',                              v_anchor_sat - interval '1 week' + v_t1, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 6, 2, 'hadir', 8, 'Fokus pemulihan akhir.',               v_anchor_sat - interval '1 week' + interval '1 day' + v_t2, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 7, 1, 'booked', NULL, NULL,                                v_anchor_sat + v_t1, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 7, 2, 'booked', NULL, NULL,                                v_anchor_sat + interval '1 day' + v_t2, 'Aqilah (Coach)', now());
+END $$;
+
+
+-- ── STEP 8: 777 FREE — fri_sat, current_week=1 ───────────────
+
+DO $$
+DECLARE
+  v_plan_id UUID; v_patient_id UUID;
+  v_anchor_fri TIMESTAMPTZ;
+  v_t1 INTERVAL := interval '10 hours';
+  v_t2 INTERVAL := interval '14 hours';
+BEGIN
+  SELECT id, patient_id INTO v_plan_id, v_patient_id
+  FROM psy_treatment_plans WHERE name ILIKE '%777 FREE%' AND status = 'active'
+  ORDER BY created_at LIMIT 1;
+  IF v_plan_id IS NULL THEN RAISE NOTICE 'Tiada plan 777 FREE'; RETURN; END IF;
+
+  v_anchor_fri := date_trunc('week', now()) + interval '4 days';
+
+  INSERT INTO psy_plan_weekly_progress
+    (plan_id, patient_id, week_number, session_day, status, session_date, updated_by_name, updated_at)
+  VALUES
+    (v_plan_id, v_patient_id, 1, 1, 'booked', v_anchor_fri + v_t1, 'Aqilah (Coach)', now()),
+    (v_plan_id, v_patient_id, 1, 2, 'booked', v_anchor_fri + interval '1 day' + v_t2, 'Aqilah (Coach)', now());
+END $$;
+
+
+-- ── SEMAK KEPUTUSAN ──────────────────────────────────────────
+
+SELECT
+  tp.name AS plan_name,
+  pp.full_name AS patient_name,
+  tp.current_week,
+  tp.preferred_pair,
+  tp.preferred_time_day1, tp.preferred_time_day2,
+  COUNT(pw.id) AS sesi_direkod
+FROM psy_treatment_plans tp
+LEFT JOIN psy_patients pat ON pat.id = tp.patient_id
+LEFT JOIN psy_profiles pp ON pp.id = pat.user_id
+LEFT JOIN psy_plan_weekly_progress pw ON pw.plan_id = tp.id
+GROUP BY tp.id, tp.name, pp.full_name, tp.current_week, tp.preferred_pair, tp.preferred_time_day1, tp.preferred_time_day2
+ORDER BY tp.created_at;
+
+-- ============================================================
+-- SECTION C: Clinic Closures 2026
+-- ============================================================
+-- ============================================================
+-- Seed Malaysia 2026 federal public holidays + Hari Raya for clinic closure.
+-- State-specific holidays not included — add manually if relevant to clinic location.
+-- Verify Islamic-calendar dates against official gazette before relying on.
+-- ============================================================
+
+INSERT INTO psy_clinic_closures (closure_date, label, category, is_recurring) VALUES
+  ('2026-01-01', 'Tahun Baru',                       'public_holiday', false),
+  ('2026-01-29', 'Israk dan Mikraj',                 'public_holiday', false),
+  ('2026-02-01', 'Hari Wilayah Persekutuan',         'public_holiday', false),
+  ('2026-02-17', 'Tahun Baru Cina',                  'public_holiday', false),
+  ('2026-02-18', 'Tahun Baru Cina (Hari Kedua)',     'public_holiday', false),
+  ('2026-02-19', 'Awal Ramadan',                     'public_holiday', false),
+  ('2026-03-20', 'Hari Raya Aidilfitri',             'hari_raya',      false),
+  ('2026-03-21', 'Hari Raya Aidilfitri (Hari Kedua) / Nuzul Al-Quran', 'hari_raya', false),
+  ('2026-05-01', 'Hari Pekerja / Hari Wesak',        'public_holiday', false),
+  ('2026-05-27', 'Hari Raya Aidiladha',              'hari_raya',      false),
+  ('2026-06-01', 'Hari Keputeraan Yang di-Pertuan Agong', 'public_holiday', false),
+  ('2026-06-17', 'Awal Muharram (Maal Hijrah)',      'public_holiday', false),
+  ('2026-08-25', 'Hari Kebangsaan',                  'public_holiday', false),
+  ('2026-08-26', 'Maulidur Rasul',                   'public_holiday', false),
+  ('2026-09-16', 'Hari Malaysia',                    'public_holiday', false),
+  ('2026-11-08', 'Deepavali',                        'public_holiday', false),
+  ('2026-12-25', 'Hari Krismas',                     'public_holiday', false)
+ON CONFLICT (closure_date) DO NOTHING;
+
+-- ============================================================
+-- SECTION D: Letter Templates (KWSP, PERKESO, RELA, dll)
+-- ============================================================
+-- ============================================================
+-- SEED: Letter templates rasmi (pre-built untuk semua klinik)
+-- Run selepas step_letter_simple.sql.
+-- ============================================================
+
+-- Hapus existing seeded templates (re-seed friendly)
+DELETE FROM psy_letter_templates WHERE name IN (
+  'Surat Permohonan KWSP',
+  'Surat Permohonan PERKESO',
+  'Surat Permohonan RELA',
+  'Surat Permohonan Bantuan Rawatan',
+  'Surat Perakuan Pemulangan Bayaran',
+  'Surat Pembatalan Rawatan',
+  'Surat Maklum Balas Penamatan Rawatan',
+  'Surat Pengiraan Stok Barang'
+);
+
+INSERT INTO psy_letter_templates (name, category, description, recipient, title, body, fields, created_by_name) VALUES
+
+-- ── 1. KWSP (PATIENT) ───────────────────────────────────────
+('Surat Permohonan KWSP', 'patient',
+ 'Permohonan pengeluaran KWSP untuk rawatan kesihatan pesakit.',
+ E'Pengurus Besar,\nKumpulan Wang Simpanan Pekerja (KWSP),\nJalan Raja Laut,\nKuala Lumpur.',
+ 'PERMOHONAN PENGELUARAN AHLI KWSP UNTUK RAWATAN PERUBATAN',
+ E'Adalah dengan hormatnya pihak kami merujuk perkara di atas.\n\n2. Bersama ini disertakan butiran pesakit yang memerlukan rawatan:\n\nNama: [NAMA]\nNo. K/P: [IC]\nNo. Akaun KWSP: [NO_AKAUN_KWSP]\nPakej Rawatan: [PAKEJ]\nAnggaran Kos Rawatan: RM [JUMLAH_RM]\n\n3. Diagnosis & sebab rawatan diperlukan:\n[DIAGNOSIS]\n\n4. Mohon pihak tuan/puan dapat memproses permohonan ini dengan kadar segera. Segala kerjasama daripada pihak tuan amat kami hargai.',
+ '[
+   {"key":"NO_AKAUN_KWSP","label":"No. Akaun KWSP","type":"text"},
+   {"key":"JUMLAH_RM","label":"Jumlah Anggaran Kos (RM)","type":"number"},
+   {"key":"DIAGNOSIS","label":"Diagnosis & Sebab Rawatan","type":"textarea"}
+ ]'::jsonb,
+ 'System Seed'),
+
+-- ── 2. PERKESO (PATIENT) ────────────────────────────────────
+('Surat Permohonan PERKESO', 'patient',
+ 'Permohonan bantuan PERKESO untuk rawatan pesakit.',
+ E'Ketua Pegawai Eksekutif,\nPertubuhan Keselamatan Sosial (PERKESO),\nKuala Lumpur.',
+ 'PERMOHONAN BANTUAN PERKESO BAGI RAWATAN PESAKIT',
+ E'Adalah dengan hormatnya pihak kami merujuk perkara di atas.\n\n2. Butiran pesakit:\n\nNama: [NAMA]\nNo. K/P: [IC]\nNo. Caruman PERKESO: [NO_CARUMAN]\nPakej Rawatan: [PAKEJ]\nJumlah Diminta: RM [JUMLAH_RM]\n\n3. Keadaan pesakit yang memerlukan rawatan:\n[KEADAAN]\n\n4. Mohon dipertimbangkan dan kelulusan dimaklumkan kepada pihak kami secepat mungkin.',
+ '[
+   {"key":"NO_CARUMAN","label":"No. Caruman PERKESO","type":"text"},
+   {"key":"JUMLAH_RM","label":"Jumlah Diminta (RM)","type":"number"},
+   {"key":"KEADAAN","label":"Keadaan Pesakit","type":"textarea"}
+ ]'::jsonb,
+ 'System Seed'),
+
+-- ── 3. RELA (INTERNAL — surat klinik ke RELA, tiada patient) ──
+('Surat Permohonan RELA', 'internal',
+ 'Permohonan bantuan anggota RELA untuk kawalan keselamatan sesi rawatan.',
+ E'PEJABAT RELA DAERAH\nHulu Langat,\n43000 Kajang.',
+ 'PERMOHONAN BANTUAN ANGGOTA RELA KE IBNU SINA WELLNESS, COUNTRY HEIGHTS, KAJANG',
+ E'Merujuk kepada perkara di atas, pihak Ibnu Sina Wellness (ISW) memohon bantuan daripada pihak tuan untuk menghantar anggota RELA bagi tujuan kawalan dan keselamatan lalu lintas semasa sesi rawatan dijalankan di premis kami.\n\n2. Butiran program adalah seperti berikut:\n[JADUAL_BUTIRAN]\n\n3. Semoga dengan bantuan daripada pihak tuan dapat menyempurnakan lagi perjalanan sesi rawatan yang diadakan di tempat kami. Segala kerjasama daripada pihak tuan amat kami hargai.',
+ '[
+   {"key":"JADUAL_BUTIRAN","label":"Senarai Tarikh & Bilangan Anggota","type":"textarea"}
+ ]'::jsonb,
+ 'System Seed'),
+
+-- ── 4. Bantuan Rawatan (PATIENT) ─────────────────────────────
+('Surat Permohonan Bantuan Rawatan', 'patient',
+ 'Permohonan bantuan kewangan umum (NGO, badan amal, syarikat).',
+ NULL,  -- recipient diisi semasa generate
+ 'PERMOHONAN BANTUAN KEWANGAN UNTUK RAWATAN PESAKIT',
+ E'Adalah dengan hormatnya, pihak kami memohon pertimbangan pihak tuan untuk bantuan kewangan bagi pesakit yang memerlukan rawatan.\n\n2. Butiran pesakit:\n\nNama: [NAMA]\nNo. K/P: [IC]\nPakej Rawatan: [PAKEJ]\nJumlah Diminta: RM [JUMLAH_RM]\n\n3. Justifikasi permohonan:\n[JUSTIFIKASI]\n\n4. Kerjasama dan pertimbangan daripada pihak tuan amat kami hargai.',
+ '[
+   {"key":"JUMLAH_RM","label":"Jumlah Diminta (RM)","type":"number"},
+   {"key":"JUSTIFIKASI","label":"Justifikasi","type":"textarea"}
+ ]'::jsonb,
+ 'System Seed'),
+
+-- ── 5. Perakuan Pemulangan Bayaran (PATIENT) ─────────────────
+('Surat Perakuan Pemulangan Bayaran', 'patient',
+ 'Perakuan rasmi untuk pemulangan bayaran kepada pesakit.',
+ E'[NAMA]\nNo. K/P: [IC]',
+ 'PERAKUAN PEMULANGAN BAYARAN',
+ E'Dengan ini disahkan bahawa pihak Ibnu Sina Wellness telah memproses pemulangan bayaran berikut:\n\nPakej Asal: [PAKEJ]\nJumlah Pulangan: RM [JUMLAH_RM]\nAkaun Penerima: [NO_AKAUN]\nTarikh Diluluskan: [TARIKH]\n\nSebab pemulangan:\n[SEBAB]\n\nPemulangan akan dikreditkan dalam tempoh 7-14 hari bekerja ke akaun yang dinyatakan.',
+ '[
+   {"key":"JUMLAH_RM","label":"Jumlah Pulangan (RM)","type":"number"},
+   {"key":"NO_AKAUN","label":"No. Akaun Bank Pesakit","type":"text"},
+   {"key":"SEBAB","label":"Sebab Pemulangan","type":"textarea"}
+ ]'::jsonb,
+ 'System Seed'),
+
+-- ── 6. Pembatalan Rawatan (PATIENT) ──────────────────────────
+('Surat Pembatalan Rawatan', 'patient',
+ 'Pembatalan rawatan rasmi (dimulakan klinik atau pesakit).',
+ E'[NAMA]\nNo. K/P: [IC]',
+ 'PEMBATALAN RAWATAN',
+ E'Dengan ini dimaklumkan bahawa rawatan tuan/puan di Ibnu Sina Wellness telah dibatalkan berkuat kuasa pada [TARIKH_BERKUAT_KUASA].\n\nButiran pakej yang dibatalkan: [PAKEJ]\n\nSebab pembatalan:\n[SEBAB]\n\nSebarang pertanyaan lanjut, sila hubungi pihak kami melalui talian rasmi.',
+ '[
+   {"key":"TARIKH_BERKUAT_KUASA","label":"Tarikh Berkuat Kuasa","type":"date"},
+   {"key":"SEBAB","label":"Sebab Pembatalan","type":"textarea"}
+ ]'::jsonb,
+ 'System Seed'),
+
+-- ── 7. Maklum Balas Penamatan Rawatan (PATIENT) ──────────────
+('Surat Maklum Balas Penamatan Rawatan', 'patient',
+ 'Maklum balas rasmi selepas pesakit tamat program rawatan.',
+ E'[NAMA]\nNo. K/P: [IC]',
+ 'PENAMATAN RAWATAN',
+ E'Dengan ini dimaklumkan bahawa rawatan tuan/puan di bawah pakej [PAKEJ] telah selesai pada [TARIKH_TAMAT].\n\nRingkasan hasil rawatan:\n[HASIL]\n\nPihak kami mengucapkan tahniah atas komitmen tuan/puan sepanjang program ini. Semoga manfaat rawatan terus dapat dirasai dalam kehidupan seharian.',
+ '[
+   {"key":"TARIKH_TAMAT","label":"Tarikh Tamat Rawatan","type":"date"},
+   {"key":"HASIL","label":"Ringkasan Hasil Rawatan","type":"textarea"}
+ ]'::jsonb,
+ 'System Seed'),
+
+-- ── 8. Pengiraan Stok Barang (INTERNAL) ──────────────────────
+('Surat Pengiraan Stok Barang', 'internal',
+ 'Sijil pengesahan pengiraan stok inventori klinik (internal document).',
+ NULL,
+ 'SIJIL PENGIRAAN STOK INVENTORI',
+ E'Dengan ini disahkan bahawa pengiraan stok inventori klinik telah dijalankan pada [TARIKH_KIRA] oleh pasukan berikut:\n\n[PASUKAN]\n\nRingkasan penemuan:\n[RINGKASAN]\n\nPengiraan ini telah disahkan oleh pengurusan dan rekod stok di sistem telah dikemaskini bagi tujuan audit dan rekod dalaman.',
+ '[
+   {"key":"TARIKH_KIRA","label":"Tarikh Pengiraan","type":"date"},
+   {"key":"PASUKAN","label":"Pasukan Pengira (nama staff)","type":"text"},
+   {"key":"RINGKASAN","label":"Ringkasan Penemuan","type":"textarea"}
+ ]'::jsonb,
+ 'System Seed');
+
+-- Semak hasil
+SELECT name, category, jsonb_array_length(fields) AS num_fields, created_at
+FROM psy_letter_templates
+ORDER BY category, created_at;
+
+-- ============================================================
+-- SECTION E: Issues (demo aduan pesakit)
+-- ============================================================
+-- ============================================================
+-- SEED DATA: Issues (laporan masalah patient)
+-- Disimpan dalam psy_audit_log:
+--   action='issue.reported'  → laporan dari patient
+--   action='issue.responded' → balasan staff
+--   action='issue.followup'  → follow-up patient/staff
+--
+-- Foto bukti guna placeholder (Picsum). Gantikan dengan real URL bila perlu.
+-- ============================================================
+
+
+-- ── STEP 1: Buang isu lama (clean re-seed) ───────────────────
+
+DELETE FROM psy_audit_log
+WHERE action IN ('issue.reported','issue.responded','issue.followup','issue.closed')
+  AND meta->>'seed' = 'true';
+
+
+-- ── STEP 2: Insert isu + balasan ──────────────────────────────
+
+DO $$
+DECLARE
+  v_patient1_uid UUID;   -- Siti Aminah (OBP1)
+  v_patient2_uid UUID;   -- patient kedua aktif
+  v_patient3_uid UUID;   -- patient ketiga
+  v_patient1_name TEXT;
+  v_patient2_name TEXT;
+  v_patient3_name TEXT;
+  v_staff_uid UUID;
+  v_staff_name TEXT;
+  v_issue1_id UUID;
+  v_issue2_id UUID;
+  v_issue3_id UUID;
+  v_issue4_id UUID;
+  v_issue5_id UUID;
+BEGIN
+  -- Ambil 3 patient pertama
+  SELECT pp.id, pp.full_name INTO v_patient1_uid, v_patient1_name
+  FROM psy_patients pat
+  JOIN psy_profiles pp ON pp.id = pat.user_id
+  WHERE pat.status = 'active'
+  ORDER BY pat.created_at LIMIT 1;
+
+  SELECT pp.id, pp.full_name INTO v_patient2_uid, v_patient2_name
+  FROM psy_patients pat
+  JOIN psy_profiles pp ON pp.id = pat.user_id
+  WHERE pat.status = 'active' AND pp.id != v_patient1_uid
+  ORDER BY pat.created_at LIMIT 1;
+
+  SELECT pp.id, pp.full_name INTO v_patient3_uid, v_patient3_name
+  FROM psy_patients pat
+  JOIN psy_profiles pp ON pp.id = pat.user_id
+  WHERE pat.status = 'active' AND pp.id NOT IN (v_patient1_uid, v_patient2_uid)
+  ORDER BY pat.created_at LIMIT 1;
+
+  -- Ambil staff admin/manager untuk reply
+  SELECT id, full_name INTO v_staff_uid, v_staff_name
+  FROM psy_profiles
+  WHERE role = 'staff' AND staff_role IN ('admin','manager')
+  ORDER BY created_at LIMIT 1;
+
+  IF v_staff_uid IS NULL THEN
+    SELECT id, full_name INTO v_staff_uid, v_staff_name
+    FROM psy_profiles WHERE role = 'staff' ORDER BY created_at LIMIT 1;
+  END IF;
+
+  IF v_patient1_uid IS NULL THEN RAISE NOTICE 'Tiada patient aktif — skip'; RETURN; END IF;
+  IF v_staff_uid    IS NULL THEN RAISE NOTICE 'Tiada staff — skip';        RETURN; END IF;
+
+  -- Generate UUIDs untuk reference dalam meta
+  v_issue1_id := gen_random_uuid();
+  v_issue2_id := gen_random_uuid();
+  v_issue3_id := gen_random_uuid();
+  v_issue4_id := gen_random_uuid();
+  v_issue5_id := gen_random_uuid();
+
+  -- ── ISSUE 1: Produk rosak (dengan foto) — Belum dijawab ──
+  INSERT INTO psy_audit_log (id, actor_id, actor_name, actor_role, action, target, meta, created_at)
+  VALUES (
+    v_issue1_id, v_patient1_uid, v_patient1_name, 'patient',
+    'issue.reported', v_patient1_uid,
+    jsonb_build_object(
+      'seed', 'true',
+      'type', 'produk_rosak',
+      'description', 'Botol madu IB yang dihantar minggu lepas pecah masa terima. Madu tumpah sikit dalam parcel. Mohon ganti.',
+      'photo_url', 'https://picsum.photos/seed/madu-pecah/800/600'
+    ),
+    now() - interval '2 days'
+  );
+
+  -- ── ISSUE 2: Salah produk — Dah dijawab ──
+  INSERT INTO psy_audit_log (id, actor_id, actor_name, actor_role, action, target, meta, created_at)
+  VALUES (
+    v_issue2_id, v_patient2_uid, v_patient2_name, 'patient',
+    'issue.reported', v_patient2_uid,
+    jsonb_build_object(
+      'seed', 'true',
+      'type', 'salah_produk',
+      'description', 'Saya order LTH tapi yang sampai LTHPG. Tolong tukar bila boleh.',
+      'photo_url', 'https://picsum.photos/seed/salah-produk/800/600'
+    ),
+    now() - interval '5 days'
+  );
+
+  -- Balasan staff untuk ISSUE 2
+  INSERT INTO psy_audit_log (actor_id, actor_name, actor_role, action, target, meta, created_at)
+  VALUES (
+    v_staff_uid, COALESCE(v_staff_name, 'Admin'), 'staff',
+    'issue.responded', v_patient2_uid,
+    jsonb_build_object(
+      'seed', 'true',
+      'issue_id', v_issue2_id,
+      'issue_type', 'salah_produk',
+      'response', 'Maaf atas kesilapan ni. LTH yang betul akan dihantar Isnin depan. LTHPG yang silap boleh simpan sebagai goodwill — tak perlu pulangkan.',
+      'patient_name', v_patient2_name
+    ),
+    now() - interval '4 days'
+  );
+
+  -- ── ISSUE 3: Kurang jumlah — Belum dijawab ──
+  INSERT INTO psy_audit_log (id, actor_id, actor_name, actor_role, action, target, meta, created_at)
+  VALUES (
+    v_issue3_id, v_patient3_uid, v_patient3_name, 'patient',
+    'issue.reported', v_patient3_uid,
+    jsonb_build_object(
+      'seed', 'true',
+      'type', 'kurang_jumlah',
+      'description', 'Pakej saya sepatutnya ada 6 KG IB tapi dapat 5 KG je. Sila check.',
+      'photo_url', NULL
+    ),
+    now() - interval '1 day'
+  );
+
+  -- ── ISSUE 4: Masalah appointment — Dah dijawab + follow-up ──
+  INSERT INTO psy_audit_log (id, actor_id, actor_name, actor_role, action, target, meta, created_at)
+  VALUES (
+    v_issue4_id, v_patient1_uid, v_patient1_name, 'patient',
+    'issue.reported', v_patient1_uid,
+    jsonb_build_object(
+      'seed', 'true',
+      'type', 'appointment',
+      'description', 'Slot 14:00 Jumaat depan tak boleh ditukar walaupun saya cuba banyak kali. Sistem hang.',
+      'photo_url', NULL
+    ),
+    now() - interval '10 days'
+  );
+
+  INSERT INTO psy_audit_log (actor_id, actor_name, actor_role, action, target, meta, created_at)
+  VALUES (
+    v_staff_uid, COALESCE(v_staff_name, 'Admin'), 'staff',
+    'issue.responded', v_patient1_uid,
+    jsonb_build_object(
+      'seed', 'true',
+      'issue_id', v_issue4_id,
+      'issue_type', 'appointment',
+      'response', 'Dah fix isu booking. Cuba refresh page dan buka semula plan.html. Kalau masih ada masalah, WhatsApp saya terus.',
+      'patient_name', v_patient1_name
+    ),
+    now() - interval '9 days'
+  );
+
+  INSERT INTO psy_audit_log (actor_id, actor_name, actor_role, action, target, meta, created_at)
+  VALUES (
+    v_patient1_uid, v_patient1_name, 'patient',
+    'issue.followup', v_staff_uid,
+    jsonb_build_object(
+      'seed', 'true',
+      'issue_id', v_issue4_id,
+      'message', 'Terima kasih, dah boleh booking semula. Issue close.'
+    ),
+    now() - interval '8 days'
+  );
+
+  -- ── ISSUE 5: Tidak sampai — Belum dijawab (urgent) ──
+  INSERT INTO psy_audit_log (id, actor_id, actor_name, actor_role, action, target, meta, created_at)
+  VALUES (
+    v_issue5_id, v_patient2_uid, v_patient2_name, 'patient',
+    'issue.reported', v_patient2_uid,
+    jsonb_build_object(
+      'seed', 'true',
+      'type', 'tidak_sampai',
+      'description', 'Order bulan lepas (10 hari) belum sampai. Tracking pun tak update. Mohon semak status.',
+      'photo_url', 'https://picsum.photos/seed/parcel-hilang/800/600'
+    ),
+    now() - interval '3 hours'
+  );
+
+  RAISE NOTICE 'Seeded 5 issues (3 belum dijawab, 2 dah dijawab) untuk % patient.', 3;
+END $$;
+
+
+-- ── SEMAK KEPUTUSAN ──────────────────────────────────────────
+
+SELECT
+  al.action,
+  al.actor_name,
+  al.meta->>'type'        AS type,
+  al.meta->>'description' AS description,
+  CASE WHEN al.meta->>'photo_url' IS NOT NULL THEN '📷' ELSE '—' END AS foto,
+  al.created_at
+FROM psy_audit_log al
+WHERE al.action IN ('issue.reported','issue.responded','issue.followup')
+  AND al.meta->>'seed' = 'true'
+ORDER BY al.created_at DESC;
+
+
+-- ============================================================
+-- SECTION F: Package Supplies (structured — link inventory)
+-- Auto-build coaching_schedule.supplies dengan item_id sebenar
+-- supaya inventory demand boleh dikira.
+-- ============================================================
+
+DO $$
+DECLARE
+  v_ib UUID; v_yhpg UUID; v_lth UUID; v_lthpg UUID;
+  v_afiyah UUID; v_zaafaran UUID; v_kolon UUID; v_yhh UUID;
+  v_starter UUID; v_enema UUID; v_iv UUID; v_dna UUID;
+BEGIN
+  SELECT id INTO v_ib       FROM psy_inventory_items WHERE name ILIKE '%Ibu Bumi%'      LIMIT 1;
+  SELECT id INTO v_yhpg     FROM psy_inventory_items WHERE name ILIKE '%YHPG%' OR name ILIKE '%Young Healthy Plus Green%' LIMIT 1;
+  SELECT id INTO v_lth      FROM psy_inventory_items WHERE name ILIKE '%Lebah Thoharah%' OR name = 'LTH 1kg' LIMIT 1;
+  SELECT id INTO v_lthpg    FROM psy_inventory_items WHERE name ILIKE '%LTHPG%' OR name ILIKE '%LTH Plus%' LIMIT 1;
+  SELECT id INTO v_afiyah   FROM psy_inventory_items WHERE name ILIKE '%Afiyah%'        LIMIT 1;
+  SELECT id INTO v_zaafaran FROM psy_inventory_items WHERE name ILIKE '%afaran%'        LIMIT 1;
+  SELECT id INTO v_kolon    FROM psy_inventory_items WHERE name ILIKE '%Herba Kolon%'   LIMIT 1;
+  SELECT id INTO v_yhh      FROM psy_inventory_items WHERE name ILIKE '%Young & Healthy%' OR name ILIKE '%YHH%' LIMIT 1;
+  SELECT id INTO v_starter  FROM psy_inventory_items WHERE name ILIKE '%Starter Kit%'   LIMIT 1;
+  SELECT id INTO v_enema    FROM psy_inventory_items WHERE name ILIKE '%Enema%'         LIMIT 1;
+  SELECT id INTO v_iv       FROM psy_inventory_items WHERE name ILIKE '%IV%Saline%'     LIMIT 1;
+  SELECT id INTO v_dna      FROM psy_inventory_items WHERE name ILIKE '%DNA%'           LIMIT 1;
+
+  -- ── OBP1: 12 minggu · 6 KG IB + 6 KG YHPG + 12 botol Afiyah + dll ──
+  -- Spread bekalan across weeks: 0.5 kg IB/week × 12 = 6 kg total
+  UPDATE psy_packages SET coaching_schedule = jsonb_build_array(
+    jsonb_build_object('week', 1, 'mode', 'f2f', 'supplies', jsonb_build_array(
+      jsonb_build_object('item_id', v_starter, 'item_name', 'Starter Kit', 'item_unit', 'set',   'qty', 1),
+      jsonb_build_object('item_id', v_ib,      'item_name', 'IB',          'item_unit', 'kg',    'qty', 0.5),
+      jsonb_build_object('item_id', v_yhpg,    'item_name', 'YHPG',        'item_unit', 'kg',    'qty', 0.5),
+      jsonb_build_object('item_id', v_afiyah,  'item_name', 'Air Afiyah',  'item_unit', 'botol', 'qty', 1)
+    )),
+    jsonb_build_object('week', 2, 'mode', 'f2f', 'supplies', jsonb_build_array(
+      jsonb_build_object('item_id', v_ib,      'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_yhpg,    'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_afiyah,  'qty', 1,   'item_unit', 'botol')
+    )),
+    jsonb_build_object('week', 3, 'mode', 'f2f', 'supplies', jsonb_build_array(
+      jsonb_build_object('item_id', v_ib,   'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_yhpg, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_afiyah, 'qty', 1, 'item_unit', 'botol'),
+      jsonb_build_object('item_id', v_zaafaran, 'qty', 1, 'item_unit', 'botol')
+    )),
+    jsonb_build_object('week', 4, 'mode', 'f2f', 'supplies', jsonb_build_array(
+      jsonb_build_object('item_id', v_ib,   'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_yhpg, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_afiyah, 'qty', 1, 'item_unit', 'botol'),
+      jsonb_build_object('item_id', v_iv, 'qty', 1, 'item_unit', 'set')
+    )),
+    jsonb_build_object('week', 5, 'mode', 'f2f', 'supplies', jsonb_build_array(
+      jsonb_build_object('item_id', v_ib, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_yhpg, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_afiyah, 'qty', 1, 'item_unit', 'botol')
+    )),
+    jsonb_build_object('week', 6, 'mode', 'f2f', 'supplies', jsonb_build_array(
+      jsonb_build_object('item_id', v_ib, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_yhpg, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_afiyah, 'qty', 1, 'item_unit', 'botol'),
+      jsonb_build_object('item_id', v_zaafaran, 'qty', 1, 'item_unit', 'botol'),
+      jsonb_build_object('item_id', v_kolon, 'qty', 1, 'item_unit', 'set')
+    )),
+    jsonb_build_object('week', 7, 'mode', 'f2f', 'supplies', jsonb_build_array(
+      jsonb_build_object('item_id', v_ib, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_yhpg, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_afiyah, 'qty', 1, 'item_unit', 'botol'),
+      jsonb_build_object('item_id', v_iv, 'qty', 1, 'item_unit', 'set')
+    )),
+    jsonb_build_object('week', 8, 'mode', 'f2f', 'supplies', jsonb_build_array(
+      jsonb_build_object('item_id', v_ib, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_yhpg, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_afiyah, 'qty', 1, 'item_unit', 'botol')
+    )),
+    jsonb_build_object('week', 9, 'mode', 'f2f', 'supplies', jsonb_build_array(
+      jsonb_build_object('item_id', v_ib, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_yhpg, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_afiyah, 'qty', 1, 'item_unit', 'botol'),
+      jsonb_build_object('item_id', v_zaafaran, 'qty', 1, 'item_unit', 'botol')
+    )),
+    jsonb_build_object('week', 10, 'mode', 'f2f', 'supplies', jsonb_build_array(
+      jsonb_build_object('item_id', v_ib, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_yhpg, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_afiyah, 'qty', 1, 'item_unit', 'botol'),
+      jsonb_build_object('item_id', v_iv, 'qty', 1, 'item_unit', 'set')
+    )),
+    jsonb_build_object('week', 11, 'mode', 'f2f', 'supplies', jsonb_build_array(
+      jsonb_build_object('item_id', v_ib, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_yhpg, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_afiyah, 'qty', 1, 'item_unit', 'botol'),
+      jsonb_build_object('item_id', v_zaafaran, 'qty', 1, 'item_unit', 'botol')
+    )),
+    jsonb_build_object('week', 12, 'mode', 'f2f', 'supplies', jsonb_build_array(
+      jsonb_build_object('item_id', v_ib, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_yhpg, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_afiyah, 'qty', 2, 'item_unit', 'botol'),
+      jsonb_build_object('item_id', v_zaafaran, 'qty', 3, 'item_unit', 'botol'),
+      jsonb_build_object('item_id', v_dna, 'qty', 1, 'item_unit', 'set')
+    ))
+  )
+  WHERE package_id = 'pkg-obp1';
+
+  -- ── OBPX1 (24 weeks, same per-week as OBP1) ──
+  UPDATE psy_packages SET coaching_schedule = (
+    SELECT coaching_schedule FROM psy_packages WHERE package_id = 'pkg-obp1'
+  )
+  WHERE package_id = 'pkg-obpx1';
+
+  -- ── OBD1 (LTH/LTHPG version of OBP1) ──
+  UPDATE psy_packages SET coaching_schedule = jsonb_build_array(
+    jsonb_build_object('week', 1, 'mode', 'f2f', 'supplies', jsonb_build_array(
+      jsonb_build_object('item_id', v_lth,   'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_lthpg, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_afiyah, 'qty', 1, 'item_unit', 'botol')
+    )),
+    jsonb_build_object('week', 2, 'mode', 'f2f', 'supplies', jsonb_build_array(
+      jsonb_build_object('item_id', v_lth, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_lthpg, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_afiyah, 'qty', 1, 'item_unit', 'botol')
+    )),
+    jsonb_build_object('week', 3, 'mode', 'f2f', 'supplies', jsonb_build_array(
+      jsonb_build_object('item_id', v_lth, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_lthpg, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_afiyah, 'qty', 1, 'item_unit', 'botol')
+    )),
+    jsonb_build_object('week', 4, 'mode', 'f2f', 'supplies', jsonb_build_array(
+      jsonb_build_object('item_id', v_lth, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_lthpg, 'qty', 0.5, 'item_unit', 'kg'),
+      jsonb_build_object('item_id', v_afiyah, 'qty', 1, 'item_unit', 'botol'),
+      jsonb_build_object('item_id', v_iv, 'qty', 1, 'item_unit', 'set')
+    ))
+  )
+  WHERE package_id = 'pkg-obd1';
+
+  -- ── EOL+: 4 minggu · 2 botol madu ──
+  UPDATE psy_packages SET coaching_schedule = jsonb_build_array(
+    jsonb_build_object('week', 1, 'supplies', jsonb_build_array(
+      jsonb_build_object('item_id', v_yhh, 'qty', 0.5, 'item_unit', 'kg')
+    )),
+    jsonb_build_object('week', 2, 'supplies', jsonb_build_array(
+      jsonb_build_object('item_id', v_yhh, 'qty', 0.5, 'item_unit', 'kg')
+    )),
+    jsonb_build_object('week', 3, 'supplies', '[]'::jsonb),
+    jsonb_build_object('week', 4, 'supplies', '[]'::jsonb)
+  )
+  WHERE package_id = 'pkg-eol-plus';
+
+  -- ── EOL: 4 minggu · 1 botol madu ──
+  UPDATE psy_packages SET coaching_schedule = jsonb_build_array(
+    jsonb_build_object('week', 1, 'supplies', jsonb_build_array(
+      jsonb_build_object('item_id', v_yhh, 'qty', 0.5, 'item_unit', 'kg')
+    )),
+    jsonb_build_object('week', 2, 'supplies', '[]'::jsonb),
+    jsonb_build_object('week', 3, 'supplies', '[]'::jsonb),
+    jsonb_build_object('week', 4, 'supplies', '[]'::jsonb)
+  )
+  WHERE package_id = 'pkg-eol';
+
+  RAISE NOTICE 'Package supplies seeded — inventory demand sekarang boleh dikira';
+END $$;

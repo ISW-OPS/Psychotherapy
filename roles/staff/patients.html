@@ -114,7 +114,7 @@
                   <circle cx="10" cy="10" r="7" />
                   <line x1="15.5" y1="15.5" x2="22" y2="22" />
                 </svg>
-                <input id="search-patient" type="text" placeholder="Cari nama, Patient ID atau IC..."
+                <input id="search-patient" type="text" placeholder="Cari nama, Patient ID, IC atau telefon..."
                   oninput="filterPatients()"
                   class="w-full pl-9 pr-3 py-2.5 border border-ink/20 rounded-xl text-sm focus:border-navy outline-none bg-white">
               </div>
@@ -146,7 +146,49 @@
                 <option value="not_signed">⚠️ Tak Signup Pakej</option>
                 <option value="pre_kob">⏳ Belum Selesai KOB</option>
               </select>
+              <button type="button" onclick="document.getElementById('adv-filters').classList.toggle('hidden')"
+                class="flex items-center gap-1.5 px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white hover:border-navy">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+                </svg>
+                Filter Lanjutan
+              </button>
+              <button onclick="clearPatientFilters()" class="text-xs text-ink/50 hover:text-terracotta hover:underline">Reset</button>
               <span id="patient-count" class="text-xs text-ink/50 whitespace-nowrap"></span>
+              <div class="flex-1"></div>
+              <button onclick="openCreatePatient()"
+                class="flex items-center gap-1.5 px-4 py-2.5 bg-purple-600 text-white rounded-xl text-sm hover:bg-purple-700 transition-colors font-semibold"
+                style="background-color:#7C3AED">
+                + Tambah Pesakit
+              </button>
+            </div>
+
+            <!-- Advanced filters (hidden by default) -->
+            <div id="adv-filters" class="hidden flex items-center gap-3 mb-3 flex-wrap print-hide p-3 bg-cream rounded-xl">
+              <select id="filter-gender" onchange="filterPatients()"
+                class="px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:border-navy outline-none">
+                <option value="">Jantina</option>
+                <option value="M">Lelaki</option>
+                <option value="F">Perempuan</option>
+              </select>
+              <select id="filter-age" onchange="filterPatients()"
+                class="px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:border-navy outline-none">
+                <option value="">Umur</option>
+                <option value="0-20">0-20 tahun</option>
+                <option value="21-40">21-40 tahun</option>
+                <option value="41-60">41-60 tahun</option>
+                <option value="61-200">61+ tahun</option>
+              </select>
+              <input id="filter-state" type="text" oninput="filterPatients()"
+                placeholder="Negeri / alamat..."
+                class="px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:border-navy outline-none w-36">
+              <input id="filter-condition" type="text" oninput="filterPatients()"
+                placeholder="Penyakit / kondisi..."
+                class="px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:border-navy outline-none w-44">
+            </div>
+
+            <!-- Action bar -->
+            <div class="flex items-center gap-3 mb-3 flex-wrap print-hide">
               <button onclick="exportCSV()"
                 class="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-colors hover:opacity-90"
                 style="background-color:#1D6F42">
@@ -175,10 +217,6 @@
                 </svg>
                 Print
               </button>
-              <button onclick="openCreatePatient()"
-                class="flex items-center gap-1.5 px-4 py-2.5 bg-green text-white rounded-xl text-sm hover:bg-green-dark transition-colors font-semibold">
-                + Tambah Pesakit
-              </button>
               <label id="archived-toggle-wrap"
                 class="hidden items-center gap-2 px-3 py-2.5 border border-terracotta/40 rounded-xl text-sm text-terracotta cursor-pointer hover:bg-terracotta/5">
                 <input type="checkbox" id="toggle-archived" onchange="loadAll()" class="accent-terracotta">
@@ -190,15 +228,16 @@
               <table class="data">
                 <thead>
                   <tr>
+                    <th class="print-hide w-8"><input type="checkbox" id="check-all" onchange="toggleCheckAll(this.checked)" class="accent-navy"></th>
                     <th>No</th>
                     <th>Patient ID</th>
                     <th>Nama</th>
                     <th>Telefon</th>
                     <th>Pakej</th>
                     <th>Kod Rujukan</th>
-                    <th>Coach</th>
+                    <th>Coach / Terapi</th>
                     <th>Status</th>
-                    <th class="print-hide"></th>
+                    <th class="print-hide">Tindakan</th>
                   </tr>
                 </thead>
                 <tbody id="patients-body"></tbody>
@@ -1259,32 +1298,55 @@
           const pkgName = escapeHtml(p.active_package_name || '');
           const refCode = escapeHtml(p.reference_code || '—');
           const coachName = escapeHtml(p.coach?.full_name || '');
-          // Name used inside onclick="...,'NAME'" — escape both JS string and HTML attr
+          const age = calcAge(p.date_of_birth);
+          const genderText = p.gender === 'M' ? 'Lelaki' : (p.gender === 'F' ? 'Perempuan' : '');
+          const ageGenderLine = [age != null ? `${age} thn` : '', genderText].filter(Boolean).join(' · ');
           const nameForJs = String(rawName).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
           const nameForAttr = escapeHtml(nameForJs);
+          const canEdit = (isAdmin || (isCoachUser && p.coach_id === window.currentUser?.id)) && p.status !== 'deleted';
+          const canDelete = isAdmin && p.status !== 'deleted';
+          const canRestore = isAdmin && p.status === 'deleted';
           return `<tr>
+          <td class="print-hide text-center"><input type="checkbox" class="row-check accent-navy" data-id="${p.id}"></td>
           <td class="text-xs text-ink/50 text-center">${start + i + 1}</td>
           <td class="text-xs font-mono">${escapeHtml(p.mrn)}</td>
           <td>
-            <strong>${name}</strong>
-            ${(!p.user_id) ? '<span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded ml-1">Belum Aktif</span>' : ''}
+            <div class="font-semibold text-sm">${name}
+              ${(!p.user_id) ? '<span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded ml-1">Belum Aktif</span>' : ''}
+            </div>
+            ${ageGenderLine ? `<div class="text-[11px] text-ink/50 mt-0.5">${ageGenderLine}</div>` : ''}
           </td>
-          <td class="text-xs">${phone}</td>
+          <td class="text-xs">
+            <span class="inline-flex items-center gap-1">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-ink/40">
+                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+              </svg>
+              ${phone}
+            </span>
+          </td>
           <td class="text-xs">${p.active_package_name
               ? `<span class="chip bg-navy-light text-navy">${pkgName}</span>`
               : '<span class="text-ink/40">—</span>'}</td>
           <td class="text-xs">${refCode}</td>
           <td class="text-xs">${p.coach?.full_name ? `<span class="text-navy font-medium">${coachName}</span>` : '<span class="text-ink/30">—</span>'}</td>
           <td>${statusChip(p.status)} ${outcomeChip(p.outcome_status)}</td>
-          <td class="whitespace-nowrap print-hide space-x-3">
-            ${p.status !== 'deleted' ? `<a href="patient-hub.html?patient_id=${p.id}" class="text-navy text-xs font-semibold hover:underline">Details</a>` : ''}
-            ${(isAdmin || (isCoachUser && p.coach_id === window.currentUser?.id)) && p.status !== 'deleted' ? `<button onclick="openEditPatient('${p.id}')" class="text-teal text-xs font-semibold hover:underline">Edit</button>` : ''}
-            ${isAdmin && p.status !== 'deleted' ? `<button onclick="deletePatient('${p.id}','${nameForAttr}')" class="text-terracotta text-xs font-semibold hover:underline">Padam</button>` : ''}
-            ${isAdmin && p.status === 'deleted' ? `<button onclick="restorePatient('${p.id}','${nameForAttr}')" class="text-green text-xs font-semibold hover:underline">Pulihkan</button>` : ''}
+          <td class="whitespace-nowrap print-hide">
+            <div class="flex items-center gap-2">
+              ${p.status !== 'deleted' ? `<a href="patient-hub.html?patient_id=${p.id}" class="text-navy text-xs font-semibold hover:underline">Details</a>` : ''}
+              ${canEdit ? `<button onclick="openEditPatient('${p.id}')" class="text-teal text-xs font-semibold hover:underline">Edit</button>` : ''}
+              ${(canDelete || canRestore) ? `
+                <div class="relative">
+                  <button onclick="toggleRowMenu(event,'${p.id}')" class="text-ink/40 hover:text-ink px-1" title="Tindakan lain">⋮</button>
+                  <div id="rowmenu-${p.id}" class="hidden absolute right-0 top-full mt-1 bg-white border border-ink/10 rounded-lg shadow-lg z-20 min-w-[140px] py-1">
+                    ${canDelete ? `<button onclick="deletePatient('${p.id}','${nameForAttr}')" class="block w-full text-left px-3 py-1.5 text-xs text-terracotta hover:bg-terracotta/5">Padam</button>` : ''}
+                    ${canRestore ? `<button onclick="restorePatient('${p.id}','${nameForAttr}')" class="block w-full text-left px-3 py-1.5 text-xs text-green hover:bg-green/5">Pulihkan</button>` : ''}
+                  </div>
+                </div>` : ''}
+            </div>
           </td>
         </tr>`;
         }).join('')
-        : '<tr><td colspan="9" class="text-center text-ink/40 py-8">Tiada pesakit ditemui</td></tr>';
+        : '<tr><td colspan="10" class="text-center text-ink/40 py-8">Tiada pesakit ditemui</td></tr>';
 
       renderPagination(total, totalPages);
     }
@@ -1333,20 +1395,73 @@
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
+    function toggleCheckAll(checked) {
+      document.querySelectorAll('.row-check').forEach(cb => cb.checked = checked);
+    }
+
+    function toggleRowMenu(ev, id) {
+      ev.stopPropagation();
+      document.querySelectorAll('[id^="rowmenu-"]').forEach(m => { if (m.id !== `rowmenu-${id}`) m.classList.add('hidden'); });
+      document.getElementById(`rowmenu-${id}`)?.classList.toggle('hidden');
+    }
+    document.addEventListener('click', () => {
+      document.querySelectorAll('[id^="rowmenu-"]').forEach(m => m.classList.add('hidden'));
+    });
+
+    function calcAge(dob) {
+      if (!dob) return null;
+      const d = new Date(dob);
+      if (isNaN(d)) return null;
+      const today = new Date();
+      let age = today.getFullYear() - d.getFullYear();
+      const m = today.getMonth() - d.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < d.getDate())) age--;
+      return age;
+    }
+
+    function clearPatientFilters() {
+      ['search-patient','filter-state','filter-condition'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+      ['filter-status','filter-pakej','filter-outcome','filter-signup','filter-gender','filter-age'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+      filterPatients();
+    }
+
     function filterPatients() {
       const q = document.getElementById('search-patient').value.toLowerCase();
       const status = document.getElementById('filter-status').value;
       const pakej = document.getElementById('filter-pakej').value;
       const outcome = document.getElementById('filter-outcome')?.value || '';
-      const signup = document.getElementById('filter-signup')?.value || '';
+      const signup  = document.getElementById('filter-signup')?.value || '';
+      const gender  = document.getElementById('filter-gender')?.value || '';
+      const ageRange = document.getElementById('filter-age')?.value || '';
+      const stateQ  = (document.getElementById('filter-state')?.value || '').toLowerCase();
+      const condQ   = (document.getElementById('filter-condition')?.value || '').toLowerCase();
       const list = allPatients.filter(p => {
         const name = (p.psy_profiles?.full_name || p.full_name || '').toLowerCase();
-        const matchQ = !q || name.includes(q) || (p.mrn || '').toLowerCase().includes(q) || (p.ic_number || '').includes(q);
+        const phoneStr = (p.psy_profiles?.phone || p.phone || '').toLowerCase();
+        const matchQ = !q || name.includes(q) || (p.mrn || '').toLowerCase().includes(q) || (p.ic_number || '').includes(q) || phoneStr.includes(q);
         const matchS = !status || p.status === status;
         const matchP = !pakej
           || (pakej === '__none__' ? !p.active_package_name : p.active_package_name === pakej);
         const matchO = !outcome
           || (outcome === '__none__' ? !p.outcome_status : p.outcome_status === outcome);
+        const matchG = !gender || p.gender === gender;
+        let matchAge = true;
+        if (ageRange) {
+          const age = calcAge(p.date_of_birth);
+          if (age === null) matchAge = false;
+          else {
+            const [min, max] = ageRange.split('-').map(Number);
+            matchAge = age >= min && age <= max;
+          }
+        }
+        const matchState = !stateQ || (p.address || '').toLowerCase().includes(stateQ);
+        const matchCond  = !condQ  || (p.medical_condition || '').toLowerCase().includes(condQ);
         let matchSU = true;
         if (signup) {
           const now = new Date();
@@ -1359,7 +1474,7 @@
           else if (signup === 'not_signed') matchSU = kobDone && !hasPkg;
           else if (signup === 'pre_kob') matchSU = !kobDone;
         }
-        return matchQ && matchS && matchP && matchO && matchSU;
+        return matchQ && matchS && matchP && matchO && matchG && matchAge && matchState && matchCond && matchSU;
       });
       renderPatients(list);
     }

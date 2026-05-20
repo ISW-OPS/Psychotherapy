@@ -219,6 +219,7 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
+<script src="../../shared/inventoryDeduct.js"></script>
 <script src="_shared.js"></script>
 <script>
 let activePlan   = null;
@@ -489,10 +490,16 @@ async function markStatus(status) {
     document.getElementById('sbtn-' + k).className = 'status-btn' + (k === status ? ` active-${k}` : '');
   });
 
+  const prevStatus = weekEntry?.status;
   await upsertProgress({ status });
   if (!weekEntry) weekEntry = {};
   weekEntry.status = status;
   renderHero();
+
+  // Auto-deduct inventory bila hadir (hanya sekali — skip kalau dah hadir sebelum ni)
+  if (status === 'hadir' && prevStatus !== 'hadir') {
+    await deductWeekInventory();
+  }
 
   // Notify patient
   const msgs = {
@@ -504,6 +511,71 @@ async function markStatus(status) {
     await notify(patientUserId, 'plan', msgs[status][0], msgs[status][1], 'plan-week.html');
   }
   banner(`Minggu ${weekNumber}: ${status}`);
+}
+
+// ── Inventory Auto-Deduct ─────────────────────────────
+async function deductWeekInventory() {
+  try {
+    // Get supplies for this week from coaching_schedule
+    const schedule = activePlan.coaching_schedule || [];
+    const weekItems = schedule.filter(s => Number(s.week || s.day) === weekNumber);
+    const allSupplies = weekItems.flatMap(w => w.supplies || []);
+    if (!allSupplies.length) return;
+
+    // Collect: {item_id → total qty to deduct}
+    const toDeduct = {};
+
+    // Separate kits vs direct items
+    const kitIds = [...new Set(allSupplies.filter(s => s?.kit_id).map(s => s.kit_id))];
+
+    // Load kits if needed
+    let kitsData = [];
+    if (kitIds.length) {
+      const { data } = await window.db.from('psy_procedure_kits')
+        .select('id, name, items').in('id', kitIds);
+      kitsData = data || [];
+    }
+
+    allSupplies.forEach(s => {
+      if (!s || typeof s !== 'object') return;
+      if (s.kit_id) {
+        const kit = kitsData.find(k => k.id === s.kit_id);
+        if (!kit) return;
+        const kitQty = Number(s.qty) || 1;
+        (kit.items || []).forEach(ki => {
+          if (!ki.item_id) return;
+          toDeduct[ki.item_id] = (toDeduct[ki.item_id] || 0) + (Number(ki.qty) || 0) * kitQty;
+        });
+      } else if (s.item_id) {
+        toDeduct[s.item_id] = (toDeduct[s.item_id] || 0) + (Number(s.qty) || 0);
+      }
+    });
+
+    const entries = Object.entries(toDeduct).filter(([, q]) => q > 0);
+    if (!entries.length) return;
+
+    // Deduct each item — fetch current stock first to avoid going negative
+    const { data: invItems } = await window.db.from('psy_inventory_items')
+      .select('id, name, qty_in_stock, unit').in('id', entries.map(([id]) => id));
+
+    const deducted = [];
+    for (const [itemId, qty] of entries) {
+      const inv = (invItems || []).find(i => i.id === itemId);
+      if (!inv) continue;
+      const newQty = Math.max(0, Number(inv.qty_in_stock) - qty);
+      await window.db.from('psy_inventory_items').update({
+        qty_in_stock: newQty,
+        updated_at: new Date().toISOString(),
+      }).eq('id', itemId);
+      deducted.push(`${inv.name} −${qty}${inv.unit || ''}`);
+    }
+
+    if (deducted.length) {
+      banner(`Stok dikurangkan: ${deducted.join(', ')}`);
+    }
+  } catch (e) {
+    console.error('Inventory deduct error:', e);
+  }
 }
 
 // ── Session date ──────────────────────────────────────
@@ -594,6 +666,11 @@ async function upsertProgress(fields) {
 
   if (fields.status === 'hadir') {
     await window.db.from('psy_treatment_plans').update({ current_week: weekNumber }).eq('id', activePlan.id);
+    // Auto-deduct F2F supplies (only on transition to 'hadir')
+    if (window.deductSessionSupplies && weekEntry?.id) {
+      const ded = await window.deductSessionSupplies(weekEntry.id);
+      window.showDeductSummary?.(ded);
+    }
   }
   await auditLog('plan.week_updated', activePlan.id, { week: weekNumber, ...fields });
 }

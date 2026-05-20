@@ -40,7 +40,7 @@ async function resolveKycApproved() {
 
 async function enforceKyc(currentPageId) {
   // Always-allowed pages (patient can browse packages + pay during KOB flow)
-  if (['kyc', 'profile', 'dashboard', 'kob', 'pakej', 'payment', 'routine'].includes(currentPageId)) return true;
+  if (['kyc', 'profile', 'dashboard', 'kob', 'pakej', 'payment', 'routine', 'checkin', 'kepatuhan'].includes(currentPageId)) return true;
 
   // KOB flow gating: must complete KOB before accessing other features
   const p = window.patientRecord;
@@ -191,6 +191,11 @@ function addToCart(product) {
     if (!product) return;
   }
   const existing = cart.find(i => i.id === product.id);
+  const currentQty = existing ? existing.qty : 0;
+  if (product.stock != null && currentQty + 1 > product.stock) {
+    banner(`Stok ${product.name} tinggal ${product.stock} sahaja`, 'error');
+    return;
+  }
   if (existing) existing.qty += 1;
   else cart.push({ ...product, qty: 1 });
   localStorage.setItem('isw_cart', JSON.stringify(cart));
@@ -208,6 +213,13 @@ function removeFromCart(id) {
 function updateQty(id, delta) {
   const item = cart.find(i => i.id === id);
   if (!item) return;
+  if (delta > 0) {
+    const product = window.PRODUCTS?.find(p => p.id === id);
+    if (product?.stock != null && item.qty + delta > product.stock) {
+      banner(`Stok ${item.name} tinggal ${product.stock} sahaja`, 'error');
+      return;
+    }
+  }
   item.qty += delta;
   if (item.qty <= 0) { removeFromCart(id); return; }
   localStorage.setItem('isw_cart', JSON.stringify(cart));

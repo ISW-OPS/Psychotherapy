@@ -57,11 +57,6 @@
                   <span class="flex-1 font-semibold text-sm">Credit / Debit Card</span>
                   <span class="text-xs text-ink/60">Visa / Master</span>
                 </label>
-                <label class="flex items-center gap-3 border-2 border-ink/10 rounded-lg p-3 cursor-pointer hover:border-navy">
-                  <input type="radio" name="pm" value="transfer">
-                  <span class="flex-1 font-semibold text-sm">Bank Transfer (manual)</span>
-                  <span class="text-xs text-ink/60">Verify 1–2 hrs</span>
-                </label>
               </div>
 
               <button onclick="processPayment()" id="btn-pay" class="w-full bg-navy text-white py-3 rounded-lg font-semibold text-base hover:bg-navy-dark">
@@ -232,6 +227,30 @@ async function loadPayments() {
     }
   });
 
+  // Plan extension (terlepas sesi → minggu tambahan)
+  if (patientRecord) {
+    const extRows = await dbQuery('psy_plan_weekly_progress', {
+      eq: { patient_id: patientRecord.id },
+    }).catch(() => []);
+    const pendingExt = extRows.filter(r => r.is_extension && r.status === 'extension_pending_payment');
+    // Group by week_number — 1 charge per minggu tambahan (walaupun 2 sesi)
+    const byWeek = {};
+    pendingExt.forEach(r => {
+      const k = r.week_number;
+      if (!byWeek[k]) byWeek[k] = { week: r.week_number, price: Number(r.extension_price) || 50, rowIds: [], extFor: r.extension_for_week };
+      byWeek[k].rowIds.push(r.id);
+    });
+    Object.values(byWeek).forEach(g => {
+      pendingItems.push({
+        type: 'plan_extension',
+        id: `ext-${g.week}`,
+        title: `Minggu Tambahan ${g.week} (ganti M${g.extFor})`,
+        amount: g.price,
+        rowIds: g.rowIds,
+      });
+    });
+  }
+
   renderInvoice();
   loadReceipts();
 }
@@ -340,6 +359,15 @@ async function processPayment() {
 
       } else if (item.type === 'package_existing') {
         await dbUpdate('psy_package_purchases', item.id, { status: 'active', payment_method: method });
+
+      } else if (item.type === 'plan_extension') {
+        // Flip semua 2 sesi extension → extension_paid + status='booked' (ready for scheduling)
+        for (const rowId of (item.rowIds || [])) {
+          await dbUpdate('psy_plan_weekly_progress', rowId, {
+            status: 'extension_paid',
+            extension_paid_at: new Date().toISOString(),
+          });
+        }
 
       } else if (item.type === 'kob') {
         // KOB payment — flip patient.kob_status from pending_payment → paid

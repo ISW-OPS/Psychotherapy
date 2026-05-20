@@ -35,7 +35,7 @@
           <p id="hdr-meta" class="text-xs text-ink/50">—</p>
         </div>
         <button id="btn-replacement"
-          class="px-4 py-2 bg-gold/20 text-gold-dark border border-gold/30 rounded-xl text-xs font-semibold hover:bg-gold/30 transition-colors whitespace-nowrap">
+          class="hidden px-4 py-2 bg-gold/20 text-gold-dark border border-gold/30 rounded-xl text-xs font-semibold hover:bg-gold/30 transition-colors whitespace-nowrap">
           📦 Buat Penggantian
         </button>
       </div>
@@ -132,6 +132,19 @@
 <script src="../../shared/navbar.js"></script>
 <script src="_shared.js"></script>
 <script>
+function openPhotoLightbox(url) {
+  const overlay = document.createElement('div');
+  overlay.className = 'fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-4 cursor-zoom-out';
+  overlay.onclick = () => overlay.remove();
+  overlay.innerHTML = `
+    <button class="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white text-xl flex items-center justify-center backdrop-blur" onclick="event.stopPropagation(); this.parentElement.remove()">×</button>
+    <a href="${url}" target="_blank" onclick="event.stopPropagation()" class="absolute bottom-4 right-4 text-white/70 hover:text-white text-xs underline backdrop-blur bg-black/30 px-3 py-1.5 rounded-full">Buka tab baru ↗</a>
+    <img src="${url}" alt="foto full" class="max-w-full max-h-full object-contain rounded-lg" onclick="event.stopPropagation()">`;
+  document.body.appendChild(overlay);
+  const onEsc = e => { if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', onEsc); } };
+  document.addEventListener('keydown', onEsc);
+}
+
 const issueId = new URLSearchParams(location.search).get('id');
 let currentIssue  = null;
 let productsList  = [];
@@ -155,16 +168,25 @@ async function loadDetail() {
   currentIssue = rows?.[0];
   if (!currentIssue) { window.location.href = 'issue.html'; return; }
 
-  const [staffRes, followRes] = await Promise.all([
+  const [staffRes, followRes, reqRes, appRes, rejRes] = await Promise.all([
     window.db.from('psy_audit_log').select('*')
       .eq('action', 'issue.responded').order('created_at', { ascending: true }),
     window.db.from('psy_audit_log').select('*')
       .eq('action', 'issue.followup').order('created_at', { ascending: true }),
+    window.db.from('psy_audit_log').select('*')
+      .eq('action', 'issue.replacement_requested').order('created_at', { ascending: true }),
+    window.db.from('psy_audit_log').select('*')
+      .eq('action', 'issue.replacement_approved').order('created_at', { ascending: true }),
+    window.db.from('psy_audit_log').select('*')
+      .eq('action', 'issue.replacement_rejected').order('created_at', { ascending: true }),
   ]);
 
   const responses = (staffRes.data  || []).filter(r => r.meta?.issue_id === issueId);
   const followups = (followRes.data || []).filter(r => r.meta?.issue_id === issueId);
-  const allMsgs   = [...responses, ...followups].sort((a,b) => new Date(a.created_at) - new Date(b.created_at));
+  const requests  = (reqRes.data    || []).filter(r => r.meta?.issue_id === issueId);
+  const approvals = (appRes.data    || []).filter(r => r.meta?.issue_id === issueId);
+  const rejects   = (rejRes.data    || []).filter(r => r.meta?.issue_id === issueId);
+  const allMsgs   = [...responses, ...followups, ...requests, ...approvals, ...rejects].sort((a,b) => new Date(a.created_at) - new Date(b.created_at));
   const resolved  = responses.length > 0;
 
   const type = currentIssue.meta?.type || 'lain_lain';
@@ -183,7 +205,7 @@ function msgBubble(side, name, text, time, photoUrl) {
   const isPatient = side === 'patient';
   const initial   = (name || '?')[0].toUpperCase();
   const photo     = photoUrl
-    ? `<img src="${photoUrl}" alt="foto" class="mt-2 rounded-xl max-h-48 object-contain border border-ink/10">`
+    ? `<img src="${photoUrl}" alt="foto" onclick="openPhotoLightbox('${photoUrl}')" class="mt-2 rounded-xl max-h-48 object-contain border border-ink/10 cursor-zoom-in hover:opacity-90 transition" title="Klik untuk view full size">`
     : '';
   const avatar = `<div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0
     ${isPatient ? 'bg-terracotta/20 text-terracotta' : 'bg-navy text-white'}">${initial}</div>`;
@@ -199,14 +221,136 @@ function msgBubble(side, name, text, time, photoUrl) {
   </div>`;
 }
 
+function replacementRequestCard(m, time, pending, isApproved, isRejected, isManager) {
+  const meta = m.meta || {};
+  const total = Number(meta.total || 0).toFixed(2);
+  const statusBadge = pending
+    ? '<span class="chip bg-gold/15 text-gold-dark text-[10px]">⏳ Menunggu Kelulusan</span>'
+    : isApproved
+      ? '<span class="chip bg-green-light text-green-dark text-[10px]">✅ Diluluskan</span>'
+      : '<span class="chip bg-terracotta/15 text-terracotta text-[10px]">❌ Ditolak</span>';
+
+  const managerActions = (pending && isManager) ? `
+    <div class="flex gap-2 mt-3 pt-3 border-t border-ink/10">
+      <button onclick="approveRequest('${m.id}')" class="flex-1 bg-green-dark text-white text-xs font-semibold py-2 rounded-lg hover:opacity-90">✅ Luluskan</button>
+      <button onclick="rejectRequest('${m.id}')" class="flex-1 bg-terracotta text-white text-xs font-semibold py-2 rounded-lg hover:opacity-90">❌ Tolak</button>
+    </div>` : '';
+
+  return `<div class="bg-gold/5 border border-gold/30 rounded-2xl p-4 max-w-[80%] mx-auto">
+    <div class="flex items-center justify-between mb-2 gap-2 flex-wrap">
+      <div class="font-semibold text-sm text-gold-dark">🎯 Request Penggantian</div>
+      ${statusBadge}
+    </div>
+    <div class="text-[10px] text-ink/50 mb-2">Oleh ${m.actor_name || 'Staff'} · ${time}</div>
+    <div class="grid grid-cols-2 gap-2 text-xs">
+      <div><span class="text-ink/50">Produk:</span> <span class="font-semibold">${meta.product_icon || ''} ${meta.product_name || '—'}</span></div>
+      <div><span class="text-ink/50">Kuantiti:</span> <span class="font-semibold">${meta.qty || 1}</span></div>
+      <div><span class="text-ink/50">Hantar:</span> <span class="font-semibold">${meta.delivery_method === 'pos' ? '📮 Pos' : '🏥 Pickup'}</span></div>
+      <div><span class="text-ink/50">Nilai:</span> <span class="font-semibold">RM ${total}</span></div>
+      ${meta.delivery_method === 'pos' && meta.delivery_address ? `<div class="col-span-2"><span class="text-ink/50">Alamat:</span> <span>${(meta.delivery_address || '').replace(/</g,'&lt;')}</span></div>` : ''}
+      ${meta.note ? `<div class="col-span-2"><span class="text-ink/50">Nota:</span> <span>${(meta.note || '').replace(/</g,'&lt;')}</span></div>` : ''}
+    </div>
+    ${managerActions}
+  </div>`;
+}
+
+function approvalDecisionCard(m, time, kind) {
+  const isApproved = kind === 'approved';
+  const cls = isApproved ? 'bg-green/5 border-green/30 text-green-dark' : 'bg-terracotta/5 border-terracotta/30 text-terracotta';
+  const icon = isApproved ? '✅' : '❌';
+  const label = isApproved ? 'Penggantian Diluluskan' : 'Penggantian Ditolak';
+  const orderInfo = isApproved && m.meta?.order_ref ? `<div class="text-xs text-ink/60 mt-1">Order Ref: <span class="font-mono font-semibold">${m.meta.order_ref}</span></div>` : '';
+  const reason = m.meta?.reason ? `<div class="text-xs text-ink/70 mt-1">Alasan: ${(m.meta.reason || '').replace(/</g,'&lt;')}</div>` : '';
+  return `<div class="${cls} border rounded-2xl p-3 max-w-[70%] mx-auto">
+    <div class="font-semibold text-sm">${icon} ${label}</div>
+    <div class="text-[10px] text-ink/50 mt-0.5">Oleh ${m.actor_name || 'Manager'} · ${time}</div>
+    ${orderInfo}${reason}
+  </div>`;
+}
+
+async function approveRequest(requestId) {
+  const { data: rows } = await window.db.from('psy_audit_log').select('*').eq('id', requestId).limit(1);
+  const req = rows?.[0];
+  if (!req) { banner('Request tidak ditemui', 'error'); return; }
+  if (!confirm(`Luluskan penggantian ${req.meta?.product_name} x${req.meta?.qty}?`)) return;
+
+  const m = req.meta || {};
+  const orderRef = 'REP-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).slice(2, 6).toUpperCase();
+  try {
+    // Create replacement order
+    const { error: orderErr } = await window.db.from('psy_orders').insert({
+      order_ref:        orderRef,
+      patient_id:       req.target,
+      items:            [{ product_id: m.product_id, name: m.product_name, icon: m.product_icon, qty: m.qty, price: m.price }],
+      total:            m.total,
+      status:           'packed',
+      delivery_method:  m.delivery_method,
+      delivery_address: m.delivery_address,
+      notes:            `Penggantian diluluskan oleh ${window.currentUser.full_name} — Isu #${(m.issue_id || '').slice(0,8)}${m.note ? ' · ' + m.note : ''}`,
+    });
+    if (orderErr) throw orderErr;
+
+    // Log approval
+    await window.db.from('psy_audit_log').insert({
+      actor_id: window.currentUser.id, actor_name: window.currentUser.full_name, actor_role: window.currentUser.role,
+      action: 'issue.replacement_approved', target: req.target,
+      meta: { issue_id: m.issue_id, request_id: requestId, order_ref: orderRef, product_name: m.product_name, qty: m.qty },
+    });
+
+    // Notify patient + requester staff
+    if (req.target) await notify(req.target, 'order', '📦 Penggantian Diluluskan', `${m.product_icon || ''} ${m.product_name} (x${m.qty}) akan dihantar. Ref: ${orderRef}`, 'orders.html');
+    if (req.actor_id) await notify(req.actor_id, 'system', '✅ Request Penggantian Diluluskan', `Manager telah luluskan request anda untuk ${m.product_name}.`, 'issue.html');
+
+    banner('Penggantian diluluskan ✅');
+    loadDetail();
+  } catch (err) {
+    banner('Ralat: ' + err.message, 'error');
+  }
+}
+
+async function rejectRequest(requestId) {
+  const { data: rows } = await window.db.from('psy_audit_log').select('*').eq('id', requestId).limit(1);
+  const req = rows?.[0];
+  if (!req) { banner('Request tidak ditemui', 'error'); return; }
+  const reason = prompt('Sila tulis alasan tolak (diperlukan):');
+  if (!reason || !reason.trim()) return;
+  try {
+    await window.db.from('psy_audit_log').insert({
+      actor_id: window.currentUser.id, actor_name: window.currentUser.full_name, actor_role: window.currentUser.role,
+      action: 'issue.replacement_rejected', target: req.target,
+      meta: { issue_id: req.meta?.issue_id, request_id: requestId, reason: reason.trim() },
+    });
+    if (req.actor_id) await notify(req.actor_id, 'system', '❌ Request Penggantian Ditolak', `Alasan: ${reason.trim()}`, 'issue.html');
+    banner('Request ditolak');
+    loadDetail();
+  } catch (err) {
+    banner('Ralat: ' + err.message, 'error');
+  }
+}
+
 function renderChat(issue, messages) {
   const t0 = new Date(issue.created_at).toLocaleString('ms-MY', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
   let html = msgBubble('patient', issue.actor_name || 'Patient', issue.meta?.description || '—', t0, issue.meta?.photo_url || null);
+
+  // Find latest approval/reject status for each request
+  const approvedReqIds = new Set(approvals.map(a => a.meta?.request_id).filter(Boolean));
+  const rejectedReqIds = new Set(rejects.map(r => r.meta?.request_id).filter(Boolean));
+  const role = window.currentUser?.staff_role;
+  const isManager = role === 'manager';
 
   messages.forEach(m => {
     const t = new Date(m.created_at).toLocaleString('ms-MY', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
     if (m.action === 'issue.followup') {
       html += msgBubble('patient', m.actor_name || 'Patient', m.meta?.message || '—', t, null);
+    } else if (m.action === 'issue.replacement_requested') {
+      const isApproved = approvedReqIds.has(m.id);
+      const isRejected = rejectedReqIds.has(m.id);
+      const pending = !isApproved && !isRejected;
+      html += replacementRequestCard(m, t, pending, isApproved, isRejected, isManager);
+    } else if (m.action === 'issue.replacement_approved') {
+      html += approvalDecisionCard(m, t, 'approved');
+    } else if (m.action === 'issue.replacement_rejected') {
+      html += approvalDecisionCard(m, t, 'rejected');
     } else {
       html += msgBubble('staff', m.actor_name || 'Staff', m.meta?.response || '—', t, null);
     }
@@ -319,15 +463,44 @@ async function confirmReplacement() {
   const icon  = opt.dataset.icon;
   const total = price * qty;
 
-  // Replacement orders bypass payment — restrict to manager/admin only
   const role = window.currentUser?.staff_role;
-  if (role !== 'manager' && role !== 'admin') {
-    banner('Hanya manager/admin boleh hantar penggantian (tanpa bayaran)', 'error');
-    return;
-  }
+  const isManager = role === 'manager';
 
   const btn = document.getElementById('btn-rep-confirm');
   btn.disabled = true; btn.textContent = 'Memproses...';
+
+  // Staff bukan manager → log sebagai approval request, tak create order
+  if (!isManager) {
+    try {
+      await window.db.from('psy_audit_log').insert({
+        actor_id:   window.currentUser.id,
+        actor_name: window.currentUser.full_name,
+        actor_role: window.currentUser.role,
+        action:     'issue.replacement_requested',
+        target:     currentIssue.actor_id,
+        meta: {
+          issue_id: currentIssue.id,
+          issue_type: currentIssue.meta?.type,
+          patient_name: currentIssue.actor_name,
+          product_id: sel.value, product_name: name, product_icon: icon,
+          qty, price, total,
+          delivery_method: delivery,
+          delivery_address: delivery === 'pos' ? address : 'Pickup Klinik',
+          note,
+          status: 'pending',
+        },
+      });
+      banner('Request approval dihantar ke manager ✅');
+      closeReplacement();
+      loadDetail();
+    } catch (err) {
+      errEl.textContent = 'Ralat: ' + (err.message || JSON.stringify(err));
+      errEl.classList.remove('hidden');
+    } finally {
+      btn.disabled = false; btn.textContent = '✅ Sahkan Penggantian';
+    }
+    return;
+  }
 
   try {
     const orderRef = 'REP-' + Date.now().toString(36).toUpperCase()
@@ -396,7 +569,25 @@ document.addEventListener('DOMContentLoaded', () => {
   const user = await initStaff('issue', 'Detail Isu');
   if (!user) return;
   setHeaderBack('issue.html', 'Kembali ke Senarai Isu');
-  loadDetail();
+
+  // Tunjuk butang ikut role + jenis isu
+  // Manager/admin → "Buat Penggantian" terus (bypass approval)
+  // Staff lain → "Request Approval Penggantian" (kena manager lulus dulu)
+  await loadDetail();
+  const role = window.currentUser?.staff_role;
+  const issueType = currentIssue?.meta?.type;
+  const isProductIssue = ['produk_rosak','salah_produk','kurang_jumlah','tidak_sampai'].includes(issueType);
+  const btn = document.getElementById('btn-replacement');
+  if (isProductIssue) {
+    if (role === 'manager') {
+      btn.textContent = '📦 Buat Penggantian';
+      btn.classList.remove('hidden');
+    } else {
+      btn.textContent = '🎯 Request Approval Penggantian';
+      btn.className = 'px-4 py-2 bg-navy/10 text-navy border border-navy/30 rounded-xl text-xs font-semibold hover:bg-navy/20 transition-colors whitespace-nowrap';
+      btn.classList.remove('hidden');
+    }
+  }
 })();
 </script>
 </body>
