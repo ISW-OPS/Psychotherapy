@@ -9,6 +9,12 @@
 <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="_styles.css" rel="stylesheet">
+<style>
+  .row-staff:hover td { background:#fafbfc; }
+  .role-pill { display:inline-flex; align-items:center; gap:4px; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:600; }
+  .icon-btn { width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center; transition:all .15s; }
+  .icon-btn:hover { transform:translateY(-1px); }
+</style>
 </head>
 <body class="min-h-screen">
 
@@ -22,22 +28,115 @@
     <main class="main-content flex-1 min-w-0">
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
-      <div class="p-4 md:p-8 space-y-6">
-        <div class="flex items-center justify-between flex-wrap gap-3">
-          <h3 class="font-bold text-lg">Senarai Staff</h3>
-          <button onclick="openCreateModal()" class="bg-navy text-white text-sm px-4 py-2 rounded-lg font-semibold">+ Daftar Staff Baru</button>
+      <div class="p-4 md:p-8 space-y-5">
+
+        <!-- Title -->
+        <div class="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-2xl font-bold text-ink">Manage Staff</h1>
+            <p class="text-sm text-ink/55 mt-0.5">Uruskan maklumat staf dan akses sistem.</p>
+          </div>
+          <button onclick="openCreateModal()" class="inline-flex items-center gap-1.5 text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:opacity-90 transition-opacity" style="background-color:#7C3AED">
+            + Tambah Staff
+          </button>
         </div>
 
-        <div class="bg-white rounded-xl border border-ink/10 overflow-x-auto">
-          <table class="data">
-            <thead><tr><th>Staff ID</th><th>Nama</th><th>Email</th><th>Role</th><th>Status</th><th>Tindakan</th></tr></thead>
-            <tbody id="staff-body"></tbody>
-          </table>
+        <!-- 4 Stat cards -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div class="bg-white rounded-2xl border border-ink/10 p-5 flex items-center gap-4">
+            <div class="w-12 h-12 rounded-xl bg-navy-light flex items-center justify-center text-xl">👥</div>
+            <div class="min-w-0">
+              <div class="text-[11px] text-ink/55 font-semibold">Jumlah Staff</div>
+              <div id="stat-total" class="text-2xl font-bold text-ink leading-none mt-1">0</div>
+              <div class="text-[10px] text-ink/50 mt-1">Semua staf berdaftar</div>
+            </div>
+          </div>
+          <div class="bg-white rounded-2xl border border-ink/10 p-5 flex items-center gap-4">
+            <div class="w-12 h-12 rounded-xl bg-green-light flex items-center justify-center text-xl">✅</div>
+            <div class="min-w-0">
+              <div class="text-[11px] text-ink/55 font-semibold">Staf Aktif</div>
+              <div id="stat-active" class="text-2xl font-bold text-ink leading-none mt-1">0</div>
+              <div id="stat-active-pct" class="text-[10px] text-ink/50 mt-1">— daripada jumlah</div>
+            </div>
+          </div>
+          <div class="bg-white rounded-2xl border border-ink/10 p-5 flex items-center gap-4">
+            <div class="w-12 h-12 rounded-xl bg-gold/30 flex items-center justify-center text-xl">🚩</div>
+            <div class="min-w-0">
+              <div class="text-[11px] text-ink/55 font-semibold">Staf Tidak Aktif</div>
+              <div id="stat-inactive" class="text-2xl font-bold text-ink leading-none mt-1">0</div>
+              <div id="stat-inactive-pct" class="text-[10px] text-ink/50 mt-1">— daripada jumlah</div>
+            </div>
+          </div>
+          <div class="bg-white rounded-2xl border border-ink/10 p-5 flex items-center gap-4">
+            <div class="w-12 h-12 rounded-xl bg-teal/10 flex items-center justify-center text-xl">🆕</div>
+            <div class="min-w-0">
+              <div class="text-[11px] text-ink/55 font-semibold">Baru (Bulan Ini)</div>
+              <div id="stat-new" class="text-2xl font-bold text-ink leading-none mt-1">0</div>
+              <div id="stat-new-pct" class="text-[10px] text-ink/50 mt-1">— daripada jumlah</div>
+            </div>
+          </div>
         </div>
 
-        <div class="bg-gold-light rounded-xl p-4 text-xs text-ink/70">
-          <strong>ℹ️ Nota:</strong> Akaun staff dicipta oleh admin sahaja. Staff baru akan terima email pengesahan untuk set kata laluan.
+        <!-- Filter card -->
+        <div class="bg-white rounded-2xl border border-ink/10 p-4 space-y-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+            <div class="relative">
+              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-ink/30 text-sm pointer-events-none">🔍</span>
+              <input id="f-search" oninput="renderTable()" placeholder="Cari nama, emel atau telefon..."
+                class="w-full border border-ink/15 rounded-lg pl-9 pr-3 py-2.5 text-sm outline-none focus:border-navy">
+            </div>
+            <select id="f-role" onchange="renderTable()" class="border border-ink/15 rounded-lg px-3 py-2.5 text-sm bg-white outline-none focus:border-navy">
+              <option value="">Semua Peranan</option>
+              <option value="admin">Admin</option>
+              <option value="coach">Coach</option>
+              <option value="doctor">Doctor</option>
+              <option value="manager">Manager</option>
+            </select>
+            <select id="f-status" onchange="renderTable()" class="border border-ink/15 rounded-lg px-3 py-2.5 text-sm bg-white outline-none focus:border-navy">
+              <option value="">Semua Status</option>
+              <option value="active">Aktif</option>
+              <option value="inactive">Tidak Aktif</option>
+            </select>
+          </div>
+
+          <!-- Action bar -->
+          <div class="flex items-center gap-2 flex-wrap pt-1">
+            <button onclick="exportExcel()" class="inline-flex items-center gap-1.5 text-white px-4 py-2 rounded-lg text-xs font-semibold hover:opacity-90" style="background-color:#1D6F42">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="3" y1="9" x2="21" y2="9"/></svg>
+              Export Excel
+            </button>
+            <button onclick="window.print()" class="inline-flex items-center gap-1.5 bg-navy text-white px-4 py-2 rounded-lg text-xs font-semibold hover:bg-navy-dark">
+              🖨️ Print
+            </button>
+            <div class="flex-1"></div>
+            <button onclick="resetFilters()" class="inline-flex items-center gap-1.5 border border-ink/15 text-ink/70 px-3 py-2 rounded-lg text-xs font-semibold hover:bg-cream">
+              ↺ Reset
+            </button>
+            <span id="total-staff" class="text-xs text-ink/55 font-semibold">Total: 0 staf</span>
+          </div>
         </div>
+
+        <!-- Table card -->
+        <div class="bg-white rounded-2xl border border-ink/10 overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-cream/40 text-[10px] uppercase tracking-wide text-ink/50">
+                <tr>
+                  <th class="w-10 py-3 px-4 text-left"><input type="checkbox" id="chk-all" class="accent-navy" onchange="toggleAll(this.checked)"></th>
+                  <th class="text-left py-3 px-3">Staff</th>
+                  <th class="text-left py-3 px-3">Peranan</th>
+                  <th class="text-left py-3 px-3">Jabatan</th>
+                  <th class="text-left py-3 px-3">Status</th>
+                  <th class="text-left py-3 px-3">Dihantar <span class="ml-1">↑</span></th>
+                  <th class="text-right py-3 px-4">Tindakan</th>
+                </tr>
+              </thead>
+              <tbody id="staff-body"></tbody>
+            </table>
+          </div>
+          <div id="pagination" class="flex items-center justify-between px-5 py-3 border-t border-ink/8 text-xs"></div>
+        </div>
+
       </div>
     </main>
   </div>
@@ -94,7 +193,7 @@
     </div>
     <div class="p-5 border-t border-ink/10 flex justify-end gap-2">
       <button onclick="closeCreateModal()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm">Batal</button>
-      <button onclick="createStaff()" id="create-btn" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold">Daftar</button>
+      <button onclick="createStaff()" id="create-btn" class="text-white px-4 py-2 rounded-lg text-sm font-semibold" style="background-color:#7C3AED">Daftar</button>
     </div>
   </div>
 </div>
@@ -123,7 +222,30 @@
 <script src="_shared.js"></script>
 <script>
 
-// ── Helpers ──────────────────────────────────────────
+// ── Avatar palette ───────────────────────────────────
+const AV_PALETTE = [
+  { bg:'#ede9fe', fg:'#5b21b6' }, { bg:'#dbeafe', fg:'#1e40af' },
+  { bg:'#d1fae5', fg:'#065f46' }, { bg:'#fef3c7', fg:'#92400e' },
+  { bg:'#fee2e2', fg:'#991b1b' }, { bg:'#ccfbf1', fg:'#115e59' },
+  { bg:'#fce7f3', fg:'#9d174d' }, { bg:'#e0e7ff', fg:'#3730a3' },
+];
+function pickAv(s) {
+  let h = 0; for (let i = 0; i < (s||'?').length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return AV_PALETTE[h % AV_PALETTE.length];
+}
+
+const ROLE_BADGE = {
+  admin:   { label:'Admin',   icon:'🛡️', bg:'#fed7aa', fg:'#9a3412' },
+  doctor:  { label:'Doctor',  icon:'🩺', bg:'#dbeafe', fg:'#1e40af' },
+  coach:   { label:'Coach',   icon:'🧑‍🏫', bg:'#ede9fe', fg:'#5b21b6' },
+  manager: { label:'Manager', icon:'📊', bg:'#fef3c7', fg:'#92400e' },
+};
+
+// ── State ────────────────────────────────────────────
+let _staffData = [];
+const PAGE_SIZE = 10;
+let currentPage = 1;
+
 async function callEdgeFn(body) {
   const { data, error } = await window.db.functions.invoke('invite-staff', { body });
   if (error) {
@@ -143,17 +265,14 @@ async function callEdgeFn(body) {
   return data;
 }
 
-// ── Create ───────────────────────────────────────────
+// ── Create modal ─────────────────────────────────────
 function resetCreateModal() {
   document.querySelectorAll('#create-modal input:not([type=radio]), #create-modal select').forEach(i => i.value = '');
   document.querySelector('input[name="method"][value="invite"]').checked = true;
   document.getElementById('password-row').classList.add('hidden');
   document.getElementById('create-error').classList.add('hidden');
 }
-function openCreateModal() {
-  resetCreateModal();
-  document.getElementById('create-modal').classList.remove('hidden');
-}
+function openCreateModal() { resetCreateModal(); document.getElementById('create-modal').classList.remove('hidden'); }
 function closeCreateModal() {
   document.getElementById('create-modal').classList.add('hidden');
   resetCreateModal();
@@ -203,7 +322,7 @@ async function createStaff() {
   }
 }
 
-// ── Delete ───────────────────────────────────────────
+// ── Delete modal ─────────────────────────────────────
 let _deleteId = null;
 function openDeleteModal(id, name) {
   _deleteId = id;
@@ -230,40 +349,168 @@ async function confirmDelete() {
   }
 }
 
-// ── Staff List ───────────────────────────────────────
-const ROLE_BADGE = {
-  admin:   '<span class="chip bg-terracotta/20 text-terracotta">Admin</span>',
-  doctor:  '<span class="chip bg-navy/20 text-navy">Doctor</span>',
-  coach:   '<span class="chip bg-teal/20 text-teal">Coach</span>',
-  manager: '<span class="chip bg-gold/30 text-gold-dark">Manager</span>',
-};
+// ── Filters / Render ─────────────────────────────────
+function getFilteredList() {
+  const q     = document.getElementById('f-search').value.toLowerCase().trim();
+  const role  = document.getElementById('f-role').value;
+  const stat  = document.getElementById('f-status').value;
 
-let _staffData = [];
+  return _staffData.filter(s => {
+    if (q) {
+      const blob = `${s.full_name||''} ${s.email||''} ${s.phone||''}`.toLowerCase();
+      if (!blob.includes(q)) return false;
+    }
+    if (role && s.staff_role !== role) return false;
+    if (stat === 'active'   && s.is_active === false) return false;
+    if (stat === 'inactive' && s.is_active !== false) return false;
+    return true;
+  });
+}
 
-async function loadStaff() {
-  _staffData = await dbQuery('psy_profiles', { eq: { role: 'staff' }, order: { col: 'created_at' } });
-  document.getElementById('staff-body').innerHTML = _staffData.length
-    ? _staffData.map(s => {
+function resetFilters() {
+  ['f-search','f-role','f-status'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  renderTable();
+}
+
+function renderTable() {
+  const list = getFilteredList();
+  document.getElementById('total-staff').textContent = `Total: ${list.length} staf`;
+
+  const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+  if (currentPage > totalPages) currentPage = totalPages;
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const slice = list.slice(start, start + PAGE_SIZE);
+
+  const body = document.getElementById('staff-body');
+  if (!slice.length) {
+    body.innerHTML = '<tr><td colspan="7" class="text-center text-ink/40 py-12 italic">Tiada staf ditemui</td></tr>';
+  } else {
+    body.innerHTML = slice.map(s => {
+      const name = escapeHtml(s.full_name || '—');
+      const initials = (s.full_name || '?').split(/\s+/).slice(0,2).map(w => w[0] || '').join('').toUpperCase();
+      const av = pickAv(s.full_name || s.email || '?');
+      const avatar = s.avatar_url
+        ? `<img src="${s.avatar_url}" class="w-10 h-10 rounded-full object-cover flex-shrink-0">`
+        : `<div class="w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0" style="background:${av.bg};color:${av.fg}">${initials}</div>`;
+      const rb = ROLE_BADGE[s.staff_role];
+      const roleHtml = rb
+        ? `<span class="role-pill" style="background:${rb.bg};color:${rb.fg}"><span>${rb.icon}</span>${rb.label}</span>`
+        : `<span class="text-xs text-ink/35">—</span>`;
+      const statusHtml = s.is_active !== false
+        ? '<span class="inline-flex items-center gap-1.5 text-xs text-green-dark font-medium"><span class="w-1.5 h-1.5 rounded-full bg-green"></span>Aktif</span>'
+        : '<span class="inline-flex items-center gap-1.5 text-xs text-gold-dark font-medium"><span class="w-1.5 h-1.5 rounded-full bg-gold"></span>Tidak Aktif</span>';
+      const dt = s.created_at ? new Date(s.created_at) : null;
+      const dateHtml = dt
+        ? `<div class="text-xs text-ink/70">${dt.toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' })}</div>
+           <div class="text-[10px] text-ink/45">${dt.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' })}</div>`
+        : '<span class="text-xs text-ink/35">—</span>';
       const nameAttr = escapeJsAttr(s.full_name || '');
-      return `
-      <tr class="cursor-pointer hover:bg-cream/30 transition-colors ${s.is_active === false ? 'opacity-50' : ''}" onclick="window.location.href='staff-detail.html?id=${s.id}'">
-        <td><strong>${escapeHtml(s.registration_no || '—')}</strong></td>
-        <td><strong>${escapeHtml(s.full_name || '')}</strong></td>
-        <td class="text-xs">${escapeHtml(s.email || '—')}</td>
-        <td>${ROLE_BADGE[s.staff_role] || '<span class="chip bg-ink/10 text-ink/60">—</span>'}</td>
-        <td>${s.is_active !== false
-          ? '<span class="chip bg-green-light text-green-dark">Aktif</span>'
-          : '<span class="chip bg-terracotta/20 text-terracotta">Dipecat</span>'}</td>
-        <td class="flex gap-2 items-center" onclick="event.stopPropagation()">
-          <button onclick="window.location.href='staff-detail.html?id=${s.id}'"
-            class="text-xs text-navy font-semibold hover:underline">Detail</button>
-          <span class="text-ink/20">|</span>
-          <button onclick="openDeleteModal('${s.id}','${nameAttr}')"
-            class="text-xs text-terracotta font-semibold hover:underline">Padam</button>
+
+      return `<tr class="row-staff border-b border-ink/5 last:border-0">
+        <td class="py-3 px-4"><input type="checkbox" class="accent-navy row-chk" data-id="${s.id}"></td>
+        <td class="py-3 px-3">
+          <div class="flex items-center gap-3 cursor-pointer" onclick="window.location.href='staff-detail.html?id=${s.id}'">
+            ${avatar}
+            <div class="min-w-0">
+              <div class="font-semibold text-sm text-ink">${name}</div>
+              <div class="text-[11px] text-ink/55">${escapeHtml(s.email || '—')}</div>
+              ${s.phone ? `<div class="text-[10px] text-ink/45">${escapeHtml(s.phone)}</div>` : ''}
+            </div>
+          </div>
+        </td>
+        <td class="py-3 px-3">${roleHtml}</td>
+        <td class="py-3 px-3"><span class="text-sm text-ink/80">${escapeHtml(s.department || s.specialization || '—')}</span></td>
+        <td class="py-3 px-3">${statusHtml}</td>
+        <td class="py-3 px-3">${dateHtml}</td>
+        <td class="py-3 px-4">
+          <div class="flex items-center justify-end gap-1.5">
+            <button onclick="window.location.href='staff-detail.html?id=${s.id}'" title="Edit" class="icon-btn bg-navy-light text-navy hover:bg-navy hover:text-white">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button onclick="openDeleteModal('${s.id}','${nameAttr}')" title="Padam" class="icon-btn bg-terracotta-light text-terracotta hover:bg-terracotta hover:text-white">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+            </button>
+          </div>
         </td>
       </tr>`;
-    }).join('')
-    : '<tr><td colspan="6" class="text-center text-ink/40 py-8">Tiada staff didaftarkan</td></tr>';
+    }).join('');
+  }
+
+  renderPagination(list.length, totalPages);
+}
+
+function renderPagination(total, totalPages) {
+  const host = document.getElementById('pagination');
+  const start = total === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
+  const end = Math.min(currentPage * PAGE_SIZE, total);
+  const pagesHtml = Array.from({ length: totalPages }, (_, i) => i + 1).map(p =>
+    `<button onclick="gotoPage(${p})" class="w-8 h-8 rounded-lg text-xs font-semibold ${p === currentPage ? 'text-white' : 'text-ink/60 hover:bg-cream'}" ${p === currentPage ? 'style="background-color:#7C3AED"' : ''}>${p}</button>`
+  ).join('');
+  host.innerHTML = `
+    <span class="text-ink/55">Memaparkan ${start} hingga ${end} daripada ${total} staf</span>
+    <div class="flex items-center gap-1.5">
+      <button onclick="gotoPage(${currentPage - 1})" ${currentPage <= 1 ? 'disabled' : ''} class="w-8 h-8 rounded-lg border border-ink/15 disabled:opacity-30 hover:bg-cream">‹</button>
+      ${pagesHtml}
+      <button onclick="gotoPage(${currentPage + 1})" ${currentPage >= totalPages ? 'disabled' : ''} class="w-8 h-8 rounded-lg border border-ink/15 disabled:opacity-30 hover:bg-cream">›</button>
+      <select onchange="changePageSize(this.value)" class="ml-2 border border-ink/15 rounded-lg px-2 py-1 text-xs bg-white"><option>10 / page</option></select>
+    </div>`;
+}
+
+function gotoPage(p) {
+  if (p < 1) return;
+  currentPage = p;
+  renderTable();
+}
+function changePageSize() { /* placeholder — fixed at 10 for now */ }
+
+function toggleAll(checked) {
+  document.querySelectorAll('.row-chk').forEach(c => c.checked = checked);
+}
+
+function renderStats() {
+  const total = _staffData.length;
+  const active = _staffData.filter(s => s.is_active !== false).length;
+  const inactive = total - active;
+  const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0,0,0,0);
+  const newThisMonth = _staffData.filter(s => s.created_at && new Date(s.created_at) >= monthStart).length;
+  const pct = (n) => total ? `${((n/total)*100).toFixed(1)}% daripada jumlah` : '— daripada jumlah';
+  document.getElementById('stat-total').textContent = total;
+  document.getElementById('stat-active').textContent = active;
+  document.getElementById('stat-active-pct').textContent = pct(active);
+  document.getElementById('stat-inactive').textContent = inactive;
+  document.getElementById('stat-inactive-pct').textContent = pct(inactive);
+  document.getElementById('stat-new').textContent = newThisMonth;
+  document.getElementById('stat-new-pct').textContent = pct(newThisMonth);
+}
+
+// ── Excel export ─────────────────────────────────────
+function exportExcel() {
+  const rows = [
+    ['Nama','Email','Telefon','Peranan','Jabatan','Status','Tarikh Daftar'],
+    ...getFilteredList().map(s => [
+      s.full_name || '',
+      s.email || '',
+      s.phone || '',
+      ROLE_BADGE[s.staff_role]?.label || s.staff_role || '',
+      s.department || s.specialization || '',
+      s.is_active !== false ? 'Aktif' : 'Tidak Aktif',
+      s.created_at ? new Date(s.created_at).toLocaleString('en-GB') : '',
+    ]),
+  ];
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `staff_${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// ── Load ─────────────────────────────────────────────
+async function loadStaff() {
+  _staffData = await dbQuery('psy_profiles', { eq: { role: 'staff' }, order: { col: 'created_at' } });
+  renderStats();
+  renderTable();
 }
 
 function showErr(el, msg) { el.textContent = msg; el.classList.remove('hidden'); }

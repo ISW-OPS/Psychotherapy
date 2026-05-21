@@ -104,6 +104,42 @@
             <p class="text-xs text-gray-500" id="print-date"></p>
           </div>
 
+          <!-- ── Patient Stats ─────────────────────────────── -->
+          <div id="patient-stats" class="grid grid-cols-2 md:grid-cols-4 gap-3 print-hide">
+            <div class="bg-white rounded-2xl border border-ink/10 p-5 flex items-center gap-4">
+              <div class="w-12 h-12 rounded-xl bg-navy-light flex items-center justify-center text-xl">👥</div>
+              <div class="min-w-0">
+                <div class="text-[11px] text-ink/55 font-semibold">Jumlah Pesakit</div>
+                <div id="stat-total" class="text-2xl font-bold text-ink leading-none mt-1">0</div>
+                <div class="text-[10px] text-ink/50 mt-1">Semua pesakit berdaftar</div>
+              </div>
+            </div>
+            <div class="bg-white rounded-2xl border border-ink/10 p-5 flex items-center gap-4">
+              <div class="w-12 h-12 rounded-xl bg-green-light flex items-center justify-center text-xl">✅</div>
+              <div class="min-w-0">
+                <div class="text-[11px] text-ink/55 font-semibold">Pesakit Aktif</div>
+                <div id="stat-active" class="text-2xl font-bold text-ink leading-none mt-1">0</div>
+                <div id="stat-active-pct" class="text-[10px] text-ink/50 mt-1">— daripada jumlah</div>
+              </div>
+            </div>
+            <div class="bg-white rounded-2xl border border-ink/10 p-5 flex items-center gap-4">
+              <div class="w-12 h-12 rounded-xl bg-gold/30 flex items-center justify-center text-xl">🚩</div>
+              <div class="min-w-0">
+                <div class="text-[11px] text-ink/55 font-semibold">Pesakit Tidak Aktif</div>
+                <div id="stat-inactive" class="text-2xl font-bold text-ink leading-none mt-1">0</div>
+                <div id="stat-inactive-pct" class="text-[10px] text-ink/50 mt-1">— daripada jumlah</div>
+              </div>
+            </div>
+            <div class="bg-white rounded-2xl border border-ink/10 p-5 flex items-center gap-4">
+              <div class="w-12 h-12 rounded-xl bg-teal/10 flex items-center justify-center text-xl">🆕</div>
+              <div class="min-w-0">
+                <div class="text-[11px] text-ink/55 font-semibold">Pesakit Baru (Bulan Ini)</div>
+                <div id="stat-new" class="text-2xl font-bold text-ink leading-none mt-1">0</div>
+                <div id="stat-new-pct" class="text-[10px] text-ink/50 mt-1">— daripada jumlah</div>
+              </div>
+            </div>
+          </div>
+
           <!-- ── Patient List ─────────────────────────────── -->
           <div id="list-section">
             <div class="flex items-center gap-3 mb-3 flex-wrap print-hide">
@@ -155,12 +191,6 @@
               </button>
               <button onclick="clearPatientFilters()" class="text-xs text-ink/50 hover:text-terracotta hover:underline">Reset</button>
               <span id="patient-count" class="text-xs text-ink/50 whitespace-nowrap"></span>
-              <div class="flex-1"></div>
-              <button onclick="openCreatePatient()"
-                class="flex items-center gap-1.5 px-4 py-2.5 bg-purple-600 text-white rounded-xl text-sm hover:bg-purple-700 transition-colors font-semibold"
-                style="background-color:#7C3AED">
-                + Tambah Pesakit
-              </button>
             </div>
 
             <!-- Advanced filters (hidden by default) -->
@@ -222,19 +252,23 @@
                 <input type="checkbox" id="toggle-archived" onchange="loadAll()" class="accent-terracotta">
                 Rekod Diarkibkan
               </label>
+              <div class="flex-1"></div>
+              <button onclick="openCreatePatient()"
+                class="flex items-center gap-1.5 px-4 py-2.5 text-white rounded-xl text-sm hover:opacity-90 transition-opacity font-semibold"
+                style="background-color:#7C3AED">
+                + Tambah Pesakit
+              </button>
             </div>
 
             <div class="bg-white rounded-xl border border-ink/10 overflow-x-auto">
               <table class="data">
                 <thead>
-                  <tr>
-                    <th class="print-hide w-8"><input type="checkbox" id="check-all" onchange="toggleCheckAll(this.checked)" class="accent-navy"></th>
+                  <tr class="text-[10px] uppercase tracking-wide text-ink/50">
                     <th>No</th>
                     <th>Patient ID</th>
-                    <th>Nama</th>
+                    <th>Nama Pesakit</th>
                     <th>Telefon</th>
                     <th>Pakej</th>
-                    <th>Kod Rujukan</th>
                     <th>Coach / Terapi</th>
                     <th>Status</th>
                     <th class="print-hide">Tindakan</th>
@@ -1290,31 +1324,41 @@
 
       document.getElementById('patient-count').textContent = `Total Pesakit : ${total} orang`;
 
+      const avatarColors = ['bg-navy-light text-navy','bg-green-light text-green-dark','bg-gold/30 text-gold-dark','bg-teal/15 text-teal','bg-terracotta-light text-terracotta'];
+
       document.getElementById('patients-body').innerHTML = pageItems.length
         ? pageItems.map((p, i) => {
           const rawName = p.psy_profiles?.full_name || p.full_name || '—';
           const name = escapeHtml(rawName);
           const phone = escapeHtml(p.psy_profiles?.phone || p.phone || p.emergency_contact_phone || '—');
           const pkgName = escapeHtml(p.active_package_name || '');
-          const refCode = escapeHtml(p.reference_code || '—');
           const coachName = escapeHtml(p.coach?.full_name || '');
           const age = calcAge(p.date_of_birth);
           const genderText = p.gender === 'M' ? 'Lelaki' : (p.gender === 'F' ? 'Perempuan' : '');
           const ageGenderLine = [age != null ? `${age} thn` : '', genderText].filter(Boolean).join(' · ');
+          const initials = rawName.split(/\s+/).slice(0,2).map(w => w[0] || '').join('').toUpperCase() || '?';
+          const avatarCls = avatarColors[(rawName.charCodeAt(0) || 0) % avatarColors.length];
+          const avatar = p.psy_profiles?.avatar_url
+            ? `<img src="${p.psy_profiles.avatar_url}" class="w-9 h-9 rounded-full object-cover flex-shrink-0">`
+            : `<div class="w-9 h-9 rounded-full ${avatarCls} flex items-center justify-center text-xs font-bold flex-shrink-0">${initials}</div>`;
           const nameForJs = String(rawName).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
           const nameForAttr = escapeHtml(nameForJs);
           const canEdit = (isAdmin || (isCoachUser && p.coach_id === window.currentUser?.id)) && p.status !== 'deleted';
           const canDelete = isAdmin && p.status !== 'deleted';
           const canRestore = isAdmin && p.status === 'deleted';
-          return `<tr>
-          <td class="print-hide text-center"><input type="checkbox" class="row-check accent-navy" data-id="${p.id}"></td>
+          return `<tr class="hover:bg-cream/40">
           <td class="text-xs text-ink/50 text-center">${start + i + 1}</td>
-          <td class="text-xs font-mono">${escapeHtml(p.mrn)}</td>
+          <td class="text-xs"><a href="patient-hub.html?patient_id=${p.id}" class="font-mono font-semibold text-navy hover:underline">${escapeHtml(p.mrn)}</a></td>
           <td>
-            <div class="font-semibold text-sm">${name}
-              ${(!p.user_id) ? '<span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded ml-1">Belum Aktif</span>' : ''}
+            <div class="flex items-center gap-3">
+              ${avatar}
+              <div class="min-w-0">
+                <div class="font-semibold text-sm flex items-center gap-1.5">${name}
+                  ${(!p.user_id) ? '<span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">Belum Aktif</span>' : ''}
+                </div>
+                ${ageGenderLine ? `<div class="text-[11px] text-ink/50 mt-0.5">${ageGenderLine}</div>` : ''}
+              </div>
             </div>
-            ${ageGenderLine ? `<div class="text-[11px] text-ink/50 mt-0.5">${ageGenderLine}</div>` : ''}
           </td>
           <td class="text-xs">
             <span class="inline-flex items-center gap-1">
@@ -1326,18 +1370,17 @@
           </td>
           <td class="text-xs">${p.active_package_name
               ? `<span class="chip bg-navy-light text-navy">${pkgName}</span>`
-              : '<span class="text-ink/40">—</span>'}</td>
-          <td class="text-xs">${refCode}</td>
+              : '<span class="text-ink/30">—</span>'}</td>
           <td class="text-xs">${p.coach?.full_name ? `<span class="text-navy font-medium">${coachName}</span>` : '<span class="text-ink/30">—</span>'}</td>
           <td>${statusChip(p.status)} ${outcomeChip(p.outcome_status)}</td>
           <td class="whitespace-nowrap print-hide">
-            <div class="flex items-center gap-2">
-              ${p.status !== 'deleted' ? `<a href="patient-hub.html?patient_id=${p.id}" class="text-navy text-xs font-semibold hover:underline">Details</a>` : ''}
-              ${canEdit ? `<button onclick="openEditPatient('${p.id}')" class="text-teal text-xs font-semibold hover:underline">Edit</button>` : ''}
-              ${(canDelete || canRestore) ? `
+            <div class="flex items-center gap-1.5">
+              ${p.status !== 'deleted' ? `<a href="patient-hub.html?patient_id=${p.id}" class="inline-flex items-center px-3 py-1.5 border border-navy/30 text-navy text-xs font-semibold rounded-lg hover:bg-navy hover:text-white transition-colors">Details</a>` : ''}
+              ${(canEdit || canDelete || canRestore) ? `
                 <div class="relative">
-                  <button onclick="toggleRowMenu(event,'${p.id}')" class="text-ink/40 hover:text-ink px-1" title="Tindakan lain">⋮</button>
+                  <button onclick="toggleRowMenu(event,'${p.id}')" class="w-7 h-7 rounded-lg text-ink/40 hover:bg-ink/5 hover:text-ink flex items-center justify-center" title="Tindakan lain">⋮</button>
                   <div id="rowmenu-${p.id}" class="hidden absolute right-0 top-full mt-1 bg-white border border-ink/10 rounded-lg shadow-lg z-20 min-w-[140px] py-1">
+                    ${canEdit ? `<button onclick="openEditPatient('${p.id}')" class="block w-full text-left px-3 py-1.5 text-xs text-teal hover:bg-teal/5">Edit</button>` : ''}
                     ${canDelete ? `<button onclick="deletePatient('${p.id}','${nameForAttr}')" class="block w-full text-left px-3 py-1.5 text-xs text-terracotta hover:bg-terracotta/5">Padam</button>` : ''}
                     ${canRestore ? `<button onclick="restorePatient('${p.id}','${nameForAttr}')" class="block w-full text-left px-3 py-1.5 text-xs text-green hover:bg-green/5">Pulihkan</button>` : ''}
                   </div>
@@ -1346,7 +1389,7 @@
           </td>
         </tr>`;
         }).join('')
-        : '<tr><td colspan="10" class="text-center text-ink/40 py-8">Tiada pesakit ditemui</td></tr>';
+        : '<tr><td colspan="8" class="text-center text-ink/40 py-8">Tiada pesakit ditemui</td></tr>';
 
       renderPagination(total, totalPages);
     }
@@ -1361,7 +1404,7 @@
 
       const start = (currentPage - 1) * PAGE_SIZE + 1;
       const end = Math.min(currentPage * PAGE_SIZE, total);
-      info.textContent = `Menunjukkan ${start}–${end} daripada ${total} pesakit`;
+      info.textContent = `Memaparkan ${start} hingga ${end} daripada ${total} pesakit`;
 
       let html = '';
       // Prev
@@ -1393,10 +1436,6 @@
       currentPage = p;
       renderPatients(currentFiltered, false);
       window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-
-    function toggleCheckAll(checked) {
-      document.querySelectorAll('.row-check').forEach(cb => cb.checked = checked);
     }
 
     function toggleRowMenu(ev, id) {
@@ -1801,7 +1840,25 @@
       }
 
       populatePackageFilter();
+      renderPatientStats();
       filterPatients();
+    }
+
+    function renderPatientStats() {
+      const total = allPatients.length;
+      const active = allPatients.filter(p => p.status === 'active').length;
+      const inactive = allPatients.filter(p => p.status === 'inactive' || p.status === 'unregistered').length;
+      const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0,0,0,0);
+      const newThisMonth = allPatients.filter(p => p.created_at && new Date(p.created_at) >= monthStart).length;
+      const pct = (n) => total ? `${((n/total)*100).toFixed(1)}% daripada jumlah` : '— daripada jumlah';
+
+      document.getElementById('stat-total').textContent       = total;
+      document.getElementById('stat-active').textContent      = active;
+      document.getElementById('stat-active-pct').textContent  = pct(active);
+      document.getElementById('stat-inactive').textContent    = inactive;
+      document.getElementById('stat-inactive-pct').textContent= pct(inactive);
+      document.getElementById('stat-new').textContent         = newThisMonth;
+      document.getElementById('stat-new-pct').textContent     = pct(newThisMonth);
     }
 
     function formatDate(d) { return new Date(d).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' }); }

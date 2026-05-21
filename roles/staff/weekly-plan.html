@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Weekly Plan</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+  .day-pill {
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    min-width:56px; padding:8px 6px; border-radius:10px; cursor:pointer;
+    border:1.5px solid transparent; transition:all .15s;
+  }
+  .day-pill:hover { background: rgba(30,30,60,0.04); }
+  .day-pill.active { border-color:#1e2b4a; background:#f0f4ff; }
+  .day-pill .lbl { font-size:11px; color:rgba(30,30,60,0.55); font-weight:600; }
+  .day-pill .num { font-size:18px; font-weight:700; color:#1e2b4a; }
+
+  .col-day { background:white; border:1px solid rgba(30,30,60,0.08); border-radius:12px; padding:12px; min-height:480px; display:flex; flex-direction:column; }
+  .col-day.is-active { box-shadow:0 0 0 2px #1e2b4a inset; }
+  .col-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .col-title { font-weight:700; font-size:13px; color:#1e2b4a; }
+  .col-sub { font-size:11px; color:rgba(30,30,60,0.5); }
+  .col-count { background:rgba(30,30,60,0.06); color:#1e2b4a; font-size:11px; font-weight:700; padding:2px 7px; border-radius:999px; }
+
+  .sess-card { border-left:3px solid #93c5fd; background:#f8fafc; border-radius:8px; padding:9px 10px; margin-bottom:8px; cursor:pointer; transition:all .15s; }
+  .sess-card:hover { transform:translateY(-1px); box-shadow:0 4px 10px rgba(0,0,0,0.06); }
+  .sess-card.s-hadir       { border-color:#10b981; }
+  .sess-card.s-booked      { border-color:#3b82f6; }
+  .sess-card.s-pending     { border-color:#f59e0b; }
+  .sess-card.s-reschedule  { border-color:#eab308; }
+  .sess-card.s-cancel      { border-color:#ef4444; background:#fef2f2; }
+  .sess-time { font-size:11px; font-weight:700; color:#1e2b4a; }
+  .sess-name { font-size:13px; font-weight:600; color:#0f172a; margin-top:2px; }
+  .sess-type { font-size:11px; color:rgba(30,30,60,0.55); }
+  .pill-status { display:inline-block; font-size:10px; font-weight:600; padding:2px 8px; border-radius:999px; margin-top:4px; }
+  .ps-hadir      { background:#d1fae5; color:#065f46; }
+  .ps-booked     { background:#dbeafe; color:#1e3a8a; }
+  .ps-pending    { background:#fef3c7; color:#92400e; }
+  .ps-reschedule { background:#fef9c3; color:#713f12; }
+  .ps-cancel     { background:#fee2e2; color:#7f1d1d; }
+
+  .add-sess { margin-top:auto; border:1.5px dashed rgba(30,30,60,0.18); border-radius:10px; padding:9px; text-align:center; font-size:12px; color:rgba(30,30,60,0.6); font-weight:600; cursor:pointer; }
+  .add-sess:hover { border-color:#1e2b4a; color:#1e2b4a; background:#fafbfc; }
+
+  .filter-btn { padding:7px 14px; border-radius:8px; font-size:12px; font-weight:600; color:rgba(30,30,60,0.6); cursor:pointer; transition:all .15s; }
+  .filter-btn.active { background:#1e2b4a; color:white; }
+  .filter-btn:not(.active):hover { background:rgba(30,30,60,0.05); color:#1e2b4a; }
+
+  .stat-card { background:white; border-radius:12px; padding:18px 20px; border:1px solid rgba(30,30,60,0.08); display:flex; align-items:center; gap:14px; }
+  .stat-icon { width:48px; height:48px; border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:22px; flex-shrink:0; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📅</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-5">
+
+        <!-- Coach Profile + Week Navigator -->
+        <div class="bg-white rounded-2xl border border-ink/10 p-5 grid grid-cols-1 md:grid-cols-2 gap-5">
+          <!-- Coach Card -->
+          <div class="flex items-center gap-4">
+            <div id="coach-avatar" class="w-20 h-20 rounded-full bg-ink/5 flex items-center justify-center text-3xl text-ink/40 flex-shrink-0">👤</div>
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 mb-1">
+                <h2 id="coach-name" class="text-lg font-bold text-ink truncate">—</h2>
+                <span id="coach-role-badge" class="bg-navy-light text-navy text-[10px] font-bold px-2 py-0.5 rounded-md">Coach</span>
+              </div>
+              <p id="coach-role" class="text-xs text-ink/60 mb-1.5">Wellness Coach</p>
+              <p id="coach-caseload" class="text-[11px] text-navy font-semibold flex items-center gap-1.5 mb-1"><span>👥</span><span>— pesakit di bawah jagaan</span></p>
+              <p id="coach-email" class="text-[11px] text-ink/60 flex items-center gap-1.5"><span>✉️</span><span class="truncate">—</span></p>
+              <p id="coach-phone" class="text-[11px] text-ink/60 flex items-center gap-1.5 mt-0.5"><span>📞</span><span>—</span></p>
+              <a href="profile.html" class="inline-flex items-center gap-1.5 mt-2 px-3 py-1.5 rounded-lg border border-ink/15 text-[11px] font-semibold text-ink/70 hover:bg-cream">
+                👤 Lihat Profil
+              </a>
+            </div>
+          </div>
+
+          <!-- Week Navigator -->
+          <div class="border-l border-ink/10 md:pl-5">
+            <div class="flex items-center justify-between">
+              <button onclick="goWeek(-1)" class="w-9 h-9 rounded-lg border border-ink/15 hover:bg-cream text-ink/60 flex items-center justify-center">‹</button>
+              <div class="text-center">
+                <div id="week-label" class="text-[11px] text-ink/50 font-semibold uppercase tracking-wide">Minggu Ini</div>
+                <div id="week-range" class="text-lg font-bold text-ink mt-0.5">—</div>
+              </div>
+              <button onclick="goWeek(1)" class="w-9 h-9 rounded-lg border border-ink/15 hover:bg-cream text-ink/60 flex items-center justify-center">›</button>
+            </div>
+            <div id="day-pills" class="grid grid-cols-7 gap-1.5 mt-3"></div>
+            <div class="flex items-center gap-1.5 text-[10px] text-ink/40 mt-3 justify-end">
+              <span>🕐</span><span id="last-updated">Terakhir dikemaskini: —</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stats -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div class="stat-card">
+            <div class="stat-icon bg-navy-light"><span>📅</span></div>
+            <div class="min-w-0">
+              <div id="s-total" class="text-2xl font-bold text-ink leading-none">0</div>
+              <div class="text-xs font-semibold text-ink/80 mt-1">Sesi Dirancang</div>
+              <div class="text-[10px] text-ink/50">Total sesi minggu ini</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon bg-green-light"><span>✅</span></div>
+            <div class="min-w-0">
+              <div id="s-confirmed" class="text-2xl font-bold text-ink leading-none">0</div>
+              <div class="text-xs font-semibold text-ink/80 mt-1">Sesi Disahkan</div>
+              <div id="s-confirmed-pct" class="text-[10px] text-ink/50">—</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon bg-gold/30"><span>⏳</span></div>
+            <div class="min-w-0">
+              <div id="s-waiting" class="text-2xl font-bold text-ink leading-none">0</div>
+              <div class="text-xs font-semibold text-ink/80 mt-1">Menunggu Pengesahan</div>
+              <div class="text-[10px] text-ink/50">Perlu tindakan</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon bg-terracotta-light"><span>❌</span></div>
+            <div class="min-w-0">
+              <div id="s-cancel" class="text-2xl font-bold text-ink leading-none">0</div>
+              <div class="text-xs font-semibold text-ink/80 mt-1">Dibatalkan</div>
+              <div id="s-cancel-pct" class="text-[10px] text-ink/50">—</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Schedule -->
+        <div class="bg-white rounded-2xl border border-ink/10 p-5">
+          <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
+            <h3 class="font-bold text-base text-ink">Jadual Mingguan</h3>
+            <div class="flex items-center gap-2 flex-wrap">
+              <div class="flex items-center bg-cream/60 rounded-lg p-1">
+                <button id="vw-week" onclick="setView('week')" class="filter-btn active">Minggu</button>
+                <button id="vw-day"  onclick="setView('day')"  class="filter-btn">Hari</button>
+              </div>
+              <button onclick="goToday()" class="px-3 py-1.5 border border-ink/15 rounded-lg text-xs font-semibold text-ink/70 hover:bg-cream inline-flex items-center gap-1.5">
+                📅 Hari Ini
+              </button>
+              <div id="scope-toggle" class="hidden items-center bg-cream/60 rounded-lg p-1">
+                <button id="sc-mine" onclick="setScope('mine')" class="filter-btn active">Saya</button>
+                <button id="sc-all"  onclick="setScope('all')"  class="filter-btn">Semua</button>
+              </div>
+              <select id="f-status" onchange="renderColumns()" class="border border-ink/15 rounded-lg px-3 py-1.5 text-xs font-semibold text-ink/70 bg-white">
+                <option value="">Semua Status</option>
+                <option value="hadir">Disahkan</option>
+                <option value="booked">Dijadualkan</option>
+                <option value="pending">Menunggu</option>
+                <option value="reschedule">Reschedule</option>
+                <option value="cancel">Dibatalkan</option>
+              </select>
+            </div>
+          </div>
+          <div id="schedule-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3"></div>
+        </div>
+
+        <!-- Notes + Tasks -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div class="bg-white rounded-2xl border border-ink/10 p-5">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-bold text-base text-ink flex items-center gap-2">📝 Nota Mingguan</h3>
+              <button onclick="saveNotes()" class="text-xs px-3 py-1.5 rounded-lg border border-ink/15 hover:bg-cream font-semibold text-ink/70">✏️ Edit Nota</button>
+            </div>
+            <div id="notes-host" class="bg-gold/10 border border-gold/30 rounded-xl p-4 text-sm text-ink/80 min-h-[120px]">
+              <p class="text-ink/40 italic text-xs">Belum ada nota minggu ini. Klik <strong>Edit Nota</strong> untuk menambah.</p>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-2xl border border-ink/10 p-5">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-bold text-base text-ink flex items-center gap-2">✅ Tugasan Mingguan</h3>
+              <a href="assignments.html" class="text-xs text-navy font-semibold hover:underline">Lihat Semua</a>
+            </div>
+            <div id="tasks-host" class="space-y-2.5"></div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+const DAY_SHORT = ['Ahd','Isn','Sel','Rab','Kha','Jum','Sab'];
+const DAY_FULL  = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
+const MONTHS    = ['Jan','Feb','Mac','Apr','Mei','Jun','Jul','Ogo','Sep','Okt','Nov','Dis'];
+const MONTHS_FULL = ['Januari','Februari','Mac','April','Mei','Jun','Julai','Ogos','September','Oktober','November','Disember'];
+
+let weekStart = null;   // Monday 00:00
+let viewMode  = 'week'; // 'week' | 'day'
+let selectedDayIdx = 0; // 0..4 within Mon..Fri (for day view)
+let allSessions = [];   // current week's sessions (after scope filter)
+let rawSessions = [];   // before scope filter
+let patientMap  = {};   // patient_id → {name, ...}
+let myCoachedPatientIds = new Set();
+let scope = 'mine';     // 'all' | 'mine' (default to own caseload for coach/doctor)
+
+function startOfWeek(d) {
+  const x = new Date(d); x.setHours(0,0,0,0);
+  const dow = x.getDay();              // 0 Sun .. 6 Sat
+  const diff = (dow === 0 ? -6 : 1 - dow); // shift back to Monday
+  x.setDate(x.getDate() + diff);
+  return x;
+}
+function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+function sameDay(a, b) { return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); }
+
+(async () => {
+  const user = await initStaff('plan_week', 'Rancang dan urus jadual mingguan anda dengan lebih teratur.');
+  if (!user) return;
+
+  // Header buttons (right side of header)
+  const header = document.getElementById('page-header');
+  if (header && !header.querySelector('#wk-add')) {
+    const add = document.createElement('div');
+    add.className = 'flex items-center gap-2';
+    add.innerHTML = `
+      <a id="wk-bell" href="dashboard.html" class="relative w-9 h-9 rounded-lg border border-ink/15 flex items-center justify-center hover:bg-cream text-ink/70">🔔</a>
+      <a id="wk-add" href="appointments.html" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark inline-flex items-center gap-1.5">＋ Tambah Plan</a>`;
+    header.appendChild(add);
+  }
+
+  // Profile card
+  const roleLbl = ({ coach:'Wellness Coach', doctor:'Pegawai Perubatan' })[user.staff_role] || 'Staff';
+  const roleBadge = ({ coach:'Coach', doctor:'Doktor' })[user.staff_role] || 'Staff';
+  document.getElementById('coach-name').textContent       = user.full_name || roleBadge;
+  document.getElementById('coach-role').textContent       = roleLbl;
+  document.getElementById('coach-role-badge').textContent = roleBadge;
+  document.getElementById('coach-email').lastElementChild.textContent = user.email || '—';
+  document.getElementById('coach-phone').lastElementChild.textContent = user.phone || '—';
+  if (user.avatar_url) {
+    document.getElementById('coach-avatar').innerHTML = `<img src="${user.avatar_url}" class="w-full h-full rounded-full object-cover">`;
+  } else if (user.full_name) {
+    const initials = user.full_name.split(/\s+/).slice(0,2).map(s => s[0]).join('').toUpperCase();
+    document.getElementById('coach-avatar').innerHTML = `<span class="text-navy font-bold text-2xl">${initials}</span>`;
+    document.getElementById('coach-avatar').classList.add('bg-navy-light');
+  }
+
+  weekStart = startOfWeek(new Date());
+  const todayDow = new Date().getDay();
+  selectedDayIdx = todayDow === 0 ? 6 : todayDow - 1;
+
+  await loadCoachedPatients();
+
+  // Caseload count (coach only — doctor uses different assignment model)
+  const caseloadEl = document.getElementById('coach-caseload');
+  if (user.staff_role === 'coach') {
+    caseloadEl.lastElementChild.textContent = `${myCoachedPatientIds.size} pesakit di bawah jagaan`;
+  } else {
+    caseloadEl.classList.add('hidden');
+  }
+
+  await loadWeek();
+})();
+
+async function loadCoachedPatients() {
+  const uid = window.currentUser.id;
+  const { data } = await window.db
+    .from('psy_patients')
+    .select('id, user_id, mrn, coach_id, psy_profiles!psy_patients_user_id_fkey(full_name)')
+    .neq('status', 'deleted');
+  (data || []).forEach(p => {
+    patientMap[p.id] = {
+      name: p.psy_profiles?.full_name || p.mrn || 'Pesakit',
+      coach_id: p.coach_id,
+    };
+    if (p.coach_id === uid) myCoachedPatientIds.add(p.id);
+  });
+}
+
+// Map raw status from each source → canonical status used by UI
+function normStatus(src, raw) {
+  if (src === 'plan') return raw || 'pending';
+  if (src === 'appt') return ({
+    scheduled:'booked', checked_in:'booked', in_progress:'booked',
+    completed:'hadir', no_show:'cancel', cancelled:'cancel',
+  })[raw] || 'pending';
+  if (src === 'coach') return ({
+    completed:'hadir', no_show:'cancel', cancelled:'cancel',
+  })[raw] || 'pending';
+  return 'pending';
+}
+
+async function loadWeek() {
+  const weekEnd = addDays(weekStart, 7);
+  const role = window.currentUser.staff_role;
+
+  const [planRes, apptRes, coachRes] = await Promise.all([
+    window.db.from('psy_plan_weekly_progress')
+      .select('id, plan_id, patient_id, week_number, session_date, status, updated_at, updated_by_name')
+      .gte('session_date', weekStart.toISOString())
+      .lt('session_date',  weekEnd.toISOString())
+      .then(r => r.data || [], () => []),
+    window.db.from('psy_appointments')
+      .select('id, patient_id, staff_id, staff_name, service, appointment_time, duration_min, status, room')
+      .gte('appointment_time', weekStart.toISOString())
+      .lt('appointment_time',  weekEnd.toISOString())
+      .then(r => r.data || [], () => []),
+    window.db.from('psy_coaching_sessions')
+      .select('id, patient_id, coach_id, pillar, session_date, duration_min, status')
+      .gte('session_date', weekStart.toISOString())
+      .lt('session_date',  weekEnd.toISOString())
+      .then(r => r.data || [], () => []),
+  ]);
+
+  // Normalise to one shape, then dedupe by (patient_id + start_time) — plan-week
+  // rows that also have a linked psy_appointment shouldn't appear twice.
+  const events = [];
+
+  planRes.forEach(s => events.push({
+    source:'plan', id:s.id, plan_id:s.plan_id, patient_id:s.patient_id,
+    title:`Minggu ${s.week_number}`, subtitle:'Sesi Coaching',
+    start: s.session_date, status: normStatus('plan', s.status),
+    updated_at: s.updated_at, week_number: s.week_number,
+    href: `plan-week.html?plan_id=${s.plan_id}&week=${s.week_number}`,
+  }));
+
+  apptRes.forEach(a => events.push({
+    source:'appt', id:a.id, patient_id:a.patient_id, staff_id:a.staff_id,
+    title:a.service || 'Appointment',
+    subtitle: a.room ? `Bilik ${a.room}` : (a.staff_name || ''),
+    start: a.appointment_time, status: normStatus('appt', a.status),
+    href: 'appointments.html',
+  }));
+
+  coachRes.forEach(c => events.push({
+    source:'coach', id:c.id, patient_id:c.patient_id, coach_id:c.coach_id,
+    title: c.pillar ? `Coaching · ${c.pillar}` : 'Coaching',
+    subtitle:'Sesi Pillar', start: c.session_date,
+    status: normStatus('coach', c.status),
+    href: 'appointments.html',
+  }));
+
+  // Dedupe: if a `plan` row and an `appt` row share patient_id within ±5 min,
+  // prefer the `plan` row (richer link to plan-week.html).
+  const dedup = [];
+  events.sort((a, b) => new Date(a.start) - new Date(b.start));
+  events.forEach(ev => {
+    const t = new Date(ev.start).getTime();
+    const dup = dedup.find(x =>
+      x.patient_id === ev.patient_id && Math.abs(new Date(x.start).getTime() - t) < 5 * 60 * 1000
+    );
+    if (dup) {
+      if (ev.source === 'plan' && dup.source !== 'plan') {
+        Object.assign(dup, ev);
+      }
+      return;
+    }
+    dedup.push(ev);
+  });
+
+  rawSessions = dedup;
+
+  // Show the scope toggle only for roles that have their own caseload
+  if (role === 'coach' || role === 'doctor') {
+    document.getElementById('scope-toggle').classList.remove('hidden');
+    document.getElementById('scope-toggle').classList.add('flex');
+  }
+
+  applyScope();
+}
+
+function applyScope() {
+  const uid = window.currentUser.id;
+  if (scope === 'mine') {
+    allSessions = rawSessions.filter(ev =>
+      myCoachedPatientIds.has(ev.patient_id) ||
+      ev.staff_id === uid || ev.coach_id === uid
+    );
+  } else {
+    allSessions = rawSessions;
+  }
+  renderWeekHeader();
+  renderDayPills();
+  renderStats();
+  renderColumns();
+  loadTasks();
+}
+
+function setScope(s) {
+  scope = s;
+  document.getElementById('sc-all').classList.toggle('active',  s === 'all');
+  document.getElementById('sc-mine').classList.toggle('active', s === 'mine');
+  applyScope();
+}
+
+function renderWeekHeader() {
+  const end = addDays(weekStart, 6);
+  const sameMonth = weekStart.getMonth() === end.getMonth();
+  const label = sameMonth
+    ? `${weekStart.getDate()} – ${end.getDate()} ${MONTHS_FULL[end.getMonth()]} ${end.getFullYear()}`
+    : `${weekStart.getDate()} ${MONTHS[weekStart.getMonth()]} – ${end.getDate()} ${MONTHS[end.getMonth()]} ${end.getFullYear()}`;
+  document.getElementById('week-range').textContent = label;
+
+  const today = new Date();
+  const thisWk = startOfWeek(today);
+  const diffDays = Math.round((weekStart - thisWk) / 86400000);
+  const wkLbl = diffDays === 0 ? 'Minggu Ini' : diffDays === 7 ? 'Minggu Depan' : diffDays === -7 ? 'Minggu Lepas' : (diffDays > 0 ? `+${diffDays/7} mgg` : `${diffDays/7} mgg`);
+  document.getElementById('week-label').textContent = wkLbl;
+
+  // Last updated = most recent updated_at among week sessions
+  const lastUp = allSessions.reduce((acc, s) => {
+    const t = s.updated_at ? new Date(s.updated_at).getTime() : 0;
+    return t > acc ? t : acc;
+  }, 0);
+  document.getElementById('last-updated').textContent = lastUp
+    ? `Terakhir dikemaskini: ${new Date(lastUp).toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric' })}, ${new Date(lastUp).toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' })}`
+    : 'Terakhir dikemaskini: —';
+}
+
+function renderDayPills() {
+  const host = document.getElementById('day-pills');
+  const today = new Date();
+  let html = '';
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(weekStart, i);
+    const isToday = sameDay(d, today);
+    const isSel   = viewMode === 'day' && i === selectedDayIdx;
+    const active  = isSel || (viewMode === 'week' && isToday);
+    html += `<div class="day-pill ${active ? 'active' : ''}" onclick="pickDay(${i})">
+      <div class="lbl">${DAY_SHORT[d.getDay()]}</div>
+      <div class="num">${d.getDate()}</div>
+    </div>`;
+  }
+  host.innerHTML = html;
+}
+
+function pickDay(i) {
+  selectedDayIdx = i;
+  viewMode = 'day';
+  document.getElementById('vw-week').classList.remove('active');
+  document.getElementById('vw-day').classList.add('active');
+  renderDayPills();
+  renderColumns();
+}
+
+function setView(v) {
+  viewMode = v;
+  document.getElementById('vw-week').classList.toggle('active', v === 'week');
+  document.getElementById('vw-day').classList.toggle('active', v === 'day');
+  renderDayPills();
+  renderColumns();
+}
+
+function goToday() {
+  weekStart = startOfWeek(new Date());
+  const todayDow = new Date().getDay();
+  selectedDayIdx = todayDow === 0 ? 6 : todayDow - 1;
+  loadWeek();
+}
+
+function goWeek(delta) {
+  weekStart = addDays(weekStart, 7 * delta);
+  loadWeek();
+}
+
+function renderStats() {
+  const total = allSessions.length;
+  const hadir = allSessions.filter(s => s.status === 'hadir').length;
+  const waiting = allSessions.filter(s => s.status === 'pending' || s.status === 'booked').length;
+  const cancel = allSessions.filter(s => s.status === 'cancel').length;
+  document.getElementById('s-total').textContent = total;
+  document.getElementById('s-confirmed').textContent = hadir;
+  document.getElementById('s-waiting').textContent = waiting;
+  document.getElementById('s-cancel').textContent = cancel;
+  document.getElementById('s-confirmed-pct').textContent = total ? `${((hadir/total)*100).toFixed(1)}% daripada dirancang` : '—';
+  document.getElementById('s-cancel-pct').textContent    = total ? `${((cancel/total)*100).toFixed(1)}% daripada dirancang` : '—';
+}
+
+function renderColumns() {
+  const host = document.getElementById('schedule-grid');
+  const statusFilter = document.getElementById('f-status').value;
+  const days = viewMode === 'day'
+    ? [selectedDayIdx] // single column
+    : [0, 1, 2, 3, 4, 5, 6]; // Mon–Sun (full week)
+
+  host.className = viewMode === 'day'
+    ? 'grid grid-cols-1 gap-3'
+    : 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3';
+
+  const today = new Date();
+  host.innerHTML = days.map(idx => {
+    const d = addDays(weekStart, idx);
+    const isToday = sameDay(d, today);
+    let daySess = allSessions.filter(s => sameDay(new Date(s.start), d));
+    if (statusFilter) daySess = daySess.filter(s => s.status === statusFilter);
+    daySess.sort((a, b) => new Date(a.start) - new Date(b.start));
+
+    return `<div class="col-day ${isToday ? 'is-active' : ''}">
+      <div class="col-head">
+        <div>
+          <div class="col-title">${DAY_FULL[d.getDay()]}</div>
+          <div class="col-sub">${d.getDate()} ${MONTHS[d.getMonth()]}</div>
+        </div>
+        <span class="col-count">${daySess.length}</span>
+      </div>
+      <div class="flex-1">
+        ${daySess.map(renderCard).join('') || '<p class="text-[11px] text-ink/30 italic text-center py-4">Tiada sesi</p>'}
+      </div>
+      <a href="appointments.html" class="add-sess block mt-2">＋ Tambah Sesi</a>
+    </div>`;
+  }).join('');
+}
+
+function renderCard(s) {
+  const t = new Date(s.start);
+  const hh = t.getHours(), mm = t.getMinutes();
+  const ampm = hh >= 12 ? 'PM' : 'AM';
+  const h12 = ((hh + 11) % 12) + 1;
+  const time = `${h12}:${String(mm).padStart(2,'0')} ${ampm}`;
+  const p = patientMap[s.patient_id] || {};
+  const name = p.name || 'Pesakit';
+  const statusLbl = { hadir:'Disahkan', booked:'Dijadual', pending:'Menunggu', reschedule:'Reschedule', cancel:'Dibatalkan' }[s.status] || 'Pending';
+  const srcBadge = { plan:'📋', appt:'📅', coach:'🎯' }[s.source] || '';
+  return `<a href="${s.href || '#'}" class="sess-card s-${s.status || 'pending'} block">
+    <div class="flex items-start justify-between gap-2">
+      <div class="min-w-0">
+        <div class="sess-time">${srcBadge} ${time}</div>
+        <div class="sess-name truncate">${escHtml(name)}</div>
+        <div class="sess-type truncate">${escHtml(s.title || '')}</div>
+      </div>
+    </div>
+    <span class="pill-status ps-${s.status || 'pending'}">${statusLbl}</span>
+  </a>`;
+}
+
+function escHtml(s) { const d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
+
+// ── Weekly notes (per-coach, per-week) — uses localStorage ─────────────
+function notesKey() {
+  return `wkplan_notes_${window.currentUser.id}_${weekStart.toISOString().slice(0,10)}`;
+}
+function renderNotes() {
+  const v = localStorage.getItem(notesKey());
+  const host = document.getElementById('notes-host');
+  if (v) {
+    host.innerHTML = `<ul class="list-disc pl-5 space-y-1.5">${v.split(/\n+/).filter(Boolean).map(l => `<li>${escHtml(l)}</li>`).join('')}</ul>`;
+  } else {
+    host.innerHTML = '<p class="text-ink/40 italic text-xs">Belum ada nota minggu ini. Klik <strong>Edit Nota</strong> untuk menambah.</p>';
+  }
+}
+function saveNotes() {
+  const current = localStorage.getItem(notesKey()) || '';
+  const v = prompt('Nota minggu ini (satu item per baris):', current);
+  if (v == null) return;
+  if (v.trim()) localStorage.setItem(notesKey(), v.trim());
+  else localStorage.removeItem(notesKey());
+  renderNotes();
+}
+
+// ── Tasks: derive from weekly sessions ─────────────────────────────────
+function loadTasks() {
+  const host = document.getElementById('tasks-host');
+  const pendingConfirm = allSessions.filter(s => s.status === 'pending' || s.status === 'booked').length;
+  const todayStr = new Date().toISOString().slice(0,10);
+  const overdue = allSessions.filter(s => {
+    return s.status !== 'hadir' && s.status !== 'cancel' && s.start && new Date(s.start).toISOString().slice(0,10) < todayStr;
+  }).length;
+  const upcoming = allSessions.filter(s => {
+    return s.status !== 'hadir' && s.status !== 'cancel' && s.start && new Date(s.start).toISOString().slice(0,10) >= todayStr;
+  }).length;
+
+  const items = [
+    {
+      icon:'⏳',
+      title:'Semak dan sahkan sesi menunggu',
+      sub:`${pendingConfirm} sesi menunggu pengesahan`,
+      badge: overdue ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-terracotta-light text-terracotta">Tertunggak</span>` : '',
+    },
+    {
+      icon:'📋',
+      title:'Sediakan plan pemakanan pesakit baru',
+      sub:`${myCoachedPatientIds.size} pesakit di bawah jagaan`,
+      badge:`<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-navy-light text-navy">Dalam Proses</span>`,
+    },
+    {
+      icon:'📈',
+      title:'Laporan kemajuan mingguan',
+      sub:`Sediakan untuk ${upcoming} sesi akan datang`,
+      badge:`<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-ink/10 text-ink/60">Belum Mula</span>`,
+    },
+  ];
+
+  host.innerHTML = items.map(it => `
+    <div class="flex items-start gap-3 p-3 border border-ink/8 rounded-xl hover:bg-cream/40">
+      <input type="checkbox" class="mt-1 w-4 h-4 accent-navy">
+      <div class="flex-1 min-w-0">
+        <div class="text-sm font-semibold text-ink">${it.title}</div>
+        <div class="text-[11px] text-ink/55 mt-0.5">${it.sub}</div>
+      </div>
+      ${it.badge}
+    </div>
+  `).join('');
+
+  renderNotes();
+}
+</script>
+</body>
+</html>

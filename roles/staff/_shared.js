@@ -6,10 +6,10 @@ window.currentUser = null;
 
 // Pages yang boleh diakses oleh setiap staff_role
 const STAFF_ROLE_ACCESS = {
-  admin:   ['dashboard','assignments','psy_patients','kyc_forms','kob_list','kob_slots','psy_appointments','pakej','coaching_catalog','psy_products','psy_orders','library','audit','staff_mgmt','announcements','closures','inventory','kit_prosedur','issue','pulangan','surat','profile','plan_week','patient_hub','coaching','staff_stats','payment_admin','kepatuhan','governance','pakej_laporan'],
+  admin:   ['dashboard','assignments','psy_patients','kyc_forms','kob_list','kob_slots','psy_appointments','pakej','coaching_catalog','psy_products','psy_orders','library','audit','staff_mgmt','announcements','closures','inventory','kit_prosedur','issue','pulangan','surat','profile','patient_hub','plan_week','staff_stats','payment_admin','kepatuhan','governance','pakej_laporan'],
   doctor:  ['dashboard','psy_patients','kyc_forms','kob_list','kob_slots','plan_week','psy_appointments','library','inventory','kit_prosedur','announcements','issue','surat','profile','patient_hub','staff_stats','kepatuhan'],
-  coach:   ['dashboard','assignments','psy_patients','plan_week','psy_appointments','coaching','inventory','kit_prosedur','issue','pulangan','surat','profile','patient_hub','kepatuhan'],
-  manager: ['dashboard','psy_patients','plan_week','psy_appointments','psy_orders','announcements','staff_stats','closures','inventory','kit_prosedur','issue','pulangan','surat','profile','patient_hub','kepatuhan','governance','payment_admin','invois'],
+  coach:   ['dashboard','assignments','psy_patients','plan_week','psy_appointments','inventory','kit_prosedur','issue','pulangan','surat','profile','patient_hub','kepatuhan'],
+  manager: ['dashboard','psy_patients','psy_appointments','psy_orders','announcements','staff_stats','closures','inventory','kit_prosedur','issue','pulangan','surat','profile','patient_hub','plan_week','kepatuhan','governance','payment_admin','invois'],
 };
 
 async function initStaff(pageId, titleSub) {

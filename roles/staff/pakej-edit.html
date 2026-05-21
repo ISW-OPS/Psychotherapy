@@ -108,10 +108,29 @@
                   <label class="text-xs font-semibold text-ink/70">Tempoh <span class="text-terracotta">*</span></label>
                   <div class="mt-1 grid grid-cols-[1fr_auto] gap-2">
                     <input id="f-weeks" type="number" min="1" class="w-full px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-navy" placeholder="12">
-                    <select id="f-duration-unit" onchange="renderCoachingScheduleEditor(true)" class="px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:outline-none focus:border-navy">
+                    <select id="f-duration-unit" onchange="onDurationUnitChange()" class="px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:outline-none focus:border-navy">
                       <option value="week">Minggu</option>
                       <option value="day">Hari</option>
                     </select>
+                  </div>
+                </div>
+
+                <!-- ── Sesi per minggu (hanya muncul bila unit=Minggu) ── -->
+                <div id="f-sessions-wrap" class="md:col-span-3 grid md:grid-cols-2 gap-4 pt-2 border-t border-ink/8">
+                  <div>
+                    <label class="text-xs font-semibold text-ink/70">Bilangan sesi seminggu <span class="text-terracotta">*</span></label>
+                    <select id="f-sessions-per-week" onchange="renderSessionDaysEditor()" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:outline-none focus:border-navy">
+                      <option value="1">1 sesi seminggu</option>
+                      <option value="2">2 sesi seminggu</option>
+                      <option value="3">3 sesi seminggu</option>
+                    </select>
+                    <p class="text-[10px] text-ink/40 mt-1">Cth: OB/NLC = 2 sesi seminggu. OBG = 1 sesi seminggu.</p>
+                  </div>
+                  <div>
+                    <label class="text-xs font-semibold text-ink/70">Pilihan hari sesi</label>
+                    <div id="session-days-editor" class="mt-1 space-y-2"></div>
+                    <button type="button" onclick="addSessionDaysVariant()" class="mt-2 text-[10px] font-semibold text-navy border border-dashed border-navy/30 px-3 py-1.5 rounded hover:bg-navy hover:text-white">+ Tambah pilihan variant</button>
+                    <p class="text-[10px] text-ink/40 mt-1.5">Patient akan pilih satu variant masa daftar pakej.</p>
                   </div>
                 </div>
 
@@ -424,6 +443,75 @@ function updateSchedSummary() {
 
 function getDurationUnit() { return document.getElementById('f-duration-unit')?.value || 'week'; }
 function getScheduleCount() { return Math.max(1, parseInt(document.getElementById('f-weeks').value) || 2); }
+
+// ── Sessions per week + day variants ──────────────────
+let _sessionDaysOptions = [[]];  // [[5,6],[6,7]] = 2 variant: Jum+Sab atau Sab+Ahd
+const DAY_LABELS = ['Isn','Sel','Rab','Kha','Jum','Sab','Ahd'];  // index 1-7 maps to 0-6
+
+function onDurationUnitChange() {
+  toggleSessionsBlock();
+  renderCoachingScheduleEditor(true);
+}
+
+function toggleSessionsBlock() {
+  // Sessions per week hanya relevan bila unit = 'week'.
+  // Pakej per-hari (cth 777) tak guna sessions_per_week.
+  const block = document.getElementById('f-sessions-wrap');
+  if (!block) return;
+  const isWeekly = getDurationUnit() === 'week';
+  block.style.display = isWeekly ? '' : 'none';
+}
+
+function renderSessionDaysEditor() {
+  const editor = document.getElementById('session-days-editor');
+  if (!editor) return;
+  const N = parseInt(document.getElementById('f-sessions-per-week').value) || 1;
+
+  if (!_sessionDaysOptions.length) _sessionDaysOptions = [[]];
+
+  editor.innerHTML = _sessionDaysOptions.map((variant, idx) => {
+    const days = Array.isArray(variant) ? variant : [];
+    const chips = [1,2,3,4,5,6,7].map(d => {
+      const sel = days.includes(d);
+      return `<button type="button" onclick="toggleDayInVariant(${idx}, ${d})"
+        class="px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${sel ? 'bg-navy text-white border-navy' : 'bg-white text-ink/60 border-ink/15 hover:border-navy'}">${DAY_LABELS[d-1]}</button>`;
+    }).join(' ');
+    const summary = days.length
+      ? days.map(d => DAY_LABELS[d-1]).join(' + ')
+      : '<span class="italic text-ink/35">Pilih ' + N + ' hari</span>';
+    const warn = days.length !== N
+      ? `<span class="text-[10px] text-terracotta ml-2">Perlu ${N} hari</span>`
+      : '';
+    return `<div class="border border-ink/10 rounded-lg p-2.5 bg-cream/30">
+      <div class="flex items-center justify-between mb-1.5">
+        <div class="text-[10px] font-semibold text-ink/55 uppercase tracking-wide">Variant ${idx+1}: <span class="text-ink/80 normal-case">${summary}</span>${warn}</div>
+        ${_sessionDaysOptions.length > 1 ? `<button type="button" onclick="removeSessionDaysVariant(${idx})" class="text-terracotta hover:bg-terracotta/10 px-2 rounded text-xs">×</button>` : ''}
+      </div>
+      <div class="flex gap-1 flex-wrap">${chips}</div>
+    </div>`;
+  }).join('');
+}
+
+function toggleDayInVariant(idx, day) {
+  const variant = _sessionDaysOptions[idx] || [];
+  const pos = variant.indexOf(day);
+  if (pos >= 0) variant.splice(pos, 1);
+  else variant.push(day);
+  variant.sort((a,b) => a - b);
+  _sessionDaysOptions[idx] = variant;
+  renderSessionDaysEditor();
+}
+
+function addSessionDaysVariant() {
+  _sessionDaysOptions.push([]);
+  renderSessionDaysEditor();
+}
+
+function removeSessionDaysVariant(idx) {
+  _sessionDaysOptions.splice(idx, 1);
+  if (!_sessionDaysOptions.length) _sessionDaysOptions = [[]];
+  renderSessionDaysEditor();
+}
 
 function normalizeCoachingSchedule(schedule, count, unit = getDurationUnit()) {
   const keyName = unit === 'day' ? 'day' : 'week';
@@ -1134,6 +1222,11 @@ function populateForm(pkg) {
   // Tier, madu, icon, bg_color
   document.getElementById('f-tier').value = pkg?.tier || 'standard';
   document.getElementById('f-madu').value = pkg?.madu_frequency_per_day ?? '';
+  document.getElementById('f-sessions-per-week').value = pkg?.sessions_per_week || 1;
+  _sessionDaysOptions = Array.isArray(pkg?.session_days_options) ? pkg.session_days_options : [];
+  if (!_sessionDaysOptions.length) _sessionDaysOptions = [[]];
+  renderSessionDaysEditor();
+  toggleSessionsBlock();
   document.getElementById('f-icon').value     = pkg?.icon     || '📦';
   document.getElementById('f-bg-color').value = pkg?.bg_color || 'bg-cream';
   renderIconPicker();
@@ -1380,6 +1473,8 @@ async function savePackage() {
       extension_price_per_week: parseFloat(document.getElementById('f-extension-price').value) || 50,
       tier: document.getElementById('f-tier').value || 'standard',
       madu_frequency_per_day: parseInt(document.getElementById('f-madu').value) || 0,
+      sessions_per_week: parseInt(document.getElementById('f-sessions-per-week').value) || 1,
+      session_days_options: _sessionDaysOptions.filter(arr => Array.isArray(arr) && arr.length > 0),
       icon:     document.getElementById('f-icon').value     || '📦',
       bg_color: document.getElementById('f-bg-color').value || 'bg-cream',
       automation_flags: {
@@ -1486,6 +1581,8 @@ async function savePackage() {
     setHeaderBack('pakej.html', 'Kembali ke Pakej');
     document.getElementById('f-pkg-id').value = await generateUniquePackageId();
     renderCoachingScheduleEditor();
+    renderSessionDaysEditor();
+    toggleSessionsBlock();
   }
 
   // Restore draft if exists (always overlay over loaded/blank form)

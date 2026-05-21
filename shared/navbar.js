@@ -98,11 +98,10 @@ const NAV_GROUPS_BY_ROLE = {
     { group: 'UTAMA', collapsible: false, items: [
       { id: 'dashboard',        url: 'dashboard.html',    icon: '🏠', label: 'Dashboard' },
       { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
-      { id: 'plan_week',        url: 'plan-week.html',    icon: '📋', label: 'Weekly Plan' },
+      { id: 'plan_week',        url: 'weekly-plan.html',  icon: '📋', label: 'Weekly Plan' },
     ]},
     { group: 'OPERASI KLINIK', collapsible: true, items: [
       { id: 'assignments', url: 'assignments.html', icon: '👥', label: 'Patients' },
-      { id: 'coaching',    url: 'coaching.html',    icon: '🎯', label: 'Sesi Coaching' },
     ]},
     { group: 'INVENTORI & BEKALAN', collapsible: true, items: [
       { id: 'inventory',    url: 'inventory.html',    icon: '🏭', label: 'Inventori' },
@@ -122,6 +121,7 @@ const NAV_GROUPS_BY_ROLE = {
     { group: 'UTAMA', collapsible: false, items: [
       { id: 'dashboard',        url: 'dashboard.html',    icon: '🏠', label: 'Dashboard' },
       { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
+      { id: 'plan_week',        url: 'weekly-plan.html',  icon: '📋', label: 'Weekly Plan' },
       { id: 'staff_stats',      url: 'staff-stats.html',  icon: '📈', label: 'Laporan Ringkas' },
     ]},
     { group: 'OPERASI KLINIK', collapsible: true, items: [
