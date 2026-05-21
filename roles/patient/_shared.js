@@ -93,34 +93,61 @@ async function initPatient(pageId, titleSub) {
 
   let patients = await dbQuery('psy_patients', { eq: { user_id: window.currentUser.id } });
 
-  // No linked record — try to claim an existing unregistered staff-created record by IC
+  // No linked record — try to claim an existing staff-created record by EMAIL.
   if (patients.length === 0) {
-    // Get IC from the user's profile
-    const { data: profileData } = await window.db
-      .from('psy_profiles')
-      .select('ic_number')
-      .eq('id', window.currentUser.id)
-      .single();
-    const userIc = profileData?.ic_number;
+    const userEmail = window.currentUser.email || null;
 
-    if (userIc) {
-      const { data: staffPt } = await window.db
+    let staffPt = null;
+    if (userEmail) {
+      const { data } = await window.db
         .from('psy_patients')
         .select('*')
-        .eq('status', 'unregistered')
         .is('user_id', null)
-        .eq('ic_number', userIc)
+        .eq('created_by_staff', true)
+        .ilike('email', userEmail)
         .limit(1);
+      staffPt = data?.[0] || null;
+    }
 
-      if (staffPt?.[0]) {
-        // Staff already filled all details — claim directly, no KYC needed
-        const { data: linked } = await window.db
-          .from('psy_patients')
-          .update({ user_id: window.currentUser.id, status: 'active' })
-          .eq('id', staffPt[0].id)
-          .select()
-          .single();
-        if (linked) patients = [linked];
+    if (staffPt) {
+      // Auto-decide kob_status + status berdasarkan keadaan rekod staff
+      const hasActivePackage = !!staffPt.active_package_id;
+      const isInactive = staffPt.status === 'inactive';
+
+      const newStatus = isInactive ? 'inactive'
+                       : hasActivePackage ? 'active'
+                       : 'active';
+      const newKobStatus = hasActivePackage ? 'completed'  // Skip KOB, terus ke plan
+                          : isInactive ? 'na'              // Pesakit Lama — bypass
+                          : 'kyc_done';                    // Belum ada pakej — masih kena book KOB
+
+      const { data: linked } = await window.db
+        .from('psy_patients')
+        .update({
+          user_id: window.currentUser.id,
+          status: newStatus,
+          kob_status: newKobStatus,
+          created_by_staff: false,
+        })
+        .eq('id', staffPt.id)
+        .select()
+        .single();
+      if (linked) {
+        patients = [linked];
+        // Notify (tidak silap kalau function tiada)
+        try {
+          await window.db.from('psy_notifications').insert({
+            user_id: window.currentUser.id,
+            type: 'system',
+            title: hasActivePackage
+              ? 'Selamat datang! Rawatan anda telah dikemaskini'
+              : 'Selamat datang! Rekod anda telah disiapkan',
+            body: hasActivePackage
+              ? `Pakej ${staffPt.active_package_name || 'rawatan'} anda aktif. Sila lihat Treatment Plan.`
+              : 'Maklumat anda telah diisi oleh staff. Tiada perlu KYC — sila terus tempah KOB.',
+            link: hasActivePackage ? 'plan.html' : 'kob.html',
+          });
+        } catch {}
       }
     }
   }
