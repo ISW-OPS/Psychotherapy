@@ -428,8 +428,23 @@
                 <select id="cp-pakej" class="flex-1 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white">
                   <option value="">— Tiada pakej —</option>
                 </select>
-                <input id="cp-pakej-date" type="date" class="w-36 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+                <input id="cp-pakej-date" type="date" class="w-36 px-3 py-2 border border-ink/20 rounded-lg text-sm" title="Tarikh mula pakej">
               </div>
+            </div>
+          </div>
+
+          <!-- Row 2c: Minggu Semasa (hanya untuk Sedang Dalam Rawatan) -->
+          <div id="cp-current-week-row" class="hidden mt-3 p-3 bg-navy-light/30 rounded-xl border border-navy/20">
+            <label class="text-xs font-semibold flex items-center gap-1.5">
+              📅 Minggu Semasa Rawatan
+              <span class="text-ink/40 font-normal">(untuk pesakit yang dah mula rawatan)</span>
+            </label>
+            <div class="flex items-center gap-3 mt-1.5">
+              <input id="cp-current-week" type="number" min="1" value="1"
+                class="w-24 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+              <span class="text-xs text-ink/55">
+                Cth: kalau pesakit dah minggu ke-3, masukkan "3". Sistem akan cipta plan + buka semua minggu 1 sehingga durasi pakej untuk staff isi nota backfill.
+              </span>
             </div>
           </div>
 
@@ -726,6 +741,10 @@
       // Show pakej selection for Aktif only (Aktif sudah ada/perlu pakej)
       const pakejRow = document.getElementById('cp-pakej')?.closest('.grid');
       if (pakejRow) pakejRow.style.opacity = isInactive ? '0.4' : '1';
+
+      // Minggu Semasa input — hanya untuk "Sedang Dalam Rawatan"
+      const cwRow = document.getElementById('cp-current-week-row');
+      if (cwRow) cwRow.classList.toggle('hidden', !isActive);
 
       // KOB slot booking only for Pesakit Baru
       const kobSlot = document.getElementById('kob-slot-section');
@@ -1163,9 +1182,56 @@
                 payment_method: 'staff_assigned',
               });
             }
+
+            // Auto-cipta treatment plan kalau patient ni belum ada plan aktif untuk pakej ni
+            const { data: existingPlan } = await window.db.from('psy_treatment_plans')
+              .select('id').eq('patient_id', editingPatientId).eq('status', 'active').limit(1);
+            if (!existingPlan?.length) {
+              const { data: pkgRows } = await window.db.from('psy_packages')
+                .select('*').eq('package_id', selectedPkgCode).limit(1);
+              const pkg = pkgRows?.[0];
+              if (pkg) {
+                const durationWeeks = pkg.duration_weeks || selectedPkgWeeks || 12;
+                const currentWeekVal = parseInt(document.getElementById('cp-current-week')?.value) || 1;
+
+                const { data: newPlan } = await window.db.from('psy_treatment_plans').insert({
+                  patient_id: editingPatientId,
+                  doctor_id: null,
+                  name: `${pkg.name} Treatment Plan`,
+                  template: pkg.package_id,
+                  duration_unit: pkg.duration_unit || 'week',
+                  duration_weeks: durationWeeks,
+                  current_week: Math.min(currentWeekVal, durationWeeks),
+                  bio_goals: pkg.bio_goals || [],
+                  psycho_goals: pkg.psycho_goals || [],
+                  social_goals: pkg.social_goals || [],
+                  spiritual_goals: pkg.spiritual_goals || [],
+                  coaching_schedule: pkg.coaching_schedule || [],
+                  status: 'active',
+                }).select('id').single();
+
+                if (newPlan?.id) {
+                  const rows = [];
+                  for (let w = 1; w <= durationWeeks; w++) {
+                    rows.push({
+                      plan_id: newPlan.id,
+                      patient_id: editingPatientId,
+                      week_number: w,
+                      session_day: 1,
+                      status: 'pending',
+                    });
+                  }
+                  await window.db.from('psy_plan_weekly_progress').insert(rows);
+                  await auditLog('plan.staff_seeded_on_edit', newPlan.id, {
+                    weeks: durationWeeks, current_week: currentWeekVal,
+                  });
+                  banner('Pakej diaktifkan & treatment plan dicipta ✅');
+                }
+              }
+            }
           }
           await auditLog('patient.updated_by_staff', editingPatientId, { name });
-          banner('Maklumat pesakit dikemaskini ✅');
+          if (!selectedPkgCode) banner('Maklumat pesakit dikemaskini ✅');
         } else {
           // CREATE new patient — branch by jenis pesakit
           const coachAutoAssign = isCoachUser ? { coach_id: window.currentUser.id } : {};
@@ -1216,6 +1282,55 @@
                 status: 'active',
                 payment_method: 'staff_assigned',
               });
+            }
+
+            // Sedang Dalam Rawatan: auto-create treatment plan + seed weekly progress
+            // supaya staff/coach boleh terus akses & masukkan nota historical
+            if (isActive && selectedPkgCode) {
+              // Fetch pakej info untuk dapatkan duration + goals + coaching_schedule
+              const { data: pkgRows } = await window.db.from('psy_packages')
+                .select('*').eq('package_id', selectedPkgCode).limit(1);
+              const pkg = pkgRows?.[0];
+              if (pkg) {
+                const durationWeeks = pkg.duration_weeks || selectedPkgWeeks || 12;
+                const currentWeekVal = parseInt(document.getElementById('cp-current-week')?.value) || 1;
+
+                const { data: newPlan } = await window.db.from('psy_treatment_plans').insert({
+                  patient_id: inserted.id,
+                  doctor_id: null,
+                  name: `${pkg.name} Treatment Plan`,
+                  template: pkg.package_id,
+                  duration_unit: pkg.duration_unit || 'week',
+                  duration_weeks: durationWeeks,
+                  current_week: Math.min(currentWeekVal, durationWeeks),
+                  bio_goals: pkg.bio_goals || [],
+                  psycho_goals: pkg.psycho_goals || [],
+                  social_goals: pkg.social_goals || [],
+                  spiritual_goals: pkg.spiritual_goals || [],
+                  coaching_schedule: pkg.coaching_schedule || [],
+                  status: 'active',
+                }).select('id').single();
+
+                // Seed weekly progress rows untuk semua minggu (1..durationWeeks)
+                // Minggu yang sudah lepas (< current_week) → 'pending' supaya staff boleh isi backfill
+                // Minggu semasa & akan datang → 'pending' juga (belum tempah)
+                if (newPlan?.id) {
+                  const rows = [];
+                  for (let w = 1; w <= durationWeeks; w++) {
+                    rows.push({
+                      plan_id: newPlan.id,
+                      patient_id: inserted.id,
+                      week_number: w,
+                      session_day: 1,
+                      status: 'pending',
+                    });
+                  }
+                  await window.db.from('psy_plan_weekly_progress').insert(rows);
+                  await auditLog('plan.staff_seeded', newPlan.id, {
+                    weeks: durationWeeks, current_week: currentWeekVal,
+                  });
+                }
+              }
             }
 
             // Pesakit Baru: auto-create approved KYC submission + optional KOB session
@@ -1935,10 +2050,15 @@
         const tog = document.getElementById('archived-toggle-wrap');
         if (tog) tog.classList.replace('hidden', 'flex');
       }
-      loadAll();
+      await loadAll();
       const qs = new URLSearchParams(location.search);
       if (qs.get('new') === '1' || qs.get('add') === '1') {
         setTimeout(openCreatePatient, 500);
+      }
+      // Auto-buka modal Edit kalau ?edit=<id>
+      const editId = qs.get('edit');
+      if (editId) {
+        setTimeout(() => openEditPatient(editId), 500);
       }
       const signupQ = qs.get('signup');
       if (signupQ) {

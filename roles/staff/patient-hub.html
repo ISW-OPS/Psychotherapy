@@ -1448,6 +1448,20 @@ const patientId = params.get('patient_id');
   // Back button — coach guna assignments.html sebagai "Patients" page, lain guna patients.html
   const backUrl = user.staff_role === 'coach' ? 'assignments.html' : 'patients.html';
   setHeaderBack(backUrl, 'Kembali ke Senarai Pesakit');
+
+  // Tambah butang "Edit Pesakit" untuk admin/manager — bawa ke patients.html dengan modal Edit terbuka
+  if (['admin','manager'].includes(user.staff_role)) {
+    const rightDiv = document.querySelector('#page-header > div:last-child');
+    if (rightDiv && !document.getElementById('btn-edit-patient')) {
+      const editBtn = document.createElement('a');
+      editBtn.id = 'btn-edit-patient';
+      editBtn.href = `patients.html?edit=${patientId}`;
+      editBtn.className = 'flex items-center gap-1.5 text-xs font-medium text-white bg-navy hover:bg-navy-dark px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap';
+      editBtn.innerHTML = '✏️ Edit Pesakit';
+      rightDiv.prepend(editBtn);
+    }
+  }
+
   await loadPatient();
 })();
 
@@ -1615,25 +1629,22 @@ function renderOvWeekPage() {
   for (let w = start; w <= end; w++) {
     const entry = progressMap[w];
     const s     = entry?.status;
-    const prev  = progressMap[w - 1];
     const isCurrent = w === cw;
-    const locked = w > 1 && (!prev || !['hadir','consultation_done'].includes(prev?.status));
 
     let border = 'border-ink/15';
     let chip   = '<span class="bg-cream text-ink/60 text-[10px] px-2 py-0.5 rounded-full font-semibold">Belum Tempah</span>';
     let body   = '';
-    let cta    = '';
+    // Staff sentiasa boleh akses mana-mana minggu untuk masukkan/edit nota
+    let cta    = activePlan ? `<a href="plan-week.html?plan_id=${activePlan.id}&week=${w}" class="text-[10px] text-navy font-semibold mt-2 block hover:underline">Lihat butiran →</a>` : '';
 
     if (s === 'consultation_done') {
       border = 'border-green-dark bg-green/5';
       chip   = '<span class="bg-green-dark text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">✅ Selesai</span>';
       body   = `<div class="text-xs text-ink/60 mt-1">📅 ${entry.session_date ? ovFmt(entry.session_date) : '—'}</div>`;
-      cta    = `<a href="plan-week.html?plan_id=${activePlan.id}&week=${w}" class="text-[10px] text-navy font-semibold mt-2 block hover:underline">Lihat butiran →</a>`;
     } else if (s === 'hadir') {
       border = 'border-green bg-green/5';
       chip   = '<span class="bg-green text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">✅ Hadir</span>';
       body   = `<div class="text-xs text-ink/60 mt-1">📅 ${entry.session_date ? ovFmt(entry.session_date) : '—'}</div>`;
-      cta    = `<a href="plan-week.html?plan_id=${activePlan.id}&week=${w}" class="text-[10px] text-navy font-semibold mt-2 block hover:underline">Lihat butiran →</a>`;
     } else if (s === 'booked') {
       border = 'border-navy bg-navy/5';
       chip   = '<span class="bg-navy text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">📅 Ditempah</span>';
@@ -1647,10 +1658,6 @@ function renderOvWeekPage() {
       border = 'border-terracotta bg-terracotta/5';
       chip   = '<span class="bg-terracotta text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">❌ Tidak Hadir</span>';
       body   = '<div class="text-[11px] text-ink/50 mt-1">Perlu tempah semula</div>';
-    } else if (locked) {
-      border = 'border-ink/10 bg-ink/[0.02]';
-      chip   = '<span class="bg-ink/10 text-ink/40 text-[10px] px-2 py-0.5 rounded-full font-semibold">🔒 Terkunci</span>';
-      body   = `<div class="text-[11px] text-ink/40 mt-1">Selesaikan Minggu ${w-1} dulu</div>`;
     } else {
       border = 'border-dashed border-ink/25';
       body   = '<div class="text-[11px] text-ink/50 mt-1">Belum dijadualkan</div>';
@@ -2567,14 +2574,12 @@ function wnRender(totalWeeks, progressMap) {
   const w       = wnCurrentIdx + 1;
   const entry   = progressMap[w];
   const cw      = activePlan?.current_week || 1;
-  const prevEntry = progressMap[w - 1];
-  const locked  = w > 1 && (!prevEntry || !['hadir','consultation_done'].includes(prevEntry?.status));
   const s       = entry?.status;
 
   document.getElementById('wn-week-label').textContent = `Minggu ${w} / ${totalWeeks}${w === cw ? ' · Semasa' : ''}`;
   document.getElementById('wn-week-sub').textContent = s
     ? ({ booked:'Ditempah', hadir:'Hadir', consultation_done:'Selesai', reschedule:'Reschedule', cancel:'Tidak Hadir' }[s] || s)
-    : (locked ? 'Terkunci' : 'Belum Ditempah');
+    : 'Belum Ditempah';
 
   // Highlight active dot
   document.querySelectorAll('#wn-dots button').forEach((btn, i) => {
@@ -2608,16 +2613,15 @@ function wnRender(totalWeeks, progressMap) {
       ? '<span class="chip bg-gold text-white text-xs">🔄 Reschedule</span>'
       : '<span class="chip bg-terracotta text-white text-xs">❌ Tidak Hadir</span>';
     detail = `<div class="flex items-center gap-2">${chip}<span class="text-sm text-ink/60">Belum ditempah semula</span></div>`;
-  } else if (locked) {
-    detail = `<div class="flex items-center gap-2">
-        <span class="chip bg-ink/10 text-ink/50 text-xs">🔒 Terkunci</span>
-        <span class="text-sm text-ink/50">Selesaikan Minggu ${w - 1} dahulu</span>
-      </div>`;
   } else {
     detail = `<div class="flex items-center gap-2 flex-wrap">
         <span class="chip bg-cream text-ink/70 text-xs">Belum Ditempah</span>
         <span class="text-sm text-ink/50">Sesi belum dijadualkan</span>
       </div>`;
+  }
+  // Staff sentiasa boleh akses minggu — tambah link Edit Nota
+  if (activePlan?.id) {
+    detail += `<div class="mt-3"><a href="plan-week.html?plan_id=${activePlan.id}&week=${w}" class="text-xs text-navy font-semibold hover:underline">📝 Edit nota minggu ini →</a></div>`;
   }
 
   document.getElementById('wn-detail').innerHTML = detail;
