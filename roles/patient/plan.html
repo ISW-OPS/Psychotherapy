@@ -61,7 +61,6 @@
               <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-navy inline-block"></span> Ditempah</span>
               <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-gold inline-block"></span> Reschedule</span>
               <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-terracotta inline-block"></span> Cancel</span>
-              <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-ink/15 inline-block"></span> Terkunci</span>
             </div>
             <div id="week-pagination" class="flex items-center gap-1"></div>
           </div>
@@ -300,8 +299,20 @@ async function loadWeeklyProgress() {
     order: { col: 'week_number', asc: true },
   }).catch(() => []);
 
-  // Auto-detect miss + create extension — DISABLED (Phase 2, belum priority)
-  // await autoMarkMissedAndExtend();
+  // 1. Backfill dulu — pastikan semua sesi seluruh tempoh wujud
+  if (activePlan.schedule_setup_at && activePlan.preferred_pair) {
+    const expectedCount = (activePlan.duration_weeks || 12) * 2;
+    if (weeklyProgressRows.length < expectedCount) {
+      await backfillMissingSessions();
+      weeklyProgressRows = await dbQuery('psy_plan_weekly_progress', {
+        eq: { plan_id: activePlan.id },
+        order: { col: 'week_number', asc: true },
+      }).catch(() => []);
+    }
+  }
+
+  // 2. Auto-detect missed weeks + cipta extension week (1 minggu tambahan per missed week)
+  await autoMarkMissedAndExtend();
 
   // Plan baru (lepas migration) tapi belum setup jadual → tunjuk wizard.
   // Plan lama (existing) yang dah ada rows tanpa setup → fallback ke flow lama.
@@ -374,8 +385,6 @@ function renderWeekPage() {
     const s1 = sessionMap[`${w}_1`];
     const s2 = sessionMap[`${w}_2`];
     const isCurrent = w === cw;
-    const prevDone = w === 1 || weekDone(w - 1);
-    const locked = !prevDone;
 
     let borderCls = 'border-ink/15';
     let weekChip  = '';
@@ -384,14 +393,9 @@ function renderWeekPage() {
     const isExt = (s1?.is_extension) || (s2?.is_extension);
     const extPending = isExt && (s1?.status === 'extension_pending_payment' || s2?.status === 'extension_pending_payment');
 
-    if (locked && !isExt) {
-      borderCls = 'border-ink/10 bg-ink/[0.02]';
-      weekChip  = '<span class="bg-ink/10 text-ink/40 text-[10px] px-2 py-0.5 rounded-full font-semibold">🔒 Terkunci</span>';
-      bodyHtml  = `<div class="text-[11px] text-ink/40 mt-2">Selesaikan Minggu ${w-1} dulu</div>`;
-    } else if (extPending) {
+    if (extPending) {
       borderCls = 'border-terracotta bg-terracotta/5';
       weekChip  = '<span class="bg-terracotta text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">💳 Belum Bayar</span>';
-      bodyHtml  = `<div class="space-y-1.5 mt-2">${renderSession(w, 1, s1)}${renderSession(w, 2, s2)}</div>`;
     } else {
       const allHadir = s1 && s2 && ['hadir','consultation_done'].includes(s1.status) && ['hadir','consultation_done'].includes(s2.status);
       const anyMiss  = (s1 && ['cancel','reschedule'].includes(s1.status)) || (s2 && ['cancel','reschedule'].includes(s2.status));
@@ -408,8 +412,8 @@ function renderWeekPage() {
         borderCls = 'border-dashed border-ink/25';
         weekChip  = '<span class="bg-cream text-ink/60 text-[10px] px-2 py-0.5 rounded-full font-semibold">Belum Tempah</span>';
       }
-      bodyHtml = `<div class="space-y-1.5 mt-2">${renderSession(w, 1, s1)}${renderSession(w, 2, s2)}</div>`;
     }
+    bodyHtml = `<div class="space-y-1.5 mt-2">${renderSession(w, 1, s1)}${renderSession(w, 2, s2)}</div>`;
 
     html += `<div class="border ${borderCls} ${isCurrent ? 'ring-2 ring-navy' : ''} rounded-xl p-3 transition">
       <div class="flex items-center justify-between mb-1 gap-1 flex-wrap">
@@ -445,15 +449,9 @@ function renderWeekPageLegacy(weeks, cw, start, end) {
   for (let w = start; w <= end; w++) {
     const entry = progressMap[w];
     const s = entry?.status;
-    const prev = progressMap[w - 1];
     const isCurrent = w === cw;
-    const locked = w > 1 && (!prev || !['hadir','consultation_done'].includes(prev?.status));
     let border = 'border-ink/15', chip = '<span class="bg-cream text-ink/60 text-[10px] px-2 py-0.5 rounded-full font-semibold">Belum Tempah</span>', body = '', cta = '';
-    if (locked) {
-      border = 'border-ink/10 bg-ink/[0.02]';
-      chip = '<span class="bg-ink/10 text-ink/40 text-[10px] px-2 py-0.5 rounded-full font-semibold">🔒 Terkunci</span>';
-      body = `<div class="text-[11px] text-ink/40 mt-1">Selesaikan Minggu ${w-1} dulu</div>`;
-    } else if (s === 'consultation_done' || s === 'hadir') {
+    if (s === 'consultation_done' || s === 'hadir') {
       border = 'border-green-dark bg-green/5';
       chip = `<span class="bg-green-dark text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">✅ ${s === 'hadir' ? 'Hadir' : 'Selesai'}</span>`;
       body = `<div class="text-xs text-ink/60 mt-1">📅 ${entry.session_date ? fmt(entry.session_date) : '—'}</div>`;
@@ -481,6 +479,46 @@ function renderWeekPageLegacy(weeks, cw, start, end) {
     </div>`;
   }
   document.getElementById('weekly-list').innerHTML = html;
+}
+
+// Backfill rows yang hilang — generate dari preferred_pair + times
+async function backfillMissingSessions() {
+  const pair = activePlan.preferred_pair;
+  const t1 = activePlan.preferred_time_day1;
+  const t2 = activePlan.preferred_time_day2;
+  if (!pair || !t1 || !t2) return;
+
+  const start = new Date(activePlan.created_at);
+  const { sessions } = generateScheduleDates(pair, t1, t2, start);
+
+  // Index existing rows by week+day untuk skip yang dah ada
+  const existing = new Set(weeklyProgressRows.map(r => `${r.week_number}_${r.session_day || 1}`));
+  const missing = sessions.filter(s => !existing.has(`${s.week}_${s.day}`));
+  if (!missing.length) return;
+
+  // Cap pada duration_weeks plan supaya tak insert melampaui tempoh
+  const maxWeek = activePlan.duration_weeks || 12;
+  const validMissing = missing.filter(s => s.week <= maxWeek);
+
+  const rows = validMissing.map(s => ({
+    plan_id: activePlan.id,
+    patient_id: patientRecord.id,
+    week_number: s.week,
+    session_day: s.day,
+    session_date: s.closed ? null : s.dateTime.toISOString(),
+    status: s.closed ? 'reschedule' : 'booked',
+  }));
+  // Insert satu-satu supaya kalau row tertentu gagal (cth duplicate), yang
+  // lain masih boleh masuk. Lebih lambat tapi resilient.
+  const errors = [];
+  for (const row of rows) {
+    const { error } = await window.db.from('psy_plan_weekly_progress').insert(row);
+    if (error) errors.push(`M${row.week_number} S${row.session_day}: ${error.message}`);
+  }
+  if (errors.length) {
+    console.warn('[plan] backfill errors:', errors);
+    banner(`Backfill: ${errors.length} sesi gagal. Lihat console.`, 'error');
+  }
 }
 
 function renderSession(week, day, row) {
@@ -793,9 +831,9 @@ async function autoMarkMissedAndExtend() {
   const now = new Date();
   const extPrice = Number(activePkg.extension_price_per_week) || 50;
 
-  // Cari sesi yang booked + hujung hari sesi dah lepas
-  const missed = weeklyProgressRows.filter(r => {
-    if (r.is_extension) return false;  // jangan auto-mark extension rows
+  // 1. Cari sesi yang booked + hujung hari sesi dah lepas (= miss)
+  const missedSessions = weeklyProgressRows.filter(r => {
+    if (r.is_extension) return false;
     if (r.status !== 'booked') return false;
     if (!r.session_date) return false;
     const sessDay = new Date(r.session_date);
@@ -803,31 +841,36 @@ async function autoMarkMissedAndExtend() {
     return sessDay < now;
   });
 
-  if (!missed.length) return;
+  if (!missedSessions.length) return;
 
-  // Cari extension week start (max week_number + 1)
-  let nextExtWeek = Math.max(activePlan.duration_weeks || 12, ...weeklyProgressRows.map(r => r.week_number)) + 1;
-
-  for (const sess of missed) {
-    // 1. Tandai sesi asal sebagai 'cancel'
+  // 2. Tanda semua sesi yang miss sebagai 'cancel'
+  for (const sess of missedSessions) {
     try {
       await dbUpdate('psy_plan_weekly_progress', sess.id, {
         status: 'cancel',
         updated_at: new Date().toISOString(),
       });
       sess.status = 'cancel';
-    } catch (e) { console.error('Auto-mark miss failed:', e); continue; }
+    } catch (e) { console.error('Auto-mark miss failed:', e); }
+  }
 
-    // 2. Cek extension untuk sesi ni dah wujud? (extension_for_week + session_day match)
-    const dupKey = `${sess.week_number}_${sess.session_day || 1}`;
-    const hasExt = weeklyProgressRows.some(r =>
-      r.is_extension &&
-      r.extension_for_week === sess.week_number &&
-      (r.session_day || 1) === (sess.session_day || 1)
-    );
-    if (hasExt) continue;
+  // 3. Kumpulkan UNIQUE minggu asal yang ada sesi miss
+  //    (1 minggu miss = 1 extension week, tak kira berapa sesi miss dalam minggu tu)
+  const missedWeeks = [...new Set(missedSessions.map(s => s.week_number))];
 
-    // 3. Create extension week (2 sesi, status=extension_pending_payment)
+  // 4. Buang minggu yang dah ada extension wujud
+  const existingExtFor = new Set(
+    weeklyProgressRows
+      .filter(r => r.is_extension && r.extension_for_week)
+      .map(r => r.extension_for_week)
+  );
+  const needExt = missedWeeks.filter(w => !existingExtFor.has(w));
+  if (!needExt.length) return;
+
+  // 5. Cipta 1 extension week per missed week
+  let nextExtWeek = Math.max(activePlan.duration_weeks || 12, ...weeklyProgressRows.map(r => r.week_number || 0)) + 1;
+
+  for (const origWeek of needExt) {
     try {
       await window.db.from('psy_plan_weekly_progress').insert([
         {
@@ -837,7 +880,7 @@ async function autoMarkMissedAndExtend() {
           session_day: 1,
           status: 'extension_pending_payment',
           is_extension: true,
-          extension_for_week: sess.week_number,
+          extension_for_week: origWeek,
           extension_price: extPrice,
         },
         {
@@ -847,25 +890,24 @@ async function autoMarkMissedAndExtend() {
           session_day: 2,
           status: 'extension_pending_payment',
           is_extension: true,
-          extension_for_week: sess.week_number,
+          extension_for_week: origWeek,
           extension_price: extPrice,
         },
       ]);
       await auditLog('plan.extension_created', activePlan.id, {
-        for_week: sess.week_number,
-        for_session: sess.session_day,
+        for_week: origWeek,
         ext_week: nextExtWeek,
         price: extPrice,
       });
       await notify(currentUser.id, 'plan',
-        `Sesi terlepas — minggu tambahan dibuka`,
-        `Minggu ${sess.week_number} Sesi ${sess.session_day || 1} terlepas. Bayar RM ${extPrice} untuk lanjutkan rawatan ke Minggu ${nextExtWeek}.`,
+        `Minggu terlepas — minggu tambahan dibuka`,
+        `Minggu ${origWeek} tidak lengkap. Bayar RM ${extPrice} untuk lanjutkan rawatan ke Minggu ${nextExtWeek}.`,
         'payment.html');
       nextExtWeek++;
     } catch (e) { console.error('Create extension failed:', e); }
   }
 
-  // Refresh local data
+  // 6. Refresh local data
   weeklyProgressRows = await dbQuery('psy_plan_weekly_progress', {
     eq: { plan_id: activePlan.id },
     order: { col: 'week_number', asc: true },
