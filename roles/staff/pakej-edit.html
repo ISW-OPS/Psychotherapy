@@ -552,6 +552,43 @@ function renderItemList(wk, field, items, placeholder) {
       class="text-[10px] font-semibold text-navy border border-dashed border-navy/30 px-2 py-1 rounded hover:bg-navy hover:text-white w-full mt-1">+ Tambah</button>`;
 }
 
+// Render gabungan Bimbingan + Aktiviti dalam satu list
+function renderCombinedCatalogList(wk, weekItem) {
+  const guidance = weekItem.guidance || [];
+  const aktiviti = weekItem.aktiviti || [];
+  const renderOne = (s, i, field) => {
+    if (typeof s === 'string') {
+      if (s.includes('[object')) {
+        return `<div class="flex gap-1 mb-1">
+          <span class="flex-1 px-2 py-1 border border-red-300 bg-red-50 rounded text-xs text-red-700">⚠️ Data rosak</span>
+          <button type="button" onclick="removeItem(${wk}, '${field}', ${i})" class="px-2 text-terracotta hover:bg-terracotta/10 rounded text-xs">×</button>
+        </div>`;
+      }
+      return `<div class="flex gap-1 mb-1">
+        <span class="flex-1 px-2 py-1 border border-gold/40 bg-gold/10 rounded text-xs text-ink/70">⚠️ ${escapeHtml(s)}</span>
+        <button type="button" onclick="removeItem(${wk}, '${field}', ${i})" class="px-2 text-terracotta hover:bg-terracotta/10 rounded text-xs">×</button>
+      </div>`;
+    }
+    const cat = (window._coachingItems || []).find(it => it.id === s.item_id);
+    const itemName = cat?.name || s.item_name || s.name || '(item tak ditemui)';
+    const badge = field === 'guidance'
+      ? '<span class="text-[9px] font-semibold text-navy bg-navy/10 px-1.5 py-0.5 rounded">💡</span>'
+      : '<span class="text-[9px] font-semibold text-terracotta bg-terracotta/10 px-1.5 py-0.5 rounded">🩺</span>';
+    return `<div class="flex gap-1 mb-1 items-center">
+      ${badge}
+      <span class="flex-1 px-2 py-1 bg-white border border-ink/15 rounded text-xs truncate">${escapeHtml(itemName)}</span>
+      <button type="button" onclick="removeItem(${wk}, '${field}', ${i})" class="px-2 text-terracotta hover:bg-terracotta/10 rounded text-xs">×</button>
+    </div>`;
+  };
+  const list = [
+    ...guidance.map((s, i) => renderOne(s, i, 'guidance')),
+    ...aktiviti.map((s, i) => renderOne(s, i, 'aktiviti')),
+  ].join('');
+  return `${list}
+    <button type="button" onclick="openCatalogPicker(${wk}, 'combined', null)"
+      class="text-[10px] font-semibold text-navy border border-dashed border-navy/30 px-2 py-1 rounded hover:bg-navy hover:text-white w-full mt-1">+ Pilih dari Catalog</button>`;
+}
+
 // Render guidance / aktiviti list — link ke coaching catalog
 function renderCatalogList(wk, items, catalogType, field) {
   const arr = items || [];
@@ -640,7 +677,7 @@ let _catalogPickerCtx = null; // { wk, type, field }
 function openCatalogPicker(wk, type, field) {
   _catalogPickerCtx = { wk, type, field };
   document.getElementById('cp-week-label').textContent = (getDurationUnit() === 'day' ? 'D' : 'M') + wk;
-  document.getElementById('cp-type-label').textContent = type === 'bimbingan' ? 'Bimbingan' : 'Aktiviti';
+  document.getElementById('cp-type-label').textContent = type === 'combined' ? 'Bimbingan & Aktiviti' : (type === 'bimbingan' ? 'Bimbingan' : 'Aktiviti');
   document.getElementById('cp-search').value = '';
   renderCatalogPickerList();
   document.getElementById('catalog-picker-modal').classList.remove('hidden');
@@ -656,7 +693,9 @@ function renderCatalogPickerList() {
   const { wk, type, field } = _catalogPickerCtx;
   const list = document.getElementById('cp-list');
   const q = (document.getElementById('cp-search')?.value || '').toLowerCase().trim();
-  const all = (window._coachingItems || []).filter(it => it.type === type);
+  const all = (window._coachingItems || []).filter(it =>
+    type === 'combined' ? (it.type === 'bimbingan' || it.type === 'aktiviti') : it.type === type
+  );
   const items = all.filter(it =>
     !q || (it.name || '').toLowerCase().includes(q) || (it.category || '').toLowerCase().includes(q)
   );
@@ -671,7 +710,10 @@ function renderCatalogPickerList() {
     byCat[cat].push(it);
   });
   const wkItem = getWeekItem(wk);
-  const picked = new Set((wkItem?.[field] || []).filter(s => typeof s === 'object').map(s => s.item_id));
+  const pickedArrays = type === 'combined'
+    ? [...(wkItem?.guidance || []), ...(wkItem?.aktiviti || [])]
+    : (wkItem?.[field] || []);
+  const picked = new Set(pickedArrays.filter(s => typeof s === 'object').map(s => s.item_id));
 
   list.innerHTML = Object.entries(byCat).map(([cat, list]) => `
     <div class="mb-3">
@@ -691,13 +733,22 @@ function renderCatalogPickerList() {
 
 function addCatalogFromPicker(itemId) {
   if (!_catalogPickerCtx) return;
-  const { wk, field } = _catalogPickerCtx;
+  const { wk, type, field } = _catalogPickerCtx;
   const wkItem = getWeekItem(wk);
   if (!wkItem) return;
-  if (!Array.isArray(wkItem[field])) wkItem[field] = [];
-  if (wkItem[field].some(s => typeof s === 'object' && s.item_id === itemId)) return;
   const item = (window._coachingItems || []).find(it => it.id === itemId);
-  wkItem[field].push({
+  // Combined picker: route ikut jenis item dalam catalog
+  const targetField = type === 'combined'
+    ? (item?.type === 'aktiviti' ? 'aktiviti' : 'guidance')
+    : field;
+  if (!Array.isArray(wkItem[targetField])) wkItem[targetField] = [];
+  if (wkItem[targetField].some(s => typeof s === 'object' && s.item_id === itemId)) return;
+  // Elak duplicate silang antara guidance/aktiviti
+  if (type === 'combined') {
+    const otherField = targetField === 'guidance' ? 'aktiviti' : 'guidance';
+    if ((wkItem[otherField] || []).some(s => typeof s === 'object' && s.item_id === itemId)) return;
+  }
+  wkItem[targetField].push({
     item_id:   itemId,
     item_name: item?.name || '',
   });
@@ -834,14 +885,10 @@ function renderCoachingScheduleEditor(forceRebuild = false) {
           <label class="flex items-center gap-1"><input type="radio" name="mode-${wk}" value="both" ${mode==='both'?'checked':''} onchange="updateMode(${wk}, 'both')"> 🔀 Both</label>
         </div>
       </div>
-      <div class="grid md:grid-cols-3 gap-3">
+      <div class="grid md:grid-cols-2 gap-3">
         <div>
-          <label class="text-[11px] font-semibold text-ink/60 block mb-1">💡 Bimbingan / Calling</label>
-          ${renderItemList(wk, 'guidance', item.guidance, 'cth: Bimbingan Reaksi')}
-        </div>
-        <div>
-          <label class="text-[11px] font-semibold text-ink/60 block mb-1">🩺 Aktiviti / Rawatan</label>
-          ${renderItemList(wk, 'aktiviti', item.aktiviti, 'cth: Herba Thoharah')}
+          <label class="text-[11px] font-semibold text-ink/60 block mb-1">💡 Bimbingan & Aktiviti</label>
+          ${renderCombinedCatalogList(wk, item)}
         </div>
         <div>
           <label class="text-[11px] font-semibold text-ink/60 block mb-1">📦 Bekalan</label>
@@ -1432,7 +1479,7 @@ async function removeAgreement() {
 }
 
 async function savePackage() {
-  const editId = document.getElementById('edit-id').value;
+  let editId = document.getElementById('edit-id').value;
   const name = document.getElementById('f-name').value.trim();
   if (!name) { banner('Nama pakej wajib diisi', 'error'); return; }
 
@@ -1497,39 +1544,43 @@ async function savePackage() {
       updated_at: new Date().toISOString(),
     };
 
-    if (editId) {
-      await dbUpdate('psy_packages', editId, data);
-      banner('Pakej dikemaskini');
-    } else {
-      data.package_id = await generateUniquePackageId();
-      const { data: inserted, error } = await window.db.from('psy_packages').insert(data).select().single();
-      if (error) throw error;
-      editId = inserted.id;
-      banner('Pakej baru ditambah');
-    }
-    await auditLog(editId ? 'package.updated' : 'package.created', editId || data.package_id, { name });
-    clearDraft();
-    setTimeout(() => { window.location.href = 'pakej-detail.html?id=' + editId; }, 800);
-  } catch (err) {
-    if (err.message?.includes('duration_unit') && data) {
-      const { duration_unit, ...fallbackData } = data;
+    // Cuba save, strip kolum yang missing daripada schema dan retry sampai berjaya
+    // (atau gagal atas sebab lain). Maks 10 kali — pakej payload ada ~30 kolum.
+    let payload = { ...data };
+    let lastErr = null;
+    let saved = false;
+    for (let attempt = 0; attempt < 10 && !saved; attempt++) {
       try {
         if (editId) {
-          await dbUpdate('psy_packages', editId, fallbackData);
+          await dbUpdate('psy_packages', editId, payload);
         } else {
-          if (!fallbackData.package_id) fallbackData.package_id = await generateUniquePackageId();
-          const { data: inserted, error } = await window.db.from('psy_packages').insert(fallbackData).select().single();
+          if (!payload.package_id) payload.package_id = await generateUniquePackageId();
+          const { data: inserted, error } = await window.db.from('psy_packages').insert(payload).select().single();
           if (error) throw error;
           editId = inserted.id;
         }
-        await auditLog(editId ? 'package.updated' : 'package.created', editId || fallbackData.package_id, { name });
-        clearDraft();
-        banner('Disimpan');
-        setTimeout(() => { window.location.href = 'pakej-detail.html?id=' + editId; }, 800);
-      } catch (err2) { banner('Ralat: ' + err2.message, 'error'); }
-    } else {
-      banner('Ralat: ' + err.message, 'error');
+        saved = true;
+      } catch (e) {
+        lastErr = e;
+        const m = e.message?.match(/Could not find the '([^']+)' column/);
+        if (m && m[1] in payload) {
+          delete payload[m[1]];
+          continue;
+        }
+        if (e.message?.includes('duration_unit') && 'duration_unit' in payload) {
+          delete payload.duration_unit;
+          continue;
+        }
+        throw e;
+      }
     }
+    if (!saved) throw lastErr || new Error('Gagal simpan pakej');
+    banner(editId ? 'Pakej dikemaskini' : 'Pakej baru ditambah');
+    await auditLog(editId ? 'package.updated' : 'package.created', editId || payload.package_id, { name });
+    clearDraft();
+    setTimeout(() => { window.location.href = 'pakej-detail.html?id=' + editId; }, 800);
+  } catch (err) {
+    banner('Ralat: ' + err.message, 'error');
   } finally {
     btn.disabled = false; btn.textContent = 'Simpan Pakej';
   }

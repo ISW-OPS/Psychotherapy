@@ -122,7 +122,6 @@ const NAV_GROUPS_BY_ROLE = {
       { id: 'dashboard',        url: 'dashboard.html',    icon: '🏠', label: 'Dashboard' },
       { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
       { id: 'plan_week',        url: 'weekly-plan.html',  icon: '📋', label: 'Weekly Plan' },
-      { id: 'staff_stats',      url: 'staff-stats.html',  icon: '📈', label: 'Laporan Ringkas' },
     ]},
     { group: 'OPERASI KLINIK', collapsible: true, items: [
       { id: 'psy_patients', url: 'patients.html',  icon: '👥', label: 'Pesakit' },
