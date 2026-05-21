@@ -2432,22 +2432,20 @@ function getVitalsPayload(prefix = 'v') {
 async function saveVitals() {
   if (!canEdit) { banner('Anda hanya boleh melihat rekod pesakit ini.', 'error'); return; }
 
-  // Check for existing record today (local date)
-  const todayLocal = new Date();
-  const startOfDay = new Date(todayLocal.getFullYear(), todayLocal.getMonth(), todayLocal.getDate()).toISOString();
-  const endOfDay   = new Date(todayLocal.getFullYear(), todayLocal.getMonth(), todayLocal.getDate(), 23, 59, 59).toISOString();
-  const { data: existing } = await window.db.from('psy_vitals').select('id')
-    .eq('patient_id', patientId).gte('created_at', startOfDay).lte('created_at', endOfDay).maybeSingle();
+  const payload = getVitalsPayload('v');
 
-  if (existing) {
-    banner('Vitals hari ini sudah direkod. Sila edit rekod sedia ada dalam sejarah.', 'error');
-    return;
+  // Auto-tag minggu rawatan kalau patient ada plan aktif
+  let weekNumber = null;
+  if (activePlan?.id && activePlan?.current_week) {
+    weekNumber = activePlan.current_week;
   }
 
-  const payload = getVitalsPayload('v');
   const { error } = await window.db.from('psy_vitals').insert({
     ...payload,
     patient_id:       patientId,
+    plan_id:          activePlan?.id || null,
+    week_number:      weekNumber,
+    reading_date:     new Date().toISOString().slice(0, 10),
     recorded_by:      window.currentUser.id,
     recorded_by_name: window.currentUser.full_name,
   });
