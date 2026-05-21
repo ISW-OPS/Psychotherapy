@@ -1,9 +1,8 @@
 -- ============================================================
--- STEP 1 — PSY_PROFILES
--- Run dulu ini sebelum table lain
+-- STEP 1 — PSY_PROFILES  (idempotent)
 -- ============================================================
 
-CREATE TABLE psy_profiles (
+CREATE TABLE IF NOT EXISTS psy_profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   full_name TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('patient','staff')),
@@ -18,11 +17,11 @@ CREATE TABLE psy_profiles (
 );
 
 ALTER TABLE psy_profiles ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Read all profiles authenticated" ON psy_profiles FOR SELECT USING (auth.role() = 'authenticated');
-CREATE POLICY "Update own profile" ON psy_profiles FOR UPDATE USING (auth.uid() = id);
-CREATE POLICY "Insert own profile" ON psy_profiles FOR INSERT WITH CHECK (auth.uid() = id OR auth.role() = 'service_role');
 
--- Auto-create profile bila user baru register
+DO $$ BEGIN CREATE POLICY "Read all profiles authenticated" ON psy_profiles FOR SELECT USING (auth.role() = 'authenticated'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE POLICY "Update own profile" ON psy_profiles FOR UPDATE USING (auth.uid() = id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE POLICY "Insert own profile" ON psy_profiles FOR INSERT WITH CHECK (auth.uid() = id OR auth.role() = 'service_role'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
 CREATE OR REPLACE FUNCTION handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -45,6 +44,6 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION handle_new_user();
 
-CREATE INDEX idx_psy_profiles_role ON psy_profiles(role);
+CREATE INDEX IF NOT EXISTS idx_psy_profiles_role ON psy_profiles(role);
 
 SELECT 'Step 1 OK — psy_profiles ready' AS status;

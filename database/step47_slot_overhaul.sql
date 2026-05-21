@@ -15,10 +15,9 @@ ALTER TABLE psy_kob_slot_config
 ALTER TABLE psy_kob_slot_config
   DROP CONSTRAINT IF EXISTS psy_kob_slot_config_day_of_week_slot_start_key;
 
-DO $$ BEGIN
-  ALTER TABLE psy_kob_slot_config
-    ADD CONSTRAINT psy_kob_slot_config_unique UNIQUE (slot_type, day_of_week, slot_start);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TABLE psy_kob_slot_config DROP CONSTRAINT IF EXISTS psy_kob_slot_config_unique;
+ALTER TABLE psy_kob_slot_config
+  ADD CONSTRAINT psy_kob_slot_config_unique UNIQUE (slot_type, day_of_week, slot_start);
 
 -- ── 2. Clear old slot definitions (template only, no FK to bookings) ──
 DELETE FROM psy_kob_slot_config;

@@ -30,9 +30,14 @@
             <h1 class="text-xl font-bold text-ink">Pakej Rawatan</h1>
             <p class="text-sm text-ink/45 mt-0.5">Urus pakej, harga, tempoh, automation dan bekalan rawatan</p>
           </div>
-          <button onclick="window.location.href='pakej-edit.html'" class="bg-green-600 text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-green-700 transition-colors flex items-center gap-2 shadow-sm">
-            <span class="text-base leading-none">+</span> Tambah Pakej
-          </button>
+          <div class="flex items-center gap-2 flex-wrap">
+            <button onclick="openCategoriesModal()" class="bg-white border border-ink/20 text-ink px-3 py-2.5 rounded-xl text-sm font-semibold hover:bg-ink/5 transition-colors flex items-center gap-2">
+              🏷️ Urus Kategori
+            </button>
+            <button onclick="window.location.href='pakej-edit.html'" class="bg-green-600 text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-green-700 transition-colors flex items-center gap-2 shadow-sm">
+              <span class="text-base leading-none">+</span> Tambah Pakej
+            </button>
+          </div>
         </div>
 
         <!-- KPI Cards -->
@@ -49,9 +54,6 @@
             <label class="text-[10px] font-bold text-ink/45 uppercase tracking-wider">Kategori</label>
             <select id="pkg-tier-filter" onchange="renderPkgTable()" class="block mt-0.5 px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
               <option value="">Semua Kategori</option>
-              <option value="free">FREE</option>
-              <option value="standard">Standard</option>
-              <option value="vip">VIP</option>
             </select>
           </div>
           <div>
@@ -68,7 +70,7 @@
             <select id="pkg-status-filter" onchange="renderPkgTable()" class="block mt-0.5 px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
               <option value="">Semua Status</option>
               <option value="active">Aktif</option>
-              <option value="draft">Draft</option>
+              <option value="inactive">Tidak Aktif</option>
             </select>
           </div>
           <button onclick="resetPkgFilters()" class="px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white hover:bg-ink/5 transition-colors flex items-center gap-1.5 self-end">
@@ -113,6 +115,31 @@
         </div>
       </div>
     </main>
+  </div>
+</div>
+
+<!-- Urus Kategori Modal -->
+<div id="cats-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/60" onclick="closeCategoriesModal()"></div>
+  <div class="relative bg-white rounded-2xl max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col shadow-2xl">
+    <div class="px-5 py-4 border-b border-ink/10 flex items-center justify-between">
+      <div>
+        <h3 class="font-bold text-base">Urus Kategori Pakej</h3>
+        <p class="text-[11px] text-ink/50 mt-0.5">Tambah, edit atau buang kategori pakej</p>
+      </div>
+      <button onclick="closeCategoriesModal()" class="text-ink/50 text-2xl leading-none hover:text-ink">×</button>
+    </div>
+    <div class="p-5 overflow-y-auto space-y-3">
+      <div id="cats-list" class="space-y-2"></div>
+      <div class="border-t border-ink/10 pt-4">
+        <div class="text-[11px] font-bold text-ink/55 uppercase tracking-wider mb-2">Tambah Kategori Baru</div>
+        <div class="grid grid-cols-2 gap-2">
+          <input id="cat-new-slug" type="text" placeholder="slug (cth: detox)" class="px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-navy">
+          <input id="cat-new-label" type="text" placeholder="Nama paparan" class="px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-navy">
+        </div>
+        <button onclick="addCategory()" class="mt-2 w-full bg-green-600 hover:bg-green-700 text-white text-sm font-semibold py-2 rounded-lg">+ Tambah</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -833,10 +860,103 @@ async function loadPackages() {
   renderPkgTable();
 }
 
+// ──────── KATEGORI PAKEJ ─────────
+window._pkgCategories = [];
+
+async function loadCategories() {
+  try {
+    const { data } = await window.db.from('psy_package_categories')
+      .select('*').order('sort_order');
+    window._pkgCategories = data || [];
+  } catch (e) { window._pkgCategories = []; }
+
+  // Populate filter dropdown
+  const filter = document.getElementById('pkg-tier-filter');
+  if (filter) {
+    const cur = filter.value;
+    filter.innerHTML = '<option value="">Semua Kategori</option>' +
+      window._pkgCategories.filter(c => c.is_active).map(c => `<option value="${c.slug}">${c.label}</option>`).join('');
+    filter.value = cur;
+  }
+}
+
+function openCategoriesModal() {
+  document.getElementById('cats-modal').classList.remove('hidden');
+  renderCategoriesList();
+}
+function closeCategoriesModal() {
+  document.getElementById('cats-modal').classList.add('hidden');
+}
+
+function renderCategoriesList() {
+  const list = document.getElementById('cats-list');
+  if (!list) return;
+  if (!window._pkgCategories.length) {
+    list.innerHTML = '<div class="text-xs text-ink/40 text-center py-4">Tiada kategori. Tambah di bawah.</div>';
+    return;
+  }
+  list.innerHTML = window._pkgCategories.map(c => `
+    <div class="flex items-center gap-2 p-2 border border-ink/10 rounded-lg">
+      <span class="text-[10px] font-mono bg-ink/5 px-2 py-0.5 rounded text-ink/50">${c.slug}</span>
+      <input type="text" value="${c.label.replace(/"/g,'&quot;')}" data-id="${c.id}"
+        onchange="updateCategoryLabel('${c.id}', this.value)"
+        class="flex-1 px-2 py-1 border border-ink/15 rounded text-sm focus:outline-none focus:border-navy">
+      <button onclick="toggleCategoryActive('${c.id}', ${!c.is_active})"
+        class="text-[10px] font-bold px-2 py-1 rounded ${c.is_active ? 'bg-green/15 text-green-dark' : 'bg-ink/10 text-ink/50'}">
+        ${c.is_active ? 'Aktif' : 'Tak Aktif'}
+      </button>
+      <button onclick="deleteCategory('${c.id}', '${c.slug}')" class="text-terracotta hover:bg-terracotta/10 w-7 h-7 rounded flex items-center justify-center" title="Buang">🗑️</button>
+    </div>`).join('');
+}
+
+async function addCategory() {
+  const slugEl = document.getElementById('cat-new-slug');
+  const labelEl = document.getElementById('cat-new-label');
+  const slug = (slugEl.value || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  const label = (labelEl.value || '').trim();
+  if (!slug || !label) { banner('Sila isi slug dan nama', 'error'); return; }
+  try {
+    const sortOrder = (window._pkgCategories.length + 1) * 10;
+    const { error } = await window.db.from('psy_package_categories')
+      .insert({ slug, label, sort_order: sortOrder, is_active: true });
+    if (error) throw error;
+    slugEl.value = ''; labelEl.value = '';
+    await loadCategories();
+    renderCategoriesList();
+    banner('Kategori ditambah');
+  } catch (e) {
+    banner(e.message.includes('duplicate') ? 'Slug sudah wujud' : 'Ralat: ' + e.message, 'error');
+  }
+}
+
+async function updateCategoryLabel(id, newLabel) {
+  newLabel = (newLabel || '').trim();
+  if (!newLabel) return;
+  await window.db.from('psy_package_categories').update({ label: newLabel, updated_at: new Date().toISOString() }).eq('id', id);
+  await loadCategories();
+}
+
+async function toggleCategoryActive(id, makeActive) {
+  await window.db.from('psy_package_categories').update({ is_active: makeActive, updated_at: new Date().toISOString() }).eq('id', id);
+  await loadCategories();
+  renderCategoriesList();
+}
+
+async function deleteCategory(id, slug) {
+  const inUse = allPackages.filter(p => p.tier === slug).length;
+  if (inUse) { banner(`Tidak boleh buang — ${inUse} pakej masih guna kategori ini`, 'error'); return; }
+  if (!confirm(`Buang kategori "${slug}"?`)) return;
+  await window.db.from('psy_package_categories').delete().eq('id', id);
+  await loadCategories();
+  renderCategoriesList();
+  banner('Kategori dibuang');
+}
+
 (async () => {
   const user = await initStaff('pakej', 'Tambah, edit & urus pakej rawatan');
   if (!user) return;
   document.getElementById('f-weeks').addEventListener('change', () => renderCoachingScheduleEditor(true));
+  await loadCategories();
   loadPackages();
 })();
 </script>

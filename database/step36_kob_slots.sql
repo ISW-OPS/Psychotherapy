@@ -58,6 +58,6 @@ INSERT INTO psy_kob_slot_config (day_of_week, slot_start, slot_end, label, sort_
   (0, '10:30', '12:00', '10.30 AM - 12.00 PM', 2),
   (0, '14:00', '15:30', '2.00 PM - 3.30 PM', 3),
   (0, '15:30', '17:00', '3.30 PM - 5.00 PM', 4)
-ON CONFLICT (day_of_week, slot_start) DO NOTHING;
+ON CONFLICT DO NOTHING;
 
 SELECT 'Step 36 OK — KOB slot config ready' AS status;

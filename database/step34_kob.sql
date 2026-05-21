@@ -26,8 +26,15 @@ COMMENT ON COLUMN psy_patients.kob_status IS
 
 -- Existing patients: bulk-categorize
 -- Staff-created (created_by_staff=true) → na (bypass KOB)
-UPDATE psy_patients SET kob_status = 'na'
-  WHERE created_by_staff = true AND kob_status = 'pending_payment';
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_name='psy_patients' AND column_name='created_by_staff') THEN
+    EXECUTE $sql$
+      UPDATE psy_patients SET kob_status = 'na'
+      WHERE created_by_staff = true AND kob_status = 'pending_payment'
+    $sql$;
+  END IF;
+END $$;
 
 -- Existing patients with active package → grandfather as completed
 UPDATE psy_patients SET kob_status = 'completed'

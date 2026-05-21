@@ -4,6 +4,29 @@
 -- + overall end-of-treatment feedback (existing behavior).
 -- ============================================================
 
+-- Create base table if not exists (was missing in earlier migrations)
+CREATE TABLE IF NOT EXISTS psy_feedback (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id  UUID REFERENCES psy_patients(id) ON DELETE CASCADE,
+  rating      INT CHECK (rating BETWEEN 1 AND 5),
+  comment     TEXT,
+  helpful_tags JSONB DEFAULT '[]',
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE psy_feedback ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+  CREATE POLICY "Patients manage own feedback" ON psy_feedback FOR ALL
+    USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
+    WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE POLICY "Staff read all feedback" ON psy_feedback FOR SELECT
+    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
 ALTER TABLE psy_feedback
   ADD COLUMN IF NOT EXISTS feedback_type   TEXT NOT NULL DEFAULT 'overall'
     CHECK (feedback_type IN ('weekly','overall')),

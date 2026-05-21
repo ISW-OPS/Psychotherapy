@@ -5,7 +5,8 @@ ALTER TABLE psy_patients DROP CONSTRAINT IF EXISTS psy_patients_status_check;
 ALTER TABLE psy_patients ADD CONSTRAINT psy_patients_status_check
   CHECK (status IN ('pending_kyc','active','inactive','rejected','deleted','unregistered','archived','deceased'));
 
--- Add email index for fast auto-link lookup on patient signup
+-- Add email column + index for fast auto-link lookup on patient signup
+ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS email TEXT;
 CREATE INDEX IF NOT EXISTS idx_psy_patients_email ON psy_patients(email);
 
 -- Default status for new staff-created patients going forward is 'unregistered'

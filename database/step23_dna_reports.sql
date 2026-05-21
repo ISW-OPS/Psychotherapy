@@ -1,4 +1,4 @@
--- DNA Reports table
+-- DNA Reports table (idempotent)
 CREATE TABLE IF NOT EXISTS psy_dna_reports (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id      UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
@@ -11,19 +11,14 @@ CREATE TABLE IF NOT EXISTS psy_dna_reports (
   uploaded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- RLS
 ALTER TABLE psy_dna_reports ENABLE ROW LEVEL SECURITY;
 
--- Staff can read and insert all
-CREATE POLICY "staff_dna_all" ON psy_dna_reports
-  FOR ALL USING (
-    EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
-  );
+DO $$ BEGIN
+  CREATE POLICY "staff_dna_all" ON psy_dna_reports FOR ALL
+    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
--- Patient can only read their own reports
-CREATE POLICY "patient_dna_read" ON psy_dna_reports
-  FOR SELECT USING (
-    patient_id IN (
-      SELECT id FROM psy_patients WHERE user_id = auth.uid()
-    )
-  );
+DO $$ BEGIN
+  CREATE POLICY "patient_dna_read" ON psy_dna_reports FOR SELECT
+    USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
