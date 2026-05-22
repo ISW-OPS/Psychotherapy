@@ -624,44 +624,39 @@ async function savePackage() {
       updated_at: new Date().toISOString(),
     };
 
-    if (editId) {
-      await dbUpdate('psy_packages', editId, data);
-      banner('Pakej dikemaskini');
-    } else {
-      data.package_id = await generateUniquePackageId();
-      document.getElementById('f-pkg-id').value = data.package_id;
-      const { error } = await window.db.from('psy_packages').insert(data);
-      if (error) throw error;
-      banner('Pakej baru ditambah');
+    let payload = { ...data };
+    let lastErr = null;
+    let saved = false;
+    for (let attempt = 0; attempt < 10 && !saved; attempt++) {
+      try {
+        if (editId) {
+          await dbUpdate('psy_packages', editId, payload);
+        } else {
+          if (!payload.package_id) {
+            payload.package_id = await generateUniquePackageId();
+            document.getElementById('f-pkg-id').value = payload.package_id;
+          }
+          const { error } = await window.db.from('psy_packages').insert(payload);
+          if (error) throw error;
+        }
+        saved = true;
+      } catch (e) {
+        lastErr = e;
+        const m = e.message?.match(/Could not find the '([^']+)' column/);
+        if (m && m[1] in payload) { delete payload[m[1]]; continue; }
+        if (e.message?.includes('duration_unit') && 'duration_unit' in payload) {
+          delete payload.duration_unit; continue;
+        }
+        throw e;
+      }
     }
-    await auditLog(editId ? 'package.updated' : 'package.created', editId || data.package_id, { name });
+    if (!saved) throw lastErr || new Error('Gagal simpan pakej');
+    banner(editId ? 'Pakej dikemaskini' : 'Pakej baru ditambah');
+    await auditLog(editId ? 'package.updated' : 'package.created', editId || payload.package_id, { name });
     closeForm();
     loadPackages();
   } catch (err) {
-    // If duration_unit column not yet in schema cache, retry without it
-    if (err.message?.includes('duration_unit') && data) {
-      const { duration_unit, ...fallbackData } = data;
-      try {
-        if (editId) {
-          await dbUpdate('psy_packages', editId, fallbackData);
-        } else {
-          if (!fallbackData.package_id) {
-            fallbackData.package_id = await generateUniquePackageId();
-            document.getElementById('f-pkg-id').value = fallbackData.package_id;
-          }
-          const { error } = await window.db.from('psy_packages').insert(fallbackData);
-          if (error) throw error;
-        }
-        await auditLog(editId ? 'package.updated' : 'package.created', editId || fallbackData.package_id, { name });
-        banner((editId ? 'Pakej dikemaskini' : 'Pakej ditambah') + ' — sila jalankan migration SQL untuk aktifkan duration_unit');
-        closeForm();
-        loadPackages();
-      } catch (err2) {
-        banner('Ralat: ' + err2.message, 'error');
-      }
-    } else {
-      banner('Ralat: ' + err.message, 'error');
-    }
+    banner('Ralat: ' + err.message, 'error');
   } finally {
     if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Simpan Pakej'; }
   }

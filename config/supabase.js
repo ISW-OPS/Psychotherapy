@@ -23,7 +23,9 @@ async function dbInsert(table, row) {
 }
 
 async function dbUpdate(table, id, updates) {
-  const { data, error } = await window.db.from(table).update(updates).eq('id', id).select().single();
+  // maybeSingle (bukan single) — RLS kadang block SELECT-after-UPDATE walaupun UPDATE berjaya;
+  // single() akan throw "Cannot coerce" kalau 0 row, padahal data dah disimpan.
+  const { data, error } = await window.db.from(table).update(updates).eq('id', id).select().maybeSingle();
   if (error) throw error;
   return data;
 }
