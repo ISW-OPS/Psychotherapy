@@ -38,7 +38,7 @@ const NAV_GROUPS_BY_ROLE = {
       { id: 'psy_patients',     url: 'patients.html',     icon: '👥', label: 'Pesakit' },
       { id: 'kyc_forms',        url: 'kyc-list.html',     icon: '🆔', label: 'KYC & Onboarding' },
       { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Kalendar & Jadual' },
-      { id: 'kob_slots',        url: 'kob-slots.html',    icon: '⏰', label: 'Slot Klinik' },
+      { id: 'kob_slots',        url: 'kob-slots.html',    icon: '⏰', label: 'Slot Konsultasi' },
       { id: 'kepatuhan',        url: 'kepatuhan.html',    icon: '📊', label: 'Kepatuhan' },
     ]},
     { group: 'OPERASI', collapsible: true, items: [
@@ -74,7 +74,7 @@ const NAV_GROUPS_BY_ROLE = {
       { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
       { id: 'staff_stats',      url: 'staff-stats.html',  icon: '📈', label: 'Laporan Ringkas' },
     ]},
-    { group: 'OPERASI KLINIK', collapsible: true, items: [
+    { group: 'OPERASI KONSULTASI', collapsible: true, items: [
       { id: 'psy_patients', url: 'patients.html', icon: '👥', label: 'Pesakit' },
     ]},
     { group: 'INVENTORI & BEKALAN', collapsible: true, items: [
@@ -98,7 +98,7 @@ const NAV_GROUPS_BY_ROLE = {
       { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
       { id: 'plan_week',        url: 'weekly-plan.html',  icon: '📋', label: 'Weekly Plan' },
     ]},
-    { group: 'OPERASI KLINIK', collapsible: true, items: [
+    { group: 'OPERASI KONSULTASI', collapsible: true, items: [
       { id: 'assignments', url: 'assignments.html', icon: '👥', label: 'Patients' },
     ]},
     { group: 'INVENTORI & BEKALAN', collapsible: true, items: [
@@ -120,11 +120,11 @@ const NAV_GROUPS_BY_ROLE = {
       { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
       { id: 'plan_week',        url: 'weekly-plan.html',  icon: '📋', label: 'Weekly Plan' },
     ]},
-    { group: 'OPERASI KLINIK', collapsible: true, items: [
+    { group: 'OPERASI KONSULTASI', collapsible: true, items: [
       { id: 'psy_patients', url: 'patients.html',  icon: '👥', label: 'Pesakit' },
       { id: 'kyc_forms',    url: 'kyc-list.html',  icon: '🆔', label: 'KYC Form' },
       { id: 'kob_list',     url: 'kob-list.html',  icon: '🩺', label: 'Rawatan & Sesi' },
-      { id: 'kob_slots',    url: 'kob-slots.html', icon: '⏰', label: 'Slot Klinik' },
+      { id: 'kob_slots',    url: 'kob-slots.html', icon: '⏰', label: 'Slot Konsultasi' },
     ]},
     { group: 'INVENTORI & BEKALAN', collapsible: true, items: [
       { id: 'inventory',    url: 'inventory.html',    icon: '🏭', label: 'Inventori' },
