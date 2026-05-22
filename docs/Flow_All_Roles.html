@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<title>ISW — Flow Lengkap Semua Role</title>
+<style>
+  body { font-family: 'Inter', 'Segoe UI', Arial, sans-serif; max-width: 1200px; margin: 30px auto; padding: 20px; background: #fdf7ed; color: #2d2d2d; line-height: 1.6; }
+  h1 { color: #1a2848; font-size: 30px; margin-bottom: 6px; }
+  h2 { color: #1a2848; font-size: 24px; margin-top: 50px; padding: 10px 16px; background: #1a2848; color: white; border-radius: 6px; }
+  h3 { color: #1a2848; font-size: 18px; margin-top: 30px; border-bottom: 2px solid #d4c9a8; padding-bottom: 6px; }
+  .flow-block { background: #f5ede0; border: 1px solid #d4c9a8; border-left: 6px solid #1a2848; border-radius: 6px; padding: 14px 18px; margin: 12px 0; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.7; }
+  .flow-block.patient { border-left-color: #16a34a; background: #f0fdf4; }
+  .flow-block.admin { border-left-color: #7c3aed; background: #faf5ff; }
+  .flow-block.coach { border-left-color: #0ea5e9; background: #f0f9ff; }
+  .flow-block.doctor { border-left-color: #dc2626; background: #fef2f2; }
+  .flow-block.manager { border-left-color: #ca8a04; background: #fefce8; }
+  .flow-title { font-family: 'Inter', sans-serif; font-weight: 700; color: #1a2848; font-size: 14px; margin-bottom: 8px; }
+  pre { margin: 0; white-space: pre-wrap; font-size: 11.5px; }
+  .toc { background: #fff; border: 1px solid #d4c9a8; padding: 16px 24px; margin-bottom: 30px; border-radius: 8px; }
+  .toc h3 { margin-top: 0; border: none; }
+  .toc ul { margin: 0; padding-left: 22px; }
+  .toc a { color: #1a2848; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .role-header { display: inline-block; padding: 4px 12px; border-radius: 4px; color: white; font-size: 12px; font-weight: 700; margin-right: 8px; }
+  .h-patient { background: #16a34a; }
+  .h-admin { background: #7c3aed; }
+  .h-coach { background: #0ea5e9; }
+  .h-doctor { background: #dc2626; }
+  .h-manager { background: #ca8a04; }
+  .badge { font-size: 10px; padding: 2px 8px; border-radius: 4px; font-weight: 700; margin-left: 6px; vertical-align: middle; }
+  .b-done { background: #16a34a; color: white; }
+  .b-partial { background: #ca8a04; color: white; }
+  .b-pending { background: #dc2626; color: white; }
+</style>
+</head>
+<body>
+
+<h1>ISW — Flow Lengkap Semua Role</h1>
+<p style="color:#5b5b5b">Dokumentasi flow lengkap setiap modul untuk setiap role dalam sistem.</p>
+
+<div class="toc">
+  <h3>📋 Senarai Kandungan</h3>
+  <ul>
+    <li><a href="#patient"><strong>1. PATIENT</strong></a> — signup, KYC, KOB, plan, check-in, shop, dll (18 flow)</li>
+    <li><a href="#admin"><strong>2. ADMIN</strong></a> — pesakit, pakej, produk, inventori, surat, staff (15 flow)</li>
+    <li><a href="#coach"><strong>3. COACH</strong></a> — assignments, weekly plan, plan-week, nota, vitals (8 flow)</li>
+    <li><a href="#doctor"><strong>4. DOCTOR</strong></a> — KOB session, questionnaire, prescribe pakej, SOAP (7 flow)</li>
+    <li><a href="#manager"><strong>5. MANAGER</strong></a> — approvals, reports, governance, closures (6 flow)</li>
+  </ul>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<h2 id="patient">1. PATIENT FLOWS <span class="role-header h-patient">PATIENT</span></h2>
+
+<h3>A. Signup &amp; Onboarding</h3>
+
+<div class="flow-block patient">
+<div class="flow-title">1.1 Signup Akaun <span class="badge b-done">DONE</span></div>
+<pre>Patient buka login.html → tab Daftar
+  • Nama Penuh
+  • Email
+  • Password (min 6 aksara)
+  ↓
+auth.users created
+  ↓
+TRIGGER handle_new_user() fires:
+  → INSERT psy_profiles (role='patient')
+  ↓
+Email verification sent (kalau Supabase auth setup verify)
+  ↓
+Patient login → cek auto-link by email:
+  • Match staff-created record → claim + skip KYC
+  • Tiada match → mula KYC flow</pre>
+</div>
+
+<div class="flow-block patient">
+<div class="flow-title">1.2 KYC (Stage 1 KOB) <span class="badge b-done">DONE</span></div>
+<pre>Patient buka kob.html (kob_status='paid', stage='kyc')
+  ↓
+Isi borang lengkap:
+  • IC, nama, tarikh lahir, jantina
+  • Telefon, email, alamat
+  • Marital status, occupation, company
+  • Waris (nama, IC, phone, email, hubungan)
+  • Masalah kesihatan (checkbox + Lain-lain)
+  • Insurance info (optional)
+  • Upload IC + dokumen sokongan
+  • Consent: data, health records, research, marketing
+  • Tick "saya bukan wakil" (atau submitted_by_proxy=true)
+  ↓
+Submit:
+  → INSERT psy_kyc_submissions (status='approved' kalau staff-created)
+  → INSERT/UPDATE psy_patients
+  → UPDATE kob_status='kyc_done'</pre>
+</div>
+
+<div class="flow-block patient">
+<div class="flow-title">1.3 Tempah Slot KOB (Stage 2) <span class="badge b-done">DONE</span></div>
+<pre>Patient buka kob.html stage='book'
+  ↓
+Pilih mod: F2F di Klinik / Online
+  ↓
+Pilih tarikh (block Isnin & Selasa + cuti klinik)
+  ↓
+Pilih slot waktu dari psy_kob_slot_config
+  (4 slot: 8.30-10am, 10.30-12pm, 2-3.30pm, 3.30-5pm)
+  ↓
+Klik Tempah:
+  → INSERT psy_kob_sessions (status='booked')
+  → UPDATE patient kob_status='booked'
+  ↓
+Stage 'booked' tunjuk:
+  • Tarikh, masa, mod
+  • Butang Reschedule
+  • Sertai Online (kalau mode='online')</pre>
+</div>
+
+<div class="flow-block patient">
+<div class="flow-title">1.4 Hadir KOB (Stage 3) <span class="badge b-done">DONE</span></div>
+<pre>Doktor di kob-detail.html tekan "Hadir":
+  → UPDATE psy_kob_sessions status='hadir'
+  → UPDATE patient kob_status='hadir'
+  ↓
+Patient page tunjuk:
+  "Sesi KOB Sedang Berlangsung"
+  "Sila tunggu doktor selesai menilai..."
+  ↓
+[Background] Doktor isi:
+  • Questionnaire (anak, tidur, gaya hidup, masalah kesihatan)
+  • Vitals (BP, HR, BMI, dll)
+  • SOAP notes (private — patient tak nampak)</pre>
+</div>
+
+<div class="flow-block patient">
+<div class="flow-title">1.5 Pakej Disyorkan + Bayar (Stage 4) <span class="badge b-done">DONE</span></div>
+<pre>Doktor pilih pakej:
+  → UPDATE psy_kob_sessions:
+    • recommended_package_id, name, price
+    • recommended_by, recommended_at
+  → UPDATE patient kob_status='package_recommended'
+  ↓
+Patient nampak "Pakej Disyorkan":
+  • Detail pakej
+  • Harga
+  • Butang "Bayar Sekarang"
+  ↓
+Patient bayar (FPX/card/transfer/manual):
+  → INSERT psy_payments
+  → UPDATE psy_kob_sessions:
+    • package_payment_status='paid'
+    • package_paid_at, package_receipt_ref
+  → UPDATE patient kob_status='package_paid'</pre>
+</div>
+
+<div class="flow-block patient">
+<div class="flow-title">1.6 Sign Agreement (Stage 5) <span class="badge b-done">DONE</span></div>
+<pre>Patient baca agreement clauses dari pakej
+  (psy_packages.agreement_clauses JSONB)
+  ↓
+Lukis signature dalam canvas:
+  • Tick "Saya bersetuju"
+  • Draw signature
+  ↓
+Submit:
+  → Upload PNG ke storage 'kob-signatures'
+  → Generate signed PDF (pdf-lib)
+  → Upload PDF ke storage
+  → INSERT psy_kob_agreements:
+    • signature_url, signed_pdf_url
+    • patient_name, patient_ic
+    • agreement_version
+  ⛔ STATUS BERHENTI — tunggu doktor</pre>
+</div>
+
+<div class="flow-block patient">
+<div class="flow-title">1.7 Selesai (Stage 6) — Doctor Confirm <span class="badge b-done">DONE</span></div>
+<pre>Doktor tekan "Tandakan Selesai":
+  → UPDATE psy_kob_sessions status='completed'
+  → UPDATE psy_patients:
+    • kob_status='completed'
+    • active_package_id, active_package_name
+    • package_purchased_at, package_expires_at
+  → INSERT psy_package_purchases
+  → 🔥 AUTO-CIPTA psy_treatment_plans:
+    • name, duration_weeks, current_week=1
+    • bio/psycho/social/spiritual_goals dari pakej
+    • coaching_schedule dari pakej
+    • status='active'
+  ↓
+Patient page: "Tahniah! KOB selesai 🎉"
+Auto-redirect ke plan.html</pre>
+</div>
+
+<h3>B. Treatment Plan</h3>
+
+<div class="flow-block patient">
+<div class="flow-title">1.8 Setup Jadual Rawatan (Wizard) <span class="badge b-done">DONE</span></div>
+<pre>Patient buka plan.html pertama kali
+  ↓
+Detect: schedule_setup_at IS NULL → tunjuk WIZARD
+  ↓
+Wizard:
+  1. Pilih pasangan hari: Jumaat+Sabtu / Sabtu+Ahad
+  2. Pilih jam hari pertama (cth 10:00 AM)
+  3. Pilih jam hari kedua (cth 10:00 AM)
+  ↓
+Preview 3 minggu pertama
+  ↓
+Klik "Sahkan & Auto-Jadual 24 Sesi":
+  → UPDATE plan dengan preferred_pair + masa
+  → generateScheduleDates(): 12 minggu × 2 sesi
+  → INSERT 24 rows psy_plan_weekly_progress
+    (status='booked' atau 'reschedule' kalau cuti)</pre>
+</div>
+
+<div class="flow-block patient">
+<div class="flow-title">1.9 View Progress + Reschedule Sesi <span class="badge b-done">DONE</span></div>
+<pre>plan.html tunjuk 12 minggu × 2 sesi
+  ↓
+Setiap kad sesi ada:
+  • Tarikh + masa
+  • Status pill (Ditempah/Hadir/Selesai)
+  • Butang Reschedule (kalau status=booked)
+  ↓
+Klik Reschedule:
+  • Modal pilih tarikh + masa baru
+  • Validate: bukan cuti, dalam tempoh plan
+  ↓
+Sahkan:
+  → UPDATE psy_plan_weekly_progress
+    (session_date baru, status='booked')</pre>
+</div>
+
+<div class="flow-block patient">
+<div class="flow-title">1.10 Miss Sesi → Bayar Extension Week <span class="badge b-done">DONE</span></div>
+<pre>Tarikh sesi dah lepas, status masih 'booked'
+  ↓
+loadWeeklyProgress() fires autoMarkMissedAndExtend():
+  → Tanda semua missed sesi 'cancel'
+  → Group ikut minggu asal
+  → Cipta 1 extension week baru (2 sesi, day1+day2)
+    • status='extension_pending_payment'
+    • extension_price = pakej.extension_price_per_week (RM 50)
+  → Notifikasi: "Bayar RM 50 untuk lanjut"
+  ↓
+Patient klik notifikasi → payment.html
+  ↓
+Bayar:
+  → UPDATE status='extension_paid'
+  → Patient boleh tempah tarikh baru untuk extension week</pre>
+</div>
+
+<h3>C. Daily Activities</h3>
+
+<div class="flow-block patient">
+<div class="flow-title">1.11 Daily Check-in <span class="badge b-done">DONE</span></div>
+<pre>Patient buka checkin.html (sekali sehari)
+  ↓
+Isi:
+  • Mood (1-10), Energy (1-10), Sleep quality (1-10)
+  • Jam tidur
+  • Madu count (target = pakej.madu_frequency_per_day)
+  • Simptom (multi-select)
+  • Aktiviti (multi-select)
+  • Nota
+  ↓
+Save:
+  → UPSERT psy_daily_checkins (UNIQUE patient_id + checkin_date)</pre>
+</div>
+
+<div class="flow-block patient">
+<div class="flow-title">1.12 Jadual Harian (Routine) <span class="badge b-done">DONE</span></div>
+<pre>Patient buka routine.html
+  ↓
+Render psy_packages.daily_schedule (atau patient-customized)
+Cth OB schedule:
+  06:15 Zikir bersanad
+  06:30 Minum madu LTHPG
+  07:30 Minum madu LTH
+  07:45 Berjemur + terapi bumi + pernafasan
+  ... (20+ items sehari)
+  ↓
+Tick checkbox bila siap setiap item:
+  → INSERT psy_daily_completions
+    (UNIQUE patient_id + log_date + item_time)</pre>
+</div>
+
+<div class="flow-block patient">
+<div class="flow-title">1.13 Update Vitals Sendiri (Bacaan Saya) <span class="badge b-done">DONE</span></div>
+<pre>Patient buka vitals.html
+  ↓
+4 stat cards: BP, Berat, BMI, HbA1c (terkini)
+Sejarah table (sumber: Staf / Sendiri)
+  ↓
+Klik "+ Catat Bacaan Sendiri":
+  • Tarikh
+  • BP sistolik/diastolik, Nadi
+  • Berat, RBS, HbA1c
+  • Nota
+  ↓
+Save:
+  → INSERT psy_vitals
+    (source='patient_self', auto-tag plan_id + week_number)</pre>
+</div>
+
+<h3>D. Shop &amp; Orders</h3>
+
+<div class="flow-block patient">
+<div class="flow-title">1.14 Beli Produk → Order → Tracking <span class="badge b-partial">PARTIAL</span></div>
+<pre>Patient buka shop.html
+  ↓
+SELECT psy_products + JOIN inv:inventory_item_id
+  • Tunjuk visible_in_shop=true + status='active'
+  • Live stock dari psy_inventory_items.qty_in_stock
+  • Promo price kalau promo_until belum tamat
+  ↓
+Add to cart → Checkout (payment.html)
+  ↓
+INSERT psy_orders (status='pending')
+  ↓
+Bayar:
+  → INSERT psy_payments
+  → UPDATE psy_orders status='paid'
+  → 🔥 TRIGGER auto-deduct psy_inventory_items.qty_in_stock
+  ↓
+Admin di orders.html:
+  • UPDATE status='packed' → 'shipped' (tambah tracking)
+  ↓
+Patient di orders.html:
+  • Track delivery
+  • Klik "Telah Diterima" → status='delivered'
+─── Belum: auto-email invoice ───</pre>
+</div>
+
+<h3>E. Patient Tools</h3>
+
+<div class="flow-block patient">
+<div class="flow-title">1.15 Pulangan Botol Madu <span class="badge b-done">DONE</span></div>
+<pre>Patient buka pulangan.html
+  ↓
+Tick criteria (semua mesti true):
+  ☐ Tidak berkarat
+  ☐ Bersih
+  ☐ Getah ada
+  ☐ Besi kemas
+  ↓
+Upload gambar bukti (multiple)
+  ↓
+Isi qty + nota
+  ↓
+Submit:
+  → INSERT psy_bottle_returns (status='pending')
+  ↓
+Admin verify → UPDATE status='received' atau 'rejected'</pre>
+</div>
+
+<div class="flow-block patient">
+<div class="flow-title">1.16 Submit Issue (Barang Rosak/Salah) <span class="badge b-done">DONE</span></div>
+<pre>Patient buka issue.html → New Issue
+  • Title, description, category
+  • Upload gambar bukti
+  ↓
+Submit → INSERT psy_issues + audit log
+  ↓
+Admin di issue.html → reply, resolve, close</pre>
+</div>
+
+<div class="flow-block patient">
+<div class="flow-title">1.17 Request Surat Rasmi <span class="badge b-done">DONE</span></div>
+<pre>Patient buka surat.html
+  ↓
+Pilih template (KWSP/PERKESO/RELA/dll)
+  ↓
+Isi reason + field tambahan
+  ↓
+Submit:
+  → INSERT psy_letter_requests (status='pending')
+  ↓
+Admin terima → fill template → sign → generate PDF
+  → INSERT psy_letter_issued
+  ↓
+Patient terima notifikasi → download PDF</pre>
+</div>
+
+<div class="flow-block patient">
+<div class="flow-title">1.18 Upload Medical Report <span class="badge b-done">DONE</span></div>
+<pre>Patient buka medical-reports section
+  ↓
+Upload (PDF / image): X-Ray, MRI, blood test, dll
+  → Upload ke storage 'medical-reports'
+  → INSERT psy_medical_reports
+    (report_type, title, status='pending')
+  ↓
+Doktor review → UPDATE doctor_review, review_status</pre>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<h2 id="admin">2. ADMIN FLOWS <span class="role-header h-admin">ADMIN</span></h2>
+
+<h3>A. Pengurusan Pesakit</h3>
+
+<div class="flow-block admin">
+<div class="flow-title">2.1 Tambah Pesakit (3 Jenis) <span class="badge b-done">DONE</span></div>
+<pre>Admin buka patients.html → "+ Tambah Pesakit"
+  ↓
+Pilih jenis:
+  • Pesakit Baru — full KYC + KOB flow
+  • Sedang Dalam Rawatan — sudah ada pakej, migrate
+  • Pesakit Lama — rekod sejarah sahaja
+  ↓
+Isi maklumat:
+  • Nama, IC, email, telefon
+  • Alamat, status perkahwinan, occupation
+  • Waris (nama, IC, phone, email, hubungan)
+  • Masalah kesihatan
+  • Pakej (kalau ada) + tarikh mula
+  • Minggu Semasa (kalau "Sedang Dalam Rawatan")
+  ↓
+Simpan:
+  → INSERT psy_patients (created_by_staff=true)
+  → INSERT psy_package_purchases (kalau ada pakej)
+  → AUTO-CIPTA psy_treatment_plans + 12 row weekly progress
+    (kalau jenis "Sedang Dalam Rawatan")
+  → INSERT psy_kyc_submissions (kalau jenis "Baru")
+  → INSERT psy_kob_sessions (kalau check Tempah KOB sekali)
+  ↓
+Auto-link bila patient signup pakai email sama</pre>
+</div>
+
+<div class="flow-block admin">
+<div class="flow-title">2.2 Edit Pesakit / Tambah Pakej <span class="badge b-done">DONE</span></div>
+<pre>Admin buka patients.html → klik Edit ATAU
+patient-hub.html → klik "Edit Pesakit"
+  ↓
+Modal pre-fill dengan data sedia ada
+  ↓
+Ubah pakej + minggu semasa
+  ↓
+Simpan:
+  → UPDATE psy_patients
+  → INSERT psy_package_purchases (kalau pakej baru)
+  → AUTO-CIPTA psy_treatment_plans (kalau belum ada)
+  → Seed 12 row weekly progress
+  → Audit log 'plan.staff_seeded_on_edit'</pre>
+</div>
+
+<div class="flow-block admin">
+<div class="flow-title">2.3 Review KYC Submissions <span class="badge b-done">DONE</span></div>
+<pre>Admin buka kyc-list.html
+  ↓
+Senarai psy_kyc_submissions (status='pending')
+  ↓
+Klik review → kyc-review.html
+  • Tengok semua jawapan
+  • Tengok dokumen upload
+  ↓
+Aksi:
+  • Approved → UPDATE status='approved', INSERT/UPDATE psy_patients
+  • Rejected → UPDATE status='rejected' + review_notes
+  • Needs Docs → UPDATE status='needs_docs'</pre>
+</div>
+
+<h3>B. Pakej Rawatan</h3>
+
+<div class="flow-block admin">
+<div class="flow-title">2.4 Tambah / Edit Pakej Rawatan <span class="badge b-done">DONE</span></div>
+<pre>Admin buka pakej.html → "+ Tambah Pakej"
+  ↓
+Buka pakej-edit.html:
+  • Maklumat Asas: Nama, Pakej ID, Harga, Tempoh (Minggu/Hari)
+  • Sessions per week (1/2/3) + pilihan hari variant
+  • Bilangan sesi seminggu (OB=2, OBG=1, 777=daily)
+  • Tier (kategori)
+  • Gambar pakej
+  • Madu frequency per day
+  • Online lock from week
+  • Extension price per week
+  • Coaching schedule (per minggu/hari):
+    - Guidance / Bimbingan (link catalog)
+    - Aktiviti
+    - Supplies (link inventory items + kits)
+    - Mode (F2F / Online / Both)
+    - Rujukan files (upload PDF)
+  • BPS-S goals (Bio, Psycho, Social, Spiritual)
+  • Daily schedule template
+  • Agreement clauses + version
+  • Automation flags (whatsapp_weekly, reminder, dll)
+  ↓
+Simpan:
+  → INSERT/UPDATE psy_packages
+  → Audit log 'package.created' / 'package.updated'</pre>
+</div>
+
+<h3>C. Produk Shop</h3>
+
+<div class="flow-block admin">
+<div class="flow-title">2.5 Tambah / Edit Produk <span class="badge b-done">DONE</span></div>
+<pre>Admin buka products.html → "+ Tambah Produk"
+  ↓
+Buka product-edit.html:
+  • Maklumat Asas:
+    - Nama, SKU, Kategori, Jenama
+    - Status (active/inactive/draft)
+    - Penerangan ringkas + penuh
+  • Harga &amp; Jualan:
+    - Harga jualan (RM)
+    - Harga promo + tarikh tamat
+  • Stok &amp; Inventori:
+    - Stok semasa, Min stock, Unit
+    - Track inventory toggle
+    - Low stock alert toggle
+    - Link inventory_item_id (auto-deduct on order paid)
+  • Media:
+    - image_url (single primary image)
+  • Butiran:
+    - Weight/size, Supplier, Tags, Notes
+  • Visibility:
+    - visible_in_shop, featured, online_purchase
+  ↓
+Simpan:
+  → INSERT/UPDATE psy_products
+  → Audit log 'product.created' / 'product.updated'</pre>
+</div>
+
+<h3>D. Inventori</h3>
+
+<div class="flow-block admin">
+<div class="flow-title">2.6 Tambah Item Inventori <span class="badge b-done">DONE</span></div>
+<pre>Admin buka inventory.html → "+ Tambah Item"
+  ↓
+Modal:
+  • Nama item
+  • Kategori (Madu/Starter Kit/Suplemen/Buku/dll)
+  • Unit (kg, botol, naskhah, unit, set, biji)
+  • Qty in stock (initial)
+  • Min qty (alert threshold)
+  • Max qty (untuk auto-PO calculation)
+  • Auto reorder enabled (toggle)
+  • Auto reorder qty (cadangan PO)
+  • Requires approval (toggle)
+  • Consumption type (package/service/general)
+  • Supplier info (JSONB: name, cost, lead_days, po_min/max)
+  • Notes
+  ↓
+Simpan → INSERT psy_inventory_items</pre>
+</div>
+
+<div class="flow-block admin">
+<div class="flow-title">2.7 Adjust Stok Inventori <span class="badge b-done">DONE</span></div>
+<pre>Admin buka inventory.html → klik item
+  ↓
+Modal "Laras Stok":
+  • Qty masuk / keluar / set
+  • Reason / catatan
+  ↓
+Save:
+  → UPDATE psy_inventory_items.qty_in_stock
+  → Audit log 'inventory.adjust'</pre>
+</div>
+
+<div class="flow-block admin">
+<div class="flow-title">2.8 Inventory Request (Manual / Auto) <span class="badge b-done">DONE</span></div>
+<pre>Staff mohon item baru:
+  → INSERT psy_inventory_requests
+    (status='pending_approval')
+  ↓
+Admin/Manager review:
+  • Approve → UPDATE status='approved'
+  • Reject → UPDATE status='rejected' + reason
+  ↓
+Bila beli & sampai:
+  → UPDATE status='purchased'
+  → Adjust stok auto</pre>
+</div>
+
+<div class="flow-block admin">
+<div class="flow-title">2.9 Tambah Kit Prosedur <span class="badge b-done">DONE</span></div>
+<pre>Admin buka kit-prosedur.html → "+ Tambah Kit"
+  ↓
+kit-edit.html:
+  • Nama kit (cth: "IV Drip Setup")
+  • Description, category
+  • Items (multi-select dari psy_inventory_items):
+    - Per item: item_name, qty, unit
+  ↓
+Simpan → INSERT psy_procedure_kits
+  ↓
+Bila pakej guna kit dalam supplies → auto-expand
+ke semua sub-items dalam kit</pre>
+</div>
+
+<h3>E. Kalendar &amp; Slot</h3>
+
+<div class="flow-block admin">
+<div class="flow-title">2.10 Setup Slot Klinik <span class="badge b-done">DONE</span></div>
+<pre>Admin buka kob-slots.html
+  ↓
+Setup slot template per hari (Rab-Ahd):
+  • Slot type: kob / rawatan
+  • Time slots: 7-9am, 9.30-11.30am, 2-4pm, 4.30-6.30pm, dll
+  • Toggle is_active
+  ↓
+UPDATE psy_kob_slot_config
+  ↓
+Override per-date:
+  • Lock / unlock specific slot for specific date
+  → INSERT psy_slot_date_overrides</pre>
+</div>
+
+<div class="flow-block admin">
+<div class="flow-title">2.11 Tambah Cuti Klinik <span class="badge b-done">DONE</span></div>
+<pre>Admin buka closures.html → "+ Tambah Cuti"
+  ↓
+Modal:
+  • Tarikh cuti
+  • Label (cth: "Hari Raya Aidilfitri")
+  • Category (public_holiday/hari_raya/clinic_closed/training)
+  • Recurring (annual) toggle
+  • Notes
+  ↓
+Simpan → INSERT psy_clinic_closures
+  ↓
+Booking auto-block tarikh ni</pre>
+</div>
+
+<h3>F. Komunikasi &amp; Kandungan</h3>
+
+<div class="flow-block admin">
+<div class="flow-title">2.12 Tambah Pengumuman <span class="badge b-done">DONE</span></div>
+<pre>Admin buka announcements.html → "+ Tambah"
+  ↓
+Modal:
+  • Title, body
+  • Tag (Promosi/Kelas/Challenge/dll)
+  • Background gradient
+  • CTA label + URL
+  • Tempoh aktif (starts_at / ends_at)
+  ↓
+INSERT psy_announcements
+  ↓
+Patient dashboard tunjuk announcement aktif</pre>
+</div>
+
+<div class="flow-block admin">
+<div class="flow-title">2.13 Tambah Library Item (Self-Help) <span class="badge b-done">DONE</span></div>
+<pre>Admin buka library.html → "+ Tambah"
+  ↓
+library-edit.html:
+  • Title, description, content body
+  • Content type (Video/Article/Audio/Worksheet)
+  • Content URL (link) atau upload
+  • Thumbnail
+  • Category, icon, gradient
+  • Package filter (psy_packages.package_id array)
+    - Empty = public, ada = restricted
+  ↓
+INSERT psy_library_items
+  ↓
+Patient library.html paparkan yang accessible</pre>
+</div>
+
+<div class="flow-block admin">
+<div class="flow-title">2.14 Manage Templates Surat <span class="badge b-done">DONE</span></div>
+<pre>Admin buka surat.html → "Templates"
+  ↓
+List 7 template hardcoded (KWSP, PERKESO, RELA, dll)
+  ↓
+Boleh override template:
+  • Edit body HTML
+  • Edit fields (key, label, type, autofill)
+  → INSERT/UPDATE psy_letter_template_overrides
+  ↓
+Manage Auto-Fields:
+  • Key (cth [BMI])
+  • Label, Source (patient/staff/system)
+  • Data path (column name)
+  → INSERT psy_letter_auto_fields</pre>
+</div>
+
+<div class="flow-block admin">
+<div class="flow-title">2.15 Generate Surat untuk Pesakit <span class="badge b-done">DONE</span></div>
+<pre>Admin buka patient-hub → klik "Generate Surat"
+ATAU buka surat-issue.html
+  ↓
+Pilih template + patient
+  ↓
+Field auto-fill dari psy_letter_auto_fields:
+  • [NAMA], [IC], [ALAMAT], [PAKEJ], dll
+  ↓
+Isi field manual (kalau ada)
+  ↓
+Preview HTML → klik Sign
+  ↓
+Generate PDF (pdf-lib):
+  → INSERT psy_letter_issued
+    (signed_by, ref_number, file_url)
+  ↓
+Patient terima notifikasi → download PDF</pre>
+</div>
+
+<h3>G. Staff &amp; Sistem</h3>
+
+<div class="flow-block admin">
+<div class="flow-title">2.16 Manage Staff (Add/Edit/Delete) <span class="badge b-done">DONE</span></div>
+<pre>Admin buka staff_management.html
+  ↓
+List psy_profiles (role='staff')
+  ↓
+"+ Tambah Staff":
+  • Staff ID (registration_no)
+  • Nama, Email
+  • Pilihan: Email invite ATAU Set password
+  • Staff role (admin/doctor/coach/manager)
+  ↓
+Edge function 'invite-staff' fires:
+  → Cipta auth.users
+  → INSERT psy_profiles (role='staff', staff_role)
+  ↓
+Edit staff → staff-detail.html
+Delete → edge function 'invite-staff' delete action</pre>
+</div>
+
+<div class="flow-block admin">
+<div class="flow-title">2.17 View Reports &amp; Audit <span class="badge b-done">DONE</span></div>
+<pre>Pages tersedia:
+  • governance.html — overall KPI
+  • staff-stats.html — staff performance
+  • pakej-laporan.html — pakej analytics
+  • audit.html — semua activity log
+    (dengan UUID → nama resolver)
+  ↓
+Filter ikut tempoh, jenis tindakan, modul, pengguna
+Export CSV / Excel / Print</pre>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<h2 id="coach">3. COACH FLOWS <span class="role-header h-coach">COACH</span></h2>
+
+<div class="flow-block coach">
+<div class="flow-title">3.1 Login → Dashboard Coach <span class="badge b-done">DONE</span></div>
+<pre>Coach login → dashboard.html
+  ↓
+View:
+  • Pesakit Di Bawah Coach (caseload count)
+  • Check-in 7 Hari (% caseload)
+  • Low Compliance count
+  • Sesi Hari Ini
+  • Reaksi Pemulihan (greyed — modul belum)
+  ↓
+Sections:
+  • Pesakit Saya (table dengan link patient hub)
+  • Jadual Mingguan (sesi minggu ni)
+  • Pesakit Perlu Tindakan Segera (greyed — tunggu Izzah)
+  • Trend Kepatuhan (greyed — tunggu Izzah)
+  • Sesi 1:1 Hakeema (greyed — modul belum)
+  • Quick Actions (greyed — no messaging yet)</pre>
+</div>
+
+<div class="flow-block coach">
+<div class="flow-title">3.2 Senarai Patients (Assignments) <span class="badge b-done">DONE</span></div>
+<pre>Coach buka assignments.html ("Patients")
+  ↓
+3 tab:
+  • Belum Ditugaskan — pesakit tanpa coach
+  • Semua Pesakit — semua dalam sistem
+  • Pesakit Saya — coach_id = me
+  ↓
+Filter: status, pakej, outcome, signup
+  ↓
+Aksi per row:
+  • "Assign to me" — UPDATE coach_id=me
+  • "Lihat" → patient-hub.html
+  • "Unassign" — coach sendiri / admin
+  ↓
+KYC pending → package & risk columns "Menunggu KYC"</pre>
+</div>
+
+<div class="flow-block coach">
+<div class="flow-title">3.3 Open Patient Hub <span class="badge b-done">DONE</span></div>
+<pre>Coach klik "Lihat" / Details
+  ↓
+patient-hub.html buka — 7 tab:
+  • Overview — stats, Progress Mingguan, Pakej Aktif
+  • Check-in — daily check-in history
+  • Vitals — BP/HR/BMI history + record new
+  • Sesi — coaching sessions
+  • Bekalan — supplies status
+  • Laporan — medical reports
+  • Profil & Dokumen — KYC, IC, dll
+  ↓
+Edit nota per minggu:
+  • Klik kad minggu di Progress Mingguan
+  → buka plan-week.html?plan_id=X&week=N</pre>
+</div>
+
+<div class="flow-block coach">
+<div class="flow-title">3.4 Edit Plan Week (Nota Coach) <span class="badge b-done">DONE</span></div>
+<pre>plan-week.html buka untuk minggu N
+  ↓
+Edit:
+  • Status kehadiran (Hadir / Reschedule / Tidak Hadir)
+  • Tarikh & masa sesi
+  • Score (0-10)
+  • Nota minggu ini
+  • Kepatuhan Rawatan (madu, nafas, terapi bumi, dll)
+  • Coaching checklist (guidance + supplies)
+  ↓
+Auto-save:
+  → UPDATE psy_plan_weekly_progress
+  → UPDATE psy_plan_compliance
+  ↓
+Hadir → 🔥 Auto-deduct supplies dari inventory</pre>
+</div>
+
+<div class="flow-block coach">
+<div class="flow-title">3.5 Record Vitals (Patient Hub) <span class="badge b-done">DONE</span></div>
+<pre>Patient hub → tab Vitals → "+ Rekod Vitals Baru"
+  ↓
+Modal:
+  • BP sistolik/diastolik, HR
+  • Berat, tinggi, suhu
+  • RBS, HbA1c
+  • PHQ2 score (optional)
+  • Nota
+  ↓
+Save:
+  → INSERT psy_vitals
+    (source='staff', auto-tag plan_id + week_number)</pre>
+</div>
+
+<div class="flow-block coach">
+<div class="flow-title">3.6 Weekly Plan Calendar (Coach View) <span class="badge b-done">DONE</span></div>
+<pre>Coach buka weekly-plan.html
+  ↓
+Hero: profil coach + caseload count
+  ↓
+Stats: Sesi Dirancang / Disahkan / Menunggu / Dibatalkan
+  ↓
+Grid 7-hari (Isn-Ahd):
+  • Card sesi per hari dengan:
+    - Time + nama pesakit + Minggu N
+    - Status pill
+    - Source icon (📋 plan / 📅 appt / 🎯 coaching)
+  ↓
+Toggle Minggu/Hari view
+Toggle Saya / Semua scope
+Filter Status</pre>
+</div>
+
+<div class="flow-block coach">
+<div class="flow-title">3.7 Manage Bottle Returns <span class="badge b-done">DONE</span></div>
+<pre>Coach/Admin buka pulangan.html
+  ↓
+List psy_bottle_returns (status='pending')
+  ↓
+Review:
+  • Tengok gambar bukti
+  • Tengok criteria_confirmed
+  ↓
+Aksi:
+  • Received → UPDATE status='received'
+  • Rejected → UPDATE status='rejected' + reason</pre>
+</div>
+
+<div class="flow-block coach">
+<div class="flow-title">3.8 Manage Inventory (Read + Request) <span class="badge b-done">DONE</span></div>
+<pre>Coach buka inventory.html
+  ↓
+Read-only view:
+  • Senarai item + stok semasa
+  • Stok rendah highlighted
+  ↓
+"+ Request Item":
+  → INSERT psy_inventory_requests (status='pending_approval')
+  ↓
+Tunggu Admin/Manager approve</pre>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<h2 id="doctor">4. DOCTOR FLOWS <span class="role-header h-doctor">DOCTOR</span></h2>
+
+<div class="flow-block doctor">
+<div class="flow-title">4.1 KOB List → Pick Session <span class="badge b-done">DONE</span></div>
+<pre>Doctor buka kob-list.html
+  ↓
+List psy_kob_sessions:
+  • Sort by scheduled_at
+  • Filter by status (booked/hadir/completed/dll)
+  ↓
+Klik session → kob-detail.html?id=X</pre>
+</div>
+
+<div class="flow-block doctor">
+<div class="flow-title">4.2 KOB Detail — Mark Hadir <span class="badge b-done">DONE</span></div>
+<pre>kob-detail.html buka untuk sesi
+  ↓
+Tunjuk:
+  • Patient info (nama, IC, contact)
+  • Scheduled at, mode
+  • Status semasa
+  ↓
+Klik "Hadir":
+  → UPDATE status='hadir'
+  → doctor_hadir_id, hadir_at
+  → UPDATE patient kob_status='hadir'</pre>
+</div>
+
+<div class="flow-block doctor">
+<div class="flow-title">4.3 Fill Questionnaire <span class="badge b-done">DONE</span></div>
+<pre>Questionnaire JSONB structure:
+  • Anak (bilangan, umur)
+  • Tidur (jam, kualiti)
+  • Gaya hidup (senaman, makan, dll)
+  • Masalah kesihatan detail
+  ↓
+Save → UPDATE psy_kob_sessions.questionnaire
+  → Audit log 'kob.questionnaire_saved'</pre>
+</div>
+
+<div class="flow-block doctor">
+<div class="flow-title">4.4 Record Vitals (KOB) <span class="badge b-done">DONE</span></div>
+<pre>Dalam kob-detail.html, section Vitals
+  ↓
+Isi BP, HR, BMI, weight, height, dll
+  ↓
+Save → INSERT psy_vitals (source='staff')</pre>
+</div>
+
+<div class="flow-block doctor">
+<div class="flow-title">4.5 Add SOAP Notes (Private) <span class="badge b-done">DONE</span></div>
+<pre>consultation.html — doctor isi SOAP:
+  • Subjective (apa patient cakap)
+  • Objective (apa doctor nampak)
+  • Assessment (diagnosis)
+  • Plan (action plan)
+  ↓
+Save → INSERT psy_soap_notes
+  • Patient TAK NAMPAK (RLS staff only)</pre>
+</div>
+
+<div class="flow-block doctor">
+<div class="flow-title">4.6 Recommend Pakej + Mark Selesai <span class="badge b-done">DONE</span></div>
+<pre>kob-detail.html → "Cadang Pakej":
+  ↓
+Pilih dari psy_packages
+  → UPDATE psy_kob_sessions:
+    • recommended_package_id, name, price
+    • recommended_by, recommended_at
+  → UPDATE patient kob_status='package_recommended'
+  ↓
+Patient bayar (via payment.html)
+  → UPDATE package_payment_status='paid'
+  ↓
+Patient sign agreement
+  → INSERT psy_kob_agreements
+  ↓
+Doctor klik "Tandakan Selesai":
+  → UPDATE status='completed'
+  → 🔥 Activate patient pakej (lihat 1.7)</pre>
+</div>
+
+<div class="flow-block doctor">
+<div class="flow-title">4.7 Upload Medical Report <span class="badge b-done">DONE</span></div>
+<pre>patient-hub → Laporan tab → "+ Upload"
+  ↓
+File picker (PDF/image)
+  • Pilih report_type (dna/xray/ct/mri/blood/dll)
+  • Title, summary, sample_date
+  • Categories (JSONB key-value)
+  ↓
+Upload ke storage 'medical-reports'
+  → INSERT psy_medical_reports
+  ↓
+Toggle "Share with patient" → patient nampak</pre>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<h2 id="manager">5. MANAGER FLOWS <span class="role-header h-manager">MANAGER</span></h2>
+
+<div class="flow-block manager">
+<div class="flow-title">5.1 Dashboard Manager <span class="badge b-done">DONE</span></div>
+<pre>Manager dashboard tunjuk:
+  • Pesakit Aktif (count)
+  • Sesi Tertunggak
+  • Stok Rendah (count)
+  • Pesanan Menunggu
+  • Trend mingguan
+  ↓
+Quick links ke staff-stats, governance</pre>
+</div>
+
+<div class="flow-block manager">
+<div class="flow-title">5.2 Approve Inventory Requests <span class="badge b-done">DONE</span></div>
+<pre>Manager buka inventory.html → tab "Requests"
+  ↓
+List psy_inventory_requests (status='pending_approval')
+  ↓
+Aksi:
+  • Approve → UPDATE status='approved', approved_by, approved_at
+  • Reject → UPDATE status='rejected', rejected_reason
+  ↓
+Bila purchasing siap beli:
+  • UPDATE status='purchased', purchased_at</pre>
+</div>
+
+<div class="flow-block manager">
+<div class="flow-title">5.3 Manage Closures Klinik <span class="badge b-done">DONE</span></div>
+<pre>Manager buka closures.html
+  ↓
+Same as Admin 2.11
+  ↓
+Lock tarikh-tarikh tertentu — booking auto-block</pre>
+</div>
+
+<div class="flow-block manager">
+<div class="flow-title">5.4 View Staff Stats <span class="badge b-done">DONE</span></div>
+<pre>Manager buka staff-stats.html
+  ↓
+Tunjuk per-staff:
+  • Sesi handle (count)
+  • Patient assigned
+  • Compliance rate
+  ↓
+Filter by tempoh, role</pre>
+</div>
+
+<div class="flow-block manager">
+<div class="flow-title">5.5 Payment Admin <span class="badge b-done">DONE</span></div>
+<pre>Manager buka payment-admin.html
+  ↓
+List psy_payments + psy_orders
+  ↓
+Filter by status, tempoh
+  ↓
+Export reconciliation report</pre>
+</div>
+
+<div class="flow-block manager">
+<div class="flow-title">5.6 Process Orders <span class="badge b-done">DONE</span></div>
+<pre>Manager buka orders.html
+  ↓
+List psy_orders by status:
+  • Pending → Paid → Packed → Shipped → Delivered
+  ↓
+Aksi:
+  • Mark packed → status='packed', packed_at
+  • Add tracking → status='shipped', tracking_number, photo
+  ↓
+Patient confirm delivery → status='delivered'</pre>
+</div>
+
+<p style="text-align:center; color:#6b7280; margin-top:50px; padding-top:20px; border-top:1px solid #d4c9a8;">
+  <strong>End of Flow Documentation</strong><br>
+  ISW System — 22 Mei 2026
+</p>
+
+</body>
+</html>

@@ -45,7 +45,6 @@ const NAV_GROUPS_BY_ROLE = {
       { id: 'pakej',         url: 'pakej.html',         icon: '🗂️', label: 'Pakej Rawatan' },
       { id: 'psy_products',  url: 'products.html',      icon: '🛍️', label: 'Produk' },
       { id: 'inventory',     url: 'inventory.html',     icon: '🏭', label: 'Inventori' },
-      { id: 'kit_prosedur',  url: 'kit-prosedur.html',  icon: '🧰', label: 'Kit Prosedur' },
       { id: 'psy_orders',    url: 'orders.html',        icon: '📦', label: 'Orders & Tracking' },
       { id: 'surat',         url: 'surat.html',         icon: '📜', label: 'Surat Rasmi' },
     ]},
@@ -80,7 +79,6 @@ const NAV_GROUPS_BY_ROLE = {
     ]},
     { group: 'INVENTORI & BEKALAN', collapsible: true, items: [
       { id: 'inventory',    url: 'inventory.html',    icon: '🏭', label: 'Inventori' },
-      { id: 'kit_prosedur', url: 'kit-prosedur.html', icon: '🧰', label: 'Kit Prosedur' },
       { id: 'psy_orders',   url: 'orders.html',       icon: '📦', label: 'Pesanan & Bekalan' },
       { id: 'pulangan',     url: 'pulangan.html',     icon: '🍯', label: 'Pulangan Botol' },
     ]},
@@ -105,7 +103,6 @@ const NAV_GROUPS_BY_ROLE = {
     ]},
     { group: 'INVENTORI & BEKALAN', collapsible: true, items: [
       { id: 'inventory',    url: 'inventory.html',    icon: '🏭', label: 'Inventori' },
-      { id: 'kit_prosedur', url: 'kit-prosedur.html', icon: '🧰', label: 'Kit Prosedur' },
       { id: 'pulangan',     url: 'pulangan.html',     icon: '🍯', label: 'Pulangan Botol' },
     ]},
     { group: 'KANDUNGAN', collapsible: true, items: [
@@ -131,7 +128,6 @@ const NAV_GROUPS_BY_ROLE = {
     ]},
     { group: 'INVENTORI & BEKALAN', collapsible: true, items: [
       { id: 'inventory',    url: 'inventory.html',    icon: '🏭', label: 'Inventori' },
-      { id: 'kit_prosedur', url: 'kit-prosedur.html', icon: '🧰', label: 'Kit Prosedur' },
     ]},
     { group: 'KANDUNGAN', collapsible: true, items: [
       { id: 'library',       url: 'library.html',       icon: '📖', label: 'Self-Help Library' },

@@ -419,6 +419,7 @@
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
 <script src="../../shared/utils.js"></script>
+<script src="../../shared/defaultAgreement.js"></script>
 <script src="_shared.js"></script>
 <script>
 let selectedMode = 'f2f';
@@ -707,15 +708,28 @@ let saAgreementData = { title: 'Kontrak Pelaburan Kesihatan', version: '', claus
 let saCanvas = null, saCtx = null, saHasDrawn = false;
 
 async function loadAgreementData() {
+  const def = window.DEFAULT_AGREEMENT || { title: 'Kontrak Pelaburan Kesihatan', version: '', clauses: [] };
+  // Pre-fill default supaya kalau pkg lookup gagal pun, patient masih ada klausa
+  saAgreementData.title   = def.title;
+  saAgreementData.version = def.version;
+  saAgreementData.clauses = def.clauses;
   if (!currentKob?.recommended_package_id) return;
   const { data } = await window.db.from('psy_packages')
     .select('*').eq('package_id', currentKob.recommended_package_id).limit(1);
   const pkg = data?.[0];
   if (pkg) {
     saAgreementData.pkg = pkg;
-    saAgreementData.title = pkg.agreement_title || 'Kontrak Pelaburan Kesihatan';
-    saAgreementData.version = pkg.agreement_version || '';
-    saAgreementData.clauses = Array.isArray(pkg.agreement_clauses) ? pkg.agreement_clauses : [];
+    const pkgClauses = Array.isArray(pkg.agreement_clauses) ? pkg.agreement_clauses : [];
+    // Override default hanya kalau pakej ada clauses sendiri
+    if (pkgClauses.length) {
+      saAgreementData.clauses = pkgClauses;
+      saAgreementData.title   = pkg.agreement_title   || def.title;
+      saAgreementData.version = pkg.agreement_version || def.version;
+    } else {
+      // Pakej tak ada clauses — kekal default, tapi title/version masih boleh override
+      saAgreementData.title   = pkg.agreement_title   || def.title;
+      saAgreementData.version = pkg.agreement_version || def.version;
+    }
   }
 }
 
@@ -934,7 +948,11 @@ async function generateSignedPdf(opts) {
   page.drawLine({ start: { x: MARGIN_X, y }, end: { x: PAGE_W - MARGIN_X, y }, thickness: 0.5, color: MUTED });
   y -= 20;
   const maxW = PAGE_W - MARGIN_X * 2;
-  for (const c of opts.clauses || []) {
+  // Safety fallback: kalau opts.clauses kosong, guna default supaya PDF tak kosong
+  const clausesToRender = (opts.clauses && opts.clauses.length)
+    ? opts.clauses
+    : (window.DEFAULT_AGREEMENT?.clauses || []);
+  for (const c of clausesToRender) {
     const titleLines = wrap(sanitize(fill(c.title || '')), maxW, fontBold, 11);
     const bodyLines = sanitize(fill(c.body || '')).split(/\n+/).flatMap(p => wrap(p, maxW, font, 10));
     need(titleLines.length * 15 + bodyLines.length * LINE_H + 14);

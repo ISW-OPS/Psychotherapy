@@ -61,7 +61,8 @@
             </div>
             <div>
               <label class="text-[10px] font-bold text-ink/45 uppercase tracking-wider">Package ID</label>
-              <input id="f-pkg-id" class="w-full mt-0.5 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-ink/5 text-ink/50 font-mono" readonly>
+              <input id="f-pkg-id" class="w-full mt-0.5 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-navy font-mono" placeholder="cth: pkg-obp1">
+              <p class="text-[10px] text-ink/40 mt-1">ID unik untuk pakej ni. Boleh edit — pastikan unik.</p>
             </div>
             <div class="sm:col-span-2">
               <label class="text-[10px] font-bold text-ink/45 uppercase tracking-wider">Penerangan Ringkas</label>
@@ -208,8 +209,15 @@
                   <h3 class="font-bold text-sm text-ink flex items-center gap-2"><span class="w-6 h-6 rounded-md bg-green-100 text-green-700 text-xs font-bold flex items-center justify-center">4</span> Kontrak Pakej</h3>
                   <p class="text-[10px] text-ink/45 mt-0.5">Patient akan baca + sign borang ini selepas bayar. Variables: <code class="bg-cream px-1 rounded text-[10px]">{{patient_name}}</code>, <code class="bg-cream px-1 rounded text-[10px]">{{patient_ic}}</code>, <code class="bg-cream px-1 rounded text-[10px]">{{package_name}}</code>, <code class="bg-cream px-1 rounded text-[10px]">{{price}}</code>, <code class="bg-cream px-1 rounded text-[10px]">{{today}}</code></p>
                 </div>
-                <button type="button" onclick="addClause()" class="bg-navy text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-navy-dark whitespace-nowrap">+ Tambah Klausa</button>
+                <div class="flex items-center gap-2 flex-wrap">
+                  <label class="text-xs font-semibold text-navy border border-navy/30 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-navy hover:text-white transition-colors whitespace-nowrap">
+                    📄 Auto-fill dari PDF
+                    <input type="file" id="f-agreement-pdf-extract" accept="application/pdf" class="hidden" onchange="extractClausesFromPdf(this)">
+                  </label>
+                  <button type="button" onclick="addClause()" class="bg-navy text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-navy-dark whitespace-nowrap">+ Tambah Klausa</button>
+                </div>
               </div>
+              <p id="f-extract-status" class="text-[11px] text-ink/50 italic hidden"></p>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
                   <label class="text-xs font-semibold text-ink/70">Tajuk Kontrak</label>
@@ -324,6 +332,14 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
+<script src="../../shared/defaultAgreement.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script>
+  if (window.pdfjsLib) {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+  }
+</script>
 <script src="_shared.js"></script>
 <script>
 function toArray(text) { return text.split('\n').map(s => s.trim()).filter(Boolean); }
@@ -1045,6 +1061,112 @@ function renderClauses(clauses) {
   `).join('');
 }
 
+// ── Auto-extract clauses dari PDF ─────────────────────────
+async function extractClausesFromPdf(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  const statusEl = document.getElementById('f-extract-status');
+  const setStatus = (text, cls = 'text-ink/55') => {
+    statusEl.className = 'text-[11px] italic ' + cls;
+    statusEl.textContent = text;
+    statusEl.classList.remove('hidden');
+  };
+  if (!file.name.toLowerCase().endsWith('.pdf')) { setStatus('❌ Hanya fail PDF dibenarkan', 'text-terracotta'); return; }
+  if (file.size > 10 * 1024 * 1024) { setStatus('❌ PDF terlalu besar (max 10MB)', 'text-terracotta'); return; }
+  if (!window.pdfjsLib) { setStatus('❌ PDF.js belum loaded', 'text-terracotta'); return; }
+  const existing = collectClauses();
+  if (existing.length && !confirm(`Ada ${existing.length} klausa sedia ada. Buang dan ganti dengan klausa dari PDF ini?`)) {
+    input.value = '';
+    return;
+  }
+  setStatus('⏳ Membaca PDF...');
+  try {
+    const buf = await file.arrayBuffer();
+    const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
+    // Kumpul teks per page, asingkan setiap item dengan newline kalau item akhir page berbeza y
+    let fullText = '';
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      let lastY = null;
+      for (const it of content.items) {
+        const y = it.transform?.[5];
+        if (lastY !== null && Math.abs(y - lastY) > 2) fullText += '\n';
+        fullText += it.str;
+        lastY = y;
+      }
+      fullText += '\n';
+    }
+    // Bersihkan header/footer berulang (cth: "ISW.SOP OB KOB FORM 03 250711", "Nama:", "No H/P:", "INITIAL:")
+    fullText = fullText
+      .replace(/^\s*OB['']?\d.*$/gm, '')
+      .replace(/^\s*Nama:\s*Enter value\s*$/gm, '')
+      .replace(/^\s*No\s*H\/P:\s*Enter value\s*$/gm, '')
+      .replace(/^\s*INITIAL:.*$/gm, '')
+      .replace(/^\s*Signature\s*$/gim, '')
+      .replace(/^\s*ISW\.?SOP.*$/gm, '')
+      .replace(/^\s*View Document\s*$/gm, '')
+      .replace(/^\s*\d+\/\d+\s*$/gm, '') // page number "1/6"
+      .replace(/^\s*Tandatangan.*$/gm, '')
+      .replace(/^\s*Enter value\s*$/gm, '')
+      .replace(/^\s*Select date\s*$/gm, '')
+      .replace(/^\s*No\.\s*I\.C\..*$/gm, '')
+      .replace(/^\s*Tarikh\s*:?.*$/gm, '')
+      .replace(/^\s*$/gm, '')
+      .replace(/\n{3,}/g, '\n\n');
+    // Cari "Kontrak Pelaburan Kesihatan" — anggap ini tajuk, ambil teks selepasnya
+    const titleIdx = fullText.search(/Kontrak Pelaburan Kesihatan/i);
+    if (titleIdx >= 0) {
+      const after = fullText.slice(titleIdx).split(/\n/);
+      after.shift();
+      fullText = after.join('\n');
+      // Auto-set tajuk kalau kosong
+      const titleEl = document.getElementById('f-agreement-title');
+      if (titleEl && !titleEl.value.trim()) titleEl.value = 'Kontrak Pelaburan Kesihatan';
+    }
+    // Parse: setiap item bermula dengan "N." atau "N.M." di awal baris
+    const lines = fullText.split('\n');
+    const clauses = [];
+    let cur = null;
+    const numRe = /^\s*(\d+)\.\s+(.+)$/;
+    const subRe = /^\s*(\d+)\.(\d+)\.\s+(.+)$/;
+    for (let raw of lines) {
+      const line = raw.trim();
+      if (!line) { if (cur) cur.body += '\n'; continue; }
+      const sub = line.match(subRe);
+      const main = !sub && line.match(numRe);
+      if (main) {
+        if (cur) clauses.push(cur);
+        const n = main[1], rest = main[2];
+        // Title = first short phrase before period/comma, atau guna nombor + first 50 chars
+        let titleHint = rest.split(/[.:]/)[0].slice(0, 60).trim();
+        if (titleHint.length < 8) titleHint = rest.slice(0, 60).trim();
+        cur = { title: `${n}. ${titleHint}`, body: rest };
+      } else if (sub && cur) {
+        cur.body += '\n\n' + line;
+      } else if (cur) {
+        cur.body += (cur.body.endsWith('\n') ? '' : ' ') + line;
+      }
+    }
+    if (cur) clauses.push(cur);
+    // Bersihkan body
+    clauses.forEach(c => { c.body = c.body.trim().replace(/\s+\n/g, '\n').replace(/\n /g, '\n'); });
+    if (!clauses.length) {
+      setStatus('❌ Tiada klausa dijumpai. Pastikan format PDF guna penomboran "1.", "2.", dst.', 'text-terracotta');
+      input.value = '';
+      return;
+    }
+    renderClauses(clauses);
+    saveDraftDebounced?.();
+    setStatus(`✅ ${clauses.length} klausa di-extract — sila semak & edit jika perlu`, 'text-green-dark');
+  } catch (e) {
+    console.error(e);
+    setStatus('❌ Ralat baca PDF: ' + e.message, 'text-terracotta');
+  } finally {
+    input.value = '';
+  }
+}
+
 function collectClauses() {
   const rows = document.querySelectorAll('#f-clauses-list [data-clause-idx]');
   return Array.from(rows).map(r => ({
@@ -1256,10 +1378,13 @@ function populateForm(pkg) {
   dailySchedule = Array.isArray(pkg?.daily_schedule) ? pkg.daily_schedule.map(x => ({ ...x })) : [];
   renderDailySchedule();
 
-  // Agreement clauses
-  document.getElementById('f-agreement-title').value = pkg?.agreement_title || 'Kontrak Pelaburan Kesihatan';
-  document.getElementById('f-agreement-version').value = pkg?.agreement_version || '';
-  renderClauses(Array.isArray(pkg?.agreement_clauses) ? pkg.agreement_clauses : []);
+  // Agreement clauses — fallback ke default kalau pakej tak ada
+  const _def = window.DEFAULT_AGREEMENT || { title: 'Kontrak Pelaburan Kesihatan', version: '', clauses: [] };
+  const _pkgClauses = Array.isArray(pkg?.agreement_clauses) ? pkg.agreement_clauses : [];
+  const _useDefault = _pkgClauses.length === 0;
+  document.getElementById('f-agreement-title').value   = pkg?.agreement_title   || _def.title;
+  document.getElementById('f-agreement-version').value = pkg?.agreement_version || (_useDefault ? _def.version : '');
+  renderClauses(_useDefault ? _def.clauses : _pkgClauses);
   document.getElementById('f-sched-type').value = pkg?.schedule?.type || '';
   document.getElementById('f-sched-val').value  = pkg?.schedule?.value || 1;
   document.getElementById('f-meet-link').value  = pkg?.meet_link || '';
@@ -1412,20 +1537,27 @@ function syncHeader() {
   chip.textContent = m.label;
 }
 
+const DEFAULT_AGREEMENT_URL = '/Agreement/agreement.pdf';
+
 async function renderAgreementStatus() {
-  const filename = document.getElementById('f-agreement-pdf').value;
+  const filename = document.getElementById('f-agreement-pdf')?.value;
   const statusEl = document.getElementById('f-agreement-status');
   const previewEl = document.getElementById('f-agreement-preview');
   const removeBtn = document.getElementById('btn-remove-agreement');
+  // Markup upload-PDF dah dibuang dari borang — function ini jadi no-op kalau elemen takda
+  if (!statusEl || !previewEl || !removeBtn) return;
   if (!filename) {
     statusEl.textContent = 'Belum upload · akan guna agreement default';
     statusEl.className = 'text-[11px] text-ink/50 italic';
-    previewEl.classList.add('hidden');
+    previewEl.href = DEFAULT_AGREEMENT_URL;
+    previewEl.textContent = '📄 Lihat default agreement';
+    previewEl.classList.remove('hidden');
     removeBtn.classList.add('hidden');
     return;
   }
   statusEl.textContent = '✓ ' + filename;
   statusEl.className = 'text-[11px] text-green-dark font-semibold';
+  previewEl.textContent = '📄 Preview PDF';
   // Try create signed URL for preview
   try {
     const { data } = await window.db.storage.from('agreement-templates').createSignedUrl(filename, 3600);
@@ -1497,11 +1629,26 @@ async function savePackage() {
   const btn = document.getElementById('btn-save');
   btn.disabled = true; btn.textContent = 'Menyimpan...';
 
+  // Validate package_id uniqueness kalau staff dah isi
+  const customPkgId = document.getElementById('f-pkg-id').value.trim();
+  if (customPkgId) {
+    const { data: dup } = await window.db.from('psy_packages')
+      .select('id, package_id').eq('package_id', customPkgId);
+    const clash = (dup || []).find(r => r.id !== editId);
+    if (clash) {
+      banner(`Package ID "${customPkgId}" dah digunakan oleh pakej lain — pilih yang lain`, 'error');
+      btn.disabled = false; btn.textContent = 'Simpan Pakej';
+      return;
+    }
+  }
+
   let data = null;
   try {
     const imageUrl = document.getElementById('f-image-url').value || null;
     data = {
       name,
+      // Hanya include package_id kalau staff isi — kosong = jangan ubah (UPDATE) / auto-generate (INSERT)
+      ...(customPkgId ? { package_id: customPkgId } : {}),
       description: document.getElementById('f-desc').value.trim(),
       price: parseFloat(document.getElementById('f-price').value) || 0,
       duration_unit: durationUnit,
@@ -1634,6 +1781,13 @@ async function savePackage() {
     renderCoachingScheduleEditor();
     renderSessionDaysEditor();
     toggleSessionsBlock();
+    // Auto-prefill default agreement untuk pakej baru — staff boleh edit/buang nanti
+    const _def = window.DEFAULT_AGREEMENT;
+    if (_def) {
+      document.getElementById('f-agreement-title').value   = _def.title || 'Kontrak Pelaburan Kesihatan';
+      document.getElementById('f-agreement-version').value = _def.version || '';
+      renderClauses(_def.clauses || []);
+    }
   }
 
   // Restore draft if exists (always overlay over loaded/blank form)
