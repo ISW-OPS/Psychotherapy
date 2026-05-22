@@ -593,10 +593,13 @@ function getReorderTarget(item) {
 }
 
 // ── Auto-PO Check ──────────────────────────────────────────
-// Skip kalau dah ada pending/approved request untuk item tu
+// Safety-net front-end. Logik utama dikendalikan oleh DB trigger
+// (lihat database/step_inventory_auto_trigger.sql). Fungsi ni
+// menangkap kes pelik (cth: trigger gagal, atau item dengan
+// stok rendah masa create) bila staff buka page inventory.
+// Skip kalau dah ada pending/approved request untuk item tu.
 async function checkAutoPO() {
   const candidates = allItems.filter(item => {
-    if (!item.auto_reorder_enabled) return false;
     const stock = Number(item.qty_in_stock);
     const threshold = getReorderThreshold(item);
     if (threshold <= 0) return false;
@@ -624,6 +627,7 @@ async function checkAutoPO() {
     const reorderQty = Number(item.auto_reorder_qty) ||
                        Math.max(1, target - Number(item.qty_in_stock));
 
+    const needsApproval = item.requires_approval || false;
     try {
       await window.db.from('psy_inventory_requests').insert({
         item_id:           item.id,
@@ -632,7 +636,7 @@ async function checkAutoPO() {
         unit_price:        null,
         total_amount:      null,
         reason:            `Auto-trigger: stok ${item.qty_in_stock}${item.unit || ''} rendah (jenis: ${item.consumption_type || 'package'}). Sila beli ${reorderQty}${item.unit || ''}.`,
-        status:            'pending_approval',
+        status:            needsApproval ? 'pending_approval' : 'approved',
         requested_by:      window.currentUser.id,
         requested_by_name: 'Sistem (Auto)',
         is_auto_generated: true,
