@@ -355,6 +355,7 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
+<script src="../../shared/stockSync.js"></script>
 <script src="_shared.js"></script>
 <script>
 let allItems    = [];
@@ -1159,11 +1160,13 @@ async function markPurchased(id, itemId, qty) {
     // Update stock
     const item = allItems.find(x => x.id === itemId);
     if (item) {
+      const newQty = Number(item.qty_in_stock) + Number(qty);
       const { error: invErr } = await window.db.from('psy_inventory_items').update({
-        qty_in_stock: Number(item.qty_in_stock) + Number(qty),
+        qty_in_stock: newQty,
         updated_at:   new Date().toISOString(),
       }).eq('id', itemId);
       if (invErr) throw invErr;
+      await (window.syncStockToProducts?.(item.name, newQty));
     }
 
     // Notify managers
@@ -1219,8 +1222,9 @@ async function saveAdjust() {
       updated_at:   new Date().toISOString(),
     }).eq('id', itemId);
     if (error) throw error;
+    const synced = await (window.syncStockToProducts?.(prevItem?.name, Number(qty)));
     await invAudit('inventory.adjust', itemId, { from: prevItem?.qty_in_stock, to: Number(qty), notes });
-    banner('Stok berjaya dikemaskini');
+    banner('Stok berjaya dikemaskini' + (synced ? ' · Produk juga di-sync' : ''));
     closeAdjustModal();
     await refreshInventory();
   } catch (e) {
