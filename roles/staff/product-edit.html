@@ -57,12 +57,30 @@
           </div>
         </div>
 
+        <!-- ─── BANNER: Pilih dari Inventori dulu (untuk produk baru) ─── -->
+        <div id="inv-prompt-banner" class="hidden bg-navy/5 border-2 border-dashed border-navy/30 rounded-2xl p-8 text-center mb-5">
+          <div class="text-5xl mb-3">📦</div>
+          <h3 class="font-bold text-lg text-navy mb-1">Pilih item dari Inventori dulu</h3>
+          <p class="text-sm text-ink/55 mb-5 max-w-md mx-auto">Semua produk mesti datang dari Inventori sebagai source of truth. Kalau item belum ada di Inventori, tambah di sana dulu.</p>
+          <button type="button" onclick="openInventoryPicker()" class="bg-navy text-white px-6 py-3 rounded-lg text-sm font-semibold hover:bg-navy-dark transition-colors">
+            📦 Pilih dari Inventori
+          </button>
+          <div class="mt-4 text-xs text-ink/45">
+            Tiada item sesuai? <a href="inventory.html" class="text-navy font-semibold hover:underline">Tambah di Inventori →</a>
+          </div>
+        </div>
+
         <!-- 2-column grid -->
-        <div class="grid lg:grid-cols-2 gap-5">
+        <div id="form-wrap" class="grid lg:grid-cols-2 gap-5">
 
           <!-- ─── 1. MAKLUMAT ASAS ─── -->
-          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 space-y-4">
-            <h3 class="font-bold text-sm text-ink flex items-center gap-2"><span class="section-num">1</span> Maklumat Asas</h3>
+          <div id="form-section-1" class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 space-y-4">
+            <div class="flex items-center justify-between gap-2 flex-wrap">
+              <h3 class="font-bold text-sm text-ink flex items-center gap-2"><span class="section-num">1</span> Maklumat Asas</h3>
+              <div id="inv-picker-wrap" class="hidden">
+                <button type="button" onclick="openInventoryPicker()" class="text-xs font-semibold text-navy border border-navy/30 px-3 py-1.5 rounded-lg hover:bg-navy hover:text-white transition-colors whitespace-nowrap">📦 Tukar item dari Inventori</button>
+              </div>
+            </div>
 
             <div class="grid grid-cols-2 gap-3">
               <div>
@@ -276,6 +294,59 @@
   </div>
 </div>
 
+<!-- Inventory Picker Modal — sidebar kategori + cards -->
+<div id="inv-picker-modal" class="hidden fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4" onclick="if(event.target===this) closeInventoryPicker()">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col" onclick="event.stopPropagation()">
+    <!-- Header -->
+    <div class="px-6 py-4 border-b border-ink/10 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="w-8 h-8 rounded-lg bg-navy/10 text-navy flex items-center justify-center text-base">📦</span>
+        <div>
+          <h3 class="font-bold text-base text-ink">Pilih dari Inventori</h3>
+          <p class="text-[11px] text-ink/55 mt-0.5">Pilih item yang ingin dijadikan produk shop</p>
+        </div>
+      </div>
+      <button onclick="closeInventoryPicker()" class="text-ink/40 text-2xl leading-none hover:text-ink">&times;</button>
+    </div>
+
+    <!-- Search bar -->
+    <div class="px-6 py-3 border-b border-ink/10">
+      <div class="relative">
+        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-ink/40 text-sm">🔍</span>
+        <input type="text" id="inv-picker-search" placeholder="Cari nama item atau kategori..." oninput="onInvPickerSearch(this.value)"
+          class="w-full pl-9 pr-3 py-2.5 border border-ink/15 rounded-lg text-sm focus:outline-none focus:border-navy">
+      </div>
+    </div>
+
+    <!-- Body: sidebar + cards -->
+    <div class="flex-1 flex overflow-hidden">
+      <!-- Sidebar kategori -->
+      <aside class="w-48 border-r border-ink/10 overflow-y-auto p-3 bg-cream/20">
+        <div class="text-[10px] font-bold text-ink/45 uppercase tracking-wider px-2 mb-2">Kategori</div>
+        <div id="inv-picker-cats" class="space-y-1"></div>
+      </aside>
+      <!-- Main: cards -->
+      <main class="flex-1 overflow-y-auto p-4">
+        <div id="inv-picker-count" class="text-xs text-ink/55 mb-3"></div>
+        <div id="inv-picker-list" class="space-y-2"></div>
+        <div id="inv-picker-pager" class="flex items-center justify-between mt-4 hidden">
+          <div id="inv-picker-pager-info" class="text-[11px] text-ink/45"></div>
+          <div id="inv-picker-pager-btns" class="flex items-center gap-1"></div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Footer -->
+    <div class="px-6 py-3 border-t border-ink/10 flex items-center justify-between">
+      <button onclick="closeInventoryPicker()" class="text-sm font-semibold text-ink/60 hover:text-ink px-4 py-2">Batal</button>
+      <button id="inv-picker-confirm" onclick="confirmInventoryPick()" disabled
+        class="bg-navy text-white text-sm font-semibold px-5 py-2 rounded-lg hover:bg-navy-dark transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+        ✓ Pilih Item
+      </button>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../../config/supabase.js"></script>
 <script src="../../shared/authGuard.js"></script>
@@ -389,14 +460,16 @@ async function saveProduct() {
     let savedId = editId;
     if (editId) {
       await window.db.from('psy_products').update(data).eq('id', editId);
+      await (window.syncStockToInventory?.(name, data.stock));
       banner('Produk dikemaskini ✅');
     } else {
       const { data: inserted, error } = await window.db.from('psy_products').insert(data).select().single();
       if (error) throw error;
       savedId = inserted.id;
+      // Nama dah datang dari Inventori (picker enforced) — sync stok je
+      await (window.syncStockToInventory?.(name, data.stock));
       banner('Produk ditambah ✅');
     }
-    await (window.syncStockToInventory?.(name, data.stock));
     await auditLog(editId ? 'product.updated' : 'product.created', savedId, { name, sku });
     setTimeout(() => location.href = 'product-detail.html?id=' + savedId, 600);
   } catch (e) {
@@ -443,11 +516,247 @@ async function loadProduct(id) {
   updateCharCount('f-notes','notes-count',500);
 }
 
+// ── Inventory Picker (untuk produk baru — pilih item sedia ada di Inventori) ──
+let _invItemsCache = [];
+let _invPickerSearch = '';
+let _invPickerCat = 'all';
+let _invPickerPage = 1;
+let _invPickerSelectedId = null;
+const _INV_PAGE_SIZE = 8;
+
+function categoryIcon(cat) {
+  const c = (cat || '').toLowerCase();
+  if (c.includes('madu') || c.includes('makanan') || c.includes('minuman')) return '🍯';
+  if (c.includes('herba') || c.includes('tradisional')) return '🌿';
+  if (c.includes('vitamin') || c.includes('suplemen')) return '💊';
+  if (c.includes('peralatan') || c.includes('kesihatan')) return '⚕️';
+  if (c.includes('kit') || c.includes('program')) return '🧰';
+  if (c.includes('brosur') || c.includes('marketing')) return '📄';
+  if (c.includes('produk')) return '📦';
+  return '📦';
+}
+
+async function openInventoryPicker() {
+  const modal = document.getElementById('inv-picker-modal');
+  modal.classList.remove('hidden');
+  if (!_invItemsCache.length) {
+    const { data } = await window.db.from('psy_inventory_items')
+      .select('id, name, category, unit, qty_in_stock, min_qty, notes').order('name');
+    _invItemsCache = data || [];
+  }
+  // Tag item yang dah ada produk dengan nama sama
+  let taken = new Set();
+  try {
+    const { data: prods } = await window.db.from('psy_products').select('name');
+    taken = new Set((prods || []).map(p => (p.name || '').trim().toLowerCase()));
+  } catch {}
+  window._invPickerAvailable = _invItemsCache.map(i => ({
+    ...i,
+    _alreadyProduct: taken.has((i.name || '').trim().toLowerCase()),
+  }));
+  _invPickerSelectedId = null;
+  _invPickerPage = 1;
+  document.getElementById('inv-picker-search').value = '';
+  _invPickerSearch = '';
+  document.getElementById('inv-picker-confirm').disabled = true;
+  renderInvPickerCats();
+  renderInvPicker();
+}
+function closeInventoryPicker() { document.getElementById('inv-picker-modal').classList.add('hidden'); }
+function onInvPickerSearch(v) {
+  _invPickerSearch = (v || '').toLowerCase().trim();
+  _invPickerPage = 1;
+  renderInvPicker();
+}
+
+function getFilteredItems() {
+  return (window._invPickerAvailable || []).filter(i => {
+    const matchCat = _invPickerCat === 'all' || (i.category || 'Lain-lain') === _invPickerCat;
+    if (!matchCat) return false;
+    if (!_invPickerSearch) return true;
+    return (i.name || '').toLowerCase().includes(_invPickerSearch)
+        || (i.category || '').toLowerCase().includes(_invPickerSearch);
+  });
+}
+
+function renderInvPickerCats() {
+  const all = window._invPickerAvailable || [];
+  const counts = { all: all.length };
+  all.forEach(i => {
+    const c = i.category || 'Lain-lain';
+    counts[c] = (counts[c] || 0) + 1;
+  });
+  const cats = Object.keys(counts).filter(c => c !== 'all').sort((a, b) => counts[b] - counts[a]);
+  const entries = [['all', 'Semua Kategori'], ...cats.map(c => [c, c])];
+  const wrap = document.getElementById('inv-picker-cats');
+  wrap.innerHTML = entries.map(([key, label]) => {
+    const active = _invPickerCat === key;
+    const icon = key === 'all' ? '📋' : categoryIcon(key);
+    return `<button type="button" onclick="setInvPickerCat('${escAttr(key)}')"
+      class="w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-xs transition ${active ? 'bg-white border border-navy/20 font-semibold text-navy shadow-sm' : 'hover:bg-white/60 text-ink/70'}">
+      <span class="flex items-center gap-2 truncate"><span>${icon}</span><span class="truncate">${escAttr(label)}</span></span>
+      <span class="text-[10px] ${active ? 'text-navy' : 'text-ink/40'} font-semibold">${counts[key]}</span>
+    </button>`;
+  }).join('');
+}
+
+function setInvPickerCat(cat) {
+  _invPickerCat = cat;
+  _invPickerPage = 1;
+  renderInvPickerCats();
+  renderInvPicker();
+}
+
+function renderInvPicker() {
+  const items = getFilteredItems();
+  document.getElementById('inv-picker-count').textContent = `${items.length} item ditemui`;
+  const list = document.getElementById('inv-picker-list');
+  if (!items.length) {
+    list.innerHTML = '<div class="text-center text-ink/40 text-sm py-12">Tiada item ditemui</div>';
+    document.getElementById('inv-picker-pager').classList.add('hidden');
+    return;
+  }
+  const totalPages = Math.max(1, Math.ceil(items.length / _INV_PAGE_SIZE));
+  if (_invPickerPage > totalPages) _invPickerPage = totalPages;
+  const start = (_invPickerPage - 1) * _INV_PAGE_SIZE;
+  const slice = items.slice(start, start + _INV_PAGE_SIZE);
+  list.innerHTML = slice.map(i => {
+    const taken = i._alreadyProduct;
+    const qty = Number(i.qty_in_stock) || 0;
+    const noStock = qty <= 0;
+    const blocked = taken || noStock;
+    const selected = String(i.id) === String(_invPickerSelectedId);
+    const cardCls = taken
+      ? 'border-green/30 bg-green/5 opacity-70 cursor-not-allowed'
+      : noStock
+        ? 'border-terracotta/30 bg-terracotta/5 opacity-70 cursor-not-allowed'
+      : selected
+        ? 'border-navy bg-navy/5 ring-2 ring-navy/30 cursor-pointer'
+        : 'border-ink/10 bg-white hover:border-navy/40 cursor-pointer';
+    const radioCls = taken
+      ? 'border-green text-green-dark'
+      : noStock
+        ? 'border-terracotta/40 text-terracotta'
+      : selected
+        ? 'bg-navy border-navy text-white'
+        : 'border-ink/25';
+    const radioInner = (taken || selected)
+      ? '<svg viewBox="0 0 16 16" class="w-3 h-3 fill-current"><path d="M6.5 10.5L3 7l1-1 2.5 2.5L12 3l1 1z"/></svg>'
+      : noStock
+        ? '<svg viewBox="0 0 16 16" class="w-3 h-3 fill-current"><path d="M4 8h8v1H4z"/></svg>'
+        : '';
+    const stockBadge = noStock
+      ? '<div class="text-[10px] text-terracotta font-semibold mt-0.5">⛔ Stok kosong</div>'
+      : taken ? '<div class="text-[10px] text-green-dark font-semibold mt-0.5">✓ Dah jadi produk</div>' : '';
+    return `<div data-inv-id="${i.id}" ${blocked ? '' : `onclick="selectInvPickerItem('${i.id}')"`}
+      class="border-2 rounded-xl p-3 flex items-center gap-3 transition ${cardCls}">
+      <div class="w-12 h-12 rounded-lg bg-cream flex items-center justify-center text-2xl flex-shrink-0">${categoryIcon(i.category)}</div>
+      <div class="flex-1 min-w-0">
+        <div class="font-semibold text-sm text-ink truncate">${escAttr(i.name || '')}</div>
+        <div class="text-[11px] text-ink/55 mt-0.5">${i.category ? `<span class="inline-block px-2 py-0.5 rounded-md bg-cream text-ink/70 text-[10px] font-medium">${escAttr(i.category)}</span>` : ''}</div>
+      </div>
+      <div class="text-right flex-shrink-0">
+        <div class="text-[11px] text-ink/45">Stok</div>
+        <div class="text-sm font-semibold ${noStock ? 'text-terracotta' : qty <= Number(i.min_qty || 5) ? 'text-amber-600' : 'text-ink'}">${qty} ${escAttr(i.unit || 'unit')}</div>
+        ${stockBadge}
+      </div>
+      <div class="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${radioCls}">${radioInner}</div>
+    </div>`;
+  }).join('');
+  // Pager
+  const pager = document.getElementById('inv-picker-pager');
+  if (totalPages > 1) {
+    pager.classList.remove('hidden');
+    document.getElementById('inv-picker-pager-info').textContent =
+      `Menunjuk ${start + 1}–${Math.min(start + _INV_PAGE_SIZE, items.length)} dari ${items.length}`;
+    const btns = document.getElementById('inv-picker-pager-btns');
+    const btn = (label, page, disabled, active) =>
+      `<button type="button" ${disabled ? 'disabled' : `onclick="setInvPickerPage(${page})"`}
+        class="px-2.5 py-1 rounded text-[11px] font-semibold transition ${active ? 'bg-navy text-white' : 'border border-ink/15 hover:bg-cream'} ${disabled ? 'opacity-40 cursor-not-allowed' : ''}">${label}</button>`;
+    const pages = [];
+    pages.push(btn('‹', _invPickerPage - 1, _invPickerPage === 1));
+    for (let p = 1; p <= totalPages; p++) {
+      if (p === 1 || p === totalPages || Math.abs(p - _invPickerPage) <= 1) {
+        pages.push(btn(String(p), p, false, p === _invPickerPage));
+      } else if (p === _invPickerPage - 2 || p === _invPickerPage + 2) {
+        pages.push('<span class="text-ink/30 px-1">…</span>');
+      }
+    }
+    pages.push(btn('›', _invPickerPage + 1, _invPickerPage === totalPages));
+    btns.innerHTML = pages.join('');
+  } else {
+    pager.classList.add('hidden');
+  }
+}
+
+function setInvPickerPage(p) { _invPickerPage = p; renderInvPicker(); }
+
+function selectInvPickerItem(id) {
+  _invPickerSelectedId = String(id);
+  document.getElementById('inv-picker-confirm').disabled = false;
+  renderInvPicker();
+}
+
+function confirmInventoryPick() {
+  if (!_invPickerSelectedId) return;
+  const item = (window._invPickerAvailable || []).find(i => String(i.id) === _invPickerSelectedId);
+  if (item) pickInventoryItem(item);
+}
+
+// Legacy entry point (kalau code lain panggil by id)
+function pickInventoryById(id) {
+  const item = (window._invPickerAvailable || []).find(i => String(i.id) === String(id));
+  if (item) pickInventoryItem(item);
+}
+
+function escAttr(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function pickInventoryById(id) {
+  const item = (window._invPickerAvailable || []).find(i => String(i.id) === String(id));
+  if (item) pickInventoryItem(item);
+}
+
+function pickInventoryItem(item) {
+  // Prefill borang produk dari inventory item
+  const nameEl = document.getElementById('f-name');
+  const skuEl  = document.getElementById('f-sku');
+  const unitEl = document.getElementById('f-unit');
+  const stockEl = document.getElementById('f-stock');
+  nameEl.value  = item.name || '';
+  skuEl.value   = (item.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50);
+  unitEl.value  = item.unit || 'unit';
+  stockEl.value = Number(item.qty_in_stock) || 0;
+  document.getElementById('f-min-stock').value = Number(item.min_qty) || 5;
+  if (item.notes) {
+    document.getElementById('f-description').value = item.notes;
+    document.getElementById('f-notes').value = item.notes;
+  }
+  // Lock fields yang datang dari Inventori — staff tak boleh ubah supaya nama tetap match
+  nameEl.readOnly = true;  nameEl.classList.add('bg-ink/5','text-ink/60','cursor-not-allowed');
+  skuEl.readOnly  = true;  skuEl.classList.add('bg-ink/5','text-ink/60','cursor-not-allowed');
+  unitEl.disabled = true;  unitEl.classList.add('bg-ink/5','text-ink/60','cursor-not-allowed');
+  stockEl.readOnly = true; stockEl.classList.add('bg-ink/5','text-ink/60','cursor-not-allowed');
+  // Tunjuk form, sembunyikan banner
+  document.getElementById('inv-prompt-banner').classList.add('hidden');
+  document.getElementById('form-wrap').classList.remove('hidden');
+  document.getElementById('inv-picker-wrap').classList.remove('hidden');
+  closeInventoryPicker();
+  banner(`✓ Item dipilih: ${item.name}`);
+}
+
 (async () => {
   const user = await initStaff('psy_products', 'Edit / Tambah Produk');
   if (!user) return;
   const id = new URLSearchParams(location.search).get('id');
-  if (id) await loadProduct(id);
+  if (id) {
+    await loadProduct(id);
+  } else {
+    // Produk baru: sembunyikan borang, tunjuk banner "Pilih dari Inventori dulu"
+    document.getElementById('form-wrap').classList.add('hidden');
+    document.getElementById('inv-prompt-banner').classList.remove('hidden');
+  }
 })();
 </script>
 </body>

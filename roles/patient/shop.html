@@ -96,16 +96,36 @@
     let CATEGORIES = ['All'];
 
     async function loadProductsFromDB() {
-      const { data: rows } = await window.db.from('psy_products')
-        .select('*, inv:inventory_item_id (id, qty_in_stock, unit)')
-        .eq('is_active', true)
-        .order('sort_order', { ascending: true });
+      const [{ data: rows }, { data: invRows }] = await Promise.all([
+        window.db.from('psy_products')
+          .select('*, inv:inventory_item_id (id, qty_in_stock, unit)')
+          .eq('is_active', true)
+          .order('sort_order', { ascending: true }),
+        window.db.from('psy_inventory_items').select('name, qty_in_stock, unit'),
+      ]);
+      // Index Inventori by lowercase trimmed name supaya boleh match nama produk
+      const invByName = new Map();
+      for (const i of (invRows || [])) {
+        const key = (i.name || '').trim().toLowerCase();
+        if (key) invByName.set(key, i);
+      }
       const arr = rows || [];
       PRODUCTS = arr.map(r => {
-        const linked = !!r.inv;
-        const liveStock = linked ? Number(r.inv.qty_in_stock) : null;
-        const legacyStock = r.stock != null ? Number(r.stock) : null;
-        const stock = linked ? liveStock : legacyStock;  // null = unlimited
+        // Priority: (1) FK link inv, (2) nama-match Inventori, (3) legacy r.stock column
+        const fkInv = r.inv || null;
+        const nameInv = invByName.get((r.name || '').trim().toLowerCase()) || null;
+        let stock, stockUnit = '';
+        if (fkInv) {
+          stock = Number(fkInv.qty_in_stock);
+          stockUnit = fkInv.unit || '';
+        } else if (nameInv) {
+          stock = Number(nameInv.qty_in_stock);
+          stockUnit = nameInv.unit || '';
+        } else if (r.stock != null) {
+          stock = Number(r.stock);
+        } else {
+          stock = 0; // tiada source — default 0 (out of stock) supaya selamat
+        }
         return {
           id: r.product_id,
           cat: r.category,
@@ -116,8 +136,8 @@
           image_url: r.image_url || null,
           bg: r.bg_color,
           stock,
-          stockUnit: r.inv?.unit || '',
-          linked,
+          stockUnit,
+          linked: !!(fkInv || nameInv),
         };
       });
       // Derive unique categories from DB

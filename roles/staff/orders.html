@@ -153,6 +153,7 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
+<script src="../../shared/stockSync.js"></script>
 <script src="_shared.js"></script>
 <script>
 let activeFilter = 'toship';
@@ -439,10 +440,12 @@ async function decrementStockForOrder(order) {
   for (const it of order.items) {
     if (!it.id || !it.qty) continue;
     const { data: prod } = await window.db.from('psy_products')
-      .select('stock').eq('id', it.id).single().then(r => r, () => ({ data: null }));
+      .select('name, stock').eq('id', it.id).single().then(r => r, () => ({ data: null }));
     if (prod && prod.stock != null) {
       const newStock = Math.max(0, Number(prod.stock) - Number(it.qty));
       await window.db.from('psy_products').update({ stock: newStock }).eq('id', it.id);
+      // Auto-sync: kurangkan juga di Inventori (nama sama)
+      await (window.syncStockToInventory?.(prod.name, newStock));
     }
   }
 }
@@ -452,10 +455,12 @@ async function restockForOrder(order) {
   for (const it of order.items) {
     if (!it.id || !it.qty) continue;
     const { data: prod } = await window.db.from('psy_products')
-      .select('stock').eq('id', it.id).single().then(r => r, () => ({ data: null }));
+      .select('name, stock').eq('id', it.id).single().then(r => r, () => ({ data: null }));
     if (prod && prod.stock != null) {
       const newStock = Number(prod.stock) + Number(it.qty);
       await window.db.from('psy_products').update({ stock: newStock }).eq('id', it.id);
+      // Auto-sync: tambah balik di Inventori (nama sama)
+      await (window.syncStockToInventory?.(prod.name, newStock));
     }
   }
 }
