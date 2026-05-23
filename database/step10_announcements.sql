@@ -10,12 +10,15 @@ CREATE TABLE IF NOT EXISTS psy_announcements (
   bg TEXT DEFAULT 'from-navy to-green-dark',
   cta_label TEXT,
   cta_url TEXT,
+  image_url TEXT,
   is_active BOOLEAN DEFAULT true,
   sort_order INT DEFAULT 0,
   starts_at TIMESTAMPTZ,
   ends_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT now()
 );
+
+ALTER TABLE psy_announcements ADD COLUMN IF NOT EXISTS image_url TEXT;
 
 ALTER TABLE psy_announcements ENABLE ROW LEVEL SECURITY;
 DO $$ BEGIN CREATE POLICY "Anyone read active announcements" ON psy_announcements FOR SELECT USING (is_active = true); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
