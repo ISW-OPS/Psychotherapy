@@ -44,6 +44,25 @@
               Kemaskini KYC <span>→</span>
             </a>
           </div>
+
+          <!-- Kod Rujukan Anda -->
+          <div id="referral-card" class="hidden rounded-xl p-4 bg-gradient-to-br from-navy/5 to-green/10 border-2 border-navy/20">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="text-lg">🎁</span>
+              <div class="text-sm font-semibold text-ink">Kod Rujukan Anda</div>
+            </div>
+            <p class="text-[11px] text-ink/50 mb-3">Kongsi kod ini. Bila kawan daftar & buat bayaran pertama, anda berdua dapat ganjaran!</p>
+            <div class="flex items-center gap-2">
+              <div id="ref-code" class="flex-1 text-center font-mono font-bold text-navy text-lg tracking-wider bg-white border border-navy/20 rounded-lg py-2">—</div>
+              <button onclick="copyRefCode()" title="Salin"
+                class="px-3 py-2 border border-navy/30 text-navy rounded-lg text-sm hover:bg-navy hover:text-white">📋</button>
+            </div>
+            <button onclick="shareRefWhatsApp()"
+              class="w-full mt-2 bg-[#25D366] text-white text-sm font-semibold py-2 rounded-lg hover:opacity-90 flex items-center justify-center gap-1.5">
+              <span>📲</span> Kongsi via WhatsApp
+            </button>
+            <div id="ref-count" class="text-[11px] text-ink/50 text-center mt-2 hidden"></div>
+          </div>
         </div>
 
         <!-- RIGHT: Form sections -->
@@ -142,6 +161,43 @@ function loadProfileForm() {
   document.getElementById('prof-email-in').value = currentUser.email || '';
 }
 
+function loadReferralCard() {
+  const code = patientRecord?.referral_code;
+  const card = document.getElementById('referral-card');
+  if (!code) { card?.classList.add('hidden'); return; }
+  card?.classList.remove('hidden');
+  document.getElementById('ref-code').textContent = code;
+  // Kiraan kawan yang telah dirujuk
+  window.db.from('psy_referrals')
+    .select('id', { count: 'exact', head: true })
+    .eq('referrer_patient_id', patientRecord.id)
+    .then(({ count }) => {
+      if (count > 0) {
+        const el = document.getElementById('ref-count');
+        el.classList.remove('hidden');
+        el.textContent = `👥 ${count} kawan telah anda rujuk`;
+      }
+    })
+    .catch(() => {});
+}
+
+function copyRefCode() {
+  const code = patientRecord?.referral_code;
+  if (!code) return;
+  navigator.clipboard?.writeText(code)
+    .then(() => banner('Kod rujukan disalin ✅'))
+    .catch(() => banner('Gagal menyalin', 'error'));
+}
+
+function shareRefWhatsApp() {
+  const code = patientRecord?.referral_code;
+  if (!code) return;
+  const msg = `Saya jemput anda ke Ibnu Sina Wellness! 🌿\n`
+    + `Guna kod rujukan saya semasa daftar: *${code}*\n`
+    + `Kita berdua akan dapat ganjaran 🎁`;
+  window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
+}
+
 async function saveProfile() {
   const name = document.getElementById('prof-name-in').value.trim();
   const phone = document.getElementById('prof-phone-in').value.trim();
@@ -220,6 +276,7 @@ async function loadPatientDocs() {
   const user = await initPatient('profile', 'Akaun & keselamatan');
   if (!user) return;
   loadProfileForm();
+  loadReferralCard();
   await loadPatientDocs();
 })();
 </script>

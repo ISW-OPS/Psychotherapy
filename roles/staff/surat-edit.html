@@ -9,6 +9,31 @@
 <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="_styles.css" rel="stylesheet">
+<style>
+  .step-dot { width:32px; height:32px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; border:2px solid rgba(0,0,0,0.1); background:white; color:rgba(0,0,0,0.4); transition:all 0.15s; flex-shrink:0; }
+  .step-dot.active   { background:#1a3a5c; color:white; border-color:#1a3a5c; }
+  .step-dot.complete { background:#16a34a; color:white; border-color:#16a34a; }
+  .step-line { flex:1; height:2px; background:rgba(0,0,0,0.08); margin:0 8px; transition:background 0.15s; }
+  .step-line.complete { background:#16a34a; }
+  .step-label { font-size:13px; font-weight:600; color:rgba(0,0,0,0.5); margin-left:8px; }
+  .step-dot.active + .step-label, .step-dot.complete + .step-label { color:#1a3a5c; }
+  .step-panel { display:none; }
+  .step-panel.active { display:block; }
+  .pal-tab { padding: 3px 8px; font-size: 10px; font-weight: 600; color: rgba(0,0,0,0.5); border-radius: 6px; background: transparent; transition: all .12s; flex: 1; }
+  .pal-tab:hover { background: rgba(0,0,0,0.04); }
+  .pal-tab.active { background: #1e3a5f; color: white; }
+  .af-filter { padding: 3px 8px; font-size: 11px; font-weight: 600; color: rgba(0,0,0,0.5); border: 1px solid rgba(0,0,0,0.12); border-radius: 9999px; background: white; transition: all .12s; }
+  .af-filter:hover { background: rgba(0,0,0,0.04); }
+  .af-filter.active { background: #1e3a5f; color: white; border-color: #1e3a5f; }
+  .preview-frame { background:white; overflow:auto; max-height:75vh; min-height:550px; }
+  .preview-frame iframe { width:100%; height:750px; border:0; display:block; transform-origin: top left; transition: transform 0.15s; }
+  .toggle-switch { position:relative; display:inline-block; width:42px; height:24px; }
+  .toggle-switch input { opacity:0; width:0; height:0; }
+  .toggle-slider { position:absolute; cursor:pointer; inset:0; background:rgba(0,0,0,0.2); border-radius:34px; transition:0.2s; }
+  .toggle-slider:before { content:''; position:absolute; height:18px; width:18px; left:3px; bottom:3px; background:white; border-radius:50%; transition:0.2s; }
+  input:checked + .toggle-slider { background:#16a34a; }
+  input:checked + .toggle-slider:before { transform:translateX(18px); }
+</style>
 </head>
 <body class="min-h-screen">
 
@@ -22,129 +47,246 @@
     <main class="main-content flex-1 min-w-0">
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
-      <!-- Sticky action bar with title -->
-      <div class="sticky top-[68px] z-10 bg-cream/90 backdrop-blur-sm border-b border-ink/10 px-4 md:px-8 py-3 flex items-center justify-between gap-4">
-        <h2 id="page-title-text" class="text-base md:text-lg font-bold text-ink truncate">Tambah Templat Baru</h2>
-        <div class="flex items-center gap-2 flex-shrink-0">
-          <button onclick="cancelEdit()" class="border border-ink/20 text-ink/60 px-4 py-2 rounded-lg text-sm hover:bg-ink/5">Batal</button>
-          <button onclick="previewTpl()" class="border border-ink/20 text-ink/70 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-ink/5">Preview</button>
-          <button onclick="saveTpl()" class="bg-navy text-white px-5 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">Simpan</button>
+      <!-- Title row -->
+      <div class="px-4 md:px-8 pt-6 pb-3 flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h2 id="page-title-text" class="text-2xl font-bold text-ink">Template Surat Baru</h2>
+          <p class="text-sm text-ink/55 mt-1">Cipta template surat baharu yang boleh digunakan berulang kali.</p>
+        </div>
+        <a href="surat.html" class="border border-ink/20 text-ink/70 px-4 py-2 rounded-xl text-sm font-semibold hover:bg-cream flex items-center gap-1.5">← Kembali ke Senarai</a>
+      </div>
+
+      <!-- Step indicator -->
+      <div class="px-4 md:px-8 mb-4">
+        <div class="bg-white rounded-2xl border border-ink/10 px-5 py-4 flex items-center">
+          <div class="flex items-center"><span class="step-dot" id="dot-1">1</span><span class="step-label">Maklumat Asas</span></div>
+          <span class="step-line" id="line-1"></span>
+          <div class="flex items-center"><span class="step-dot" id="dot-2">2</span><span class="step-label">Kandungan Template</span></div>
+          <span class="step-line" id="line-2"></span>
+          <div class="flex items-center"><span class="step-dot" id="dot-3">3</span><span class="step-label">Pemboleh Ubah</span></div>
+          <span class="step-line" id="line-3"></span>
+          <div class="flex items-center"><span class="step-dot" id="dot-4">4</span><span class="step-label">Semak & Simpan</span></div>
         </div>
       </div>
 
-      <div class="p-4 md:p-8 max-w-[1200px] mx-auto">
+      <!-- Main: 2-col grid (form | preview) — preview lebih besar -->
+      <div class="px-4 md:px-8 pb-6 grid grid-cols-1 lg:grid-cols-[minmax(360px,_2fr)_3fr] gap-5">
 
-        <!-- Form -->
-        <div class="space-y-8">
+        <!-- LEFT: Step panels -->
+        <div class="bg-white rounded-2xl border border-ink/10 p-5 md:p-6">
 
-          <!-- Section: Meta -->
-          <section class="space-y-4">
-            <div class="grid grid-cols-1 md:grid-cols-[1fr_200px] gap-4">
+          <!-- ═══ STEP 1: MAKLUMAT ASAS ═══ -->
+          <div class="step-panel active" id="step-1">
+            <h3 class="font-bold text-base mb-4">Maklumat Asas Template</h3>
+            <div class="space-y-4">
               <div>
-                <label class="text-xs font-semibold text-ink/60 mb-1 block">Nama Templat <span class="text-terracotta">*</span></label>
-                <input id="tpl-name" type="text" placeholder="cth: Surat Permohonan KWSP" class="w-full bg-white border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none">
+                <label class="text-xs font-semibold text-ink/65 mb-1 block">Nama Template <span class="text-terracotta">*</span></label>
+                <input id="tpl-name" type="text" placeholder="cth: Surat untuk KWSP" oninput="updatePreview()" class="w-full bg-white border border-ink/20 rounded-lg px-3 py-2.5 text-sm focus:border-navy outline-none">
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label class="text-xs font-semibold text-ink/65 mb-1 block">Kategori Surat <span class="text-terracotta">*</span></label>
+                  <select id="tpl-category" class="w-full bg-white border border-ink/20 rounded-lg px-3 py-2.5 text-sm focus:border-navy outline-none">
+                    <option value="patient">Untuk Pesakit</option>
+                    <option value="internal">Kegunaan Dalaman</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="text-xs font-semibold text-ink/65 mb-1 block">Jenis Surat</label>
+                  <input id="tpl-jenis" type="text" placeholder="cth: KWSP, RELA, Tujuan Rawatan" class="w-full bg-white border border-ink/20 rounded-lg px-3 py-2.5 text-sm focus:border-navy outline-none">
+                </div>
               </div>
               <div>
-                <label class="text-xs font-semibold text-ink/60 mb-1 block">Kategori <span class="text-terracotta">*</span></label>
-                <select id="tpl-category" class="w-full bg-white border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none">
-                  <option value="patient">Untuk Pesakit</option>
-                  <option value="internal">Kegunaan Dalaman</option>
-                </select>
+                <label class="text-xs font-semibold text-ink/65 mb-1 block">Penerangan (Opsyenal)</label>
+                <textarea id="tpl-desc" rows="3" maxlength="500" placeholder="Penerangan ringkas template ini"
+                  class="w-full bg-white border border-ink/20 rounded-lg px-3 py-2.5 text-sm focus:border-navy outline-none resize-none"></textarea>
+                <div class="text-[10px] text-ink/40 mt-1 text-right"><span id="desc-count">0</span> / 500</div>
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-ink/65 mb-1 block">Status Template</label>
+                <label class="flex items-center gap-3 cursor-pointer">
+                  <span class="toggle-switch">
+                    <input id="tpl-active" type="checkbox" checked>
+                    <span class="toggle-slider"></span>
+                  </span>
+                  <span class="text-sm text-ink/75">Aktif (boleh digunakan)</span>
+                </label>
+                <p class="text-[11px] text-ink/45 mt-1">Tidak aktif = draft, tak akan muncul untuk patient request.</p>
               </div>
             </div>
+          </div>
 
-            <div>
-              <label class="text-xs font-semibold text-ink/60 mb-1 block">Description</label>
-              <input id="tpl-desc" type="text" placeholder="Penerangan ringkas templat ini" class="w-full bg-white border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none">
+          <!-- ═══ STEP 2: KANDUNGAN TEMPLATE ═══ -->
+          <div class="step-panel" id="step-2">
+            <h3 class="font-bold text-base mb-4">Kandungan Template</h3>
+            <div class="space-y-4">
+              <div>
+                <label class="text-xs font-semibold text-ink/65 mb-1 block">Kepada (Recipient)</label>
+                <textarea id="tpl-recipient" rows="4" placeholder="cth: Pengurus Besar,&#10;Kumpulan Wang Simpanan Pekerja (KWSP),&#10;Jalan Raja Laut,&#10;Kuala Lumpur." oninput="updatePreview()" class="w-full bg-white border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none resize-y"></textarea>
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-ink/65 mb-1 block">Tajuk Surat</label>
+                <input id="tpl-title" type="text" placeholder="cth: SURAT UNTUK KWSP" oninput="updatePreview()" class="w-full bg-white border border-ink/20 rounded-lg px-3 py-2.5 text-sm focus:border-navy outline-none">
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-ink/65 mb-1 block">Isi Surat <span class="text-terracotta">*</span></label>
+                <p class="text-[11px] text-ink/50 mb-2">Klik tag dari palette di Step 3 untuk insert ke kursor. Atau taip <code class="bg-ink/5 px-1 rounded">[NAMA]</code> manual.</p>
+                <textarea id="tpl-body" rows="18" placeholder="Adalah disahkan bahawa [NAMA] (No. KP: [IC]) telah mendapatkan rawatan di Ibnu Sina Wellness..." oninput="updatePreview()" class="w-full bg-white border border-ink/20 rounded-lg px-3 py-2 text-sm font-mono focus:border-navy outline-none resize-y" style="min-height:380px"></textarea>
+              </div>
             </div>
-          </section>
+          </div>
 
-          <hr class="border-ink/10">
+          <!-- ═══ STEP 3: PEMBOLEH UBAH ═══ -->
+          <div class="step-panel" id="step-3">
+            <h3 class="font-bold text-base mb-1">Pemboleh Ubah (Medan Dinamik)</h3>
+            <p class="text-xs text-ink/55 mb-4">Klik tag dalam palette untuk insert ke isi surat. Auto-field auto-isi semasa surat dijana.</p>
 
-          <!-- Section: Recipient + Title -->
-          <section class="space-y-4">
-            <div>
-              <label class="text-xs font-semibold text-ink/60 mb-1 block">Kepada (Recipient)</label>
-              <textarea id="tpl-recipient" rows="5" placeholder="cth: Pengurus Besar,&#10;Kumpulan Wang Simpanan Pekerja (KWSP),&#10;Jalan Raja Laut,&#10;Kuala Lumpur." class="w-full bg-white border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none resize-y"></textarea>
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-5">
+              <!-- Field Manual -->
+              <section>
+                <div class="flex items-center justify-between mb-2 pb-1.5 border-b border-ink/10">
+                  <label class="text-[11px] font-semibold text-ink/55 uppercase tracking-wider">Field Manual <span class="text-ink/40 font-normal normal-case">(staff isi)</span></label>
+                  <button onclick="addField()" class="text-xs font-semibold text-navy hover:underline">+ Tambah</button>
+                </div>
+                <p class="text-[11px] text-ink/50 mb-2">Klik [KEY] untuk insert ke isi.</p>
+                <div id="fields-list" class="space-y-1.5 max-h-[380px] overflow-y-auto pr-1 -mr-1"></div>
+              </section>
+
+              <!-- Auto Field -->
+              <section>
+                <div class="flex items-center justify-between mb-2 pb-1.5 border-b border-ink/10 gap-2 flex-wrap">
+                  <label class="text-[11px] font-semibold text-ink/55 uppercase tracking-wider">Auto Field <span class="text-ink/40 font-normal normal-case">(global)</span></label>
+                  <div class="flex gap-3">
+                    <button onclick="resetAutoFields()" class="text-xs font-semibold text-terracotta hover:underline">Reset</button>
+                    <button onclick="openAutoFieldForm()" class="text-xs font-semibold text-navy hover:underline">+ Tambah</button>
+                  </div>
+                </div>
+                <p class="text-[11px] text-ink/50 mb-2">Klik tag untuk insert. Auto-isi dari DB.</p>
+                <div class="flex items-center gap-2 mb-2 flex-wrap">
+                  <input id="af-search" type="text" oninput="renderAutoFieldsList()" placeholder="Cari..." class="bg-white border border-ink/20 rounded px-2 py-1 text-xs flex-1 min-w-[100px] focus:border-navy outline-none">
+                  <div class="flex gap-1">
+                    <button onclick="setAfFilter('all')"     id="af-f-all"     class="af-filter active">Semua</button>
+                    <button onclick="setAfFilter('patient')" id="af-f-patient" class="af-filter">Patient</button>
+                    <button onclick="setAfFilter('staff')"   id="af-f-staff"   class="af-filter">Staff</button>
+                    <button onclick="setAfFilter('system')"  id="af-f-system"  class="af-filter">Sys</button>
+                  </div>
+                </div>
+                <div id="auto-fields-list" class="space-y-1 max-h-[340px] overflow-y-auto pr-1 -mr-1"></div>
+              </section>
             </div>
 
-            <div>
-              <label class="text-xs font-semibold text-ink/60 mb-1 block">Tajuk Surat</label>
-              <input id="tpl-title" type="text" placeholder="cth: PERMOHONAN PENGELUARAN AHLI KWSP" class="w-full bg-white border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none">
-            </div>
-          </section>
-
-          <hr class="border-ink/10">
-
-          <!-- Section: Body -->
-          <section>
-            <label class="text-xs font-semibold text-ink/60 mb-1 block">Isi Surat <span class="text-terracotta">*</span></label>
-            <p class="text-[11px] text-ink/50 mb-2">Klik tag di palette kanan untuk insert ke kursor. Atau taip <code class="bg-ink/5 px-1 rounded">[NAMA]</code> manual.</p>
-
-            <div class="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-4">
-              <textarea id="tpl-body" rows="18" placeholder="Pihak kami memohon untuk pesakit [NAMA] dengan No. K/P [IC]..." class="w-full bg-white border border-ink/20 rounded-lg px-3 py-2 text-sm font-mono focus:border-navy outline-none resize-y" style="min-height:380px"></textarea>
-
-              <!-- Insert Palette -->
-              <div class="bg-white rounded-lg border border-ink/10 p-3 max-h-[440px] overflow-y-auto">
-                <div class="flex items-center gap-1 mb-2">
+            <!-- Insert palette (untuk insert ke body) -->
+            <div class="mt-5 bg-cream/40 border border-ink/10 rounded-xl p-3">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-[11px] font-semibold text-ink/55 uppercase tracking-wider">Palette Insert</span>
+                <div class="flex items-center gap-1">
                   <button onclick="setPalTab('all')"      id="pal-t-all"     class="pal-tab active">Semua</button>
                   <button onclick="setPalTab('patient')"  id="pal-t-patient" class="pal-tab">Patient</button>
                   <button onclick="setPalTab('staff')"    id="pal-t-staff"   class="pal-tab">Staff</button>
                   <button onclick="setPalTab('manual')"   id="pal-t-manual"  class="pal-tab">Manual</button>
                 </div>
-                <div id="palette-list" class="space-y-1"></div>
+              </div>
+              <div id="palette-list" class="grid grid-cols-2 md:grid-cols-3 gap-1.5"></div>
+            </div>
+          </div>
+
+          <!-- ═══ STEP 4: SEMAK & SIMPAN ═══ -->
+          <div class="step-panel" id="step-4">
+            <h3 class="font-bold text-base mb-4">Semak & Simpan</h3>
+
+            <!-- Approver / Signer -->
+            <div class="bg-navy-light/30 border border-navy/15 rounded-xl p-4 space-y-3 mb-5">
+              <div>
+                <div class="flex items-center gap-2">
+                  <span class="text-base">🛡️</span>
+                  <h4 class="font-semibold text-sm text-navy">Penyelaras / Approver</h4>
+                </div>
+                <p class="text-[11px] text-ink/55 mt-1">Tetapkan staff yang bertanggungjawab untuk lulus dan tandatangan surat jenis ini.</p>
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-start">
+                <div>
+                  <label class="text-[11px] font-semibold text-ink/60 mb-1 block">Pilih Approver</label>
+                  <select id="tpl-signer" class="w-full bg-white border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none">
+                    <option value="">— Mana-mana staff (tiada penyelaras khas) —</option>
+                  </select>
+                </div>
+                <label class="flex items-center gap-2 text-xs font-semibold text-ink/70 mt-5">
+                  <input id="tpl-strict" type="checkbox" class="w-4 h-4">
+                  Wajib hanya approver ini
+                </label>
               </div>
             </div>
-          </section>
 
-          <hr class="border-ink/10">
-
-          <!-- Section: Fields -->
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-
-            <!-- Field Manual -->
-            <section>
-              <div class="flex items-center justify-between mb-2 pb-1.5 border-b border-ink/10">
-                <label class="text-[11px] font-semibold text-ink/45 uppercase tracking-wider">Field Manual <span class="text-ink/40 font-normal normal-case">(staff isi)</span></label>
-                <button onclick="addField()" class="text-xs font-semibold text-navy hover:underline">+ Tambah</button>
-              </div>
-              <p class="text-[11px] text-ink/50 mb-2">Klik <code class="bg-ink/5 px-1 rounded">[KEY]</code> untuk insert ke body.</p>
-              <div id="fields-list" class="space-y-1.5 max-h-[340px] overflow-y-auto pr-1 -mr-1"></div>
-            </section>
-
-            <!-- Auto Field -->
-            <section>
-              <div class="flex items-center justify-between mb-2 pb-1.5 border-b border-ink/10 gap-2 flex-wrap">
-                <label class="text-[11px] font-semibold text-ink/45 uppercase tracking-wider">Auto Field <span class="text-ink/40 font-normal normal-case">(global)</span></label>
-                <div class="flex gap-3">
-                  <button onclick="resetAutoFields()" class="text-xs font-semibold text-terracotta hover:underline">Reset</button>
-                  <button onclick="openAutoFieldForm()" class="text-xs font-semibold text-navy hover:underline">+ Tambah</button>
+            <!-- Summary -->
+            <div class="space-y-2.5 text-sm">
+              <h4 class="font-semibold text-sm text-ink mb-2">Ringkasan</h4>
+              <div class="grid grid-cols-2 gap-2 text-xs">
+                <div class="bg-cream/30 px-3 py-2 rounded-lg">
+                  <div class="text-ink/50 text-[10px] uppercase">Nama Template</div>
+                  <div id="sum-name" class="font-semibold mt-0.5 truncate">—</div>
+                </div>
+                <div class="bg-cream/30 px-3 py-2 rounded-lg">
+                  <div class="text-ink/50 text-[10px] uppercase">Kategori</div>
+                  <div id="sum-category" class="font-semibold mt-0.5">—</div>
+                </div>
+                <div class="bg-cream/30 px-3 py-2 rounded-lg">
+                  <div class="text-ink/50 text-[10px] uppercase">Jenis</div>
+                  <div id="sum-jenis" class="font-semibold mt-0.5">—</div>
+                </div>
+                <div class="bg-cream/30 px-3 py-2 rounded-lg">
+                  <div class="text-ink/50 text-[10px] uppercase">Status</div>
+                  <div id="sum-active" class="font-semibold mt-0.5">—</div>
+                </div>
+                <div class="bg-cream/30 px-3 py-2 rounded-lg">
+                  <div class="text-ink/50 text-[10px] uppercase">Field Manual</div>
+                  <div id="sum-fields" class="font-semibold mt-0.5">0</div>
                 </div>
               </div>
-              <p class="text-[11px] text-ink/50 mb-2">Klik tag untuk insert. Auto-isi dari DB semasa generate.</p>
+            </div>
 
-              <div class="flex items-center gap-2 mb-2 flex-wrap">
-                <input id="af-search" type="text" oninput="renderAutoFieldsList()" placeholder="Cari..." class="bg-white border border-ink/20 rounded px-2 py-1 text-xs flex-1 min-w-[100px] focus:border-navy outline-none">
-                <div class="flex gap-1">
-                  <button onclick="setAfFilter('all')"     id="af-f-all"     class="af-filter active">Semua</button>
-                  <button onclick="setAfFilter('patient')" id="af-f-patient" class="af-filter">Patient</button>
-                  <button onclick="setAfFilter('staff')"   id="af-f-staff"   class="af-filter">Staff</button>
-                  <button onclick="setAfFilter('system')"  id="af-f-system"  class="af-filter">Sys</button>
-                </div>
-              </div>
-              <div id="auto-fields-list" class="space-y-1 max-h-[340px] overflow-y-auto pr-1 -mr-1"></div>
-            </section>
-
+            <p class="text-[11px] text-ink/55 mt-4 italic">Periksa pratonton di kanan. Klik Simpan kalau sudah betul.</p>
           </div>
 
         </div>
 
+        <!-- RIGHT: Live preview -->
+        <div class="lg:sticky lg:top-[80px] self-start">
+          <div class="bg-white rounded-2xl border border-ink/10 overflow-hidden">
+            <div class="flex items-center justify-between px-4 py-3 border-b border-ink/8 gap-2">
+              <h4 class="text-sm font-bold">Pratonton Template</h4>
+              <div class="flex items-center gap-1">
+                <button onclick="zoomPreview(-10)" title="Zoom out" class="w-7 h-7 border border-ink/15 rounded-lg hover:bg-cream flex items-center justify-center text-sm">−</button>
+                <button onclick="resetZoom()" title="Reset 100%" id="zoom-label" class="px-2 h-7 border border-ink/15 rounded-lg hover:bg-cream text-xs font-semibold min-w-[48px]">100%</button>
+                <button onclick="zoomPreview(10)" title="Zoom in" class="w-7 h-7 border border-ink/15 rounded-lg hover:bg-cream flex items-center justify-center text-sm">+</button>
+                <button onclick="previewFull()" title="Buka tab penuh" class="w-7 h-7 border border-ink/15 rounded-lg hover:bg-cream flex items-center justify-center text-xs">⤢</button>
+              </div>
+            </div>
+            <div class="preview-frame">
+              <iframe id="preview-iframe" sandbox="allow-same-origin"></iframe>
+            </div>
+          </div>
+          <div class="mt-3 bg-navy-light/30 border border-navy/15 rounded-xl p-3 text-[11px] text-ink/65">
+            <strong>ℹ️ Nota:</strong> Pratonton guna placeholder (cth: <code class="bg-white/60 px-1 rounded">[NAMA]</code>). Bila staff issue surat, sistem auto-isi data sebenar.
+          </div>
+        </div>
+
       </div>
+
+      <!-- Bottom action bar -->
+      <div class="sticky bottom-0 bg-cream/95 backdrop-blur-sm border-t border-ink/10 px-4 md:px-8 py-3 flex items-center justify-between flex-wrap gap-3">
+        <button onclick="cancelEdit()" class="border border-ink/20 text-ink/70 px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-ink/5">Batal</button>
+        <div class="flex items-center gap-2">
+          <button id="btn-back" onclick="goStep(-1)" class="hidden border border-ink/20 text-ink/70 px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-ink/5">← Kembali</button>
+          <button id="btn-next" onclick="goStep(1)" class="bg-navy text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-dark">Seterusnya →</button>
+          <button id="btn-save" onclick="saveTpl()" class="hidden bg-green-dark text-white px-6 py-2.5 rounded-xl text-sm font-semibold hover:bg-green">💾 Simpan Template</button>
+        </div>
+      </div>
+
     </main>
   </div>
 </div>
 
-<!-- Add/Edit Auto Field Modal -->
+<!-- Add/Edit Auto Field Modal (unchanged) -->
 <div id="af-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
   <div class="bg-white rounded-2xl shadow-xl w-full max-w-md">
     <div class="px-6 py-4 border-b border-ink/10 flex items-center justify-between">
@@ -153,12 +295,12 @@
     </div>
     <div class="p-6 space-y-3">
       <div>
-        <label class="text-xs font-semibold text-ink/60 mb-1 block">Key (untuk dalam templat) <span class="text-terracotta">*</span></label>
+        <label class="text-xs font-semibold text-ink/60 mb-1 block">Key <span class="text-terracotta">*</span></label>
         <input id="af-key" type="text" placeholder="cth: BMI" class="w-full border border-ink/20 rounded-lg px-3 py-2 text-sm font-mono uppercase focus:border-navy outline-none">
-        <p class="text-[10px] text-ink/40 mt-1">Akan jadi <code class="bg-ink/5 px-1 rounded">[KEY]</code> dalam templat. Huruf besar &amp; underscore sahaja.</p>
+        <p class="text-[10px] text-ink/40 mt-1">Akan jadi <code class="bg-ink/5 px-1 rounded">[KEY]</code> dalam templat.</p>
       </div>
       <div>
-        <label class="text-xs font-semibold text-ink/60 mb-1 block">Label (yang muncul dalam palette) <span class="text-terracotta">*</span></label>
+        <label class="text-xs font-semibold text-ink/60 mb-1 block">Label <span class="text-terracotta">*</span></label>
         <input id="af-label" type="text" placeholder="cth: BMI Patient" class="w-full border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none">
       </div>
       <div>
@@ -189,18 +331,6 @@
   </div>
 </div>
 
-<style>
-.tag-btn { width: 100%; text-align: left; padding: 6px 10px; background: rgba(0,0,0,0.02); border: 1px solid rgba(0,0,0,0.08); border-radius: 6px; font-size: 12px; cursor: pointer; transition: all .12s; line-height: 1.3; }
-.tag-btn:hover { background: #1e3a5f; color: white; border-color: #1e3a5f; }
-.tag-btn .code { display: block; font-family: monospace; font-size: 10px; opacity: 0.6; margin-top: 2px; }
-.af-filter { padding: 3px 8px; font-size: 11px; font-weight: 600; color: rgba(0,0,0,0.5); border: 1px solid rgba(0,0,0,0.12); border-radius: 9999px; background: white; transition: all .12s; }
-.af-filter:hover { background: rgba(0,0,0,0.04); }
-.af-filter.active { background: #1e3a5f; color: white; border-color: #1e3a5f; }
-.pal-tab { padding: 3px 8px; font-size: 10px; font-weight: 600; color: rgba(0,0,0,0.5); border-radius: 6px; background: transparent; transition: all .12s; flex: 1; }
-.pal-tab:hover { background: rgba(0,0,0,0.04); }
-.pal-tab.active { background: #1e3a5f; color: white; }
-</style>
-
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../../config/supabase.js"></script>
 <script src="../../shared/authGuard.js"></script>
@@ -214,33 +344,143 @@ const params = new URLSearchParams(location.search);
 const editId = params.get('id');
 
 let editingFields = [];
+let currentStep = 1;
+const TOTAL_STEPS = 4;
 
-function isAdmin() { return window.currentUser?.staff_role === 'admin'; }
+function isAdmin() { return can('communication','edit'); }
+
+// ─── Wizard navigation ──────────────────────────────────
+function goStep(delta) {
+  const next = currentStep + delta;
+  if (next < 1 || next > TOTAL_STEPS) return;
+  // Light validation per step
+  if (delta > 0 && currentStep === 1) {
+    if (!document.getElementById('tpl-name').value.trim()) { banner('Nama template wajib', 'error'); return; }
+  }
+  if (delta > 0 && currentStep === 2) {
+    if (!document.getElementById('tpl-body').value.trim()) { banner('Isi surat wajib', 'error'); return; }
+  }
+  currentStep = next;
+  setStepUI();
+}
+function setStepUI() {
+  for (let i = 1; i <= TOTAL_STEPS; i++) {
+    document.getElementById('step-' + i).classList.toggle('active', i === currentStep);
+    const dot = document.getElementById('dot-' + i);
+    dot.classList.toggle('active',   i === currentStep);
+    dot.classList.toggle('complete', i <  currentStep);
+    if (i < TOTAL_STEPS) document.getElementById('line-' + i).classList.toggle('complete', i < currentStep);
+  }
+  document.getElementById('btn-back').classList.toggle('hidden', currentStep === 1);
+  document.getElementById('btn-next').classList.toggle('hidden', currentStep === TOTAL_STEPS);
+  document.getElementById('btn-save').classList.toggle('hidden', currentStep !== TOTAL_STEPS);
+  if (currentStep === TOTAL_STEPS) renderSummary();
+  updatePreview();
+}
+
+function renderSummary() {
+  document.getElementById('sum-name').textContent     = document.getElementById('tpl-name').value || '—';
+  document.getElementById('sum-category').textContent = document.getElementById('tpl-category').value === 'patient' ? 'Untuk Pesakit' : 'Kegunaan Dalaman';
+  document.getElementById('sum-jenis').textContent    = document.getElementById('tpl-jenis').value || '—';
+  document.getElementById('sum-active').textContent   = document.getElementById('tpl-active').checked ? '✓ Aktif' : '⊘ Draft';
+  document.getElementById('sum-fields').textContent   = editingFields.length;
+}
+
+// ─── Live preview ───────────────────────────────────────
+let zoomLevel = 100;
+function zoomPreview(delta) {
+  zoomLevel = Math.max(50, Math.min(200, zoomLevel + delta));
+  applyZoom();
+}
+function resetZoom() { zoomLevel = 100; applyZoom(); }
+function applyZoom() {
+  const iframe = document.getElementById('preview-iframe');
+  const lbl    = document.getElementById('zoom-label');
+  if (!iframe || !lbl) return;
+  const scale = zoomLevel / 100;
+  iframe.style.transform = 'scale(' + scale + ')';
+  iframe.style.width  = (100 / scale) + '%';
+  iframe.style.height = (750 / scale) + 'px';
+  lbl.textContent = zoomLevel + '%';
+}
+
+let previewDebounce = null;
+function updatePreview() {
+  clearTimeout(previewDebounce);
+  previewDebounce = setTimeout(renderPreviewNow, 200);
+}
+function renderPreviewNow() {
+  const tpl = {
+    name:      document.getElementById('tpl-name').value || 'Template Baru',
+    recipient: document.getElementById('tpl-recipient').value || '',
+    title:     document.getElementById('tpl-title').value || '',
+    body:      document.getElementById('tpl-body').value || '',
+    fields:    editingFields,
+  };
+  const dummyValues = {};
+  (AUTO_FIELDS || []).forEach(f => dummyValues[f.key] = '[' + f.label + ']');
+  editingFields.forEach(f => dummyValues[f.key] = '[' + (f.label || f.key) + ']');
+  let html;
+  try {
+    html = renderLetterFull({
+      logoUrl: LOGO_URL, template: tpl, values: dummyValues,
+      refNumber: 'ISW/PREVIEW/0001',
+      signerName: '[Nama Staff]', signerRole: '[Jawatan]', signatureDataUrl: null,
+    });
+  } catch (e) {
+    html = '<div style="padding:40px;color:#999;font-family:sans-serif">Pratonton tak boleh dijana — sila isi medan asas dulu.</div>';
+  }
+  const iframe = document.getElementById('preview-iframe');
+  if (!iframe) return;
+  const doc = iframe.contentDocument;
+  doc.open(); doc.write(html); doc.close();
+}
+
+function previewFull() {
+  const tpl = collect();
+  if (!tpl) return;
+  const dummyValues = {};
+  (AUTO_FIELDS || []).forEach(f => dummyValues[f.key] = '[' + f.label + ']');
+  editingFields.forEach(f => dummyValues[f.key] = '[' + (f.label || f.key) + ']');
+  const html = renderLetterFull({
+    logoUrl: LOGO_URL, template: tpl, values: dummyValues,
+    refNumber: 'ISW/PREVIEW/0001',
+    signerName: '[Nama Staff]', signerRole: '[Jawatan]', signatureDataUrl: null,
+  });
+  openLetterTab(html, 'Preview — ' + tpl.name);
+}
 
 async function loadTemplate() {
   if (!editId) {
-    document.getElementById('page-title-text').textContent = 'Tambah Templat Baru';
+    document.getElementById('page-title-text').textContent = 'Template Surat Baru';
     editingFields = [];
     renderFieldsList();
     renderPalettes();
+    updatePreview();
     return;
   }
   const { data } = await window.db.from('psy_letter_templates').select('*').eq('id', editId).limit(1);
   const tpl = data?.[0];
   if (!tpl) { banner('Templat tidak ditemui', 'error'); setTimeout(() => location.href = 'surat.html', 1500); return; }
-  document.getElementById('page-title-text').textContent = 'Edit: ' + tpl.name;
+  document.getElementById('page-title-text').textContent = 'Edit Template: ' + tpl.name;
   document.getElementById('tpl-name').value = tpl.name || '';
   document.getElementById('tpl-category').value = tpl.category || 'patient';
+  document.getElementById('tpl-jenis').value = tpl.jenis_surat || '';
   document.getElementById('tpl-desc').value = tpl.description || '';
+  document.getElementById('desc-count').textContent = (tpl.description || '').length;
+  document.getElementById('tpl-active').checked = tpl.is_active !== false;
   document.getElementById('tpl-recipient').value = tpl.recipient || '';
   document.getElementById('tpl-title').value = tpl.title || '';
   document.getElementById('tpl-body').value = tpl.body || '';
+  document.getElementById('tpl-signer').value = tpl.assigned_signer_id || '';
+  document.getElementById('tpl-strict').checked = !!tpl.requires_specific_approver;
   editingFields = Array.isArray(tpl.fields) ? JSON.parse(JSON.stringify(tpl.fields)) : [];
   renderFieldsList();
   renderPalettes();
+  updatePreview();
 }
 
-// ── Insert Palette (di sebelah body editor) ──────────────
+// ─── Field Manual + Palette (unchanged) ─────────────────
 let palTab = 'all';
 function setPalTab(t) {
   palTab = t;
@@ -252,16 +492,16 @@ function setPalTab(t) {
 function renderPalettes() {
   const list = document.getElementById('palette-list');
   if (!list) return;
-  let items = [];
+  let items;
   if (palTab === 'all') {
-    items = [...AUTO_FIELDS, ...editingFields.map(f => ({ ...f, isManual: true }))];
+    items = [...(AUTO_FIELDS || []), ...editingFields.map(f => ({ ...f, isManual: true }))];
   } else if (palTab === 'manual') {
     items = editingFields.map(f => ({ ...f, isManual: true }));
   } else {
-    items = AUTO_FIELDS.filter(f => f.source === palTab);
+    items = (AUTO_FIELDS || []).filter(f => f.source === palTab);
   }
   if (!items.length) {
-    list.innerHTML = '<div class="text-[10px] text-ink/40 italic text-center py-3">Tiada</div>';
+    list.innerHTML = '<div class="text-[10px] text-ink/40 italic text-center py-3 col-span-full">Tiada</div>';
     return;
   }
   list.innerHTML = items.map(f => {
@@ -271,27 +511,29 @@ function renderPalettes() {
                    :                          'bg-gray-100 text-gray-700';
     const srcLabel = f.isManual ? 'M' : f.source.charAt(0).toUpperCase();
     const label = (f.label || f.key || '').replace(/</g,'&lt;');
-    return `<button onclick="insertTag('${f.key}')" class="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left hover:bg-cream/60 transition group">
+    return `<button onclick="insertTag('${f.key}')" class="flex items-center gap-2 px-2 py-1.5 rounded text-left hover:bg-white transition group bg-white/60 border border-ink/8">
       <span class="text-[9px] font-mono font-bold ${srcColor} px-1.5 py-0.5 rounded flex-shrink-0">${srcLabel}</span>
       <span class="flex-1 min-w-0 text-xs truncate">${label}</span>
-      <span class="text-[9px] font-mono text-ink/40 group-hover:text-navy">[${f.key}]</span>
     </button>`;
   }).join('');
 }
 
 function insertTag(key) {
   const ta = document.getElementById('tpl-body');
-  const pos = ta.selectionStart;
+  if (!ta) return;
+  const pos = ta.selectionStart || 0;
   const tag = `[${key}]`;
-  ta.value = ta.value.slice(0, pos) + tag + ta.value.slice(ta.selectionEnd);
+  ta.value = ta.value.slice(0, pos) + tag + ta.value.slice(ta.selectionEnd || pos);
   ta.focus();
   ta.setSelectionRange(pos + tag.length, pos + tag.length);
+  updatePreview();
 }
 
 function renderFieldsList() {
   const list = document.getElementById('fields-list');
+  if (!list) return;
   if (!editingFields.length) {
-    list.innerHTML = '<div class="text-xs text-ink/40 italic p-3 bg-cream/30 rounded-lg">Tiada field manual. Auto-fields (NAMA, IC, dll) boleh terus guna dalam body.</div>';
+    list.innerHTML = '<div class="text-xs text-ink/40 italic p-3 bg-cream/30 rounded-lg">Tiada field manual. Auto-fields boleh terus guna dalam body.</div>';
     return;
   }
   list.innerHTML = editingFields.map((f, i) => `
@@ -325,9 +567,8 @@ function rmField(i) {
   editingFields.splice(i, 1); renderFieldsList(); renderPalettes();
 }
 
-// ── Custom Auto-Fields ───────────────────────────────────────
+// ─── Custom Auto-Fields (unchanged) ────────────────────
 let editingAutoFieldId = null;
-
 const PATIENT_COLS = ['address','dob','gender','race','religion','occupation','email','status','active_package_id','package_purchased_at','package_expires_at','kob_status','weight_kg','height_cm','bmi'];
 const STAFF_COLS = ['full_name','staff_role','role','registration_no','specialization','phone','email'];
 
@@ -341,17 +582,17 @@ function setAfFilter(f) {
 
 function renderAutoFieldsList() {
   const list = document.getElementById('auto-fields-list');
+  if (!list) return;
   const search = (document.getElementById('af-search')?.value || '').toLowerCase().trim();
-  let items = AUTO_FIELDS;
+  let items = AUTO_FIELDS || [];
   if (afFilter !== 'all') items = items.filter(f => f.source === afFilter);
   if (search) items = items.filter(f =>
     f.key.toLowerCase().includes(search) ||
     (f.label || '').toLowerCase().includes(search) ||
     (f.data_path || '').toLowerCase().includes(search)
   );
-
   if (!items.length) {
-    list.innerHTML = '<div class="col-span-full text-xs text-ink/40 italic text-center py-6">Tiada auto-field yang sepadan.</div>';
+    list.innerHTML = '<div class="text-xs text-ink/40 italic text-center py-6">Tiada auto-field.</div>';
     return;
   }
   list.innerHTML = items.map(f => {
@@ -359,13 +600,13 @@ function renderAutoFieldsList() {
                    : f.source === 'staff'   ? 'bg-purple-100 text-purple-700'
                    :                          'bg-gray-100 text-gray-700';
     return `<div class="flex items-center gap-2 bg-cream/30 hover:bg-cream/50 transition px-2 py-1.5 rounded">
-      <div class="text-[10px] font-mono uppercase px-1.5 py-0.5 ${srcColor} rounded flex-shrink-0" title="${f.source}">${f.source.charAt(0).toUpperCase()}</div>
-      <button onclick="insertTag('${f.key}')" title="Klik untuk insert ke body" class="flex-1 min-w-0 text-left cursor-pointer">
-        <div class="text-xs font-semibold truncate text-ink hover:text-navy transition">${(f.label || '').replace(/</g,'&lt;')}</div>
+      <div class="text-[10px] font-mono uppercase px-1.5 py-0.5 ${srcColor} rounded flex-shrink-0">${f.source.charAt(0).toUpperCase()}</div>
+      <button onclick="insertTag('${f.key}')" title="Insert" class="flex-1 min-w-0 text-left cursor-pointer">
+        <div class="text-xs font-semibold truncate text-ink hover:text-navy">${(f.label || '').replace(/</g,'&lt;')}</div>
         <div class="text-[10px] text-ink/45 font-mono truncate">[${f.key}]${f.format_type ? ` · ${f.format_type}` : ''}</div>
       </button>
-      <button onclick="editAutoField('${f.custom_id}')" title="Edit" class="text-ink/50 hover:text-navy text-[11px] flex-shrink-0">Edit</button>
-      <button onclick="deleteAutoField('${f.custom_id}')" title="Buang" class="text-ink/50 hover:text-terracotta text-[11px] flex-shrink-0">Buang</button>
+      <button onclick="editAutoField('${f.custom_id}')" title="Edit" class="text-ink/50 hover:text-navy text-[11px]">Edit</button>
+      <button onclick="deleteAutoField('${f.custom_id}')" title="Buang" class="text-ink/50 hover:text-terracotta text-[11px]">Buang</button>
     </div>`;
   }).join('');
 }
@@ -383,7 +624,7 @@ function openAutoFieldForm() {
 }
 
 function editAutoField(id) {
-  const f = AUTO_FIELDS.find(x => x.custom_id === id);
+  const f = (AUTO_FIELDS || []).find(x => x.custom_id === id);
   if (!f) return;
   editingAutoFieldId = id;
   document.getElementById('af-title').textContent = 'Edit Auto Field';
@@ -413,12 +654,9 @@ async function saveAutoField() {
   const source = document.getElementById('af-source').value;
   const data_path = document.getElementById('af-path').value.trim();
   const format_type = document.getElementById('af-format').value || null;
-
   if (!key || !label || !data_path) { banner('Sila isi semua field wajib', 'error'); return; }
-  // Check key clash with hardcoded defaults
   const defaultKeys = DEFAULT_AUTO_FIELDS.map(f => f.key);
-  if (defaultKeys.includes(key) && !editingAutoFieldId) { banner('Key tu dah ada sebagai default field', 'error'); return; }
-
+  if (defaultKeys.includes(key) && !editingAutoFieldId) { banner('Key dah ada sebagai default', 'error'); return; }
   try {
     if (editingAutoFieldId) {
       await window.db.from('psy_letter_auto_fields').update({
@@ -440,7 +678,7 @@ async function saveAutoField() {
 }
 
 async function deleteAutoField(id) {
-  if (!confirm('Buang auto-field ini? Templat yang guna placeholder ni akan jadi kosong.')) return;
+  if (!confirm('Buang auto-field ini?')) return;
   try {
     await window.db.from('psy_letter_auto_fields').delete().eq('id', id);
     banner('Auto-field dibuang');
@@ -450,7 +688,6 @@ async function deleteAutoField(id) {
   } catch (e) { banner('Ralat: ' + e.message, 'error'); }
 }
 
-// Default auto-fields untuk reset
 const DEFAULT_AUTO_FIELDS_SEED = [
   { key: 'NAMA',                label: 'Nama Patient',          source: 'patient', data_path: 'full_name',            format_type: null,   is_default: true, sort_order: 10  },
   { key: 'IC',                  label: 'No. K/P',                source: 'patient', data_path: 'ic_number',            format_type: null,   is_default: true, sort_order: 20  },
@@ -472,10 +709,9 @@ const DEFAULT_AUTO_FIELDS_SEED = [
 ];
 
 async function resetAutoFields() {
-  if (!confirm('Reset Default akan tambah balik auto-field default yang dah dibuang. Custom field anda tak akan terjejas. Teruskan?')) return;
+  if (!confirm('Reset default akan tambah balik auto-field yang dah dibuang. Teruskan?')) return;
   try {
-    // Insert defaults yang tak wujud (ON CONFLICT do nothing)
-    const existingKeys = new Set(AUTO_FIELDS.map(f => f.key));
+    const existingKeys = new Set((AUTO_FIELDS || []).map(f => f.key));
     const toInsert = DEFAULT_AUTO_FIELDS_SEED.filter(f => !existingKeys.has(f.key));
     if (!toInsert.length) { banner('Semua default fields dah ada'); return; }
     const { error } = await window.db.from('psy_letter_auto_fields').insert(toInsert);
@@ -487,6 +723,7 @@ async function resetAutoFields() {
   } catch (e) { banner('Ralat: ' + e.message, 'error'); }
 }
 
+// ─── Collect + save ─────────────────────────────────────
 function collect() {
   const name = document.getElementById('tpl-name').value.trim();
   if (!name) { banner('Nama wajib diisi', 'error'); return null; }
@@ -498,32 +735,24 @@ function collect() {
   return {
     name,
     category:    document.getElementById('tpl-category').value || 'patient',
+    jenis_surat: document.getElementById('tpl-jenis').value.trim() || null,
     description: document.getElementById('tpl-desc').value.trim(),
+    is_active:   document.getElementById('tpl-active').checked,
     recipient:   document.getElementById('tpl-recipient').value.trim(),
     title:       document.getElementById('tpl-title').value.trim(),
     body,
     fields:      editingFields,
+    assigned_signer_id:         document.getElementById('tpl-signer').value || null,
+    requires_specific_approver: document.getElementById('tpl-strict').checked,
   };
-}
-
-function previewTpl() {
-  const tpl = collect();
-  if (!tpl) return;
-  const dummyValues = {};
-  AUTO_FIELDS.forEach(f => dummyValues[f.key] = '[' + f.label + ']');
-  editingFields.forEach(f => dummyValues[f.key] = '[' + (f.label || f.key) + ']');
-  const html = renderLetterFull({
-    logoUrl: LOGO_URL, template: tpl, values: dummyValues,
-    refNumber: 'ISW/PREVIEW/0001',
-    signerName: '[Nama Staff]', signerRole: '[Jawatan]', signatureDataUrl: null,
-  });
-  openLetterTab(html, 'Preview — ' + tpl.name);
 }
 
 async function saveTpl() {
   if (!isAdmin()) { banner('Hanya admin', 'error'); return; }
   const tpl = collect();
   if (!tpl) return;
+  const btn = document.getElementById('btn-save');
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
   try {
     if (editId) {
       await window.db.from('psy_letter_templates').update({
@@ -536,23 +765,43 @@ async function saveTpl() {
         created_by_name: window.currentUser.full_name,
       });
     }
-    banner('Templat disimpan');
+    banner('Templat disimpan ✓');
     setTimeout(() => location.href = 'surat.html', 700);
-  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+    btn.disabled = false; btn.textContent = '💾 Simpan Template';
+  }
 }
 
 function cancelEdit() {
   if (confirm('Batal & buang perubahan?')) location.href = 'surat.html';
 }
 
+async function loadSignerOptions() {
+  const { data } = await window.db.from('psy_profiles')
+    .select('id, full_name, staff_role').eq('role', 'staff').not('staff_role','is',null)
+    .order('full_name');
+  const sel = document.getElementById('tpl-signer');
+  sel.innerHTML = '<option value="">— Mana-mana staff (tiada penyelaras khas) —</option>' +
+    (data || []).map(u => `<option value="${u.id}">${u.full_name} · ${u.staff_role}</option>`).join('');
+}
+
+// Description counter
+document.addEventListener('input', e => {
+  if (e.target?.id === 'tpl-desc') {
+    document.getElementById('desc-count').textContent = e.target.value.length;
+  }
+});
+
 (async () => {
-  const user = await initStaff('surat', editId ? 'Edit templat surat' : 'Tambah templat surat baru');
+  const user = await initStaff('surat', editId ? 'Edit template surat' : 'Cipta template surat baharu');
   if (!user) return;
   if (!isAdmin()) { banner('Hanya admin boleh edit templat', 'error'); setTimeout(() => location.href = 'surat.html', 1500); return; }
-  setHeaderBack('surat.html', 'Kembali ke Senarai Surat');
+  await loadSignerOptions();
   await loadCustomAutoFields();
   await loadTemplate();
   renderAutoFieldsList();
+  setStepUI();
 })();
 </script>
 </body>

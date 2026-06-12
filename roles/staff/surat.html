@@ -3,12 +3,23 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ibnu Sina Wellness — Surat Rasmi</title>
+<title>Ibnu Sina Wellness — Senarai Surat</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="../../shared/theme.js"></script>
 <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="_styles.css" rel="stylesheet">
+<style>
+  .stat-card { transition: all 0.15s; cursor: pointer; }
+  .stat-card.active { box-shadow: 0 0 0 2px var(--rpm, #1a3a5c); background: #fffaf0; }
+  .stat-card:hover:not(.active) { background: #fcfaf5; }
+  .ltr-table thead th { background: transparent; text-align: left; font-size: 11px; color: rgba(0,0,0,0.55); font-weight: 600; padding: 14px 16px; border-bottom: 1px solid rgba(0,0,0,0.08); }
+  .ltr-table tbody td { padding: 14px 16px; border-bottom: 1px solid rgba(0,0,0,0.05); font-size: 13px; vertical-align: top; }
+  .ltr-table tbody tr:hover td { background: #fcfaf5; }
+  .chip-status { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .tab-btn { padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 500; color: rgba(0,0,0,0.5); border-bottom: 2px solid transparent; background: transparent; }
+  .tab-btn.active { color: #1e3a5f; border-bottom-color: #1e3a5f; font-weight: 600; }
+</style>
 </head>
 <body class="min-h-screen">
 
@@ -22,49 +33,161 @@
     <main class="main-content flex-1 min-w-0">
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
-      <div class="p-4 md:p-8 space-y-4">
+      <div class="p-4 md:p-8 space-y-5">
 
         <!-- Tabs -->
         <div class="flex gap-2 border-b border-ink/10 flex-wrap">
-          <button onclick="setTab('templates')" id="tab-templates" class="tab-btn active">Templat</button>
-          <button onclick="setTab('pending')"   id="tab-pending"   class="tab-btn">Permohonan <span id="cnt-pending" class="badge">0</span></button>
-          <button onclick="setTab('issued')"    id="tab-issued"    class="tab-btn">Telah Dikeluarkan <span id="cnt-issued" class="badge">0</span></button>
+          <button onclick="setTab('senarai')" id="tab-senarai" class="tab-btn active">📋 Senarai Surat</button>
+          <button onclick="setTab('templat')" id="tab-templat" class="tab-btn">🗂️ Templat</button>
         </div>
 
-        <!-- TEMPLATES -->
-        <div id="pane-templates" class="space-y-3">
-          <div class="bg-white rounded-xl border border-ink/10 p-5">
-            <div class="flex items-center justify-between gap-3 mb-3 flex-wrap">
-              <div>
-                <h3 class="font-semibold text-sm">Senarai Templat Surat</h3>
-                <p class="text-xs text-ink/60 mt-0.5">Format surat tetap (letterhead, signature, footer). Admin define isi & field yang staff perlu isi.</p>
-              </div>
-              <a id="btn-new-tpl" href="surat-edit.html" class="hidden bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">+ Tambah Templat</a>
-            </div>
-            <div class="mb-6">
-              <div class="text-[11px] font-semibold text-ink/45 uppercase tracking-wider mb-2 pb-1.5 border-b border-ink/10">Surat Untuk Pesakit</div>
-              <ul id="templates-patient" class="divide-y divide-ink/8"></ul>
-              <div id="pager-patient" class="flex items-center justify-end gap-1 mt-3"></div>
-            </div>
+        <!-- ════════ TAB 1: SENARAI SURAT ════════ -->
+        <div id="pane-senarai" class="space-y-5">
+          <div class="flex items-start justify-between gap-3 flex-wrap">
             <div>
-              <div class="text-[11px] font-semibold text-ink/45 uppercase tracking-wider mb-2 pb-1.5 border-b border-ink/10">Kegunaan Dalaman</div>
-              <ul id="templates-internal" class="divide-y divide-ink/8"></ul>
-              <div id="pager-internal" class="flex items-center justify-end gap-1 mt-3"></div>
+              <p class="text-sm text-ink/60">Papar senarai permohonan dan surat yang dikeluarkan.</p>
+              <label class="flex items-center gap-2 mt-2 text-xs text-ink/70 cursor-pointer">
+                <input id="f-mine" type="checkbox" class="w-4 h-4" onchange="loadData()">
+                Hanya tunjuk yang perlu saya lulus
+              </label>
+            </div>
+            <a href="surat-issue.html" id="btn-new-letter" class="hidden bg-navy text-white text-sm px-4 py-2.5 rounded-xl font-semibold hover:bg-navy-dark">+ Surat / Pesakit Baru</a>
+          </div>
+
+          <!-- Stat cards (5) -->
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div class="stat-card bg-white rounded-2xl border border-ink/10 p-4 flex items-center gap-3" data-st="all" onclick="filterStatus('all')">
+              <div class="w-11 h-11 rounded-xl bg-navy-light text-navy flex items-center justify-center text-lg">📋</div>
+              <div>
+                <div class="text-[11px] text-ink/55 font-semibold">Semua</div>
+                <div id="stat-all" class="text-2xl font-bold mt-0.5">0</div>
+              </div>
+            </div>
+            <div class="stat-card bg-white rounded-2xl border border-ink/10 p-4 flex items-center gap-3" data-st="draft" onclick="filterStatus('draft')">
+              <div class="w-11 h-11 rounded-xl bg-ink/10 text-ink/65 flex items-center justify-center text-lg">📝</div>
+              <div>
+                <div class="text-[11px] text-ink/55 font-semibold">Draf</div>
+                <div id="stat-draft" class="text-2xl font-bold mt-0.5">0</div>
+              </div>
+            </div>
+            <div class="stat-card bg-white rounded-2xl border border-ink/10 p-4 flex items-center gap-3" data-st="pending" onclick="filterStatus('pending')">
+              <div class="w-11 h-11 rounded-xl bg-gold/20 text-gold-dark flex items-center justify-center text-lg">⏳</div>
+              <div>
+                <div class="text-[11px] text-ink/55 font-semibold">Menunggu Kelulusan</div>
+                <div id="stat-pending" class="text-2xl font-bold mt-0.5">0</div>
+              </div>
+            </div>
+            <div class="stat-card bg-white rounded-2xl border border-ink/10 p-4 flex items-center gap-3" data-st="issued" onclick="filterStatus('issued')">
+              <div class="w-11 h-11 rounded-xl bg-green-light text-green-dark flex items-center justify-center text-lg">✅</div>
+              <div>
+                <div class="text-[11px] text-ink/55 font-semibold">Selesai</div>
+                <div id="stat-issued" class="text-2xl font-bold mt-0.5">0</div>
+              </div>
+            </div>
+            <div class="stat-card bg-white rounded-2xl border border-ink/10 p-4 flex items-center gap-3" data-st="rejected" onclick="filterStatus('rejected')">
+              <div class="w-11 h-11 rounded-xl bg-terracotta-light text-terracotta flex items-center justify-center text-lg">✕</div>
+              <div>
+                <div class="text-[11px] text-ink/55 font-semibold">Dibatalkan</div>
+                <div id="stat-rejected" class="text-2xl font-bold mt-0.5">0</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Filter row -->
+          <div class="flex gap-2 flex-wrap items-center">
+            <input id="f-search" type="text" placeholder="Cari tajuk surat, pesakit atau jenis surat..." oninput="renderList()"
+              class="flex-1 min-w-[260px] border border-ink/15 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-navy">
+            <select id="f-kategori" onchange="renderList()" class="border border-ink/15 rounded-xl px-4 py-2.5 text-sm bg-white outline-none focus:border-navy min-w-[160px]">
+              <option value="">Semua Kategori</option>
+              <option value="patient">Untuk Pesakit</option>
+              <option value="internal">Kegunaan Dalaman</option>
+            </select>
+            <select id="f-jenis" onchange="renderList()" class="border border-ink/15 rounded-xl px-4 py-2.5 text-sm bg-white outline-none focus:border-navy min-w-[160px]">
+              <option value="">Semua Jenis</option>
+            </select>
+            <button onclick="resetFilters()" class="border border-ink/15 rounded-xl px-4 py-2.5 text-sm text-navy hover:bg-cream font-semibold">↻ Reset</button>
+          </div>
+
+          <!-- Table -->
+          <div class="bg-white rounded-2xl border border-ink/10 overflow-x-auto">
+            <table class="ltr-table w-full">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Tajuk Surat</th>
+                  <th>Pesakit</th>
+                  <th>Jenis Surat</th>
+                  <th>Status</th>
+                  <th>Dicipta Pada</th>
+                  <th>Tindakan</th>
+                </tr>
+              </thead>
+              <tbody id="ltr-body"></tbody>
+            </table>
+            <div class="px-5 py-3 border-t border-ink/8 flex items-center justify-between text-xs text-ink/55">
+              <span id="ltr-count">—</span>
+              <div class="flex gap-2">
+                <button id="page-prev" onclick="changePage(-1)" class="px-3 py-1.5 border border-ink/15 rounded-lg hover:bg-cream disabled:opacity-40" disabled>←</button>
+                <span id="page-info">—</span>
+                <button id="page-next" onclick="changePage(1)" class="px-3 py-1.5 border border-ink/15 rounded-lg hover:bg-cream disabled:opacity-40" disabled>→</button>
+              </div>
             </div>
           </div>
         </div>
 
-        <!-- PENDING -->
-        <div id="pane-pending" class="hidden space-y-3">
-          <div id="pending-list"></div>
-        </div>
-
-        <!-- ISSUED -->
-        <div id="pane-issued" class="hidden space-y-3">
-          <div class="flex items-center justify-end">
-            <a href="surat-issue.html" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">+ Keluarkan Surat Baru</a>
+        <!-- ════════ TAB 2: TEMPLAT ════════ -->
+        <div id="pane-templat" class="hidden space-y-4">
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <p class="text-sm text-ink/60">Senarai templat surat. Admin define isi & approver yang ditetapkan.</p>
+            <a id="btn-new-tpl" href="surat-edit.html" class="hidden bg-navy text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-dark">+ Tambah Templat</a>
           </div>
-          <div id="issued-list"></div>
+
+          <!-- Search + filter row -->
+          <div class="flex gap-2 flex-wrap items-center">
+            <input id="tpl-search" type="text" placeholder="Cari templat surat..." oninput="renderTemplates()"
+              class="flex-1 min-w-[260px] border border-ink/15 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-navy">
+            <select id="tpl-kategori" onchange="renderTemplates()" class="border border-ink/15 rounded-xl px-4 py-2.5 text-sm bg-white outline-none focus:border-navy min-w-[180px]">
+              <option value="">Semua Kategori</option>
+            </select>
+          </div>
+
+          <!-- Section: Untuk Pesakit -->
+          <div class="bg-white rounded-2xl border border-ink/10 overflow-hidden">
+            <div class="px-5 py-3 bg-cream/40 border-b border-ink/10 text-[11px] font-bold text-ink/55 uppercase tracking-widest">Surat Untuk Pesakit</div>
+            <div class="overflow-x-auto">
+              <table class="w-full">
+                <thead>
+                  <tr class="text-left text-[11px] uppercase tracking-wide text-ink/50 border-b border-ink/8">
+                    <th class="px-4 py-3" style="width:48px"></th>
+                    <th class="px-2 py-3">Nama Templat</th>
+                    <th class="px-2 py-3">Kategori</th>
+                    <th class="px-2 py-3 whitespace-nowrap">Kemas Kini Terakhir</th>
+                    <th class="px-2 py-3 text-right">Tindakan</th>
+                  </tr>
+                </thead>
+                <tbody id="templates-patient"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Section: Kegunaan Dalaman -->
+          <div class="bg-white rounded-2xl border border-ink/10 overflow-hidden">
+            <div class="px-5 py-3 bg-cream/40 border-b border-ink/10 text-[11px] font-bold text-ink/55 uppercase tracking-widest">Kegunaan Dalaman</div>
+            <div class="overflow-x-auto">
+              <table class="w-full">
+                <thead>
+                  <tr class="text-left text-[11px] uppercase tracking-wide text-ink/50 border-b border-ink/8">
+                    <th class="px-4 py-3" style="width:48px"></th>
+                    <th class="px-2 py-3">Nama Templat</th>
+                    <th class="px-2 py-3">Kategori</th>
+                    <th class="px-2 py-3 whitespace-nowrap">Kemas Kini Terakhir</th>
+                    <th class="px-2 py-3 text-right">Tindakan</th>
+                  </tr>
+                </thead>
+                <tbody id="templates-internal"></tbody>
+              </table>
+            </div>
+          </div>
         </div>
 
       </div>
@@ -72,16 +195,32 @@
   </div>
 </div>
 
-<style>
-.tab-btn { padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 500; color: rgba(0,0,0,0.5); border-bottom: 2px solid transparent; background: transparent; }
-.tab-btn.active { color: #1e3a5f; border-bottom-color: #1e3a5f; font-weight: 600; }
-.badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; background: rgba(0,0,0,0.08); border-radius: 9999px; font-size: 10px; font-weight: 600; margin-left: 4px; }
-.tab-btn.active .badge { background: #1e3a5f; color: white; }
-.chip { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 9999px; font-weight: 600; }
-.palette-btn { width: 100%; text-align: left; padding: 5px 8px; background: white; border: 1px solid rgba(0,0,0,0.08); border-radius: 6px; font-size: 11px; cursor: pointer; transition: all .12s; }
-.palette-btn:hover { background: #1e3a5f; color: white; border-color: #1e3a5f; }
-.palette-btn .tag { display: block; font-family: monospace; font-size: 10px; opacity: 0.6; }
-</style>
+<!-- Reject Modal -->
+<div id="reject-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/50" onclick="closeRejectModal()"></div>
+  <div class="relative bg-white rounded-2xl max-w-md w-full">
+    <div class="p-5 border-b border-ink/10 flex items-center justify-between">
+      <h3 class="font-bold text-lg">Tolak Permohonan Surat</h3>
+      <button onclick="closeRejectModal()" class="text-ink/60 text-xl">×</button>
+    </div>
+    <div class="p-5 space-y-3">
+      <div class="bg-cream/40 rounded-lg p-3 text-xs">
+        <div class="text-ink/55">Permohonan untuk:</div>
+        <div id="rej-tpl" class="font-semibold text-sm mt-0.5">—</div>
+        <div id="rej-patient" class="text-ink/65 mt-0.5">—</div>
+      </div>
+      <div>
+        <label class="text-xs font-semibold">Alasan tolak <span class="text-terracotta">*</span></label>
+        <textarea id="rej-reason" rows="3" placeholder="Alasan akan dihantar sebagai notifikasi kepada pesakit."
+          class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm outline-none focus:border-navy resize-none"></textarea>
+      </div>
+    </div>
+    <div class="p-5 border-t border-ink/10 flex justify-end gap-2">
+      <button onclick="closeRejectModal()" class="px-4 py-2 text-sm rounded-xl border border-ink/20 hover:bg-cream">Batal</button>
+      <button onclick="confirmRejectReq()" id="rej-btn" class="px-4 py-2 text-sm rounded-xl bg-terracotta text-white font-semibold hover:bg-terracotta/90">Tolak Permohonan</button>
+    </div>
+  </div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../../config/supabase.js"></script>
@@ -92,141 +231,354 @@
 <script src="_shared.js"></script>
 <script>
 const LOGO_URL = '../../image/Logo_ISW.png';
+const PAGE_SIZE = 25;
 
 let allTemplates = [];
 let allRequests = [];
 let allIssued = [];
 let allPatients = [];
-let currentTab = 'templates';
+let staffMap = {};            // userId → { full_name, staff_role }
+let currentStatusFilter = 'all';
+let currentPage = 0;
+let pendingRejectId = null;
 
-function isAdmin() { return window.currentUser?.staff_role === 'admin'; }
+function isAdmin() { return can('communication','edit'); }
+function isSuperAdmin() { return window.currentUser?.staff_role === 'super_admin'; }
 
 function setTab(t) {
-  currentTab = t;
-  ['templates','pending','issued'].forEach(k => {
-    document.getElementById('pane-' + k).classList.toggle('hidden', k !== t);
+  document.getElementById('pane-senarai').classList.toggle('hidden', t !== 'senarai');
+  document.getElementById('pane-templat').classList.toggle('hidden', t !== 'templat');
+  ['senarai','templat'].forEach(k => {
     document.getElementById('tab-' + k).classList.toggle('active', k === t);
   });
 }
 
 async function loadData() {
-  const [tplRes, reqRes, issuedRes, patRes] = await Promise.all([
+  const onlyMine = document.getElementById('f-mine')?.checked;
+  let reqQuery = window.db.from('psy_letter_requests').select('*');
+  let issuedQuery = window.db.from('psy_letter_issued').select('*');
+  if (onlyMine && !isSuperAdmin()) {
+    reqQuery = reqQuery.eq('assigned_signer_id', window.currentUser.id);
+    issuedQuery = issuedQuery.eq('signed_by', window.currentUser.id);
+  }
+
+  const [tplRes, reqRes, issuedRes, patRes, staffRes] = await Promise.all([
     window.db.from('psy_letter_templates').select('*').order('created_at', { ascending: false }),
-    window.db.from('psy_letter_requests').select('*').order('created_at', { ascending: false }),
-    window.db.from('psy_letter_issued').select('*').order('created_at', { ascending: false }),
+    reqQuery.order('created_at', { ascending: false }),
+    issuedQuery.order('created_at', { ascending: false }),
     window.db.from('psy_patients').select('id, full_name, ic_number, user_id, phone, active_package_name, profile:psy_profiles!user_id(full_name)').eq('status', 'active'),
+    window.db.from('psy_profiles').select('id, full_name, staff_role').eq('role','staff').not('staff_role','is',null),
   ]);
   allTemplates = tplRes.data || [];
   allRequests  = reqRes.data || [];
   allIssued    = issuedRes.data || [];
-  allPatients  = (patRes.data || []).map(p => ({
-    ...p,
-    full_name: p.full_name || p.profile?.full_name || null,
-  }));
+  allPatients  = (patRes.data || []).map(p => ({ ...p, full_name: p.full_name || p.profile?.full_name || null }));
+  staffMap = {};
+  (staffRes.data || []).forEach(s => staffMap[s.id] = s);
 
-  document.getElementById('cnt-pending').textContent = allRequests.filter(r => r.status === 'pending').length;
-  document.getElementById('cnt-issued').textContent  = allIssued.length;
   document.getElementById('btn-new-tpl').classList.toggle('hidden', !isAdmin());
+  document.getElementById('btn-new-letter').classList.toggle('hidden', !can('communication','create'));
 
+  populateTplFilter();
+  populateTplKategoriFilter();
+  renderStats();
+  renderList();
   renderTemplates();
-  renderPending();
-  renderIssued();
 }
 
-const TPL_PAGE_SIZE = 15;
-let tplPage = { patient: 1, internal: 1 };
+function populateTplFilter() {
+  const jenisInUse = new Set(allTemplates.map(t => t.jenis_surat).filter(Boolean));
+  const sel = document.getElementById('f-jenis');
+  if (sel) {
+    sel.innerHTML = '<option value="">Semua Jenis</option>' +
+      [...jenisInUse].sort().map(n => `<option value="${n}">${n.replace(/</g,'&lt;')}</option>`).join('');
+  }
+}
+
+function resetFilters() {
+  document.getElementById('f-search').value = '';
+  document.getElementById('f-kategori').value = '';
+  document.getElementById('f-jenis').value = '';
+  document.getElementById('f-mine').checked = false;
+  currentStatusFilter = 'all';
+  document.querySelectorAll('.stat-card').forEach(c => c.classList.toggle('active', c.dataset.st === 'all'));
+  loadData();
+}
+
+function filterStatus(st) {
+  currentStatusFilter = st;
+  document.querySelectorAll('.stat-card').forEach(c => {
+    c.classList.toggle('active', c.dataset.st === st);
+  });
+  currentPage = 0;
+  renderList();
+}
+
+function renderStats() {
+  const draft    = allRequests.filter(r => r.status === 'draft').length;
+  const pending  = allRequests.filter(r => r.status === 'pending').length;
+  const issued   = allIssued.length;
+  const rejected = allRequests.filter(r => r.status === 'rejected' || r.status === 'cancelled').length;
+  document.getElementById('stat-all').textContent      = draft + pending + issued + rejected;
+  document.getElementById('stat-draft').textContent    = draft;
+  document.getElementById('stat-pending').textContent  = pending;
+  document.getElementById('stat-issued').textContent   = issued;
+  document.getElementById('stat-rejected').textContent = rejected;
+  if (!document.querySelector('.stat-card.active')) {
+    document.querySelector('[data-st="all"]').classList.add('active');
+  }
+}
+
+// Lookup helper: derive jenis + category from template name (snapshot)
+function tplMeta(name) {
+  const t = allTemplates.find(x => x.name === name);
+  return { jenis: t?.jenis_surat || null, category: t?.category || null };
+}
+function patientIc(pid) { return allPatients.find(p => p.id === pid)?.ic_number || null; }
+
+// Combine requests + issued into a unified list with normalized shape
+function buildUnifiedList() {
+  const fromReq = allRequests.map(r => {
+    const m = tplMeta(r.template_name);
+    return {
+      kind:        'request',
+      id:          r.id,
+      title:       r.template_name || 'Permohonan Surat',
+      template:    r.template_name,
+      jenis:       m.jenis,
+      category:    m.category,
+      patient_id:  r.patient_id,
+      patient:     r.patient_name,
+      ic:          patientIc(r.patient_id),
+      signer_id:   r.assigned_signer_id,
+      status:      r.status,
+      created_at:  r.created_at,
+      reason:      r.reason,
+      ref:         null,
+      raw:         r,
+    };
+  });
+  const fromIssued = allIssued.map(l => {
+    const m = tplMeta(l.template_name);
+    return {
+      kind:       'issued',
+      id:         l.id,
+      title:      l.template_name,
+      template:   l.template_name,
+      jenis:      m.jenis,
+      category:   m.category,
+      patient_id: l.patient_id,
+      patient:    l.patient_name,
+      ic:         patientIc(l.patient_id),
+      signer_id:  l.signed_by,
+      status:     'issued',
+      created_at: l.signed_at || l.created_at,
+      ref:        l.ref_number,
+      raw:        l,
+    };
+  });
+  return [...fromReq, ...fromIssued].sort((a, b) =>
+    new Date(b.created_at) - new Date(a.created_at)
+  );
+}
+
+function statusChip(st) {
+  switch (st) {
+    case 'draft':     return '<span class="chip-status bg-navy-light text-navy">Draf</span>';
+    case 'pending':   return '<span class="chip-status bg-gold/30 text-gold-dark">Menunggu Kelulusan</span>';
+    case 'issued':    return '<span class="chip-status bg-green-light text-green-dark">Selesai</span>';
+    case 'rejected':  return '<span class="chip-status bg-terracotta-light text-terracotta">Dibatalkan</span>';
+    case 'cancelled': return '<span class="chip-status bg-ink/10 text-ink/60">Dibatalkan</span>';
+    default:          return `<span class="chip-status bg-ink/10 text-ink/60">${st}</span>`;
+  }
+}
+
+function renderList() {
+  let list = buildUnifiedList();
+  // Status filter
+  if (currentStatusFilter === 'draft')         list = list.filter(x => x.status === 'draft');
+  else if (currentStatusFilter === 'pending')  list = list.filter(x => x.status === 'pending');
+  else if (currentStatusFilter === 'issued')   list = list.filter(x => x.status === 'issued');
+  else if (currentStatusFilter === 'rejected') list = list.filter(x => x.status === 'rejected' || x.status === 'cancelled');
+  // Search + filter
+  const q  = (document.getElementById('f-search')?.value || '').toLowerCase().trim();
+  const fk = document.getElementById('f-kategori')?.value || '';
+  const fj = document.getElementById('f-jenis')?.value || '';
+  if (q) list = list.filter(x =>
+    (x.title || '').toLowerCase().includes(q) ||
+    (x.patient || '').toLowerCase().includes(q) ||
+    (x.ic || '').toLowerCase().includes(q) ||
+    (x.jenis || '').toLowerCase().includes(q) ||
+    (x.ref || '').toLowerCase().includes(q)
+  );
+  if (fk) list = list.filter(x => x.category === fk);
+  if (fj) list = list.filter(x => x.jenis === fj);
+
+  document.getElementById('ltr-count').textContent = `${list.length} rekod`;
+
+  if (!list.length) {
+    document.getElementById('ltr-body').innerHTML =
+      `<tr><td colspan="7" class="text-center py-10 text-ink/40">Tiada surat dijumpai untuk filter ini.</td></tr>`;
+    document.getElementById('page-prev').disabled = true;
+    document.getElementById('page-next').disabled = true;
+    document.getElementById('page-info').textContent = '0';
+    return;
+  }
+
+  const start = currentPage * PAGE_SIZE;
+  const end   = start + PAGE_SIZE;
+  const page  = list.slice(start, end);
+
+  document.getElementById('ltr-body').innerHTML = page.map((x, i) => {
+    const dt   = new Date(x.created_at);
+    const date = dt.toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' });
+    const time = dt.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+    const patientCell = x.patient_id
+      ? `<div class="font-medium text-ink">${(x.patient || '').replace(/</g,'&lt;')}</div>${x.ic ? `<div class="text-[11px] text-ink/55 mt-0.5">${x.ic}</div>` : ''}`
+      : '<span class="text-navy">Internal</span>';
+    const jenis = x.jenis || '<span class="text-ink/40">—</span>';
+    return `<tr>
+      <td class="text-ink/55 text-xs">${start + i + 1}</td>
+      <td><div class="font-semibold text-ink">${(x.title || '').replace(/</g,'&lt;')}</div>${x.ref ? `<div class="text-[10px] text-ink/50 font-mono mt-0.5">${x.ref}</div>` : ''}</td>
+      <td>${patientCell}</td>
+      <td class="text-ink/75">${jenis}</td>
+      <td>${statusChip(x.status)}</td>
+      <td><div class="text-ink">${date}</div><div class="text-ink/60 text-xs mt-0.5">${time}</div></td>
+      <td class="text-right whitespace-nowrap relative">${renderRowMenu(x, start + i)}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('page-prev').disabled = currentPage === 0;
+  document.getElementById('page-next').disabled = end >= list.length;
+  document.getElementById('page-info').textContent = `${currentPage + 1} / ${Math.ceil(list.length / PAGE_SIZE)}`;
+}
+
+function renderRowMenu(x, idx) {
+  const me = window.currentUser?.id;
+  const sa = x.signer_id;
+  const iAmSigner = !sa || sa === me || isSuperAdmin();
+  const items = [];
+  if (x.kind === 'issued') {
+    items.push(`<button onclick="viewIssued('${x.id}')" class="block w-full text-left px-3 py-1.5 text-xs hover:bg-cream">📄 Buka / Cetak</button>`);
+    if (can('communication','delete')) {
+      items.push(`<button onclick="deleteIssued('${x.id}')" class="block w-full text-left px-3 py-1.5 text-xs text-terracotta hover:bg-terracotta/5">🗑️ Padam</button>`);
+    }
+  } else if (x.status === 'pending') {
+    if (iAmSigner) {
+      items.push(`<a href="surat-issue.html?req=${x.id}" class="block w-full text-left px-3 py-1.5 text-xs hover:bg-cream text-navy font-semibold">✍️ Lulus & Sign</a>`);
+      items.push(`<button onclick="rejectReq('${x.id}')" class="block w-full text-left px-3 py-1.5 text-xs text-terracotta hover:bg-terracotta/5">✕ Tolak</button>`);
+    } else {
+      items.push(`<div class="px-3 py-2 text-[11px] text-ink/40 italic">Tunggu approver</div>`);
+    }
+    if (can('communication','delete')) {
+      items.push(`<button onclick="deleteRequest('${x.id}')" class="block w-full text-left px-3 py-1.5 text-xs text-terracotta hover:bg-terracotta/5">🗑️ Padam permohonan</button>`);
+    }
+  } else if (x.status === 'rejected' || x.status === 'cancelled') {
+    if (can('communication','delete')) {
+      items.push(`<button onclick="deleteRequest('${x.id}')" class="block w-full text-left px-3 py-1.5 text-xs text-terracotta hover:bg-terracotta/5">🗑️ Padam permohonan</button>`);
+    } else {
+      items.push(`<div class="px-3 py-2 text-[11px] text-ink/40 italic">Tiada tindakan</div>`);
+    }
+  }
+  if (!items.length) return '';
+  const menuId = 'menu-' + idx;
+  return `<button onclick="toggleRowMenu('${menuId}', event)" class="w-8 h-8 rounded-lg hover:bg-ink/5 text-ink/60 flex items-center justify-center mx-auto">⋮</button>
+    <div id="${menuId}" class="hidden absolute right-3 top-10 z-20 bg-white border border-ink/10 rounded-xl shadow-lg py-1 min-w-[180px]">${items.join('')}</div>`;
+}
+
+function toggleRowMenu(id, evt) {
+  evt.stopPropagation();
+  document.querySelectorAll('[id^="menu-"]').forEach(m => { if (m.id !== id) m.classList.add('hidden'); });
+  document.getElementById(id)?.classList.toggle('hidden');
+}
+document.addEventListener('click', () => document.querySelectorAll('[id^="menu-"]').forEach(m => m.classList.add('hidden')));
+
+function changePage(delta) {
+  currentPage = Math.max(0, currentPage + delta);
+  renderList();
+}
+
+// ─── Templates tab ────────────────────────────────────────
+const KATEGORI_CHIP = {
+  KWSP:        { label: 'Surat KWSP',     cls: 'bg-blue-100 text-blue-700' },
+  Pengesahan:  { label: 'Surat Klinikal', cls: 'bg-navy-light text-navy' },
+  PERKESO:     { label: 'Surat PERKESO',  cls: 'bg-purple-100 text-purple-700' },
+  RELA:        { label: 'Surat Lain-lain',cls: 'bg-gold/30 text-gold-dark' },
+  MC:          { label: 'Surat Klinik',   cls: 'bg-teal/20 text-teal' },
+  Sokongan:    { label: 'Surat Lain-lain',cls: 'bg-gold/30 text-gold-dark' },
+};
+function kategoriChip(jenis) {
+  const k = KATEGORI_CHIP[jenis];
+  if (k) return `<span class="chip-status ${k.cls}">${k.label}</span>`;
+  if (jenis) return `<span class="chip-status bg-ink/8 text-ink/65">${jenis.replace(/</g,'&lt;')}</span>`;
+  return '<span class="text-ink/40 text-xs">—</span>';
+}
+
+// Avatar warna per template (consistent ikut nama)
+const AVATAR_COLORS = ['bg-blue-100 text-blue-600','bg-green-100 text-green-700','bg-purple-100 text-purple-700','bg-gold/40 text-gold-dark','bg-terracotta-light text-terracotta','bg-teal/20 text-teal'];
+function tplAvatar(t) {
+  const hash = (t.name || 'x').split('').reduce((a,c) => a + c.charCodeAt(0), 0);
+  const cls = AVATAR_COLORS[hash % AVATAR_COLORS.length];
+  return `<div class="w-9 h-9 rounded-lg ${cls} flex items-center justify-center text-sm">📄</div>`;
+}
+
+function populateTplKategoriFilter() {
+  const sel = document.getElementById('tpl-kategori');
+  if (!sel) return;
+  const jenisSet = new Set(allTemplates.map(t => t.jenis_surat).filter(Boolean));
+  sel.innerHTML = '<option value="">Semua Kategori</option>' +
+    [...jenisSet].sort().map(j => `<option value="${j}">${j.replace(/</g,'&lt;')}</option>`).join('');
+}
 
 function renderTemplates() {
-  const tplRowHtml = t => {
-    const adminBtns = isAdmin()
-      ? `<a href="surat-edit.html?id=${t.id}" class="text-ink/50 hover:text-navy text-xs">Edit</a>
-         <span class="text-ink/15">·</span>
-         <button onclick="deleteTpl('${t.id}')" class="text-ink/50 hover:text-terracotta text-xs">Buang</button>`
-      : '';
-    return `<li class="flex items-center gap-3 py-2.5 px-1 hover:bg-ink/[0.02] transition-colors">
-      <div class="flex-1 min-w-0 text-sm text-ink truncate">${(t.name || '').replace(/</g,'&lt;')}</div>
-      <button onclick="previewTpl('${t.id}')" class="text-ink/50 hover:text-navy text-xs">Preview</button>
-      <span class="text-ink/15">·</span>
-      <a href="surat-issue.html?tpl=${t.id}" class="text-navy font-semibold text-xs hover:underline">Guna</a>
-      ${adminBtns ? `<span class="text-ink/15">·</span>${adminBtns}` : ''}
-    </li>`;
+  const q  = (document.getElementById('tpl-search')?.value || '').toLowerCase().trim();
+  const fk = document.getElementById('tpl-kategori')?.value || '';
+
+  const tplRowHtml = (t, idx) => {
+    const signer = t.assigned_signer_id ? staffMap[t.assigned_signer_id]?.full_name : null;
+    const updated = t.updated_at || t.created_at;
+    const dt   = updated ? new Date(updated) : null;
+    const date = dt ? dt.toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : '—';
+    const time = dt ? dt.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' }) : '';
+    return `<tr class="border-b border-ink/5 last:border-0 hover:bg-cream/30">
+      <td class="px-4 py-3">${tplAvatar(t)}</td>
+      <td class="px-2 py-3">
+        <div class="font-semibold text-sm text-ink">${(t.name || '').replace(/</g,'&lt;')}</div>
+        ${signer ? `<div class="text-[10px] text-ink/55 mt-0.5">🛡️ ${signer}</div>` : ''}
+      </td>
+      <td class="px-2 py-3">${kategoriChip(t.jenis_surat)}</td>
+      <td class="px-2 py-3 whitespace-nowrap">
+        <div class="text-xs text-ink">${date}</div>
+        <div class="text-[10px] text-ink/55">${time}</div>
+      </td>
+      <td class="px-2 py-3 text-right whitespace-nowrap">
+        <button onclick="previewTpl('${t.id}')" class="text-navy text-xs hover:underline mr-2">👁️ Preview</button>
+        <a href="surat-issue.html?tpl=${t.id}" class="text-navy text-xs hover:underline mr-2">📝 Guna</a>
+        ${isAdmin() ? `<a href="surat-edit.html?id=${t.id}" class="text-navy text-xs hover:underline mr-2">✏️ Edit</a>` : ''}
+        ${isAdmin() && can('communication','delete') ? `<button onclick="deleteTpl('${t.id}')" class="text-terracotta text-xs hover:underline">🗑️ Padam</button>` : ''}
+      </td>
+    </tr>`;
   };
 
   const emptyMsg = isAdmin() ? 'Belum ada templat. Klik "+ Tambah Templat" untuk tambah.' : 'Tiada templat dalam kategori ini.';
-
-  const renderSection = (cat) => {
-    const items = allTemplates.filter(t => (t.category || 'patient') === cat);
-    const containerId = `templates-${cat}`;
-    const pagerId     = `pager-${cat}`;
-    if (!items.length) {
-      document.getElementById(containerId).innerHTML = `<li class="text-center text-ink/40 text-xs py-4 list-none">${emptyMsg}</li>`;
-      document.getElementById(pagerId).innerHTML = '';
-      return;
-    }
-    const total = items.length;
-    const totalPages = Math.ceil(total / TPL_PAGE_SIZE);
-    if (tplPage[cat] > totalPages) tplPage[cat] = totalPages;
-    const start = (tplPage[cat] - 1) * TPL_PAGE_SIZE;
-    const slice = items.slice(start, start + TPL_PAGE_SIZE);
-    document.getElementById(containerId).innerHTML = slice.map(tplRowHtml).join('');
-
-    if (totalPages <= 1) {
-      document.getElementById(pagerId).innerHTML = '';
-    } else {
-      let pgHtml = `<span class="text-[10px] text-ink/50 mr-2">${total} templat</span>`;
-      for (let p = 1; p <= totalPages; p++) {
-        pgHtml += `<button onclick="setTplPage('${cat}',${p})" class="w-7 h-7 rounded text-xs font-semibold ${p === tplPage[cat] ? 'bg-navy text-white' : 'bg-ink/8 text-ink/60 hover:bg-ink/15'}">${p}</button>`;
-      }
-      document.getElementById(pagerId).innerHTML = pgHtml;
-    }
-  };
-
-  renderSection('patient');
-  renderSection('internal');
+  ['patient','internal'].forEach(cat => {
+    let items = allTemplates.filter(t => (t.category || 'patient') === cat);
+    if (q)  items = items.filter(t => (t.name || '').toLowerCase().includes(q));
+    if (fk) items = items.filter(t => t.jenis_surat === fk);
+    document.getElementById('templates-' + cat).innerHTML = items.length
+      ? items.map(tplRowHtml).join('')
+      : `<tr><td colspan="5" class="text-center text-ink/40 text-xs py-6">${emptyMsg}</td></tr>`;
+  });
 }
 
-function setTplPage(cat, p) {
-  tplPage[cat] = p;
-  renderTemplates();
-}
-
-function renderPending() {
-  const list = document.getElementById('pending-list');
-  const items = allRequests.filter(r => r.status === 'pending');
-  if (!items.length) { list.innerHTML = '<div class="text-center text-ink/40 text-sm py-10">Tiada permohonan menunggu</div>'; return; }
-  list.innerHTML = items.map(r => `
-    <div class="bg-white rounded-xl border border-ink/10 p-4">
-      <div class="font-semibold text-sm">${(r.template_name || 'Permohonan Surat').replace(/</g,'&lt;')}</div>
-      <div class="text-[11px] text-ink/50 mt-0.5">Pesakit: <span class="font-semibold">${r.patient_name}</span> · ${new Date(r.created_at).toLocaleString('ms-MY',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
-      <p class="text-sm text-ink mt-2 italic">"${(r.reason || '').replace(/</g,'&lt;')}"</p>
-      <div class="flex gap-2 mt-3 pt-3 border-t border-ink/10 flex-wrap">
-        <a href="surat-issue.html?req=${r.id}" class="bg-navy text-white px-4 py-2 rounded-lg text-xs font-semibold hover:bg-navy-dark">Keluarkan Surat</a>
-        <button onclick="rejectReq('${r.id}')" class="border border-terracotta/30 text-terracotta px-4 py-2 rounded-lg text-xs font-semibold hover:bg-terracotta/10">Tolak</button>
-      </div>
-    </div>`).join('');
-}
-
-function renderIssued() {
-  const list = document.getElementById('issued-list');
-  if (!allIssued.length) { list.innerHTML = '<div class="text-center text-ink/40 text-sm py-10">Belum ada surat dikeluarkan</div>'; return; }
-  list.innerHTML = allIssued.map(l => {
-    const recipient = l.patient_id ? l.patient_name : '<span class="text-navy">Internal document</span>';
-    return `<div class="bg-white rounded-xl border border-ink/10 p-4 flex items-center gap-3 flex-wrap">
-      <div class="flex-1 min-w-0">
-        <div class="font-semibold text-sm">${(l.template_name || '').replace(/</g,'&lt;')}</div>
-        <div class="text-[11px] text-ink/50">Ruj: <span class="font-mono">${l.ref_number || '—'}</span> · ${recipient} · oleh ${l.signed_by_name} pada ${new Date(l.signed_at).toLocaleDateString('ms-MY',{day:'2-digit',month:'short',year:'numeric'})}</div>
-      </div>
-      <button onclick="viewIssued('${l.id}')" class="bg-navy text-white px-4 py-2 rounded-lg text-xs font-semibold hover:bg-navy-dark">Buka / Cetak</button>
-      ${isAdmin() ? `<button onclick="deleteIssued('${l.id}')" class="text-terracotta border border-terracotta/30 px-3 py-2 rounded text-xs font-semibold hover:bg-terracotta/10">Buang</button>` : ''}
-    </div>`;
-  }).join('');
-}
 
 async function deleteTpl(id) {
-  if (!isAdmin()) return;
-  if (!confirm('Buang templat ini?')) return;
+  if (!can('communication','delete')) return;
+  const tpl = allTemplates.find(t => t.id === id);
+  if (!confirm(`Buang templat "${tpl?.name || ''}"?`)) return;
   try {
     await window.db.from('psy_letter_templates').delete().eq('id', id);
+    await logAudit('letter.template_deleted', id, { name: tpl?.name });
     banner('Templat dibuang');
     loadData();
   } catch (e) { banner('Ralat: ' + e.message, 'error'); }
@@ -246,11 +598,9 @@ function previewTpl(id) {
   openLetterTab(html, 'Preview — ' + tpl.name);
 }
 
-// ─── Issued view ───────────────────────────────────────────────
 function viewIssued(id) {
   const l = allIssued.find(x => x.id === id);
   if (!l) return;
-  // Reconstruct template (snapshot kalau template dah delete)
   const tpl = allTemplates.find(t => t.name === l.template_name)
     || { name: l.template_name, body: '', recipient: '', title: l.template_name };
   const html = renderLetterFull({
@@ -264,35 +614,87 @@ function viewIssued(id) {
   openLetterTab(html, l.template_name + ' — ' + l.ref_number);
 }
 
-async function rejectReq(id) {
-  const reason = prompt('Alasan tolak:');
-  if (!reason || !reason.trim()) return;
+async function deleteRequest(id) {
+  if (!can('communication','delete')) return;
+  const req = allRequests.find(r => r.id === id);
+  if (!req) return;
+  if (!confirm(`Padam permohonan "${req.template_name}" oleh ${req.patient_name}?\n\nTindakan ini tak boleh diundur.`)) return;
   try {
-    await window.db.from('psy_letter_requests').update({
-      status: 'rejected', reject_reason: reason.trim(), updated_at: new Date().toISOString(),
-    }).eq('id', id);
-    const req = allRequests.find(r => r.id === id);
-    const patient = allPatients.find(p => p.id === req?.patient_id);
-    if (patient?.user_id) {
-      await notify(patient.user_id, 'system', 'Permohonan Surat Ditolak', `Alasan: ${reason.trim()}`, 'surat.html');
-    }
-    banner('Permohonan ditolak');
+    await window.db.from('psy_letter_requests').delete().eq('id', id);
+    await logAudit('letter.request_deleted', id, { template: req.template_name, patient: req.patient_name, status: req.status });
+    banner('Permohonan dipadam');
     loadData();
   } catch (e) { banner('Ralat: ' + e.message, 'error'); }
 }
 
 async function deleteIssued(id) {
-  if (!isAdmin()) return;
-  if (!confirm('Buang surat ini?')) return;
+  if (!can('communication','delete')) return;
+  const l = allIssued.find(x => x.id === id);
+  if (!confirm(`Buang surat "${l?.template_name || ''}" (Ruj: ${l?.ref_number || '—'})?\n\nRekod surat akan hilang dari akaun pesakit juga.`)) return;
   try {
     await window.db.from('psy_letter_issued').delete().eq('id', id);
+    await logAudit('letter.issued_deleted', id, { template: l?.template_name, ref: l?.ref_number, patient: l?.patient_name });
     banner('Surat dibuang');
     loadData();
   } catch (e) { banner('Ralat: ' + e.message, 'error'); }
 }
 
+// ─── Reject modal ──────────────────────────────────────
+function rejectReq(id) {
+  const req = allRequests.find(r => r.id === id);
+  if (!req) return;
+  pendingRejectId = id;
+  document.getElementById('rej-tpl').textContent = req.template_name || 'Permohonan Surat';
+  document.getElementById('rej-patient').textContent = 'Pesakit: ' + (req.patient_name || '—');
+  document.getElementById('rej-reason').value = '';
+  document.getElementById('reject-modal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('rej-reason').focus(), 100);
+}
+
+function closeRejectModal() {
+  document.getElementById('reject-modal').classList.add('hidden');
+  pendingRejectId = null;
+}
+
+async function confirmRejectReq() {
+  const reason = document.getElementById('rej-reason').value.trim();
+  if (!reason) { banner('Sila isi alasan tolak', 'error'); return; }
+  if (!pendingRejectId) return;
+  const btn = document.getElementById('rej-btn');
+  btn.disabled = true; btn.textContent = 'Memproses...';
+  try {
+    await window.db.from('psy_letter_requests').update({
+      status: 'rejected', reject_reason: reason, updated_at: new Date().toISOString(),
+    }).eq('id', pendingRejectId);
+    const req = allRequests.find(r => r.id === pendingRejectId);
+    const patient = allPatients.find(p => p.id === req?.patient_id);
+    if (patient?.user_id) {
+      try { await notify(patient.user_id, 'system', 'Permohonan Surat Ditolak', `Alasan: ${reason}`, 'surat.html'); } catch {}
+    }
+    await logAudit('letter.request_rejected', pendingRejectId, { template: req?.template_name, reason });
+    banner('Permohonan ditolak');
+    closeRejectModal();
+    loadData();
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Tolak Permohonan';
+  }
+}
+
+async function logAudit(action, target, meta) {
+  try {
+    await window.db.from('psy_audit_log').insert({
+      actor_id:   window.currentUser?.id,
+      actor_name: window.currentUser?.full_name,
+      actor_role: 'staff',
+      action, target, meta: meta || {},
+    });
+  } catch {}
+}
+
 (async () => {
-  const user = await initStaff('surat', 'Repositori surat rasmi');
+  const user = await initStaff('surat', 'Senarai surat & permohonan');
   if (!user) return;
   loadData();
 })();

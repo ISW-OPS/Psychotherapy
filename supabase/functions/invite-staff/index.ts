@@ -48,8 +48,9 @@ Deno.serve(async (req: Request) => {
     if (!callerProfile || callerProfile.role !== 'staff') {
       throw new Error('Akses ditolak: hanya staff boleh daftar staff baru')
     }
-    if (callerProfile.staff_role !== 'admin') {
-      throw new Error('Akses ditolak: hanya Admin boleh daftar staff baru')
+    const ALLOWED_ROLES = ['admin', 'manager', 'super_admin']
+    if (!ALLOWED_ROLES.includes(callerProfile.staff_role)) {
+      throw new Error('Akses ditolak: hanya Admin, Manager, atau Super Admin boleh daftar staff baru')
     }
 
     // Parse request body

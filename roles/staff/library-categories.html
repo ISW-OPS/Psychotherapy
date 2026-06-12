@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Urus Kategori</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🗂️</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-6 space-y-5 max-w-3xl">
+        <div>
+          <div class="text-xs text-ink/40"><a href="library.html" class="hover:underline">Library Content</a> › <span class="text-navy font-semibold">Kategori</span></div>
+          <h1 class="text-2xl font-bold text-ink mt-1">Urus Kategori</h1>
+          <p class="text-sm text-ink/50 mt-0.5">Sumber tunggal kategori library. Tukar di sini → semua dropdown & filter ikut automatik.</p>
+        </div>
+
+        <!-- Guard: bukan super admin -->
+        <div id="no-access" class="hidden bg-amber-50 border border-amber-200 rounded-2xl p-6 text-center">
+          <div class="text-4xl mb-2">🔒</div>
+          <h2 class="font-bold text-ink">Akses Terhad</h2>
+          <p class="text-sm text-ink/60 mt-1">Hanya <strong>Super Admin</strong> boleh urus kategori.</p>
+          <a href="library.html" class="inline-block mt-4 bg-navy text-white px-5 py-2.5 rounded-xl text-sm font-semibold">← Kembali ke Library</a>
+        </div>
+
+        <div id="mgr" class="hidden space-y-5">
+          <!-- Scope toggle -->
+          <div class="flex items-center gap-2">
+            <button id="sc-content" onclick="setScope('content')" class="px-4 py-2 rounded-xl text-sm font-semibold bg-navy text-white">📚 Kategori Kandungan</button>
+            <button id="sc-faq" onclick="setScope('faq')" class="px-4 py-2 rounded-xl text-sm font-semibold bg-white border border-ink/20 text-ink/70 hover:bg-cream">❓ Kategori FAQ</button>
+          </div>
+
+          <!-- Add -->
+          <div class="bg-white rounded-2xl border border-ink/10 p-5">
+            <h2 class="font-bold text-ink text-sm mb-2">Tambah Kategori</h2>
+            <div class="flex gap-2">
+              <input id="new-cat" onkeydown="if(event.key==='Enter')addCat()" placeholder="cth: Kesihatan Jantung" class="flex-1 px-3 py-2.5 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none">
+              <button onclick="addCat()" class="bg-navy text-white px-5 py-2.5 rounded-lg text-sm font-semibold hover:bg-navy-dark">+ Tambah</button>
+            </div>
+          </div>
+
+          <!-- List -->
+          <div class="bg-white rounded-2xl border border-ink/10 overflow-hidden">
+            <div class="px-5 py-3.5 border-b border-ink/8 flex items-center justify-between">
+              <h2 class="font-bold text-ink text-sm">Senarai Kategori</h2>
+              <span class="text-xs text-ink/45"><span id="cat-count">0</span> kategori</span>
+            </div>
+            <div id="cat-list" class="divide-y divide-ink/5"></div>
+            <div id="cat-empty" class="hidden px-5 py-10 text-center text-sm text-ink/35">Tiada kategori</div>
+          </div>
+          <p class="text-[11px] text-ink/45">💡 Tukar nama akan kemas kini semua content yang guna kategori itu. Padam akan jadikan content tersebut tanpa kategori.</p>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+let CATS=[], SCOPE='content';
+function escH(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function setScope(s){
+  SCOPE=s;
+  const on='px-4 py-2 rounded-xl text-sm font-semibold bg-navy text-white';
+  const off='px-4 py-2 rounded-xl text-sm font-semibold bg-white border border-ink/20 text-ink/70 hover:bg-cream';
+  document.getElementById('sc-content').className = s==='content'?on:off;
+  document.getElementById('sc-faq').className = s==='faq'?on:off;
+  loadCats();
+}
+
+async function loadCats(){
+  const { data }=await window.db.from('psy_library_categories').select('*').eq('scope',SCOPE).order('sort_order',{ascending:true});
+  CATS=data||[];
+  document.getElementById('cat-count').textContent=CATS.length;
+  const el=document.getElementById('cat-list'), empty=document.getElementById('cat-empty');
+  if(!CATS.length){ el.innerHTML=''; empty.classList.remove('hidden'); return; }
+  empty.classList.add('hidden');
+  el.innerHTML=CATS.map((c,i)=>`<div class="px-5 py-3 flex items-center gap-3 ${c.is_active?'':'opacity-50'}">
+    <div class="flex flex-col">
+      <button onclick="moveCat(${i},-1)" ${i===0?'disabled':''} class="text-ink/40 hover:text-navy disabled:opacity-20 leading-none">▲</button>
+      <button onclick="moveCat(${i},1)" ${i===CATS.length-1?'disabled':''} class="text-ink/40 hover:text-navy disabled:opacity-20 leading-none">▼</button>
+    </div>
+    <span class="flex-1 font-semibold text-sm text-ink">${escH(c.name)}</span>
+    ${c.is_active?'':'<span class="text-[10px] px-2 py-0.5 rounded-full bg-ink/10 text-ink/50">Tidak Aktif</span>'}
+    <button onclick="renameCat('${c.id}')" class="text-xs font-semibold text-navy hover:underline">Edit</button>
+    <button onclick="toggleCat('${c.id}',${c.is_active})" class="text-xs font-semibold ${c.is_active?'text-gold-dark':'text-green-dark'} hover:underline">${c.is_active?'Sembunyi':'Aktifkan'}</button>
+    <button onclick="deleteCat('${c.id}','${escH(c.name).replace(/'/g,'')}')" class="text-xs font-semibold text-terracotta hover:underline">Padam</button>
+  </div>`).join('');
+}
+
+async function addCat(){
+  const inp=document.getElementById('new-cat'); const name=inp.value.trim();
+  if(!name) return;
+  if(CATS.some(c=>c.name.toLowerCase()===name.toLowerCase())){ banner('Kategori dah wujud','error'); return; }
+  const maxSort=CATS.reduce((m,c)=>Math.max(m,c.sort_order||0),0);
+  const { error }=await window.db.from('psy_library_categories').insert({ name, scope:SCOPE, sort_order:maxSort+1 });
+  if(error){ banner('Gagal: '+error.message,'error'); return; }
+  inp.value=''; banner('Kategori ditambah ✓'); loadCats();
+}
+
+async function renameCat(id){
+  const c=CATS.find(x=>x.id===id); if(!c) return;
+  const nn=prompt('Nama baru kategori:', c.name); if(nn===null) return;
+  const name=nn.trim(); if(!name||name===c.name) return;
+  if(CATS.some(x=>x.id!==id && x.name.toLowerCase()===name.toLowerCase())){ banner('Nama dah wujud','error'); return; }
+  const { error }=await window.db.from('psy_library_categories').update({ name }).eq('id',id);
+  if(error){ banner('Gagal: '+error.message,'error'); return; }
+  // Kemas kini content yang guna nama lama
+  await window.db.from('psy_library_items').update({ topic:name }).eq('topic',c.name);
+  banner('Kategori dikemas kini ✓ (content turut dikemas kini)'); loadCats();
+}
+
+async function toggleCat(id,isActive){
+  await window.db.from('psy_library_categories').update({ is_active:!isActive }).eq('id',id);
+  loadCats();
+}
+
+async function deleteCat(id,name){
+  if(!confirm(`Padam kategori "${name}"? Content yang guna kategori ini akan jadi tanpa kategori.`)) return;
+  const { error }=await window.db.from('psy_library_categories').delete().eq('id',id);
+  if(error){ banner('Gagal: '+error.message,'error'); return; }
+  await window.db.from('psy_library_items').update({ topic:null }).eq('topic',name);
+  banner('Kategori dipadam'); loadCats();
+}
+
+async function moveCat(i,dir){
+  const j=i+dir; if(j<0||j>=CATS.length) return;
+  const a=CATS[i], b=CATS[j];
+  await Promise.all([
+    window.db.from('psy_library_categories').update({ sort_order:b.sort_order }).eq('id',a.id),
+    window.db.from('psy_library_categories').update({ sort_order:a.sort_order }).eq('id',b.id),
+  ]);
+  loadCats();
+}
+
+(async()=>{
+  const user=await initStaff('library','Urus kategori library'); if(!user) return;
+  if(window.currentUser?.staff_role!=='super_admin'){
+    document.getElementById('no-access').classList.remove('hidden');
+    return;
+  }
+  document.getElementById('mgr').classList.remove('hidden');
+  loadCats();
+})();
+</script>
+</body>
+</html>

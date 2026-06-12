@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — WhatsApp Inbox</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">💬</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex" style="height: calc(100vh - 3.5rem); overflow: hidden">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0 flex flex-col overflow-hidden">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="flex-1 min-h-0 p-3 md:p-4">
+        <!-- 2-panel inbox -->
+        <div class="bg-white rounded-2xl border border-ink/10 overflow-hidden flex h-full">
+
+          <!-- LEFT: conversation list -->
+          <div class="w-full sm:w-80 md:w-96 flex-shrink-0 border-r border-ink/10 flex flex-col" id="list-pane">
+            <div class="px-3 py-2.5 border-b border-ink/10 flex items-center justify-between flex-shrink-0">
+              <div class="font-bold text-[13px]">Perbualan</div>
+              <div class="flex items-center gap-2">
+                <div class="flex rounded-lg bg-ink/5 p-0.5 text-[11px] font-semibold">
+                  <button id="tab-mine" onclick="setTab('mine')" class="px-2.5 py-1 rounded-md bg-white shadow-sm">Pesakit</button>
+                  <button id="tab-unread" onclick="setTab('unread')" class="px-2.5 py-1 rounded-md text-ink/50">Belum Baca</button>
+                  <button id="tab-all" onclick="setTab('all')" class="px-2.5 py-1 rounded-md text-ink/50">Semua</button>
+                </div>
+                <button onclick="openCompose()" title="Mesej baru" class="w-8 h-8 flex items-center justify-center rounded-lg bg-green text-white hover:bg-green-dark text-sm">✏️</button>
+                <button onclick="loadList()" title="Muat semula" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-ink/5 text-base">🔄</button>
+              </div>
+            </div>
+            <div id="conv-list" class="flex-1 overflow-y-auto divide-y divide-ink/5">
+              <div class="p-6 text-center text-sm text-ink/40">Memuatkan perbualan...</div>
+            </div>
+          </div>
+
+          <!-- RIGHT: chat -->
+          <div class="hidden sm:flex flex-1 min-w-0 flex-col" id="chat-pane">
+            <div id="chat-empty" class="flex-1 flex items-center justify-center text-center text-ink/40 text-sm p-8">
+              <div><div class="text-4xl mb-2">👈</div>Pilih perbualan untuk mula</div>
+            </div>
+            <div id="chat-active" class="hidden flex-1 flex-col min-h-0">
+              <!-- chat header -->
+              <div class="px-3 py-2 border-b border-ink/10 flex items-center gap-2.5 flex-shrink-0">
+                <button onclick="closeChat()" class="sm:hidden text-ink/50 text-lg">←</button>
+                <div class="w-8 h-8 rounded-full bg-navy text-white text-[11px] font-bold flex items-center justify-center flex-shrink-0" id="chat-initials">?</div>
+                <div class="min-w-0 flex-1">
+                  <div class="font-semibold text-[13px] truncate" id="chat-name">—</div>
+                  <div class="text-[10px] text-ink/50 truncate" id="chat-phone">—</div>
+                </div>
+                <a id="chat-patient-link" href="#" class="hidden text-[11px] font-semibold text-navy border border-navy/30 px-2.5 py-1 rounded-lg hover:bg-navy hover:text-white transition-colors whitespace-nowrap">Lihat pesakit →</a>
+                <button onclick="toggleInfo()" id="info-toggle" class="hidden lg:flex w-8 h-8 items-center justify-center rounded-lg hover:bg-ink/5 text-base flex-shrink-0" title="Tunjuk/sembunyi info pesakit">👤</button>
+              </div>
+              <!-- messages -->
+              <div id="msg-list" class="flex-1 overflow-y-auto p-3 space-y-1.5 bg-cream/30"></div>
+              <!-- composer -->
+              <div class="border-t border-ink/10 flex-shrink-0">
+                <div id="attach-preview" class="hidden px-2.5 pt-2"></div>
+                <div class="p-2.5 flex items-end gap-2">
+                  <input id="wa-file" type="file" class="hidden" accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx" onchange="onFilePick(this)">
+                  <button id="attach-btn" onclick="document.getElementById('wa-file').click()" title="Lampiran (gambar/dokumen)" class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 hover:bg-ink/5 text-lg disabled:opacity-40">📎</button>
+                  <textarea id="msg-input" rows="1" placeholder="Taip mesej..." onkeydown="onComposerKey(event)"
+                    class="flex-1 px-3 py-2 border border-ink/20 rounded-xl text-[13px] focus:border-navy outline-none resize-none max-h-32"></textarea>
+                  <button id="send-btn" onclick="sendMsg()" class="bg-green text-white w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 hover:bg-green-dark disabled:opacity-40">➤</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- INFO: patient panel -->
+          <div id="info-pane" class="hidden lg:flex w-72 flex-shrink-0 border-l border-ink/10 flex-col overflow-y-auto bg-cream/20"></div>
+
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- Compose: mesej baru -->
+<div id="compose-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/50" onclick="closeCompose()"></div>
+  <div class="relative bg-white rounded-2xl w-full max-w-md max-h-[80vh] flex flex-col overflow-hidden">
+    <div class="p-4 border-b border-ink/10 flex items-center justify-between flex-shrink-0">
+      <h3 class="font-bold text-sm">✏️ Mesej Baru</h3>
+      <button onclick="closeCompose()" class="text-ink/50 text-xl leading-none">&times;</button>
+    </div>
+    <div class="p-3 border-b border-ink/10 flex-shrink-0">
+      <input id="compose-search" type="text" placeholder="Cari nama pesakit atau nombor telefon..." oninput="searchPatients(this.value)"
+        class="w-full px-3 py-2 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none">
+    </div>
+    <div id="compose-results" class="flex-1 overflow-y-auto p-2 min-h-[140px]"></div>
+  </div>
+</div>
+
+<!-- Lightbox media -->
+<div id="lightbox" class="hidden fixed inset-0 z-[60] bg-black/85 items-center justify-center p-4" onclick="closeLightbox()">
+  <button onclick="closeLightbox()" class="absolute top-4 right-5 text-white/80 hover:text-white text-4xl leading-none">&times;</button>
+  <div id="lightbox-content" class="max-w-[92vw] max-h-[88vh] flex items-center justify-center" onclick="event.stopPropagation()"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+let allConvos = [];
+let activeTab = 'mine'; // default: pesakit sahaja (lead EOB = telesale, bukan coach)
+let activeConv = null;
+let currentMessages = [];
+let listCursor = null, listHasMore = false;   // pagination senarai perbualan
+let msgCursor = null, msgHasMore = false;      // pagination mesej lama
+let infoOpen = localStorage.getItem('isw_wa_info') === '1'; // default: tutup (jimat ruang)
+
+// Lipat/buka panel info kanan
+function applyInfo() {
+  const pane = document.getElementById('info-pane');
+  if (pane) pane.style.display = infoOpen ? '' : 'none';
+  const btn = document.getElementById('info-toggle');
+  if (btn) btn.classList.toggle('bg-ink/10', infoOpen);
+}
+function toggleInfo() {
+  infoOpen = !infoOpen;
+  localStorage.setItem('isw_wa_info', infoOpen ? '1' : '0');
+  applyInfo();
+}
+
+function initials(name) {
+  return (name || '?').split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+}
+
+// 9 digit terakhir untuk padan nombor (sama logik macam server)
+function phoneKey(s) { const d = String(s || '').replace(/\D/g, ''); return d.length >= 9 ? d.slice(-9) : ''; }
+
+// Buka terus perbualan pesakit ikut nombor (dipanggil dari patient-hub ?phone=)
+async function openByPhone(phone, name) {
+  const key = phoneKey(phone);
+  if (!key) return;
+  let conv = allConvos.find(c => phoneKey(c.phone_e164) === key);
+  if (!conv) {
+    try {
+      const r = await invoke('findconv', { phone });
+      if (r.conversation) {
+        conv = r.conversation;
+        if (!allConvos.some(c => c.ghl_conversation_id === conv.ghl_conversation_id)) {
+          allConvos.unshift(conv);
+        }
+      }
+    } catch (_) {}
+  }
+  if (conv) {
+    if (!conv.patient_id && activeTab === 'mine') setTab('all'); else renderList();
+    openChat(conv.ghl_conversation_id);
+    return;
+  }
+  // Tiada perbualan → cari-atau-CIPTA contact GHL, kemudian mula chat baru
+  try {
+    const r = await invoke('ensurecontact', { phone, name });
+    if (r.contact?.contactId) { openNewChat(r.contact); return; }
+  } catch (e) { banner('Gagal sediakan contact: ' + e.message, 'error'); return; }
+  banner('Tak dapat sediakan contact GHL untuk nombor ini.', 'error');
+}
+
+// ── Compose: cari pesakit & mula mesej baru dari inbox ──
+let composeList = [];
+let composeTimer = null;
+function openCompose() {
+  document.getElementById('compose-modal').classList.remove('hidden');
+  const inp = document.getElementById('compose-search');
+  inp.value = '';
+  inp.focus();
+  doSearchPatients('');   // papar senarai pesakit terus
+}
+function closeCompose() { document.getElementById('compose-modal').classList.add('hidden'); }
+function searchPatients(q) {
+  clearTimeout(composeTimer);
+  composeTimer = setTimeout(() => doSearchPatients(q.trim()), 250);
+}
+async function doSearchPatients(q) {
+  const box = document.getElementById('compose-results');
+  const digitsQ = q.replace(/\D/g, '');
+  const hasQ = q.length >= 2;
+  box.innerHTML = '<div class="p-5 text-center text-xs text-ink/40">Memuatkan...</div>';
+  try {
+    const orStr = digitsQ.length >= 3 ? `full_name.ilike.%${q}%,phone.ilike.%${digitsQ}%` : `full_name.ilike.%${q}%`;
+    const build = (tbl) => {
+      let qq = window.db.from(tbl).select('full_name, phone');
+      if (tbl === 'psy_profiles') qq = qq.eq('role', 'patient');
+      if (hasQ) qq = qq.or(orStr);
+      return qq.order('full_name', { ascending: true }).limit(60);
+    };
+    // cari kedua-dua: psy_profiles (nama sebenar) + psy_patients (jadual pesakit kanonikal)
+    const [pp, pr] = await Promise.all([build('psy_profiles'), build('psy_patients')]);
+    const seen = new Set();
+    const merged = [];
+    for (const row of [...(pp.data || []), ...(pr.data || [])]) {  // profiles dulu (nama sebenar)
+      if (!row.phone) continue;
+      const key = String(row.phone).replace(/\D/g, '').slice(-9);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      merged.push({ full_name: row.full_name, phone: row.phone });
+    }
+    merged.sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || '')));
+    renderComposeResults(merged, q, digitsQ);
+  } catch (e) {
+    box.innerHTML = `<div class="p-5 text-center text-xs text-terracotta">Ralat carian: ${e.message}</div>`;
+  }
+}
+function renderComposeResults(list, q, digitsQ) {
+  const box = document.getElementById('compose-results');
+  composeList = (list || []).filter(p => p.phone);
+  let html = composeList.map((p, i) => `
+    <button onclick="startChatByIndex(${i})" class="w-full text-left flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-cream/60">
+      <div class="w-8 h-8 rounded-full bg-green-light text-green-dark text-[11px] font-bold flex items-center justify-center flex-shrink-0">${initials(p.full_name)}</div>
+      <div class="min-w-0"><div class="text-[13px] font-semibold truncate">${(p.full_name || '(tanpa nama)').replace(/</g, '&lt;')}</div><div class="text-[11px] text-ink/50">${p.phone}</div></div>
+    </button>`).join('');
+  // pilihan chat terus dengan nombor yang ditaip (kalau nampak macam nombor)
+  if (digitsQ.length >= 9) {
+    html += `<button onclick="startChatRaw('${digitsQ}')" class="w-full text-left flex items-center gap-2.5 px-2 py-2 mt-1 rounded-lg hover:bg-cream/60 border-t border-ink/5">
+      <div class="w-8 h-8 rounded-full bg-navy/10 text-navy text-base flex items-center justify-center flex-shrink-0">📱</div>
+      <div class="min-w-0"><div class="text-[13px] font-semibold">Chat dengan nombor ini</div><div class="text-[11px] text-ink/50">${digitsQ}</div></div>
+    </button>`;
+  }
+  box.innerHTML = html || '<div class="p-5 text-center text-xs text-ink/40">Tiada pesakit dijumpai.</div>';
+}
+function startChatByIndex(i) {
+  const p = composeList[i];
+  if (!p) return;
+  closeCompose();
+  openByPhone(p.phone, p.full_name || '');
+}
+function startChatRaw(phone) {
+  closeCompose();
+  openByPhone(phone, '');
+}
+
+// Mula perbualan WhatsApp baru (belum ada thread di GHL)
+function openNewChat(contact) {
+  activeConv = {
+    ghl_conversation_id: '__new__',
+    ghl_contact_id: contact.contactId,
+    contact_name: contact.name || contact.phone || '(tanpa nama)',
+    phone_e164: contact.phone || '',
+    patient_id: contact.patient_id || null,
+    unread: 0,
+  };
+  document.getElementById('chat-empty').classList.add('hidden');
+  const ca = document.getElementById('chat-active');
+  ca.classList.remove('hidden'); ca.classList.add('flex');
+  if (window.innerWidth < 640) {
+    document.getElementById('list-pane').classList.add('hidden');
+    document.getElementById('chat-pane').classList.remove('hidden');
+    document.getElementById('chat-pane').classList.add('flex');
+  }
+  document.getElementById('chat-initials').textContent = initials(activeConv.contact_name);
+  document.getElementById('chat-name').textContent = activeConv.contact_name;
+  document.getElementById('chat-phone').textContent = activeConv.phone_e164 || '';
+  const link = document.getElementById('chat-patient-link');
+  if (activeConv.patient_id) { link.href = `patient-hub.html?id=${activeConv.patient_id}`; link.classList.remove('hidden'); } else link.classList.add('hidden');
+  currentMessages = []; msgCursor = null; msgHasMore = false;
+  pendingAttachment = null; renderAttachPreview();
+  document.getElementById('msg-list').innerHTML = '<div class="text-center text-xs text-ink/40 py-8">Perbualan baru — taip mesej untuk mula WhatsApp dengan pesakit ini.</div>';
+  loadPatientPanel();
+  document.getElementById('msg-input')?.focus();
+}
+
+// Buang anotasi sistem GHL (noise) supaya bubble ikut teks sebenar sahaja.
+// Hanya escape ASCII digunakan dalam regex (elak aksara khas literal).
+function cleanBody(t) {
+  return (t || '')
+    .replace(/\s*\[Received on[^\]]*\]/gi, '')
+    .replace(/Sent from another device\s*\(\s*\+?\d[\d\s]*\)/gi, '')
+    .replace(/[-�↔-↪⬅-⬇🔁🔂🔃🔄📱📲🔠🔡🔢🔣]/gu, '')   // ikon penanda GHL (info dah ada di label bawah)
+    .replace(/^[ \t]+/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// Tukar URL & pautan format GHL jadi <a> boleh klik (input MESTI dah di-escape)
+function linkify(s) {
+  // "Label [https://url]" -> klik pada Label sahaja
+  s = s.replace(/([^\[\]\n]+?)\s*\[(https?:\/\/[^\]\s]+)\]/g,
+    (mm, label, url) => `<a href="${url}" target="_blank" rel="noopener" class="underline break-all">${label.trim()}</a>`);
+  // "[https://url]" tanpa label -> "pautan"
+  s = s.replace(/\[(https?:\/\/[^\]\s]+)\]/g,
+    (mm, url) => `<a href="${url}" target="_blank" rel="noopener" class="underline break-all">pautan</a>`);
+  // URL telanjang -> pendekkan paparan
+  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<]+)/g,
+    (mm, pre, url) => `${pre}<a href="${url}" target="_blank" rel="noopener" class="underline break-all">${url.length > 45 ? url.slice(0, 45) + '...' : url}</a>`);
+  return s;
+}
+
+// Lampiran dimuat melalui proxy Edge Function (sebab URL GHL perlu token).
+// Render placeholder dulu; hydrateAttachments() isi kemudian.
+function renderAttachment(url) {
+  if (!url) return '';
+  const safe = String(url).replace(/"/g, '&quot;');
+  return `<div class="wa-att mb-1 text-xs opacity-60" data-url="${safe}">📎 memuat media…</div>`;
+}
+
+function openLightbox(type, src) {
+  const c = document.getElementById('lightbox-content');
+  if (type === 'video') {
+    c.innerHTML = `<video src="${src}" controls autoplay class="max-w-[92vw] max-h-[88vh] rounded-lg"></video>`;
+  } else if (type === 'pdf') {
+    c.innerHTML = `<iframe src="${src}" class="w-[92vw] h-[88vh] rounded-lg bg-white"></iframe>`;
+  } else {
+    c.innerHTML = `<img src="${src}" class="max-w-[92vw] max-h-[88vh] rounded-lg object-contain">`;
+  }
+  const lb = document.getElementById('lightbox');
+  lb.classList.remove('hidden');
+  lb.classList.add('flex');
+}
+function closeLightbox() {
+  const lb = document.getElementById('lightbox');
+  lb.classList.add('hidden');
+  lb.classList.remove('flex');
+  document.getElementById('lightbox-content').innerHTML = ''; // henti video
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+
+// Tentukan nama + jenis fail untuk kad dokumen
+function fileMeta(url, ct) {
+  const CT_EXT = {
+    'application/pdf': 'pdf',
+    'application/msword': 'doc',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.ms-excel': 'xls',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'application/vnd.ms-powerpoint': 'ppt',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+    'text/plain': 'txt', 'application/zip': 'zip',
+  };
+  let name = decodeURIComponent((url || '').split('?')[0].split('/').pop() || '').trim();
+  const nameExt = (name.split('.').pop() || '').toLowerCase();
+  let ext = (nameExt && nameExt.length <= 4 && /^[a-z0-9]+$/.test(nameExt)) ? nameExt : (CT_EXT[ct] || '');
+  if (!ext) ext = 'file';
+  // nama hodoh (cuma nombor) → label generik + sambungan betul
+  if (!name || /^\d+$/.test(name.replace(/\.\w+$/, ''))) name = 'Dokumen' + (ext !== 'file' ? '.' + ext : '');
+  else if (!name.includes('.') && ext !== 'file') name += '.' + ext;
+  const COLORS = { pdf: 'bg-red-500', doc: 'bg-blue-600', docx: 'bg-blue-600', xls: 'bg-green-600', xlsx: 'bg-green-600', ppt: 'bg-orange-500', pptx: 'bg-orange-500', zip: 'bg-slate-600', txt: 'bg-slate-500' };
+  return { name, ext, color: COLORS[ext] || 'bg-slate-500' };
+}
+
+async function hydrateAttachments() {
+  const els = document.querySelectorAll('.wa-att:not([data-done])');
+  for (const el of els) {
+    el.setAttribute('data-done', '1');
+    const url = el.getAttribute('data-url');
+    try {
+      const { dataUrl, contentType } = await invoke('media', { mediaUrl: url });
+      const ct = contentType || '';
+      if (ct.startsWith('image/')) {
+        el.classList.remove('opacity-60');
+        el.innerHTML = `<img src="${dataUrl}" class="rounded-lg max-w-full max-h-60 cursor-pointer" title="Klik untuk besarkan">`;
+        el.querySelector('img').addEventListener('click', () => openLightbox('img', dataUrl));
+      } else if (ct.startsWith('audio/')) {
+        el.classList.remove('opacity-60');
+        el.innerHTML = `<audio controls src="${dataUrl}" class="max-w-full"></audio>`;
+      } else if (ct.startsWith('video/')) {
+        el.classList.remove('opacity-60');
+        el.innerHTML = `<div class="relative inline-block cursor-pointer" title="Klik untuk main">
+            <video src="${dataUrl}" class="rounded-lg max-w-full max-h-60 pointer-events-none"></video>
+            <div class="absolute inset-0 flex items-center justify-center">
+              <div class="w-12 h-12 rounded-full bg-black/55 flex items-center justify-center text-white text-xl">▶</div>
+            </div>
+          </div>`;
+        el.querySelector('div').addEventListener('click', () => openLightbox('video', dataUrl));
+      } else {
+        el.classList.remove('opacity-60');
+        const { name, ext, color } = fileMeta(url, ct);
+        const isPdf = ct === 'application/pdf' || ext === 'pdf';
+        const card = `<div class="flex items-center gap-2.5 bg-white border border-ink/10 rounded-lg p-2 max-w-[230px] ${isPdf ? 'cursor-pointer hover:border-navy/40' : ''} transition-colors">
+            <div class="w-9 h-9 rounded ${color} text-white text-[9px] font-bold flex items-center justify-center flex-shrink-0">${ext.toUpperCase().slice(0, 4)}</div>
+            <div class="min-w-0 text-left">
+              <div class="text-[12px] font-medium truncate text-ink">${name}</div>
+              <div class="text-[10px] text-ink/50">${isPdf ? 'Klik untuk lihat' : 'Muat turun ↓'}</div>
+            </div>
+          </div>`;
+        if (isPdf) {
+          el.innerHTML = card;
+          el.firstElementChild.addEventListener('click', () => openLightbox('pdf', dataUrl));
+        } else {
+          el.innerHTML = `<a href="${dataUrl}" download="${name}" class="no-underline">${card}</a>`;
+        }
+      }
+    } catch (e) {
+      el.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="underline">📎 Buka fail →</a>`;
+    }
+  }
+}
+
+async function invoke(action, extra = {}) {
+  const { data, error } = await window.db.functions.invoke('ghl-inbox', { body: { action, ...extra } });
+  if (error) {
+    // cuba baca mesej ralat dari response
+    let msg = error.message;
+    try { const ctx = await error.context?.json(); if (ctx?.error) msg = ctx.error; } catch (_) {}
+    throw new Error(msg);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+function setTab(t) {
+  activeTab = t;
+  for (const [id, key] of [['tab-mine', 'mine'], ['tab-unread', 'unread'], ['tab-all', 'all']]) {
+    const el = document.getElementById(id);
+    if (el) el.className = 'px-2.5 py-1 rounded-md ' + (t === key ? 'bg-white shadow-sm' : 'text-ink/50');
+  }
+  renderList();
+}
+
+async function loadList(append = false) {
+  const box = document.getElementById('conv-list');
+  if (!append) box.innerHTML = '<div class="p-6 text-center text-sm text-ink/40">Memuatkan perbualan...</div>';
+  try {
+    const args = (append && listCursor) ? listCursor : {};
+    const { conversations, cursor, hasMore } = await invoke('list', args);
+    const incoming = conversations || [];
+    if (append) {
+      const seen = new Set(allConvos.map(c => c.ghl_conversation_id));
+      allConvos.push(...incoming.filter(c => !seen.has(c.ghl_conversation_id)));
+    } else {
+      allConvos = incoming;
+    }
+    listCursor = cursor || null;
+    listHasMore = !!hasMore;
+    renderList();
+  } catch (e) {
+    if (!append) box.innerHTML = `<div class="p-6 text-center text-sm text-terracotta">Gagal muat: ${e.message}</div>
+      <div class="px-6 text-center text-[11px] text-ink/40">Semak scope <code>conversations</code> pada token GHL & secret di Supabase.</div>`;
+  }
+}
+
+function renderList() {
+  const box = document.getElementById('conv-list');
+  // kemas kini kiraan pada tab "Belum Baca"
+  const unreadCount = allConvos.filter(c => c.unread > 0).length;
+  const ut = document.getElementById('tab-unread');
+  if (ut) ut.textContent = unreadCount > 0 ? `Belum Baca (${unreadCount})` : 'Belum Baca';
+  let list = allConvos;
+  if (activeTab === 'mine') list = allConvos.filter(c => c.patient_id);
+  else if (activeTab === 'unread') list = allConvos.filter(c => c.unread > 0);
+  if (!list.length) {
+    const msg = activeTab === 'mine' ? 'Tiada perbualan dengan pesakit berdaftar.'
+      : activeTab === 'unread' ? 'Tiada mesej belum dibaca.' : 'Tiada perbualan.';
+    box.innerHTML = `<div class="p-6 text-center text-sm text-ink/40">${msg}</div>`;
+    return;
+  }
+  box.innerHTML = list.map(c => `
+    <div onclick="openChat('${c.ghl_conversation_id}')"
+      class="px-3 py-2 cursor-pointer hover:bg-cream/50 transition-colors flex items-center gap-2.5 ${activeConv?.ghl_conversation_id === c.ghl_conversation_id ? 'bg-navy-light/40' : ''}">
+      <div class="w-9 h-9 rounded-full bg-green-light text-green-dark text-[11px] font-bold flex items-center justify-center flex-shrink-0">${initials(c.contact_name)}</div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-1.5">
+          <span class="font-semibold text-[13px] truncate">${c.contact_name || '(tanpa nama)'}</span>
+          ${c.patient_id ? '<span class="text-[9px] bg-green/15 text-green-dark px-1.5 py-0.5 rounded-full font-bold flex-shrink-0">PESAKIT</span>' : ''}
+        </div>
+        <div class="text-xs text-ink/50 truncate">${c.last_message || '<i>Tiada mesej</i>'}</div>
+      </div>
+      <div class="flex flex-col items-end gap-1 flex-shrink-0">
+        <span class="text-[10px] text-ink/40">${c.last_message_at ? timeAgo(c.last_message_at) : ''}</span>
+        ${c.unread > 0 ? `<span class="min-w-[18px] h-[18px] px-1 bg-green text-white text-[10px] font-bold rounded-full flex items-center justify-center">${c.unread}</span>` : ''}
+      </div>
+    </div>`).join('')
+    + ((listHasMore && list.length >= 50) ? `<button onclick="loadList(true)" class="w-full py-3 text-xs font-semibold text-navy hover:bg-cream/50 transition-colors">Muat Lagi ↓</button>` : '');
+}
+
+async function openChat(convId) {
+  activeConv = allConvos.find(c => c.ghl_conversation_id === convId);
+  if (!activeConv) return;
+  pendingAttachment = null; renderAttachPreview();
+  renderList();
+  document.getElementById('chat-empty').classList.add('hidden');
+  document.getElementById('chat-active').classList.remove('hidden');
+  document.getElementById('chat-active').classList.add('flex');
+  // mobile: tunjuk chat, sembunyi list
+  if (window.innerWidth < 640) {
+    document.getElementById('list-pane').classList.add('hidden');
+    document.getElementById('chat-pane').classList.remove('hidden');
+    document.getElementById('chat-pane').classList.add('flex');
+  }
+  document.getElementById('chat-initials').textContent = initials(activeConv.contact_name);
+  document.getElementById('chat-name').textContent = activeConv.contact_name || '(tanpa nama)';
+  document.getElementById('chat-phone').textContent = activeConv.phone_e164 || '—';
+  const link = document.getElementById('chat-patient-link');
+  if (activeConv.patient_id) { link.href = `patient-hub.html?id=${activeConv.patient_id}`; link.classList.remove('hidden'); }
+  else link.classList.add('hidden');
+
+  loadPatientPanel();
+
+  const msgBox = document.getElementById('msg-list');
+  msgBox.innerHTML = '<div class="text-center text-xs text-ink/40 py-6">Memuatkan mesej...</div>';
+  try {
+    const res = await invoke('messages', { conversationId: convId });
+    currentMessages = res.messages || [];
+    msgCursor = res.moreCursor || null;
+    msgHasMore = !!res.hasMore;
+    renderMessages(currentMessages);
+    markRead(convId);
+  } catch (e) {
+    msgBox.innerHTML = `<div class="text-center text-xs text-terracotta py-6">Gagal muat mesej: ${e.message}</div>`;
+  }
+}
+
+// Tandai perbualan dibaca (unread=0) — server + tempatan
+function markRead(convId) {
+  const c = allConvos.find(x => x.ghl_conversation_id === convId);
+  if (c && c.unread) { c.unread = 0; renderList(); updateWaBadge(); }
+  invoke('markread', { conversationId: convId }).catch(() => {});
+}
+
+function updateWaBadge() {
+  const n = allConvos.filter(c => c.unread > 0).length;
+  if (typeof setWaBadge === 'function') setWaBadge(n);
+}
+
+// Realtime: mesej & perbualan baru muncul sendiri
+function subscribeRealtime() {
+  if (!window.db) return;
+  window.db.channel('wa-inbox')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'psy_wa_messages' }, (p) => {
+      const m = p.new;
+      if (!m || !activeConv || m.ghl_conversation_id !== activeConv.ghl_conversation_id) return;
+      if (currentMessages.some(x => x.ghl_message_id === m.ghl_message_id)) return;
+      currentMessages.push(m);
+      renderMessages(currentMessages);
+      markRead(activeConv.ghl_conversation_id); // sedang buka → terus tanda dibaca
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'psy_wa_conversations' }, (p) => {
+      const c = p.new;
+      if (!c) return;
+      const i = allConvos.findIndex(x => x.ghl_conversation_id === c.ghl_conversation_id);
+      if (i >= 0) allConvos[i] = { ...allConvos[i], ...c };
+      else allConvos.unshift(c);
+      allConvos.sort((a, b) => new Date(b.last_message_at || 0) - new Date(a.last_message_at || 0));
+      renderList();
+      updateWaBadge();
+    })
+    .subscribe();
+}
+
+function renderMessages(msgs, keepScroll = false) {
+  const box = document.getElementById('msg-list');
+  // tapis email — inbox ini untuk WhatsApp coach sahaja (email automatik biar di GHL)
+  const visible = (msgs || []).filter(m => (m.msg_type || '') !== 'email');
+  const olderBtn = msgHasMore ? `<button id="older-btn" onclick="loadOlderMessages()" class="block mx-auto my-2 text-[11px] font-semibold text-navy underline">↑ Muat mesej lama</button>` : '';
+  if (!visible.length) {
+    box.innerHTML = olderBtn + '<div class="text-center text-xs text-ink/40 py-6">Tiada mesej WhatsApp dalam perbualan ini (mungkin email sahaja — buka GHL).</div>';
+    return;
+  }
+  box.innerHTML = olderBtn + visible.map(m => {
+    const out = m.direction === 'outbound';
+    const media = (m.attachments || []).map(renderAttachment).join('');
+    // Cungkil maklumat talian/peranti dari anotasi GHL (untuk papar sebagai label kecil)
+    const recv = (m.body || '').match(/\[Received on ([^\]]*?)\]/i);
+    const dev = /Sent from another device\s*\(([^)]*)\)/i.exec(m.body || '');
+    const meta = recv ? 'Diterima: ' + recv[1].trim()
+      : (dev ? 'Hantar dari peranti lain' + (dev[1] ? ' (' + dev[1].trim() + ')' : '') : '');
+    // token placeholder media GHL (">IMAGE<" dll): buang bila media dipapar,
+    // tukar jadi label mesra bila media tiada URL
+    const PH = { IMAGE: '🖼 Gambar', VIDEO: '🎬 Video', AUDIO: '🎙 Audio', VOICE: '🎙 Nota suara', DOCUMENT: '📄 Dokumen', FILE: '📎 Fail' };
+    let raw = cleanBody(m.body).replace(/>([A-Z]{3,})</g, (_, w) =>
+      media ? '' : ((PH[w] || '📎 ' + w) + ' (tidak dapat dipaparkan)')).trim();
+    const text = raw.replace(/</g, '&lt;');
+    if (!text && !media) return ''; // mesej cuma anotasi sistem → langkau
+    const time = m.created_at ? formatTime(m.created_at) : '';
+    const html = linkify(text);
+    const isLong = text.length > 600; // mesej panjang (cth email) → lipat
+    return `<div class="${out ? 'text-right' : 'text-left'}">
+      <div class="inline-block text-left align-top max-w-[75%] px-2.5 py-1.5 rounded-xl text-[13px] leading-snug whitespace-pre-wrap break-words ${out ? 'bg-green text-white rounded-br-sm' : 'bg-white border border-ink/10 rounded-bl-sm'}">
+        ${media}${html ? `<span class="wa-text ${isLong ? 'block max-h-28 overflow-hidden' : ''}">${html}</span>` : ''}
+        ${isLong ? `<button type="button" class="block text-[10px] underline mt-1 ${out ? 'text-white/80' : 'text-navy'}" onclick="const t=this.parentElement.querySelector('.wa-text'); const col=t.classList.toggle('max-h-28'); t.classList.toggle('overflow-hidden', col); this.textContent=col?'Lihat lagi':'Tutup';">Lihat lagi</button>` : ''}
+      </div>
+      <div class="text-[9px] text-ink/40 mt-0.5 px-1">${time}${meta ? ' &middot; ' + meta : ''}</div>
+    </div>`;
+  }).join('');
+  if (!keepScroll) {
+    box.scrollTop = box.scrollHeight;
+    hydrateAttachments().then(() => { box.scrollTop = box.scrollHeight; });
+  } else {
+    hydrateAttachments();
+  }
+}
+
+async function loadOlderMessages() {
+  if (!activeConv || !msgCursor) return;
+  const btn = document.getElementById('older-btn');
+  if (btn) btn.textContent = 'Memuatkan...';
+  const box = document.getElementById('msg-list');
+  const prevH = box.scrollHeight;
+  try {
+    const res = await invoke('messages', { conversationId: activeConv.ghl_conversation_id, before: msgCursor });
+    const older = (res.messages || []).filter(m => !currentMessages.some(x => x.ghl_message_id === m.ghl_message_id));
+    currentMessages = [...older, ...currentMessages];
+    msgCursor = res.moreCursor || null;
+    msgHasMore = !!res.hasMore;
+    renderMessages(currentMessages, true);      // keepScroll
+    box.scrollTop = box.scrollHeight - prevH;    // kekal posisi tontonan
+  } catch (e) {
+    if (btn) btn.textContent = '↑ Muat mesej lama';
+  }
+}
+
+async function loadPatientPanel() {
+  const pane = document.getElementById('info-pane');
+  const cid = activeConv?.ghl_contact_id;
+  if (!cid) {
+    pane.innerHTML = `<div class="p-5 text-center text-xs text-ink/40 m-auto"><div class="text-3xl mb-2">👤</div>Tiada butiran contact</div>`;
+    return;
+  }
+  pane.innerHTML = '<div class="p-5 text-center text-xs text-ink/40 m-auto">Memuatkan butiran...</div>';
+  try {
+    const { contact } = await invoke('ghlcontact', { contactId: cid });
+    renderPatientPanel(contact);
+  } catch (e) {
+    pane.innerHTML = `<div class="p-5 text-center text-xs text-terracotta m-auto">Gagal muat: ${e.message}</div>`;
+  }
+}
+
+function renderPatientPanel(c) {
+  const pane = document.getElementById('info-pane');
+  if (!c) { pane.innerHTML = '<div class="p-5 text-center text-xs text-ink/40 m-auto">Tiada butiran</div>'; return; }
+  const esc = v => ('' + (v ?? '')).replace(/</g, '&lt;');
+  const row = (label, val) => val ? `<div class="px-3.5 py-2 border-b border-ink/5">
+      <div class="text-[9px] uppercase text-ink/40 font-semibold tracking-wide">${esc(label)}</div>
+      <div class="text-[13px] mt-0.5 break-words whitespace-pre-wrap">${esc(val)}</div></div>` : '';
+  // hanya field penting untuk coach (buang field telesale: FU dates, funnel, agency, dll)
+  const WANT = ['ISW STATUS', 'EOB NOTES', 'PURCHASE HISTORY'];
+  const fields = (c.fields || [])
+    .filter(f => WANT.includes(('' + f.name).toUpperCase().trim()))
+    .map(f => row(f.name, f.value)).join('');
+  pane.innerHTML = `
+    <div class="p-3 border-b border-ink/10 text-center flex-shrink-0">
+      <div class="w-11 h-11 rounded-full bg-navy text-white font-bold flex items-center justify-center mx-auto text-sm">${initials(c.name)}</div>
+      <div class="font-bold text-[13px] mt-1.5 break-words px-2">${esc(c.name)}</div>
+      <div class="text-[10px] text-ink/50">${esc(c.phone)}</div>
+    </div>
+    ${row('Owner / Coach', c.owner)}
+    ${row('Email', c.email)}
+    ${fields}
+    ${activeConv?.patient_id ? `<div class="p-3 mt-auto flex-shrink-0"><a href="patient-hub.html?id=${activeConv.patient_id}" class="block text-center bg-navy text-white text-[13px] py-2 rounded-lg font-semibold hover:bg-navy-dark no-underline">Buka Rekod Penuh →</a></div>` : ''}`;
+}
+
+function closeChat() {
+  document.getElementById('list-pane').classList.remove('hidden');
+  document.getElementById('chat-pane').classList.add('hidden');
+}
+
+function onComposerKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+}
+
+// Lampiran yang sedang disediakan (belum dihantar) — coach semak dulu
+let pendingAttachment = null;
+
+function renderAttachPreview() {
+  const el = document.getElementById('attach-preview');
+  if (!el) return;
+  if (!pendingAttachment) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  el.classList.remove('hidden');
+  const isImg = (pendingAttachment.type || '').startsWith('image/');
+  el.innerHTML = `<div class="inline-flex items-center gap-2 bg-ink/5 border border-ink/10 rounded-lg px-2 py-1.5 max-w-full">
+      <div class="flex items-center gap-2 cursor-pointer min-w-0" onclick="previewPending()" title="Klik untuk semak saiz penuh">
+        ${isImg ? `<img src="${pendingAttachment.url}" class="w-9 h-9 rounded object-cover flex-shrink-0">` : '<span class="text-lg flex-shrink-0">📎</span>'}
+        <span class="text-[12px] truncate max-w-[180px]">${(pendingAttachment.name || 'fail').replace(/</g, '&lt;')}</span>
+      </div>
+      <button onclick="clearAttach()" title="Buang lampiran" class="text-ink/40 hover:text-terracotta text-lg leading-none ml-1 flex-shrink-0">&times;</button>
+    </div>`;
+}
+function clearAttach() { pendingAttachment = null; renderAttachPreview(); }
+// Semak lampiran yang belum dihantar dalam saiz penuh
+function previewPending() {
+  if (!pendingAttachment) return;
+  const t = pendingAttachment.type || '';
+  if (t.startsWith('image/')) openLightbox('img', pendingAttachment.url);
+  else if (t === 'application/pdf') openLightbox('pdf', pendingAttachment.url);
+  else if (t.startsWith('video/')) openLightbox('video', pendingAttachment.url);
+  else window.open(pendingAttachment.url, '_blank');
+}
+
+// Pilih fail → upload & SEDIAKAN (preview); belum hantar sampai tekan ➤
+async function onFilePick(input) {
+  const file = input.files && input.files[0];
+  input.value = '';
+  if (!file || !activeConv) return;
+  if (file.size > 16 * 1024 * 1024) { banner('Fail melebihi 16MB', 'error'); return; }
+  const attBtn = document.getElementById('attach-btn');
+  attBtn.disabled = true; attBtn.textContent = '⏳';
+  try {
+    const uid = (await window.db.auth.getUser()).data.user?.id || 'staff';
+    const safe = file.name.replace(/[^\w.\-]/g, '_');
+    const path = `${uid}/${Date.now()}-${safe}`;
+    const { error: upErr } = await window.db.storage.from('wa-outbox').upload(path, file, { contentType: file.type || undefined, upsert: false });
+    if (upErr) throw upErr;
+    const url = window.db.storage.from('wa-outbox').getPublicUrl(path).data.publicUrl;
+    pendingAttachment = { url, name: file.name, type: file.type };
+    renderAttachPreview();
+    document.getElementById('msg-input').focus();
+  } catch (e) {
+    banner('Gagal upload fail: ' + e.message, 'error');
+  } finally {
+    attBtn.disabled = false; attBtn.textContent = '📎';
+  }
+}
+
+async function sendMsg() {
+  const input = document.getElementById('msg-input');
+  const text = input.value.trim();
+  if ((!text && !pendingAttachment) || !activeConv) return;
+  const btn = document.getElementById('send-btn');
+  btn.disabled = true;
+  try {
+    const atts = pendingAttachment ? [pendingAttachment.url] : undefined;
+    const existingId = (activeConv.ghl_conversation_id && activeConv.ghl_conversation_id !== '__new__') ? activeConv.ghl_conversation_id : undefined;
+    const res = await invoke('send', { contactId: activeConv.ghl_contact_id, conversationId: existingId, message: text, attachments: atts });
+    input.value = '';
+    input.style.height = 'auto';
+    pendingAttachment = null; renderAttachPreview();
+    const cid = res?.conversationId || existingId || null;
+    if (cid) {
+      activeConv.ghl_conversation_id = cid;
+      if (!allConvos.some(c => c.ghl_conversation_id === cid)) {
+        allConvos.unshift({ ...activeConv, last_message: text || '📎 Lampiran', last_message_at: new Date().toISOString() });
+      }
+      await openChat(cid); // muat semula thread (kini wujud di GHL)
+    } else {
+      banner('Mesej dihantar.', 'ok');
+    }
+  } catch (e) {
+    banner('Gagal hantar: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+(async function () {
+  const user = await initStaff('inbox', 'Balas WhatsApp pesakit dari satu tempat');
+  if (!user) return;
+  document.getElementById('msg-input').addEventListener('input', function () {
+    this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 128) + 'px';
+  });
+  applyInfo();
+  await loadList();
+  updateWaBadge();
+  subscribeRealtime();
+  // dari patient-hub: buka terus perbualan pesakit (cipta contact kalau perlu)
+  const params = new URLSearchParams(location.search);
+  const wantPhone = params.get('phone');
+  if (wantPhone) openByPhone(wantPhone, params.get('name') || '');
+})();
+</script>
+</body>
+</html>

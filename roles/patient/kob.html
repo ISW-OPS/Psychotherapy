@@ -116,6 +116,24 @@
             <button onclick="openReschedule()" id="btn-reschedule" class="flex-1 px-4 py-2.5 border border-ink/20 rounded-lg text-sm font-semibold hover:bg-cream">🔄 Reschedule</button>
             <a id="join-online" href="#" target="_blank" class="hidden flex-1 bg-navy text-white text-center px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-navy-dark">🎥 Sertai Online</a>
           </div>
+
+          <!-- Lokasi & Video Panduan ke ISW -->
+          <div class="mt-5 border-t border-ink/10 pt-4 text-left">
+            <div class="flex items-center gap-2 mb-2">
+              <span class="text-xl">📍</span>
+              <div class="font-bold text-sm text-ink">Lokasi & Panduan Perjalanan</div>
+            </div>
+            <p class="text-sm text-ink/70 leading-relaxed">
+              <strong>Ibnu Sina Wellness (ISW)</strong> hanya ada di <strong>Country Heights, Kajang, Selangor</strong>. Gunakan Google Maps &amp; video di bawah untuk panduan ke pusat rawatan.
+            </p>
+            <a href="https://maps.app.goo.gl/G3vnmP61xW34iSELA" target="_blank" rel="noopener"
+               class="inline-flex items-center gap-2 mt-3 bg-navy text-white text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-navy-dark no-underline">📍 Buka di Google Maps →</a>
+            <div class="rounded-xl overflow-hidden border border-ink/10 aspect-video bg-black mt-3">
+              <iframe class="w-full h-full" src="https://www.youtube.com/embed/-mLRxq21r7g"
+                title="Panduan Perjalanan ke ISW" frameborder="0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+            </div>
+          </div>
         </div>
 
         <!-- Stage: Hadir (active session OR past view) -->
@@ -296,8 +314,13 @@
                   <h2 class="text-xl font-bold text-green-dark">Agreement Telah Di-sign</h2>
                 </div>
                 <p id="sign-done-date" class="text-xs text-ink/50 mt-1">—</p>
+                <p id="sign-edit-hint" class="text-[11px] text-gold-dark mt-1 hidden">⚠️ Anda masih boleh tandatangan semula atau batal sebelum doktor sahkan.</p>
               </div>
-              <a id="sign-pdf-link" href="#" target="_blank" class="bg-navy text-white px-5 py-2.5 rounded-lg text-sm font-semibold hover:bg-navy-dark">⬇ Muat Turun PDF</a>
+              <div class="flex flex-wrap gap-2">
+                <a id="sign-pdf-link" href="#" target="_blank" class="bg-navy text-white px-5 py-2.5 rounded-lg text-sm font-semibold hover:bg-navy-dark">⬇ Muat Turun PDF</a>
+                <button id="btn-resign" onclick="resignAgreement()" class="hidden border border-gold-dark text-gold-dark bg-white px-5 py-2.5 rounded-lg text-sm font-semibold hover:bg-gold-dark hover:text-white">✏️ Sign Semula</button>
+                <button id="btn-cancel-sign" onclick="cancelSignedAgreement()" class="hidden border border-terracotta text-terracotta bg-white px-5 py-2.5 rounded-lg text-sm font-semibold hover:bg-terracotta hover:text-white">✕ Batal Tandatangan</button>
+              </div>
             </div>
             <div class="bg-cream/60 border border-ink/10 rounded-2xl p-5 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
               <div><div class="text-[10px] text-ink/50 uppercase font-semibold">Nama</div><div id="sd-info-name" class="font-semibold mt-0.5">—</div></div>
@@ -828,6 +851,14 @@ async function renderSignStage() {
     const sigImg = document.getElementById('sd-signature');
     if (signed.signature_url) { sigImg.src = signed.signature_url; sigImg.classList.remove('hidden'); }
     else sigImg.classList.add('hidden');
+
+    // Allow re-sign / cancel kalau belum di-finalize oleh doktor (kob_status !== 'completed')
+    const finalized = patientRecord.kob_status === 'completed';
+    if (!finalized) {
+      document.getElementById('btn-resign').classList.remove('hidden');
+      document.getElementById('btn-cancel-sign').classList.remove('hidden');
+      document.getElementById('sign-edit-hint').classList.remove('hidden');
+    }
     return;
   }
 
@@ -867,12 +898,26 @@ async function submitInlineSignature() {
     if (sigErr) throw new Error('Sig upload: ' + sigErr.message);
     const { data: sigUrl } = await window.db.storage.from('kob-signatures').createSignedUrl(sigPath, 3600 * 24 * 365);
 
+    // Fallback: kalau patientRecord.ic_number / full_name kosong, ambil dari KYC submission terbaru
+    let resolvedName = currentUser.full_name || patientRecord.full_name || '';
+    let resolvedIc   = patientRecord.ic_number || '';
+    if (!resolvedName || !resolvedIc) {
+      const { data: kycSubs } = await window.db.from('psy_kyc_submissions')
+        .select('patient_name, ic_number').eq('user_id', currentUser.id).eq('status', 'approved')
+        .order('created_at', { ascending: false }).limit(1);
+      const kyc = kycSubs?.[0];
+      if (kyc) {
+        if (!resolvedName) resolvedName = kyc.patient_name || '';
+        if (!resolvedIc)   resolvedIc   = kyc.ic_number || '';
+      }
+    }
+
     const signedPdfBytes = await generateSignedPdf({
       title: saAgreementData.title,
       version: saAgreementData.version,
       clauses: saAgreementData.clauses,
-      patientName: currentUser.full_name || patientRecord.full_name || '',
-      patientIc: patientRecord.ic_number || '',
+      patientName: resolvedName,
+      patientIc: resolvedIc,
       packageName: saAgreementData.pkg?.name || '—',
       price: saAgreementData.pkg?.price != null ? `RM ${Number(saAgreementData.pkg.price).toFixed(2)}` : '—',
       signatureDataUrl: sigDataUrl,
@@ -886,8 +931,8 @@ async function submitInlineSignature() {
     const { error: agrErr } = await window.db.from('psy_kob_agreements').insert({
       patient_id: patientRecord.id,
       kob_session_id: currentKob?.id || null,
-      patient_name: currentUser.full_name || patientRecord.full_name || '',
-      patient_ic: patientRecord.ic_number || '',
+      patient_name: resolvedName,
+      patient_ic: resolvedIc,
       signature_url: sigUrl?.signedUrl || sigPath,
       signed_pdf_url: pdfUrl?.signedUrl || pdfPath,
       user_agent: navigator.userAgent,
@@ -902,6 +947,55 @@ async function submitInlineSignature() {
     errEl.classList.remove('hidden');
     btn.disabled = false; btn.textContent = '🖊️ Hantar Tandatangan';
   }
+}
+
+// ─── Re-sign / Cancel agreement (sebelum doktor sahkan) ───
+async function deleteSignedAgreement() {
+  // Block kalau doktor dah finalize
+  if (patientRecord.kob_status === 'completed') {
+    banner('Agreement sudah disahkan oleh doktor — tak boleh diubah.', 'error');
+    return false;
+  }
+  // Ambil row latest
+  const { data: agr } = await window.db.from('psy_kob_agreements')
+    .select('id, signature_url, signed_pdf_url')
+    .eq('patient_id', patientRecord.id)
+    .order('signed_at', { ascending: false }).limit(1);
+  const row = agr?.[0];
+  if (!row) return true;
+  // Padam DB row
+  await window.db.from('psy_kob_agreements').delete().eq('id', row.id);
+  // Padam files dari storage (best-effort)
+  const paths = [];
+  if (row.signature_url) {
+    const m = row.signature_url.match(/kob-signatures\/(.+?)(\?|$)/);
+    if (m?.[1]) paths.push(decodeURIComponent(m[1]));
+  }
+  if (row.signed_pdf_url) {
+    const m = row.signed_pdf_url.match(/kob-signatures\/(.+?)(\?|$)/);
+    if (m?.[1]) paths.push(decodeURIComponent(m[1]));
+  }
+  if (paths.length) {
+    try { await window.db.storage.from('kob-signatures').remove(paths); } catch {}
+  }
+  await auditLog('kob.agreement_cancelled', patientRecord.id);
+  return true;
+}
+
+async function resignAgreement() {
+  if (!confirm('Tandatangan semula?\n\nTandatangan dan PDF lama akan dipadam. Awak boleh tulis tandatangan baru.')) return;
+  const ok = await deleteSignedAgreement();
+  if (!ok) return;
+  banner('Tandatangan lama dipadam. Sila tandatangan semula.');
+  setTimeout(() => location.reload(), 800);
+}
+
+async function cancelSignedAgreement() {
+  if (!confirm('Batal tandatangan?\n\nAnda perlu tandatangan semula sebelum boleh teruskan ke langkah seterusnya.')) return;
+  const ok = await deleteSignedAgreement();
+  if (!ok) return;
+  banner('Tandatangan dibatalkan.');
+  setTimeout(() => location.reload(), 800);
 }
 
 // pdf-lib helper to generate clean PDF (ported from kob-agreement.html)
@@ -1131,10 +1225,16 @@ async function loadSlotsForDate() {
   }
 
   const day = new Date(date + 'T00:00:00').getDay();
-  const { data: slots } = await window.db.from('psy_kob_slot_config')
-    .select('*').eq('day_of_week', day).eq('is_active', true)
+  // Try filter by slot_type='kob' dulu (step47). Kalau column tak wujud, fallback tanpa filter.
+  let { data: slots, error } = await window.db.from('psy_kob_slot_config')
+    .select('*').eq('day_of_week', day).eq('is_active', true).eq('slot_type', 'kob')
     .order('sort_order', { ascending: true });
-
+  if (error && /slot_type/i.test(error.message || '')) {
+    const fallback = await window.db.from('psy_kob_slot_config')
+      .select('*').eq('day_of_week', day).eq('is_active', true)
+      .order('sort_order', { ascending: true });
+    slots = fallback.data;
+  }
   availableSlots = slots || [];
   if (!availableSlots.length) {
     sel.innerHTML = '<option value="">— Tiada slot tersedia —</option>';
@@ -1313,12 +1413,29 @@ async function init() {
   const user = await initPatient('kob', 'Konsultasi Orang Baru');
   if (!user) return;
 
-  const kobStatus = patientRecord?.kob_status || 'na';
+  let kobStatus = patientRecord?.kob_status || 'na';
+  console.log('[KOB init] patientRecord:', patientRecord, 'kobStatus:', kobStatus);
 
+  // KYC approved patient dengan kob_status='na' — masuk KOB flow (advance ke kyc_done)
   if (kobStatus === 'na') {
-    // No KOB needed for this patient — redirect
-    window.location.href = 'dashboard.html';
-    return;
+    const { data: subs, error: subsErr } = await window.db
+      .from('psy_kyc_submissions')
+      .select('status, created_at')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    console.log('[KOB init] KYC subs:', subs, 'error:', subsErr);
+    const isApproved = subs?.[0]?.status === 'approved';
+    if (isApproved && patientRecord) {
+      await window.db.from('psy_patients').update({ kob_status: 'kyc_done' }).eq('id', patientRecord.id);
+      patientRecord.kob_status = 'kyc_done';
+      kobStatus = 'kyc_done';
+      console.log('[KOB init] Advanced to kyc_done');
+    } else {
+      console.log('[KOB init] Redirecting to dashboard. isApproved:', isApproved, 'patientRecord:', !!patientRecord);
+      window.location.href = 'dashboard.html';
+      return;
+    }
   }
   // kob_status='completed' tetap stay di kob.html — patient boleh review history
 

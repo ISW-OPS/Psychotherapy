@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Peranan & Kebenaran</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+  .role-card { transition: all 0.15s; }
+  .role-card.active { background: #f4f1ea; border-left: 4px solid var(--rpm, #1a3a5c); }
+  .role-card:hover:not(.active) { background: #fcfaf5; }
+  .matrix th, .matrix td { border-bottom: 1px solid rgba(0,0,0,0.05); }
+  .matrix thead th { background: #f8f5ef; position: sticky; top: 0; z-index: 2; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: rgba(0,0,0,0.5); }
+  .perm-cell { text-align: center; padding: 10px; user-select: none; transition: background 0.1s; position: relative; }
+  .perm-cell:hover.editable { background: #fcfaf5; }
+  .perm-cell.editable { cursor: pointer; }
+  .perm-cell.locked { cursor: not-allowed; opacity: 0.6; }
+  .perm-cell.na { color: rgba(0,0,0,0.2); }
+  .perm-box {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 5px;
+    border: 1.5px solid rgba(0,0,0,0.2); background: #fff;
+    font-weight: bold; transition: all 0.15s;
+  }
+  .perm-cell.editable:hover .perm-box { border-color: #1a3a5c; }
+  .perm-cell.granted .perm-box { background: #16a34a; border-color: #16a34a; color: white; }
+  .perm-cell.denied .perm-box { background: #fff; border-color: rgba(0,0,0,0.2); color: transparent; }
+  .perm-cell.override-grant .perm-box { background: #15803d; border-color: #15803d; color: white; box-shadow: 0 0 0 2px #d1fae5; }
+  .perm-cell.override-revoke .perm-box { background: #fff; border-color: #b91c1c; color: #b91c1c; box-shadow: 0 0 0 2px #fee2e2; }
+  .perm-cell .ov-dot { position: absolute; top: 4px; right: 6px; width: 6px; height: 6px; border-radius: 999px; }
+  .perm-cell.override-grant .ov-dot { background: #15803d; }
+  .perm-cell.override-revoke .ov-dot { background: #b91c1c; }
+  .user-row { transition: background 0.1s; cursor: pointer; }
+  .user-row:hover { background: #fcfaf5; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🔐</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-5">
+
+        <!-- Top bar: actions -->
+        <div class="flex items-center justify-between flex-wrap gap-3">
+          <p class="text-sm text-ink/55">Urus peranan (role) dan kebenaran akses sistem berdasarkan RBAC.</p>
+          <button onclick="openRoleModal()" class="bg-navy text-white text-sm px-4 py-2.5 rounded-xl font-semibold hover:bg-navy-dark">+ Tambah Peranan</button>
+        </div>
+
+        <!-- 2-column layout: Roles list (left) + Matrix (right) -->
+        <div class="grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-5">
+
+          <!-- ── LEFT: Roles list ── -->
+          <div class="bg-white rounded-2xl border border-ink/10 overflow-hidden">
+            <div class="p-4 border-b border-ink/8">
+              <h3 class="font-bold text-base">Peranan (Role)</h3>
+              <p class="text-[11px] text-ink/55 mt-0.5">Pilih peranan untuk lihat dan ubah kebenaran.</p>
+              <input id="search-role" type="text" placeholder="Cari peranan..." oninput="renderRoles()"
+                class="w-full mt-3 px-3 py-2 border border-ink/15 rounded-lg text-sm focus:border-navy outline-none">
+            </div>
+            <div id="roles-list" class="divide-y divide-ink/5 max-h-[70vh] overflow-y-auto"></div>
+          </div>
+
+          <!-- ── RIGHT: Selected role detail + matrix ── -->
+          <div class="bg-white rounded-2xl border border-ink/10 overflow-hidden">
+            <div id="role-header" class="p-5 border-b border-ink/8 flex items-center justify-between gap-3 flex-wrap">
+              <div class="flex items-center gap-3">
+                <div id="rh-icon" class="w-12 h-12 rounded-xl bg-navy-light flex items-center justify-center text-2xl">🛡️</div>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <h3 id="rh-label" class="font-bold text-lg">—</h3>
+                    <span id="rh-code" class="chip bg-ink/8 text-ink/60 text-[10px] font-mono">—</span>
+                    <span id="rh-system" class="chip bg-gold/30 text-gold-dark text-[10px] hidden">SYSTEM</span>
+                  </div>
+                  <p id="rh-desc" class="text-xs text-ink/55 mt-0.5">—</p>
+                </div>
+              </div>
+              <div class="flex gap-2">
+                <button onclick="editCurrentRole()" id="btn-edit-role" class="text-sm px-3 py-2 border border-ink/20 rounded-lg hover:bg-cream">✏️ Edit</button>
+                <button onclick="toggleRoleActive()" id="btn-toggle-role" class="text-sm px-3 py-2 border border-terracotta/30 text-terracotta rounded-lg hover:bg-terracotta/10">Nyahaktifkan</button>
+              </div>
+            </div>
+
+            <!-- Legend -->
+            <div class="px-5 py-3 border-b border-ink/8 flex items-center gap-4 text-[11px] text-ink/65 flex-wrap">
+              <span class="flex items-center gap-2"><span class="perm-box" style="background:#16a34a;border-color:#16a34a;color:white;width:18px;height:18px;font-size:11px;">✓</span> Dibenarkan</span>
+              <span class="flex items-center gap-2"><span class="perm-box" style="width:18px;height:18px;"></span> Tidak Dibenarkan</span>
+              <span class="flex items-center gap-2"><span class="text-ink/30">—</span> Tidak Berkenaan</span>
+              <span class="ml-auto text-ink/40">Klik kotak untuk toggle</span>
+            </div>
+
+            <!-- Matrix -->
+            <div class="overflow-x-auto" style="max-height: 60vh">
+              <table class="matrix w-full text-sm">
+                <thead>
+                  <tr id="matrix-head"></tr>
+                </thead>
+                <tbody id="matrix-body"></tbody>
+              </table>
+            </div>
+
+            <!-- Footer -->
+            <div class="px-5 py-3 border-t border-ink/8 flex items-center justify-between flex-wrap gap-3">
+              <p class="text-[11px] text-ink/50">Perubahan kebenaran akan digunakan serta-merta untuk semua pengguna dalam peranan ini.</p>
+              <div class="flex gap-2">
+                <button onclick="reloadMatrix()" class="text-sm px-4 py-2 border border-ink/20 rounded-xl hover:bg-cream">↻ Reset</button>
+                <button id="save-btn" onclick="saveMatrix()" class="bg-navy text-white text-sm px-4 py-2.5 rounded-xl font-semibold hover:bg-navy-dark disabled:opacity-50" disabled>💾 Simpan Perubahan</button>
+              </div>
+            </div>
+
+            <!-- Users in this role -->
+            <div class="border-t border-ink/10">
+              <div class="px-5 py-4 flex items-center justify-between gap-3">
+                <div>
+                  <h4 class="font-bold text-base">Pengguna dalam peranan ini</h4>
+                  <p class="text-[11px] text-ink/55 mt-0.5">Klik nama untuk override kebenaran khas bagi individu tertentu.</p>
+                </div>
+                <span id="users-count" class="chip bg-ink/8 text-ink/65 text-[10px]">0</span>
+              </div>
+              <div id="users-in-role" class="divide-y divide-ink/5 max-h-[40vh] overflow-y-auto"></div>
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- Modal: Role CRUD -->
+<div id="role-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/50" onclick="closeRoleModal()"></div>
+  <div class="relative bg-white rounded-2xl max-w-md w-full">
+    <div class="p-5 border-b border-ink/10 flex items-center justify-between">
+      <h3 id="role-modal-title" class="font-bold text-lg">Peranan Baru</h3>
+      <button onclick="closeRoleModal()" class="text-ink/60 text-xl">×</button>
+    </div>
+    <div class="p-5 space-y-3">
+      <input id="rm-original-code" type="hidden">
+      <div>
+        <label class="text-xs font-semibold">Kod <span class="text-terracotta">*</span></label>
+        <input id="rm-code" type="text" placeholder="cth: receptionist"
+          class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none font-mono">
+        <p class="text-[10px] text-ink/50 mt-1">Huruf kecil + underscore. Tak boleh diubah selepas dicipta.</p>
+      </div>
+      <div>
+        <label class="text-xs font-semibold">Nama Paparan <span class="text-terracotta">*</span></label>
+        <input id="rm-label" type="text" placeholder="cth: Receptionist"
+          class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none">
+      </div>
+      <div>
+        <label class="text-xs font-semibold">Penerangan</label>
+        <textarea id="rm-desc" rows="2"
+          class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none resize-none"></textarea>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="text-xs font-semibold">Ikon</label>
+          <input id="rm-icon" type="text" maxlength="2" placeholder="👤"
+            class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm text-center outline-none">
+        </div>
+        <div>
+          <label class="text-xs font-semibold">Warna</label>
+          <select id="rm-color" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm outline-none">
+            <option value="navy">Navy</option>
+            <option value="purple">Purple</option>
+            <option value="teal">Teal</option>
+            <option value="green">Green</option>
+            <option value="gold">Gold</option>
+            <option value="terracotta">Terracotta</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="p-5 border-t border-ink/10 flex justify-between gap-2">
+      <button onclick="deleteCurrentRole()" id="btn-delete-role" class="px-4 py-2 text-sm text-terracotta hover:underline hidden">Padam peranan</button>
+      <div class="flex gap-2 ml-auto">
+        <button onclick="closeRoleModal()" class="px-4 py-2 text-sm rounded-xl border border-ink/20 hover:bg-cream">Batal</button>
+        <button onclick="saveRole()" class="px-4 py-2 text-sm rounded-xl bg-navy text-white font-semibold hover:bg-navy-dark">Simpan</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: User Override -->
+<div id="override-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/50" onclick="closeOverrideModal()"></div>
+  <div class="relative bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+    <div class="p-5 border-b border-ink/10 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div id="om-avatar" class="w-12 h-12 rounded-xl bg-navy text-white flex items-center justify-center text-lg font-bold">—</div>
+        <div>
+          <h3 id="om-name" class="font-bold text-lg">—</h3>
+          <p id="om-email" class="text-xs text-ink/60">—</p>
+        </div>
+      </div>
+      <button onclick="closeOverrideModal()" class="text-ink/60 text-xl">×</button>
+    </div>
+
+    <div class="p-5 space-y-3 overflow-y-auto flex-1">
+      <div class="grid grid-cols-3 gap-2">
+        <div class="bg-green-light/40 border border-green/15 rounded-xl p-3">
+          <div class="text-[10px] uppercase text-green-dark/70 font-semibold">Tambahan (Grant)</div>
+          <div id="om-grant" class="text-xl font-bold text-green-dark mt-1">0</div>
+        </div>
+        <div class="bg-terracotta-light/40 border border-terracotta/15 rounded-xl p-3">
+          <div class="text-[10px] uppercase text-terracotta/70 font-semibold">Disekat (Revoke)</div>
+          <div id="om-revoke" class="text-xl font-bold text-terracotta mt-1">0</div>
+        </div>
+        <div class="bg-navy-light/40 border border-navy/15 rounded-xl p-3">
+          <div class="text-[10px] uppercase text-navy/70 font-semibold">Berkesan</div>
+          <div id="om-effective" class="text-xl font-bold text-navy mt-1">0</div>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-4 text-[11px] text-ink/65 flex-wrap">
+        <span class="flex items-center gap-2"><span class="perm-box" style="background:#16a34a;border-color:#16a34a;color:white;width:18px;height:18px;font-size:11px;">✓</span> Default role</span>
+        <span class="flex items-center gap-2"><span class="perm-box" style="background:#15803d;border-color:#15803d;color:white;box-shadow:0 0 0 2px #d1fae5;width:18px;height:18px;font-size:11px;">✓</span> Grant tambahan</span>
+        <span class="flex items-center gap-2"><span class="perm-box" style="border-color:#b91c1c;color:#b91c1c;box-shadow:0 0 0 2px #fee2e2;width:18px;height:18px;font-size:11px;">✕</span> Disekat</span>
+        <span class="ml-auto text-ink/40">Klik kotak untuk toggle</span>
+      </div>
+
+      <div class="border border-ink/10 rounded-xl overflow-x-auto" style="max-height: 50vh">
+        <table class="matrix w-full text-sm">
+          <thead><tr id="om-head"></tr></thead>
+          <tbody id="om-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="p-5 border-t border-ink/10 flex justify-between gap-2">
+      <button onclick="clearAllOverrides()" id="om-clear-btn" class="text-sm px-4 py-2 border border-terracotta/30 text-terracotta rounded-xl hover:bg-terracotta/10">Buang Semua Override</button>
+      <button onclick="closeOverrideModal()" class="px-4 py-2 text-sm rounded-xl bg-navy text-white font-semibold hover:bg-navy-dark">Selesai</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+let roles      = [];
+let modules    = [];
+let actions    = [];
+let modActions = new Set(); // 'module|action' yang applicable
+let grants     = new Set(); // 'role|module|action' untuk role semasa
+let dirty      = new Set(); // 'module|action' yang berubah dari load
+let currentRoleCode = null;
+let userCounts = {};        // { roleCode: jumlah pengguna }
+let allStaffUsers = [];     // semua staff dgn staff_role
+let currentOverrideUser = null;
+let currentOverrides = new Map(); // 'm|a' -> 'grant'/'revoke'
+
+const COLOR_CLS = {
+  navy:       'bg-navy-light text-navy',
+  purple:     'bg-purple-100 text-purple-700',
+  teal:       'bg-teal/15 text-teal',
+  green:      'bg-green-light text-green-dark',
+  gold:       'bg-gold/30 text-gold-dark',
+  terracotta: 'bg-terracotta-light text-terracotta',
+};
+
+(async function init() {
+  const user = await checkAuth('staff');
+  if (!user) return;
+  if (user.staff_role !== 'super_admin') {
+    alert('Halaman ini hanya untuk Super Admin.');
+    window.location.href = 'dashboard.html';
+    return;
+  }
+  document.getElementById('app-loading')?.classList.add('hidden');
+  document.getElementById('app-shell')?.classList.remove('hidden');
+  document.body.classList.add('role-' + user.staff_role);
+  renderNavbar('staff', user, null, 'peranan');
+  renderHeader('Peranan & Kebenaran', 'Super Admin');
+  await loadAll();
+})();
+
+async function loadAll() {
+  const [rRes, mRes, aRes, maRes, uRes] = await Promise.all([
+    window.db.from('psy_roles').select('*').order('sort_order'),
+    window.db.from('psy_modules').select('*').eq('is_active', true).order('sort_order'),
+    window.db.from('psy_actions').select('*').order('sort_order'),
+    window.db.from('psy_module_actions').select('*'),
+    window.db.from('psy_profiles').select('id,full_name,email,is_active,staff_role')
+      .eq('role','staff').not('staff_role','is',null).order('full_name'),
+  ]);
+  roles   = rRes.data || [];
+  modules = mRes.data || [];
+  actions = aRes.data || [];
+  modActions = new Set((maRes.data || []).map(r => r.module_code + '|' + r.action_code));
+  allStaffUsers = uRes.data || [];
+  userCounts = {};
+  allStaffUsers.forEach(p => {
+    userCounts[p.staff_role] = (userCounts[p.staff_role] || 0) + 1;
+  });
+
+  if (!currentRoleCode && roles.length) currentRoleCode = roles[0].code;
+  renderRoles();
+  await loadGrants(currentRoleCode);
+}
+
+async function loadGrants(roleCode) {
+  if (!roleCode) return;
+  const { data } = await window.db.from('psy_role_module_actions')
+    .select('module_code, action_code').eq('role_code', roleCode);
+  grants = new Set((data || []).map(r => r.module_code + '|' + r.action_code));
+  dirty.clear();
+  renderRoleHeader();
+  renderMatrix();
+  renderUsersInRole();
+  updateSaveBtn();
+}
+
+// ── USERS IN CURRENT ROLE ──
+async function renderUsersInRole() {
+  const users = allStaffUsers.filter(u => u.staff_role === currentRoleCode);
+  document.getElementById('users-count').textContent = users.length + ' pengguna';
+
+  // Bulk fetch override counts per user for this role
+  let overrideCounts = {};
+  if (users.length) {
+    const userIds = users.map(u => u.id);
+    const { data } = await window.db.from('psy_user_overrides')
+      .select('user_id, grant_type').in('user_id', userIds);
+    (data || []).forEach(o => {
+      const k = o.user_id;
+      overrideCounts[k] ||= { grant: 0, revoke: 0 };
+      overrideCounts[k][o.grant_type]++;
+    });
+  }
+
+  if (!users.length) {
+    document.getElementById('users-in-role').innerHTML =
+      `<p class="p-5 text-xs text-ink/40 text-center">Tiada pengguna dalam peranan ini.</p>`;
+    return;
+  }
+  const r = roles.find(x => x.code === currentRoleCode);
+  const colorCls = (r?.color === 'navy' ? 'bg-navy' :
+                    r?.color === 'purple' ? 'bg-purple-600' :
+                    r?.color === 'teal' ? 'bg-teal' :
+                    r?.color === 'green' ? 'bg-green-dark' :
+                    r?.color === 'gold' ? 'bg-gold-dark' :
+                    r?.color === 'terracotta' ? 'bg-terracotta' : 'bg-navy') + ' text-white';
+  document.getElementById('users-in-role').innerHTML = users.map(u => {
+    const init = (u.full_name||'?').split(' ').map(s=>s[0]).join('').slice(0,2).toUpperCase();
+    const oc = overrideCounts[u.id];
+    const ovBadge = oc
+      ? `<span class="chip bg-gold/30 text-gold-dark text-[10px]">⚙ ${(oc.grant||0)+(oc.revoke||0)} override</span>`
+      : '';
+    const statusBadge = u.is_active
+      ? '<span class="chip bg-green-light text-green-dark text-[9px]">Aktif</span>'
+      : '<span class="chip bg-ink/10 text-ink/55 text-[9px]">Tak Aktif</span>';
+    return `<div class="user-row p-3 flex items-center gap-3" onclick="openOverrideModal('${u.id}')">
+      <div class="w-9 h-9 rounded-lg ${colorCls} flex items-center justify-center text-xs font-bold flex-shrink-0">${init}</div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 flex-wrap">
+          <div class="font-semibold text-sm truncate">${u.full_name || '(Tanpa Nama)'}</div>
+          ${statusBadge}
+          ${ovBadge}
+        </div>
+        <div class="text-[10px] text-ink/55 truncate">${u.email || ''}</div>
+      </div>
+      <span class="text-xs text-navy hover:underline">Override →</span>
+    </div>`;
+  }).join('');
+}
+
+// ── ROLES LIST ──
+function renderRoles() {
+  const q = (document.getElementById('search-role')?.value || '').toLowerCase().trim();
+  const filtered = roles.filter(r =>
+    !q || r.label.toLowerCase().includes(q) || r.code.toLowerCase().includes(q));
+  const html = filtered.map(r => {
+    const cnt = userCounts[r.code] || 0;
+    const isActive = r.code === currentRoleCode;
+    const colorCls = COLOR_CLS[r.color] || COLOR_CLS.navy;
+    return `<div class="role-card ${isActive ? 'active' : ''} p-3 cursor-pointer flex items-center gap-3" onclick="selectRole('${r.code}')">
+      <div class="w-10 h-10 rounded-lg ${colorCls} flex items-center justify-center text-lg flex-shrink-0">${r.icon || '👤'}</div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2">
+          <div class="font-semibold text-sm truncate">${r.label}</div>
+          ${r.is_active ? '<span class="chip bg-green-light text-green-dark text-[9px]">Aktif</span>'
+                       : '<span class="chip bg-ink/10 text-ink/50 text-[9px]">Tak Aktif</span>'}
+        </div>
+        <div class="text-[10px] text-ink/55 mt-0.5">${cnt} pengguna</div>
+      </div>
+    </div>`;
+  }).join('');
+  document.getElementById('roles-list').innerHTML = html || '<p class="p-4 text-xs text-ink/40 text-center">Tiada peranan dijumpai.</p>';
+}
+
+async function selectRole(code) {
+  if (dirty.size && !confirm(`Buang ${dirty.size} perubahan belum simpan?`)) return;
+  currentRoleCode = code;
+  renderRoles();
+  await loadGrants(code);
+}
+
+function renderRoleHeader() {
+  const r = roles.find(x => x.code === currentRoleCode);
+  if (!r) return;
+  document.getElementById('rh-icon').textContent = r.icon || '👤';
+  document.getElementById('rh-icon').className = `w-12 h-12 rounded-xl ${COLOR_CLS[r.color] || COLOR_CLS.navy} flex items-center justify-center text-2xl`;
+  document.getElementById('rh-label').textContent = r.label;
+  document.getElementById('rh-code').textContent  = r.code;
+  document.getElementById('rh-desc').textContent  = r.description || 'Tiada penerangan.';
+  document.getElementById('rh-system').classList.toggle('hidden', !r.is_system);
+  const btnToggle = document.getElementById('btn-toggle-role');
+  btnToggle.textContent = r.is_active ? 'Nyahaktifkan' : 'Aktifkan';
+  btnToggle.disabled = r.is_system && r.is_active && r.code === 'super_admin';
+}
+
+// ── MATRIX ──
+function renderMatrix() {
+  // Header
+  const headHtml = `<th class="text-left py-3 px-4" style="min-width:220px">Modul</th>` +
+    actions.map(a => `<th class="px-3 py-3 text-center">${a.label}</th>`).join('');
+  document.getElementById('matrix-head').innerHTML = headHtml;
+
+  // Body
+  const role = roles.find(r => r.code === currentRoleCode);
+  const isSuperAdminLock = role && role.code === 'super_admin'; // lock super_admin matrix
+  const body = modules.map(m => {
+    const cells = actions.map(a => {
+      const cellKey = m.code + '|' + a.code;
+      const applicable = modActions.has(cellKey);
+      if (!applicable) {
+        return `<td class="perm-cell na" title="Tidak berkenaan">—</td>`;
+      }
+      const granted = grants.has(cellKey);
+      if (isSuperAdminLock) {
+        return `<td class="perm-cell granted locked" title="Super Admin sentiasa ada semua kebenaran"><span class="perm-box">✓</span></td>`;
+      }
+      return `<td class="perm-cell editable ${granted ? 'granted' : 'denied'}"
+        onclick="toggleCell('${m.code}','${a.code}', this)"><span class="perm-box">${granted ? '✓' : ''}</span></td>`;
+    }).join('');
+    return `<tr>
+      <td class="py-2 px-4">
+        <div class="flex items-center gap-2">
+          <span class="text-base">${m.icon || '📁'}</span>
+          <span class="font-semibold text-sm">${m.label}</span>
+        </div>
+      </td>
+      ${cells}
+    </tr>`;
+  }).join('');
+  document.getElementById('matrix-body').innerHTML = body;
+}
+
+function toggleCell(moduleCode, actionCode, td) {
+  const key = moduleCode + '|' + actionCode;
+  if (!modActions.has(key)) return;
+  const was = grants.has(key);
+  if (was) grants.delete(key); else grants.add(key);
+  if (dirty.has(key)) dirty.delete(key); else dirty.add(key);
+  const granted = grants.has(key);
+  td.classList.toggle('granted', granted);
+  td.classList.toggle('denied', !granted);
+  const box = td.querySelector('.perm-box');
+  if (box) box.textContent = granted ? '✓' : '';
+  updateSaveBtn();
+}
+
+function updateSaveBtn() {
+  const btn = document.getElementById('save-btn');
+  btn.disabled = !dirty.size;
+  btn.textContent = dirty.size ? `💾 Simpan (${dirty.size} perubahan)` : '💾 Simpan Perubahan';
+}
+
+async function saveMatrix() {
+  if (!dirty.size) return;
+  const toInsert = [];
+  const toDelete = [];
+  dirty.forEach(k => {
+    const [m, a] = k.split('|');
+    if (grants.has(k)) toInsert.push({ role_code: currentRoleCode, module_code: m, action_code: a });
+    else toDelete.push({ m, a });
+  });
+
+  if (toInsert.length) {
+    const { error } = await window.db.from('psy_role_module_actions').upsert(toInsert);
+    if (error) { banner('Ralat insert: ' + error.message, 'error'); return; }
+  }
+  for (const d of toDelete) {
+    const { error } = await window.db.from('psy_role_module_actions').delete()
+      .eq('role_code', currentRoleCode).eq('module_code', d.m).eq('action_code', d.a);
+    if (error) { banner('Ralat delete: ' + error.message, 'error'); return; }
+  }
+
+  // Audit log (bulk one entry per change)
+  const auditRows = [...dirty].map(k => {
+    const [m, a] = k.split('|');
+    return {
+      actor_id:    window.currentUser?.id || null,
+      actor_email: window.currentUser?.email || null,
+      action:      grants.has(k) ? 'grant' : 'revoke',
+      target_type: 'role',
+      target_id:   currentRoleCode,
+      module_code: m,
+      action_code: a,
+    };
+  });
+  if (auditRows.length) {
+    await window.db.from('psy_permission_audit').insert(auditRows);
+  }
+
+  dirty.clear();
+  banner('Tersimpan ✓');
+  updateSaveBtn();
+}
+
+async function reloadMatrix() {
+  if (dirty.size && !confirm(`Buang ${dirty.size} perubahan belum simpan?`)) return;
+  await loadGrants(currentRoleCode);
+}
+
+// ── ROLE CRUD ──
+function openRoleModal() {
+  document.getElementById('role-modal-title').textContent = 'Peranan Baru';
+  document.getElementById('rm-original-code').value = '';
+  document.getElementById('rm-code').value  = '';
+  document.getElementById('rm-code').disabled = false;
+  document.getElementById('rm-label').value = '';
+  document.getElementById('rm-desc').value  = '';
+  document.getElementById('rm-icon').value  = '👤';
+  document.getElementById('rm-color').value = 'navy';
+  document.getElementById('btn-delete-role').classList.add('hidden');
+  document.getElementById('role-modal').classList.remove('hidden');
+}
+
+function editCurrentRole() {
+  const r = roles.find(x => x.code === currentRoleCode);
+  if (!r) return;
+  document.getElementById('role-modal-title').textContent = 'Edit Peranan';
+  document.getElementById('rm-original-code').value = r.code;
+  document.getElementById('rm-code').value  = r.code;
+  document.getElementById('rm-code').disabled = true;
+  document.getElementById('rm-label').value = r.label;
+  document.getElementById('rm-desc').value  = r.description || '';
+  document.getElementById('rm-icon').value  = r.icon || '👤';
+  document.getElementById('rm-color').value = r.color || 'navy';
+  document.getElementById('btn-delete-role').classList.toggle('hidden', !!r.is_system);
+  document.getElementById('role-modal').classList.remove('hidden');
+}
+
+function closeRoleModal() { document.getElementById('role-modal').classList.add('hidden'); }
+
+async function saveRole() {
+  const original = document.getElementById('rm-original-code').value;
+  const row = {
+    code:        document.getElementById('rm-code').value.trim(),
+    label:       document.getElementById('rm-label').value.trim(),
+    description: document.getElementById('rm-desc').value.trim() || null,
+    icon:        document.getElementById('rm-icon').value.trim() || '👤',
+    color:       document.getElementById('rm-color').value,
+    sort_order:  100,
+  };
+  if (!row.code || !row.label) { alert('Sila isi kod dan nama.'); return; }
+  if (!/^[a-z_]+$/.test(row.code)) { alert('Kod hanya huruf kecil + underscore.'); return; }
+  const { error } = original
+    ? await window.db.from('psy_roles').update(row).eq('code', original)
+    : await window.db.from('psy_roles').insert(row);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  await window.db.from('psy_permission_audit').insert({
+    actor_id: window.currentUser?.id || null,
+    actor_email: window.currentUser?.email || null,
+    action: original ? 'role_update' : 'role_create',
+    target_type: 'role',
+    target_id: row.code,
+    details: row,
+  });
+  closeRoleModal();
+  banner('Tersimpan ✓');
+  if (!original) currentRoleCode = row.code;
+  await loadAll();
+}
+
+async function deleteCurrentRole() {
+  const r = roles.find(x => x.code === currentRoleCode);
+  if (!r) return;
+  if (r.is_system) { alert('Peranan sistem tak boleh dipadam.'); return; }
+  if ((userCounts[r.code] || 0) > 0) {
+    alert(`Tidak boleh padam — ${userCounts[r.code]} pengguna masih guna peranan ini. Ubah peranan mereka dahulu.`);
+    return;
+  }
+  if (!confirm(`Padam peranan "${r.label}"?\n\nSemua mapping kebenaran akan hilang.`)) return;
+  const { error } = await window.db.from('psy_roles').delete().eq('code', r.code);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  await window.db.from('psy_permission_audit').insert({
+    actor_id: window.currentUser?.id || null,
+    actor_email: window.currentUser?.email || null,
+    action: 'role_delete',
+    target_type: 'role',
+    target_id: r.code,
+  });
+  closeRoleModal();
+  banner('Dipadam ✓');
+  currentRoleCode = null;
+  await loadAll();
+}
+
+// ── USER OVERRIDE MODAL ──
+async function openOverrideModal(userId) {
+  const u = allStaffUsers.find(x => x.id === userId);
+  if (!u) return;
+  if (u.staff_role === 'super_admin') {
+    alert('Super Admin tak boleh ada override (sentiasa akses penuh).');
+    return;
+  }
+  currentOverrideUser = u;
+  // Header
+  const init = (u.full_name||'?').split(' ').map(s=>s[0]).join('').slice(0,2).toUpperCase();
+  document.getElementById('om-avatar').textContent = init;
+  document.getElementById('om-name').textContent  = u.full_name || '(Tanpa Nama)';
+  document.getElementById('om-email').textContent = u.email || '';
+
+  // Load overrides
+  const { data } = await window.db.from('psy_user_overrides')
+    .select('module_code, action_code, grant_type').eq('user_id', userId);
+  currentOverrides = new Map();
+  (data || []).forEach(o => currentOverrides.set(o.module_code + '|' + o.action_code, o.grant_type));
+
+  renderOverrideMatrix();
+  document.getElementById('override-modal').classList.remove('hidden');
+}
+
+function closeOverrideModal() {
+  document.getElementById('override-modal').classList.add('hidden');
+  // Refresh user list to update override badges
+  renderUsersInRole();
+}
+
+function renderOverrideMatrix() {
+  const u = currentOverrideUser;
+  if (!u) return;
+  const roleGrants = grants; // current role's grants (already loaded)
+
+  // Counts
+  let g = 0, r = 0, eff = 0;
+  currentOverrides.forEach(v => { if (v === 'grant') g++; else r++; });
+  modActions.forEach(k => {
+    const ov = currentOverrides.get(k);
+    const def = roleGrants.has(k);
+    if (ov === 'grant') eff++;
+    else if (ov === 'revoke') {}
+    else if (def) eff++;
+  });
+  document.getElementById('om-grant').textContent     = g;
+  document.getElementById('om-revoke').textContent    = r;
+  document.getElementById('om-effective').textContent = eff;
+  document.getElementById('om-clear-btn').classList.toggle('hidden', (g + r) === 0);
+
+  // Head
+  document.getElementById('om-head').innerHTML =
+    `<th class="text-left py-3 px-4" style="min-width:220px">Modul</th>` +
+    actions.map(a => `<th class="px-3 py-3 text-center">${a.label}</th>`).join('');
+
+  // Body
+  document.getElementById('om-body').innerHTML = modules.map(m => {
+    const cells = actions.map(a => {
+      const key = m.code + '|' + a.code;
+      if (!modActions.has(key)) return `<td class="perm-cell na">—</td>`;
+      const ov = currentOverrides.get(key);
+      const def = roleGrants.has(key);
+      let cls, icon, title;
+      if (ov === 'grant') { cls = 'override-grant'; icon = '✓'; title = 'Override: grant tambahan'; }
+      else if (ov === 'revoke') { cls = 'override-revoke'; icon = '✕'; title = 'Override: disekat'; }
+      else if (def) { cls = 'granted'; icon = '✓'; title = 'Default role — klik untuk revoke'; }
+      else { cls = 'denied'; icon = ''; title = 'Default tiada akses — klik untuk grant'; }
+      return `<td class="perm-cell editable ${cls}" onclick="cycleOverride('${m.code}','${a.code}', this)" title="${title}"><span class="perm-box">${icon}</span>${ov ? '<span class="ov-dot"></span>' : ''}</td>`;
+    }).join('');
+    return `<tr>
+      <td class="py-2 px-4"><div class="flex items-center gap-2"><span class="text-base">${m.icon || '📁'}</span><span class="font-semibold text-sm">${m.label}</span></div></td>
+      ${cells}
+    </tr>`;
+  }).join('');
+}
+
+async function cycleOverride(moduleCode, actionCode, td) {
+  const u = currentOverrideUser;
+  if (!u) return;
+  const key = moduleCode + '|' + actionCode;
+  if (!modActions.has(key)) return;
+
+  const ov  = currentOverrides.get(key);
+  const def = grants.has(key);
+  let nextOv = null;
+  if (!ov) nextOv = def ? 'revoke' : 'grant';
+  else nextOv = null;
+
+  if (nextOv) {
+    const { error } = await window.db.from('psy_user_overrides').upsert({
+      user_id: u.id, module_code: moduleCode, action_code: actionCode,
+      grant_type: nextOv, granted_by: window.currentUser?.id || null,
+    });
+    if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+    currentOverrides.set(key, nextOv);
+  } else {
+    const { error } = await window.db.from('psy_user_overrides').delete()
+      .eq('user_id', u.id).eq('module_code', moduleCode).eq('action_code', actionCode);
+    if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+    currentOverrides.delete(key);
+  }
+
+  await window.db.from('psy_permission_audit').insert({
+    actor_id: window.currentUser?.id || null,
+    actor_email: window.currentUser?.email || null,
+    action: nextOv ? ('user_' + nextOv) : 'user_clear_override',
+    target_type: 'user', target_id: u.id,
+    module_code: moduleCode, action_code: actionCode,
+    details: { user_email: u.email, role: u.staff_role, previous: ov || null, next: nextOv },
+  });
+
+  renderOverrideMatrix();
+}
+
+async function clearAllOverrides() {
+  const u = currentOverrideUser;
+  if (!u || !currentOverrides.size) return;
+  if (!confirm(`Buang ${currentOverrides.size} override untuk ${u.full_name || u.email}?`)) return;
+  const { error } = await window.db.from('psy_user_overrides').delete().eq('user_id', u.id);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  await window.db.from('psy_permission_audit').insert({
+    actor_id: window.currentUser?.id || null,
+    actor_email: window.currentUser?.email || null,
+    action: 'user_clear_all_overrides',
+    target_type: 'user', target_id: u.id,
+    details: { user_email: u.email, count: currentOverrides.size },
+  });
+  currentOverrides.clear();
+  renderOverrideMatrix();
+  banner('Override dibuang ✓');
+}
+
+async function toggleRoleActive() {
+  const r = roles.find(x => x.code === currentRoleCode);
+  if (!r) return;
+  if (r.code === 'super_admin' && r.is_active) {
+    alert('Super Admin tak boleh dinyahaktifkan.');
+    return;
+  }
+  const newVal = !r.is_active;
+  const { error } = await window.db.from('psy_roles').update({ is_active: newVal }).eq('code', r.code);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  await window.db.from('psy_permission_audit').insert({
+    actor_id: window.currentUser?.id || null,
+    actor_email: window.currentUser?.email || null,
+    action: newVal ? 'role_activate' : 'role_deactivate',
+    target_type: 'role',
+    target_id: r.code,
+  });
+  banner('Status dikemaskini ✓');
+  await loadAll();
+}
+</script>
+</body>
+</html>

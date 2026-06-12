@@ -16,6 +16,8 @@
 .day-chip { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border: 1.5px solid #e5e7eb; border-radius: 10px; cursor: pointer; font-size: 13px; font-weight: 600; color: #6b7280; transition: all .15s; }
 .day-chip input { accent-color: #6366f1; }
 .day-chip.checked { border-color: #6366f1; background: #eef2ff; color: #4338ca; }
+.day-chip.conflict { border-color: #f59e0b; background: #fef3c7; color: #b45309; opacity: 0.6; cursor: not-allowed; }
+.day-chip.conflict input { cursor: not-allowed; }
 .purple-btn { background: #6366f1; color: white; transition: background .15s; }
 .purple-btn:hover { background: #4f46e5; }
 </style>
@@ -338,16 +340,14 @@
               </div>
             </div>
 
-            <!-- Label (auto-generated, editable) -->
-            <div>
-              <label class="text-xs font-semibold text-ink/70">Label (cth: "9.30 - 11.30 pg")</label>
-              <input id="slot-label" type="text" placeholder="Auto-jana dari masa" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-[#6366f1]">
-            </div>
+            <!-- Label disembunyikan — auto-jana dari Masa Mula + Tamat -->
+            <input id="slot-label" type="hidden">
 
             <!-- Hari -->
             <div>
               <label class="text-xs font-semibold text-ink/70">Hari</label>
               <p class="text-[10px] text-ink/45 mt-0.5">Pilih hari slot ini aktif</p>
+              <div id="day-conflict-warn" class="hidden mt-2 bg-gold/20 border border-gold/30 text-gold-dark text-[11px] px-3 py-2 rounded-lg"></div>
               <div class="mt-2 grid grid-cols-4 gap-2" id="day-checkboxes">
                 <label class="day-chip" data-day="1"><input type="checkbox" class="slot-day" data-day="1" onchange="updateDayChips()"> Isnin</label>
                 <label class="day-chip" data-day="2"><input type="checkbox" class="slot-day" data-day="2" onchange="updateDayChips()"> Selasa</label>
@@ -630,15 +630,75 @@ function updateDayChips() {
   });
 }
 
+// Format "07:00" → "7:00 AM", "14:30" → "2:30 PM"
+function fmtTime12(hhmm) {
+  if (!hhmm) return '';
+  const [h, m] = hhmm.split(':').map(Number);
+  const period = h < 12 ? 'AM' : 'PM';
+  const hr12 = h === 0 ? 12 : (h > 12 ? h - 12 : h);
+  return `${hr12}:${String(m).padStart(2,'0')} ${period}`;
+}
+function buildSlotLabel(start, end) {
+  if (!start || !end) return '';
+  return `${fmtTime12(start)} - ${fmtTime12(end)}`;
+}
+
 function autoGenLabel() {
   const start = document.getElementById('slot-start').value;
   const end = document.getElementById('slot-end').value;
   if (start && end) {
-    const labelInput = document.getElementById('slot-label');
-    if (!labelInput.dataset.manual) {
-      labelInput.value = `${start} - ${end}`;
-    }
+    // Auto-update label sentiasa — buang manual flag supaya selalu sync
+    document.getElementById('slot-label').value = buildSlotLabel(start, end);
     document.getElementById('slot-duration').value = computeDuration(start, end);
+  }
+  updateDayConflicts();
+}
+
+// Detect conflict: untuk masa mula yang dipilih, hari mana dah ada slot
+function updateDayConflicts() {
+  const start = document.getElementById('slot-start')?.value;
+  const type = document.querySelector('input[name="slot-type"]:checked')?.value;
+  const editOrder = _slotModalState?.editOrder ?? null;
+  const warnEl = document.getElementById('day-conflict-warn');
+
+  // Reset semua chip
+  document.querySelectorAll('.day-chip').forEach(chip => {
+    chip.classList.remove('conflict');
+    chip.title = '';
+    const cb = chip.querySelector('input');
+    cb.disabled = false;
+  });
+
+  if (!start || !type) { if (warnEl) warnEl.classList.add('hidden'); return; }
+
+  // Cari conflict — slot wujud dengan type+start sama, dan BUKAN slot yang sedang di-edit
+  const conflicts = allSlots.filter(s =>
+    (s.slot_type || 'kob') === type &&
+    (s.slot_start || '').slice(0,5) === start &&
+    (editOrder == null || s.sort_order !== editOrder)
+  );
+
+  if (!conflicts.length) { if (warnEl) warnEl.classList.add('hidden'); return; }
+
+  const DAY_LABELS = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
+  const conflictDays = conflicts.map(c => c.day_of_week);
+  const conflictDayNames = [...new Set(conflictDays)].map(d => DAY_LABELS[d]);
+
+  conflictDays.forEach(d => {
+    const chip = document.querySelector(`.day-chip[data-day="${d}"]`);
+    if (chip) {
+      chip.classList.add('conflict');
+      chip.title = `Sudah ada slot ${type === 'kob' ? 'KOB' : 'Rawatan'} mula ${start} pada ${DAY_LABELS[d]}`;
+      const cb = chip.querySelector('input');
+      cb.checked = false;
+      cb.disabled = true;
+    }
+  });
+  updateDayChips();
+
+  if (warnEl) {
+    warnEl.innerHTML = `⚠️ Sudah ada slot ${type === 'kob' ? 'KOB' : 'Rawatan'} mula <strong>${start}</strong> pada hari: <strong>${conflictDayNames.join(', ')}</strong>. Hari tersebut akan dinyahaktifkan.`;
+    warnEl.classList.remove('hidden');
   }
 }
 
@@ -679,6 +739,7 @@ function openEditSlot(type, sortOrder) {
   document.querySelectorAll('.slot-day').forEach(el => el.checked = activeDays.has(parseInt(el.dataset.day)));
   updateSlotTypeUI();
   updateDayChips();
+  updateDayConflicts();
   document.getElementById('slot-modal').classList.remove('hidden');
 }
 
@@ -1079,10 +1140,10 @@ function timeAgo(d) {
   const user = await initStaff('kob_slots', 'Tetapan Jadual Konsultasi');
   if (!user) return;
 
-  // Auto-update label when time changes (unless manual)
+  // Auto-update label + conflict detection sentiasa dari masa mula/tamat
   document.getElementById('slot-start').addEventListener('input', autoGenLabel);
   document.getElementById('slot-end').addEventListener('input', autoGenLabel);
-  document.getElementById('slot-label').addEventListener('input', e => { e.target.dataset.manual = '1'; });
+  document.querySelectorAll('input[name="slot-type"]').forEach(r => r.addEventListener('change', updateDayConflicts));
 
   // Note counter
   document.getElementById('slot-note').addEventListener('input', e => {

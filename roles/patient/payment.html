@@ -13,10 +13,24 @@
   @media print {
     body * { visibility: hidden; }
     #receipt-print, #receipt-print * { visibility: visible; }
-    #receipt-print { position: absolute; left: 0; top: 0; width: 100%; background: white; padding: 40px; }
+    #receipt-print {
+      position: absolute; left: 0; top: 0; width: 100%;
+      max-height: none !important; overflow: visible !important;
+      background: white; padding: 40px;
+    }
     #receipt-print .no-print { display: none !important; }
-    #pdf-modal { position: static !important; background: white !important; }
-    #pdf-modal .absolute.inset-0 { display: none; }
+    #pdf-modal { position: static !important; background: white !important; padding: 0 !important; }
+    #pdf-modal .absolute.inset-0 { display: none !important; }
+    /* Kad modal tak boleh potong/runtuh kandungan resit semasa cetak */
+    #pdf-modal > div.relative {
+      position: static !important;
+      max-height: none !important;
+      max-width: 100% !important;
+      overflow: visible !important;
+      box-shadow: none !important;
+      border: 0 !important;
+      border-radius: 0 !important;
+    }
   }
 </style>
 </head>
@@ -103,8 +117,7 @@ async function getPlanTemplate(packageId, packageName) {
 }
 </script>
 <script>
-const SERVICE_CHARGE = 5.00;
-const SST_RATE = 0.06;
+// Service charge & SST dibuang — pesakit bayar harga subtotal sahaja
 
 let pendingItems = [];
 let grandTotal = 0;
@@ -124,20 +137,26 @@ function checkPendingPayment() {
 async function verifyShopOrderPrices(item) {
   const ids = item.items.map(i => i.id).filter(Boolean);
   if (!ids.length) return null;
+  // Cart simpan product_id (SKU), bukan UUID PK — padan guna lajur product_id
   const { data: products, error } = await window.db
     .from('psy_products')
-    .select('id, price, is_active')
-    .in('id', ids);
+    .select('product_id, price, promo_price, promo_until, is_active')
+    .in('product_id', ids);
   if (error || !products) return null;
-  const priceMap = Object.fromEntries(products.map(p => [p.id, p]));
+  const priceMap = Object.fromEntries(products.map(p => [p.product_id, p]));
+  const today = new Date().toISOString().slice(0, 10);
   let verifiedSubtotal = 0;
   const verifiedItems = [];
   for (const cartItem of item.items) {
     const dbProd = priceMap[cartItem.id];
     if (!dbProd || dbProd.is_active === false) return null;
     const qty = Math.max(1, parseInt(cartItem.qty) || 1);
-    const dbPrice = Number(dbProd.price);
-    if (!Number.isFinite(dbPrice) || dbPrice < 0) return null;
+    const origPrice = Number(dbProd.price);
+    if (!Number.isFinite(origPrice) || origPrice < 0) return null;
+    // Guna harga promo jika sah (lebih murah & belum tamat) — selaras dengan shop.html
+    const promoPrice = Number(dbProd.promo_price || 0);
+    const onPromo = promoPrice > 0 && promoPrice < origPrice && (!dbProd.promo_until || dbProd.promo_until >= today);
+    const dbPrice = onPromo ? promoPrice : origPrice;
     verifiedSubtotal += dbPrice * qty;
     verifiedItems.push({ id: cartItem.id, name: cartItem.name, qty, price: dbPrice });
   }
@@ -266,8 +285,7 @@ function renderInvoice() {
   }
 
   const subtotal = pendingItems.reduce((s, i) => s + i.amount, 0);
-  const sst = subtotal * SST_RATE;
-  grandTotal = subtotal + SERVICE_CHARGE + sst;
+  grandTotal = subtotal;
 
   let html = `<div class="font-semibold mb-3">Ringkasan bayaran (${pendingItems.length} invois belum bayar)</div>`;
 
@@ -284,14 +302,6 @@ function renderInvoice() {
   });
 
   html += `
-    <div class="flex justify-between py-1 text-ink/60">
-      <span>Service charge</span>
-      <span>RM ${SERVICE_CHARGE.toFixed(2)}</span>
-    </div>
-    <div class="flex justify-between py-1 text-ink/60">
-      <span>SST 6%</span>
-      <span>RM ${sst.toFixed(2)}</span>
-    </div>
     <div class="flex justify-between pt-3 mt-2 border-t border-ink/20">
       <span class="font-bold text-base">Jumlah</span>
       <span class="font-bold text-base text-navy">RM ${grandTotal.toFixed(2)}</span>
@@ -409,22 +419,31 @@ async function processPayment() {
     }
 
     const subtotal = pendingItems.reduce((s, i) => s + i.amount, 0);
-    const sstAmount = grandTotal - subtotal - SERVICE_CHARGE;
 
     // Insert proper payment record
     await window.db.from('psy_payments').insert({
       receipt_ref: receiptRef,
       patient_id: patientRecord?.id,
       user_id: currentUser.id,
-      items: pendingItems.map(i => ({
-        type: i.type,
-        title: i.title,
-        amount: i.amount,
-        reference_id: i.id || i.packageId,
-      })),
+      items: pendingItems.flatMap(i => {
+        // Pesanan shop — pecahkan kepada baris produk individu supaya resit tunjuk nama barang
+        if (i.type === 'shop_order' && Array.isArray(i.items)) {
+          const lines = i.items.map(p => ({
+            type: 'shop_order',
+            title: `${p.name}${Number(p.qty) > 1 ? ` ×${p.qty}` : ''}`,
+            amount: Number(p.price) * Number(p.qty || 1),
+            reference_id: p.id,
+          }));
+          if (Number(i.deliveryFee) > 0) {
+            lines.push({ type: 'delivery', title: 'Penghantaran', amount: Number(i.deliveryFee), reference_id: i.orderRef });
+          }
+          return lines;
+        }
+        return [{ type: i.type, title: i.title, amount: i.amount, reference_id: i.id || i.packageId }];
+      }),
       subtotal,
-      service_charge: SERVICE_CHARGE,
-      sst: sstAmount,
+      service_charge: 0,
+      sst: 0,
       total: grandTotal,
       payment_method: method,
       status: 'completed',
@@ -537,9 +556,10 @@ function viewReceiptPDF(id) {
       <div id="receipt-print" class="flex-1 overflow-y-auto p-8">
         <!-- Header -->
         <div class="text-center border-b-2 border-navy pb-4 mb-6">
-          <div class="text-3xl mb-2">🏥</div>
+          <img src="../../image/Logo_ISW.png" alt="Ibnu Sina Wellness" class="h-16 mx-auto mb-2 object-contain" onerror="this.style.display='none'">
           <h1 class="text-2xl font-bold text-navy">Ibnu Sina Wellness</h1>
-          <p class="text-xs text-ink/60 mt-1">Shifa Hub · Holistic Healthcare</p>
+          <p class="text-xs text-ink/60 mt-1">Ibnu Sina Wellness Sdn Bhd (1319021-P)</p>
+          <p class="text-xs text-ink/50">Lot 331, Lorong Senyum Matahari B, Country Heights, 43000 Kajang, Selangor · Tel: 03-8966 3696</p>
         </div>
 
         <!-- Receipt Info -->
@@ -575,16 +595,6 @@ function viewReceiptPDF(id) {
                 <td class="py-2">${it.title}</td>
                 <td class="text-right py-2">RM ${Number(it.amount).toFixed(2)}</td>
               </tr>`).join('')}
-            ${Number(r.service_charge) > 0 ? `
-              <tr class="border-b border-ink/10 text-ink/60">
-                <td class="py-2 text-xs">Service charge</td>
-                <td class="text-right py-2 text-xs">RM ${Number(r.service_charge).toFixed(2)}</td>
-              </tr>` : ''}
-            ${Number(r.sst) > 0 ? `
-              <tr class="border-b border-ink/10 text-ink/60">
-                <td class="py-2 text-xs">SST 6%</td>
-                <td class="text-right py-2 text-xs">RM ${Number(r.sst).toFixed(2)}</td>
-              </tr>` : ''}
           </tbody>
           <tfoot>
             <tr class="font-bold text-lg">
@@ -612,7 +622,7 @@ function viewReceiptPDF(id) {
         <div class="text-xs text-ink/50 text-center mt-8 pt-4 border-t border-ink/10">
           <p>Terima kasih atas kepercayaan anda kepada Ibnu Sina Wellness.</p>
           <p class="mt-1">Ini adalah resit rasmi yang dijana secara automatik.</p>
-          <p class="mt-2">Pertanyaan: info@ibnusinawellness.com</p>
+          <p class="mt-2">Pertanyaan: 03-8966 3696 · Ibnu Sina Wellness Sdn Bhd (1319021-P)</p>
         </div>
       </div>
     </div>`;
@@ -653,8 +663,6 @@ async function loadReceipts() {
             <span>${it.title}</span>
             <span>RM ${Number(it.amount).toFixed(2)}</span>
           </div>`).join('')}
-        ${Number(r.service_charge) > 0 ? `<div class="flex justify-between text-xs text-ink/60 py-0.5"><span>Service charge</span><span>RM ${Number(r.service_charge).toFixed(2)}</span></div>` : ''}
-        ${Number(r.sst) > 0 ? `<div class="flex justify-between text-xs text-ink/60 py-0.5"><span>SST 6%</span><span>RM ${Number(r.sst).toFixed(2)}</span></div>` : ''}
         <div class="flex justify-between font-bold text-sm pt-2 mt-2 border-t border-ink/10">
           <span>Total</span>
           <span class="text-green-dark">RM ${Number(r.total).toFixed(2)}</span>

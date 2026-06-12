@@ -6,10 +6,11 @@ window.currentUser = null;
 
 // Pages yang boleh diakses oleh setiap staff_role
 const STAFF_ROLE_ACCESS = {
-  admin:   ['dashboard','assignments','psy_patients','kyc_forms','kob_list','kob_slots','psy_appointments','pakej','coaching_catalog','psy_products','psy_orders','library','audit','staff_mgmt','announcements','closures','inventory','kit_prosedur','issue','pulangan','surat','profile','patient_hub','plan_week','staff_stats','payment_admin','kepatuhan','governance','pakej_laporan'],
-  doctor:  ['dashboard','psy_patients','kyc_forms','kob_list','kob_slots','plan_week','psy_appointments','library','inventory','kit_prosedur','announcements','issue','surat','profile','patient_hub','kepatuhan'],
-  coach:   ['dashboard','assignments','psy_patients','plan_week','psy_appointments','inventory','kit_prosedur','issue','pulangan','surat','profile','patient_hub','kepatuhan'],
-  manager: ['dashboard','psy_patients','psy_appointments','psy_orders','announcements','staff_stats','closures','inventory','kit_prosedur','issue','pulangan','surat','profile','patient_hub','plan_week','kepatuhan','governance','payment_admin','invois'],
+  admin:   ['dashboard','assignments','psy_patients','kyc_forms','kob_list','kob_slots','psy_appointments','pakej','coaching_catalog','psy_products','psy_orders','library','inbox','audit','staff_mgmt','announcements','closures','inventory','kit_prosedur','issue','pulangan','surat','profile','patient_hub','plan_week','staff_stats','payment_admin','kepatuhan','governance','pakej_laporan'],
+  doctor:  ['dashboard','psy_patients','kyc_forms','kob_list','kob_slots','plan_week','psy_appointments','library','inbox','inventory','kit_prosedur','announcements','issue','surat','profile','patient_hub','kepatuhan'],
+  coach:   ['dashboard','assignments','psy_patients','plan_week','psy_appointments','inbox','inventory','kit_prosedur','issue','pulangan','surat','profile','patient_hub','kepatuhan'],
+  manager: ['dashboard','psy_patients','psy_appointments','psy_orders','announcements','inbox','staff_stats','closures','inventory','kit_prosedur','issue','pulangan','surat','profile','patient_hub','plan_week','kepatuhan','governance','payment_admin','invois'],
+  // super_admin bypass — diberi akses semua. Lihat semakan di bawah.
 };
 
 async function initStaff(pageId, titleSub) {
@@ -18,10 +19,12 @@ async function initStaff(pageId, titleSub) {
 
   const staffRole = window.currentUser.staff_role;
 
-  // Semak akses — redirect ke dashboard jika tak ada kebenaran
-  if (staffRole && pageId !== 'dashboard') {
-    const allowed = STAFF_ROLE_ACCESS[staffRole] || [];
-    if (!allowed.includes(pageId)) {
+  // Semak akses berdasarkan RBAC permission (super_admin bypass semua)
+  if (staffRole !== 'super_admin' && pageId !== 'dashboard') {
+    const allowed = typeof window.pageAllowed === 'function'
+      ? window.pageAllowed(pageId)
+      : (STAFF_ROLE_ACCESS[staffRole] || []).includes(pageId); // fallback kalau permission-map belum load
+    if (!allowed) {
       alert('Akses ditolak. Anda tidak mempunyai kebenaran untuk halaman ini.');
       window.location.href = 'dashboard.html';
       return null;

@@ -9,6 +9,19 @@
 <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="_styles.css" rel="stylesheet">
+<style>
+  .step-dot { width:32px; height:32px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; border:2px solid rgba(0,0,0,0.1); background:white; color:rgba(0,0,0,0.4); transition:all 0.15s; flex-shrink:0; }
+  .step-dot.active   { background:#1a3a5c; color:white; border-color:#1a3a5c; }
+  .step-dot.complete { background:#16a34a; color:white; border-color:#16a34a; }
+  .step-line { flex:1; height:2px; background:rgba(0,0,0,0.08); margin:0 8px; transition:background 0.15s; }
+  .step-line.complete { background:#16a34a; }
+  .step-label { font-size:13px; font-weight:600; color:rgba(0,0,0,0.5); margin-left:8px; }
+  .step-dot.active + .step-label, .step-dot.complete + .step-label { color:#1a3a5c; }
+  .step-panel { display:none; }
+  .step-panel.active { display:block; }
+  .preview-frame { background:white; overflow:auto; max-height:75vh; min-height:550px; }
+  .preview-frame iframe { width:100%; height:750px; border:0; display:block; }
+</style>
 </head>
 <body class="min-h-screen">
 
@@ -22,94 +35,157 @@
     <main class="main-content flex-1 min-w-0">
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
-      <!-- Sticky action bar with title -->
-      <div class="sticky top-[68px] z-10 bg-cream/90 backdrop-blur-sm border-b border-ink/10 px-4 md:px-8 py-3 flex items-center justify-between gap-4">
-        <h2 id="page-title-text" class="text-base md:text-lg font-bold text-ink truncate">Keluarkan Surat</h2>
-        <div class="flex items-center gap-2 flex-shrink-0">
-          <button onclick="cancel()" class="border border-ink/20 text-ink/60 px-4 py-2 rounded-lg text-sm hover:bg-ink/5">Batal</button>
-          <button onclick="preview()" class="border border-ink/20 text-ink/70 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-ink/5">Preview</button>
-          <button onclick="openSig()" class="bg-navy text-white px-5 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">Sign &amp; Keluarkan</button>
+      <!-- Title row -->
+      <div class="px-4 md:px-8 pt-6 pb-3 flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h2 id="page-title-text" class="text-2xl font-bold text-ink">Keluarkan Surat Baharu</h2>
+          <p class="text-sm text-ink/55 mt-1">Pilih templat, isi maklumat, semak dan tandatangan surat.</p>
+        </div>
+        <a href="surat.html" class="border border-ink/20 text-ink/70 px-4 py-2 rounded-xl text-sm font-semibold hover:bg-cream flex items-center gap-1.5">← Kembali ke Senarai</a>
+      </div>
+
+      <!-- Step indicator -->
+      <div class="px-4 md:px-8 mb-4">
+        <div class="bg-white rounded-2xl border border-ink/10 px-5 py-4 flex items-center">
+          <div class="flex items-center"><span class="step-dot" id="dot-1">1</span><span class="step-label">Pilih Templat</span></div>
+          <span class="step-line" id="line-1"></span>
+          <div class="flex items-center"><span class="step-dot" id="dot-2">2</span><span class="step-label">Maklumat Surat</span></div>
+          <span class="step-line" id="line-2"></span>
+          <div class="flex items-center"><span class="step-dot" id="dot-3">3</span><span class="step-label">Semak &amp; Tandatangan</span></div>
         </div>
       </div>
 
-      <div class="p-4 md:p-6 max-w-3xl mx-auto space-y-8">
+      <!-- Main: 2-col grid (form | preview) -->
+      <div class="px-4 md:px-8 pb-6 grid grid-cols-1 lg:grid-cols-[minmax(360px,_2fr)_3fr] gap-5">
 
-        <!-- Templat -->
-        <section class="space-y-2">
-          <div class="flex items-baseline justify-between border-b border-ink/10 pb-1.5">
-            <div class="text-[11px] font-semibold text-ink/45 uppercase tracking-wider">Templat</div>
-            <div id="gen-tpl-meta" class="hidden text-[10px] text-ink/55"></div>
-          </div>
-          <select id="gen-tpl" onchange="onTplChange()" class="w-full bg-white border border-ink/15 rounded-lg px-3 py-2.5 text-sm focus:border-navy outline-none">
-            <option value="">— Pilih templat —</option>
-          </select>
-        </section>
+        <!-- LEFT: Step panels -->
+        <div class="bg-white rounded-2xl border border-ink/10 p-5 md:p-6">
 
-        <!-- Pesakit -->
-        <section id="gen-patient-wrap" class="space-y-3">
-          <div class="flex items-baseline justify-between border-b border-ink/10 pb-1.5">
-            <div class="text-[11px] font-semibold text-ink/45 uppercase tracking-wider">Pesakit</div>
-            <button id="gen-patient-clear" type="button" onclick="clearPatientSelection()" class="hidden text-[10px] text-terracotta hover:underline">Batal pilihan</button>
-          </div>
+          <!-- ═══ STEP 1: PILIH TEMPLAT ═══ -->
+          <div class="step-panel active" id="step-1">
+            <h3 class="font-bold text-base mb-4">Pilih Templat</h3>
 
-          <!-- Search side by side dengan dropdown autocomplete -->
-          <div class="relative grid grid-cols-2 gap-3">
-            <div>
-              <label class="text-[11px] text-ink/55 mb-1 block">Cari Nama Pesakit</label>
-              <input id="gen-search-name" type="text"
-                oninput="onPatientSearchInput('name')"
-                onfocus="showPatientDropdown()"
-                placeholder="Taip nama..."
-                class="w-full bg-white border border-ink/15 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none">
+            <div class="space-y-4">
+              <div>
+                <label class="text-xs font-semibold text-ink/65 mb-1 block">Templat Surat <span class="text-terracotta">*</span></label>
+                <select id="gen-tpl" onchange="onTplChange()" class="w-full bg-white border border-ink/20 rounded-lg px-3 py-2.5 text-sm focus:border-navy outline-none">
+                  <option value="">— Pilih templat —</option>
+                </select>
+                <p id="gen-tpl-meta" class="text-[11px] text-ink/55 mt-1.5 hidden"></p>
+              </div>
+
+              <!-- Pesakit picker -->
+              <div id="gen-patient-wrap" class="hidden">
+                <div class="flex items-center justify-between mb-1">
+                  <label class="text-xs font-semibold text-ink/65">Pesakit <span class="text-terracotta">*</span></label>
+                  <button id="gen-patient-clear" type="button" onclick="clearPatientSelection()" class="hidden text-[10px] text-terracotta hover:underline">Batal pilihan</button>
+                </div>
+                <div class="relative grid grid-cols-2 gap-3">
+                  <div>
+                    <label class="text-[11px] text-ink/55 mb-1 block">Cari Nama</label>
+                    <input id="gen-search-name" type="text" oninput="onPatientSearchInput('name')" onfocus="showPatientDropdown()" placeholder="Taip nama..." class="w-full bg-white border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none">
+                  </div>
+                  <div>
+                    <label class="text-[11px] text-ink/55 mb-1 block">Cari No. K/P</label>
+                    <input id="gen-search-ic" type="text" oninput="onPatientSearchInput('ic')" onfocus="showPatientDropdown()" placeholder="Taip nombor IC..." class="w-full bg-white border border-ink/20 rounded-lg px-3 py-2 text-sm font-mono focus:border-navy outline-none">
+                  </div>
+                  <div id="gen-patient-list" class="hidden absolute left-0 right-0 top-full mt-1 z-20 bg-white border border-ink/20 rounded-lg max-h-[280px] overflow-y-auto shadow-lg"></div>
+                </div>
+                <input type="hidden" id="gen-patient">
+              </div>
             </div>
-            <div>
-              <label class="text-[11px] text-ink/55 mb-1 block">Cari No. K/P</label>
-              <input id="gen-search-ic" type="text"
-                oninput="onPatientSearchInput('ic')"
-                onfocus="showPatientDropdown()"
-                placeholder="Taip nombor IC..."
-                class="w-full bg-white border border-ink/15 rounded-lg px-3 py-2 text-sm font-mono focus:border-navy outline-none">
+          </div>
+
+          <!-- ═══ STEP 2: MAKLUMAT SURAT ═══ -->
+          <div class="step-panel" id="step-2">
+            <h3 class="font-bold text-base mb-4">Maklumat Surat</h3>
+
+            <div class="space-y-4">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label class="text-xs font-semibold text-ink/65 mb-1 block">Tarikh Surat <span class="text-terracotta">*</span></label>
+                  <input id="gen-tarikh" type="date" oninput="updatePreview()" class="w-full bg-white border border-ink/20 rounded-lg px-3 py-2.5 text-sm focus:border-navy outline-none">
+                </div>
+                <div>
+                  <label class="text-xs font-semibold text-ink/65 mb-1 block">No. Rujukan</label>
+                  <input id="gen-ref" type="text" oninput="updatePreview()" placeholder="Auto-jana" class="w-full bg-white border border-ink/20 rounded-lg px-3 py-2.5 text-sm font-mono focus:border-navy outline-none">
+                  <p class="text-[10px] text-ink/45 mt-1">Boleh edit kalau perlu format khas.</p>
+                </div>
+              </div>
+
+              <!-- Template fields -->
+              <div id="gen-fields-card" class="hidden">
+                <div class="flex items-baseline justify-between border-b border-ink/10 pb-1.5 mb-3 mt-2">
+                  <div class="text-[11px] font-semibold text-ink/55 uppercase tracking-wider">Maklumat Khas Templat</div>
+                  <a id="edit-tpl-link" href="#" class="hidden text-[11px] text-navy hover:underline font-semibold">Edit templat →</a>
+                </div>
+                <div id="gen-fields" class="grid grid-cols-1 md:grid-cols-2 gap-3"></div>
+              </div>
+
+              <div id="no-fields-msg" class="hidden bg-cream/50 border border-ink/10 rounded-xl p-4 text-center text-xs text-ink/55">
+                Templat ini tiada medan khas — semua maklumat akan auto-isi dari rekod pesakit dan staff.
+              </div>
+            </div>
+          </div>
+
+          <!-- ═══ STEP 3: SEMAK & TANDATANGAN ═══ -->
+          <div class="step-panel" id="step-3">
+            <h3 class="font-bold text-base mb-1">Semak &amp; Tandatangan</h3>
+            <p class="text-xs text-ink/55 mb-4">Periksa pratonton di kanan. Lukis signature di bawah untuk lulus & jana surat.</p>
+
+            <!-- Summary -->
+            <div class="bg-cream/40 border border-ink/10 rounded-xl p-4 space-y-2 text-xs mb-4">
+              <div class="flex justify-between gap-3"><span class="text-ink/55">Templat</span><span id="sum-tpl" class="font-semibold text-right truncate">—</span></div>
+              <div class="flex justify-between gap-3"><span class="text-ink/55">Pesakit</span><span id="sum-patient" class="font-semibold text-right truncate">—</span></div>
+              <div class="flex justify-between gap-3"><span class="text-ink/55">Tarikh</span><span id="sum-date" class="font-semibold">—</span></div>
+              <div class="flex justify-between gap-3"><span class="text-ink/55">Ruj No.</span><span id="sum-ref" class="font-mono font-semibold text-right">—</span></div>
+              <div class="flex justify-between gap-3"><span class="text-ink/55">Signer</span><span id="sum-signer" class="font-semibold">—</span></div>
             </div>
 
-            <!-- Dropdown panel — absolute positioned, full width -->
-            <div id="gen-patient-list"
-              class="hidden absolute left-0 right-0 top-full mt-1 z-20 bg-white border border-ink/15 rounded-lg max-h-[280px] overflow-y-auto shadow-lg"></div>
+            <!-- Signature pad -->
+            <div>
+              <label class="text-xs font-semibold text-ink/65 mb-1 block">Tandatangan <span class="text-terracotta">*</span></label>
+              <div class="border-2 border-dashed border-ink/20 rounded-xl bg-white overflow-hidden">
+                <canvas id="sig-canvas" width="400" height="180" class="w-full block cursor-crosshair" style="touch-action:none;height:180px"></canvas>
+              </div>
+              <div class="flex items-center justify-between mt-2">
+                <p class="text-[11px] text-ink/55">Lukis menggunakan tetikus atau jari.</p>
+                <button onclick="clearSig()" class="text-xs text-terracotta border border-terracotta/30 px-3 py-1 rounded-lg hover:bg-terracotta/10">↻ Clear</button>
+              </div>
+            </div>
           </div>
-          <input type="hidden" id="gen-patient">
-        </section>
 
-        <!-- Fields -->
-        <section id="gen-fields-card" class="hidden">
-          <div class="flex items-baseline justify-between border-b border-ink/10 pb-1.5 mb-3">
-            <div class="text-[11px] font-semibold text-ink/45 uppercase tracking-wider">Maklumat Untuk Surat</div>
-            <a id="edit-tpl-link" href="#" class="hidden text-[11px] text-navy hover:underline font-semibold">Edit field templat →</a>
+        </div>
+
+        <!-- RIGHT: Live preview -->
+        <div class="lg:sticky lg:top-[80px] self-start">
+          <div class="bg-white rounded-2xl border border-ink/10 overflow-hidden">
+            <div class="flex items-center justify-between px-4 py-3 border-b border-ink/8 gap-2">
+              <h4 class="text-sm font-bold">Pratonton Surat</h4>
+              <button onclick="previewFull()" title="Buka tab penuh" class="text-xs text-navy hover:underline">⤢ Tab penuh</button>
+            </div>
+            <div class="preview-frame">
+              <iframe id="preview-iframe" sandbox="allow-same-origin"></iframe>
+            </div>
           </div>
-          <div id="gen-fields" class="grid grid-cols-1 md:grid-cols-2 gap-3"></div>
-        </section>
+          <div class="mt-3 bg-navy-light/30 border border-navy/15 rounded-xl p-3 text-[11px] text-ink/65">
+            <strong>ℹ️ Nota:</strong> Pratonton update setiap kali awak edit. Auto-fields auto-isi dari rekod pesakit yang dipilih.
+          </div>
+        </div>
 
       </div>
+
+      <!-- Bottom action bar -->
+      <div class="sticky bottom-0 bg-cream/95 backdrop-blur-sm border-t border-ink/10 px-4 md:px-8 py-3 flex items-center justify-between flex-wrap gap-3">
+        <button onclick="cancel()" class="border border-ink/20 text-ink/70 px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-ink/5">Batal</button>
+        <div class="flex items-center gap-2">
+          <button id="btn-back" onclick="goStep(-1)" class="hidden border border-ink/20 text-ink/70 px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-ink/5">← Kembali</button>
+          <button id="btn-next" onclick="goStep(1)" class="bg-navy text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-dark">Seterusnya →</button>
+          <button id="btn-issue" onclick="confirmSign()" class="hidden bg-green-dark text-white px-6 py-2.5 rounded-xl text-sm font-semibold hover:bg-green">✍️ Lulus &amp; Tandatangan</button>
+        </div>
+      </div>
+
     </main>
-  </div>
-</div>
-
-<!-- Signature Pad Modal -->
-<div id="sig-modal" class="hidden fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
-  <div class="bg-white rounded-2xl shadow-xl w-full max-w-md">
-    <div class="px-6 py-4 border-b border-ink/10 flex items-center justify-between">
-      <h3 class="font-bold text-base">Sign Surat</h3>
-      <button onclick="closeSig()" class="text-ink/40 hover:text-ink text-2xl leading-none">&times;</button>
-    </div>
-    <div class="p-6 space-y-3">
-      <p class="text-xs text-ink/60">Lukis signature anda di bawah.</p>
-      <div class="border-2 border-dashed border-ink/20 rounded-xl bg-white overflow-hidden">
-        <canvas id="sig-canvas" width="400" height="180" class="w-full block cursor-crosshair" style="touch-action:none"></canvas>
-      </div>
-      <button onclick="clearSig()" class="text-xs text-ink/60 border border-ink/20 px-3 py-1.5 rounded-lg hover:bg-ink/5">Clear</button>
-    </div>
-    <div class="px-6 py-4 border-t border-ink/10 flex gap-3">
-      <button onclick="closeSig()" class="flex-1 border border-ink/20 text-ink/60 py-2.5 rounded-xl text-sm">Batal</button>
-      <button onclick="confirmSign()" class="flex-1 bg-navy text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-dark">Sahkan &amp; Keluarkan</button>
-    </div>
   </div>
 </div>
 
@@ -130,41 +206,97 @@ let allTemplates = [];
 let allPatients = [];
 let allIssuedCount = 0;
 let currentRequest = null;
+let currentStep = 1;
+const TOTAL_STEPS = 3;
 
-function isAdmin() { return window.currentUser?.staff_role === 'admin'; }
+function isAdmin() { return can('communication','edit'); }
+function isSuperAdmin() { return window.currentUser?.staff_role === 'super_admin'; }
 
+// ─── Wizard navigation ──────────────────────────────────
+function goStep(delta) {
+  const next = currentStep + delta;
+  if (next < 1 || next > TOTAL_STEPS) return;
+  if (delta > 0 && currentStep === 1) {
+    if (!document.getElementById('gen-tpl').value) { banner('Sila pilih templat', 'error'); return; }
+    const tpl = allTemplates.find(t => t.id === document.getElementById('gen-tpl').value);
+    if (tpl?.category !== 'internal' && !document.getElementById('gen-patient').value) {
+      banner('Sila pilih pesakit', 'error'); return;
+    }
+  }
+  if (delta > 0 && currentStep === 2) {
+    if (!document.getElementById('gen-tarikh').value) { banner('Sila isi tarikh surat', 'error'); return; }
+  }
+  currentStep = next;
+  setStepUI();
+}
+function setStepUI() {
+  for (let i = 1; i <= TOTAL_STEPS; i++) {
+    document.getElementById('step-' + i).classList.toggle('active', i === currentStep);
+    const dot = document.getElementById('dot-' + i);
+    dot.classList.toggle('active',   i === currentStep);
+    dot.classList.toggle('complete', i <  currentStep);
+    if (i < TOTAL_STEPS) document.getElementById('line-' + i).classList.toggle('complete', i < currentStep);
+  }
+  document.getElementById('btn-back').classList.toggle('hidden', currentStep === 1);
+  document.getElementById('btn-next').classList.toggle('hidden', currentStep === TOTAL_STEPS);
+  document.getElementById('btn-issue').classList.toggle('hidden', currentStep !== TOTAL_STEPS);
+  if (currentStep === TOTAL_STEPS) {
+    renderSummary();
+    setTimeout(initSigPad, 100);
+  }
+  updatePreview();
+}
+
+function renderSummary() {
+  const tpl = allTemplates.find(t => t.id === document.getElementById('gen-tpl').value);
+  const patient = allPatients.find(p => p.id === document.getElementById('gen-patient').value);
+  document.getElementById('sum-tpl').textContent     = tpl?.name || '—';
+  document.getElementById('sum-patient').textContent = tpl?.category === 'internal' ? 'Internal Document' : (patient?.full_name || '—');
+  document.getElementById('sum-date').textContent    = document.getElementById('gen-tarikh').value || '—';
+  document.getElementById('sum-ref').textContent     = document.getElementById('gen-ref').value || '—';
+  document.getElementById('sum-signer').textContent  = window.currentUser?.full_name || '—';
+}
+
+// ─── Data load ──────────────────────────────────────────
 async function loadData() {
   const [tplRes, patRes, issuedCountRes, reqRes] = await Promise.all([
-    window.db.from('psy_letter_templates').select('*').order('created_at', { ascending: false }),
+    window.db.from('psy_letter_templates').select('*').eq('is_active', true).order('name'),
     window.db.from('psy_patients').select('id, full_name, ic_number, user_id, phone, active_package_name, profile:psy_profiles!user_id(full_name)').eq('status', 'active'),
     window.db.from('psy_letter_issued').select('id', { count: 'exact', head: true }),
     reqId ? window.db.from('psy_letter_requests').select('*').eq('id', reqId).limit(1) : Promise.resolve({ data: [] }),
   ]);
   allTemplates = tplRes.data || [];
-  allPatients  = (patRes.data || []).map(p => ({
-    ...p,
-    full_name: p.full_name || p.profile?.full_name || null,
-  }));
+  allPatients  = (patRes.data || []).map(p => ({ ...p, full_name: p.full_name || p.profile?.full_name || null }));
   allIssuedCount = issuedCountRes.count || 0;
   currentRequest = reqRes.data?.[0] || null;
 
   if (currentRequest) {
     document.getElementById('page-title-text').textContent = 'Keluarkan Surat untuk ' + currentRequest.patient_name;
+    // Approval gate
+    const sa = currentRequest.assigned_signer_id;
+    const me = window.currentUser?.id;
+    if (sa && sa !== me && !isSuperAdmin()) {
+      const { data: signerRow } = await window.db.from('psy_profiles').select('full_name').eq('id', sa).maybeSingle();
+      alert('Permohonan ini perlu kelulusan ' + (signerRow?.full_name || 'staff yang ditetapkan') + ' sahaja.');
+      window.location.href = 'surat.html';
+      return;
+    }
   }
 
   populateTemplates();
-  renderPatients();
 
-  // Pre-select template kalau ada
+  // Default tarikh = hari ini, ref auto
+  document.getElementById('gen-tarikh').value = new Date().toISOString().split('T')[0];
+  document.getElementById('gen-ref').value    = `ISW/${new Date().getFullYear()}/${String(allIssuedCount + 1).padStart(4, '0')}`;
+
   const initialTpl = preTplId || currentRequest?.template_code;
   if (initialTpl) {
-    const sel = document.getElementById('gen-tpl');
-    sel.value = initialTpl;
+    document.getElementById('gen-tpl').value = initialTpl;
     onTplChange();
   }
-
-  // Pre-select patient kalau dari request
   if (currentRequest?.patient_id) selectPatient(currentRequest.patient_id);
+
+  updatePreview();
 }
 
 function populateTemplates() {
@@ -185,7 +317,7 @@ function populateTemplates() {
   sel.innerHTML = html;
 }
 
-// Bila type dalam satu input, kosongkan input lain (cari guna satu sahaja)
+// ─── Patient picker (unchanged from original) ──────────
 function onPatientSearchInput(which) {
   const other = which === 'name' ? 'gen-search-ic' : 'gen-search-name';
   if (document.getElementById('gen-patient').value) {
@@ -198,17 +330,12 @@ function onPatientSearchInput(which) {
 }
 
 function showPatientDropdown() {
-  // Jangan show kalau dah ada selection
   if (document.getElementById('gen-patient').value) return;
   document.getElementById('gen-patient-list').classList.remove('hidden');
   renderPatients();
 }
+function hidePatientDropdown() { document.getElementById('gen-patient-list').classList.add('hidden'); }
 
-function hidePatientDropdown() {
-  document.getElementById('gen-patient-list').classList.add('hidden');
-}
-
-// Click luar untuk close dropdown
 document.addEventListener('click', e => {
   const wrap = document.getElementById('gen-patient-wrap');
   if (wrap && !wrap.contains(e.target)) hidePatientDropdown();
@@ -219,15 +346,10 @@ function renderPatients() {
   if (!list) return;
   const nf = (document.getElementById('gen-search-name')?.value || '').toLowerCase().trim();
   const cf = (document.getElementById('gen-search-ic')?.value   || '').toLowerCase().trim();
-
   let filtered = allPatients;
   if (nf) filtered = filtered.filter(p => (p.full_name || '').toLowerCase().includes(nf));
   else if (cf) filtered = filtered.filter(p => (p.ic_number || '').toLowerCase().includes(cf));
-
-  if (!filtered.length) {
-    list.innerHTML = '<div class="text-xs text-ink/40 text-center py-6">Tiada pesakit yang sepadan</div>';
-    return;
-  }
+  if (!filtered.length) { list.innerHTML = '<div class="text-xs text-ink/40 text-center py-6">Tiada pesakit yang sepadan</div>'; return; }
   list.innerHTML = filtered.map(p => {
     const name = (p.full_name && p.full_name !== 'null') ? p.full_name : '(Tiada nama)';
     const ic   = p.ic_number || '—';
@@ -238,8 +360,6 @@ function renderPatients() {
   }).join('');
 }
 
-function filterPatients() { renderPatients(); }
-
 function selectPatient(id) {
   document.getElementById('gen-patient').value = id;
   const p = allPatients.find(x => x.id === id);
@@ -249,6 +369,7 @@ function selectPatient(id) {
     document.getElementById('gen-patient-clear').classList.remove('hidden');
   }
   hidePatientDropdown();
+  updatePreview();
 }
 
 function clearPatientSelection() {
@@ -256,22 +377,26 @@ function clearPatientSelection() {
   document.getElementById('gen-search-name').value = '';
   document.getElementById('gen-search-ic').value   = '';
   document.getElementById('gen-patient-clear').classList.add('hidden');
-  renderPatients();
+  updatePreview();
 }
 
+// ─── Template change ────────────────────────────────────
 function onTplChange() {
   const tplId = document.getElementById('gen-tpl').value;
   const tpl = allTemplates.find(t => t.id === tplId);
+  const metaDiv  = document.getElementById('gen-tpl-meta');
+  const patientWrap = document.getElementById('gen-patient-wrap');
   const fieldsCard = document.getElementById('gen-fields-card');
   const fieldsDiv  = document.getElementById('gen-fields');
-  const metaDiv    = document.getElementById('gen-tpl-meta');
-  const patientWrap = document.getElementById('gen-patient-wrap');
+  const noFields   = document.getElementById('no-fields-msg');
   const editLink   = document.getElementById('edit-tpl-link');
 
   if (!tpl) {
     metaDiv.classList.add('hidden');
     patientWrap.classList.add('hidden');
     fieldsCard.classList.add('hidden');
+    noFields.classList.add('hidden');
+    updatePreview();
     return;
   }
 
@@ -279,23 +404,24 @@ function onTplChange() {
   patientWrap.classList.toggle('hidden', isInternalTpl);
 
   metaDiv.classList.remove('hidden');
-  metaDiv.innerHTML = isInternalTpl
-    ? '<span class="inline-flex items-center gap-1 text-navy/80">Kegunaan dalaman · tiada pesakit diperlukan</span>'
-    : `<span class="inline-flex items-center gap-1 text-ink/55">Surat untuk pesakit${tpl.fields?.length ? ` · ${tpl.fields.length} field` : ''}</span>`;
+  let metaParts = [];
+  if (tpl.description) metaParts.push(tpl.description);
+  if (tpl.jenis_surat) metaParts.push('<strong>Jenis:</strong> ' + tpl.jenis_surat);
+  metaDiv.innerHTML = metaParts.join(' · ') || (isInternalTpl ? 'Kegunaan dalaman' : 'Surat untuk pesakit');
 
   if (isAdmin()) {
     editLink.href = 'surat-edit.html?id=' + tpl.id;
     editLink.classList.remove('hidden');
-  } else {
-    editLink.classList.add('hidden');
-  }
+  } else editLink.classList.add('hidden');
 
   if (!tpl.fields?.length) {
     fieldsCard.classList.add('hidden');
     fieldsDiv.innerHTML = '';
+    noFields.classList.remove('hidden');
+    updatePreview();
     return;
   }
-
+  noFields.classList.add('hidden');
   fieldsCard.classList.remove('hidden');
   fieldsDiv.innerHTML = tpl.fields.map(f => {
     const id = 'genf-' + f.key;
@@ -303,62 +429,90 @@ function onTplChange() {
     const span = isTextarea ? 'md:col-span-2' : '';
     let input;
     if (isTextarea) {
-      input = `<textarea id="${id}" rows="3" class="w-full border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none resize-y"></textarea>`;
+      input = `<textarea id="${id}" rows="3" oninput="updatePreview()" class="w-full border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none resize-y"></textarea>`;
     } else {
-      input = `<input id="${id}" type="${f.type || 'text'}" class="w-full border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none">`;
+      input = `<input id="${id}" type="${f.type || 'text'}" oninput="updatePreview()" class="w-full border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none">`;
     }
     return `<div class="${span}">
       <label class="text-[11px] text-ink/55 mb-0.5 block">${(f.label || f.key).replace(/</g,'&lt;')}</label>
       ${input}
     </div>`;
   }).join('');
+  updatePreview();
 }
 
-function buildIssueData() {
+// ─── Build issue data + preview ────────────────────────
+function buildIssueData(silent = false) {
   const tplId = document.getElementById('gen-tpl').value;
   const tpl = allTemplates.find(t => t.id === tplId);
-  if (!tpl) { banner('Sila pilih templat', 'error'); return null; }
+  if (!tpl) { if (!silent) banner('Sila pilih templat', 'error'); return null; }
   const isInternal = tpl.category === 'internal';
   let patient = null;
   if (!isInternal) {
     const pid = document.getElementById('gen-patient').value;
-    if (!pid) { banner('Sila pilih pesakit', 'error'); return null; }
+    if (!pid) { if (!silent) banner('Sila pilih pesakit', 'error'); return null; }
     patient = allPatients.find(p => p.id === pid);
   }
   const manualValues = {};
   (tpl.fields || []).forEach(f => {
     manualValues[f.key] = document.getElementById('genf-' + f.key)?.value || '';
   });
-  const seq = allIssuedCount + 1;
-  const refNumber = `ISW/${new Date().getFullYear()}/${String(seq).padStart(4, '0')}`;
+  const refNumber = document.getElementById('gen-ref').value
+    || `ISW/${new Date().getFullYear()}/${String(allIssuedCount + 1).padStart(4, '0')}`;
   const values = buildLetterValues(patient, manualValues, { staff: window.currentUser, refNumber });
   return { tpl, patient, isInternal, values, refNumber };
 }
 
-function preview() {
+let previewDebounce = null;
+function updatePreview() {
+  clearTimeout(previewDebounce);
+  previewDebounce = setTimeout(renderPreviewNow, 200);
+}
+function renderPreviewNow() {
+  const data = buildIssueData(true);
+  let html;
+  if (!data) {
+    html = '<div style="padding:40px;color:#999;font-family:sans-serif">Pilih templat dan pesakit untuk mula pratonton.</div>';
+  } else {
+    const tarikh = document.getElementById('gen-tarikh').value;
+    const todayStr = tarikh ? new Date(tarikh).toLocaleDateString('ms-MY', { day:'2-digit', month:'long', year:'numeric' }) : null;
+    try {
+      html = renderLetterFull({
+        logoUrl: LOGO_URL, template: data.tpl, values: data.values,
+        refNumber: data.refNumber,
+        signerName: window.currentUser?.full_name || '[Nama Staff]',
+        signerRole: window.currentUser?.staff_role || '',
+        signatureDataUrl: sigInked ? document.getElementById('sig-canvas')?.toDataURL('image/png') : null,
+        todayStr,
+      });
+    } catch (e) {
+      html = '<div style="padding:40px;color:#999;font-family:sans-serif">Pratonton tak boleh dijana.</div>';
+    }
+  }
+  const iframe = document.getElementById('preview-iframe');
+  if (!iframe) return;
+  const doc = iframe.contentDocument;
+  doc.open(); doc.write(html); doc.close();
+}
+
+function previewFull() {
   const data = buildIssueData();
   if (!data) return;
+  const tarikh = document.getElementById('gen-tarikh').value;
+  const todayStr = tarikh ? new Date(tarikh).toLocaleDateString('ms-MY', { day:'2-digit', month:'long', year:'numeric' }) : null;
   const html = renderLetterFull({
     logoUrl: LOGO_URL, template: data.tpl, values: data.values,
     refNumber: data.refNumber,
     signerName: window.currentUser.full_name,
     signerRole: window.currentUser.staff_role || '',
-    signatureDataUrl: null,
+    signatureDataUrl: sigInked ? document.getElementById('sig-canvas').toDataURL('image/png') : null,
+    todayStr,
   });
   openLetterTab(html, 'Preview — ' + data.tpl.name);
 }
 
-// ─── Signature ─────────────────────────────────────────────
-let pendingIssue = null;
+// ─── Signature pad (inline, step 3) ────────────────────
 let sigCtx = null, sigDrawing = false, sigInked = false;
-
-function openSig() {
-  const data = buildIssueData();
-  if (!data) return;
-  pendingIssue = data;
-  document.getElementById('sig-modal').classList.remove('hidden');
-  setTimeout(initSigPad, 50);
-}
 
 function initSigPad() {
   const c = document.getElementById('sig-canvas');
@@ -377,8 +531,8 @@ function initSigPad() {
     return { x: ((t?.clientX ?? e.clientX) - rr.left), y: ((t?.clientY ?? e.clientY) - rr.top) };
   };
   const start = e => { e.preventDefault(); sigDrawing = true; const p = getPos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); };
-  const move = e => { if (!sigDrawing) return; e.preventDefault(); const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); sigInked = true; };
-  const end = () => { sigDrawing = false; };
+  const move  = e => { if (!sigDrawing) return; e.preventDefault(); const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); sigInked = true; updatePreview(); };
+  const end   = () => { sigDrawing = false; };
   c.onmousedown = start; c.onmousemove = move; c.onmouseup = end; c.onmouseleave = end;
   c.ontouchstart = start; c.ontouchmove = move; c.ontouchend = end;
 }
@@ -389,18 +543,20 @@ function clearSig() {
   const r = c.getBoundingClientRect();
   sigCtx.fillStyle = 'white'; sigCtx.fillRect(0, 0, r.width, 180);
   sigInked = false;
-}
-
-function closeSig() {
-  document.getElementById('sig-modal').classList.add('hidden');
-  pendingIssue = null; sigInked = false;
+  updatePreview();
 }
 
 async function confirmSign() {
   if (!sigInked) { banner('Sila lukis signature dulu', 'error'); return; }
-  if (!pendingIssue) return;
+  const data = buildIssueData();
+  if (!data) return;
+  const btn = document.getElementById('btn-issue');
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
   const sigData = document.getElementById('sig-canvas').toDataURL('image/png');
-  const { tpl, patient, isInternal, values, refNumber } = pendingIssue;
+  const { tpl, patient, isInternal, values, refNumber } = data;
+  const signedAt = document.getElementById('gen-tarikh').value
+    ? new Date(document.getElementById('gen-tarikh').value).toISOString()
+    : new Date().toISOString();
   try {
     await window.db.from('psy_letter_issued').insert({
       request_id:      reqId || null,
@@ -414,23 +570,33 @@ async function confirmSign() {
       signed_by_name:  window.currentUser.full_name,
       signed_by_role:  window.currentUser.staff_role || '',
       signature_url:   sigData,
-      signed_at:       new Date().toISOString(),
+      signed_at:       signedAt,
     });
-
     if (reqId) {
       await window.db.from('psy_letter_requests').update({
         status: 'issued', updated_at: new Date().toISOString(),
       }).eq('id', reqId);
     }
-
     if (!isInternal && patient?.user_id) {
-      await notify(patient.user_id, 'system', 'Surat Anda Sedia',
-        `${tpl.name} (${refNumber}) telah dikeluarkan.`, 'surat.html');
+      try { await notify(patient.user_id, 'system', 'Surat Anda Sedia',
+        `${tpl.name} (${refNumber}) telah dikeluarkan.`, 'surat.html'); } catch {}
     }
-
-    banner('Surat dikeluarkan');
+    try {
+      await window.db.from('psy_audit_log').insert({
+        actor_id:   window.currentUser?.id,
+        actor_name: window.currentUser?.full_name,
+        actor_role: 'staff',
+        action: 'letter.issued',
+        target: refNumber,
+        meta: { template: tpl.name, ref: refNumber, patient_id: isInternal ? null : patient.id, patient_name: isInternal ? 'Internal' : patient.full_name, from_request: reqId || null },
+      });
+    } catch {}
+    banner('Surat dikeluarkan ✓');
     setTimeout(() => location.href = 'surat.html', 700);
-  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+    btn.disabled = false; btn.textContent = '✍️ Lulus & Tandatangan';
+  }
 }
 
 function cancel() {
@@ -438,11 +604,10 @@ function cancel() {
 }
 
 (async () => {
-  const user = await initStaff('surat', 'Keluarkan surat baru');
+  const user = await initStaff('surat', 'Keluarkan surat baharu');
   if (!user) return;
-  setHeaderBack('surat.html', 'Kembali ke Senarai Surat');
-  await loadCustomAutoFields();
-  loadData();
+  await loadData();
+  setStepUI();
 })();
 </script>
 </body>

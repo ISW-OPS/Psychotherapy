@@ -44,7 +44,7 @@
           <div class="lg:col-span-2 bg-white rounded-2xl border border-ink/10 overflow-hidden">
             <div class="px-5 py-4 border-b border-ink/8 flex items-center justify-between">
               <h3 class="font-bold text-base text-ink">Pesakit Saya</h3>
-              <a href="assignments.html" class="text-xs text-navy font-semibold hover:underline">Lihat semua pesakit</a>
+              <a href="patients.html" class="text-xs text-navy font-semibold hover:underline">Lihat semua pesakit</a>
             </div>
             <div class="overflow-x-auto">
               <table class="w-full text-sm">
@@ -95,15 +95,13 @@
             </div>
           </div>
 
-          <div class="bg-white rounded-2xl border border-ink/10 overflow-hidden relative">
-            <div class="absolute top-3 right-3 text-[9px] font-bold uppercase tracking-wide bg-ink/10 text-ink/50 px-2 py-0.5 rounded-full">Akan Datang</div>
-            <div class="px-5 py-4 border-b border-ink/8">
-              <h3 class="font-bold text-sm text-ink/40">Trend Kepatuhan</h3>
-              <p class="text-[10px] text-ink/40">Definisi kepatuhan menunggu kelulusan</p>
+          <div class="bg-white rounded-2xl border border-ink/10 overflow-hidden">
+            <div class="px-5 py-4 border-b border-ink/8 flex items-center justify-between">
+              <h3 class="font-bold text-sm text-ink">Kepatuhan Rawatan</h3>
+              <a href="kepatuhan.html" class="text-[11px] text-navy font-semibold hover:underline">Laporan →</a>
             </div>
-            <div class="p-5 text-center text-xs text-ink/40">
-              <div class="text-3xl mb-2 opacity-30">📈</div>
-              <p>Jenis kepatuhan & formula perlu ditakrifkan.</p>
+            <div id="c-kepatuhan-summary" class="p-5">
+              <p class="text-xs text-ink/35 text-center py-4">Memuatkan...</p>
             </div>
           </div>
 
@@ -506,6 +504,52 @@ function riskRow(r) {
 }
 
 // ── COACH DASHBOARD ───────────────────────────────────────────────────────
+// ── Kepatuhan summary (donut) untuk coach dashboard ──
+function kp_ymd(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function kp_addDays(ds,n){ const d=new Date(ds+'T00:00:00'); d.setDate(d.getDate()+n); return kp_ymd(d); }
+function kp_monday(ds){ const d=new Date(ds+'T00:00:00'); const off=(d.getDay()+6)%7; return kp_addDays(ds,-off); }
+function kp_elapsed(start,end,today){ const e=end>today?today:end; if(e<start) return 0; return Math.round((new Date(e+'T00:00:00')-new Date(start+'T00:00:00'))/86400000)+1; }
+function kepatuhanDonut(counts, total){
+  total = total || 1;
+  const seg=[
+    {label:'A — Patuh',   val:counts.A,    color:'#16a34a'},
+    {label:'B — Separuh', val:counts.B,    color:'#f59e0b'},
+    {label:'C — Tidak',   val:counts.C,    color:'#ef4444'},
+    {label:'Belum isi',   val:counts.none, color:'#d1d5db'},
+  ];
+  let acc=0; const stops=[];
+  seg.forEach(s=>{ const a=acc/total*100,b=(acc+s.val)/total*100; if(s.val>0) stops.push(`${s.color} ${a}% ${b}%`); acc+=s.val; });
+  const grad = stops.length ? `conic-gradient(${stops.join(',')})` : '#e5e7eb';
+  const legend = seg.map(s=>`<div class="flex items-center justify-between gap-2 text-[11px]"><span class="flex items-center gap-1.5 text-ink/60"><span class="w-2.5 h-2.5 rounded-sm" style="background:${s.color}"></span>${s.label}</span><span class="font-semibold text-ink">${s.val}</span></div>`).join('');
+  return `<div class="flex items-center gap-4">
+    <div class="relative w-20 h-20 shrink-0"><div class="w-20 h-20 rounded-full" style="background:${grad}"></div><div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white flex items-center justify-center text-xs font-bold text-ink">${counts.A+counts.B+counts.C}</div></div>
+    <div class="flex-1 space-y-1">${legend}</div>
+  </div>`;
+}
+async function renderCoachKepatuhan(_caseload, today){
+  const el = document.getElementById('c-kepatuhan-summary'); if(!el) return;
+  // Semua pesakit aktif (sama macam Laporan Kepatuhan)
+  const { data: patients } = await window.db.from('psy_patients')
+    .select('id').neq('status','deleted').neq('status','rejected');
+  const list = patients || [];
+  if(!list.length){ el.innerHTML='<p class="text-xs text-ink/35 text-center py-4">Tiada pesakit.</p>'; return; }
+  const ws = kp_monday(today), we = kp_addDays(ws,6), denom = kp_elapsed(ws,we,today);
+  const { data } = await window.db.from('psy_kepatuhan_log')
+    .select('patient_id, log_date, skor_harian').gte('log_date', ws).lte('log_date', we);
+  const byP={}; (data||[]).forEach(l=>{ (byP[l.patient_id] ||= []).push(l); });
+  const counts={A:0,B:0,C:0,none:0};
+  list.forEach(p=>{
+    const pl=byP[p.id]||[];
+    if(!pl.length){ counts.none++; return; }
+    const sum=pl.reduce((a,l)=>a+(l.skor_harian!=null?l.skor_harian:0),0);
+    const avg=denom>0?Math.round(sum/denom):null;
+    const c=avg==null?null:avg>=85?'A':avg>=50?'B':'C';
+    if(c) counts[c]++; else counts.none++;
+  });
+  el.innerHTML = kepatuhanDonut(counts, list.length)
+    + `<div class="text-[10px] text-ink/40 mt-3 text-center">Minggu ini · semua pesakit · kelas A/B/C dari checklist harian</div>`;
+}
+
 async function renderCoachDashboard(user, today) {
   document.getElementById('coach-view').classList.remove('hidden');
 
@@ -522,6 +566,7 @@ async function renderCoachDashboard(user, today) {
   ]);
 
   const myPatientIds = new Set(myPatients.map(p => p.id));
+  renderCoachKepatuhan(myPatients, today).catch(() => {});
   const myWeekSessions = weekSessions.filter(s => myPatientIds.has(s.patient_id));
   const todayStr = today;
   const todaySessions = myWeekSessions.filter(s => s.session_date && s.session_date.slice(0,10) === todayStr);
@@ -1395,6 +1440,8 @@ function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&
     await renderManagerDashboard(user, today);
   } else if (user.staff_role === 'doctor') {
     await renderDoctorDashboard(user, today);
+  } else if (user.staff_role === 'super_admin') {
+    await renderAdminDashboard(user, today);
   } else {
     await renderDefaultDashboard(user, today);
   }

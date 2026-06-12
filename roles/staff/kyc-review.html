@@ -204,6 +204,7 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
+<script src="../../shared/referral.js"></script>
 <script src="_shared.js"></script>
 <script>
 const kycId = new URLSearchParams(location.search).get('id');
@@ -452,6 +453,26 @@ async function doReview(status) {
             condition_duration:      kyc.condition_duration,
             medical_notes:           kyc.medical_notes,
           }).eq('id', pts[0].id);
+
+          // ── Referral: pautkan perujuk + cipta lejar (konteks staf, RLS penuh) ──
+          if (kyc.referred_by_code) {
+            const referrer = await resolveReferrer(kyc.referred_by_code);
+            if (referrer && referrer.id !== pts[0].id) {
+              await window.db.from('psy_patients').update({
+                referred_by_code:       kyc.referred_by_code,
+                referred_by_patient_id: referrer.id,
+              }).eq('id', pts[0].id);
+              const { error: refErr } = await window.db.from('psy_referrals').insert({
+                referrer_patient_id: referrer.id,
+                referee_patient_id:  pts[0].id,
+                code_used:           kyc.referred_by_code,
+                status:              'pending',
+              });
+              if (refErr && !/duplicate|unique/i.test(refErr.message || '')) {
+                console.warn('[referral] insert error:', refErr.message);
+              }
+            }
+          }
         }
         await window.db.from('psy_profiles').update({
           full_name: kyc.patient_name, phone: kyc.phone,

@@ -81,16 +81,13 @@
               <div>
                 <label class="text-xs font-semibold">Masa</label>
                 <select id="book-time" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
-                  <option value="09:00">9:00 AM</option>
-                  <option value="10:00" selected>10:00 AM</option>
-                  <option value="14:00">2:00 PM</option>
-                  <option value="15:00">3:00 PM</option>
-                  <option value="16:00">4:00 PM</option>
+                  <option value="">— Pilih tarikh dahulu —</option>
                 </select>
               </div>
             </div>
 
-            <p class="text-[11px] text-ink/50 mt-3">Reschedule mesti dibuat 1–2 hari sebelum tarikh asal.</p>
+            <p class="text-[11px] text-ink/50 mt-3">⚡ Semua sesi seterusnya akan auto-shift ikut perubahan ini.</p>
+            <p class="text-[11px] text-ink/50 mt-1">Reschedule mesti dibuat 1–2 hari sebelum tarikh asal.</p>
             <div class="flex gap-2 mt-5">
               <button onclick="closeBookModal()" class="flex-1 bg-cream px-4 py-2 rounded-lg text-sm font-semibold">Batal</button>
               <button onclick="confirmBooking()" class="flex-1 bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold">Sahkan</button>
@@ -104,7 +101,7 @@
             <div class="text-3xl">📅</div>
             <div>
               <h3 class="font-bold text-base">Setup Jadual Rawatan Anda</h3>
-              <p class="text-xs text-ink/60 mt-1">Pilih hari & jam pilihan — sistem akan auto-jadual 12 minggu (24 sesi).</p>
+              <p class="text-xs text-ink/60 mt-1">Pilih hari & jam pilihan — sistem akan auto-jadual 14 minggu (28 sesi).</p>
             </div>
           </div>
 
@@ -291,7 +288,7 @@ const fmt  = d => new Date(d).toLocaleDateString('ms-MY', { day: '2-digit', mont
 const fmtT = d => new Date(d).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 const fmtDayShort = d => new Date(d).toLocaleDateString('ms-MY', { weekday: 'short', day: '2-digit', month: 'short' });
 
-async function loadWeeklyProgress() {
+async function loadWeeklyProgress(preservePage = false) {
   if (!activePlan) return;
 
   weeklyProgressRows = await dbQuery('psy_plan_weekly_progress', {
@@ -348,7 +345,14 @@ async function loadWeeklyProgress() {
   document.getElementById('plan-week-full').textContent = `Minggu ${activePlan.current_week} / ${weeks}`;
 
   const cw = activePlan.current_week || 1;
-  currentPage = Math.ceil(cw / PAGE_SIZE);
+  const totalWeeks = Math.max(activePlan.duration_weeks || 12, ...weeklyProgressRows.map(r => r.week_number || 0));
+  const totalPages = Math.max(1, Math.ceil(totalWeeks / PAGE_SIZE));
+  if (preservePage) {
+    // Kekal di halaman semasa (cth selepas tempah/reschedule) — jangan lompat balik
+    currentPage = Math.min(currentPage, totalPages);
+  } else {
+    currentPage = Math.ceil(cw / PAGE_SIZE);
+  }
   renderWeekPage();
 }
 
@@ -421,6 +425,7 @@ function renderWeekPage() {
         ${weekChip}
       </div>
       ${bodyHtml}
+      <a href="plan-week.html?plan_id=${activePlan.id}&week=${w}" class="text-[10px] text-navy font-semibold mt-2 block hover:underline">Lihat butiran (Sesi 1 &amp; 2) →</a>
     </div>`;
   }
   document.getElementById('weekly-list').innerHTML = html;
@@ -530,16 +535,23 @@ function renderSession(week, day, row) {
 
   if (status === 'hadir' || status === 'consultation_done') {
     icon = '✅'; cls = 'text-green-dark'; label = 'Hadir';
-    actionBtn = `<a href="plan-week.html?plan_id=${activePlan.id}&week=${week}" class="text-[10px] text-navy hover:underline">Butiran →</a>`;
+    actionBtn = '';
   } else if (status === 'booked') {
     icon = '📅'; cls = 'text-navy'; label = 'Ditempah';
     actionBtn = `<button onclick="openBookModal(${week},${day},true)" class="text-[10px] text-gold-dark font-semibold hover:underline">Reschedule</button>`;
-  } else if (status === 'reschedule' || status === 'cancel') {
-    icon = '⚠️'; cls = 'text-gold-dark'; label = status === 'cancel' ? 'Tidak Hadir' : 'Reschedule';
+  } else if (status === 'cancel') {
+    icon = '❌'; cls = 'text-terracotta'; label = 'Tidak Hadir';
+    // Tiada reschedule — sesi tidak hadir ganti melalui minggu tambahan berbayar
+    actionBtn = `<a href="payment.html" class="text-[10px] text-terracotta font-semibold hover:underline whitespace-nowrap">Minggu ganti dibuka →</a>`;
+  } else if (status === 'reschedule') {
+    icon = '🔄'; cls = 'text-gold-dark'; label = 'Reschedule';
     actionBtn = `<button onclick="openBookModal(${week},${day},true)" class="text-[10px] bg-navy text-white font-semibold px-2 py-0.5 rounded hover:bg-navy-dark">Tempah Semula</button>`;
   } else if (status === 'extension_pending_payment') {
     icon = '💳'; cls = 'text-terracotta'; label = 'Belum Bayar';
-    actionBtn = `<a href="payment.html" class="text-[10px] bg-terracotta text-white font-semibold px-2 py-0.5 rounded hover:opacity-90">Bayar RM ${(row.extension_price || 50).toFixed(0)}</a>`;
+    // RM dikira PER MINGGU (2 sesi) — butang bayar pada sesi 1 sahaja; sesi 2 nota sahaja
+    actionBtn = day === 1
+      ? `<a href="payment.html" class="text-[10px] bg-terracotta text-white font-semibold px-2 py-0.5 rounded hover:opacity-90">Bayar RM ${(row.extension_price || 50).toFixed(0)} (2 sesi)</a>`
+      : `<span class="text-[10px] text-ink/45 italic">termasuk bayaran minggu</span>`;
   } else if (status === 'extension_paid') {
     icon = '➕'; cls = 'text-navy'; label = 'Tambahan — Tempah';
     actionBtn = `<button onclick="openBookModal(${week},${day},false)" class="text-[10px] bg-navy text-white font-semibold px-2 py-0.5 rounded hover:bg-navy-dark">Tempah</button>`;
@@ -556,6 +568,7 @@ function renderSession(week, day, row) {
       <span class="${cls}">${icon}</span>
       <span class="${cls} font-semibold w-12">${dayName}</span>
       <span class="truncate">${dateTime}</span>
+      <span class="${cls} font-semibold whitespace-nowrap">· ${label}</span>
     </div>
     ${actionBtn}
   </div>`;
@@ -575,7 +588,7 @@ function isClinicClosed(date) {
   });
 }
 
-function checkBookingDate() {
+async function checkBookingDate() {
   const val = document.getElementById('book-date').value;
   const hint = document.getElementById('book-date-hint');
   if (!val) return;
@@ -591,9 +604,41 @@ function checkBookingDate() {
     hint.textContent = 'Hanya Jumaat, Sabtu, atau Ahad';
     hint.className = 'text-[10px] text-ink/50 mt-1';
   }
+  await loadTimeSlots(val);
 }
 
-function openBookModal(w, day, isReschedule) {
+// Load time slots dari slot config (slot_type='rawatan') untuk hari yang dipilih
+async function loadTimeSlots(dateStr) {
+  const sel = document.getElementById('book-time');
+  const preserveValue = sel.value;
+  if (!dateStr) { sel.innerHTML = '<option value="">— Pilih tarikh dahulu —</option>'; return; }
+  const day = new Date(dateStr + 'T00:00:00').getDay();
+  let { data: slots, error } = await window.db.from('psy_kob_slot_config')
+    .select('slot_start, slot_end, label').eq('day_of_week', day).eq('is_active', true).eq('slot_type', 'rawatan')
+    .order('sort_order', { ascending: true });
+  // Fallback kalau slot_type column tak wujud
+  if (error && /slot_type/i.test(error.message || '')) {
+    const fb = await window.db.from('psy_kob_slot_config')
+      .select('slot_start, slot_end, label').eq('day_of_week', day).eq('is_active', true)
+      .order('sort_order', { ascending: true });
+    slots = fb.data;
+  }
+  if (!slots || !slots.length) {
+    sel.innerHTML = '<option value="">— Tiada slot tersedia —</option>';
+    return;
+  }
+  sel.innerHTML = '<option value="">— Pilih slot —</option>' +
+    slots.map(s => {
+      const start = (s.slot_start || '').slice(0, 5);
+      return `<option value="${start}">${s.label || start}</option>`;
+    }).join('');
+  // Restore previous value kalau masih wujud
+  if (preserveValue && [...sel.options].some(o => o.value === preserveValue)) {
+    sel.value = preserveValue;
+  }
+}
+
+async function openBookModal(w, day, isReschedule) {
   pendingBookWeek = w;
   pendingBookSessionDay = day;
   const existing = weeklyProgressRows.find(r => r.week_number === w && (r.session_day || 1) === day);
@@ -615,7 +660,7 @@ function openBookModal(w, day, isReschedule) {
   }
   document.getElementById('book-date').value = base.toISOString().slice(0, 10);
   document.getElementById('book-date').min = new Date().toISOString().slice(0, 10);
-  checkBookingDate();
+  await checkBookingDate(); // Tunggu slot dropdown populate
 
   if (existing?.session_date) {
     const t = new Date(existing.session_date);
@@ -691,12 +736,63 @@ async function confirmBooking() {
     }
 
     await auditLog('plan.session_booked', activePlan.id, { week: pendingBookWeek, day: pendingBookSessionDay, at: sessionAt.toISOString() });
+
+    // Auto cascade: shift semua sesi seterusnya guna offset yang sama (hanya kalau reschedule existing)
+    const originalDateStr = existing?.session_date;
+    if (originalDateStr) {
+      const offsetMs = sessionAt.getTime() - new Date(originalDateStr).getTime();
+      const offsetDays = Math.round(offsetMs / (24*60*60*1000));
+      if (offsetDays !== 0) {
+        const totalShifted = await cascadeShiftSessions(pendingBookWeek, pendingBookSessionDay, offsetDays);
+        if (totalShifted > 0) {
+          banner(`${totalShifted} sesi seterusnya turut diubah (${offsetDays > 0 ? '+' : ''}${offsetDays} hari)`);
+        }
+      }
+    }
+
     banner(`Minggu ${pendingBookWeek} Sesi ${pendingBookSessionDay} ditempah: ${sessionAt.toLocaleString('ms-MY')}`);
     closeBookModal();
-    await loadWeeklyProgress();
+    await loadWeeklyProgress(true);
   } catch (err) {
     banner('Ralat: ' + err.message, 'error');
   }
+}
+
+// Shift semua sesi selepas minggu/sesi tertentu guna offset (hari)
+async function cascadeShiftSessions(fromWeek, sessionDay, offsetDays) {
+  // Ambil semua weekly_progress rows untuk plan ini, week > fromWeek, atau (week == fromWeek && session_day > sessionDay)
+  const targetRows = weeklyProgressRows.filter(r => {
+    if (r.week_number < fromWeek) return false;
+    if (r.week_number === fromWeek && (r.session_day || 1) <= sessionDay) return false;
+    if (!r.session_date) return false;
+    if (r.status === 'completed' || r.status === 'cancel') return false; // Skip yang dah lepas
+    return true;
+  });
+  let count = 0;
+  for (const row of targetRows) {
+    const newDate = new Date(row.session_date);
+    newDate.setDate(newDate.getDate() + offsetDays);
+    try {
+      // Kekalkan status 'booked' (tempahan masih sah, cuma tarikh shifted)
+      // Jangan tukar ke 'reschedule' — itu untuk perubahan manual oleh patient
+      await window.db.from('psy_plan_weekly_progress').update({
+        session_date: newDate.toISOString(),
+        status: 'booked',
+        updated_at: new Date().toISOString(),
+      }).eq('id', row.id);
+      if (row.appointment_id) {
+        await window.db.from('psy_appointments').update({
+          appointment_time: newDate.toISOString(),
+          status: 'scheduled',
+        }).eq('id', row.appointment_id);
+      }
+      count++;
+    } catch (e) {
+      console.warn('Cascade shift failed for row', row.id, e.message);
+    }
+  }
+  if (count > 0) await auditLog('plan.cascade_shift', activePlan.id, { from_week: fromWeek, session_day: sessionDay, offset_days: offsetDays, shifted: count });
+  return count;
 }
 
 // ──────── ONBOARDING WIZARD ────────
@@ -714,7 +810,7 @@ function getSelectedPair() {
   return document.querySelector('input[name="setup-pair"]:checked')?.value || null;
 }
 
-// Generate 24 sesi dates (12 minggu × 2 hari) base on pair + start date
+// Generate 28 sesi dates (14 minggu × 2 hari) base on pair + start date
 function generateScheduleDates(pair, time1, time2, startDate) {
   const [dow1, dow2] = PAIR_DAYS[pair];
   const sessions = [];
@@ -731,7 +827,7 @@ function generateScheduleDates(pair, time1, time2, startDate) {
   m1day2.setDate(m1day2.getDate() + 1);
   while (m1day2.getDay() !== dow2) m1day2.setDate(m1day2.getDate() + 1);
 
-  for (let w = 1; w <= 12; w++) {
+  for (let w = 1; w <= 14; w++) {
     const sess1 = new Date(m1day1);
     sess1.setDate(sess1.getDate() + (w - 1) * 7);
     const [h1, mn1] = time1.split(':').map(Number);

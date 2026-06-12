@@ -76,6 +76,24 @@
     #print-header {
       display: none;
     }
+
+    /* Tab penapis pesakit (gabungan Assignments) */
+    .ptab { padding:7px 14px; border-radius:9999px; font-size:13px; font-weight:600;
+            background:white; border:1px solid rgba(30,30,60,0.15); color:#475569; cursor:pointer;
+            transition:all .15s; display:inline-flex; align-items:center; gap:6px; }
+    .ptab:hover { border-color:#7c3aed; color:#7c3aed; }
+    .ptab.active { background:#7c3aed; border-color:#7c3aed; color:white; }
+    .tab-ct { font-size:11px; background:rgba(0,0,0,0.08); color:inherit; border-radius:9999px;
+              padding:1px 7px; font-weight:700; }
+    .ptab.active .tab-ct { background:rgba(255,255,255,0.25); }
+    .tab-ct:empty { display:none; }
+    /* Butang assign dalam kolum Coach */
+    .coach-assign { padding:4px 10px; border-radius:7px; font-size:11px; font-weight:600;
+                    background:#7c3aed; color:white; border:none; cursor:pointer; white-space:nowrap; }
+    .coach-assign:hover:not(:disabled) { background:#6d28d9; }
+    .coach-unassign { width:22px; height:22px; border-radius:6px; background:#fff0f0; color:#c0392b;
+                      border:1px solid #f5c6c6; cursor:pointer; font-size:11px; line-height:1; }
+    .coach-unassign:hover:not(:disabled) { background:#fde0e0; }
   </style>
 </head>
 
@@ -142,6 +160,13 @@
 
           <!-- ── Patient List ─────────────────────────────── -->
           <div id="list-section">
+            <!-- Tab penapis (gabungan dari Assignments) -->
+            <div class="flex items-center gap-2 mb-3 flex-wrap print-hide" id="patient-tabs">
+              <button class="ptab active" data-tab="all"        onclick="setPatientTab('all')">Semua</button>
+              <button class="ptab"        data-tab="unassigned" onclick="setPatientTab('unassigned')">Belum Ditugaskan <span id="tab-ct-unassigned" class="tab-ct"></span></button>
+              <button class="ptab"        data-tab="mine"       onclick="setPatientTab('mine')">Pesakit Saya <span id="tab-ct-mine" class="tab-ct"></span></button>
+              <button class="ptab"        data-tab="prekyc"     onclick="setPatientTab('prekyc')">Belum KYC <span id="tab-ct-prekyc" class="tab-ct"></span></button>
+            </div>
             <div class="flex items-center gap-3 mb-3 flex-wrap print-hide">
               <div class="relative flex-1 min-w-48">
                 <svg class="absolute left-3 top-1/2 -translate-y-1/2 text-ink/40 pointer-events-none" width="15"
@@ -253,8 +278,8 @@
                 Rekod Diarkibkan
               </label>
               <div class="flex-1"></div>
-              <button onclick="openCreatePatient()"
-                class="flex items-center gap-1.5 px-4 py-2.5 text-white rounded-xl text-sm hover:opacity-90 transition-opacity font-semibold"
+              <button id="btn-add-patient" onclick="openCreatePatient()"
+                class="hidden flex items-center gap-1.5 px-4 py-2.5 text-white rounded-xl text-sm hover:opacity-90 transition-opacity font-semibold"
                 style="background-color:#7C3AED">
                 + Tambah Pesakit
               </button>
@@ -445,6 +470,29 @@
               <span class="text-xs text-ink/55">
                 Cth: kalau pesakit dah minggu ke-3, masukkan "3". Sistem akan cipta plan + buka semua minggu 1 sehingga durasi pakej untuk staff isi nota backfill.
               </span>
+            </div>
+          </div>
+
+          <!-- Row 2d: Referral — kod pesakit sendiri + dirujuk oleh -->
+          <div class="grid grid-cols-3 gap-3 mt-3">
+            <div id="cp-own-code-wrap" class="hidden">
+              <label class="text-xs font-semibold">Kod Rujukan Pesakit Ini</label>
+              <div class="flex gap-2 mt-1">
+                <input id="cp-own-code" readonly
+                  class="flex-1 px-3 py-2 border border-ink/20 rounded-lg text-sm font-mono font-bold text-navy bg-cream/60">
+                <button type="button" onclick="copyOwnRefCode()"
+                  class="px-3 py-2 border border-navy/30 text-navy rounded-lg text-xs font-semibold hover:bg-navy hover:text-white whitespace-nowrap">📋 Salin</button>
+              </div>
+              <p class="text-[11px] text-ink/40 mt-1">Kod unik pesakit ini untuk dikongsi kepada kawan.</p>
+            </div>
+            <div class="col-span-2">
+              <label class="text-xs font-semibold">Dirujuk Oleh — Kod Rujukan <span
+                  class="text-ink/40 font-normal">(optional)</span></label>
+              <input id="cp-referred-by" maxlength="16"
+                oninput="this.value=this.value.toUpperCase()"
+                class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm font-mono uppercase"
+                placeholder="cth: N7K23H5P">
+              <p class="text-[11px] text-ink/40 mt-1">Kod pesakit yang merujuk pesakit ini. Biar kosong jika tiada.</p>
             </div>
           </div>
 
@@ -706,6 +754,7 @@
   <script src="../../shared/authGuard.js"></script>
   <script src="../../shared/logout.js"></script>
   <script src="../../shared/navbar.js"></script>
+  <script src="../../shared/referral.js"></script>
   <script src="_shared.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
   <script>
@@ -715,6 +764,8 @@
     let isAdmin = false;
     let isCoachUser = false;
     let editingPatientId = null;
+    let currentTab = 'all';                 // all | unassigned | mine | prekyc
+    let pendingKycUserIds = new Set();       // user_id dgn borang KYC 'pending' (menunggu semakan)
 
     // ── Create Patient ────────────────────────────────────
     function getSelectedStatus() {
@@ -862,9 +913,11 @@
 
     function resetCreateForm() {
       ['cp-name', 'cp-ic', 'cp-phone', 'cp-email', 'cp-address', 'cp-ref-code', 'cp-company', 'cp-medical-notes',
-        'cp-emg-name', 'cp-emg-ic', 'cp-emg-phone', 'cp-occupation', 'cp-emg-rel', 'cp-emg-email'].forEach(id => {
+        'cp-emg-name', 'cp-emg-ic', 'cp-emg-phone', 'cp-occupation', 'cp-emg-rel', 'cp-emg-email',
+        'cp-referred-by', 'cp-own-code'].forEach(id => {
           const el = document.getElementById(id); if (el) el.value = '';
         });
+      document.getElementById('cp-own-code-wrap')?.classList.add('hidden');
       const durEl = document.getElementById('cp-duration'); if (durEl) durEl.value = '';
       const rptEl = document.getElementById('cp-reports'); if (rptEl) rptEl.value = '';
       const existRpt = document.getElementById('cp-existing-reports'); if (existRpt) existRpt.innerHTML = '';
@@ -907,6 +960,14 @@
             ${p.package_id === selectedPkgCode ? 'selected' : ''}>${p.name}</option>`).join('');
     }
 
+    function copyOwnRefCode() {
+      const code = document.getElementById('cp-own-code')?.value?.trim();
+      if (!code || code === '—') return;
+      navigator.clipboard?.writeText(code)
+        .then(() => banner(`Kod rujukan "${code}" disalin ✅`))
+        .catch(() => banner('Gagal menyalin kod', 'error'));
+    }
+
     function openCreatePatient() {
       editingPatientId = null;
       resetCreateForm();
@@ -947,6 +1008,12 @@
       document.getElementById('cp-occupation').value = p.occupation || '';
       document.getElementById('cp-dob').value = p.date_of_birth || '';
       document.getElementById('cp-ref-code').value = p.reference_code || '';
+      // Referral: papar kod sendiri (read-only) + kod perujuk
+      document.getElementById('cp-referred-by').value = p.referred_by_code || '';
+      const ownWrap = document.getElementById('cp-own-code-wrap');
+      const ownCode = document.getElementById('cp-own-code');
+      if (ownCode) ownCode.value = p.referral_code || '—';
+      if (ownWrap) ownWrap.classList.toggle('hidden', !p.referral_code);
       document.getElementById('cp-company').value = p.company || '';
       document.getElementById('cp-duration').value = p.condition_duration || '';
       document.getElementById('cp-medical-notes').value = p.medical_notes || '';
@@ -1094,6 +1161,20 @@
         return;
       }
 
+      // Halangan keras: No. KP mesti unik (rekod yang sedang disunting dikecualikan)
+      const { data: dupIc } = await window.db.from('psy_patients')
+        .select('id, mrn, full_name, status')
+        .eq('ic_number', ic)
+        .neq('id', editingPatientId || '00000000-0000-0000-0000-000000000000')
+        .neq('status', 'deleted')
+        .limit(1);
+      if (dupIc?.[0]) {
+        const d = dupIc[0];
+        errEl.textContent = `🚫 No. KP ${ic} sudah wujud — ${d.full_name || d.mrn} (${d.mrn}). Sila guna rekod sedia ada, bukan cipta baru.`;
+        errEl.classList.remove('hidden');
+        return;
+      }
+
       // KOB slot validation
       const kobBook = isNew && document.getElementById('cp-kob-book')?.checked;
       const kobMode = document.getElementById('cp-kob-mode')?.value || 'f2f';
@@ -1118,6 +1199,38 @@
       const btn = document.getElementById('cp-save-btn');
       btn.disabled = true; btn.textContent = 'Menyimpan...';
 
+      // ── Referral: sahkan kod perujuk (jika ada) ──
+      const referredByRaw = document.getElementById('cp-referred-by')?.value.trim() || '';
+      let referredByCode = null, referredByPatientId = null;
+      if (referredByRaw) {
+        referredByCode = normalizeReferralCode(referredByRaw);
+        const referrer = await resolveReferrer(referredByCode);
+        const resetBtn = () => { btn.disabled = false; btn.textContent = editingPatientId ? 'Kemaskini' : 'Simpan'; };
+        if (!referrer) {
+          errEl.textContent = `Kod rujukan "${referredByCode}" tidak dijumpai. Sila semak semula.`;
+          errEl.classList.remove('hidden'); resetBtn(); return;
+        }
+        if (editingPatientId && referrer.id === editingPatientId) {
+          errEl.textContent = 'Pesakit tidak boleh merujuk diri sendiri.';
+          errEl.classList.remove('hidden'); resetBtn(); return;
+        }
+        referredByPatientId = referrer.id;
+      }
+
+      // Cipta rekod referral (lejar) — diabaikan jika referee sudah dirujuk
+      async function createReferralRow(refereeId) {
+        if (!referredByPatientId || !refereeId || referredByPatientId === refereeId) return;
+        const { error: refErr } = await window.db.from('psy_referrals').insert({
+          referrer_patient_id: referredByPatientId,
+          referee_patient_id: refereeId,
+          code_used: referredByCode,
+          status: 'pending',
+        });
+        if (refErr && !/duplicate|unique/i.test(refErr.message || '')) {
+          console.warn('[referral] insert error:', refErr.message);
+        }
+      }
+
       const payload = {
         full_name: name,
         phone,
@@ -1141,6 +1254,8 @@
         package_expires_at: expiresAt,
         medical_notes: document.getElementById('cp-medical-notes')?.value.trim() || null,
         reference_code: document.getElementById('cp-ref-code')?.value.trim() || null,
+        referred_by_code: referredByCode,
+        referred_by_patient_id: referredByPatientId,
       };
 
       // Outcome status — track timestamp on change
@@ -1164,6 +1279,7 @@
           // UPDATE existing patient
           const { error } = await window.db.from('psy_patients').update(payload).eq('id', editingPatientId);
           if (error) throw error;
+          await createReferralRow(editingPatientId);
           await uploadAndSaveReports(editingPatientId);
           // If package assigned/changed, create or update purchase record
           if (selectedPkgCode) {
@@ -1268,6 +1384,7 @@
           }
           if (error) throw error;
           if (inserted?.id) {
+            await createReferralRow(inserted.id);
             await uploadAndSaveReports(inserted.id);
 
             // Create package purchase record if assigned
@@ -1486,7 +1603,7 @@
           <td class="text-xs">${p.active_package_name
               ? `<span class="chip bg-navy-light text-navy">${pkgName}</span>`
               : '<span class="text-ink/30">—</span>'}</td>
-          <td class="text-xs">${p.coach?.full_name ? `<span class="text-navy font-medium">${coachName}</span>` : '<span class="text-ink/30">—</span>'}</td>
+          <td class="text-xs">${coachCellHtml(p)}</td>
           <td>${statusChip(p.status)} ${outcomeChip(p.outcome_status)}</td>
           <td class="whitespace-nowrap print-hide">
             <div class="flex items-center gap-1.5">
@@ -1595,7 +1712,17 @@
       const ageRange = document.getElementById('filter-age')?.value || '';
       const stateQ  = (document.getElementById('filter-state')?.value || '').toLowerCase();
       const condQ   = (document.getElementById('filter-condition')?.value || '').toLowerCase();
+      const myId = window.currentUser?.id;
       const list = allPatients.filter(p => {
+        // Lapisan tab (gabungan Assignments)
+        const preKyc = isPreKyc(p);
+        let matchTab = true;
+        if (currentTab === 'all')             matchTab = !preKyc;            // senarai pesakit "sebenar"
+        else if (currentTab === 'unassigned') matchTab = !p.coach_id;        // barisan intake (termasuk pra-KYC)
+        else if (currentTab === 'mine')        matchTab = p.coach_id === myId;
+        else if (currentTab === 'prekyc')      matchTab = preKyc;            // belum/menunggu KYC
+        if (!matchTab) return false;
+
         const name = (p.psy_profiles?.full_name || p.full_name || '').toLowerCase();
         const phoneStr = (p.psy_profiles?.phone || p.phone || '').toLowerCase();
         const matchQ = !q || name.includes(q) || (p.mrn || '').toLowerCase().includes(q) || (p.ic_number || '').includes(q) || phoneStr.includes(q);
@@ -1631,6 +1758,98 @@
         return matchQ && matchS && matchP && matchO && matchG && matchAge && matchState && matchCond && matchSU;
       });
       renderPatients(list);
+      updateTabCounts();
+    }
+
+    // Pesakit pra-KYC: status pending_kyc ATAU ada borang KYC menunggu semakan
+    function isPreKyc(p) {
+      return p.status === 'pending_kyc' || pendingKycUserIds.has(p.user_id);
+    }
+
+    function setPatientTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('#patient-tabs .ptab').forEach(b =>
+        b.classList.toggle('active', b.dataset.tab === tab));
+      filterPatients();
+    }
+
+    function updateTabCounts() {
+      const myId = window.currentUser?.id;
+      const live = allPatients.filter(p => p.status !== 'deleted');
+      const set = (id, n) => { const el = document.getElementById(id); if (el) el.textContent = n || ''; };
+      set('tab-ct-unassigned', live.filter(p => !p.coach_id).length);
+      set('tab-ct-mine',       live.filter(p => p.coach_id === myId).length);
+      set('tab-ct-prekyc',     live.filter(p => isPreKyc(p)).length);
+    }
+
+    // ── Coach assign/unassign (gabungan dari Assignments) ──
+    function coachCellHtml(p) {
+      const cn = escapeHtml(p.coach?.full_name || '');
+      const myId = window.currentUser?.id;
+      const deleted = p.status === 'deleted';
+      if (p.coach_id) {
+        const canUnassign = !deleted && (isAdmin || p.coach_id === myId);
+        return `<span class="text-navy font-medium">${cn || '—'}</span>`
+          + (canUnassign ? ` <button class="coach-unassign" title="Tarik balik penugasan" onclick="doUnassign('${p.id}',this)">✕</button>` : '');
+      }
+      if ((isAdmin || isCoachUser) && !deleted) {
+        return `<button class="coach-assign" onclick="quickAssign('${p.id}',this)">Assign to me</button>`;
+      }
+      return '<span class="text-ink/30">—</span>';
+    }
+
+    async function quickAssign(pid, btn) {
+      const uid  = window.currentUser.id;
+      const role = window.currentUser.staff_role;
+      const patient = allPatients.find(x => x.id === pid);
+      if (patient && patient.coach_id && patient.coach_id !== uid && role !== 'admin' && role !== 'manager') {
+        banner('Pesakit sudah ditugaskan kepada coach lain', 'error');
+        return;
+      }
+      btn.disabled = true; btn.textContent = '…';
+      const { error } = await window.db.from('psy_patients')
+        .update({ coach_id: uid, assigned_at: new Date().toISOString() })
+        .eq('id', pid);
+      if (error) { btn.textContent = '⚠'; btn.disabled = false; banner('Ralat: ' + error.message, 'error'); return; }
+
+      await window.db.from('psy_audit_log').insert({
+        actor_id: uid, actor_name: window.currentUser.full_name,
+        actor_role: window.currentUser.role || 'staff',
+        action: 'patient.assigned', target: pid, meta: { assigned_to: window.currentUser.full_name },
+      });
+
+      if (patient) { patient.coach_id = uid; patient.assigned_at = new Date().toISOString(); patient.coach = { full_name: window.currentUser.full_name }; }
+      renderPatientStats();
+      filterPatients();
+      banner('Pesakit ditugaskan kepada anda ✅');
+    }
+
+    async function doUnassign(pid, btn) {
+      const uid  = window.currentUser.id;
+      const role = window.currentUser.staff_role;
+      const patient = allPatients.find(x => x.id === pid);
+      const isOwner = patient && patient.coach_id === uid;
+      if (!isOwner && role !== 'admin' && role !== 'manager') {
+        banner('Anda hanya boleh tarik balik penugasan pesakit anda sendiri', 'error');
+        return;
+      }
+      if (!confirm('Tarik balik penugasan pesakit ini?')) return;
+      btn.disabled = true; btn.textContent = '…';
+      const { error } = await window.db.from('psy_patients')
+        .update({ coach_id: null, assigned_at: null })
+        .eq('id', pid);
+      if (error) { btn.textContent = '⚠'; btn.disabled = false; banner('Ralat: ' + error.message, 'error'); return; }
+
+      await window.db.from('psy_audit_log').insert({
+        actor_id: uid, actor_name: window.currentUser.full_name,
+        actor_role: window.currentUser.role || 'staff',
+        action: 'patient.unassigned', target: pid, meta: { unassigned_by: window.currentUser.full_name },
+      });
+
+      if (patient) { patient.coach_id = null; patient.assigned_at = null; patient.coach = null; }
+      renderPatientStats();
+      filterPatients();
+      banner('Penugasan pesakit telah ditarik balik');
     }
 
     function populatePackageFilter() {
@@ -1892,7 +2111,25 @@
       const kycMap = {};
       matches.forEach(k => { if (k.user_id) kycMap[k.ic_number] = k.user_id; });
 
-      const toLink = unlinked.filter(p => kycMap[p.ic_number]);
+      // user_id yang SUDAH ada rekod pesakit (bukan-deleted) — jangan link stub ke sini,
+      // jika tidak dua rekod akan kongsi user_id yang sama (duplicate).
+      const takenUserIds = new Set(
+        allPatients.filter(p => p.user_id && p.status !== 'deleted').map(p => p.user_id)
+      );
+
+      const toLink = [];
+      const dupSkipped = [];
+      unlinked.forEach(p => {
+        const uid = kycMap[p.ic_number];
+        if (!uid) return;
+        if (takenUserIds.has(uid)) { dupSkipped.push(p); }   // rekod lain dah pegang user_id ini
+        else { toLink.push(p); takenUserIds.add(uid); }       // elak dua stub IC sama → user_id sama
+      });
+
+      if (dupSkipped.length) {
+        console.warn('[autoLink] Stub IC bertindih dengan rekod sedia ada — perlu gabung manual:',
+          dupSkipped.map(p => `${p.mrn} (IC ${p.ic_number})`).join(', '));
+      }
       if (!toLink.length) return false;
 
       await Promise.all(toLink.map(p =>
@@ -1914,13 +2151,13 @@
 
       if (patRes.error) console.error('[patients] load error:', patRes.error);
 
-      const pendingKycUserIds = new Set((kycRes.data || []).map(k => k.user_id).filter(Boolean));
+      pendingKycUserIds = new Set((kycRes.data || []).map(k => k.user_id).filter(Boolean));
       const showArchived = document.getElementById('toggle-archived')?.checked;
 
+      // Pesakit pra-KYC (pending_kyc / menunggu semakan) kini DIMUATKAN juga —
+      // ditapis ikut tab dalam filterPatients() (default tab 'all' sembunyikannya).
       allPatients = (patRes.data || []).filter(p =>
         (p.psy_profiles?.role === 'patient' || !p.psy_profiles)
-        && p.status !== 'pending_kyc'
-        && !pendingKycUserIds.has(p.user_id)
         && (showArchived ? p.status === 'deleted' : p.status !== 'deleted')
       );
 
@@ -1960,11 +2197,13 @@
     }
 
     function renderPatientStats() {
-      const total = allPatients.length;
-      const active = allPatients.filter(p => p.status === 'active').length;
-      const inactive = allPatients.filter(p => p.status === 'inactive' || p.status === 'unregistered').length;
+      // Stat = pesakit "sebenar" sahaja (kecualikan pra-KYC yg kini turut dimuatkan)
+      const real = allPatients.filter(p => !isPreKyc(p));
+      const total = real.length;
+      const active = real.filter(p => p.status === 'active').length;
+      const inactive = real.filter(p => p.status === 'inactive' || p.status === 'unregistered').length;
       const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0,0,0,0);
-      const newThisMonth = allPatients.filter(p => p.created_at && new Date(p.created_at) >= monthStart).length;
+      const newThisMonth = real.filter(p => p.created_at && new Date(p.created_at) >= monthStart).length;
       const pct = (n) => total ? `${((n/total)*100).toFixed(1)}% daripada jumlah` : '— daripada jumlah';
 
       document.getElementById('stat-total').textContent       = total;
@@ -2044,14 +2283,22 @@
     (async () => {
       const user = await initStaff('psy_patients', 'Senarai Pesakit');
       if (!user) return;
-      isAdmin = ['admin', 'manager', 'doctor'].includes(user.staff_role);
+      isAdmin = can('patient','edit');
       isCoachUser = user.staff_role === 'coach';
+      if (can('patient','create')) {
+        const btn = document.getElementById('btn-add-patient');
+        if (btn) btn.classList.remove('hidden');
+      }
       if (isAdmin) {
         const tog = document.getElementById('archived-toggle-wrap');
         if (tog) tog.classList.replace('hidden', 'flex');
       }
       await loadAll();
       const qs = new URLSearchParams(location.search);
+      const tabQ = qs.get('tab');
+      if (tabQ && ['all','unassigned','mine','prekyc'].includes(tabQ)) {
+        setPatientTab(tabQ);
+      }
       if (qs.get('new') === '1' || qs.get('add') === '1') {
         setTimeout(openCreatePatient, 500);
       }

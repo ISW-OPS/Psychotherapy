@@ -36,7 +36,7 @@
             <h1 class="text-2xl font-bold text-ink">Manage Staff</h1>
             <p class="text-sm text-ink/55 mt-0.5">Uruskan maklumat staf dan akses sistem.</p>
           </div>
-          <button onclick="openCreateModal()" class="inline-flex items-center gap-1.5 text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:opacity-90 transition-opacity" style="background-color:#7C3AED">
+          <button id="btn-add-staff" onclick="openCreateModal()" class="hidden inline-flex items-center gap-1.5 text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:opacity-90 transition-opacity" style="background-color:#7C3AED">
             + Tambah Staff
           </button>
         </div>
@@ -87,10 +87,6 @@
             </div>
             <select id="f-role" onchange="renderTable()" class="border border-ink/15 rounded-lg px-3 py-2.5 text-sm bg-white outline-none focus:border-navy">
               <option value="">Semua Peranan</option>
-              <option value="admin">Admin</option>
-              <option value="coach">Coach</option>
-              <option value="doctor">Doctor</option>
-              <option value="manager">Manager</option>
             </select>
             <select id="f-status" onchange="renderTable()" class="border border-ink/15 rounded-lg px-3 py-2.5 text-sm bg-white outline-none focus:border-navy">
               <option value="">Semua Status</option>
@@ -183,10 +179,6 @@
         <label class="text-xs font-semibold">Staff Role <span class="text-terracotta">*</span></label>
         <select id="new-staff-role" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none">
           <option value="">— Pilih Role —</option>
-          <option value="admin">Admin</option>
-          <option value="doctor">Doctor</option>
-          <option value="coach">Coach</option>
-          <option value="manager">Manager</option>
         </select>
       </div>
       <div id="create-error" class="hidden text-xs text-terracotta bg-terracotta/10 rounded-lg p-3 text-center"></div>
@@ -327,6 +319,9 @@ let _deleteId = null;
 function openDeleteModal(id, name) {
   _deleteId = id;
   document.getElementById('delete-name').textContent = name;
+  // Reset button state setiap kali buka (elak kekal "Memadam..." dari delete sebelum)
+  const btn = document.getElementById('delete-btn');
+  if (btn) { btn.disabled = false; btn.textContent = 'Ya, Padam'; }
   document.getElementById('delete-modal').classList.remove('hidden');
 }
 function closeDeleteModal() {
@@ -424,12 +419,12 @@ function renderTable() {
         <td class="py-3 px-3">${dateHtml}</td>
         <td class="py-3 px-4">
           <div class="flex items-center justify-end gap-1.5">
-            <button onclick="window.location.href='staff-detail.html?id=${s.id}'" title="Edit" class="icon-btn bg-navy-light text-navy hover:bg-navy hover:text-white">
+            ${can('staff','edit') ? `<button onclick="window.location.href='staff-detail.html?id=${s.id}'" title="Edit" class="icon-btn bg-navy-light text-navy hover:bg-navy hover:text-white">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-            </button>
-            <button onclick="openDeleteModal('${s.id}','${nameAttr}')" title="Padam" class="icon-btn bg-terracotta-light text-terracotta hover:bg-terracotta hover:text-white">
+            </button>` : ''}
+            ${can('staff','delete') ? `<button onclick="openDeleteModal('${s.id}','${nameAttr}')" title="Padam" class="icon-btn bg-terracotta-light text-terracotta hover:bg-terracotta hover:text-white">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
-            </button>
+            </button>` : ''}
           </div>
         </td>
       </tr>`;
@@ -515,9 +510,27 @@ async function loadStaff() {
 
 function showErr(el, msg) { el.textContent = msg; el.classList.remove('hidden'); }
 
+async function loadRoleOptions() {
+  const { data } = await window.db.from('psy_roles')
+    .select('code, label, is_active').eq('is_active', true).order('sort_order');
+  const roles = data || [];
+  // Filter dropdown — semua role (termasuk super_admin) supaya boleh tapis tengok
+  const filterSel = document.getElementById('f-role');
+  filterSel.innerHTML = '<option value="">Semua Peranan</option>' +
+    roles.map(r => `<option value="${r.code}">${r.label}</option>`).join('');
+  // Create-staff dropdown — EXCLUDE super_admin (assign via SQL sahaja untuk keselamatan)
+  const newSel = document.getElementById('new-staff-role');
+  newSel.innerHTML = '<option value="">— Pilih Role —</option>' +
+    roles.filter(r => r.code !== 'super_admin')
+         .map(r => `<option value="${r.code}">${r.label}</option>`).join('');
+}
+
 (async () => {
   const user = await initStaff('staff_mgmt', 'Daftar & urus akaun staff');
   if (!user) return;
+  // Reveal "+ Tambah Staff" button hanya jika ada permission
+  if (can('staff','create')) document.getElementById('btn-add-staff').classList.remove('hidden');
+  await loadRoleOptions();
   loadStaff();
 })();
 </script>

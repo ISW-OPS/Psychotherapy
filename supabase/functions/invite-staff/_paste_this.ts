@@ -35,7 +35,8 @@ Deno.serve(async (req: Request) => {
 
     const { data: profile } = await userClient.from('psy_profiles').select('role, staff_role').eq('id', user.id).single()
     if (!profile || profile.role !== 'staff') return fail('Akses ditolak: bukan staff')
-    if (profile.staff_role && profile.staff_role !== 'admin') return fail('Akses ditolak: hanya Admin')
+    const ALLOWED = ['admin', 'manager', 'super_admin']
+    if (profile.staff_role && !ALLOWED.includes(profile.staff_role)) return fail('Akses ditolak: hanya Admin, Manager, atau Super Admin')
 
     let body: any
     try { body = await req.json() } catch { return fail('Request body tidak sah') }
@@ -46,6 +47,10 @@ Deno.serve(async (req: Request) => {
     if (action === 'update') {
       const { target_id, full_name, staff_role, specialization, registration_no, phone, is_active } = body
       if (!target_id) return fail('target_id diperlukan')
+      // Block promote ke super_admin via UI
+      if (staff_role === 'super_admin') {
+        return fail('Promote ke Super Admin hanya boleh via SQL oleh developer')
+      }
 
       const updates: any = {}
       if (full_name      !== undefined) updates.full_name       = full_name
@@ -74,17 +79,24 @@ Deno.serve(async (req: Request) => {
 
     // ── DELETE ────────────────────────────────────────────────
     if (action === 'delete') {
+      // Hanya Manager dan Super Admin boleh padam staff
+      if (!['manager', 'super_admin'].includes(profile.staff_role)) {
+        return fail('Akses ditolak: hanya Manager atau Super Admin boleh padam staff')
+      }
+
       const { target_id } = body
       if (!target_id) return fail('target_id diperlukan')
       if (target_id === user.id) return fail('Tidak boleh padam akaun sendiri')
 
-      // Cek target — admin tidak boleh dipadam
+      // Cek target — Super Admin hanya boleh dipadam oleh Super Admin lain
       const { data: targetProfile } = await adminClient
         .from('psy_profiles')
         .select('staff_role')
         .eq('id', target_id)
         .single()
-      if (targetProfile?.staff_role === 'admin') return fail('Akaun Admin tidak boleh dipadam')
+      if (targetProfile?.staff_role === 'super_admin' && profile.staff_role !== 'super_admin') {
+        return fail('Akaun Super Admin hanya boleh dipadam oleh Super Admin lain')
+      }
 
       // Bersihkan SEMUA FK references supaya delete tak fail
       await Promise.allSettled([
@@ -98,6 +110,10 @@ Deno.serve(async (req: Request) => {
         adminClient.from('psy_risk_alerts').update({ created_by: null }).eq('created_by', target_id),
         adminClient.from('psy_risk_alerts').update({ acknowledged_by: null }).eq('acknowledged_by', target_id),
         adminClient.from('psy_payments').update({ user_id: null }).eq('user_id', target_id),
+        // RBAC v2 tables
+        adminClient.from('psy_user_overrides').delete().eq('user_id', target_id),
+        adminClient.from('psy_user_overrides').update({ granted_by: null }).eq('granted_by', target_id),
+        adminClient.from('psy_permission_audit').update({ actor_id: null }).eq('actor_id', target_id),
       ])
 
       // Delete profile dulu (kerana psy_patients.user_id → psy_profiles tanpa cascade)
@@ -107,19 +123,39 @@ Deno.serve(async (req: Request) => {
 
       // Delete auth user
       const { error: delErr } = await adminClient.auth.admin.deleteUser(target_id)
-      if (delErr) return fail(delErr.message)
+
+      // Profile dah berjaya dipadam pada tahap ini. Kalau auth delete gagal,
+      // staff tak nampak dalam UI tapi auth.users masih ada (orphan).
+      // Log dan return success separa supaya UI tak buang error.
+      let warning: string | null = null
+      if (delErr) {
+        console.error('auth.admin.deleteUser failed for', target_id, delErr)
+        warning = 'Profile dipadam tapi auth user gagal: ' + delErr.message
+      }
 
       await adminClient.from('psy_audit_log').insert({
         actor_id: user.id, actor_role: 'staff', action: 'staff.deleted',
-        target: target_id, meta: {}
+        target: target_id, meta: { auth_delete_error: delErr?.message || null }
       }).then(() => {}, () => {})
 
-      return ok({ success: true, message: 'Akaun staff dipadam' })
+      return ok({
+        success: true,
+        message: warning ? 'Akaun dipadam dari sistem (auth orphan — semak Supabase Auth)' : 'Akaun staff dipadam',
+        warning,
+      })
     }
 
     // ── CREATE ────────────────────────────────────────────────
     if (!body.email || !body.full_name) return fail('Email dan nama wajib diisi')
-    if (!['admin','doctor','coach','manager'].includes(body.staff_role)) return fail('Staff role tidak sah')
+
+    // super_admin tak boleh dicipta via UI/API — hanya via SQL terus oleh developer
+    if (body.staff_role === 'super_admin') {
+      return fail('Akaun Super Admin hanya boleh dicipta via SQL oleh developer untuk keselamatan')
+    }
+    // Validate role exists in psy_roles
+    const { data: roleRow } = await adminClient.from('psy_roles')
+      .select('code, is_active').eq('code', body.staff_role).maybeSingle()
+    if (!roleRow || !roleRow.is_active) return fail('Staff role tidak sah atau tidak aktif')
 
     let newUserId: string
 

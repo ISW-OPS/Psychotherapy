@@ -27,12 +27,12 @@ window.kycApproved = false;
 
 async function resolveKycApproved() {
   const p = window.patientRecord;
-  if (!p) return false;
   // Active patients (staff-created and claimed, or fully approved) skip KYC
-  if (p.status === 'active') return true;
-  // Pending patients: must have an approved KYC submission
+  if (p?.status === 'active') return true;
+  // Check latest KYC submission status (handles patient without patientRecord yet)
   const subs = await dbQuery('psy_kyc_submissions', {
     eq: { user_id: window.currentUser.id },
+    order: { col: 'created_at', ascending: false },
     limit: 1,
   }).catch(() => []);
   return subs[0]?.status === 'approved';
@@ -152,27 +152,16 @@ async function initPatient(pageId, titleSub) {
     }
   }
 
-  // Still no record — fresh signup, create a new patient record (retry on MRN conflict)
+  // Still no record — fresh signup, create new patient. MRN auto-assigned by DB trigger.
   if (patients.length === 0) {
-    for (let attempt = 0; attempt < 5; attempt++) {
-      try {
-        const { data: latest } = await window.db.from('psy_patients')
-          .select('mrn').like('mrn', 'P-%').order('mrn', { ascending: false }).limit(1);
-        const lastNum = parseInt(latest?.[0]?.mrn?.replace(/\D/g, '')) || 0;
-        const mrn = 'P-' + String(lastNum + 1 + attempt).padStart(3, '0');
-        const newPatient = await dbInsert('psy_patients', {
-          user_id: window.currentUser.id,
-          mrn,
-          status: 'pending_kyc',
-        });
-        patients = [newPatient];
-        break;
-      } catch (e) {
-        if (!/duplicate|unique/i.test(e.message || '')) {
-          console.warn('Auto-create patient failed:', e.message);
-          break;
-        }
-      }
+    try {
+      const newPatient = await dbInsert('psy_patients', {
+        user_id: window.currentUser.id,
+        status: 'pending_kyc',
+      });
+      patients = [newPatient];
+    } catch (e) {
+      console.warn('Auto-create patient failed:', e.message);
     }
   }
 
@@ -187,12 +176,12 @@ async function initPatient(pageId, titleSub) {
   // Hide KYC + KOB nav items conditionally
   const kobStatus = window.patientRecord?.kob_status || 'na';
   // Hide nav items conditionally:
-  // - kyc: hide after approved
-  // - kob: hide for grandfathered patients only
-  // Pakej Rawatan kekal visible — patient boleh browse continuity / pakej seterusnya
+  // - kyc: hide after approved (dah lulus, tak perlu form lagi)
+  // - kob: tunjuk kalau KYC dah lulus (boleh tempah) ATAU dah dalam flow KOB (pending_payment+).
+  //        Sembunyi hanya untuk patient yang KYC belum lulus DAN tiada KOB flow.
   const navItems = getNavItems('patient').filter(item => {
     if (item.id === 'kyc' && window.kycApproved) return false;
-    if (item.id === 'kob' && kobStatus === 'na') return false;
+    if (item.id === 'kob' && kobStatus === 'na' && !window.kycApproved) return false;
     return true;
   });
   renderNavbar('patient', window.currentUser, navItems, pageId);

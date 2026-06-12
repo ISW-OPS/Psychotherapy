@@ -10,10 +10,16 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'plan', url: 'plan.html', icon: '💊', label: 'My Treatment Plan' },
     { id: 'routine', url: 'routine.html', icon: '🕐', label: 'Jadual Harian' },
     { id: 'pakej', url: 'pakej.html', icon: '🗂️', label: 'Pakej Rawatan' },
-    { id: 'checkin',    url: 'checkin.html',    icon: '✅', label: 'Daily Check-in' },
-    { id: 'kepatuhan', url: 'kepatuhan.html', icon: '📊', label: 'Kepatuhan Saya' },
-    { id: 'vitals',    url: 'vitals.html',    icon: '📉', label: 'Bacaan Saya' },
-    { id: 'library', url: 'library.html', icon: '📚', label: 'Self-Help Library' },
+    { id: 'kepatuhan', url: 'kepatuhan.html', icon: '📝', label: 'Catatan Harian' },
+    { id: 'vitals', url: 'vitals.html', icon: '📉', label: 'Bacaan Saya' },
+    { id: 'rekod-perubatan', url: 'rekod-perubatan.html', icon: '🩻', label: 'Rekod Perubatan' },
+    {
+      id: 'library', url: 'library.html', icon: '📚', label: 'Self-Help Library', children: [
+        { id: 'video', url: 'library.html?tab=video', icon: '📹', label: 'Video' },
+        { id: 'artikel', url: 'library.html?tab=article', icon: '📝', label: 'Artikel' },
+        { id: 'faq', url: 'faq.html', icon: '❓', label: 'FAQ' },
+      ]
+    },
     { id: 'shop', url: 'shop.html', icon: '🛒', label: 'Product' },
     { id: 'payment', url: 'payment.html', icon: '💳', label: 'Payment' },
     { id: 'psy_orders', url: 'orders.html', icon: '📦', label: 'Orders & Tracking' },
@@ -21,7 +27,6 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'pulangan', url: 'pulangan.html', icon: '🍯', label: 'Pulangan Botol' },
     { id: 'surat', url: 'surat.html', icon: '📜', label: 'Surat Rasmi' },
     { id: 'kyc', url: 'kyc.html', icon: '🆔', label: 'KYC Form' },
-    { id: 'profile', url: 'profile.html', icon: '👤', label: 'Profile' },
   ],
   staff: [
     { id: 'dashboard', url: 'dashboard.html', icon: '🏥', label: 'Dashboard' },
@@ -30,131 +35,85 @@ const NAV_ITEMS_BY_ROLE = {
 };
 
 // ── Staff nav (grouped) ──────────────────────────────────
-const NAV_GROUPS_BY_ROLE = {
-
-  staff_admin: [
-    { group: 'UTAMA', collapsible: false, items: [
-      { id: 'dashboard',        url: 'dashboard.html',    icon: '🏠', label: 'Dashboard' },
-      { id: 'psy_patients',     url: 'patients.html',     icon: '👥', label: 'Pesakit' },
-      { id: 'kyc_forms',        url: 'kyc-list.html',     icon: '🆔', label: 'KYC & Onboarding' },
-      { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Kalendar & Jadual' },
-      { id: 'kob_slots',        url: 'kob-slots.html',    icon: '⏰', label: 'Slot Konsultasi' },
-      { id: 'kepatuhan',        url: 'kepatuhan.html',    icon: '📊', label: 'Kepatuhan' },
-    ]},
-    { group: 'OPERASI', collapsible: true, items: [
-      { id: 'pakej',         url: 'pakej.html',         icon: '🗂️', label: 'Pakej Rawatan' },
-      { id: 'psy_products',  url: 'products.html',      icon: '🛍️', label: 'Produk' },
-      { id: 'inventory',     url: 'inventory.html',     icon: '🏭', label: 'Inventori' },
-      { id: 'psy_orders',    url: 'orders.html',        icon: '📦', label: 'Orders & Tracking' },
-      { id: 'surat',         url: 'surat.html',         icon: '📜', label: 'Surat Rasmi' },
-    ]},
-    { group: 'KOMUNIKASI', collapsible: true, items: [
-      { id: 'announcements', url: 'announcements.html', icon: '📢', label: 'Pengumuman' },
-      { id: 'library',       url: 'library.html',       icon: '📚', label: 'Self-Help Library' },
-    ]},
-    { group: 'KEWANGAN', collapsible: true, items: [
-      { id: 'payment_admin', url: 'payment-admin.html', icon: '💳', label: 'Pembayaran' },
-    ]},
-    { group: 'LAPORAN', collapsible: true, items: [
-      { id: 'governance',    url: 'governance.html',    icon: '📈', label: 'Governance' },
-      { id: 'staff_stats',   url: 'staff-stats.html',   icon: '📊', label: 'Statistik & Analitik' },
-      { id: 'pakej_laporan', url: 'pakej-laporan.html', icon: '📦', label: 'Laporan Pakej' },
-      { id: 'audit',         url: 'audit.html',         icon: '🔒', label: 'Audit Log' },
-    ]},
-    { group: 'SISTEM', collapsible: true, items: [
-      { id: 'staff_mgmt', url: 'staff_management.html', icon: '👨‍⚕️', label: 'Manage Staff' },
-      { id: 'issue',      url: 'issue.html',            icon: '⚠️', label: 'Report Issue' },
-      { id: 'profile',    url: 'profile.html',          icon: '👤', label: 'Profile' },
-    ]},
-  ],
-
-  staff_manager: [
-    { group: 'UTAMA', collapsible: false, items: [
-      { id: 'dashboard',        url: 'dashboard.html',    icon: '🏠', label: 'Dashboard' },
-      { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
-      { id: 'staff_stats',      url: 'staff-stats.html',  icon: '📈', label: 'Laporan Ringkas' },
-    ]},
-    { group: 'OPERASI KONSULTASI', collapsible: true, items: [
+// Master staff nav — ikut matrix yang user define.
+// Semua role guna struktur sama; RBAC `pageAllowed()` filter mana item nampak.
+const STAFF_NAV_MASTER = [
+  {
+    group: 'UTAMA', collapsible: false, items: [
+      { id: 'dashboard', url: 'dashboard.html', icon: '🏠', label: 'Dashboard' },
       { id: 'psy_patients', url: 'patients.html', icon: '👥', label: 'Pesakit' },
-    ]},
-    { group: 'INVENTORI & BEKALAN', collapsible: true, items: [
-      { id: 'inventory',    url: 'inventory.html',    icon: '🏭', label: 'Inventori' },
-      { id: 'psy_orders',   url: 'orders.html',       icon: '📦', label: 'Pesanan & Bekalan' },
-      { id: 'pulangan',     url: 'pulangan.html',     icon: '🍯', label: 'Pulangan Botol' },
-    ]},
-    { group: 'KANDUNGAN', collapsible: true, items: [
+      { id: 'kyc_forms', url: 'kyc-list.html', icon: '🆔', label: 'KYC' },
+      { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Kalendar & Jadual' },
+      { id: 'plan_week', url: 'weekly-plan.html', icon: '📋', label: 'Weekly Plan' },
+      { id: 'kob_list', url: 'kob-list.html', icon: '🩺', label: 'Sesi KOB' },
+      { id: 'kepatuhan', url: 'kepatuhan.html', icon: '📊', label: 'Kepatuhan' },
+    ]
+  },
+  {
+    group: 'OPERASI', collapsible: true, items: [
+      { id: 'pakej', url: 'pakej.html', icon: '🗂️', label: 'Pakej Rawatan' },
+      { id: 'psy_products', url: 'products.html', icon: '🛍️', label: 'Produk' },
+      { id: 'inventory', url: 'inventory.html', icon: '🏭', label: 'Inventori' },
+      { id: 'psy_orders', url: 'orders.html', icon: '📦', label: 'Orders & Tracking' },
+      { id: 'pulangan', url: 'pulangan.html', icon: '🍯', label: 'Pulangan Botol' },
+      { id: 'payment_admin', url: 'payment-admin.html', icon: '💳', label: 'Pembayaran' },
+    ]
+  },
+  {
+    group: 'KOMUNIKASI', collapsible: true, items: [
       { id: 'announcements', url: 'announcements.html', icon: '📢', label: 'Pengumuman' },
-      { id: 'surat',         url: 'surat.html',         icon: '📜', label: 'Surat Rasmi' },
-    ]},
-    { group: 'SISTEM', collapsible: true, items: [
-      { id: 'issue',   url: 'issue.html',   icon: '⚠️', label: 'Report Issue' },
-      { id: 'profile', url: 'profile.html', icon: '👤', label: 'Profile' },
-    ]},
-  ],
-
-  staff_coach: [
-    { group: 'UTAMA', collapsible: false, items: [
-      { id: 'dashboard',        url: 'dashboard.html',    icon: '🏠', label: 'Dashboard' },
-      { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
-      { id: 'plan_week',        url: 'weekly-plan.html',  icon: '📋', label: 'Weekly Plan' },
-    ]},
-    { group: 'OPERASI KONSULTASI', collapsible: true, items: [
-      { id: 'assignments', url: 'assignments.html', icon: '👥', label: 'Patients' },
-    ]},
-    { group: 'INVENTORI & BEKALAN', collapsible: true, items: [
-      { id: 'inventory',    url: 'inventory.html',    icon: '🏭', label: 'Inventori' },
-      { id: 'pulangan',     url: 'pulangan.html',     icon: '🍯', label: 'Pulangan Botol' },
-    ]},
-    { group: 'KANDUNGAN', collapsible: true, items: [
+      { id: 'library', url: 'library.html', icon: '📚', label: 'Library' },
+    ]
+  },
+  {
+    group: 'LAPORAN', collapsible: true, items: [
+      { id: 'governance', url: 'governance.html', icon: '📈', label: 'Governance' },
+      { id: 'staff_stats', url: 'staff-stats.html', icon: '📊', label: 'Statistik' },
+      { id: 'pakej_laporan', url: 'pakej-laporan.html', icon: '📦', label: 'Laporan Pakej' },
+      { id: 'issue', url: 'issue.html', icon: '⚠️', label: 'Report Issue' },
+    ]
+  },
+  {
+    group: 'PENTADBIRAN', collapsible: true, items: [
       { id: 'surat', url: 'surat.html', icon: '📜', label: 'Surat Rasmi' },
-    ]},
-    { group: 'SISTEM', collapsible: true, items: [
-      { id: 'issue',   url: 'issue.html',   icon: '⚠️', label: 'Report Issue' },
-      { id: 'profile', url: 'profile.html', icon: '👤', label: 'Profile' },
-    ]},
-  ],
+      { id: 'closures', url: 'closures.html', icon: '🚫', label: 'Penutupan Klinik' },
+      { id: 'kob_slots', url: 'kob-slots.html', icon: '⏰', label: 'Slot Konsultasi' },
+      { id: 'staff_mgmt', url: 'staff_management.html', icon: '👨‍⚕️', label: 'Manage Staff' },
+    ]
+  },
+  {
+    group: 'SISTEM', collapsible: true, items: [
+      { id: 'peranan', url: 'peranan.html', icon: '🔐', label: 'Peranan & Kebenaran' },
+      { id: 'audit_kebenaran', url: 'audit-kebenaran.html', icon: '📋', label: 'Audit Kebenaran' },
+      { id: 'audit', url: 'audit.html', icon: '🔒', label: 'Audit Log' },
+    ]
+  },
+];
 
-  staff_doctor: [
-    { group: 'UTAMA', collapsible: false, items: [
-      { id: 'dashboard',        url: 'dashboard.html',    icon: '🏠', label: 'Dashboard' },
-      { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Jadual Sesi' },
-      { id: 'plan_week',        url: 'weekly-plan.html',  icon: '📋', label: 'Weekly Plan' },
-    ]},
-    { group: 'OPERASI KONSULTASI', collapsible: true, items: [
-      { id: 'psy_patients', url: 'patients.html',  icon: '👥', label: 'Pesakit' },
-      { id: 'kyc_forms',    url: 'kyc-list.html',  icon: '🆔', label: 'KYC Form' },
-      { id: 'kob_list',     url: 'kob-list.html',  icon: '🩺', label: 'Rawatan & Sesi' },
-      { id: 'kob_slots',    url: 'kob-slots.html', icon: '⏰', label: 'Slot Konsultasi' },
-    ]},
-    { group: 'INVENTORI & BEKALAN', collapsible: true, items: [
-      { id: 'inventory',    url: 'inventory.html',    icon: '🏭', label: 'Inventori' },
-    ]},
-    { group: 'KANDUNGAN', collapsible: true, items: [
-      { id: 'library',       url: 'library.html',       icon: '📖', label: 'Self-Help Library' },
-      { id: 'announcements', url: 'announcements.html', icon: '📢', label: 'Pengumuman' },
-      { id: 'surat',         url: 'surat.html',         icon: '📜', label: 'Surat Rasmi' },
-    ]},
-    { group: 'SISTEM', collapsible: true, items: [
-      { id: 'issue',   url: 'issue.html',   icon: '⚠️', label: 'Report Issue' },
-      { id: 'profile', url: 'profile.html', icon: '👤', label: 'Profile' },
-    ]},
-  ],
+const NAV_GROUPS_BY_ROLE = {
+  staff_admin: STAFF_NAV_MASTER,
+  staff_manager: STAFF_NAV_MASTER,
+  staff_coach: STAFF_NAV_MASTER,
+  staff_doctor: STAFF_NAV_MASTER,
+  staff_super_admin: STAFF_NAV_MASTER,
 };
 
 const ROLE_CONFIG = {
-  patient:      { label: 'My Health',      icon: '🏥' },
-  staff_admin:  { label: 'Admin Portal',   icon: '⚕' },
-  staff_coach:  { label: 'Coach Portal',   icon: '⚕' },
-  staff_doctor: { label: 'Doctor Portal',  icon: '⚕' },
-  staff_manager:{ label: 'Manager Portal', icon: '⚕' },
-  staff:        { label: 'Staff Portal',   icon: '⚕' },
+  patient: { label: 'My Health', icon: '🏥' },
+  staff_admin: { label: 'Admin Portal', icon: '⚕' },
+  staff_coach: { label: 'Coach Portal', icon: '⚕' },
+  staff_doctor: { label: 'Doctor Portal', icon: '⚕' },
+  staff_manager: { label: 'Manager Portal', icon: '⚕' },
+  staff_super_admin: { label: 'Super Admin Portal', icon: '⚕' },
+  staff: { label: 'Staff Portal', icon: '⚕' },
 };
 
 const STAFF_ROLE_BADGE = {
-  admin:   { label: 'Admin',   cls: 'role-accent-bg' },
-  coach:   { label: 'Coach',   cls: 'role-accent-bg' },
-  doctor:  { label: 'Doctor',  cls: 'role-accent-bg' },
+  admin: { label: 'Admin', cls: 'role-accent-bg' },
+  coach: { label: 'Coach', cls: 'role-accent-bg' },
+  doctor: { label: 'Doctor', cls: 'role-accent-bg' },
   manager: { label: 'Manager', cls: 'role-accent-bg' },
+  super_admin: { label: 'Super Admin', cls: 'role-accent-bg' },
 };
 
 // Get flat nav items for a role (for goTo, staffCanAccess, badge counts)
@@ -172,8 +131,8 @@ function staffCanAccess(staffRole, pageId) {
 
 // ── Render one nav group (staff sidebar) ─────────────────
 function renderNavGroup(group, roleKey, activeScreen) {
-  const safeId    = `${roleKey}_${group.group.replace(/[^a-zA-Z0-9]/g, '_')}`;
-  const lsKey     = `isw_nav_${safeId}`;
+  const safeId = `${roleKey}_${group.group.replace(/[^a-zA-Z0-9]/g, '_')}`;
+  const lsKey = `isw_nav_${safeId}`;
   const hasActive = group.items.some(i => i.id === activeScreen);
   const collapsed = group.collapsible && !hasActive && localStorage.getItem(lsKey) === '1';
 
@@ -191,12 +150,12 @@ function renderNavGroup(group, roleKey, activeScreen) {
        </div>`;
 
   const items = group.items.map(item => `
-    <button onclick="goTo('${item.id}')" title="${item.label}"
-      class="nav-item ${item.id === activeScreen ? 'active' : ''} w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-ink/60 hover:bg-ink/5 transition-colors">
+    <a href="${item.url}" title="${item.label}"
+      class="nav-item no-underline ${item.id === activeScreen ? 'active' : ''} w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-ink/60 hover:bg-ink/5 transition-colors">
       <span class="flex-shrink-0 text-base">${item.icon}</span>
       <span class="nav-label font-medium">${item.label}</span>
       <span id="nav-badge-${item.id}" class="hidden ml-auto nav-label min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold bg-terracotta text-white flex items-center justify-center"></span>
-    </button>`).join('');
+    </a>`).join('');
 
   return `
     <div class="mb-1">
@@ -208,8 +167,8 @@ function renderNavGroup(group, roleKey, activeScreen) {
 }
 
 function toggleNavGroup(safeId) {
-  const lsKey   = `isw_nav_${safeId}`;
-  const items   = document.getElementById('ngi-' + safeId);
+  const lsKey = `isw_nav_${safeId}`;
+  const items = document.getElementById('ngi-' + safeId);
   const chevron = document.getElementById('ngc-' + safeId);
   if (!items) return;
   const isNowCollapsed = items.classList.toggle('hidden');
@@ -217,16 +176,26 @@ function toggleNavGroup(safeId) {
   localStorage.setItem(lsKey, isNowCollapsed ? '1' : '0');
 }
 
+// Toggle nav parent (patient) — buka/tutup anak
+function togglePNav(id) {
+  const items = document.getElementById('pni-' + id);
+  const chev = document.getElementById('pnv-' + id);
+  if (!items) return;
+  const collapsed = items.classList.toggle('hidden');
+  if (chev) chev.classList.toggle('-rotate-90', collapsed);
+  localStorage.setItem('isw_pnav_' + id, collapsed ? '0' : '1');
+}
+
 // ── Main navbar renderer ──────────────────────────────────
 function renderNavbar(role, user, navItems, activeScreen) {
   const staffRole = user.staff_role || null;
-  const roleKey   = (role === 'staff' && staffRole) ? `staff_${staffRole}` : role;
+  const roleKey = (role === 'staff' && staffRole) ? `staff_${staffRole}` : role;
 
   if (!navItems) navItems = getNavItems(role, staffRole);
 
-  const cfg      = ROLE_CONFIG[roleKey] || ROLE_CONFIG[role] || ROLE_CONFIG.patient;
+  const cfg = ROLE_CONFIG[roleKey] || ROLE_CONFIG[role] || ROLE_CONFIG.patient;
   const initials = (user.full_name || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
-  const badge    = role === 'staff' && staffRole ? STAFF_ROLE_BADGE[staffRole] : null;
+  const badge = role === 'staff' && staffRole ? STAFF_ROLE_BADGE[staffRole] : null;
 
   const sidebar = document.getElementById('sidebar');
   if (!sidebar) return;
@@ -241,11 +210,11 @@ function renderNavbar(role, user, navItems, activeScreen) {
   // Patient: persistent bottom nav bar
   if (role === 'patient' && !document.getElementById('pat-bottom-nav')) {
     const BOT_ITEMS = [
-      { href: 'dashboard.html', icon: '🏠', label: 'Home',     id: 'dashboard' },
-      { href: 'plan.html',      icon: '💊', label: 'Plan',     id: 'plan' },
-      { href: 'checkin.html',   icon: '✅', label: 'Check-in', id: 'checkin' },
-      { href: 'shop.html',      icon: '🛒', label: 'Shop',     id: 'shop' },
-      { href: 'profile.html',   icon: '👤', label: 'Profil',   id: 'profile' },
+      { href: 'dashboard.html', icon: '🏠', label: 'Home', id: 'dashboard' },
+      { href: 'plan.html', icon: '💊', label: 'Plan', id: 'plan' },
+      { href: 'kepatuhan.html', icon: '📝', label: 'Catatan', id: 'kepatuhan' },
+      { href: 'library.html', icon: '📚', label: 'Library', id: 'library' },
+      { href: 'profile.html', icon: '👤', label: 'Profil', id: 'profile' },
     ];
     if (!document.getElementById('pat-bottom-nav-style')) {
       const s = document.createElement('style');
@@ -265,19 +234,29 @@ function renderNavbar(role, user, navItems, activeScreen) {
   }
 
   const logoPath = window.location.pathname.includes('/roles/') ? '../../image/Logo_ISW.png' : 'image/Logo_ISW.png';
-  const isStaff  = role === 'staff';
+  const isStaff = role === 'staff';
 
   if (isStaff) {
-    const groups   = NAV_GROUPS_BY_ROLE[roleKey] || [];
-    const navHtml  = groups.length
+    const rawGroups = NAV_GROUPS_BY_ROLE[roleKey] || [];
+    // Filter items by RBAC permission (super_admin nampak semua)
+    const isSA = staffRole === 'super_admin';
+    const groups = rawGroups
+      .map(g => ({
+        ...g,
+        items: g.items.filter(item =>
+          isSA || typeof window.pageAllowed !== 'function' || window.pageAllowed(item.id)
+        ),
+      }))
+      .filter(g => g.items.length > 0);
+    const navHtml = groups.length
       ? groups.map(g => renderNavGroup(g, roleKey, activeScreen)).join('')
       : navItems.map(item => `
-          <button onclick="goTo('${item.id}')" title="${item.label}"
-            class="nav-item ${item.id === activeScreen ? 'active' : ''} w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-ink/60 hover:bg-ink/5 transition-colors">
+          <a href="${item.url}" title="${item.label}"
+            class="nav-item no-underline ${item.id === activeScreen ? 'active' : ''} w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-ink/60 hover:bg-ink/5 transition-colors">
             <span class="flex-shrink-0 text-base">${item.icon}</span>
             <span class="nav-label font-medium">${item.label}</span>
             <span id="nav-badge-${item.id}" class="hidden ml-auto nav-label min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold bg-terracotta text-white flex items-center justify-center"></span>
-          </button>`).join('');
+          </a>`).join('');
 
     sidebar.innerHTML = `
       <div class="nav-brand px-4 py-3 border-b border-ink/8 flex items-center gap-3">
@@ -342,21 +321,61 @@ function renderNavbar(role, user, navItems, activeScreen) {
         </div>
       </div>
       <nav class="flex-1 overflow-y-auto p-2 space-y-0.5">
-        ${navItems.map(item => `
-          <button onclick="goTo('${item.id}')" title="${item.label}"
-            class="nav-item ${item.id === activeScreen ? 'active' : ''} w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-white/80 hover:bg-white/10">
-            <span class="flex-shrink-0">${item.icon}</span>
-            <span class="nav-label">${item.label}</span>
-            <span id="nav-badge-${item.id}" class="hidden ml-auto min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold bg-terracotta text-white flex items-center justify-center"></span>
-          </button>
-        `).join('')}
+        ${(() => {
+        const badge = (id) => `<span id="nav-badge-${id}" class="hidden ml-auto min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold bg-terracotta text-white flex items-center justify-center"></span>`;
+        const topLink = (it, extra = '') => `
+            <a href="${it.url}" title="${it.label}"
+              class="nav-item no-underline ${it.id === activeScreen ? 'active' : ''} ${extra} flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-white/80 hover:bg-white/10">
+              <span class="flex-shrink-0">${it.icon}</span><span class="nav-label">${it.label}</span>${badge(it.id)}
+            </a>`;
+        const childLink = (it) => `
+            <a href="${it.url}" title="${it.label}"
+              class="nav-item no-underline ${it.id === activeScreen ? 'active' : ''} w-full flex items-center gap-3 pl-9 pr-3 py-1.5 rounded-lg text-[13px] text-white/65 hover:bg-white/10">
+              <span class="flex-shrink-0">${it.icon}</span><span class="nav-label">${it.label}</span>${badge(it.id)}
+            </a>`;
+        return navItems.map(item => {
+          if (!(item.children && item.children.length)) return topLink(item, 'w-full');
+          const childActive = item.id === activeScreen || item.children.some(c => c.id === activeScreen);
+          const expanded = childActive || localStorage.getItem('isw_pnav_' + item.id) === '1';
+          return `
+              <div>
+                <div class="flex items-center gap-0.5">
+                  ${topLink(item, 'flex-1 min-w-0')}
+                  <button onclick="togglePNav('${item.id}')" title="Buka/tutup" class="p-2 rounded-lg text-white/45 hover:text-white hover:bg-white/10 flex-shrink-0">
+                    <svg id="pnv-${item.id}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" class="w-3.5 h-3.5 transition-transform duration-200 ${expanded ? '' : '-rotate-90'}"><polyline points="6 9 12 15 18 9"/></svg>
+                  </button>
+                </div>
+                <div id="pni-${item.id}" class="${expanded ? '' : 'hidden'} space-y-0.5 mt-0.5">
+                  ${item.children.map(childLink).join('')}
+                </div>
+              </div>`;
+        }).join('');
+      })()}
       </nav>
     `;
   }
 
+  // Top bar global (logo + carian + notif + user) — ganti per-page header
+  buildTopbar(user, cfg, role, staffRole);
+
   window.db?.auth.getUser().then(({ data }) => {
     const uid = data?.user?.id;
     if (uid) loadNavBadges(role, staffRole, uid);
+  });
+
+  // Auto-scroll sidebar supaya active nav item visible (tak perlu user scroll cari)
+  requestAnimationFrame(() => {
+    const activeBtn = sidebar.querySelector('.nav-item.active');
+    if (activeBtn) {
+      const navScroll = activeBtn.closest('nav');
+      if (navScroll) {
+        const btnTop = activeBtn.offsetTop;
+        const btnHeight = activeBtn.offsetHeight;
+        const navHeight = navScroll.clientHeight;
+        // Scroll supaya active item di tengah viewport nav
+        navScroll.scrollTop = Math.max(0, btnTop - (navHeight / 2) + (btnHeight / 2));
+      }
+    }
   });
 }
 
@@ -414,7 +433,7 @@ async function loadNavBadges(role, _staffRole, userId) {
       const openCount = (issuesRes.data || []).filter(i => !closedIds.has(i.id)).length;
       setNavBadge('issue', openCount);
     }
-  } catch (e) {}
+  } catch (e) { }
 }
 
 function setHeaderBack(url, label) {
@@ -437,40 +456,54 @@ function setPageTitle(title, subtitle) {
   if (s && subtitle !== undefined) s.textContent = subtitle;
 }
 
-function renderHeader(title, subtitle) {
-  const header = document.getElementById('page-header');
-  if (!header) return;
-  header.innerHTML = `
-    <div class="flex items-center gap-3 min-w-0">
-      <button onclick="toggleMobileSidebar()" aria-label="Menu"
-        class="flex-shrink-0 md:hidden w-9 h-9 flex items-center justify-center rounded-lg hover:bg-ink/8 text-ink/60">
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <path d="M2 4h14M2 9h14M2 14h14"/>
-        </svg>
+// ── Global top bar (logo + carian + notifikasi + user) — penuh lebar, atas sidebar ──
+function buildTopbar(user, cfg, role, staffRole) {
+  const initials = (user.full_name || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  const logoPath = window.location.pathname.includes('/roles/') ? '../../image/Logo_ISW.png' : 'image/Logo_ISW.png';
+  const roleLabel = (role === 'staff' && staffRole) ? (STAFF_ROLE_BADGE[staffRole]?.label || 'Staff') : 'Pesakit';
+  let bar = document.getElementById('global-topbar');
+  if (!bar) { bar = document.createElement('header'); bar.id = 'global-topbar'; document.body.appendChild(bar); }
+  bar.className = 'fixed top-0 left-0 right-0 h-14 bg-white border-b border-ink/10 z-30 flex items-stretch';
+  bar.innerHTML = `
+    <div class="w-64 flex-shrink-0 flex items-center gap-2 px-4 border-r border-ink/8">
+      <button onclick="toggleMobileSidebar()" aria-label="Menu" class="md:hidden w-9 h-9 flex items-center justify-center rounded-lg hover:bg-ink/8 text-ink/60">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 4h14M2 9h14M2 14h14"/></svg>
       </button>
-      <div class="min-w-0">
-        <h2 id="page-title" class="font-bold text-base lg:text-lg truncate">${title}</h2>
-        <p id="page-sub" class="text-[11px] text-ink/60 truncate">${subtitle}</p>
-      </div>
+      <div class="w-9 h-9 bg-white rounded-lg border border-ink/10 flex items-center justify-center p-1 flex-shrink-0"><img src="${logoPath}" class="w-full h-full object-contain" onerror="this.outerHTML='⚕'"></div>
+      <div class="leading-tight min-w-0 hidden lg:block"><div class="font-bold text-sm text-ink truncate">Ibnu Sina Wellness</div><div class="text-[10px] text-ink/50 truncate">${cfg.label}</div></div>
     </div>
-    <div class="flex items-center gap-2 flex-shrink-0">
-      <button id="notif-btn" onclick="toggleNotifPanel()" class="relative p-2 hover:bg-gray-100 rounded-lg" title="Notifikasi">
+    <div class="flex-1 min-w-0"></div>
+    <div class="flex items-center gap-2 px-4 flex-shrink-0">
+      ${role === 'staff' ? `<a href="inbox.html" id="wa-inbox-btn" class="relative p-2 hover:bg-ink/5 rounded-lg" title="WhatsApp Inbox">
+        <span class="text-lg">💬</span>
+        <span id="wa-inbox-badge" class="hidden absolute top-0.5 right-1 min-w-[16px] h-4 bg-green text-white text-[9px] font-bold rounded-full flex items-center justify-center px-0.5"></span>
+      </a>` : ''}
+      <button id="notif-btn" onclick="toggleNotifPanel()" class="relative p-2 hover:bg-ink/5 rounded-lg" title="Notifikasi">
         <span class="text-lg">🔔</span>
-        <span id="notif-badge" class="hidden absolute -top-0.5 -right-0.5 min-w-[16px] h-4 bg-terracotta text-white text-[9px] font-bold rounded-full flex items-center justify-center px-0.5"></span>
+        <span id="notif-badge" class="hidden absolute top-0.5 right-1 min-w-[16px] h-4 bg-terracotta text-white text-[9px] font-bold rounded-full flex items-center justify-center px-0.5"></span>
       </button>
-      <button onclick="logout()" title="Log Keluar"
-        class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-ink/60 hover:text-terracotta hover:bg-terracotta/10 border border-ink/10 hover:border-terracotta/30 transition-colors">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
-        </svg>
-        <span class="hidden sm:inline">Log Keluar</span>
-      </button>
-    </div>
-  `;
+      <div class="relative">
+        <button onclick="toggleUserMenu(event)" class="flex items-center gap-2 px-1.5 py-1 rounded-lg hover:bg-ink/5">
+          <div class="w-9 h-9 rounded-full bg-navy text-white text-xs font-bold flex items-center justify-center flex-shrink-0">${initials}</div>
+          <div class="hidden sm:block leading-tight min-w-0 text-left"><div class="text-sm font-semibold text-ink truncate max-w-[130px]">${user.full_name || 'User'}</div><div class="text-[10px] text-ink/50 truncate">${roleLabel}</div></div>
+          <svg class="w-3.5 h-3.5 text-ink/40 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div id="user-menu" class="hidden absolute right-0 top-12 z-40 bg-white border border-ink/10 rounded-xl shadow-lg py-1 w-44">
+          <a href="profile.html" class="flex items-center gap-2.5 px-4 py-2.5 text-sm text-ink hover:bg-ink/5">👤 <span>Profil</span></a>
+          <button onclick="logout()" class="w-full text-left flex items-center gap-2.5 px-4 py-2.5 text-sm text-terracotta hover:bg-terracotta/5">⎋ <span>Log Keluar</span></button>
+        </div>
+      </div>
+    </div>`;
+  // Layout: tolak kandungan ke bawah top bar + sidebar mula bawah top bar
+  document.body.style.paddingTop = '3.5rem';
+  const sb = document.getElementById('sidebar');
+  if (sb) { sb.style.top = '3.5rem'; sb.style.height = 'calc(100vh - 3.5rem)'; }
+  document.querySelectorAll('#sidebar .nav-brand, #sidebar .nav-user').forEach(el => { el.style.display = 'none'; });
+  const ph = document.getElementById('page-header'); if (ph) ph.style.display = 'none';
+  // Notif panel (sekali sahaja)
   if (!document.getElementById('notif-panel')) {
     const panel = document.createElement('div');
-    panel.id = 'notif-panel';
-    panel.className = 'hidden fixed inset-0 z-50';
+    panel.id = 'notif-panel'; panel.className = 'hidden fixed inset-0 z-50';
     panel.innerHTML = `
       <div class="absolute inset-0" onclick="closeNotifPanel()"></div>
       <div id="notif-drawer" class="absolute top-0 right-0 bottom-0 w-full max-w-sm bg-white shadow-2xl flex flex-col translate-x-full transition-transform duration-300">
@@ -486,6 +519,48 @@ function renderHeader(title, subtitle) {
     document.body.appendChild(panel);
   }
   loadNotifBadge();
+  if (role === 'staff') { loadWaBadge(); subscribeWaBadge(); }
+}
+
+// ── WhatsApp unread badge (ikon 💬 top bar) ──────────────
+function setWaBadge(count) {
+  const el = document.getElementById('wa-inbox-badge');
+  if (!el) return;
+  if (count > 0) { el.textContent = count > 99 ? '99+' : String(count); el.classList.remove('hidden'); }
+  else el.classList.add('hidden');
+}
+async function loadWaBadge() {
+  if (!window.db) return;
+  try {
+    const { count } = await window.db.from('psy_wa_conversations')
+      .select('id', { count: 'exact', head: true }).gt('unread', 0);
+    setWaBadge(count || 0);
+  } catch (_) { }
+}
+function subscribeWaBadge() {
+  if (!window.db || window._waBadgeSub) return;
+  window._waBadgeSub = true;
+  window.db.channel('wa-badge')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'psy_wa_conversations' }, () => loadWaBadge())
+    .subscribe();
+}
+
+function toggleUserMenu(e) {
+  if (e) e.stopPropagation();
+  document.getElementById('user-menu')?.classList.toggle('hidden');
+}
+if (!window._userMenuListener) {
+  window._userMenuListener = true;
+  document.addEventListener('click', (e) => {
+    const m = document.getElementById('user-menu');
+    if (m && !m.classList.contains('hidden') && !e.target.closest('#user-menu') && !e.target.closest('button[onclick*="toggleUserMenu"]')) m.classList.add('hidden');
+  });
+}
+
+// Per-page header tak diperlukan lagi (top bar global ambil alih) — sembunyi sahaja.
+function renderHeader(title, subtitle) {
+  const header = document.getElementById('page-header');
+  if (header) header.style.display = 'none';
 }
 
 const NOTIF_ICONS = { appointment: '📅', order: '📦', plan: '💊', system: '📢', default: '🔔' };
@@ -517,7 +592,7 @@ async function loadNotifPanel() {
         <div class="flex-1 min-w-0">
           <div class="text-sm font-semibold leading-snug">${n.title}</div>
           ${n.body ? `<div class="text-xs text-ink/60 mt-0.5">${n.body}</div>` : ''}
-          <div class="text-[10px] text-ink/40 mt-1">${new Date(n.created_at).toLocaleString('ms-MY',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+          <div class="text-[10px] text-ink/40 mt-1">${new Date(n.created_at).toLocaleString('ms-MY', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
         </div>
         ${!n.is_read ? '<span class="w-2 h-2 bg-navy rounded-full flex-shrink-0 mt-2"></span>' : ''}
       </div>
@@ -540,7 +615,7 @@ async function markAllRead() {
 }
 
 function toggleNotifPanel() {
-  const panel  = document.getElementById('notif-panel');
+  const panel = document.getElementById('notif-panel');
   const drawer = document.getElementById('notif-drawer');
   if (!panel || !drawer) return;
   const isHidden = panel.classList.contains('hidden');
@@ -556,7 +631,7 @@ async function notify(userId, type, title, body, link) {
 }
 
 function closeNotifPanel() {
-  const panel  = document.getElementById('notif-panel');
+  const panel = document.getElementById('notif-panel');
   const drawer = document.getElementById('notif-drawer');
   if (!panel || !drawer) return;
   drawer.style.transform = 'translateX(100%)';
@@ -587,6 +662,14 @@ function toggleSidebar() {
   localStorage.setItem('isw_sidebar_collapsed', collapsed ? '1' : '0');
 }
 
+// ── PWA bootstrap — pull in /shared/pwa.js on every role page ──
+if (!window.__iswPwaInit && !document.getElementById('isw-pwa-loader')) {
+  const s = document.createElement('script');
+  s.id = 'isw-pwa-loader';
+  s.src = '/shared/pwa.js';
+  document.head.appendChild(s);
+}
+
 function goTo(screen) {
   // Search in grouped staff nav
   for (const groups of Object.values(NAV_GROUPS_BY_ROLE)) {
@@ -595,8 +678,9 @@ function goTo(screen) {
       if (found?.url) { window.location.href = found.url; return; }
     }
   }
-  // Patient flat nav
-  const patItem = (NAV_ITEMS_BY_ROLE.patient || []).find(n => n.id === screen);
+  // Patient nav (termasuk anak/children)
+  const patFlat = (NAV_ITEMS_BY_ROLE.patient || []).flatMap(n => n.children ? [n, ...n.children] : [n]);
+  const patItem = patFlat.find(n => n.id === screen);
   if (patItem?.url) { window.location.href = patItem.url; return; }
 
   // SPA fallback

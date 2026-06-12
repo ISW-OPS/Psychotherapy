@@ -99,6 +99,29 @@
         <!-- ── FORM BODY ─────────────────────────────── -->
         <div id="kyc-body">
 
+          <!-- Referral code — kad menonjol dengan hook ganjaran -->
+          <div class="rounded-2xl border-2 border-navy/25 bg-gradient-to-br from-navy/5 to-green/10 p-4 md:p-5 mb-6">
+            <div class="flex items-start gap-3">
+              <div class="text-2xl leading-none">🎁</div>
+              <div class="flex-1 min-w-0">
+                <div class="font-bold text-sm">Ada kawan rujuk anda?</div>
+                <p class="text-xs text-ink/60 mt-0.5">
+                  Masukkan kod rujukan mereka — <strong>anda berdua layak dapat ganjaran!</strong>
+                  <span class="text-ink/40">(Pilihan)</span>
+                </p>
+                <div class="flex gap-2 mt-3 max-w-md">
+                  <input id="f-referral" maxlength="16"
+                    oninput="this.value=this.value.toUpperCase();resetReferralCheck()"
+                    class="flex-1 px-3 py-2 border border-ink/20 rounded-lg text-sm font-mono uppercase bg-white"
+                    placeholder="cth: N7K23H5P">
+                  <button type="button" onclick="verifyReferralCode()" id="f-referral-btn"
+                    class="px-4 py-2 bg-navy text-white rounded-lg text-sm font-semibold hover:bg-navy-dark whitespace-nowrap">Semak</button>
+                </div>
+                <p id="f-referral-msg" class="text-xs mt-2 hidden"></p>
+              </div>
+            </div>
+          </div>
+
           <!-- ROW 1: Patient (top) → Waris (below) — stack vertically to reduce confusion -->
           <div class="space-y-8 mb-5">
 
@@ -433,6 +456,7 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
+<script src="../../shared/referral.js"></script>
 <script src="_shared.js"></script>
 <script>
 let existingKYC  = null;
@@ -644,6 +668,44 @@ function validateAll() {
 function fv(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
 function sv(id, v) { const el = document.getElementById(id); if (el) el.value = v || ''; }
 
+// ── Referral code ──────────────────────────────────────
+function normRef(v) { return String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+
+function resetReferralCheck() {
+  const msg = document.getElementById('f-referral-msg');
+  if (msg) { msg.classList.add('hidden'); msg.textContent = ''; }
+}
+
+async function verifyReferralCode() {
+  const input = document.getElementById('f-referral');
+  const code = normRef(input.value);
+  input.value = code;
+  const msg = document.getElementById('f-referral-msg');
+  const btn = document.getElementById('f-referral-btn');
+  if (!code) { resetReferralCheck(); return; }
+  btn.disabled = true; btn.textContent = 'Menyemak...';
+  try {
+    const { data, error } = await window.db.rpc('check_referral_code', { p_code: code });
+    const row = Array.isArray(data) ? data[0] : data;
+    msg.classList.remove('hidden');
+    if (!error && row && row.valid) {
+      msg.className = 'text-xs mt-2 text-green-600 font-semibold';
+      msg.textContent = row.referrer_name
+        ? `✓ Kod sah — dirujuk oleh ${row.referrer_name}`
+        : '✓ Kod sah';
+    } else {
+      msg.className = 'text-xs mt-2 text-red-500 font-semibold';
+      msg.textContent = '✗ Kod tidak dijumpai. Sila semak semula.';
+    }
+  } catch (e) {
+    msg.classList.remove('hidden');
+    msg.className = 'text-xs mt-2 text-red-500';
+    msg.textContent = 'Ralat menyemak kod. Cuba lagi.';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Semak';
+  }
+}
+
 function fillForm(k) {
   sv('f-name',       k.patient_name);
   sv('f-ic',         k.ic_number);
@@ -696,6 +758,7 @@ function fillForm(k) {
   sv('f-condition', k.medical_condition);
   sv('f-duration',   k.condition_duration);
   sv('f-medical-notes', k.medical_notes);
+  sv('f-referral', k.referred_by_code);
   if (k.marital_status) setMarital(k.marital_status);
   document.getElementById('c-data').checked     = !!k.consent_data_processing;
   document.getElementById('c-health').checked   = !!k.consent_health_records;
@@ -748,6 +811,7 @@ function buildPayload() {
     consent_health_records:  document.getElementById('c-health').checked,
     consent_research:        document.getElementById('c-research').checked,
     consent_marketing:       document.getElementById('c-marketing').checked,
+    referred_by_code:        normRef(fv('f-referral')) || null,
     status: 'pending',
   };
 }

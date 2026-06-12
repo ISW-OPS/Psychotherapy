@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Audit Kebenaran</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🔍</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-5">
+
+        <div>
+          <h2 class="text-2xl font-bold text-ink">Audit Kebenaran</h2>
+          <p class="text-sm text-ink/55 mt-1">Log semua perubahan peranan dan kebenaran dalam sistem.</p>
+        </div>
+
+        <!-- Filter bar -->
+        <div class="bg-white rounded-2xl border border-ink/10 p-4">
+          <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
+            <div>
+              <label class="text-[10px] uppercase text-ink/55 font-semibold">Dari</label>
+              <input id="f-from" type="date" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm outline-none">
+            </div>
+            <div>
+              <label class="text-[10px] uppercase text-ink/55 font-semibold">Hingga</label>
+              <input id="f-to" type="date" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm outline-none">
+            </div>
+            <div>
+              <label class="text-[10px] uppercase text-ink/55 font-semibold">Jenis Aktiviti</label>
+              <select id="f-action" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm outline-none">
+                <option value="">Semua</option>
+                <option value="grant">Grant (role)</option>
+                <option value="revoke">Revoke (role)</option>
+                <option value="user_grant">User: Grant</option>
+                <option value="user_revoke">User: Revoke</option>
+                <option value="user_clear_override">User: Clear Override</option>
+                <option value="user_role_change">User: Tukar Peranan</option>
+                <option value="role_create">Cipta Peranan</option>
+                <option value="role_update">Edit Peranan</option>
+                <option value="role_delete">Padam Peranan</option>
+                <option value="role_activate">Aktifkan Peranan</option>
+                <option value="role_deactivate">Nyahaktifkan Peranan</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-[10px] uppercase text-ink/55 font-semibold">Modul</label>
+              <select id="f-module" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm outline-none">
+                <option value="">Semua modul</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-[10px] uppercase text-ink/55 font-semibold">Carian Aktor</label>
+              <input id="f-actor" type="text" placeholder="Email atau nama..."
+                class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm outline-none">
+            </div>
+          </div>
+          <div class="flex justify-end mt-3 gap-2">
+            <button onclick="resetFilters()" class="text-sm px-4 py-2 border border-ink/20 rounded-xl hover:bg-cream">↻ Reset</button>
+            <button onclick="loadAudit()" class="bg-navy text-white text-sm px-4 py-2.5 rounded-xl font-semibold hover:bg-navy-dark">🔍 Tapis</button>
+          </div>
+        </div>
+
+        <!-- Summary cards -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3" id="kpi-grid"></div>
+
+        <!-- Table -->
+        <div class="bg-white rounded-2xl border border-ink/10 overflow-x-auto">
+          <table class="data w-full text-sm">
+            <thead>
+              <tr>
+                <th class="text-left py-3 px-4 text-[10px] uppercase tracking-wide text-ink/50">Tarikh & Masa</th>
+                <th class="text-left py-3 px-4 text-[10px] uppercase tracking-wide text-ink/50">Aktiviti</th>
+                <th class="text-left py-3 px-4 text-[10px] uppercase tracking-wide text-ink/50">Sasaran</th>
+                <th class="text-left py-3 px-4 text-[10px] uppercase tracking-wide text-ink/50">Modul / Aksi</th>
+                <th class="text-left py-3 px-4 text-[10px] uppercase tracking-wide text-ink/50">Aktor</th>
+                <th class="text-left py-3 px-4 text-[10px] uppercase tracking-wide text-ink/50">Perincian</th>
+              </tr>
+            </thead>
+            <tbody id="audit-body"></tbody>
+          </table>
+          <div class="px-5 py-3 border-t border-ink/8 flex items-center justify-between text-xs text-ink/55">
+            <span id="audit-count">—</span>
+            <span class="text-ink/40">Memaparkan 200 rekod terkini berdasarkan filter</span>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+let userMap = {};
+let roleMap = {};
+let moduleMap = {};
+let actionMap = {};
+
+const ACTION_CHIP = {
+  grant:               { label: 'Grant',         cls: 'bg-green-light text-green-dark' },
+  revoke:              { label: 'Revoke',        cls: 'bg-terracotta-light text-terracotta' },
+  user_grant:          { label: 'User Grant',    cls: 'bg-green-light text-green-dark' },
+  user_revoke:         { label: 'User Revoke',   cls: 'bg-terracotta-light text-terracotta' },
+  user_clear_override: { label: 'Clear Override',cls: 'bg-ink/10 text-ink/60' },
+  user_clear_all_overrides: { label: 'Clear All', cls: 'bg-ink/10 text-ink/60' },
+  user_role_change:    { label: 'Tukar Peranan', cls: 'bg-navy-light text-navy' },
+  role_create:         { label: 'Cipta Peranan', cls: 'bg-teal/15 text-teal' },
+  role_update:         { label: 'Edit Peranan',  cls: 'bg-gold/30 text-gold-dark' },
+  role_delete:         { label: 'Padam Peranan', cls: 'bg-terracotta-light text-terracotta' },
+  role_activate:       { label: 'Aktif',         cls: 'bg-green-light text-green-dark' },
+  role_deactivate:     { label: 'Nyahaktif',     cls: 'bg-ink/10 text-ink/60' },
+};
+
+(async function init() {
+  const user = await checkAuth('staff');
+  if (!user) return;
+  if (user.staff_role !== 'super_admin') {
+    alert('Halaman ini hanya untuk Super Admin.');
+    window.location.href = 'dashboard.html';
+    return;
+  }
+  document.getElementById('app-loading')?.classList.add('hidden');
+  document.getElementById('app-shell')?.classList.remove('hidden');
+  document.body.classList.add('role-' + user.staff_role);
+  renderNavbar('staff', user, null, 'audit_kebenaran');
+  renderHeader('Audit Kebenaran', 'Super Admin');
+
+  // Default: last 30 days
+  const to = new Date();
+  const from = new Date(); from.setDate(from.getDate() - 30);
+  document.getElementById('f-from').value = from.toISOString().split('T')[0];
+  document.getElementById('f-to').value   = to.toISOString().split('T')[0];
+
+  await loadLookups();
+  await loadAudit();
+})();
+
+async function loadLookups() {
+  const [uRes, rRes, mRes, aRes] = await Promise.all([
+    window.db.from('psy_profiles').select('id,full_name,email'),
+    window.db.from('psy_roles').select('code,label'),
+    window.db.from('psy_modules').select('code,label,icon'),
+    window.db.from('psy_actions').select('code,label'),
+  ]);
+  (uRes.data || []).forEach(u => userMap[u.id] = u);
+  (rRes.data || []).forEach(r => roleMap[r.code] = r);
+  (mRes.data || []).forEach(m => moduleMap[m.code] = m);
+  (aRes.data || []).forEach(a => actionMap[a.code] = a);
+
+  const fm = document.getElementById('f-module');
+  fm.innerHTML = '<option value="">Semua modul</option>' +
+    (mRes.data || []).map(m => `<option value="${m.code}">${m.label}</option>`).join('');
+}
+
+async function loadAudit() {
+  let q = window.db.from('psy_permission_audit').select('*').order('created_at',{ascending:false}).limit(200);
+  const fFrom   = document.getElementById('f-from').value;
+  const fTo     = document.getElementById('f-to').value;
+  const fAction = document.getElementById('f-action').value;
+  const fModule = document.getElementById('f-module').value;
+  const fActor  = document.getElementById('f-actor').value.trim().toLowerCase();
+  if (fFrom)   q = q.gte('created_at', fFrom + 'T00:00:00');
+  if (fTo)     q = q.lte('created_at', fTo   + 'T23:59:59');
+  if (fAction) q = q.eq('action', fAction);
+  if (fModule) q = q.eq('module_code', fModule);
+  const { data, error } = await q;
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  let rows = data || [];
+  if (fActor) rows = rows.filter(r => (r.actor_email || '').toLowerCase().includes(fActor));
+  renderAudit(rows);
+  renderKpis(rows);
+}
+
+function renderKpis(rows) {
+  const grantCnt   = rows.filter(r => r.action === 'grant' || r.action === 'user_grant').length;
+  const revokeCnt  = rows.filter(r => r.action === 'revoke' || r.action === 'user_revoke').length;
+  const roleChange = rows.filter(r => r.action === 'user_role_change').length;
+  document.getElementById('kpi-grid').innerHTML = `
+    <div class="bg-white rounded-2xl border border-ink/10 p-4">
+      <div class="text-[10px] uppercase text-ink/55 font-semibold">Jumlah Aktiviti</div>
+      <div class="text-2xl font-bold mt-1">${rows.length}</div>
+    </div>
+    <div class="bg-white rounded-2xl border border-ink/10 p-4">
+      <div class="text-[10px] uppercase text-ink/55 font-semibold">Grant</div>
+      <div class="text-2xl font-bold mt-1 text-green-dark">${grantCnt}</div>
+    </div>
+    <div class="bg-white rounded-2xl border border-ink/10 p-4">
+      <div class="text-[10px] uppercase text-ink/55 font-semibold">Revoke</div>
+      <div class="text-2xl font-bold mt-1 text-terracotta">${revokeCnt}</div>
+    </div>
+    <div class="bg-white rounded-2xl border border-ink/10 p-4">
+      <div class="text-[10px] uppercase text-ink/55 font-semibold">Tukar Peranan</div>
+      <div class="text-2xl font-bold mt-1 text-navy">${roleChange}</div>
+    </div>
+  `;
+}
+
+function renderAudit(rows) {
+  document.getElementById('audit-count').textContent = `${rows.length} rekod`;
+  if (!rows.length) {
+    document.getElementById('audit-body').innerHTML = `<tr><td colspan="6" class="text-center py-10 text-ink/40">Tiada aktiviti dijumpai.</td></tr>`;
+    return;
+  }
+  document.getElementById('audit-body').innerHTML = rows.map(r => {
+    const chip = ACTION_CHIP[r.action] || { label: r.action, cls: 'bg-ink/10 text-ink/60' };
+    let target = r.target_id;
+    if (r.target_type === 'user') {
+      const u = userMap[r.target_id];
+      target = u ? `<div><div class="font-semibold">${u.full_name || u.email}</div><div class="text-[10px] text-ink/50">${u.email || ''}</div></div>` : r.target_id;
+    } else if (r.target_type === 'role') {
+      const ro = roleMap[r.target_id];
+      target = `<span class="chip bg-navy-light text-navy text-[10px]">${ro?.label || r.target_id}</span>`;
+    }
+    const mod = r.module_code ? (moduleMap[r.module_code]?.label || r.module_code) : '—';
+    const act = r.action_code ? (actionMap[r.action_code]?.label || r.action_code) : '';
+    const modAct = r.module_code ? `<div class="text-xs">${mod}${act ? ' · ' + act : ''}</div>` : '—';
+    const details = r.details ? `<details class="text-xs"><summary class="cursor-pointer text-navy hover:underline">Lihat</summary><pre class="mt-1 bg-cream/40 p-2 rounded text-[10px] overflow-x-auto">${JSON.stringify(r.details, null, 2)}</pre></details>` : '—';
+    return `<tr class="hover:bg-cream/30">
+      <td class="px-4 py-2 text-xs whitespace-nowrap">${new Date(r.created_at).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})}</td>
+      <td class="px-4 py-2"><span class="chip ${chip.cls} text-[10px]">${chip.label}</span></td>
+      <td class="px-4 py-2 text-xs">${target}</td>
+      <td class="px-4 py-2">${modAct}</td>
+      <td class="px-4 py-2 text-xs">${r.actor_email || '(sistem)'}</td>
+      <td class="px-4 py-2">${details}</td>
+    </tr>`;
+  }).join('');
+}
+
+function resetFilters() {
+  const to = new Date();
+  const from = new Date(); from.setDate(from.getDate() - 30);
+  document.getElementById('f-from').value = from.toISOString().split('T')[0];
+  document.getElementById('f-to').value   = to.toISOString().split('T')[0];
+  document.getElementById('f-action').value = '';
+  document.getElementById('f-module').value = '';
+  document.getElementById('f-actor').value = '';
+  loadAudit();
+}
+</script>
+</body>
+</html>

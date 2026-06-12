@@ -126,12 +126,20 @@
         } else {
           stock = 0; // tiada source — default 0 (out of stock) supaya selamat
         }
+        // Promo aktif jika ada harga promo > 0 dan belum tamat (promo_until kosong = tiada had)
+        const today = new Date().toISOString().slice(0, 10);
+        const origPrice = Number(r.price);
+        const promoPrice = Number(r.promo_price || 0);
+        const onPromo = promoPrice > 0 && promoPrice < origPrice && (!r.promo_until || r.promo_until >= today);
         return {
           id: r.product_id,
           cat: r.category,
           name: r.name,
-          desc: r.description,
-          price: Number(r.price),
+          desc: r.description || '',
+          price: onPromo ? promoPrice : origPrice,  // harga berkesan (dipakai troli & bayaran)
+          origPrice,
+          onPromo,
+          promoUntil: r.promo_until || null,
           icon: r.icon,
           image_url: r.image_url || null,
           bg: r.bg_color,
@@ -182,6 +190,15 @@
           : lowStock
           ? `<span class="absolute top-2 right-2 chip bg-gold/30 text-gold-dark text-[10px]">Tinggal ${p.stock}</span>`
           : '';
+        const promoBadge = p.onPromo
+          ? '<span class="absolute top-2 left-2 chip bg-red-600 text-white text-[10px] font-bold">PROMO</span>'
+          : '';
+        const priceHtml = p.onPromo
+          ? `<div class="leading-tight">
+               <span class="text-xs text-ink/40 line-through">RM ${p.origPrice.toFixed(2)}</span>
+               <div class="font-bold text-sm text-red-600">RM ${p.price.toFixed(2)}</div>
+             </div>`
+          : `<div class="font-bold text-sm">RM ${p.price.toFixed(2)}</div>`;
         const btn = outOfStock
           ? '<button disabled class="bg-ink/15 text-ink/40 text-xs px-3 py-1.5 rounded-lg cursor-not-allowed">Habis</button>'
           : `<button onclick="addToCart('${p.id}')" class="bg-navy text-white text-xs px-3 py-1.5 rounded-lg hover:bg-navy-dark">+ Add</button>`;
@@ -189,13 +206,14 @@
     <div class="bg-white rounded-xl overflow-hidden border border-ink/10 hover:shadow-md flex flex-col ${outOfStock ? 'opacity-60' : ''}">
       <div class="relative h-32 ${p.bg || 'bg-cream'} flex items-center justify-center overflow-hidden">
         ${p.image_url ? `<img src="${p.image_url}" class="w-full h-full object-cover">` : `<span class="text-5xl">${p.icon || '📦'}</span>`}
+        ${promoBadge}
         ${stockBadge}
       </div>
       <div class="p-4 flex-1 flex flex-col">
         <div class="font-semibold text-sm">${p.name}</div>
         <div class="text-xs text-ink/60 mt-1 flex-1">${p.desc}</div>
         <div class="flex items-center justify-between mt-3 pt-3 border-t border-ink/5">
-          <div class="font-bold text-sm">RM ${p.price.toFixed(2)}</div>
+          ${priceHtml}
           ${btn}
         </div>
       </div>

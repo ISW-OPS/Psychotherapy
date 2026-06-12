@@ -128,21 +128,40 @@
           <p class="text-xs text-ink/60 mb-4">Bagaimana minggu rawatan ini bagi anda?</p>
 
           <!-- Submitted state -->
-          <div id="feedback-done" class="hidden text-center py-4 space-y-2">
-            <div id="feedback-done-stars" class="text-3xl"></div>
-            <p class="text-sm text-ink/70 font-medium">Terima kasih atas feedback anda!</p>
+          <div id="feedback-done" class="hidden py-4 space-y-2">
+            <div id="feedback-done-aspects" class="space-y-1.5 text-sm"></div>
+            <p class="text-sm text-ink/70 font-medium mt-2">Terima kasih atas feedback anda!</p>
             <p id="feedback-done-comment" class="text-xs text-ink/50 italic"></p>
             <button onclick="editFeedback()" class="text-xs text-navy underline mt-1">Tukar feedback</button>
           </div>
 
           <!-- Input state -->
           <div id="feedback-form" class="space-y-4">
-            <div class="flex gap-3 text-3xl" id="feedback-stars">
-              <span class="cursor-pointer select-none" onclick="setWeekRating(1)">☆</span>
-              <span class="cursor-pointer select-none" onclick="setWeekRating(2)">☆</span>
-              <span class="cursor-pointer select-none" onclick="setWeekRating(3)">☆</span>
-              <span class="cursor-pointer select-none" onclick="setWeekRating(4)">☆</span>
-              <span class="cursor-pointer select-none" onclick="setWeekRating(5)">☆</span>
+            <div class="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <div class="text-sm font-semibold text-ink">🧑‍🏫 Coach</div>
+                <div class="text-[11px] text-ink/50">Bimbingan & layanan coach</div>
+              </div>
+              <div class="flex gap-2 text-3xl" id="stars-coach">
+                <span class="cursor-pointer select-none" onclick="setAspectRating('coach',1)">☆</span>
+                <span class="cursor-pointer select-none" onclick="setAspectRating('coach',2)">☆</span>
+                <span class="cursor-pointer select-none" onclick="setAspectRating('coach',3)">☆</span>
+                <span class="cursor-pointer select-none" onclick="setAspectRating('coach',4)">☆</span>
+                <span class="cursor-pointer select-none" onclick="setAspectRating('coach',5)">☆</span>
+              </div>
+            </div>
+            <div class="flex items-center justify-between gap-3 flex-wrap border-t border-ink/8 pt-3">
+              <div>
+                <div class="text-sm font-semibold text-ink">📦 Bekalan</div>
+                <div class="text-[11px] text-ink/50">Kualiti & penghantaran bekalan</div>
+              </div>
+              <div class="flex gap-2 text-3xl" id="stars-bekalan">
+                <span class="cursor-pointer select-none" onclick="setAspectRating('bekalan',1)">☆</span>
+                <span class="cursor-pointer select-none" onclick="setAspectRating('bekalan',2)">☆</span>
+                <span class="cursor-pointer select-none" onclick="setAspectRating('bekalan',3)">☆</span>
+                <span class="cursor-pointer select-none" onclick="setAspectRating('bekalan',4)">☆</span>
+                <span class="cursor-pointer select-none" onclick="setAspectRating('bekalan',5)">☆</span>
+              </div>
             </div>
             <textarea id="feedback-comment" rows="3" placeholder="Komen atau cadangan (optional)..."
               class="w-full border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none bg-white resize-none"></textarea>
@@ -177,6 +196,7 @@
 let activePlan = null;
 let weekNumber = 1;
 let weekEntry = null;
+let sessionRows = [];   // semua baris sesi minggu ini (1–2); weekEntry = sesi aktif
 let weekStart = null;
 let weekEnd = null;
 let checkInState = {};
@@ -215,16 +235,18 @@ async function loadWeekDetail() {
   weekStart = range.start;
   weekEnd = range.end;
 
-  // Week entry (coach-recorded)
+  // Week entry (coach-recorded) — boleh ada 2 sesi/minggu
   const progress = await dbQuery('psy_plan_weekly_progress', {
     eq: { plan_id: activePlan.id, week_number: weekNumber },
+    order: { col: 'session_day' },
   }).catch(() => []);
-  weekEntry = progress[0] || null;
+  sessionRows = progress || [];
+  weekEntry = sessionRows[0] || null;
 
   renderHero();
   renderCoachNotes();
   renderCoachingSchedule();
-  await Promise.all([loadVitals(), loadSessions(), loadSoap(), loadCheckIns(), loadCompliance()]);
+  await Promise.all([loadVitals(), loadSessions(), loadSoap(), loadCheckIns(), loadCompliance(), loadWeeklyFeedback()]);
   renderFeedbackSection();
   renderChecklists();
 }
@@ -254,19 +276,29 @@ function renderCoachingSchedule() {
 
   section.classList.remove('hidden');
 
+  // Item boleh string atau objek ({item_name/kit_name/name, qty, kit_id})
+  const labelOf = v => {
+    if (typeof v === 'string') return v;
+    if (!v || typeof v !== 'object') return String(v);
+    const name = v.item_name || v.kit_name || v.name || v.label || v.title || '';
+    const qty = v.qty ? ` ×${v.qty}` : '';
+    const kitIcon = v.kit_id ? '🧰 ' : '';
+    return kitIcon + name + qty;
+  };
+
   const readonlyList = (title, type, values, prefix, colorClass, bgClass) => {
     if (!(values || []).length) return '';
     return `<div class="rounded-lg ${bgClass} border p-3">
       <div class="text-xs font-bold ${colorClass} mb-2">${title}</div>
       <div class="space-y-2">
-        ${values.map((text, idx) => {
+        ${values.map((value, idx) => {
           const key = `${prefix}_${type}_${idx}`;
           const done = !!checks[key];
           const reason = checks[key + '_reason'] || '';
           return `<div>
             <div class="flex items-start gap-2 text-xs">
               <span class="flex-shrink-0">${done ? '✅' : '☐'}</span>
-              <span class="${done ? 'line-through text-ink/40' : 'text-ink/80'}">${escHtml(text)}</span>
+              <span class="${done ? 'line-through text-ink/40' : 'text-ink/80'}">${escHtml(labelOf(value))}</span>
             </div>
             ${!done && reason ? `<div class="mt-1 ml-5 text-xs text-gold-dark italic">Alasan: ${escHtml(reason)}</div>` : ''}
           </div>`;
@@ -311,7 +343,7 @@ async function loadSoap() {
 
 async function loadCompliance() {
   const rows = await dbQuery('psy_plan_compliance', {
-    eq: { plan_id: activePlan.id, week_number: weekNumber },
+    eq: { plan_id: activePlan.id, week_number: weekNumber, session_day: weekEntry?.session_day || 1 },
   }).catch(() => []);
   const c = rows[0];
   const host = document.getElementById('compliance-view');
@@ -364,7 +396,18 @@ function renderHero() {
     else countdown = `<span class="text-sm font-semibold text-gold-dark">Hari ini 📍</span>`;
   }
 
+  // Tab sesi (Jum / Sab) — hanya jika >1 sesi minggu ini
+  const sDay = r => r?.session_date ? new Date(r.session_date).toLocaleDateString('ms-MY', { weekday: 'short' }) : `Sesi ${r?.session_day || 1}`;
+  const tabs = sessionRows.length > 1
+    ? `<div class="flex gap-2 mb-3 flex-wrap">${sessionRows.map((r, i) => {
+        const active = weekEntry?.id === r.id;
+        const dstr = r.session_date ? new Date(r.session_date).toLocaleDateString('ms-MY',{day:'2-digit',month:'short'}) : '';
+        return `<button onclick="selectSession(${i})" class="px-3 py-1.5 rounded-lg text-xs font-bold border transition ${active ? 'bg-navy text-white border-navy' : 'border-ink/20 text-ink/60 hover:bg-cream'}">${sDay(r)} <span class="font-normal opacity-75">${dstr}</span></button>`;
+      }).join('')}</div>`
+    : '';
+
   document.getElementById('week-hero').innerHTML = `
+    ${tabs}
     <div class="flex items-start justify-between gap-4 flex-wrap">
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-2 flex-wrap mb-1">
@@ -407,6 +450,18 @@ function renderHero() {
     cardsGrid.style.opacity = isFuture ? '0.45' : '';
     cardsGrid.style.pointerEvents = isFuture ? 'none' : '';
   }
+}
+
+// Tukar sesi aktif — Nota Coach, Kepatuhan & checklist ikut sesi ini
+function selectSession(i) {
+  if (!sessionRows[i]) return;
+  weekEntry = sessionRows[i];
+  renderHero();
+  renderCoachNotes();
+  renderCoachingSchedule();
+  renderChecklists();
+  loadCompliance();
+  // Feedback = per minggu (psy_feedback), tak berubah ikut sesi
 }
 
 let weekVitals = [];
@@ -652,29 +707,50 @@ async function toggleCheckIn(pillar, index, goalText) {
   }
 }
 
-// ==================== WEEKLY FEEDBACK ====================
-let weekRating = 0;
+// ==================== WEEKLY FEEDBACK (per aspek) ====================
+// Disimpan dalam psy_feedback (feedback_type='weekly') — sumber yang sama
+// dibaca oleh staff-stats (Rating Coach) & feedback.html. Per MINGGU.
+const FEEDBACK_ASPECTS = [
+  { key: 'coach',   icon: '🧑‍🏫', label: 'Coach' },
+  { key: 'bekalan', icon: '📦',  label: 'Bekalan' },
+];
+let aspectRatings = { coach: 0, bekalan: 0 };
+let weeklyFeedback = null;   // baris psy_feedback sedia ada untuk minggu ini
 
-function setWeekRating(n) {
-  weekRating = n;
-  document.querySelectorAll('#feedback-stars span').forEach((s, i) => {
+function setAspectRating(aspect, n) {
+  aspectRatings[aspect] = n;
+  document.querySelectorAll(`#stars-${aspect} span`).forEach((s, i) => {
     s.textContent = i < n ? '⭐' : '☆';
   });
 }
 
+async function loadWeeklyFeedback() {
+  const rows = await dbQuery('psy_feedback', {
+    eq: { plan_id: activePlan.id, week_number: weekNumber, feedback_type: 'weekly' },
+  }).catch(() => []);
+  weeklyFeedback = rows[0] || null;
+}
+
 function renderFeedbackSection() {
-  const rating = weekEntry?.feedback_rating;
-  const comment = weekEntry?.feedback_comment;
-  if (rating) {
+  const fb = weeklyFeedback;
+  const hasFeedback = fb && (fb.coach_rating || fb.supply_rating || fb.rating);
+
+  if (hasFeedback) {
     document.getElementById('feedback-form').classList.add('hidden');
     document.getElementById('feedback-done').classList.remove('hidden');
-    document.getElementById('feedback-done-stars').textContent = '⭐'.repeat(rating) + '☆'.repeat(5 - rating);
-    document.getElementById('feedback-done-comment').textContent = comment || '';
+    const rows = [
+      { label: '🧑‍🏫 Coach',   val: fb.coach_rating  || 0 },
+      { label: '📦 Bekalan',  val: fb.supply_rating || 0 },
+    ];
+    document.getElementById('feedback-done-aspects').innerHTML = rows.map(r =>
+      `<div class="flex items-center justify-between gap-2"><span class="text-ink/70">${r.label}</span><span>${'⭐'.repeat(r.val)}${'☆'.repeat(5 - r.val)}</span></div>`
+    ).join('');
+    document.getElementById('feedback-done-comment').textContent = fb.comment || '';
   } else {
     document.getElementById('feedback-form').classList.remove('hidden');
     document.getElementById('feedback-done').classList.add('hidden');
-    weekRating = 0;
-    document.querySelectorAll('#feedback-stars span').forEach(s => s.textContent = '☆');
+    aspectRatings = { coach: 0, bekalan: 0 };
+    document.querySelectorAll('#stars-coach span, #stars-bekalan span').forEach(s => s.textContent = '☆');
     document.getElementById('feedback-comment').value = '';
   }
 }
@@ -682,26 +758,42 @@ function renderFeedbackSection() {
 function editFeedback() {
   document.getElementById('feedback-done').classList.add('hidden');
   document.getElementById('feedback-form').classList.remove('hidden');
-  setWeekRating(weekEntry?.feedback_rating || 0);
-  document.getElementById('feedback-comment').value = weekEntry?.feedback_comment || '';
+  setAspectRating('coach',   weeklyFeedback?.coach_rating  || 0);
+  setAspectRating('bekalan', weeklyFeedback?.supply_rating || 0);
+  document.getElementById('feedback-comment').value = weeklyFeedback?.comment || '';
 }
 
 async function submitWeekFeedback() {
-  if (!weekRating) { banner('Sila pilih rating bintang', 'error'); return; }
+  if (!aspectRatings.coach && !aspectRatings.bekalan) {
+    banner('Sila beri rating untuk Coach atau Bekalan', 'error'); return;
+  }
   const comment = document.getElementById('feedback-comment').value.trim();
+  const vals = [aspectRatings.coach, aspectRatings.bekalan].filter(v => v > 0);
+  const overall = vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
+  // coach_id/name diambil dari sesi (diisi bila coach rekod nota)
+  const coachSrc = sessionRows.find(r => r.coach_id || r.coach_name) || weekEntry || {};
+
+  const payload = {
+    patient_id:    patientRecord.id,
+    user_id:       window.currentUser?.id || patientRecord.user_id || null,
+    patient_name:  window.currentUser?.full_name || null,
+    feedback_type: 'weekly',
+    week_number:   weekNumber,
+    plan_id:       activePlan.id,
+    coach_id:      coachSrc.coach_id || null,
+    coach_name:    coachSrc.coach_name || null,
+    rating:        overall,
+    coach_rating:  aspectRatings.coach || null,
+    supply_rating: aspectRatings.bekalan || null,
+    comment:       comment || null,
+  };
+
   try {
-    const data = { feedback_rating: weekRating, feedback_comment: comment || null, feedback_at: new Date().toISOString() };
-    if (weekEntry?.id) {
-      await dbUpdate('psy_plan_weekly_progress', weekEntry.id, data);
-      weekEntry = { ...weekEntry, ...data };
+    if (weeklyFeedback?.id) {
+      await dbUpdate('psy_feedback', weeklyFeedback.id, payload);
+      weeklyFeedback = { ...weeklyFeedback, ...payload };
     } else {
-      const row = await dbInsert('psy_plan_weekly_progress', {
-        plan_id: activePlan.id,
-        patient_id: patientRecord.id,
-        week_number: weekNumber,
-        ...data,
-      });
-      weekEntry = row;
+      weeklyFeedback = await dbInsert('psy_feedback', payload);
     }
     renderFeedbackSection();
     banner('Terima kasih atas feedback anda!');
