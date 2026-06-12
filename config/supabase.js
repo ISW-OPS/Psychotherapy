@@ -24,27 +24,40 @@ const _supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON
 window.db = _supabaseClient;
 window.ISW_ENV = _activeEnv;
 
-// Badge — tunjuk environment di sudut bawah kanan
+// Badge — tunjuk hanya kepada staff (role='staff'), sorok dari patient
 (function () {
-  const badge = document.createElement('div');
-  badge.id = 'isw-env-badge';
-  badge.textContent = _cfg.label;
-  badge.title = 'Klik untuk tukar environment (developer only)';
-  Object.assign(badge.style, {
-    position: 'fixed', bottom: '8px', right: '8px', zIndex: 99999,
-    background: _cfg.color, color: '#fff', fontSize: '10px',
-    fontWeight: '700', padding: '2px 8px', borderRadius: '4px',
-    cursor: 'pointer', letterSpacing: '0.05em', opacity: '0.85'
-  });
-  badge.onclick = function () {
-    const next = _activeEnv === 'production' ? 'testing' : 'production';
-    if (confirm('Tukar ke ' + _ENV[next].label + '?\nPage akan reload.')) {
-      localStorage.setItem('isw_env', next);
-      location.reload();
-    }
-  };
-  document.addEventListener('DOMContentLoaded', function () {
+  function _showEnvBadge() {
+    if (document.getElementById('isw-env-badge')) return;
+    const badge = document.createElement('div');
+    badge.id = 'isw-env-badge';
+    badge.textContent = _cfg.label;
+    badge.title = 'Klik untuk tukar environment (developer only)';
+    Object.assign(badge.style, {
+      position: 'fixed', bottom: '8px', right: '8px', zIndex: 99999,
+      background: _cfg.color, color: '#fff', fontSize: '10px',
+      fontWeight: '700', padding: '2px 8px', borderRadius: '4px',
+      cursor: 'pointer', letterSpacing: '0.05em', opacity: '0.85'
+    });
+    badge.onclick = function () {
+      const next = _activeEnv === 'production' ? 'testing' : 'production';
+      if (confirm('Tukar ke ' + _ENV[next].label + '?\nPage akan reload.')) {
+        localStorage.setItem('isw_env', next);
+        location.reload();
+      }
+    };
     document.body.appendChild(badge);
+  }
+
+  // Semak role selepas auth ready — tunjuk badge hanya kalau staff
+  document.addEventListener('DOMContentLoaded', function () {
+    window.db.auth.getSession().then(function (res) {
+      const session = res.data && res.data.session;
+      if (!session) return; // belum login — sorok
+      window.db.from('psy_profiles').select('role').eq('id', session.user.id).single()
+        .then(function (r) {
+          if (r.data && r.data.role === 'staff') _showEnvBadge();
+        });
+    });
   });
 })();
 
