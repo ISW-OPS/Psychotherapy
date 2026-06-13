@@ -107,6 +107,47 @@
   .kf-confetti { position:fixed; inset:0; pointer-events:none; overflow:hidden; z-index:55; }
   .kf-confetti span { position:absolute; top:-24px; animation:kffall linear forwards; }
   @keyframes kffall { to { transform:translateY(112vh) rotate(720deg); opacity:.25; } }
+
+  /* Emotion card grid */
+  .kf-emo-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:10px; }
+  .kf-emo-card { background:rgba(255,255,255,.1); border:2px solid rgba(255,255,255,.18); border-radius:16px;
+    padding:14px 6px 12px; display:flex; flex-direction:column; align-items:center; gap:7px;
+    cursor:pointer; transition:transform .12s, background .15s, border-color .15s; position:relative; }
+  .kf-emo-card:active { transform:scale(.95); }
+  .kf-emo-card .kf-ec-icon { width:50px; height:50px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:26px; }
+  .kf-emo-card .kf-ec-label { font-size:11.5px; font-weight:700; text-align:center; line-height:1.2; color:rgba(255,255,255,.9); }
+  .kf-emo-card.sel { border-color:#22c55e; background:rgba(34,197,94,.18); }
+  .kf-emo-card .kf-ec-check { position:absolute; top:-9px; right:-9px; width:22px; height:22px;
+    border-radius:50%; background:#22c55e; color:white; font-size:12px; font-weight:800;
+    display:none; align-items:center; justify-content:center; border:2px solid rgba(15,41,66,.6); }
+  .kf-emo-card.sel .kf-ec-check { display:flex; }
+  .kf-tahukah { margin-top:14px; background:rgba(255,255,255,.09); border-radius:12px;
+    padding:11px 13px; display:flex; align-items:flex-start; gap:9px; }
+  .kf-tahukah-label { font-size:10px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; opacity:.65; margin-bottom:3px; }
+  .kf-tahukah-text { font-size:12px; line-height:1.45; opacity:.82; margin:0; }
+
+  /* Confirmation bottom sheet */
+  .kf-confirm { position:absolute; inset:0; background:rgba(0,0,0,.38); display:flex;
+    align-items:flex-end; z-index:10; animation:kfcfin .18s ease; }
+  @keyframes kfcfin { from{opacity:0} to{opacity:1} }
+  .kf-confirm-sheet { width:100%; background:white; border-radius:22px 22px 0 0;
+    padding:26px 22px calc(26px + env(safe-area-inset-bottom)); display:flex;
+    flex-direction:column; align-items:center; gap:10px; text-align:center;
+    animation:kfcslide .2s ease; }
+  @keyframes kfcslide { from{transform:translateY(60px)} to{transform:translateY(0)} }
+  .kf-confirm-icon { width:78px; height:78px; border-radius:50%; display:flex;
+    align-items:center; justify-content:center; font-size:42px; position:relative; margin-bottom:2px; }
+  .kf-confirm-badge { position:absolute; bottom:1px; right:1px; width:24px; height:24px;
+    border-radius:50%; background:#22c55e; color:white; font-size:13px;
+    display:flex; align-items:center; justify-content:center; border:2px solid white; }
+  .kf-confirm-title { font-size:21px; font-weight:800; color:#0f2942; margin:0; }
+  .kf-confirm-sub { font-size:13.5px; color:#555; margin:0; }
+  .kf-confirm-tip { background:#f0fdf4; border:1px solid #86efac; border-radius:12px;
+    padding:11px 14px; display:flex; align-items:flex-start; gap:9px; text-align:left; width:100%; }
+  .kf-confirm-tip span { font-size:18px; flex-shrink:0; }
+  .kf-confirm-tip p { font-size:12.5px; color:#333; line-height:1.45; margin:0; }
+  .kf-confirm-btn { width:100%; background:#22c55e; color:white; border:0;
+    border-radius:13px; padding:15px; font-size:15px; font-weight:800; cursor:pointer; margin-top:2px; }
 </style>
 </head>
 <body class="min-h-screen bg-[#f5f6f8]">
@@ -215,6 +256,22 @@
   </div>
   <div class="kf-barwrap"><div id="kf-bar-fill" class="kf-bar-fill"></div></div>
   <div class="kf-stage"><div id="kf-card" class="kf-card"></div></div>
+  <!-- Confirmation overlay (emogroup) -->
+  <div id="kf-confirm" class="kf-confirm" style="display:none">
+    <div class="kf-confirm-sheet">
+      <div class="kf-confirm-icon" id="kf-confirm-icon">
+        <span id="kf-confirm-emoji">💚</span>
+        <span class="kf-confirm-badge">✓</span>
+      </div>
+      <p class="kf-confirm-title">Terima kasih!</p>
+      <p class="kf-confirm-sub">Perasaan anda telah direkodkan.</p>
+      <div class="kf-confirm-tip">
+        <span>🍃</span>
+        <p id="kf-confirm-tip-text"></p>
+      </div>
+      <button class="kf-confirm-btn" onclick="kfConfirmNext()">Teruskan Check-in →</button>
+    </div>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -783,6 +840,44 @@ function kfFooter(extra) {
   </div>`;
 }
 const EMO_EMOJI = { 'Mood Positif':'😊', 'Kesedihan / Kemurungan':'😔', 'Kebimbangan / Kecemasan':'😰', 'Kemarahan / Kekecewaan':'😠', 'Keletihan Emosi / Burnout':'😮‍💨' };
+const EMO_CARD = {
+  'Gembira':      { bg:'rgba(253,224,71,.28)',  emoji:'😊' },
+  'Tenang':       { bg:'rgba(134,239,172,.28)', emoji:'😌' },
+  'Bersyukur':    { bg:'rgba(167,243,208,.28)', emoji:'🙏' },
+  'Bersemangat':  { bg:'rgba(196,181,253,.28)', emoji:'💪' },
+  'Bermotivasi':  { bg:'rgba(253,186,116,.28)', emoji:'🔥' },
+  'Biasa sahaja': { bg:'rgba(167,243,208,.22)', emoji:'🍃' },
+  'Sedih':        { bg:'rgba(147,197,253,.28)', emoji:'😢' },
+  'Kecewa':       { bg:'rgba(147,197,253,.22)', emoji:'😞' },
+  'Murung':       { bg:'rgba(196,181,253,.22)', emoji:'😔' },
+  'Kesunyian':    { bg:'rgba(147,197,253,.2)',  emoji:'🌧️' },
+  'Kosong jiwa':  { bg:'rgba(167,243,208,.18)', emoji:'🌀' },
+  'Hilang arah tujuan hidup': { bg:'rgba(253,186,116,.2)', emoji:'🧭' },
+  'Risau':        { bg:'rgba(253,224,71,.22)',  emoji:'😰' },
+  'Cemas':        { bg:'rgba(253,186,116,.25)', emoji:'😨' },
+  'Gelisah':      { bg:'rgba(196,181,253,.25)', emoji:'😖' },
+  'Takut':        { bg:'rgba(147,197,253,.25)', emoji:'😱' },
+  'Tertekan':     { bg:'rgba(253,186,116,.28)', emoji:'😤' },
+  'Marah':        { bg:'rgba(252,165,165,.28)', emoji:'😠' },
+  'Geram':        { bg:'rgba(252,165,165,.25)', emoji:'😡' },
+  'Frustrasi':    { bg:'rgba(253,186,116,.25)', emoji:'😤' },
+  'Letih emosi':  { bg:'rgba(167,243,208,.2)',  emoji:'😮‍💨' },
+  'Burnout':      { bg:'rgba(253,186,116,.22)', emoji:'🔥' },
+  'Hilang motivasi': { bg:'rgba(196,181,253,.2)', emoji:'😶' },
+  'Hilang fokus': { bg:'rgba(147,197,253,.2)',  emoji:'🌫️' },
+  'Tidak yakin diri': { bg:'rgba(253,224,71,.2)', emoji:'😟' },
+  'Rendah diri':  { bg:'rgba(196,181,253,.25)', emoji:'🫂' },
+  'Tidak dihargai': { bg:'rgba(252,165,165,.2)', emoji:'💔' },
+  'Terasing':     { bg:'rgba(147,197,253,.2)',  emoji:'🏚️' },
+  'Trauma':       { bg:'rgba(252,165,165,.25)', emoji:'🌧️' },
+};
+const EMO_TIPS = {
+  'Mood Positif': 'Mengenal pasti perasaan membantu anda memahami diri dengan lebih baik dan menyokong pemulihan anda.',
+  'Kesedihan / Kemurungan': 'Mengakui perasaan sedih adalah langkah pertama untuk sembuh. Anda tidak bersendirian dalam perjalanan ini.',
+  'Kebimbangan / Kecemasan': 'Cemas adalah tindak balas semula jadi. Mengenal pasti punca membantu anda mengurusnya dengan lebih baik.',
+  'Kemarahan / Kekecewaan': 'Kemarahan sering menyembunyikan kesakitan. Luahkan perasaan dengan cara yang sihat dan produktif.',
+  'Keletihan Emosi / Burnout': 'Rehat adalah sebahagian dari pemulihan. Menjaga diri sendiri adalah langkah penting ke arah kesihatan.',
+};
 const REAKSI_EMOJI = { 'Pencernaan':'🦠', 'Peredaran Darah':'🩸', 'Otot & Saraf':'💪', 'Detoksifikasi':'✨', 'Emosi & Tenaga':'🔋', 'Pernafasan':'🫁', 'Lain-lain':'📋' };
 function kfGroupChips(items, attr, selArr) {
   return `<div class="kf-chips kf-chips-lg">${items.map(it =>
@@ -806,14 +901,28 @@ function kfStepHtml(step) {
 
   if (step.type === 'emogroup') {
     const g = step.g;
-    const other = step.last ? `<div style="margin-top:18px"><div class="kf-group-t" style="text-align:center">Perasaan lain</div><input class="kf-other" data-kfhother="emo" placeholder="Nyatakan…" value="${escAttr(healthData.emotionOther)}"></div>` : '';
+    const other = step.last ? `<div style="margin-top:16px"><div class="kf-group-t" style="text-align:center">Perasaan lain</div><input class="kf-other" data-kfhother="emo" placeholder="Nyatakan…" value="${escAttr(healthData.emotionOther)}"></div>` : '';
+    const cards = g.items.map(it => {
+      const ec = EMO_CARD[it] || { bg:'rgba(255,255,255,.15)', emoji:'💚' };
+      const isSel = healthData.emotions.includes(it);
+      return `<button class="kf-emo-card${isSel?' sel':''}" data-kfemo="${escAttr(it)}">
+        <span class="kf-ec-check">✓</span>
+        <span class="kf-ec-icon" style="background:${ec.bg}">${ec.emoji}</span>
+        <span class="kf-ec-label">${it}</span>
+      </button>`;
+    }).join('');
+    const tip = EMO_TIPS[g.domain] || '';
+    const tipHtml = tip ? `<div class="kf-tahukah">
+      <span style="font-size:16px;flex-shrink:0">🍃</span>
+      <div><div class="kf-tahukah-label">Tahukah anda?</div><p class="kf-tahukah-text">${tip}</p></div>
+    </div>` : '';
     return `<div class="kf-body kf-q">
         <div class="kf-step-emoji">${EMO_EMOJI[g.domain] || '💚'}</div>
         <div class="kf-kicker">Perasaan hari ini</div>
         <h3>${g.domain}</h3>
         <p class="kf-hint">Pilih yang berkaitan · boleh skip</p>
-        ${kfGroupChips(g.items, 'kfemo', healthData.emotions)}
-        ${other}
+        <div class="kf-emo-grid">${cards}</div>
+        ${other}${tipHtml}
       </div>${kfFooter()}`;
   }
   if (step.type === 'reaksigroup') {
@@ -940,6 +1049,24 @@ function kfAnimateRing() {
   if (fg && skor != null) requestAnimationFrame(() => fg.setAttribute('stroke-dasharray', `${skor} ${100 - skor}`));
 }
 
+// ── Confirmation popup (emogroup) ──
+function kfShowConfirm(step) {
+  const g = step.g;
+  const selItems = g.items.filter(it => healthData.emotions.includes(it));
+  const mainItem = selItems[0] || null;
+  const ec = mainItem ? (EMO_CARD[mainItem] || {}) : {};
+  const emoji = ec.emoji || EMO_EMOJI[g.domain] || '💚';
+  const bg = ec.bg || 'rgba(34,197,94,.12)';
+  document.getElementById('kf-confirm-emoji').textContent = emoji;
+  document.getElementById('kf-confirm-icon').style.background = bg;
+  document.getElementById('kf-confirm-tip-text').textContent = EMO_TIPS[g.domain] || '';
+  document.getElementById('kf-confirm').style.display = 'flex';
+}
+function kfConfirmNext() {
+  document.getElementById('kf-confirm').style.display = 'none';
+  if (kfIdx < kfSteps.length - 1) { kfBusy = true; kfIdx++; kfRender(kfIdx, 1); setTimeout(() => kfBusy = false, 230); }
+}
+
 // ── Navigation ──
 function kfNext() {
   if (kfBusy) return;
@@ -950,6 +1077,7 @@ function kfNext() {
       banner('Sila pilih jawapan dahulu', 'error'); return;
     }
   }
+  if (step.type === 'emogroup') { kfShowConfirm(step); return; }
   if (kfIdx < kfSteps.length - 1) { kfBusy = true; kfIdx++; kfRender(kfIdx, 1); setTimeout(() => kfBusy = false, 230); }
 }
 function kfPrev() {
