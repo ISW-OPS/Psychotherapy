@@ -1,0 +1,25 @@
+// Jadual harian default untuk semua pakej rawatan baru.
+// Staff boleh edit per-pakej via Edit Pakej → Jadual Harian section.
+window.DEFAULT_DAILY_SCHEDULE = [
+  { time: '06:15', activity: 'Zikir bersanad' },
+  { time: '06:30', activity: 'Minum madu LTHPG' },
+  { time: '07:30', activity: 'Minum madu LTH' },
+  { time: '07:45', activity: 'Berjemur cahaya matahari pagi & terapi bumi & pernafasan fitrah (10 minit)' },
+  { time: '08:15', activity: 'Makan breakfast (Yogurt dan buah)' },
+  { time: '09:15', activity: 'Minum madu LTHPG' },
+  { time: '10:15', activity: 'Minum madu LTH' },
+  { time: '11:15', activity: 'Minum madu LTHPG' },
+  { time: '12:15', activity: 'Minum madu LTH' },
+  { time: '12:30', activity: 'Lunch & minum air kelapa' },
+  { time: '13:15', activity: 'Solat Zohor & pernafasan fitrah (5 minit)' },
+  { time: '14:15', activity: 'Minum madu LTHPG' },
+  { time: '15:15', activity: 'Minum madu LTH' },
+  { time: '16:15', activity: 'Minum madu LTHPG' },
+  { time: '16:40', activity: 'Solat Asar & pernafasan fitrah (5 minit)' },
+  { time: '17:00', activity: 'Berkebun @ Terapi bumi' },
+  { time: '18:30', activity: 'Makan malam' },
+  { time: '19:30', activity: 'Solat Maghrib & Zikir bersanad' },
+  { time: '20:30', activity: 'Solat Isyak & Pernafasan Fitrah (5 minit)' },
+  { time: '21:00', activity: 'Minum madu LTH' },
+  { time: '21:30', activity: 'Pernafasan fitrah (5 minit) & Tidur' },
+];
