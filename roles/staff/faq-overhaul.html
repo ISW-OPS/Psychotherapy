@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — FAQ Rawatan Overhaul Body</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+.sec-row { display:flex; align-items:flex-start; justify-content:space-between; gap:6px; padding:8px 10px; border-radius:10px; cursor:pointer; font-size:13px; line-height:1.4; }
+.sec-row:hover { background:#f5f3ee; }
+.sec-row.active { background:#eef2ff; color:#1a3a5c; font-weight:700; }
+.sec-badge { flex-shrink:0; width:22px; height:22px; border-radius:6px; background:#1a3a5c; color:#fff; font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center; margin-top:1px; }
+.sec-row.active .sec-badge { background:#2563eb; }
+.faq-ans ul{list-style:disc;padding-left:1.4rem;margin:.4rem 0}
+.faq-ans ol{list-style:decimal;padding-left:1.4rem;margin:.4rem 0}
+.faq-ans p{margin:.5rem 0}
+.faq-ans h2,.faq-ans h3{font-weight:700;color:#1a3a5c;margin:.6rem 0 .3rem}
+</style>
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📋</div><p class="text-ink/60 text-sm">Memuatkan FAQ...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-6 space-y-5">
+
+        <div>
+          <div class="text-xs text-ink/40"><a href="library.html" class="hover:underline">Library</a> › <span class="text-navy font-semibold">FAQ Rawatan Overhaul Body</span></div>
+          <h1 class="text-2xl font-bold text-ink mt-1">FAQ Rawatan Overhaul Body</h1>
+          <p class="text-sm text-ink/50 mt-0.5">Jawapan kepada soalan yang sering ditanya berkaitan program rawatan Overhaul Body.</p>
+        </div>
+
+        <div class="grid lg:grid-cols-[260px_1fr] gap-5 items-start">
+
+          <!-- SIDEBAR: Sections A–M -->
+          <aside class="space-y-4 lg:sticky lg:top-24">
+            <div class="bg-white rounded-2xl border border-ink/10 p-4">
+              <h3 class="font-bold text-ink text-sm mb-2 px-1">Bahagian</h3>
+              <div id="sec-list" class="space-y-0.5"></div>
+            </div>
+          </aside>
+
+          <!-- MAIN -->
+          <div class="space-y-4">
+            <div class="flex flex-wrap items-center gap-3">
+              <div class="relative flex-1 min-w-[200px]">
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-ink/35">🔍</span>
+                <input id="f-search" oninput="applyF()" placeholder="Cari soalan..." class="w-full pl-9 pr-3 py-2.5 bg-white border border-ink/15 rounded-xl text-sm focus:border-navy outline-none">
+              </div>
+              <button onclick="resetF()" class="bg-white border border-ink/15 rounded-xl px-4 py-2.5 text-sm font-semibold text-ink/70 hover:bg-ink/5">⛛ Reset</button>
+            </div>
+            <div id="count-text" class="text-xs text-ink/55">—</div>
+
+            <div id="faq-list" class="space-y-3"></div>
+            <div id="faq-empty" class="hidden text-center text-sm text-ink/40 py-12 bg-white rounded-2xl border border-ink/10">Tiada soalan dijumpai</div>
+
+            <div class="flex items-center justify-between flex-wrap gap-3 pt-1">
+              <span id="page-info" class="text-xs text-ink/55">—</span>
+              <div id="pager" class="flex items-center gap-1"></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+const PAGE_SIZE = 10;
+let SECTIONS = [], ITEMS = [];
+const state = { code: '', page: 1, open: null };
+
+function escH(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function filtered(){
+  const q = (document.getElementById('f-search').value||'').toLowerCase().trim();
+  return ITEMS.filter(f => {
+    if(state.code && f.section_code !== state.code) return false;
+    if(q){
+      const hay = `${f.soalan||''} ${f.jawapan||''}`.toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function render(){
+  const list = filtered();
+  const tp = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+  if(state.page > tp) state.page = tp;
+  const start = (state.page-1) * PAGE_SIZE;
+  const items = list.slice(start, start + PAGE_SIZE);
+
+  document.getElementById('count-text').textContent = `${list.length} soalan dijumpai`;
+  const el = document.getElementById('faq-list');
+  const empty = document.getElementById('faq-empty');
+
+  if(!items.length){
+    el.innerHTML = '';
+    empty.classList.remove('hidden');
+  } else {
+    empty.classList.add('hidden');
+    el.innerHTML = items.map(f => {
+      const isOpen = state.open === f.id;
+      const jawText = escH(f.jawapan||'').replace(/\n/g, '<br>');
+      return `<div class="bg-white rounded-2xl border ${isOpen?'border-navy/40':'border-ink/10'} overflow-hidden">
+        <button onclick="toggle(${f.id})" class="w-full flex items-start justify-between gap-4 text-left px-5 py-4 hover:bg-ink/[0.015]">
+          <div class="flex items-start gap-3 min-w-0">
+            <span class="sec-badge flex-shrink-0 mt-0.5" style="background:${isOpen?'#2563eb':'#1a3a5c'}">${escH(f.section_code)}</span>
+            <span class="font-semibold ${isOpen?'text-navy':'text-ink'} text-sm leading-snug">${escH(f.soalan)}</span>
+          </div>
+          <span class="flex-shrink-0 w-6 h-6 rounded-full ${isOpen?'bg-navy text-white':'border border-ink/20 text-navy'} flex items-center justify-center text-base">${isOpen?'−':'+'}</span>
+        </button>
+        ${isOpen ? `<div class="px-5 pb-5 pl-[52px]">
+          <div class="faq-ans text-sm text-ink/75 leading-relaxed">${jawText}</div>
+        </div>` : ''}
+      </div>`;
+    }).join('');
+  }
+
+  document.getElementById('page-info').textContent = list.length
+    ? `Memaparkan ${start+1} hingga ${Math.min(start+PAGE_SIZE, list.length)} daripada ${list.length} soalan` : '';
+  renderPager(tp);
+}
+
+function renderPager(tp){
+  const pager = document.getElementById('pager');
+  if(tp <= 1){ pager.innerHTML = ''; return; }
+  const p = state.page;
+  const btn = (l,pg,act,dis) => `<button ${dis?'disabled':''} onclick="goPage(${pg})" class="min-w-8 h-8 px-2 rounded-lg text-xs font-semibold ${act?'bg-navy text-white':'border border-ink/15 text-ink/70 hover:bg-ink/5'} ${dis?'opacity-40 cursor-not-allowed':''}">${l}</button>`;
+  let a = [];
+  a.push(btn('‹', p-1, false, p===1));
+  if(tp <= 7){ for(let i=1;i<=tp;i++) a.push(btn(i,i,i===p)); }
+  else{
+    a.push(btn(1,1,p===1));
+    if(p > 3) a.push('<span class="px-1 text-ink/40">…</span>');
+    for(let i=Math.max(2,p-1); i<=Math.min(tp-1,p+1); i++) a.push(btn(i,i,i===p));
+    if(p < tp-2) a.push('<span class="px-1 text-ink/40">…</span>');
+    a.push(btn(tp,tp,p===tp));
+  }
+  a.push(btn('›', p+1, false, p===tp));
+  pager.innerHTML = a.join('');
+}
+
+function toggle(id){ state.open = state.open === id ? null : id; render(); }
+function goPage(n){ state.page = n; state.open = null; window.scrollTo(0,0); render(); }
+function applyF(){ state.page = 1; state.open = null; render(); }
+function resetF(){ document.getElementById('f-search').value = ''; setSection(''); }
+
+function setSection(code){
+  state.code = code;
+  state.page = 1;
+  state.open = null;
+  document.querySelectorAll('.sec-row').forEach(r => {
+    r.classList.toggle('active', r.dataset.code === code);
+  });
+  render();
+}
+
+function renderSections(){
+  const rows = SECTIONS.map(s => {
+    const cnt = ITEMS.filter(f => f.section_code === s.code).length;
+    return `<div class="sec-row" data-code="${escH(s.code)}" onclick="setSection('${escH(s.code)}')">
+      <div class="flex items-start gap-2">
+        <span class="sec-badge">${escH(s.code)}</span>
+        <span class="text-ink/80">${escH(s.title)}</span>
+      </div>
+      <span class="text-ink/45 text-[11px] flex-shrink-0 mt-0.5">${cnt}</span>
+    </div>`;
+  }).join('');
+
+  document.getElementById('sec-list').innerHTML =
+    `<div class="sec-row active" data-code="" onclick="setSection('')">
+      <div class="flex items-center gap-2">
+        <span class="sec-badge" style="background:#6b7280">✦</span>
+        <span>Semua Bahagian</span>
+      </div>
+      <span class="text-ink/45 text-[11px]">${ITEMS.length}</span>
+    </div>` + rows;
+}
+
+(async () => {
+  const user = await initStaff('library', 'FAQ Rawatan Overhaul Body');
+  if(!user) return;
+
+  const [secRes, itemRes] = await Promise.all([
+    window.db.from('psy_faq_sections').select('id,code,title,sort_order').order('sort_order', {ascending:true}),
+    window.db.from('psy_faq_items')
+      .select('id, section_id, soalan, jawapan, sort_order, psy_faq_sections(code)')
+      .order('section_id', {ascending:true})
+      .order('sort_order', {ascending:true}),
+  ]);
+
+  SECTIONS = secRes.data || [];
+  ITEMS = (itemRes.data || []).map(f => ({
+    ...f,
+    section_code: f.psy_faq_sections?.code || '',
+  }));
+
+  renderSections();
+  render();
+})();
+</script>
+</body>
+</html>
