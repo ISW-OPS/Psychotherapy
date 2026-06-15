@@ -32,20 +32,22 @@ async function checkAuth(requiredRole) {
 // ── RBAC v2: PAGE → MODULE mapping (untuk page-level access guard) ──
 window.PAGE_MODULE = {
   dashboard: 'dashboard',
-  psy_patients: 'patient', patient_hub: 'patient', kyc_forms: 'patient', vitals: 'patient',
+  psy_patients: 'patient', patient_hub: 'patient', vitals: 'patient',
+  kyc_forms: 'kyc',
   assignments: 'coaching', coaching: 'coaching', consultation: 'coaching',
   plan_week: 'schedule', psy_appointments: 'schedule', closures: 'schedule',
   kob_list: 'kob', kob_slots: 'kob',
   inventory: 'inventory', kit_prosedur: 'inventory', pulangan: 'inventory',
   psy_products: 'products',
   psy_orders: 'orders',
-  pakej: 'package', payment_admin: 'package',
+  pakej: 'package',
+  payment_admin: 'payment',
   surat: 'communication', library: 'communication', announcements: 'communication',
-  kepatuhan: 'operations',
+  kepatuhan: 'operations', issue: 'operations',
   audit: 'reports', governance: 'reports', staff_stats: 'reports', pakej_laporan: 'reports',
   staff_mgmt: 'staff',
   peranan: 'rbac', audit_kebenaran: 'rbac',
-  // Sentiasa allow: profile, issue, login
+  // profile & login sentiasa allow (bukan dalam PAGE_MODULE)
 };
 
 window.pageAllowed = function(pageId) {
