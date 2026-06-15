@@ -1507,15 +1507,26 @@
       }
     }
 
-    // ── Soft Delete ───────────────────────────────────────
+    // ── Soft Delete + cleanup related data ───────────────────────────────────────
     async function deletePatient(id, name) {
-      if (!confirm(`Arkib rekod pesakit "${name || id}"?\n\nRekod akan disembunyikan dari senarai tetapi masih tersimpan dalam sistem.\nAdmin boleh pulihkan rekod ini pada bila-bila masa.`)) return;
+      if (!confirm(`Arkib rekod pesakit "${name || id}"?\n\nRekod akan disembunyikan dari senarai dan semua data berkaitan (KOB, jadual, plan rawatan) akan dipadam.\nAdmin boleh pulihkan rekod pesakit tetapi data KOB & jadual tidak akan dipulihkan.`)) return;
       try {
         const { data: snapshot } = await window.db.from('psy_patients').select('*').eq('id', id).single();
+        // Padam semua data berkaitan
+        const deleteOps = [
+          window.db.from('psy_kob_sessions').delete().eq('patient_id', id),
+          window.db.from('psy_appointments').delete().eq('patient_id', id),
+          window.db.from('psy_treatment_plans').delete().eq('patient_id', id),
+        ];
+        if (snapshot?.user_id) {
+          deleteOps.push(window.db.from('psy_kyc_submissions').delete().eq('user_id', snapshot.user_id));
+        }
+        await Promise.all(deleteOps);
+        // Soft delete rekod pesakit
         const { error } = await window.db.from('psy_patients').update({ status: 'deleted' }).eq('id', id);
         if (error) throw error;
         await auditLog('patient.archived', id, { name, snapshot });
-        banner('Rekod pesakit diarkibkan');
+        banner('Rekod pesakit diarkibkan dan data berkaitan dipadam');
         loadAll();
       } catch (err) {
         banner('Ralat: ' + err.message, 'error');
