@@ -352,7 +352,20 @@ function renderNavbar(role, user, navItems, activeScreen) {
         }).join('');
       })()}
       </nav>
+      <div class="hidden md:flex flex-shrink-0 border-t border-white/10 p-2">
+        <button onclick="toggleSidebar()" title="Kecilkan/Besarkan"
+          class="sidebar-collapse-btn w-full flex items-center justify-center gap-2 py-2 rounded-lg text-white/40 hover:bg-white/10 hover:text-white/70 transition-all text-sm">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+          <span class="nav-label text-xs">Kecilkan</span>
+        </button>
+      </div>
     `;
+
+    if (localStorage.getItem('isw_sidebar_collapsed') === '1') {
+      sidebar.classList.add('collapsed');
+    }
   }
 
   // Top bar global (logo + carian + notif + user) — ganti per-page header

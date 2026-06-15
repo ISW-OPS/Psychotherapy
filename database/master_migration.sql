@@ -1527,6 +1527,16 @@ DO $$ BEGIN
     USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
+DO $$ BEGIN
+  CREATE POLICY "Staff insert agreement on behalf of patient" ON psy_kob_agreements FOR INSERT
+    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE POLICY "Staff update agreement" ON psy_kob_agreements FOR UPDATE
+    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
 -- ── 4. Storage bucket for KOB documents + signatures ──────
 -- Run separately in Supabase Storage UI or via:
 --   INSERT INTO storage.buckets (id, name, public) VALUES ('kob-documents', 'kob-documents', false);

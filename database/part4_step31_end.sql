@@ -2107,6 +2107,34 @@ SELECT 'Step 66 — semak BAHAGIAN 1 dahulu, kemudian nyahkomen BAHAGIAN 2 & 3' 
 
 
 -- ════════════════════════════════════════════════════════════════
+-- step67_staff_sign_agreement_policy.sql
+-- ════════════════════════════════════════════════════════════════
+-- Benarkan staff (doktor) sign agreement bagi pihak patient
+-- semasa sesi KOB inline (kob-detail.html).
+-- ============================================================
+
+-- Staff boleh INSERT ke psy_kob_agreements (sign inline semasa KOB)
+DO $$ BEGIN
+  CREATE POLICY "Staff insert agreement on behalf of patient"
+    ON psy_kob_agreements FOR INSERT
+    WITH CHECK (
+      EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
+    );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- Staff juga boleh UPDATE agreement (e.g., tambah signed_pdf_url selepas generate PDF)
+DO $$ BEGIN
+  CREATE POLICY "Staff update agreement"
+    ON psy_kob_agreements FOR UPDATE
+    USING (
+      EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
+    );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+SELECT 'Step 67 OK — staff can sign KOB agreement inline' AS status;
+
+
+-- ════════════════════════════════════════════════════════════════
 -- step_patients_created_by_staff.sql
 -- ════════════════════════════════════════════════════════════════
 
