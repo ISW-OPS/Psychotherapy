@@ -969,6 +969,20 @@ async function submitKYC() {
   const btn = document.getElementById('btn-submit');
   btn.disabled = true; btn.textContent = 'Menghantar...';
   try {
+    // Block duplicate IC — semak sekali lagi sebelum submit
+    const icVal = (document.getElementById('f-ic')?.value || '').trim().replace(/-/g, '');
+    const myPatientId = window.patientRecord?.id || '00000000-0000-0000-0000-000000000000';
+    const { data: icDup } = await window.db.from('psy_patients')
+      .select('id, mrn, full_name').eq('ic_number', icVal).neq('id', myPatientId).limit(1);
+    if (icDup?.[0]) {
+      const p = icDup[0];
+      const footerErr = document.getElementById('footer-error');
+      footerErr.textContent = `No. IC ini sudah didaftarkan atas nama "${p.full_name || p.mrn}". Hubungi admin untuk bantuan.`;
+      footerErr.classList.remove('hidden');
+      btn.disabled = false; btn.textContent = 'Hantar KYC';
+      return;
+    }
+
     const reports = await uploadMedicalReports();
     const payload = {
       ...buildPayload(),
