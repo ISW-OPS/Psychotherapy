@@ -30,23 +30,48 @@ async function checkAuth(requiredRole) {
 }
 
 // ── RBAC v2: PAGE → MODULE mapping (untuk page-level access guard) ──
+// Setiap nav item mempunyai module tersendiri supaya boleh dikawal berasingan dari RBAC UI.
 window.PAGE_MODULE = {
-  dashboard: 'dashboard',
-  psy_patients: 'patient', patient_hub: 'patient', vitals: 'patient',
-  kyc_forms: 'kyc',
+  // UTAMA
+  dashboard:        'dashboard',
+  psy_patients:     'patient', patient_hub: 'patient', vitals: 'patient',
+  kyc_forms:        'kyc',
+  psy_appointments: 'schedule',
+  plan_week:        'plan_week',
+  kob_list:         'kob',
+  kepatuhan:        'operations',
+
+  // OPERASI
+  pakej:            'package',
+  psy_products:     'products',
+  inventory:        'inventory', kit_prosedur: 'inventory',
+  pulangan:         'pulangan',
+  psy_orders:       'orders',
+  payment_admin:    'payment',
+
+  // KOMUNIKASI
+  announcements:    'announcements',
+  library:          'library',
+
+  // LAPORAN
+  governance:       'governance',
+  staff_stats:      'staff_stats',
+  pakej_laporan:    'pakej_laporan',
+  issue:            'issue',
+
+  // PENTADBIRAN
+  surat:            'surat',
+  closures:         'closures',
+  kob_slots:        'kob_slots',
+  staff_mgmt:       'staff',
+
+  // SISTEM
+  peranan:          'rbac',
+  audit_kebenaran:  'audit_kebenaran',
+  audit:            'audit',
+
+  // sub-pages (akses via patient-hub, bukan nav terus)
   assignments: 'coaching', coaching: 'coaching', consultation: 'coaching',
-  plan_week: 'schedule', psy_appointments: 'schedule', closures: 'schedule',
-  kob_list: 'kob', kob_slots: 'kob',
-  inventory: 'inventory', kit_prosedur: 'inventory', pulangan: 'inventory',
-  psy_products: 'products',
-  psy_orders: 'orders',
-  pakej: 'package',
-  payment_admin: 'payment',
-  surat: 'communication', library: 'communication', announcements: 'communication',
-  kepatuhan: 'operations', issue: 'operations',
-  audit: 'reports', governance: 'reports', staff_stats: 'reports', pakej_laporan: 'reports',
-  staff_mgmt: 'staff',
-  peranan: 'rbac', audit_kebenaran: 'rbac',
   // profile & login sentiasa allow (bukan dalam PAGE_MODULE)
 };
 
