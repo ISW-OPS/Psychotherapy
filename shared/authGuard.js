@@ -68,6 +68,7 @@ async function loadPermissions(userId) {
 //   can('inventory', 'edit')   ATAU
 //   can('inventory.edit')
 function can(moduleOrCode, action) {
+  if (window.currentUser?.staff_role === 'super_admin') return true;
   if (!window.__iswPerms) return false;
   const key = action ? (moduleOrCode + '.' + action) : moduleOrCode;
   return window.__iswPerms.has(key);
