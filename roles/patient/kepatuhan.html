@@ -1007,7 +1007,7 @@ function kfStepHtml(step) {
         <div class="kf-step-emoji">${EMO_EMOJI[g.domain] || '💚'}</div>
         <div class="kf-kicker">Perasaan hari ini</div>
         <h3>${g.domain}</h3>
-        <p class="kf-hint">Pilih yang berkaitan · boleh skip</p>
+        <p class="kf-hint">Pilih satu (wajib)</p>
         <div class="kf-emo-grid">${cards}</div>
         ${other}
       </div>${kfFooter()}`;
@@ -1186,6 +1186,11 @@ function kfConfirmNext() {
 function kfNext() {
   if (kfBusy) return;
   const step = kfSteps[kfIdx];
+  if (step.type === 'emogroup') {
+    const groupItems = step.g ? step.g.items : [];
+    const hasSelection = groupItems.some(it => healthData.emotions.includes(it));
+    if (!hasSelection) { banner('Sila pilih satu perasaan dahulu', 'error'); return; }
+  }
   if (step.type === 'item' && step.it.berskor) {
     const v = answers[step.it.item_key];
     if (v == null || v === '' || v === 'other' && !(answersText[step.it.item_key] || '').trim()) {
@@ -1254,7 +1259,16 @@ async function kfFinish() {
   if (!flow) return;
   flow.addEventListener('click', (e) => {
     const emo = e.target.closest('[data-kfemo]');
-    if (emo) { toggleArr(healthData.emotions, emo.dataset.kfemo); emo.classList.toggle('sel'); return; }
+    if (emo) {
+      const curStep = kfSteps[kfIdx];
+      const groupItems = curStep.g ? curStep.g.items : [];
+      healthData.emotions = healthData.emotions.filter(x => !groupItems.includes(x));
+      healthData.emotions.push(emo.dataset.kfemo);
+      document.querySelectorAll('#kf-card [data-kfemo]').forEach(btn => btn.classList.remove('sel'));
+      emo.classList.add('sel');
+      vibrate(8);
+      return;
+    }
     const rk = e.target.closest('[data-kfreaksi]');
     if (rk) { toggleArr(healthData.reaksi, rk.dataset.kfreaksi); rk.classList.toggle('sel'); return; }
     const ak = e.target.closest('[data-kfakt]');
