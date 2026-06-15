@@ -94,3 +94,42 @@ async function requirePermission(moduleOrCode, action, redirectTo) {
 function getBasePath() {
   return '../../';
 }
+
+// ── Patient features (global on/off, dikawal dari RBAC UI) ──
+window.__patientFeats = null;
+
+window.PAGE_PATIENT_MODULE = {
+  kob:               'pat_kob',
+  plan:              'pat_plan',
+  routine:           'pat_routine',
+  kepatuhan:         'pat_kepatuhan',
+  vitals:            'pat_vitals',
+  'rekod-perubatan': 'pat_rekod',
+  library:           'pat_library',
+  shop:              'pat_shop',
+  psy_orders:        'pat_orders',
+  issue:             'pat_issue',
+  pulangan:          'pat_pulangan',
+  surat:             'pat_surat',
+  // sentiasa allow: dashboard, pakej, payment, kyc, profile, checkin
+};
+
+async function loadPatientFeatures() {
+  try {
+    const { data } = await window.db
+      .from('psy_role_module_actions')
+      .select('module_code')
+      .eq('role_code', 'patient')
+      .eq('action_code', 'view');
+    window.__patientFeats = new Set((data || []).map(r => r.module_code));
+  } catch (_) {
+    window.__patientFeats = new Set(Object.values(window.PAGE_PATIENT_MODULE));
+  }
+}
+
+function canPatient(pageId) {
+  const mod = window.PAGE_PATIENT_MODULE[pageId];
+  if (!mod) return true;
+  if (!window.__patientFeats) return true;
+  return window.__patientFeats.has(mod);
+}

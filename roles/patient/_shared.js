@@ -170,16 +170,22 @@ async function initPatient(pageId, titleSub) {
   // Resolve KYC approval once and cache
   window.kycApproved = await resolveKycApproved();
 
+  // Load patient feature toggles from RBAC
+  await loadPatientFeatures();
+
+  // Feature gate — redirect if feature disabled by admin
+  if (!canPatient(pageId)) {
+    window.location.href = 'dashboard.html';
+    return null;
+  }
+
   document.getElementById('app-loading')?.classList.add('hidden');
   document.getElementById('app-shell')?.classList.remove('hidden');
 
-  // Hide KYC + KOB nav items conditionally
+  // Hide nav items based on: RBAC feature toggle + KYC/KOB state
   const kobStatus = window.patientRecord?.kob_status || 'na';
-  // Hide nav items conditionally:
-  // - kyc: hide after approved (dah lulus, tak perlu form lagi)
-  // - kob: tunjuk kalau KYC dah lulus (boleh tempah) ATAU dah dalam flow KOB (pending_payment+).
-  //        Sembunyi hanya untuk patient yang KYC belum lulus DAN tiada KOB flow.
   const navItems = getNavItems('patient').filter(item => {
+    if (!canPatient(item.id)) return false;
     if (item.id === 'kyc' && window.kycApproved) return false;
     if (item.id === 'kob' && kobStatus === 'na' && !window.kycApproved) return false;
     return true;
