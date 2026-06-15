@@ -68,6 +68,10 @@
                   <span>Cadangkan pakej</span>
                 </label>
                 <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="rec-mode" value="declined" onchange="onRecModeChange()" class="accent-navy">
+                  <span>Patient tidak teruskan pada masa ini <span class="text-ink/50">(simpan cadangan untuk rujukan)</span></span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
                   <input type="radio" name="rec-mode" value="skip" onchange="onRecModeChange()" class="accent-navy">
                   <span>Tidak perlu pakej rawatan</span>
                 </label>
@@ -537,10 +541,11 @@ async function render() {
   } else if (kob.status === 'booked' || kob.status === 'reschedule') {
     actEl.innerHTML = `<button onclick="markHadir()" id="btn-hadir" class="bg-gold-dark text-white px-6 py-2.5 rounded-lg text-sm font-semibold hover:opacity-90">✅ Tandakan Hadir</button>`;
   } else if (kob.status === 'hadir') {
-    // Check progress: package recommended? package paid? agreement signed?
+    // Check progress: package recommended? package paid/declined? agreement signed?
+    const isDeclined = kob.package_payment_status === 'declined';
     const hasRec = !!kob.recommended_package_id || kob.package_payment_status === 'skipped';
-    const paid = kob.package_payment_status === 'paid' || kob.package_payment_status === 'skipped';
-    const needsAgreement = !agreement;
+    const paid = kob.package_payment_status === 'paid' || kob.package_payment_status === 'skipped' || isDeclined;
+    const needsAgreement = !agreement && !isDeclined;
     const canFinish = hasRec && paid && !needsAgreement;
 
     // Button only — goes in header right
@@ -552,6 +557,9 @@ async function render() {
     let warning = '';
     if (!hasRec) {
       warning = `<div class="text-xs text-navy bg-navy-light/40 p-2 rounded mt-2">📋 Sila pilih/cadangkan pakej rawatan di bawah dahulu.</div>`;
+    } else if (isDeclined) {
+      const pkgName = escapeHtml(kob.recommended_package_name || '');
+      warning = `<div class="text-xs text-gold-dark bg-gold/10 p-2 rounded mt-2">⚠️ Patient tidak teruskan. Pakej dicadangkan: <strong>${pkgName}</strong> — disimpan untuk rujukan.</div>`;
     } else if (!paid) {
       const pkgName = escapeHtml(kob.recommended_package_name || '');
       warning = `<div class="text-xs text-gold-dark bg-gold/15 p-2 rounded mt-2">💰 Menunggu patient bayar pakej: <strong>${pkgName}</strong></div>`;
@@ -564,8 +572,16 @@ async function render() {
     }
   } else if (kob.status === 'completed') {
     actEl.innerHTML = '<span class="chip bg-green-light text-green-dark text-xs">✅ KOB Selesai</span>';
-    document.getElementById('doctor-info').insertAdjacentHTML('beforeend',
-      '<div class="bg-green-light text-green-dark text-xs p-2 rounded mt-2">Pakej rawatan telah dibuka untuk patient.</div>');
+    if (kob.package_payment_status === 'declined' && kob.recommended_package_name) {
+      document.getElementById('doctor-info').insertAdjacentHTML('beforeend',
+        `<div class="bg-gold/10 border border-gold/30 text-xs p-2 rounded mt-2">⚠️ Patient tidak teruskan pada masa KOB. Pakej dicadangkan: <strong>${escapeHtml(kob.recommended_package_name)}</strong> · RM ${Number(kob.recommended_package_price || 0).toFixed(2)} — disimpan untuk rujukan jika patient kembali.</div>`);
+    } else if (kob.recommended_package_name) {
+      document.getElementById('doctor-info').insertAdjacentHTML('beforeend',
+        `<div class="bg-green-light text-green-dark text-xs p-2 rounded mt-2">Pakej rawatan <strong>${escapeHtml(kob.recommended_package_name)}</strong> telah dibuka untuk patient.</div>`);
+    } else {
+      document.getElementById('doctor-info').insertAdjacentHTML('beforeend',
+        '<div class="bg-green-light text-green-dark text-xs p-2 rounded mt-2">KOB selesai — tiada pakej dicadangkan.</div>');
+    }
   }
 
   // Documents
@@ -614,9 +630,15 @@ async function markHadir() {
 
 async function markSelesai() {
   const hasPackage = !!kob.recommended_package_id;
-  const msg = hasPackage
-    ? `Tandakan KOB selesai? Pakej "${kob.recommended_package_name}" akan diaktifkan untuk patient.`
-    : 'Tandakan KOB selesai? (tiada pakej dicadangkan)';
+  const isDeclined = kob.package_payment_status === 'declined';
+  let msg;
+  if (isDeclined) {
+    msg = `Tandakan KOB selesai? Pakej "${kob.recommended_package_name}" dicadangkan tetapi patient tidak teruskan — rekod disimpan untuk rujukan.`;
+  } else if (hasPackage) {
+    msg = `Tandakan KOB selesai? Pakej "${kob.recommended_package_name}" akan diaktifkan untuk patient.`;
+  } else {
+    msg = 'Tandakan KOB selesai? (tiada pakej dicadangkan)';
+  }
   if (!confirm(msg)) return;
 
   const btn = document.getElementById('btn-selesai');
@@ -631,9 +653,9 @@ async function markSelesai() {
     }).eq('id', kobId);
     if (error) throw error;
 
-    // Activate recommended package (if any)
+    // Activate recommended package (if any, and patient agreed)
     const patientUpdates = { kob_status: 'completed' };
-    if (hasPackage) {
+    if (hasPackage && !isDeclined) {
       // Fetch package metadata for plan creation + expiry
       const { data: pkgRows } = await window.db.from('psy_packages')
         .select('*').eq('package_id', kob.recommended_package_id).limit(1);
@@ -678,10 +700,12 @@ async function markSelesai() {
     }
 
     await window.db.from('psy_patients').update(patientUpdates).eq('id', patient.id);
-    await auditLog('kob.completed', kobId, { patient_id: patient.id, package: kob.recommended_package_name });
-    banner(hasPackage
-      ? `KOB selesai ✅ Pakej ${kob.recommended_package_name} aktif.`
-      : 'KOB selesai ✅');
+    await auditLog('kob.completed', kobId, { patient_id: patient.id, package: kob.recommended_package_name, declined: isDeclined });
+    banner(isDeclined
+      ? `KOB selesai ✅ Rekod cadangan pakej disimpan — patient tidak teruskan buat masa ini.`
+      : hasPackage
+        ? `KOB selesai ✅ Pakej ${kob.recommended_package_name} aktif.`
+        : 'KOB selesai ✅');
     setTimeout(() => location.reload(), 1500);
   } catch (e) {
     banner('Ralat: ' + e.message, 'error');
@@ -874,13 +898,19 @@ async function renderPackageRecCard() {
 
   // Pre-fill from existing recommendation
   if (kob.recommended_package_id) {
-    document.querySelector('input[name="rec-mode"][value="package"]').checked = true;
+    const isDeclined = kob.package_payment_status === 'declined';
+    document.querySelector(`input[name="rec-mode"][value="${isDeclined ? 'declined' : 'package'}"]`).checked = true;
     onRecModeChange();
     sel.value = kob.recommended_package_id;
     sel.onchange();
     const savedInfo = document.getElementById('rec-saved-info');
     savedInfo.classList.remove('hidden');
-    savedInfo.innerHTML = `✓ Pakej dicadangkan: <strong>${escapeHtml(kob.recommended_package_name || '')}</strong>${kob.package_payment_status === 'paid' ? ' · 💰 Patient sudah bayar' : ' · ⏳ Menunggu bayaran patient'}`;
+    if (isDeclined) {
+      savedInfo.innerHTML = `⚠️ Dicadangkan: <strong>${escapeHtml(kob.recommended_package_name || '')}</strong> · Patient tidak teruskan pada masa ini`;
+      savedInfo.className = 'bg-gold/10 border border-gold/30 rounded p-2 text-xs';
+    } else {
+      savedInfo.innerHTML = `✓ Pakej dicadangkan: <strong>${escapeHtml(kob.recommended_package_name || '')}</strong>${kob.package_payment_status === 'paid' ? ' · 💰 Patient sudah bayar' : ' · ⏳ Menunggu bayaran patient'}`;
+    }
   } else if (kob.package_payment_status === 'skipped') {
     document.querySelector('input[name="rec-mode"][value="skip"]').checked = true;
     onRecModeChange();
@@ -893,7 +923,7 @@ async function renderPackageRecCard() {
 function onRecModeChange() {
   const mode = document.querySelector('input[name="rec-mode"]:checked')?.value;
   const picker = document.getElementById('rec-package-picker');
-  if (mode === 'package') picker.classList.remove('hidden');
+  if (mode === 'package' || mode === 'declined') picker.classList.remove('hidden');
   else picker.classList.add('hidden');
 }
 
@@ -916,6 +946,21 @@ async function saveRecommendation() {
         package_payment_status: 'skipped',
         updated_at: new Date().toISOString(),
       };
+    } else if (mode === 'declined') {
+      const sel = document.getElementById('rec-package-select');
+      const pkgId = sel.value;
+      if (!pkgId) { banner('Sila pilih pakej yang dicadangkan sebelum simpan', 'error'); btn.disabled = false; btn.textContent = 'Sahkan Cadangan'; return; }
+      const opt = sel.options[sel.selectedIndex];
+      updates = {
+        recommended_package_id: pkgId,
+        recommended_package_name: opt.dataset.name,
+        recommended_package_price: parseFloat(opt.dataset.price) || 0,
+        recommended_at: new Date().toISOString(),
+        recommended_by: window.currentUser.id,
+        recommended_by_name: window.currentUser.full_name,
+        package_payment_status: 'declined',
+        updated_at: new Date().toISOString(),
+      };
     } else {
       const sel = document.getElementById('rec-package-select');
       const pkgId = sel.value;
@@ -936,13 +981,19 @@ async function saveRecommendation() {
     if (error) throw error;
 
     // Update patient kob_status
+    const kobStatusMap = { skip: 'package_paid', declined: 'package_recommended', package: 'package_recommended' };
     await window.db.from('psy_patients')
-      .update({ kob_status: mode === 'skip' ? 'package_paid' : 'package_recommended' })
+      .update({ kob_status: kobStatusMap[mode] || 'package_recommended' })
       .eq('id', patient.id);
 
     Object.assign(kob, updates);
     await auditLog('kob.package_recommended', kobId, { mode, package_id: updates.recommended_package_id });
-    banner(mode === 'skip' ? 'Cadangan disimpan (tiada pakej)' : 'Pakej dicadangkan ✅ Patient akan dimaklumkan untuk bayar');
+    const bannerMsg = {
+      skip: 'Cadangan disimpan (tiada pakej)',
+      declined: `Rekod disimpan ✅ Pakej "${updates.recommended_package_name}" dicadangkan — patient tidak teruskan buat masa ini`,
+      package: 'Pakej dicadangkan ✅ Patient akan dimaklumkan untuk bayar',
+    };
+    banner(bannerMsg[mode] || bannerMsg.package);
     setTimeout(() => location.reload(), 1000);
   } catch (e) {
     banner('Ralat: ' + e.message, 'error');

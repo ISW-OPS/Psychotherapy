@@ -1880,13 +1880,23 @@ async function loadOverview() {
   document.getElementById('ov-checkin-pct').textContent = Math.round(ciCount/7*100) + '%';
 
   // ─── KPI: Pakej Aktif Count + Total RM (derive from plans + packages) ───
-  const { data: plansData } = await window.db.from('psy_treatment_plans')
-    .select('id, name, template, duration_weeks, current_week, status, created_at')
-    .eq('patient_id', patientId)
-    .order('created_at', { ascending: false });
-  const { data: pkgsData } = await window.db.from('psy_packages').select('package_id, name, price');
+  const [{ data: plansData }, { data: pkgsData }, { data: declinedKobData }] = await Promise.all([
+    window.db.from('psy_treatment_plans')
+      .select('id, name, template, duration_weeks, current_week, status, created_at')
+      .eq('patient_id', patientId)
+      .order('created_at', { ascending: false }),
+    window.db.from('psy_packages').select('package_id, name, price'),
+    window.db.from('psy_kob_sessions')
+      .select('recommended_package_id, recommended_package_name, recommended_package_price, recommended_at, recommended_by_name')
+      .eq('patient_id', patientId)
+      .eq('package_payment_status', 'declined')
+      .eq('status', 'completed')
+      .order('selesai_at', { ascending: false })
+      .limit(1),
+  ]);
   const pkgMap = {};
   (pkgsData || []).forEach(pk => { pkgMap[pk.package_id] = pk; });
+  const declinedKob = declinedKobData?.[0] || null;
 
   const allPkgs = (plansData || []).map((pl, idx) => {
     const pkg = pkgMap[pl.template] || {};
@@ -1914,7 +1924,7 @@ async function loadOverview() {
   document.getElementById('ov-pakej-value').textContent = 'RM ' + totalValue.toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});
 
   // ─── Pakej Aktif Table ───
-  renderPakejAktifTable(allPkgs || []);
+  renderPakejAktifTable(allPkgs || [], declinedKob);
 
   // ─── Right sidebar: Maklumat Peribadi ───
   renderPersonalInfo();
@@ -1922,13 +1932,24 @@ async function loadOverview() {
   await renderPatientNotes('general', 'ov-notes-body');
 }
 
-function renderPakejAktifTable(pkgs) {
+function renderPakejAktifTable(pkgs, declinedKob) {
   const body = document.getElementById('ov-pakej-body');
   const empty = document.getElementById('ov-pakej-empty');
   const footer = document.getElementById('ov-pakej-footer');
 
   if (!pkgs.length) {
     body.innerHTML = '';
+    if (declinedKob?.recommended_package_name) {
+      const declinedDate = declinedKob.recommended_at ? new Date(declinedKob.recommended_at).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+      const docName = declinedKob.recommended_by_name ? ` oleh ${escapeHtml(declinedKob.recommended_by_name)}` : '';
+      empty.innerHTML = `<div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-left space-y-1">
+        <div class="text-xs font-bold text-amber-700">⚠️ Cadangan KOB Sebelum Ini</div>
+        <div class="text-sm font-semibold text-ink">${escapeHtml(declinedKob.recommended_package_name)} · RM ${Number(declinedKob.recommended_package_price || 0).toFixed(2)}</div>
+        <div class="text-xs text-ink/55">Dicadangkan${docName} pada ${declinedDate} — patient tidak teruskan pada masa itu.</div>
+      </div>`;
+    } else {
+      empty.innerHTML = 'Tiada pakej aktif';
+    }
     empty.classList.remove('hidden');
     footer.classList.add('hidden');
     return;
