@@ -390,6 +390,12 @@
 
       // Fetch clinic closures (untuk skip cuti)
       clinicClosures = await dbQuery('psy_clinic_closures', {}).catch(() => []);
+
+      // Load allowed rawatan days dari slot config (dynamic)
+      const slotRes = await window.db.from('psy_kob_slot_config')
+        .select('day_of_week').eq('is_active', true).eq('slot_type', 'rawatan');
+      const rawatanDays = [...new Set((slotRes.data || []).map(s => s.day_of_week))];
+      window._allowedRawatanDays = rawatanDays.length ? rawatanDays : [0, 5, 6];
     }
 
     let weeklyProgressRows = [];
@@ -870,7 +876,7 @@
           <div class="text-sm font-semibold text-ink">${dayNameFull}</div>
           ${gantiLabel
             ? `<div class="text-xs text-red-500 font-semibold">Diganti kepada: ${gantiLabel}</div>`
-            : `<div class="text-xs text-ink/45">${shortDate}</div>`
+            : `<div class="text-xs text-ink/45">${shortDate}${d ? ` · ${fmtT(d)}` : ''}</div>`
           }
         </div>
         <div class="flex-shrink-0">${actionBtn}</div>
@@ -898,15 +904,18 @@
       const hint = document.getElementById('book-date-hint');
       if (!val) return;
       const day = new Date(val).getDay();
-      // Hanya Jumaat (5), Sabtu (6), Ahad (0) dibenarkan
-      if (![0, 5, 6].includes(day)) {
-        hint.textContent = '⚠️ Hanya Jumaat, Sabtu, atau Ahad dibenarkan';
+      const allowed = window._allowedRawatanDays || [0, 5, 6];
+      const DAY_NAMES = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
+      const DAY_ORDER = [5, 6, 0, 1, 2, 3, 4]; // Jumaat dulu
+      const allowedNames = [...allowed].sort((a, b) => DAY_ORDER.indexOf(a) - DAY_ORDER.indexOf(b)).map(d => DAY_NAMES[d]).join(', ');
+      if (!allowed.includes(day)) {
+        hint.textContent = `⚠️ Hanya ${allowedNames} dibenarkan`;
         hint.className = 'text-[10px] text-terracotta font-semibold mt-1';
       } else if (isClinicClosed(new Date(val))) {
         hint.textContent = '⚠️ Konsultasi tutup pada tarikh ini — sila pilih hari lain';
         hint.className = 'text-[10px] text-terracotta font-semibold mt-1';
       } else {
-        hint.textContent = 'Hanya Jumaat, Sabtu, atau Ahad';
+        hint.textContent = `Hanya ${allowedNames}`;
         hint.className = 'text-[10px] text-ink/50 mt-1';
       }
       await loadTimeSlots(val);
@@ -963,8 +972,9 @@
         base = prevSession?.session_date ? new Date(prevSession.session_date) : new Date();
         base.setDate(base.getDate() + 7);
       }
-      document.getElementById('book-date').value = base.toISOString().slice(0, 10);
-      document.getElementById('book-date').min = new Date().toISOString().slice(0, 10);
+      const toLocalDateStr = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      document.getElementById('book-date').value = toLocalDateStr(base);
+      document.getElementById('book-date').min = toLocalDateStr(new Date());
       await checkBookingDate(); // Tunggu slot dropdown populate
 
       if (existing?.session_date) {
@@ -997,8 +1007,11 @@
 
       const sessionAt = new Date(`${date}T${time}:00`);
       const dow = sessionAt.getDay();
-      if (![0, 5, 6].includes(dow)) {
-        banner('Hanya Jumaat, Sabtu, atau Ahad dibenarkan', 'error');
+      const allowed = window._allowedRawatanDays || [0, 5, 6];
+      if (!allowed.includes(dow)) {
+        const DAY_NAMES = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
+        const DAY_ORDER = [5, 6, 0, 1, 2, 3, 4];
+        banner(`Hanya ${[...allowed].sort((a,b) => DAY_ORDER.indexOf(a) - DAY_ORDER.indexOf(b)).map(d => DAY_NAMES[d]).join(', ')} dibenarkan`, 'error');
         return;
       }
       if (isClinicClosed(sessionAt)) {

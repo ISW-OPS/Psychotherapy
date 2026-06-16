@@ -268,7 +268,7 @@
         <div>
           <label class="label">Tarikh Sesi</label>
           <input id="bk-date" type="date" onchange="checkBookDate(this)" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
-          <p id="bk-date-warn" class="hidden text-[11px] text-terracotta mt-1">🚫 Konsultasi tutup (Isnin/Selasa)</p>
+          <p id="bk-date-warn" class="hidden text-[11px] text-terracotta mt-1">🚫 Hari rawatan hanya Jumaat, Sabtu & Ahad</p>
         </div>
         <div>
           <label class="label">Masa</label>
@@ -328,7 +328,7 @@
         <div>
           <label class="label">Tarikh Baru</label>
           <input id="rs-date" type="date" onchange="checkRsDate(this)" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
-          <p id="rs-date-warn" class="hidden text-[11px] text-terracotta mt-1">🚫 Konsultasi tutup (Isnin/Selasa)</p>
+          <p id="rs-date-warn" class="hidden text-[11px] text-terracotta mt-1">🚫 Hari rawatan hanya Jumaat, Sabtu & Ahad</p>
         </div>
         <div>
           <label class="label">Masa Baru</label>
@@ -480,6 +480,13 @@ async function loadSessions() {
     .then(r => r.data || [], () => []);
   window._closureMap = {};
   closuresRes.forEach(c => { window._closureMap[c.closure_date] = c; });
+
+  // Load allowed rawatan days from slot config (dynamic — ikut slot yang ON)
+  const slotRes = await window.db.from('psy_kob_slot_config')
+    .select('day_of_week').eq('is_active', true).eq('slot_type', 'rawatan');
+  const rawatanDays = [...new Set((slotRes.data || []).map(s => s.day_of_week))];
+  // Fallback ke Jumaat/Sabtu/Ahad jika slot config kosong
+  window._allowedRawatanDays = rawatanDays.length ? rawatanDays : [0, 5, 6];
 
   const patients = (patientsRes.data || []).filter(p => p.psy_profiles?.role === 'patient');
   allPatientsList = patients;
@@ -909,9 +916,13 @@ async function markCancel(id) {
 function checkRsDate(input) {
   const warn = document.getElementById('rs-date-warn');
   const day = new Date(input.value).getDay();
-  if (day === 1 || day === 2) {
+  const allowed = window._allowedRawatanDays || [0, 5, 6];
+  const DAY_NAMES = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
+  const DAY_ORDER = [5, 6, 0, 1, 2, 3, 4];
+  const allowedNames = [...allowed].sort((a,b) => DAY_ORDER.indexOf(a) - DAY_ORDER.indexOf(b)).map(d => DAY_NAMES[d]).join(', ');
+  if (!allowed.includes(day)) {
+    warn.textContent = `🚫 Hari rawatan hanya: ${allowedNames}`;
     warn.classList.remove('hidden');
-    input.value = '';
   } else {
     warn.classList.add('hidden');
   }
@@ -936,7 +947,13 @@ async function confirmReschedule() {
   const reason = document.getElementById('rs-reason').value.trim();
   if (!date || !time) { banner('Sila pilih tarikh dan masa baru.', 'error'); return; }
   const day = new Date(date).getDay();
-  if (day === 1 || day === 2) { banner('🚫 Konsultasi tutup Isnin & Selasa. Sila pilih hari lain.', 'error'); return; }
+  const allowedRs = window._allowedRawatanDays || [0, 5, 6];
+  if (!allowedRs.includes(day)) {
+    const DAY_NAMES = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
+    const DAY_ORDER = [5, 6, 0, 1, 2, 3, 4];
+    banner(`🚫 Hari rawatan hanya: ${[...allowedRs].sort((a,b)=>DAY_ORDER.indexOf(a)-DAY_ORDER.indexOf(b)).map(d=>DAY_NAMES[d]).join(', ')}`, 'error');
+    return;
+  }
   const btn = document.getElementById('btn-rs-confirm');
   btn.disabled = true; btn.textContent = 'Menyimpan...';
   try {
@@ -1028,9 +1045,15 @@ function autoFillPlan() {
 
 function checkBookDate(input) {
   const day = new Date(input.value).getDay();
-  const closed = day === 1 || day === 2;
+  const allowed = window._allowedRawatanDays || [0, 5, 6];
+  const closed = !allowed.includes(day);
+  const DAY_NAMES = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
+  const DAY_ORDER = [5, 6, 0, 1, 2, 3, 4]; // Jumaat dulu
+  const allowedNames = [...allowed].sort((a, b) => DAY_ORDER.indexOf(a) - DAY_ORDER.indexOf(b)).map(d => DAY_NAMES[d]).join(', ');
   input.style.borderColor = closed ? '#d9534f' : '';
-  document.getElementById('bk-date-warn').classList.toggle('hidden', !closed);
+  const warn = document.getElementById('bk-date-warn');
+  warn.textContent = `🚫 Hari rawatan hanya: ${allowedNames}`;
+  warn.classList.toggle('hidden', !closed);
   document.getElementById('btn-save-session').disabled = closed;
 }
 
@@ -1039,7 +1062,7 @@ function openBookModal(prefillDate) {
   document.getElementById('bk-plan-id').value = '';
   document.getElementById('bk-plan-display').textContent = 'Pilih pesakit dahulu';
   document.getElementById('bk-plan-display').className = 'w-full border border-ink/10 bg-cream/40 rounded-xl px-3 py-2.5 text-sm text-ink/50 italic';
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = localDateStr(new Date());
   document.getElementById('bk-date').min = todayStr;
   const defaultDate = prefillDate && prefillDate >= todayStr ? prefillDate : todayStr;
   document.getElementById('bk-date').value  = defaultDate;
@@ -1073,7 +1096,7 @@ async function saveSession() {
   if (!patientId) { errEl.textContent = 'Sila pilih pesakit.'; errEl.classList.remove('hidden'); return; }
   if (!planId)    { errEl.textContent = 'Sila pilih plan rawatan.'; errEl.classList.remove('hidden'); return; }
   if (!date)      { errEl.textContent = 'Sila pilih tarikh sesi.'; errEl.classList.remove('hidden'); return; }
-  if (date < new Date().toISOString().split('T')[0]) { errEl.textContent = '🚫 Tarikh yang dipilih sudah lepas. Sila pilih tarikh akan datang.'; errEl.classList.remove('hidden'); return; }
+  if (date < localDateStr(new Date())) { errEl.textContent = '🚫 Tarikh yang dipilih sudah lepas. Sila pilih tarikh akan datang.'; errEl.classList.remove('hidden'); return; }
   if (!week || week < 1) { errEl.textContent = 'Sila masukkan nombor minggu yang sah.'; errEl.classList.remove('hidden'); return; }
 
   const plan = allPlansList.find(p => p.id === planId);
@@ -1100,9 +1123,12 @@ async function saveSession() {
     }
   }
 
-  const dayOfWeek = new Date(date).getDay(); // 0=Ahad, 1=Isnin, 2=Selasa
-  if (dayOfWeek === 1 || dayOfWeek === 2) {
-    errEl.textContent = '🚫 Konsultasi tutup pada hari Isnin dan Selasa. Sila pilih hari lain.';
+  const dayOfWeek = new Date(date).getDay();
+  const allowedDays = window._allowedRawatanDays || [0, 5, 6];
+  if (!allowedDays.includes(dayOfWeek)) {
+    const DAY_NAMES = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
+    const DAY_ORDER = [5, 6, 0, 1, 2, 3, 4];
+    errEl.textContent = `🚫 Hari rawatan hanya: ${[...allowedDays].sort((a,b) => DAY_ORDER.indexOf(a) - DAY_ORDER.indexOf(b)).map(d => DAY_NAMES[d]).join(', ')}. Sila pilih hari yang betul.`;
     errEl.classList.remove('hidden');
     return;
   }
