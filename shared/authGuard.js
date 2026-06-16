@@ -39,7 +39,7 @@ window.PAGE_MODULE = {
   psy_appointments: 'schedule',
   plan_week:        'plan_week',
   kob_list:         'kob',
-  kepatuhan:        'operations',
+  kepatuhan:        'kepatuhan',
 
   // OPERASI
   pakej:            'package',

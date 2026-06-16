@@ -5416,3 +5416,149 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 SELECT 'Step 68 OK — library-media storage bucket ready' AS status;
+
+
+-- ════════════════════════════════════════════════════════════════
+-- step69_rbac_granular_nav.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ============================================================
+-- STEP 69 — RBAC granular: satu modul untuk SETIAP page navbar staff
+-- Sebelum ni hanya 13 modul kasar; banyak page (payment, products,
+-- library, announcements, surat, closures, kob_slots, governance,
+-- statistik, audit, dll) terpetak ke modul yang TAK WUJUD → tersembunyi
+-- untuk semua role kecuali super_admin. Step ni cipta modul per-page
+-- supaya setiap role (manager/admin/doctor/coach) boleh dikawal satu-satu
+-- dalam UI Peranan & Kebenaran.
+-- ============================================================
+
+-- ── 1) Modul baru (per page) + relabel modul gabungan ──
+INSERT INTO psy_modules (code, label, icon, sort_order) VALUES
+  ('kyc',             'KYC',              '🆔',  25),
+  ('plan_week',       'Weekly Plan',      '📋',  35),
+  ('kepatuhan',       'Kepatuhan',        '📊',  55),
+  ('products',        'Produk',           '🛍️',  62),
+  ('pulangan',        'Pulangan Botol',   '🍯',  72),
+  ('payment',         'Pembayaran',       '💳',  85),
+  ('announcements',   'Pengumuman',       '📢',  90),
+  ('library',         'Library',          '📚',  95),
+  ('surat',           'Surat Rasmi',      '📜', 100),
+  ('closures',        'Penutupan Klinik', '🚫', 102),
+  ('kob_slots',       'Slot Konsultasi',  '⏰', 104),
+  ('governance',      'Governance',       '📈', 110),
+  ('staff_stats',     'Statistik',        '📊', 112),
+  ('pakej_laporan',   'Laporan Pakej',    '📦', 114),
+  ('issue',           'Report Issue',     '⚠️', 116),
+  ('audit_kebenaran', 'Audit Kebenaran',  '📋', 132),
+  ('audit',           'Audit Log',        '🔒', 134)
+ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label, icon=EXCLUDED.icon, sort_order=EXCLUDED.sort_order, is_active=true;
+
+-- Relabel modul gabungan kepada makna tunggal (pakej & inventori kini berasingan dari payment/produk)
+UPDATE psy_modules SET label='Pakej Rawatan', icon='🗂️' WHERE code='package';
+UPDATE psy_modules SET label='Inventori',     icon='🏭' WHERE code='inventory';
+-- Selaraskan istilah dengan navbar ("Sesi KOB")
+UPDATE psy_modules SET label='Sesi KOB' WHERE code='kob';
+
+-- Modul lama yang kini dipecahkan kepada modul per-page → NYAHAKTIF di seksyen (6)
+-- (kekal row untuk FK & sejarah audit; cuma tak papar di RBAC UI):
+--   communication → announcements + library
+--   operations    → kepatuhan
+--   reports       → governance + staff_stats + pakej_laporan + audit + audit_kebenaran
+
+-- ── 2) Module × Action applicability untuk modul baru ──
+INSERT INTO psy_module_actions (module_code, action_code) VALUES
+  ('kyc','view'),('kyc','create'),('kyc','edit'),('kyc','delete'),('kyc','export'),('kyc','settings'),
+  ('plan_week','view'),('plan_week','create'),('plan_week','edit'),('plan_week','delete'),('plan_week','export'),('plan_week','settings'),
+  ('kepatuhan','view'),('kepatuhan','export'),('kepatuhan','settings'),
+  ('products','view'),('products','create'),('products','edit'),('products','delete'),('products','export'),('products','settings'),
+  ('pulangan','view'),('pulangan','create'),('pulangan','edit'),('pulangan','delete'),('pulangan','export'),('pulangan','settings'),
+  ('payment','view'),('payment','edit'),('payment','export'),('payment','settings'),
+  ('announcements','view'),('announcements','create'),('announcements','edit'),('announcements','delete'),('announcements','settings'),
+  ('library','view'),('library','create'),('library','edit'),('library','delete'),('library','settings'),
+  ('surat','view'),('surat','create'),('surat','edit'),('surat','delete'),('surat','settings'),
+  ('closures','view'),('closures','create'),('closures','edit'),('closures','delete'),('closures','settings'),
+  ('kob_slots','view'),('kob_slots','create'),('kob_slots','edit'),('kob_slots','delete'),('kob_slots','settings'),
+  ('governance','view'),('governance','export'),('governance','settings'),
+  ('staff_stats','view'),('staff_stats','export'),
+  ('pakej_laporan','view'),('pakej_laporan','export'),
+  ('issue','view'),('issue','edit'),('issue','settings'),
+  ('audit_kebenaran','view'),('audit_kebenaran','export'),
+  ('audit','view'),('audit','export')
+ON CONFLICT DO NOTHING;
+
+-- ── 3) Grant: super_admin & manager auto (SELECT atas semua module_actions) ──
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT 'super_admin', module_code, action_code FROM psy_module_actions
+ON CONFLICT DO NOTHING;
+
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT 'manager', module_code, action_code FROM psy_module_actions
+WHERE NOT (module_code='rbac' AND action_code IN ('create','edit','delete','settings'))
+ON CONFLICT DO NOTHING;
+
+-- Pindah grant lama 'communication' → announcements + library (kekalkan akses sedia ada)
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT role_code, 'announcements', action_code FROM psy_role_module_actions
+WHERE module_code='communication'
+  AND action_code IN (SELECT action_code FROM psy_module_actions WHERE module_code='announcements')
+ON CONFLICT DO NOTHING;
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT role_code, 'library', action_code FROM psy_role_module_actions
+WHERE module_code='communication'
+  AND action_code IN (SELECT action_code FROM psy_module_actions WHERE module_code='library')
+ON CONFLICT DO NOTHING;
+-- 'operations' → kepatuhan
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT role_code, 'kepatuhan', action_code FROM psy_role_module_actions
+WHERE module_code='operations'
+  AND action_code IN (SELECT action_code FROM psy_module_actions WHERE module_code='kepatuhan')
+ON CONFLICT DO NOTHING;
+
+-- ── 4) Default grant untuk admin / doctor / coach (modul baru) ──
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code) VALUES
+  -- ADMIN: operasi penuh (tiada governance/audit)
+  ('admin','kyc','view'),('admin','kyc','create'),('admin','kyc','edit'),
+  ('admin','plan_week','view'),
+  ('admin','kepatuhan','view'),
+  ('admin','products','view'),('admin','products','create'),('admin','products','edit'),('admin','products','delete'),('admin','products','export'),
+  ('admin','pulangan','view'),('admin','pulangan','edit'),
+  ('admin','payment','view'),('admin','payment','edit'),('admin','payment','export'),
+  ('admin','announcements','view'),('admin','announcements','create'),('admin','announcements','edit'),('admin','announcements','delete'),
+  ('admin','library','view'),('admin','library','create'),('admin','library','edit'),('admin','library','delete'),
+  ('admin','surat','view'),('admin','surat','create'),('admin','surat','edit'),
+  ('admin','closures','view'),('admin','closures','create'),('admin','closures','edit'),
+  ('admin','kob_slots','view'),('admin','kob_slots','create'),('admin','kob_slots','edit'),
+  ('admin','staff_stats','view'),
+  ('admin','pakej_laporan','view'),('admin','pakej_laporan','export'),
+  ('admin','issue','view'),('admin','issue','edit'),
+  -- DOCTOR: klinikal
+  ('doctor','kyc','view'),('doctor','kyc','edit'),
+  ('doctor','plan_week','view'),('doctor','plan_week','create'),('doctor','plan_week','edit'),
+  ('doctor','kepatuhan','view'),
+  ('doctor','library','view'),
+  ('doctor','announcements','view'),
+  ('doctor','kob_slots','view'),
+  ('doctor','issue','view'),
+  -- COACH: pesakit ditugaskan
+  ('coach','plan_week','view'),('coach','plan_week','edit'),
+  ('coach','kepatuhan','view'),
+  ('coach','library','view'),
+  ('coach','announcements','view'),
+  ('coach','issue','view')
+ON CONFLICT DO NOTHING;
+
+-- ── 6) Nyahaktif modul lama — selepas grant lama dipindahkan ──
+-- Kekal row (FK & sejarah audit), cuma tak papar di RBAC UI (peranan.html tapis is_active).
+UPDATE psy_modules SET is_active = false WHERE code IN ('communication','operations','reports');
+
+-- Peranan & Kebenaran (rbac) — super_admin SAHAJA; tarik balik akses role lain
+DELETE FROM psy_role_module_actions WHERE module_code = 'rbac' AND role_code <> 'super_admin';
+
+-- ── 7) Verifikasi ──
+SELECT 'Step 69 OK — RBAC granular per-page modules ready' AS status,
+  (SELECT COUNT(*) FROM psy_modules WHERE is_active) AS modul_aktif;
+
+SELECT r.code, COUNT(rma.*) AS jumlah_kebenaran
+FROM psy_roles r
+LEFT JOIN psy_role_module_actions rma ON rma.role_code = r.code
+GROUP BY r.code, r.sort_order ORDER BY r.sort_order;
