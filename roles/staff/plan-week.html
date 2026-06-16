@@ -228,6 +228,21 @@
           </div>
         </div>
 
+        <!-- Admin Tools — super_admin only -->
+        <div id="admin-tools-section" class="hidden bg-red-50 border border-red-200 rounded-xl p-4">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="text-red-600 font-bold text-sm">Admin Tools</span>
+            <span class="text-[10px] bg-red-100 text-red-500 px-2 py-0.5 rounded-full font-semibold">super_admin</span>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="resetWeekSessions()" class="px-4 py-2 bg-red-600 text-white text-xs font-semibold rounded-lg hover:bg-red-700">
+              Reset Tarikh Sesi Minggu Ini
+            </button>
+          </div>
+          <p class="text-[11px] text-red-400 mt-2">Padam rows sesi minggu ini dan jana semula dari jadual asal (preferred_pair). Guna untuk betulkan tarikh yang rosak.</p>
+          <div id="admin-tools-msg" class="hidden mt-2 text-xs font-semibold"></div>
+        </div>
+
       </div>
     </main>
 
@@ -372,6 +387,11 @@ function escHtml(s) { const d = document.createElement('div'); d.textContent = S
   planMaxWeek = Math.max(plan.duration_weeks || 48, maxRowWeek);
 
   weekNumber = Math.max(1, Math.min(weekNumber, planMaxWeek));
+
+  // Tunjuk admin tools hanya untuk super_admin
+  if (window.currentUser?.staff_role === 'super_admin') {
+    document.getElementById('admin-tools-section').classList.remove('hidden');
+  }
 
   await loadWeek();
 })();
@@ -1415,6 +1435,28 @@ async function notify(userId, type, title, body, link) {
   try {
     await window.db.from('psy_notifications').insert({ user_id: userId, type, title, body, link });
   } catch (_) { /* notifikasi tak kritikal */ }
+}
+
+// ── Admin: Reset tarikh sesi minggu ini ───────────────
+async function resetWeekSessions() {
+  if (!confirm(`Reset semua sesi Minggu ${weekNumber}? Rows akan dipadam dan dijana semula apabila pesakit buka plan.`)) return;
+  const msgEl = document.getElementById('admin-tools-msg');
+  msgEl.className = 'mt-2 text-xs font-semibold text-ink/60';
+  msgEl.textContent = 'Memproses...';
+  msgEl.classList.remove('hidden');
+  try {
+    const { error } = await window.db
+      .from('psy_plan_weekly_progress')
+      .delete()
+      .eq('plan_id', activePlan.id)
+      .eq('week_number', weekNumber);
+    if (error) throw error;
+    msgEl.className = 'mt-2 text-xs font-semibold text-green-700';
+    msgEl.textContent = `Minggu ${weekNumber} berjaya dipadam. Tarikh akan dijana semula apabila pesakit buka halaman plan.`;
+  } catch (e) {
+    msgEl.className = 'mt-2 text-xs font-semibold text-red-600';
+    msgEl.textContent = 'Ralat: ' + e.message;
+  }
 }
 </script>
 </body>

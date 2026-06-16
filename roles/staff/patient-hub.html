@@ -117,6 +117,7 @@
                   <div class="flex items-center gap-2">
                     <span id="ov-plan-subtitle" class="text-xs text-ink/50"></span>
                     <button id="ov-add-week-btn" onclick="openAddWeekModal()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-navy text-navy hover:bg-navy hover:text-white transition whitespace-nowrap">➕ Tambah Minggu</button>
+                    <button id="ov-reset-sessions-btn" onclick="resetPlanSessions()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-red-300 text-red-500 hover:bg-red-50 transition whitespace-nowrap">🔄 Reset Sesi</button>
                   </div>
                 </div>
                 <div id="ov-weekly-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3"></div>
@@ -1832,6 +1833,7 @@ async function removeExtensionWeek(weekNo) {
 async function loadOverview() {
   // Butang "Tambah Minggu" hanya untuk staf boleh-edit & ada plan aktif
   document.getElementById('ov-add-week-btn')?.classList.toggle('hidden', !(canEdit && activePlan));
+  document.getElementById('ov-reset-sessions-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
 
   // ─── KPI: Minggu Semasa + Kehadiran ───
   if (activePlan) {
@@ -4065,6 +4067,24 @@ async function uploadDnaReports(input) {
     await loadDnaReports();
   } catch (err) {
     banner('Ralat upload: ' + err.message, 'error');
+  }
+}
+
+async function resetPlanSessions() {
+  if (!activePlan) return;
+  if (!confirm(`Reset semua sesi plan ini?\n\nRows booked/cancel akan dipadam. Tarikh dijana semula apabila pesakit buka plan.\nSesi yang sudah hadir tidak akan dipadam.`)) return;
+  try {
+    const { error } = await window.db
+      .from('psy_plan_weekly_progress')
+      .delete()
+      .eq('plan_id', activePlan.id)
+      .neq('status', 'hadir')
+      .neq('status', 'consultation_done');
+    if (error) throw error;
+    banner('Sesi dipadam. Tarikh akan dijana semula apabila pesakit buka plan. ✅');
+    await loadOverview();
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
   }
 }
 </script>
