@@ -132,11 +132,12 @@ window.PAGE_PATIENT_MODULE = {
   'rekod-perubatan': 'pat_rekod',
   library:           'pat_library',
   shop:              'pat_shop',
+  payment:           'pat_payment',
   psy_orders:        'pat_orders',
   issue:             'pat_issue',
   pulangan:          'pat_pulangan',
   surat:             'pat_surat',
-  // sentiasa allow: dashboard, pakej, payment, kyc, profile, checkin
+  // sentiasa allow: dashboard, pakej, kyc, profile, checkin
 };
 
 async function loadPatientFeatures() {
