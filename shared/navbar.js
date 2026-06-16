@@ -90,6 +90,10 @@ const STAFF_NAV_ICONS = {
   staff_mgmt:       'staff-management.png',
   peranan:          'access-control-RBAC.png',
   audit:            'audit-log.png',
+  governance:       'governance.png',
+  staff_stats:      'statistik.png',
+  pakej_laporan:    'laporan-pakej.png',
+  audit_kebenaran:  'audit kebenaran.png',
 };
 // Sidebar staf latar PUTIH: ikon gelap bila tak aktif, putih bila aktif (latar navy).
 function staffNavIconHtml(id, fallbackEmoji, isActive) {
