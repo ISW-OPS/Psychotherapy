@@ -65,6 +65,43 @@ function patientNavIconHtml(id, fallbackEmoji, sizeClass = 'w-[18px] h-[18px]') 
   return `<img src="${encodeURI(base + f)}" alt="" class="${sizeClass} object-contain flex-shrink-0" style="filter:brightness(0) invert(1);opacity:.9" onerror="this.outerHTML='<span class=\\'flex-shrink-0\\'>${fallbackEmoji}</span>'">`;
 }
 
+// Staff guna ikon PNG yang SAMA dengan patient untuk item yang seakan.
+// Item yang tiada padanan kekal emoji (fallback).
+const STAFF_NAV_ICONS = {
+  dashboard:        'dashboard-home.png',
+  psy_patients:     'patient.png',
+  kyc_forms:        'kyc.png',
+  psy_appointments: 'calendar.png',
+  plan_week:        'treatment-plan.png',
+  kob_list:         'KOB.png',
+  kepatuhan:        'catatan-harian.png',
+  pakej:            'Pakej-rawatan.png',
+  psy_products:     'shop.png',
+  psy_orders:       'Orders&tracking.png',
+  pulangan:         'return bottle.png',
+  payment_admin:    'payment.png',
+  library:          'content-library.png',
+  issue:            'report-issue.png',
+  surat:            'surat-rasmi.png',
+  inventory:        'inventory.png',
+  announcements:    'announce.png',
+  closures:         'penutupan klinik.png',
+  kob_slots:        'slot konsultasi.png',
+  staff_mgmt:       'staff-management.png',
+  peranan:          'access-control-RBAC.png',
+  audit:            'audit-log.png',
+};
+// Sidebar staf latar PUTIH: ikon gelap bila tak aktif, putih bila aktif (latar navy).
+function staffNavIconHtml(id, fallbackEmoji, isActive) {
+  const f = STAFF_NAV_ICONS[id];
+  if (!f) return `<span class="flex-shrink-0 text-base">${fallbackEmoji}</span>`;
+  const base = window.location.pathname.includes('/roles/') ? '../../icon/' : 'icon/';
+  const style = isActive
+    ? 'filter:brightness(0) invert(1);opacity:1'
+    : 'filter:brightness(0);opacity:.55';
+  return `<img src="${encodeURI(base + f)}" alt="" class="w-[18px] h-[18px] object-contain flex-shrink-0" style="${style}" onerror="this.outerHTML='<span class=\\'flex-shrink-0 text-base\\'>${fallbackEmoji}</span>'">`;
+}
+
 // ── Staff nav (grouped) ──────────────────────────────────
 // Master staff nav — ikut matrix yang user define.
 // Semua role guna struktur sama; RBAC `pageAllowed()` filter mana item nampak.
@@ -183,7 +220,7 @@ function renderNavGroup(group, roleKey, activeScreen) {
   const items = group.items.map(item => `
     <a href="${item.url}" title="${item.label}"
       class="nav-item no-underline ${item.id === activeScreen ? 'active' : ''} w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-ink/60 hover:bg-ink/5 transition-colors">
-      <span class="flex-shrink-0 text-base">${item.icon}</span>
+      ${staffNavIconHtml(item.id, item.icon, item.id === activeScreen)}
       <span class="nav-label font-medium">${item.label}</span>
       <span id="nav-badge-${item.id}" class="hidden ml-auto nav-label min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold bg-terracotta text-white flex items-center justify-center"></span>
     </a>`).join('');
