@@ -34,6 +34,37 @@ const NAV_ITEMS_BY_ROLE = {
   ],
 };
 
+// ── Patient nav PNG icons (folder /icon) ─────────────────
+// id nav → nama fail. Item tanpa entri guna emoji fallback.
+const PATIENT_NAV_ICONS = {
+  dashboard: 'dashboard-home.png',
+  kob: 'KOB.png',
+  plan: 'treatment-plan.png',
+  routine: 'Jadual-Harian.png',
+  pakej: 'Pakej-rawatan.png',
+  kepatuhan: 'catatan-harian.png',
+  vitals: 'Vital-rekod.png',
+  'rekod-perubatan': 'medical-record.png',
+  library: 'content-library.png',
+  video: 'video.png',
+  artikel: 'article.png',
+  faq: 'faq.png',
+  shop: 'shop.png',
+  payment: 'payment.png',
+  psy_orders: 'Orders&tracking.png',
+  issue: 'report-issue.png',
+  pulangan: 'return bottle.png',
+  surat: 'surat-rasmi.png',
+  kyc: 'kyc.png',
+};
+function patientNavIconHtml(id, fallbackEmoji, sizeClass = 'w-[18px] h-[18px]') {
+  const f = PATIENT_NAV_ICONS[id];
+  if (!f) return `<span class="flex-shrink-0">${fallbackEmoji}</span>`;
+  const base = window.location.pathname.includes('/roles/') ? '../../icon/' : 'icon/';
+  // filter: jadikan ikon PNG putih supaya jelas atas latar navy
+  return `<img src="${encodeURI(base + f)}" alt="" class="${sizeClass} object-contain flex-shrink-0" style="filter:brightness(0) invert(1);opacity:.9" onerror="this.outerHTML='<span class=\\'flex-shrink-0\\'>${fallbackEmoji}</span>'">`;
+}
+
 // ── Staff nav (grouped) ──────────────────────────────────
 // Master staff nav — ikut matrix yang user define.
 // Semua role guna struktur sama; RBAC `pageAllowed()` filter mana item nampak.
@@ -300,7 +331,8 @@ function renderNavbar(role, user, navItems, activeScreen) {
     }
 
   } else {
-    // Dark sidebar for patient
+    // Dark (navy) sidebar for patient — kekal ikon PNG
+    sidebar.classList.remove('patient-white');
     sidebar.innerHTML = `
       <div class="nav-brand p-4 border-b border-white/10 flex items-center gap-3">
         <div class="w-10 h-10 bg-white rounded-xl flex items-center justify-center flex-shrink-0 p-1">
@@ -326,12 +358,12 @@ function renderNavbar(role, user, navItems, activeScreen) {
         const topLink = (it, extra = '') => `
             <a href="${it.url}" title="${it.label}"
               class="nav-item no-underline ${it.id === activeScreen ? 'active' : ''} ${extra} flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-white/80 hover:bg-white/10">
-              <span class="flex-shrink-0">${it.icon}</span><span class="nav-label">${it.label}</span>${badge(it.id)}
+              ${patientNavIconHtml(it.id, it.icon)}<span class="nav-label">${it.label}</span>${badge(it.id)}
             </a>`;
         const childLink = (it) => `
             <a href="${it.url}" title="${it.label}"
               class="nav-item no-underline ${it.id === activeScreen ? 'active' : ''} w-full flex items-center gap-3 pl-9 pr-3 py-1.5 rounded-lg text-[13px] text-white/65 hover:bg-white/10">
-              <span class="flex-shrink-0">${it.icon}</span><span class="nav-label">${it.label}</span>${badge(it.id)}
+              ${patientNavIconHtml(it.id, it.icon, 'w-4 h-4')}<span class="nav-label">${it.label}</span>${badge(it.id)}
             </a>`;
         return navItems.map(item => {
           if (!(item.children && item.children.length)) return topLink(item, 'w-full');
@@ -510,7 +542,19 @@ function buildTopbar(user, cfg, role, staffRole) {
   // Layout: tolak kandungan ke bawah top bar + sidebar mula bawah top bar
   document.body.style.paddingTop = '3.5rem';
   const sb = document.getElementById('sidebar');
-  if (sb) { sb.style.top = '3.5rem'; sb.style.height = 'calc(100vh - 3.5rem)'; }
+  if (sb) {
+    // Kalau sidebar berada dalam shell 'overflow-hidden' (cth plan.html: flex h-screen overflow-hidden),
+    // body padding-top dah offset shell di bawah top bar — jadi JANGAN tambah top:3.5rem lagi,
+    // kalau tidak ada ruang kosong di atas sidebar (double offset).
+    let inFixedShell = false, el = sb.parentElement;
+    while (el && el !== document.body) {
+      const cs = getComputedStyle(el);
+      if (cs.overflow === 'hidden' || cs.overflowY === 'hidden') { inFixedShell = true; break; }
+      el = el.parentElement;
+    }
+    sb.style.top = inFixedShell ? '0' : '3.5rem';
+    sb.style.height = 'calc(100vh - 3.5rem)';
+  }
   document.querySelectorAll('#sidebar .nav-brand, #sidebar .nav-user').forEach(el => { el.style.display = 'none'; });
   const ph = document.getElementById('page-header'); if (ph) ph.style.display = 'none';
   // Notif panel (sekali sahaja)

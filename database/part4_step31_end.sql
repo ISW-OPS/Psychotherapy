@@ -5363,3 +5363,56 @@ CREATE POLICY "Staff can read all kyc"
   );
 
 SELECT 'RLS fix OK — staff can now read all patient data' AS status;
+
+
+-- ════════════════════════════════════════════════════════════════
+-- step68_library_media_storage.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ============================================================
+-- STEP 68 — 'library-media' storage bucket
+-- Library editor (roles/staff/library-edit.html) memuat naik video,
+-- audio, thumbnail & dokumen sokongan ke bucket 'library-media'.
+-- Bucket ini belum dicipta → ralat "Bucket not found" semasa upload.
+-- Cipta bucket public (getPublicUrl dipakai oleh kod) + RLS.
+-- ============================================================
+
+-- 1. Cipta bucket public (50MB limit; naikkan jika perlu video besar)
+INSERT INTO storage.buckets (id, name, public, file_size_limit)
+VALUES ('library-media', 'library-media', true, 524288000)  -- 500 MB
+ON CONFLICT (id) DO UPDATE SET public = true, file_size_limit = 524288000;
+
+-- 2. Staff boleh upload kandungan library
+DO $$ BEGIN
+  CREATE POLICY "library_media_staff_insert" ON storage.objects FOR INSERT
+    WITH CHECK (
+      bucket_id = 'library-media'
+      AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
+    );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- 3. Baca awam (bucket public — pesakit boleh tonton/baca kandungan)
+DO $$ BEGIN
+  CREATE POLICY "library_media_public_read" ON storage.objects FOR SELECT
+    USING (bucket_id = 'library-media');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- 4. Staff boleh kemaskini fail (tukar thumbnail/video)
+DO $$ BEGIN
+  CREATE POLICY "library_media_staff_update" ON storage.objects FOR UPDATE
+    USING (
+      bucket_id = 'library-media'
+      AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
+    );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- 5. Staff boleh padam fail
+DO $$ BEGIN
+  CREATE POLICY "library_media_staff_delete" ON storage.objects FOR DELETE
+    USING (
+      bucket_id = 'library-media'
+      AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
+    );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+SELECT 'Step 68 OK — library-media storage bucket ready' AS status;
