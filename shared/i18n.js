@@ -182,9 +182,13 @@
   }
 
   function updateToggle() {
-    var lang = getLang();
+    var label = getLang() === 'en' ? 'EN' : 'BM';
     var btns = document.querySelectorAll('[data-isw-lang-btn]');
-    for (var i = 0; i < btns.length; i++) btns[i].textContent = lang === 'en' ? 'EN' : 'BM';
+    // Guard: only write when changed. Unconditional textContent writes would
+    // create childList mutations that re-trigger the observer -> infinite loop.
+    for (var i = 0; i < btns.length; i++) {
+      if (btns[i].textContent !== label) btns[i].textContent = label;
+    }
   }
 
   function apply() {
