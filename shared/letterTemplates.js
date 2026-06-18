@@ -5,10 +5,10 @@
 const CLINIC = {
   name: 'IBNU SINA WELLNESS',
   address: 'Lot 331, Lorong Senyum Matahari B, Country Heights, 43000 Kajang, Selangor.',
-  phone: '03-8966 3696',
+  phone: '03-8966 3702',
   legalName: 'Ibnu Sina Wellness Sdn Bhd (1319021-P)',
   legalAddress: 'Lot 331 Lorong Senyum Matahari B, Country Heights 43000 Kajang, Selangor Malaysia',
-  legalPhones: '+60 17 775 6615 / +60 17 426 5661',
+  legalPhones: '03-8966 3702',
 };
 
 // Placeholder auto-isi — semua di-load dari DB (psy_letter_auto_fields)

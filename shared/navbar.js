@@ -560,6 +560,9 @@ function buildTopbar(user, cfg, role, staffRole) {
     </div>
     <div class="flex-1 min-w-0"></div>
     <div class="flex items-center gap-2 px-4 flex-shrink-0">
+      <button onclick="iswToggleLang && iswToggleLang()" data-isw-lang-btn
+        class="px-2.5 h-9 min-w-[40px] rounded-lg hover:bg-ink/5 text-xs font-bold text-ink/60 border border-ink/15 transition-colors"
+        title="Bahasa / Language">EN</button>
       ${role === 'staff' ? `<a href="inbox.html" id="wa-inbox-btn" class="relative p-2 hover:bg-ink/5 rounded-lg" title="WhatsApp Inbox">
         <span class="text-lg">💬</span>
         <span id="wa-inbox-badge" class="hidden absolute top-0.5 right-1 min-w-[16px] h-4 bg-green text-white text-[9px] font-bold rounded-full flex items-center justify-center px-0.5"></span>
@@ -765,6 +768,21 @@ if (!window.__iswPwaInit && !document.getElementById('isw-pwa-loader')) {
   const s = document.createElement('script');
   s.id = 'isw-pwa-loader';
   s.src = '/shared/pwa.js';
+  document.head.appendChild(s);
+}
+
+// ── i18n bootstrap — glossary dict + engine on every role page (BM ⇄ EN) ──
+// async=false preserves execution order so the dict is ready before the engine.
+if (!window.__iswI18n && !document.getElementById('isw-i18n-loader')) {
+  const d = document.createElement('script');
+  d.id = 'isw-i18n-dict-loader';
+  d.src = '/shared/i18n-dict.js';
+  d.async = false;
+  document.head.appendChild(d);
+  const s = document.createElement('script');
+  s.id = 'isw-i18n-loader';
+  s.src = '/shared/i18n.js';
+  s.async = false;
   document.head.appendChild(s);
 }
 
