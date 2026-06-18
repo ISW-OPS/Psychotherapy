@@ -123,6 +123,12 @@
     border-radius:50%; background:#22c55e; color:white; font-size:12px; font-weight:800;
     display:none; align-items:center; justify-content:center; border:2px solid #fff; }
   .kf-emo-card.sel .kf-ec-check { display:flex; }
+  /* Star rating */
+  .kf-stars { display:flex; gap:8px; justify-content:center; margin-top:14px; }
+  .kf-star { font-size:38px; line-height:1; background:none; border:none; cursor:pointer; color:#d1d5db; transition:transform .1s, color .15s; padding:2px; }
+  .kf-star:active { transform:scale(.85); }
+  .kf-star.on { color:#f59e0b; }
+  .kf-star-lbl { text-align:center; margin-top:10px; font-size:13px; font-weight:700; color:#1a3a5c; min-height:18px; }
   /* Confirmation bottom sheet */
   .kf-confirm { position:absolute; inset:0; background:rgba(0,0,0,.38); display:flex;
     align-items:flex-end; z-index:10; animation:kfcfin .18s ease; }
@@ -325,26 +331,62 @@ let selectedDate = today;
 let viewWeekStart = curWeekStart;
 let READONLY = false;
 const logCache = {};   // log_date -> jawapan object
-let healthData = { emotions:[], emotionOther:'', reaksi:[], reaksiOther:'', tidur:'', bangun:'', aktiviti:'' };
+function emptyMood(){ return { primary:'', detail:'', intensity:0, factors:[], interference:'', anxSym:[], cause:'', burnSym:[] }; }
+function emptyHealth(){ return { mood:emptyMood(), reaksiSev:'', reaksiCats:[], reaksi:[], reaksiOther:'', tidur:'', bangun:'', aktiviti:'' }; }
+let healthData = emptyHealth();
 const healthCache = {}; // checkin_date -> row
 
-// ── Definisi Daily Check-in ──
-const EMOSI = [
-  { domain:'Mood Positif', items:['Gembira','Tenang','Bersyukur','Bersemangat','Bermotivasi','Biasa sahaja'] },
-  { domain:'Kesedihan / Kemurungan', items:['Sedih','Kecewa','Murung','Kesunyian','Kosong jiwa','Hilang arah tujuan hidup'] },
-  { domain:'Kebimbangan / Kecemasan', items:['Risau','Cemas','Gelisah','Takut','Tertekan'] },
-  { domain:'Kemarahan / Kekecewaan', items:['Marah','Geram','Frustrasi'] },
-  { domain:'Keletihan Emosi / Burnout', items:['Letih emosi','Burnout','Hilang motivasi','Hilang fokus','Tidak yakin diri','Rendah diri','Tidak dihargai','Terasing','Trauma'] },
+// ── Definisi Daily Check-in (ADAPTIF) ──
+// Bahagian 1: pilih 1 mood utama → soalan susulan berubah ikut mood.
+const MOOD_PRIMARY = [
+  { key:'Gembira', emoji:'😊', bg:'#fef9c3' },
+  { key:'Sedih',   emoji:'😔', bg:'#dbeafe' },
+  { key:'Cemas',   emoji:'😟', bg:'#fed7aa' },
+  { key:'Marah',   emoji:'😠', bg:'#fecaca' },
+  { key:'Burnout', emoji:'😩', bg:'#e9d5ff', label:'Burnout / Letih Emosi' },
+  { key:'Biasa',   emoji:'😐', bg:'#e5e7eb', label:'Biasa Sahaja' },
 ];
-const REAKSI = [
-  { group:'Pencernaan', items:['Kembung','Banyak angin','Banyak membuang air besar','Sembelit','Cirit-birit','Najis hitam'] },
-  { group:'Peredaran Darah', items:['Tekanan darah tinggi','Tekanan darah rendah','Berdebar-debar'] },
-  { group:'Otot & Saraf', items:['Kejang','Kebas','Sakit badan','Sakit sendi'] },
-  { group:'Detoksifikasi', items:['Mukus keluar','Jerawat keluar','Gatal-gatal','Badan panas','Badan sejuk'] },
-  { group:'Emosi & Tenaga', items:['Mengantuk','Kurang tenaga','Mudah sebak','Gelisah'] },
-  { group:'Pernafasan', items:['Sesak nafas','Batuk','Kahak'] },
-  { group:'Lain-lain', items:['Tiada simptom'] },
+const MOOD_FLOW = {
+  Gembira:{ tone:'pos', detailQ:'Apakah yang paling menggambarkan perasaan anda?',
+    detail:['Tenang','Bersyukur','Bersemangat','Bermotivasi','Yakin'],
+    intQ:'Tahap perasaan positif anda hari ini?',
+    q3:{ type:'multi', key:'factors', q:'Apa yang menyumbang kepada perasaan ini?', opts:['Kesihatan','Keluarga','Kerja','Hubungan','Ibadah','Lain-lain'] } },
+  Sedih:{ tone:'neg', detailQ:'Apakah yang paling menggambarkan perasaan anda?',
+    detail:['Kecewa','Kesunyian','Murung','Kosong Jiwa','Hilang Arah Tujuan Hidup'],
+    intQ:'Tahap kesedihan hari ini?',
+    q3:{ type:'single', key:'interference', q:'Adakah perasaan ini mengganggu aktiviti harian anda?', opts:['Tidak','Sedikit','Sederhana','Teruk'] } },
+  Cemas:{ tone:'neg', detailQ:'Apakah yang paling menggambarkan keadaan anda?',
+    detail:['Risau','Gelisah','Takut','Tertekan','Overthinking'],
+    intQ:'Tahap kebimbangan hari ini?',
+    q3:{ type:'multi', key:'anxSym', q:'Adakah anda mengalami?', opts:['Berdebar-debar','Sukar tidur','Sukar fokus','Sesak dada','Tiada'] } },
+  Marah:{ tone:'neg', detailQ:'Apakah yang paling menggambarkan keadaan anda?',
+    detail:['Geram','Frustrasi','Hilang sabar','Tersinggung'],
+    intQ:'Tahap kemarahan hari ini?',
+    q3:{ type:'single', key:'cause', q:'Punca utama?', opts:['Keluarga','Pasangan','Kerja','Kesihatan','Kewangan','Lain-lain'] } },
+  Burnout:{ tone:'neg', detailQ:'Apakah yang paling menggambarkan keadaan anda?',
+    detail:['Letih Emosi','Hilang Motivasi','Hilang Fokus','Tiada Tenaga','Tidak Yakin Diri'],
+    intQ:'Tahap keletihan hari ini?',
+    q3:{ type:'multi', key:'burnSym', q:'Adakah anda mengalami?', opts:['Sukar fokus','Cepat penat','Sukar bangun pagi','Tiada motivasi','Mudah menangis'] } },
+  Biasa:{ tone:'neutral' },
+};
+const INT_LABELS = ['Sangat Rendah','Rendah','Sederhana','Baik','Sangat Baik'];
+
+// Bahagian 2: severity dulu → bahagian → simptom per bahagian
+const REAKSI_SEV = [
+  { key:'Tiada',     emoji:'😊', bg:'#d1fae5' },
+  { key:'Ringan',    emoji:'😐', bg:'#fef9c3' },
+  { key:'Sederhana', emoji:'😣', bg:'#fed7aa' },
+  { key:'Teruk',     emoji:'🤒', bg:'#fecaca' },
 ];
+const REAKSI_CATS = {
+  'Pencernaan':      ['Kembung','Banyak Angin','Sembelit','Cirit-birit','Najis Hitam'],
+  'Peredaran Darah': ['Tekanan Darah Tinggi','Tekanan Darah Rendah','Berdebar-debar'],
+  'Otot & Saraf':    ['Kejang','Kebas','Sakit Badan','Sakit Sendi'],
+  'Detoksifikasi':   ['Mukus Keluar','Jerawat Keluar','Gatal-gatal','Badan Panas','Badan Sejuk'],
+  'Emosi & Tenaga':  ['Mengantuk','Kurang Tenaga','Mudah Sebak','Gelisah'],
+  'Pernafasan':      ['Sesak Nafas','Batuk','Kahak'],
+};
+
 const AKTIVITI = [
   'Saya dapat menjalankan aktiviti harian seperti biasa',
   'Saya dapat menjalankan aktiviti harian tetapi memerlukan lebih banyak rehat',
@@ -352,15 +394,16 @@ const AKTIVITI = [
   'Saya banyak berehat dan tidak mampu melakukan kebanyakan aktiviti harian',
 ];
 const AKT_ENERGY = [9, 7, 4, 2]; // map tahap aktiviti → energy_score (widget lama)
-const ALL_EMO = new Set(EMOSI.flatMap(g => g.items));
-const ALL_REAKSI = new Set(REAKSI.flatMap(g => g.items));
-const POS_EMO = new Set(EMOSI[0].items.filter(x => x !== 'Biasa sahaja'));
+const ALL_REAKSI = new Set(Object.values(REAKSI_CATS).flat());
 
 function escAttr(s){ return String(s||'').replace(/"/g,'&quot;'); }
-function deriveMood(emos){
-  let pos=0, neg=0;
-  emos.forEach(e=>{ if(POS_EMO.has(e)) pos++; else if(e!=='Biasa sahaja') neg++; });
-  return Math.max(1, Math.min(10, 5 + pos - neg));
+// Derive mood_score 1–10 dari mood utama + intensiti (untuk widget staff sedia ada)
+function deriveMood(){
+  const m = healthData.mood || {};
+  if(!m.primary || m.primary==='Biasa') return 5;
+  const fl = MOOD_FLOW[m.primary]; const inten = m.intensity || 3;
+  if(fl && fl.tone==='pos') return Math.max(1, Math.min(10, 5 + inten));   // 6–10
+  return Math.max(1, Math.min(10, 6 - inten));                            // 1–5
 }
 function sleepHours(t1,t2){
   if(!t1||!t2) return null;
@@ -509,90 +552,54 @@ function hRad(val, on) {
   </label>`;
 }
 function renderHealth() {
-  const ro = READONLY ? 'pointer-events-none opacity-60' : '';
-  const emoHtml = EMOSI.map(g=>`<div class="mb-2.5"><div class="text-[11px] font-semibold text-ink/45 mb-1">${g.domain}</div><div class="flex flex-wrap gap-x-5 gap-y-0.5">${g.items.map(it=>hChk('emo',it,healthData.emotions.includes(it))).join('')}</div></div>`).join('');
-  const reaksiHtml = REAKSI.map(g=>`<div class="mb-2.5"><div class="text-[11px] font-semibold text-ink/45 mb-1">${g.group}</div><div class="flex flex-wrap gap-x-5 gap-y-0.5">${g.items.map(it=>hChk('reaksi',it,healthData.reaksi.includes(it))).join('')}</div></div>`).join('');
-  const aktHtml = AKTIVITI.map(a=>hRad(a, healthData.aktiviti===a)).join('');
+  const m = healthData.mood || {};
+  const mp = MOOD_PRIMARY.find(x => x.key === m.primary);
+  const done = !!(window.__kfLogDates && window.__kfLogDates.has(selectedDate));
+  const chip = (txt) => `<span class="inline-flex items-center gap-1.5 text-[12px] bg-ink/5 rounded-full px-3 py-1.5">${txt}</span>`;
+  const summary = (m.primary || healthData.reaksiSev || healthData.aktiviti) ? `
+    <div class="flex flex-wrap gap-2 mb-4">
+      ${mp ? chip(`${mp.emoji} ${(mp.label||mp.key)}${m.detail?` · ${m.detail}`:''}${m.intensity?` · ${'⭐'.repeat(m.intensity)}`:''}`) : ''}
+      ${healthData.reaksiSev ? chip(`🩺 Reaksi: ${healthData.reaksiSev}`) : ''}
+      ${healthData.tidur ? chip(`🌙 ${healthData.tidur}–${healthData.bangun||'…'}`) : ''}
+      ${healthData.aktiviti ? chip('🚶 Aktiviti direkod') : ''}
+    </div>` : '<p class="text-[12px] text-ink/45 mb-4">Belum diisi untuk hari ini.</p>';
   document.getElementById('health-card').innerHTML = `
-    <div class="${ro}">
-      <div class="flex items-center gap-2.5 mb-4"><span class="text-2xl">💚</span><div><div class="text-[15px] font-semibold text-ink">Daily Check-in</div><div class="text-[11px] text-ink/45">Perasaan, reaksi pemulihan, tidur &amp; aktiviti</div></div></div>
-
-      <div class="mb-5">
-        <div class="text-[13px] font-semibold text-ink mb-2">1. Perasaan Hari Ini <span class="text-[10px] font-normal text-ink/35">(pilih semua yang berkaitan)</span></div>
-        ${emoHtml}
-        <div class="flex items-center gap-2 mt-1"><span class="text-[12px] text-ink/55">Lain-lain:</span><input data-hother="emo" value="${escAttr(healthData.emotionOther)}" placeholder="Nyatakan" class="text-[12px] border-b border-ink/25 bg-transparent px-1 py-0.5 flex-1 focus:outline-none focus:border-navy"></div>
-      </div>
-
-      <div class="mb-5">
-        <div class="text-[13px] font-semibold text-ink mb-2">2. Reaksi Pemulihan Hari Ini <span class="text-[10px] font-normal text-ink/35">(pilih semua yang berkaitan)</span></div>
-        ${reaksiHtml}
-        <div class="flex items-center gap-2 mt-1"><span class="text-[12px] text-ink/55">Lain-lain:</span><input data-hother="reaksi" value="${escAttr(healthData.reaksiOther)}" placeholder="Nyatakan" class="text-[12px] border-b border-ink/25 bg-transparent px-1 py-0.5 flex-1 focus:outline-none focus:border-navy"></div>
-      </div>
-
-      <div class="mb-5">
-        <div class="text-[13px] font-semibold text-ink mb-2">3. Tidur</div>
-        <div class="flex flex-wrap gap-4">
-          <div><label class="block text-[11px] text-ink/55 mb-0.5">Tidur pukul</label><input type="time" data-sleep="tidur" value="${healthData.tidur}" class="text-sm border border-ink/15 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-navy/20"></div>
-          <div><label class="block text-[11px] text-ink/55 mb-0.5">Bangun pukul</label><input type="time" data-sleep="bangun" value="${healthData.bangun}" class="text-sm border border-ink/15 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-navy/20"></div>
-          <div class="self-end text-[11px] text-ink/45 pb-2">${sleepHours(healthData.tidur,healthData.bangun)!=null?`≈ ${sleepHours(healthData.tidur,healthData.bangun)} jam`:''}</div>
-        </div>
-      </div>
-
-      <div>
-        <div class="text-[13px] font-semibold text-ink mb-2">4. Tahap Gangguan Aktiviti Harian <span class="text-[10px] font-normal text-ink/35">(pilih satu)</span></div>
-        <div class="space-y-0.5">${aktHtml}</div>
-      </div>
-    </div>`;
+    <div class="flex items-center gap-2.5 mb-4"><span class="text-2xl">💚</span><div><div class="text-[15px] font-semibold text-ink">Daily Check-in</div><div class="text-[11px] text-ink/45">Perasaan, reaksi pemulihan, tidur &amp; aktiviti</div></div></div>
+    ${summary}
+    <button type="button" onclick="kfLaunch()" ${READONLY ? 'disabled' : ''} class="w-full bg-navy text-white py-3 rounded-xl text-sm font-bold hover:bg-navy-dark transition-colors shadow-sm flex items-center justify-center gap-2 ${READONLY ? 'opacity-50 cursor-not-allowed' : ''}">
+      ${done ? '✏️ Kemaskini Catatan Harian' : '✅ Mula Catatan Harian'}
+    </button>
+    ${READONLY ? '<p class="text-[11px] text-ink/40 text-center mt-2">Hanya hari dalam minggu semasa boleh diisi.</p>' : ''}`;
 }
 
-// Health: toggle emosi/reaksi + pilih aktiviti
-document.addEventListener('click', (e) => {
-  if (READONLY) return;
-  const emo = e.target.closest('[data-emo]');
-  if (emo) { const v=emo.dataset.emo; const i=healthData.emotions.indexOf(v); if(i>=0)healthData.emotions.splice(i,1); else healthData.emotions.push(v); renderHealth(); return; }
-  const rk = e.target.closest('[data-reaksi]');
-  if (rk) { const v=rk.dataset.reaksi; const i=healthData.reaksi.indexOf(v); if(i>=0)healthData.reaksi.splice(i,1); else healthData.reaksi.push(v); renderHealth(); return; }
-  const ak = e.target.closest('[data-akt]');
-  if (ak) { healthData.aktiviti = healthData.aktiviti===ak.dataset.akt ? '' : ak.dataset.akt; renderHealth(); return; }
-});
-// Health: text & masa (tak re-render — kekal fokus)
-document.addEventListener('input', (e) => {
-  if (READONLY) return;
-  const ho = e.target.closest('[data-hother]');
-  if (ho) { if(ho.dataset.hother==='emo') healthData.emotionOther=ho.value; else healthData.reaksiOther=ho.value; return; }
-  const sl = e.target.closest('[data-sleep]');
-  if (sl) { if(sl.dataset.sleep==='tidur') healthData.tidur=sl.value; else healthData.bangun=sl.value; }
-});
+// (Borang ringkas kini jadi pelancar wizard — input dikendali dalam flow wizard)
 
 function selectDate(ds) {
   selectedDate = ds;
   READONLY = !isEditable(ds);
 
-  // Muat data kesihatan dari cache
-  const ck = healthCache[ds];
-  if (ck) {
-    const emos = Array.isArray(ck.emotions) ? ck.emotions : [];
-    const syms = Array.isArray(ck.symptoms) ? ck.symptoms : [];
-    healthData = {
-      emotions: emos.filter(x => ALL_EMO.has(x)),
-      emotionOther: emos.find(x => !ALL_EMO.has(x)) || '',
-      reaksi: syms.filter(x => ALL_REAKSI.has(x)),
-      reaksiOther: syms.find(x => !ALL_REAKSI.has(x)) || '',
-      tidur: ck.sleep_time || '', bangun: ck.wake_time || '', aktiviti: ck.activity_level || '',
-    };
-  } else {
-    healthData = { emotions:[], emotionOther:'', reaksi:[], reaksiOther:'', tidur:'', bangun:'', aktiviti:'' };
-  }
-
-  // Muat jawapan dari cache
+  // Muat jawapan dari cache (termasuk butiran check-in __mood / __reaksi)
   answers = {}; answersText = {};
-  const jaw = logCache[ds];
-  if (jaw) {
-    Object.entries(jaw).forEach(([k, v]) => {
-      if (k.endsWith('__text')) answersText[k.replace('__text', '')] = v;
-      else answers[k] = v;
-    });
+  const jaw = logCache[ds] || {};
+  Object.entries(jaw).forEach(([k, v]) => {
+    if (k.startsWith('__')) return;                 // reserved keys (mood/reaksi detail)
+    if (k.endsWith('__text')) answersText[k.replace('__text', '')] = v;
+    else answers[k] = v;
+  });
+
+  // Muat data kesihatan: utamakan butiran kaya dari jawapan, fallback ke psy_daily_checkins
+  const ck = healthCache[ds] || {};
+  healthData = emptyHealth();
+  if (jaw.__mood) healthData.mood = Object.assign(emptyMood(), jaw.__mood);
+  if (jaw.__reaksi) {
+    healthData.reaksiSev  = jaw.__reaksi.severity || '';
+    healthData.reaksiCats = Array.isArray(jaw.__reaksi.cats) ? jaw.__reaksi.cats : [];
+    healthData.reaksi     = Array.isArray(jaw.__reaksi.symptoms) ? jaw.__reaksi.symptoms : [];
+    healthData.reaksiOther = jaw.__reaksi.other || '';
+  } else if (Array.isArray(ck.symptoms)) {
+    healthData.reaksi = ck.symptoms.filter(x => ALL_REAKSI.has(x));
   }
+  healthData.tidur = ck.sleep_time || ''; healthData.bangun = ck.wake_time || ''; healthData.aktiviti = ck.activity_level || '';
 
   // Label tarikh
   const d = new Date(ds + 'T00:00:00');
@@ -678,6 +685,14 @@ async function saveChecklist() {
     const t = answersText[it.item_key];
     if (t) jawapan[it.item_key + '__text'] = t;
   });
+  // Simpan butiran check-in adaptif (kaya) dalam jawapan JSON
+  jawapan.__mood = healthData.mood;
+  jawapan.__reaksi = {
+    severity: healthData.reaksiSev || '',
+    cats: healthData.reaksiCats,
+    symptoms: healthData.reaksi,
+    other: (healthData.reaksiOther || '').trim(),
+  };
 
   const payload = {
     patient_id: patientRecord.id,
@@ -695,17 +710,20 @@ async function saveChecklist() {
   // Tulis juga ke psy_daily_checkins (kesihatan + madu + gejala) untuk widget staff sedia ada
   let maduCount = 0;
   ['madu_lth_ib', 'madu_lthpg_yhpg'].forEach(k => { const n = parseInt(answers[k]); if (!isNaN(n)) maduCount += n; });
-  const emotions = [...healthData.emotions];
-  if (healthData.emotionOther.trim()) emotions.push(healthData.emotionOther.trim());
+  // Derive emotions[] untuk widget staff sedia ada: [mood utama, sub-perasaan]
+  const mp = MOOD_PRIMARY.find(x => x.key === healthData.mood.primary);
+  const emotions = [];
+  if (mp) emotions.push(mp.label || mp.key);
+  if (healthData.mood.detail) emotions.push(healthData.mood.detail);
   const symptoms = [...healthData.reaksi];
-  if (healthData.reaksiOther.trim()) symptoms.push(healthData.reaksiOther.trim());
+  if ((healthData.reaksiOther || '').trim()) symptoms.push(healthData.reaksiOther.trim());
   const aktIdx = AKTIVITI.indexOf(healthData.aktiviti);
   const ckPayload = {
     patient_id: patientRecord.id,
     checkin_date: selectedDate,
     emotions,
     symptoms,
-    mood_score: deriveMood(healthData.emotions),                      // derive utk widget lama
+    mood_score: deriveMood(),                                         // derive utk widget lama
     energy_score: aktIdx >= 0 ? AKT_ENERGY[aktIdx] : null,            // derive dari tahap aktiviti
     sleep_time: healthData.tidur || null,
     wake_time: healthData.bangun || null,
@@ -751,6 +769,7 @@ async function loadWeek(ws) {
 // REAKSI, AKTIVITI, computeSkor(), saveChecklist(), selectedDate.
 // ============================================================
 let kfSteps = [], kfIdx = 0, kfBusy = false;
+// Jejak pilihan "Tiada" per kumpulan (UI sahaja — tak disimpan; ketiadaan = tiada)
 
 function vibrate(p) { try { navigator.vibrate && navigator.vibrate(p); } catch (_) {} }
 function toggleArr(arr, v) { const i = arr.indexOf(v); if (i >= 0) arr.splice(i, 1); else arr.push(v); }
@@ -806,16 +825,32 @@ function updateMobileStart() {
     </div>`;
 }
 
-// ── Build steps ──
+// ── Build steps (ADAPTIF — bergantung pilihan mood & reaksi) ──
 function kfBuildSteps() {
   const steps = [{ type:'intro' }];
-  EMOSI.forEach((g, i) => steps.push({ type:'emogroup', g, last: i === EMOSI.length - 1 }));
-  REAKSI.forEach((g, i) => steps.push({ type:'reaksigroup', g, last: i === REAKSI.length - 1 }));
+  // Bahagian 1 — Mood
+  steps.push({ type:'mood_primary' });
+  const m = healthData.mood.primary;
+  const fl = MOOD_FLOW[m];
+  if (m && m !== 'Biasa' && fl) {
+    steps.push({ type:'mood_detail' });
+    steps.push({ type:'mood_intensity' });
+    if (fl.q3) steps.push({ type:'mood_q3' });
+  }
+  // Bahagian 2 — Reaksi pemulihan
+  steps.push({ type:'reaksi_sev' });
+  if (healthData.reaksiSev && healthData.reaksiSev !== 'Tiada') {
+    steps.push({ type:'reaksi_cats' });
+    healthData.reaksiCats.forEach(cat => { if (REAKSI_CATS[cat]) steps.push({ type:'reaksi_sym', cat }); });
+  }
+  // Bahagian 3 & 4
   steps.push({ type:'tidur' }, { type:'aktiviti' });
   ITEMS.forEach(it => steps.push({ type:'item', it }));
   steps.push({ type:'final' });
   return steps;
 }
+// Bina semula steps selepas jawapan bercabang berubah (kekalkan kedudukan semasa)
+function kfRebuild() { kfSteps = kfBuildSteps(); }
 
 function kfLaunch() {
   if (!isEditable(selectedDate)) { banner('Hanya hari dalam minggu semasa boleh diisi', 'error'); return; }
@@ -991,45 +1026,107 @@ function kfStepHtml(step) {
       <div class="kf-foot kf-foot-center"><button class="kf-next" onclick="kfNext()">Mula →</button></div>`;
   }
 
-  if (step.type === 'emogroup') {
-    const g = step.g;
-    const other = step.last ? `<div style="margin-top:16px"><div class="kf-group-t" style="text-align:center">Perasaan lain</div><input class="kf-other" data-kfhother="emo" placeholder="Nyatakan…" value="${escAttr(healthData.emotionOther)}"></div>` : '';
-    const cards = g.items.map(it => {
-      const ec = EMO_CARD[it] || { bg:'#e5e7eb', emoji:'💚' };
-      const isSel = healthData.emotions.includes(it);
-      return `<button class="kf-emo-card${isSel?' sel':''}" style="background:${ec.bg}" data-kfemo="${escAttr(it)}">
+  // ── Bahagian 1: Mood (adaptif) ──
+  if (step.type === 'mood_primary') {
+    const cards = MOOD_PRIMARY.map(o => `
+      <button class="kf-emo-card${healthData.mood.primary===o.key?' sel':''}" style="background:${o.bg}" data-kfmood="${escAttr(o.key)}">
         <span class="kf-ec-check">✓</span>
-        <span class="kf-ec-icon">${ec.emoji}</span>
-        <span class="kf-ec-label">${it}</span>
-      </button>`;
-    }).join('');
+        <span class="kf-ec-icon">${o.emoji}</span>
+        <span class="kf-ec-label">${o.label||o.key}</span>
+      </button>`).join('');
     return `<div class="kf-body kf-q">
-        <div class="kf-step-emoji">${EMO_EMOJI[g.domain] || '💚'}</div>
+        <div class="kf-step-emoji">😊</div>
         <div class="kf-kicker">Perasaan hari ini</div>
-        <h3>${g.domain}</h3>
+        <h3>Bagaimana Perasaan Anda Hari Ini?</h3>
         <p class="kf-hint">Pilih satu (wajib)</p>
         <div class="kf-emo-grid">${cards}</div>
-        ${other}
       </div>${kfFooter()}`;
   }
-  if (step.type === 'reaksigroup') {
-    const g = step.g;
-    const other = step.last ? `<div style="margin-top:16px"><div class="kf-group-t" style="text-align:center">Reaksi lain</div><input class="kf-other" data-kfhother="reaksi" placeholder="Nyatakan…" value="${escAttr(healthData.reaksiOther)}"></div>` : '';
-    const cards = g.items.map(it => {
-      const ec = REAKSI_CARD[it] || { bg:'#e5e7eb', emoji:'💜' };
-      const isSel = healthData.reaksi.includes(it);
+  if (step.type === 'mood_detail') {
+    const fl = MOOD_FLOW[healthData.mood.primary] || {};
+    const opts = (fl.detail||[]).map((o,i) => `<button class="kf-opt ${healthData.mood.detail===o?'sel':''}" style="background:${['#1368CE','#007B6F','#C47800','#C0392B','#6D28D9','#0E7490'][i%6]}" data-kfmdetail="${escAttr(o)}">${o}</button>`).join('');
+    return `<div class="kf-body kf-q">
+        <div class="kf-step-emoji">💭</div>
+        <div class="kf-kicker">Perasaan hari ini</div>
+        <h3>${fl.detailQ||'Apakah yang paling menggambarkan perasaan anda?'}</h3>
+        <p class="kf-hint">Pilih satu</p>
+        <div class="kf-opts">${opts}</div>
+      </div>${kfFooter()}`;
+  }
+  if (step.type === 'mood_intensity') {
+    const fl = MOOD_FLOW[healthData.mood.primary] || {};
+    const stars = [1,2,3,4,5].map(n => `<button class="kf-star${healthData.mood.intensity>=n?' on':''}" data-kfmint="${n}" title="${INT_LABELS[n-1]}">★</button>`).join('');
+    const lbl = healthData.mood.intensity ? INT_LABELS[healthData.mood.intensity-1] : 'Ketuk bintang';
+    return `<div class="kf-body kf-q">
+        <div class="kf-step-emoji">📊</div>
+        <div class="kf-kicker">Perasaan hari ini</div>
+        <h3>${fl.intQ||'Tahap perasaan anda hari ini?'}</h3>
+        <p class="kf-hint">Tahap 1–5</p>
+        <div class="kf-stars">${stars}</div>
+        <div class="kf-star-lbl">${lbl}</div>
+      </div>${kfFooter()}`;
+  }
+  if (step.type === 'mood_q3') {
+    const fl = MOOD_FLOW[healthData.mood.primary] || {}; const q3 = fl.q3; const cur = healthData.mood[q3.key];
+    let body;
+    if (q3.type === 'multi') {
+      const arr = Array.isArray(cur) ? cur : [];
+      body = `<div class="kf-chips">${q3.opts.map(o => `<button class="kf-chip ${arr.includes(o)?'sel':''}" data-kfmmulti="${escAttr(o)}">${o}</button>`).join('')}</div>`;
+    } else {
+      body = `<div class="kf-opts">${q3.opts.map((o,i)=>`<button class="kf-opt ${cur===o?'sel':''}" style="background:${['#1368CE','#007B6F','#C47800','#C0392B','#6D28D9','#0E7490'][i%6]}" data-kfmsingle="${escAttr(o)}">${o}</button>`).join('')}</div>`;
+    }
+    return `<div class="kf-body kf-q">
+        <div class="kf-step-emoji">📝</div>
+        <div class="kf-kicker">Perasaan hari ini</div>
+        <h3>${q3.q}</h3>
+        <p class="kf-hint">${q3.type==='multi'?'Pilih semua yang berkaitan':'Pilih satu'}</p>
+        ${body}
+      </div>${kfFooter()}`;
+  }
+  // ── Bahagian 2: Reaksi pemulihan (adaptif) ──
+  if (step.type === 'reaksi_sev') {
+    const cards = REAKSI_SEV.map(o => `
+      <button class="kf-emo-card${healthData.reaksiSev===o.key?' sel':''}" style="background:${o.bg}" data-kfsev="${escAttr(o.key)}">
+        <span class="kf-ec-check">✓</span>
+        <span class="kf-ec-icon">${o.emoji}</span>
+        <span class="kf-ec-label">${o.key}</span>
+      </button>`).join('');
+    return `<div class="kf-body kf-q">
+        <div class="kf-step-emoji">🩺</div>
+        <div class="kf-kicker">Reaksi pemulihan</div>
+        <h3>Adakah anda mengalami reaksi pemulihan hari ini?</h3>
+        <p class="kf-hint">Pilih satu</p>
+        <div class="kf-emo-grid">${cards}</div>
+      </div>${kfFooter()}`;
+  }
+  if (step.type === 'reaksi_cats') {
+    const cards = Object.keys(REAKSI_CATS).map(c => `<button class="kf-chip ${healthData.reaksiCats.includes(c)?'sel':''}" data-kfcat="${escAttr(c)}">${c}</button>`).join('');
+    return `<div class="kf-body kf-q">
+        <div class="kf-step-emoji">🩺</div>
+        <div class="kf-kicker">Reaksi pemulihan</div>
+        <h3>Bahagian manakah yang terlibat?</h3>
+        <p class="kf-hint">Pilih semua yang berkaitan</p>
+        <div class="kf-chips">${cards}</div>
+      </div>${kfFooter()}`;
+  }
+  if (step.type === 'reaksi_sym') {
+    const cat = step.cat; const syms = REAKSI_CATS[cat] || [];
+    const isLast = healthData.reaksiCats[healthData.reaksiCats.length-1] === cat;
+    const other = isLast ? `<div style="margin-top:16px"><div class="kf-group-t" style="text-align:center">Reaksi lain</div><input class="kf-other" data-kfhother="reaksi" placeholder="Nyatakan…" value="${escAttr(healthData.reaksiOther)}"></div>` : '';
+    const cards = syms.map(it => {
+      const ec = REAKSI_CARD[it] || { bg:'#ede9fe', emoji:'💜' };
       const icon = CUSTOM_ICONS[it] || ec.emoji;
-      return `<button class="kf-emo-card${isSel?' sel':''}" style="background:${ec.bg}" data-kfreaksi="${escAttr(it)}">
+      return `<button class="kf-emo-card${healthData.reaksi.includes(it)?' sel':''}" style="background:${ec.bg}" data-kfreaksi="${escAttr(it)}">
         <span class="kf-ec-check">✓</span>
         <span class="kf-ec-icon">${icon}</span>
         <span class="kf-ec-label">${it}</span>
       </button>`;
     }).join('');
     return `<div class="kf-body kf-q">
-        <div class="kf-step-emoji">${REAKSI_EMOJI[g.group] || '💜'}</div>
+        <div class="kf-step-emoji">${REAKSI_EMOJI[cat] || '💜'}</div>
         <div class="kf-kicker">Reaksi pemulihan</div>
-        <h3>${g.group}</h3>
-        <p class="kf-hint">Pilih yang berkaitan · boleh skip</p>
+        <h3>${cat}</h3>
+        <p class="kf-hint">Pilih yang berkaitan</p>
         <div class="kf-emo-grid">${cards}</div>
         ${other}
       </div>${kfFooter()}`;
@@ -1151,32 +1248,7 @@ function kfAnimateRing() {
   if (fg && skor != null) requestAnimationFrame(() => fg.setAttribute('stroke-dasharray', `${skor} ${100 - skor}`));
 }
 
-// ── Confirmation popup (emogroup / reaksigroup) ──
-function kfShowConfirm(step) {
-  let emoji, bg, tip, sub;
-  if (step.type === 'emogroup') {
-    const g = step.g;
-    const main = g.items.find(it => healthData.emotions.includes(it));
-    const ec = main ? (EMO_CARD[main] || {}) : {};
-    emoji = ec.emoji || EMO_EMOJI[g.domain] || '💚';
-    bg = ec.bg || 'rgba(34,197,94,.12)';
-    tip = EMO_TIPS[g.domain] || '';
-    sub = 'Perasaan anda telah direkodkan.';
-  } else {
-    const g = step.g;
-    const main = g.items.find(it => healthData.reaksi.includes(it));
-    const ec = main ? (REAKSI_CARD[main] || {}) : {};
-    emoji = ec.emoji || REAKSI_EMOJI[g.group] || '💜';
-    bg = ec.bg || 'rgba(167,139,250,.12)';
-    tip = REAKSI_TIPS[g.group] || '';
-    sub = 'Reaksi anda telah direkodkan.';
-  }
-  document.getElementById('kf-confirm-emoji').textContent = emoji;
-  document.getElementById('kf-confirm-icon').style.background = bg;
-  document.getElementById('kf-confirm-sub').textContent = sub;
-  document.getElementById('kf-confirm-tip-text').textContent = tip;
-  document.getElementById('kf-confirm').style.display = 'flex';
-}
+// ── (Confirmation popup lama dinyahaktifkan — flow adaptif auto-maju) ──
 function kfConfirmNext() {
   document.getElementById('kf-confirm').style.display = 'none';
   if (kfIdx < kfSteps.length - 1) { kfBusy = true; kfIdx++; kfRender(kfIdx, 1); setTimeout(() => kfBusy = false, 230); }
@@ -1186,11 +1258,11 @@ function kfConfirmNext() {
 function kfNext() {
   if (kfBusy) return;
   const step = kfSteps[kfIdx];
-  if (step.type === 'emogroup') {
-    const groupItems = step.g ? step.g.items : [];
-    const hasSelection = groupItems.some(it => healthData.emotions.includes(it));
-    if (!hasSelection) { banner('Sila pilih satu perasaan dahulu', 'error'); return; }
-  }
+  if (step.type === 'mood_primary' && !healthData.mood.primary) { banner('Sila pilih perasaan anda dahulu', 'error'); return; }
+  if (step.type === 'mood_detail' && !healthData.mood.detail) { banner('Sila pilih satu', 'error'); return; }
+  if (step.type === 'mood_intensity' && !healthData.mood.intensity) { banner('Sila pilih tahap (1–5)', 'error'); return; }
+  if (step.type === 'reaksi_sev' && !healthData.reaksiSev) { banner('Sila pilih satu', 'error'); return; }
+  if (step.type === 'reaksi_cats' && !healthData.reaksiCats.length) { banner('Sila pilih sekurang-kurangnya satu bahagian', 'error'); return; }
   if (step.type === 'item' && step.it.berskor) {
     const v = answers[step.it.item_key];
     if (v == null || v === '' || v === 'other' && !(answersText[step.it.item_key] || '').trim()) {
@@ -1258,19 +1330,55 @@ async function kfFinish() {
   const flow = document.getElementById('kep-flow');
   if (!flow) return;
   flow.addEventListener('click', (e) => {
-    const emo = e.target.closest('[data-kfemo]');
-    if (emo) {
-      const curStep = kfSteps[kfIdx];
-      const groupItems = curStep.g ? curStep.g.items : [];
-      healthData.emotions = healthData.emotions.filter(x => !groupItems.includes(x));
-      healthData.emotions.push(emo.dataset.kfemo);
-      document.querySelectorAll('#kf-card [data-kfemo]').forEach(btn => btn.classList.remove('sel'));
-      emo.classList.add('sel');
-      vibrate(8);
-      return;
+    // Mood utama (single) → set, bina semula steps, auto-maju
+    const md = e.target.closest('[data-kfmood]');
+    if (md) {
+      const key = md.dataset.kfmood;
+      if (healthData.mood.primary !== key) { healthData.mood = emptyMood(); healthData.mood.primary = key; }
+      kfRebuild();
+      document.querySelectorAll('#kf-card [data-kfmood]').forEach(b => b.classList.remove('sel'));
+      md.classList.add('sel'); vibrate(8);
+      setTimeout(kfNext, 300); return;
     }
+    // Sub-perasaan (single) → auto-maju
+    const mdet = e.target.closest('[data-kfmdetail]');
+    if (mdet) { healthData.mood.detail = mdet.dataset.kfmdetail; kfMarkSel(mdet, 'data-kfmdetail'); vibrate(8); setTimeout(kfNext, 300); return; }
+    // Tahap (bintang)
+    const mint = e.target.closest('[data-kfmint]');
+    if (mint) {
+      const n = +mint.dataset.kfmint; healthData.mood.intensity = n;
+      document.querySelectorAll('#kf-card [data-kfmint]').forEach(s => s.classList.toggle('on', (+s.dataset.kfmint) <= n));
+      const lbl = document.querySelector('#kf-card .kf-star-lbl'); if (lbl) lbl.textContent = INT_LABELS[n - 1];
+      vibrate(10); setTimeout(kfNext, 360); return;
+    }
+    // Soalan ke-3: single → auto-maju
+    const msg = e.target.closest('[data-kfmsingle]');
+    if (msg) { const fl = MOOD_FLOW[healthData.mood.primary]; healthData.mood[fl.q3.key] = msg.dataset.kfmsingle; kfMarkSel(msg, 'data-kfmsingle'); vibrate(8); setTimeout(kfNext, 300); return; }
+    // Soalan ke-3: multi
+    const mmu = e.target.closest('[data-kfmmulti]');
+    if (mmu) { const fl = MOOD_FLOW[healthData.mood.primary]; const k = fl.q3.key; if (!Array.isArray(healthData.mood[k])) healthData.mood[k] = []; toggleArr(healthData.mood[k], mmu.dataset.kfmmulti); mmu.classList.toggle('sel'); vibrate(6); return; }
+    // Severity reaksi (single) → bina semula, auto-maju
+    const sev = e.target.closest('[data-kfsev]');
+    if (sev) {
+      healthData.reaksiSev = sev.dataset.kfsev;
+      if (healthData.reaksiSev === 'Tiada') { healthData.reaksiCats = []; healthData.reaksi = []; }
+      kfRebuild();
+      document.querySelectorAll('#kf-card [data-kfsev]').forEach(b => b.classList.remove('sel'));
+      sev.classList.add('sel'); vibrate(8);
+      setTimeout(kfNext, 300); return;
+    }
+    // Bahagian terlibat (multi) → bina semula (tambah/buang step simptom)
+    const cat = e.target.closest('[data-kfcat]');
+    if (cat) {
+      const c = cat.dataset.kfcat;
+      toggleArr(healthData.reaksiCats, c);
+      if (!healthData.reaksiCats.includes(c)) healthData.reaksi = healthData.reaksi.filter(x => !(REAKSI_CATS[c] || []).includes(x));
+      kfRebuild();
+      cat.classList.toggle('sel'); vibrate(6); return;
+    }
+    // Simptom (multi)
     const rk = e.target.closest('[data-kfreaksi]');
-    if (rk) { toggleArr(healthData.reaksi, rk.dataset.kfreaksi); rk.classList.toggle('sel'); return; }
+    if (rk) { toggleArr(healthData.reaksi, rk.dataset.kfreaksi); rk.classList.toggle('sel'); vibrate(6); return; }
     const ak = e.target.closest('[data-kfakt]');
     if (ak) { healthData.aktiviti = ak.dataset.kfakt; kfMarkSel(ak, 'data-kfakt'); vibrate(8); setTimeout(kfNext, 320); return; }
     const op = e.target.closest('[data-kfitem]');
@@ -1280,7 +1388,7 @@ async function kfFinish() {
   });
   flow.addEventListener('input', (e) => {
     const ho = e.target.closest('[data-kfhother]');
-    if (ho) { if (ho.dataset.kfhother === 'emo') healthData.emotionOther = ho.value; else healthData.reaksiOther = ho.value; return; }
+    if (ho) { if (ho.dataset.kfhother === 'reaksi') healthData.reaksiOther = ho.value; return; }
     const sl = e.target.closest('[data-kfsleep]');
     if (sl) {
       if (sl.dataset.kfsleep === 'tidur') healthData.tidur = sl.value; else healthData.bangun = sl.value;
