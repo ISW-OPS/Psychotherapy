@@ -5554,6 +5554,21 @@ UPDATE psy_modules SET is_active = false WHERE code IN ('communication','operati
 -- Peranan & Kebenaran (rbac) — super_admin SAHAJA; tarik balik akses role lain
 DELETE FROM psy_role_module_actions WHERE module_code = 'rbac' AND role_code <> 'super_admin';
 
+-- ── 6b) Selaraskan label modul PATIENT dengan navbar pesakit (sebijik sama) ──
+UPDATE psy_modules SET label='KOB'                WHERE code='pat_kob';
+UPDATE psy_modules SET label='My Treatment Plan'  WHERE code='pat_plan';
+UPDATE psy_modules SET label='Jadual Harian'      WHERE code='pat_routine';
+UPDATE psy_modules SET label='Catatan Harian'     WHERE code='pat_kepatuhan';
+UPDATE psy_modules SET label='Bacaan Saya'        WHERE code='pat_vitals';
+UPDATE psy_modules SET label='Rekod Perubatan'    WHERE code='pat_rekod';
+UPDATE psy_modules SET label='Self-Help Library'  WHERE code='pat_library';
+UPDATE psy_modules SET label='Product'            WHERE code='pat_shop';
+UPDATE psy_modules SET label='Payment'            WHERE code='pat_payment';
+UPDATE psy_modules SET label='Orders & Tracking'  WHERE code='pat_orders';
+UPDATE psy_modules SET label='Report Issue'       WHERE code='pat_issue';
+UPDATE psy_modules SET label='Pulangan Botol'     WHERE code='pat_pulangan';
+UPDATE psy_modules SET label='Surat Rasmi'        WHERE code='pat_surat';
+
 -- ── 7) Verifikasi ──
 SELECT 'Step 69 OK — RBAC granular per-page modules ready' AS status,
   (SELECT COUNT(*) FROM psy_modules WHERE is_active) AS modul_aktif;
@@ -5562,3 +5577,48 @@ SELECT r.code, COUNT(rma.*) AS jumlah_kebenaran
 FROM psy_roles r
 LEFT JOIN psy_role_module_actions rma ON rma.role_code = r.code
 GROUP BY r.code, r.sort_order ORDER BY r.sort_order;
+
+
+-- ════════════════════════════════════════════════════════════════
+-- step70_patient_rbac_complete.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ============================================================
+-- STEP 70 — Lengkapkan RBAC PATIENT (scope='patient')
+-- Pastikan SEMUA item navbar pesakit ada modul (termasuk Pakej Rawatan
+-- yang dulu "sentiasa allow", dan Payment yang mungkin tak ter-seed).
+-- Default ON untuk role 'patient' → kelakuan kekal, admin boleh toggle off.
+-- ============================================================
+
+-- 1) Pastikan modul patient wujud (label ikut navbar pesakit) — SEMUA item termasuk always-allow
+INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
+  ('pat_dashboard', 'Dashboard',         '🏠', 'patient',   5),
+  ('pat_kob',       'KOB',               '🩺', 'patient',  10),
+  ('pat_plan',      'My Treatment Plan', '💊', 'patient',  20),
+  ('pat_routine',   'Jadual Harian',     '🕐', 'patient',  30),
+  ('pat_pakej',     'Pakej Rawatan',     '🗂️', 'patient',  35),
+  ('pat_kepatuhan', 'Catatan Harian',    '📝', 'patient',  40),
+  ('pat_vitals',    'Bacaan Saya',       '📉', 'patient',  50),
+  ('pat_rekod',     'Rekod Perubatan',   '🩻', 'patient',  60),
+  ('pat_library',   'Self-Help Library', '📚', 'patient',  70),
+  ('pat_shop',      'Product',           '🛒', 'patient',  80),
+  ('pat_payment',   'Payment',           '💳', 'patient',  90),
+  ('pat_orders',    'Orders & Tracking', '📦', 'patient', 100),
+  ('pat_issue',     'Report Issue',      '⚠️', 'patient', 110),
+  ('pat_pulangan',  'Pulangan Botol',    '🍯', 'patient', 120),
+  ('pat_surat',     'Surat Rasmi',       '📜', 'patient', 130),
+  ('pat_kyc',       'KYC Form',          '🆔', 'patient', 140)
+ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label, scope='patient', is_active=true;
+
+-- 2) Action 'view' (on/off ciri) untuk setiap modul patient
+INSERT INTO psy_module_actions (module_code, action_code)
+SELECT code, 'view' FROM psy_modules WHERE scope='patient'
+ON CONFLICT DO NOTHING;
+
+-- 3) Default ON untuk role 'patient' (admin boleh nyahaktif kemudian via override)
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT 'patient', code, 'view' FROM psy_modules WHERE scope='patient'
+ON CONFLICT DO NOTHING;
+
+SELECT 'Step 70 OK — patient RBAC lengkap' AS status,
+  (SELECT COUNT(*) FROM psy_modules WHERE scope='patient' AND is_active) AS modul_patient;

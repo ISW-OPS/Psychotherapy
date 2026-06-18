@@ -124,9 +124,11 @@ function getBasePath() {
 window.__patientFeats = null;
 
 window.PAGE_PATIENT_MODULE = {
+  dashboard:         'pat_dashboard',
   kob:               'pat_kob',
   plan:              'pat_plan',
   routine:           'pat_routine',
+  pakej:             'pat_pakej',
   kepatuhan:         'pat_kepatuhan',
   vitals:            'pat_vitals',
   'rekod-perubatan': 'pat_rekod',
@@ -137,7 +139,8 @@ window.PAGE_PATIENT_MODULE = {
   issue:             'pat_issue',
   pulangan:          'pat_pulangan',
   surat:             'pat_surat',
-  // sentiasa allow: dashboard, pakej, kyc, profile, checkin
+  kyc:               'pat_kyc',
+  // profile & checkin: sentiasa allow (bukan item nav utama)
 };
 
 async function loadPatientFeatures() {
