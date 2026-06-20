@@ -102,7 +102,17 @@
         </div>
         <div>
           <label class="text-xs font-semibold text-ink/70">Berat (kg)</label>
-          <input id="s-weight" type="number" step="0.1" placeholder="65" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm">
+          <input id="s-weight" type="number" step="0.1" placeholder="65" oninput="updateBmiPreview()" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm">
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="text-xs font-semibold text-ink/70">Tinggi (cm)</label>
+          <input id="s-height" type="number" step="0.1" min="50" max="250" placeholder="170" oninput="updateBmiPreview()" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm">
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-ink/70">BMI (auto)</label>
+          <input id="s-bmi" disabled placeholder="—" class="w-full mt-1 px-3 py-2 border border-ink/10 rounded-lg text-sm bg-cream text-ink/60">
         </div>
       </div>
       <div class="grid grid-cols-2 gap-2">
@@ -196,9 +206,19 @@ function renderTable() {
   }).join('');
 }
 
+function updateBmiPreview() {
+  const w = parseFloat(document.getElementById('s-weight').value);
+  const h = parseFloat(document.getElementById('s-height').value);
+  const el = document.getElementById('s-bmi');
+  if (el) el.value = (w && h) ? (w / Math.pow(h / 100, 2)).toFixed(1) : '';
+}
+
 function openSelfModal() {
   document.getElementById('s-date').value = new Date().toISOString().slice(0, 10);
   ['s-sys','s-dia','s-hr','s-weight','s-rbs','s-hba1c','s-notes'].forEach(id => document.getElementById(id).value = '');
+  // Tinggi prefill dari rekod pesakit (boleh ditukar di sini)
+  document.getElementById('s-height').value = window.patientRecord?.height_cm ?? '';
+  updateBmiPreview();
   document.getElementById('s-error').classList.add('hidden');
   document.getElementById('self-modal').classList.remove('hidden');
 }
@@ -214,10 +234,12 @@ async function saveSelfVitals() {
   const dia = parseInt(document.getElementById('s-dia').value) || null;
   const hr  = parseInt(document.getElementById('s-hr').value) || null;
   const wt  = parseFloat(document.getElementById('s-weight').value) || null;
+  const ht  = parseFloat(document.getElementById('s-height').value) || null;
   const rbs = parseFloat(document.getElementById('s-rbs').value) || null;
   const hba1c = parseFloat(document.getElementById('s-hba1c').value) || null;
   const notes = document.getElementById('s-notes').value.trim() || null;
   const date = document.getElementById('s-date').value || new Date().toISOString().slice(0, 10);
+  const bmiVal = (wt && ht) ? Number((wt / Math.pow(ht / 100, 2)).toFixed(1)) : null;
 
   if (!sys && !dia && !hr && !wt && !rbs && !hba1c) {
     errEl.textContent = 'Sila isi sekurang-kurangnya satu bacaan';
@@ -246,11 +268,18 @@ async function saveSelfVitals() {
       source: 'patient_self',
       bp_systolic: sys, bp_diastolic: dia,
       heart_rate: hr, weight: wt,
+      height: ht, bmi: bmiVal,
       rbs, hba1c, notes,
       recorded_by: window.currentUser.id,
       recorded_by_name: window.currentUser.full_name,
     });
     if (error) throw error;
+
+    // Kemaskini tinggi pada rekod pesakit (sumber tunggal — boleh ditukar di sini)
+    if (ht && window.patientRecord?.id) {
+      await window.db.from('psy_patients').update({ height_cm: ht }).eq('id', window.patientRecord.id);
+      window.patientRecord.height_cm = ht;
+    }
 
     banner('Bacaan disimpan ✅');
     closeSelfModal();

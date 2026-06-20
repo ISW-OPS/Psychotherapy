@@ -504,7 +504,7 @@ async function loadNavBadges(role, _staffRole, userId) {
     } else if (role === 'patient') {
       const [ordersRes, issuesRes, closedRes, patRes] = await Promise.all([
         window.db.from('psy_orders').select('id', { count: 'exact', head: true }).eq('patient_id', userId).in('status', ['pending', 'paid', 'packed', 'shipped']),
-        window.db.from('psy_audit_log').select('id, meta').eq('action', 'issue.reported').eq('user_id', userId),
+        window.db.from('psy_audit_log').select('id, meta').eq('action', 'issue.reported').eq('actor_id', userId),
         window.db.from('psy_audit_log').select('meta').eq('action', 'issue.closed'),
         window.db.from('psy_patients').select('kob_status, status').eq('user_id', userId).maybeSingle(),
       ]);

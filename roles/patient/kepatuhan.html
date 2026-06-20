@@ -574,7 +574,7 @@ function renderHealth() {
       ${healthData.aktiviti ? chip('🚶 Aktiviti direkod') : ''}
     </div>` : '<p class="text-[12px] text-ink/45 mb-4">Belum diisi untuk hari ini.</p>';
   document.getElementById('health-card').innerHTML = `
-    <div class="flex items-center gap-2.5 mb-4"><span class="text-2xl">💚</span><div><div class="text-[15px] font-semibold text-ink">Daily Check-in</div><div class="text-[11px] text-ink/45">Perasaan, reaksi pemulihan, tidur &amp; aktiviti</div></div></div>
+    <div class="flex items-center gap-2.5 mb-4"><span class="text-2xl">💚</span><div><div class="text-[15px] font-semibold text-ink">Catatan Harian</div><div class="text-[11px] text-ink/45">Perasaan, reaksi, tidur, aktiviti &amp; checklist amalan</div></div></div>
     ${summary}
     <button type="button" onclick="kfLaunch()" ${READONLY ? 'disabled' : ''} class="w-full bg-navy text-white py-3 rounded-xl text-sm font-bold hover:bg-navy-dark transition-colors shadow-sm flex items-center justify-center gap-2 ${READONLY ? 'opacity-50 cursor-not-allowed' : ''}">
       ${done ? '✏️ Kemaskini Catatan Harian' : '✅ Mula Catatan Harian'}
@@ -675,10 +675,13 @@ document.addEventListener('click', (e) => {
 });
 
 // ── Save ──
-async function saveChecklist() {
+async function saveChecklist(mode) {
   if (READONLY) return;
-  const missing = ITEMS.filter(it => it.berskor && (answers[it.item_key] == null || answers[it.item_key] === ''));
-  if (missing.length) { banner(`Sila lengkapkan: ${missing[0].label}`, 'error'); return; }
+  // Hanya kuatkuasa kelengkapan amalan bila bahagian amalan disimpan (bukan check-in sahaja)
+  if (mode !== 'checkin') {
+    const missing = ITEMS.filter(it => it.berskor && (answers[it.item_key] == null || answers[it.item_key] === ''));
+    if (missing.length) { banner(`Sila lengkapkan: ${missing[0].label}`, 'error'); return; }
+  }
 
   const btns = document.querySelectorAll('[data-save]');
   btns.forEach(b => b.disabled = true);
@@ -736,9 +739,12 @@ async function saveChecklist() {
     activity_level: healthData.aktiviti || null,
     madu_count: maduCount,
   };
-  const { error: ckErr } = await window.db.from('psy_daily_checkins')
-    .upsert(ckPayload, { onConflict: 'patient_id,checkin_date' });
-  if (ckErr) console.warn('Simpan check-in gagal:', ckErr.message);
+  // Hanya tulis check-in bila ada data perasaan (elak rekod kosong bila simpan amalan sahaja)
+  if (healthData.mood && healthData.mood.primary) {
+    const { error: ckErr } = await window.db.from('psy_daily_checkins')
+      .upsert(ckPayload, { onConflict: 'patient_id,checkin_date' });
+    if (ckErr) console.warn('Simpan check-in gagal:', ckErr.message);
+  }
 
   btns.forEach(b => b.disabled = false);
   banner('Catatan harian disimpan ✓');
@@ -774,6 +780,8 @@ async function loadWeek(ws) {
 // REAKSI, AKTIVITI, computeSkor(), saveChecklist(), selectedDate.
 // ============================================================
 let kfSteps = [], kfIdx = 0, kfBusy = false;
+// Mode flow: 'checkin' (Daily Check-in sahaja), 'amalan' (Checklist Amalan sahaja), 'all' (gabung — legacy)
+let kfMode = 'all';
 // Jejak pilihan "Tiada" per kumpulan (UI sahaja — tak disimpan; ketiadaan = tiada)
 
 function vibrate(p) { try { navigator.vibrate && navigator.vibrate(p); } catch (_) {} }
@@ -797,7 +805,6 @@ function kfGrade(skor) {
 function updateMobileStart() {
   const el = document.getElementById('mobile-start');
   if (!el) return;
-  // Nota: walaupun tiada amalan berskor, Daily Check-in (mood/reaksi/tidur/aktiviti) tetap boleh diisi
   const filled = !!logCache[selectedDate];
   const editable = isEditable(selectedDate);
   const d = new Date(selectedDate + 'T00:00:00');
@@ -830,35 +837,40 @@ function updateMobileStart() {
     </div>`;
 }
 
-// ── Build steps (ADAPTIF — bergantung pilihan mood & reaksi) ──
+// ── Build steps (ADAPTIF — bergantung mod + pilihan mood & reaksi) ──
 function kfBuildSteps() {
   const steps = [{ type:'intro' }];
-  // Bahagian 1 — Mood
-  steps.push({ type:'mood_primary' });
-  const m = healthData.mood.primary;
-  const fl = MOOD_FLOW[m];
-  if (m && m !== 'Biasa' && fl) {
-    steps.push({ type:'mood_detail' });
-    steps.push({ type:'mood_intensity' });
-    if (fl.q3) steps.push({ type:'mood_q3' });
+  // Bahagian Daily Check-in (mood → reaksi → tidur → aktiviti)
+  if (kfMode !== 'amalan') {
+    steps.push({ type:'mood_primary' });
+    const m = healthData.mood.primary;
+    const fl = MOOD_FLOW[m];
+    if (m && m !== 'Biasa' && fl) {
+      steps.push({ type:'mood_detail' });
+      steps.push({ type:'mood_intensity' });
+      if (fl.q3) steps.push({ type:'mood_q3' });
+    }
+    steps.push({ type:'reaksi_sev' });
+    if (healthData.reaksiSev && healthData.reaksiSev !== 'Tiada') {
+      steps.push({ type:'reaksi_cats' });
+      healthData.reaksiCats.forEach(cat => { if (REAKSI_CATS[cat]) steps.push({ type:'reaksi_sym', cat }); });
+    }
+    steps.push({ type:'tidur' }, { type:'aktiviti' });
   }
-  // Bahagian 2 — Reaksi pemulihan
-  steps.push({ type:'reaksi_sev' });
-  if (healthData.reaksiSev && healthData.reaksiSev !== 'Tiada') {
-    steps.push({ type:'reaksi_cats' });
-    healthData.reaksiCats.forEach(cat => { if (REAKSI_CATS[cat]) steps.push({ type:'reaksi_sym', cat }); });
+  // Bahagian Checklist Amalan (berskor)
+  if (kfMode !== 'checkin') {
+    ITEMS.forEach(it => steps.push({ type:'item', it }));
   }
-  // Bahagian 3 & 4
-  steps.push({ type:'tidur' }, { type:'aktiviti' });
-  ITEMS.forEach(it => steps.push({ type:'item', it }));
   steps.push({ type:'final' });
   return steps;
 }
 // Bina semula steps selepas jawapan bercabang berubah (kekalkan kedudukan semasa)
 function kfRebuild() { kfSteps = kfBuildSteps(); }
 
-function kfLaunch() {
+function kfLaunch(mode) {
   if (!isEditable(selectedDate)) { banner('Hanya hari dalam minggu semasa boleh diisi', 'error'); return; }
+  kfMode = (mode === 'checkin' || mode === 'amalan') ? mode : 'all';
+  if (kfMode === 'amalan' && !ITEMS.length) { banner('Tiada amalan untuk fasa ini', 'error'); return; }
   kfSteps = kfBuildSteps(); kfIdx = 0;
   document.getElementById('kep-flow').classList.add('open');
   document.body.style.overflow = 'hidden';
@@ -1021,9 +1033,11 @@ function kfStepHtml(step) {
     const streak = computeStreakBase();
     const d = new Date(selectedDate + 'T00:00:00');
     const dl = d.toLocaleDateString('ms-MY', { weekday:'long', day:'numeric', month:'long' });
+    const introTitle = kfMode === 'amalan' ? 'Checklist Amalan' : kfMode === 'checkin' ? 'Daily Check-in' : 'Catatan Harian';
+    const introEmoji = kfMode === 'amalan' ? '📋' : kfMode === 'checkin' ? '💚' : '📝';
     return `<div class="kf-body"><div class="kf-center">
-        <div class="kf-emoji">📝</div>
-        <h2>Catatan Harian</h2>
+        <div class="kf-emoji">${introEmoji}</div>
+        <h2>${introTitle}</h2>
         <p>${dl}</p>
         ${streak > 0 ? `<div class="kf-streak">🔥 ${streak} hari berturut</div>` : ''}
         <p class="kf-sub">${kfSteps.length - 2} langkah pantas • jujur itu penting 🌿</p>
@@ -1193,7 +1207,8 @@ function kfStepHtml(step) {
     return `<div class="kf-body kf-q">${head}${body}</div>${kfFooter()}`;
   }
   if (step.type === 'final') {
-    const skor = computeSkor(), g = kfGrade(skor);
+    const skor = computeSkor();
+    const g = kfMode === 'checkin' ? null : kfGrade(skor);
     const streak = computeStreakBase() + (window.__kfLogDates?.has(today) ? 0 : 1);
     const name = window.__firstName || '';
     const ring = g ? `
@@ -1205,7 +1220,7 @@ function kfStepHtml(step) {
         </svg>
         <div class="kf-ring-num">${skor}%</div>
       </div>
-      <div class="kf-grade" style="color:${g.c}">Gred ${g.cls} — ${g.l}</div>` : `<div class="kf-emoji">✅</div><p>Catatan hari ini lengkap</p>`;
+      <div class="kf-grade" style="color:${g.c}">Gred ${g.cls} — ${g.l}</div>` : `<div class="kf-emoji">✅</div><p>${kfMode === 'amalan' ? 'Checklist amalan lengkap' : kfMode === 'checkin' ? 'Daily check-in selesai' : 'Catatan hari ini lengkap'}</p>`;
     return `<div class="kf-confetti" id="kf-confetti"></div>
       <div class="kf-body"><div class="kf-center">
         <div class="kf-emoji">🎉</div>
@@ -1325,7 +1340,7 @@ function kfConfetti() {
 async function kfFinish() {
   const btn = document.querySelector('.kf-finish');
   if (btn) { btn.disabled = true; btn.textContent = 'Menyimpan…'; }
-  await saveChecklist();
+  await saveChecklist(kfMode);
   if (window.__kfLogDates) window.__kfLogDates.add(selectedDate);
   kfClose();
   selectDate(selectedDate);   // refresh kad desktop + mobile + notis selepas simpan
@@ -1429,11 +1444,25 @@ async function kfFinish() {
   } catch (_) {}
   window.__fasa = weekToFasa(currentWeek);
 
-  // 2. Item config
-  const { data: items } = await window.db.from('psy_kepatuhan_item')
-    .select('*').eq('fasa', window.__fasa).eq('aktif', true)
-    .order('urutan', { ascending: true });
-  ITEMS = items || [];
+  // 2. Item config — amalan AKTIF sepanjang rawatan.
+  // Kalau fasa semasa belum dikonfigur staff, guna fasa terdahulu yang ada item
+  // (carry-forward): set week1 kekal aktif utk minggu seterusnya sehingga ada set baru.
+  const FASA_ORDER = ['week1', 'week2_4', 'week5_12', 'fasa2', 'fasa3'];
+  const loadFasaItems = async (f) => {
+    const { data } = await window.db.from('psy_kepatuhan_item')
+      .select('*').eq('fasa', f).eq('aktif', true).order('urutan', { ascending: true });
+    return data || [];
+  };
+  let items = await loadFasaItems(window.__fasa);
+  window.__fasaEffective = window.__fasa;
+  if (!items.length) {
+    const idx = FASA_ORDER.indexOf(window.__fasa);
+    for (let i = idx - 1; i >= 0; i--) {
+      const fb = await loadFasaItems(FASA_ORDER[i]);
+      if (fb.length) { items = fb; window.__fasaEffective = FASA_ORDER[i]; break; }
+    }
+  }
+  ITEMS = items;
   // Nota: walaupun tiada amalan BERSKOR untuk fasa ini, Daily Check-in
   // (perasaan, reaksi, tidur, aktiviti) tetap boleh diisi.
   document.getElementById('week-card').classList.remove('hidden');
