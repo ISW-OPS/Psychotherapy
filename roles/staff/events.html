@@ -143,9 +143,18 @@
 <!-- Registrations modal -->
 <div id="reg-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
   <div class="relative bg-white rounded-2xl max-w-md w-full max-h-[88vh] flex flex-col overflow-hidden">
-    <div class="px-5 py-4 border-b border-ink/10 flex items-center justify-between">
-      <h3 id="reg-title" class="font-bold text-lg">Pendaftar</h3>
-      <button onclick="document.getElementById('reg-modal').classList.add('hidden')" class="text-ink/50 text-xl leading-none">&times;</button>
+    <div class="px-5 py-4 border-b border-ink/10">
+      <div class="flex items-center justify-between">
+        <h3 id="reg-title" class="font-bold text-lg">Pendaftar</h3>
+        <button onclick="document.getElementById('reg-modal').classList.add('hidden')" class="text-ink/50 text-xl leading-none">&times;</button>
+      </div>
+      <div id="reg-sub" class="text-xs text-ink/50 mt-0.5"></div>
+      <div class="flex items-center justify-between gap-2 mt-3">
+        <label class="flex items-center gap-1.5 text-xs font-medium text-ink/60 cursor-pointer">
+          <input id="reg-hadir-only" type="checkbox" onchange="renderRegs()" class="w-3.5 h-3.5 accent-green-600"> Hadir sahaja
+        </label>
+        <button onclick="exportRegs()" class="text-xs font-semibold text-navy border border-navy/30 px-3 py-1.5 rounded-lg hover:bg-navy hover:text-white">⬇ Export CSV</button>
+      </div>
     </div>
     <div id="reg-list" class="p-4 overflow-y-auto divide-y divide-ink/5"></div>
   </div>
@@ -160,6 +169,9 @@
 <script>
 let allEvents = [];
 let regCounts = {};   // event_id -> count of active registrations
+let hadirCounts = {}; // event_id -> count hadir
+let currentRegs = [];
+let currentEventForRegs = null;
 
 const TYPE_EMOJI = { kelas:'🧘', webinar:'🎥', komuniti:'🤝', challenge:'🏆', manzil:'🕌' };
 const STATUS_CLS = {
@@ -189,6 +201,7 @@ function renderEvents() {
   if (!list.length) { grid.innerHTML = '<div class="col-span-full text-center py-16 text-ink/40 text-sm">Tiada acara. Klik "+ Acara Baru".</div>'; return; }
   grid.innerHTML = list.map(ev => {
     const cnt = regCounts[ev.id] || 0;
+    const had = hadirCounts[ev.id] || 0;
     const cap = ev.capacity ? `${cnt}/${ev.capacity}` : `${cnt}`;
     return `<div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4 flex flex-col">
       <div class="flex items-start justify-between gap-2 mb-1">
@@ -198,7 +211,7 @@ function renderEvents() {
       <div class="text-[11px] text-ink/55">🗓️ ${fmtWhen(ev.start_at, ev.end_at)}</div>
       <div class="text-[11px] text-ink/50 mt-0.5">${ev.mode === 'f2f' ? '🏥 '+(ev.location||'F2F') : '💻 Online'} ${ev.host ? '· 👤 '+ev.host : ''}</div>
       <div class="mt-3 pt-3 border-t border-ink/5 flex items-center justify-between gap-2">
-        <button onclick="openRegs('${ev.id}')" class="text-[11px] font-semibold text-navy hover:underline">👥 ${cap} pendaftar</button>
+        <button onclick="openRegs('${ev.id}')" class="text-[11px] font-semibold text-navy hover:underline">👥 ${cap} pendaftar${had ? ` · <span class="text-green-dark">✓ ${had} hadir</span>` : ''}</button>
         <div class="flex items-center gap-1.5">
           <button onclick="openEventModal('${ev.id}')" class="text-[11px] font-semibold text-ink/60 border border-ink/20 px-2.5 py-1 rounded-lg hover:bg-ink/5">✏️ Edit</button>
           <button onclick="deleteEvent('${ev.id}')" class="text-[11px] font-semibold text-terracotta border border-terracotta/30 px-2.5 py-1 rounded-lg hover:bg-terracotta/5">🗑️</button>
@@ -279,15 +292,29 @@ async function deleteEvent(id) {
 }
 
 async function openRegs(eventId) {
-  const ev = allEvents.find(e => e.id === eventId);
-  document.getElementById('reg-title').textContent = 'Pendaftar — ' + ev.title;
-  const list = document.getElementById('reg-list');
-  list.innerHTML = '<div class="text-sm text-ink/40 text-center py-8">Memuatkan...</div>';
+  currentEventForRegs = eventId;
+  document.getElementById('reg-hadir-only').checked = false;
+  document.getElementById('reg-list').innerHTML = '<div class="text-sm text-ink/40 text-center py-8">Memuatkan...</div>';
   document.getElementById('reg-modal').classList.remove('hidden');
-  const { data: regs } = await window.db.from('psy_event_registrations')
+  await fetchRegs();
+}
+
+async function fetchRegs() {
+  const { data } = await window.db.from('psy_event_registrations')
     .select('id, status, registered_at, patient_id, psy_patients(full_name, mrn)')
-    .eq('event_id', eventId).neq('status', 'batal').order('registered_at', { ascending: true });
-  const rows = regs || [];
+    .eq('event_id', currentEventForRegs).neq('status', 'batal').order('registered_at', { ascending: true });
+  currentRegs = data || [];
+  const ev = allEvents.find(e => e.id === currentEventForRegs);
+  const had = currentRegs.filter(r => r.status === 'hadir').length;
+  document.getElementById('reg-title').textContent = 'Pendaftar — ' + (ev?.title || '');
+  document.getElementById('reg-sub').textContent = `${currentRegs.length} pendaftar · ${had} hadir`;
+  renderRegs();
+}
+
+function renderRegs() {
+  const hadirOnly = document.getElementById('reg-hadir-only').checked;
+  const rows = hadirOnly ? currentRegs.filter(r => r.status === 'hadir') : currentRegs;
+  const list = document.getElementById('reg-list');
   list.innerHTML = rows.length ? rows.map(r => {
     const p = r.psy_patients || {};
     const attended = r.status === 'hadir';
@@ -296,27 +323,48 @@ async function openRegs(eventId) {
         <div class="text-sm font-semibold text-ink truncate">${p.full_name || 'Pesakit'}</div>
         <div class="text-[10px] text-ink/45">${p.mrn || ''} · daftar ${new Date(r.registered_at).toLocaleDateString('ms-MY',{day:'2-digit',month:'short'})}</div>
       </div>
-      <button onclick="markAttend('${r.id}','${attended ? 'registered' : 'hadir'}','${eventId}')"
+      <button onclick="markAttend('${r.id}','${attended ? 'registered' : 'hadir'}')"
         class="text-[11px] font-bold px-2.5 py-1 rounded-lg ${attended ? 'bg-green text-white' : 'bg-ink/5 text-ink/60 hover:bg-ink/10'}">
         ${attended ? '✓ Hadir' : 'Tanda Hadir'}
       </button>
     </div>`;
-  }).join('') : '<div class="text-sm text-ink/40 text-center py-8">Belum ada pendaftar.</div>';
+  }).join('') : '<div class="text-sm text-ink/40 text-center py-8">Tiada pendaftar.</div>';
 }
 
-async function markAttend(regId, newStatus, eventId) {
+async function markAttend(regId, newStatus) {
   const { error } = await window.db.from('psy_event_registrations').update({ status: newStatus }).eq('id', regId);
   if (error) { banner('Ralat: ' + error.message, 'error'); return; }
-  openRegs(eventId);
+  await fetchRegs();   // refresh senarai + kiraan
+  loadEvents();        // kemaskini kiraan pada kad (latar belakang)
+}
+
+function exportRegs() {
+  const ev = allEvents.find(e => e.id === currentEventForRegs);
+  if (!currentRegs.length) { banner('Tiada pendaftar untuk dieksport', 'error'); return; }
+  const head = ['Nama', 'MRN', 'Status', 'Tarikh Daftar'];
+  const lines = currentRegs.map(r => {
+    const p = r.psy_patients || {};
+    return [p.full_name || '', p.mrn || '', r.status === 'hadir' ? 'Hadir' : 'Daftar',
+      new Date(r.registered_at).toLocaleString('ms-MY')];
+  });
+  const csv = [head, ...lines].map(row => row.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `pendaftar-${(ev?.title || 'acara').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.csv`;
+  a.click();
 }
 
 async function loadEvents() {
   const { data: evs } = await window.db.from('psy_events').select('*').order('start_at', { ascending: false });
   allEvents = evs || [];
   // Count active registrations per event (staff can read all via RLS)
-  regCounts = {};
+  regCounts = {}; hadirCounts = {};
   const { data: regs } = await window.db.from('psy_event_registrations').select('event_id, status').neq('status', 'batal');
-  (regs || []).forEach(r => { regCounts[r.event_id] = (regCounts[r.event_id] || 0) + 1; });
+  (regs || []).forEach(r => {
+    regCounts[r.event_id] = (regCounts[r.event_id] || 0) + 1;
+    if (r.status === 'hadir') hadirCounts[r.event_id] = (hadirCounts[r.event_id] || 0) + 1;
+  });
   renderEvents();
 }
 
