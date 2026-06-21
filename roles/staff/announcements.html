@@ -22,43 +22,53 @@
     <main class="main-content flex-1 min-w-0">
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
-      <div class="p-4 md:p-8 space-y-5">
+      <div class="p-4 md:p-8 space-y-5 max-w-[1500px] mx-auto">
 
-        <div class="bg-navy-light/50 border border-navy/20 rounded-xl p-4 text-sm text-navy">
-          📱 Pengumuman aktif akan dipaparkan sebagai <strong>carousel</strong> di dashboard pesakit. Susun urutan dengan mengubah nilai "Turutan".
-        </div>
-
-        <div class="flex items-center justify-between flex-wrap gap-3">
-          <h3 class="font-bold text-lg">Senarai Pengumuman</h3>
-          <div class="flex items-center gap-2">
-            <button id="btn-ann-quick" onclick="openModal()" class="hidden border border-ink/20 text-ink/70 text-sm px-4 py-2.5 rounded-xl font-semibold hover:bg-ink/5">Tambah Ringkas</button>
-            <a id="btn-ann-new" href="pengumuman-baru.html" class="hidden bg-navy text-white text-sm px-4 py-2.5 rounded-xl font-semibold hover:bg-navy-dark">+ Pengumuman Baru</a>
+        <!-- Title -->
+        <div class="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-2xl font-extrabold text-ink">Pengurusan Pengumuman</h1>
+            <p class="text-sm text-ink/55 mt-0.5">Urus, cipta dan terbitkan pengumuman untuk pesakit &amp; staf.</p>
           </div>
+          <a id="btn-ann-new" href="pengumuman-baru.html" class="hidden inline-flex items-center gap-2 bg-navy text-white text-sm px-5 py-2.5 rounded-xl font-semibold hover:bg-navy-dark shadow-sm">+ Tambah Pengumuman</a>
         </div>
 
-        <!-- Preview -->
-        <div id="preview-section" class="hidden">
-          <div class="text-xs font-semibold text-ink/50 uppercase mb-2">Preview Carousel Pesakit</div>
-          <div class="relative overflow-hidden rounded-2xl" style="min-height:120px">
-            <div id="preview-track" class="flex transition-transform duration-500 ease-in-out h-full"></div>
+        <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-4 md:p-5 space-y-4">
+          <!-- Filter tabs + search -->
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div id="status-tabs" class="flex items-center gap-1.5 flex-wrap"></div>
+            <div class="flex items-center gap-2">
+              <div class="relative">
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-ink/35 text-sm">🔍</span>
+                <input id="search" oninput="renderTable()" placeholder="Cari pengumuman..." class="pl-9 pr-3 py-2 border border-ink/15 rounded-xl text-sm w-56 outline-none focus:border-navy">
+              </div>
+              <button id="btn-ann-quick" onclick="openModal()" class="hidden border border-ink/20 text-ink/60 text-sm px-3 py-2 rounded-xl font-semibold hover:bg-ink/5" title="Tambah ringkas (banner sahaja)">⚡</button>
+            </div>
           </div>
-        </div>
 
-        <div class="bg-white rounded-xl border border-ink/10 overflow-x-auto">
-          <table class="data">
-            <thead>
-              <tr>
-                <th>Urutan</th>
-                <th>Tajuk</th>
-                <th>Tag</th>
-                <th>CTA</th>
-                <th>Warna Latar</th>
-                <th>Status</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="ann-body"></tbody>
-          </table>
+          <!-- Table -->
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-[11px] uppercase tracking-wide text-ink/45 border-b border-ink/10">
+                  <th class="text-left font-semibold py-3 pr-3">Pengumuman</th>
+                  <th class="text-left font-semibold py-3 px-3">Kategori</th>
+                  <th class="text-left font-semibold py-3 px-3">Tarikh</th>
+                  <th class="text-left font-semibold py-3 px-3">Sasaran</th>
+                  <th class="text-left font-semibold py-3 px-3">Status</th>
+                  <th class="text-left font-semibold py-3 px-3">Dikemaskini</th>
+                  <th class="text-right font-semibold py-3 pl-3">Tindakan</th>
+                </tr>
+              </thead>
+              <tbody id="ann-body"></tbody>
+            </table>
+          </div>
+
+          <!-- Pagination -->
+          <div class="flex items-center justify-between gap-3 flex-wrap pt-1">
+            <div id="page-info" class="text-xs text-ink/50"></div>
+            <div id="pager" class="flex items-center gap-1.5"></div>
+          </div>
         </div>
       </div>
     </main>
@@ -223,74 +233,162 @@ function removeAnnImage() {
   document.getElementById('btn-remove-img').classList.add('hidden');
 }
 
+let items = [];          // merged announcements + events
+let statusFilter = '';
+let page = 1;
+const PAGE_SIZE = 8;
+
+const TYPE_EMOJI = { kelas:'🧘', webinar:'🎥', komuniti:'🤝', challenge:'🏆', manzil:'🕌' };
+const STATUS_META = {
+  aktif:       { l:'Aktif',        c:'bg-green/10 text-green-dark', dot:'bg-green' },
+  dijadualkan: { l:'Dijadualkan',  c:'bg-navy/10 text-navy',        dot:'bg-navy' },
+  draft:       { l:'Draft',        c:'bg-ink/8 text-ink/55',        dot:'bg-ink/40' },
+  tamat:       { l:'Tamat Tempoh', c:'bg-terracotta/10 text-terracotta', dot:'bg-terracotta' },
+};
+const TABS = [['', 'Semua'], ['aktif', 'Aktif'], ['dijadualkan', 'Dijadualkan'], ['draft', 'Draft'], ['tamat', 'Tamat Tempoh']];
+
+function statusOf(it) {
+  if (it._kind === 'announcement') return it.raw.is_active ? 'aktif' : 'draft';
+  const e = it.raw;
+  if (e.status === 'draft') return 'draft';
+  if (e.status === 'cancelled' || e.status === 'completed') return 'tamat';
+  const ref = e.end_at ? new Date(e.end_at) : new Date(e.start_at);
+  if (ref < new Date()) return 'tamat';
+  return new Date(e.start_at) > new Date() ? 'dijadualkan' : 'aktif';
+}
+function audLabel(aud) {
+  if (!Array.isArray(aud) || !aud.length) return 'Semua Pengguna';
+  const map = { patient:'Pesakit', staff:'Staff', doctor:'Doktor', coach:'Coach', admin:'Admin' };
+  if (aud.length >= 5) return 'Semua Pengguna';
+  if (aud.length === 1) return aud[0] === 'patient' ? 'Semua Pesakit' : aud[0] === 'staff' ? 'Semua Staff' : map[aud[0]] || aud[0];
+  return aud.map(x => map[x] || x).join(', ');
+}
+function fmtDate(d) { return d ? new Date(d).toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric' }) : '—'; }
+function fmtTime(d) { return d ? new Date(d).toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' }) : ''; }
+function thumbHtml(it) {
+  if (it.image) return `<img src="${it.image}" alt="" class="w-14 h-12 rounded-lg object-cover flex-shrink-0">`;
+  const emoji = it._kind === 'event' ? (TYPE_EMOJI[it.raw.type] || '📅') : '📢';
+  const grad = it._kind === 'event' ? 'from-teal to-navy' : 'from-navy to-green-dark';
+  return `<div class="w-14 h-12 rounded-lg bg-gradient-to-br ${grad} flex items-center justify-center text-white text-lg flex-shrink-0">${emoji}</div>`;
+}
+
 async function loadAnn() {
-  const { data, error } = await window.db.from('psy_announcements')
-    .select('*').order('sort_order', { ascending: true }).order('created_at', { ascending: false });
-  allAnn = data || [];
+  const [annRes, evRes] = await Promise.all([
+    window.db.from('psy_announcements').select('*').order('created_at', { ascending: false }),
+    window.db.from('psy_events').select('*').order('start_at', { ascending: false }),
+  ]);
+  allAnn = annRes.data || [];                       // announcements (untuk modal edit cepat)
+  const anns = allAnn.map(a => ({
+    _kind:'announcement', id:a.id, title:a.title, body:a.body, image:a.image_url,
+    category:a.category || a.tag, dateAt:a.created_at, audience:a.audience, updatedAt:a.created_at, raw:a,
+  }));
+  const evs = (evRes.data || []).map(e => ({
+    _kind:'event', id:e.id, title:e.title, body:e.description, image:e.cover_image,
+    category:e.tag || e.type, dateAt:e.start_at, audience:e.audience, updatedAt:e.updated_at || e.created_at, raw:e,
+  }));
+  items = [...anns, ...evs].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  renderTabs();
   renderTable();
-  renderPreview();
+}
+
+function renderTabs() {
+  document.getElementById('status-tabs').innerHTML = TABS.map(([key, label]) => {
+    const on = statusFilter === key;
+    return `<button onclick="setFilter('${key}')" class="px-3.5 py-1.5 rounded-full text-xs font-semibold transition-colors ${on ? 'bg-navy text-white' : 'bg-ink/5 text-ink/60 hover:bg-ink/10'}">${label}</button>`;
+  }).join('');
+}
+function setFilter(key) { statusFilter = key; page = 1; renderTabs(); renderTable(); }
+
+function filteredItems() {
+  const q = (document.getElementById('search').value || '').toLowerCase().trim();
+  return items.filter(it => {
+    if (statusFilter && statusOf(it) !== statusFilter) return false;
+    if (q && !((it.title || '') + ' ' + (it.body || '') + ' ' + (it.category || '')).toLowerCase().includes(q)) return false;
+    return true;
+  });
 }
 
 function renderTable() {
-  document.getElementById('ann-body').innerHTML = allAnn.length
-    ? allAnn.map(a => `
-      <tr class="cursor-pointer hover:bg-cream/30 transition-colors" onclick="window.location.href='announcement-detail.html?id=${a.id}'">
-        <td class="text-center font-bold text-ink/60">${a.sort_order}</td>
-        <td>
-          <div class="font-semibold text-sm">${a.title}</div>
-          ${a.body ? `<div class="text-xs text-ink/50 truncate max-w-xs">${a.body}</div>` : ''}
-        </td>
-        <td>${a.tag ? `<span class="chip bg-navy-light text-navy text-[10px]">${a.tag}</span>` : '—'}</td>
-        <td class="text-xs">${a.cta_label ? `<span class="text-navy">${a.cta_label}</span>` : '—'}</td>
-        <td>
-          <div class="w-24 h-6 rounded-lg bg-gradient-to-r ${a.bg || 'from-navy to-green-dark'}"></div>
-        </td>
-        <td>
-          <span class="chip ${a.is_active ? 'bg-green-light text-green-dark' : 'bg-ink/10 text-ink/60'} text-[10px]">
-            ${a.is_active ? '✅ Aktif' : '⏸ Tidak aktif'}
-          </span>
-        </td>
-        <td class="whitespace-nowrap" onclick="event.stopPropagation()">
-          <button onclick="window.location.href='announcement-detail.html?id=${a.id}'" class="text-navy text-xs font-semibold hover:underline mr-3">Detail</button>
-          ${can('announcements','edit') ? `<button onclick="toggleActive('${a.id}', ${!a.is_active})" class="text-xs font-semibold ${a.is_active ? 'text-gold-dark hover:text-gold' : 'text-green-dark hover:text-green'} mr-3">
-            ${a.is_active ? 'Nyahaktif' : 'Aktifkan'}
-          </button>` : ''}
-          ${can('announcements','delete') ? `<button onclick="deleteAnn('${a.id}')" class="text-terracotta text-xs hover:underline">Padam</button>` : ''}
-        </td>
-      </tr>`).join('')
-    : `<tr><td colspan="7" class="text-center text-ink/40 py-8">📭 Tiada pengumuman</td></tr>`;
-}
+  const list = filteredItems();
+  const total = list.length;
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (page > pages) page = pages;
+  const slice = list.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const canEdit = can('announcements', 'edit'), canDel = can('announcements', 'delete');
 
-function slideHtml(s) {
-  const hasImg = !!s.image_url;
-  const bgStyle = hasImg
-    ? `style="background-image:url('${s.image_url}');background-size:cover;background-position:center;"`
-    : '';
-  const overlay = hasImg
-    ? `<div class="absolute inset-0 bg-gradient-to-r from-black/65 to-black/25 rounded-2xl"></div>`
-    : `<div class="absolute inset-0 bg-gradient-to-r ${s.bg || 'from-navy to-green-dark'} rounded-2xl"></div>`;
-  return `
-    <div class="min-w-full relative rounded-2xl overflow-hidden" ${bgStyle}>
-      ${overlay}
-      <div class="relative z-10 p-6 text-white flex items-center justify-between gap-4 flex-wrap min-h-[130px]">
-        <div>
-          ${s.tag ? `<div class="text-[10px] font-semibold uppercase tracking-widest opacity-70 mb-1">${s.tag}</div>` : ''}
-          <div class="text-lg font-bold leading-snug drop-shadow">${s.title}</div>
-          ${s.body ? `<div class="text-sm opacity-85 mt-1 max-w-sm">${s.body}</div>` : ''}
+  document.getElementById('ann-body').innerHTML = slice.length ? slice.map(it => {
+    const sk = statusOf(it), sm = STATUS_META[sk];
+    return `<tr class="border-b border-ink/5 hover:bg-cream/30 transition-colors align-middle">
+      <td class="py-3 pr-3">
+        <div class="flex items-center gap-3 min-w-0">
+          ${thumbHtml(it)}
+          <div class="min-w-0">
+            <div class="font-bold text-ink text-sm truncate max-w-[260px]">${it.title}</div>
+            ${it.body ? `<div class="text-[11px] text-ink/50 truncate max-w-[260px]">${String(it.body).replace(/<[^>]+>/g,'')}</div>` : ''}
+          </div>
         </div>
-        ${s.cta_label && s.cta_url ? `<a href="${s.cta_url}" class="bg-white/20 hover:bg-white/30 text-white text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap backdrop-blur-sm">${s.cta_label}</a>` : ''}
-      </div>
-    </div>`;
+      </td>
+      <td class="px-3">${it.category ? `<span class="inline-block text-[10px] font-semibold px-2.5 py-1 rounded-full bg-navy/8 text-navy">${it.category}</span>` : '—'}</td>
+      <td class="px-3 whitespace-nowrap">
+        <div class="text-[12px] text-ink/70 flex items-center gap-1">📅 ${fmtDate(it.dateAt)}</div>
+        ${it._kind === 'event' ? `<div class="text-[10px] text-ink/40 mt-0.5">${fmtTime(it.dateAt)}</div>` : ''}
+      </td>
+      <td class="px-3 text-[12px] text-ink/65 whitespace-nowrap">${audLabel(it.audience)}</td>
+      <td class="px-3"><span class="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full ${sm.c}"><span class="w-1.5 h-1.5 rounded-full ${sm.dot}"></span>${sm.l}</span></td>
+      <td class="px-3 text-[11px] text-ink/45 whitespace-nowrap">${fmtDate(it.updatedAt)}<br><span class="text-ink/30">${fmtTime(it.updatedAt)}</span></td>
+      <td class="pl-3">
+        <div class="flex items-center justify-end gap-1">
+          <button onclick="viewItem('${it._kind}','${it.id}')" title="Lihat" class="w-8 h-8 rounded-lg hover:bg-ink/8 text-ink/50 flex items-center justify-center">👁️</button>
+          ${canEdit ? `<button onclick="editItem('${it._kind}','${it.id}')" title="Edit" class="w-8 h-8 rounded-lg hover:bg-navy/10 text-navy flex items-center justify-center">✏️</button>` : ''}
+          ${canDel ? `<button onclick="delItem('${it._kind}','${it.id}')" title="Padam" class="w-8 h-8 rounded-lg hover:bg-terracotta/10 text-terracotta flex items-center justify-center">🗑️</button>` : ''}
+          ${canEdit ? `<button onclick="toggleStatus('${it._kind}','${it.id}')" title="Aktif/Nyahaktif" class="w-8 h-8 rounded-lg hover:bg-ink/8 text-ink/40 flex items-center justify-center">⋮</button>` : ''}
+        </div>
+      </td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="7" class="text-center text-ink/40 py-12">📭 Tiada pengumuman ditemui</td></tr>`;
+
+  // info + pager
+  document.getElementById('page-info').textContent = total
+    ? `Menunjukkan ${(page-1)*PAGE_SIZE+1} hingga ${Math.min(page*PAGE_SIZE, total)} daripada ${total} pengumuman` : '';
+  let pg = `<button onclick="goPage(${page-1})" ${page<=1?'disabled':''} class="w-8 h-8 rounded-lg border border-ink/15 text-ink/50 disabled:opacity-30 hover:bg-ink/5">‹</button>`;
+  for (let i = 1; i <= pages; i++) {
+    if (pages > 7 && i > 2 && i < pages - 1 && Math.abs(i - page) > 1) { if (i === 3) pg += `<span class="px-1 text-ink/30">…</span>`; continue; }
+    pg += `<button onclick="goPage(${i})" class="w-8 h-8 rounded-lg text-sm font-semibold ${i===page?'bg-green text-white':'border border-ink/15 text-ink/60 hover:bg-ink/5'}">${i}</button>`;
+  }
+  pg += `<button onclick="goPage(${page+1})" ${page>=pages?'disabled':''} class="w-8 h-8 rounded-lg border border-ink/15 text-ink/50 disabled:opacity-30 hover:bg-ink/5">›</button>`;
+  document.getElementById('pager').innerHTML = pages > 1 ? pg : '';
 }
+function goPage(p) { page = Math.max(1, p); renderTable(); }
 
-function renderPreview() {
-  const active = allAnn.filter(a => a.is_active).slice(0, 5);
-  const section = document.getElementById('preview-section');
-  const track = document.getElementById('preview-track');
-
-  if (!active.length) { section.classList.add('hidden'); return; }
-  section.classList.remove('hidden');
-  track.innerHTML = active.map(slideHtml).join('');
+function viewItem(kind, id) {
+  if (kind === 'announcement') location.href = 'announcement-detail.html?id=' + id;
+  else location.href = 'events.html';
+}
+function editItem(kind, id) {
+  if (kind === 'announcement') openModal(id);
+  else location.href = 'events.html';   // event diedit di halaman Acara & Kelas
+}
+async function delItem(kind, id) {
+  if (!confirm('Padam item ini?')) return;
+  const table = kind === 'announcement' ? 'psy_announcements' : 'psy_events';
+  const { error } = await window.db.from(table).delete().eq('id', id);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  banner('Dipadam');
+  await loadAnn();
+}
+async function toggleStatus(kind, id) {
+  const it = items.find(x => x._kind === kind && x.id === id);
+  if (!it) return;
+  if (kind === 'announcement') {
+    const nv = !it.raw.is_active;
+    await window.db.from('psy_announcements').update({ is_active: nv }).eq('id', id);
+    banner(nv ? 'Diaktifkan' : 'Dinyahaktif');
+  } else {
+    const nv = it.raw.status === 'published' ? 'draft' : 'published';
+    await window.db.from('psy_events').update({ status: nv }).eq('id', id);
+    banner(nv === 'published' ? 'Diterbitkan' : 'Dijadikan draf');
+  }
+  await loadAnn();
 }
 
 function openModal(id) {
