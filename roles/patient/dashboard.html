@@ -526,7 +526,7 @@ async function loadBanners(user) {
         .eq('patient_id', patientRecord.id).gte('session_date', today).in('status', ['booked','reschedule'])
         .order('session_date', { ascending: true }).limit(5)
         .then(r => r.data || [], () => []),
-      window.db.from('psy_announcements').select('id, title, body, tag, image_url, cta_label, cta_url, bg, sort_order, created_at, is_active')
+      window.db.from('psy_announcements').select('id, title, body, tag, image_url, cta_label, cta_url, bg, sort_order, created_at, is_active, audience')
         .eq('is_active', true).order('sort_order', { ascending: true }).order('created_at', { ascending: false }).limit(8)
         .then(r => r.data || [], () => []),
       patientRecord.active_package_id
@@ -757,9 +757,10 @@ async function loadBanners(user) {
       if (hnd) hnd.textContent = ns ? new Date(ns.session_date).toLocaleDateString(LCALE(), { weekday: 'long', day: '2-digit', month: 'short' }) : 'Tiada';
     }
 
-    // ── Announcements (banner carousel + dots) ──
-    document.getElementById('announce-list').innerHTML = announces.length
-      ? announces.map(a => {
+    // ── Announcements (banner carousel + dots) — tapis ikut sasaran (audience) ──
+    const annVisible = announces.filter(a => !Array.isArray(a.audience) || a.audience.includes('patient'));
+    document.getElementById('announce-list').innerHTML = annVisible.length
+      ? annVisible.map(a => {
           const hasImg = !!a.image_url;
           const bgCls = hasImg ? '' : `bg-gradient-to-r ${a.bg || 'from-navy to-teal'}`;
           const bgStyle = hasImg ? `background-image:url('${a.image_url}');background-size:cover;background-position:center;` : '';
@@ -779,8 +780,8 @@ async function loadBanners(user) {
         }).join('')
       : '<div class="text-xs text-ink/40 text-center py-6 w-full">Tiada pengumuman buat masa ini</div>';
 
-    renderAnnounceDots(announces.length);
-    if (announces.length > 1) startAnnounceAutoSlide();
+    renderAnnounceDots(annVisible.length);
+    if (annVisible.length > 1) startAnnounceAutoSlide();
   } catch (err) {
     console.error('Dashboard error:', err);
     document.querySelector('section').insertAdjacentHTML('afterbegin',
