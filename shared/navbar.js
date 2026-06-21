@@ -7,6 +7,7 @@ const NAV_ITEMS_BY_ROLE = {
   patient: [
     { id: 'dashboard', url: 'dashboard.html', icon: '🏠', label: 'Dashboard' },
     { id: 'kob', url: 'kob.html', icon: '🩺', label: 'KOB' },
+    { id: 'events', url: 'events.html', icon: '📅', label: 'Acara & Kelas' },
     { id: 'plan', url: 'plan.html', icon: '💊', label: 'My Treatment Plan' },
     { id: 'routine', url: 'routine.html', icon: '🕐', label: 'Jadual Harian' },
     { id: 'pakej', url: 'pakej.html', icon: '🗂️', label: 'Pakej Rawatan' },
@@ -134,6 +135,7 @@ const STAFF_NAV_MASTER = [
   {
     group: 'KOMUNIKASI', collapsible: true, items: [
       { id: 'announcements', url: 'announcements.html', icon: '📢', label: 'Pengumuman' },
+      { id: 'events_admin', url: 'events.html', icon: '📅', label: 'Acara & Kelas' },
       { id: 'library', url: 'library.html', icon: '📚', label: 'Library' },
     ]
   },

@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Acara & Kelas</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📅</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <section class="p-4 md:p-6 space-y-4">
+        <div class="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-xl md:text-2xl font-bold text-ink">Acara &amp; Kelas</h1>
+            <p class="text-sm text-ink/55 mt-0.5">Sertai kelas, webinar &amp; program komuniti.</p>
+          </div>
+          <div class="flex items-center gap-1.5 bg-white border border-ink/10 rounded-xl p-1 text-xs font-semibold">
+            <button data-filter="upcoming" class="ev-tab px-3 py-1.5 rounded-lg bg-navy text-white">Akan Datang</button>
+            <button data-filter="mine" class="ev-tab px-3 py-1.5 rounded-lg text-ink/60 hover:bg-ink/5">Acara Saya</button>
+          </div>
+        </div>
+
+        <div id="events-list" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div class="col-span-full text-center py-16 text-ink/40 text-sm">Memuatkan acara...</div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+let allEvents = [];
+let myRegs = {};        // event_id -> registration row
+let evFilter = 'upcoming';
+
+const EV_STYLE = {
+  kelas:     { grad: 'from-navy to-teal',        emoji: '🧘' },
+  webinar:   { grad: 'from-[#2f7fc8] to-[#54b3cf]', emoji: '🎥' },
+  komuniti:  { grad: 'from-green to-green-dark',  emoji: '🤝' },
+  manzil:    { grad: 'from-teal to-navy',         emoji: '🕌' },
+  challenge: { grad: 'from-gold to-gold-dark',    emoji: '🏆' },
+  default:   { grad: 'from-navy to-navy-dark',    emoji: '📅' },
+};
+function evStyle(t) { return EV_STYLE[t] || EV_STYLE.default; }
+function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
+function fmtWhen(s, e) {
+  const d = new Date(s);
+  const day = d.toLocaleDateString(LCALE(), { weekday: 'short', day: '2-digit', month: 'short' });
+  const t1 = d.toLocaleTimeString(LCALE(), { hour: '2-digit', minute: '2-digit', hour12: false });
+  const t2 = e ? new Date(e).toLocaleTimeString(LCALE(), { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
+  return `${day} · ${t1}${t2 ? '–' + t2 : ''}`;
+}
+
+function isRegistered(ev) {
+  const r = myRegs[ev.id];
+  return r && r.status !== 'batal';
+}
+
+function eventCard(ev) {
+  const st = evStyle(ev.type);
+  const registered = isRegistered(ev);
+  const past = new Date(ev.start_at) < new Date();
+  const joinable = registered && ev.meet_link && !past;
+  const cover = ev.cover_image
+    ? `style="background-image:url('${ev.cover_image}');background-size:cover;background-position:center;"`
+    : '';
+  return `<div class="rounded-2xl bg-white border border-ink/8 shadow-sm overflow-hidden flex flex-col">
+    <div class="relative h-24 flex items-end p-3 ${ev.cover_image ? '' : 'bg-gradient-to-br ' + st.grad}" ${cover}>
+      ${ev.cover_image ? '<div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>' : ''}
+      <span class="absolute top-2.5 left-2.5 text-[9px] font-bold uppercase tracking-wide bg-white/25 text-white px-2 py-0.5 rounded-full backdrop-blur-sm">${ev.tag || ev.type}</span>
+      <div class="absolute top-2.5 right-2.5 text-2xl">${st.emoji}</div>
+      <div class="relative z-10 font-bold text-white text-sm leading-snug line-clamp-2">${ev.title}</div>
+    </div>
+    <div class="p-4 flex-1 flex flex-col">
+      <div class="flex items-center gap-2 text-[11px] text-ink/60 mb-1">
+        <span>🗓️ ${fmtWhen(ev.start_at, ev.end_at)}</span>
+      </div>
+      <div class="flex items-center gap-3 text-[11px] text-ink/50 mb-2 flex-wrap">
+        <span>${ev.mode === 'f2f' ? '🏥 ' + (ev.location || 'Bersemuka') : '💻 Online'}</span>
+        ${ev.host ? `<span>👤 ${ev.host}</span>` : ''}
+        ${ev.capacity ? `<span>👥 Had ${ev.capacity}</span>` : ''}
+        ${Number(ev.price) > 0 ? `<span class="font-semibold text-ink/70">RM ${Number(ev.price).toFixed(0)}</span>` : '<span class="text-green-dark font-semibold">Percuma</span>'}
+      </div>
+      ${ev.description ? `<p class="text-[11px] text-ink/55 line-clamp-2 mb-3">${ev.description}</p>` : '<div class="mb-3"></div>'}
+
+      <div class="mt-auto flex items-center gap-2">
+        ${past
+          ? (ev.recording_url
+              ? `<a href="${ev.recording_url}" target="_blank" rel="noopener" class="flex-1 text-center bg-ink/5 text-ink/70 text-xs font-semibold py-2.5 rounded-xl hover:bg-ink/10">▶️ Lihat Rakaman</a>`
+              : '<span class="flex-1 text-center text-[11px] text-ink/40 py-2.5">Acara telah tamat</span>')
+          : registered
+            ? `<button onclick="toggleReg('${ev.id}')" class="flex-1 bg-green/10 text-green-dark border border-green/30 text-xs font-bold py-2.5 rounded-xl hover:bg-green/15">✓ Telah Daftar</button>`
+            : `<button onclick="toggleReg('${ev.id}')" class="flex-1 bg-navy text-white text-xs font-bold py-2.5 rounded-xl hover:bg-navy-dark">Daftar Sekarang</button>`}
+        ${joinable ? `<a href="${ev.meet_link}" target="_blank" rel="noopener" class="bg-green hover:bg-green-dark text-white text-xs font-bold px-3 py-2.5 rounded-xl whitespace-nowrap">📹 Sertai</a>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function render() {
+  const now = new Date();
+  let list = allEvents.slice();
+  if (evFilter === 'mine') list = list.filter(isRegistered);
+  // upcoming first, then by date
+  list.sort((a, b) => new Date(a.start_at) - new Date(b.start_at));
+  const el = document.getElementById('events-list');
+  el.innerHTML = list.length
+    ? list.map(eventCard).join('')
+    : `<div class="col-span-full text-center py-16 text-ink/40 text-sm">${evFilter === 'mine' ? 'Anda belum mendaftar mana-mana acara.' : 'Tiada acara akan datang buat masa ini.'}</div>`;
+}
+
+async function toggleReg(eventId) {
+  if (!window.patientRecord?.id) { (window.banner || alert)('Rekod pesakit tidak ditemui'); return; }
+  const ev = allEvents.find(e => e.id === eventId);
+  const registered = isRegistered(ev);
+  try {
+    if (registered) {
+      await window.db.from('psy_event_registrations')
+        .update({ status: 'batal' }).eq('event_id', eventId).eq('patient_id', window.patientRecord.id);
+      myRegs[eventId] = { ...(myRegs[eventId] || {}), status: 'batal' };
+      banner('Pendaftaran dibatalkan');
+    } else {
+      await window.db.from('psy_event_registrations')
+        .upsert({ event_id: eventId, patient_id: window.patientRecord.id, status: 'registered' }, { onConflict: 'event_id,patient_id' });
+      myRegs[eventId] = { event_id: eventId, status: 'registered' };
+      banner('Berjaya daftar ✓');
+      notify(window.currentUser.id, 'system', 'Pendaftaran acara disahkan', `Anda telah mendaftar: ${ev.title}`, 'events.html').catch(() => {});
+    }
+    render();
+  } catch (e) {
+    (window.banner || alert)('Ralat: ' + e.message);
+  }
+}
+
+document.addEventListener('click', (e) => {
+  const tab = e.target.closest('.ev-tab');
+  if (!tab) return;
+  evFilter = tab.dataset.filter;
+  document.querySelectorAll('.ev-tab').forEach(t => {
+    const on = t === tab;
+    t.className = 'ev-tab px-3 py-1.5 rounded-lg ' + (on ? 'bg-navy text-white' : 'text-ink/60 hover:bg-ink/5');
+  });
+  render();
+});
+
+(async () => {
+  const user = await initPatient('events', 'Acara & kelas komuniti');
+  if (!user) return;
+  try {
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    const [evs, regs] = await Promise.all([
+      window.db.from('psy_events').select('*')
+        .eq('status', 'published').gte('start_at', todayStart.toISOString())
+        .order('start_at', { ascending: true })
+        .then(r => r.data || [], () => []),
+      window.patientRecord?.id
+        ? window.db.from('psy_event_registrations').select('event_id, status')
+            .eq('patient_id', window.patientRecord.id)
+            .then(r => r.data || [], () => [])
+        : Promise.resolve([]),
+    ]);
+    allEvents = evs;
+    myRegs = {};
+    regs.forEach(r => { myRegs[r.event_id] = r; });
+    render();
+  } catch (e) {
+    document.getElementById('events-list').innerHTML =
+      `<div class="col-span-full bg-terracotta/10 text-terracotta rounded-xl p-4 text-sm">Ralat: ${e.message}</div>`;
+  }
+})();
+</script>
+</body>
+</html>
