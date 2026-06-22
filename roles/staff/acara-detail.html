@@ -54,7 +54,7 @@ function timeRange(){ const t1=fmtT(EV.start_at), t2=EV.end_at?fmtT(EV.end_at):'
 function statusDisp(){ if(EV.status==='draft')return{l:'Draft',c:'text-ink/55'}; if(EV.status==='cancelled')return{l:'Dibatalkan',c:'text-terracotta'}; if(EV.status==='completed')return{l:'Selesai',c:'text-navy'}; return new Date(EV.start_at)>new Date()?{l:'Scheduled',c:'text-[#1d4ed8]'}:{l:'Published',c:'text-green-dark'}; }
 function audLabel(a){ if(!Array.isArray(a)||!a.length)return'Semua Pengguna'; if(a.includes('patient')&&a.length===1)return'Semua Pesakit'; const m={patient:'Pesakit',staff:'Staff',doctor:'Doktor',coach:'Coach',admin:'Admin'}; return a.length>=5?'Semua Pengguna':a.map(x=>m[x]||x).join(', '); }
 
-let EV = null, REGS = [], CREATOR = '', TAB = 'info';
+let EV = null, REGS = [], CREATOR = '', TAB = 'info', MATERIALS = [];
 
 function counts() {
   const pendaftar = REGS.length;
@@ -88,11 +88,23 @@ function tabPanel() {
     }).join('')}</div>`;
   }
   if (TAB === 'rakaman') {
-    if (!EV.recording_url) return '<div class="text-center py-12 text-ink/40 text-sm">Tiada rakaman atau bahan lagi.</div>';
-    return `<a href="${EV.recording_url}" target="_blank" rel="noopener" class="flex items-center gap-3 p-4 border border-ink/10 rounded-xl hover:bg-cream/40">
-      <div class="w-10 h-10 rounded-lg bg-navy/10 text-navy flex items-center justify-center">▶️</div>
-      <div class="flex-1"><div class="text-sm font-semibold text-ink">Rakaman Sesi</div><div class="text-[11px] text-ink/45">Klik untuk tonton</div></div>
-      <span class="text-navy">⬇</span></a>`;
+    const matIcon = { nota:'📄', video:'🎥', slaid:'📊', pautan:'🔗' };
+    const items = [];
+    if (EV.recording_url) items.push({ _rec:true, title:'Rakaman Sesi', type:'video', url:EV.recording_url });
+    MATERIALS.forEach(m => items.push(m));
+    const addForm = `<div class="bg-cream/40 rounded-xl p-3 mb-4 flex flex-wrap items-end gap-2">
+      <div class="flex-1 min-w-[140px]"><label class="text-[10px] text-ink/50">Tajuk</label><input id="mat-title" class="w-full mt-0.5 px-2.5 py-1.5 border border-ink/15 rounded-lg text-sm" placeholder="Cth: Slide Pembentangan"></div>
+      <div><label class="text-[10px] text-ink/50">Jenis</label><select id="mat-type" class="mt-0.5 px-2.5 py-1.5 border border-ink/15 rounded-lg text-sm bg-white"><option value="nota">Nota</option><option value="video">Video</option><option value="slaid">Slaid</option><option value="pautan">Pautan</option></select></div>
+      <div class="flex-1 min-w-[160px]"><label class="text-[10px] text-ink/50">Pautan (URL)</label><input id="mat-url" class="w-full mt-0.5 px-2.5 py-1.5 border border-ink/15 rounded-lg text-sm" placeholder="https://..."></div>
+      <button onclick="addMaterial()" class="bg-navy text-white text-sm font-semibold px-4 py-1.5 rounded-lg hover:bg-navy-dark">+ Tambah</button>
+    </div>`;
+    const list = items.length ? items.map(m => `<div class="flex items-center gap-3 p-3 border border-ink/10 rounded-xl">
+      <div class="w-10 h-10 rounded-lg bg-navy/10 text-navy flex items-center justify-center text-lg flex-shrink-0">${matIcon[m.type] || '📎'}</div>
+      <div class="flex-1 min-w-0"><div class="text-sm font-semibold text-ink truncate">${m.title}</div><div class="text-[11px] text-ink/45 capitalize">${m.type}</div></div>
+      <a href="${m.url}" target="_blank" rel="noopener" class="text-[11px] font-semibold text-navy border border-navy/25 px-3 py-1.5 rounded-lg hover:bg-navy hover:text-white">Buka</a>
+      ${m._rec ? '' : `<button onclick="delMaterial('${m.id}')" class="text-terracotta hover:text-terracotta/70 px-1" title="Padam">🗑️</button>`}
+    </div>`).join('') : '<div class="text-center py-8 text-ink/40 text-sm">Tiada bahan lagi. Tambah di atas.</div>';
+    return addForm + '<div class="space-y-2">' + list + '</div>';
   }
   // info
   const tags = (EV.tag || '').split(/[,;]+/).map(t => t.trim()).filter(Boolean);
@@ -156,7 +168,7 @@ function render() {
           ${tabBtn('info','ⓘ Maklumat Event')}
           ${tabBtn('peserta','👥 Peserta ('+c.pendaftar+')')}
           ${tabBtn('kehadiran','✓ Kehadiran ('+c.hadir+')')}
-          ${tabBtn('rakaman','▶️ Rakaman & Bahan ('+(EV.recording_url?1:0)+')')}
+          ${tabBtn('rakaman','▶️ Rakaman & Bahan ('+(MATERIALS.length+(EV.recording_url?1:0))+')')}
         </div>
         <div class="pt-5">${tabPanel()}</div>
       </div>
@@ -212,6 +224,22 @@ async function mark(regId, status) {
   if (r) r.status = nv;
   render();
 }
+async function addMaterial() {
+  const title = document.getElementById('mat-title').value.trim();
+  const type = document.getElementById('mat-type').value;
+  const url = document.getElementById('mat-url').value.trim();
+  if (!title || !url) { banner('Tajuk & pautan diperlukan', 'error'); return; }
+  const { error } = await window.db.from('psy_event_materials').insert({ event_id: EV.id, title, type, url });
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  const { data } = await window.db.from('psy_event_materials').select('*').eq('event_id', EV.id).order('created_at', { ascending: true });
+  MATERIALS = data || []; banner('Bahan ditambah ✓'); render();
+}
+async function delMaterial(id) {
+  if (!confirm('Padam bahan ini?')) return;
+  const { error } = await window.db.from('psy_event_materials').delete().eq('id', id);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  MATERIALS = MATERIALS.filter(m => m.id !== id); render();
+}
 function copyTxt(t) { navigator.clipboard?.writeText(t).then(() => banner('Pautan disalin ✓'), () => {}); }
 function kongsi() {
   const url = location.origin + '/roles/patient/event-detail.html?id=' + EV.id;
@@ -246,6 +274,8 @@ async function batal() {
       .select('id, status, registered_at, psy_patients(full_name, mrn)')
       .eq('event_id', id).neq('status', 'batal').order('registered_at', { ascending: true });
     REGS = regs || [];
+    const { data: mats } = await window.db.from('psy_event_materials').select('*').eq('event_id', id).order('created_at', { ascending: true });
+    MATERIALS = mats || [];
     if (EV.created_by) { const { data: prof } = await window.db.from('psy_profiles').select('full_name').eq('id', EV.created_by).maybeSingle(); CREATOR = prof?.full_name || ''; }
     render();
   } catch (e) {
