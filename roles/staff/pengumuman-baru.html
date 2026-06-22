@@ -203,6 +203,39 @@
   </div>
 </div>
 
+<!-- Urus Jenis Pengumuman (super admin) -->
+<div id="type-mgr" class="hidden fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl w-full max-w-md p-5 shadow-xl max-h-[85vh] overflow-y-auto">
+    <div class="flex items-center justify-between mb-3">
+      <div class="font-bold text-ink">Urus Jenis Pengumuman</div>
+      <button onclick="closeTypeMgr()" class="text-ink/50 text-xl leading-none">&times;</button>
+    </div>
+    <div id="tm-list" class="mb-4"></div>
+    <div class="border-t border-ink/10 pt-3">
+      <div id="tm-form-title" class="text-sm font-bold text-ink mb-2">Tambah Jenis Baru</div>
+      <label class="lbl">Nama Jenis</label>
+      <input id="tm-name" class="fld mb-2" placeholder="Contoh: Kempen Kesihatan" maxlength="50">
+      <label class="lbl">Kategori Asas</label>
+      <select id="tm-base" class="fld mb-2" onchange="onTypeBase()">
+        <option value="announcement">Pengumuman biasa (tiada tarikh/lokasi)</option>
+        <option value="event">Event (ada tarikh, masa, lokasi)</option>
+      </select>
+      <div id="tm-mode-wrap" class="hidden mb-2">
+        <label class="lbl">Mod Event</label>
+        <select id="tm-mode" class="fld">
+          <option value="f2f">Fizikal (F2F) — ada lokasi</option>
+          <option value="online">Online — ada pautan sertai</option>
+        </select>
+      </div>
+      <div id="tm-err" class="hidden text-xs text-terracotta mt-1 mb-1"></div>
+      <div class="flex justify-end gap-2 mt-3">
+        <button onclick="resetTypeForm()" class="px-3 py-2 text-sm font-semibold text-ink/60 hover:bg-ink/5 rounded-lg">Kosongkan</button>
+        <button id="tm-save" onclick="saveType()" class="px-4 py-2 text-sm font-bold text-white bg-green-600 hover:bg-green-700 rounded-lg">Tambah</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../../config/supabase.js"></script>
 <script src="../../shared/authGuard.js"></script>
@@ -210,28 +243,52 @@
 <script src="../../shared/navbar.js"></script>
 <script src="_shared.js"></script>
 <script>
-const TYPES = [
-  { key:'makluman',  icon:'📢', title:'Makluman',           desc:'Makluman umum, notis dan pengumuman biasa.',          kind:'announcement' },
-  { key:'event_f2f', icon:'📍', title:'Event Fizikal (F2F)', desc:'Program atau acara yang dijalankan secara bersemuka.', kind:'event', mode:'f2f',    etype:'kelas',   label:'Maklumat Event (Fizikal)' },
-  { key:'webinar',   icon:'💻', title:'Webinar / Online',    desc:'Program atau sesi yang dijalankan secara online.',     kind:'event', mode:'online', etype:'webinar', label:'Maklumat Webinar (Online)' },
-  { key:'manzil',    icon:'🕌', title:'Bacaan Manzil',       desc:'Sesi bacaan manzil secara berkumpulan.',               kind:'event', mode:'online', etype:'manzil',  label:'Maklumat Sesi Manzil' },
-  { key:'survey',    icon:'📋', title:'Survey / Tindakan',   desc:'Tindakan atau maklum balas daripada pengguna.',        kind:'announcement' },
-  { key:'sistem',    icon:'⚙️', title:'Kemaskini Sistem',    desc:'Makluman berkaitan kemaskini atau penyelenggaraan sistem.', kind:'announcement' },
+const DEFAULT_TYPES = [
+  { key:'makluman',  title:'Makluman',            desc:'Makluman umum, notis dan pengumuman biasa.',          kind:'announcement' },
+  { key:'event_f2f', title:'Event Fizikal (F2F)', desc:'Program atau acara yang dijalankan secara bersemuka.', kind:'event', mode:'f2f',    etype:'kelas',   label:'Maklumat Event (Fizikal)' },
+  { key:'webinar',   title:'Webinar / Online',    desc:'Program atau sesi yang dijalankan secara online.',     kind:'event', mode:'online', etype:'webinar', label:'Maklumat Webinar (Online)' },
+  { key:'manzil',    title:'Bacaan Manzil',       desc:'Sesi bacaan manzil secara berkumpulan.',               kind:'event', mode:'online', etype:'manzil',  label:'Maklumat Sesi Manzil' },
+  { key:'survey',    title:'Survey / Tindakan',   desc:'Tindakan atau maklum balas daripada pengguna.',        kind:'announcement' },
+  { key:'sistem',    title:'Kemaskini Sistem',    desc:'Makluman berkaitan kemaskini atau penyelenggaraan sistem.', kind:'announcement' },
 ];
+let TYPES = DEFAULT_TYPES.slice();
+let typeRows = [];
 let selectedType = 'event_f2f';
 
-function curType() { return TYPES.find(t => t.key === selectedType); }
+function curType() { return TYPES.find(t => t.key === selectedType) || TYPES[0]; }
 function cnt(inId, outId, max) { document.getElementById(outId).textContent = document.getElementById(inId).value.length; }
+
+async function loadTypes(keep) {
+  try {
+    const { data, error } = await window.db.from('psy_announcement_types')
+      .select('*').order('sort_order', { ascending: true });
+    if (!error && data) {
+      typeRows = data;
+      TYPES = data.length
+        ? data.filter(r => r.is_active !== false).map(r => ({
+            key:r.key, title:r.title, desc:r.description||'', kind:r.kind,
+            mode:r.mode||undefined, etype:r.etype||r.key, label:r.label||('Maklumat '+r.title)
+          }))
+        : DEFAULT_TYPES.slice();
+    }
+  } catch (_) {}
+  if (!TYPES.length) TYPES = DEFAULT_TYPES.slice();
+  const want = (keep && TYPES.some(t => t.key === keep)) ? keep
+             : (TYPES.some(t => t.key === selectedType) ? selectedType : TYPES[0].key);
+  selectType(want);
+}
 
 function renderTypes() {
   const sel = document.getElementById('type-select');
-  sel.innerHTML = TYPES.map(t => `<option value="${t.key}">${t.title}</option>`).join('');
+  sel.innerHTML = TYPES.map(t => `<option value="${t.key}">${escOpt(t.title)}</option>`).join('')
+    + (isSuperAdmin() ? '<option value="__manage_types__">⚙️ Urus jenis…</option>' : '');
   sel.value = selectedType;
   const t = curType();
   document.getElementById('type-desc').textContent = t ? t.desc : '';
 }
 
 function selectType(key) {
+  if (key === '__manage_types__') { document.getElementById('type-select').value = selectedType; openTypeMgr(); return; }
   selectedType = key;
   renderTypes();
   const t = curType();
@@ -444,11 +501,88 @@ async function saveNewCat(){
   banner('Kategori "' + name + '" ditambah ✓');
 }
 
+// ---- Urus Jenis Pengumuman (super admin CRUD) ----
+let editingTypeId = null;
+function openTypeMgr(){ resetTypeForm(); renderTypeMgr(); document.getElementById('type-mgr').classList.remove('hidden'); }
+function closeTypeMgr(){ document.getElementById('type-mgr').classList.add('hidden'); }
+function onTypeBase(){ document.getElementById('tm-mode-wrap').classList.toggle('hidden', document.getElementById('tm-base').value !== 'event'); }
+function resetTypeForm(){
+  editingTypeId = null;
+  document.getElementById('tm-name').value = '';
+  document.getElementById('tm-base').value = 'announcement';
+  document.getElementById('tm-mode').value = 'f2f';
+  onTypeBase();
+  document.getElementById('tm-err').classList.add('hidden');
+  document.getElementById('tm-form-title').textContent = 'Tambah Jenis Baru';
+  document.getElementById('tm-save').textContent = 'Tambah';
+}
+function renderTypeMgr(){
+  const list = document.getElementById('tm-list');
+  list.innerHTML = typeRows.length ? typeRows.map(r => `
+    <div class="flex items-center justify-between gap-2 py-2 border-b border-ink/8">
+      <div class="min-w-0">
+        <div class="text-sm font-semibold text-ink truncate">${escOpt(r.title)}</div>
+        <div class="text-[11px] text-ink/45">${r.kind==='event' ? ('Event · '+(r.mode==='online'?'Online':'Fizikal')) : 'Pengumuman biasa'}</div>
+      </div>
+      <div class="flex items-center gap-1 shrink-0">
+        <button onclick="editType('${r.id}')" class="text-xs font-semibold text-navy hover:underline px-2 py-1">Edit</button>
+        <button onclick="delType('${r.id}')" class="text-xs font-semibold text-terracotta hover:underline px-2 py-1">Padam</button>
+      </div>
+    </div>`).join('') : '<div class="text-xs text-ink/40 py-3">Tiada jenis lagi.</div>';
+}
+function editType(id){
+  const r = typeRows.find(x => x.id === id); if (!r) return;
+  editingTypeId = id;
+  document.getElementById('tm-name').value = r.title;
+  document.getElementById('tm-base').value = r.kind === 'event' ? 'event' : 'announcement';
+  document.getElementById('tm-mode').value = r.mode || 'f2f';
+  onTypeBase();
+  document.getElementById('tm-form-title').textContent = 'Edit Jenis';
+  document.getElementById('tm-save').textContent = 'Simpan';
+}
+function slugifyKey(s){ return (s.toLowerCase().trim().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,36)) || 'jenis'; }
+async function saveType(){
+  const err = document.getElementById('tm-err');
+  const title = document.getElementById('tm-name').value.trim();
+  if (!title){ err.textContent = 'Sila masukkan nama jenis.'; err.classList.remove('hidden'); return; }
+  const isEv = document.getElementById('tm-base').value === 'event';
+  const mode = isEv ? document.getElementById('tm-mode').value : null;
+  let res;
+  if (editingTypeId){
+    res = await window.db.from('psy_announcement_types').update({
+      title, kind: isEv?'event':'announcement', mode, label: isEv?('Maklumat '+title):null
+    }).eq('id', editingTypeId);
+  } else {
+    let base = slugifyKey(title), key = base, i = 2;
+    const used = new Set(typeRows.map(r => r.key));
+    while (used.has(key)){ key = base+'_'+i; i++; }
+    const maxSort = typeRows.reduce((m,r) => Math.max(m, r.sort_order||0), 0);
+    res = await window.db.from('psy_announcement_types').insert({
+      key, title, kind: isEv?'event':'announcement', mode,
+      etype: isEv?key:null, label: isEv?('Maklumat '+title):null,
+      sort_order: maxSort+1, created_by: window.currentUser.id
+    });
+  }
+  if (res.error){ err.textContent = 'Gagal: ' + res.error.message; err.classList.remove('hidden'); return; }
+  resetTypeForm();
+  await loadTypes(selectedType);
+  renderTypeMgr();
+  banner('Jenis disimpan ✓');
+}
+async function delType(id){
+  const r = typeRows.find(x => x.id === id);
+  if (!confirm('Padam jenis "' + (r?r.title:'') + '"? Pengumuman/event sedia ada tidak terjejas.')) return;
+  const { error } = await window.db.from('psy_announcement_types').delete().eq('id', id);
+  if (error){ banner('Gagal padam: ' + error.message, 'error'); return; }
+  await loadTypes(selectedType);
+  renderTypeMgr();
+  banner('Jenis dipadam');
+}
+
 (async () => {
   const user = await initStaff('announcements', 'Cipta pengumuman / event baharu');
   if (!user) return;
-  renderTypes();
-  selectType('event_f2f');
+  await loadTypes();
   await loadCategories();
 })();
 </script>
