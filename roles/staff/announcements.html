@@ -37,12 +37,21 @@
           <!-- Filter tabs + search -->
           <div class="flex items-center justify-between gap-3 flex-wrap">
             <div id="status-tabs" class="flex items-center gap-1.5 flex-wrap"></div>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 flex-wrap">
               <div class="relative">
                 <span class="absolute left-3 top-1/2 -translate-y-1/2 text-ink/35 text-sm">🔍</span>
                 <input id="search" oninput="renderTable()" placeholder="Cari pengumuman..." class="pl-9 pr-3 py-2 border border-ink/15 rounded-xl text-sm w-56 outline-none focus:border-navy">
               </div>
-              <button id="btn-ann-quick" onclick="openModal()" class="hidden border border-ink/20 text-ink/60 text-sm px-3 py-2 rounded-xl font-semibold hover:bg-ink/5" title="Tambah ringkas (banner sahaja)">⚡</button>
+              <select id="cat-filter" onchange="renderTable()" class="px-3 py-2 border border-ink/15 rounded-xl text-sm text-ink/70 outline-none focus:border-navy bg-white">
+                <option value="">Semua kategori</option>
+              </select>
+              <select id="date-filter" onchange="renderTable()" class="px-3 py-2 border border-ink/15 rounded-xl text-sm text-ink/70 outline-none focus:border-navy bg-white">
+                <option value="">Semua tarikh</option>
+                <option value="today">Hari ini</option>
+                <option value="7">7 hari lepas</option>
+                <option value="30">30 hari lepas</option>
+                <option value="upcoming">Akan datang</option>
+              </select>
             </div>
           </div>
 
@@ -318,6 +327,7 @@ async function loadAnn() {
   }));
   items = [...anns, ...evs].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
   renderTabs();
+  populateCatFilter();
   renderTable();
 }
 
@@ -329,10 +339,39 @@ function renderTabs() {
 }
 function setFilter(key) { statusFilter = key; page = 1; renderTabs(); renderTable(); }
 
+function populateCatFilter() {
+  const sel = document.getElementById('cat-filter');
+  const cur = sel.value;
+  const cats = [...new Set(items.map(it => (it.category || '').trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+  sel.innerHTML = '<option value="">Semua kategori</option>' +
+    cats.map(c => `<option value="${c.toLowerCase()}">${c}</option>`).join('');
+  if (cats.some(c => c.toLowerCase() === cur)) sel.value = cur;
+}
+
+function inDateRange(it, mode) {
+  if (!mode || !it.dateAt) return !mode;
+  const d = new Date(it.dateAt); if (isNaN(d)) return false;
+  const now = new Date();
+  if (mode === 'upcoming') return d > now;
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (mode === 'today') {
+    const end = new Date(start); end.setDate(end.getDate() + 1);
+    return d >= start && d < end;
+  }
+  const days = parseInt(mode, 10);
+  if (!isNaN(days)) { const from = new Date(now.getTime() - days * 864e5); return d >= from && d <= now; }
+  return true;
+}
+
 function filteredItems() {
   const q = (document.getElementById('search').value || '').toLowerCase().trim();
+  const cat = (document.getElementById('cat-filter').value || '').toLowerCase();
+  const dateMode = document.getElementById('date-filter').value || '';
   return items.filter(it => {
     if (statusFilter && statusOf(it) !== statusFilter) return false;
+    if (cat && (it.category || '').toLowerCase() !== cat) return false;
+    if (dateMode && !inDateRange(it, dateMode)) return false;
     if (q && !((it.title || '') + ' ' + (it.body || '') + ' ' + (it.category || '')).toLowerCase().includes(q)) return false;
     return true;
   });
@@ -532,7 +571,6 @@ async function deleteAnn(id) {
   if (!user) return;
   if (can('announcements','create')) {
     document.getElementById('btn-ann-new').classList.remove('hidden');
-    document.getElementById('btn-ann-quick').classList.remove('hidden');
   }
   await loadAnn();
   const ed = new URLSearchParams(location.search).get('edit');
