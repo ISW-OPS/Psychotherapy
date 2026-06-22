@@ -8,6 +8,8 @@
 <script src="../../shared/theme.js"></script>
 <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
 <link href="_styles.css" rel="stylesheet">
 <style>
   .fld { width:100%; margin-top:6px; padding:10px 12px; border:1px solid rgba(60,79,92,.18); border-radius:10px; font-size:14px; outline:none; background:#fff; }
@@ -46,6 +48,34 @@
   </div>
 </div>
 
+<!-- Banner cropper modal -->
+<div id="crop-modal" class="hidden fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl max-w-2xl w-full overflow-hidden flex flex-col">
+    <div class="px-5 py-4 border-b border-ink/10 flex items-center justify-between">
+      <h3 class="font-bold text-lg">Laras Banner</h3>
+      <button onclick="closeCrop()" class="text-ink/50 text-xl leading-none">&times;</button>
+    </div>
+    <div class="p-4">
+      <div class="bg-ink/5 rounded-xl overflow-hidden" style="max-height:58vh"><img id="crop-img" class="block max-w-full"></div>
+      <div class="flex items-center justify-center gap-1.5 mt-3 flex-wrap">
+        <button onclick="cropper&&cropper.zoom(0.1)" class="px-3 py-1.5 border border-ink/20 rounded-lg text-sm font-semibold hover:bg-ink/5">🔍 Zoom +</button>
+        <button onclick="cropper&&cropper.zoom(-0.1)" class="px-3 py-1.5 border border-ink/20 rounded-lg text-sm font-semibold hover:bg-ink/5">🔍 Zoom −</button>
+        <span class="w-px h-5 bg-ink/15 mx-1"></span>
+        <button onclick="cropper&&cropper.move(-25,0)" class="w-9 h-9 border border-ink/20 rounded-lg hover:bg-ink/5" title="Kiri">←</button>
+        <button onclick="cropper&&cropper.move(25,0)" class="w-9 h-9 border border-ink/20 rounded-lg hover:bg-ink/5" title="Kanan">→</button>
+        <button onclick="cropper&&cropper.move(0,-25)" class="w-9 h-9 border border-ink/20 rounded-lg hover:bg-ink/5" title="Atas">↑</button>
+        <button onclick="cropper&&cropper.move(0,25)" class="w-9 h-9 border border-ink/20 rounded-lg hover:bg-ink/5" title="Bawah">↓</button>
+        <button onclick="cropper&&cropper.reset()" class="px-3 py-1.5 border border-ink/20 rounded-lg text-sm font-semibold hover:bg-ink/5">↺ Reset</button>
+      </div>
+      <p class="text-[11px] text-ink/45 text-center mt-2">Seret gambar untuk gerak · butang untuk zoom & arah. Nisbah 2:1.</p>
+    </div>
+    <div class="px-5 py-4 border-t border-ink/10 flex gap-2">
+      <button onclick="closeCrop()" class="flex-1 border border-ink/20 text-ink/60 py-2.5 rounded-xl text-sm font-semibold hover:bg-ink/5">Batal</button>
+      <button onclick="applyCrop()" class="flex-1 bg-navy text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-dark">✓ Guna Gambar</button>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../../config/supabase.js"></script>
 <script src="../../shared/authGuard.js"></script>
@@ -63,21 +93,39 @@ function rte(c) { document.execCommand(c, false, null); document.getElementById(
 function rteLink() { const u = prompt('URL pautan:'); if (u) document.execCommand('createLink', false, u); }
 function cnt(i, o) { document.getElementById(o).textContent = document.getElementById(i).value.length; }
 
+let cropper = null;
 function previewBanner(input) {
   const f = input.files[0]; if (!f) return;
   if (f.size > 5 * 1024 * 1024) { banner('Gambar melebihi 5MB', 'error'); input.value = ''; return; }
   const r = new FileReader();
-  r.onload = e => {
-    imgData = e.target.result;
-    document.querySelectorAll('.banner-img').forEach(el => {
-      el.style.backgroundImage = `url('${imgData}')`;
-      el.style.backgroundSize = 'cover';
-      el.style.backgroundPosition = 'center';
-      el.classList.remove('bg-gradient-to-br');
-      el.innerHTML = '';
-    });
-  };
+  r.onload = e => openCrop(e.target.result);
   r.readAsDataURL(f);
+  input.value = '';
+}
+function openCrop(src) {
+  const img = document.getElementById('crop-img');
+  img.src = src;
+  document.getElementById('crop-modal').classList.remove('hidden');
+  if (cropper) { cropper.destroy(); cropper = null; }
+  cropper = new Cropper(img, { aspectRatio: 2, viewMode: 1, autoCropArea: 1, dragMode: 'move', background: false, movable: true, zoomable: true });
+}
+function closeCrop() {
+  document.getElementById('crop-modal').classList.add('hidden');
+  if (cropper) { cropper.destroy(); cropper = null; }
+}
+function applyCrop() {
+  if (!cropper) return;
+  const canvas = cropper.getCroppedCanvas({ width: 1200, height: 600, imageSmoothingQuality: 'high' });
+  imgData = canvas.toDataURL('image/jpeg', 0.85);
+  document.querySelectorAll('.banner-img').forEach(el => {
+    el.style.backgroundImage = `url('${imgData}')`;
+    el.style.backgroundSize = 'cover';
+    el.style.backgroundPosition = 'center';
+    el.classList.remove('bg-gradient-to-br');
+    el.innerHTML = '';
+  });
+  closeCrop();
+  banner('Banner dikemaskini — tekan Simpan Perubahan');
 }
 
 function render() {
