@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Detail Acara</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen bg-[#f7f8fa]">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📅</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-6 max-w-[1280px] mx-auto">
+        <a href="events.html" class="inline-flex items-center gap-2 text-sm font-semibold text-ink/60 hover:text-navy mb-4">← Kembali ke Acara &amp; Kelas</a>
+        <div id="wrap" class="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
+          <div class="lg:col-span-3 text-center py-16 text-ink/40 text-sm">Memuatkan...</div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+const TYPE = {
+  kelas:{ l:'KELAS', grad:'from-navy to-teal', emoji:'🧘', badge:'bg-green-600' },
+  webinar:{ l:'WEBINAR', grad:'from-[#2f7fc8] to-[#54b3cf]', emoji:'🎥', badge:'bg-navy' },
+  komuniti:{ l:'KOMUNITI', grad:'from-green to-green-dark', emoji:'🤝', badge:'bg-teal' },
+  manzil:{ l:'BACAAN MANZIL', grad:'from-[#0e2a4a] to-[#16604a]', emoji:'🕌', badge:'bg-purple-600' },
+  challenge:{ l:'CHALLENGE', grad:'from-gold to-gold-dark', emoji:'🏆', badge:'bg-gold-dark' },
+  default:{ l:'ACARA', grad:'from-navy to-navy-dark', emoji:'📅', badge:'bg-navy' },
+};
+function ty() { return TYPE[EV.type] || TYPE.default; }
+function fmtDate(d){ return d?new Date(d).toLocaleDateString('ms-MY',{weekday:'long',day:'2-digit',month:'long',year:'numeric'}):'—'; }
+function fmtT(d){ return d?new Date(d).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):''; }
+function timeRange(){ const t1=fmtT(EV.start_at), t2=EV.end_at?fmtT(EV.end_at):''; let dur=''; if(EV.end_at){const m=Math.round((new Date(EV.end_at)-new Date(EV.start_at))/60000); dur=' ('+(m>=60?Math.floor(m/60)+' Jam '+(m%60?(m%60)+' Minit':''):m+' Minit').trim()+')';} return `${t1}${t2?' – '+t2:''}${dur}`; }
+function statusDisp(){ if(EV.status==='draft')return{l:'Draft',c:'text-ink/55'}; if(EV.status==='cancelled')return{l:'Dibatalkan',c:'text-terracotta'}; if(EV.status==='completed')return{l:'Selesai',c:'text-navy'}; return new Date(EV.start_at)>new Date()?{l:'Scheduled',c:'text-[#1d4ed8]'}:{l:'Published',c:'text-green-dark'}; }
+function audLabel(a){ if(!Array.isArray(a)||!a.length)return'Semua Pengguna'; if(a.includes('patient')&&a.length===1)return'Semua Pesakit'; const m={patient:'Pesakit',staff:'Staff',doctor:'Doktor',coach:'Coach',admin:'Admin'}; return a.length>=5?'Semua Pengguna':a.map(x=>m[x]||x).join(', '); }
+
+let EV = null, REGS = [], CREATOR = '', TAB = 'info';
+
+function counts() {
+  const pendaftar = REGS.length;
+  const hadir = REGS.filter(r => r.status === 'hadir').length;
+  const tdk = REGS.filter(r => r.status === 'tak_hadir').length;
+  const rate = pendaftar ? Math.round(hadir / pendaftar * 100) : 0;
+  return { pendaftar, hadir, tdk, rate, kapasiti: EV.capacity || '∞' };
+}
+
+function statBox(icon, val, label, tone) {
+  return `<div class="bg-cream/40 rounded-xl p-3.5"><div class="text-ink/35 mb-1">${icon}</div><div class="text-xl font-extrabold ${tone||'text-ink'}">${val}</div><div class="text-[10px] text-ink/50 mt-0.5">${label}</div></div>`;
+}
+
+function setTab(t) { TAB = t; render(); }
+
+function tabPanel() {
+  const c = counts();
+  if (TAB === 'peserta' || TAB === 'kehadiran') {
+    const rows = TAB === 'kehadiran' ? REGS : REGS;
+    if (!rows.length) return '<div class="text-center py-12 text-ink/40 text-sm">Belum ada pendaftar.</div>';
+    return `<div class="divide-y divide-ink/5">${rows.map(r => {
+      const p = r.psy_patients || {};
+      return `<div class="flex items-center gap-3 py-3">
+        <div class="w-9 h-9 rounded-full bg-navy/10 text-navy flex items-center justify-center font-bold text-xs flex-shrink-0">${(p.full_name||'?').slice(0,2).toUpperCase()}</div>
+        <div class="flex-1 min-w-0"><div class="text-sm font-semibold text-ink truncate">${p.full_name||'Pesakit'}</div><div class="text-[10px] text-ink/45">${p.mrn||''} · daftar ${new Date(r.registered_at).toLocaleDateString('ms-MY',{day:'2-digit',month:'short'})}</div></div>
+        ${TAB === 'kehadiran' ? `<div class="flex items-center gap-1.5">
+          <button onclick="mark('${r.id}','hadir')" class="text-[11px] font-bold px-2.5 py-1 rounded-lg ${r.status==='hadir'?'bg-green text-white':'bg-ink/5 text-ink/60 hover:bg-green/15'}">✓ Hadir</button>
+          <button onclick="mark('${r.id}','tak_hadir')" class="text-[11px] font-bold px-2.5 py-1 rounded-lg ${r.status==='tak_hadir'?'bg-terracotta text-white':'bg-ink/5 text-ink/60 hover:bg-terracotta/15'}">✗ Tidak</button>
+        </div>` : `<span class="text-[11px] font-semibold px-2.5 py-1 rounded-full ${r.status==='hadir'?'bg-green/12 text-green-dark':r.status==='tak_hadir'?'bg-terracotta/12 text-terracotta':'bg-navy/8 text-navy'}">${r.status==='hadir'?'Hadir':r.status==='tak_hadir'?'Tidak Hadir':'Berdaftar'}</span>`}
+      </div>`;
+    }).join('')}</div>`;
+  }
+  if (TAB === 'rakaman') {
+    if (!EV.recording_url) return '<div class="text-center py-12 text-ink/40 text-sm">Tiada rakaman atau bahan lagi.</div>';
+    return `<a href="${EV.recording_url}" target="_blank" rel="noopener" class="flex items-center gap-3 p-4 border border-ink/10 rounded-xl hover:bg-cream/40">
+      <div class="w-10 h-10 rounded-lg bg-navy/10 text-navy flex items-center justify-center">▶️</div>
+      <div class="flex-1"><div class="text-sm font-semibold text-ink">Rakaman Sesi</div><div class="text-[11px] text-ink/45">Klik untuk tonton</div></div>
+      <span class="text-navy">⬇</span></a>`;
+  }
+  // info
+  const tags = (EV.tag || '').split(/[,;]+/).map(t => t.trim()).filter(Boolean);
+  const joinSteps = EV.mode === 'online'
+    ? ['Klik "Masuk ke Google Meet" di bawah.', 'Log masuk dengan akaun Google.', 'Sertai 5 minit lebih awal.']
+    : ['Hadir di lokasi yang ditetapkan.', 'Sampai 10 minit lebih awal untuk pendaftaran.'];
+  return `<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div class="space-y-4">
+      <div><h3 class="font-bold text-ink mb-2">Tentang Event</h3><div class="text-sm text-ink/70 leading-relaxed">${EV.description || '<span class="text-ink/40">Tiada penerangan.</span>'}</div></div>
+      ${tags.length ? `<div><h3 class="font-bold text-ink mb-2 text-sm">Tag</h3><div class="flex flex-wrap gap-1.5">${tags.map(t => `<span class="text-[10px] font-semibold px-2.5 py-1 rounded-full bg-green/10 text-green-dark">${t}</span>`).join('')}</div></div>` : ''}
+    </div>
+    <div class="bg-cream/30 rounded-xl p-4">
+      <h3 class="font-bold text-ink mb-3 text-sm">Maklumat Penyertaan</h3>
+      <div class="text-[11px] bg-green/10 text-green-dark rounded-lg px-3 py-2 mb-3">${new Date(EV.start_at) > new Date() ? '🟢 Pendaftaran masih dibuka sehingga acara bermula.' : '🔴 Pendaftaran telah ditutup.'}</div>
+      <div class="space-y-2 text-sm">
+        <div class="flex justify-between"><span class="text-ink/55">Kapasiti</span><span class="font-semibold">${c.kapasiti} Peserta</span></div>
+        <div class="flex justify-between"><span class="text-ink/55">Pendaftaran</span><span class="font-semibold">${c.pendaftar} Peserta</span></div>
+        <div class="flex justify-between"><span class="text-ink/55">Hadir</span><span class="font-semibold text-green-dark">${c.hadir} Peserta</span></div>
+        <div class="flex justify-between"><span class="text-ink/55">Tidak Hadir</span><span class="font-semibold text-terracotta">${c.tdk} Peserta</span></div>
+      </div>
+      <div class="mt-3"><div class="flex justify-between text-[11px] mb-1"><span class="text-ink/55">Attendance Rate</span><span class="font-bold">${c.rate}%</span></div>
+        <div class="h-2 bg-ink/10 rounded-full overflow-hidden"><div class="h-full bg-green rounded-full" style="width:${c.rate}%"></div></div></div>
+    </div>
+    <div class="space-y-4">
+      <div>
+        <h3 class="font-bold text-ink mb-2 text-sm">Cara Penyertaan</h3>
+        <ol class="space-y-1.5">${joinSteps.map((s,i)=>`<li class="flex items-start gap-2 text-[12px] text-ink/70"><span class="w-4 h-4 rounded-full bg-navy text-white text-[9px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">${i+1}</span> ${s}</li>`).join('')}</ol>
+      </div>
+      <div>
+        <h3 class="font-bold text-ink mb-2 text-sm">Keperluan</h3>
+        <ul class="space-y-1 text-[12px] text-ink/65">
+          <li>✓ ${EV.mode==='online'?'Peranti dengan internet stabil':'Hadir di lokasi'}</li>
+          ${EV.mode==='online'?'<li>✓ Mikrofon (disyorkan)</li><li>✓ Speaker atau headphone</li>':'<li>✓ Sampai awal untuk pendaftaran</li>'}
+        </ul>
+      </div>
+    </div>
+  </div>`;
+}
+
+function render() {
+  const t = ty(), sd = statusDisp(), c = counts();
+  const cover = EV.cover_image ? `style="background-image:url('${EV.cover_image}');background-size:cover;background-position:center;"` : '';
+  const tabBtn = (k, label) => `<button onclick="setTab('${k}')" class="px-1 pb-2.5 text-sm font-semibold border-b-2 ${TAB===k?'border-navy text-navy':'border-transparent text-ink/50 hover:text-ink'}">${label}</button>`;
+
+  document.getElementById('wrap').innerHTML = `
+    <!-- LEFT -->
+    <div class="lg:col-span-2 space-y-5">
+      <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5 md:p-6">
+        <div class="flex flex-col md:flex-row gap-5">
+          <div class="relative w-full md:w-64 h-40 rounded-2xl overflow-hidden flex-shrink-0 ${EV.cover_image?'':'bg-gradient-to-br '+t.grad}" ${cover}>
+            ${EV.cover_image?'':`<div class="absolute inset-0 flex items-center justify-center text-5xl">${t.emoji}</div>`}
+            <span class="absolute top-2.5 left-2.5 text-[9px] font-bold uppercase tracking-wide text-white px-2 py-0.5 rounded ${t.badge}">${t.l}</span>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <h1 class="text-2xl font-extrabold text-ink">${EV.title}</h1>
+              <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-green-light ${sd.c}">${sd.l}</span>
+            </div>
+            <p class="text-sm text-ink/60 mt-1">${(EV.description||'').replace(/<[^>]+>/g,'').slice(0,140)}</p>
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-4 text-[12px]">
+              <div><div class="text-ink/45 flex items-center gap-1">📅 Tarikh</div><div class="font-semibold text-ink">${new Date(EV.start_at).toLocaleDateString('ms-MY',{weekday:'short',day:'2-digit',month:'short',year:'numeric'})}</div></div>
+              <div><div class="text-ink/45 flex items-center gap-1">🕒 Masa</div><div class="font-semibold text-ink">${timeRange()}</div></div>
+              <div><div class="text-ink/45 flex items-center gap-1">🏷️ Jenis</div><div class="font-semibold text-ink">${t.l.charAt(0)+t.l.slice(1).toLowerCase()} (${EV.mode==='f2f'?'F2F':'Online'})</div></div>
+              <div><div class="text-ink/45 flex items-center gap-1">💻 Platform</div><div class="font-semibold text-ink">${EV.mode==='f2f'?(EV.location||'Bersemuka'):'Google Meet'}</div></div>
+              <div><div class="text-ink/45 flex items-center gap-1">● Status</div><div class="font-semibold ${sd.c}">${sd.l}</div></div>
+              <div><div class="text-ink/45 flex items-center gap-1">👤 Dicipta</div><div class="font-semibold text-ink">${CREATOR||'—'}</div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-5 border-b border-ink/10 mt-5 overflow-x-auto">
+          ${tabBtn('info','ⓘ Maklumat Event')}
+          ${tabBtn('peserta','👥 Peserta ('+c.pendaftar+')')}
+          ${tabBtn('kehadiran','✓ Kehadiran ('+c.hadir+')')}
+          ${tabBtn('rakaman','▶️ Rakaman & Bahan ('+(EV.recording_url?1:0)+')')}
+        </div>
+        <div class="pt-5">${tabPanel()}</div>
+      </div>
+    </div>
+
+    <!-- RIGHT -->
+    <div class="space-y-5">
+      <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+        <h3 class="font-bold text-ink mb-3">Ringkasan Event</h3>
+        <div class="grid grid-cols-2 gap-2.5">
+          ${statBox('👥', c.kapasiti, 'Kapasiti')}
+          ${statBox('📝', c.pendaftar, 'Pendaftaran', 'text-navy')}
+          ${statBox('✓', c.hadir, 'Hadir', 'text-green-dark')}
+          ${statBox('✗', c.tdk, 'Tidak Hadir', 'text-terracotta')}
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+        <h3 class="font-bold text-ink mb-2">Lokasi / Platform</h3>
+        <div class="text-sm text-ink/70 mb-3">${EV.mode==='f2f'?('📍 '+(EV.location||'Bersemuka')+(EV.address?'<div class=\"text-[11px] text-ink/45 mt-0.5\">'+EV.address+'</div>':'')):'💻 Online (Google Meet)<div class="text-[11px] text-ink/45 mt-0.5">Pautan aktif 15 minit sebelum sesi bermula.</div>'}</div>
+        ${EV.meet_link?`<a href="${EV.meet_link}" target="_blank" rel="noopener" class="w-full bg-green hover:bg-green-dark text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 mb-2">📹 Masuk ke Google Meet</a>
+        <button onclick="copyTxt('${EV.meet_link}')" class="w-full border border-ink/20 text-ink/70 font-semibold py-2.5 rounded-xl text-sm hover:bg-ink/5">📋 Salin Pautan</button>`:''}
+        ${EV.mode==='f2f'&&EV.maps_url?`<a href="${EV.maps_url}" target="_blank" rel="noopener" class="w-full border border-navy/25 text-navy font-semibold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2 hover:bg-navy hover:text-white">🗺 Lihat Peta</a>`:''}
+      </div>
+
+      <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+        <h3 class="font-bold text-ink mb-3">Tindakan</h3>
+        <div class="space-y-2">
+          <a href="pengumuman-edit.html?kind=event&id=${EV.id}" class="w-full border border-navy/25 text-navy font-semibold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2 hover:bg-navy hover:text-white">✏️ Edit Event</a>
+          <button onclick="exportPeserta()" class="w-full border border-ink/20 text-ink/70 font-semibold py-2.5 rounded-xl text-sm hover:bg-ink/5 flex items-center justify-center gap-2">⬇ Export Peserta</button>
+          <button onclick="kongsi()" class="w-full border border-ink/20 text-ink/70 font-semibold py-2.5 rounded-xl text-sm hover:bg-ink/5 flex items-center justify-center gap-2">🔗 Kongsi Event</button>
+          <button onclick="batal()" class="w-full border border-terracotta/30 text-terracotta font-semibold py-2.5 rounded-xl text-sm hover:bg-terracotta hover:text-white flex items-center justify-center gap-2">⊘ Batalkan Event</button>
+        </div>
+      </div>
+
+      <div class="bg-amber-50 border border-amber-200 rounded-2xl p-5">
+        <div class="flex items-center gap-2 font-bold text-amber-700 mb-1">📌 Nota</div>
+        <p class="text-[12px] text-ink/60 leading-relaxed">Semua peserta berdaftar akan menerima peringatan 1 jam sebelum acara bermula (bila modul peringatan diaktifkan).</p>
+      </div>
+    </div>
+  `;
+}
+
+async function mark(regId, status) {
+  const r = REGS.find(x => x.id === regId);
+  const nv = r && r.status === status ? 'registered' : status;   // toggle off
+  const { error } = await window.db.from('psy_event_registrations').update({ status: nv }).eq('id', regId);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  if (r) r.status = nv;
+  render();
+}
+function copyTxt(t) { navigator.clipboard?.writeText(t).then(() => banner('Pautan disalin ✓'), () => {}); }
+function kongsi() {
+  const url = location.origin + '/roles/patient/event-detail.html?id=' + EV.id;
+  if (navigator.share) navigator.share({ title: EV.title, url }).catch(() => {});
+  else copyTxt(url);
+}
+function exportPeserta() {
+  if (!REGS.length) { banner('Tiada peserta', 'error'); return; }
+  const head = ['Nama', 'MRN', 'Status', 'Tarikh Daftar'];
+  const lines = REGS.map(r => { const p = r.psy_patients || {}; return [p.full_name||'', p.mrn||'', r.status==='hadir'?'Hadir':r.status==='tak_hadir'?'Tidak Hadir':'Berdaftar', new Date(r.registered_at).toLocaleString('ms-MY')]; });
+  const csv = [head, ...lines].map(row => row.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿'+csv], { type:'text/csv;charset=utf-8;' }));
+  a.download = `peserta-${(EV.title||'acara').replace(/[^a-z0-9]+/gi,'-').toLowerCase()}.csv`; a.click();
+}
+async function batal() {
+  if (!confirm('Batalkan acara ini? Status akan jadi "Dibatalkan".')) return;
+  const { error } = await window.db.from('psy_events').update({ status: 'cancelled' }).eq('id', EV.id);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  EV.status = 'cancelled'; banner('Acara dibatalkan'); render();
+}
+
+(async () => {
+  const user = await initStaff('events_admin', 'Detail acara & kehadiran');
+  if (!user) return;
+  const id = new URLSearchParams(location.search).get('id');
+  if (!id) { document.getElementById('wrap').innerHTML = '<div class="lg:col-span-3 text-center py-16 text-ink/40">Tiada ID.</div>'; return; }
+  try {
+    const { data: ev } = await window.db.from('psy_events').select('*').eq('id', id).maybeSingle();
+    if (!ev) { document.getElementById('wrap').innerHTML = '<div class="lg:col-span-3 text-center py-16 text-ink/40">Acara tidak dijumpai.</div>'; return; }
+    EV = ev;
+    const { data: regs } = await window.db.from('psy_event_registrations')
+      .select('id, status, registered_at, psy_patients(full_name, mrn)')
+      .eq('event_id', id).neq('status', 'batal').order('registered_at', { ascending: true });
+    REGS = regs || [];
+    if (EV.created_by) { const { data: prof } = await window.db.from('psy_profiles').select('full_name').eq('id', EV.created_by).maybeSingle(); CREATOR = prof?.full_name || ''; }
+    render();
+  } catch (e) {
+    document.getElementById('wrap').innerHTML = `<div class="lg:col-span-3 bg-terracotta/10 text-terracotta rounded-xl p-4 text-sm">Ralat: ${e.message}</div>`;
+  }
+})();
+</script>
+</body>
+</html>
