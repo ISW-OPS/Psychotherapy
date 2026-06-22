@@ -6618,3 +6618,147 @@ CREATE POLICY "Staff can read all kyc"
   );
 
 SELECT 'RLS fix OK — staff can now read all patient data' AS status;
+
+
+-- ════════════════════════════════════════════════════════════════
+-- step67_pengumuman_event_system.sql   (Jun 2026)
+-- Sistem Pengumuman & Acara — events, pendaftaran, bahan, kategori,
+-- jenis, sasaran audiens/pakej, tinggi pesakit. Semua idempotent.
+-- (Seed lalai kategori/jenis ada dalam seeds.sql)
+-- ════════════════════════════════════════════════════════════════
+
+-- Pesakit: tinggi (untuk auto-BMI)
+alter table psy_patients add column if not exists height_cm numeric;
+
+-- Acara / Kelas + pendaftaran
+create table if not exists psy_events (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  description text,
+  type text default 'kelas',
+  start_at timestamptz not null,
+  end_at timestamptz,
+  mode text default 'online',
+  meet_link text,
+  location text,
+  capacity int,
+  registration_deadline timestamptz,
+  cover_image text,
+  tag text,
+  host text,
+  price numeric default 0,
+  status text default 'published',
+  recording_url text,
+  created_by uuid,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+create table if not exists psy_event_registrations (
+  id uuid primary key default gen_random_uuid(),
+  event_id uuid references psy_events(id) on delete cascade,
+  patient_id uuid references psy_patients(id) on delete cascade,
+  status text default 'registered',
+  registered_at timestamptz default now(),
+  unique(event_id, patient_id)
+);
+create index if not exists idx_event_regs_event on psy_event_registrations(event_id);
+create index if not exists idx_event_regs_patient on psy_event_registrations(patient_id);
+alter table psy_events enable row level security;
+alter table psy_event_registrations enable row level security;
+drop policy if exists "events read" on psy_events;
+create policy "events read" on psy_events for select using (
+  status = 'published' or auth.uid() in (select id from psy_profiles where role='staff'));
+drop policy if exists "events staff manage" on psy_events;
+create policy "events staff manage" on psy_events for all
+  using (auth.uid() in (select id from psy_profiles where role='staff'))
+  with check (auth.uid() in (select id from psy_profiles where role='staff'));
+drop policy if exists "regs read" on psy_event_registrations;
+create policy "regs read" on psy_event_registrations for select using (
+  patient_id in (select id from psy_patients where user_id = auth.uid())
+  or auth.uid() in (select id from psy_profiles where role='staff'));
+drop policy if exists "regs patient insert" on psy_event_registrations;
+create policy "regs patient insert" on psy_event_registrations for insert with check (
+  patient_id in (select id from psy_patients where user_id = auth.uid()));
+drop policy if exists "regs patient update" on psy_event_registrations;
+create policy "regs patient update" on psy_event_registrations for update using (
+  patient_id in (select id from psy_patients where user_id = auth.uid())
+  or auth.uid() in (select id from psy_profiles where role='staff'));
+drop policy if exists "regs staff delete" on psy_event_registrations;
+create policy "regs staff delete" on psy_event_registrations for delete using (
+  auth.uid() in (select id from psy_profiles where role='staff'));
+
+-- Lajur tambahan (pengumuman & event)
+alter table psy_announcements add column if not exists category    text;
+alter table psy_announcements add column if not exists content     text;
+alter table psy_announcements add column if not exists audience    jsonb default '["patient"]'::jsonb;
+alter table psy_announcements add column if not exists expires_at  timestamptz;
+alter table psy_announcements add column if not exists package_ids jsonb default '[]'::jsonb;
+alter table psy_events add column if not exists address     text;
+alter table psy_events add column if not exists maps_url    text;
+alter table psy_events add column if not exists audience    jsonb default '["patient"]'::jsonb;
+alter table psy_events add column if not exists package_ids jsonb default '[]'::jsonb;
+
+-- Bahan / rakaman acara
+create table if not exists psy_event_materials (
+  id uuid primary key default gen_random_uuid(),
+  event_id uuid references psy_events(id) on delete cascade,
+  title text not null,
+  type text default 'pautan',
+  url text not null,
+  created_at timestamptz default now()
+);
+create index if not exists idx_event_materials_event on psy_event_materials(event_id);
+alter table psy_event_materials enable row level security;
+drop policy if exists "materials read" on psy_event_materials;
+create policy "materials read" on psy_event_materials for select using (
+  exists (select 1 from psy_events e where e.id = event_id
+          and (e.status = 'published' or auth.uid() in (select id from psy_profiles where role='staff'))));
+drop policy if exists "materials staff manage" on psy_event_materials;
+create policy "materials staff manage" on psy_event_materials for all
+  using (auth.uid() in (select id from psy_profiles where role='staff'))
+  with check (auth.uid() in (select id from psy_profiles where role='staff'));
+
+-- Kategori pengumuman (super admin CRUD)
+create table if not exists psy_announcement_categories (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  sort_order int default 0,
+  is_active boolean default true,
+  created_by uuid references psy_profiles(id) on delete set null,
+  created_at timestamptz default now()
+);
+alter table psy_announcement_categories enable row level security;
+drop policy if exists "ann_cat read" on psy_announcement_categories;
+create policy "ann_cat read" on psy_announcement_categories for select using (
+  auth.uid() in (select id from psy_profiles where role = 'staff'));
+drop policy if exists "ann_cat manage" on psy_announcement_categories;
+create policy "ann_cat manage" on psy_announcement_categories for all
+  using (auth.uid() in (select id from psy_profiles where staff_role = 'super_admin'))
+  with check (auth.uid() in (select id from psy_profiles where staff_role = 'super_admin'));
+
+-- Jenis pengumuman (super admin CRUD)
+create table if not exists psy_announcement_types (
+  id uuid primary key default gen_random_uuid(),
+  key text not null unique,
+  title text not null,
+  description text default '',
+  kind text not null default 'announcement',
+  mode text,
+  etype text,
+  label text,
+  sort_order int default 0,
+  is_active boolean default true,
+  created_by uuid references psy_profiles(id) on delete set null,
+  created_at timestamptz default now()
+);
+create index if not exists idx_ann_types_sort on psy_announcement_types(sort_order);
+alter table psy_announcement_types enable row level security;
+drop policy if exists "ann_types read" on psy_announcement_types;
+create policy "ann_types read" on psy_announcement_types for select using (
+  auth.uid() in (select id from psy_profiles where role = 'staff'));
+drop policy if exists "ann_types manage" on psy_announcement_types;
+create policy "ann_types manage" on psy_announcement_types for all
+  using (auth.uid() in (select id from psy_profiles where staff_role = 'super_admin'))
+  with check (auth.uid() in (select id from psy_profiles where staff_role = 'super_admin'));
+
+SELECT 'Pengumuman & Acara system OK' AS status;

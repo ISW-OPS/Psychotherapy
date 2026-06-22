@@ -283,3 +283,24 @@ ORDER BY name;
 SELECT COUNT(*) || ' template seeded' AS status
 FROM psy_letter_templates
 WHERE jenis_surat IS NOT NULL;
+
+
+-- ════════════════════════════════════════════════════════════════
+-- Pengumuman — kategori & jenis lalai (Jun 2026)
+-- Run AFTER master_migration.sql (table mesti wujud dulu).
+-- ════════════════════════════════════════════════════════════════
+insert into psy_announcement_categories (name, sort_order) values
+  ('Promosi',1),('Info',2),('Kesihatan',3),('Kelas & Acara',4),
+  ('Komuniti',5),('Webinar',6),('Bacaan Manzil',7),('Kemaskini Sistem',8)
+on conflict (name) do nothing;
+
+insert into psy_announcement_types (key, title, description, kind, mode, etype, label, sort_order) values
+  ('makluman',  'Makluman',            'Makluman umum, notis dan pengumuman biasa.',                'announcement', null,     null,      null,                        1),
+  ('event_f2f', 'Event Fizikal (F2F)', 'Program atau acara yang dijalankan secara bersemuka.',      'event',        'f2f',    'kelas',   'Maklumat Event (Fizikal)',  2),
+  ('webinar',   'Webinar / Online',    'Program atau sesi yang dijalankan secara online.',          'event',        'online', 'webinar', 'Maklumat Webinar (Online)', 3),
+  ('manzil',    'Bacaan Manzil',       'Sesi bacaan manzil secara berkumpulan.',                    'event',        'online', 'manzil',  'Maklumat Sesi Manzil',      4),
+  ('survey',    'Survey / Tindakan',   'Tindakan atau maklum balas daripada pengguna.',             'announcement', null,     null,      null,                        5),
+  ('sistem',    'Kemaskini Sistem',    'Makluman berkaitan kemaskini atau penyelenggaraan sistem.', 'announcement', null,     null,      null,                        6)
+on conflict (key) do nothing;
+
+SELECT 'Pengumuman categories + types seeded' AS status;
