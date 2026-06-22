@@ -164,12 +164,19 @@
               <div class="text-xs text-ink/50">Pilih kumpulan pengguna yang akan melihat pengumuman ini.</div>
             </div>
           </div>
-          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            <label class="flex items-center gap-2.5 text-sm cursor-pointer"><input type="checkbox" class="aud w-4 h-4 accent-green-600" value="patient" checked> 👥 Semua Pesakit</label>
-            <label class="flex items-center gap-2.5 text-sm cursor-pointer"><input type="checkbox" class="aud w-4 h-4 accent-green-600" value="staff" checked> 🧑‍⚕️ Semua Staff</label>
-            <label class="flex items-center gap-2.5 text-sm cursor-pointer"><input type="checkbox" class="aud w-4 h-4 accent-green-600" value="doctor"> 🩺 Doktor</label>
-            <label class="flex items-center gap-2.5 text-sm cursor-pointer"><input type="checkbox" class="aud w-4 h-4 accent-green-600" value="coach"> 🏃 Coach</label>
-            <label class="flex items-center gap-2.5 text-sm cursor-pointer"><input type="checkbox" class="aud w-4 h-4 accent-green-600" value="admin"> 🔑 Admin</label>
+          <div class="space-y-2.5">
+            <label class="flex items-center gap-2.5 text-sm cursor-pointer">
+              <input type="checkbox" id="aud-all-patients" class="w-4 h-4 accent-green-600" checked onchange="onAllPatients()"> 👥 Semua Pesakit
+            </label>
+            <label class="flex items-center gap-2.5 text-sm cursor-pointer">
+              <input type="checkbox" id="aud-package" class="w-4 h-4 accent-green-600" onchange="onPackageToggle()"> 🎯 Pakej Tertentu
+            </label>
+            <div id="pkg-list" class="hidden ml-6 grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-44 overflow-y-auto border border-ink/10 rounded-xl p-3 bg-cream/30">
+              <div class="text-xs text-ink/40">Memuatkan pakej…</div>
+            </div>
+            <label class="flex items-center gap-2.5 text-sm cursor-pointer pt-2.5 border-t border-ink/8">
+              <input type="checkbox" id="aud-staff" class="w-4 h-4 accent-green-600"> 🧑‍⚕️ Staff
+            </label>
           </div>
         </div>
 
@@ -324,8 +331,41 @@ function removeBanner() {
     '<div class="text-3xl text-ink/30 mb-1">⬆️</div><div class="text-sm font-semibold text-navy">Klik untuk muat naik gambar</div><div class="text-[11px] text-ink/45 mt-0.5">Saiz disyorkan: 1200 x 600px (JPG/PNG)</div>';
 }
 
+// ---- Sasaran Pengguna ----
+let packagesLoaded = false;
+async function loadPackages() {
+  if (packagesLoaded) return;
+  packagesLoaded = true;
+  const wrap = document.getElementById('pkg-list');
+  const { data, error } = await window.db.from('psy_packages')
+    .select('package_id,name').order('name', { ascending: true });
+  if (error || !data || !data.length) {
+    wrap.innerHTML = '<div class="text-xs text-ink/40">Tiada pakej tersedia.</div>';
+    return;
+  }
+  wrap.innerHTML = data.map(p => `<label class="flex items-center gap-2 text-[13px] cursor-pointer">
+    <input type="checkbox" class="pkg-cb w-4 h-4 accent-green-600" value="${escOpt(p.package_id)}"> ${escOpt(p.name)}</label>`).join('');
+}
+function onAllPatients() {
+  if (document.getElementById('aud-all-patients').checked) {
+    document.getElementById('aud-package').checked = false;
+    document.getElementById('pkg-list').classList.add('hidden');
+  }
+}
+function onPackageToggle() {
+  const on = document.getElementById('aud-package').checked;
+  document.getElementById('pkg-list').classList.toggle('hidden', !on);
+  if (on) { document.getElementById('aud-all-patients').checked = false; loadPackages(); }
+}
 function getAudience() {
-  return Array.from(document.querySelectorAll('.aud:checked')).map(c => c.value);
+  const audience = [];
+  if (document.getElementById('aud-all-patients').checked || document.getElementById('aud-package').checked) audience.push('patient');
+  if (document.getElementById('aud-staff').checked) audience.push('staff');
+  return audience;
+}
+function getPackageIds() {
+  if (!document.getElementById('aud-package').checked) return [];
+  return Array.from(document.querySelectorAll('.pkg-cb:checked')).map(c => c.value);
 }
 
 async function submitForm(statusVal) {
@@ -338,10 +378,13 @@ async function submitForm(statusVal) {
   const category = document.getElementById('f-category').value.trim();
   const image = document.getElementById('f-image-url').value || null;
   const audience = getAudience();
+  const packageIds = getPackageIds();
 
   const fail = msg => { errEl.textContent = msg; errEl.classList.remove('hidden'); window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); };
   if (!title) return fail('Tajuk Pengumuman wajib diisi.');
   if (!summary) return fail('Ringkasan Pendek wajib diisi.');
+  if (!audience.length) return fail('Pilih sekurang-kurangnya satu sasaran pengguna.');
+  if (document.getElementById('aud-package').checked && !packageIds.length) return fail('Sila pilih sekurang-kurangnya satu pakej untuk "Pakej Tertentu".');
 
   const btns = document.querySelectorAll('#publish-btn, [onclick^="submitForm"]');
   btns.forEach(b => b.disabled = true);
@@ -364,7 +407,7 @@ async function submitForm(statusVal) {
         maps_url: t.mode !== 'online' ? mapurl : null,
         meet_link: t.mode === 'online' ? mapurl : null,
         capacity: document.getElementById('f-capacity').value ? parseInt(document.getElementById('f-capacity').value) : null,
-        cover_image: image, tag: category || null, audience,
+        cover_image: image, tag: category || null, audience, package_ids: packageIds,
         status: statusVal === 'published' ? 'published' : 'draft',
         created_by: window.currentUser.id,
       };
@@ -377,7 +420,7 @@ async function submitForm(statusVal) {
       const payload = {
         title, body: summary, content: content || null,
         category: category || t.title, tag: category || null,
-        image_url: image, audience, sort_order: 0,
+        image_url: image, audience, package_ids: packageIds, sort_order: 0,
         expires_at: expVal ? new Date(expVal).toISOString() : null,
         is_active: statusVal === 'published',
       };
