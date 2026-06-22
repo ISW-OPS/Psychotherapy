@@ -8,6 +8,8 @@
 <script src="../../shared/theme.js"></script>
 <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
 <link href="_styles.css" rel="stylesheet">
 <style>
   .step-num { width: 30px; height: 30px; border-radius: 999px; background: #1a3a5c; color: #fff;
@@ -80,7 +82,7 @@
                 <label class="lbl req">Kategori</label>
                 <input id="f-category" class="fld" placeholder="Contoh: Promosi, Info, Kelas">
               </div>
-              <div>
+              <div id="expiry-wrap">
                 <label class="lbl">Tarikh Tamat Papar <span class="font-normal text-ink/40">(Opsyenal)</span></label>
                 <input id="f-expires" type="datetime-local" class="fld">
                 <div class="text-[11px] text-ink/45 mt-1">Pengumuman auto-sembunyi dari pesakit selepas tarikh ini. Kosongkan untuk kekal.</div>
@@ -210,6 +212,34 @@
   </div>
 </div>
 
+<!-- Banner cropper modal -->
+<div id="crop-modal" class="hidden fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl max-w-2xl w-full overflow-hidden flex flex-col">
+    <div class="px-5 py-4 border-b border-ink/10 flex items-center justify-between">
+      <h3 class="font-bold text-lg">Laras Banner</h3>
+      <button onclick="closeCrop()" class="text-ink/50 text-xl leading-none">&times;</button>
+    </div>
+    <div class="p-4">
+      <div class="bg-ink/5 rounded-xl overflow-hidden" style="max-height:58vh"><img id="crop-img" class="block max-w-full"></div>
+      <div class="flex items-center justify-center gap-1.5 mt-3 flex-wrap">
+        <button onclick="cropper&&cropper.zoom(0.1)" class="px-3 py-1.5 border border-ink/20 rounded-lg text-sm font-semibold hover:bg-ink/5">🔍 Zoom +</button>
+        <button onclick="cropper&&cropper.zoom(-0.1)" class="px-3 py-1.5 border border-ink/20 rounded-lg text-sm font-semibold hover:bg-ink/5">🔍 Zoom −</button>
+        <span class="w-px h-5 bg-ink/15 mx-1"></span>
+        <button onclick="cropper&&cropper.move(-25,0)" class="w-9 h-9 border border-ink/20 rounded-lg hover:bg-ink/5" title="Kiri">←</button>
+        <button onclick="cropper&&cropper.move(25,0)" class="w-9 h-9 border border-ink/20 rounded-lg hover:bg-ink/5" title="Kanan">→</button>
+        <button onclick="cropper&&cropper.move(0,-25)" class="w-9 h-9 border border-ink/20 rounded-lg hover:bg-ink/5" title="Atas">↑</button>
+        <button onclick="cropper&&cropper.move(0,25)" class="w-9 h-9 border border-ink/20 rounded-lg hover:bg-ink/5" title="Bawah">↓</button>
+        <button onclick="cropper&&cropper.reset()" class="px-3 py-1.5 border border-ink/20 rounded-lg text-sm font-semibold hover:bg-ink/5">↺ Reset</button>
+      </div>
+      <p class="text-[11px] text-ink/45 text-center mt-2">Seret gambar untuk gerak · butang untuk zoom & arah. Nisbah 2:1.</p>
+    </div>
+    <div class="px-5 py-4 border-t border-ink/10 flex gap-2">
+      <button onclick="closeCrop()" class="flex-1 border border-ink/20 text-ink/60 py-2.5 rounded-xl text-sm font-semibold hover:bg-ink/5">Batal</button>
+      <button onclick="applyCrop()" class="flex-1 bg-navy text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-dark">✓ Guna Gambar</button>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../../config/supabase.js"></script>
 <script src="../../shared/authGuard.js"></script>
@@ -250,6 +280,8 @@ function selectType(key) {
   const isEvent = t.kind === 'event';
   const evCard = document.getElementById('event-card');
   evCard.classList.toggle('hidden', !isEvent);
+  // Event auto-tamat ikut Masa Tamat — sembunyi medan Tarikh Tamat Papar untuk event
+  document.getElementById('expiry-wrap').classList.toggle('hidden', isEvent);
   document.getElementById('info-grid').className = isEvent
     ? 'grid grid-cols-1 xl:grid-cols-2 gap-6 items-start'
     : 'grid grid-cols-1 gap-6 items-start';
@@ -264,22 +296,46 @@ function selectType(key) {
   }
 }
 
+let cropper = null;
+const BOX_EMPTY_CLS = 'mt-1.5 border-2 border-dashed border-ink/20 rounded-xl bg-cream/40 flex flex-col items-center justify-center text-center py-7 cursor-pointer hover:border-navy transition-colors overflow-hidden';
+
 function previewBanner(input) {
   const file = input.files[0]; if (!file) return;
   if (file.size > 5 * 1024 * 1024) { banner('Gambar melebihi 5MB', 'error'); input.value = ''; return; }
   const r = new FileReader();
-  r.onload = e => {
-    document.getElementById('f-image-url').value = e.target.result;
-    document.getElementById('banner-box').innerHTML = `<img src="${e.target.result}" class="w-full h-40 object-cover">`;
-    document.getElementById('btn-rm-img').classList.remove('hidden');
-  };
+  r.onload = e => openCrop(e.target.result);
   r.readAsDataURL(file);
+  input.value = '';
+}
+function openCrop(src) {
+  const img = document.getElementById('crop-img');
+  img.src = src;
+  document.getElementById('crop-modal').classList.remove('hidden');
+  if (cropper) { cropper.destroy(); cropper = null; }
+  cropper = new Cropper(img, { aspectRatio: 2, viewMode: 1, autoCropArea: 1, dragMode: 'move', background: false });
+}
+function closeCrop() {
+  document.getElementById('crop-modal').classList.add('hidden');
+  if (cropper) { cropper.destroy(); cropper = null; }
+}
+function applyCrop() {
+  if (!cropper) return;
+  const canvas = cropper.getCroppedCanvas({ width: 1200, height: 600, imageSmoothingQuality: 'high' });
+  const data = canvas.toDataURL('image/jpeg', 0.85);
+  document.getElementById('f-image-url').value = data;
+  const box = document.getElementById('banner-box');
+  box.className = 'mt-1.5 rounded-xl overflow-hidden border border-ink/10';
+  box.innerHTML = `<img src="${data}" class="w-full aspect-[2/1] object-cover block">`;
+  document.getElementById('btn-rm-img').classList.remove('hidden');
+  closeCrop();
 }
 function removeBanner() {
   document.getElementById('f-image-url').value = '';
   document.getElementById('f-image').value = '';
   document.getElementById('btn-rm-img').classList.add('hidden');
-  document.getElementById('banner-box').innerHTML =
+  const box = document.getElementById('banner-box');
+  box.className = BOX_EMPTY_CLS;
+  box.innerHTML =
     '<div class="text-3xl text-ink/30 mb-1">⬆️</div><div class="text-sm font-semibold text-navy">Klik untuk muat naik gambar</div><div class="text-[11px] text-ink/45 mt-0.5">Saiz disyorkan: 1200 x 600px (JPG/PNG)</div>';
 }
 
