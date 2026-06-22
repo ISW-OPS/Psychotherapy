@@ -7,6 +7,7 @@ const NAV_ITEMS_BY_ROLE = {
   patient: [
     { id: 'dashboard', url: 'dashboard.html', icon: '🏠', label: 'Dashboard' },
     { id: 'kob', url: 'kob.html', icon: '🩺', label: 'KOB' },
+    { id: 'announcements', url: 'announcements.html', icon: '📢', label: 'Pengumuman' },
     { id: 'events', url: 'events.html', icon: '📅', label: 'Acara & Kelas' },
     { id: 'plan', url: 'plan.html', icon: '💊', label: 'My Treatment Plan' },
     { id: 'routine', url: 'routine.html', icon: '🕐', label: 'Jadual Harian' },
@@ -40,6 +41,8 @@ const NAV_ITEMS_BY_ROLE = {
 const PATIENT_NAV_ICONS = {
   dashboard: 'dashboard-home.png',
   kob: 'KOB.png',
+  announcements: 'announce.png',
+  events: 'event-class.png',
   plan: 'treatment-plan.png',
   routine: 'Jadual-Harian.png',
   pakej: 'Pakej-rawatan.png',
@@ -86,6 +89,7 @@ const STAFF_NAV_ICONS = {
   surat:            'surat-rasmi.png',
   inventory:        'inventory.png',
   announcements:    'announce.png',
+  events_admin:     'event-class.png',
   closures:         'penutupan klinik.png',
   kob_slots:        'slot konsultasi.png',
   staff_mgmt:       'staff-management.png',

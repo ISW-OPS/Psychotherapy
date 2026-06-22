@@ -22,7 +22,7 @@
     <main class="main-content flex-1 min-w-0">
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
-      <section class="p-4 md:p-6 space-y-4">
+      <section class="p-4 md:p-6 space-y-4 max-w-[1200px] mx-auto">
         <div class="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <h1 class="text-xl md:text-2xl font-bold text-ink">Acara &amp; Kelas</h1>
@@ -34,7 +34,7 @@
           </div>
         </div>
 
-        <div id="events-list" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div id="events-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div class="col-span-full text-center py-16 text-ink/40 text-sm">Memuatkan acara...</div>
         </div>
       </section>
@@ -82,16 +82,15 @@ function eventCard(ev) {
   const past = new Date(ev.start_at) < new Date();
   const joinable = registered && ev.meet_link && !past;
   const cover = ev.cover_image
-    ? `style="background-image:url('${ev.cover_image}');background-size:cover;background-position:center;"`
-    : '';
+    ? `<div class="h-32 bg-cover bg-center" style="background-image:url('${ev.cover_image}')"></div>`
+    : `<div class="h-32 bg-gradient-to-br ${st.grad} flex items-center justify-center text-5xl">${st.emoji}</div>`;
   return `<div class="rounded-2xl bg-white border border-ink/8 shadow-sm overflow-hidden flex flex-col">
-    <div class="relative h-24 flex items-end p-3 ${ev.cover_image ? '' : 'bg-gradient-to-br ' + st.grad}" ${cover}>
-      ${ev.cover_image ? '<div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>' : ''}
-      <span class="absolute top-2.5 left-2.5 text-[9px] font-bold uppercase tracking-wide bg-white/25 text-white px-2 py-0.5 rounded-full backdrop-blur-sm">${ev.tag || ev.type}</span>
-      <div class="absolute top-2.5 right-2.5 text-2xl">${st.emoji}</div>
-      <div class="relative z-10 font-bold text-white text-sm leading-snug line-clamp-2">${ev.title}</div>
+    <div class="relative">
+      ${cover}
+      <span class="absolute top-2.5 left-2.5 text-[9px] font-bold uppercase tracking-wide bg-black/40 text-white px-2.5 py-1 rounded-full backdrop-blur-sm">${ev.tag || ev.type}</span>
     </div>
     <div class="p-4 flex-1 flex flex-col">
+      <h3 class="font-bold text-ink text-[15px] leading-snug line-clamp-2 mb-2">${ev.title}</h3>
       <div class="flex items-center gap-2 text-[11px] text-ink/60 mb-1">
         <span>🗓️ ${fmtWhen(ev.start_at, ev.end_at)}</span>
       </div>
@@ -117,9 +116,10 @@ function eventCard(ev) {
 }
 
 function render() {
-  const now = new Date();
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
   let list = allEvents.slice();
-  if (evFilter === 'mine') list = list.filter(isRegistered);
+  if (evFilter === 'mine') list = list.filter(isRegistered);            // termasuk acara lepas yang telah didaftar
+  else list = list.filter(e => new Date(e.start_at) >= todayStart);     // "Akan Datang" — masa depan sahaja
   // upcoming first, then by date
   list.sort((a, b) => new Date(a.start_at) - new Date(b.start_at));
   const el = document.getElementById('events-list');
@@ -183,6 +183,14 @@ document.addEventListener('click', (e) => {
     allEvents = (evs || []).filter(e => (!Array.isArray(e.audience) || e.audience.includes('patient')) && pkgOk(e));
     myRegs = {};
     regs.forEach(r => { myRegs[r.event_id] = r; });
+
+    // Tarik juga acara LEPAS yang pesakit telah daftar (untuk tab "Acara Saya" + akses rakaman)
+    const regIds = regs.map(r => r.event_id).filter(Boolean);
+    if (regIds.length) {
+      const { data: regEvs } = await window.db.from('psy_events').select('*')
+        .eq('status', 'published').in('id', regIds);
+      (regEvs || []).forEach(e => { if (!allEvents.some(a => a.id === e.id)) allEvents.push(e); });
+    }
     render();
   } catch (e) {
     document.getElementById('events-list').innerHTML =

@@ -88,15 +88,22 @@ function tabPanel() {
     }).join('')}</div>`;
   }
   if (TAB === 'rakaman') {
-    const matIcon = { nota:'📄', video:'🎥', slaid:'📊', pautan:'🔗' };
+    const matIcon = { nota:'📄', video:'🎥', slaid:'📊', imej:'🖼️', pautan:'🔗' };
     const items = [];
     if (EV.recording_url) items.push({ _rec:true, title:'Rakaman Sesi', type:'video', url:EV.recording_url });
     MATERIALS.forEach(m => items.push(m));
-    const addForm = `<div class="bg-cream/40 rounded-xl p-3 mb-4 flex flex-wrap items-end gap-2">
-      <div class="flex-1 min-w-[140px]"><label class="text-[10px] text-ink/50">Tajuk</label><input id="mat-title" class="w-full mt-0.5 px-2.5 py-1.5 border border-ink/15 rounded-lg text-sm" placeholder="Cth: Slide Pembentangan"></div>
-      <div><label class="text-[10px] text-ink/50">Jenis</label><select id="mat-type" class="mt-0.5 px-2.5 py-1.5 border border-ink/15 rounded-lg text-sm bg-white"><option value="nota">Nota</option><option value="video">Video</option><option value="slaid">Slaid</option><option value="pautan">Pautan</option></select></div>
-      <div class="flex-1 min-w-[160px]"><label class="text-[10px] text-ink/50">Pautan (URL)</label><input id="mat-url" class="w-full mt-0.5 px-2.5 py-1.5 border border-ink/15 rounded-lg text-sm" placeholder="https://..."></div>
-      <button onclick="addMaterial()" class="bg-navy text-white text-sm font-semibold px-4 py-1.5 rounded-lg hover:bg-navy-dark">+ Tambah</button>
+    const addForm = `<div class="bg-cream/40 rounded-xl p-3 mb-4 space-y-2">
+      <div class="flex flex-wrap items-end gap-2">
+        <div class="flex-1 min-w-[140px]"><label class="text-[10px] text-ink/50">Tajuk</label><input id="mat-title" class="w-full mt-0.5 px-2.5 py-1.5 border border-ink/15 rounded-lg text-sm" placeholder="Cth: Slide Pembentangan"></div>
+        <div class="flex-1 min-w-[160px]"><label class="text-[10px] text-ink/50">Pautan (URL)</label><input id="mat-url" class="w-full mt-0.5 px-2.5 py-1.5 border border-ink/15 rounded-lg text-sm" placeholder="https://..."></div>
+        <button onclick="addMaterial()" id="mat-add-btn" class="bg-navy text-white text-sm font-semibold px-4 py-1.5 rounded-lg hover:bg-navy-dark">+ Tambah</button>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <input id="mat-file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,image/*,video/*" class="hidden" onchange="onMatFile()">
+        <button type="button" onclick="document.getElementById('mat-file').click()" class="text-[11px] font-semibold text-navy border border-navy/25 px-3 py-1.5 rounded-lg hover:bg-navy hover:text-white">📎 Muat naik fail (PDF / imej / doc / video)</button>
+        <span id="mat-file-name" class="text-[11px] text-ink/50 truncate max-w-[260px]"></span>
+        <span class="text-[10px] text-ink/35">Pilih fail ATAU tampal pautan · maks 500MB</span>
+      </div>
     </div>`;
     const list = items.length ? items.map(m => `<div class="flex items-center gap-3 p-3 border border-ink/10 rounded-xl">
       <div class="w-10 h-10 rounded-lg bg-navy/10 text-navy flex items-center justify-center text-lg flex-shrink-0">${matIcon[m.type] || '📎'}</div>
@@ -224,20 +231,74 @@ async function mark(regId, status) {
   if (r) r.status = nv;
   render();
 }
+const MAT_BUCKET = 'library-media';   // bucket awam sedia ada (RLS: staff tulis, semua baca)
+function inferMatType(url) {
+  const u = (url || '').toLowerCase();
+  if (/youtube|youtu\.be|vimeo|loom|\.mp4|\.mov|\.webm|drive\.google\.com\/file/.test(u)) return 'video';
+  if (/\.(png|jpe?g|gif|webp|svg)(\?|$)/.test(u)) return 'imej';
+  if (/slides|presentation|\.pptx?|canva/.test(u)) return 'slaid';
+  if (/\.pdf|docs\.google\.com\/document|\.docx?/.test(u)) return 'nota';
+  return 'pautan';
+}
+function inferTypeFromFile(file) {
+  const t = (file.type || '').toLowerCase(), n = (file.name || '').toLowerCase();
+  if (t.startsWith('video/') || /\.(mp4|mov|webm|mkv)$/.test(n)) return 'video';
+  if (t.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/.test(n)) return 'imej';
+  if (/\.(ppt|pptx)$/.test(n)) return 'slaid';
+  return 'nota';   // pdf / doc / docx / txt
+}
+function onMatFile() {
+  const f = document.getElementById('mat-file').files[0];
+  document.getElementById('mat-file-name').textContent = f ? ('📄 ' + f.name) : '';
+  const t = document.getElementById('mat-title');
+  if (f && !t.value.trim()) t.value = f.name.replace(/\.[^.]+$/, '');
+}
+async function uploadMaterial(file) {
+  const ext = (file.name.split('.').pop() || 'bin').toLowerCase();
+  const path = `event-materials/${EV.id}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+  const { error } = await window.db.storage.from(MAT_BUCKET).upload(path, file, { contentType: file.type || undefined, upsert: false });
+  if (error) throw new Error('Upload gagal: ' + error.message);
+  return window.db.storage.from(MAT_BUCKET).getPublicUrl(path).data.publicUrl;
+}
 async function addMaterial() {
-  const title = document.getElementById('mat-title').value.trim();
-  const type = document.getElementById('mat-type').value;
-  const url = document.getElementById('mat-url').value.trim();
-  if (!title || !url) { banner('Tajuk & pautan diperlukan', 'error'); return; }
-  const { error } = await window.db.from('psy_event_materials').insert({ event_id: EV.id, title, type, url });
-  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
-  const { data } = await window.db.from('psy_event_materials').select('*').eq('event_id', EV.id).order('created_at', { ascending: true });
-  MATERIALS = data || []; banner('Bahan ditambah ✓'); render();
+  const titleEl = document.getElementById('mat-title');
+  const url0 = document.getElementById('mat-url').value.trim();
+  const file = document.getElementById('mat-file').files[0];
+  if (!file && !url0) { banner('Masukkan pautan atau pilih fail', 'error'); return; }
+  const btn = document.getElementById('mat-add-btn');
+  const lbl = btn.textContent; btn.disabled = true; btn.textContent = file ? 'Memuat naik…' : 'Menyimpan…';
+  try {
+    let url = url0, type;
+    if (file) {
+      if (file.size > 500 * 1024 * 1024) throw new Error('Fail melebihi 500MB');
+      url = await uploadMaterial(file);
+      type = inferTypeFromFile(file);
+    } else {
+      type = inferMatType(url0);
+    }
+    const title = titleEl.value.trim() || (file ? file.name.replace(/\.[^.]+$/, '') : 'Bahan');
+    const { error } = await window.db.from('psy_event_materials').insert({ event_id: EV.id, title, type, url });
+    if (error) throw error;
+    const { data } = await window.db.from('psy_event_materials').select('*').eq('event_id', EV.id).order('created_at', { ascending: true });
+    MATERIALS = data || []; banner('Bahan ditambah ✓'); render();   // render() bina semula borang (reset)
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+    btn.disabled = false; btn.textContent = lbl;
+  }
+}
+function bucketPathFromUrl(url) {
+  const marker = `/public/${MAT_BUCKET}/`;
+  const i = (url || '').indexOf(marker);
+  return i === -1 ? null : decodeURIComponent(url.slice(i + marker.length).split('?')[0]);
 }
 async function delMaterial(id) {
   if (!confirm('Padam bahan ini?')) return;
+  const mat = MATERIALS.find(m => m.id === id);
   const { error } = await window.db.from('psy_event_materials').delete().eq('id', id);
   if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  // Buang juga fail dari storage jika ia fail dimuat naik (bukan pautan luar seperti YouTube)
+  const path = mat && bucketPathFromUrl(mat.url);
+  if (path) { try { await window.db.storage.from(MAT_BUCKET).remove([path]); } catch (_) {} }
   MATERIALS = MATERIALS.filter(m => m.id !== id); render();
 }
 function copyTxt(t) { navigator.clipboard?.writeText(t).then(() => banner('Pautan disalin ✓'), () => {}); }

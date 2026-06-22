@@ -51,6 +51,7 @@ window.PAGE_MODULE = {
 
   // KOMUNIKASI
   announcements:    'announcements',
+  events_admin:     'events',          // Acara & Kelas — modul RBAC berasingan
   library:          'library',
 
   // LAPORAN
@@ -126,6 +127,8 @@ window.__patientFeats = null;
 window.PAGE_PATIENT_MODULE = {
   dashboard:         'pat_dashboard',
   kob:               'pat_kob',
+  announcements:     'pat_announcements',
+  events:            'pat_events',
   plan:              'pat_plan',
   routine:           'pat_routine',
   pakej:             'pat_pakej',

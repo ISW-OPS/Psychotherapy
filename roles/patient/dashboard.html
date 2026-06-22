@@ -53,7 +53,7 @@
 
         <!-- Pengumuman & Makluman (carousel) -->
         <div class="rounded-2xl bg-white border border-ink/8 shadow-sm p-3 flex-shrink-0">
-          <div class="font-bold text-sm text-ink flex items-center gap-2 mb-2">📢 Pengumuman &amp; Makluman</div>
+          <div class="font-bold text-sm text-ink flex items-center gap-2 mb-2">📢 Pengumuman &amp; Acara</div>
           <div id="announce-track" class="flex gap-3 overflow-x-auto snap-x snap-mandatory scroll-smooth pb-1">
             <div id="announce-list" class="flex gap-3 contents"></div>
           </div>
@@ -513,7 +513,7 @@ async function loadBanners(user) {
 
     if (!patientRecord) return;
 
-    const [plans, completionsWeek, vitalsRows, upcomingRows, announces, activePkgRows, todayKepLog, todayCheckin, myEventRegs] = await Promise.all([
+    const [plans, completionsWeek, vitalsRows, upcomingRows, announces, activePkgRows, todayKepLog, todayCheckin, myEventRegs, upcomingEvents] = await Promise.all([
       dbQuery('psy_treatment_plans', { eq: { patient_id: patientRecord.id, status: 'active' } }).catch(() => []),
       window.db.from('psy_daily_completions').select('log_date, item_time')
         .eq('patient_id', patientRecord.id).gte('log_date', weekAgoKey).lte('log_date', today)
@@ -526,8 +526,9 @@ async function loadBanners(user) {
         .eq('patient_id', patientRecord.id).gte('session_date', today).in('status', ['booked','reschedule'])
         .order('session_date', { ascending: true }).limit(5)
         .then(r => r.data || [], () => []),
-      window.db.from('psy_announcements').select('id, title, body, tag, image_url, cta_label, cta_url, bg, sort_order, created_at, is_active, audience, expires_at')
-        .eq('is_active', true).order('sort_order', { ascending: true }).order('created_at', { ascending: false }).limit(8)
+      window.db.from('psy_announcements').select('id, title, body, tag, image_url, cta_label, cta_url, bg, sort_order, created_at, is_active, audience, expires_at, package_ids')
+        .eq('is_active', true).or('expires_at.is.null,expires_at.gte.' + new Date().toISOString())
+        .order('sort_order', { ascending: true }).order('created_at', { ascending: false }).limit(50)
         .then(r => r.data || [], () => []),
       patientRecord.active_package_id
         ? dbQuery('psy_packages', { eq: { package_id: patientRecord.active_package_id } }).catch(() => [])
@@ -541,6 +542,12 @@ async function loadBanners(user) {
       window.db.from('psy_event_registrations')
         .select('status, psy_events(id, title, start_at, meet_link, type, status)')
         .eq('patient_id', patientRecord.id).neq('status', 'batal')
+        .then(r => r.data || [], () => []),
+      window.db.from('psy_events')
+        .select('id, title, start_at, end_at, meet_link, type, tag, cover_image, mode, location, audience, package_ids')
+        .eq('status', 'published')
+        .or('end_at.gte.' + new Date().toISOString() + ',and(end_at.is.null,start_at.gte.' + new Date().toISOString() + ')')
+        .order('start_at', { ascending: true }).limit(20)
         .then(r => r.data || [], () => []),
     ]);
 
@@ -757,37 +764,79 @@ async function loadBanners(user) {
       if (hnd) hnd.textContent = ns ? new Date(ns.session_date).toLocaleDateString(LCALE(), { weekday: 'long', day: '2-digit', month: 'short' }) : 'Tiada';
     }
 
-    // ── Announcements (banner carousel + dots) — tapis ikut sasaran + tarikh tamat ──
+    // ── Pengumuman + Acara akan datang (banner carousel + dots) — tapis ikut sasaran + tarikh tamat ──
     const _now = new Date();
     const myPkg = patientRecord?.active_package_id || null;
     const pkgOk = it => !Array.isArray(it.package_ids) || it.package_ids.length === 0 || (myPkg && it.package_ids.includes(myPkg));
+
+    // (a) Pengumuman
     const annVisible = announces.filter(a =>
       (!Array.isArray(a.audience) || a.audience.includes('patient')) &&
       pkgOk(a) &&
-      (!a.expires_at || new Date(a.expires_at) >= _now));
-    document.getElementById('announce-list').innerHTML = annVisible.length
-      ? annVisible.map(a => {
-          const hasImg = !!a.image_url;
-          const bgCls = hasImg ? '' : `bg-gradient-to-r ${a.bg || 'from-navy to-teal'}`;
-          const bgStyle = hasImg ? `background-image:url('${a.image_url}');background-size:cover;background-position:center;` : '';
-          const dateStr = new Date(a.created_at).toLocaleDateString(LCALE(), { day:'2-digit', month:'short', year:'numeric' });
-          return `<div class="snap-start shrink-0 w-[72%] sm:w-[40%] lg:w-[31%] xl:w-[30.5%] rounded-xl overflow-hidden relative h-24 md:h-28 ${bgCls}" style="${bgStyle}">
-            <div class="absolute inset-0 bg-gradient-to-r from-black/65 via-black/35 to-black/10"></div>
-            <div class="relative z-10 h-full p-3.5 flex flex-col">
-              ${a.tag ? `<span class="self-start text-[8px] font-bold px-2 py-0.5 rounded-full bg-white/25 text-white uppercase tracking-wide backdrop-blur-sm mb-1">${a.tag}</span>` : ''}
-              <div class="font-bold text-sm text-white leading-snug line-clamp-1">${a.title}</div>
-              ${a.body ? `<div class="text-[11px] text-white/85 mt-0.5 line-clamp-2 flex-1">${a.body}</div>` : '<div class="flex-1"></div>'}
-              <div class="flex items-center justify-between gap-2 mt-1">
-                <span class="text-[9px] text-white/70">${dateStr}</span>
-                ${a.cta_label ? `<a href="${a.cta_url || '#'}" class="text-[10px] font-bold bg-white/90 text-navy px-2.5 py-1 rounded-lg hover:bg-white whitespace-nowrap">${a.cta_label}</a>` : ''}
-              </div>
-            </div>
-          </div>`;
-        }).join('')
+      (!a.expires_at || new Date(a.expires_at) >= _now)).slice(0, 8);
+    const annCards = annVisible.map(a => {
+      const hasImg = !!a.image_url;
+      const bgCls = hasImg ? '' : `bg-gradient-to-r ${a.bg || 'from-navy to-teal'}`;
+      const bgStyle = hasImg ? `background-image:url('${a.image_url}');background-size:cover;background-position:center;` : '';
+      const dateStr = new Date(a.created_at).toLocaleDateString(LCALE(), { day:'2-digit', month:'short', year:'numeric' });
+      return `<div class="snap-start shrink-0 w-[72%] sm:w-[40%] lg:w-[31%] xl:w-[30.5%] rounded-xl overflow-hidden relative h-24 md:h-28 ${bgCls}" style="${bgStyle}">
+        <div class="absolute inset-0 bg-gradient-to-r from-black/65 via-black/35 to-black/10"></div>
+        <div class="relative z-10 h-full p-3.5 flex flex-col">
+          ${a.tag ? `<span class="self-start text-[8px] font-bold px-2 py-0.5 rounded-full bg-white/25 text-white uppercase tracking-wide backdrop-blur-sm mb-1">${a.tag}</span>` : ''}
+          <div class="font-bold text-sm text-white leading-snug line-clamp-1">${a.title}</div>
+          ${a.body ? `<div class="text-[11px] text-white/85 mt-0.5 line-clamp-2 flex-1">${a.body}</div>` : '<div class="flex-1"></div>'}
+          <div class="flex items-center justify-between gap-2 mt-1">
+            <span class="text-[9px] text-white/70">${dateStr}</span>
+            ${a.cta_label ? `<a href="${a.cta_url || '#'}" class="text-[10px] font-bold bg-white/90 text-navy px-2.5 py-1 rounded-lg hover:bg-white whitespace-nowrap">${a.cta_label}</a>` : ''}
+          </div>
+        </div>
+      </div>`;
+    });
+
+    // (b) Acara akan datang yang BELUM didaftar (discovery) — link ke detail
+    const EV_GRAD = { kelas:'from-navy to-teal', webinar:'from-[#2f7fc8] to-[#54b3cf]', komuniti:'from-green to-green-dark', manzil:'from-teal to-navy', challenge:'from-gold to-gold-dark' };
+    const regIds = new Set((myEventRegs || []).map(r => r.psy_events?.id).filter(Boolean));
+    const evVisible = (upcomingEvents || []).filter(e =>
+      !regIds.has(e.id) &&
+      (!Array.isArray(e.audience) || e.audience.includes('patient')) &&
+      pkgOk(e)).slice(0, 8);
+    const evCards = evVisible.map(e => {
+      const hasImg = !!e.cover_image;
+      const bgCls = hasImg ? '' : `bg-gradient-to-r ${EV_GRAD[e.type] || 'from-teal to-navy'}`;
+      const bgStyle = hasImg ? `background-image:url('${e.cover_image}');background-size:cover;background-position:center;` : '';
+      const d = new Date(e.start_at);
+      const whenStr = d.toLocaleDateString(LCALE(), { day:'2-digit', month:'short' }) + ' · ' + d.toLocaleTimeString(LCALE(), { hour:'2-digit', minute:'2-digit', hour12:false });
+      const sub = e.mode === 'f2f' ? (e.location || 'Bersemuka') : 'Online';
+      // Sedang berlangsung: mula <= sekarang <= tamat
+      const live = d <= _now && e.end_at && new Date(e.end_at) >= _now;
+      const tagPill = live
+        ? `<span class="self-start text-[8px] font-bold px-2 py-0.5 rounded-full bg-red-500 text-white uppercase tracking-wide mb-1 flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>Berlangsung</span>`
+        : `<span class="self-start text-[8px] font-bold px-2 py-0.5 rounded-full bg-white/25 text-white uppercase tracking-wide backdrop-blur-sm mb-1">📅 ${e.tag || 'Acara'}</span>`;
+      const cta = (live && e.meet_link)
+        ? `<a href="${e.meet_link}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="text-[10px] font-bold bg-green text-white px-2.5 py-1 rounded-lg whitespace-nowrap">📹 Sertai →</a>`
+        : `<span class="text-[10px] font-bold bg-white/90 text-navy px-2.5 py-1 rounded-lg whitespace-nowrap">${live ? 'Lihat →' : 'Daftar →'}</span>`;
+      return `<div onclick="location.href='event-detail.html?id=${e.id}'" class="snap-start shrink-0 w-[72%] sm:w-[40%] lg:w-[31%] xl:w-[30.5%] rounded-xl overflow-hidden relative h-24 md:h-28 ${bgCls} block cursor-pointer" style="${bgStyle}">
+        <div class="absolute inset-0 bg-gradient-to-r from-black/65 via-black/35 to-black/10"></div>
+        <div class="relative z-10 h-full p-3.5 flex flex-col">
+          ${tagPill}
+          <div class="font-bold text-sm text-white leading-snug line-clamp-1">${e.title}</div>
+          <div class="text-[11px] text-white/85 mt-0.5 line-clamp-2 flex-1">🗓️ ${whenStr} · ${sub}</div>
+          <div class="flex items-center justify-between gap-2 mt-1">
+            <span class="text-[9px] text-white/70">Acara &amp; Kelas</span>
+            ${cta}
+          </div>
+        </div>
+      </div>`;
+    });
+
+    // Pengumuman dahulu, kemudian acara — had jumlah 9 kad
+    const feedCards = [...annCards, ...evCards].slice(0, 9);
+    document.getElementById('announce-list').innerHTML = feedCards.length
+      ? feedCards.join('')
       : '<div class="text-xs text-ink/40 text-center py-6 w-full">Tiada pengumuman buat masa ini</div>';
 
-    renderAnnounceDots(annVisible.length);
-    if (annVisible.length > 1) startAnnounceAutoSlide();
+    renderAnnounceDots(feedCards.length);
+    if (feedCards.length > 1) startAnnounceAutoSlide();
   } catch (err) {
     console.error('Dashboard error:', err);
     document.querySelector('section').insertAdjacentHTML('afterbegin',

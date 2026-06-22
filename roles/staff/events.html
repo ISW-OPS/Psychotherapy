@@ -28,10 +28,6 @@
           <p class="text-sm text-ink/55 mt-0.5">Webinar, kelas dan bacaan yang dianjurkan oleh Ibnu Sina Wellness.</p>
         </div>
 
-        <div class="bg-navy-light/50 border border-navy/20 rounded-xl p-4 text-sm text-navy flex items-start gap-2">
-          <span>ℹ️</span><div>Cipta acara melalui <strong>Pengumuman → + Tambah Pengumuman</strong> (pilih jenis Event) — ia muncul di sini automatik. Halaman ini untuk <strong>urus pendaftar, kehadiran &amp; status</strong>.</div>
-        </div>
-
         <div class="flex items-center gap-2 flex-wrap">
           <select id="f-type" onchange="renderEvents()" class="border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white outline-none">
             <option value="">Semua Jenis</option>
@@ -342,8 +338,11 @@ async function saveEvent() {
   try {
     const id = document.getElementById('ev-id').value;
     if (id) {
+      const prev = allEvents.find(e => e.id === id);
       const { error } = await window.db.from('psy_events').update(payload).eq('id', id);
       if (error) throw error;
+      // Maklum pesakit berdaftar bila acara baru dibatalkan
+      if (payload.status === 'cancelled' && prev && prev.status !== 'cancelled') notifyCancellation(id, title);
     } else {
       payload.created_by = window.currentUser.id;
       const { error } = await window.db.from('psy_events').insert(payload);
@@ -357,6 +356,16 @@ async function saveEvent() {
   } finally {
     btn.disabled = false; btn.textContent = '💾 Simpan';
   }
+}
+
+async function notifyCancellation(eventId, title) {
+  try {
+    const { data } = await window.db.from('psy_event_registrations')
+      .select('psy_patients(user_id)').eq('event_id', eventId).neq('status', 'batal');
+    const ids = [...new Set((data || []).map(r => r.psy_patients?.user_id).filter(Boolean))];
+    await Promise.all(ids.map(uid => notify(uid, 'system', 'Acara dibatalkan',
+      `Acara "${title}" yang anda daftar telah dibatalkan. Maaf atas kesulitan.`, 'events.html')));
+  } catch (e) { console.warn('cancel notify failed:', e.message); }
 }
 
 async function deleteEvent(id) {

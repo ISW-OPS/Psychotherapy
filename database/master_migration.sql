@@ -6697,6 +6697,10 @@ alter table psy_events add column if not exists address     text;
 alter table psy_events add column if not exists maps_url    text;
 alter table psy_events add column if not exists audience    jsonb default '["patient"]'::jsonb;
 alter table psy_events add column if not exists package_ids jsonb default '[]'::jsonb;
+alter table psy_events add column if not exists host_role   text;  -- Penceramah / Coach / Moderator
+
+-- Peringatan WhatsApp 1 jam sebelum acara (Edge Function event-reminders) — penanda dedup
+alter table psy_event_registrations add column if not exists reminder_sent_at timestamptz;
 
 -- Bahan / rakaman acara
 create table if not exists psy_event_materials (

@@ -84,7 +84,8 @@
 <script src="_shared.js"></script>
 <script>
 const EV_STYLE = { kelas:'from-navy to-teal', webinar:'from-[#2f7fc8] to-[#54b3cf]', komuniti:'from-green to-green-dark', manzil:'from-[#0e2a4a] to-[#16604a]', challenge:'from-gold to-gold-dark', default:'from-navy to-navy-dark' };
-let KIND = 'announcement', IT = null, CREATOR = '', imgData = null;
+let KIND = 'announcement', IT = null, CREATOR = '', imgData = null, PACKAGES = [];
+function escHtml(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 function toLocalDate(iso) { if (!iso) return ''; const d = new Date(iso), p = n => String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
 function toLocalTime(iso) { if (!iso) return ''; const d = new Date(iso), p = n => String(n).padStart(2,'0'); return `${p(d.getHours())}:${p(d.getMinutes())}`; }
@@ -138,6 +139,8 @@ function render() {
   const category = IT.tag || IT.category || '';
   const aud = Array.isArray(IT.audience) ? IT.audience : ['patient'];
   const audChk = v => aud.includes(v) ? 'checked' : '';
+  const pkgSel = Array.isArray(IT.package_ids) ? IT.package_ids.map(String) : [];
+  const pkgChk = v => pkgSel.includes(String(v)) ? 'checked' : '';
   const statusTxt = (isEvent ? (IT.status === 'published' ? 'Aktif' : IT.status) : (IT.is_active ? 'Aktif' : 'Draft'));
 
   document.getElementById('edit-body').innerHTML = `
@@ -214,6 +217,15 @@ function render() {
         <div><label class="lbl">Nama Lokasi</label><input id="f-locname" class="fld" value="${(IT.location||'').replace(/"/g,'&quot;')}"></div>
         <div><label class="lbl">Kapasiti</label><input id="f-capacity" type="number" min="1" class="fld" value="${IT.capacity||''}"></div>
       </div>
+      <div>
+        <label class="lbl">👤 Pengendali Program</label>
+        <div class="grid grid-cols-[130px_1fr] gap-2">
+          <select id="f-host-role" class="fld">
+            ${['Penceramah','Coach','Moderator'].map(r => `<option value="${r}" ${ (IT.host_role||'Penceramah')===r ? 'selected':''}>${r}</option>`).join('')}
+          </select>
+          <input id="f-host" class="fld" value="${(IT.host||'').replace(/"/g,'&quot;')}" placeholder="Nama (cth: Ustaz Faiz)">
+        </div>
+      </div>
       ` : `
       <div>
         <label class="lbl">Tarikh Tamat Papar <span class="font-normal text-ink/40">(Opsyenal)</span></label>
@@ -249,6 +261,16 @@ function render() {
           <label class="flex items-center gap-2.5 text-sm cursor-pointer"><input type="checkbox" class="aud w-4 h-4 accent-green-600" value="doctor" ${audChk('doctor')}> 🩺 Doktor</label>
           <label class="flex items-center gap-2.5 text-sm cursor-pointer"><input type="checkbox" class="aud w-4 h-4 accent-green-600" value="coach" ${audChk('coach')}> 🏃 Coach</label>
           <label class="flex items-center gap-2.5 text-sm cursor-pointer"><input type="checkbox" class="aud w-4 h-4 accent-green-600" value="admin" ${audChk('admin')}> 🔑 Admin</label>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+        <h3 class="font-bold text-ink mb-1">Sasaran Pakej</h3>
+        <p class="text-[11px] text-ink/45 mb-3">Kosongkan semua = semua pesakit nampak. Pilih pakej tertentu untuk hadkan paparan kepada pesakit pakej itu sahaja.</p>
+        <div class="space-y-2 max-h-48 overflow-y-auto">
+          ${PACKAGES.length
+            ? PACKAGES.map(p => `<label class="flex items-center gap-2.5 text-sm cursor-pointer"><input type="checkbox" class="pkg w-4 h-4 accent-green-600" value="${escHtml(p.package_id)}" ${pkgChk(p.package_id)}> ${escHtml(p.name)}</label>`).join('')
+            : '<div class="text-xs text-ink/40">Tiada pakej tersedia.</div>'}
         </div>
       </div>
 
@@ -290,8 +312,10 @@ async function saveEdit() {
   const content = document.getElementById('rte').innerHTML.trim();
   const category = document.getElementById('f-category').value.trim();
   const audience = Array.from(document.querySelectorAll('.aud:checked')).map(c => c.value);
+  const packageIds = Array.from(document.querySelectorAll('.pkg:checked')).map(c => c.value);
   if (!title) return fail('Tajuk wajib diisi.');
   if (!summary) return fail('Ringkasan wajib diisi.');
+  if (!audience.length) return fail('Pilih sekurang-kurangnya satu sasaran pengguna.');
   try {
     if (KIND === 'event') {
       const date = document.getElementById('f-date').value, start = document.getElementById('f-start').value;
@@ -299,12 +323,14 @@ async function saveEdit() {
       const edate = document.getElementById('f-edate').value || date, end = document.getElementById('f-end').value;
       const mode = document.getElementById('f-mode').value, link = document.getElementById('f-link').value.trim() || null;
       const payload = {
-        title, description: content || summary, tag: category || null, audience,
+        title, description: content || summary, tag: category || null, audience, package_ids: packageIds,
         start_at: new Date(`${date}T${start}`).toISOString(),
         end_at: end ? new Date(`${edate}T${end}`).toISOString() : null,
         mode, meet_link: mode === 'online' ? link : null, maps_url: mode === 'f2f' ? link : null,
         location: document.getElementById('f-locname')?.value.trim() || null,
         capacity: document.getElementById('f-capacity')?.value ? parseInt(document.getElementById('f-capacity').value) : null,
+        host: document.getElementById('f-host')?.value.trim() || null,
+        host_role: document.getElementById('f-host')?.value.trim() ? document.getElementById('f-host-role').value : null,
         updated_at: new Date().toISOString(),
       };
       if (imgData) payload.cover_image = imgData;
@@ -314,7 +340,7 @@ async function saveEdit() {
       const exp = document.getElementById('f-expires').value;
       const payload = {
         title, body: summary, content: content || null,
-        category: category || null, tag: category || null, audience,
+        category: category || null, tag: category || null, audience, package_ids: packageIds,
         cta_label: document.getElementById('f-cta-label')?.value.trim() || null,
         cta_url: document.getElementById('f-cta-url')?.value.trim() || null,
         expires_at: exp ? new Date(exp).toISOString() : null,
@@ -362,6 +388,7 @@ async function toggleActive() {
     if (!item) { document.getElementById('edit-body').innerHTML = '<div class="lg:col-span-3 text-center py-16 text-ink/40">Tidak dijumpai.</div>'; return; }
     IT = item;
     if (IT.created_by) { const { data: prof } = await window.db.from('psy_profiles').select('full_name').eq('id', IT.created_by).maybeSingle(); CREATOR = prof?.full_name || ''; }
+    try { const { data: pkgs } = await window.db.from('psy_packages').select('package_id, name').order('name', { ascending: true }); PACKAGES = pkgs || []; } catch (_) {}
     render();
   } catch (e) {
     document.getElementById('edit-body').innerHTML = `<div class="lg:col-span-3 bg-terracotta/10 text-terracotta rounded-xl p-4 text-sm">Ralat: ${e.message}</div>`;
