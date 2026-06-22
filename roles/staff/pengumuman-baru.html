@@ -80,16 +80,8 @@
               </div>
               <div>
                 <label class="lbl req">Kategori</label>
-                <select id="f-category" class="fld">
+                <select id="f-category" class="fld" onchange="onCatChange(this)">
                   <option value="">— Pilih kategori —</option>
-                  <option>Promosi</option>
-                  <option>Info</option>
-                  <option>Kesihatan</option>
-                  <option>Kelas &amp; Acara</option>
-                  <option>Komuniti</option>
-                  <option>Webinar</option>
-                  <option>Bacaan Manzil</option>
-                  <option>Kemaskini Sistem</option>
                 </select>
               </div>
               <div id="expiry-wrap">
@@ -246,6 +238,21 @@
     <div class="px-5 py-4 border-t border-ink/10 flex gap-2">
       <button onclick="closeCrop()" class="flex-1 border border-ink/20 text-ink/60 py-2.5 rounded-xl text-sm font-semibold hover:bg-ink/5">Batal</button>
       <button onclick="applyCrop()" class="flex-1 bg-navy text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-dark">✓ Guna Gambar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Tambah Kategori (super admin) -->
+<div id="cat-modal" class="hidden fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl w-full max-w-sm p-5 shadow-xl">
+    <div class="font-bold text-ink mb-1">Tambah Kategori Baru</div>
+    <div class="text-xs text-ink/50 mb-3">Kategori ini akan tersedia untuk semua pengumuman akan datang.</div>
+    <input id="cat-input" class="fld" placeholder="Contoh: Testimoni" maxlength="40"
+           onkeydown="if(event.key==='Enter')saveNewCat()">
+    <div id="cat-err" class="hidden text-xs text-terracotta mt-1.5"></div>
+    <div class="flex justify-end gap-2 mt-4">
+      <button onclick="closeCatModal()" class="px-3 py-2 text-sm font-semibold text-ink/60 hover:bg-ink/5 rounded-lg">Batal</button>
+      <button onclick="saveNewCat()" class="px-4 py-2 text-sm font-bold text-white bg-green-600 hover:bg-green-700 rounded-lg">Simpan</button>
     </div>
   </div>
 </div>
@@ -417,11 +424,56 @@ async function submitForm(statusVal) {
   }
 }
 
+// ---- Kategori (DB-backed, super admin boleh tambah) ----
+const DEFAULT_CATS = ['Promosi','Info','Kesihatan','Kelas & Acara','Komuniti','Webinar','Bacaan Manzil','Kemaskini Sistem'];
+let categoriesCache = [];
+function escOpt(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function isSuperAdmin(){ return window.currentUser && window.currentUser.staff_role === 'super_admin'; }
+
+async function loadCategories(selectVal){
+  const sel = document.getElementById('f-category');
+  const keep = selectVal || sel.value;
+  let rows = null;
+  try {
+    const { data, error } = await window.db.from('psy_announcement_categories')
+      .select('name,sort_order,is_active').order('sort_order', { ascending: true });
+    if (!error && data) rows = data.filter(c => c.is_active !== false);
+  } catch (_) {}
+  categoriesCache = rows && rows.length ? rows : DEFAULT_CATS.map((n,i) => ({ name:n, sort_order:i+1 }));
+  sel.innerHTML = '<option value="">— Pilih kategori —</option>'
+    + categoriesCache.map(c => `<option>${escOpt(c.name)}</option>`).join('')
+    + (isSuperAdmin() ? '<option value="__add__">➕ Tambah kategori baru…</option>' : '');
+  if (keep && categoriesCache.some(c => c.name === keep)) sel.value = keep;
+}
+function onCatChange(sel){ if (sel.value === '__add__'){ sel.value = ''; openCatModal(); } }
+function openCatModal(){
+  document.getElementById('cat-input').value = '';
+  document.getElementById('cat-err').classList.add('hidden');
+  document.getElementById('cat-modal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('cat-input').focus(), 50);
+}
+function closeCatModal(){ document.getElementById('cat-modal').classList.add('hidden'); }
+async function saveNewCat(){
+  const err = document.getElementById('cat-err');
+  const name = document.getElementById('cat-input').value.trim();
+  if (!name){ err.textContent = 'Sila masukkan nama kategori.'; err.classList.remove('hidden'); return; }
+  const dup = categoriesCache.find(c => c.name.toLowerCase() === name.toLowerCase());
+  if (dup){ closeCatModal(); document.getElementById('f-category').value = dup.name; return; }
+  const maxSort = categoriesCache.reduce((m,c) => Math.max(m, c.sort_order||0), 0);
+  const { error } = await window.db.from('psy_announcement_categories')
+    .insert({ name, sort_order: maxSort + 1, created_by: window.currentUser.id });
+  if (error){ err.textContent = 'Gagal menambah: ' + error.message; err.classList.remove('hidden'); return; }
+  closeCatModal();
+  await loadCategories(name);
+  banner('Kategori "' + name + '" ditambah ✓');
+}
+
 (async () => {
   const user = await initStaff('announcements', 'Cipta pengumuman / event baharu');
   if (!user) return;
   renderTypes();
   selectType('event_f2f');
+  await loadCategories();
 })();
 </script>
 </body>
