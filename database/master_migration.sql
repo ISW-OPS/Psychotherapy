@@ -6762,3 +6762,27 @@ create policy "ann_types manage" on psy_announcement_types for all
   with check (auth.uid() in (select id from psy_profiles where staff_role = 'super_admin'));
 
 SELECT 'Pengumuman & Acara system OK' AS status;
+
+
+-- ════════════════════════════════════════════════════════════════
+-- step_supply_disbursements.sql
+-- Barang yang diberi kepada pesakit dari stok inventori.
+-- ════════════════════════════════════════════════════════════════
+create table if not exists psy_supply_disbursements (
+  id            uuid primary key default gen_random_uuid(),
+  patient_id    uuid not null references psy_patients(id) on delete cascade,
+  item_id       uuid references psy_inventory_items(id) on delete set null,
+  item_name     text not null,
+  unit          text,
+  qty           numeric(10,2) not null,
+  notes         text,
+  given_by      uuid references psy_profiles(id) on delete set null,
+  given_by_name text,
+  created_at    timestamptz not null default now()
+);
+alter table psy_supply_disbursements enable row level security;
+drop policy if exists "supply_disb_staff" on psy_supply_disbursements;
+create policy "supply_disb_staff" on psy_supply_disbursements for all using (
+  exists (select 1 from psy_profiles where id = auth.uid() and role = 'staff'));
+
+SELECT 'Supply disbursements OK' AS status;
