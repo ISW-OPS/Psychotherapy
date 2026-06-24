@@ -79,6 +79,7 @@ const STAFF_NAV_ICONS = {
   plan_week:        'treatment-plan.png',
   kob_list:         'KOB.png',
   kepatuhan:        'catatan-harian.png',
+  risk:             'Risk.png',
   pakej:            'Pakej-rawatan.png',
   psy_products:     'shop.png',
   psy_orders:       'Orders&tracking.png',
@@ -90,6 +91,7 @@ const STAFF_NAV_ICONS = {
   inventory:        'inventory.png',
   announcements:    'announce.png',
   events_admin:     'event-class.png',
+  auto_messages:    'chatbot.png',
   closures:         'penutupan klinik.png',
   kob_slots:        'slot konsultasi.png',
   staff_mgmt:       'staff-management.png',
@@ -124,6 +126,7 @@ const STAFF_NAV_MASTER = [
       { id: 'plan_week', url: 'weekly-plan.html', icon: '📋', label: 'Weekly Plan' },
       { id: 'kob_list', url: 'kob-list.html', icon: '🩺', label: 'Sesi KOB' },
       { id: 'kepatuhan', url: 'kepatuhan.html', icon: '📊', label: 'Kepatuhan' },
+      { id: 'risk', url: 'risk.html', icon: '⚠️', label: 'Amaran Risiko' },
     ]
   },
   {
@@ -140,6 +143,7 @@ const STAFF_NAV_MASTER = [
     group: 'KOMUNIKASI', collapsible: true, items: [
       { id: 'announcements', url: 'announcements.html', icon: '📢', label: 'Pengumuman' },
       { id: 'events_admin', url: 'events.html', icon: '📅', label: 'Acara & Kelas' },
+      { id: 'auto_messages', url: 'auto-mesej.html', icon: '🤖', label: 'Mesej Automatik' },
       { id: 'library', url: 'library.html', icon: '📚', label: 'Library' },
     ]
   },
@@ -487,7 +491,7 @@ async function loadNavBadges(role, _staffRole, userId) {
   if (!window.db || !userId) return;
   try {
     if (role === 'staff') {
-      const [ordersRes, kycRes, issuesRes, closedRes, invRes, kobRes, patientsRes] = await Promise.all([
+      const [ordersRes, kycRes, issuesRes, closedRes, invRes, kobRes, patientsRes, riskRes] = await Promise.all([
         window.db.from('psy_orders').select('id', { count: 'exact', head: true }).in('status', ['paid', 'packed']),
         window.db.from('psy_kyc_submissions').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
         window.db.from('psy_audit_log').select('id').eq('action', 'issue.reported'),
@@ -495,6 +499,7 @@ async function loadNavBadges(role, _staffRole, userId) {
         window.db.from('psy_inventory_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending_approval'),
         window.db.from('psy_kob_sessions').select('id', { count: 'exact', head: true }).eq('status', 'booked'),
         window.db.from('psy_patients').select('id', { count: 'exact', head: true }).eq('status', 'pending_kyc'),
+        window.db.from('psy_risk_alerts').select('id', { count: 'exact', head: true }).eq('status', 'open'),
       ]);
 
       setNavBadge('psy_orders', ordersRes.count || 0);
@@ -502,6 +507,7 @@ async function loadNavBadges(role, _staffRole, userId) {
       setNavBadge('inventory', invRes.count || 0);
       setNavBadge('kob_list', kobRes.count || 0);
       setNavBadge('psy_patients', patientsRes.count || 0);
+      setNavBadge('risk', riskRes.count || 0); // semua staff nampak semua amaran terbuka
 
       const closedIds = new Set((closedRes.data || []).map(r => r.meta?.issue_id).filter(Boolean));
       const openCount = (issuesRes.data || []).filter(i => !closedIds.has(i.id)).length;

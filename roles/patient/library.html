@@ -382,7 +382,7 @@ function render(){
       <div class="flex gap-3 px-4 lg:px-8 overflow-x-auto sh pb-1">
         ${featured.map(it=>`
           <div onclick="openItem('${escH(it.item_id)}')" class="vid-card flex-shrink-0" style="width:210px;">
-            <div style="height:126px;" class="card-thumb" style="border-radius:16px 16px 0 0;">
+            <div class="card-thumb" style="height:126px;border-radius:16px 16px 0 0;">
               ${it.thumbnail_url?`<img src="${escH(it.thumbnail_url)}" class="w-full h-full object-cover" loading="lazy">`:`<div class="w-full h-full flex items-center justify-center text-3xl bg-gradient-to-br from-slate-200 to-slate-300">${typeOf(it)==='video'?'🎬':'📄'}</div>`}
               ${typeOf(it)==='video'&&!isLocked(it)?`<div class="play-overlay"><div class="play-circle"><svg width="12" height="12" viewBox="0 0 24 24" fill="#1e2b4a"><polygon points="5 3 19 12 5 21 5 3"/></svg></div></div>`:''}
               ${it.duration?`<div class="dur-badge">${escH(it.duration)}</div>`:''}
@@ -529,6 +529,7 @@ async function toggleSave(itemId){
 
 async function loadSavedSidebar(){
   if(!window.currentUser)return;
+  if(!document.getElementById('saved-list'))return;  // sidebar 'Saved' belum dipasang — elak query terbuang
   const {data}=await window.db.from('psy_library_bookmarks').select('item_id').eq('user_id',currentUser.id).order('created_at',{ascending:false}).limit(3);
   const ids=(data||[]).map(r=>r.item_id);
   const savedItems=ITEMS.filter(it=>ids.includes(it.item_id));
@@ -538,9 +539,13 @@ async function loadSavedSidebar(){
 async function loadContinueWatching(){
   if(!window.currentUser)return;
   try{
-    const {data,error}=await window.db.from('psy_library_progress').select('*,psy_library_items(*)').eq('user_id',currentUser.id).order('last_watched_at',{ascending:false}).limit(3);
+    const {data,error}=await window.db.from('psy_library_views')
+      .select('item_id,created_at').eq('user_id',currentUser.id)
+      .order('created_at',{ascending:false}).limit(3);
     if(error)throw error;
-    renderContinueWatching(data||[]);
+    const viewedIds=(data||[]).map(v=>v.item_id);
+    const recentItems=viewedIds.map(id=>ITEMS.find(it=>(it.item_id||it.id)===id)).filter(Boolean);
+    renderContinueWatching(recentItems);
   }catch{
     setRightSidebar(false);
   }

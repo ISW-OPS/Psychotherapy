@@ -119,6 +119,15 @@
                 <textarea id="f-summary" rows="3" maxlength="200" oninput="cnt('f-summary','c-sum',200)" class="fld resize-none" placeholder="Ringkaskan secara ringkas tentang pengumuman ini..."></textarea>
                 <div class="text-[10px] text-ink/40 text-right mt-0.5"><span id="c-sum">0</span>/200</div>
               </div>
+              <!-- Butang Tindakan / CTA (untuk pengumuman; cth pautan Google Form untuk Survey) -->
+              <div id="cta-wrap" class="hidden">
+                <label class="lbl" id="cta-label-lbl">Butang Tindakan <span class="font-normal text-ink/40">(Opsyenal)</span></label>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-1.5">
+                  <input id="f-cta-label" class="fld" maxlength="40" placeholder="Label butang — cth: Lihat Pakej →">
+                  <input id="f-cta-url" class="fld" placeholder="URL — cth: pakej.html">
+                </div>
+                <div id="cta-hint" class="text-[11px] text-ink/45 mt-1">Pesakit akan nampak butang ini pada pengumuman.</div>
+              </div>
             </div>
           </div>
 
@@ -201,15 +210,23 @@
 
 <!-- Tambah Kategori (super admin) -->
 <div id="cat-modal" class="hidden fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
-  <div class="bg-white rounded-2xl w-full max-w-sm p-5 shadow-xl">
-    <div class="font-bold text-ink mb-1">Tambah Kategori Baru</div>
-    <div class="text-xs text-ink/50 mb-3">Kategori ini akan tersedia untuk semua pengumuman akan datang.</div>
-    <input id="cat-input" class="fld" placeholder="Contoh: Testimoni" maxlength="40"
-           onkeydown="if(event.key==='Enter')saveNewCat()">
-    <div id="cat-err" class="hidden text-xs text-terracotta mt-1.5"></div>
-    <div class="flex justify-end gap-2 mt-4">
-      <button onclick="closeCatModal()" class="px-3 py-2 text-sm font-semibold text-ink/60 hover:bg-ink/5 rounded-lg">Batal</button>
-      <button onclick="saveNewCat()" class="px-4 py-2 text-sm font-bold text-white bg-green-600 hover:bg-green-700 rounded-lg">Simpan</button>
+  <div class="bg-white rounded-2xl w-full max-w-md p-5 shadow-xl max-h-[85vh] overflow-y-auto">
+    <div class="flex items-center justify-between mb-1">
+      <div class="font-bold text-ink">Urus Kategori</div>
+      <button onclick="closeCatModal()" class="text-ink/50 text-xl leading-none">&times;</button>
+    </div>
+    <div class="text-xs text-ink/50 mb-3">Tambah, edit atau padam kategori pengumuman. Pengumuman sedia ada tidak terjejas.</div>
+    <div id="cat-list" class="mb-4"></div>
+    <div class="border-t border-ink/10 pt-3">
+      <div id="cat-form-title" class="text-sm font-bold text-ink mb-2">Tambah Kategori Baru</div>
+      <label class="lbl">Nama Kategori</label>
+      <input id="cat-input" class="fld mb-1" placeholder="Contoh: Testimoni" maxlength="40"
+             onkeydown="if(event.key==='Enter')saveCat()">
+      <div id="cat-err" class="hidden text-xs text-terracotta mt-1 mb-1"></div>
+      <div class="flex justify-end gap-2 mt-3">
+        <button onclick="resetCatForm()" class="px-3 py-2 text-sm font-semibold text-ink/60 hover:bg-ink/5 rounded-lg">Kosongkan</button>
+        <button id="cat-save" onclick="saveCat()" class="px-4 py-2 text-sm font-bold text-white bg-green-600 hover:bg-green-700 rounded-lg">Tambah</button>
+      </div>
     </div>
   </div>
 </div>
@@ -308,6 +325,30 @@ function selectType(key) {
   evCard.classList.toggle('hidden', !isEvent);
   // Event auto-tamat ikut Masa Tamat — sembunyi medan Tarikh Tamat Papar untuk event
   document.getElementById('expiry-wrap').classList.toggle('hidden', isEvent);
+
+  // Butang Tindakan / CTA — papar untuk pengumuman (bukan event). Survey = mod pautan borang.
+  const ctaWrap = document.getElementById('cta-wrap');
+  ctaWrap.classList.toggle('hidden', isEvent);
+  if (!isEvent) {
+    const isSurvey = /survey|tindakan|borang|form/i.test((t.key || '') + ' ' + (t.title || ''));
+    const lbl   = document.getElementById('cta-label-lbl');
+    const fLbl  = document.getElementById('f-cta-label');
+    const fUrl  = document.getElementById('f-cta-url');
+    const hint  = document.getElementById('cta-hint');
+    if (isSurvey) {
+      lbl.innerHTML = '📋 Pautan Borang / Survey <span class="font-normal text-ink/40">(Google Form, Typeform, dll.)</span>';
+      fLbl.placeholder = 'Label butang — cth: Isi Borang →';
+      fUrl.placeholder = 'URL borang — cth: https://forms.gle/…';
+      hint.textContent = 'Tampal pautan Google Form / Typeform di sini. Pesakit tekan butang untuk buka & isi borang.';
+      if (!fLbl.value) fLbl.value = 'Isi Borang →';
+    } else {
+      lbl.innerHTML = 'Butang Tindakan <span class="font-normal text-ink/40">(Opsyenal)</span>';
+      fLbl.placeholder = 'Label butang — cth: Lihat Pakej →';
+      fUrl.placeholder = 'URL — cth: pakej.html';
+      hint.textContent = 'Pesakit akan nampak butang ini pada pengumuman.';
+      if (fLbl.value === 'Isi Borang →') fLbl.value = '';
+    }
+  }
   document.getElementById('info-grid').className = isEvent
     ? 'grid grid-cols-1 xl:grid-cols-2 gap-5 items-start'
     : 'grid grid-cols-1 gap-5 items-start max-w-[640px]';
@@ -418,6 +459,12 @@ async function submitForm(statusVal) {
   if (!summary) return fail('Ringkasan Pendek wajib diisi.');
   if (!audience.length) return fail('Pilih sekurang-kurangnya satu sasaran pengguna.');
   if (document.getElementById('aud-package').checked && !packageIds.length) return fail('Sila pilih sekurang-kurangnya satu pakej untuk "Pakej Tertentu".');
+  if (t.kind !== 'event') {
+    const cl = document.getElementById('f-cta-label').value.trim();
+    const cu = document.getElementById('f-cta-url').value.trim();
+    if (cl && !cu) return fail('Sila isi URL untuk butang tindakan (cth: pautan Google Form).');
+    if (cu && !cl) return fail('Sila isi label untuk butang tindakan.');
+  }
 
   const btns = document.querySelectorAll('#publish-btn, [onclick^="submitForm"]');
   btns.forEach(b => b.disabled = true);
@@ -452,10 +499,14 @@ async function submitForm(statusVal) {
       setTimeout(() => location.href = 'events.html', 700);
     } else {
       const expVal = document.getElementById('f-expires').value;
+      const ctaLabel = document.getElementById('f-cta-label').value.trim();
+      const ctaUrl   = document.getElementById('f-cta-url').value.trim();
       const payload = {
         title, body: summary, content: null,
         category: category || t.title, tag: category || null,
         image_url: image, audience, package_ids: packageIds, sort_order: 0,
+        cta_label: ctaLabel || null,
+        cta_url:   ctaUrl || null,
         expires_at: expVal ? new Date(expVal).toISOString() : null,
         is_active: statusVal === 'published',
       };
@@ -482,36 +533,81 @@ async function loadCategories(selectVal){
   let rows = null;
   try {
     const { data, error } = await window.db.from('psy_announcement_categories')
-      .select('name,sort_order,is_active').order('sort_order', { ascending: true });
+      .select('id,name,sort_order,is_active').order('sort_order', { ascending: true });
     if (!error && data) rows = data.filter(c => c.is_active !== false);
   } catch (_) {}
   categoriesCache = rows && rows.length ? rows : DEFAULT_CATS.map((n,i) => ({ name:n, sort_order:i+1 }));
   sel.innerHTML = '<option value="">— Pilih kategori —</option>'
     + categoriesCache.map(c => `<option>${escOpt(c.name)}</option>`).join('')
-    + (isSuperAdmin() ? '<option value="__add__">➕ Tambah kategori baru…</option>' : '');
+    + (isSuperAdmin() ? '<option value="__manage__">⚙️ Urus kategori (tambah / edit / padam)…</option>' : '');
   if (keep && categoriesCache.some(c => c.name === keep)) sel.value = keep;
 }
-function onCatChange(sel){ if (sel.value === '__add__'){ sel.value = ''; openCatModal(); } }
-function openCatModal(){
+let editingCatId = null;
+function onCatChange(sel){ if (sel.value === '__manage__'){ sel.value = ''; openCatModal(); } }
+function openCatModal(){ resetCatForm(); renderCatList(); document.getElementById('cat-modal').classList.remove('hidden'); }
+function closeCatModal(){ document.getElementById('cat-modal').classList.add('hidden'); }
+function resetCatForm(){
+  editingCatId = null;
   document.getElementById('cat-input').value = '';
   document.getElementById('cat-err').classList.add('hidden');
-  document.getElementById('cat-modal').classList.remove('hidden');
+  document.getElementById('cat-form-title').textContent = 'Tambah Kategori Baru';
+  document.getElementById('cat-save').textContent = 'Tambah';
+}
+function renderCatList(){
+  const list = document.getElementById('cat-list');
+  list.innerHTML = categoriesCache.length ? categoriesCache.map(c => `
+    <div class="flex items-center justify-between gap-2 py-2 border-b border-ink/8">
+      <div class="text-sm font-semibold text-ink truncate min-w-0">${escOpt(c.name)}</div>
+      <div class="flex items-center gap-1 shrink-0">
+        ${c.id
+          ? `<button onclick="editCat('${c.id}')" class="text-xs font-semibold text-navy hover:underline px-2 py-1">Edit</button>
+             <button onclick="delCat('${c.id}')" class="text-xs font-semibold text-terracotta hover:underline px-2 py-1">Padam</button>`
+          : '<span class="text-[11px] text-ink/35">Lalai</span>'}
+      </div>
+    </div>`).join('') : '<div class="text-xs text-ink/40 py-3">Tiada kategori lagi.</div>';
+}
+function editCat(id){
+  const c = categoriesCache.find(x => x.id === id); if (!c) return;
+  editingCatId = id;
+  document.getElementById('cat-input').value = c.name;
+  document.getElementById('cat-err').classList.add('hidden');
+  document.getElementById('cat-form-title').textContent = 'Edit Kategori';
+  document.getElementById('cat-save').textContent = 'Simpan';
   setTimeout(() => document.getElementById('cat-input').focus(), 50);
 }
-function closeCatModal(){ document.getElementById('cat-modal').classList.add('hidden'); }
-async function saveNewCat(){
+async function saveCat(){
   const err = document.getElementById('cat-err');
   const name = document.getElementById('cat-input').value.trim();
   if (!name){ err.textContent = 'Sila masukkan nama kategori.'; err.classList.remove('hidden'); return; }
-  const dup = categoriesCache.find(c => c.name.toLowerCase() === name.toLowerCase());
-  if (dup){ closeCatModal(); document.getElementById('f-category').value = dup.name; return; }
-  const maxSort = categoriesCache.reduce((m,c) => Math.max(m, c.sort_order||0), 0);
-  const { error } = await window.db.from('psy_announcement_categories')
-    .insert({ name, sort_order: maxSort + 1, created_by: window.currentUser.id });
-  if (error){ err.textContent = 'Gagal menambah: ' + error.message; err.classList.remove('hidden'); return; }
-  closeCatModal();
+  const dup = categoriesCache.find(c => c.name.toLowerCase() === name.toLowerCase() && c.id !== editingCatId);
+  if (dup){ err.textContent = 'Kategori "' + name + '" sudah wujud.'; err.classList.remove('hidden'); return; }
+  let res;
+  if (editingCatId){
+    res = await window.db.from('psy_announcement_categories').update({ name }).eq('id', editingCatId);
+  } else {
+    const maxSort = categoriesCache.reduce((m,c) => Math.max(m, c.sort_order||0), 0);
+    res = await window.db.from('psy_announcement_categories')
+      .insert({ name, sort_order: maxSort + 1, created_by: window.currentUser.id });
+  }
+  if (res.error){ err.textContent = 'Gagal: ' + res.error.message; err.classList.remove('hidden'); return; }
+  const wasEdit = !!editingCatId;
+  resetCatForm();
   await loadCategories(name);
-  banner('Kategori "' + name + '" ditambah ✓');
+  renderCatList();
+  banner(wasEdit ? 'Kategori dikemaskini ✓' : 'Kategori "' + name + '" ditambah ✓');
+}
+async function delCat(id){
+  const c = categoriesCache.find(x => x.id === id);
+  if (!confirm('Padam kategori "' + (c ? c.name : '') + '"? Pengumuman sedia ada tidak terjejas.')) return;
+  const { error } = await window.db.from('psy_announcement_categories').delete().eq('id', id);
+  if (error){
+    const err = document.getElementById('cat-err');
+    err.textContent = 'Gagal padam: ' + error.message; err.classList.remove('hidden'); return;
+  }
+  if (editingCatId === id) resetCatForm();
+  await loadCategories();
+  renderCatList();
+  banner('Kategori dipadam');
 }
 
 // ---- Urus Jenis Pengumuman (super admin CRUD) ----

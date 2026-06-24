@@ -52,6 +52,7 @@ window.PAGE_MODULE = {
   // KOMUNIKASI
   announcements:    'announcements',
   events_admin:     'events',          // Acara & Kelas — modul RBAC berasingan
+  auto_messages:    'auto_messages',   // Mesej Automatik (super admin)
   library:          'library',
 
   // LAPORAN

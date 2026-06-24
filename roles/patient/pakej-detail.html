@@ -265,12 +265,13 @@ async function activateFreePackage() {
   });
   if (error) { banner('Ralat: ' + error.message, 'error'); return; }
 
-  await window.db.from('psy_patients').update({
+  const { error: paErr } = await window.db.from('psy_patients').update({
     active_package_id: currentPkg.id,
     active_package_name: currentPkg.name,
     package_purchased_at: new Date().toISOString(),
     package_expires_at: expiresAt.toISOString(),
   }).eq('id', patientRecord.id);
+  if (paErr) { banner('Ralat aktifkan pakej: ' + paErr.message, 'error'); return; }
 
   // Auto-create treatment plan (skip if already exists — race guard)
   const existingPlans = await dbQuery('psy_treatment_plans', { eq: { patient_id: patientRecord.id, status: 'active' } }).catch(() => []);
@@ -280,7 +281,7 @@ async function activateFreePackage() {
     return;
   }
   const template = getPlanTemplate(currentPkg.id, currentPkg.name, currentPkg);
-  await window.db.from('psy_treatment_plans').insert({
+  const { error: planErr } = await window.db.from('psy_treatment_plans').insert({
     patient_id: patientRecord.id,
     doctor_id: null,
     name: template.name,
@@ -294,6 +295,7 @@ async function activateFreePackage() {
     coaching_schedule: template.coaching_schedule,
     status: 'active',
   });
+  if (planErr) { banner('Ralat cipta pelan rawatan: ' + planErr.message, 'error'); return; }
 
   banner(`Pakej ${currentPkg.name} diaktifkan!`);
   setTimeout(() => { window.location.href = 'plan.html'; }, 1500);

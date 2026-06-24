@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Mesej Automatik</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+  .fld { width:100%; margin-top:6px; padding:10px 12px; border:1px solid rgba(60,79,92,.18); border-radius:10px; font-size:14px; outline:none; background:#fff; }
+  .fld:focus { border-color:#1a3a5c; box-shadow:0 0 0 3px rgba(26,58,92,.08); }
+  .lbl { font-size:12px; font-weight:600; color:rgba(60,79,92,.7); }
+  .ph-chip { font-size:11px; font-weight:600; padding:3px 8px; border-radius:6px; background:rgba(26,58,92,.08); color:#1a3a5c; cursor:pointer; }
+  .ph-chip:hover { background:rgba(26,58,92,.16); }
+</style>
+</head>
+<body class="min-h-screen bg-[#f7f8fa]">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🤖</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <section class="p-4 md:p-8 max-w-[1000px] mx-auto space-y-5">
+        <div>
+          <h1 class="text-2xl font-extrabold text-ink">Mesej Automatik</h1>
+          <p class="text-sm text-ink/55 mt-0.5">Urus teks &amp; masa untuk semua mesej WhatsApp automatik. Ubah di sini — terus berkesan tanpa perlu pasang semula.</p>
+        </div>
+        <div id="list" class="space-y-3">
+          <div class="text-center py-16 text-ink/40 text-sm">Memuatkan...</div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<!-- Edit modal -->
+<div id="edit-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/55" onclick="closeEdit()"></div>
+  <div class="relative bg-white rounded-2xl max-w-2xl w-full max-h-[92vh] flex flex-col overflow-hidden">
+    <div class="px-5 py-4 border-b border-ink/10 flex items-center justify-between">
+      <div>
+        <h3 id="m-name" class="font-bold text-lg text-ink"></h3>
+        <p id="m-desc" class="text-xs text-ink/50"></p>
+      </div>
+      <button onclick="closeEdit()" class="text-ink/50 text-2xl leading-none">&times;</button>
+    </div>
+    <div class="p-5 space-y-4 overflow-y-auto">
+      <input id="m-id" type="hidden">
+
+      <!-- Timing -->
+      <div id="timing-before" class="hidden">
+        <label class="lbl">Hantar berapa lama sebelum?</label>
+        <div class="flex items-center gap-2 mt-1.5 flex-wrap">
+          <button type="button" onclick="setMin(15)" class="tm-btn px-3.5 py-2 rounded-lg border border-ink/15 text-sm font-semibold hover:border-navy">15 minit</button>
+          <button type="button" onclick="setMin(30)" class="tm-btn px-3.5 py-2 rounded-lg border border-ink/15 text-sm font-semibold hover:border-navy">30 minit</button>
+          <button type="button" onclick="setMin(60)" class="tm-btn px-3.5 py-2 rounded-lg border border-ink/15 text-sm font-semibold hover:border-navy">1 jam</button>
+          <span class="text-xs text-ink/40">atau</span>
+          <input id="m-min" type="number" min="1" oninput="syncMinBtns()" class="fld" style="width:120px;margin-top:0" placeholder="minit">
+        </div>
+      </div>
+      <div id="timing-daily" class="hidden">
+        <label class="lbl">Hantar setiap hari pukul</label>
+        <input id="m-time" type="time" class="fld" style="max-width:160px">
+      </div>
+      <div id="timing-none" class="hidden text-[13px] text-ink/55 bg-cream/50 rounded-lg px-3 py-2">⚡ Mesej ini dihantar serta-merta bila tindakan berlaku (tiada tetapan masa).</div>
+
+      <!-- Broadcast berulang: hari + masa sesi + link + saluran + sasaran -->
+      <div id="broadcast-extra" class="hidden space-y-4 border-t border-ink/8 pt-4">
+        <div>
+          <label class="lbl">Hari hantar (setiap minggu)</label>
+          <div id="dow-list" class="flex flex-wrap gap-1.5 mt-1.5"></div>
+        </div>
+        <div>
+          <label class="lbl">Masa sesi bermula</label>
+          <input id="m-session" type="time" oninput="renderPreview()" class="fld" style="max-width:160px">
+        </div>
+        <div>
+          <label class="lbl">Pautan (Google Meet)</label>
+          <input id="m-link" class="fld" oninput="renderPreview()" placeholder="https://meet.google.com/...">
+        </div>
+        <div>
+          <label class="lbl">Saluran hantar</label>
+          <div class="flex flex-wrap gap-4 mt-1.5">
+            <label class="flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" class="ch-cb w-4 h-4 accent-green-600" value="whatsapp"> 📲 WhatsApp</label>
+            <label class="flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" class="ch-cb w-4 h-4 accent-green-600" value="inapp"> 🔔 Notifikasi app</label>
+            <label class="flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" class="ch-cb w-4 h-4 accent-green-600" value="announcement"> 📢 Pengumuman</label>
+          </div>
+        </div>
+        <div>
+          <label class="lbl">Sasaran</label>
+          <div class="space-y-2 mt-1.5">
+            <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="radio" name="aud" value="all" class="accent-green-600" onchange="onAudChange()"> 👥 Semua pesakit</label>
+            <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="radio" name="aud" value="pkg" class="accent-green-600" onchange="onAudChange()"> 🎯 Pakej tertentu</label>
+            <div id="pkg-box" class="hidden ml-6 grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto border border-ink/10 rounded-lg p-2 bg-cream/30"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Template -->
+      <div>
+        <label class="lbl">Teks Mesej</label>
+        <textarea id="m-tpl" rows="8" oninput="renderPreview()" class="fld font-mono text-[13px] leading-relaxed"></textarea>
+        <div class="flex items-center gap-1.5 flex-wrap mt-2">
+          <span class="text-[11px] text-ink/45 mr-1">Sisip:</span>
+          <span id="ph-list"></span>
+        </div>
+      </div>
+
+      <!-- Preview -->
+      <div>
+        <label class="lbl">Pratonton</label>
+        <div id="preview" class="mt-1.5 bg-[#dcf8c6] border border-green/20 rounded-xl p-3.5 text-[13px] text-ink/85 whitespace-pre-wrap leading-relaxed"></div>
+      </div>
+
+      <!-- Active -->
+      <label class="flex items-center gap-2.5 text-sm cursor-pointer pt-1">
+        <input id="m-active" type="checkbox" class="w-4 h-4 accent-green-600">
+        <span class="font-semibold text-ink">Aktifkan mesej automatik ini</span>
+      </label>
+
+      <div id="m-err" class="hidden text-sm text-terracotta bg-terracotta/10 rounded-xl px-3 py-2"></div>
+    </div>
+    <div class="px-5 py-4 border-t border-ink/10 flex gap-2">
+      <button onclick="closeEdit()" class="flex-1 border border-ink/20 text-ink/60 py-2.5 rounded-xl text-sm font-semibold hover:bg-ink/5">Batal</button>
+      <button id="save-btn" onclick="saveMsg()" class="flex-1 bg-green hover:bg-green-dark text-white py-2.5 rounded-xl text-sm font-semibold">💾 Simpan</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+let MSGS = [];
+let editing = null;
+let PACKAGES = [];
+
+const TRIGGER_LABEL = {
+  before_event:        { l: 'Sebelum acara',  c: 'bg-purple-100 text-purple-700' },
+  before_session:      { l: 'Sebelum sesi',   c: 'bg-navy/10 text-navy' },
+  daily_reminder:      { l: 'Harian',         c: 'bg-teal/10 text-teal' },
+  recurring_broadcast: { l: 'Broadcast berulang', c: 'bg-green/10 text-green-dark' },
+  on_action:           { l: 'Serta-merta',    c: 'bg-amber-100 text-amber-700' },
+};
+const DOW = [['1','Isn'],['2','Sel'],['3','Rab'],['4','Kha'],['5','Jum'],['6','Sab'],['0','Ahd']];
+const CH_LABEL = { whatsapp:'WhatsApp', inapp:'Notifikasi', announcement:'Pengumuman' };
+// Nilai sampel untuk pratonton
+const SAMPLE = { nama: 'Encik Ali', acara: 'Kelas Mindfulness', masa: '10:00 PG', lead: '30 minit', pautan: 'https://meet.google.com/abc-defg' };
+
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function leadLabel(min){ if(min==null) return '—'; if(min>=60) return min%60===0?`${min/60} jam`:`${Math.floor(min/60)} jam ${min%60} minit`; return `${min} minit`; }
+
+function timingText(m){
+  if (m.trigger_type==='daily_reminder') return m.send_at_time ? ('Setiap hari · ' + m.send_at_time.slice(0,5)) : 'Setiap hari';
+  if (m.trigger_type==='on_action') return 'Serta-merta';
+  if (m.trigger_type==='recurring_broadcast'){
+    const days = (Array.isArray(m.days_of_week)?m.days_of_week:[]).map(d => (DOW.find(x=>x[0]==d)||['',''])[1]).filter(Boolean).join('/');
+    const chs = (Array.isArray(m.channels)?m.channels:[]).map(c=>CH_LABEL[c]||c).join('+');
+    return `${days||'—'} · ${m.session_time?m.session_time.slice(0,5):'—'} · ${leadLabel(m.minutes_before)} awal · ${chs}`;
+  }
+  return m.minutes_before!=null ? (leadLabel(m.minutes_before) + ' sebelum') : 'Belum diset';
+}
+
+function render(){
+  document.getElementById('list').innerHTML = MSGS.map(m => {
+    const t = TRIGGER_LABEL[m.trigger_type] || { l:m.trigger_type, c:'bg-ink/8 text-ink/60' };
+    return `<div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-4 md:p-5 flex items-center gap-4">
+      <div class="w-12 h-12 rounded-xl bg-navy/8 text-navy flex items-center justify-center text-xl flex-shrink-0">💬</div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="font-bold text-ink text-[15px]">${esc(m.name)}</span>
+          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${t.c} uppercase tracking-wide">${t.l}</span>
+          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${m.is_active?'bg-green/10 text-green-dark':'bg-ink/8 text-ink/45'}">${m.is_active?'● Aktif':'○ Tidak aktif'}</span>
+        </div>
+        <div class="text-[12px] text-ink/50 mt-0.5 truncate">${esc(m.description||'')}</div>
+        <div class="text-[11px] text-ink/45 mt-1">📲 ${esc(m.channel)} · ⏱️ ${timingText(m)}</div>
+      </div>
+      <button onclick="openEdit('${m.id}')" class="text-sm font-bold text-navy border border-navy/25 px-4 py-2 rounded-lg hover:bg-navy hover:text-white whitespace-nowrap">Edit</button>
+    </div>`;
+  }).join('') || '<div class="text-center py-16 text-ink/40 text-sm">Tiada mesej automatik.</div>';
+}
+
+function openEdit(id){
+  const m = MSGS.find(x=>x.id===id); if(!m) return;
+  editing = m;
+  document.getElementById('m-id').value = m.id;
+  document.getElementById('m-name').textContent = m.name;
+  document.getElementById('m-desc').textContent = m.description||'';
+  document.getElementById('m-tpl').value = m.message_template||'';
+  document.getElementById('m-active').checked = !!m.is_active;
+  document.getElementById('m-err').classList.add('hidden');
+
+  // Timing fields ikut jenis
+  ['timing-before','timing-daily','timing-none','broadcast-extra'].forEach(id => document.getElementById(id).classList.add('hidden'));
+  if (m.trigger_type==='before_event' || m.trigger_type==='before_session'){
+    document.getElementById('timing-before').classList.remove('hidden');
+    document.getElementById('m-min').value = m.minutes_before ?? '';
+    syncMinBtns();
+  } else if (m.trigger_type==='recurring_broadcast'){
+    document.getElementById('timing-before').classList.remove('hidden');
+    document.getElementById('broadcast-extra').classList.remove('hidden');
+    document.getElementById('m-min').value = m.minutes_before ?? '';
+    syncMinBtns();
+    document.getElementById('m-session').value = (m.session_time||'').slice(0,5);
+    document.getElementById('m-link').value = m.link || '';
+    renderDow((Array.isArray(m.days_of_week)?m.days_of_week:[]).map(String));
+    document.querySelectorAll('.ch-cb').forEach(cb => cb.checked = (Array.isArray(m.channels)?m.channels:[]).includes(cb.value));
+    renderAudience(m);
+  } else if (m.trigger_type==='daily_reminder'){
+    document.getElementById('timing-daily').classList.remove('hidden');
+    document.getElementById('m-time').value = (m.send_at_time||'').slice(0,5);
+  } else {
+    document.getElementById('timing-none').classList.remove('hidden');
+  }
+
+  // Placeholder chips
+  const phs = Array.isArray(m.placeholders) ? m.placeholders : [];
+  document.getElementById('ph-list').innerHTML = phs.map(p => `<span class="ph-chip" onclick="insertPh('${p}')">${esc(p)}</span>`).join(' ')
+    || '<span class="text-[11px] text-ink/35">tiada</span>';
+
+  renderPreview();
+  document.getElementById('edit-modal').classList.remove('hidden');
+}
+function closeEdit(){ document.getElementById('edit-modal').classList.add('hidden'); editing=null; }
+
+function setMin(v){ document.getElementById('m-min').value = v; syncMinBtns(); }
+function syncMinBtns(){
+  const v = parseInt(document.getElementById('m-min').value);
+  document.querySelectorAll('.tm-btn').forEach(b => {
+    const on = b.textContent.includes('jam') ? v===60 : parseInt(b.textContent)===v;
+    b.className = 'tm-btn px-3.5 py-2 rounded-lg border text-sm font-semibold ' + (on ? 'border-navy bg-navy text-white' : 'border-ink/15 hover:border-navy');
+  });
+}
+function fmtClock(min){ let h=Math.floor(min/60), m=min%60; const ap=h>=12?'PTG':'PG'; let hh=h%12; if(hh===0)hh=12; return `${hh}:${String(m).padStart(2,'0')} ${ap}`; }
+function renderDow(sel){
+  document.getElementById('dow-list').innerHTML = DOW.map(([v,l]) => {
+    const on = sel.includes(v);
+    return `<button type="button" data-dow="${v}" onclick="toggleDow(this)" class="dow-btn px-3 py-1.5 rounded-lg text-xs font-semibold border ${on?'border-navy bg-navy text-white':'border-ink/15 hover:border-navy'}">${l}</button>`;
+  }).join('');
+}
+function toggleDow(btn){
+  const on = btn.classList.contains('bg-navy');
+  btn.className = 'dow-btn px-3 py-1.5 rounded-lg text-xs font-semibold border ' + (on ? 'border-ink/15 hover:border-navy' : 'border-navy bg-navy text-white');
+}
+function getDows(){ return Array.from(document.querySelectorAll('#dow-list .dow-btn.bg-navy')).map(b => parseInt(b.dataset.dow)); }
+function getChannels(){ return Array.from(document.querySelectorAll('.ch-cb:checked')).map(c => c.value); }
+function renderAudience(m){
+  const pkgs = (Array.isArray(m.package_ids)?m.package_ids:[]).map(String);
+  const isPkg = pkgs.length>0;
+  document.querySelector('input[name=aud][value=all]').checked = !isPkg;
+  document.querySelector('input[name=aud][value=pkg]').checked = isPkg;
+  document.getElementById('pkg-box').innerHTML = PACKAGES.length
+    ? PACKAGES.map(p => `<label class="flex items-center gap-1.5 text-[12px] cursor-pointer"><input type="checkbox" class="pkg-cb accent-green-600" value="${esc(p.package_id)}" ${pkgs.includes(String(p.package_id))?'checked':''}> ${esc(p.name||p.package_id)}</label>`).join('')
+    : '<div class="text-[11px] text-ink/40">Tiada pakej</div>';
+  onAudChange();
+}
+function onAudChange(){ const pkg = document.querySelector('input[name=aud][value=pkg]')?.checked; document.getElementById('pkg-box').classList.toggle('hidden', !pkg); }
+function getAudiencePkgs(){ const pkg = document.querySelector('input[name=aud][value=pkg]').checked; return pkg ? Array.from(document.querySelectorAll('.pkg-cb:checked')).map(c=>c.value) : []; }
+function insertPh(ph){
+  const ta = document.getElementById('m-tpl');
+  const s = ta.selectionStart, e = ta.selectionEnd;
+  ta.value = ta.value.slice(0,s) + ph + ta.value.slice(e);
+  ta.focus(); ta.selectionStart = ta.selectionEnd = s + ph.length;
+  renderPreview();
+}
+function renderPreview(){
+  let txt = document.getElementById('m-tpl').value;
+  const sample = { ...SAMPLE };
+  const minEl = document.getElementById('m-min');
+  if (minEl && minEl.value) sample.lead = leadLabel(parseInt(minEl.value));
+  if (editing && editing.trigger_type==='recurring_broadcast'){
+    const st = document.getElementById('m-session').value;
+    if (st){ const [h,mm]=st.split(':').map(Number); sample.masa = fmtClock(h*60+mm); }
+    const lk = document.getElementById('m-link').value;
+    if (lk) sample.pautan = lk;
+  }
+  Object.entries(sample).forEach(([k,v]) => { txt = txt.split('{'+k+'}').join(v); });
+  txt = txt.replace(/\n{3,}/g,'\n\n').trim();
+  document.getElementById('preview').textContent = txt || '—';
+}
+
+async function saveMsg(){
+  if (!editing) return;
+  const err = document.getElementById('m-err'); err.classList.add('hidden');
+  const tpl = document.getElementById('m-tpl').value.trim();
+  if (!tpl){ err.textContent='Teks mesej tak boleh kosong.'; err.classList.remove('hidden'); return; }
+  const payload = { message_template: tpl, is_active: document.getElementById('m-active').checked, updated_at: new Date().toISOString() };
+  if (editing.trigger_type==='before_event' || editing.trigger_type==='before_session'){
+    const v = parseInt(document.getElementById('m-min').value);
+    if (!v || v<1){ err.textContent='Sila set berapa minit sebelum.'; err.classList.remove('hidden'); return; }
+    payload.minutes_before = v;
+  } else if (editing.trigger_type==='recurring_broadcast'){
+    const v = parseInt(document.getElementById('m-min').value);
+    const st = document.getElementById('m-session').value;
+    const dows = getDows(), chs = getChannels();
+    if (!dows.length){ err.textContent='Pilih sekurang-kurangnya satu hari.'; err.classList.remove('hidden'); return; }
+    if (!st){ err.textContent='Sila set masa sesi bermula.'; err.classList.remove('hidden'); return; }
+    if (!v || v<1){ err.textContent='Sila set berapa minit sebelum.'; err.classList.remove('hidden'); return; }
+    if (!chs.length){ err.textContent='Pilih sekurang-kurangnya satu saluran.'; err.classList.remove('hidden'); return; }
+    payload.minutes_before = v;
+    payload.session_time = st;
+    payload.days_of_week = dows;
+    payload.channels = chs;
+    payload.link = document.getElementById('m-link').value.trim() || null;
+    payload.audience = ['patient'];
+    payload.package_ids = getAudiencePkgs();
+  } else if (editing.trigger_type==='daily_reminder'){
+    const t = document.getElementById('m-time').value;
+    if (!t){ err.textContent='Sila set masa hantar harian.'; err.classList.remove('hidden'); return; }
+    payload.send_at_time = t;
+  }
+  try { payload.updated_by = window.currentUser.id; } catch(_){}
+  const btn = document.getElementById('save-btn'); btn.disabled=true; btn.textContent='Menyimpan...';
+  try {
+    const { error } = await window.db.from('psy_auto_messages').update(payload).eq('id', editing.id);
+    if (error) throw error;
+    banner('Mesej automatik dikemaskini ✅');
+    closeEdit();
+    await load();
+  } catch(e){ err.textContent='Ralat: '+e.message; err.classList.remove('hidden'); }
+  finally { btn.disabled=false; btn.textContent='💾 Simpan'; }
+}
+
+async function load(){
+  const { data } = await window.db.from('psy_auto_messages').select('*').order('trigger_type', { ascending: true }).order('name', { ascending: true });
+  MSGS = data || [];
+  render();
+}
+
+(async () => {
+  const user = await initStaff('auto_messages', 'Urus teks & masa mesej WhatsApp automatik');
+  if (!user) return;
+  try { const { data } = await window.db.from('psy_packages').select('package_id, name').order('name', { ascending: true }); PACKAGES = data || []; } catch(_){}
+  await load();
+})();
+</script>
+</body>
+</html>

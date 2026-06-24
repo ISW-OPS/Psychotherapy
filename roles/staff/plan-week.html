@@ -344,6 +344,7 @@ let activePlan   = null;
 let weekNumber   = 1;
 let weekEntry    = null;   // psy_plan_weekly_progress row (sesi pertama)
 let weekSessions = [];     // semua baris sesi minggu ini (1–2)
+let extForThisWeek = null; // baris minggu tambahan yg dah dibuka utk minggu ini (atau null)
 let planMaxWeek  = 0;      // minggu tertinggi (termasuk extension)
 let cmpRowId     = null;   // psy_plan_compliance row id
 let patientId    = null;   // psy_patients.id
@@ -407,6 +408,11 @@ async function loadWeek() {
     .select('*').eq('plan_id', activePlan.id).eq('week_number', weekNumber).order('session_day');
   weekSessions = prog || [];
   weekEntry = prog?.[0] || null;
+
+  // Adakah minggu tambahan dah dibuka untuk minggu ini? (untuk papar butang/nota di hero)
+  const { data: extRows } = await window.db.from('psy_plan_weekly_progress')
+    .select('id,status').eq('plan_id', activePlan.id).eq('is_extension', true).eq('extension_for_week', weekNumber);
+  extForThisWeek = (extRows && extRows.length) ? extRows : null;
 
   updateBreadcrumb();
   renderHero();
@@ -601,6 +607,29 @@ function renderHero() {
   // Butang kehadiran untuk sesi aktif
   const attBtn = (st, txt, activeCls) =>
     `<button onclick="markStatus('${st}')" class="px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${status === st ? activeCls : 'border-ink/15 text-ink/60 hover:bg-cream'}">${txt}</button>`;
+  // Kawalan minggu tambahan — hanya bila ada sesi tidak hadir minggu ini (& bukan minggu extension sendiri)
+  const weekHasMiss = !weekEntry?.is_extension && weekSessions.some(r => r.status === 'cancel');
+  const extPaid = extForThisWeek && extForThisWeek.some(r => r.status !== 'extension_pending_payment');
+  const extControl = weekHasMiss
+    ? (extForThisWeek
+        ? `<div class="mt-3 text-xs text-ink/65 bg-cream rounded-lg px-3 py-2">🔁 Minggu tambahan sudah dibuka untuk minggu ini${extPaid ? ' <span class="text-green-dark font-semibold">(sudah dibayar)</span>' : ' — <span class="text-terracotta font-semibold">menunggu bayaran pesakit</span>'}.</div>`
+        : `<div class="mt-3">
+             <button onclick="openExtensionManually()" class="inline-flex items-center gap-1.5 text-xs font-semibold border border-terracotta/40 text-terracotta px-3 py-1.5 rounded-lg hover:bg-terracotta hover:text-white transition">➕ Buka Minggu Tambahan (pesakit bayar)</button>
+             <div class="text-[11px] text-ink/45 mt-1">Tidak hadir <b>tidak</b> auto-caj. Tekan ini hanya bila pesakit sah nak sambung rawatan.</div>
+           </div>`)
+    : '';
+  // Kawalan sesi tidak hadir (sesi aktif): ingatkan pesakit + coach reschedule terus
+  const missControl = (status === 'cancel')
+    ? `<div class="mt-3 pt-3 border-t border-ink/8">
+         <div class="text-[11px] font-semibold text-ink/50 uppercase tracking-wide mb-2">Sesi tidak hadir — tindakan</div>
+         <div class="flex items-center gap-2 flex-wrap">
+           <button onclick="remindPatientReschedule()" class="inline-flex items-center gap-1.5 text-xs font-semibold border border-navy/30 text-navy px-3 py-1.5 rounded-lg hover:bg-navy hover:text-white transition">🔔 Ingatkan Pesakit</button>
+           <input id="resched-date" type="datetime-local" class="text-xs border border-ink/20 rounded-lg px-2 py-1.5 outline-none focus:border-navy">
+           <button onclick="coachReschedule()" class="inline-flex items-center gap-1.5 text-xs font-semibold bg-gold text-ink px-3 py-1.5 rounded-lg hover:bg-gold-dark hover:text-white transition">📅 Jadual Semula</button>
+         </div>
+         <div class="text-[11px] text-ink/45 mt-1">Ingatkan pesakit untuk reschedule sendiri, atau tetapkan tarikh baru terus.</div>
+       </div>`
+    : '';
   const attendance = weekEntry?.id
     ? `<div class="mt-4 pt-4 border-t border-ink/8">
          <div class="text-[11px] font-semibold text-ink/50 uppercase tracking-wide mb-2">Kehadiran ${weekSessions.length > 1 ? dayName(weekEntry) : ''}</div>
@@ -608,6 +637,8 @@ function renderHero() {
            ${attBtn('hadir','✅ Hadir','bg-green text-white border-green')}
            ${attBtn('cancel','❌ Tidak Hadir','bg-terracotta text-white border-terracotta')}
          </div>
+         ${missControl}
+         ${extControl}
        </div>`
     : '';
 
@@ -672,26 +703,84 @@ async function markStatus(status) {
   }
   renderHero();
 
-  // Peraturan: tidak hadir → buka 1 MINGGU tambahan (pesakit bayar).
-  // Minggu extension sendiri tidak mencetus extension lagi (elak berantai).
-  if (!weekEntry.is_extension) {
-    if (status === 'cancel') {
-      await createExtensionForWeek(weekNumber);
-    } else {
-      await removePendingExtensionIfResolved(weekNumber);
-    }
+  // Tidak hadir TIDAK lagi auto-buka extension berbayar.
+  // Coach buka manual via butang "Buka Minggu Tambahan" bila pesakit sah nak sambung (pisahkan absen drpd auto-caj).
+  // Jika kehadiran dipulihkan (hadir/reschedule), batalkan minggu tambahan yang belum dibayar.
+  if (!weekEntry.is_extension && status !== 'cancel') {
+    await removePendingExtensionIfResolved(weekNumber);
   }
 
   const dayLabel = weekEntry.session_date ? new Date(weekEntry.session_date).toLocaleDateString('ms-MY',{weekday:'long'}) : `Sesi ${weekEntry.session_day || 1}`;
   const msgs = {
     hadir:      [`Kehadiran disahkan ✅`, `${dayLabel} Minggu ${weekNumber} — kehadiran anda disahkan oleh Coach ${window.currentUser.full_name}.`],
     reschedule: [`Sesi perlu dijadual semula`, `${dayLabel} Minggu ${weekNumber} perlu ditempah semula.`],
-    cancel:     [`Sesi ditanda tidak hadir`, `${dayLabel} Minggu ${weekNumber} ditanda tidak hadir.`],
+    cancel:     [`Sesi ditanda tidak hadir`, `${dayLabel} Minggu ${weekNumber} ditanda tidak hadir. Anda boleh tempah semula (reschedule) sesi ini.`],
   };
   if (patientUserId && msgs[status]) {
     await notify(patientUserId, 'plan', msgs[status][0], msgs[status][1], 'plan-week.html');
   }
   banner(`${dayLabel}: ${status === 'hadir' ? 'Hadir' : status === 'cancel' ? 'Tidak Hadir' : 'Reschedule'}`);
+}
+
+// Coach: ingatkan pesakit supaya jadual semula sesi tidak hadir (hantar notifikasi).
+async function remindPatientReschedule() {
+  if (!weekEntry?.id) { banner('Tiada sesi.', 'error'); return; }
+  if (!patientUserId) { banner('Tiada akaun pesakit untuk dihubungi.', 'error'); return; }
+  const dayLabel = weekEntry.session_date
+    ? new Date(weekEntry.session_date).toLocaleDateString('ms-MY', { weekday:'long', day:'2-digit', month:'long' })
+    : `Sesi ${weekEntry.session_day || 1}`;
+  await notify(patientUserId, 'plan',
+    'Peringatan: Jadual Semula Sesi',
+    `Sesi Minggu ${weekNumber} (${dayLabel}) anda tidak hadir. Sila tempah semula (reschedule) untuk teruskan rawatan.`,
+    'plan.html');
+  await auditLog('plan.reschedule_reminder', activePlan.id, { week: weekNumber, session: weekEntry.session_day || 1 });
+  banner('Peringatan dihantar kepada pesakit ✅');
+}
+
+// Coach: jadual semula sesi tidak hadir terus (tetapkan tarikh baru + status booked + notify).
+async function coachReschedule() {
+  if (!weekEntry?.id) { banner('Tiada sesi.', 'error'); return; }
+  const val = document.getElementById('resched-date')?.value;
+  if (!val) { banner('Sila pilih tarikh & masa baru.', 'error'); return; }
+  const sessionAt = new Date(val).toISOString();
+  try {
+    let apptId = weekEntry.appointment_id || null;
+    if (apptId) {
+      await window.db.from('psy_appointments').update({ appointment_time: sessionAt, status: 'scheduled' }).eq('id', apptId);
+    } else {
+      const { data: appt } = await window.db.from('psy_appointments').insert({
+        patient_id: patientId, staff_id: window.currentUser.id, staff_name: window.currentUser.full_name,
+        service: `${activePlan.name} · Minggu ${weekNumber}`, appointment_time: sessionAt, duration_min: 60, status: 'scheduled',
+      }).select('id').single();
+      apptId = appt?.id || null;
+    }
+    await upsertProgress({ session_date: sessionAt, status: 'booked', ...(apptId ? { appointment_id: apptId } : {}) });
+    weekEntry.status = 'booked'; weekEntry.session_date = sessionAt; if (apptId) weekEntry.appointment_id = apptId;
+    const idx = weekSessions.findIndex(r => r.id === weekEntry.id);
+    if (idx >= 0) { weekSessions[idx].status = 'booked'; weekSessions[idx].session_date = sessionAt; }
+
+    // Kehadiran dipulihkan → batalkan minggu tambahan belum bayar (jika ada)
+    if (!weekEntry.is_extension) await removePendingExtensionIfResolved(weekNumber);
+
+    if (patientUserId) {
+      const d = new Date(sessionAt);
+      await notify(patientUserId, 'appointment',
+        `Sesi Minggu ${weekNumber} dijadual semula`,
+        `${d.toLocaleDateString('ms-MY',{weekday:'long',day:'2-digit',month:'long'})} · ${d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})} — dijadual semula oleh ${window.currentUser.full_name}.`,
+        'plan.html');
+    }
+    renderHero();
+    banner('Sesi dijadual semula ✅');
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+}
+
+// Coach buka minggu tambahan secara MANUAL (selepas tidak hadir disahkan & pesakit setuju sambung).
+async function openExtensionManually() {
+  if (!weekEntry || weekEntry.is_extension) return;
+  if (!weekSessions.some(r => r.status === 'cancel')) { banner('Tiada sesi tidak hadir untuk minggu ini.', 'error'); return; }
+  if (!confirm(`Buka 1 minggu tambahan berbayar untuk Minggu ${weekNumber}? Pesakit akan diminta membuat bayaran.`)) return;
+  await createExtensionForWeek(weekNumber);
+  await loadWeek();   // refresh — butang bertukar jadi nota "minggu tambahan dibuka"
 }
 
 // Buka 1 minggu tambahan (2 sesi, pesakit bayar) untuk minggu yang ada ketidakhadiran.

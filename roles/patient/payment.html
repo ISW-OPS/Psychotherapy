@@ -322,7 +322,8 @@ async function processPayment() {
 
   try {
     // CRITICAL: Fresh DB check — prevent duplicate package subscription
-    const hasPackageInCart = pendingItems.some(i => i.type === 'package');
+    // Termasuk 'package_existing' (bayar pakej sedia ada) — kedua-dua aktifkan pakej pada rekod pesakit.
+    const hasPackageInCart = pendingItems.some(i => i.type === 'package' || i.type === 'package_existing');
     if (hasPackageInCart && patientRecord) {
       const fresh = await dbQuery('psy_patients', { eq: { id: patientRecord.id }, single: true }).catch(() => null);
       if (fresh?.active_package_id &&
@@ -369,6 +370,16 @@ async function processPayment() {
 
       } else if (item.type === 'package_existing') {
         await dbUpdate('psy_package_purchases', item.id, { status: 'active', payment_method: method });
+        // Aktifkan pakej pada rekod pesakit (sama seperti 'package' — sebelum ni terlepas).
+        const exp = item.raw?.expires_at
+          || (() => { const d = new Date(); d.setMonth(d.getMonth() + 3); return d.toISOString(); })();
+        const { error: paErr } = await window.db.from('psy_patients').update({
+          active_package_id:    item.raw?.package_id,
+          active_package_name:  item.raw?.package_name,
+          package_purchased_at: item.raw?.purchased_at || new Date().toISOString(),
+          package_expires_at:   exp,
+        }).eq('id', patientRecord.id);
+        if (paErr) throw paErr;
 
       } else if (item.type === 'plan_extension') {
         // Flip semua 2 sesi extension → extension_paid + status='booked' (ready for scheduling)
@@ -613,7 +624,7 @@ function viewReceiptPDF(id) {
             </div>
             <div>
               <div class="text-xs text-ink/60">Status</div>
-              <div class="font-bold text-green-dark">${r.status.toUpperCase()} ✓</div>
+              <div class="font-bold text-green-dark">${(r.status || 'completed').toUpperCase()} ✓</div>
             </div>
           </div>
         </div>
@@ -654,7 +665,7 @@ async function loadReceipts() {
             <div class="text-xs text-ink/60">${new Date(r.paid_at).toLocaleString('ms-MY')}</div>
           </div>
           <div class="flex items-center gap-2">
-            <span class="chip ${r.status === 'completed' ? 'bg-green-light text-green-dark' : r.status === 'refunded' ? 'bg-terracotta/20 text-terracotta' : 'bg-gold/30 text-gold-dark'}">${r.status.toUpperCase()}</span>
+            <span class="chip ${r.status === 'completed' ? 'bg-green-light text-green-dark' : r.status === 'refunded' ? 'bg-terracotta/20 text-terracotta' : 'bg-gold/30 text-gold-dark'}">${(r.status || 'completed').toUpperCase()}</span>
             <button onclick="viewReceiptPDF('${r.id}')" class="text-xs text-navy font-semibold border border-navy/30 px-3 py-1 rounded-lg hover:bg-navy hover:text-white">📄 PDF</button>
           </div>
         </div>

@@ -270,6 +270,7 @@ async function loadHistory() {
 function previewPhoto(e) {
   const file = e.target.files[0];
   if (!file) return;
+  if (file.size > 5 * 1024 * 1024) { banner('Foto melebihi 5MB — sila pilih yang lebih kecil', 'error'); e.target.value = ''; return; }
   issuePhotoFile = file;
   const reader = new FileReader();
   reader.onload = ev => {
@@ -294,7 +295,7 @@ async function submitIssue() {
   if (!type) { banner('Sila pilih jenis isu', 'error'); return; }
   if (!desc) { banner('Sila isi deskripsi masalah', 'error'); return; }
 
-  let photoUrl = null;
+  let photoUrl = null, photoFailed = false;
   if (issuePhotoFile) {
     try {
       const path = `issues/${window.currentUser.id}/${Date.now()}_${issuePhotoFile.name}`;
@@ -302,15 +303,24 @@ async function submitIssue() {
       if (!error) {
         const { data } = window.db.storage.from('issue-photos').getPublicUrl(path);
         photoUrl = data.publicUrl;
-      }
-    } catch (e) { console.warn('Photo upload skipped:', e.message); }
+      } else { photoFailed = true; }
+    } catch (e) { photoFailed = true; console.warn('Photo upload skipped:', e.message); }
   }
 
-  await auditLog('issue.reported', window.currentUser.id, {
-    type, description: desc, photo_url: photoUrl,
+  // Insert terus (bukan auditLog yg telan ralat) supaya kegagalan disurface, bukan "berjaya" palsu.
+  const { error: issueErr } = await window.db.from('psy_audit_log').insert({
+    actor_id:   window.currentUser.id,
+    actor_name: window.currentUser.full_name,
+    actor_role: window.currentUser.role || 'patient',
+    action:     'issue.reported',
+    target:     window.currentUser.id,
+    meta:       { type, description: desc, photo_url: photoUrl },
   });
+  if (issueErr) { banner('Gagal hantar laporan: ' + issueErr.message, 'error'); return; }
 
-  banner('Laporan dihantar. Admin akan hubungi anda dalam 24 jam.');
+  banner(photoFailed
+    ? 'Laporan dihantar (foto gagal dimuat naik). Admin akan hubungi anda dalam 24 jam.'
+    : 'Laporan dihantar. Admin akan hubungi anda dalam 24 jam.');
   document.getElementById('issue-desc').value = '';
   document.querySelectorAll('input[name="issue-type"]').forEach(r => r.checked = false);
   clearPhoto();

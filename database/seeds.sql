@@ -294,6 +294,43 @@ insert into psy_announcement_categories (name, sort_order) values
   ('Komuniti',5),('Webinar',6),('Bacaan Manzil',7),('Kemaskini Sistem',8)
 on conflict (name) do nothing;
 
+-- Mesej Automatik (seed): event_reminder aktif; selebihnya draf sehingga pencetus disambung
+insert into psy_auto_messages (key, name, description, trigger_type, minutes_before, send_at_time, message_template, placeholders, is_active) values
+  ('event_reminder','Peringatan Acara & Kelas','Hantar peringatan kepada pesakit yang telah daftar, sebelum acara/kelas bermula.','before_event',30,null,
+   E'Salam {nama} 👋\n\nPeringatan: acara *{acara}* akan bermula lebih kurang {lead} lagi ({masa}).\n{pautan}\n\n— Ibnu Sina Wellness',
+   '["{nama}","{acara}","{masa}","{lead}","{pautan}"]'::jsonb, true),
+  ('catatan_harian','Peringatan Catatan Harian','Ingatkan pesakit isi Catatan Harian setiap hari (jika belum diisi). Pencetus belum disambung.','daily_reminder',null,'20:00',
+   E'Salam {nama} 👋\n\nJangan lupa isi *Catatan Harian* anda hari ini ya. Ia membantu coach pantau kemajuan anda. 🌱\n\n— Ibnu Sina Wellness',
+   '["{nama}"]'::jsonb, false),
+  ('birthday','Ucapan Hari Jadi','Hantar ucapan pada tarikh lahir pesakit. Pencetus belum disambung.','daily_reminder',null,'09:00',
+   E'Selamat Hari Jadi, {nama}! 🎂\n\nSemoga sihat sejahtera & dimurahkan rezeki. Kami doakan kesembuhan & kebahagiaan anda.\n\n— Ibnu Sina Wellness',
+   '["{nama}"]'::jsonb, false)
+on conflict (key) do nothing;
+
+-- Broadcast berulang (Manzil Live) — draf, staff lengkapkan link & aktifkan
+insert into psy_auto_messages
+  (key, name, description, trigger_type, minutes_before, session_time, days_of_week, audience, package_ids, channels, link, message_template, placeholders, is_active)
+values
+  ('manzil_live','Live Bacaan Manzil & Perubatan Alami',
+   'Broadcast jemputan sesi Manzil live kepada pesakit, sebelum sesi bermula pada hari terpilih.',
+   'recurring_broadcast',30,'08:45','[3,4,5]'::jsonb,'["patient"]'::jsonb,'[]'::jsonb,
+   '["whatsapp","inapp","announcement"]'::jsonb,'https://meet.google.com/xxx-xxxx-xxx',
+   E'Salam {nama} 👋\n\n📿 *Sesi Rohani Eksklusif: Alunan Manzil*\nBersama Sheikh Fares Mohammed\n\nSesi akan bermula {lead} lagi (pukul {masa}). Jom sertai untuk ketenangan & perlindungan hari anda.\n\n📹 Sertai: {pautan}\n\n— Ibnu Sina Wellness',
+   '["{nama}","{masa}","{lead}","{pautan}"]'::jsonb,false)
+on conflict (key) do nothing;
+
+-- Alert Kepatuhan kpd COACH (gabungan multi-check) — draf, aktifkan di UI bila sedia
+insert into psy_auto_messages
+  (key, name, description, trigger_type, send_at_time, days_of_week, audience, channels, rule, message_template, placeholders, is_active)
+values
+  ('kepatuhan_alert','Alert Coach — Kepatuhan Pesakit',
+   'Setiap malam, semak kepatuhan setiap pesakit aktif (amalan Catatan Harian tak dibuat/bawah sasaran, hari tak isi, skor rendah, tiada bacaan kesihatan). Gabung jadi SATU alert kepada COACH yang di-assign (papan pemuka + loceng + email) supaya boleh hubungi pesakit esok pagi. Dedup 1×/minggu/pesakit.',
+   'daily_reminder','21:00','[0,1,2,3,4,5,6]'::jsonb,'["coach"]'::jsonb,'["inapp"]'::jsonb,
+   '{"severity":"high","window_days":7,"email_from":"support@ibnusinawellness.com","checks":{"amalan":{"on":true,"min_days_short":3},"checklist":{"on":true,"min_days_missing":3},"skor":{"on":true,"min_score":80},"vitals":{"on":true,"min_days_since":7}}}'::jsonb,
+   E'Assalamualaikum Coach 👋\n\nPesakit {nama} memerlukan perhatian anda.\n\nBerikut perkara yang perlu diberi perhatian (7 hari lepas):\n{senarai}\n\nTindakan Disyorkan:\n📞 Hubungi pesakit untuk membuat semakan keadaan semasa dan memberikan sokongan agar rawatan dapat diteruskan dengan lebih konsisten.\n\nTerima kasih atas perhatian dan bimbingan anda.\n\n— Sistem Auto-Kepatuhan ISW',
+   '["{nama}","{senarai}"]'::jsonb,false)
+on conflict (key) do nothing;
+
 insert into psy_announcement_types (key, title, description, kind, mode, etype, label, sort_order) values
   ('makluman',  'Makluman',            'Makluman umum, notis dan pengumuman biasa.',                'announcement', null,     null,      null,                        1),
   ('event_f2f', 'Event Fizikal (F2F)', 'Program atau acara yang dijalankan secara bersemuka.',      'event',        'f2f',    'kelas',   'Maklumat Event (Fizikal)',  2),

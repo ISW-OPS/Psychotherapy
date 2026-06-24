@@ -438,7 +438,7 @@ CREATE TABLE IF NOT EXISTS psy_payments (
 
 ALTER TABLE psy_payments ENABLE ROW LEVEL SECURITY;
 DO $$ BEGIN CREATE POLICY "Patients read own payments" ON psy_payments FOR SELECT USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Patients insert own payments" ON psy_payments FOR INSERT WITH CHECK (true); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE POLICY "Patients insert own payments" ON psy_payments FOR INSERT WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE POLICY "Staff manage all payments" ON psy_payments FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 CREATE TABLE IF NOT EXISTS psy_orders (
@@ -931,7 +931,7 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN
   CREATE POLICY "Patients can upload own medical reports" ON storage.objects
     FOR INSERT TO authenticated
-    WITH CHECK (bucket_id = 'medical-reports' AND (storage.foldername(name))[1] = 'patient' AND EXISTS (SELECT 1 FROM psy_patients WHERE user_id = auth.uid()));
+    WITH CHECK (bucket_id = 'medical-reports' AND (storage.foldername(name))[1] = 'patient' AND EXISTS (SELECT 1 FROM psy_patients WHERE user_id = auth.uid() AND id::text = (storage.foldername(name))[2]));
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN
@@ -6702,6 +6702,42 @@ alter table psy_events add column if not exists host_role   text;  -- Penceramah
 -- Peringatan WhatsApp 1 jam sebelum acara (Edge Function event-reminders) — penanda dedup
 alter table psy_event_registrations add column if not exists reminder_sent_at timestamptz;
 
+-- Mesej Automatik (rangka umum: template + masa + on/off; Edge function baca dari sini)
+create table if not exists psy_auto_messages (
+  id uuid primary key default gen_random_uuid(),
+  key text not null unique,
+  name text not null,
+  description text,
+  channel text not null default 'whatsapp',
+  trigger_type text not null,            -- before_event | before_session | daily_reminder | on_action | recurring_broadcast
+  minutes_before int,
+  send_at_time time,
+  days_of_week jsonb,                     -- [3,4,5] = Rab/Kha/Jum (recurring_broadcast)
+  session_time time,                      -- masa sesi bermula (recurring_broadcast)
+  audience jsonb default '["patient"]'::jsonb,
+  package_ids jsonb default '[]'::jsonb,
+  channels jsonb default '["whatsapp"]'::jsonb,  -- whatsapp | inapp | announcement
+  link text,
+  last_broadcast_at timestamptz,
+  rule jsonb,                            -- ambang utk alert berasaskan logik (cth kepatuhan madu)
+  message_template text not null,
+  placeholders jsonb default '[]'::jsonb,
+  is_active boolean default true,
+  updated_by uuid references psy_profiles(id) on delete set null,
+  updated_at timestamptz default now(),
+  created_at timestamptz default now()
+);
+alter table psy_auto_messages enable row level security;
+do $$ begin
+  create policy "auto_msg staff read" on psy_auto_messages for select
+    using (auth.uid() in (select id from psy_profiles where role = 'staff'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create policy "auto_msg super manage" on psy_auto_messages for all
+    using (auth.uid() in (select id from psy_profiles where staff_role = 'super_admin'))
+    with check (auth.uid() in (select id from psy_profiles where staff_role = 'super_admin'));
+exception when duplicate_object then null; end $$;
+
 -- Bahan / rakaman acara
 create table if not exists psy_event_materials (
   id uuid primary key default gen_random_uuid(),
@@ -6790,3 +6826,99 @@ create policy "supply_disb_staff" on psy_supply_disbursements for all using (
   exists (select 1 from psy_profiles where id = auth.uid() and role = 'staff'));
 
 SELECT 'Supply disbursements OK' AS status;
+
+-- ════════════════════════════════════════════════════════════════
+-- step68: Jadual hilang — psy_soap_notes, psy_faq_sections, psy_faq_items
+-- ════════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS psy_soap_notes (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id         UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  doctor_id          UUID NOT NULL REFERENCES auth.users(id),
+  chief_complaint    TEXT,
+  hpi                TEXT,
+  examination        TEXT,
+  diagnoses          TEXT[] DEFAULT '{}',
+  clinical_reasoning TEXT,
+  plan_medications   TEXT[] DEFAULT '{}',
+  plan_labs          TEXT[] DEFAULT '{}',
+  follow_up          TEXT,
+  status             TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'signed')),
+  signed_at          TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ DEFAULT now(),
+  updated_at         TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE psy_soap_notes ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  CREATE POLICY "soap_notes_staff_all" ON psy_soap_notes FOR ALL
+    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  CREATE POLICY "soap_notes_patient_read" ON psy_soap_notes FOR SELECT
+    USING (status = 'signed' AND patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+CREATE INDEX IF NOT EXISTS idx_soap_notes_patient ON psy_soap_notes(patient_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_soap_notes_doctor  ON psy_soap_notes(doctor_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS psy_faq_sections (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code       TEXT NOT NULL UNIQUE,
+  title      TEXT NOT NULL,
+  sort_order INT  NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE psy_faq_sections ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  CREATE POLICY "faq_sections_staff_all" ON psy_faq_sections FOR ALL
+    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  CREATE POLICY "faq_sections_public_read" ON psy_faq_sections FOR SELECT USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE TABLE IF NOT EXISTS psy_faq_items (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  section_id UUID NOT NULL REFERENCES psy_faq_sections(id) ON DELETE CASCADE,
+  soalan     TEXT NOT NULL,
+  jawapan    TEXT NOT NULL,
+  sort_order INT  NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE psy_faq_items ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  CREATE POLICY "faq_items_staff_all" ON psy_faq_items FOR ALL
+    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  CREATE POLICY "faq_items_public_read" ON psy_faq_items FOR SELECT USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+CREATE INDEX IF NOT EXISTS idx_faq_items_section ON psy_faq_items(section_id, sort_order);
+
+INSERT INTO psy_faq_sections (code, title, sort_order) VALUES
+  ('umum',     'Soalan Umum',                1),
+  ('rawatan',  'Tentang Rawatan',            2),
+  ('pakej',    'Pakej & Pembayaran',         3),
+  ('kepatuhan','Kepatuhan & Catatan Harian', 4),
+  ('teknikal', 'Teknikal & Akaun',           5)
+ON CONFLICT (code) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION check_referral_code(p_code TEXT)
+RETURNS TABLE (valid BOOLEAN, referrer_name TEXT)
+LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  RETURN QUERY
+  SELECT TRUE, p.full_name
+  FROM psy_patients p
+  WHERE upper(trim(p.referral_code)) = upper(trim(p_code))
+  LIMIT 1;
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT FALSE, NULL::TEXT;
+  END IF;
+END;
+$$;
+
+SELECT 'Missing tables OK' AS status;

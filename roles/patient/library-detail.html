@@ -181,9 +181,12 @@ async function renderDetail(it){
   if(body) setBody(document.getElementById('a-body'),body);
   else if(t==='faq') document.getElementById('a-body').innerHTML='<p class="text-ink/40 italic">Tiada jawapan.</p>';
 
-  if(it.content_url && t!=='video'){ const link=document.getElementById('a-link'); link.href=it.content_url;
+  // Tunjuk pautan "Buka Kandungan" untuk semua jenis berpaut, DAN untuk video yg tak boleh di-embed
+  // (bukan YouTube / mp4/webm/mov) supaya pesakit masih boleh buka video luaran (cth Vimeo/landing).
+  const _embeddable = !!ytId(it.content_url) || /\.(mp4|webm|mov)/i.test(it.content_url||'');
+  if(it.content_url && (t!=='video' || !_embeddable)){ const link=document.getElementById('a-link'); link.href=it.content_url;
     const isCourse=/course|membership|portal/i.test(it.content_url)||/course/i.test(it.content_type||'');
-    link.innerHTML=isCourse?'🎓 Buka Course →':'🔗 Buka Kandungan';
+    link.innerHTML=isCourse?'🎓 Buka Course →':(t==='video'?'▶️ Tonton Video →':'🔗 Buka Kandungan');
     document.getElementById('a-link-wrap').classList.remove('hidden'); }
   if(it.attachment_url){ document.getElementById('a-doc').href=it.attachment_url; document.getElementById('a-doc-wrap').classList.remove('hidden'); }
 
@@ -250,8 +253,8 @@ function setSaveBtn(saved){
 async function toggleSave(){
   if(!window.currentUser||!CUR) return;
   const saved=document.getElementById('btn-save').dataset.saved==='1';
-  if(saved){ await window.db.from('psy_library_bookmarks').delete().eq('user_id',currentUser.id).eq('item_id',CUR.item_id); setSaveBtn(false); banner('Dibuang dari simpanan'); }
-  else { await window.db.from('psy_library_bookmarks').insert({user_id:currentUser.id,item_id:CUR.item_id}); setSaveBtn(true); banner('Disimpan ✓'); }
+  if(saved){ const {error}=await window.db.from('psy_library_bookmarks').delete().eq('user_id',currentUser.id).eq('item_id',CUR.item_id); if(error){ banner('Gagal: '+error.message,'error'); return; } setSaveBtn(false); banner('Dibuang dari simpanan'); }
+  else { const {error}=await window.db.from('psy_library_bookmarks').insert({user_id:currentUser.id,item_id:CUR.item_id}); if(error){ banner('Gagal: '+error.message,'error'); return; } setSaveBtn(true); banner('Disimpan ✓'); }
 }
 function markFeedback(helpful){
   document.getElementById('fb-up').classList.toggle('bg-green-light', helpful===true);
@@ -261,7 +264,8 @@ function markFeedback(helpful){
 }
 async function sendFeedback(helpful){
   if(!window.currentUser||!CUR) return;
-  await window.db.from('psy_library_feedback').upsert({user_id:currentUser.id,item_id:CUR.item_id,helpful,updated_at:new Date().toISOString()},{onConflict:'user_id,item_id'});
+  const {error}=await window.db.from('psy_library_feedback').upsert({user_id:currentUser.id,item_id:CUR.item_id,helpful,updated_at:new Date().toISOString()},{onConflict:'user_id,item_id'});
+  if(error){ banner('Gagal menyimpan maklum balas','error'); return; }
   markFeedback(helpful);
   banner(helpful?'Terima kasih atas maklum balas 👍':'Terima kasih, kami akan perbaiki 👎');
 }

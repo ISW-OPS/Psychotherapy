@@ -100,7 +100,7 @@
                   <div class="text-lg font-bold leading-tight"><span id="hero-weeks-total">—</span> <span class="text-xs font-medium text-white/70">minggu</span></div>
                 </div>
                 <div>
-                  <div class="text-white/70 text-[10px] uppercase tracking-wide">🗓️ Sesi Minggu Ini</div>
+                  <div class="text-white/70 text-[10px] uppercase tracking-wide">🗓️ Sesi Akan Datang</div>
                   <div class="text-lg font-bold leading-tight"><span id="stat-sess-count">0</span> <span class="text-xs font-medium text-white/70">sesi</span></div>
                 </div>
                 <div>
@@ -142,6 +142,11 @@
               </div>
             </div>
 
+            <div id="kep-nudge" class="hidden mt-3 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 flex items-start gap-2">
+              <span class="text-sm leading-none mt-0.5">🌱</span>
+              <p class="text-[11px] text-amber-800 leading-snug">Anda <b>belum isi</b> Catatan Harian hari ini. Konsistensi setiap hari membantu pemulihan anda lebih cepat — jangan lepaskan hari ini ya!</p>
+            </div>
+
             <a href="kepatuhan.html" class="mt-3 w-full bg-green hover:bg-green-dark text-white text-xs font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2">
               ✍️ Isi Sekarang
             </a>
@@ -164,7 +169,7 @@
           <div class="rounded-2xl bg-white border border-ink/8 shadow-sm p-4 flex flex-col min-h-0">
             <div class="flex items-center justify-between mb-2 flex-shrink-0">
               <div class="font-bold text-sm text-ink">Checklist Hari Ini</div>
-              <a href="kepatuhan.html" class="text-[11px] text-navy hover:underline">Semua</a>
+              <a href="routine.html" class="text-[11px] text-navy hover:underline">Semua</a>
             </div>
             <div class="flex items-center gap-3 mb-2 flex-shrink-0">
               <div class="relative w-12 h-12 flex-shrink-0">
@@ -177,7 +182,7 @@
               <div class="text-[11px] text-ink/55 leading-tight"><span class="font-bold text-ink"><span id="checklist-frac">0/0</span></span><br>tugasan selesai</div>
             </div>
             <div id="checklist-list" class="space-y-0.5 flex-1 overflow-y-auto mini-scroll"></div>
-            <a href="kepatuhan.html" class="mt-2 w-full bg-navy hover:bg-navy-dark text-white text-xs font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 flex-shrink-0">✏️ Kemas Kini</a>
+            <a href="routine.html" class="mt-2 w-full bg-navy hover:bg-navy-dark text-white text-xs font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 flex-shrink-0">✏️ Kemas Kini</a>
             <div id="checklist-last" class="hidden"></div>
           </div>
 
@@ -489,6 +494,24 @@ async function loadBanners(user) {
       body:'Aktifkan pakej untuk akses penuh ke Treatment Plan, Coaching, dan Library.',
       cta:'Pilih Pakej →', ctaUrl:'pakej.html', ctaColor:'text-terracotta' }));
   }
+
+  // ⚠️ Sesi tidak hadir yang belum dijadual semula — alert paling atas (urgen, perlu tindakan)
+  try {
+    const { data: missedRaw } = await window.db.from('psy_plan_weekly_progress')
+      .select('id, week_number, session_day, is_extension')
+      .eq('patient_id', patientRecord.id)
+      .eq('status', 'cancel');
+    const missed = (missedRaw || []).filter(r => !r.is_extension);
+    if (missed.length) {
+      const first = missed.slice().sort((a, b) =>
+        (a.week_number - b.week_number) || ((a.session_day || 1) - (b.session_day || 1)))[0];
+      zone.insertAdjacentHTML('afterbegin', bannerHtml({
+        id:'b-missed', grad:'from-terracotta to-terracotta/80', icon:'📅',
+        title: missed.length > 1 ? `${missed.length} Sesi Tidak Hadir — Jadual Semula` : 'Sesi Tidak Hadir — Jadual Semula',
+        body:'Anda terlepas sesi rawatan. Sila tempah semula (reschedule) untuk teruskan jadual anda.',
+        cta:'Jadual Semula →', ctaUrl:`plan.html?reschedule=${first.week_number}.${first.session_day || 1}`, ctaColor:'text-terracotta' }));
+    }
+  } catch (_) {}
 }
 
 (async () => {
@@ -617,6 +640,7 @@ async function loadBanners(user) {
       document.getElementById('kep-pct').textContent = '—';
       document.getElementById('kep-detail').textContent = 'Belum diisi hari ini';
       kepRing.setAttribute('stroke-dasharray', '0 100');
+      document.getElementById('kep-nudge')?.classList.remove('hidden');   // nudge: belum isi hari ini
     }
 
     // ── Perasaan Hari Ini (mood) — hanya bila Catatan Harian sudah diisi ──
@@ -658,7 +682,7 @@ async function loadBanners(user) {
       </div>`;
     }).join('');
     const chkMore = sorted.length > CHK_SHOW
-      ? `<a href="kepatuhan.html" class="block text-center text-[10px] font-semibold text-navy hover:underline pt-1.5">+${sorted.length - CHK_SHOW} lagi →</a>`
+      ? `<a href="routine.html" class="block text-center text-[10px] font-semibold text-navy hover:underline pt-1.5">+${sorted.length - CHK_SHOW} lagi →</a>`
       : '';
     document.getElementById('checklist-list').innerHTML = chkRows
       ? chkRows + chkMore
