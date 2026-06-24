@@ -14,7 +14,7 @@ Petunjuk halaman: `P` = pesakit (`roles/patient/`), `S` = staf (`roles/staff/`).
 
 | | Halaman / Jadual |
 |--|--|
-| Pesakit | `P kyc.html`, `P kob.html`, `P kob-agreement.html` |
+| Pesakit | `P kyc.html`, `P kob.html`, `P kob-agreement.html` *(redirect → `kob.html`; agreement inline dalam fasa 5 KOB)* |
 | Staf | `S kyc-list.html`, `S kyc-review.html`, `S kob-list.html`, `S kob-detail.html`, `S kob-slots.html` |
 | Jadual | `psy_kyc_submissions`, `psy_kob_sessions`, `psy_kob_agreements`, `psy_kob_slot_config`, `psy_dna_reports` |
 
@@ -127,6 +127,8 @@ Petunjuk halaman: `P` = pesakit (`roles/patient/`), `S` = staf (`roles/staff/`).
 | Staf | `S payment-admin.html` |
 | Jadual | `psy_payments` |
 
+> **Nota:** `payment-admin.html` adalah paparan sahaja (rekod + resit). Aktivasi pakej pesakit berlaku melalui `P payment.html` (aliran bayar pesakit), bukan dari panel admin.
+
 > **Status:** UI + DB lengkap tetapi `processPayment()` masih **SIMULASI** — tiada gateway sebenar lagi. Model bayar sekali. Pilihan gateway (Billplz vs ToyyibPay) + SST masih pending. (Lihat memori `project_payment_gateway_pending`.)
 
 ---
@@ -169,7 +171,9 @@ Model: `media_type` / `topic` / `tags` / `package_ids`. (Migrasi step49→51.)
 | Staf | `S surat.html`, `S surat-edit.html`, `S surat-issue.html`, `S issue.html`, `S issue-detail.html` |
 | Jadual | `psy_letter_requests`, `psy_letter_issued`, `psy_letter_templates`, `psy_letter_template_overrides`, `psy_letter_template_files`, `psy_letter_auto_fields` |
 
-7 template surat dalam `shared/letterTemplates.js` (+ RELA DOCX/PDF di folder `surat/`). Jana PDF dengan medan pesakit + letterhead + tandatangan staf → audit log + Storage.
+7 template surat dalam `shared/letterTemplates.js` (+ RELA DOCX/PDF di folder `surat/`). Jana PDF dengan medan pesakit + letterhead + tandatangan staf → **browser print-to-PDF** (tiada simpan ke Storage). Audit log direkod sahaja.
+
+> **Nota:** Laporan isu pesakit (`P issue.html`, `S issue.html`) disimpan dalam `psy_audit_log` (event `issue.reported` / `issue.responded` / `issue.followup`) — tiada jadual `psy_issues` berasingan.
 
 ---
 
@@ -181,7 +185,7 @@ Model: `media_type` / `topic` / `tags` / `package_ids`. (Migrasi step49→51.)
 |--|--|
 | Staf | `S patients.html`, `S patient-hub.html`, `S staff_management.html`, `S staff-detail.html`, `S staff-stats.html`, `S peranan.html`, `S audit-kebenaran.html`, `S profile.html` |
 | Pesakit | `P profile.html` |
-| Jadual | `psy_profiles`, `psy_patients`, `psy_permissions`, `psy_role_permissions`, `psy_user_permissions` |
+| Jadual | `psy_profiles`, `psy_patients`, `psy_roles`, `psy_modules`, `psy_role_module_actions`, `psy_role_permissions`, `psy_user_permissions` |
 
 > **Nota:** `assignments.html` (penugasan) telah **dibersarakan** → redirect. Tab penugasan kini dalam `patients.html`. Edit `patients.html`, bukan `assignments.html`. (Memori `project_assignments_merged`.)
 > **Pencegahan duplikat pesakit**: autoLink + sekatan IC keras; migrasi cleanup step66. (Memori `project_patient_dedup`.)

@@ -38,7 +38,9 @@ if (window.currentUser?.staff_role === 'super_admin') return true;
 Kebenaran disimpan dalam DB:
 | Jadual | Guna |
 |--------|------|
-| `psy_permissions` | Definisi modul + tindakan |
+| `psy_roles` | Senarai peranan (super_admin, doctor, coach, dll) |
+| `psy_modules` | Definisi modul sistem |
+| `psy_role_module_actions` | Tindakan yang dibenarkan per peranan + modul |
 | `psy_role_permissions` | Peta peranan → kebenaran (default) |
 | `psy_user_permissions` | Override per-pengguna |
 
