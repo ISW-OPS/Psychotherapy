@@ -6922,3 +6922,11 @@ END;
 $$;
 
 SELECT 'Missing tables OK' AS status;
+
+-- ════════════════════════════════════════════════════════════════
+-- step69: Kolum hilang — resolution_notes, kob_slot note
+-- ════════════════════════════════════════════════════════════════
+ALTER TABLE psy_risk_alerts      ADD COLUMN IF NOT EXISTS resolution_notes TEXT;
+ALTER TABLE psy_kob_slot_config  ADD COLUMN IF NOT EXISTS note TEXT;
+
+SELECT 'Schema fixes OK' AS status;
