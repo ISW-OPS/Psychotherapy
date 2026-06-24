@@ -332,7 +332,8 @@ DO $$ BEGIN
   CREATE POLICY "Users update own notifications" ON psy_notifications FOR UPDATE USING (user_id = auth.uid());
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN
-  CREATE POLICY "Anyone insert notifications" ON psy_notifications FOR INSERT WITH CHECK (true);
+  CREATE POLICY "Staff insert notifications" ON psy_notifications FOR INSERT
+    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 CREATE INDEX IF NOT EXISTS idx_psy_appointments_time ON psy_appointments(appointment_time);
@@ -3156,6 +3157,11 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN
   CREATE POLICY "kepatuhan_log_staff_read" ON psy_kepatuhan_log FOR SELECT
     USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  CREATE POLICY "kepatuhan_log_staff_write" ON psy_kepatuhan_log FOR ALL
+    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 CREATE INDEX IF NOT EXISTS idx_kepatuhan_log_patient ON psy_kepatuhan_log(patient_id, log_date);

@@ -454,7 +454,7 @@ async function doReview(status) {
             medical_notes:           kyc.medical_notes,
           }).eq('id', pts[0].id);
 
-          // ── Referral: pautkan perujuk + cipta lejar (konteks staf, RLS penuh) ──
+          // ── Referral: pautkan perujuk + cipta lejar ──
           if (kyc.referred_by_code) {
             const referrer = await resolveReferrer(kyc.referred_by_code);
             if (referrer && referrer.id !== pts[0].id) {
@@ -470,6 +470,50 @@ async function doReview(status) {
               });
               if (refErr && !/duplicate|unique/i.test(refErr.message || '')) {
                 console.warn('[referral] insert error:', refErr.message);
+              }
+            }
+          }
+        } else {
+          // Self-registered user with no existing patient record — create one
+          const { error: insErr } = await window.db.from('psy_patients').insert({
+            user_id:                 kyc.user_id,
+            status:                  'active',
+            full_name:               kyc.patient_name,
+            phone:                   kyc.phone,
+            ic_number:               kyc.ic_number,
+            date_of_birth:           kyc.date_of_birth,
+            gender:                  kyc.gender,
+            address:                 kyc.address,
+            occupation:              kyc.occupation,
+            company:                 kyc.company,
+            marital_status:          kyc.marital_status,
+            emergency_contact_name:  kyc.emergency_contact_name,
+            emergency_contact_phone: kyc.emergency_contact_phone,
+            referral_source:         kyc.referral_source,
+            medical_condition:       kyc.medical_condition,
+            condition_duration:      kyc.condition_duration,
+            medical_notes:           kyc.medical_notes,
+            created_by_staff:        false,
+          });
+          if (insErr) throw insErr;
+          if (kyc.referred_by_code) {
+            const { data: newPts } = await window.db.from('psy_patients').select('id').eq('user_id', kyc.user_id).limit(1);
+            if (newPts?.[0]) {
+              const referrer = await resolveReferrer(kyc.referred_by_code);
+              if (referrer && referrer.id !== newPts[0].id) {
+                await window.db.from('psy_patients').update({
+                  referred_by_code:       kyc.referred_by_code,
+                  referred_by_patient_id: referrer.id,
+                }).eq('id', newPts[0].id);
+                const { error: refErr } = await window.db.from('psy_referrals').insert({
+                  referrer_patient_id: referrer.id,
+                  referee_patient_id:  newPts[0].id,
+                  code_used:           kyc.referred_by_code,
+                  status:              'pending',
+                });
+                if (refErr && !/duplicate|unique/i.test(refErr.message || '')) {
+                  console.warn('[referral] insert error:', refErr.message);
+                }
               }
             }
           }
