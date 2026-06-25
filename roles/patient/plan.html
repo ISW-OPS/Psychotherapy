@@ -107,42 +107,57 @@
               <h3 class="font-bold text-lg mb-1" id="book-title">Reschedule Sesi</h3>
               <p class="text-xs text-ink/60 mb-4" id="book-subtitle"></p>
 
-              <div class="grid grid-cols-2 gap-3">
-                <div>
-                  <label class="text-xs font-semibold">Tarikh</label>
-                  <input id="book-date" type="date" onchange="checkBookingDate()"
-                    class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
-                  <p id="book-date-hint" class="text-[10px] text-ink/50 mt-1">Hanya Jumaat, Sabtu, atau Ahad</p>
+              <!-- LANGKAH 1: Sebab tidak hadir — hanya bila reschedule sesi yang tertinggal -->
+              <div id="book-reason-wrap" class="hidden">
+                <label class="text-xs font-semibold">Sebab tidak hadir <span class="text-terracotta">*</span></label>
+                <textarea id="book-reason" rows="3" maxlength="500"
+                  placeholder="Cth: sakit, hal kecemasan keluarga, kerja…"
+                  class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm resize-none focus:border-navy outline-none"></textarea>
+                <p class="text-[10px] text-ink/50 mt-1">Coach anda akan dapat lihat sebab ini.</p>
+              </div>
+
+              <!-- LANGKAH 2: Tarikh, masa & skop (tersembunyi dahulu bila perlu isi sebab) -->
+              <div id="book-schedule-section">
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <label class="text-xs font-semibold">Tarikh</label>
+                    <input id="book-date" type="date" onchange="checkBookingDate()"
+                      class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+                    <p id="book-date-hint" class="text-[10px] text-ink/50 mt-1">Hanya Jumaat, Sabtu, atau Ahad</p>
+                  </div>
+                  <div>
+                    <label class="text-xs font-semibold">Masa</label>
+                    <select id="book-time" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
+                      <option value="">— Pilih tarikh dahulu —</option>
+                    </select>
+                  </div>
                 </div>
-                <div>
-                  <label class="text-xs font-semibold">Masa</label>
-                  <select id="book-time" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm">
-                    <option value="">— Pilih tarikh dahulu —</option>
-                  </select>
+
+                <!-- Toggle: cascade vs minggu ini sahaja -->
+                <div class="mt-3 border border-ink/10 rounded-xl overflow-hidden">
+                  <label class="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-cream/50 transition">
+                    <input type="radio" name="reschedule-scope" value="cascade" checked class="accent-navy">
+                    <div>
+                      <div class="text-xs font-semibold text-ink">Tukar semua sesi seterusnya</div>
+                      <div class="text-[10px] text-ink/45">Minggu lain auto-shift ikut perubahan ini</div>
+                    </div>
+                  </label>
+                  <label class="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-cream/50 border-t border-ink/10 transition">
+                    <input type="radio" name="reschedule-scope" value="week-only" class="accent-navy">
+                    <div>
+                      <div class="text-xs font-semibold text-ink">Tukar minggu ini sahaja</div>
+                      <div class="text-[10px] text-ink/45">Minggu lain kekal jadual asal</div>
+                    </div>
+                  </label>
                 </div>
               </div>
 
-              <!-- Toggle: cascade vs minggu ini sahaja -->
-              <div class="mt-3 border border-ink/10 rounded-xl overflow-hidden">
-                <label class="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-cream/50 transition">
-                  <input type="radio" name="reschedule-scope" value="cascade" checked class="accent-navy">
-                  <div>
-                    <div class="text-xs font-semibold text-ink">Tukar semua sesi seterusnya</div>
-                    <div class="text-[10px] text-ink/45">Minggu lain auto-shift ikut perubahan ini</div>
-                  </div>
-                </label>
-                <label class="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-cream/50 border-t border-ink/10 transition">
-                  <input type="radio" name="reschedule-scope" value="week-only" class="accent-navy">
-                  <div>
-                    <div class="text-xs font-semibold text-ink">Tukar minggu ini sahaja</div>
-                    <div class="text-[10px] text-ink/45">Minggu lain kekal jadual asal</div>
-                  </div>
-                </label>
-              </div>
               <div class="flex gap-2 mt-4">
                 <button onclick="closeBookModal()"
                   class="flex-1 bg-cream px-4 py-2 rounded-lg text-sm font-semibold">Batal</button>
-                <button onclick="confirmBooking()"
+                <button id="book-next-btn" onclick="bookReasonNext()"
+                  class="hidden flex-1 bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold">Seterusnya →</button>
+                <button id="book-confirm-btn" onclick="confirmBooking()"
                   class="flex-1 bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold">Sahkan</button>
               </div>
             </div>
@@ -401,6 +416,7 @@
     let pendingBookWeek = null;
     let pendingBookSessionDay = null;
     let pendingBookExistingId = null;
+    let pendingBookIsMiss = false;
     let currentPage = 1;
     const getPageSize = () => window.innerWidth < 768 ? 1 : 6;
 
@@ -757,58 +773,6 @@
       return missedSuggestions.get(`${row.week_number}_${row.session_day || 1}`) || null;
     }
 
-    async function quickReschedule(week, day, rowId, suggestedISO) {
-      const row = weeklyProgressRows.find(r => r.id === rowId);
-      if (!row) return;
-
-      const newDate = new Date(suggestedISO);
-      // Kekalkan masa asal
-      if (row.session_date) {
-        const orig = new Date(row.session_date);
-        newDate.setHours(orig.getHours(), orig.getMinutes(), 0, 0);
-      } else {
-        const t = day === 1 ? (activePlan.preferred_time_day1 || '10:00') : (activePlan.preferred_time_day2 || '10:00');
-        const [h, m] = t.split(':');
-        newDate.setHours(parseInt(h), parseInt(m), 0, 0);
-      }
-
-      try {
-        if (row.appointment_id) {
-          await window.db.from('psy_appointments').update({ appointment_time: newDate.toISOString(), status: 'scheduled' }).eq('id', row.appointment_id);
-        } else {
-          const { data: newAppt } = await window.db.from('psy_appointments').insert({
-            patient_id: patientRecord.id,
-            patient_name: currentUser.full_name,
-            service: `${activePlan.name} · Minggu ${week} Sesi ${day}`,
-            appointment_time: newDate.toISOString(),
-            duration_min: 60,
-            status: 'scheduled',
-          }).select('id').single();
-          if (newAppt?.id) row.appointment_id = newAppt.id;
-        }
-
-        await dbUpdate('psy_plan_weekly_progress', row.id, {
-          session_date: newDate.toISOString(),
-          status: 'booked',
-          updated_at: new Date().toISOString(),
-        });
-
-        await auditLog('plan.session_rescheduled', activePlan.id, { week, day, newDate: newDate.toISOString() });
-
-        const orig = new Date(row.session_date);
-        const offsetDays = Math.round((newDate.getTime() - orig.getTime()) / 86400000);
-        if (offsetDays !== 0) {
-          const shifted = await cascadeShiftSessions(week, day, offsetDays);
-          if (shifted > 0) banner(`${shifted} sesi seterusnya turut diubah (${offsetDays > 0 ? '+' : ''}${offsetDays} hari)`);
-        }
-
-        banner(`Sesi ${day} Minggu ${week} dijadual semula: ${newDate.toLocaleDateString('ms-MY', { weekday: 'long', day: 'numeric', month: 'long' })}`);
-        await loadWeeklyProgress(true);
-      } catch (err) {
-        banner('Ralat reschedule: ' + err.message, 'error');
-      }
-    }
-
     function renderSession(week, day, row, otherRow) {
       const status = row?.status;
       const hasDate = !!row?.session_date;
@@ -854,9 +818,8 @@
       if (status === 'cancel') {
         const _reschedIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18M8 2v4M16 2v4M9 16l2 2 4-4"/></svg>';
         const _reschedCls = 'inline-flex items-center gap-1 bg-indigo-200 hover:bg-indigo-300 text-indigo-950 text-[11px] font-bold px-2.5 py-1 rounded-lg whitespace-nowrap transition-colors';
-        actionBtn = suggested
-          ? `<button onclick="quickReschedule(${week},${day},'${row.id}','${suggested.toISOString()}')" class="${_reschedCls}">${_reschedIcon} Reschedule</button>`
-          : `<button onclick="openBookModal(${week},${day},true)" class="${_reschedCls}">${_reschedIcon} Reschedule</button>`;
+        // Buka modal (bukan one-click) supaya pesakit boleh isi sebab tidak hadir; tarikh cadangan di-prefill.
+        actionBtn = `<button onclick="openBookModal(${week},${day},true${suggested ? `,'${suggested.toISOString()}'` : ''})" class="${_reschedCls}">${_reschedIcon} Reschedule</button>`;
       }
 
       return `<div class="flex items-start gap-3 bg-white/60 rounded-xl px-3 py-2.5 mt-2">
@@ -955,7 +918,7 @@
       }
     }
 
-    async function openBookModal(w, day, isReschedule) {
+    async function openBookModal(w, day, isReschedule, suggestedISO) {
       pendingBookWeek = w;
       pendingBookSessionDay = day;
       const existing = weeklyProgressRows.find(r => r.week_number === w && (r.session_day || 1) === day);
@@ -964,11 +927,23 @@
       document.getElementById('book-title').textContent = isReschedule
         ? `Reschedule — Minggu ${w} Sesi ${day}`
         : `Tempah — Minggu ${w} Sesi ${day}`;
-      document.getElementById('book-subtitle').textContent = 'Pilih tarikh & masa (Jumaat/Sabtu/Ahad sahaja).';
+      // Sebab tidak hadir — wajib hanya bila reschedule sesi yang tertinggal (tidak hadir / perlu jadual semula)
+      pendingBookIsMiss = ['cancel', 'reschedule'].includes(existing?.status);
+      document.getElementById('book-subtitle').textContent = pendingBookIsMiss
+        ? 'Beritahu sebab anda tidak hadir, kemudian pilih tarikh baharu.'
+        : 'Pilih tarikh & masa (Jumaat/Sabtu/Ahad sahaja).';
+      const reasonWrap = document.getElementById('book-reason-wrap');
+      const reasonInput = document.getElementById('book-reason');
+      reasonWrap.classList.toggle('hidden', !pendingBookIsMiss);
+      reasonInput.value = pendingBookIsMiss ? (existing?.absence_reason || '') : '';
+      // Aliran berperingkat: sesi tertinggal mula di Langkah 1 (isi sebab dulu), baru Langkah 2 (pilih tarikh).
+      bookSetStep(pendingBookIsMiss ? 1 : 2);
 
-      // Default tarikh: existing date kalau ada, kalau tak base on previous session +7
+      // Default tarikh: tarikh cadangan (jika ada) > existing date > previous session +7
       let base;
-      if (existing?.session_date) {
+      if (suggestedISO) {
+        base = new Date(suggestedISO);
+      } else if (existing?.session_date) {
         base = new Date(existing.session_date);
       } else {
         const prevSession = weeklyProgressRows.find(r => r.week_number === w - 1 && (r.session_day || 1) === day);
@@ -1000,6 +975,28 @@
       pendingBookWeek = null;
       pendingBookSessionDay = null;
       pendingBookExistingId = null;
+      pendingBookIsMiss = false;
+      bookSetStep(2); // reset utk tempahan biasa seterusnya
+    }
+
+    // Tukar antara Langkah 1 (sebab tidak hadir) & Langkah 2 (tarikh/masa) dalam modal reschedule.
+    function bookSetStep(step) {
+      const isStep1 = step === 1;
+      document.getElementById('book-schedule-section').classList.toggle('hidden', isStep1);
+      document.getElementById('book-next-btn').classList.toggle('hidden', !isStep1);
+      document.getElementById('book-confirm-btn').classList.toggle('hidden', isStep1);
+      if (isStep1) setTimeout(() => document.getElementById('book-reason')?.focus(), 50);
+    }
+
+    // Langkah 1 → 2: sahkan sebab diisi, baru dedahkan pilihan tarikh.
+    function bookReasonNext() {
+      const reason = document.getElementById('book-reason').value.trim();
+      if (!reason) {
+        banner('Sila isi sebab tidak hadir', 'error');
+        document.getElementById('book-reason').focus();
+        return;
+      }
+      bookSetStep(2);
     }
 
 
@@ -1007,6 +1004,13 @@
       const date = document.getElementById('book-date').value;
       const time = document.getElementById('book-time').value;
       if (!date || !time) { banner('Sila pilih tarikh dan masa', 'error'); return; }
+
+      const absenceReason = pendingBookIsMiss ? document.getElementById('book-reason').value.trim() : null;
+      if (pendingBookIsMiss && !absenceReason) {
+        banner('Sila isi sebab tidak hadir', 'error');
+        document.getElementById('book-reason').focus();
+        return;
+      }
 
       const sessionAt = new Date(`${date}T${time}:00`);
       const dow = sessionAt.getDay();
@@ -1047,6 +1051,7 @@
           status: 'booked',
           updated_at: new Date().toISOString(),
           ...(apptId ? { appointment_id: apptId } : {}),
+          ...(absenceReason ? { absence_reason: absenceReason } : {}),
         };
 
         if (pendingBookExistingId) {
