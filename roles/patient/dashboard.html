@@ -536,7 +536,7 @@ async function loadBanners(user) {
 
     if (!patientRecord) return;
 
-    const [plans, completionsWeek, vitalsRows, upcomingRows, announces, activePkgRows, todayKepLog, todayCheckin, myEventRegs, upcomingEvents] = await Promise.all([
+    const [plans, completionsWeek, vitalsRows, upcomingRows, announces, activePkgRows, todayKepLog, todayCheckin, myEventRegs, upcomingEvents, allProgressRows] = await Promise.all([
       dbQuery('psy_treatment_plans', { eq: { patient_id: patientRecord.id, status: 'active' } }).catch(() => []),
       window.db.from('psy_daily_completions').select('log_date, item_time')
         .eq('patient_id', patientRecord.id).gte('log_date', weekAgoKey).lte('log_date', today)
@@ -571,6 +571,11 @@ async function loadBanners(user) {
         .eq('status', 'published')
         .or('end_at.gte.' + new Date().toISOString() + ',and(end_at.is.null,start_at.gte.' + new Date().toISOString() + ')')
         .order('start_at', { ascending: true }).limit(20)
+        .then(r => r.data || [], () => []),
+      // Semua baris kemajuan mingguan — untuk kira cadangan tarikh sesi tidak hadir (Diganti kepada)
+      window.db.from('psy_plan_weekly_progress').select('session_date, week_number, session_day, status, is_extension, meet_link')
+        .eq('patient_id', patientRecord.id)
+        .order('week_number', { ascending: true }).order('session_day', { ascending: true })
         .then(r => r.data || [], () => []),
     ]);
 
@@ -733,13 +738,56 @@ async function loadBanners(user) {
     const todaySessions = upcomingRows.filter(r => r.session_date === today);
     document.getElementById('stat-sess-count').textContent = todaySessions.length || upcomingRows.length;
 
+    // Cadangan tarikh untuk sesi tidak hadir (Diganti kepada) — selari dengan logik di plan.html
+    function calcMissedSuggestions(rows) {
+      const map = new Map();
+      const missed = (rows || [])
+        .filter(r => !r.is_extension && r.status === 'cancel' && r.session_date)
+        .sort((a, b) => a.week_number - b.week_number || (a.session_day || 1) - (b.session_day || 1));
+      const t0 = new Date(today + 'T00:00:00'); t0.setHours(0, 0, 0, 0);
+      let minDate = new Date(t0);
+      for (const sess of missed) {
+        const orig = new Date(sess.session_date);
+        const dow = orig.getDay();
+        const bothMissed = missed.some(r =>
+          r.week_number === sess.week_number && (r.session_day || 1) !== (sess.session_day || 1));
+        const addDays = bothMissed ? 7 : (dow === 0 ? 6 : 1);
+        const targetDow = (dow + addDays) % 7;
+        const bookedSameWeek = (rows || []).filter(r =>
+          r.week_number === sess.week_number && (r.session_day || 1) !== (sess.session_day || 1) &&
+          r.status === 'booked' && r.session_date);
+        for (const b of bookedSameWeek) {
+          const bd = new Date(b.session_date); bd.setHours(0, 0, 0, 0);
+          if (bd > minDate) minDate = new Date(bd);
+        }
+        let next = new Date(orig); next.setDate(next.getDate() + addDays);
+        const after = new Date(minDate); after.setDate(after.getDate() + 1);
+        if (next < after) {
+          next = new Date(after);
+          while (next.getDay() !== targetDow) next.setDate(next.getDate() + 1);
+        }
+        map.set(`${sess.week_number}_${sess.session_day || 1}`, next);
+        minDate = new Date(next);
+      }
+      return map;
+    }
+    const missedSuggestions = calcMissedSuggestions(allProgressRows);
+
     // Gabung sesi rawatan + acara berdaftar dalam satu senarai (ikut tarikh)
     const EV_EMOJI = { kelas:'🧘', webinar:'🎥', komuniti:'🤝', challenge:'🏆', manzil:'🕌' };
     const startOfToday = new Date(today + 'T00:00:00');
     const sessionItems = upcomingRows.map(s => ({ kind:'session', date: s.session_date, week: s.week_number, day: s.session_day || 1, meet: s.meet_link, status: s.status }));
+    // Sesi tidak hadir (cancel) yang perlu dijadual semula — tunjuk pada tarikh cadangan (Diganti kepada)
+    const missedItems = (allProgressRows || [])
+      .filter(r => !r.is_extension && r.status === 'cancel' && r.session_date)
+      .map(s => {
+        const sugg = missedSuggestions.get(`${s.week_number}_${s.session_day || 1}`);
+        return sugg ? { kind:'session', date: sugg.toISOString(), week: s.week_number, day: s.session_day || 1, meet: s.meet_link, status: 'cancel' } : null;
+      })
+      .filter(Boolean);
     const eventItems = (myEventRegs || []).map(r => r.psy_events).filter(e => e && e.status === 'published' && new Date(e.start_at) >= startOfToday)
       .map(e => ({ kind:'event', date: e.start_at, title: e.title, meet: e.meet_link, type: e.type }));
-    const upcomingMerged = [...sessionItems, ...eventItems].sort((a, b) => new Date(a.date) - new Date(b.date));
+    const upcomingMerged = [...sessionItems, ...missedItems, ...eventItems].sort((a, b) => new Date(a.date) - new Date(b.date));
 
     document.getElementById('upcoming-list').innerHTML = upcomingMerged.slice(0, 5).map(it => {
       const d = new Date(it.date);
@@ -766,8 +814,13 @@ async function loadBanners(user) {
         </div>`;
       }
 
-      const subLine = ([wdStr, tStr].filter(Boolean).join(' · ') + (it.meet ? ' · 💻 Online' : '')) || '—';
-      const statusBadge = it.status === 'reschedule'
+      const isMissed = it.status === 'cancel';
+      const subLine = isMissed
+        ? `🔴 Tidak Hadir · Diganti kepada ${[wdStr, tStr].filter(Boolean).join(' · ')}`
+        : (([wdStr, tStr].filter(Boolean).join(' · ') + (it.meet ? ' · 💻 Online' : '')) || '—');
+      const statusBadge = isMissed
+        ? '<span class="text-[9px] font-bold bg-terracotta/15 text-terracotta px-1.5 py-0.5 rounded">⚠️ Tidak hadir</span>'
+        : it.status === 'reschedule'
         ? '<span class="text-[9px] font-bold bg-gold/20 text-gold-dark px-1.5 py-0.5 rounded">🔄 Perlu tukar</span>'
         : isToday ? '<span class="text-[9px] font-bold bg-gold/20 text-gold-dark px-1.5 py-0.5 rounded">Hari ini</span>'
         : '';
