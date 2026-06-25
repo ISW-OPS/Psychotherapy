@@ -5,30 +5,30 @@
 // ── Patient nav (flat list) ──────────────────────────────
 const NAV_ITEMS_BY_ROLE = {
   patient: [
-    { id: 'dashboard', url: 'dashboard.html', icon: '🏠', label: 'Dashboard' },
+    { id: 'dashboard', url: 'dashboard.html', icon: '🏠', label: 'Papan Pemuka' },
     { id: 'kob', url: 'kob.html', icon: '🩺', label: 'KOB' },
     { id: 'announcements', url: 'announcements.html', icon: '📢', label: 'Pengumuman' },
     { id: 'events', url: 'events.html', icon: '📅', label: 'Acara & Kelas' },
-    { id: 'plan', url: 'plan.html', icon: '💊', label: 'My Treatment Plan' },
+    { id: 'plan', url: 'plan.html', icon: '💊', label: 'Pelan Rawatan Saya' },
     { id: 'routine', url: 'routine.html', icon: '🕐', label: 'Jadual Harian' },
     { id: 'pakej', url: 'pakej.html', icon: '🗂️', label: 'Pakej Rawatan' },
     { id: 'kepatuhan', url: 'kepatuhan.html', icon: '📝', label: 'Catatan Harian' },
     { id: 'vitals', url: 'vitals.html', icon: '📉', label: 'Bacaan Saya' },
     { id: 'rekod-perubatan', url: 'rekod-perubatan.html', icon: '🩻', label: 'Rekod Perubatan' },
     {
-      id: 'library', url: 'library.html', icon: '📚', label: 'Self-Help Library', children: [
+      id: 'library', url: 'library.html', icon: '📚', label: 'Pustaka Bantuan Diri', children: [
         { id: 'video', url: 'library.html?tab=video', icon: '📹', label: 'Video' },
         { id: 'artikel', url: 'library.html?tab=article', icon: '📝', label: 'Artikel' },
         { id: 'faq', url: 'faq.html', icon: '❓', label: 'FAQ' },
       ]
     },
-    { id: 'shop', url: 'shop.html', icon: '🛒', label: 'Product' },
-    { id: 'payment', url: 'payment.html', icon: '💳', label: 'Payment' },
-    { id: 'psy_orders', url: 'orders.html', icon: '📦', label: 'Orders & Tracking' },
-    { id: 'issue', url: 'issue.html', icon: '⚠️', label: 'Report Issue' },
+    { id: 'shop', url: 'shop.html', icon: '🛒', label: 'Produk' },
+    { id: 'payment', url: 'payment.html', icon: '💳', label: 'Pembayaran' },
+    { id: 'psy_orders', url: 'orders.html', icon: '📦', label: 'Pesanan & Penjejakan' },
+    { id: 'issue', url: 'issue.html', icon: '⚠️', label: 'Lapor Isu' },
     { id: 'pulangan', url: 'pulangan.html', icon: '🍯', label: 'Pulangan Botol' },
     { id: 'surat', url: 'surat.html', icon: '📜', label: 'Surat Rasmi' },
-    { id: 'kyc', url: 'kyc.html', icon: '🆔', label: 'KYC Form' },
+    { id: 'kyc', url: 'kyc.html', icon: '🆔', label: 'Borang KYC' },
   ],
   staff: [
     { id: 'dashboard', url: 'dashboard.html', icon: '🏥', label: 'Dashboard' },

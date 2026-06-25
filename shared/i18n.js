@@ -101,7 +101,13 @@
     'Pesakit': 'Patient',
 
     // — Chrome: patient sidebar nav —
-    'My Treatment Plan': 'My Treatment Plan',
+    'Papan Pemuka': 'Dashboard',
+    'Pelan Rawatan Saya': 'My Treatment Plan',
+    'Pustaka Bantuan Diri': 'Self-Help Library',
+    'Pembayaran': 'Payment',
+    'Pesanan & Penjejakan': 'Orders & Tracking',
+    'Lapor Isu': 'Report Issue',
+    'Borang KYC': 'KYC Form',
     'Jadual Harian': 'Daily Schedule',
     'Pakej Rawatan': 'Treatment Package',
     'Catatan Harian': 'Daily Log',
