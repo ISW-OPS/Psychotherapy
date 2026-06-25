@@ -5913,7 +5913,7 @@ INSERT INTO psy_role_module_actions (role_code, module_code, action_code) VALUES
   ('admin','dashboard','view'),
   ('admin','patient','view'),('admin','patient','create'),('admin','patient','edit'),('admin','patient','export'),
   ('admin','schedule','view'),('admin','schedule','create'),('admin','schedule','edit'),('admin','schedule','delete'),
-  ('admin','coaching','view'),
+  ('admin','coaching','view'),('admin','coaching','create'),('admin','coaching','edit'),('admin','coaching','delete'),
   ('admin','kob','view'),('admin','kob','create'),('admin','kob','edit'),('admin','kob','settings'),
   ('admin','inventory','view'),('admin','inventory','create'),('admin','inventory','edit'),('admin','inventory','delete'),('admin','inventory','export'),
   ('admin','orders','view'),('admin','orders','create'),('admin','orders','edit'),
