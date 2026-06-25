@@ -32,48 +32,53 @@ async function checkAuth(requiredRole) {
 // ── RBAC v2: PAGE → MODULE mapping (untuk page-level access guard) ──
 // Setiap nav item mempunyai module tersendiri supaya boleh dikawal berasingan dari RBAC UI.
 window.PAGE_MODULE = {
-  // UTAMA
+  // UTAMA — map ke modul dalam psy_modules
   dashboard:        'dashboard',
   psy_patients:     'patient', patient_hub: 'patient', vitals: 'patient',
-  kyc_forms:        'kyc',
+  kyc_forms:        'patient',   // KYC sebahagian daripada modul patient
   psy_appointments: 'schedule',
-  plan_week:        'plan_week',
+  plan_week:        'coaching',  // weekly plan = coaching workflow
   kob_list:         'kob',
-  kepatuhan:        'kepatuhan',
+  kepatuhan:        'patient',   // kepatuhan staff view = patient management
+  risk:             'patient',   // amaran risiko = patient management
 
   // OPERASI
   pakej:            'package',
-  psy_products:     'products',
+  psy_products:     'inventory', // produk di bawah inventory
   inventory:        'inventory', kit_prosedur: 'inventory',
-  pulangan:         'pulangan',
+  pulangan:         'operations',
   psy_orders:       'orders',
-  payment_admin:    'payment',
+  payment_admin:    'package',   // pembayaran di bawah package
 
   // KOMUNIKASI
-  announcements:    'announcements',
-  events_admin:     'events',          // Acara & Kelas — modul RBAC berasingan
-  auto_messages:    'auto_messages',   // Mesej Automatik (super admin)
-  library:          'library',
+  announcements:    'communication',
+  events_admin:     'communication',
+  auto_messages:    'communication',
+  library:          'communication',
 
   // LAPORAN
-  governance:       'governance',
-  staff_stats:      'staff_stats',
-  pakej_laporan:    'pakej_laporan',
-  issue:            'issue',
+  governance:       'reports',
+  staff_stats:      'reports',
+  pakej_laporan:    'reports',
+  issue:            'operations',
 
   // PENTADBIRAN
-  surat:            'surat',
-  closures:         'closures',
-  kob_slots:        'kob_slots',
+  surat:            'operations',
+  closures:         'operations',
+  kob_slots:        'kob',
   staff_mgmt:       'staff',
 
   // SISTEM
   peranan:          'rbac',
-  audit_kebenaran:  'audit_kebenaran',
-  audit:            'audit',
+  audit_kebenaran:  'rbac',
+  audit:            'rbac',
 
   // sub-pages (akses via patient-hub, bukan nav terus)
   assignments: 'coaching', coaching: 'coaching', consultation: 'coaching',
+  coaching_catalog: 'coaching', plans: 'coaching',
+  psy_vitals: 'patient',
+  inbox: 'communication',
+  feedback: 'operations', services: 'operations',
   // profile & login sentiasa allow (bukan dalam PAGE_MODULE)
 };
 
