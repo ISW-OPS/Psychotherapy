@@ -5808,22 +5808,52 @@ INSERT INTO psy_actions (code, label, icon, sort_order) VALUES
   ('settings', 'Tetapan',  '⚙️',  60)
 ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label, icon=EXCLUDED.icon, sort_order=EXCLUDED.sort_order;
 
--- ── 2) Modules (13 group utama) ──
-INSERT INTO psy_modules (code, label, icon, sort_order) VALUES
-  ('dashboard',     'Dashboard',            '🏠',  10),
-  ('patient',       'Pesakit & KYC',        '👥',  20),
-  ('schedule',      'Kalender & Jadual',    '📅',  30),
-  ('coaching',      'Coaching & Sesi',      '🧑‍🏫', 40),
-  ('kob',           'KOB',                  '🩺',  50),
-  ('inventory',     'Inventori & Produk',   '🏭',  60),
-  ('orders',        'Orders & Tracking',    '📦',  70),
-  ('package',       'Pakej & Pembayaran',   '💳',  80),
-  ('communication', 'Komunikasi & Library', '📢',  90),
-  ('operations',    'Operasi Klinik',       '⚙️', 100),
-  ('reports',       'Laporan & Audit',      '📊', 110),
-  ('staff',         'Pengurusan Staff',     '👨‍⚕️',120),
-  ('rbac',          'Peranan & Kebenaran',  '🔐', 130)
-ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label, icon=EXCLUDED.icon, sort_order=EXCLUDED.sort_order;
+-- ── 2) Modules — sort_order ikut susunan navbar ──
+--      UTAMA(10-80) → OPERASI(90-140) → KOMUNIKASI(150-180)
+--      → LAPORAN(190-220) → PENTADBIRAN(230-260) → SISTEM(270-290)
+--      Modul broad/internal (untuk internal action checks) → 300+
+INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
+  -- UTAMA
+  ('dashboard',     'Dashboard',            '🏠', 'staff',  10),
+  ('patient',       'Pesakit',              '👥', 'staff',  20),
+  ('kyc',           'KYC',                  '🆔', 'staff',  30),
+  ('schedule',      'Kalendar & Jadual',    '📅', 'staff',  40),
+  ('plan_week',     'Weekly Plan',          '📋', 'staff',  50),
+  ('kob',           'KOB',                  '🩺', 'staff',  60),
+  ('kepatuhan',     'Kepatuhan',            '📊', 'staff',  70),
+  ('risk',          'Amaran Risiko',        '⚠️', 'staff',  80),
+  -- OPERASI
+  ('package',       'Pakej Rawatan',        '🗂️', 'staff',  90),
+  ('products',      'Produk',              '🛍️', 'staff', 100),
+  ('inventory',     'Inventori',            '🏭', 'staff', 110),
+  ('orders',        'Orders & Tracking',    '📦', 'staff', 120),
+  ('pulangan',      'Pulangan Botol',      '🍯', 'staff', 130),
+  ('payment',       'Pembayaran',          '💳', 'staff', 140),
+  -- KOMUNIKASI
+  ('announcements', 'Pengumuman',          '📢', 'staff', 150),
+  ('events',        'Acara & Kelas',       '📅', 'staff', 160),
+  ('auto_messages', 'Mesej Automatik',     '🤖', 'staff', 170),
+  ('library',       'Library',             '📚', 'staff', 180),
+  -- LAPORAN
+  ('governance',    'Governance',          '📈', 'staff', 190),
+  ('staff_stats',   'Statistik',           '📊', 'staff', 200),
+  ('pakej_laporan', 'Laporan Pakej',       '📦', 'staff', 210),
+  ('issue',         'Report Issue',        '⚠️', 'staff', 220),
+  -- PENTADBIRAN
+  ('surat',         'Surat Rasmi',         '📜', 'staff', 230),
+  ('closures',      'Penutupan Klinik',    '🚫', 'staff', 240),
+  ('kob_slots',     'Slot Konsultasi',     '⏰', 'staff', 250),
+  ('staff',         'Pengurusan Staff',     '👨‍⚕️','staff', 260),
+  -- SISTEM
+  ('rbac',          'Peranan & Kebenaran',  '🔐', 'staff', 270),
+  ('audit_kebenaran','Audit Kebenaran',    '📋', 'staff', 280),
+  ('audit',         'Audit Log',           '🔒', 'staff', 290),
+  -- Modul broad/internal (sub-page checks, bukan navbar item sendiri)
+  ('coaching',      'Coaching & Sesi',      '🧑‍🏫','staff', 300),
+  ('communication', 'Komunikasi',           '📢', 'staff', 310),
+  ('operations',    'Operasi Klinik',       '⚙️', 'staff', 320),
+  ('reports',       'Laporan',              '📊', 'staff', 330)
+ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label, icon=EXCLUDED.icon, scope=EXCLUDED.scope, sort_order=EXCLUDED.sort_order;
 
 -- ── 3) Module × Action applicability ──
 -- Dashboard hanya boleh "Lihat"
