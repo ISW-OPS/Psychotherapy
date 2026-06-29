@@ -39,29 +39,24 @@ async function resolveKycApproved() {
 }
 
 async function enforceKyc(currentPageId) {
-  // Always-allowed pages (patient can browse packages + pay during KOB flow)
-  if (['kyc', 'profile', 'dashboard', 'kob', 'pakej', 'payment', 'routine', 'checkin', 'kepatuhan'].includes(currentPageId)) return true;
+  // Sentiasa boleh (tiada data rawatan sensitif): KYC sendiri, profil, dashboard
+  if (['kyc', 'profile', 'dashboard'].includes(currentPageId)) return true;
 
-  // KOB flow gating: must complete KOB before accessing other features
-  const p = window.patientRecord;
-  const kobStatus = p?.kob_status || 'na';
+  // ── GATE 1: KYC MESTI DILULUSKAN staff dulu sebelum akses apa-apa lain ──
+  // kycApproved = true bila psy_patients.status='active' ATAU submission terkini 'approved'.
+  // Pesakit belum lulus → terkunci, dihantar ke skrin KYC (papar status menunggu).
+  if (!window.kycApproved) { window.location.href = 'kyc.html'; return false; }
+
+  // (KYC sudah lulus) — boleh teruskan onboarding KOB + browse pakej/bayar
+  if (['kob', 'pakej', 'payment', 'routine', 'checkin', 'kepatuhan'].includes(currentPageId)) return true;
+
+  // ── GATE 2: features penuh (plan, vitals, library, dll) — mesti siap KOB dulu ──
+  const kobStatus = window.patientRecord?.kob_status || 'na';
   if (kobStatus !== 'na' && kobStatus !== 'completed') {
-    // Payment is external (GHL). KYC is Step 1.
-    if (kobStatus === 'pending_payment' || kobStatus === 'paid') {
-      window.location.href = 'kyc.html';
-    } else {
-      // kyc_done / booked / hadir → tempah / lihat KOB
-      window.location.href = 'kob.html';
-    }
+    window.location.href = 'kob.html';
     return false;
   }
-
-  // KOB completed → unlock everything (KYC admin approval no longer mandatory)
-  if (kobStatus === 'completed') return true;
-
-  if (window.kycApproved) return true;
-  window.location.href = 'kyc.html';
-  return false;
+  return true; // KYC lulus + KOB (na/completed) → buka semua
 }
 
 // ==================== PACKAGE GATING ====================
@@ -187,7 +182,7 @@ async function initPatient(pageId, titleSub) {
   const navItems = getNavItems('patient').filter(item => {
     if (!canPatient(item.id)) return false;
     if (item.id === 'kyc' && window.kycApproved) return false;
-    if (item.id === 'kob' && kobStatus === 'na' && !window.kycApproved) return false;
+    if (item.id === 'kob' && !window.kycApproved) return false;   // KOB hanya lepas KYC lulus
     return true;
   });
   renderNavbar('patient', window.currentUser, navItems, pageId);
