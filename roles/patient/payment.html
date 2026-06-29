@@ -93,7 +93,7 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/shared/supabase.js"></script>
 <script src="../../config/supabase.js"></script>
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
@@ -426,6 +426,24 @@ async function processPayment() {
         });
         if (error) throw error;
         clearCart();
+
+        // Notify admin & manager: new order
+        (async () => {
+          try {
+            const { data: staffRows } = await window.db.from('psy_profiles')
+              .select('id').eq('role', 'staff').in('staff_role', ['admin', 'manager']);
+            if (staffRows?.length && typeof notify === 'function') {
+              const ptName = window.currentUser?.full_name || window.currentUser?.email || 'Pesakit';
+              const itemCount = item.items?.length || 1;
+              const total = item.amount ? `RM${(item.amount/100).toFixed(2)}` : '';
+              for (const s of staffRows) {
+                notify(s.id, 'order', 'Pesanan Baru Diterima',
+                  `${ptName} membuat pesanan (${itemCount} item${itemCount > 1 ? 's' : ''}${total ? ' · ' + total : ''}).`,
+                  '../staff/orders.html');
+              }
+            }
+          } catch (_) {}
+        })();
       }
     }
 
@@ -466,6 +484,11 @@ async function processPayment() {
       total: grandTotal,
       method,
     });
+
+    await notify(currentUser.id, 'system',
+      `Pembayaran Berjaya ✅`,
+      `Resit ${receiptRef} — RM ${grandTotal.toFixed(2)} diterima (${method}). Semak dalam Pesanan & Pembayaran.`,
+      'payment.html');
 
     localStorage.removeItem('isw_pending_payment');
 

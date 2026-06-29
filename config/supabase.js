@@ -13,13 +13,20 @@ const _ENV = {
 
 const _isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 const _defaultEnv = _isLocal ? 'testing' : 'production';
-const _activeEnv = localStorage.getItem('isw_env') || _defaultEnv;
+const _activeEnvRaw = localStorage.getItem('isw_env');
+const _activeEnv = _ENV[_activeEnvRaw] ? _activeEnvRaw : _defaultEnv;
+if (_activeEnvRaw && !_ENV[_activeEnvRaw]) {
+  localStorage.removeItem('isw_env'); // buang nilai rosak
+}
 const _cfg = _ENV[_activeEnv];
 
 const SUPABASE_URL = _cfg.url;
 const SUPABASE_ANON_KEY = _cfg.key;
 
-const _supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+if (!window.supabase) {
+  console.error('[ISW] Supabase CDN gagal dimuatkan. Sila muat semula halaman.');
+}
+const _supabaseClient = window.supabase?.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) || null;
 
 window.db = _supabaseClient;
 window.ISW_ENV = _activeEnv;

@@ -171,24 +171,31 @@
           <div id="schedule-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3"></div>
         </div>
 
-        <!-- Notes + Tasks -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div class="bg-white rounded-2xl border border-ink/10 p-5">
-            <div class="flex items-center justify-between mb-3">
-              <h3 class="font-bold text-base text-ink flex items-center gap-2">📝 Nota Mingguan</h3>
-              <button onclick="saveNotes()" class="text-xs px-3 py-1.5 rounded-lg border border-ink/15 hover:bg-cream font-semibold text-ink/70">✏️ Edit Nota</button>
-            </div>
-            <div id="notes-host" class="bg-gold/10 border border-gold/30 rounded-xl p-4 text-sm text-ink/80 min-h-[120px]">
-              <p class="text-ink/40 italic text-xs">Belum ada nota minggu ini. Klik <strong>Edit Nota</strong> untuk menambah.</p>
+        <!-- Task Harian -->
+        <div class="bg-white rounded-2xl border border-ink/10 p-5">
+          <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
+            <h3 class="font-bold text-base text-ink flex items-center gap-2">✅ Task Harian</h3>
+            <div class="flex items-center gap-2 flex-wrap">
+              <div id="day-task-picker" class="flex items-center gap-0.5 bg-cream/60 rounded-lg p-0.5 overflow-x-auto text-[11px] font-semibold max-w-[340px]"></div>
+              <button onclick="openTaskModal(null)" class="bg-navy text-white text-[11px] px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap flex items-center gap-1">＋ Task</button>
             </div>
           </div>
-
-          <div class="bg-white rounded-2xl border border-ink/10 p-5">
-            <div class="flex items-center justify-between mb-3">
-              <h3 class="font-bold text-base text-ink flex items-center gap-2">✅ Tugasan Mingguan</h3>
-              <a href="patients.html?tab=unassigned" class="text-xs text-navy font-semibold hover:underline">Lihat Semua</a>
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <div>
+              <div class="text-[10px] font-bold uppercase tracking-wider text-ink/35 mb-2.5">🤖 Semakan Sistem</div>
+              <div id="auto-tasks-host" class="space-y-2">
+                <p class="text-xs text-ink/40 italic py-1">Memuatkan...</p>
+              </div>
             </div>
-            <div id="tasks-host" class="space-y-2.5"></div>
+            <div>
+              <div class="flex items-center justify-between mb-2.5">
+                <div class="text-[10px] font-bold uppercase tracking-wider text-ink/35">📌 Task Peribadi</div>
+                <div id="task-day-label" class="text-[10px] text-ink/45 font-medium"></div>
+              </div>
+              <div id="personal-tasks-host" class="space-y-2">
+                <p class="text-xs text-ink/40 italic py-1">Pilih hari untuk lihat task.</p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -197,7 +204,7 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/shared/supabase.js"></script>
 <script src="../../config/supabase.js"></script>
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
@@ -263,7 +270,7 @@ function sameDay(a, b) { return a.getFullYear()===b.getFullYear() && a.getMonth(
   const todayDow = new Date().getDay();
   selectedDayIdx = todayDow === 0 ? 6 : todayDow - 1;
 
-  await loadCoachedPatients();
+  await Promise.all([loadCoachedPatients(), buildStaffMap()]);
 
   // Caseload count (coach only — doctor uses different assignment model)
   const caseloadEl = document.getElementById('coach-caseload');
@@ -274,6 +281,7 @@ function sameDay(a, b) { return a.getFullYear()===b.getFullYear() && a.getMonth(
   }
 
   await loadWeek();
+  initTaskDayPicker();
 })();
 
 async function loadCoachedPatients() {
@@ -310,7 +318,7 @@ async function loadWeek() {
 
   const [planRes, apptRes, coachRes] = await Promise.all([
     window.db.from('psy_plan_weekly_progress')
-      .select('id, plan_id, patient_id, week_number, session_date, status, updated_at, updated_by_name')
+      .select('id, plan_id, patient_id, week_number, session_date, status, notes, score, session_type, meet_link, substitute_coach_id, updated_at, updated_by_name')
       .gte('session_date', weekStart.toISOString())
       .lt('session_date',  weekEnd.toISOString())
       .then(r => r.data || [], () => []),
@@ -335,7 +343,10 @@ async function loadWeek() {
     title:`Minggu ${s.week_number}`, subtitle:'Sesi Coaching',
     start: s.session_date, status: normStatus('plan', s.status),
     updated_at: s.updated_at, week_number: s.week_number,
-    href: `session-notes.html?id=${s.id}`,
+    notes: s.notes, score: s.score,
+    session_type: s.session_type, meet_link: s.meet_link,
+    substitute_coach_id: s.substitute_coach_id,
+    href: `plan-week.html?plan_id=${s.plan_id}&week=${s.week_number}`,
   }));
 
   apptRes.forEach(a => events.push({
@@ -397,7 +408,7 @@ function applyScope() {
   renderDayPills();
   renderStats();
   renderColumns();
-  loadTasks();
+  loadAutoTasks();  // async, fire-and-forget
 }
 
 function setScope(s) {
@@ -535,6 +546,12 @@ function renderCard(s) {
   const name = p.name || 'Pesakit';
   const statusLbl = { hadir:'Disahkan', booked:'Dijadual', pending:'Menunggu', reschedule:'Reschedule', cancel:'Dibatalkan' }[s.status] || 'Pending';
   const srcBadge = { plan:'📋', appt:'📅', coach:'🎯' }[s.source] || '';
+  const subName = s.substitute_coach_id ? (staffMap[s.substitute_coach_id]?.name || '—') : null;
+  const gantiBtn = s.source === 'plan'
+    ? `<button onclick="event.preventDefault();event.stopPropagation();openCoachGanti('${s.id}','${s.substitute_coach_id||''}')"
+        class="text-[9px] px-1.5 py-0.5 rounded border border-ink/15 hover:bg-ink/5 text-ink/45 hover:text-ink/70 mt-1 block w-full text-left transition-colors">
+        ${subName ? `👥 ${escHtml(subName)}` : '👥 Ganti'}
+      </button>` : '';
   return `<a href="${s.href || '#'}" class="sess-card s-${s.status || 'pending'} block">
     <div class="flex items-start justify-between gap-2">
       <div class="min-w-0">
@@ -543,80 +560,340 @@ function renderCard(s) {
         <div class="sess-type truncate">${escHtml(s.title || '')}</div>
       </div>
     </div>
-    <span class="pill-status ps-${s.status || 'pending'}">${statusLbl}</span>
+    <div class="flex items-center justify-between mt-1">
+      <span class="pill-status ps-${s.status || 'pending'}">${statusLbl}</span>
+    </div>
+    ${gantiBtn}
   </a>`;
 }
 
 function escHtml(s) { const d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
 
-// ── Weekly notes (per-coach, per-week) — uses localStorage ─────────────
-function notesKey() {
-  return `wkplan_notes_${window.currentUser.id}_${weekStart.toISOString().slice(0,10)}`;
-}
-function renderNotes() {
-  const v = localStorage.getItem(notesKey());
-  const host = document.getElementById('notes-host');
-  if (v) {
-    host.innerHTML = `<ul class="list-disc pl-5 space-y-1.5">${v.split(/\n+/).filter(Boolean).map(l => `<li>${escHtml(l)}</li>`).join('')}</ul>`;
-  } else {
-    host.innerHTML = '<p class="text-ink/40 italic text-xs">Belum ada nota minggu ini. Klik <strong>Edit Nota</strong> untuk menambah.</p>';
-  }
-}
-function saveNotes() {
-  const current = localStorage.getItem(notesKey()) || '';
-  const v = prompt('Nota minggu ini (satu item per baris):', current);
-  if (v == null) return;
-  if (v.trim()) localStorage.setItem(notesKey(), v.trim());
-  else localStorage.removeItem(notesKey());
-  renderNotes();
+// ── Staff map (for Coach Ganti names) ──────────────────────────────
+let staffMap = {};
+async function buildStaffMap() {
+  const { data } = await window.db.from('psy_profiles').select('id, full_name, staff_role').eq('role', 'staff').then(r => r, () => ({ data: [] }));
+  (data || []).forEach(p => { staffMap[p.id] = { name: p.full_name, role: p.staff_role }; });
 }
 
-// ── Tasks: derive from weekly sessions ─────────────────────────────────
-function loadTasks() {
-  const host = document.getElementById('tasks-host');
-  const pendingConfirm = allSessions.filter(s => s.status === 'pending' || s.status === 'booked').length;
-  const todayStr = new Date().toISOString().slice(0,10);
-  const overdue = allSessions.filter(s => {
-    return s.status !== 'hadir' && s.status !== 'cancel' && s.start && new Date(s.start).toISOString().slice(0,10) < todayStr;
-  }).length;
-  const upcoming = allSessions.filter(s => {
-    return s.status !== 'hadir' && s.status !== 'cancel' && s.start && new Date(s.start).toISOString().slice(0,10) >= todayStr;
-  }).length;
+// ── Task Harian: Day Picker ──────────────────────────────
+let taskDayStr = '';
+let personalTasksCache = {};
+
+function initTaskDayPicker() {
+  taskDayStr = new Date().toISOString().slice(0, 10);
+  renderDayTaskPicker();
+  loadPersonalTasks(taskDayStr);
+}
+
+function renderDayTaskPicker() {
+  const host = document.getElementById('day-task-picker');
+  if (!host) return;
+  host.innerHTML = [0,1,2,3,4,5,6].map(i => {
+    const d  = addDays(weekStart, i);
+    const ds = d.toISOString().slice(0, 10);
+    const isActive = ds === taskDayStr;
+    const dow = ['Ahd','Isn','Sel','Rab','Kha','Jum','Sab'][d.getDay()];
+    return `<button onclick="selectTaskDay('${ds}')"
+      class="px-2 py-1 rounded-md transition-colors whitespace-nowrap ${isActive ? 'bg-navy text-white' : 'text-ink/60 hover:bg-ink/5'}">${dow} ${d.getDate()}</button>`;
+  }).join('');
+}
+
+function selectTaskDay(dayStr) {
+  taskDayStr = dayStr;
+  renderDayTaskPicker();
+  loadPersonalTasks(dayStr);
+}
+
+function updateTaskDayLabel(dayStr) {
+  const el = document.getElementById('task-day-label');
+  if (!el) return;
+  const d = new Date(dayStr + 'T00:00:00');
+  el.textContent = d.toLocaleDateString('ms-MY', { weekday:'long', day:'numeric', month:'long' });
+}
+
+// ── Auto Tasks (Semakan Sistem — week level) ──────────────────────────────
+async function loadAutoTasks() {
+  const host = document.getElementById('auto-tasks-host');
+  if (!host) return;
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const wkStart  = weekStart.toISOString().slice(0, 10);
+  const wkEnd    = addDays(weekStart, 6).toISOString().slice(0, 10);
+  const myId     = window.currentUser?.id;
+  const ptIds    = [...myCoachedPatientIds];
+
+  const [patientsRes, plansRes, kepatRes] = await Promise.all([
+    myId
+      ? window.db.from('psy_patients').select('id').eq('coach_id', myId).eq('status','active').then(r => r.data||[]).catch(()=>[])
+      : Promise.resolve([]),
+    ptIds.length
+      ? window.db.from('psy_treatment_plans').select('patient_id').eq('status','active').in('patient_id',ptIds).then(r => r.data||[]).catch(()=>[])
+      : Promise.resolve([]),
+    ptIds.length
+      ? window.db.from('psy_kepatuhan_weekly').select('patient_id,skor').gte('minggu_mula',wkStart).lte('minggu_mula',wkEnd).in('patient_id',ptIds).then(r => r.data||[]).catch(()=>[])
+      : Promise.resolve([]),
+  ]);
+
+  const pendingCount = allSessions.filter(s => ['booked','pending'].includes(s.status)).length;
+  const overdueCount = allSessions.filter(s => ['booked','pending'].includes(s.status) && (s.start||'').slice(0,10) < todayStr).length;
+  const t1Badge = overdueCount > 0
+    ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-terracotta/15 text-terracotta">⚠️ ${overdueCount} Tertunggak</span>`
+    : pendingCount > 0
+      ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gold/20 text-gold-dark">Menunggu</span>`
+      : `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-green/15 text-green-dark">Selesai ✓</span>`;
+
+  const allPtIds    = new Set((patientsRes||[]).map(p => p.id));
+  const withPlanIds = new Set((plansRes||[]).map(p => p.patient_id));
+  const noPlanCount = [...allPtIds].filter(id => !withPlanIds.has(id)).length;
+  const t2Badge = noPlanCount > 0
+    ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-terracotta/15 text-terracotta">Perlu Tindakan</span>`
+    : `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-green/15 text-green-dark">Lengkap ✓</span>`;
+
+  const lowKept = (kepatRes||[]).filter(k => k.skor !== null && k.skor < 60);
+  const t3Badge = lowKept.length > 0
+    ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Perlu Perhatian</span>`
+    : kepatRes.length > 0
+      ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-green/15 text-green-dark">OK ✓</span>`
+      : `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-ink/10 text-ink/50">Tiada Data</span>`;
+
+  const hadirNoNotes = allSessions.filter(s => s.status === 'hadir' && !s.notes && !s.score).length;
 
   const items = [
-    {
-      icon:'⏳',
-      title:'Semak dan sahkan sesi menunggu',
-      sub:`${pendingConfirm} sesi menunggu pengesahan`,
-      badge: overdue ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-terracotta-light text-terracotta">Tertunggak</span>` : '',
-    },
-    {
-      icon:'📋',
-      title:'Sediakan plan pemakanan pesakit baru',
-      sub:`${myCoachedPatientIds.size} pesakit di bawah jagaan`,
-      badge:`<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-navy-light text-navy">Dalam Proses</span>`,
-    },
-    {
-      icon:'📈',
-      title:'Laporan kemajuan mingguan',
-      sub:`Sediakan untuk ${upcoming} sesi akan datang`,
-      badge:`<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-ink/10 text-ink/60">Belum Mula</span>`,
-    },
+    { icon:'⏳', link:'appointments.html', title:'Sesi menunggu pengesahan',
+      sub: pendingCount > 0 ? `${pendingCount} sesi minggu ini${overdueCount ? ` · ${overdueCount} sudah lepas tarikh` : ''}` : 'Tiada sesi menunggu minggu ini',
+      badge: t1Badge },
+    { icon:'📋', link:'patients.html', title:'Pesakit tanpa plan rawatan aktif',
+      sub: noPlanCount > 0 ? `${noPlanCount} daripada ${allPtIds.size} pesakit tiada plan` : `Semua ${allPtIds.size} pesakit ada plan aktif`,
+      badge: t2Badge },
+    { icon:'📊', link:'kepatuhan.html', title:'Kepatuhan rendah minggu ini',
+      sub: lowKept.length > 0 ? `${lowKept.length} pesakit kepatuhan < 60%` : kepatRes.length > 0 ? 'Semua kepatuhan memuaskan' : 'Data kepatuhan belum ada',
+      badge: t3Badge },
   ];
+  if (hadirNoNotes > 0) {
+    items.push({ icon:'📝', link:'plan-week.html', title:'Lengkapkan catatan sesi',
+      sub:`${hadirNoNotes} sesi hadir belum ada catatan atau skor`,
+      badge:`<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-navy/10 text-navy">Belum Lengkap</span>` });
+  }
 
   host.innerHTML = items.map(it => `
-    <div class="flex items-start gap-3 p-3 border border-ink/8 rounded-xl hover:bg-cream/40">
-      <input type="checkbox" class="mt-1 w-4 h-4 accent-navy">
+    <div class="flex items-start gap-3 p-3 border border-ink/8 rounded-xl hover:bg-cream/40 cursor-pointer transition-colors"
+         onclick="location.href='${it.link}'">
+      <span class="text-xl mt-0.5 flex-shrink-0">${it.icon}</span>
       <div class="flex-1 min-w-0">
         <div class="text-sm font-semibold text-ink">${it.title}</div>
         <div class="text-[11px] text-ink/55 mt-0.5">${it.sub}</div>
       </div>
-      ${it.badge}
-    </div>
-  `).join('');
-
-  renderNotes();
+      <div class="flex-shrink-0">${it.badge}</div>
+    </div>`).join('');
 }
+
+// ── Personal Tasks (psy_coach_tasks) ──────────────────────────────
+async function loadPersonalTasks(dayStr) {
+  const host = document.getElementById('personal-tasks-host');
+  if (!host) return;
+  host.innerHTML = '<p class="text-xs text-ink/40 italic py-1">Memuatkan...</p>';
+  updateTaskDayLabel(dayStr);
+
+  const myId = window.currentUser?.id;
+  if (!myId) { host.innerHTML = ''; return; }
+
+  const { data } = await window.db.from('psy_coach_tasks')
+    .select('*').eq('coach_id', myId).eq('task_date', dayStr)
+    .order('created_at', { ascending: true })
+    .then(r => r, () => ({ data: [] }));
+
+  personalTasksCache = {};
+  (data || []).forEach(t => { personalTasksCache[t.id] = t; });
+  renderPersonalTaskList(data || []);
+}
+
+function renderPersonalTaskList(tasks) {
+  const host = document.getElementById('personal-tasks-host');
+  if (!host) return;
+  if (!tasks.length) {
+    host.innerHTML = '<p class="text-xs text-ink/40 italic py-1">Tiada task untuk hari ini. Klik <strong>＋ Task</strong> untuk tambah.</p>';
+    return;
+  }
+  const pBadge = { tinggi:'bg-terracotta/15 text-terracotta', sederhana:'bg-gold/20 text-gold-dark', rendah:'bg-ink/8 text-ink/50' };
+  const sCls   = { belum_mula:'border-ink/25 bg-white', dalam_proses:'border-gold bg-gold/20', selesai:'border-green bg-green/20' };
+  const sLbl   = { belum_mula:'Belum Mula', dalam_proses:'Dalam Proses', selesai:'Selesai ✓' };
+
+  host.innerHTML = tasks.map(t => {
+    const isDone = t.status === 'selesai';
+    return `<div class="flex items-start gap-3 p-3 border rounded-xl group transition-colors ${isDone ? 'border-ink/6 opacity-60' : 'border-ink/10 hover:border-ink/20'}">
+      <button onclick="cycleTaskStatus('${t.id}','${t.status}')" title="Tukar status"
+        class="flex-shrink-0 w-5 h-5 rounded-full border-2 mt-0.5 transition-colors ${sCls[t.status]||sCls.belum_mula}"></button>
+      <div class="flex-1 min-w-0">
+        <div class="text-sm font-semibold ${isDone ? 'line-through text-ink/40' : 'text-ink'}">${escHtml(t.title)}</div>
+        ${t.notes ? `<div class="text-[11px] text-ink/50 mt-0.5">${escHtml(t.notes)}</div>` : ''}
+        <div class="flex items-center gap-2 mt-1.5 flex-wrap">
+          <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${pBadge[t.priority]||pBadge.sederhana}">${(t.priority||'').toUpperCase()}</span>
+          <span class="text-[9px] text-ink/40">${sLbl[t.status]||t.status}</span>
+        </div>
+      </div>
+      <div class="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+        <button onclick="openTaskModal('${t.id}')" class="text-[10px] text-navy hover:underline font-semibold">Edit</button>
+        <button onclick="deleteTask('${t.id}')" class="text-[10px] text-terracotta hover:underline font-semibold">Padam</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function openTaskModal(taskId) {
+  const task = taskId ? personalTasksCache[taskId] : null;
+  document.getElementById('task-modal-title').textContent = task ? 'Edit Task' : 'Tambah Task';
+  document.getElementById('task-id').value       = task?.id || '';
+  document.getElementById('task-title').value    = task?.title || '';
+  document.getElementById('task-date').value     = task?.task_date || taskDayStr;
+  document.getElementById('task-priority').value = task?.priority || 'sederhana';
+  document.getElementById('task-notes').value    = task?.notes || '';
+  document.getElementById('task-err').classList.add('hidden');
+  document.getElementById('task-modal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('task-title').focus(), 50);
+}
+
+function closeTaskModal() {
+  document.getElementById('task-modal').classList.add('hidden');
+}
+
+async function saveTask() {
+  const title    = document.getElementById('task-title').value.trim();
+  const date     = document.getElementById('task-date').value;
+  const priority = document.getElementById('task-priority').value;
+  const notes    = document.getElementById('task-notes').value.trim();
+  const taskId   = document.getElementById('task-id').value;
+  const errEl    = document.getElementById('task-err');
+  errEl.classList.add('hidden');
+
+  if (!title) { errEl.textContent = 'Tajuk task diperlukan.'; errEl.classList.remove('hidden'); return; }
+  if (!date)  { errEl.textContent = 'Tarikh diperlukan.';    errEl.classList.remove('hidden'); return; }
+
+  const myId = window.currentUser?.id;
+  if (!myId) return;
+  const payload = { coach_id:myId, title, task_date:date, priority, notes:notes||null, updated_at:new Date().toISOString() };
+
+  let error;
+  if (taskId) {
+    ({ error } = await window.db.from('psy_coach_tasks').update(payload).eq('id', taskId));
+  } else {
+    ({ error } = await window.db.from('psy_coach_tasks').insert(payload));
+  }
+  if (error) { errEl.textContent = 'Ralat: ' + (error.message || JSON.stringify(error)); errEl.classList.remove('hidden'); return; }
+
+  banner(taskId ? 'Task dikemaskini ✅' : 'Task ditambah ✅');
+  closeTaskModal();
+  if (date !== taskDayStr) { taskDayStr = date; renderDayTaskPicker(); }
+  loadPersonalTasks(date);
+}
+
+async function deleteTask(taskId) {
+  if (!confirm('Padam task ini?')) return;
+  const { error } = await window.db.from('psy_coach_tasks').delete().eq('id', taskId);
+  if (error) { banner('Ralat padam: ' + error.message, 'error'); return; }
+  banner('Task dipadam');
+  loadPersonalTasks(taskDayStr);
+}
+
+async function cycleTaskStatus(taskId, currentStatus) {
+  const next = { belum_mula:'dalam_proses', dalam_proses:'selesai', selesai:'belum_mula' }[currentStatus] || 'dalam_proses';
+  const { error } = await window.db.from('psy_coach_tasks').update({ status:next, updated_at:new Date().toISOString() }).eq('id', taskId);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  personalTasksCache[taskId] = { ...personalTasksCache[taskId], status: next };
+  renderPersonalTaskList(Object.values(personalTasksCache));
+}
+
+// ── Coach Ganti ──────────────────────────────
+function openCoachGanti(sessionId, currentSubId) {
+  const sel = document.getElementById('ganti-coach-select');
+  sel.innerHTML = '<option value="">— Tiada (buang ganti) —</option>';
+  Object.entries(staffMap).forEach(([id, info]) => {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = info.name + (info.role ? ` (${info.role})` : '');
+    if (id === currentSubId) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  document.getElementById('ganti-session-id').value = sessionId;
+  document.getElementById('coach-ganti-modal').classList.remove('hidden');
+}
+
+async function saveCoachGanti() {
+  const sessionId = document.getElementById('ganti-session-id').value;
+  const coachId   = document.getElementById('ganti-coach-select').value || null;
+  const { error } = await window.db.from('psy_plan_weekly_progress')
+    .update({ substitute_coach_id: coachId }).eq('id', sessionId);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  const name = coachId ? (staffMap[coachId]?.name || 'Coach') : null;
+  banner(coachId ? `Coach ganti: ${name} ✅` : 'Coach ganti dibuang');
+  document.getElementById('coach-ganti-modal').classList.add('hidden');
+  await loadWeek();
+}
+
+
 </script>
+
+<!-- Task Modal -->
+<div id="task-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-ink/30 p-4"
+     onclick="if(event.target===this)closeTaskModal()">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+    <h3 class="font-bold text-base text-ink mb-4" id="task-modal-title">Tambah Task</h3>
+    <input type="hidden" id="task-id">
+    <div class="space-y-3">
+      <div>
+        <label class="block text-xs font-semibold text-ink/60 mb-1">Tajuk Task *</label>
+        <input id="task-title" type="text" placeholder="Contoh: Hubungi pesakit Ahmad..."
+          class="w-full border border-ink/20 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-navy/50">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs font-semibold text-ink/60 mb-1">Tarikh</label>
+          <input id="task-date" type="date"
+            class="w-full border border-ink/20 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-navy/50">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-ink/60 mb-1">Keutamaan</label>
+          <select id="task-priority"
+            class="w-full border border-ink/20 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-navy/50">
+            <option value="rendah">Rendah</option>
+            <option value="sederhana" selected>Sederhana</option>
+            <option value="tinggi">Tinggi</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-ink/60 mb-1">Nota (opsional)</label>
+        <textarea id="task-notes" rows="2" placeholder="Tambah nota..."
+          class="w-full border border-ink/20 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-navy/50 resize-none"></textarea>
+      </div>
+    </div>
+    <div id="task-err" class="hidden mt-2 text-xs text-terracotta font-medium"></div>
+    <div class="flex gap-2 mt-5">
+      <button onclick="saveTask()" class="flex-1 bg-navy text-white py-2 rounded-xl text-sm font-semibold">Simpan</button>
+      <button onclick="closeTaskModal()" class="flex-1 border border-ink/20 py-2 rounded-xl text-sm font-semibold text-ink/60">Batal</button>
+    </div>
+  </div>
+</div>
+
+<!-- Coach Ganti Modal -->
+<div id="coach-ganti-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-ink/30 p-4"
+     onclick="if(event.target===this)document.getElementById('coach-ganti-modal').classList.add('hidden')">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+    <h3 class="font-bold text-base text-ink mb-1">👥 Coach Ganti</h3>
+    <p class="text-xs text-ink/50 mb-4">Pesakit kekal di bawah coach asal. Coach ganti hanya untuk sesi ini.</p>
+    <input type="hidden" id="ganti-session-id">
+    <div class="mb-4">
+      <label class="block text-xs font-semibold text-ink/60 mb-1">Pilih Coach Ganti</label>
+      <select id="ganti-coach-select"
+        class="w-full border border-ink/20 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-navy/50">
+        <option value="">— Tiada (buang ganti) —</option>
+      </select>
+    </div>
+    <div class="flex gap-2">
+      <button onclick="saveCoachGanti()" class="flex-1 bg-navy text-white py-2 rounded-xl text-sm font-semibold">Simpan</button>
+      <button onclick="document.getElementById('coach-ganti-modal').classList.add('hidden')"
+        class="flex-1 border border-ink/20 py-2 rounded-xl text-sm font-semibold text-ink/60">Batal</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>

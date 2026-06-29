@@ -34,7 +34,8 @@ async function checkAuth(requiredRole) {
 window.PAGE_MODULE = {
   // UTAMA — setiap navbar item ada modul sendiri
   dashboard:        'dashboard',
-  psy_patients:     'patient',   patient_hub: 'patient', vitals: 'patient',
+  psy_patients:     'patient',   patient_hub: 'patient',
+  psy_vitals:       'vitals',    vitals: 'vitals',
   kyc_forms:        'kyc',
   psy_appointments: 'schedule',
   plan_week:        'plan_week',
@@ -76,7 +77,6 @@ window.PAGE_MODULE = {
   // sub-pages — guna modul parent (bukan navbar item sendiri)
   assignments: 'coaching', coaching: 'coaching', consultation: 'coaching',
   coaching_catalog: 'coaching', plans: 'coaching',
-  psy_vitals: 'patient',
   inbox: 'announcements',
   feedback: 'issue', services: 'operations',
   // profile & login sentiasa allow (bukan dalam PAGE_MODULE)

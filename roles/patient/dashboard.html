@@ -282,7 +282,7 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/shared/supabase.js"></script>
 <script src="../../config/supabase.js"></script>
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
@@ -410,7 +410,7 @@ function kycStatusBanner(submissionStatus) {
       cta:'Pinda KYC →', ctaUrl:'kyc.html', ctaColor:'text-terracotta' });
   }
   return bannerHtml({ id:'b-kyc', grad:'from-gold to-gold-dark', icon:'🆔',
-    title:'Langkah 1/3: Lengkapkan KYC',
+    title:'Langkah 1/6: Lengkapkan KYC',
     body:'Maklumat peribadi diperlukan sebelum sesi KOB.',
     cta:'Isi KYC →', ctaUrl:'kyc.html', ctaColor:'text-gold-dark' });
 }
@@ -436,7 +436,7 @@ async function loadBanners(user) {
         await window.db.from('psy_patients').update({ kob_status: 'kyc_done' }).eq('id', patientRecord.id);
         patientRecord.kob_status = 'kyc_done';
         zone.innerHTML = bannerHtml({ id:'b-book', grad:'from-navy to-navy-dark', icon:'📅',
-          title:'Langkah 2/3: Tempah Slot KOB',
+          title:'Langkah 2/6: Tempah Slot KOB',
           body:'KYC anda telah dihantar. Sila tempah tarikh sesi KOB bersama doktor.',
           cta:'Pilih Tarikh →', ctaUrl:'kob.html', ctaColor:'text-navy' });
       } else {
@@ -444,21 +444,26 @@ async function loadBanners(user) {
       }
     } else if (kobStatus === 'kyc_done') {
       zone.innerHTML = bannerHtml({ id:'b-book', grad:'from-navy to-navy-dark', icon:'📅',
-        title:'Langkah 2/3: Tempah Slot KOB',
+        title:'Langkah 2/6: Tempah Slot KOB',
         body:'KYC anda telah dihantar. Sila tempah tarikh sesi KOB bersama doktor.',
         cta:'Pilih Tarikh →', ctaUrl:'kob.html', ctaColor:'text-navy' });
-    } else if (kobStatus === 'booked' || kobStatus === 'hadir') {
+    } else if (kobStatus === 'booked') {
       const { data: kobRows } = await window.db.from('psy_kob_sessions')
         .select('scheduled_at, mode').eq('patient_id', patientRecord.id)
-        .in('status', ['booked', 'hadir', 'reschedule'])
+        .in('status', ['booked', 'reschedule'])
         .order('scheduled_at', { ascending: true }).limit(1);
       const kob = kobRows?.[0];
       const detail = kob
         ? `${new Date(kob.scheduled_at).toLocaleDateString(LCALE(), { weekday:'long', day:'2-digit', month:'long' })} · ${new Date(kob.scheduled_at).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})} · ${kob.mode === 'online' ? '💻 Online' : '🏥 F2F'}`
         : 'Tarikh akan dimaklumkan';
       zone.innerHTML = bannerHtml({ id:'b-booked', grad:'from-gold to-gold-dark', icon:'⏰',
-        title:'Langkah 3/3: KOB Anda Ditempah', body:detail,
+        title:'Langkah 3/6: KOB Anda Ditempah', body:detail,
         cta:'Lihat Detail →', ctaUrl:'kob.html', ctaColor:'text-gold-dark' });
+    } else if (kobStatus === 'hadir') {
+      zone.innerHTML = bannerHtml({ id:'b-hadir', grad:'from-navy to-navy-dark', icon:'🩺',
+        title:'Langkah 4/6: Menunggu Cadangan Pakej',
+        body:'Sesi KOB anda telah selesai. Doktor sedang menyediakan cadangan pakej rawatan untuk anda.',
+        cta:'Lihat KOB →', ctaUrl:'kob.html', ctaColor:'text-navy' });
     } else if (kobStatus === 'package_recommended') {
       const { data: kobRows } = await window.db.from('psy_kob_sessions')
         .select('recommended_package_name, recommended_package_price').eq('patient_id', patientRecord.id)
@@ -545,7 +550,7 @@ async function loadBanners(user) {
         .eq('patient_id', patientRecord.id).order('reading_date', { ascending: false, nullsFirst: false })
         .order('created_at', { ascending: false }).limit(10)
         .then(r => r.data || [], () => []),
-      window.db.from('psy_plan_weekly_progress').select('session_date, week_number, session_day, status, meet_link')
+      window.db.from('psy_plan_weekly_progress').select('id, session_date, week_number, session_day, status, meet_link, patient_confirmed, patient_absence_reason')
         .eq('patient_id', patientRecord.id).gte('session_date', today).in('status', ['booked','reschedule'])
         .order('session_date', { ascending: true }).limit(5)
         .then(r => r.data || [], () => []),
@@ -828,23 +833,49 @@ async function loadBanners(user) {
       const subLine = isMissed
         ? `🔴 ${_isMS ? 'Tidak Hadir · Diganti kepada' : 'Absent · Moved to'} ${[wdStr, tStr].filter(Boolean).join(' · ')}`
         : (([wdStr, tStr].filter(Boolean).join(' · ') + (it.meet ? ' · 💻 Online' : '')) || '—');
+
+      // Attendance confirmation (new step73 columns)
+      const confirmed = it.patient_confirmed;
+      let confirmUI = '';
+      const isDueToday = isToday || (ymd <= today);
+      if (!isMissed) {
+        if (confirmed === true) {
+          confirmUI = `<span class="text-[9px] font-bold bg-green/15 text-green-dark px-1.5 py-0.5 rounded-full">✅ ${_isMS ? 'Akan hadir' : 'Confirmed'}</span>`;
+        } else if (confirmed === false) {
+          confirmUI = `<span class="text-[9px] font-bold bg-terracotta/15 text-terracotta px-1.5 py-0.5 rounded-full">❌ ${_isMS ? 'Tidak dapat hadir' : 'Cannot attend'}</span>`;
+        } else if (isDueToday || ymd <= new Date(new Date(today+'T00:00:00').getTime()+3*86400000).toISOString().slice(0,10)) {
+          confirmUI = `<div class="flex gap-1 mt-0.5">
+            <button onclick="ptConfirmHadir('${it.id}')" class="text-[9px] font-bold bg-green/15 text-green-dark hover:bg-green/25 px-2 py-0.5 rounded-full transition-colors whitespace-nowrap">✅ Hadir</button>
+            <button onclick="ptConfirmAbsent('${it.id}','${it.week}')" class="text-[9px] font-bold bg-ink/8 text-ink/50 hover:bg-terracotta/10 hover:text-terracotta px-2 py-0.5 rounded-full transition-colors whitespace-nowrap">❌ Tidak</button>
+          </div>`;
+        }
+      }
+
       const statusBadge = isMissed
         ? `<span class="text-[9px] font-bold bg-terracotta/15 text-terracotta px-1.5 py-0.5 rounded">⚠️ ${_isMS ? 'Tidak hadir' : 'Absent'}</span>`
         : it.status === 'reschedule'
         ? '<span class="text-[9px] font-bold bg-gold/20 text-gold-dark px-1.5 py-0.5 rounded">🔄 Perlu tukar</span>'
         : isToday ? '<span class="text-[9px] font-bold bg-gold/20 text-gold-dark px-1.5 py-0.5 rounded">Hari ini</span>'
         : '';
-      return `<div class="flex items-center gap-2.5 py-1 border-b border-ink/5 last:border-0">
-        <div class="flex flex-col items-center justify-center w-10 h-10 rounded-lg bg-cream flex-shrink-0">
+
+      // Google Calendar reminder link
+      const gcStart = isNaN(d) ? '' : d.toISOString().replace(/[-:]/g,'').replace(/\.\d{3}/,'');
+      const gcEnd = isNaN(d) ? '' : new Date(d.getTime()+3600000).toISOString().replace(/[-:]/g,'').replace(/\.\d{3}/,'');
+      const gcLink = gcStart ? `https://calendar.google.com/calendar/render?action=TEMPLATE&text=Sesi+Rawatan+Minggu+${it.week}&dates=${gcStart}/${gcEnd}&details=Sesi+coaching+ISW+Minggu+${it.week}` : '';
+
+      return `<div class="flex items-start gap-2.5 py-1.5 border-b border-ink/5 last:border-0">
+        <div class="flex flex-col items-center justify-center w-10 h-10 rounded-lg bg-cream flex-shrink-0 mt-0.5">
           <span class="text-[8px] font-bold text-ink/45 uppercase leading-none">${monShort}</span>
           <span class="text-sm font-extrabold text-navy leading-tight">${dayNum}</span>
         </div>
         <div class="flex-1 min-w-0">
           <div class="text-[11px] font-semibold text-ink truncate">Sesi Minggu <span class="tabular-nums">${it.week}</span></div>
           <div class="text-[9px] text-ink/45 truncate">${subLine}</div>
+          ${confirmUI}
         </div>
         <div class="flex flex-col items-end gap-1 flex-shrink-0">
           ${statusBadge}
+          ${gcLink ? `<a href="${gcLink}" target="_blank" rel="noopener" class="text-[8px] text-ink/35 hover:text-navy whitespace-nowrap">📆 Remind</a>` : ''}
           <a href="plan.html?reschedule=${it.week}.${it.day}" class="inline-flex items-center gap-1 bg-indigo-200 hover:bg-indigo-300 text-indigo-950 text-[9px] font-bold px-2 py-1 rounded-lg whitespace-nowrap transition-colors">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18M8 2v4M16 2v4M9 16l2 2 4-4"/></svg>
             Reschedule
@@ -941,6 +972,81 @@ async function loadBanners(user) {
       `<div class="bg-terracotta/10 text-terracotta rounded-xl p-4 text-sm">Ralat: ${err.message}</div>`);
   }
 })();
+
+// ── Patient attendance confirmation ────────────────────────────────────────
+async function ptConfirmHadir(sessionId) {
+  try {
+    await window.db.from('psy_plan_weekly_progress').update({
+      patient_confirmed: true,
+      patient_confirmed_at: new Date().toISOString(),
+    }).eq('id', sessionId);
+    // Notify coach
+    const { data: s } = await window.db.from('psy_plan_weekly_progress')
+      .select('week_number, psy_patients(coach_id, psy_profiles!psy_patients_user_id_fkey(full_name))')
+      .eq('id', sessionId).maybeSingle();
+    if (s?.psy_patients?.coach_id && typeof notify === 'function') {
+      const ptName = window.currentUser?.full_name || 'Pesakit';
+      notify(s.psy_patients.coach_id, 'appointment', 'Pesakit Sahkan Kehadiran',
+        `${ptName} mengesahkan akan hadir untuk Sesi Minggu ${s.week_number || '?'}.`,
+        'appointments.html');
+    }
+    banner?.('Kehadiran anda disahkan ✅');
+    setTimeout(() => location.reload(), 800);
+  } catch (e) { banner?.('Ralat: ' + e.message, 'error'); }
+}
+
+function ptConfirmAbsent(sessionId, weekNum) {
+  document.getElementById('pt-absent-id').value = sessionId;
+  document.getElementById('pt-absent-week').textContent = weekNum || '?';
+  document.getElementById('pt-absent-reason').value = '';
+  document.getElementById('pt-absent-modal').classList.remove('hidden');
+}
+
+async function ptSubmitAbsent() {
+  const sessionId = document.getElementById('pt-absent-id').value;
+  const reason = document.getElementById('pt-absent-reason').value.trim();
+  if (!reason) { document.getElementById('pt-absent-err').textContent = 'Sila nyatakan sebab.'; return; }
+  document.getElementById('pt-absent-err').textContent = '';
+  try {
+    await window.db.from('psy_plan_weekly_progress').update({
+      patient_confirmed: false,
+      patient_absence_reason: reason,
+      patient_confirmed_at: new Date().toISOString(),
+    }).eq('id', sessionId);
+    // Notify coach
+    const { data: s } = await window.db.from('psy_plan_weekly_progress')
+      .select('week_number, psy_patients(coach_id, psy_profiles!psy_patients_user_id_fkey(full_name))')
+      .eq('id', sessionId).maybeSingle();
+    if (s?.psy_patients?.coach_id && typeof notify === 'function') {
+      const ptName = window.currentUser?.full_name || 'Pesakit';
+      notify(s.psy_patients.coach_id, 'appointment', 'Pesakit Tidak Dapat Hadir',
+        `${ptName} tidak dapat hadir Sesi Minggu ${s.week_number || '?'}. Sebab: ${reason}`,
+        'appointments.html');
+    }
+    document.getElementById('pt-absent-modal').classList.add('hidden');
+    banner?.('Makluman dihantar kepada coach anda.');
+    setTimeout(() => location.reload(), 800);
+  } catch (e) { banner?.('Ralat: ' + e.message, 'error'); }
+}
 </script>
+
+<!-- ── Modal: Patient absence reason ── -->
+<div id="pt-absent-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+    <h3 class="font-bold text-base text-ink mb-1">❌ Tidak Dapat Hadir</h3>
+    <p class="text-xs text-ink/50 mb-4">Sesi Minggu <strong id="pt-absent-week"></strong>. Sila nyatakan sebab supaya coach anda boleh bantu jadual semula.</p>
+    <input type="hidden" id="pt-absent-id">
+    <textarea id="pt-absent-reason" rows="3" placeholder="Contoh: Urusan kerja mendesak, tidak sihat..."
+      class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm text-ink mb-1 focus:outline-none focus:ring-2 focus:ring-navy/30 resize-none"></textarea>
+    <p id="pt-absent-err" class="text-xs text-terracotta mb-3"></p>
+    <div class="flex gap-2 justify-end">
+      <button onclick="document.getElementById('pt-absent-modal').classList.add('hidden')"
+        class="px-4 py-2 rounded-lg text-sm text-ink/60 hover:bg-ink/5 transition-colors">Batal</button>
+      <button onclick="ptSubmitAbsent()"
+        class="px-4 py-2 rounded-lg text-sm font-semibold bg-terracotta text-white hover:bg-terracotta-dark transition-colors">Hantar</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>

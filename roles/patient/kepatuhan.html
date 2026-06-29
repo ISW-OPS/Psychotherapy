@@ -301,6 +301,15 @@
           </p>
         </div>
 
+        <!-- Trend Kepatuhan 6 Minggu -->
+        <div id="trend-card" class="hidden bg-white rounded-xl border border-[#edeff2] shadow-sm px-5 py-4">
+          <div class="mb-3">
+            <h3 class="text-sm font-bold text-ink">Trend Kepatuhan</h3>
+            <p class="text-[11px] text-ink/45 mt-0.5">Skor purata amalan 6 minggu terkini</p>
+          </div>
+          <div id="trend-bars" class="space-y-2.5"></div>
+        </div>
+
       </div>
     </main>
   </div>
@@ -308,7 +317,7 @@
 
   <nav class="mobile-nav fixed bottom-16 left-0 right-0 bg-navy-dark text-white py-2 justify-around z-20">
     <a href="dashboard.html" class="flex flex-col items-center text-[10px] gap-0.5 p-2"><span>🏠</span>Home</a>
-    <a href="checkin.html" class="flex flex-col items-center text-[10px] gap-0.5 p-2"><span>✅</span>Check-in</a>
+    <a href="checkin.html" class="flex flex-col items-center text-[10px] gap-0.5 p-2"><span>✅</span>Poll</a>
     <a href="plan.html" class="flex flex-col items-center text-[10px] gap-0.5 p-2"><span>💊</span>Plan</a>
     <a href="profile.html" class="flex flex-col items-center text-[10px] gap-0.5 p-2"><span>👤</span>Profile</a>
   </nav>
@@ -336,12 +345,12 @@
         <span>🍃</span>
         <p id="kf-confirm-tip-text"></p>
       </div>
-      <button class="kf-confirm-btn" onclick="kfConfirmNext()">Teruskan Check-in →</button>
+      <button class="kf-confirm-btn" onclick="kfConfirmNext()">Teruskan Poll Harian →</button>
     </div>
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/shared/supabase.js"></script>
 <script src="../../config/supabase.js"></script>
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
@@ -386,6 +395,7 @@ function weekToFasa(w) {
 
 // ── State ──
 let ITEMS = [];
+let REAKSI_GROUPS = [];   // reaksi pemulihan grouped (sumber: psy_reaksi_item) — checklist item 5
 let answers = {};
 let answersText = {};
 let focusOther = null;
@@ -468,6 +478,39 @@ const AKT_ENERGY = [9, 7, 4, 2]; // map tahap aktiviti → energy_score (widget 
 const ALL_REAKSI = new Set(Object.values(REAKSI_CATS).flat());
 
 function escAttr(s){ return String(s||'').replace(/"/g,'&quot;'); }
+// ── Reaksi Pemulihan (grouped, sumber tunggal psy_reaksi_item) ──
+const slugRK = s => String(s||'').toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'');
+const escRK  = s => String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+async function loadReaksiGroups(){
+  const { data } = await window.db.from('psy_reaksi_item')
+    .select('id,kumpulan,ikon,label,urutan').eq('aktif', true).order('urutan', { ascending: true });
+  const groups = [], byKey = {};
+  (data || []).forEach(it => {
+    if (!byKey[it.kumpulan]) { byKey[it.kumpulan] = { kumpulan: it.kumpulan, ikon: it.ikon || '', items: [] }; groups.push(byKey[it.kumpulan]); }
+    byKey[it.kumpulan].items.push(it);
+  });
+  REAKSI_GROUPS = groups;
+}
+// Render satu skrin: semua kumpulan reaksi (checkbox per simptom + Lain-lain per kumpulan)
+function kfReaksiGroupedHtml(selArr){
+  if (!REAKSI_GROUPS.length) return '<p class="kf-hint">Tiada simptom reaksi dikonfigur.</p>';
+  const sel = Array.isArray(selArr) ? selArr : [];
+  return `<div style="display:flex;flex-direction:column;gap:12px;width:100%;max-width:560px;margin:0 auto;text-align:left">
+    ${REAKSI_GROUPS.map(g => {
+      const slug = slugRK(g.kumpulan);
+      return `<div style="border:1px solid rgba(16,24,40,.12);border-radius:12px;padding:12px;background:#fafafa">
+        <div style="font-weight:700;font-size:13px;margin-bottom:8px">${g.ikon} ${g.kumpulan}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          ${g.items.map(it => {
+            const val = `${g.kumpulan}::${it.label}`;
+            return `<button type="button" class="kf-chip ${sel.includes(val) ? 'sel' : ''}" data-kfmulti="reaksi_pemulihan" data-kfval="${escRK(val)}">${it.label}</button>`;
+          }).join('')}
+        </div>
+        <input class="kf-other" style="margin-top:8px;width:100%" data-kfotherinput="reaksi_pemulihan__lain__${slug}" placeholder="Lain-lain…" value="${escRK(answersText['reaksi_pemulihan__lain__' + slug] || '')}">
+      </div>`;
+    }).join('')}
+  </div>`;
+}
 // Derive mood_score 1–10 dari mood utama + intensiti (untuk widget staff sedia ada)
 function deriveMood(){
   const m = healthData.mood || {};
@@ -493,7 +536,7 @@ function computeSkor() {
   let earned = 0, max = 0;
   ITEMS.forEach(it => {
     if (!it.berskor) return;
-    max += 2;
+    max += Math.max(1, ...(it.options || []).map(o => o.mata || 0));
     const val = answers[it.item_key];
     if (val == null) return;
     const opt = (it.options || []).find(o => o.value === val);
@@ -628,15 +671,19 @@ function renderHealth() {
   const mp = MOOD_PRIMARY.find(x => x.key === m.primary);
   const done = !!(window.__kfLogDates && window.__kfLogDates.has(selectedDate));
   const chip = (txt) => `<span class="inline-flex items-center gap-1.5 text-[12px] bg-ink/5 rounded-full px-3 py-1.5">${txt}</span>`;
-  const summary = (m.primary || healthData.reaksiSev || healthData.aktiviti) ? `
+  const summary = !SHOW_CHECKIN
+    ? (done ? '<p class="text-[12px] text-emerald-600 mb-4">✅ Checklist hari ini sudah lengkap.</p>'
+            : '<p class="text-[12px] text-ink/45 mb-4">Belum diisi untuk hari ini.</p>')
+    : ((m.primary || healthData.reaksiSev || healthData.aktiviti) ? `
     <div class="flex flex-wrap gap-2 mb-4">
       ${mp ? chip(`${mp.emoji} ${(mp.label||mp.key)}${m.detail?` · ${m.detail}`:''}${m.intensity?` · ${'⭐'.repeat(m.intensity)}`:''}`) : ''}
       ${healthData.reaksiSev ? chip(`🩺 Reaksi: ${healthData.reaksiSev}`) : ''}
       ${healthData.tidur ? chip(`🌙 ${healthData.tidur}–${healthData.bangun||'…'}`) : ''}
       ${healthData.aktiviti ? chip('🚶 Aktiviti direkod') : ''}
-    </div>` : '<p class="text-[12px] text-ink/45 mb-4">Belum diisi untuk hari ini.</p>';
+    </div>` : '<p class="text-[12px] text-ink/45 mb-4">Belum diisi untuk hari ini.</p>');
+  const cardSub = SHOW_CHECKIN ? 'Perasaan, reaksi, tidur, aktiviti &amp; checklist amalan' : 'Checklist amalan harian';
   document.getElementById('health-card').innerHTML = `
-    <div class="flex items-center gap-2.5 mb-4"><span class="text-2xl">💚</span><div><div class="text-[15px] font-semibold text-ink">Catatan Harian</div><div class="text-[11px] text-ink/45">Perasaan, reaksi, tidur, aktiviti &amp; checklist amalan</div></div></div>
+    <div class="flex items-center gap-2.5 mb-4"><span class="text-2xl">💚</span><div><div class="text-[15px] font-semibold text-ink">Catatan Harian</div><div class="text-[11px] text-ink/45">${cardSub}</div></div></div>
     ${summary}
     <button type="button" onclick="kfLaunch()" ${READONLY ? 'disabled' : ''} class="w-full bg-navy text-white py-3 rounded-xl text-sm font-bold hover:bg-navy-dark transition-colors shadow-sm flex items-center justify-center gap-2 ${READONLY ? 'opacity-50 cursor-not-allowed' : ''}">
       ${done ? '✏️ Kemaskini Catatan Harian' : '✅ Mula Catatan Harian'}
@@ -656,6 +703,7 @@ function selectDate(ds) {
   Object.entries(jaw).forEach(([k, v]) => {
     if (k.startsWith('__')) return;                 // reserved keys (mood/reaksi detail)
     if (k.endsWith('__text')) answersText[k.replace('__text', '')] = v;
+    else if (k.includes('__lain__')) answersText[k] = v;   // reaksi Lain-lain per kumpulan
     else answers[k] = v;
   });
 
@@ -755,6 +803,10 @@ async function saveChecklist(mode) {
     const t = answersText[it.item_key];
     if (t) jawapan[it.item_key + '__text'] = t;
   });
+  // Reaksi pemulihan: simpan "Lain-lain" per kumpulan (kunci komposit)
+  Object.entries(answersText).forEach(([k, v]) => {
+    if (k.startsWith('reaksi_pemulihan__lain__') && v && v.trim()) jawapan[k] = v.trim();
+  });
   // Simpan butiran check-in adaptif (kaya) dalam jawapan JSON
   jawapan.__mood = healthData.mood;
   jawapan.__reaksi = {
@@ -846,6 +898,9 @@ async function loadWeek(ws) {
 let kfSteps = [], kfIdx = 0, kfBusy = false;
 // Mode flow: 'checkin' (Daily Check-in sahaja), 'amalan' (Checklist Amalan sahaja), 'all' (gabung — legacy)
 let kfMode = 'all';
+// Sembunyi bahagian Daily Check-in (perasaan/mood, reaksi severity, tidur, aktiviti) buat masa ini —
+// pesakit isi checklist amalan sahaja (set GForm biasa). Set true utk aktifkan balik check-in penuh.
+const SHOW_CHECKIN = false;
 // Jejak pilihan "Tiada" per kumpulan (UI sahaja — tak disimpan; ketiadaan = tiada)
 
 function vibrate(p) { try { navigator.vibrate && navigator.vibrate(p); } catch (_) {} }
@@ -891,7 +946,7 @@ function updateMobileStart() {
         ${streak > 0 ? `<div class="shrink-0 bg-gold/20 border border-gold/40 text-[#f4d97b] text-xs font-bold px-3 py-1.5 rounded-full">🔥 ${streak} hari</div>` : ''}
       </div>
       <div class="flex items-center gap-2 mt-3">
-        ${filled ? '<span class="text-[12px] text-white/70">✓ Sudah diisi</span>' : `<span class="text-[12px] text-white/70">${ITEMS.length + 4} soalan ringkas · ~2 minit</span>`}
+        ${filled ? '<span class="text-[12px] text-white/70">✓ Sudah diisi</span>' : `<span class="text-[12px] text-white/70">${ITEMS.length + (SHOW_CHECKIN ? 4 : 0)} soalan ringkas · ~2 minit</span>`}
         ${badge}
       </div>
       <button onclick="kfLaunch()" ${!editable ? 'disabled' : ''}
@@ -905,7 +960,7 @@ function updateMobileStart() {
 function kfBuildSteps() {
   const steps = [{ type:'intro' }];
   // Bahagian Daily Check-in (mood → reaksi → tidur → aktiviti)
-  if (kfMode !== 'amalan') {
+  if (SHOW_CHECKIN && kfMode !== 'amalan') {
     steps.push({ type:'mood_primary' });
     const m = healthData.mood.primary;
     const fl = MOOD_FLOW[m];
@@ -1097,7 +1152,7 @@ function kfStepHtml(step) {
     const streak = computeStreakBase();
     const d = new Date(selectedDate + 'T00:00:00');
     const dl = d.toLocaleDateString('ms-MY', { weekday:'long', day:'numeric', month:'long' });
-    const introTitle = kfMode === 'amalan' ? 'Checklist Amalan' : kfMode === 'checkin' ? 'Daily Check-in' : 'Catatan Harian';
+    const introTitle = kfMode === 'amalan' ? 'Checklist Amalan' : kfMode === 'checkin' ? 'Poll Harian' : 'Catatan Harian';
     const introEmoji = kfMode === 'amalan' ? '📋' : kfMode === 'checkin' ? '💚' : '📝';
     return `<div class="kf-body"><div class="kf-center">
         <div class="kf-emoji">${introEmoji}</div>
@@ -1248,6 +1303,10 @@ function kfStepHtml(step) {
     const head = `<div class="kf-step-emoji">${icon}</div>
       <h3>${it.label}${it.berskor ? '' : ' <span style="font-size:12px;opacity:.6;font-weight:600">(tracking)</span>'}</h3>
       ${it.nota ? `<p class="kf-nota">${it.nota.replace(/ · /g, '\n')}</p>` : '<p class="kf-hint"></p>'}`;
+    // Reaksi pemulihan = grouped dari psy_reaksi_item (bukan flat options)
+    if (it.item_key === 'reaksi_pemulihan') {
+      return `<div class="kf-body kf-q">${head}${kfReaksiGroupedHtml(sel)}</div>${kfFooter()}`;
+    }
     let body;
     if (it.jenis_input === 'pilih_banyak') {
       const arr = Array.isArray(sel) ? sel : [];
@@ -1276,7 +1335,7 @@ function kfStepHtml(step) {
     const streak = computeStreakBase() + (window.__kfLogDates?.has(today) ? 0 : 1);
     const name = window.__firstName || '';
     const subTxt = kfMode === 'amalan' ? 'Anda telah melengkapkan amalan hari ini.'
-      : kfMode === 'checkin' ? 'Anda telah melengkapkan check-in hari ini.'
+      : kfMode === 'checkin' ? 'Anda telah melengkapkan Poll Harian hari ini.'
       : 'Anda telah melengkapkan catatan hari ini.';
     const motiv = g ? (g.cls === 'A' ? 'Hebat! Kepatuhan anda sangat baik — teruskan momentum ini.'
       : g.cls === 'B' ? 'Teruskan usaha anda secara konsisten untuk hasil yang lebih optimum.'
@@ -1317,7 +1376,7 @@ function kfStepHtml(step) {
     : `
       <div class="kf-res-checkin">
         <div class="kf-emoji">✅</div>
-        <p>${kfMode === 'checkin' ? 'Daily check-in selesai' : 'Catatan hari ini lengkap'}</p>
+        <p>${kfMode === 'checkin' ? 'Poll Harian selesai' : 'Catatan hari ini lengkap'}</p>
         <div class="kf-streak-big">🔥 ${streak} hari berturut</div>
       </div>`;
     return `<div class="kf-confetti" id="kf-confetti"></div>
@@ -1578,6 +1637,50 @@ async function initStaffFill(patientId){
 const _kfQ = new URLSearchParams(location.search);
 const _kfStaffPid = _kfQ.get('staff') === '1' ? _kfQ.get('patient_id') : null;
 
+async function renderPatientTrend() {
+  const el = document.getElementById('trend-card');
+  if (!el || !window.patientRecord) return;
+  try {
+    const { data: logs } = await window.db.from('psy_kepatuhan_log')
+      .select('log_date, skor_harian')
+      .eq('patient_id', window.patientRecord.id)
+      .gte('log_date', addDays(today, -41))
+      .lte('log_date', today);
+    if (!logs || !logs.length) return;
+    const byWeek = {};
+    logs.forEach(l => {
+      const ws = mondayOf(l.log_date);
+      (byWeek[ws] ||= []).push(l);
+    });
+    const weeks = [];
+    for (let i = 5; i >= 0; i--) {
+      const ws = mondayOf(addDays(today, -7 * i));
+      const wl = byWeek[ws] || [];
+      const we = addDays(ws, 6);
+      const cap = we > today ? today : we;
+      const elapsed = Math.max(1, Math.round((new Date(cap + 'T00:00:00') - new Date(ws + 'T00:00:00')) / 86400000) + 1);
+      const sum = wl.reduce((a, l) => a + (l.skor_harian != null ? l.skor_harian : 0), 0);
+      const avg = wl.length ? Math.round(sum / elapsed) : null;
+      const d = new Date(ws + 'T00:00:00');
+      weeks.push({ label: d.toLocaleDateString('ms-MY', { day: 'numeric', month: 'short' }), avg });
+    }
+    if (!weeks.some(w => w.avg != null)) return;
+    el.classList.remove('hidden');
+    document.getElementById('trend-bars').innerHTML = weeks.map(w => {
+      const pct = w.avg ?? 0;
+      const color = w.avg == null ? '#d1d5db' : pct >= 85 ? '#16a34a' : pct >= 50 ? '#f59e0b' : '#ef4444';
+      const kelas = w.avg == null ? '—' : pct >= 85 ? 'A' : pct >= 50 ? 'B' : 'C';
+      return `<div class="flex items-center gap-2 text-[11px]">
+        <span class="w-14 shrink-0 text-ink/50">${w.label}</span>
+        <div class="flex-1 bg-ink/5 rounded-full h-4 overflow-hidden">
+          <div class="h-full rounded-full" style="width:${pct}%;background:${color}"></div>
+        </div>
+        <span class="w-16 text-right font-bold shrink-0" style="color:${color}">${w.avg != null ? pct + '%' : '—'} <span class="text-[9px] font-semibold text-ink/35">${kelas}</span></span>
+      </div>`;
+    }).join('');
+  } catch (_) {}
+}
+
 (async () => {
   let user;
   if (_kfStaffPid) {
@@ -1620,6 +1723,7 @@ const _kfStaffPid = _kfQ.get('staff') === '1' ? _kfQ.get('patient_id') : null;
     }
   }
   ITEMS = items;
+  await loadReaksiGroups();   // reaksi pemulihan grouped (item 5)
   // Nota: walaupun tiada amalan BERSKOR untuk fasa ini, Daily Check-in
   // (perasaan, reaksi, tidur, aktiviti) tetap boleh diisi.
   document.getElementById('week-card').classList.remove('hidden');
@@ -1639,6 +1743,7 @@ const _kfStaffPid = _kfQ.get('staff') === '1' ? _kfQ.get('patient_id') : null;
   const _kfTarget = _kfDate || today;
   await loadWeek(mondayOf(_kfTarget));
   selectDate(_kfTarget);
+  if (!_kfStaffPid) renderPatientTrend().catch(() => {});
   // Staff-fill: terus buka flow kfMode supaya tak perlu klik button lagi
   if (_kfStaffPid) setTimeout(() => kfLaunch('all'), 100);
 })();

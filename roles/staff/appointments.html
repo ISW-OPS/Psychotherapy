@@ -92,7 +92,11 @@
               📋 Senarai
             </button>
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 flex-wrap">
+            <select id="f-coach" onchange="onCoachFilter()"
+              class="border border-ink/20 rounded-xl px-3 py-2 text-sm outline-none focus:border-navy bg-white">
+              <option value="">Semua coach</option>
+            </select>
             <span id="count" class="text-sm text-ink/60"></span>
             <button onclick="printSchedule()" class="flex items-center gap-1.5 px-4 py-2 border border-ink/20 rounded-xl text-sm bg-white hover:border-navy hover:text-navy transition-colors">
               🖨️ Print
@@ -100,6 +104,37 @@
             <button onclick="openBookModal()" class="flex items-center gap-1.5 bg-navy text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-navy-dark">
               + Buat Sesi
             </button>
+          </div>
+        </div>
+
+        <!-- ── ABSENT ALERT (>7 days) ───────────────── -->
+        <div id="absent-alert-wrap" class="hidden print-hide">
+          <div class="bg-terracotta/10 border border-terracotta/30 rounded-xl overflow-hidden">
+            <button onclick="toggleAbsentPanel()" class="w-full flex items-center justify-between px-4 py-3 hover:bg-terracotta/5 transition-colors">
+              <div class="flex items-center gap-2">
+                <span class="text-lg">🚨</span>
+                <span class="font-semibold text-sm text-terracotta">Pesakit Tidak Hadir Lebih 7 Hari</span>
+                <span id="absent-badge" class="bg-terracotta text-white text-[10px] font-bold px-2 py-0.5 rounded-full"></span>
+              </div>
+              <span id="absent-chevron" class="text-terracotta text-sm font-bold">▼</span>
+            </button>
+            <div id="absent-panel" class="hidden border-t border-terracotta/20">
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="bg-terracotta/5 text-left">
+                      <th class="px-4 py-2 text-[10px] font-semibold text-terracotta uppercase">Pesakit</th>
+                      <th class="px-4 py-2 text-[10px] font-semibold text-terracotta uppercase">MRN</th>
+                      <th class="px-4 py-2 text-[10px] font-semibold text-terracotta uppercase">Coach</th>
+                      <th class="px-4 py-2 text-[10px] font-semibold text-terracotta uppercase text-center">Hari Tanpa Kehadiran</th>
+                      <th class="px-4 py-2 text-[10px] font-semibold text-terracotta uppercase">Sesi Hadir Terakhir</th>
+                      <th class="px-4 py-2 text-[10px] font-semibold text-terracotta uppercase text-center">Minggu Semasa</th>
+                    </tr>
+                  </thead>
+                  <tbody id="absent-tbody"></tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -218,7 +253,7 @@
           </div>
           <div class="bg-white rounded-xl border border-ink/10 overflow-x-auto">
             <table class="data">
-              <thead><tr><th>Tarikh & Masa</th><th>Pesakit</th><th>Plan · Minggu</th><th>Status</th><th>Skor</th><th>Nota</th><th class="print-hide">Tindakan</th></tr></thead>
+              <thead><tr><th>Tarikh & Masa</th><th>Pesakit</th><th>Coach</th><th>Plan · Minggu</th><th>Status</th><th>Skor</th><th>Nota</th><th class="print-hide">Tindakan</th></tr></thead>
               <tbody id="tbody"></tbody>
             </table>
           </div>
@@ -353,7 +388,7 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/shared/supabase.js"></script>
 <script src="../../config/supabase.js"></script>
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
@@ -445,6 +480,12 @@ let rescheduleId = null;
 let currentView  = 'calendar';
 let calYear, calMonth; // 0-based month
 let selectedDayDate = null;
+let apptStaffMap = {}; // id → full_name (for coach ganti)
+
+async function loadApptStaffMap() {
+  const { data } = await window.db.from('psy_profiles').select('id, full_name, staff_role').eq('role', 'staff').then(r => r, () => ({ data: [] }));
+  (data || []).forEach(p => { apptStaffMap[p.id] = { name: p.full_name, role: p.staff_role }; });
+}
 
 // Local date string (YYYY-MM-DD) without UTC conversion
 function localDateStr(dt) {
@@ -587,6 +628,7 @@ function renderWeekView() {
 
   // Day columns
   const closureMap = window._closureMap || {};
+  const wkCoachFilter = document.getElementById('f-coach')?.value || '';
   const dayCols = [];
   for (let i = 0; i < 7; i++) {
     const d = wkAddDays(currentWeekStart, i);
@@ -594,7 +636,8 @@ function renderWeekView() {
     const closure = closureMap[ymd];
     const isOff = !closure && [1, 2].includes(d.getDay()); // Mon/Tue clinic-off (existing rule)
 
-    const daySessions = allSessions.filter(s => s.session_date && wkSame(new Date(s.session_date), d));
+    const daySessions = allSessions.filter(s => s.session_date && wkSame(new Date(s.session_date), d)
+      && (!wkCoachFilter || patientMap[s.patient_id]?.coach_id === wkCoachFilter || s.substitute_coach_id === wkCoachFilter));
 
     const hourRows = [];
     for (let h = 0; h < WK_HOURS; h++) hourRows.push(`<div class="wk-hour-row" style="height:${WK_ROW_PX}px"></div>`);
@@ -733,9 +776,11 @@ function renderCalendar() {
   startDate.setDate(startDate.getDate() - startOffset);
 
   // Build session map: dateStr → [sessions]
+  const coachFilter = document.getElementById('f-coach')?.value || '';
   const sessionMap = {};
   allSessions.forEach(s => {
     if (!s.session_date) return;
+    if (coachFilter && patientMap[s.patient_id]?.coach_id !== coachFilter && s.substitute_coach_id !== coachFilter) return;
     const d = localDateStr(s.session_date);
     if (!sessionMap[d]) sessionMap[d] = [];
     sessionMap[d].push(s);
@@ -793,7 +838,9 @@ function openDayModal(dateStr) {
   document.getElementById('day-modal-title').textContent =
     d.toLocaleDateString('ms-MY', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
 
-  const daySessions = allSessions.filter(s => s.session_date && localDateStr(s.session_date) === dateStr);
+  const dayCoachFilter = document.getElementById('f-coach')?.value || '';
+  const daySessions = allSessions.filter(s => s.session_date && localDateStr(s.session_date) === dateStr
+    && (!dayCoachFilter || patientMap[s.patient_id]?.coach_id === dayCoachFilter || s.substitute_coach_id === dayCoachFilter));
   const isClosed    = [1, 2].includes(d.getDay()); // Mon/Tue closed
   const addBtn      = document.querySelector('#day-modal > div > div:last-child');
   if (addBtn) addBtn.style.display = isClosed ? 'none' : '';
@@ -805,6 +852,7 @@ function openDayModal(dateStr) {
         const plan    = planMap[s.plan_id];
         const name    = patientName(patient);
         const time    = dt.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+        const subCoachName = s.substitute_coach_id ? (apptStaffMap[s.substitute_coach_id]?.name || '—') : null;
         return `<div class="bg-white border border-ink/10 rounded-xl p-3">
           <div class="flex items-start justify-between gap-2">
             <div>
@@ -813,6 +861,7 @@ function openDayModal(dateStr) {
               <div class="text-xs text-ink/60 mt-0.5">${plan?.name || '—'}</div>
               ${s.notes ? `<div class="text-xs text-ink/50 italic mt-1">${s.notes}</div>` : ''}
               ${s.session_type === 'online' ? '<span class="text-[10px] text-navy font-semibold">💻 Online</span>' : '<span class="text-[10px] text-ink/40">🏥 F2F</span>'}
+              ${subCoachName ? `<div class="text-[10px] font-semibold text-amber-700 mt-1">👥 Coach Ganti: ${escapeHtml(subCoachName)}</div>` : ''}
             </div>
             <div>${statusChipMap[s.status] || ''}</div>
           </div>
@@ -823,6 +872,7 @@ function openDayModal(dateStr) {
                 : `<button onclick="markHadir('${s.id}','${s.plan_id}',${s.week_number})" class="bg-green text-white text-xs px-3 py-1 rounded-lg">✅ Hadir</button>`}
               <button onclick="openReschedule('${s.id}')" class="border border-gold text-gold-dark text-xs px-3 py-1 rounded-lg">🔄 Reschedule</button>
               <button onclick="markCancel('${s.id}')" class="border border-terracotta text-terracotta text-xs px-3 py-1 rounded-lg">❌ Tidak Hadir</button>` : ''}
+            <button onclick="openApptCoachGanti('${s.id}','${s.substitute_coach_id||''}')" class="border border-ink/20 text-ink/50 text-xs px-3 py-1 rounded-lg hover:border-ink/40 hover:text-ink/80">👥 ${subCoachName ? `Ganti: ${escapeHtml(subCoachName)}` : 'Assign Ganti'}</button>
           </div>
         </div>`;
       }).join('')
@@ -840,16 +890,21 @@ function openBookFromDay() {
 function renderList() {
   const date   = document.getElementById('f-date')?.value || '';
   const status = document.getElementById('f-status')?.value || '';
+  const coach  = document.getElementById('f-coach')?.value || '';
   let filtered = allSessions;
   if (date)   filtered = filtered.filter(s => s.session_date && localDateStr(s.session_date) === date);
   if (status) filtered = filtered.filter(s => s.status === status);
+  if (coach)  filtered = filtered.filter(s => patientMap[s.patient_id]?.coach_id === coach || s.substitute_coach_id === coach);
 
   document.getElementById('tbody').innerHTML = filtered.length
     ? filtered.map(s => {
-        const dt      = s.session_date ? new Date(s.session_date) : null;
-        const patient = patientMap[s.patient_id];
-        const plan    = planMap[s.plan_id];
-        const name    = patientName(patient);
+        const dt        = s.session_date ? new Date(s.session_date) : null;
+        const patient   = patientMap[s.patient_id];
+        const plan      = planMap[s.plan_id];
+        const name      = patientName(patient);
+        const coachId   = patient?.coach_id;
+        const coachName = coachId ? (apptStaffMap[coachId]?.name || '—') : '—';
+        const subName   = s.substitute_coach_id ? (apptStaffMap[s.substitute_coach_id]?.name || null) : null;
         return `<tr>
           <td class="font-semibold">${dt
             ? dt.toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric' })
@@ -858,6 +913,10 @@ function renderList() {
           <td>
             <div class="font-medium text-sm">${name}</div>
             <div class="text-[10px] text-ink/50 font-mono">${patient?.mrn || '—'}</div>
+          </td>
+          <td class="text-xs">
+            <div>${coachName}</div>
+            ${subName ? `<div class="text-[10px] text-amber-700 font-semibold">👥 Ganti: ${escapeHtml(subName)}</div>` : ''}
           </td>
           <td class="text-xs">${plan?.name || '—'}<br><span class="text-ink/60">Minggu ${s.week_number}</span></td>
           <td>${statusChipMap[s.status] || s.status}</td>
@@ -873,7 +932,7 @@ function renderList() {
           </td>
         </tr>`;
       }).join('')
-    : '<tr><td colspan="7" class="text-center text-ink/40 py-8">Tiada sesi</td></tr>';
+    : '<tr><td colspan="8" class="text-center text-ink/40 py-8">Tiada sesi</td></tr>';
 }
 
 // ── Actions ──────────────────────────────────────────
@@ -910,6 +969,34 @@ async function markCancel(id) {
     document.getElementById('day-modal').classList.add('hidden');
     loadSessions();
   } catch (err) { banner('Ralat: ' + err.message, 'error'); }
+}
+
+// ── Coach Ganti ────────────────────────────────────────
+function openApptCoachGanti(sessionId, currentSubId) {
+  const sel = document.getElementById('appt-ganti-select');
+  sel.innerHTML = '<option value="">— Tiada (buang ganti) —</option>';
+  Object.entries(apptStaffMap).forEach(([id, info]) => {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = info.name + (info.role ? ` (${info.role})` : '');
+    if (id === currentSubId) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  document.getElementById('appt-ganti-session-id').value = sessionId;
+  document.getElementById('appt-coach-ganti-modal').classList.remove('hidden');
+}
+
+async function saveApptCoachGanti() {
+  const sessionId = document.getElementById('appt-ganti-session-id').value;
+  const coachId   = document.getElementById('appt-ganti-select').value || null;
+  const { error } = await window.db.from('psy_plan_weekly_progress')
+    .update({ substitute_coach_id: coachId }).eq('id', sessionId);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  const name = coachId ? (apptStaffMap[coachId]?.name || 'Coach') : null;
+  banner(coachId ? `Coach ganti: ${name} ✅` : 'Coach ganti dibuang');
+  document.getElementById('appt-coach-ganti-modal').classList.add('hidden');
+  await loadSessions();
+  openDayModal(selectedDayDate);
 }
 
 // ── Reschedule ────────────────────────────────────────
@@ -998,6 +1085,14 @@ async function confirmReschedule() {
     }
 
     banner(shifted ? `Sesi dijadualkan semula + ${shifted} sesi seterusnya di-shift` : 'Sesi dijadualkan semula');
+    const patUserProfileId = patientMap[currentSession?.patient_id]?.psy_profiles?.id;
+    if (patUserProfileId) {
+      const d = new Date(newDate);
+      await notify(patUserProfileId, 'appointment',
+        `Sesi Minggu ${currentSession.week_number} dijadual semula`,
+        `${d.toLocaleDateString('ms-MY',{weekday:'long',day:'2-digit',month:'long'})} · ${d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})} — dijadual semula oleh ${window.currentUser.full_name}.`,
+        'plan.html');
+    }
     closeReschedule();
     loadSessions();
   } catch (err) {
@@ -1106,7 +1201,7 @@ async function saveSession() {
     return;
   }
 
-  // Gate: previous session must be consultation_done before booking next
+  // Gate: previous session must be marked attended (hadir/selesai) before booking next
   if (week > 1) {
     const { data: prevSessions } = await window.db
       .from('psy_plan_weekly_progress')
@@ -1116,8 +1211,8 @@ async function saveSession() {
       .order('week_number', { ascending: false })
       .limit(1);
     const prev = prevSessions?.[0];
-    if (prev && prev.status !== 'consultation_done' && prev.status !== 'cancel') {
-      errEl.textContent = `⚠️ Sesi Minggu ${prev.week_number} belum selesai consultation. Sila sign SOAP note dahulu sebelum book sesi seterusnya.`;
+    if (prev && !['hadir','consultation_done','cancel'].includes(prev.status)) {
+      errEl.textContent = `⚠️ Sesi Minggu ${prev.week_number} belum ditanda hadir. Sila tandakan kehadiran sesi sebelum book sesi seterusnya.`;
       errEl.classList.remove('hidden');
       return;
     }
@@ -1218,10 +1313,118 @@ function printSchedule() {
   setTimeout(() => window.print(), 100);
 }
 
+function populateCoachFilter() {
+  const sel = document.getElementById('f-coach');
+  if (!sel) return;
+  const coaches = Object.entries(apptStaffMap)
+    .sort((a, b) => a[1].name.localeCompare(b[1].name));
+  sel.innerHTML = '<option value="">Semua coach</option>' +
+    coaches.map(([id, info]) => `<option value="${id}">${escapeHtml(info.name)}</option>`).join('');
+}
+
+function onCoachFilter() {
+  if (currentView === 'list') renderList();
+  else if (currentView === 'calendar') renderCalendar();
+  else if (currentView === 'week') renderWeekView();
+}
+
 function clearFilter() {
   document.getElementById('f-date').value   = '';
   document.getElementById('f-status').value = '';
+  document.getElementById('f-coach').value  = '';
   renderList();
+}
+
+// ── Absent >7 days alert ──────────────────────────────────────
+let absentPanelOpen = false;
+
+function toggleAbsentPanel() {
+  absentPanelOpen = !absentPanelOpen;
+  document.getElementById('absent-panel').classList.toggle('hidden', !absentPanelOpen);
+  document.getElementById('absent-chevron').textContent = absentPanelOpen ? '▲' : '▼';
+}
+
+async function loadAbsentAlert() {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 7);
+  const cutoffISO = cutoff.toISOString();
+
+  // Get all active patients with active treatment plans
+  const [patientsRes, plansRes, progressRes, profilesRes] = await Promise.all([
+    window.db.from('psy_patients')
+      .select('id, mrn, coach_id, psy_profiles!psy_patients_user_id_fkey(full_name)')
+      .eq('status', 'active')
+      .then(r => r.data || []).catch(() => []),
+    window.db.from('psy_treatment_plans')
+      .select('patient_id, current_week, duration_weeks')
+      .eq('status', 'active')
+      .then(r => r.data || []).catch(() => []),
+    window.db.from('psy_plan_weekly_progress')
+      .select('patient_id, session_date, status')
+      .eq('status', 'hadir')
+      .order('session_date', { ascending: false })
+      .then(r => r.data || []).catch(() => []),
+    window.db.from('psy_profiles')
+      .select('id, full_name')
+      .then(r => r.data || []).catch(() => []),
+  ]);
+
+  const profileMap = {};
+  profilesRes.forEach(p => { profileMap[p.id] = p.full_name; });
+
+  // Last hadir per patient
+  const lastHadirMap = {};
+  progressRes.forEach(s => {
+    if (!lastHadirMap[s.patient_id]) lastHadirMap[s.patient_id] = s.session_date;
+  });
+
+  const planMap2 = {};
+  plansRes.forEach(pl => { planMap2[pl.patient_id] = pl; });
+
+  const today = new Date();
+  const absentList = patientsRes
+    .filter(p => planMap2[p.id]) // only those with active plans
+    .map(p => {
+      const lastHadir = lastHadirMap[p.id] || null;
+      const daysSince = lastHadir
+        ? Math.floor((today - new Date(lastHadir)) / 86400000)
+        : null;
+      return {
+        id:            p.id,
+        name:          p.psy_profiles?.full_name || '—',
+        mrn:           p.mrn || '—',
+        coach_name:    p.coach_id ? (profileMap[p.coach_id] || '—') : '—',
+        daysSince:     daysSince,
+        last_hadir:    lastHadir,
+        current_week:  planMap2[p.id]?.current_week || 0,
+        duration_weeks: planMap2[p.id]?.duration_weeks || 0,
+      };
+    })
+    .filter(p => p.daysSince === null || p.daysSince >= 7)
+    .sort((a, b) => (b.daysSince ?? 999) - (a.daysSince ?? 999));
+
+  if (!absentList.length) return;
+
+  document.getElementById('absent-alert-wrap').classList.remove('hidden');
+  document.getElementById('absent-badge').textContent = absentList.length;
+
+  document.getElementById('absent-tbody').innerHTML = absentList.map(p => {
+    const days  = p.daysSince !== null ? p.daysSince : '?';
+    const daysCls = p.daysSince !== null && p.daysSince >= 14 ? 'text-terracotta font-bold' : 'text-amber-700 font-semibold';
+    const lastDt  = p.last_hadir
+      ? new Date(p.last_hadir).toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric' })
+      : 'Belum pernah hadir';
+    return `<tr class="border-b border-terracotta/10 hover:bg-terracotta/5">
+      <td class="px-4 py-2.5 font-medium text-sm">${escapeHtml(p.name)}</td>
+      <td class="px-4 py-2.5 text-xs text-ink/60">${p.mrn}</td>
+      <td class="px-4 py-2.5 text-xs">${escapeHtml(p.coach_name)}</td>
+      <td class="px-4 py-2.5 text-center"><span class="${daysCls}">${days} hari</span></td>
+      <td class="px-4 py-2.5 text-xs">${lastDt}</td>
+      <td class="px-4 py-2.5 text-center text-xs font-semibold text-navy">
+        ${p.duration_weeks ? `M${p.current_week}/${p.duration_weeks}` : '—'}
+      </td>
+    </tr>`;
+  }).join('');
 }
 
 (async () => {
@@ -1232,7 +1435,9 @@ function clearFilter() {
   calMonth = now.getMonth();
   document.getElementById('f-date').addEventListener('change', renderList);
   document.getElementById('f-status').addEventListener('change', renderList);
-  await loadSessions();
+  await Promise.all([loadSessions(), loadApptStaffMap()]);
+  populateCoachFilter();
+  loadAbsentAlert();
 
   // Deep-link: ?date=YYYY-MM-DD → buka paparan minggu yang mengandungi tarikh itu
   const qDate = new URLSearchParams(location.search).get('date');
@@ -1242,5 +1447,27 @@ function clearFilter() {
   }
 })();
 </script>
+
+<!-- Coach Ganti Modal -->
+<div id="appt-coach-ganti-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-ink/30 p-4"
+     onclick="if(event.target===this)document.getElementById('appt-coach-ganti-modal').classList.add('hidden')">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+    <h3 class="font-bold text-base text-ink mb-1">👥 Coach Ganti</h3>
+    <p class="text-xs text-ink/50 mb-4">Pesakit kekal di bawah coach asal. Coach ganti hanya untuk sesi ini.</p>
+    <input type="hidden" id="appt-ganti-session-id">
+    <div class="mb-4">
+      <label class="block text-xs font-semibold text-ink/60 mb-1">Pilih Coach Ganti</label>
+      <select id="appt-ganti-select"
+        class="w-full border border-ink/20 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-navy/50">
+        <option value="">— Tiada (buang ganti) —</option>
+      </select>
+    </div>
+    <div class="flex gap-2">
+      <button onclick="saveApptCoachGanti()" class="flex-1 bg-navy text-white py-2 rounded-xl text-sm font-semibold">Simpan</button>
+      <button onclick="document.getElementById('appt-coach-ganti-modal').classList.add('hidden')"
+        class="flex-1 border border-ink/20 py-2 rounded-xl text-sm font-semibold text-ink/60">Batal</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>

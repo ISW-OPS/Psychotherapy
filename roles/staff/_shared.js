@@ -73,7 +73,7 @@ const STATUS_LABELS = {
   cancelled:    'Dibatalkan',
   no_show:      'Tidak Hadir',
   in_progress:  'Sedang Berjalan',
-  checked_in:   'Check-in',
+  checked_in:   'Daftar Masuk',
   draft:        'Draf',
   signed:       'Ditandatangan',
   open:         'Terbuka',

@@ -79,6 +79,7 @@ const STAFF_NAV_ICONS = {
   plan_week:        'treatment-plan.png',
   kob_list:         'KOB.png',
   kepatuhan:        'catatan-harian.png',
+  psy_vitals:       'Vital-rekod.png',
   risk:             'Risk.png',
   pakej:            'Pakej-rawatan.png',
   psy_products:     'shop.png',
@@ -126,6 +127,7 @@ const STAFF_NAV_MASTER = [
       { id: 'plan_week', url: 'weekly-plan.html', icon: '📋', label: 'Weekly Plan' },
       { id: 'kob_list', url: 'kob-list.html', icon: '🩺', label: 'Sesi KOB' },
       { id: 'kepatuhan', url: 'kepatuhan.html', icon: '📊', label: 'Kepatuhan' },
+      { id: 'psy_vitals', url: 'vitals.html', icon: '💓', label: 'Bacaan Vitals' },
       { id: 'risk', url: 'risk.html', icon: '⚠️', label: 'Amaran Risiko' },
     ]
   },
@@ -151,6 +153,7 @@ const STAFF_NAV_MASTER = [
     group: 'LAPORAN', collapsible: true, items: [
       { id: 'governance', url: 'governance.html', icon: '📈', label: 'Governance' },
       { id: 'staff_stats', url: 'staff-stats.html', icon: '📊', label: 'Statistik' },
+      { id: 'kehadiran', url: 'kehadiran.html', icon: '📋', label: 'Laporan Kehadiran' },
       { id: 'pakej_laporan', url: 'pakej-laporan.html', icon: '📦', label: 'Laporan Pakej' },
       { id: 'issue', url: 'issue.html', icon: '⚠️', label: 'Report Issue' },
     ]
@@ -622,9 +625,10 @@ function buildTopbar(user, cfg, role, staffRole) {
       <div id="notif-drawer" class="absolute top-0 right-0 bottom-0 w-full max-w-sm bg-white shadow-2xl flex flex-col translate-x-full transition-transform duration-300">
         <div class="px-5 py-4 border-b border-ink/10 flex items-center justify-between">
           <h3 class="font-bold">Notifikasi</h3>
-          <div class="flex items-center gap-3">
-            <button onclick="markAllRead()" class="text-xs text-navy hover:underline">Baca semua</button>
-            <button onclick="closeNotifPanel()" class="text-ink/50 text-xl leading-none">×</button>
+          <div class="flex items-center gap-2">
+            <button onclick="markAllRead()" class="text-xs text-navy hover:underline px-1">Baca semua</button>
+            <button onclick="deleteAllNotif()" class="text-xs text-terracotta hover:underline px-1">Padam semua</button>
+            <button onclick="closeNotifPanel()" class="text-ink/40 hover:text-ink text-xl leading-none ml-1">×</button>
           </div>
         </div>
         <div id="notif-list" class="flex-1 overflow-y-auto divide-y divide-ink/5"></div>
@@ -632,6 +636,7 @@ function buildTopbar(user, cfg, role, staffRole) {
     document.body.appendChild(panel);
   }
   loadNotifBadge();
+  subscribeNotifBadge();
   if (role === 'staff') { loadWaBadge(); subscribeWaBadge(); }
 }
 
@@ -650,6 +655,16 @@ async function loadWaBadge() {
     setWaBadge(count || 0);
   } catch (_) { }
 }
+async function subscribeNotifBadge() {
+  if (!window.db || window._notifBadgeSub) return;
+  window._notifBadgeSub = true;
+  const uid = (await window.db.auth.getUser()).data.user?.id;
+  if (!uid) return;
+  window.db.channel('notif-badge-' + uid)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'psy_notifications', filter: `user_id=eq.${uid}` }, () => loadNotifBadge())
+    .subscribe();
+}
+
 function subscribeWaBadge() {
   if (!window.db || window._waBadgeSub) return;
   window._waBadgeSub = true;
@@ -676,7 +691,7 @@ function renderHeader(title, subtitle) {
   if (header) header.style.display = 'none';
 }
 
-const NOTIF_ICONS = { appointment: '📅', order: '📦', plan: '💊', system: '📢', default: '🔔' };
+const NOTIF_ICONS = { appointment: '📅', order: '📦', plan: '💊', system: '📢', reaksi: '🌀', kyc: '🆔', default: '🔔' };
 
 async function loadNotifBadge() {
   if (!window.db) return;
@@ -698,16 +713,19 @@ async function loadNotifPanel() {
     .select('*').eq('user_id', uid).order('created_at', { ascending: false }).limit(30);
   const items = notifs || [];
   list.innerHTML = items.length ? items.map(n => `
-    <div onclick="readNotif('${n.id}','${n.link || ''}')"
-      class="px-5 py-4 cursor-pointer hover:bg-cream transition-colors ${n.is_read ? 'opacity-60' : 'bg-navy-light/30'}">
+    <div id="notif-item-${n.id}" class="group px-5 py-3.5 hover:bg-cream/60 transition-colors ${n.is_read ? 'opacity-55' : 'bg-navy-light/20'}">
       <div class="flex items-start gap-3">
-        <span class="text-xl flex-shrink-0 mt-0.5">${NOTIF_ICONS[n.type] || NOTIF_ICONS.default}</span>
-        <div class="flex-1 min-w-0">
-          <div class="text-sm font-semibold leading-snug">${n.title}</div>
-          ${n.body ? `<div class="text-xs text-ink/60 mt-0.5">${n.body}</div>` : ''}
-          <div class="text-[10px] text-ink/40 mt-1">${new Date(n.created_at).toLocaleString('ms-MY', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
+        <span class="text-xl flex-shrink-0 mt-0.5 cursor-pointer" onclick="readNotif('${n.id}','${n.link || ''}')">${NOTIF_ICONS[n.type] || NOTIF_ICONS.default}</span>
+        <div class="flex-1 min-w-0 cursor-pointer" onclick="readNotif('${n.id}','${n.link || ''}')">
+          <div class="flex items-start justify-between gap-1">
+            <div class="text-sm font-semibold leading-snug">${n.title}</div>
+            ${!n.is_read ? '<span class="w-1.5 h-1.5 bg-navy rounded-full flex-shrink-0 mt-1.5"></span>' : ''}
+          </div>
+          ${n.body ? `<div class="text-xs text-ink/60 mt-0.5 leading-relaxed">${n.body}</div>` : ''}
+          <div class="text-[10px] text-ink/35 mt-1">${new Date(n.created_at).toLocaleString('ms-MY', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
         </div>
-        ${!n.is_read ? '<span class="w-2 h-2 bg-navy rounded-full flex-shrink-0 mt-2"></span>' : ''}
+        <button onclick="deleteNotif('${n.id}')" title="Padam"
+          class="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-ink/25 hover:bg-terracotta/15 hover:text-terracotta transition-colors opacity-0 group-hover:opacity-100 text-xs leading-none mt-0.5">✕</button>
       </div>
     </div>`).join('')
     : '<div class="text-sm text-ink/40 text-center py-16">Tiada notifikasi</div>';
@@ -725,6 +743,22 @@ async function markAllRead() {
   await window.db.from('psy_notifications').update({ is_read: true }).eq('user_id', uid).eq('is_read', false);
   loadNotifBadge();
   loadNotifPanel();
+}
+
+async function deleteNotif(id) {
+  document.getElementById('notif-item-' + id)?.remove();
+  await window.db.from('psy_notifications').delete().eq('id', id);
+  loadNotifBadge();
+  const list = document.getElementById('notif-list');
+  if (list && !list.children.length) list.innerHTML = '<div class="text-sm text-ink/40 text-center py-16">Tiada notifikasi</div>';
+}
+
+async function deleteAllNotif() {
+  const uid = (await window.db.auth.getUser()).data.user?.id;
+  await window.db.from('psy_notifications').delete().eq('user_id', uid);
+  loadNotifBadge();
+  const list = document.getElementById('notif-list');
+  if (list) list.innerHTML = '<div class="text-sm text-ink/40 text-center py-16">Tiada notifikasi</div>';
 }
 
 function toggleNotifPanel() {

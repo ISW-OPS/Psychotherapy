@@ -1908,11 +1908,11 @@ CREATE INDEX IF NOT EXISTS idx_kepatuhan_weekly_patient ON psy_kepatuhan_weekly(
 -- ============================================================
 INSERT INTO psy_kepatuhan_item (fasa, item_key, label, nota, jenis_input, period, options, meta, berskor, urutan) VALUES
 ('week1','madu_lth_ib','Minum Madu (LTH / IB)','LTH: Lote Tree Honey · IB: Immune Booster Honey','kiraan','harian',
- '[{"value":"2","label":"2x","mata":1},{"value":"3","label":"3x","mata":2},{"value":"4","label":"4x","mata":2},{"value":"5","label":"5x","mata":2},{"value":"other","label":"Other","mata":1}]',
+ '[{"value":"tidak","label":"Tidak minum","mata":0},{"value":"2","label":"2x","mata":1},{"value":"3","label":"3x","mata":2},{"value":"4","label":"4x","mata":3},{"value":"5","label":"5x","mata":4},{"value":"other","label":"Lebih 5x","mata":4}]',
  '{"target":3}', true, 1),
 
 ('week1','madu_lthpg_yhpg','Minum Madu (LTHPG / YHPG)','LTHPG: Lote Tree Honey Pearl Garlic · YHPG: Young & Healthy Pearl Garlic','kiraan','harian',
- '[{"value":"2","label":"2x","mata":1},{"value":"3","label":"3x","mata":2},{"value":"4","label":"4x","mata":2},{"value":"5","label":"5x","mata":2},{"value":"other","label":"Other","mata":1}]',
+ '[{"value":"tidak","label":"Tidak minum","mata":0},{"value":"2","label":"2x","mata":1},{"value":"3","label":"3x","mata":2},{"value":"4","label":"4x","mata":3},{"value":"5","label":"5x","mata":4},{"value":"other","label":"Lebih 5x","mata":4}]',
  '{"target":3}', true, 2),
 
 ('week1','pernafasan_fitrah','Pernafasan Fitrah 30 Minit',NULL,'pilih_satu','harian',
@@ -1981,9 +1981,16 @@ ALTER TABLE psy_daily_checkins
   ADD COLUMN IF NOT EXISTS wake_time      TEXT,                 -- bangun pukul (HH:MM)
   ADD COLUMN IF NOT EXISTS activity_level TEXT;                 -- tahap gangguan aktiviti
 
--- Reaksi pemulihan kini di bahagian Daily Check-in (lebih terperinci, berkumpulan)
--- → nyahaktif item ringkas dalam checklist amalan supaya tidak bertindih.
-UPDATE psy_kepatuhan_item SET aktif = false WHERE item_key = 'reaksi_pemulihan';
+-- Set asas Week 1 (GForm biasa) — buat masa ini hanya 5 item aktif:
+--   madu LTH/IB, madu LTHPG/YHPG, zikir bersanad, pantang makan, reaksi pemulihan (multi-pilih, tracking).
+-- Item lain (pernafasan, terapi bumi, berjemur, air kelapa, yogurt) dinyahaktif buat sementara —
+-- akan diaktifkan balik bila set penuh digunakan. Daily Check-in (mood/tidur/aktiviti) disembunyi
+-- di UI patient (flag SHOW_CHECKIN=false dalam roles/patient/kepatuhan.html).
+UPDATE psy_kepatuhan_item SET aktif = false
+  WHERE item_key IN ('pernafasan_fitrah','terapi_bumi','berjemur','air_kelapa','yogurt');
+UPDATE psy_kepatuhan_item SET aktif = true,  urutan = 5 WHERE item_key = 'reaksi_pemulihan';
+UPDATE psy_kepatuhan_item SET urutan = 3 WHERE item_key = 'zikir_bersanad';
+UPDATE psy_kepatuhan_item SET urutan = 4 WHERE item_key = 'pantang_makan';
 
 SELECT 'Step 65 OK — daily check-in detail fields ready; reaksi checklist dinyahaktifkan' AS status;
 
