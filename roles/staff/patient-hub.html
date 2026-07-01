@@ -114,7 +114,11 @@
               <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 space-y-3">
                 <div class="flex items-center justify-between flex-wrap gap-2">
                   <h3 class="font-bold text-sm text-ink flex items-center gap-2">📅 Progress Mingguan</h3>
-                  <div class="flex items-center gap-2">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <div id="ov-progstart-wrap" class="hidden items-center gap-1.5" title="Tarikh sebenar Minggu 1. Ubah untuk anjak semua tarikh sesi (data kekal).">
+                      <span class="text-[10px] font-semibold text-ink/45 uppercase tracking-wide">📌 Mula Program</span>
+                      <input id="ov-progstart-input" type="date" onchange="setProgramStart(this.value)" class="text-[11px] border border-ink/20 rounded-lg px-2 py-1 outline-none focus:border-navy">
+                    </div>
                     <span id="ov-plan-subtitle" class="text-xs text-ink/50"></span>
                     <button id="ov-add-week-btn" onclick="openAddWeekModal()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-navy text-navy hover:bg-navy hover:text-white transition whitespace-nowrap">➕ Tambah Minggu</button>
                     <button id="ov-reset-sessions-btn" onclick="resetPlanSessions()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-red-300 text-red-500 hover:bg-red-50 transition whitespace-nowrap">🔄 Reset Sesi</button>
@@ -1532,7 +1536,25 @@ function ovSessionRow(row, day) {
   </div>`;
 }
 
+// Anchor Minggu 1 = start_date (tarikh sebenar mula program) kalau diset, fallback created_at.
+function phAnchorDate(p) {
+  p = p || activePlan;
+  if (p?.start_date) return new Date(p.start_date + 'T00:00:00');
+  return new Date(p.created_at);
+}
+function phYmd(d) {
+  const x = new Date(d); const p = n => String(n).padStart(2, '0');
+  return `${x.getFullYear()}-${p(x.getMonth()+1)}-${p(x.getDate())}`;
+}
+
 function renderOvWeekPage() {
+  // Kawalan Tarikh Mula Program (staf boleh-edit sahaja)
+  const psWrap = document.getElementById('ov-progstart-wrap');
+  const psInput = document.getElementById('ov-progstart-input');
+  if (psWrap && psInput) {
+    if (canEdit && activePlan) { psWrap.classList.remove('hidden'); psWrap.classList.add('flex'); psInput.value = phYmd(phAnchorDate(activePlan)); }
+    else { psWrap.classList.add('hidden'); psWrap.classList.remove('flex'); }
+  }
   if (!activePlan) {
     document.getElementById('ov-weekly-list').innerHTML = '<div class="col-span-3 text-sm text-ink/40 italic py-4 text-center">Tiada plan aktif</div>';
     return;
@@ -1660,6 +1682,49 @@ function renderOvWeekPage() {
 }
 
 function ovGoPage(p) { ovCurrentPage = p; renderOvWeekPage(); }
+
+// Set "Tarikh Mula Program" (anchor Minggu 1). Semua tarikh sesi sedia ada DIANJAK
+// ikut beza hari — data (vitals/nota/kehadiran) kekal, cuma tarikh berubah.
+async function setProgramStart(newYmd) {
+  if (!newYmd || !activePlan) return;
+  const oldAnchor = phAnchorDate(activePlan); oldAnchor.setHours(0, 0, 0, 0);
+  const newAnchor = new Date(newYmd + 'T00:00:00'); newAnchor.setHours(0, 0, 0, 0);
+  const deltaDays = Math.round((newAnchor - oldAnchor) / 86400000);
+
+  if (deltaDays === 0) {
+    if (!activePlan.start_date) {
+      await window.db.from('psy_treatment_plans').update({ start_date: newYmd }).eq('id', activePlan.id);
+      activePlan.start_date = newYmd;
+      banner('Tarikh mula program disimpan ✅');
+    }
+    return;
+  }
+
+  const shiftTxt = `${deltaDays > 0 ? '+' : ''}${deltaDays} hari`;
+  if (!confirm(`Tetapkan Tarikh Mula Program ke ${newAnchor.toLocaleDateString('ms-MY',{day:'2-digit',month:'long',year:'numeric'})}?\n\nSemua tarikh sesi akan dianjak ${shiftTxt}. Data (vitals, nota, kehadiran) kekal — hanya tarikh berubah.`)) {
+    const inp = document.getElementById('ov-progstart-input'); if (inp) inp.value = phYmd(oldAnchor);
+    return;
+  }
+
+  try {
+    await window.db.from('psy_treatment_plans').update({ start_date: newYmd }).eq('id', activePlan.id);
+    activePlan.start_date = newYmd;
+
+    const { data: rows } = await window.db.from('psy_plan_weekly_progress')
+      .select('id, session_date, appointment_id').eq('plan_id', activePlan.id).not('session_date', 'is', null);
+    for (const r of (rows || [])) {
+      const nd = new Date(r.session_date); nd.setDate(nd.getDate() + deltaDays);
+      const iso = nd.toISOString();
+      await window.db.from('psy_plan_weekly_progress').update({ session_date: iso }).eq('id', r.id);
+      if (r.appointment_id) {
+        await window.db.from('psy_appointments').update({ appointment_time: iso }).eq('id', r.appointment_id);
+      }
+    }
+    await auditLog('plan.start_date_set', activePlan.id, { start_date: newYmd, shift_days: deltaDays });
+    banner(`Tarikh mula program dikemaskini — ${(rows || []).length} sesi dianjak ${shiftTxt} ✅`);
+    await reloadOverviewKeepPage();
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+}
 
 // Refresh overview TANPA lompat halaman (kekal di page yang staf sedang lihat)
 async function reloadOverviewKeepPage() {
@@ -1826,7 +1891,7 @@ async function loadOverview() {
   // ─── KPI: Pakej Aktif Count + Total RM (derive from plans + packages) ───
   const [{ data: plansData }, { data: pkgsData }, { data: declinedKobData }] = await Promise.all([
     window.db.from('psy_treatment_plans')
-      .select('id, name, template, duration_weeks, current_week, status, created_at')
+      .select('id, name, template, duration_weeks, current_week, status, created_at, start_date')
       .eq('patient_id', patientId)
       .order('created_at', { ascending: false }),
     window.db.from('psy_packages').select('package_id, name, price'),
@@ -1844,7 +1909,7 @@ async function loadOverview() {
 
   const allPkgs = (plansData || []).map((pl, idx) => {
     const pkg = pkgMap[pl.template] || {};
-    const startDate = pl.created_at;
+    const startDate = pl.start_date ? pl.start_date + 'T00:00:00' : pl.created_at;
     const endDate = startDate ? new Date(new Date(startDate).getTime() + (pl.duration_weeks || 12) * 7 * 86400000).toISOString() : null;
     const sessionsTotal = pl.duration_weeks || 12;
     const sessionsUsed = pl.current_week ? Math.min(pl.current_week, sessionsTotal) : 0;

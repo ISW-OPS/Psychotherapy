@@ -180,8 +180,13 @@ async function initPatient(pageId, titleSub) {
   // Load patient feature toggles from RBAC
   await loadPatientFeatures();
 
-  // Feature gate — redirect if feature disabled by admin
-  if (!canPatient(pageId)) {
+  // Feature gate — redirect if feature disabled by admin.
+  // 'payment' dikecualikan: ia plumbing wajib (bayar pakej KOB + checkout kedai)
+  // yang dicapai secara kontekstual, bukan ciri boleh-toggle. Ia kekal TERSEMBUNYI
+  // dari nav (canPatient masih false) tapi halamannya sentiasa boleh dibuka.
+  // Akses sebenar dikawal enforceKyc (mesti KYC lulus dulu).
+  const PAGE_GATE_EXEMPT = ['payment'];
+  if (!PAGE_GATE_EXEMPT.includes(pageId) && !canPatient(pageId)) {
     window.location.href = 'dashboard.html';
     return null;
   }

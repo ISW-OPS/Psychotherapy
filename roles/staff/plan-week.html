@@ -459,8 +459,16 @@ async function saveCoachingReason(key, value) {
   flashSaved('coaching-saved');
 }
 
+// Anchor Minggu 1 = start_date (tarikh sebenar mula program) kalau diset, fallback created_at.
+function planAnchorDate(plan) {
+  const p = plan || activePlan;
+  if (p?.start_date) return new Date(p.start_date + 'T00:00:00');
+  return new Date(p.created_at);
+}
+
 function computeWeekRange(plan, w) {
-  const start = new Date(plan.created_at);
+  const start = planAnchorDate(plan);
+  start.setHours(0, 0, 0, 0);
   start.setDate(start.getDate() + (w - 1) * 7);
   const end = new Date(start);
   end.setDate(end.getDate() + 7);
@@ -493,6 +501,7 @@ function renderHero() {
   const s = statusMap[status] || statusMap.pending;
   const total = activePlan.duration_weeks || 48;
   const pct   = Math.round((weekNumber / total) * 100);
+  const progStartYmd = ymdLocal(planAnchorDate(activePlan));
 
   const dayName = r => r?.session_date ? new Date(r.session_date).toLocaleDateString('ms-MY', { weekday: 'short' }) : `Sesi ${r?.session_day || 1}`;
 
@@ -562,6 +571,12 @@ function renderHero() {
             : 'Tarikh sesi belum ditetapkan'}
           ${weekEntry?.meet_link ? `<br><a href="${weekEntry.meet_link}" target="_blank" class="inline-flex items-center gap-1 mt-1 text-xs font-semibold text-navy hover:underline bg-navy-light px-2 py-0.5 rounded-lg">🎥 Join Google Meet →</a>` : ''}
         </div>
+        ${weekEntry?.id ? `<div class="mt-2 flex items-center gap-2 flex-wrap">
+          <span class="text-[10px] font-semibold text-ink/45 uppercase tracking-wide">Tukar tarikh sesi ini</span>
+          <input id="week-date-edit" type="datetime-local" value="${toLocalDT(weekEntry.session_date)}"
+            class="text-xs border border-ink/20 rounded-lg px-2 py-1 outline-none focus:border-navy">
+          <button onclick="setSessionDate()" class="text-xs font-semibold border border-navy/30 text-navy px-3 py-1 rounded-lg hover:bg-navy hover:text-white transition">💾 Simpan</button>
+        </div>` : ''}
         ${weekEntry?.absence_reason ? `<div class="mt-2 bg-terracotta/10 border border-terracotta/25 rounded-lg px-3 py-2 text-xs text-terracotta-dark"><span class="font-semibold">📝 Sebab tidak hadir (oleh pesakit):</span> <span class="text-ink/75">${escHtml(weekEntry.absence_reason)}</span></div>` : ''}
       </div>
       ${weekEntry?.updated_by_name ? `<div class="text-xs text-ink/40 text-right">Dikemaskini oleh<br><span class="font-semibold text-ink/60">${weekEntry.updated_by_name}</span></div>` : ''}
@@ -572,6 +587,14 @@ function renderHero() {
         <div class="bg-navy rounded-full h-1.5 transition-all" style="width:${pct}%"></div>
       </div>
       <span>${pct}%</span>
+    </div>
+    <div class="mt-3 pt-3 border-t border-ink/8 flex items-center gap-2 flex-wrap">
+      <span class="text-[10px] font-semibold text-ink/45 uppercase tracking-wide">📌 Tarikh Mula Program</span>
+      <input type="date" value="${progStartYmd}" onchange="setProgramStart(this.value)"
+        class="text-xs border border-ink/20 rounded-lg px-2 py-1 outline-none focus:border-navy">
+      <span class="text-[11px] text-ink/45">${activePlan.start_date
+        ? 'Set tarikh sebenar Minggu 1 — semua minggu auto-ikut.'
+        : '⚠️ Belum diset (guna tarikh plan dicipta). Set tarikh sebenar mula program untuk pesakit yang dimasukkan lewat.'}</span>
     </div>
     ${attendance}`;
 }
@@ -649,6 +672,80 @@ async function resetAttendance() {
 
   renderHero();
   banner(`${dayLabel}: kehadiran direset ke Ditempah ✅`);
+}
+
+// Format ISO → nilai <input type="datetime-local"> (waktu tempatan)
+function toLocalDT(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// Tukar tarikh SESI AKTIF sahaja (override manual) — tak sentuh minggu lain.
+async function setSessionDate() {
+  if (!weekEntry?.id) { banner('Tiada sesi untuk minggu ini.', 'error'); return; }
+  const val = document.getElementById('week-date-edit')?.value;
+  if (!val) { banner('Sila pilih tarikh & masa.', 'error'); return; }
+  const iso = new Date(val).toISOString();
+  try {
+    await window.db.from('psy_plan_weekly_progress').update({
+      session_date:    iso,
+      updated_by:      window.currentUser.id,
+      updated_by_name: window.currentUser.full_name,
+      updated_at:      new Date().toISOString(),
+    }).eq('id', weekEntry.id);
+    if (weekEntry.appointment_id) {
+      await window.db.from('psy_appointments').update({ appointment_time: iso }).eq('id', weekEntry.appointment_id);
+    }
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); return; }
+  weekEntry.session_date = iso;
+  const idx = weekSessions.findIndex(r => r.id === weekEntry.id);
+  if (idx >= 0) weekSessions[idx].session_date = iso;
+  await auditLog('plan.session_date_edited', activePlan.id, { week: weekNumber, session: weekEntry.session_day || 1, session_date: iso });
+  renderHero();
+  banner('Tarikh sesi dikemaskini ✅');
+}
+
+// Set "Tarikh Mula Program" (anchor Minggu 1). Semua tarikh sesi sedia ada DIANJAK
+// ikut beza hari (kekal data: vitals/nota/kehadiran tak berubah, cuma tarikh).
+async function setProgramStart(newYmd) {
+  if (!newYmd) return;
+  const oldAnchor = planAnchorDate(activePlan); oldAnchor.setHours(0, 0, 0, 0);
+  const newAnchor = new Date(newYmd + 'T00:00:00'); newAnchor.setHours(0, 0, 0, 0);
+  const deltaDays = Math.round((newAnchor - oldAnchor) / 86400000);
+
+  if (deltaDays === 0) {
+    if (!activePlan.start_date) {
+      await window.db.from('psy_treatment_plans').update({ start_date: newYmd }).eq('id', activePlan.id);
+      activePlan.start_date = newYmd;
+      banner('Tarikh mula program disimpan ✅');
+      renderHero();
+    }
+    return;
+  }
+
+  const shiftTxt = `${deltaDays > 0 ? '+' : ''}${deltaDays} hari`;
+  if (!confirm(`Tetapkan Tarikh Mula Program ke ${newAnchor.toLocaleDateString('ms-MY',{day:'2-digit',month:'long',year:'numeric'})}?\n\nSemua tarikh sesi akan dianjak ${shiftTxt}. Data (vitals, nota, kehadiran) kekal — hanya tarikh berubah.`)) return;
+
+  try {
+    await window.db.from('psy_treatment_plans').update({ start_date: newYmd }).eq('id', activePlan.id);
+    activePlan.start_date = newYmd;
+
+    const { data: rows } = await window.db.from('psy_plan_weekly_progress')
+      .select('id, session_date, appointment_id').eq('plan_id', activePlan.id).not('session_date', 'is', null);
+    for (const r of (rows || [])) {
+      const nd = new Date(r.session_date); nd.setDate(nd.getDate() + deltaDays);
+      const iso = nd.toISOString();
+      await window.db.from('psy_plan_weekly_progress').update({ session_date: iso }).eq('id', r.id);
+      if (r.appointment_id) {
+        await window.db.from('psy_appointments').update({ appointment_time: iso }).eq('id', r.appointment_id);
+      }
+    }
+    await auditLog('plan.start_date_set', activePlan.id, { start_date: newYmd, shift_days: deltaDays });
+    banner(`Tarikh mula program dikemaskini — ${(rows || []).length} sesi dianjak ${shiftTxt} ✅`);
+    await loadWeek();
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
 }
 
 // Coach: ingatkan pesakit supaya jadual semula sesi tidak hadir (hantar notifikasi).

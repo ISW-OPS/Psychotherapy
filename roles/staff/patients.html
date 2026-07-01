@@ -453,8 +453,9 @@
                 <select id="cp-pakej" class="flex-1 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white">
                   <option value="">— Tiada pakej —</option>
                 </select>
-                <input id="cp-pakej-date" type="date" class="w-36 px-3 py-2 border border-ink/20 rounded-lg text-sm" title="Tarikh mula pakej">
+                <input id="cp-pakej-date" type="date" class="w-36 px-3 py-2 border border-ink/20 rounded-lg text-sm" title="Tarikh sebenar mula program (anchor Minggu 1)">
               </div>
+              <p class="text-[11px] text-ink/45 mt-1">📌 Tarikh di sebelah = <b>tarikh sebenar mula program</b> (Minggu 1). Semua minggu dikira dari sini — untuk pesakit lama/sedang rawatan, letak tarikh dia mula dulu, bukan hari ini. Boleh ubah per-minggu kemudian.</p>
             </div>
           </div>
 
@@ -789,13 +790,13 @@
       const warisLabel = document.getElementById('lbl-waris-section');
       if (warisLabel) warisLabel.textContent = relaxed ? 'Maklumat Waris / Kecemasan (optional)' : 'Maklumat Waris / Kecemasan';
 
-      // Show pakej selection for Aktif only (Aktif sudah ada/perlu pakej)
+      // Pakej diperlukan untuk Aktif & Pesakit Lama (kedua-dua cipta treatment plan utk backfill data)
       const pakejRow = document.getElementById('cp-pakej')?.closest('.grid');
-      if (pakejRow) pakejRow.style.opacity = isInactive ? '0.4' : '1';
+      if (pakejRow) pakejRow.style.opacity = '1';
 
-      // Minggu Semasa input — hanya untuk "Sedang Dalam Rawatan"
+      // Minggu Semasa input — untuk "Sedang Dalam Rawatan" & "Pesakit Lama" (kedua-dua mid/past program)
       const cwRow = document.getElementById('cp-current-week-row');
-      if (cwRow) cwRow.classList.toggle('hidden', !isActive);
+      if (cwRow) cwRow.classList.toggle('hidden', !(isActive || isInactive));
 
       // KOB slot booking only for Pesakit Baru
       const kobSlot = document.getElementById('kob-slot-section');
@@ -806,6 +807,52 @@
         const fields = document.getElementById('kob-slot-fields');
         if (fields) fields.classList.add('hidden');
       }
+    }
+
+    // Cipta treatment plan + seed minggu untuk pesakit yang didaftar staff
+    // (Sedang Dalam Rawatan / Pesakit Lama). Dipakai supaya staff boleh terus backfill data.
+    //  • startDateStr = 'YYYY-MM-DD' tarikh SEBENAR mula program (anchor Minggu 1) → simpan ke start_date.
+    //  • session_date tiap minggu dijana = startDate + (w-1)×7 hari (boleh ubah per-minggu di plan-week).
+    //  • planStatus: 'active' (sedang rawatan) atau 'completed' (rekod sejarah / berhenti / meninggal).
+    async function seedStaffTreatmentPlan(patientId, pkg, durationWeeks, currentWeekVal, startDateStr, planStatus) {
+      const cw = Math.min(Math.max(1, parseInt(currentWeekVal) || 1), durationWeeks);
+      const { data: newPlan } = await window.db.from('psy_treatment_plans').insert({
+        patient_id: patientId,
+        doctor_id: null,
+        name: `${pkg.name} Treatment Plan`,
+        template: pkg.package_id,
+        duration_unit: pkg.duration_unit || 'week',
+        duration_weeks: durationWeeks,
+        current_week: cw,
+        start_date: startDateStr || null,
+        bio_goals: pkg.bio_goals || [],
+        psycho_goals: pkg.psycho_goals || [],
+        social_goals: pkg.social_goals || [],
+        spiritual_goals: pkg.spiritual_goals || [],
+        coaching_schedule: pkg.coaching_schedule || [],
+        status: planStatus || 'active',
+      }).select('id').single();
+      if (!newPlan?.id) return null;
+
+      const anchor = startDateStr ? new Date(startDateStr + 'T09:00:00') : null;
+      const rows = [];
+      for (let w = 1; w <= durationWeeks; w++) {
+        let sd = null;
+        if (anchor) { const d = new Date(anchor); d.setDate(d.getDate() + (w - 1) * 7); sd = d.toISOString(); }
+        rows.push({
+          plan_id: newPlan.id,
+          patient_id: patientId,
+          week_number: w,
+          session_day: 1,
+          status: 'pending',
+          session_date: sd,
+        });
+      }
+      await window.db.from('psy_plan_weekly_progress').insert(rows);
+      await auditLog('plan.staff_seeded', newPlan.id, {
+        weeks: durationWeeks, current_week: cw, start_date: startDateStr || null, status: planStatus || 'active',
+      });
+      return newPlan;
     }
 
     function toggleKobSlot(checked) {
@@ -1309,40 +1356,9 @@
               if (pkg) {
                 const durationWeeks = pkg.duration_weeks || selectedPkgWeeks || 12;
                 const currentWeekVal = parseInt(document.getElementById('cp-current-week')?.value) || 1;
-
-                const { data: newPlan } = await window.db.from('psy_treatment_plans').insert({
-                  patient_id: editingPatientId,
-                  doctor_id: null,
-                  name: `${pkg.name} Treatment Plan`,
-                  template: pkg.package_id,
-                  duration_unit: pkg.duration_unit || 'week',
-                  duration_weeks: durationWeeks,
-                  current_week: Math.min(currentWeekVal, durationWeeks),
-                  bio_goals: pkg.bio_goals || [],
-                  psycho_goals: pkg.psycho_goals || [],
-                  social_goals: pkg.social_goals || [],
-                  spiritual_goals: pkg.spiritual_goals || [],
-                  coaching_schedule: pkg.coaching_schedule || [],
-                  status: 'active',
-                }).select('id').single();
-
-                if (newPlan?.id) {
-                  const rows = [];
-                  for (let w = 1; w <= durationWeeks; w++) {
-                    rows.push({
-                      plan_id: newPlan.id,
-                      patient_id: editingPatientId,
-                      week_number: w,
-                      session_day: 1,
-                      status: 'pending',
-                    });
-                  }
-                  await window.db.from('psy_plan_weekly_progress').insert(rows);
-                  await auditLog('plan.staff_seeded_on_edit', newPlan.id, {
-                    weeks: durationWeeks, current_week: currentWeekVal,
-                  });
-                  banner('Pakej diaktifkan & treatment plan dicipta ✅');
-                }
+                const planStatus = isInactive ? 'completed' : 'active';
+                const newPlan = await seedStaffTreatmentPlan(editingPatientId, pkg, durationWeeks, currentWeekVal, pakejDate, planStatus);
+                if (newPlan) banner('Pakej diaktifkan & treatment plan dicipta ✅');
               }
             }
           }
@@ -1401,52 +1417,21 @@
               });
             }
 
-            // Sedang Dalam Rawatan: auto-create treatment plan + seed weekly progress
-            // supaya staff/coach boleh terus akses & masukkan nota historical
-            if (isActive && selectedPkgCode) {
-              // Fetch pakej info untuk dapatkan duration + goals + coaching_schedule
+            // Sedang Dalam Rawatan (active) & Pesakit Lama (inactive): auto-create treatment plan
+            // + seed weekly progress supaya staff/coach boleh terus akses & backfill data historical.
+            // Pesakit Lama → status 'completed' (rekod sejarah / berhenti / meninggal).
+            if ((isActive || isInactive) && selectedPkgCode) {
               const { data: pkgRows } = await window.db.from('psy_packages')
                 .select('*').eq('package_id', selectedPkgCode).limit(1);
               const pkg = pkgRows?.[0];
               if (pkg) {
                 const durationWeeks = pkg.duration_weeks || selectedPkgWeeks || 12;
                 const currentWeekVal = parseInt(document.getElementById('cp-current-week')?.value) || 1;
-
-                const { data: newPlan } = await window.db.from('psy_treatment_plans').insert({
-                  patient_id: inserted.id,
-                  doctor_id: null,
-                  name: `${pkg.name} Treatment Plan`,
-                  template: pkg.package_id,
-                  duration_unit: pkg.duration_unit || 'week',
-                  duration_weeks: durationWeeks,
-                  current_week: Math.min(currentWeekVal, durationWeeks),
-                  bio_goals: pkg.bio_goals || [],
-                  psycho_goals: pkg.psycho_goals || [],
-                  social_goals: pkg.social_goals || [],
-                  spiritual_goals: pkg.spiritual_goals || [],
-                  coaching_schedule: pkg.coaching_schedule || [],
-                  status: 'active',
-                }).select('id').single();
-
-                // Seed weekly progress rows untuk semua minggu (1..durationWeeks)
-                // Minggu yang sudah lepas (< current_week) → 'pending' supaya staff boleh isi backfill
-                // Minggu semasa & akan datang → 'pending' juga (belum tempah)
-                if (newPlan?.id) {
-                  const rows = [];
-                  for (let w = 1; w <= durationWeeks; w++) {
-                    rows.push({
-                      plan_id: newPlan.id,
-                      patient_id: inserted.id,
-                      week_number: w,
-                      session_day: 1,
-                      status: 'pending',
-                    });
-                  }
-                  await window.db.from('psy_plan_weekly_progress').insert(rows);
-                  await auditLog('plan.staff_seeded', newPlan.id, {
-                    weeks: durationWeeks, current_week: currentWeekVal,
-                  });
-                }
+                const planStatus = isInactive ? 'completed' : 'active';
+                const newPlan = await seedStaffTreatmentPlan(inserted.id, pkg, durationWeeks, currentWeekVal, pakejDate, planStatus);
+                if (newPlan) banner(isInactive
+                  ? 'Rekod sejarah dicipta — boleh isi data setiap minggu di Pesakit → Sesi ✅'
+                  : 'Treatment plan dicipta ✅');
               }
             }
 
@@ -1480,6 +1465,11 @@
                 const meetLink = kobMode === 'online'
                   ? `https://meet.jit.si/ISW-KOB-${Math.random().toString(36).slice(2,8).toUpperCase()}`
                   : null;
+                // Ganti tempahan sedia ada supaya sentiasa satu KOB aktif (elak duplicate).
+                // Sesi 'hadir'/'completed' TIDAK disentuh.
+                await window.db.from('psy_kob_sessions').delete()
+                  .eq('patient_id', inserted.id)
+                  .in('status', ['booked', 'reschedule']);
                 await window.db.from('psy_kob_sessions').insert({
                   patient_id: inserted.id,
                   scheduled_at: new Date(`${kobDate}T${kobSlotStart}`).toISOString(),

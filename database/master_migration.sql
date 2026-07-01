@@ -4813,7 +4813,13 @@ ALTER TABLE psy_treatment_plans
   ADD COLUMN IF NOT EXISTS preferred_pair TEXT CHECK (preferred_pair IN ('fri_sat','sat_sun')),
   ADD COLUMN IF NOT EXISTS preferred_time_day1 TIME,   -- jam hari pertama (Jum atau Sab)
   ADD COLUMN IF NOT EXISTS preferred_time_day2 TIME,   -- jam hari kedua (Sab atau Ahad)
-  ADD COLUMN IF NOT EXISTS schedule_setup_at TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS schedule_setup_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS start_date DATE;             -- tarikh SEBENAR mula program (anchor minggu 1)
+
+COMMENT ON COLUMN psy_treatment_plans.start_date IS
+  'Tarikh sebenar program bermula (anchor Minggu 1). NULL = fallback ke created_at. '
+  'Guna untuk pesakit yang dimasukkan lewat / mid-program (cth dah di week 7/12) supaya '
+  'semua tarikh sesi dikira dari tarikh sebenar, bukan tarikh plan dicipta.';
 
 COMMENT ON COLUMN psy_treatment_plans.preferred_pair IS
   'Pasangan hari pilihan patient: fri_sat (Jumaat+Sabtu) atau sat_sun (Sabtu+Ahad).';
