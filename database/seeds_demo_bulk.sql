@@ -55,8 +55,10 @@ FROM _bulk;
 
 DELETE FROM psy_patients WHERE user_id IN (SELECT prof FROM _bulk) AND referral_source IS NULL;
 
-INSERT INTO psy_treatment_plans (id, patient_id, doctor_id, name, duration_unit, duration_weeks, current_week, status, created_at)
-SELECT plan, pid, '0cb188b0-f2e5-42d8-9071-81b331d88a59', pkg_name||' — Pelan Rawatan', 'weeks', dur,
+INSERT INTO psy_treatment_plans (id, patient_id, doctor_id, name, template, duration_unit, duration_weeks, current_week, status, created_at)
+SELECT plan, pid, '0cb188b0-f2e5-42d8-9071-81b331d88a59', pkg_name||' — Pelan Rawatan',
+  (SELECT package_id FROM psy_packages WHERE id::text = _bulk.pkg_id),  -- template = package_id → coaching_schedule (Bimbingan/Bekalan)
+  'weeks', dur,
   CASE WHEN status='active' THEN LEAST(1+(i%12), dur) WHEN outcome='completed' THEN dur ELSE 1+(i%3) END,
   CASE WHEN status='active' THEN 'active' WHEN outcome='completed' THEN 'completed' ELSE 'paused' END,
   now()-(created_days||' days')::interval

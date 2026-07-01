@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<title>ISW — Flow By Module</title>
+<style>
+  body { font-family: 'Inter', 'Segoe UI', Arial, sans-serif; max-width: 1000px; margin: 30px auto; padding: 20px; background: #fdf7ed; color: #2d2d2d; line-height: 1.6; }
+  h1 { color: #1a2848; font-size: 28px; margin-bottom: 6px; }
+  h2 { color: #1a2848; font-size: 22px; margin-top: 45px; padding-bottom: 8px; border-bottom: 3px solid #d4c9a8; }
+  h2 .badge { font-size: 11px; padding: 3px 10px; border-radius: 4px; font-weight: 700; margin-left: 10px; vertical-align: middle; }
+  .b-done { background: #16a34a; color: white; }
+  .b-partial { background: #ca8a04; color: white; }
+  .b-pending { background: #dc2626; color: white; }
+  .b-concept { background: #6b7280; color: white; }
+  .b-blocked { background: #4b5563; color: white; }
+  pre {
+    background: #f5ede0;
+    border: 1px solid #d4c9a8;
+    border-left: 5px solid #1a2848;
+    border-radius: 6px;
+    padding: 14px 20px;
+    margin: 12px 0;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    line-height: 1.8;
+    white-space: pre-wrap;
+    color: #2d2d2d;
+  }
+  pre.concept { border-left-color: #6b7280; background: #f3f4f6; }
+  pre.partial { border-left-color: #ca8a04; }
+  pre.pending { border-left-color: #dc2626; }
+  pre.blocked { border-left-color: #4b5563; }
+  .toc { background: #fff; border: 1px solid #d4c9a8; padding: 16px 22px; margin-bottom: 30px; border-radius: 8px; }
+  .toc ul { margin: 0; padding-left: 22px; columns: 2; column-gap: 30px; }
+  .toc a { color: #1a2848; text-decoration: none; font-size: 13px; }
+  .toc a:hover { text-decoration: underline; }
+  .legend { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 20px; }
+  .legend .badge { font-size: 11px; padding: 4px 10px; border-radius: 4px; font-weight: 700; }
+</style>
+</head>
+<body>
+
+<h1>ISW — Flow By Module</h1>
+<p style="color:#5b5b5b">Lifecycle setiap modul dalam format ringkas. 22 Mei 2026.</p>
+
+<div class="legend">
+  <span class="badge b-done">DONE</span>
+  <span class="badge b-partial">PARTIAL</span>
+  <span class="badge b-pending">PENDING</span>
+  <span class="badge b-concept">CONCEPT</span>
+  <span class="badge b-blocked">BLOCKED</span>
+</div>
+
+<div class="toc">
+  <strong>📋 18 Module:</strong>
+  <ul>
+    <li><a href="#kob">🩺 KOB</a></li>
+    <li><a href="#plan">💊 Treatment Plan</a></li>
+    <li><a href="#shop">🛒 Product / Shop</a></li>
+    <li><a href="#inventory">📦 Inventory</a></li>
+    <li><a href="#pakej">📋 Pakej Rawatan</a></li>
+    <li><a href="#kalendar">📅 Kalendar / Slot</a></li>
+    <li><a href="#surat">📜 Surat Rasmi</a></li>
+    <li><a href="#bottle">🍯 Bottle Return</a></li>
+    <li><a href="#vitals">📊 Vitals / Check-in</a></li>
+    <li><a href="#staff">👥 Staff Mgmt</a></li>
+    <li><a href="#risk">⚠️ Risk Alert</a></li>
+    <li><a href="#kepatuhan">📈 Kepatuhan</a></li>
+    <li><a href="#reward">⭐ Reward / Star</a></li>
+    <li><a href="#hakeema">🤲 Sesi Hakeema</a></li>
+    <li><a href="#reaksi">💓 Reaksi Pemulihan</a></li>
+    <li><a href="#refund">↩️ Refund</a></li>
+    <li><a href="#autopo">🔄 Auto-PO</a></li>
+    <li><a href="#whatsapp">💬 WhatsApp Notif</a></li>
+  </ul>
+</div>
+
+<h2 id="kob">🩺 KOB <span class="badge b-done">DONE</span></h2>
+<pre>Admin setup slot di kob-slots.html (template hari + jam + max)
+  ↓
+Patient signup → auto buka kob.html stage='kyc'
+  ↓
+Patient isi KYC:
+  • IC, alamat, waris, masalah kesihatan
+  • Upload IC + dokumen
+  • Consent + tick "bukan wakil"
+  → INSERT psy_kyc_submissions + psy_patients
+  → kob_status='kyc_done'
+  ↓
+Patient tempah slot KOB:
+  • Pilih mod (F2F/Online), tarikh, slot
+  • Auto-block Isnin/Selasa + cuti klinik
+  → INSERT psy_kob_sessions (status='booked')
+  → kob_status='booked'
+  ↓
+Doctor di kob-detail.html klik "Hadir":
+  → status='hadir'
+  → kob_status='hadir'
+  ↓
+Doctor isi:
+  • Questionnaire (anak, tidur, gaya hidup)
+  • Vitals (BP, BMI, HR) → INSERT psy_vitals
+  • SOAP notes → INSERT psy_soap_notes (patient tak nampak)
+  ↓
+Doctor cadang pakej:
+  → UPDATE recommended_package_id, price
+  → kob_status='package_recommended'
+  ↓
+Patient bayar via payment.html:
+  → INSERT psy_payments
+  → UPDATE package_payment_status='paid'
+  → kob_status='package_paid'
+  ↓
+Patient sign agreement:
+  • Baca clauses dari pakej
+  • Lukis signature → generate PDF
+  → INSERT psy_kob_agreements
+  ⛔ Berhenti — tunggu doctor
+  ↓
+Doctor klik "Tandakan Selesai":
+  🔥 UPDATE patient kob_status='completed'
+  🔥 Set active_package_id, package_expires_at
+  🔥 INSERT psy_package_purchases
+  🔥 AUTO-CIPTA psy_treatment_plans
+     (goals + coaching_schedule dari pakej)
+  ↓
+Patient auto-redirect ke plan.html (setup 24 sesi)</pre>
+
+<h2 id="plan">💊 Treatment Plan <span class="badge b-done">DONE</span></h2>
+<pre>Plan auto-dicipta lepas KOB selesai (lihat KOB)
+  ↓
+Patient buka plan.html pertama kali:
+  → schedule_setup_at IS NULL → tunjuk WIZARD
+  ↓
+Wizard:
+  • Pasangan hari: Jum+Sab atau Sab+Ahd
+  • Jam hari 1 + jam hari 2
+  • Preview 3 minggu pertama
+  ↓
+Klik "Sahkan & Auto-Jadual 24 Sesi":
+  → UPDATE plan: preferred_pair, schedule_setup_at
+  🔥 generateScheduleDates(): 12 minggu × 2 sesi
+  🔥 INSERT 24 row psy_plan_weekly_progress
+     (status='booked', skip tarikh cuti)
+  ↓
+Progress Mingguan tunjuk 12 minggu:
+  • Setiap kad: tarikh + masa + status + Reschedule
+  ↓
+Coach edit per minggu via plan-week.html:
+  • Status (Hadir/Reschedule/Tidak Hadir)
+  • Nota minggu
+  • Score (0-10)
+  • Kepatuhan rawatan (madu/nafas/bumi/dll)
+  • Coaching checklist
+  → UPDATE psy_plan_weekly_progress
+  → UPDATE psy_plan_compliance
+  ↓
+Hadir → 🔥 Auto-deduct supplies dari inventory
+  ↓
+Patient MISS sesi (tarikh lepas, status booked):
+  🔥 autoMarkMissedAndExtend():
+     • Tanda 'cancel'
+     • Cipta extension week (2 sesi)
+     • status='extension_pending_payment'
+     • extension_price dari pakej
+     • Notify patient
+  ↓
+Patient bayar extension:
+  → status='extension_paid' → boleh tempah tarikh baru
+  ↓
+package_expires_at lepas:
+  🔥 fn_complete_expired_treatments()
+  → plan status='completed'
+  → patient outcome_status='completed'
+  → Notify feedback</pre>
+
+<h2 id="shop">🛒 Product / Shop <span class="badge b-partial">PARTIAL</span></h2>
+<pre class="partial">Admin di product-edit.html tambah produk:
+  • Nama, SKU, kategori, harga, image
+  • Link inventory_item_id
+  • Toggle visible_in_shop, online_purchase
+  • Set promo_price + promo_until
+  → INSERT psy_products
+  ↓
+Patient buka shop.html:
+  → SELECT psy_products + JOIN inv:inventory_item_id
+  • Tunjuk visible_in_shop=true + status='active'
+  • Live stock dari psy_inventory_items.qty_in_stock
+  • Promo price kalau promo_until belum tamat
+  ↓
+Add to cart → Checkout (payment.html)
+  ↓
+INSERT psy_orders (status='pending')
+  ↓
+Bayar:
+  → INSERT psy_payments
+  → UPDATE psy_orders status='paid'
+  🔥 TRIGGER auto-deduct psy_inventory_items.qty_in_stock
+  ↓
+Admin di orders.html:
+  • UPDATE status='packed' → 'shipped' (tambah tracking)
+  ↓
+Patient di orders.html:
+  • Track delivery
+  • Klik "Telah Diterima" → status='delivered'
+  ─── Belum: auto-email invoice ───
+  ─── Belum: blinking notif admin ───</pre>
+
+<h2 id="inventory">📦 Inventory <span class="badge b-done">DONE</span></h2>
+<pre>Admin tambah item di inventory.html:
+  • Nama, kategori, unit, qty awal
+  • Min qty (alert), max qty (PO calc)
+  • Auto-reorder enabled
+  • Consumption type (package/service/general)
+  • Supplier info (JSONB)
+  → INSERT psy_inventory_items
+  ↓
+Admin bina Kit Prosedur:
+  • Combine multiple items (IV Drip Setup, dll)
+  → INSERT psy_procedure_kits
+  ↓
+Coach hadir sesi + pakej ada supplies:
+  🔥 Auto-deduct stok ikut weekly_supplies pakej
+  ↓
+Patient beli produk + order paid:
+  🔥 TRIGGER deduct linked inventory_item
+  ↓
+Staff mohon item baru:
+  → INSERT psy_inventory_requests
+    (status='pending_approval')
+  ↓
+Admin/Manager review:
+  • Approve → status='approved'
+  • Reject → status='rejected' + reason
+  ↓
+Beli & sampai:
+  → UPDATE status='purchased'
+  → Adjust stok manual
+  ─── Belum: Auto-PO bila stok ≤30% ───
+  ─── Schema ada tapi cron belum ───</pre>
+
+<h2 id="pakej">📋 Pakej Rawatan <span class="badge b-done">DONE</span></h2>
+<pre>Admin buka pakej-edit.html:
+  ↓
+Maklumat Asas:
+  • Nama, package ID, harga
+  • Tempoh (Minggu / Hari)
+  • Tier kategori
+  • Gambar pakej
+  ↓
+Konfig Sesi:
+  • sessions_per_week (1, 2, 3)
+  • session_days_options (variant Jum+Sab / Sab+Ahd)
+  ↓
+Konfig Rawatan:
+  • madu_frequency_per_day (10x/8x/4x)
+  • online_lock_from_week (default 3)
+  • allow_online_full_duration (OBD1 dll)
+  • extension_price_per_week
+  ↓
+Coaching Schedule (per minggu/hari):
+  • Guidance / Bimbingan (link catalog)
+  • Aktiviti
+  • Supplies (link inventory + kits)
+  • Mode (F2F/Online/Both)
+  • Rujukan files (PDF upload)
+  ↓
+BPS-S Goals: Bio, Psycho, Social, Spiritual
+  ↓
+Daily Schedule template (jadual harian)
+  ↓
+Agreement:
+  • Clauses (variables {{patient_name}} dll)
+  • Version
+  ↓
+Automation flags:
+  • whatsapp_weekly, reminder_checkin, dll
+  ↓
+Simpan → INSERT psy_packages
+  ↓
+🔥 Bila KOB selesai → AUTO-CIPTA plan
+  dengan SEMUA setting pakej ni dipakai</pre>
+
+<h2 id="kalendar">📅 Kalendar / Slot <span class="badge b-done">DONE</span></h2>
+<pre>Admin setup slot template di kob-slots.html:
+  • Per-hari (Rab–Ahd)
+  • Per-jenis: kob / rawatan
+  • Slot waktu (7-9am, 9.30-11.30am, dll)
+  • Toggle is_active per slot
+  → INSERT psy_kob_slot_config
+  ↓
+Override per-date kalau perlu:
+  • Lock / unlock slot tertentu pada tarikh khas
+  → INSERT psy_slot_date_overrides
+  ↓
+Manager buka closures.html:
+  • Tambah cuti umum / Hari Raya (recurring)
+  • Tambah cuti klinik ad-hoc
+  → INSERT psy_clinic_closures
+  ↓
+Patient tempah / reschedule:
+  • Sistem auto-block:
+    - Tarikh dalam closures
+    - Slot is_active=false
+    - Slot di-lock dalam overrides
+  ↓
+Coach buka weekly-plan.html:
+  • Calendar 7-hari
+  • Semua sesi visible by hari
+  ↓
+Admin buka appointments.html:
+  • Monthly / Weekly / List view
+  • Filter by status</pre>
+
+<h2 id="surat">📜 Surat Rasmi <span class="badge b-done">DONE</span></h2>
+<pre>Admin setup sistem (sekali):
+  • Auto-fields ([NAMA], [IC], [BMI] dll)
+    → INSERT psy_letter_auto_fields
+  • 7 template default ada hardcoded
+    (KWSP, PERKESO, RELA, dll)
+  • Override template kalau perlu
+    → INSERT psy_letter_template_overrides
+  ↓
+Patient buka surat.html:
+  • Pilih template
+  • Isi reason
+  → INSERT psy_letter_requests (status='pending')
+  ↓
+Admin buka surat-issue.html:
+  • Review request
+  • Field auto-fill dari patient data
+  • Isi field manual kalau ada
+  ↓
+Admin sign:
+  • Signature dari profile
+  • Generate PDF (pdf-lib)
+  → INSERT psy_letter_issued
+    (signed_by, ref_number, file_url)
+  ↓
+Patient terima notifikasi:
+  → Buka surat.html → download PDF</pre>
+
+<h2 id="bottle">🍯 Bottle Return <span class="badge b-done">DONE</span></h2>
+<pre>Patient buka pulangan.html:
+  ↓
+Tick 4 criteria (semua mesti TRUE):
+  ☑ Tidak berkarat
+  ☑ Bersih
+  ☑ Getah ada
+  ☑ Besi kemas
+  ↓
+Upload gambar bukti (multiple)
+  ↓
+Isi qty + nota → Submit
+  → INSERT psy_bottle_returns (status='pending')
+  → Audit log
+  ↓
+Admin / Coach buka pulangan.html:
+  • Review gambar
+  • Verify criteria
+  ↓
+Aksi:
+  • Approve → UPDATE status='received'
+  • Reject → status='rejected' + reason</pre>
+
+<h2 id="vitals">📊 Vitals &amp; Check-in <span class="badge b-done">DONE</span></h2>
+<pre>Patient daily check-in di checkin.html:
+  • Mood, energy, sleep quality (1-10)
+  • Madu count (target = pakej.madu_frequency_per_day)
+  • Simptom, aktiviti, nota
+  → UPSERT psy_daily_checkins
+    (UNIQUE patient_id + checkin_date)
+  ↓
+Patient routine di routine.html:
+  • Render psy_packages.daily_schedule
+    (cth OB: 6.15 Zikir, 6.30 Madu LTHPG, dll)
+  • Tick checkbox per item
+  → INSERT psy_daily_completions
+  ↓
+Patient Bacaan Saya di vitals.html:
+  • View stat cards (BP, Berat, BMI, HbA1c)
+  • Klik "+ Catat Bacaan Sendiri"
+  → INSERT psy_vitals (source='patient_self')
+  ↓
+Coach / Doctor di patient hub → Vitals tab:
+  • Klik "+ Rekod Vitals Baru"
+  → INSERT psy_vitals (source='staff')
+  ↓
+🔥 Semua vitals auto-tag:
+  • plan_id dari active plan
+  • week_number dari current_week
+  ↓
+Plan-week.html section "Bacaan Vitals":
+  • Tunjuk vitals untuk minggu tu sahaja</pre>
+
+<h2 id="staff">👥 Staff Management <span class="badge b-done">DONE</span></h2>
+<pre>Admin buka staff_management.html:
+  ↓
+Klik "+ Tambah Staff":
+  • Staff ID (registration_no)
+  • Nama, Email
+  • Pilih: Email Invite (auto) ATAU Set Password
+  • Role: admin / coach / doctor / manager
+  ↓
+🔥 Edge function 'invite-staff' fires:
+  → Cipta auth.users (via Supabase admin API)
+  → INSERT psy_profiles (role='staff', staff_role)
+  → Send invite email (kalau pilih Invite)
+  ↓
+Staff terima email → set password → login
+  ↓
+Admin boleh:
+  • Edit staff → staff-detail.html
+  • Delete → edge function delete action
+  • Filter by role / status / dept</pre>
+
+<!-- ════════════════════════════════════════ -->
+<!-- CONCEPT FLOWS -->
+<!-- ════════════════════════════════════════ -->
+
+<h2 id="risk">⚠️ Risk Alert <span class="badge b-blocked">BLOCKED — Tunggu Izzah</span></h2>
+<pre class="blocked">💡 Threshold + auto-trigger rules tunggu definisi Izzah
+   (26 Mei 2026). Schema dah ada.
+
+🔄 CONCEPT FLOW:
+
+System cron daily scan data:
+  • psy_daily_checkins — tak check-in 3+ hari?
+  • psy_plan_compliance — madu &lt;5/hari, 4-5 hari/mgg?
+  • psy_vitals — BP &gt;180/110? mood &lt;3?
+  • psy_plan_weekly_progress — miss 2 sesi berturut?
+  ↓
+Detect breach:
+  → INSERT psy_risk_alerts
+    • severity (low/medium/high/critical)
+    • category, description
+    • status='open'
+  ↓
+Coach Dashboard:
+  • Panel "Pesakit Perlu Tindakan Segera"
+  • Sort by severity DESC
+  • Tunjuk top 3-5 alerts
+  ↓
+Coach klik alert:
+  • Buka patient hub
+  • Action: WhatsApp / Call / Visit
+  → UPDATE status='acknowledged'
+  ↓
+Lepas urus:
+  → UPDATE status='resolved', resolved_at
+  ↓
+🔥 Kalau critical &gt; 24 jam tak resolved:
+   Auto-escalate ke doctor / manager
+   Notify in-app + WhatsApp (kalau ada)</pre>
+
+<h2 id="kepatuhan">📈 Kepatuhan Rules <span class="badge b-blocked">BLOCKED — Tunggu Izzah</span></h2>
+<pre class="blocked">💡 Definisi konflik. Tunggu Izzah confirm formula.
+
+🔄 CONCEPT FLOW:
+
+Pilihan formula (Izzah pilih satu / gabungan):
+
+Option A: Session-based
+  % sesi hadir / total sesi (data: psy_plan_weekly_progress)
+
+Option B: Check-in based
+  % hari check-in / 7 hari (data: psy_daily_checkins)
+
+Option C: Protokol-based
+  % protokol diikut (madu/nafas/bumi/kelapa/kolon/berjemur)
+  (data: psy_plan_compliance)
+
+Option D: Manual OB Category
+  Coach assign kategori per pesakit:
+    • Pesakit A — Disiplin & Patuh 100%
+    • Pesakit B — Separuh Patuh
+    • Pesakit C — Tidak Patuh
+
+Option E: Gabungan (weighted score)
+  Combination semua di atas
+  ↓
+System calculate score per patient
+  ↓
+Coach assign manual kategori (kalau Option D):
+  • Patient hub → "Set Kategori OB"
+  → UPDATE psy_patients.adherence_category
+  ↓
+Dashboard kepatuhan.html:
+  • Kadar keseluruhan (klinik)
+  • Senarai pesakit per kategori
+  • Trend mingguan
+  ↓
+🔥 Trigger risk alert kalau jatuh ke kategori C</pre>
+
+<h2 id="reward">⭐ Reward / Star System <span class="badge b-concept">CONCEPT</span></h2>
+<pre class="concept">💡 Per Syafa: bintang utk pesakit cemerlang,
+   mata utk tukar baucar, cabutan bertuah.
+
+🔄 CONCEPT FLOW:
+
+Schema baru:
+  psy_patient_rewards (patient_id, type, points,
+                       awarded_at, redeemed_at,
+                       voucher_code)
+  ↓
+System trigger kira mata automatik:
+  • Hadir semua sesi minggu → +10 mata
+  • Check-in 7/7 → +20 mata
+  • Madu compliance 100% → +30 mata
+  • Selesai Minggu 4/7/12 dengan progress → +50 + Star
+  ↓
+Patient dashboard:
+  • Tunjuk total mata + bintang
+  • Senarai rewards available
+  • Butang "Tukar Mata"
+  ↓
+Patient pilih reward:
+  • Baucar produk (RM10/20/50)
+  • Free konsultasi Hakeema
+  • Diskaun pakej tambahan
+  → INSERT redemption record
+  ↓
+Admin approve:
+  • Kurangkan mata dari balance
+  • Issue voucher code
+  • Notify patient (email + in-app)
+  ↓
+Cabutan Bertuah (special event):
+  • Patient NLC join 2+ kelas eligible
+  • Roda gift UI
+  • Random reward
+  ↓
+🔥 Geng ALIVE design khusus:
+   • Logo, badge, special UI
+   • Lifetime achievement</pre>
+
+<h2 id="hakeema">🤲 Sesi 1:1 Hakeema <span class="badge b-concept">CONCEPT</span></h2>
+<pre class="concept">💡 M6, M11, bulanan, 3-bulan sekali.
+   Voice record + transcribe + auto-WhatsApp saranan.
+
+🔄 CONCEPT FLOW:
+
+Schema baru:
+  • psy_hakeema_sessions
+  • psy_hakeema_recordings
+  • staff_role='hakeema' (tambah)
+  ↓
+System auto-schedule ikut milestone pakej:
+  • Minggu 6 → sesi 1
+  • Minggu 11 → sesi 2
+  • Bulanan (M1, M2, M3) → recurring
+  • Q1, Q2, Q3 → quarterly
+  ↓
+Patient notifikasi:
+  "Sesi Hakeema dijadualkan M6"
+  • Pilih masa dari slot Hakeema available
+  → INSERT psy_hakeema_sessions
+  ↓
+Hari sesi — Coach/Hakeema rakam audio:
+  • Whisper API / ChatGPT transcribe
+  → INSERT psy_hakeema_recordings (audio_url)
+  ↓
+🔥 System transcribe → masuk psy_patient_notes:
+   • note_type='hakeema'
+   • visibility='both' (patient + staff nampak)
+  ↓
+🔥 System detect saranan dari transcript:
+   • Kata kunci: "ambil", "buat", "elakkan"
+   • Extract action items
+   • Auto-send WhatsApp ke patient
+  ↓
+Coach set follow-up X hari kemudian:
+  • Auto-notification ke patient:
+    "Sudah ikut saranan Hakeema?"
+  • Patient respond → log dalam patient notes</pre>
+
+<h2 id="reaksi">💓 Reaksi Pemulihan <span class="badge b-concept">CONCEPT</span></h2>
+<pre class="concept">💡 Patient tag reaksi dalam check-in → saranan auto
+   + butang call coach.
+
+🔄 CONCEPT FLOW:
+
+Schema baru:
+  psy_recovery_reactions (id, name, severity,
+                         saranan_text, is_red_flag)
+  ↓
+Admin seed senarai reaksi:
+  • Demam → minum air asam jawa
+  • Loya → rehat + air kelapa
+  • Pening → check vitals
+  • Sakit dada (RED FLAG) → emergency!
+  ↓
+Patient checkin.html — section reaksi pemulihan:
+  • Multi-select reaksi yang dialami
+  ↓
+🔥 Sistem tunjuk pop-up saranan:
+   • Detail apa nak buat
+   • Butang "Call Coach"
+   • Butang "Mesej Coach"
+  ↓
+Patient klik "Call Coach":
+  → Trigger notification ke coach assigned
+  → Coach terima dalam dashboard + WhatsApp
+  ↓
+Coach respond:
+  • Call patient
+  • Atau mesej terus
+  • Log dalam patient hub
+  ↓
+🔥 RED FLAG reaksi (sakit dada, sesak nafas):
+   • Auto-escalate ke doctor
+   • Tunjuk RED EMERGENCY PROTOCOL UI
+   • Auto-call ambulance number
+   • Notify management</pre>
+
+<h2 id="refund">↩️ Refund <span class="badge b-concept">CONCEPT</span></h2>
+<pre class="concept">💡 Schema psy_payments.status='refunded' ada,
+   UI kena bina.
+
+🔄 CONCEPT FLOW:
+
+Schema tambahan:
+  psy_refund_requests (payment_id, patient_id,
+                       reason, status, processed_at)
+  ↓
+Patient buka payment.html → tab "Resit Saya":
+  • Klik payment row → "Request Refund"
+  • Isi reason
+  → INSERT psy_refund_requests (status='pending')
+  ↓
+Admin buka payment-admin.html:
+  • Tab "Refund Requests"
+  • Review reason + payment detail
+  ↓
+Aksi:
+  • Approve:
+    → UPDATE psy_payments.status='refunded'
+    → Reverse inventory deduction (kalau order)
+    → Process actual refund (manual transfer)
+    → UPDATE refund_processed_at
+  • Reject:
+    → UPDATE status='rejected' + reason
+  ↓
+Patient terima:
+  • Notifikasi in-app
+  • Email confirmation (kalau ada provider)</pre>
+
+<h2 id="autopo">🔄 Auto-PO Inventory <span class="badge b-concept">CONCEPT</span></h2>
+<pre class="concept">💡 Schema dah ada (auto_reorder_enabled,
+   last_auto_po_at). Cron / trigger belum implement.
+
+🔄 CONCEPT FLOW:
+
+Setup (Admin):
+  • Buka inventory.html → item edit
+  • Toggle auto_reorder_enabled=true
+  • Set max_qty + auto_reorder_qty
+  • Set supplier_info (name, cost, lead_days)
+  ↓
+🔥 System cron daily (1:00 AM):
+   SELECT psy_inventory_items WHERE
+     qty_in_stock &lt;= max_qty * 0.3
+     AND auto_reorder_enabled = true
+     AND (last_auto_po_at IS NULL
+          OR last_auto_po_at &lt; now() - 7 days)
+  ↓
+Untuk setiap item match:
+  → INSERT psy_inventory_requests (
+      is_auto_generated=true,
+      qty_requested=auto_reorder_qty,
+      status='pending_approval'
+    )
+  → UPDATE last_auto_po_at = now()
+  → Notify Manager + Finance
+  ↓
+Manager review request:
+  • Tengok cost estimation
+  • Approve / Reject
+  ↓
+Bila approved:
+  • Send PO ke supplier (manual / email)
+  • Track delivery
+  ↓
+Bila barang sampai:
+  • UPDATE psy_inventory_requests.status='purchased'
+  • Adjust qty_in_stock</pre>
+
+<h2 id="whatsapp">💬 WhatsApp / Email Notification <span class="badge b-blocked">BLOCKED — Need API</span></h2>
+<pre class="blocked">💡 Tunggu WhatsApp Business API + email provider
+   (Resend / SendGrid).
+
+🔄 CONCEPT FLOW:
+
+Schema baru:
+  • psy_message_templates (key, channel, body,
+                          variables, frequency)
+  • psy_message_log (template_key, recipient,
+                    sent_at, status, error)
+  ↓
+Admin setup template:
+  • Invoice receipt
+  • KOB reminder (1 hari sebelum)
+  • Weekly checklist Selasa 9am
+  • Madu compliance low alert
+  • Google Review request lepas treatment
+  ↓
+🔥 System events trigger send:
+   • Order paid → invoice email + WhatsApp
+   • Sesi 1 hari sebelum → reminder + meet link
+   • Sesi miss → "Bayar RM 50 extension"
+   • Madu &lt;5/hari → coach contact alert
+   • Treatment complete → Google Review
+   ↓
+Queue + send via API:
+  • WhatsApp Business API
+  • Resend / SendGrid email
+  → Log in psy_message_log
+    (status: queued / sent / delivered / failed)
+  ↓
+Admin dashboard:
+  • Delivery status per template
+  • Failed messages — manual retry option
+  • Bounce rate analytics
+  ↓
+Per template config:
+  • One-time (cth invoice)
+  • Recurring (cth weekly Selasa 9am)
+  • Conditional (cth madu low daily 8pm)
+  • Custom hours interval (every 5 hours)</pre>
+
+<p style="text-align:center; color:#6b7280; margin-top:50px; padding-top:20px; border-top:1px solid #d4c9a8;">
+  <strong>End of Module Flow Documentation</strong><br>
+  ISW System — 22 Mei 2026<br>
+  <span style="font-size:11px">10 module siap + 8 concept untuk planning</span>
+</p>
+
+</body>
+</html>

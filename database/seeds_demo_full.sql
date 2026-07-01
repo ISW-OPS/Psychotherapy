@@ -132,8 +132,10 @@ DELETE FROM psy_patients
 WHERE user_id::text LIKE 'd0000000%' AND id::text NOT LIKE 'c0000000%';
 
 -- ════════════════════════ 4. PELAN RAWATAN + PROGRES MINGGUAN ════════════════════════
-INSERT INTO psy_treatment_plans (id, patient_id, doctor_id, name, duration_unit, duration_weeks, current_week, status, created_at)
-SELECT plan, pid, '0cb188b0-f2e5-42d8-9071-81b331d88a59', pkg_name||' — Pelan Rawatan', 'weeks', dur, cur_week,
+INSERT INTO psy_treatment_plans (id, patient_id, doctor_id, name, template, duration_unit, duration_weeks, current_week, status, created_at)
+SELECT plan, pid, '0cb188b0-f2e5-42d8-9071-81b331d88a59', pkg_name||' — Pelan Rawatan',
+  (SELECT package_id FROM psy_packages WHERE id::text = _r.pkg_id),  -- template = package_id → tarik coaching_schedule (Bimbingan/Bekalan)
+  'weeks', dur, cur_week,
   CASE WHEN status='active' THEN 'active' WHEN outcome='completed' THEN 'completed' ELSE 'paused' END,
   now() - (created_days||' days')::interval
 FROM _r WHERE pkg_id IS NOT NULL;

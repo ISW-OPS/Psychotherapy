@@ -911,6 +911,7 @@ async function renderCoachDashboard(user, today) {
   // Selaraskan cache selepas tanda kehadiran supaya navigasi tarikh tak tunjuk butang lapuk (elak double-deduct).
   window._schedSyncCache = (id, status) => {
     Object.values(cSchedCache).forEach(arr => (arr || []).forEach(s => { if (s.id === id) s.status = status; }));
+    Object.values(cNearCache).forEach(arr => (arr || []).forEach(s => { if (s.id === id) s.status = status; }));
   };
   let schedScope = 'mine';
   async function loadCoachDay(ymd, scope) {
@@ -927,20 +928,27 @@ async function renderCoachDashboard(user, today) {
     cSchedCache[key] = (data||[]).filter(s => s.session_date && sameDay(s) && (scope === 'all' || s.psy_patients?.coach_id === user.id || s.substitute_coach_id === user.id));
     return cSchedCache[key];
   }
+  // Fallback bila tarikh dipilih kosong: tunjuk sesi terdekat (lepas + akan datang) supaya sesi lampau senang nampak.
+  const cNearCache = {};
+  async function loadCoachNearest(scope) {
+    if (cNearCache[scope]) return cNearCache[scope];
+    const now = new Date();
+    const lo = new Date(now); lo.setDate(lo.getDate()-120);
+    const hi = new Date(now); hi.setDate(hi.getDate()+60);
+    const { data } = await window.db.from('psy_plan_weekly_progress')
+      .select('id, session_date, status, week_number, plan_id, patient_id, substitute_coach_id, psy_patients(coach_id, mrn, psy_profiles!psy_patients_user_id_fkey(full_name))')
+      .gte('session_date', lo.toISOString()).lt('session_date', hi.toISOString())
+      .order('session_date',{ascending:false}).then(r=>r,()=>({data:[]}));
+    const mine = (data||[]).filter(s => s.session_date && (scope === 'all' || s.psy_patients?.coach_id === user.id || s.substitute_coach_id === user.id));
+    cNearCache[scope] = mine.slice(0, 12); // terbaru dahulu (descending)
+    return cNearCache[scope];
+  }
   const C_SESS_PILL = {
     hadir:['Disahkan','bg-green-light text-green-dark'], booked:['Akan datang','bg-navy-light text-navy'],
     pending:['Menunggu','bg-amber-100 text-amber-700'], reschedule:['Dijadual semula','bg-gold/30 text-gold-dark'], cancel:['Tidak hadir','bg-ink/10 text-ink/50'],
   };
   const weeklyList = document.getElementById('c-weekly-list');
-  async function renderCoachSchedule(ymd) {
-    document.getElementById('c-sched-date').value = ymd;
-    weeklyList.innerHTML = '<div class="h-full flex items-center justify-center text-xs text-ink/35 p-6">Memuatkan…</div>';
-    const sess = await loadCoachDay(ymd, schedScope);
-    if (!sess.length) {
-      weeklyList.innerHTML = `<div class="h-full flex items-center justify-center text-sm text-ink/35 p-6">${schedScope === 'all' ? 'Tiada sesi pada tarikh ini.' : 'Tiada sesi pesakit anda pada tarikh ini.'}</div>`;
-      return;
-    }
-    weeklyList.innerHTML = sess.map(s => {
+  const coachSchedRow = (s) => {
       const p = s.psy_patients;
       const name = p?.psy_profiles?.full_name || p?.mrn || 'Pesakit';
       const d = new Date(s.session_date);
@@ -982,7 +990,22 @@ async function renderCoachDashboard(user, today) {
         </a>
         ${right}
       </div>`;
-    }).join('');
+  };
+  async function renderCoachSchedule(ymd) {
+    document.getElementById('c-sched-date').value = ymd;
+    weeklyList.innerHTML = '<div class="h-full flex items-center justify-center text-xs text-ink/35 p-6">Memuatkan…</div>';
+    const sess = await loadCoachDay(ymd, schedScope);
+    if (sess.length) { weeklyList.innerHTML = sess.map(coachSchedRow).join(''); return; }
+    // Tiada sesi pada tarikh dipilih → papar sesi terdekat (termasuk yang lepas) supaya senang nampak.
+    const near = await loadCoachNearest(schedScope);
+    const emptyMsg = schedScope === 'all' ? 'Tiada sesi pada tarikh ini.' : 'Tiada sesi pesakit anda pada tarikh ini.';
+    if (!near.length) {
+      weeklyList.innerHTML = `<div class="h-full flex items-center justify-center text-sm text-ink/35 p-6">${emptyMsg}</div>`;
+      return;
+    }
+    weeklyList.innerHTML =
+      `<div class="px-5 py-2.5 text-[11px] text-ink/45 bg-cream/30 border-b border-ink/8">${emptyMsg} <span class="text-ink/60 font-semibold">Sesi terdekat:</span></div>`
+      + near.map(coachSchedRow).join('');
   }
   let cSchedDate = today;
   const cShiftSched = n => { const d=new Date(cSchedDate+'T00:00:00'); d.setDate(d.getDate()+n); cSchedDate=cSchedYmd(d); renderCoachSchedule(cSchedDate); };
@@ -1001,6 +1024,7 @@ async function renderCoachDashboard(user, today) {
   setSchedScope('mine');
   window._reloadCoachSchedule = () => {
     Object.keys(cSchedCache).forEach(k => delete cSchedCache[k]);
+    Object.keys(cNearCache).forEach(k => delete cNearCache[k]);
     renderCoachSchedule(cSchedDate);
   };
   loadDashSchedStaff(); // background-load so ganti button shows name without waiting for modal open

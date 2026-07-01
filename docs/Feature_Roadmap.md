@@ -1,5 +1,26 @@
 # ISW System — Feature Roadmap
-> Kemaskini: 24 Jun 2026 · Berdasarkan meeting Izzah 26 Mei 2026
+> Kemaskini: 30 Jun 2026 · Berdasarkan meeting Izzah 26 Mei 2026
+
+---
+
+## 🎯 PHASE 3 — Skop Rasmi (ditetapkan 30 Jun 2026)
+> 10 item disahkan untuk Phase 3. Status: 🆕 baharu · ♻️ naik taraf modul sedia ada · 📋 dari roadmap asal (#).
+
+| # | Feature | Jenis | Keterangan & nota pembinaan |
+|---|---|---|---|
+| 1 | **Payment gateway** | 📋 #29 | Tukar `processPayment()` dari simulasi → gateway sebenar (Billplz / ToyyibPay). **Blocker:** keputusan Zahin (gateway/kad/SST). Bayaran sekali, bukan recurring. |
+| 2 | **OH MY GENE (DNA Flow)** | 📋 #34 | Test → consultation → report email pesakit. Perlu schema baru + langkah workflow + storan laporan DNA. Boleh guna `psy_medical_reports` sebagai asas. |
+| 3 | **Continuity Package** | 🆕 | Bila pesakit ada **baki ≤4 minggu** dalam pelan, sistem cadang pakej sambungan. Trigger ikut `current_week` vs `duration_weeks`; papar cadangan di portal pesakit + alert coach. |
+| 4 | **Red Emergency Protocol** | 📋 #19 | Butang SOS / alert kecemasan pesakit → notifikasi segera ke coach/doktor + log risiko. Sambung ke `psy_risk_alerts`. |
+| 5 | **Reward System** | 📋 #21 | Star/kategori ikut progress + hadiah bila capai sasaran. Perlu schema mata/lencana + peraturan + paparan pesakit. |
+| 6 | **Geng ALIVE features** | 📋 #22 | Santapan fitrah, ziarah, family day, graduasi, hi-tea — modul komuniti/acara lanjutan (extend `psy_events`). |
+| 7 | **Hakeema 1:1** | 📋 #10 | Jadual 1:1 Hakeema (Minggu 6 & 11, bulanan M1–M3, suku-tahun Q1–Q3) + nota. Perlu schema sesi Hakeema + dashboard ringkasan (#36). |
+| 8 | **Referral dalam sistem** | 📋 #11 | Rujuk pesakit ke doktor / Hakeema / coach / manager dalam app + jejak status rujukan. Schema `psy_referrals` (sudah wujud — bina UI + alur). |
+| 9 | **Daily Check-in: mood → emosi → saranan tindakan** | ♻️ | Naik taraf `checkin.html`: petakan skor mood → emosi → **saranan tindakan automatik** (cadangan amalan/aktiviti ikut emosi). Logik pemetaan + paparan saranan. |
+| 10 | **Reaksi Pemulihan: saranan → tindakan** | ♻️ | Naik taraf modul Reaksi Pemulihan (`psy_reaksi_item`): dari simptom direkod → jana **saranan tindakan** untuk pesakit/coach. |
+
+**Kebergantungan luar (perlu keputusan/akses):** Payment gateway (Zahin) · OH MY GENE (proses & format report) · WhatsApp untuk notifikasi SOS/continuity (jika mahu auto-WA).
+**Boleh mula tanpa blocker:** Continuity Package, Reward, Referral, Daily Check-in saranan, Reaksi Pemulihan saranan, Hakeema 1:1, Geng ALIVE, Red Emergency (in-app).
 
 ---
 
