@@ -530,9 +530,12 @@ function renderHero() {
   const attendance = weekEntry?.id
     ? `<div class="mt-4 pt-4 border-t border-ink/8">
          <div class="text-[11px] font-semibold text-ink/50 uppercase tracking-wide mb-2">Kehadiran ${weekSessions.length > 1 ? dayName(weekEntry) : ''}</div>
-         <div class="flex gap-2 flex-wrap">
+         <div class="flex gap-2 flex-wrap items-center">
            ${attBtn('hadir','✅ Hadir','bg-green text-white border-green')}
            ${attBtn('cancel','❌ Tidak Hadir','bg-terracotta text-white border-terracotta')}
+           ${['hadir','consultation_done','cancel'].includes(status)
+             ? `<button onclick="resetAttendance()" title="Reset kehadiran sesi ini sahaja kembali ke 'Ditempah'" class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-ink/15 text-ink/55 hover:bg-cream transition">🔄 Reset</button>`
+             : ''}
          </div>
          ${missControl}
          ${extControl}
@@ -615,6 +618,33 @@ async function markStatus(status) {
     await notify(patientUserId, 'plan', msgs[status][0], msgs[status][1], 'plan-week.html');
   }
   banner(`${dayLabel}: ${status === 'hadir' ? 'Hadir' : status === 'cancel' ? 'Tidak Hadir' : 'Reschedule'}`);
+}
+
+// Reset kehadiran SESI AKTIF sahaja (satu hari) kembali ke 'booked'.
+// Guna bila tersilap tanda Hadir/Tidak Hadir. Ini TIDAK menyentuh sesi lain / minggu lain.
+async function resetAttendance() {
+  if (!weekEntry?.id) { banner('Tiada sesi untuk minggu ini', 'error'); return; }
+  const curLbl = { hadir: 'Hadir', consultation_done: 'Selesai', cancel: 'Tidak Hadir' }[weekEntry.status] || weekEntry.status;
+  const dayLabel = weekEntry.session_date ? new Date(weekEntry.session_date).toLocaleDateString('ms-MY',{weekday:'long'}) : `Sesi ${weekEntry.session_day || 1}`;
+  if (!confirm(`Reset kehadiran ${dayLabel} Minggu ${weekNumber} (kini: ${curLbl})?\n\nHanya sesi ini yang direset ke 'Ditempah'. Sesi & minggu lain tidak terjejas.`)) return;
+  try {
+    await window.db.from('psy_plan_weekly_progress').update({
+      status:          'booked',
+      updated_by:      window.currentUser.id,
+      updated_by_name: window.currentUser.full_name,
+      updated_at:      new Date().toISOString(),
+    }).eq('id', weekEntry.id);
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); return; }
+
+  weekEntry.status = 'booked';
+  const idx = weekSessions.findIndex(r => r.id === weekEntry.id);
+  if (idx >= 0) weekSessions[idx].status = 'booked';
+
+  // Kehadiran dipulihkan (bukan lagi 'cancel') → batalkan minggu tambahan yang belum dibayar.
+  if (!weekEntry.is_extension) await removePendingExtensionIfResolved(weekNumber);
+
+  renderHero();
+  banner(`${dayLabel}: kehadiran direset ke Ditempah ✅`);
 }
 
 // Coach: ingatkan pesakit supaya jadual semula sesi tidak hadir (hantar notifikasi).
