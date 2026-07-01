@@ -566,7 +566,7 @@ function buildTopbar(user, cfg, role, staffRole) {
   if (!bar) { bar = document.createElement('header'); bar.id = 'global-topbar'; document.body.appendChild(bar); }
   bar.className = 'fixed top-0 left-0 right-0 h-14 bg-white border-b border-ink/10 z-30 flex items-stretch';
   bar.innerHTML = `
-    <div class="w-64 flex-shrink-0 flex items-center gap-2 px-4 border-r border-ink/8">
+    <div class="w-auto md:w-64 flex-shrink-0 flex items-center gap-2 px-3 md:px-4 md:border-r border-ink/8">
       <button onclick="toggleMobileSidebar()" aria-label="Menu" class="md:hidden w-9 h-9 flex items-center justify-center rounded-lg hover:bg-ink/8 text-ink/60">
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 4h14M2 9h14M2 14h14"/></svg>
       </button>
@@ -574,7 +574,7 @@ function buildTopbar(user, cfg, role, staffRole) {
       <div class="leading-tight min-w-0 hidden lg:block"><div class="font-bold text-sm text-ink truncate">Ibnu Sina Wellness</div><div class="text-[10px] text-ink/50 truncate">${cfg.label}</div></div>
     </div>
     <div class="flex-1 min-w-0"></div>
-    <div class="flex items-center gap-2 px-4 flex-shrink-0">
+    <div class="flex items-center gap-1.5 md:gap-2 px-2 md:px-4 flex-shrink-0">
       <button onclick="iswToggleLang && iswToggleLang()" data-isw-lang-btn
         class="px-2.5 h-9 min-w-[40px] rounded-lg hover:bg-ink/5 text-xs font-bold text-ink/60 border border-ink/15 transition-colors"
         title="Bahasa / Language">EN</button>
