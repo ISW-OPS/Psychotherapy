@@ -380,6 +380,7 @@
 let kobId = null;
 let kob = null;
 let patient = null;
+let patientKycApproved = false;
 
 async function loadKob() {
   const params = new URLSearchParams(location.search);
@@ -394,6 +395,17 @@ async function loadKob() {
     .select('*, psy_profiles!psy_patients_user_id_fkey(full_name, phone, email)')
     .eq('id', kob.patient_id).single().then(r => r, () => ({ data: null }));
   patient = patData;
+
+  // Semak kelulusan KYC — patient.status='active' ATAU submission terkini 'approved'.
+  // Doktor tak boleh tanda hadir / cadang pakej selagi KYC belum diluluskan staff.
+  if (patient?.status === 'active') {
+    patientKycApproved = true;
+  } else {
+    const { data: kycStat } = await window.db.from('psy_kyc_submissions')
+      .select('status').eq('user_id', patient.user_id)
+      .order('created_at', { ascending: false }).limit(1);
+    patientKycApproved = kycStat?.[0]?.status === 'approved';
+  }
 
   render();
 }
@@ -619,6 +631,10 @@ function renderDocs() {
 }
 
 async function markHadir() {
+  if (!patientKycApproved) {
+    banner('KYC pesakit belum diluluskan. Luluskan KYC dahulu sebelum tanda hadir / cadang pakej.', 'error');
+    return;
+  }
   if (!confirm('Tandakan kehadiran pesakit?')) return;
   const btn = document.getElementById('btn-hadir');
   btn.disabled = true; btn.textContent = 'Memproses...';
@@ -950,6 +966,10 @@ function onRecModeChange() {
 }
 
 async function saveRecommendation() {
+  if (!patientKycApproved) {
+    banner('KYC pesakit belum diluluskan. Luluskan KYC dahulu sebelum cadang pakej.', 'error');
+    return;
+  }
   const mode = document.querySelector('input[name="rec-mode"]:checked')?.value;
   if (!mode) { banner('Sila pilih cadangan dahulu', 'error'); return; }
 

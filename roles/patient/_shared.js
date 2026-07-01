@@ -162,6 +162,18 @@ async function initPatient(pageId, titleSub) {
 
   window.patientRecord = patients[0] || null;
 
+  // ── Sekat rekod soft-deleted ── akaun auth + profil masih hidup, tapi rekod
+  // pesakit ditanda 'deleted' TAK boleh akses kawasan pesakit. Log keluar terus.
+  // (nota: 'inactive' = Pesakit Lama, masih dibenarkan — bypass.)
+  if (window.patientRecord?.status === 'deleted') {
+    await window.db.auth.signOut();
+    localStorage.removeItem('isw_role');
+    localStorage.removeItem('isw_name');
+    alert('Akaun ini tidak lagi aktif. Sila hubungi pentadbir.');
+    window.location.href = '../../auth/login.html';
+    return null;
+  }
+
   // Resolve KYC approval once and cache
   window.kycApproved = await resolveKycApproved();
 
