@@ -179,6 +179,7 @@ let weekNumber = 1;
 let weekEntry = null;
 let sessionRows = [];   // semua baris sesi minggu ini (1–2); weekEntry = sesi aktif
 let weekStart = null;
+let weekOverride = null; // override bekalan/sesi minggu ini (atau null = ikut pakej)
 let weekEnd = null;
 
 function escHtml(s) { const d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
@@ -252,6 +253,12 @@ async function loadWeekDetail() {
   sessionRows = progress || [];
   weekEntry = sessionRows[0] || null;
 
+  // Override bekalan/sesi per-minggu (read-only untuk pesakit). Null = ikut pakej.
+  const ovr = await dbQuery('psy_plan_week_overrides', {
+    eq: { plan_id: activePlan.id, week_number: weekNumber },
+  }).catch(() => []);
+  weekOverride = (ovr && ovr[0]) || null;
+
   updateWeekNav();
   renderHero();
   renderCoachNotes();
@@ -263,12 +270,30 @@ async function loadWeekDetail() {
 function getWeekCoachingItems() {
   const schedule = activePlan.coaching_schedule || [];
   const daily = schedule.filter(item => (item.period === 'day' || item.day) && !item.week);
+  let items;
   if (daily.length) {
     const startDay = (weekNumber - 1) * 7 + 1;
     const endDay = weekNumber * 7;
-    return daily.filter(item => Number(item.day) >= startDay && Number(item.day) <= endDay);
+    items = daily.filter(item => Number(item.day) >= startDay && Number(item.day) <= endDay);
+  } else {
+    items = schedule.filter(item => Number(item.week || item.day) === weekNumber);
   }
-  return schedule.filter(item => Number(item.week || item.day) === weekNumber);
+  // Bimbingan/Aktiviti/Bekalan ikut SESI AKTIF: Sesi 2 guna *_2. Salinan cetek — jangan mutate pakej.
+  const activeDay = weekEntry?.session_day || 1;
+  items = items.map(it => ({ ...it,
+    guidance: (activeDay === 2 ? it.guidance_2 : it.guidance) || [],
+    aktiviti: (activeDay === 2 ? it.aktiviti_2 : it.aktiviti) || [],
+    supplies: (activeDay === 2 ? it.supplies_2 : it.supplies) || [],
+  }));
+
+  // Override bekalan per-pesakit per-SESI. supplies_override = {1:[...],2:[...]} (sokong format lama array=Sesi 1).
+  const ov = weekOverride?.supplies_override;
+  const ovForDay = ov ? (Array.isArray(ov) ? (activeDay === 1 ? ov : undefined) : ov[activeDay]) : undefined;
+  if (Array.isArray(ovForDay)) {
+    if (!items.length) items = [{ week: weekNumber, guidance: [], supplies: ovForDay }];
+    else items = items.map((it, i) => ({ ...it, supplies: i === 0 ? ovForDay : [] }));
+  }
+  return items;
 }
 
 function renderCoachingSchedule() {

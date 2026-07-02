@@ -120,7 +120,7 @@
                 <div id="f-sessions-wrap" class="md:col-span-3 grid md:grid-cols-2 gap-4 pt-2 border-t border-ink/8">
                   <div>
                     <label class="text-xs font-semibold text-ink/70">Bilangan sesi seminggu <span class="text-terracotta">*</span></label>
-                    <select id="f-sessions-per-week" onchange="renderSessionDaysEditor()" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:outline-none focus:border-navy">
+                    <select id="f-sessions-per-week" onchange="onSessionsPerWeekChange()" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:outline-none focus:border-navy">
                       <option value="1">1 sesi seminggu</option>
                       <option value="2">2 sesi seminggu</option>
                     </select>
@@ -529,6 +529,23 @@ function removeSessionDaysVariant(idx) {
   renderSessionDaysEditor();
 }
 
+// Default hari-sesi ikut "Bilangan sesi seminggu" pakej: 2 → [1,2], selainnya → [1].
+function defaultSessionDays() {
+  const n = parseInt(document.getElementById('f-sessions-per-week')?.value) || 1;
+  return n >= 2 ? [1, 2] : [1];
+}
+
+// Tukar dropdown "Bilangan sesi seminggu" → semua minggu ikut (cascade) + re-render.
+function onSessionsPerWeekChange() {
+  renderSessionDaysEditor();
+  const def = defaultSessionDays();
+  (coachingSchedule || []).forEach(it => {
+    if ((it.period || 'week') !== 'day') it.session_days = [...def];
+  });
+  renderCoachingScheduleEditor();
+  saveDraftDebounced?.();
+}
+
 function normalizeCoachingSchedule(schedule, count, unit = getDurationUnit()) {
   const keyName = unit === 'day' ? 'day' : 'week';
   const existing = {};
@@ -539,10 +556,17 @@ function normalizeCoachingSchedule(schedule, count, unit = getDurationUnit()) {
     return {
       period: unit,
       [keyName]: n,
+      // Sesi 1 (juga default utk minggu 1-sesi)
       guidance:   item.guidance || item.bimbingan || [],
       aktiviti:   item.aktiviti || [],
       supplies:   item.supplies || item.bekalan || [],
+      // Sesi 2 (hanya guna bila minggu = 2 sesi)
+      guidance_2: item.guidance_2 || [],
+      aktiviti_2: item.aktiviti_2 || [],
+      supplies_2: item.supplies_2 || [],
       mode:       item.mode || 'both',
+      // Hari sesi aktif minggu ini: [1,2]=dua sesi, [1]=sesi 1 saja, [2]=sesi 2 saja.
+      session_days: Array.isArray(item.session_days) && item.session_days.length ? item.session_days : defaultSessionDays(),
       rujukan_files: item.rujukan_files || [],
     };
   });
@@ -550,7 +574,7 @@ function normalizeCoachingSchedule(schedule, count, unit = getDurationUnit()) {
 
 function renderItemList(wk, field, items, placeholder) {
   // SUPPLIES = inventory picker. GUIDANCE/AKTIVITI = catalog picker.
-  if (field === 'supplies') return renderSuppliesList(wk, items);
+  if (field === 'supplies' || field === 'supplies_2') return renderSuppliesList(wk, items, field);
   if (field === 'guidance') return renderCatalogList(wk, items, 'bimbingan', 'guidance');
   if (field === 'aktiviti') return renderCatalogList(wk, items, 'aktiviti', 'aktiviti');
   // Fallback: text input
@@ -569,9 +593,25 @@ function renderItemList(wk, field, items, placeholder) {
 }
 
 // Render gabungan Bimbingan + Aktiviti dalam satu list
-function renderCombinedCatalogList(wk, weekItem) {
-  const guidance = weekItem.guidance || [];
-  const aktiviti = weekItem.aktiviti || [];
+// Dua lajur (Bimbingan & Aktiviti | Bekalan) untuk satu sesi. suf='' = Sesi 1, '_2' = Sesi 2.
+function renderSessionCols(wk, item, suf) {
+  return `<div class="grid md:grid-cols-2 gap-3">
+    <div>
+      <label class="text-[11px] font-semibold text-ink/60 block mb-1">💡 Bimbingan & Aktiviti</label>
+      ${renderCombinedCatalogList(wk, item, suf)}
+    </div>
+    <div>
+      <label class="text-[11px] font-semibold text-ink/60 block mb-1">📦 Bekalan</label>
+      ${renderItemList(wk, 'supplies' + suf, item['supplies' + suf], 'cth: 1 kg LTH')}
+    </div>
+  </div>`;
+}
+
+function renderCombinedCatalogList(wk, weekItem, suf = '') {
+  const guidance = weekItem['guidance' + suf] || [];
+  const aktiviti = weekItem['aktiviti' + suf] || [];
+  const gField = 'guidance' + suf;
+  const aField = 'aktiviti' + suf;
   const renderOne = (s, i, field) => {
     if (typeof s === 'string') {
       if (s.includes('[object')) {
@@ -587,7 +627,7 @@ function renderCombinedCatalogList(wk, weekItem) {
     }
     const cat = (window._coachingItems || []).find(it => it.id === s.item_id);
     const itemName = cat?.name || s.item_name || s.name || '(item tak ditemui)';
-    const badge = field === 'guidance'
+    const badge = field.startsWith('guidance')
       ? '<span class="text-[9px] font-semibold text-navy bg-navy/10 px-1.5 py-0.5 rounded">💡</span>'
       : '<span class="text-[9px] font-semibold text-terracotta bg-terracotta/10 px-1.5 py-0.5 rounded">🩺</span>';
     return `<div class="flex gap-1 mb-1 items-center">
@@ -597,11 +637,11 @@ function renderCombinedCatalogList(wk, weekItem) {
     </div>`;
   };
   const list = [
-    ...guidance.map((s, i) => renderOne(s, i, 'guidance')),
-    ...aktiviti.map((s, i) => renderOne(s, i, 'aktiviti')),
+    ...guidance.map((s, i) => renderOne(s, i, gField)),
+    ...aktiviti.map((s, i) => renderOne(s, i, aField)),
   ].join('');
   return `${list}
-    <button type="button" onclick="openCatalogPicker(${wk}, 'combined', null)"
+    <button type="button" onclick="openCatalogPicker(${wk}, 'combined', null, '${suf}')"
       class="text-[10px] font-semibold text-navy border border-dashed border-navy/30 px-2 py-1 rounded hover:bg-navy hover:text-white w-full mt-1">+ Pilih dari Catalog</button>`;
 }
 
@@ -636,14 +676,14 @@ function renderCatalogList(wk, items, catalogType, field) {
 }
 
 // Render supplies list — link ke inventory items dengan qty
-function renderSuppliesList(wk, items) {
+function renderSuppliesList(wk, items, field = 'supplies') {
   const arr = items || [];
   const list = arr.map((s, i) => {
     // Backward compat: kalau string (legacy), tunjuk sebagai text dengan warning
     if (typeof s === 'string') {
       return `<div class="flex gap-1 mb-1">
         <span class="flex-1 px-2 py-1 border border-gold/40 bg-gold/10 rounded text-xs text-ink/70" title="Legacy text — sila pilih item dari inventory">⚠️ ${escapeHtml(s)}</span>
-        <button type="button" onclick="removeItem(${wk}, 'supplies', ${i})" class="px-2 text-terracotta hover:bg-terracotta/10 rounded text-xs">×</button>
+        <button type="button" onclick="removeItem(${wk}, '${field}', ${i})" class="px-2 text-terracotta hover:bg-terracotta/10 rounded text-xs">×</button>
       </div>`;
     }
     // KIT entry
@@ -655,10 +695,10 @@ function renderSuppliesList(wk, items) {
         <div class="flex gap-1 items-center px-2 py-1">
           <span class="flex-1 font-semibold truncate">🧰 ${escapeHtml(kitName)}</span>
           <input type="number" value="${s.qty || 1}" min="0.5" step="0.5" title="Bilangan kit per patient"
-            oninput="updateSupplyQty(${wk}, ${i}, this.value)"
+            oninput="updateSupplyQty(${wk}, ${i}, this.value, '${field}')"
             class="w-14 px-1.5 py-1 border border-teal/30 rounded text-xs text-center focus:outline-none focus:border-teal">
           <span class="text-[10px] text-ink/45 w-8">kit</span>
-          <button type="button" onclick="removeItem(${wk}, 'supplies', ${i})" class="px-2 text-terracotta hover:bg-terracotta/10 rounded text-xs">×</button>
+          <button type="button" onclick="removeItem(${wk}, '${field}', ${i})" class="px-2 text-terracotta hover:bg-terracotta/10 rounded text-xs">×</button>
         </div>
         <div class="px-2 pb-1.5 text-[10px] text-ink/50 truncate">${escapeHtml(subItems)}</div>
       </div>`;
@@ -669,30 +709,31 @@ function renderSuppliesList(wk, items) {
     return `<div class="flex gap-1 mb-1 items-center">
       <span class="flex-1 px-2 py-1 bg-white border border-ink/15 rounded text-xs truncate">${escapeHtml(itemName)}</span>
       <input type="number" value="${s.qty || 1}" min="0" step="0.5"
-        oninput="updateSupplyQty(${wk}, ${i}, this.value)"
+        oninput="updateSupplyQty(${wk}, ${i}, this.value, '${field}')"
         class="w-14 px-1.5 py-1 border border-ink/15 rounded text-xs text-center focus:outline-none focus:border-navy">
       <span class="text-[10px] text-ink/45 w-10">${escapeHtml(itemUnit)}</span>
-      <button type="button" onclick="removeItem(${wk}, 'supplies', ${i})" class="px-2 text-terracotta hover:bg-terracotta/10 rounded text-xs">×</button>
+      <button type="button" onclick="removeItem(${wk}, '${field}', ${i})" class="px-2 text-terracotta hover:bg-terracotta/10 rounded text-xs">×</button>
     </div>`;
   }).join('');
   return `${list}
-    <button type="button" onclick="openSupplyPicker(${wk})"
+    <button type="button" onclick="openSupplyPicker(${wk}, '${field}')"
       class="text-[10px] font-semibold text-navy border border-dashed border-navy/30 px-2 py-1 rounded hover:bg-navy hover:text-white w-full mt-1">+ Pilih dari Inventory</button>`;
 }
 
-function updateSupplyQty(wk, idx, val) {
+function updateSupplyQty(wk, idx, val, field = 'supplies') {
   const it = getWeekItem(wk);
-  if (!it || !it.supplies?.[idx]) return;
-  it.supplies[idx].qty = parseFloat(val) || 0;
+  if (!it || !it[field]?.[idx]) return;
+  it[field][idx].qty = parseFloat(val) || 0;
   saveDraftDebounced();
 }
 
 // ── Catalog Picker (bimbingan / aktiviti) ──────────────
-let _catalogPickerCtx = null; // { wk, type, field }
+let _catalogPickerCtx = null; // { wk, type, field, suf }
 
-function openCatalogPicker(wk, type, field) {
-  _catalogPickerCtx = { wk, type, field };
-  document.getElementById('cp-week-label').textContent = (getDurationUnit() === 'day' ? 'D' : 'M') + wk;
+function openCatalogPicker(wk, type, field, suf = '') {
+  _catalogPickerCtx = { wk, type, field, suf };
+  const sesLbl = suf === '_2' ? ' · Sesi 2' : '';
+  document.getElementById('cp-week-label').textContent = (getDurationUnit() === 'day' ? 'D' : 'M') + wk + sesLbl;
   document.getElementById('cp-type-label').textContent = type === 'combined' ? 'Bimbingan & Aktiviti' : (type === 'bimbingan' ? 'Bimbingan' : 'Aktiviti');
   document.getElementById('cp-search').value = '';
   renderCatalogPickerList();
@@ -726,8 +767,9 @@ function renderCatalogPickerList() {
     byCat[cat].push(it);
   });
   const wkItem = getWeekItem(wk);
+  const suf = _catalogPickerCtx.suf || '';
   const pickedArrays = type === 'combined'
-    ? [...(wkItem?.guidance || []), ...(wkItem?.aktiviti || [])]
+    ? [...(wkItem?.['guidance' + suf] || []), ...(wkItem?.['aktiviti' + suf] || [])]
     : (wkItem?.[field] || []);
   const picked = new Set(pickedArrays.filter(s => typeof s === 'object').map(s => s.item_id));
 
@@ -749,19 +791,19 @@ function renderCatalogPickerList() {
 
 function addCatalogFromPicker(itemId) {
   if (!_catalogPickerCtx) return;
-  const { wk, type, field } = _catalogPickerCtx;
+  const { wk, type, field, suf = '' } = _catalogPickerCtx;
   const wkItem = getWeekItem(wk);
   if (!wkItem) return;
   const item = (window._coachingItems || []).find(it => it.id === itemId);
-  // Combined picker: route ikut jenis item dalam catalog
+  // Combined picker: route ikut jenis item dalam catalog (+ suffix sesi)
   const targetField = type === 'combined'
-    ? (item?.type === 'aktiviti' ? 'aktiviti' : 'guidance')
+    ? (item?.type === 'aktiviti' ? 'aktiviti' + suf : 'guidance' + suf)
     : field;
   if (!Array.isArray(wkItem[targetField])) wkItem[targetField] = [];
   if (wkItem[targetField].some(s => typeof s === 'object' && s.item_id === itemId)) return;
-  // Elak duplicate silang antara guidance/aktiviti
+  // Elak duplicate silang antara guidance/aktiviti (dalam sesi sama)
   if (type === 'combined') {
-    const otherField = targetField === 'guidance' ? 'aktiviti' : 'guidance';
+    const otherField = (targetField.startsWith('guidance') ? 'aktiviti' : 'guidance') + suf;
     if ((wkItem[otherField] || []).some(s => typeof s === 'object' && s.item_id === itemId)) return;
   }
   wkItem[targetField].push({
@@ -774,6 +816,7 @@ function addCatalogFromPicker(itemId) {
 }
 
 let _supplyPickerWk = null;
+let _supplyPickerField = 'supplies';
 let _spTab = 'item';
 function setSpTab(tab) {
   _spTab = tab;
@@ -782,11 +825,13 @@ function setSpTab(tab) {
   renderSupplyPickerList();
 }
 
-function openSupplyPicker(wk) {
+function openSupplyPicker(wk, field = 'supplies') {
   _supplyPickerWk = wk;
+  _supplyPickerField = field;
   _spTab = 'item';
   setSpTab('item');
-  document.getElementById('sp-week-label').textContent = (getDurationUnit() === 'day' ? 'D' : 'M') + wk;
+  const sesLbl = field === 'supplies_2' ? ' · Sesi 2' : '';
+  document.getElementById('sp-week-label').textContent = (getDurationUnit() === 'day' ? 'D' : 'M') + wk + sesLbl;
   document.getElementById('sp-search').value = '';
   renderSupplyPickerList();
   document.getElementById('supply-picker-modal').classList.remove('hidden');
@@ -801,8 +846,9 @@ function renderSupplyPickerList() {
   const list = document.getElementById('sp-list');
   const q = (document.getElementById('sp-search')?.value || '').toLowerCase().trim();
   const wkItem = getWeekItem(_supplyPickerWk);
-  const pickedItems = new Set((wkItem?.supplies || []).filter(s => typeof s === 'object' && s.item_id).map(s => s.item_id));
-  const pickedKits  = new Set((wkItem?.supplies || []).filter(s => typeof s === 'object' && s.kit_id).map(s => s.kit_id));
+  const pickedList = wkItem?.[_supplyPickerField] || [];
+  const pickedItems = new Set(pickedList.filter(s => typeof s === 'object' && s.item_id).map(s => s.item_id));
+  const pickedKits  = new Set(pickedList.filter(s => typeof s === 'object' && s.kit_id).map(s => s.kit_id));
 
   if (_spTab === 'kit') {
     const kits = (window._kits || []).filter(k => !q || (k.name || '').toLowerCase().includes(q) || (k.category || '').toLowerCase().includes(q));
@@ -857,10 +903,11 @@ function renderSupplyPickerList() {
 function addSupplyFromPicker(itemId) {
   const wkItem = getWeekItem(_supplyPickerWk);
   if (!wkItem) return;
-  if (!Array.isArray(wkItem.supplies)) wkItem.supplies = [];
-  if (wkItem.supplies.some(s => typeof s === 'object' && s.item_id === itemId)) return;
+  const f = _supplyPickerField;
+  if (!Array.isArray(wkItem[f])) wkItem[f] = [];
+  if (wkItem[f].some(s => typeof s === 'object' && s.item_id === itemId)) return;
   const item = (window._invItems || []).find(it => it.id === itemId);
-  wkItem.supplies.push({ item_id: itemId, item_name: item?.name || '', item_unit: item?.unit || '', qty: 1 });
+  wkItem[f].push({ item_id: itemId, item_name: item?.name || '', item_unit: item?.unit || '', qty: 1 });
   renderCoachingScheduleEditor();
   saveDraftDebounced();
   renderSupplyPickerList();
@@ -869,10 +916,11 @@ function addSupplyFromPicker(itemId) {
 function addKitFromPicker(kitId) {
   const wkItem = getWeekItem(_supplyPickerWk);
   if (!wkItem) return;
-  if (!Array.isArray(wkItem.supplies)) wkItem.supplies = [];
-  if (wkItem.supplies.some(s => typeof s === 'object' && s.kit_id === kitId)) return;
+  const f = _supplyPickerField;
+  if (!Array.isArray(wkItem[f])) wkItem[f] = [];
+  if (wkItem[f].some(s => typeof s === 'object' && s.kit_id === kitId)) return;
   const kit = (window._kits || []).find(k => k.id === kitId);
-  wkItem.supplies.push({ kit_id: kitId, kit_name: kit?.name || '', qty: 1 });
+  wkItem[f].push({ kit_id: kitId, kit_name: kit?.name || '', qty: 1 });
   renderCoachingScheduleEditor();
   saveDraftDebounced();
   renderSupplyPickerList();
@@ -889,28 +937,36 @@ function renderCoachingScheduleEditor(forceRebuild = false) {
   document.getElementById('weekly-schedule-editor').innerHTML = coachingSchedule.map(item => {
     const wk = item[keyName];
     const mode = item.mode || 'both';
+    const sdArr = (Array.isArray(item.session_days) && item.session_days.length ? item.session_days : defaultSessionDays());
+    const nSes = sdArr.length >= 2 ? 2 : 1;
     const files = item.rujukan_files || [];
     return `
     <div class="rounded-lg border border-ink/10 bg-cream/30 p-3" data-week="${wk}">
       <div class="flex items-center justify-between gap-3 flex-wrap mb-2">
         <div class="font-bold text-sm text-navy">${prefix}${wk}</div>
-        <div class="flex items-center gap-2 text-[11px]">
+        <div class="flex items-center gap-2 text-[11px] flex-wrap">
           <span class="text-ink/60 font-semibold">Mode:</span>
           <label class="flex items-center gap-1"><input type="radio" name="mode-${wk}" value="f2f" ${mode==='f2f'?'checked':''} onchange="updateMode(${wk}, 'f2f')"> 🏥 F2F</label>
           <label class="flex items-center gap-1"><input type="radio" name="mode-${wk}" value="online" ${mode==='online'?'checked':''} onchange="updateMode(${wk}, 'online')"> 💻 Online</label>
           <label class="flex items-center gap-1"><input type="radio" name="mode-${wk}" value="both" ${mode==='both'?'checked':''} onchange="updateMode(${wk}, 'both')"> 🔀 Both</label>
+          ${unit === 'week' ? `
+          <span class="text-ink/60 font-semibold ml-2">Sesi:</span>
+          <select onchange="updateSessions(${wk}, this.value)" class="border border-ink/20 rounded px-1.5 py-0.5 text-[11px] bg-white">
+            <option value="2" ${nSes===2?'selected':''}>2 sesi</option>
+            <option value="1" ${nSes===1?'selected':''}>1 sesi</option>
+          </select>` : ''}
         </div>
       </div>
-      <div class="grid md:grid-cols-2 gap-3">
-        <div>
-          <label class="text-[11px] font-semibold text-ink/60 block mb-1">💡 Bimbingan & Aktiviti</label>
-          ${renderCombinedCatalogList(wk, item)}
+      ${nSes >= 2 ? `
+        <div class="rounded-md border border-navy/15 bg-navy/[0.02] p-2 mb-2">
+          <div class="text-[11px] font-bold text-navy mb-2">🗓️ Sesi 1</div>
+          ${renderSessionCols(wk, item, '')}
         </div>
-        <div>
-          <label class="text-[11px] font-semibold text-ink/60 block mb-1">📦 Bekalan</label>
-          ${renderItemList(wk, 'supplies', item.supplies, 'cth: 1 kg LTH')}
+        <div class="rounded-md border border-teal/25 bg-teal/[0.04] p-2">
+          <div class="text-[11px] font-bold text-teal mb-2">🗓️ Sesi 2</div>
+          ${renderSessionCols(wk, item, '_2')}
         </div>
-      </div>
+      ` : renderSessionCols(wk, item, '')}
       <div class="mt-3 pt-3 border-t border-ink/10">
         <div class="flex items-center justify-between mb-2">
           <label class="text-[11px] font-semibold text-ink/60">📎 Rujukan (staff only)</label>
@@ -968,6 +1024,14 @@ function removeItem(wk, field, idx) {
 function updateMode(wk, mode) {
   const item = getWeekItem(wk);
   if (item) item.mode = mode;
+}
+
+function updateSessions(wk, val) {
+  const item = getWeekItem(wk);
+  // 2 sesi = [1,2]; 1 sesi = [1] (kekal Sesi 1, buang Sesi 2).
+  if (item) item.session_days = Number(val) >= 2 ? [1, 2] : [1];
+  renderCoachingScheduleEditor();  // re-render supaya kotak Bekalan Sesi 2 muncul/hilang
+  saveDraftDebounced?.();
 }
 
 // ──────── DAILY SCHEDULE ─────────
@@ -1301,9 +1365,14 @@ function collectCoachingSchedule() {
     guidance: clean(item.guidance),
     aktiviti: clean(item.aktiviti),
     supplies: clean(item.supplies),
+    guidance_2: clean(item.guidance_2),
+    aktiviti_2: clean(item.aktiviti_2),
+    supplies_2: clean(item.supplies_2),
   })).filter(item =>
     item.guidance.length || item.aktiviti.length || item.supplies.length ||
-    (item.rujukan_files && item.rujukan_files.length) || (item.mode && item.mode !== 'both')
+    item.guidance_2.length || item.aktiviti_2.length || item.supplies_2.length ||
+    (item.rujukan_files && item.rujukan_files.length) || (item.mode && item.mode !== 'both') ||
+    (Array.isArray(item.session_days) && item.session_days.join(',') !== defaultSessionDays().join(','))
   );
 }
 

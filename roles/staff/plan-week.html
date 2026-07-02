@@ -123,8 +123,15 @@
               <h3 class="font-bold text-base">Coaching Minggu Ini</h3>
               <p class="text-xs text-ink/60">Task dan bekalan yang ditetapkan dalam pakej rawatan.</p>
             </div>
-            <span id="coaching-saved" class="save-indicator">✓ Tersimpan</span>
+            <div class="flex items-center gap-2">
+              <span id="coaching-saved" class="save-indicator">✓ Tersimpan</span>
+              <button type="button" onclick="openSupplyOverride()"
+                class="text-xs font-semibold px-3 py-1.5 rounded-lg border border-green/40 text-green-dark hover:bg-green/5">
+                Ubah bekalan minggu ini
+              </button>
+            </div>
           </div>
+          <div id="override-note" class="hidden mb-3 text-xs rounded-lg bg-gold/10 border border-gold/30 text-ink/80 px-3 py-2"></div>
           <div id="coaching-schedule-view" class="grid md:grid-cols-3 gap-3"></div>
         </div>
 
@@ -201,6 +208,15 @@
 
         </div>
 
+        <!-- Pengesahan & Tandatangan Sesi -->
+        <div id="sec-signoff" class="bg-white rounded-xl p-5 border border-ink/10 scroll-mt-24 hidden">
+          <div class="flex items-center justify-between mb-1 gap-3 flex-wrap">
+            <h3 class="font-bold text-base flex items-center gap-2">🖊️ Pengesahan Sesi</h3>
+            <span id="signoff-saved" class="save-indicator">✓ Tersimpan</span>
+          </div>
+          <div id="signoff-body"></div>
+        </div>
+
         <!-- Admin Tools — super_admin only -->
         <div id="admin-tools-section" class="hidden bg-red-50 border border-red-200 rounded-xl p-4">
           <div class="flex items-center gap-2 mb-3">
@@ -222,6 +238,47 @@
   </div>
 </div>
 
+<!-- ── Modal: Ubah Bekalan Minggu Ini (override per-pesakit) ── -->
+<div id="supply-override-modal" class="hidden fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-xl">
+    <div class="p-5 border-b border-ink/10">
+      <h3 class="font-bold text-lg">Ubah Bekalan Minggu Ini</h3>
+      <p id="so-subtitle" class="text-xs text-ink/60 mt-1"></p>
+      <p class="text-[11px] text-gold-dark mt-1">Hanya untuk pesakit ini, minggu ini. Templat pakej &amp; pesakit lain tidak terjejas.</p>
+    </div>
+    <div class="p-5 space-y-4">
+      <div>
+        <div class="text-xs font-bold text-green-dark mb-2">Bekalan minggu ini</div>
+        <div id="so-list" class="space-y-2"></div>
+      </div>
+      <div class="border-t border-ink/10 pt-3">
+        <div class="text-xs font-bold text-ink/70 mb-2">Tambah item</div>
+        <div class="flex items-end gap-2 flex-wrap">
+          <div class="flex-1 min-w-[160px]">
+            <select id="so-item" class="w-full px-2 py-2 border border-ink/20 rounded-lg text-sm"></select>
+          </div>
+          <div class="w-20">
+            <input id="so-qty" type="number" min="1" value="1" class="w-full px-2 py-2 border border-ink/20 rounded-lg text-sm">
+          </div>
+          <button type="button" onclick="soAddItem()" class="px-3 py-2 rounded-lg bg-green text-white text-sm font-semibold hover:bg-green-dark">Tambah</button>
+        </div>
+      </div>
+      <div>
+        <label class="text-xs font-bold text-ink/70">Nota (pilihan)</label>
+        <input id="so-note" type="text" placeholder="cth: tangguh madu ke minggu depan"
+          class="w-full mt-1 px-2 py-2 border border-ink/20 rounded-lg text-sm">
+      </div>
+    </div>
+    <div class="p-5 border-t border-ink/10 flex items-center justify-between gap-2 flex-wrap">
+      <button type="button" id="so-reset-btn" onclick="resetSupplyOverride()" class="text-sm font-semibold text-red-600 hover:underline hidden">Reset ikut pakej</button>
+      <div class="flex items-center gap-2 ml-auto">
+        <button type="button" onclick="closeSupplyOverride()" class="px-4 py-2 rounded-lg border border-ink/20 text-sm font-semibold">Batal</button>
+        <button type="button" onclick="saveSupplyOverride()" class="px-4 py-2 rounded-lg bg-navy text-white text-sm font-semibold hover:bg-navy-dark">Simpan</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="/shared/supabase.js"></script>
 <script src="../../config/supabase.js"></script>
 <script src="../../shared/authGuard.js"></script>
@@ -238,9 +295,11 @@ let extForThisWeek = null; // baris minggu tambahan yg dah dibuka utk minggu ini
 let planMaxWeek  = 0;      // minggu tertinggi (termasuk extension)
 let patientId    = null;   // psy_patients.id
 let patientUserId = null;  // psy_profiles.id (for notify)
+let patientName  = '';     // nama pesakit (prefill tandatangan)
 let weekStart    = null;
 let weekEnd      = null;
 let coachingChecks = {};
+let weekOverride = null;   // psy_plan_week_overrides row utk minggu ini (atau null = ikut pakej)
 
 function escHtml(s) { const d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
 
@@ -271,8 +330,9 @@ function escHtml(s) { const d = document.createElement('div'); d.textContent = S
     if (pkg?.coaching_schedule?.length) activePlan.coaching_schedule = pkg.coaching_schedule;
   }
 
-  const { data: pt } = await window.db.from('psy_patients').select('user_id').eq('id', patientId).single();
+  const { data: pt } = await window.db.from('psy_patients').select('user_id, full_name').eq('id', patientId).single();
   patientUserId = pt?.user_id || null;
+  patientName   = pt?.full_name || '';
 
   // Minggu maksimum termasuk minggu tambahan (extension) — boleh lebih dari duration_weeks
   const { data: wkRows } = await window.db.from('psy_plan_weekly_progress')
@@ -303,6 +363,11 @@ async function loadWeek() {
   weekSessions = prog || [];
   weekEntry = prog?.[0] || null;
 
+  // Override bekalan/sesi per-pesakit per-minggu (kalau ada). Null = ikut pakej.
+  const { data: ovr } = await window.db.from('psy_plan_week_overrides')
+    .select('*').eq('plan_id', activePlan.id).eq('week_number', weekNumber).maybeSingle();
+  weekOverride = ovr || null;
+
   // Adakah minggu tambahan dah dibuka untuk minggu ini? (untuk papar butang/nota di hero)
   const { data: extRows } = await window.db.from('psy_plan_weekly_progress')
     .select('id,status').eq('plan_id', activePlan.id).eq('is_extension', true).eq('extension_for_week', weekNumber);
@@ -312,6 +377,7 @@ async function loadWeek() {
   renderHero();
   renderCoachingSchedule();
   fillCoachForm();
+  renderSignoff();
   await Promise.all([loadPollSummary(), loadVitals(), loadFeedback(), loadWeekDocs()]);
   wireQuickCards();
 }
@@ -322,12 +388,55 @@ function wireQuickCards() { /* no-op: lihat onclick pada setiap kad */ }
 function getWeekCoachingItems() {
   const schedule = activePlan.coaching_schedule || [];
   const daily = schedule.filter(item => (item.period === 'day' || item.day) && !item.week);
+  let items;
   if (daily.length) {
     const startDay = (weekNumber - 1) * 7 + 1;
     const endDay = weekNumber * 7;
-    return daily.filter(item => Number(item.day) >= startDay && Number(item.day) <= endDay);
+    items = daily.filter(item => Number(item.day) >= startDay && Number(item.day) <= endDay);
+  } else {
+    items = schedule.filter(item => Number(item.week || item.day) === weekNumber);
   }
-  return schedule.filter(item => Number(item.week || item.day) === weekNumber);
+
+  // Bimbingan/Aktiviti/Bekalan ikut SESI AKTIF: Sesi 2 guna *_2, selainnya asal.
+  // Salinan cetek supaya tak mutate coaching_schedule pakej (dibaca live).
+  const activeDay = weekEntry?.session_day || 1;
+  items = items.map(it => ({ ...it,
+    guidance: (activeDay === 2 ? it.guidance_2 : it.guidance) || [],
+    aktiviti: (activeDay === 2 ? it.aktiviti_2 : it.aktiviti) || [],
+    supplies: (activeDay === 2 ? it.supplies_2 : it.supplies) || [],
+  }));
+
+  // Override bekalan per-pesakit per-SESI: ganti penuh senarai supplies sesi ini.
+  // supplies_override = objek {1:[...],2:[...]}; NULL/tiada key = ikut pakej; [] = tiada bekalan.
+  const ovForDay = supplyOverrideForDay(activeDay);
+  if (Array.isArray(ovForDay)) {
+    if (!items.length) items = [{ week: weekNumber, guidance: [], supplies: ovForDay }];
+    else items = items.map((it, i) => ({ ...it, supplies: i === 0 ? ovForDay : [] }));
+  }
+  return items;
+}
+
+// Ambil override bekalan untuk sesi tertentu. Sokong format lama (array = Sesi 1).
+function supplyOverrideForDay(day) {
+  const ov = weekOverride?.supplies_override;
+  if (!ov) return undefined;
+  if (Array.isArray(ov)) return day === 1 ? ov : undefined;   // backward compat
+  return ov[day];
+}
+
+function renderOverrideNote() {
+  const el = document.getElementById('override-note');
+  if (!el) return;
+  const activeDay = weekEntry?.session_day || 1;
+  const ovForDay = supplyOverrideForDay(activeDay);
+  if (!Array.isArray(ovForDay)) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  const sesLbl = weekSessions.length > 1 ? ` (Sesi ${activeDay})` : '';
+  const noteTxt = weekOverride.note ? ` — ${escHtml(weekOverride.note)}` : '';
+  el.classList.remove('hidden');
+  el.innerHTML = `<div class="flex items-center justify-between gap-2 flex-wrap">
+    <span>✏️ Bekalan${sesLbl} diubah khas untuk pesakit ini (${ovForDay.length} item)${noteTxt}. Pakej tidak terjejas.</span>
+    <button type="button" onclick="resetSupplyOverride()" class="font-semibold text-red-600 hover:underline whitespace-nowrap">Reset ikut pakej</button>
+  </div>`;
 }
 
 function renderCoachingSchedule() {
@@ -335,13 +444,18 @@ function renderCoachingSchedule() {
   const section = document.getElementById('coaching-schedule-section');
   const host = document.getElementById('coaching-schedule-view');
   coachingChecks = weekEntry?.coaching_checks || {};
+  renderOverrideNote();
 
-  if (!items.length || !items.some(item => (item.guidance || []).length || ((item.rujukan_files || item.references) || []).length || (item.supplies || []).length)) {
+  const hasContent = items.some(item => (item.guidance || []).length || ((item.rujukan_files || item.references) || []).length || (item.supplies || []).length);
+  const hasSupplyOverride = Array.isArray(supplyOverrideForDay(weekEntry?.session_day || 1));
+
+  if (!hasContent && !hasSupplyOverride) {
     section.classList.add('hidden');
     return;
   }
 
   section.classList.remove('hidden');
+  if (!hasContent) { host.innerHTML = '<p class="text-xs text-ink/40 italic md:col-span-3">Tiada bekalan untuk sesi ini (diubah khas).</p>'; return; }
 
   function parseRef(value) {
     // Backward compat: object form { label, url } or { name, link }
@@ -540,6 +654,26 @@ function renderHero() {
          <div class="text-[11px] text-ink/45 mt-1">Ingatkan pesakit untuk reschedule sendiri, atau tetapkan tarikh baru terus.</div>
        </div>`
     : '';
+  // Kawalan bilangan sesi minggu ini (per-pesakit). Hanya untuk plan berpasangan (2-sesi capable).
+  const curDaysArr = weekSessions.length
+    ? [...new Set(weekSessions.map(r => r.session_day || 1))]
+    : (weekOverride?.session_days_override || sessionDaysForWeekStaff());
+  const curN = curDaysArr.length >= 2 ? 2 : 1;
+  const isOverridden = Array.isArray(weekOverride?.session_days_override) && weekOverride.session_days_override.length;
+  const sessionControl = (activePlan.preferred_pair && !weekEntry?.is_extension)
+    ? `<div class="mt-4 pt-4 border-t border-ink/8">
+         <div class="flex items-center gap-2 flex-wrap">
+           <span class="text-[11px] font-semibold text-ink/50 uppercase tracking-wide">Sesi minggu ini</span>
+           <select onchange="changeWeekSessions(this.value)" class="text-xs border border-ink/20 rounded-lg px-2 py-1 bg-white outline-none focus:border-navy">
+             <option value="2" ${curN===2?'selected':''}>2 sesi</option>
+             <option value="1" ${curN===1?'selected':''}>1 sesi</option>
+           </select>
+           ${isOverridden ? `<span class="text-[10px] font-semibold text-gold-dark">✏️ diubah khas</span>
+             <button onclick="resetWeekSessions()" class="text-[11px] font-semibold text-red-600 hover:underline">Reset ikut pakej</button>` : ''}
+         </div>
+         <div class="text-[11px] text-ink/45 mt-1">Ubah bilangan sesi untuk pesakit ini, minggu ini sahaja. Sesi baru perlu ditetapkan tarikh.</div>
+       </div>`
+    : '';
   const attendance = weekEntry?.id
     ? `<div class="mt-4 pt-4 border-t border-ink/8">
          <div class="text-[11px] font-semibold text-ink/50 uppercase tracking-wide mb-2">Kehadiran ${weekSessions.length > 1 ? dayName(weekEntry) : ''}</div>
@@ -596,7 +730,41 @@ function renderHero() {
         ? 'Set tarikh sebenar Minggu 1 — semua minggu auto-ikut.'
         : '⚠️ Belum diset (guna tarikh plan dicipta). Set tarikh sebenar mula program untuk pesakit yang dimasukkan lewat.'}</span>
     </div>
+    ${sessionControl}
     ${attendance}`;
+}
+
+// Hari-sesi ikut template pakej untuk minggu semasa (fallback [1,2]).
+function sessionDaysForWeekStaff() {
+  const sched = (activePlan.coaching_schedule || []).find(it => Number(it.week || it.day) === weekNumber);
+  if (sched && Array.isArray(sched.session_days) && sched.session_days.length) return sched.session_days;
+  return [1, 2];
+}
+
+// Cadang tarikh untuk sesi baru ikut preferred_pair + masa pesakit.
+// JS getDay: Ahd=0 … Sab=6. fri_sat = Jum(5)+Sab(6); sat_sun = Sab(6)+Ahd(0).
+function suggestSessionDate(day, day1Date) {
+  const PAIR = { fri_sat: [5, 6], sat_sun: [6, 0] };
+  const pair = PAIR[activePlan.preferred_pair];
+  if (!pair) return null;
+  const targetDow = day === 2 ? pair[1] : pair[0];
+  const time = (day === 2 ? activePlan.preferred_time_day2 : activePlan.preferred_time_day1) || '10:00';
+  let d;
+  if (day === 2 && day1Date) {
+    // Sesi 2 = sehari selepas Sesi 1, cari hari sasaran terdekat (ikut penjana asal).
+    d = new Date(day1Date);
+    d.setDate(d.getDate() + 1);
+    let guard = 0;
+    while (d.getDay() !== targetDow && guard++ < 8) d.setDate(d.getDate() + 1);
+  } else {
+    d = new Date(weekStart);
+    d.setHours(0, 0, 0, 0);
+    let guard = 0;
+    while (d.getDay() !== targetDow && guard++ < 8) d.setDate(d.getDate() + 1);
+  }
+  const [h, m] = String(time).split(':').map(Number);
+  d.setHours(h || 10, m || 0, 0, 0);
+  return d.toISOString();
 }
 
 // Tukar sesi aktif — semua bahagian bawah ikut sesi ini
@@ -606,6 +774,7 @@ function selectSession(i) {
   renderHero();
   fillCoachForm();
   renderCoachingSchedule();
+  renderSignoff();
 }
 
 // Tanda kehadiran untuk sesi aktif
@@ -672,6 +841,212 @@ async function resetAttendance() {
 
   renderHero();
   banner(`${dayLabel}: kehadiran direset ke Ditempah ✅`);
+}
+
+// ── Pengesahan & Tandatangan Sesi ─────────────────────
+let sigCanvas = null, sigCtx = null, sigHasDrawn = false;
+
+// Online jika session_type = 'online', atau (rekod lama tiada type) ada meet_link.
+function isOnlineSession() {
+  return (weekEntry?.session_type === 'online') || (!weekEntry?.session_type && !!weekEntry?.meet_link);
+}
+
+function renderSignoff() {
+  const sec  = document.getElementById('sec-signoff');
+  const body = document.getElementById('signoff-body');
+  if (!sec || !body) return;
+
+  if (!weekEntry?.id) { sec.classList.add('hidden'); return; }   // tiada sesi minggu ini
+  sec.classList.remove('hidden');
+
+  const online = isOnlineSession();
+  const done   = weekEntry.status === 'consultation_done';
+  const hasSig = !!weekEntry.patient_signature_path;
+
+  const typeToggle = `
+    <div class="flex items-center gap-2 mb-4">
+      <span class="text-[11px] font-semibold text-ink/50 uppercase tracking-wide">Jenis sesi</span>
+      <div class="inline-flex rounded-lg border border-ink/15 overflow-hidden">
+        <button onclick="setSessionType('f2f')" class="px-3 py-1.5 text-xs font-semibold ${!online ? 'bg-navy text-white' : 'text-ink/60 hover:bg-cream'}">🏥 F2F</button>
+        <button onclick="setSessionType('online')" class="px-3 py-1.5 text-xs font-semibold ${online ? 'bg-navy text-white' : 'text-ink/60 hover:bg-cream'}">💻 Online</button>
+      </div>
+    </div>`;
+
+  // ── Sudah selesai ──
+  if (done) {
+    body.innerHTML = `
+      ${typeToggle}
+      <div class="rounded-lg bg-green/10 border border-green/25 px-4 py-3 flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <div class="text-sm font-bold text-green-dark flex items-center gap-2">✅ Sesi Selesai</div>
+          <div class="text-xs text-ink/60 mt-0.5">${weekEntry.patient_signed_at ? 'Ditandatangani ' + new Date(weekEntry.patient_signed_at).toLocaleString('ms-MY') : (online ? 'Sesi online — tanpa tandatangan.' : 'Selesai tanpa tandatangan.')}</div>
+        </div>
+        <button onclick="reopenSession()" class="text-xs font-semibold border border-ink/20 text-ink/60 px-3 py-1.5 rounded-lg hover:bg-cream whitespace-nowrap">↩️ Buka Semula</button>
+      </div>
+      ${hasSig ? `<div class="mt-3">
+        <div class="text-[11px] font-semibold text-ink/50 uppercase tracking-wide mb-1">Tandatangan Pesakit${weekEntry.patient_signed_name ? ' — ' + escHtml(weekEntry.patient_signed_name) : ''}</div>
+        <img id="signoff-img" alt="tandatangan" class="max-h-32 border border-ink/10 rounded bg-white">
+      </div>` : ''}`;
+    if (hasSig) loadSignatureImage();
+    return;
+  }
+
+  // ── Online, belum selesai — tiada tandatangan ──
+  if (online) {
+    body.innerHTML = `
+      ${typeToggle}
+      <div class="rounded-lg bg-navy/5 border border-navy/15 px-4 py-3 text-sm text-ink/70">
+        💻 Sesi <b>online</b> — pesakit tidak boleh turunkan tandatangan di sini. Tekan butang di bawah untuk tandakan sesi selesai.
+      </div>
+      <div class="flex justify-center mt-4">
+        <button onclick="completeSession()" class="inline-flex items-center gap-2 px-10 py-2.5 rounded-lg bg-green text-white text-sm font-semibold hover:bg-green-dark">✅ Selesai Sesi</button>
+      </div>`;
+    return;
+  }
+
+  // ── F2F, belum selesai — canvas tandatangan ──
+  body.innerHTML = `
+    ${typeToggle}
+    <p class="text-xs text-ink/60 mb-3">Pesakit turunkan tandatangan pada skrin untuk sahkan sesi bersemuka. <span class="text-ink/40">(Pilihan — boleh tekan Selesai tanpa tandatangan.)</span></p>
+    <div>
+      <div class="flex items-center justify-between mb-1.5">
+        <label class="text-[11px] font-semibold text-ink/50 uppercase tracking-wide">Tandatangan Pesakit</label>
+        <button onclick="clearSignoffSignature()" class="text-xs text-terracotta hover:underline font-semibold">🗑️ Padam & Ulang</button>
+      </div>
+      <canvas id="sig-canvas" width="900" height="200" class="w-full border border-ink/20 rounded-lg touch-none bg-white cursor-crosshair"></canvas>
+    </div>
+    <div class="flex justify-center mt-4">
+      <button onclick="completeSession()" class="inline-flex items-center gap-2 px-10 py-2.5 rounded-lg bg-green text-white text-sm font-semibold hover:bg-green-dark">✅ Selesai Sesi</button>
+    </div>`;
+  setupSignoffCanvas();
+}
+
+async function loadSignatureImage() {
+  const img = document.getElementById('signoff-img');
+  if (!img || !weekEntry?.patient_signature_path) return;
+  const { data: s } = await window.db.storage.from('medical-reports').createSignedUrl(weekEntry.patient_signature_path, 3600);
+  if (s?.signedUrl) img.src = s.signedUrl;
+}
+
+function setupSignoffCanvas() {
+  sigCanvas = document.getElementById('sig-canvas');
+  if (!sigCanvas) return;
+  sigCtx = sigCanvas.getContext('2d');
+  sigCtx.lineWidth = 2.5; sigCtx.lineCap = 'round'; sigCtx.strokeStyle = '#0a2540';
+  sigCtx.fillStyle = '#ffffff'; sigCtx.fillRect(0, 0, sigCanvas.width, sigCanvas.height);
+  sigHasDrawn = false;
+  let drawing = false;
+  const getPos = (e) => {
+    const r = sigCanvas.getBoundingClientRect();
+    const sx = sigCanvas.width / r.width, sy = sigCanvas.height / r.height;
+    const t = e.touches?.[0] || e;
+    return { x: (t.clientX - r.left) * sx, y: (t.clientY - r.top) * sy };
+  };
+  const start = e => { e.preventDefault(); drawing = true; sigHasDrawn = true; const p = getPos(e); sigCtx.beginPath(); sigCtx.moveTo(p.x, p.y); };
+  const move  = e => { if (!drawing) return; e.preventDefault(); const p = getPos(e); sigCtx.lineTo(p.x, p.y); sigCtx.stroke(); };
+  const end   = () => { drawing = false; };
+  sigCanvas.addEventListener('mousedown', start);
+  sigCanvas.addEventListener('mousemove', move);
+  sigCanvas.addEventListener('mouseup', end);
+  sigCanvas.addEventListener('mouseleave', end);
+  sigCanvas.addEventListener('touchstart', start, { passive: false });
+  sigCanvas.addEventListener('touchmove', move, { passive: false });
+  sigCanvas.addEventListener('touchend', end);
+}
+
+function clearSignoffSignature() {
+  if (!sigCtx) return;
+  sigCtx.fillStyle = '#ffffff'; sigCtx.fillRect(0, 0, sigCanvas.width, sigCanvas.height);
+  sigHasDrawn = false;
+}
+
+// Tukar jenis sesi (f2f/online) untuk sesi aktif.
+async function setSessionType(type) {
+  if (!weekEntry?.id || weekEntry.session_type === type) return;
+  try {
+    await window.db.from('psy_plan_weekly_progress').update({ session_type: type }).eq('id', weekEntry.id);
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); return; }
+  weekEntry.session_type = type;
+  const idx = weekSessions.findIndex(r => r.id === weekEntry.id);
+  if (idx >= 0) weekSessions[idx].session_type = type;
+  renderSignoff();
+  flashSaved('signoff-saved');
+}
+
+// Selesai sesi — F2F simpan tandatangan (jika ada), online terus selesai.
+async function completeSession() {
+  if (!weekEntry?.id) { banner('Tiada sesi untuk minggu ini.', 'error'); return; }
+  const online = isOnlineSession();
+  const prevStatus = weekEntry.status;
+
+  let sigPath = weekEntry.patient_signature_path || null;
+  let signedName = null;
+
+  if (!online && sigHasDrawn && sigCanvas) {
+    signedName = (patientName || '').trim();
+    banner('Menyimpan tandatangan...');
+    try {
+      const dataUrl = sigCanvas.toDataURL('image/png');
+      const blob = await (await fetch(dataUrl)).blob();
+      const path = `signatures/${patientId}/${weekEntry.id}_${Date.now()}.png`;
+      const { error: upErr } = await window.db.storage.from('medical-reports').upload(path, blob, { contentType: 'image/png' });
+      if (upErr) throw upErr;
+      sigPath = path;
+    } catch (e) { banner('Ralat simpan tandatangan: ' + e.message, 'error'); return; }
+  } else if (!online && !sigHasDrawn && !sigPath) {
+    if (!confirm('Tandakan sesi ini SELESAI tanpa tandatangan pesakit?')) return;
+  }
+
+  const patch = {
+    status:                 'consultation_done',
+    patient_signature_path: sigPath,
+    patient_signed_at:      sigPath ? new Date().toISOString() : (weekEntry.patient_signed_at || null),
+    patient_signed_name:    signedName || weekEntry.patient_signed_name || null,
+    updated_by:             window.currentUser.id,
+    updated_by_name:        window.currentUser.full_name,
+    updated_at:             new Date().toISOString(),
+  };
+  try {
+    await window.db.from('psy_plan_weekly_progress').update(patch).eq('id', weekEntry.id);
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); return; }
+
+  Object.assign(weekEntry, patch);
+  const idx = weekSessions.findIndex(r => r.id === weekEntry.id);
+  if (idx >= 0) Object.assign(weekSessions[idx], patch);
+
+  // Kesan sampingan sama macam 'hadir' — hanya kalau belum ditanda hadir/selesai sebelum ni.
+  if (prevStatus !== 'hadir' && prevStatus !== 'consultation_done') {
+    await window.db.from('psy_treatment_plans').update({ current_week: weekNumber }).eq('id', activePlan.id);
+    if (!online && window.deductSessionSupplies && weekEntry.id) {
+      const ded = await window.deductSessionSupplies(weekEntry.id);
+      window.showDeductSummary?.(ded);
+    }
+  }
+
+  await auditLog('plan.session_completed', activePlan.id, { week: weekNumber, session: weekEntry.session_day || 1, signed: !!sigPath, online });
+  if (patientUserId) {
+    await notify(patientUserId, 'plan', 'Sesi selesai ✅', `Sesi Minggu ${weekNumber} telah disahkan selesai oleh Coach ${window.currentUser.full_name}.`, 'plan.html');
+  }
+  renderHero();
+  renderSignoff();
+  banner('Sesi ditandakan selesai ✅');
+}
+
+// Buka semula sesi yang dah selesai (kembali ke 'hadir'). Tandatangan dikekalkan.
+async function reopenSession() {
+  if (!weekEntry?.id) return;
+  if (!confirm('Buka semula sesi ini? Status kembali ke "Hadir". Tandatangan (jika ada) dikekalkan.')) return;
+  try {
+    await window.db.from('psy_plan_weekly_progress').update({
+      status: 'hadir', updated_by: window.currentUser.id, updated_by_name: window.currentUser.full_name, updated_at: new Date().toISOString(),
+    }).eq('id', weekEntry.id);
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); return; }
+  weekEntry.status = 'hadir';
+  const idx = weekSessions.findIndex(r => r.id === weekEntry.id);
+  if (idx >= 0) weekSessions[idx].status = 'hadir';
+  renderHero();
+  renderSignoff();
+  banner('Sesi dibuka semula (Hadir).');
 }
 
 // Format ISO → nilai <input type="datetime-local"> (waktu tempatan)
@@ -934,6 +1309,188 @@ async function applySupplyStock(supplies, sign) {
   } catch (e) {
     console.error('Inventory stock error:', e);
   }
+}
+
+// ── Override Bekalan Minggu Ini (per-pesakit per-minggu) ──
+let soDraft = [];          // senarai bekalan sedang diedit
+let soCatalog = [];        // katalog psy_inventory_items
+
+async function openSupplyOverride() {
+  // Prefill dari bekalan berkuatkuasa minggu ini (override kalau ada, kalau tidak default pakej)
+  const items = getWeekCoachingItems();
+  soDraft = items.flatMap(it => (it.supplies || [])).filter(s => s && typeof s === 'object')
+    .map(s => ({ ...s }));
+  const activeDay = weekEntry?.session_day || 1;
+  const sesLbl = weekSessions.length > 1 ? ` · Sesi ${activeDay}` : '';
+  document.getElementById('so-note').value = weekOverride?.note || '';
+  document.getElementById('so-subtitle').textContent = `Minggu ${weekNumber}${sesLbl} — ${patientName}`;
+  document.getElementById('so-reset-btn').classList.toggle('hidden', !Array.isArray(supplyOverrideForDay(activeDay)));
+
+  if (!soCatalog.length) {
+    const { data } = await window.db.from('psy_inventory_items')
+      .select('id, name, unit').order('name');
+    soCatalog = data || [];
+    const sel = document.getElementById('so-item');
+    sel.innerHTML = soCatalog.map(i => `<option value="${i.id}">${escHtml(i.name)}${i.unit ? ' (' + escHtml(i.unit) + ')' : ''}</option>`).join('');
+  }
+  renderSoList();
+  document.getElementById('supply-override-modal').classList.remove('hidden');
+}
+
+function closeSupplyOverride() {
+  document.getElementById('supply-override-modal').classList.add('hidden');
+}
+
+function renderSoList() {
+  const host = document.getElementById('so-list');
+  if (!soDraft.length) {
+    host.innerHTML = '<p class="text-xs text-ink/40 italic">Tiada bekalan minggu ini.</p>';
+    return;
+  }
+  const labelOf = s => (s.item_name || s.kit_name || s.name || 'Item') + (s.kit_id ? ' 🧰' : '');
+  host.innerHTML = soDraft.map((s, idx) => `<div class="flex items-center gap-2 bg-green/5 border border-green/20 rounded-lg px-3 py-2">
+    <span class="flex-1 text-sm">${escHtml(labelOf(s))}</span>
+    <input type="number" min="1" value="${Number(s.qty) || 1}" onchange="soSetQty(${idx}, this.value)"
+      class="w-16 px-2 py-1 border border-ink/20 rounded text-sm">
+    <button type="button" onclick="soRemove(${idx})" class="text-red-500 hover:text-red-700 font-bold px-1" title="Buang">×</button>
+  </div>`).join('');
+}
+
+function soSetQty(idx, val) {
+  if (soDraft[idx]) soDraft[idx].qty = Math.max(1, Number(val) || 1);
+}
+
+function soRemove(idx) {
+  soDraft.splice(idx, 1);
+  renderSoList();
+}
+
+function soAddItem() {
+  const sel = document.getElementById('so-item');
+  const qty = Math.max(1, Number(document.getElementById('so-qty').value) || 1);
+  const id = sel.value;
+  const cat = soCatalog.find(i => i.id === id);
+  if (!cat) return;
+  const existing = soDraft.find(s => s.item_id === id);
+  if (existing) { existing.qty = (Number(existing.qty) || 0) + qty; }
+  else { soDraft.push({ item_id: cat.id, item_name: cat.name, qty }); }
+  document.getElementById('so-qty').value = 1;
+  renderSoList();
+}
+
+// Tulis override secara MERGE — bekalan & sesi kongsi satu baris, jadi jangan
+// timpa medan yang tak diubah. Kalau semua medan override jadi kosong → padam baris.
+async function persistWeekOverride(patch) {
+  const merged = {
+    supplies_override: weekOverride?.supplies_override ?? null,
+    session_days_override: weekOverride?.session_days_override ?? null,
+    note: weekOverride?.note ?? null,
+    ...patch,
+  };
+  const isEmpty = merged.supplies_override == null
+    && merged.session_days_override == null && !merged.note;
+  if (isEmpty) {
+    const { error } = await window.db.from('psy_plan_week_overrides')
+      .delete().eq('plan_id', activePlan.id).eq('week_number', weekNumber);
+    return error;
+  }
+  const { error } = await window.db.from('psy_plan_week_overrides').upsert({
+    plan_id: activePlan.id, patient_id: patientId, week_number: weekNumber,
+    ...merged,
+    updated_by: window.currentUser?.id || null,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'plan_id,week_number' });
+  return error;
+}
+
+// Objek supplies_override sedia ada (normalkan format lama array → {1:[...]}).
+function currentSupplyOverrideMap() {
+  const ov = weekOverride?.supplies_override;
+  if (!ov) return {};
+  if (Array.isArray(ov)) return { 1: ov };
+  return { ...ov };
+}
+
+async function saveSupplyOverride() {
+  const note = document.getElementById('so-note').value.trim() || null;
+  const activeDay = weekEntry?.session_day || 1;
+  const map = currentSupplyOverrideMap();
+  map[activeDay] = soDraft;   // boleh [] = tiada bekalan sesi ni
+  const error = await persistWeekOverride({ supplies_override: map, note });
+  if (error) { banner('Gagal simpan override: ' + error.message); return; }
+  await auditLog('plan.supplies_override_saved', activePlan.id, { week: weekNumber, session: activeDay, count: soDraft.length });
+  closeSupplyOverride();
+  await loadWeek();
+  banner('Bekalan sesi ini dikemas kini (khas pesakit ini).');
+}
+
+async function resetSupplyOverride() {
+  const activeDay = weekEntry?.session_day || 1;
+  if (!Array.isArray(supplyOverrideForDay(activeDay))) { closeSupplyOverride(); return; }
+  if (!confirm('Reset bekalan sesi ini ikut pakej semula?')) return;
+  const map = currentSupplyOverrideMap();
+  delete map[activeDay];
+  const supplies_override = Object.keys(map).length ? map : null;
+  const error = await persistWeekOverride({ supplies_override });
+  if (error) { banner('Gagal reset: ' + error.message); return; }
+  await auditLog('plan.supplies_override_reset', activePlan.id, { week: weekNumber, session: activeDay });
+  closeSupplyOverride();
+  await loadWeek();
+  banner('Bekalan sesi ini kembali ikut pakej.');
+}
+
+// ── Override Bilangan Sesi Minggu Ini (per-pesakit) ──
+// Tambah/buang baris psy_plan_weekly_progress ikut hari-sesi dipilih,
+// dan rekod session_days_override. Sesi yang sudah 'hadir'/'selesai' tak boleh dibuang.
+async function changeWeekSessions(val) {
+  // 2 sesi = [1,2]; 1 sesi = [1] (kekal Sesi 1, buang Sesi 2).
+  const n = Number(val) >= 2 ? 2 : 1;
+  const days = n === 2 ? [1, 2] : [1];
+  const bySd = {};
+  weekSessions.forEach(r => { bySd[r.session_day || 1] = r; });
+
+  const toRemove = weekSessions.filter(r => !days.includes(r.session_day || 1));
+  const blocked = toRemove.filter(r => ['hadir', 'consultation_done'].includes(r.status));
+  if (blocked.length) {
+    alert('Tak boleh buang sesi yang sudah Hadir/Selesai. Reset kehadiran sesi itu dahulu.');
+    renderCoachingSchedule();
+    return;
+  }
+  const toAdd = days.filter(d => !bySd[d]);
+  const label = n === 2 ? '2 sesi' : '1 sesi (Sesi 1 sahaja)';
+  if (!confirm(`Tukar minggu ${weekNumber} kepada ${label}?${toRemove.length ? `\nSesi ${toRemove.map(r => r.session_day).join(', ')} akan dibuang.` : ''}`)) {
+    renderHero();
+    return;
+  }
+
+  for (const r of toRemove) {
+    await window.db.from('psy_plan_weekly_progress').delete().eq('id', r.id);
+  }
+  const day1Date = bySd[1]?.session_date || null;
+  let anyDated = false;
+  for (const d of toAdd) {
+    const suggested = suggestSessionDate(d, day1Date);
+    if (suggested) anyDated = true;
+    await window.db.from('psy_plan_weekly_progress').insert({
+      plan_id: activePlan.id, patient_id: patientId, week_number: weekNumber,
+      session_day: d, status: suggested ? 'booked' : 'pending', session_date: suggested,
+    });
+  }
+  const error = await persistWeekOverride({ session_days_override: days });
+  if (error) { banner('Gagal simpan: ' + error.message); return; }
+  await auditLog('plan.sessions_override', activePlan.id, { week: weekNumber, days });
+  await loadWeek();
+  banner(`Bilangan sesi minggu ${weekNumber} dikemaskini.${toAdd.length ? (anyDated ? ' Tarikh sesi baru dicadang automatik — semak & laras jika perlu.' : ' Tetapkan tarikh sesi baru.') : ''}`);
+}
+
+async function resetWeekSessions() {
+  if (!weekOverride?.session_days_override) return;
+  if (!confirm('Reset bilangan sesi minggu ini ikut pakej semula? (Baris sesi tidak dipadam automatik — semak secara manual jika perlu.)')) return;
+  const error = await persistWeekOverride({ session_days_override: null });
+  if (error) { banner('Gagal reset: ' + error.message); return; }
+  await auditLog('plan.sessions_override_reset', activePlan.id, { week: weekNumber });
+  await loadWeek();
+  banner('Tetapan sesi minggu ini kembali ikut pakej.');
 }
 
 // ── Coach notes ───────────────────────────────────────

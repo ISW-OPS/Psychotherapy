@@ -285,10 +285,10 @@ function renderBekalan() {
   // Primary: new `supplies` column
   let entries = Array.isArray(pkg.supplies) ? [...pkg.supplies] : [];
 
-  // Fallback 1: aggregate from coaching_schedule[].supplies (per-week)
+  // Fallback 1: aggregate from coaching_schedule[].supplies (+ supplies_2 utk Sesi 2)
   if (!entries.length && Array.isArray(pkg.coaching_schedule)) {
     pkg.coaching_schedule.forEach(w => {
-      (w.supplies || []).forEach(s => entries.push(s));
+      [...(w.supplies || []), ...(w.supplies_2 || [])].forEach(s => entries.push(s));
     });
   }
 
@@ -504,6 +504,9 @@ function renderCoaching() {
     (w.guidance && w.guidance.length) ||
     (w.aktiviti && w.aktiviti.length) ||
     (w.supplies && w.supplies.length) ||
+    (w.guidance_2 && w.guidance_2.length) ||
+    (w.aktiviti_2 && w.aktiviti_2.length) ||
+    (w.supplies_2 && w.supplies_2.length) ||
     w.mode
   );
   if (!valid.length) return;
@@ -514,11 +517,16 @@ function renderCoaching() {
   document.getElementById('coaching-body').innerHTML = valid.map(w => {
     const guidance = (w.guidance || []).map(itemLabel).filter(Boolean);
     const aktiviti = (w.aktiviti || []).map(itemLabel).filter(Boolean);
-    const supplies = (w.supplies || []).map(s => {
+    const supplyLabels = arr => (arr || []).map(s => {
       const name = itemLabel(s);
       const qty = s && typeof s === 'object' ? (s.qty || s.quantity) : null;
       return name ? (qty ? `${name} (${qty})` : name) : null;
     }).filter(Boolean);
+    const supplies  = supplyLabels(w.supplies);
+    const guidance2 = (w.guidance_2 || []).map(itemLabel).filter(Boolean);
+    const aktiviti2 = (w.aktiviti_2 || []).map(itemLabel).filter(Boolean);
+    const supplies2 = supplyLabels(w.supplies_2);
+    const has2Sesi  = Array.isArray(w.session_days) ? w.session_days.length >= 2 : (supplies2.length || guidance2.length || aktiviti2.length) > 0;
 
     const modeChip = w.mode === 'online'
       ? '<span class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-semibold">💻 Online</span>'
@@ -526,23 +534,23 @@ function renderCoaching() {
         ? '<span class="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-[10px] font-semibold">🏥 Fizikal</span>'
         : '<span class="px-2 py-0.5 rounded-full bg-ink/8 text-ink/55 text-[10px] font-semibold">F2F + Online</span>';
 
+    const chipRow = (label, arr, cls) => arr.length ? `<div class="mb-1.5">
+      <div class="text-[10px] font-bold text-ink/45 uppercase tracking-wider mb-1">${label}</div>
+      <div class="flex flex-wrap gap-1">${arr.map(x => `<span class="text-[11px] px-2 py-0.5 rounded ${cls}">${escHtml(x)}</span>`).join('')}</div>
+    </div>` : '';
+    const sesBlock = (num, g, a, s) => `
+      ${has2Sesi ? `<div class="text-[10px] font-bold text-navy uppercase tracking-wider mt-2 mb-1">🗓️ Sesi ${num}</div>` : ''}
+      ${chipRow('Bimbingan', g, 'bg-emerald-50 text-emerald-700')}
+      ${chipRow('Aktiviti', a, 'bg-blue-50 text-blue-700')}
+      ${chipRow('Bekalan', s, 'bg-amber-50 text-amber-700')}`;
+
     return `<div class="border border-ink/10 rounded-xl p-3 bg-ink/[0.01]">
       <div class="flex items-center justify-between mb-2">
         <div class="font-bold text-sm text-ink">Minggu ${w.week || '?'}</div>
         ${modeChip}
       </div>
-      ${guidance.length ? `<div class="mb-1.5">
-        <div class="text-[10px] font-bold text-ink/45 uppercase tracking-wider mb-1">Bimbingan</div>
-        <div class="flex flex-wrap gap-1">${guidance.map(g => `<span class="text-[11px] px-2 py-0.5 rounded bg-emerald-50 text-emerald-700">${escHtml(g)}</span>`).join('')}</div>
-      </div>` : ''}
-      ${aktiviti.length ? `<div class="mb-1.5">
-        <div class="text-[10px] font-bold text-ink/45 uppercase tracking-wider mb-1">Aktiviti</div>
-        <div class="flex flex-wrap gap-1">${aktiviti.map(a => `<span class="text-[11px] px-2 py-0.5 rounded bg-blue-50 text-blue-700">${escHtml(a)}</span>`).join('')}</div>
-      </div>` : ''}
-      ${supplies.length ? `<div>
-        <div class="text-[10px] font-bold text-ink/45 uppercase tracking-wider mb-1">Bekalan</div>
-        <div class="flex flex-wrap gap-1">${supplies.map(s => `<span class="text-[11px] px-2 py-0.5 rounded bg-amber-50 text-amber-700">${escHtml(s)}</span>`).join('')}</div>
-      </div>` : ''}
+      ${sesBlock(1, guidance, aktiviti, supplies)}
+      ${has2Sesi ? sesBlock(2, guidance2, aktiviti2, supplies2) : ''}
     </div>`;
   }).join('');
 }

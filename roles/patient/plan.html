@@ -1189,6 +1189,14 @@
       return p?.created_at ? new Date(p.created_at) : new Date();
     }
 
+    // Hari-sesi aktif untuk minggu w: ikut template pakej per-minggu, fallback [1,2] (2 sesi).
+    // [1,2]=dua sesi, [1]=sesi 1 saja, [2]=sesi 2 saja.
+    function sessionDaysForWeek(w) {
+      const sched = (activePlan.coaching_schedule || []).find(it => Number(it.week || it.day) === w);
+      if (sched && Array.isArray(sched.session_days) && sched.session_days.length) return sched.session_days;
+      return [1, 2];
+    }
+
     function generateScheduleDates(pair, time1, time2, startDate) {
       const [dow1, dow2] = PAIR_DAYS[pair];
       const sessions = [];
@@ -1227,11 +1235,15 @@
           sess2.setHours(h2, mn2, 0, 0);
         }
 
-        if (isClinicClosed(sess1)) warnings.push(`Minggu ${w} Sesi 1 (${fmtDayShort(sess1)}) jatuh pada cuti konsultasi`);
-        if (isClinicClosed(sess2)) warnings.push(`Minggu ${w} Sesi 2 (${fmtDayShort(sess2)}) jatuh pada cuti konsultasi`);
-
-        sessions.push({ week: w, day: 1, dateTime: sess1, closed: isClinicClosed(sess1) });
-        sessions.push({ week: w, day: 2, dateTime: sess2, closed: isClinicClosed(sess2) });
+        const days = sessionDaysForWeek(w);
+        if (days.includes(1)) {
+          if (isClinicClosed(sess1)) warnings.push(`Minggu ${w} Sesi 1 (${fmtDayShort(sess1)}) jatuh pada cuti konsultasi`);
+          sessions.push({ week: w, day: 1, dateTime: sess1, closed: isClinicClosed(sess1) });
+        }
+        if (days.includes(2)) {
+          if (isClinicClosed(sess2)) warnings.push(`Minggu ${w} Sesi 2 (${fmtDayShort(sess2)}) jatuh pada cuti konsultasi`);
+          sessions.push({ week: w, day: 2, dateTime: sess2, closed: isClinicClosed(sess2) });
+        }
       }
 
       return { sessions, warnings };

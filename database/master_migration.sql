@@ -7255,3 +7255,92 @@ ALTER TABLE psy_plan_weekly_progress
   ADD COLUMN IF NOT EXISTS patient_confirmed_at TIMESTAMPTZ DEFAULT NULL;
 
 SELECT 'Step 73 OK -- patient attendance confirmation columns added' AS status;
+
+-- ════════════════════════════════════════════════════════════════
+-- step74: Patient per-session signature  (Jul 2026)
+-- Tandatangan pesakit di depan coach (device coach) untuk sahkan sesi.
+-- Pilihan sahaja — tidak block status 'hadir'. PNG disimpan di bucket
+-- medical-reports; kolum simpan PATH sahaja (signed URL dijana masa papar).
+-- ════════════════════════════════════════════════════════════════
+
+ALTER TABLE psy_plan_weekly_progress
+  ADD COLUMN IF NOT EXISTS patient_signature_path TEXT DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS patient_signed_at       TIMESTAMPTZ DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS patient_signed_name     TEXT DEFAULT NULL;
+
+SELECT 'Step 74 OK -- patient per-session signature columns added' AS status;
+
+-- ════════════════════════════════════════════════════════════════
+-- step75: Override bekalan & sesi PER-PESAKIT PER-MINGGU  (Jul 2026)
+-- Templat pakej (psy_packages.coaching_schedule + sessions_per_week) kekal
+-- sebagai DEFAULT. Jadual ini simpan PENGECUALIAN untuk satu pesakit, satu
+-- minggu sahaja — langsung tak sentuh templat pakej atau pesakit lain.
+-- Logik baca di UI: override ?? default_pakej.
+--   supplies_override: NULL = ikut pakej; [] = minggu ni TIADA bekalan;
+--                      [..] = GANTI penuh senarai bekalan minggu ni.
+--   sessions_override: NULL = ikut pakej; 1..7 = paksa bilangan sesi minggu ni.
+-- ════════════════════════════════════════════════════════════════
+
+-- Longgarkan had session_day (dulu IN (1,2)) supaya boleh >2 sesi seminggu.
+ALTER TABLE psy_plan_weekly_progress
+  DROP CONSTRAINT IF EXISTS psy_plan_weekly_progress_session_day_check;
+ALTER TABLE psy_plan_weekly_progress
+  ADD CONSTRAINT psy_plan_weekly_progress_session_day_check
+  CHECK (session_day BETWEEN 1 AND 7);
+
+-- Cipta jadual asas; kolum penuh dipastikan di bawah (kalis jadual separa dari run lama).
+CREATE TABLE IF NOT EXISTS psy_plan_week_overrides (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  plan_id     UUID NOT NULL REFERENCES psy_treatment_plans(id) ON DELETE CASCADE,
+  week_number INT  NOT NULL
+);
+
+ALTER TABLE psy_plan_week_overrides
+  ADD COLUMN IF NOT EXISTS patient_id        UUID REFERENCES psy_patients(id) ON DELETE CASCADE,
+  ADD COLUMN IF NOT EXISTS sessions_override INT,
+  ADD COLUMN IF NOT EXISTS supplies_override JSONB,
+  ADD COLUMN IF NOT EXISTS note              TEXT,
+  ADD COLUMN IF NOT EXISTS updated_by        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS updated_at        TIMESTAMPTZ DEFAULT now();
+
+DO $$ BEGIN
+  ALTER TABLE psy_plan_week_overrides
+    ADD CONSTRAINT psy_plan_week_overrides_sessions_override_check CHECK (sessions_override BETWEEN 1 AND 7);
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE psy_plan_week_overrides
+    ADD CONSTRAINT psy_plan_week_overrides_plan_id_week_number_key UNIQUE (plan_id, week_number);
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS idx_psy_plan_week_overrides_plan
+  ON psy_plan_week_overrides(plan_id, week_number);
+
+ALTER TABLE psy_plan_week_overrides ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Staff manage week overrides" ON psy_plan_week_overrides;
+CREATE POLICY "Staff manage week overrides" ON psy_plan_week_overrides FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+DROP POLICY IF EXISTS "Patients read own week overrides" ON psy_plan_week_overrides;
+CREATE POLICY "Patients read own week overrides" ON psy_plan_week_overrides FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+COMMENT ON TABLE psy_plan_week_overrides IS
+  'Pengecualian bekalan/sesi per-pesakit per-minggu. Kalau tiada baris = ikut default pakej sepenuhnya.';
+
+SELECT 'Step 75 OK -- psy_plan_week_overrides + session_day CHECK relaxed' AS status;
+
+-- ════════════════════════════════════════════════════════════════
+-- step76: Override HARI-SESI per-pesakit per-minggu  (Jul 2026)
+-- Melengkapkan step75. Bilangan sesi seminggu kini boleh beza per-minggu:
+--   Peringkat PAKEJ  : psy_packages.coaching_schedule[w].session_days (cth [1,2] / [1] / [2])
+--   Peringkat PESAKIT: kolum di bawah — override untuk satu pesakit satu minggu.
+-- session_days_override: NULL = ikut pakej; [1,2]=dua sesi; [1]=sesi 1 saja; [2]=sesi 2 saja.
+-- (sessions_override INT dari step75 dikekalkan sbg fallback ringkas; session_days lebih tepat.)
+-- ════════════════════════════════════════════════════════════════
+
+ALTER TABLE psy_plan_week_overrides
+  ADD COLUMN IF NOT EXISTS session_days_override JSONB;
+
+COMMENT ON COLUMN psy_plan_week_overrides.session_days_override IS
+  'Hari-sesi aktif minggu ini untuk pesakit ini. NULL=ikut pakej; [1,2]/[1]/[2].';
+
+SELECT 'Step 76 OK -- session_days_override added' AS status;
