@@ -120,6 +120,7 @@
                       <input id="ov-progstart-input" type="date" onchange="setProgramStart(this.value)" class="text-[11px] border border-ink/20 rounded-lg px-2 py-1 outline-none focus:border-navy">
                     </div>
                     <span id="ov-plan-subtitle" class="text-xs text-ink/50"></span>
+                    <button id="ov-autoschedule-btn" onclick="openAutoScheduleModal()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-emerald-400 text-emerald-600 hover:bg-emerald-500 hover:text-white transition whitespace-nowrap">📅 Jadualkan Semua Sesi</button>
                     <button id="ov-add-week-btn" onclick="openAddWeekModal()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-navy text-navy hover:bg-navy hover:text-white transition whitespace-nowrap">➕ Tambah Minggu</button>
                     <button id="ov-reset-sessions-btn" onclick="resetPlanSessions()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-red-300 text-red-500 hover:bg-red-50 transition whitespace-nowrap">🔄 Reset Sesi</button>
                   </div>
@@ -630,6 +631,9 @@
         <!-- ═══════════════ TAB: SESSIONS ═══════════════ -->
         <div id="tab-sessions" class="tab-content space-y-5">
 
+          <!-- Continuity package prompt (baki ≤4 minggu) -->
+          <div id="sn-continuity" class="hidden"></div>
+
           <!-- 4 KPI cards -->
           <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex items-center gap-3">
@@ -1114,6 +1118,35 @@
   </div>
 </div>
 
+<!-- ═══════ CONTINUITY OFFER MODAL ═══════ -->
+<div id="continuity-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/50" onclick="closeContinuityModal()"></div>
+  <div class="relative bg-white rounded-2xl max-w-md w-full flex flex-col overflow-hidden shadow-2xl">
+    <div class="px-5 py-4 border-b border-ink/10 flex items-center justify-between">
+      <h3 class="font-bold">Cadang Pakej Sambungan</h3>
+      <button onclick="closeContinuityModal()" class="text-ink/40 text-xl leading-none">×</button>
+    </div>
+    <div class="p-5 space-y-4">
+      <p class="text-xs text-ink/60">Cadangan akan muncul sebagai notifikasi pada pesakit. Jika pesakit Terima, mereka terus ke skrin pembayaran.</p>
+      <div>
+        <label class="text-xs font-semibold">Pakej <span class="text-terracotta">*</span></label>
+        <select id="co-package" class="w-full mt-1 px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white outline-none focus:border-navy">
+          <option value="">— Pilih pakej —</option>
+        </select>
+      </div>
+      <div>
+        <label class="text-xs font-semibold">Nota untuk pesakit (pilihan)</label>
+        <textarea id="co-note" rows="2" placeholder="cth: Saya cadang sambung 4 minggu lagi untuk kukuhkan progres anda."
+          class="w-full mt-1 px-3 py-2.5 border border-ink/20 rounded-xl text-sm outline-none focus:border-navy resize-none"></textarea>
+      </div>
+    </div>
+    <div class="px-5 py-4 border-t border-ink/10 flex justify-end gap-2">
+      <button onclick="closeContinuityModal()" class="px-4 py-2.5 border border-ink/20 rounded-xl text-sm font-semibold hover:bg-ink/5">Batal</button>
+      <button id="co-send-btn" onclick="sendContinuityOffer()" class="bg-navy text-white px-6 py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-dark">Hantar Cadangan</button>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════ PROFILE EDIT MODAL ═══════ -->
 <div id="profile-edit-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
   <div class="absolute inset-0 bg-black/50" onclick="closeProfileEdit()"></div>
@@ -1512,8 +1545,25 @@ const OV_PAGE_SIZE = 6;
 const ovFmt  = d => new Date(d).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' });
 const ovFmtT = d => new Date(d).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 
+// Tarikh DIJANGKA sesi (bila belum ditempah) — dikira dari anchor (Tarikh Mula Program)
+// + hari-sesi pakej. Placeholder sahaja; tidak ditulis ke DB.
+function ovExpectedDate(w, day) {
+  const anchor = phAnchorDate(activePlan); anchor.setHours(0, 0, 0, 0);
+  const d = new Date(anchor); d.setDate(d.getDate() + (w - 1) * 7);
+  const PAIR = { fri_sat: [5, 6], sat_sun: [6, 0] };
+  const pair = PAIR[activePlan.preferred_pair];
+  if (pair) {
+    const targetDow = day === 2 ? pair[1] : pair[0];
+    let guard = 0;
+    while (d.getDay() !== targetDow && guard++ < 8) d.setDate(d.getDate() + 1);
+  } else if (day === 2) {
+    d.setDate(d.getDate() + 1);
+  }
+  return d;
+}
+
 // Satu baris sesi (untuk plan 2-sesi/minggu) — paparan sahaja
-function ovSessionRow(row, day) {
+function ovSessionRow(row, day, w) {
   const status  = row?.status;
   const dayName = row?.session_date
     ? new Date(row.session_date).toLocaleDateString('ms-MY', { weekday: 'short' })
@@ -1525,14 +1575,22 @@ function ovSessionRow(row, day) {
   else if (status === 'cancel')                              { icon = '❌'; cls = 'text-terracotta'; label = 'Tidak Hadir'; }
   else if (status === 'extension_pending_payment')           { icon = '💳'; cls = 'text-terracotta'; label = 'Belum Bayar'; }
   else if (status === 'extension_paid')                      { icon = '➕'; cls = 'text-navy';       label = 'Tambahan'; }
-  const dateTime = row?.session_date ? `${ovFmt(row.session_date)} · ${ovFmtT(row.session_date)}` : '—';
+  const dateTime = row?.session_date
+    ? `${ovFmt(row.session_date)} · ${ovFmtT(row.session_date)}`
+    : `<span class="italic text-ink/40">${ovFmt(ovExpectedDate(w, day))} · dijangka</span>`;
+  // Sesi yang sudah ditempah & belum hadir/selesai → tunjuk butang "Jadual semula"
+  // (gantikan label supaya tak berganda dengan chip status di atas kad).
+  const canEditDate = ovCanSchedule() && row?.id && row?.session_date && !['hadir','consultation_done'].includes(status);
+  const rightSide = canEditDate
+    ? `<button onclick="openEditSessionDate('${row.id}', ${w})" title="Jadual semula sesi ini" class="inline-flex items-center gap-1 text-navy/70 hover:text-white hover:bg-navy border border-navy/30 rounded-md px-1.5 py-0.5 font-semibold transition">🔄 Jadual semula</button>`
+    : `<span class="${cls} font-semibold">${label}</span>`;
   return `<div class="flex items-center justify-between gap-2 text-[11px] bg-white/60 rounded px-2 py-1 border border-ink/5">
     <div class="flex items-center gap-1.5 min-w-0">
       <span class="${cls}">${icon}</span>
       <span class="${cls} font-semibold w-9">${dayName}</span>
       <span class="truncate text-ink/70">${dateTime}</span>
     </div>
-    <span class="${cls} font-semibold whitespace-nowrap">${label}</span>
+    <span class="whitespace-nowrap">${rightSide}</span>
   </div>`;
 }
 
@@ -1568,106 +1626,75 @@ function renderOvWeekPage() {
   const start = (ovCurrentPage - 1) * OV_PAGE_SIZE + 1;
   const end   = Math.min(ovCurrentPage * OV_PAGE_SIZE, weeks);
 
-  // Plan berpasangan (preferred_pair) ada 2 sesi/minggu; plan lama = 1 sesi/minggu
-  const isLegacy = !activePlan.preferred_pair;
   // Staff sentiasa boleh akses mana-mana minggu untuk masukkan/edit nota
-  const cta = w => `<a href="plan-week.html?plan_id=${activePlan.id}&week=${w}" class="text-[10px] text-navy font-semibold mt-2 block hover:underline">Lihat butiran →</a>`;
+  const cta = w => `<a href="plan-week.html?plan_id=${activePlan.id}&week=${w}&from=overview" class="text-[10px] text-navy font-semibold mt-2 block hover:underline">Lihat butiran →</a>`;
+
+  // Bilangan sesi setiap minggu = ikut Timeline Rawatan pakej (coaching_schedule[w].session_days).
+  // Fallback: bilangan baris sesi sedia ada, akhir sekali toggle plan-level.
+  const sessionsForWeek = w => {
+    const sched = (activePlan.coaching_schedule || [])
+      .find(it => (it.period || 'week') !== 'day' && Number(it.week) === w);
+    if (sched && Array.isArray(sched.session_days) && sched.session_days.length) return sched.session_days.length;
+    const rows = ovWeeklyRows.filter(r => Number(r.week_number) === w);
+    if (rows.length) return Math.max(...rows.map(r => r.session_day || 1));
+    return activePlan.preferred_pair ? 2 : (activePlan.sessions_per_week || 1);
+  };
 
   let html = '';
 
-  if (isLegacy) {
-    const progressMap = {};
-    ovWeeklyRows.forEach(p => { progressMap[p.week_number] = p; });
-    for (let w = start; w <= end; w++) {
-      const entry = progressMap[w];
-      const s     = entry?.status;
-      const isCurrent = w === cw;
+  // Satu renderer — bilangan baris sesi ikut sessionsForWeek(w) dari Timeline Rawatan.
+  const sessionMap = {};
+  ovWeeklyRows.forEach(p => { sessionMap[`${p.week_number}_${p.session_day || 1}`] = p; });
 
-      let border = 'border-ink/15';
-      let chip   = '<span class="bg-cream text-ink/60 text-[10px] px-2 py-0.5 rounded-full font-semibold">Belum Tempah</span>';
-      let body   = '';
+  for (let w = start; w <= end; w++) {
+    const nSes = Math.min(2, Math.max(1, sessionsForWeek(w)));
+    const s1 = sessionMap[`${w}_1`];
+    const s2 = nSes >= 2 ? sessionMap[`${w}_2`] : null;
+    const isCurrent = w === cw;
 
-      if (s === 'consultation_done') {
-        border = 'border-green-dark bg-green/5';
-        chip   = '<span class="bg-green-dark text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">✅ Selesai</span>';
-        body   = `<div class="text-xs text-ink/60 mt-1">📅 ${entry.session_date ? ovFmt(entry.session_date) : '—'}</div>`;
-      } else if (s === 'hadir') {
-        border = 'border-green bg-green/5';
-        chip   = '<span class="bg-green text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">✅ Hadir</span>';
-        body   = `<div class="text-xs text-ink/60 mt-1">📅 ${entry.session_date ? ovFmt(entry.session_date) : '—'}</div>`;
-      } else if (s === 'booked') {
-        border = 'border-navy bg-navy/5';
-        chip   = '<span class="bg-navy text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">📅 Ditempah</span>';
-        body   = `<div class="text-xs text-ink/80 mt-1 font-semibold">📅 ${ovFmt(entry.session_date)}</div>
-                  <div class="text-[11px] text-ink/60">🕐 ${ovFmtT(entry.session_date)}</div>`;
-      } else if (s === 'reschedule') {
-        border = 'border-gold bg-gold/5';
-        chip   = '<span class="bg-gold text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">🔄 Reschedule</span>';
-        body   = '<div class="text-[11px] text-ink/50 mt-1">Perlu tempah semula</div>';
-      } else if (s === 'cancel') {
-        border = 'border-terracotta bg-terracotta/5';
-        chip   = '<span class="bg-terracotta text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">❌ Tidak Hadir</span>';
-        body   = '<div class="text-[11px] text-ink/50 mt-1">Perlu tempah semula</div>';
-      } else {
-        border = 'border-dashed border-ink/25';
-        body   = '<div class="text-[11px] text-ink/50 mt-1">Belum dijadualkan</div>';
-      }
+    const relevant   = (nSes >= 2 ? [s1, s2] : [s1]);
+    const isExt      = relevant.some(s => s?.is_extension);
+    const extPending = isExt && relevant.some(s => s?.status === 'extension_pending_payment');
+    const allHadir   = relevant.every(s => s && ['hadir','consultation_done'].includes(s.status));
+    const anyMiss    = relevant.some(s => s && ['cancel','reschedule'].includes(s.status));
+    const anyBooked  = relevant.some(Boolean);
 
-      html += `<div class="border ${border} ${isCurrent ? 'ring-2 ring-navy' : ''} rounded-xl p-3 transition">
-        <div class="flex items-center justify-between mb-1 gap-1 flex-wrap">
-          <div class="text-sm font-bold ${isCurrent ? 'text-navy' : 'text-ink/80'}">Minggu ${w}${isCurrent ? ' · <span class="font-normal text-xs">Semasa</span>' : ''}</div>
-          ${chip}
-        </div>
-        ${body}${cta(w)}
-      </div>`;
+    let border, chip;
+    if (extPending) {
+      border = 'border-terracotta bg-terracotta/5';
+      chip   = '<span class="bg-terracotta text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">💳 Belum Bayar</span>';
+    } else if (allHadir) {
+      border = 'border-green-dark bg-green/5';
+      chip   = `<span class="bg-green-dark text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">✅ ${isExt ? 'Tambahan Selesai' : 'Selesai'}</span>`;
+    } else if (anyMiss) {
+      border = 'border-gold bg-gold/5';
+      chip   = '<span class="bg-gold text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">⚠️ Tidak Lengkap</span>';
+    } else if (anyBooked) {
+      border = 'border-navy bg-navy/5';
+      chip   = `<span class="bg-navy text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">${isExt ? '➕ Tambahan' : '📅 Ditempah'}</span>`;
+    } else {
+      border = 'border-dashed border-ink/25';
+      chip   = '<span class="bg-cream text-ink/60 text-[10px] px-2 py-0.5 rounded-full font-semibold">Belum Tempah</span>';
     }
-  } else {
-    // 2 sesi/minggu — index ikut week_number + session_day
-    const sessionMap = {};
-    ovWeeklyRows.forEach(p => { sessionMap[`${p.week_number}_${p.session_day || 1}`] = p; });
-    for (let w = start; w <= end; w++) {
-      const s1 = sessionMap[`${w}_1`];
-      const s2 = sessionMap[`${w}_2`];
-      const isCurrent = w === cw;
 
-      const isExt      = (s1?.is_extension) || (s2?.is_extension);
-      const extPending = isExt && (s1?.status === 'extension_pending_payment' || s2?.status === 'extension_pending_payment');
-      const allHadir   = s1 && s2 && ['hadir','consultation_done'].includes(s1.status) && ['hadir','consultation_done'].includes(s2.status);
-      const anyMiss    = (s1 && ['cancel','reschedule'].includes(s1.status)) || (s2 && ['cancel','reschedule'].includes(s2.status));
+    // Minggu tambahan yang BELUM dibayar boleh dibuang oleh staf
+    const removeBtn = (extPending && canEdit)
+      ? `<button onclick="removeExtensionWeek(${w})" class="text-[10px] text-terracotta font-semibold mt-1 hover:underline">🗑 Buang minggu tambahan</button>`
+      : '';
 
-      let border, chip;
-      if (extPending) {
-        border = 'border-terracotta bg-terracotta/5';
-        chip   = '<span class="bg-terracotta text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">💳 Belum Bayar</span>';
-      } else if (allHadir) {
-        border = 'border-green-dark bg-green/5';
-        chip   = `<span class="bg-green-dark text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">✅ ${isExt ? 'Tambahan Selesai' : 'Selesai'}</span>`;
-      } else if (anyMiss) {
-        border = 'border-gold bg-gold/5';
-        chip   = '<span class="bg-gold text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">⚠️ Tidak Lengkap</span>';
-      } else if (s1 || s2) {
-        border = 'border-navy bg-navy/5';
-        chip   = `<span class="bg-navy text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">${isExt ? '➕ Tambahan' : '📅 Ditempah'}</span>`;
-      } else {
-        border = 'border-dashed border-ink/25';
-        chip   = '<span class="bg-cream text-ink/60 text-[10px] px-2 py-0.5 rounded-full font-semibold">Belum Tempah</span>';
-      }
+    const sessionRows = nSes >= 2
+      ? `${ovSessionRow(s1, 1, w)}${ovSessionRow(s2, 2, w)}`
+      : ovSessionRow(s1, 1, w);
 
-      // Minggu tambahan yang BELUM dibayar boleh dibuang oleh staf
-      const removeBtn = (extPending && canEdit)
-        ? `<button onclick="removeExtensionWeek(${w})" class="text-[10px] text-terracotta font-semibold mt-1 hover:underline">🗑 Buang minggu tambahan</button>`
-        : '';
-
-      html += `<div class="border ${border} ${isCurrent ? 'ring-2 ring-navy' : ''} rounded-xl p-3 transition">
-        <div class="flex items-center justify-between mb-1 gap-1 flex-wrap">
-          <div class="text-sm font-bold ${isCurrent ? 'text-navy' : 'text-ink/80'}">Minggu ${w}${isCurrent ? ' · <span class="font-normal text-xs">Semasa</span>' : ''}</div>
-          ${chip}
-        </div>
-        <div class="space-y-1.5 mt-2">${ovSessionRow(s1, 1)}${ovSessionRow(s2, 2)}</div>
-        ${cta(w)}
-        ${removeBtn}
-      </div>`;
-    }
+    html += `<div class="border ${border} ${isCurrent ? 'ring-2 ring-navy' : ''} rounded-xl p-3 transition">
+      <div class="flex items-center justify-between mb-1 gap-1 flex-wrap">
+        <div class="text-sm font-bold ${isCurrent ? 'text-navy' : 'text-ink/80'}">Minggu ${w}${isCurrent ? ' · <span class="font-normal text-xs">Semasa</span>' : ''}</div>
+        ${chip}
+      </div>
+      <div class="space-y-1.5 mt-2">${sessionRows}</div>
+      ${cta(w)}
+      ${removeBtn}
+    </div>`;
   }
 
   document.getElementById('ov-weekly-list').innerHTML = html || '<div class="col-span-3 text-sm text-ink/40 italic py-4 text-center">Tiada data</div>';
@@ -1841,6 +1868,7 @@ async function loadOverview() {
   // Butang "Tambah Minggu" hanya untuk staf boleh-edit & ada plan aktif
   document.getElementById('ov-add-week-btn')?.classList.toggle('hidden', !(canEdit && activePlan));
   document.getElementById('ov-reset-sessions-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
+  document.getElementById('ov-autoschedule-btn')?.classList.toggle('hidden', !((canEdit || window.currentUser?.staff_role === 'super_admin') && activePlan));
 
   // ─── KPI: Minggu Semasa + Kehadiran ───
   if (activePlan) {
@@ -2897,6 +2925,132 @@ async function deleteVitals(id) {
 async function loadSessions() {
   await renderSnKpiAndTable();
   await renderPatientNotes('sesi', 'sn-notes-body');
+  await renderContinuityPanel();
+}
+
+// ── Continuity Package (baki ≤4 minggu) ──────────────
+let _continuityPackages = [];
+
+function weeksRemaining() {
+  if (!activePlan) return null;
+  const dur = activePlan.duration_weeks || 0;
+  const cw  = activePlan.current_week || 1;
+  return Math.max(0, dur - cw);
+}
+
+async function renderContinuityPanel() {
+  const host = document.getElementById('sn-continuity');
+  if (!host) return;
+  const rem = weeksRemaining();
+  // Tawaran terkini (kalau ada)
+  let offer = null;
+  if (patientId) {
+    const { data } = await window.db.from('psy_continuity_offers')
+      .select('*').eq('patient_id', patientId).order('created_at', { ascending: false }).limit(1);
+    offer = (data && data[0]) || null;
+  }
+  const active = offer && ['sent', 'viewed'].includes(offer.status);
+  const showPrompt = rem !== null && rem <= 4;
+
+  if (!showPrompt && !active) { host.classList.add('hidden'); host.innerHTML = ''; return; }
+
+  const statusChip = {
+    sent:     '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-navy/10 text-navy">Dihantar</span>',
+    viewed:   '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Dilihat</span>',
+    accepted: '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">Diterima ✓</span>',
+    declined: '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600">Ditolak</span>',
+    cancelled:'<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-ink/10 text-ink/50">Dibatalkan</span>',
+  };
+
+  host.classList.remove('hidden');
+  host.innerHTML = `
+    <div class="rounded-2xl border border-[#6366f1]/25 bg-[#6366f1]/[0.04] p-5">
+      <div class="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <div class="font-bold text-sm text-ink flex items-center gap-2">🔄 Continuity Package
+            ${offer ? (statusChip[offer.status] || '') : ''}</div>
+          <p class="text-xs text-ink/60 mt-1">
+            ${rem !== null ? `Pesakit tinggal <b>${rem} minggu</b> rawatan.` : ''}
+            ${offer && ['sent','viewed'].includes(offer.status)
+              ? `Cadangan dihantar: <b>${escHtml(offer.package_name || '')}</b>${offer.price ? ` (RM ${Number(offer.price).toFixed(2)})` : ''}.`
+              : offer && offer.status === 'accepted'
+                ? `Pesakit terima <b>${escHtml(offer.package_name || '')}</b> — menunggu pembayaran.`
+                : offer && offer.status === 'declined'
+                  ? `Pesakit tolak cadangan <b>${escHtml(offer.package_name || '')}</b>.`
+                  : 'Cadang pakej sambungan untuk teruskan rawatan.'}
+          </p>
+        </div>
+        <div class="flex items-center gap-2">
+          ${active
+            ? `<button onclick="cancelContinuityOffer('${offer.id}')" class="text-xs font-semibold text-red-600 hover:underline">Batalkan</button>`
+            : `<button onclick="openContinuityModal()" class="bg-[#6366f1] text-white px-4 py-2 rounded-xl text-xs font-semibold hover:opacity-90">${offer ? 'Cadang Semula' : 'Cadang Pakej'}</button>`}
+        </div>
+      </div>
+    </div>`;
+}
+
+async function openContinuityModal() {
+  const sel = document.getElementById('co-package');
+  if (!_continuityPackages.length) {
+    const { data } = await window.db.from('psy_packages')
+      .select('id, name, price').eq('is_active', true).order('name');
+    _continuityPackages = data || [];
+  }
+  sel.innerHTML = '<option value="">— Pilih pakej —</option>' + _continuityPackages.map(p =>
+    `<option value="${p.id}">${escHtml(p.name)}${p.price ? ' — RM ' + Number(p.price).toFixed(2) : ''}</option>`).join('');
+  document.getElementById('co-note').value = '';
+  document.getElementById('continuity-modal').classList.remove('hidden');
+}
+
+function closeContinuityModal() {
+  document.getElementById('continuity-modal').classList.add('hidden');
+}
+
+async function sendContinuityOffer() {
+  const pkgId = document.getElementById('co-package').value;
+  if (!pkgId) { banner('Sila pilih pakej.', 'error'); return; }
+  const pkg = _continuityPackages.find(p => p.id === pkgId);
+  const note = document.getElementById('co-note').value.trim() || null;
+  const btn = document.getElementById('co-send-btn');
+  btn.disabled = true;
+
+  const { error } = await window.db.from('psy_continuity_offers').insert({
+    plan_id: activePlan?.id || null,
+    patient_id: patientId,
+    suggested_by: window.currentUser?.id || null,
+    package_uuid: pkg?.id || null,
+    package_name: pkg?.name || null,
+    price: pkg?.price ?? null,
+    note,
+    status: 'sent',
+  });
+  btn.disabled = false;
+  if (error) { banner('Gagal hantar cadangan: ' + error.message, 'error'); return; }
+
+  if (patient?.user_id) {
+    try {
+      await window.db.from('psy_notifications').insert({
+        user_id: patient.user_id, type: 'plan',
+        title: 'Cadangan Pakej Sambungan 🔄',
+        body: `Coach mencadangkan pakej "${pkg?.name || ''}" untuk teruskan rawatan anda.${note ? ' Nota: ' + note : ''}`,
+        link: 'dashboard.html',
+      });
+    } catch (_) { /* notifikasi tak kritikal */ }
+  }
+  await auditLog('continuity.offer_sent', patientId, { package: pkg?.name, plan: activePlan?.id });
+  closeContinuityModal();
+  await renderContinuityPanel();
+  banner('Cadangan pakej sambungan dihantar ke pesakit ✅');
+}
+
+async function cancelContinuityOffer(id) {
+  if (!confirm('Batalkan cadangan ini?')) return;
+  const { error } = await window.db.from('psy_continuity_offers')
+    .update({ status: 'cancelled', responded_at: new Date().toISOString() }).eq('id', id);
+  if (error) { banner('Gagal batal: ' + error.message, 'error'); return; }
+  await auditLog('continuity.offer_cancelled', patientId, { offer: id });
+  await renderContinuityPanel();
+  banner('Cadangan dibatalkan.');
 }
 
 let snTableShowAll = false;
@@ -4064,6 +4218,324 @@ async function uploadDnaReports(input) {
     await loadDnaReports();
   } catch (err) {
     banner('Ralat upload: ' + err.message, 'error');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// TEMPAHAN RAWATAN — SEDAR SLOT + PENUTUPAN KLINIK
+// Semua tempahan (auto-jadual + jadual semula) hanya benarkan slot rawatan
+// aktif (psy_kob_slot_config slot_type='rawatan') & elak tarikh penutupan
+// klinik (psy_clinic_closures). Auto-jadual: minggu langgar penutupan/hari
+// tutup → anjak ke tarikh tersedia terdekat; masa = slot pertama hari itu.
+// ══════════════════════════════════════════════════════════════════════
+const OV_DAY_NAMES = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
+const OV_DAY_ORDER = [5, 6, 0, 1, 2, 3, 4];  // Jum→Sab→Ahd… (susunan paparan)
+const ovEsc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+let _rawatanSlotsByDay = {};   // { day_of_week: [{start,end,label}] }
+let _closureMap = {};          // { 'YYYY-MM-DD': label }
+let _allowedRawatanDays = [];  // [day_of_week…] yang ada slot rawatan aktif
+
+function ovCanSchedule() {
+  return !!activePlan && (canEdit || window.currentUser?.staff_role === 'super_admin');
+}
+
+// Muat slot rawatan aktif + penutupan klinik (fresh setiap kali modal dibuka).
+async function loadRawatanAvailability() {
+  let { data: slots, error } = await window.db.from('psy_kob_slot_config')
+    .select('day_of_week, slot_start, slot_end, label, sort_order')
+    .eq('is_active', true).eq('slot_type', 'rawatan').order('sort_order', { ascending: true });
+  if (error && /slot_type/i.test(error.message || '')) {
+    const fb = await window.db.from('psy_kob_slot_config')
+      .select('day_of_week, slot_start, slot_end, label, sort_order')
+      .eq('is_active', true).order('sort_order', { ascending: true });
+    slots = fb.data;
+  }
+  _rawatanSlotsByDay = {};
+  (slots || []).forEach(s => {
+    const start = (s.slot_start || '').slice(0, 5);
+    (_rawatanSlotsByDay[s.day_of_week] = _rawatanSlotsByDay[s.day_of_week] || [])
+      .push({ start, end: (s.slot_end || '').slice(0, 5), label: s.label || start });
+  });
+  _allowedRawatanDays = Object.keys(_rawatanSlotsByDay).map(Number);
+
+  const { data: closures } = await window.db.from('psy_clinic_closures').select('closure_date, label');
+  _closureMap = {};
+  (closures || []).forEach(c => { _closureMap[c.closure_date] = c.label || 'Tutup'; });
+}
+
+function ovAllowedDayNames() {
+  return [..._allowedRawatanDays].sort((a, b) => OV_DAY_ORDER.indexOf(a) - OV_DAY_ORDER.indexOf(b))
+    .map(d => OV_DAY_NAMES[d]).join(', ');
+}
+function ovTodayYmd() { return phYmd(new Date()); }
+
+// Ralat validasi tarikh (null = sah). Sekat penutupan + hari tiada slot rawatan.
+function ovValidateDate(dateStr) {
+  if (!dateStr) return '— Pilih tarikh dahulu —';
+  if (_closureMap[dateStr]) return `🚫 Klinik tutup: ${_closureMap[dateStr]}`;
+  const day = new Date(dateStr + 'T00:00:00').getDay();
+  if (!_allowedRawatanDays.includes(day)) return `🚫 Hari rawatan hanya: ${ovAllowedDayNames()}`;
+  return null;
+}
+// Isi dropdown slot untuk hari tertentu; preselect masa (HH:MM) jika padan.
+function ovFillSlotSelect(sel, day, preselect) {
+  const slots = _rawatanSlotsByDay[day] || [];
+  if (!slots.length) { sel.innerHTML = '<option value="">— Tiada slot —</option>'; return; }
+  sel.innerHTML = '<option value="">— Pilih slot —</option>' +
+    slots.map(s => `<option value="${s.start}">${ovEsc(s.label)}</option>`).join('');
+  if (preselect && [...sel.options].some(o => o.value === preselect)) sel.value = preselect;
+}
+// Handler onchange kongsi (auto-jadual & jadual semula).
+function ovOnDateChange(dateId, slotId, warnId, preselect) {
+  const dateStr = document.getElementById(dateId).value;
+  const warn = document.getElementById(warnId);
+  const sel = document.getElementById(slotId);
+  const err = ovValidateDate(dateStr);
+  if (err) {
+    warn.textContent = err; warn.classList.remove('hidden');
+    sel.innerHTML = `<option value="">${err.includes('tutup') ? '— Klinik tutup —' : '— Tiada slot —'}</option>`;
+    return;
+  }
+  warn.classList.add('hidden');
+  ovFillSlotSelect(sel, new Date(dateStr + 'T00:00:00').getDay(), preselect);
+}
+
+// Tarikh sah terdekat >= `from` (hari ada slot rawatan & bukan penutupan).
+function ovNearestAvailable(from) {
+  const d = new Date(from); d.setHours(0, 0, 0, 0);
+  let g = 0;
+  while (g++ < 180) {
+    if (_allowedRawatanDays.includes(d.getDay()) && !_closureMap[phYmd(d)]) return new Date(d);
+    d.setDate(d.getDate() + 1);
+  }
+  return null;
+}
+
+// Bilangan sesi minggu w ikut Timeline pakej (fallback baris sedia ada / plan-level). Clamp 1–2.
+function ovSessionsForWeek(w) {
+  const sched = (activePlan.coaching_schedule || [])
+    .find(it => (it.period || 'week') !== 'day' && Number(it.week) === w);
+  let n;
+  if (sched && Array.isArray(sched.session_days) && sched.session_days.length) n = sched.session_days.length;
+  else {
+    const rows = ovWeeklyRows.filter(r => Number(r.week_number) === w);
+    n = rows.length ? Math.max(...rows.map(r => r.session_day || 1))
+                    : (activePlan.preferred_pair ? 2 : (activePlan.sessions_per_week || 1));
+  }
+  return Math.min(2, Math.max(1, n));
+}
+
+// Tarikh+masa tempahan minggu w, sesi `day`, berpandukan tarikh+slot sesi pertama.
+// w1 sesi1 = tepat pilihan staff; minggu lain = anjak ke tarikh sah terdekat + slot pertama hari itu.
+function ovComputeWhen(w, day, firstDate, firstSlotStart) {
+  if (w === 1 && day === 1) {
+    const d = new Date(firstDate); const [h, m] = firstSlotStart.split(':').map(Number);
+    d.setHours(h || 0, m || 0, 0, 0); return d;
+  }
+  const target = new Date(firstDate); target.setHours(0, 0, 0, 0);
+  target.setDate(target.getDate() + (w - 1) * 7 + (day === 2 ? 1 : 0));
+  const avail = ovNearestAvailable(target);
+  if (!avail) return null;
+  const slots = _rawatanSlotsByDay[avail.getDay()] || [];
+  if (!slots.length) return null;
+  const [h, m] = slots[0].start.split(':').map(Number);
+  avail.setHours(h || 0, m || 0, 0, 0);
+  return avail;
+}
+
+async function openAutoScheduleModal() {
+  if (!ovCanSchedule()) { banner('Anda hanya boleh melihat rekod pesakit ini.', 'error'); return; }
+  await loadRawatanAvailability();
+  if (!_allowedRawatanDays.length) { banner('Tiada slot rawatan aktif. Sila set di menu Slot Rawatan dahulu.', 'error'); return; }
+  const baseWeeks = activePlan.duration_weeks || 12;
+  const m = document.createElement('div');
+  m.id = 'autosched-modal';
+  m.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
+  m.innerHTML = `
+    <div class="absolute inset-0 bg-black/50" onclick="document.getElementById('autosched-modal').remove()"></div>
+    <div class="relative bg-white rounded-2xl max-w-sm w-full p-6 space-y-4">
+      <h3 class="font-bold text-base">📅 Jadualkan Semua Sesi</h3>
+      <p class="text-sm text-ink/60">Pilih <span class="font-semibold">tarikh & slot sesi pertama</span>. Sistem tempah setiap minggu (${baseWeeks} minggu) — hanya slot rawatan yang dibuka & elak tarikh penutupan klinik. Minggu yang sudah ditempah / hadir <span class="font-semibold">dilangkau</span>.</p>
+      <div>
+        <label class="text-xs font-semibold text-ink/60 uppercase">Tarikh sesi pertama</label>
+        <input id="as-date" type="date" min="${ovTodayYmd()}" onchange="ovOnDateChange('as-date','as-slot','as-warn')" class="w-full mt-1.5 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-navy">
+        <div id="as-warn" class="hidden text-[11px] text-terracotta mt-1"></div>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-ink/60 uppercase">Slot masa</label>
+        <select id="as-slot" class="w-full mt-1.5 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:outline-none focus:border-navy">
+          <option value="">— Pilih tarikh dahulu —</option>
+        </select>
+        <div class="text-[11px] text-ink/45 mt-1">Hari rawatan: ${ovAllowedDayNames() || '—'}</div>
+      </div>
+      <div class="flex justify-end gap-2 pt-1">
+        <button onclick="document.getElementById('autosched-modal').remove()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm">Batal</button>
+        <button onclick="confirmAutoSchedule()" class="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-emerald-700">Jadualkan</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+}
+
+async function confirmAutoSchedule() {
+  const date = document.getElementById('as-date')?.value;
+  const slot = document.getElementById('as-slot')?.value;
+  if (!date) { banner('Sila pilih tarikh sesi pertama.', 'error'); return; }
+  if (ovValidateDate(date)) { banner(ovValidateDate(date), 'error'); return; }
+  if (!slot) { banner('Sila pilih slot masa.', 'error'); return; }
+  document.getElementById('autosched-modal')?.remove();
+  await autoScheduleAllSessions(date, slot);
+}
+
+async function autoScheduleAllSessions(firstDateStr, firstSlotStart) {
+  if (!ovCanSchedule()) { banner('Anda hanya boleh melihat rekod pesakit ini.', 'error'); return; }
+  const firstDate = new Date(firstDateStr + 'T00:00:00');
+  if (isNaN(firstDate.getTime())) { banner('Tarikh tidak sah.', 'error'); return; }
+  try {
+    const baseWeeks = activePlan.duration_weeks || 12;
+
+    // Peta sesi sedia ada (week_day → row) untuk langkau / kemaskini
+    const existing = {};
+    ovWeeklyRows.forEach(r => { existing[`${r.week_number}_${r.session_day || 1}`] = r; });
+    const SKIP = ['hadir','consultation_done','booked','reschedule','cancel','extension_pending_payment','extension_paid'];
+
+    // Kumpul slot yang perlu ditempah + kira tarikh (sedar slot & penutupan)
+    const bookings = [];
+    for (let w = 1; w <= baseWeeks; w++) {
+      const nSes = ovSessionsForWeek(w);
+      for (let day = 1; day <= nSes; day++) {
+        const row = existing[`${w}_${day}`];
+        if (row && (row.session_date || row.is_extension || SKIP.includes(row.status))) continue;
+        const when = ovComputeWhen(w, day, firstDate, firstSlotStart);
+        if (!when) continue;  // tiada slot langsung — tak patut berlaku sebab dah cek di atas
+        bookings.push({ w, day, when, existingId: row?.id || null });
+      }
+    }
+    if (!bookings.length) { banner('Semua sesi sudah ditempah — tiada yang perlu dijadualkan.', 'error'); return; }
+
+    const first = bookings[0].when;
+    if (!confirm(`Jadualkan ${bookings.length} sesi bermula ${first.toLocaleDateString('ms-MY',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})} · ${first.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}?\n\nHanya slot rawatan dibuka & elak tarikh penutupan. Minggu yang sudah ditempah / hadir dilangkau.`)) return;
+
+    // Cipta appointment (dapat id) + kumpul progress untuk insert/update
+    const toInsert = [];
+    for (const b of bookings) {
+      const iso = b.when.toISOString();
+      const { data: appt } = await window.db.from('psy_appointments').insert({
+        patient_id: patientId, staff_id: window.currentUser.id, staff_name: window.currentUser.full_name,
+        service: `${activePlan.name} · Minggu ${b.w}`, appointment_time: iso, duration_min: 60, status: 'scheduled',
+      }).select('id').single();
+      const apptId = appt?.id || null;
+      if (b.existingId) {
+        await window.db.from('psy_plan_weekly_progress')
+          .update({ status: 'booked', session_date: iso, appointment_id: apptId }).eq('id', b.existingId);
+      } else {
+        toInsert.push({
+          plan_id: activePlan.id, patient_id: patientId, week_number: b.w, session_day: b.day,
+          status: 'booked', session_date: iso, appointment_id: apptId,
+        });
+      }
+    }
+    if (toInsert.length) {
+      const { error } = await window.db.from('psy_plan_weekly_progress').insert(toInsert);
+      if (error) throw error;
+    }
+
+    // Set anchor Tarikh Mula Program = tarikh sesi pertama
+    const anchorYmd = phYmd(first);
+    await window.db.from('psy_treatment_plans').update({ start_date: anchorYmd }).eq('id', activePlan.id);
+    activePlan.start_date = anchorYmd;
+
+    await auditLog('plan.auto_scheduled', activePlan.id, { sessions: bookings.length, first: first.toISOString() });
+
+    // Notifikasi RINGKASAN (satu sahaja)
+    if (patient?.user_id) {
+      const firstTxt = first.toLocaleDateString('ms-MY', { weekday:'long', day:'2-digit', month:'long', year:'numeric' });
+      try {
+        await window.db.from('psy_notifications').insert({
+          user_id: patient.user_id, type: 'appointment',
+          title: 'Jadual rawatan anda telah ditetapkan',
+          body: `${bookings.length} sesi telah dijadualkan oleh ${window.currentUser.full_name}, bermula ${firstTxt}. Lihat jadual penuh dalam aplikasi.`,
+          link: 'plan.html',
+        });
+      } catch (_) {}
+    }
+
+    banner(`${bookings.length} sesi dijadualkan ✅`);
+    await reloadOverviewKeepPage();
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+  }
+}
+
+// ── Jadual semula SATU sesi (dari kad Overview) — sedar slot + penutupan ──
+async function openEditSessionDate(id, w) {
+  if (!ovCanSchedule()) { banner('Anda hanya boleh melihat rekod pesakit ini.', 'error'); return; }
+  const row = ovWeeklyRows.find(r => String(r.id) === String(id));
+  if (!row) { banner('Sesi tidak dijumpai.', 'error'); return; }
+  await loadRawatanAvailability();
+  if (!_allowedRawatanDays.length) { banner('Tiada slot rawatan aktif. Sila set di menu Slot Rawatan dahulu.', 'error'); return; }
+
+  const cur = row.session_date ? new Date(row.session_date) : null;
+  const curYmd = cur ? phYmd(cur) : '';
+  const curTime = cur ? `${String(cur.getHours()).padStart(2,'0')}:${String(cur.getMinutes()).padStart(2,'0')}` : '';
+
+  const m = document.createElement('div');
+  m.id = 'editdate-modal';
+  m.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
+  m.innerHTML = `
+    <div class="absolute inset-0 bg-black/50" onclick="document.getElementById('editdate-modal').remove()"></div>
+    <div class="relative bg-white rounded-2xl max-w-sm w-full p-6 space-y-4">
+      <h3 class="font-bold text-base">🔄 Jadual Semula Sesi — Minggu ${w}</h3>
+      <p class="text-sm text-ink/60">Tukar tarikh & slot sesi ini sahaja (hanya slot rawatan dibuka, elak penutupan). Minggu lain tidak terjejas.</p>
+      <div>
+        <label class="text-xs font-semibold text-ink/60 uppercase">Tarikh baru</label>
+        <input id="ed-date" type="date" min="${ovTodayYmd()}" value="${curYmd}" onchange="ovOnDateChange('ed-date','ed-slot','ed-warn')" class="w-full mt-1.5 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-navy">
+        <div id="ed-warn" class="hidden text-[11px] text-terracotta mt-1"></div>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-ink/60 uppercase">Slot masa</label>
+        <select id="ed-slot" class="w-full mt-1.5 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:outline-none focus:border-navy">
+          <option value="">— Pilih tarikh dahulu —</option>
+        </select>
+        <div class="text-[11px] text-ink/45 mt-1">Hari rawatan: ${ovAllowedDayNames() || '—'}</div>
+      </div>
+      <div class="flex justify-end gap-2 pt-1">
+        <button onclick="document.getElementById('editdate-modal').remove()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm">Batal</button>
+        <button onclick="saveEditSessionDate('${id}')" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">Simpan</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  // Prefill slot ikut tarikh semasa (jika sah)
+  if (curYmd && !ovValidateDate(curYmd)) ovFillSlotSelect(document.getElementById('ed-slot'), cur.getDay(), curTime);
+}
+
+async function saveEditSessionDate(id) {
+  if (!ovCanSchedule()) return;
+  const date = document.getElementById('ed-date')?.value;
+  const time = document.getElementById('ed-slot')?.value;
+  if (!date) { banner('Sila pilih tarikh.', 'error'); return; }
+  const derr = ovValidateDate(date);
+  if (derr) { banner(derr, 'error'); return; }
+  if (!time) { banner('Sila pilih slot masa.', 'error'); return; }
+  const iso = new Date(`${date}T${time}:00`).toISOString();
+  const row = ovWeeklyRows.find(r => String(r.id) === String(id));
+  document.getElementById('editdate-modal')?.remove();
+  try {
+    await window.db.from('psy_plan_weekly_progress').update({
+      session_date:    iso,
+      updated_by:      window.currentUser.id,
+      updated_by_name: window.currentUser.full_name,
+      updated_at:      new Date().toISOString(),
+    }).eq('id', id);
+    // Selaraskan janji temu berkaitan (jika ada)
+    if (row?.appointment_id) {
+      await window.db.from('psy_appointments').update({ appointment_time: iso }).eq('id', row.appointment_id);
+    }
+    await auditLog('plan.session_date_edited', activePlan.id, { week: row?.week_number, session: row?.session_day || 1, session_date: iso });
+    banner('Sesi dijadual semula ✅');
+    await reloadOverviewKeepPage();
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
   }
 }
 

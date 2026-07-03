@@ -116,6 +116,8 @@
                     <thead>
                       <tr class="border-b border-ink/8 bg-ink/[0.015]">
                         <th class="text-left px-5 py-2.5 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Slot Waktu</th>
+                        <th class="text-center px-3 py-2.5 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Isnin</th>
+                        <th class="text-center px-3 py-2.5 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Selasa</th>
                         <th class="text-center px-3 py-2.5 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Rabu</th>
                         <th class="text-center px-3 py-2.5 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Khamis</th>
                         <th class="text-center px-3 py-2.5 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Jumaat</th>
@@ -148,6 +150,8 @@
                     <thead>
                       <tr class="border-b border-ink/8 bg-ink/[0.015]">
                         <th class="text-left px-5 py-2.5 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Slot Waktu</th>
+                        <th class="text-center px-3 py-2.5 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Isnin</th>
+                        <th class="text-center px-3 py-2.5 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Selasa</th>
                         <th class="text-center px-3 py-2.5 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Rabu</th>
                         <th class="text-center px-3 py-2.5 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Khamis</th>
                         <th class="text-center px-3 py-2.5 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Jumaat</th>
@@ -483,6 +487,8 @@ let allOverrides = [];
 let allLogs = [];
 
 const DAYS = [
+  { key: 1, label: 'Isnin' },
+  { key: 2, label: 'Selasa' },
   { key: 3, label: 'Rabu' },
   { key: 4, label: 'Khamis' },
   { key: 5, label: 'Jumaat' },
@@ -567,7 +573,11 @@ function renderType(slotType) {
 
     const cells = DAYS.map(d => {
       const slot = dayMap[d.key];
-      if (!slot) return '<td class="text-center px-3 py-3.5"><span class="text-ink/25 text-xs">—</span></td>';
+      if (!slot) {
+        // Tiada baris untuk hari ini = OFF. Papar butang OFF yang boleh diaktifkan (cipta baris).
+        offCount++;
+        return `<td class="text-center px-3 py-3.5"><button onclick="enableSlotDay('${slotType}', ${order}, ${d.key})" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-bold transition-colors hover:opacity-80 bg-ink/8 text-ink/45 border-ink/10"><span class="text-ink/35">✕</span> OFF</button></td>`;
+      }
       if (slot.is_active) activeCount++; else offCount++;
       const chipCls = slot.is_active ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-ink/8 text-ink/45 border-ink/10';
       const chipIcon = slot.is_active ? '<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>' : '<span class="text-ink/35">✕</span>';
@@ -594,7 +604,7 @@ function renderType(slotType) {
     </tr>`;
   }).join('');
 
-  document.getElementById(bodyId).innerHTML = rows || `<tr><td colspan="7" class="text-center text-ink/35 px-5 py-10">Tiada slot ${slotType === 'kob' ? 'KOB' : 'Rawatan'}. Tekan + Tambah Slot untuk mula.</td></tr>`;
+  document.getElementById(bodyId).innerHTML = rows || `<tr><td colspan="9" class="text-center text-ink/35 px-5 py-10">Tiada slot ${slotType === 'kob' ? 'KOB' : 'Rawatan'}. Tekan + Tambah Slot untuk mula.</td></tr>`;
   document.getElementById(`${slotType}-active-count`).textContent = activeCount;
   document.getElementById(`${slotType}-off-count`).textContent = offCount;
 }
@@ -608,6 +618,27 @@ async function toggleSlot(slotId, isActive) {
     await auditLog('clinic_slot.toggled', slotId, { is_active: isActive, slot_type: slot?.slot_type });
     banner(isActive ? 'Slot diaktifkan ✅' : 'Slot dinyahaktifkan ⛔');
     renderType(slot?.slot_type || 'kob');
+    renderKpi();
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); loadSlots(); }
+}
+
+// Aktifkan slot untuk hari yang belum ada baris (dari butang OFF) — cipta baris baru ON.
+async function enableSlotDay(slotType, order, day) {
+  try {
+    // Kalau baris sudah wujud (mungkin is_active=false), cukup toggle jadi ON.
+    const existing = allSlots.find(s => (s.slot_type || 'kob') === slotType && s.sort_order === order && s.day_of_week === day);
+    if (existing) { await toggleSlot(existing.id, true); return; }
+    const sample = allSlots.find(s => (s.slot_type || 'kob') === slotType && s.sort_order === order);
+    if (!sample) { banner('Slot tidak dijumpai.', 'error'); return; }
+    const { data, error } = await window.db.from('psy_kob_slot_config').insert({
+      slot_type: slotType, day_of_week: day, slot_start: sample.slot_start, slot_end: sample.slot_end,
+      label: sample.label, note: sample.note || null, sort_order: order, is_active: true,
+    }).select().single();
+    if (error) throw error;
+    if (data) allSlots.push(data);
+    await auditLog('clinic_slot.day_enabled', data?.id, { slot_type: slotType, day, sort_order: order });
+    banner('Slot diaktifkan ✅');
+    renderType(slotType);
     renderKpi();
   } catch (e) { banner('Ralat: ' + e.message, 'error'); loadSlots(); }
 }
@@ -735,8 +766,11 @@ function openEditSlot(type, sortOrder) {
   document.getElementById('slot-end').value = (sample.slot_end || '').slice(0, 5);
   document.getElementById('slot-duration').value = computeDuration((sample.slot_start || '').slice(0, 5), (sample.slot_end || '').slice(0, 5));
   document.getElementById('slot-note').value = sample.note || '';
-  const activeDays = new Set(rows.map(r => r.day_of_week));
+  // Checkbox = hari AKTIF (ON), bukan sekadar wujud baris — supaya selari dgn toggle grid.
+  const activeDays = new Set(rows.filter(r => r.is_active).map(r => r.day_of_week));
   document.querySelectorAll('.slot-day').forEach(el => el.checked = activeDays.has(parseInt(el.dataset.day)));
+  const hasActive = rows.some(r => r.is_active);
+  document.querySelector(`input[name="slot-default-status"][value="${hasActive ? 'on' : 'off'}"]`).checked = true;
   updateSlotTypeUI();
   updateDayChips();
   updateDayConflicts();
@@ -763,15 +797,19 @@ async function submitSlotModal() {
       const existing = allSlots.filter(s => (s.slot_type || 'kob') === type && s.sort_order === editOrder);
       const existingByDay = {};
       existing.forEach(s => { existingByDay[s.day_of_week] = s; });
+      // Hari BERTANDA = ON (is_active ikut Status Default). Hari TAK bertanda = OFF (kekal baris,
+      // bukan padam) supaya selari dgn grid & tak hilang config. Padam penuh guna butang 🗑️.
       for (const day of days) {
         if (existingByDay[day]) {
-          await window.db.from('psy_kob_slot_config').update({ label, slot_start: start, slot_end: end, note: note || null, updated_at: new Date().toISOString() }).eq('id', existingByDay[day].id);
+          await window.db.from('psy_kob_slot_config').update({ label, slot_start: start, slot_end: end, note: note || null, is_active: isActive, updated_at: new Date().toISOString() }).eq('id', existingByDay[day].id);
         } else {
           await window.db.from('psy_kob_slot_config').insert({ slot_type: type, day_of_week: day, slot_start: start, slot_end: end, label, note: note || null, sort_order: editOrder, is_active: isActive });
         }
       }
       for (const row of existing) {
-        if (!days.includes(row.day_of_week)) await window.db.from('psy_kob_slot_config').delete().eq('id', row.id);
+        if (!days.includes(row.day_of_week) && row.is_active) {
+          await window.db.from('psy_kob_slot_config').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', row.id);
+        }
       }
       await auditLog('clinic_slot.edited', null, { type, sort_order: editOrder, label });
       banner('Slot dikemaskini ✅');

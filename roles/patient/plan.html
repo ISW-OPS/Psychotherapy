@@ -317,7 +317,7 @@
       <div class="max-w-xl mx-auto bg-white rounded-2xl border border-ink/10 p-8 md:p-10 text-center mt-10">
         <div class="text-6xl mb-4">📦</div>
         <h2 class="text-2xl font-bold text-ink mb-2">Belum Ada Pelan Rawatan</h2>
-        <p class="text-sm text-ink/70 mb-6">Treatment Plan akan muncul secara automatik selepas anda memilih dan membeli pakej rawatan. Setiap pakej ada goals berbeza untuk Bio, Psycho, Social, dan Spiritual.</p>
+        <p class="text-sm text-ink/70 mb-6">Treatment Plan akan muncul secara automatik selepas anda memilih dan membeli pakej rawatan.</p>
         <a href="pakej.html" class="inline-block bg-navy text-white px-6 py-3 rounded-lg font-semibold hover:bg-navy-dark">
           📦 Pilih Pakej Rawatan →
         </a>
@@ -348,10 +348,6 @@
                 duration_unit: pkg.duration_unit || 'week',
                 duration_weeks: pkg.duration_weeks || 12,
                 current_week: 1,
-                bio_goals: pkg.bio_goals || [],
-                psycho_goals: pkg.psycho_goals || [],
-                social_goals: pkg.social_goals || [],
-                spiritual_goals: pkg.spiritual_goals || [],
                 coaching_schedule: pkg.coaching_schedule || [],
                 status: 'active',
               }).select().single();
@@ -400,6 +396,18 @@
       if (patientRecord?.active_package_id) {
         const pkgRows = await dbQuery('psy_packages', { eq: { package_id: patientRecord.active_package_id } }).catch(() => []);
         activePkg = pkgRows[0] || null;
+      }
+
+      // Baca coaching_schedule LIVE dari pakej (sama macam plan-week) supaya edit pakej
+      // (bimbingan/bekalan/aktiviti) terus muncul untuk pesakit — bukan snapshot lama.
+      const _tmplId = activePlan?.template || patientRecord?.active_package_id;
+      if (_tmplId) {
+        let livePkg = (activePkg && activePkg.package_id === _tmplId) ? activePkg : null;
+        if (!livePkg) {
+          const liveRows = await dbQuery('psy_packages', { eq: { package_id: _tmplId } }).catch(() => []);
+          livePkg = liveRows[0] || null;
+        }
+        if (livePkg?.coaching_schedule?.length) activePlan.coaching_schedule = livePkg.coaching_schedule;
       }
 
       // Fetch clinic closures (untuk skip cuti)
@@ -572,11 +580,14 @@
       for (let w = startW; w <= endW; w++) {
         const s1 = sessionMap[`${w}_1`];
         const s2 = sessionMap[`${w}_2`];
-        const isExt = s1?.is_extension || s2?.is_extension;
-        const extPending = isExt && (s1?.status === 'extension_pending_payment' || s2?.status === 'extension_pending_payment');
-        const allHadir = s1 && s2 && ['hadir','consultation_done'].includes(s1.status) && ['hadir','consultation_done'].includes(s2.status);
-        const anyMiss = s1?.status === 'cancel' || s2?.status === 'cancel';
-        const hasSessions = !!(s1 || s2);
+        // Bilangan/hari sesi ikut Timeline Rawatan: [1,2]=dua sesi, [1]/[2]=satu sesi.
+        const days = sessionDaysForWeek(w);
+        const shown = days.map(dn => dn === 2 ? s2 : s1);
+        const isExt = shown.some(s => s?.is_extension);
+        const extPending = isExt && shown.some(s => s?.status === 'extension_pending_payment');
+        const allHadir = shown.length && shown.every(s => s && ['hadir','consultation_done'].includes(s.status));
+        const anyMiss = shown.some(s => s?.status === 'cancel');
+        const hasSessions = shown.some(Boolean);
         const isExpanded = expandedWeeks.has(w);
 
         const t = extPending ? chipTheme('bayar')
@@ -586,7 +597,7 @@
           : hasSessions ? chipTheme('dijadual')
           : chipTheme('datang');
 
-        const dateRange = weekDateRange(s1, s2);
+        const dateRange = weekDateRange(shown[0], shown[1]);
         const borderLeft = anyMiss ? 'border-l-4 border-l-amber-400' : allHadir ? 'border-l-4 border-l-green-500' : 'border-l-4 border-l-blue-400';
 
         html += `
@@ -603,8 +614,7 @@
             </svg>
           </button>
           <div id="week-body-${w}" class="${isExpanded ? '' : 'hidden'} px-3 pb-3 space-y-2 border-t border-ink/5">
-            ${renderSession(w, 1, s1, s2)}
-            ${renderSession(w, 2, s2, s1)}
+            ${days.map(dn => renderSession(w, dn, dn === 2 ? s2 : s1, dn === 2 ? s1 : s2)).join('')}
             <a href="plan-week.html?plan_id=${activePlan.id}&week=${w}" class="block text-center text-[11px] font-semibold text-navy hover:underline pt-1.5">📋 Lihat butiran &amp; bekalan minggu ini →</a>
           </div>
         </div>`;

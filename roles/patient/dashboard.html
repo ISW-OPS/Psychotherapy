@@ -415,6 +415,62 @@ function kycStatusBanner(submissionStatus) {
     cta:'Isi KYC →', ctaUrl:'kyc.html', ctaColor:'text-gold-dark' });
 }
 
+// ── Continuity Package offer (cadangan coach) ──────────
+async function renderContinuityOffer(zone) {
+  if (!patientRecord) return;
+  const { data } = await window.db.from('psy_continuity_offers')
+    .select('*').eq('patient_id', patientRecord.id)
+    .in('status', ['sent', 'viewed']).order('created_at', { ascending: false }).limit(1);
+  const offer = data && data[0];
+  if (!offer) return;
+
+  // Tandai 'viewed' supaya coach tahu pesakit dah nampak (non-kritikal).
+  if (offer.status === 'sent') {
+    window.db.from('psy_continuity_offers').update({ status: 'viewed' }).eq('id', offer.id).then(() => {}, () => {});
+  }
+
+  const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const priceTxt = offer.price != null ? `RM ${Number(offer.price).toFixed(2)}` : '';
+  zone.insertAdjacentHTML('beforeend', `
+    <div class="rounded-2xl bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] text-white p-5 shadow-sm">
+      <div class="flex items-start gap-3">
+        <div class="text-2xl">🔄</div>
+        <div class="flex-1 min-w-0">
+          <div class="font-bold text-sm">Cadangan Pakej Sambungan</div>
+          <div class="text-xs text-white/85 mt-1">Coach mencadangkan <b>${esc(offer.package_name)}</b>${priceTxt ? ` · ${priceTxt}` : ''} untuk teruskan rawatan anda.</div>
+          ${offer.note ? `<div class="text-[11px] text-white/75 mt-1 italic">"${esc(offer.note)}"</div>` : ''}
+          <div class="flex items-center gap-2 mt-3">
+            <button onclick="acceptContinuity('${offer.id}')" class="bg-white text-[#6366f1] px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-white/90">Terima & Bayar →</button>
+            <button onclick="declineContinuity('${offer.id}')" class="border border-white/50 text-white px-4 py-1.5 rounded-lg text-xs font-semibold hover:bg-white/10">Tolak</button>
+          </div>
+        </div>
+      </div>
+    </div>`);
+}
+
+async function acceptContinuity(id) {
+  const { data: offer } = await window.db.from('psy_continuity_offers').select('*').eq('id', id).single();
+  if (!offer) return;
+  await window.db.from('psy_continuity_offers')
+    .update({ status: 'accepted', responded_at: new Date().toISOString() }).eq('id', id);
+  // Guna semula aliran pembayaran pakej sedia ada (isw_pending_payment → payment.html).
+  localStorage.setItem('isw_pending_payment', JSON.stringify({
+    type: 'package',
+    packageId: offer.package_uuid,
+    packageName: offer.package_name,
+    title: `Pakej: ${offer.package_name}`,
+    amount: offer.price || 0,
+  }));
+  location.href = 'payment.html';
+}
+
+async function declineContinuity(id) {
+  if (!confirm('Tolak cadangan pakej sambungan ini?')) return;
+  await window.db.from('psy_continuity_offers')
+    .update({ status: 'declined', responded_at: new Date().toISOString() }).eq('id', id);
+  location.reload();
+}
+
 async function loadBanners(user) {
   const zone = document.getElementById('banner-zone');
   zone.innerHTML = '';
@@ -507,6 +563,9 @@ async function loadBanners(user) {
       body:'Aktifkan pakej untuk akses penuh ke Treatment Plan, Coaching, dan Library.',
       cta:'Pilih Pakej →', ctaUrl:'pakej.html', ctaColor:'text-terracotta' }));
   }
+
+  // 🔄 Cadangan Pakej Sambungan (continuity) daripada coach
+  await renderContinuityOffer(zone);
 
   // ⚠️ Sesi tidak hadir yang belum dijadual semula — alert paling atas (urgen, perlu tindakan)
   try {

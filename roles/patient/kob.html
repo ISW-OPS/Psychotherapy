@@ -88,7 +88,7 @@
               <div>
                 <label class="text-xs font-semibold">Tarikh</label>
                 <input id="book-date" type="date" onchange="loadSlotsForDate()" class="w-full mt-1 px-3 py-2.5 border border-ink/15 rounded-lg text-sm">
-                <p class="text-[10px] text-ink/40 mt-1">Konsultasi tutup Isnin & Selasa</p>
+                <p id="book-days-hint" class="text-[10px] text-ink/40 mt-1">Konsultasi ikut slot dibuka</p>
               </div>
               <div>
                 <label class="text-xs font-semibold">Slot Waktu</label>
@@ -194,28 +194,6 @@
             <div id="pkg-bimbingan" class="grid md:grid-cols-2 gap-2"></div>
           </div>
 
-          <!-- Treatment Plan Preview (BPS-S) -->
-          <div id="pkg-plan-preview" class="hidden">
-            <h3 class="font-bold mb-3">📋 Treatment Plan yang akan dicipta</h3>
-            <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-3">
-              <div class="bg-white rounded-xl p-4 border-t-4 border-navy">
-                <div class="text-xs text-navy font-semibold mb-2">🧬 BIO · Fizikal</div>
-                <ul id="pkg-bio" class="text-xs text-ink/70 space-y-1"></ul>
-              </div>
-              <div class="bg-white rounded-xl p-4 border-t-4 border-terracotta">
-                <div class="text-xs text-terracotta font-semibold mb-2">🧠 PSYCHO · Mental</div>
-                <ul id="pkg-psycho" class="text-xs text-ink/70 space-y-1"></ul>
-              </div>
-              <div class="bg-white rounded-xl p-4 border-t-4 border-gold-dark">
-                <div class="text-xs text-gold-dark font-semibold mb-2">👥 SOCIAL · Komuniti</div>
-                <ul id="pkg-social" class="text-xs text-ink/70 space-y-1"></ul>
-              </div>
-              <div class="bg-white rounded-xl p-4 border-t-4 border-green-dark">
-                <div class="text-xs text-green-dark font-semibold mb-2">🕌 SPIRITUAL · Rohani</div>
-                <ul id="pkg-spiritual" class="text-xs text-ink/70 space-y-1"></ul>
-              </div>
-            </div>
-          </div>
 
           <!-- CTA: Payment button at bottom (changes based on payment status) -->
           <div id="pkg-cta" class="bg-white rounded-xl p-6 border border-terracotta/30 sticky bottom-0">
@@ -1119,18 +1097,6 @@ async function renderRecommendedPackageDetail() {
       .map(p => `<div class="flex items-center gap-2 p-2 bg-cream/40 rounded text-sm"><span class="text-green-dark">✓</span>${escapeHtml(p)}</div>`)
       .join('');
   }
-  // Plan preview (BPS-S)
-  const hasGoals = ['bio_goals','psycho_goals','social_goals','spiritual_goals']
-    .some(k => Array.isArray(pkg[k]) && pkg[k].length);
-  if (hasGoals) {
-    document.getElementById('pkg-plan-preview').classList.remove('hidden');
-    ['bio','psycho','social','spiritual'].forEach(key => {
-      const list = pkg[`${key}_goals`] || [];
-      document.getElementById(`pkg-${key}`).innerHTML = list.length
-        ? list.map(g => `<li>• ${escapeHtml(g)}</li>`).join('')
-        : '<li class="text-ink/40 italic">—</li>';
-    });
-  }
 
   // CTA — switch based on payment status
   document.getElementById('cta-pkg-name').textContent = pkg.name;
@@ -1194,14 +1160,39 @@ function selectMode(m) {
     : 'flex-1 py-2.5 border-2 border-ink/15 text-ink/60 rounded-xl text-sm font-semibold';
 }
 
+// Hari konsultasi KOB dibuka = derive dari Slot KOB aktif (bukan hardcode Isnin/Selasa).
+let _kobAllowedDays = null;
+const _KOB_DAY_NAMES = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
+const _KOB_DAY_ORDER = [3, 4, 5, 6, 0, 1, 2];  // Rabu→Ahad… (susunan paparan)
+async function loadKobAllowedDays() {
+  let { data, error } = await window.db.from('psy_kob_slot_config')
+    .select('day_of_week').eq('is_active', true).eq('slot_type', 'kob');
+  if (error && /slot_type/i.test(error.message || '')) {
+    const fb = await window.db.from('psy_kob_slot_config').select('day_of_week').eq('is_active', true);
+    data = fb.data;
+  }
+  _kobAllowedDays = [...new Set((data || []).map(s => s.day_of_week))];
+  const hint = document.getElementById('book-days-hint');
+  if (hint) hint.textContent = _kobAllowedDays.length ? `Konsultasi dibuka: ${kobAllowedDayNames()}` : 'Tiada slot konsultasi aktif';
+  return _kobAllowedDays;
+}
+function kobAllowedDayNames() {
+  return [...(_kobAllowedDays || [])].sort((a, b) => _KOB_DAY_ORDER.indexOf(a) - _KOB_DAY_ORDER.indexOf(b))
+    .map(d => _KOB_DAY_NAMES[d]).join(', ');
+}
+
 async function validateBookDate(dateStr) {
   if (!dateStr) return 'Sila pilih tarikh';
   if (dateStr < todayLocal()) return 'Tarikh tidak boleh pada masa lepas';
   const day = new Date(dateStr + 'T00:00:00').getDay();
-  if (day === 1 || day === 2) return 'Konsultasi tutup Isnin & Selasa';
+  // Penutupan klinik
   const { data: closure } = await window.db.from('psy_clinic_closures')
     .select('label').eq('closure_date', dateStr).limit(1);
   if (closure?.[0]) return `Konsultasi tutup: ${closure[0].label}`;
+  // Hari dibuka ikut Slot KOB aktif (derive, bukan hardcode)
+  const allowed = _kobAllowedDays || await loadKobAllowedDays();
+  if (!allowed.length) return 'Tiada slot konsultasi aktif';
+  if (!allowed.includes(day)) return `Konsultasi hanya: ${kobAllowedDayNames()}`;
   return null;
 }
 
@@ -1318,9 +1309,14 @@ async function loadRsSlots() {
   if (dateErr) { sel.innerHTML = `<option value="">🚫 ${dateErr}</option>`; return; }
 
   const day = new Date(date + 'T00:00:00').getDay();
-  const { data: slots } = await window.db.from('psy_kob_slot_config')
-    .select('*').eq('day_of_week', day).eq('is_active', true)
+  let { data: slots, error } = await window.db.from('psy_kob_slot_config')
+    .select('*').eq('day_of_week', day).eq('is_active', true).eq('slot_type', 'kob')
     .order('sort_order', { ascending: true });
+  if (error && /slot_type/i.test(error.message || '')) {
+    const fb = await window.db.from('psy_kob_slot_config')
+      .select('*').eq('day_of_week', day).eq('is_active', true).order('sort_order', { ascending: true });
+    slots = fb.data;
+  }
   rsAvailableSlots = slots || [];
 
   if (!rsAvailableSlots.length) {
@@ -1446,6 +1442,7 @@ async function init() {
 
   document.getElementById('book-date').min = todayLocal();
   document.getElementById('rs-date').min = todayLocal();
+  loadKobAllowedDays();  // isi hint hari dibuka + cache utk validasi
 
   // Load latest KOB session if any
   const { data: kobRows } = await window.db.from('psy_kob_sessions')

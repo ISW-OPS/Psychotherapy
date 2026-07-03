@@ -298,6 +298,7 @@ let patientUserId = null;  // psy_profiles.id (for notify)
 let patientName  = '';     // nama pesakit (prefill tandatangan)
 let weekStart    = null;
 let weekEnd      = null;
+let backTab      = 'sessions';  // tab patient-hub untuk butang "Kembali" (ikut tempat asal)
 let coachingChecks = {};
 let weekOverride = null;   // psy_plan_week_overrides row utk minggu ini (atau null = ikut pakej)
 
@@ -312,6 +313,7 @@ function escHtml(s) { const d = document.createElement('div'); d.textContent = S
   const params = new URLSearchParams(location.search);
   const planId = params.get('plan_id');
   weekNumber   = parseInt(params.get('week') || '1');
+  backTab      = params.get('from') || 'sessions';  // kembali ke tab asal (cth 'overview')
 
   if (!planId) { location.href = 'plans.html'; return; }
 
@@ -348,6 +350,7 @@ function escHtml(s) { const d = document.createElement('div'); d.textContent = S
   }
 
   await loadKepatuhanItems();
+  await loadPwAvailability();   // slot rawatan + penutupan klinik (utk tempahan sedar-slot)
   await loadWeek();
 })();
 
@@ -593,7 +596,7 @@ function updateBreadcrumb() {
   document.getElementById('plan-name-crumb').textContent = activePlan.name;
   document.getElementById('week-crumb').textContent = `Minggu ${weekNumber}`;
   const back = document.getElementById('btn-back');
-  if (back && patientId) back.href = `patient-hub.html?patient_id=${patientId}&tab=sessions`;
+  if (back && patientId) back.href = `patient-hub.html?patient_id=${patientId}&tab=${backTab}`;
   document.getElementById('btn-prev').disabled = weekNumber <= 1;
   document.getElementById('btn-next').disabled = weekNumber >= (planMaxWeek || activePlan.duration_weeks);
 }
@@ -616,6 +619,10 @@ function renderHero() {
   const total = activePlan.duration_weeks || 48;
   const pct   = Math.round((weekNumber / total) * 100);
   const progStartYmd = ymdLocal(planAnchorDate(activePlan));
+  // Tarikh DIJANGKA untuk sesi ini bila belum ditempah — dikira dari anchor (Tarikh Mula Program),
+  // ikut hari-sesi pakej. Placeholder sahaja; tidak ditulis ke DB (session_date kekal null).
+  const expectedIso = suggestSessionDate(weekEntry?.session_day || 1, null)
+    || (() => { const d = new Date(weekStart); d.setHours(0, 0, 0, 0); return d.toISOString(); })();
 
   const dayName = r => r?.session_date ? new Date(r.session_date).toLocaleDateString('ms-MY', { weekday: 'short' }) : `Sesi ${r?.session_day || 1}`;
 
@@ -648,10 +655,12 @@ function renderHero() {
          <div class="text-[11px] font-semibold text-ink/50 uppercase tracking-wide mb-2">Sesi tidak hadir — tindakan</div>
          <div class="flex items-center gap-2 flex-wrap">
            <button onclick="remindPatientReschedule()" class="inline-flex items-center gap-1.5 text-xs font-semibold border border-navy/30 text-navy px-3 py-1.5 rounded-lg hover:bg-navy hover:text-white transition">🔔 Ingatkan Pesakit</button>
-           <input id="resched-date" type="datetime-local" class="text-xs border border-ink/20 rounded-lg px-2 py-1.5 outline-none focus:border-navy">
+           <input id="resched-date" type="date" min="${pwTodayYmd()}" onchange="pwOnDateChange('resched-date','resched-slot','resched-warn')" class="text-xs border border-ink/20 rounded-lg px-2 py-1.5 outline-none focus:border-navy">
+           <select id="resched-slot" class="text-xs border border-ink/20 rounded-lg px-2 py-1.5 bg-white outline-none focus:border-navy"><option value="">— Pilih tarikh —</option></select>
            <button onclick="coachReschedule()" class="inline-flex items-center gap-1.5 text-xs font-semibold bg-gold text-ink px-3 py-1.5 rounded-lg hover:bg-gold-dark hover:text-white transition">📅 Jadual Semula</button>
          </div>
-         <div class="text-[11px] text-ink/45 mt-1">Ingatkan pesakit untuk reschedule sendiri, atau tetapkan tarikh baru terus.</div>
+         <div id="resched-warn" class="hidden text-[11px] text-terracotta mt-1"></div>
+         <div class="text-[11px] text-ink/45 mt-1">Ingatkan pesakit untuk reschedule sendiri, atau tetapkan tarikh baru terus (hanya slot rawatan dibuka).</div>
        </div>`
     : '';
   // Kawalan bilangan sesi minggu ini (per-pesakit). Hanya untuk plan berpasangan (2-sesi capable).
@@ -702,15 +711,22 @@ function renderHero() {
         <div class="text-sm text-ink/70 mt-1">
           ${weekEntry?.session_date
             ? `📅 ${new Date(weekEntry.session_date).toLocaleDateString('ms-MY', { weekday:'long', day:'2-digit', month:'long', year:'numeric' })} · 🕐 ${new Date(weekEntry.session_date).toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' })}`
-            : 'Tarikh sesi belum ditetapkan'}
+            : `<span class="text-ink/45">📅 ${new Date(expectedIso).toLocaleDateString('ms-MY', { weekday:'long', day:'2-digit', month:'long', year:'numeric' })} · <span class="italic">dijangka — belum ditempah</span></span>`}
           ${weekEntry?.meet_link ? `<br><a href="${weekEntry.meet_link}" target="_blank" class="inline-flex items-center gap-1 mt-1 text-xs font-semibold text-navy hover:underline bg-navy-light px-2 py-0.5 rounded-lg">🎥 Join Google Meet →</a>` : ''}
         </div>
-        ${weekEntry?.id ? `<div class="mt-2 flex items-center gap-2 flex-wrap">
+        ${weekEntry?.id ? (() => {
+          const cur = weekEntry.session_date ? new Date(weekEntry.session_date) : null;
+          const curYmd = cur ? pwYmd(cur) : '';
+          const curTime = cur ? `${String(cur.getHours()).padStart(2,'0')}:${String(cur.getMinutes()).padStart(2,'0')}` : '';
+          const slotOpts = (curYmd && !pwValidateDate(curYmd)) ? pwSlotOptionsHtml(cur.getDay(), curTime) : '<option value="">— Pilih tarikh —</option>';
+          return `<div class="mt-2 flex items-center gap-2 flex-wrap">
           <span class="text-[10px] font-semibold text-ink/45 uppercase tracking-wide">Tukar tarikh sesi ini</span>
-          <input id="week-date-edit" type="datetime-local" value="${toLocalDT(weekEntry.session_date)}"
+          <input id="week-date-edit" type="date" min="${pwTodayYmd()}" value="${curYmd}" onchange="pwOnDateChange('week-date-edit','week-slot-edit','week-date-warn')"
             class="text-xs border border-ink/20 rounded-lg px-2 py-1 outline-none focus:border-navy">
+          <select id="week-slot-edit" class="text-xs border border-ink/20 rounded-lg px-2 py-1 bg-white outline-none focus:border-navy">${slotOpts}</select>
           <button onclick="setSessionDate()" class="text-xs font-semibold border border-navy/30 text-navy px-3 py-1 rounded-lg hover:bg-navy hover:text-white transition">💾 Simpan</button>
-        </div>` : ''}
+          <span id="week-date-warn" class="hidden w-full text-[11px] text-terracotta"></span>
+        </div>`; })() : ''}
         ${weekEntry?.absence_reason ? `<div class="mt-2 bg-terracotta/10 border border-terracotta/25 rounded-lg px-3 py-2 text-xs text-terracotta-dark"><span class="font-semibold">📝 Sebab tidak hadir (oleh pesakit):</span> <span class="text-ink/75">${escHtml(weekEntry.absence_reason)}</span></div>` : ''}
       </div>
       ${weekEntry?.updated_by_name ? `<div class="text-xs text-ink/40 text-right">Dikemaskini oleh<br><span class="font-semibold text-ink/60">${weekEntry.updated_by_name}</span></div>` : ''}
@@ -1057,12 +1073,73 @@ function toLocalDT(iso) {
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-// Tukar tarikh SESI AKTIF sahaja (override manual) — tak sentuh minggu lain.
+// ── Ketersediaan slot rawatan + penutupan klinik (tempahan sedar-slot) ──
+const PW_DAY_NAMES = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
+const PW_DAY_ORDER = [5, 6, 0, 1, 2, 3, 4];
+let _pwSlotsByDay = {}, _pwClosureMap = {}, _pwAllowedDays = [];
+
+async function loadPwAvailability() {
+  let { data: slots, error } = await window.db.from('psy_kob_slot_config')
+    .select('day_of_week, slot_start, slot_end, label, sort_order')
+    .eq('is_active', true).eq('slot_type', 'rawatan').order('sort_order', { ascending: true });
+  if (error && /slot_type/i.test(error.message || '')) {
+    const fb = await window.db.from('psy_kob_slot_config')
+      .select('day_of_week, slot_start, slot_end, label, sort_order')
+      .eq('is_active', true).order('sort_order', { ascending: true });
+    slots = fb.data;
+  }
+  _pwSlotsByDay = {};
+  (slots || []).forEach(s => {
+    const start = (s.slot_start || '').slice(0, 5);
+    (_pwSlotsByDay[s.day_of_week] = _pwSlotsByDay[s.day_of_week] || []).push({ start, label: s.label || start });
+  });
+  _pwAllowedDays = Object.keys(_pwSlotsByDay).map(Number);
+  const { data: closures } = await window.db.from('psy_clinic_closures').select('closure_date, label');
+  _pwClosureMap = {};
+  (closures || []).forEach(c => { _pwClosureMap[c.closure_date] = c.label || 'Tutup'; });
+}
+function pwYmd(d) { const p = n => String(n).padStart(2, '0'); const x = new Date(d); return `${x.getFullYear()}-${p(x.getMonth()+1)}-${p(x.getDate())}`; }
+function pwTodayYmd() { return pwYmd(new Date()); }
+function pwAllowedDayNames() {
+  return [..._pwAllowedDays].sort((a, b) => PW_DAY_ORDER.indexOf(a) - PW_DAY_ORDER.indexOf(b)).map(d => PW_DAY_NAMES[d]).join(', ');
+}
+function pwValidateDate(dateStr) {
+  if (!dateStr) return '— Pilih tarikh dahulu —';
+  if (_pwClosureMap[dateStr]) return `🚫 Klinik tutup: ${_pwClosureMap[dateStr]}`;
+  const day = new Date(dateStr + 'T00:00:00').getDay();
+  if (!_pwAllowedDays.includes(day)) return `🚫 Hari rawatan hanya: ${pwAllowedDayNames()}`;
+  return null;
+}
+function pwSlotOptionsHtml(day, preselect) {
+  const slots = _pwSlotsByDay[day] || [];
+  if (!slots.length) return '<option value="">— Tiada slot —</option>';
+  return '<option value="">— Pilih slot —</option>' +
+    slots.map(s => `<option value="${s.start}" ${preselect === s.start ? 'selected' : ''}>${escHtml(s.label)}</option>`).join('');
+}
+function pwOnDateChange(dateId, slotId, warnId) {
+  const dateStr = document.getElementById(dateId).value;
+  const warn = document.getElementById(warnId);
+  const sel = document.getElementById(slotId);
+  const err = pwValidateDate(dateStr);
+  if (err) {
+    if (warn) { warn.textContent = err; warn.classList.remove('hidden'); }
+    sel.innerHTML = `<option value="">${err.includes('tutup') ? '— Klinik tutup —' : '— Tiada slot —'}</option>`;
+    return;
+  }
+  if (warn) warn.classList.add('hidden');
+  sel.innerHTML = pwSlotOptionsHtml(new Date(dateStr + 'T00:00:00').getDay(), '');
+}
+
+// Tukar tarikh SESI AKTIF sahaja (override manual) — tak sentuh minggu lain. Sedar slot + penutupan.
 async function setSessionDate() {
   if (!weekEntry?.id) { banner('Tiada sesi untuk minggu ini.', 'error'); return; }
-  const val = document.getElementById('week-date-edit')?.value;
-  if (!val) { banner('Sila pilih tarikh & masa.', 'error'); return; }
-  const iso = new Date(val).toISOString();
+  const date = document.getElementById('week-date-edit')?.value;
+  const time = document.getElementById('week-slot-edit')?.value;
+  if (!date) { banner('Sila pilih tarikh.', 'error'); return; }
+  const derr = pwValidateDate(date);
+  if (derr) { banner(derr, 'error'); return; }
+  if (!time) { banner('Sila pilih slot masa.', 'error'); return; }
+  const iso = new Date(`${date}T${time}:00`).toISOString();
   try {
     await window.db.from('psy_plan_weekly_progress').update({
       session_date:    iso,
@@ -1141,9 +1218,13 @@ async function remindPatientReschedule() {
 // Coach: jadual semula sesi tidak hadir terus (tetapkan tarikh baru + status booked + notify).
 async function coachReschedule() {
   if (!weekEntry?.id) { banner('Tiada sesi.', 'error'); return; }
-  const val = document.getElementById('resched-date')?.value;
-  if (!val) { banner('Sila pilih tarikh & masa baru.', 'error'); return; }
-  const sessionAt = new Date(val).toISOString();
+  const date = document.getElementById('resched-date')?.value;
+  const time = document.getElementById('resched-slot')?.value;
+  if (!date) { banner('Sila pilih tarikh baru.', 'error'); return; }
+  const derr = pwValidateDate(date);
+  if (derr) { banner(derr, 'error'); return; }
+  if (!time) { banner('Sila pilih slot masa.', 'error'); return; }
+  const sessionAt = new Date(`${date}T${time}:00`).toISOString();
   try {
     let apptId = weekEntry.appointment_id || null;
     if (apptId) {

@@ -215,10 +215,6 @@ CREATE TABLE IF NOT EXISTS psy_treatment_plans (
   duration_unit TEXT DEFAULT 'week',
   duration_weeks INT DEFAULT 13,
   current_week INT DEFAULT 1,
-  bio_goals JSONB DEFAULT '[]',
-  psycho_goals JSONB DEFAULT '[]',
-  social_goals JSONB DEFAULT '[]',
-  spiritual_goals JSONB DEFAULT '[]',
   coaching_schedule JSONB DEFAULT '[]',
   status TEXT DEFAULT 'active' CHECK (status IN ('draft','active','completed','paused')),
   created_at TIMESTAMPTZ DEFAULT now()
