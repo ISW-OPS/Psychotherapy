@@ -1437,10 +1437,12 @@
               });
             }
 
-            // Auto-cipta treatment plan kalau patient ni belum ada plan aktif untuk pakej ni
+            // Plan aktif sedia ada (utk cipta baru / kemaskini bila pakej ditukar)
             const { data: existingPlan } = await window.db.from('psy_treatment_plans')
-              .select('id').eq('patient_id', editingPatientId).eq('status', 'active').limit(1);
-            if (!existingPlan?.length) {
+              .select('id, template').eq('patient_id', editingPatientId).eq('status', 'active').limit(1);
+            const _plan = existingPlan?.[0];
+            if (!_plan) {
+              // Belum ada plan → cipta baru
               const { data: pkgRows } = await window.db.from('psy_packages')
                 .select('*').eq('package_id', selectedPkgCode).limit(1);
               const pkg = pkgRows?.[0];
@@ -1451,6 +1453,23 @@
                 const mode = isInactive ? (_inactState === 'stopped' ? 'stopped' : 'completed') : 'active';
                 const newPlan = await seedStaffTreatmentPlan(editingPatientId, pkg, durationWeeks, currentWeekVal, pakejDate, mode);
                 if (newPlan) banner('Pakej diaktifkan & treatment plan dicipta ✅');
+              }
+            } else if (_plan.template !== selectedPkgCode) {
+              // Pakej DITUKAR → kemaskini plan sedia ada ke pakej baru (nama/template/tempoh/timeline).
+              // Sesi sedia ada kekal — staff boleh "Jadualkan Semula Sesi" jika tempoh berubah.
+              const { data: pkgRows } = await window.db.from('psy_packages')
+                .select('*').eq('package_id', selectedPkgCode).limit(1);
+              const pkg = pkgRows?.[0];
+              if (pkg) {
+                await window.db.from('psy_treatment_plans').update({
+                  template: pkg.package_id,
+                  name: `${pkg.name} Treatment Plan`,
+                  duration_unit: pkg.duration_unit || 'week',
+                  duration_weeks: pkg.duration_weeks || 12,
+                  coaching_schedule: pkg.coaching_schedule || [],
+                }).eq('id', _plan.id);
+                await auditLog('plan.package_changed', _plan.id, { to: pkg.package_id });
+                banner('Pakej ditukar — treatment plan dikemaskini ✅ (semak jadual sesi jika tempoh berubah)');
               }
             }
           }
