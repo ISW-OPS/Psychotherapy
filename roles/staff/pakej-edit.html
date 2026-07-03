@@ -596,11 +596,11 @@ function renderItemList(wk, field, items, placeholder) {
 // Dua lajur (Bimbingan & Aktiviti | Bekalan) untuk satu sesi. suf='' = Sesi 1, '_2' = Sesi 2.
 function renderSessionCols(wk, item, suf) {
   return `<div class="grid md:grid-cols-2 gap-3">
-    <div>
+    <div ondragover="pkgDragOver(event)" ondragleave="pkgDragLeave(event)" ondrop="pkgDrop(event, ${wk}, '${suf}', 'bimbingan')" class="rounded-lg transition-colors p-1 -m-1">
       <label class="text-[11px] font-semibold text-ink/60 block mb-1">💡 Bimbingan & Aktiviti</label>
       ${renderCombinedCatalogList(wk, item, suf)}
     </div>
-    <div>
+    <div ondragover="pkgDragOver(event)" ondragleave="pkgDragLeave(event)" ondrop="pkgDrop(event, ${wk}, '${suf}', 'bekalan')" class="rounded-lg transition-colors p-1 -m-1">
       <label class="text-[11px] font-semibold text-ink/60 block mb-1">📦 Bekalan</label>
       ${renderItemList(wk, 'supplies' + suf, item['supplies' + suf], 'cth: 1 kg LTH')}
     </div>
@@ -631,6 +631,7 @@ function renderCombinedCatalogList(wk, weekItem, suf = '') {
       ? '<span class="text-[9px] font-semibold text-navy bg-navy/10 px-1.5 py-0.5 rounded">💡</span>'
       : '<span class="text-[9px] font-semibold text-terracotta bg-terracotta/10 px-1.5 py-0.5 rounded">🩺</span>';
     return `<div class="flex gap-1 mb-1 items-center">
+      ${pkgDragHandle(wk, field, i)}
       ${badge}
       <span class="flex-1 px-2 py-1 bg-white border border-ink/15 rounded text-xs truncate">${escapeHtml(itemName)}</span>
       <button type="button" onclick="removeItem(${wk}, '${field}', ${i})" class="px-2 text-terracotta hover:bg-terracotta/10 rounded text-xs">×</button>
@@ -693,6 +694,7 @@ function renderSuppliesList(wk, items, field = 'supplies') {
       const subItems = (kit?.items || []).map(i => i.item_name + ' ×' + i.qty).join(', ');
       return `<div class="mb-1 border border-teal/30 bg-teal/5 rounded text-xs">
         <div class="flex gap-1 items-center px-2 py-1">
+          ${pkgDragHandle(wk, field, i)}
           <span class="flex-1 font-semibold truncate">🧰 ${escapeHtml(kitName)}</span>
           <input type="number" value="${s.qty || 1}" min="0.5" step="0.5" title="Bilangan kit per patient"
             oninput="updateSupplyQty(${wk}, ${i}, this.value, '${field}')"
@@ -707,6 +709,7 @@ function renderSuppliesList(wk, items, field = 'supplies') {
     const itemName = item?.name || s.item_name || '(item tak ditemui)';
     const itemUnit = item?.unit || s.item_unit || '';
     return `<div class="flex gap-1 mb-1 items-center">
+      ${pkgDragHandle(wk, field, i)}
       <span class="flex-1 px-2 py-1 bg-white border border-ink/15 rounded text-xs truncate">${escapeHtml(itemName)}</span>
       <input type="number" value="${s.qty || 1}" min="0" step="0.5"
         oninput="updateSupplyQty(${wk}, ${i}, this.value, '${field}')"
@@ -1018,6 +1021,46 @@ function removeItem(wk, field, idx) {
   const item = getWeekItem(wk);
   if (!item?.[field]) return;
   item[field].splice(idx, 1);
+  renderCoachingScheduleEditor();
+}
+
+// ── Drag-drop item Bimbingan/Aktiviti/Bekalan antara Sesi 1 ↔ Sesi 2 (& antara minggu) ──
+function pkgDragHandle(wk, field, i) {
+  return `<span draggable="true" ondragstart="pkgDragStart(event,${wk},'${field}',${i})" class="cursor-grab select-none text-ink/30 hover:text-navy text-sm leading-none px-0.5" title="Seret ke Sesi lain">⠿</span>`;
+}
+let _pkgDrag = null;
+function pkgDragStart(e, wk, field, idx) {
+  _pkgDrag = { wk, field, idx };
+  e.dataTransfer.effectAllowed = 'move';
+  try { e.dataTransfer.setData('text/plain', field + ':' + idx); } catch (_) {}
+}
+function pkgDragOver(e) {
+  if (!_pkgDrag) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  e.currentTarget.classList.add('ring-2', 'ring-navy/40', 'bg-navy/5');
+}
+function pkgDragLeave(e) { e.currentTarget.classList.remove('ring-2', 'ring-navy/40', 'bg-navy/5'); }
+function pkgDrop(e, wk, tgtSuf, kind) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('ring-2', 'ring-navy/40', 'bg-navy/5');
+  const src = _pkgDrag; _pkgDrag = null;
+  if (!src) return;
+  const base = src.field.replace(/_2$/, '');            // guidance | aktiviti | supplies
+  const isSupply = base === 'supplies';
+  // Padankan jenis: Bekalan → kotak Bekalan; Bimbingan/Aktiviti → kotak Bimbingan
+  if (isSupply && kind !== 'bekalan') { banner('Bekalan hanya boleh diseret ke kotak Bekalan.', 'error'); return; }
+  if (!isSupply && kind !== 'bimbingan') { banner('Bimbingan/Aktiviti hanya boleh diseret ke kotak Bimbingan.', 'error'); return; }
+  const tgtField = base + (tgtSuf || '');
+  if (src.wk === wk && src.field === tgtField) return;   // sama tempat — tiada apa berubah
+  const sItem = getWeekItem(src.wk), tItem = getWeekItem(wk);
+  if (!sItem || !tItem) return;
+  sItem[src.field] = sItem[src.field] || [];
+  if (src.idx < 0 || src.idx >= sItem[src.field].length) return;
+  const [val] = sItem[src.field].splice(src.idx, 1);
+  tItem[tgtField] = tItem[tgtField] || [];
+  tItem[tgtField].push(val);
+  if (typeof saveDraftDebounced === 'function') saveDraftDebounced();
   renderCoachingScheduleEditor();
 }
 
