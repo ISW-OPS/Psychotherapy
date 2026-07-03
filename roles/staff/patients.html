@@ -345,8 +345,8 @@
             <label class="flex items-start gap-1.5 cursor-pointer flex-1 min-w-[200px] p-2 border border-ink/15 rounded-lg hover:bg-white">
               <input type="radio" name="cp-status-radio" value="inactive" onchange="onStatusChange(this.value)" class="accent-navy mt-0.5">
               <div>
-                <div class="text-xs font-semibold">Pesakit Lama</div>
-                <div class="text-[10px] text-ink/50">Rekod sejarah · sudah berhenti / tamat / meninggal</div>
+                <div class="text-xs font-semibold">Tidak Aktif (Selesai / Berhenti)</div>
+                <div class="text-[10px] text-ink/50">Dah selesai atau berhenti rawatan · atau rekod sejarah lama</div>
               </div>
             </label>
           </div>
@@ -472,6 +472,16 @@
                 Cth: kalau pesakit dah minggu ke-3, masukkan "3". Sistem akan cipta plan + buka semua minggu 1 sehingga durasi pakej untuk staff isi nota backfill.
               </span>
             </div>
+          </div>
+
+          <!-- Row 2c-2: Keadaan rawatan (bila status = Tidak Aktif — mana-mana pesakit) -->
+          <div id="cp-inactive-state-row" class="hidden mt-3 p-3 bg-cream/60 rounded-xl border border-ink/10">
+            <label class="text-xs font-semibold">🗂️ Keadaan Rawatan (bila Tidak Aktif)</label>
+            <div class="flex items-center gap-4 mt-1.5 text-sm flex-wrap">
+              <label class="flex items-center gap-1.5"><input type="radio" name="cp-inactive-state" value="completed" checked class="accent-navy"> ✅ Selesai rawatan</label>
+              <label class="flex items-center gap-1.5"><input type="radio" name="cp-inactive-state" value="stopped" class="accent-navy"> ⛔ Berhenti separuh jalan</label>
+            </div>
+            <p class="text-[11px] text-ink/45 mt-1"><b>Selesai</b> → semua minggu (yang tarikh dah lepas) ditanda Hadir. <b>Berhenti</b> → "Minggu Semasa" = minggu berhenti; minggu sebelumnya (tarikh dah lepas) ditanda Hadir, selebihnya kekal kosong. Sesi tarikh masa depan tak ditanda Hadir.</p>
           </div>
 
           <!-- Row 2d: Referral — kod pesakit sendiri + dirujuk oleh -->
@@ -798,6 +808,10 @@
       const cwRow = document.getElementById('cp-current-week-row');
       if (cwRow) cwRow.classList.toggle('hidden', !(isActive || isInactive));
 
+      // Keadaan rawatan (Selesai / Berhenti) — hanya untuk Pesakit Lama (inactive)
+      const inactRow = document.getElementById('cp-inactive-state-row');
+      if (inactRow) inactRow.classList.toggle('hidden', !isInactive);
+
       // KOB slot booking only for Pesakit Baru
       const kobSlot = document.getElementById('kob-slot-section');
       if (kobSlot) kobSlot.style.display = isNew ? '' : 'none';
@@ -814,8 +828,10 @@
     //  • startDateStr = 'YYYY-MM-DD' tarikh SEBENAR mula program (anchor Minggu 1) → simpan ke start_date.
     //  • session_date tiap minggu dijana = startDate + (w-1)×7 hari (boleh ubah per-minggu di plan-week).
     //  • planStatus: 'active' (sedang rawatan) atau 'completed' (rekod sejarah / berhenti / meninggal).
-    async function seedStaffTreatmentPlan(patientId, pkg, durationWeeks, currentWeekVal, startDateStr, planStatus) {
+    // mode: 'active' (sedang rawatan) | 'completed' (Pesakit Lama — selesai) | 'stopped' (Pesakit Lama — berhenti)
+    async function seedStaffTreatmentPlan(patientId, pkg, durationWeeks, currentWeekVal, startDateStr, mode) {
       const cw = Math.min(Math.max(1, parseInt(currentWeekVal) || 1), durationWeeks);
+      const planStatus = mode === 'stopped' ? 'paused' : (mode === 'completed' ? 'completed' : 'active');
       const { data: newPlan } = await window.db.from('psy_treatment_plans').insert({
         patient_id: patientId,
         doctor_id: null,
@@ -826,7 +842,7 @@
         current_week: cw,
         start_date: startDateStr || null,
         coaching_schedule: pkg.coaching_schedule || [],
-        status: planStatus || 'active',
+        status: planStatus,
       }).select('id').single();
       if (!newPlan?.id) return null;
 
@@ -857,15 +873,20 @@
       const anchor = startDateStr ? new Date(startDateStr + 'T00:00:00') : null;
       const sched = Array.isArray(pkg.coaching_schedule) ? pkg.coaching_schedule : [];
       const canBook = !!anchor && allowedDays.length > 0;
+      const nowMs = Date.now();
+      // Julat minggu yang DIHADIRI: Selesai = semua; Berhenti = minggu sebelum minggu berhenti; Active = tiada auto-hadir.
+      const attendedUpTo = mode === 'completed' ? durationWeeks : (mode === 'stopped' ? Math.max(0, cw - 1) : 0);
       const rows = [];
       for (let w = 1; w <= durationWeeks; w++) {
         // Bilangan sesi minggu ni ikut Timeline pakej (session_days); fallback 1.
         const wkCfg = sched.find(it => Number(it.week || it.day) === w);
         const nSes = (Array.isArray(wkCfg?.session_days) && wkCfg.session_days.length >= 2) ? 2 : 1;
+        // Pesakit berhenti: minggu berhenti (cw) & selepasnya → kekal kosong (tiada tarikh/tempahan).
+        const isStoppedFuture = (mode === 'stopped' && w >= cw);
         let prev = null;
         for (let day = 1; day <= nSes; day++) {
           let sd = null;
-          if (canBook) {
+          if (canBook && !isStoppedFuture) {
             const target = day === 1
               ? new Date(anchor.getTime() + (w - 1) * 7 * 86400000)
               : new Date((prev || anchor).getTime() + 86400000);
@@ -876,12 +897,14 @@
               sd = avail.toISOString(); prev = avail;
             }
           }
+          // Tanda Hadir HANYA kalau minggu dalam julat dihadiri DAN tarikh sesi dah lepas (tak boleh hadir tarikh masa depan).
+          const attended = (w <= attendedUpTo) && sd && (new Date(sd).getTime() <= nowMs);
           rows.push({
             plan_id: newPlan.id,
             patient_id: patientId,
             week_number: w,
             session_day: day,
-            status: sd ? 'booked' : 'pending',
+            status: attended ? 'hadir' : (sd ? 'booked' : 'pending'),
             session_date: sd,
           });
         }
@@ -891,6 +914,25 @@
         weeks: durationWeeks, current_week: cw, start_date: startDateStr || null, status: planStatus || 'active',
       });
       return newPlan;
+    }
+
+    // Tandai plan SEDIA ADA sebagai selesai/berhenti (utk pesakit yang sudah ada plan, kini ditukar ke inactive).
+    // Update status plan + tanda Hadir minggu dalam julat yang tarikhnya DAH LEPAS. Tak sentuh yang dah hadir/cancel.
+    async function markPlanInactive(planId, mode, currentWeekVal) {
+      const planStatus = mode === 'stopped' ? 'paused' : 'completed';
+      await window.db.from('psy_treatment_plans').update({ status: planStatus }).eq('id', planId);
+      const cw = Math.max(1, parseInt(currentWeekVal) || 1);
+      const attendedUpTo = mode === 'stopped' ? (cw - 1) : Infinity;  // Selesai = semua; Berhenti = sebelum minggu berhenti
+      const nowMs = Date.now();
+      const { data: rows } = await window.db.from('psy_plan_weekly_progress')
+        .select('id, week_number, session_date, status').eq('plan_id', planId);
+      for (const r of (rows || [])) {
+        if (['hadir', 'consultation_done', 'cancel'].includes(r.status)) continue;  // jangan sentuh yang dah bertanda
+        if (r.week_number <= attendedUpTo && r.session_date && new Date(r.session_date).getTime() <= nowMs) {
+          await window.db.from('psy_plan_weekly_progress').update({ status: 'hadir' }).eq('id', r.id);
+        }
+      }
+      await auditLog('plan.marked_inactive', planId, { mode, current_week: cw });
     }
 
     function toggleKobSlot(checked) {
@@ -1394,10 +1436,25 @@
               if (pkg) {
                 const durationWeeks = pkg.duration_weeks || selectedPkgWeeks || 12;
                 const currentWeekVal = parseInt(document.getElementById('cp-current-week')?.value) || 1;
-                const planStatus = isInactive ? 'completed' : 'active';
-                const newPlan = await seedStaffTreatmentPlan(editingPatientId, pkg, durationWeeks, currentWeekVal, pakejDate, planStatus);
+                const _inactState = document.querySelector('input[name="cp-inactive-state"]:checked')?.value || 'completed';
+                const mode = isInactive ? (_inactState === 'stopped' ? 'stopped' : 'completed') : 'active';
+                const newPlan = await seedStaffTreatmentPlan(editingPatientId, pkg, durationWeeks, currentWeekVal, pakejDate, mode);
                 if (newPlan) banner('Pakej diaktifkan & treatment plan dicipta ✅');
               }
+            }
+          }
+
+          // Pesakit SEDIA ADA ditukar ke INACTIVE (Pesakit Lama) — kemas plan sedia ada
+          // (status completed/paused + tanda Hadir minggu lepas). Tak perlu pilih pakej semula.
+          if (isInactive) {
+            const { data: _plans } = await window.db.from('psy_treatment_plans')
+              .select('id, status').eq('patient_id', editingPatientId).order('created_at', { ascending: false });
+            const _target = (_plans || []).find(p => p.status !== 'completed' && p.status !== 'paused') || (_plans || [])[0] || null;
+            if (_target) {
+              const _cw = parseInt(document.getElementById('cp-current-week')?.value) || 1;
+              const _st = document.querySelector('input[name="cp-inactive-state"]:checked')?.value || 'completed';
+              await markPlanInactive(_target.id, _st === 'stopped' ? 'stopped' : 'completed', _cw);
+              banner(_st === 'stopped' ? 'Plan ditanda berhenti ⛔' : 'Plan ditanda selesai ✅');
             }
           }
           await auditLog('patient.updated_by_staff', editingPatientId, { name });
@@ -1465,8 +1522,9 @@
               if (pkg) {
                 const durationWeeks = pkg.duration_weeks || selectedPkgWeeks || 12;
                 const currentWeekVal = parseInt(document.getElementById('cp-current-week')?.value) || 1;
-                const planStatus = isInactive ? 'completed' : 'active';
-                const newPlan = await seedStaffTreatmentPlan(inserted.id, pkg, durationWeeks, currentWeekVal, pakejDate, planStatus);
+                const _inactState = document.querySelector('input[name="cp-inactive-state"]:checked')?.value || 'completed';
+                const mode = isInactive ? (_inactState === 'stopped' ? 'stopped' : 'completed') : 'active';
+                const newPlan = await seedStaffTreatmentPlan(inserted.id, pkg, durationWeeks, currentWeekVal, pakejDate, mode);
                 if (newPlan) banner(isInactive
                   ? 'Rekod sejarah dicipta — boleh isi data setiap minggu di Pesakit → Sesi ✅'
                   : 'Treatment plan dicipta ✅');

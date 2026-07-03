@@ -1622,7 +1622,13 @@ function renderOvWeekPage() {
     else { psWrap.classList.add('hidden'); psWrap.classList.remove('flex'); }
   }
   if (!activePlan) {
-    document.getElementById('ov-weekly-list').innerHTML = '<div class="col-span-3 text-sm text-ink/40 italic py-4 text-center">Tiada plan aktif</div>';
+    const hasPkg  = !!(patient?.active_package_id || patient?.active_package_name);
+    const canMake = hasPkg && (canEdit || window.currentUser?.staff_role === 'super_admin');
+    document.getElementById('ov-weekly-list').innerHTML = `
+      <div class="col-span-3 text-center py-6">
+        <div class="text-sm text-ink/40 italic mb-3">Tiada plan aktif${hasPkg ? ` — pesakit ada pakej (<span class="text-ink/60 font-semibold not-italic">${ovEsc(patient.active_package_name || patient.active_package_id)}</span>) tapi belum ada treatment plan` : ''}</div>
+        ${canMake ? `<button onclick="createMissingPlan()" class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-navy text-white hover:bg-navy-dark transition">➕ Cipta Plan Rawatan</button>` : ''}
+      </div>`;
     return;
   }
   // Kira minggu termasuk minggu tambahan (extension) — week_number boleh melebihi duration_weeks
@@ -1640,11 +1646,14 @@ function renderOvWeekPage() {
   // Bilangan sesi setiap minggu = ikut Timeline Rawatan pakej (coaching_schedule[w].session_days).
   // Fallback: bilangan baris sesi sedia ada, akhir sekali toggle plan-level.
   const sessionsForWeek = w => {
+    // Utamakan baris SEBENAR yang wujud untuk plan ini — supaya edit pakej (cth 2-sesi)
+    // TAK cipta "Sesi 2 hantu" untuk plan lama yang cuma ada 1 sesi. Pakej cuma fallback
+    // untuk minggu yang belum ada baris langsung (plan/registrasi baru).
+    const rows = ovWeeklyRows.filter(r => Number(r.week_number) === w);
+    if (rows.length) return Math.max(...rows.map(r => r.session_day || 1));
     const sched = (activePlan.coaching_schedule || [])
       .find(it => (it.period || 'week') !== 'day' && Number(it.week) === w);
     if (sched && Array.isArray(sched.session_days) && sched.session_days.length) return sched.session_days.length;
-    const rows = ovWeeklyRows.filter(r => Number(r.week_number) === w);
-    if (rows.length) return Math.max(...rows.map(r => r.session_day || 1));
     return activePlan.preferred_pair ? 2 : (activePlan.sessions_per_week || 1);
   };
 
@@ -4322,16 +4331,18 @@ function ovNearestAvailable(from) {
   return null;
 }
 
-// Bilangan sesi minggu w ikut Timeline pakej (fallback baris sedia ada / plan-level). Clamp 1–2.
+// Bilangan sesi minggu w — utamakan baris SEBENAR (elak Sesi 2 hantu utk plan lama 1-sesi);
+// pakej cuma fallback utk minggu tiada baris. Clamp 1–2.
 function ovSessionsForWeek(w) {
-  const sched = (activePlan.coaching_schedule || [])
-    .find(it => (it.period || 'week') !== 'day' && Number(it.week) === w);
+  const rows = ovWeeklyRows.filter(r => Number(r.week_number) === w);
   let n;
-  if (sched && Array.isArray(sched.session_days) && sched.session_days.length) n = sched.session_days.length;
+  if (rows.length) n = Math.max(...rows.map(r => r.session_day || 1));
   else {
-    const rows = ovWeeklyRows.filter(r => Number(r.week_number) === w);
-    n = rows.length ? Math.max(...rows.map(r => r.session_day || 1))
-                    : (activePlan.preferred_pair ? 2 : (activePlan.sessions_per_week || 1));
+    const sched = (activePlan.coaching_schedule || [])
+      .find(it => (it.period || 'week') !== 'day' && Number(it.week) === w);
+    n = (sched && Array.isArray(sched.session_days) && sched.session_days.length)
+      ? sched.session_days.length
+      : (activePlan.preferred_pair ? 2 : (activePlan.sessions_per_week || 1));
   }
   return Math.min(2, Math.max(1, n));
 }
@@ -4547,6 +4558,50 @@ async function saveEditSessionDate(id) {
   } catch (e) {
     banner('Ralat: ' + e.message, 'error');
   }
+}
+
+// Cipta treatment plan dari pakej pesakit bila label pakej ada tapi tiada baris plan.
+// Cipta skeleton mingguan (bilangan sesi ikut pakej, pending). Tarikh ditempah kemudian
+// via "Jadualkan Semua Sesi". Inactive → plan 'completed' (rekod sejarah).
+async function createMissingPlan() {
+  if (activePlan) return;
+  if (!(canEdit || window.currentUser?.staff_role === 'super_admin')) { banner('Anda hanya boleh melihat rekod pesakit ini.', 'error'); return; }
+  const pkgId = patient?.active_package_id, pkgName = patient?.active_package_name;
+  if (!pkgId && !pkgName) { banner('Pesakit tiada pakej.', 'error'); return; }
+  try {
+    let pkg = null;
+    if (pkgId) { const { data } = await window.db.from('psy_packages').select('*').eq('package_id', pkgId).maybeSingle(); pkg = data; }
+    if (!pkg && pkgName) { const { data } = await window.db.from('psy_packages').select('*').eq('name', pkgName).limit(1); pkg = data?.[0] || null; }
+    if (!pkg) { banner('Pakej tidak dijumpai dalam sistem — semak nama/ID pakej.', 'error'); return; }
+
+    const durationWeeks = pkg.duration_weeks || 12;
+    const isInactive = patient?.status === 'inactive';
+    const planStatus = isInactive ? 'completed' : 'active';
+    if (!confirm(`Cipta treatment plan dari pakej "${pkg.name}" (${durationWeeks} minggu, status ${planStatus})?`)) return;
+
+    const { data: newPlan, error } = await window.db.from('psy_treatment_plans').insert({
+      patient_id: patientId, doctor_id: null,
+      name: `${pkg.name} Treatment Plan`, template: pkg.package_id,
+      duration_unit: pkg.duration_unit || 'week', duration_weeks: durationWeeks,
+      current_week: 1, coaching_schedule: pkg.coaching_schedule || [], status: planStatus,
+    }).select().single();
+    if (error) throw error;
+
+    // Skeleton mingguan — bilangan sesi ikut Timeline pakej (2 sesi = 2 baris)
+    const sched = Array.isArray(pkg.coaching_schedule) ? pkg.coaching_schedule : [];
+    const rows = [];
+    for (let w = 1; w <= durationWeeks; w++) {
+      const wkCfg = sched.find(it => Number(it.week || it.day) === w);
+      const nSes = (Array.isArray(wkCfg?.session_days) && wkCfg.session_days.length >= 2) ? 2 : 1;
+      for (let day = 1; day <= nSes; day++) {
+        rows.push({ plan_id: newPlan.id, patient_id: patientId, week_number: w, session_day: day, status: 'pending', session_date: null });
+      }
+    }
+    if (rows.length) await window.db.from('psy_plan_weekly_progress').insert(rows);
+    await auditLog('plan.created_from_hub', newPlan.id, { package: pkg.package_id, status: planStatus, weeks: durationWeeks });
+    banner('Treatment plan dicipta ✅');
+    location.reload();
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
 }
 
 async function resetPlanSessions() {
