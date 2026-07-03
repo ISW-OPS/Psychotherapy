@@ -1467,6 +1467,12 @@
         payload.outcome_status_notes = newOutcomeNotes;
       }
 
+      // Auto-link outcome → status: outcome TAMAT (Selesai/Berhenti/Meninggal) = pesakit Tidak Aktif.
+      // Status sama (inactive) untuk ketiga-tiga; outcome yang bezakan sebabnya.
+      if (['completed', 'berhenti', 'meninggal'].includes(newOutcome)) {
+        payload.status = 'inactive';
+      }
+
       try {
         if (editingPatientId) {
           // Simpan status pesakit ikut pemilih — hanya kalau status asal STANDARD (elak sentuh KYC dll).
@@ -1478,6 +1484,13 @@
           // UPDATE existing patient
           const { error } = await window.db.from('psy_patients').update(payload).eq('id', editingPatientId);
           if (error) throw error;
+
+          // Outcome tamat → selaraskan status plan aktif (Selesai=completed, Berhenti/Meninggal=paused)
+          if (['completed', 'berhenti', 'meninggal'].includes(newOutcome)) {
+            const _planStatus = newOutcome === 'completed' ? 'completed' : 'paused';
+            await window.db.from('psy_treatment_plans')
+              .update({ status: _planStatus }).eq('patient_id', editingPatientId).eq('status', 'active');
+          }
           await createReferralRow(editingPatientId);
           await uploadAndSaveReports(editingPatientId);
           // If package assigned/changed, create or update purchase record
