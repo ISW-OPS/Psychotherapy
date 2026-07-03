@@ -1425,6 +1425,14 @@ async function loadPatient() {
   const plans = planRes.data || [];
   activePlan  = plans.find(p => p.status === 'active') || plans[0] || null;
 
+  // Baca coaching_schedule LIVE dari pakej (sama macam plan-week/plan.html) — supaya
+  // edit pakej (bimbingan/bekalan + bilangan sesi) terus terpakai, bukan snapshot lama.
+  if (activePlan?.template) {
+    const { data: livePkg } = await window.db.from('psy_packages')
+      .select('coaching_schedule').eq('package_id', activePlan.template).maybeSingle();
+    if (livePkg?.coaching_schedule?.length) activePlan.coaching_schedule = livePkg.coaching_schedule;
+  }
+
   // Fallback: if profile join failed, try direct query
   if (!profile && pt.user_id) {
     const { data: prof } = await window.db.from('psy_profiles')
@@ -1657,7 +1665,9 @@ function renderOvWeekPage() {
     const extPending = isExt && relevant.some(s => s?.status === 'extension_pending_payment');
     const allHadir   = relevant.every(s => s && ['hadir','consultation_done'].includes(s.status));
     const anyMiss    = relevant.some(s => s && ['cancel','reschedule'].includes(s.status));
-    const anyBooked  = relevant.some(Boolean);
+    // "Ditempah" hanya bila betul-betul ditempah (status booking / ada appointment).
+    // Baris 'pending' (skeleton/seed, belum ditempah) → kekal "Belum Tempah".
+    const anyBooked  = relevant.some(s => s && (['booked','reschedule','hadir','consultation_done','extension_paid'].includes(s.status) || s.appointment_id));
 
     let border, chip;
     if (extPending) {

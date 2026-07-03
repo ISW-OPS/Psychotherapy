@@ -830,19 +830,61 @@
       }).select('id').single();
       if (!newPlan?.id) return null;
 
-      const anchor = startDateStr ? new Date(startDateStr + 'T09:00:00') : null;
+      // Slot rawatan aktif + penutupan klinik — tarikh seed SEDAR-SLOT (elak hari tutup / bukan hari slot)
+      let slotByDay = {}, allowedDays = [];
+      const closureSet = new Set();
+      {
+        let { data: slotRows, error } = await window.db.from('psy_kob_slot_config')
+          .select('day_of_week, slot_start, sort_order')
+          .eq('is_active', true).eq('slot_type', 'rawatan').order('sort_order', { ascending: true });
+        if (error && /slot_type/i.test(error.message || '')) {
+          const fb = await window.db.from('psy_kob_slot_config')
+            .select('day_of_week, slot_start, sort_order').eq('is_active', true).order('sort_order', { ascending: true });
+          slotRows = fb.data;
+        }
+        (slotRows || []).forEach(s => { if (slotByDay[s.day_of_week] == null) slotByDay[s.day_of_week] = (s.slot_start || '09:00').slice(0, 5); });
+        allowedDays = Object.keys(slotByDay).map(Number);
+        const { data: cl } = await window.db.from('psy_clinic_closures').select('closure_date');
+        (cl || []).forEach(c => closureSet.add(c.closure_date));
+      }
+      const _ymd = d => { const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; };
+      const _nearest = from => {
+        const d = new Date(from); d.setHours(0, 0, 0, 0); let g = 0;
+        while (g++ < 180) { if (allowedDays.includes(d.getDay()) && !closureSet.has(_ymd(d))) return new Date(d); d.setDate(d.getDate() + 1); }
+        return null;
+      };
+
+      const anchor = startDateStr ? new Date(startDateStr + 'T00:00:00') : null;
+      const sched = Array.isArray(pkg.coaching_schedule) ? pkg.coaching_schedule : [];
+      const canBook = !!anchor && allowedDays.length > 0;
       const rows = [];
       for (let w = 1; w <= durationWeeks; w++) {
-        let sd = null;
-        if (anchor) { const d = new Date(anchor); d.setDate(d.getDate() + (w - 1) * 7); sd = d.toISOString(); }
-        rows.push({
-          plan_id: newPlan.id,
-          patient_id: patientId,
-          week_number: w,
-          session_day: 1,
-          status: 'pending',
-          session_date: sd,
-        });
+        // Bilangan sesi minggu ni ikut Timeline pakej (session_days); fallback 1.
+        const wkCfg = sched.find(it => Number(it.week || it.day) === w);
+        const nSes = (Array.isArray(wkCfg?.session_days) && wkCfg.session_days.length >= 2) ? 2 : 1;
+        let prev = null;
+        for (let day = 1; day <= nSes; day++) {
+          let sd = null;
+          if (canBook) {
+            const target = day === 1
+              ? new Date(anchor.getTime() + (w - 1) * 7 * 86400000)
+              : new Date((prev || anchor).getTime() + 86400000);
+            const avail = _nearest(target);
+            if (avail) {
+              const [h, m] = (slotByDay[avail.getDay()] || '09:00').split(':').map(Number);
+              avail.setHours(h || 9, m || 0, 0, 0);
+              sd = avail.toISOString(); prev = avail;
+            }
+          }
+          rows.push({
+            plan_id: newPlan.id,
+            patient_id: patientId,
+            week_number: w,
+            session_day: day,
+            status: sd ? 'booked' : 'pending',
+            session_date: sd,
+          });
+        }
       }
       await window.db.from('psy_plan_weekly_progress').insert(rows);
       await auditLog('plan.staff_seeded', newPlan.id, {
