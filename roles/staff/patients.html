@@ -1183,8 +1183,15 @@
 
       document.getElementById('cp-modal-title').textContent = 'Edit Maklumat Pesakit';
       document.getElementById('cp-save-btn').textContent = 'Kemaskini';
-      // Hide status selector when editing — status managed via status button in list
-      document.querySelector('.flex.items-center.gap-3.p-3.bg-cream')?.classList.add('hidden');
+      // Papar pemilih status masa edit supaya staff boleh betulkan status (cth Tidak Aktif → Aktif).
+      // Hanya utk status STANDARD (active/inactive/unregistered) — elak sentuh pesakit status KYC dll.
+      const _isStdStatus = ['active', 'inactive', 'unregistered'].includes(p.status);
+      const _statusWrap = document.querySelector('.flex.items-center.gap-3.p-3.bg-cream');
+      if (_statusWrap) _statusWrap.classList.toggle('hidden', !_isStdStatus);
+      if (_isStdStatus) {
+        const _stRadio = document.querySelector(`input[name="cp-status-radio"][value="${p.status}"]`);
+        if (_stRadio) { _stRadio.checked = true; onStatusChange(p.status); }
+      }
 
       // Fill fields
       document.getElementById('cp-name').value = p.full_name || p.psy_profiles?.full_name || '';
@@ -1462,6 +1469,12 @@
 
       try {
         if (editingPatientId) {
+          // Simpan status pesakit ikut pemilih — hanya kalau status asal STANDARD (elak sentuh KYC dll).
+          const _prevP = allPatients.find(x => x.id === editingPatientId);
+          if (['active', 'inactive', 'unregistered'].includes(_prevP?.status)
+              && ['active', 'inactive', 'unregistered'].includes(selectedStatus)) {
+            payload.status = selectedStatus;
+          }
           // UPDATE existing patient
           const { error } = await window.db.from('psy_patients').update(payload).eq('id', editingPatientId);
           if (error) throw error;
@@ -1528,7 +1541,7 @@
             statusVal = 'unregistered';        // patient will claim by IC on signup
             kobStatusVal = kobBook ? 'booked' : 'kyc_done';
           } else if (isActive) {
-            statusVal = 'unregistered';        // still need claim, but already grandfathered
+            statusVal = 'active';              // Sedang Dalam Rawatan → Aktif (claim akaun ikut user_id, bukan status)
             kobStatusVal = 'na';
           } else {
             statusVal = 'inactive';
@@ -1906,8 +1919,11 @@
           const hasActivePkg = hasPkg &&
             (!p.package_expires_at || new Date(p.package_expires_at) >= now);
           const kobDone = p.kob_status === 'completed' || p.kob_status === 'na';
+          // "Pakej Aktif" = ada pakej belum tamat DAN pesakit masih dalam rawatan
+          // (kecuali yang dah Tidak Aktif/Selesai, Berhenti/archived, Meninggal/deceased, dipadam).
+          const notActiveStatus = ['inactive', 'archived', 'deceased', 'deleted'].includes(p.status);
           if (signup === 'signed_up') matchSU = kobDone && hasPkg;
-          else if (signup === 'active') matchSU = hasActivePkg;
+          else if (signup === 'active') matchSU = hasActivePkg && !notActiveStatus;
           else if (signup === 'not_signed') matchSU = kobDone && !hasPkg;
           else if (signup === 'pre_kob') matchSU = !kobDone;
         }

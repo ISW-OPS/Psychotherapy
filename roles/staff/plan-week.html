@@ -801,6 +801,35 @@ function selectSession(i) {
   renderSignoff();
 }
 
+// Auto-tamat: bila SEMUA sesi (bukan extension) dah selesai ATAU pakej tamat tempoh (mana dulu),
+// tukar pesakit → Tidak Aktif + outcome Selesai + plan completed. Dicetus masa tanda kehadiran.
+async function maybeAutoInactivePatient() {
+  if (!activePlan?.id || !patientId) return;
+  try {
+    const { data: rows } = await window.db.from('psy_plan_weekly_progress')
+      .select('status, is_extension').eq('plan_id', activePlan.id);
+    const core = (rows || []).filter(r => !r.is_extension);
+    const allDone = core.length > 0 && core.every(r => ['hadir', 'consultation_done'].includes(r.status));
+
+    const { data: pt } = await window.db.from('psy_patients')
+      .select('status, package_expires_at').eq('id', patientId).maybeSingle();
+    if (!pt) return;
+    if (['inactive', 'archived', 'deceased', 'deleted'].includes(pt.status)) return;  // sudah tak aktif
+    const pkgExpired = pt.package_expires_at && new Date(pt.package_expires_at) < new Date();
+
+    if (allDone || pkgExpired) {
+      await window.db.from('psy_patients').update({
+        status: 'inactive',
+        outcome_status: 'completed',
+        outcome_status_at: new Date().toISOString(),
+      }).eq('id', patientId);
+      await window.db.from('psy_treatment_plans').update({ status: 'completed' }).eq('id', activePlan.id);
+      await auditLog('patient.auto_inactive', patientId, { reason: allDone ? 'sessions_done' : 'package_expired', plan_id: activePlan.id });
+      banner('✅ Rawatan tamat — pesakit ditanda Tidak Aktif (Selesai).');
+    }
+  } catch (e) { console.warn('[auto-inactive]', e.message); }
+}
+
 // Tanda kehadiran untuk sesi aktif
 async function markStatus(status) {
   if (!weekEntry?.id) { banner('Tiada sesi untuk minggu ini', 'error'); return; }
@@ -818,6 +847,7 @@ async function markStatus(status) {
   if (idx >= 0) weekSessions[idx].status = status;
   if (status === 'hadir') {
     await window.db.from('psy_treatment_plans').update({ current_week: weekNumber }).eq('id', activePlan.id);
+    await maybeAutoInactivePatient();  // auto Tidak Aktif kalau semua sesi selesai / pakej tamat
   }
   renderHero();
 
@@ -1046,6 +1076,7 @@ async function completeSession() {
       window.showDeductSummary?.(ded);
     }
   }
+  await maybeAutoInactivePatient();  // auto Tidak Aktif kalau semua sesi selesai / pakej tamat
 
   await auditLog('plan.session_completed', activePlan.id, { week: weekNumber, session: weekEntry.session_day || 1, signed: !!sigPath, online });
   if (patientUserId) {

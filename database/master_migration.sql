@@ -1309,7 +1309,7 @@ DO $$ BEGIN
       EXISTS (SELECT 1 FROM psy_profiles
               WHERE id = auth.uid()
               AND role = 'staff'
-              AND staff_role IN ('admin','manager'))
+              AND staff_role IN ('admin','manager','doctor','super_admin'))
     );
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
