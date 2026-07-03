@@ -625,16 +625,26 @@ async function toggleSlot(slotId, isActive) {
 // Aktifkan slot untuk hari yang belum ada baris (dari butang OFF) — cipta baris baru ON.
 async function enableSlotDay(slotType, order, day) {
   try {
-    // Kalau baris sudah wujud (mungkin is_active=false), cukup toggle jadi ON.
-    const existing = allSlots.find(s => (s.slot_type || 'kob') === slotType && s.sort_order === order && s.day_of_week === day);
-    if (existing) { await toggleSlot(existing.id, true); return; }
     const sample = allSlots.find(s => (s.slot_type || 'kob') === slotType && s.sort_order === order);
     if (!sample) { banner('Slot tidak dijumpai.', 'error'); return; }
+    // Semak ikut UNIQUE KEY sebenar (slot_type, day_of_week, slot_start) — elak duplicate key.
+    // Kalau baris untuk hari+masa ni sudah wujud (mungkin is_active=false), cukup toggle jadi ON.
+    const existing = allSlots.find(s => (s.slot_type || 'kob') === slotType && s.day_of_week === day && s.slot_start === sample.slot_start);
+    if (existing) { await toggleSlot(existing.id, true); return; }
     const { data, error } = await window.db.from('psy_kob_slot_config').insert({
       slot_type: slotType, day_of_week: day, slot_start: sample.slot_start, slot_end: sample.slot_end,
       label: sample.label, note: sample.note || null, sort_order: order, is_active: true,
     }).select().single();
-    if (error) throw error;
+    if (error) {
+      // Baris sudah wujud dalam DB (cache lama) — muat semula & toggle ON, bukan error.
+      if (/duplicate key/i.test(error.message || '')) {
+        await loadSlots();
+        const row = allSlots.find(s => (s.slot_type || 'kob') === slotType && s.day_of_week === day && s.slot_start === sample.slot_start);
+        if (row) await toggleSlot(row.id, true);
+        return;
+      }
+      throw error;
+    }
     if (data) allSlots.push(data);
     await auditLog('clinic_slot.day_enabled', data?.id, { slot_type: slotType, day, sort_order: order });
     banner('Slot diaktifkan ✅');
