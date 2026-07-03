@@ -1429,8 +1429,9 @@ async function loadPatient() {
   // edit pakej (bimbingan/bekalan + bilangan sesi) terus terpakai, bukan snapshot lama.
   if (activePlan?.template) {
     const { data: livePkg } = await window.db.from('psy_packages')
-      .select('coaching_schedule').eq('package_id', activePlan.template).maybeSingle();
+      .select('coaching_schedule, sessions_per_week').eq('package_id', activePlan.template).maybeSingle();
     if (livePkg?.coaching_schedule?.length) activePlan.coaching_schedule = livePkg.coaching_schedule;
+    if (livePkg?.sessions_per_week) activePlan.sessions_per_week = livePkg.sessions_per_week;
   }
 
   // Fallback: if profile join failed, try direct query
@@ -1646,15 +1647,16 @@ function renderOvWeekPage() {
   // Bilangan sesi setiap minggu = ikut Timeline Rawatan pakej (coaching_schedule[w].session_days).
   // Fallback: bilangan baris sesi sedia ada, akhir sekali toggle plan-level.
   const sessionsForWeek = w => {
-    // Utamakan baris SEBENAR yang wujud untuk plan ini — supaya edit pakej (cth 2-sesi)
-    // TAK cipta "Sesi 2 hantu" untuk plan lama yang cuma ada 1 sesi. Pakej cuma fallback
-    // untuk minggu yang belum ada baris langsung (plan/registrasi baru).
+    // Bilangan sesi = MAKS antara pakej (Timeline) & baris sebenar. Pakej 2-sesi sentiasa
+    // tunjuk 2 sesi; baris sebenar tak pernah disembunyi walau pakej diubah jadi 1.
     const rows = ovWeeklyRows.filter(r => Number(r.week_number) === w);
-    if (rows.length) return Math.max(...rows.map(r => r.session_day || 1));
+    const rowN = rows.length ? Math.max(...rows.map(r => r.session_day || 1)) : 0;
     const sched = (activePlan.coaching_schedule || [])
       .find(it => (it.period || 'week') !== 'day' && Number(it.week) === w);
-    if (sched && Array.isArray(sched.session_days) && sched.session_days.length) return sched.session_days.length;
-    return activePlan.preferred_pair ? 2 : (activePlan.sessions_per_week || 1);
+    const pkgN = (sched && Array.isArray(sched.session_days) && sched.session_days.length)
+      ? sched.session_days.length
+      : (activePlan.preferred_pair ? 2 : (activePlan.sessions_per_week || 1));
+    return Math.max(rowN, pkgN);
   };
 
   let html = '';
@@ -4331,20 +4333,16 @@ function ovNearestAvailable(from) {
   return null;
 }
 
-// Bilangan sesi minggu w — utamakan baris SEBENAR (elak Sesi 2 hantu utk plan lama 1-sesi);
-// pakej cuma fallback utk minggu tiada baris. Clamp 1–2.
+// Bilangan sesi minggu w = MAKS antara pakej (Timeline) & baris sebenar. Clamp 1–2.
 function ovSessionsForWeek(w) {
   const rows = ovWeeklyRows.filter(r => Number(r.week_number) === w);
-  let n;
-  if (rows.length) n = Math.max(...rows.map(r => r.session_day || 1));
-  else {
-    const sched = (activePlan.coaching_schedule || [])
-      .find(it => (it.period || 'week') !== 'day' && Number(it.week) === w);
-    n = (sched && Array.isArray(sched.session_days) && sched.session_days.length)
-      ? sched.session_days.length
-      : (activePlan.preferred_pair ? 2 : (activePlan.sessions_per_week || 1));
-  }
-  return Math.min(2, Math.max(1, n));
+  const rowN = rows.length ? Math.max(...rows.map(r => r.session_day || 1)) : 0;
+  const sched = (activePlan.coaching_schedule || [])
+    .find(it => (it.period || 'week') !== 'day' && Number(it.week) === w);
+  const pkgN = (sched && Array.isArray(sched.session_days) && sched.session_days.length)
+    ? sched.session_days.length
+    : (activePlan.preferred_pair ? 2 : (activePlan.sessions_per_week || 1));
+  return Math.min(2, Math.max(1, Math.max(rowN, pkgN)));
 }
 
 // Tarikh+masa tempahan minggu w, sesi `day`, berpandukan tarikh+slot sesi pertama.
@@ -4592,7 +4590,7 @@ async function createMissingPlan() {
     const rows = [];
     for (let w = 1; w <= durationWeeks; w++) {
       const wkCfg = sched.find(it => Number(it.week || it.day) === w);
-      const nSes = (Array.isArray(wkCfg?.session_days) && wkCfg.session_days.length >= 2) ? 2 : 1;
+      const nSes = (Array.isArray(wkCfg?.session_days) && wkCfg.session_days.length >= 2) ? 2 : ((pkg.sessions_per_week || 1) >= 2 ? 2 : 1);
       for (let day = 1; day <= nSes; day++) {
         rows.push({ plan_id: newPlan.id, patient_id: patientId, week_number: w, session_day: day, status: 'pending', session_date: null });
       }

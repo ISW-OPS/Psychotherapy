@@ -878,9 +878,9 @@
       const attendedUpTo = mode === 'completed' ? durationWeeks : (mode === 'stopped' ? Math.max(0, cw - 1) : 0);
       const rows = [];
       for (let w = 1; w <= durationWeeks; w++) {
-        // Bilangan sesi minggu ni ikut Timeline pakej (session_days); fallback 1.
+        // Bilangan sesi minggu ni ikut Timeline pakej (session_days), fallback ke sessions_per_week pakej.
         const wkCfg = sched.find(it => Number(it.week || it.day) === w);
-        const nSes = (Array.isArray(wkCfg?.session_days) && wkCfg.session_days.length >= 2) ? 2 : 1;
+        const nSes = (Array.isArray(wkCfg?.session_days) && wkCfg.session_days.length >= 2) ? 2 : ((pkg.sessions_per_week || 1) >= 2 ? 2 : 1);
         // Pesakit berhenti: minggu berhenti (cw) & selepasnya → kekal kosong (tiada tarikh/tempahan).
         const isStoppedFuture = (mode === 'stopped' && w >= cw);
         let prev = null;
@@ -916,23 +916,81 @@
       return newPlan;
     }
 
-    // Tandai plan SEDIA ADA sebagai selesai/berhenti (utk pesakit yang sudah ada plan, kini ditukar ke inactive).
-    // Update status plan + tanda Hadir minggu dalam julat yang tarikhnya DAH LEPAS. Tak sentuh yang dah hadir/cancel.
+    // Tandai plan SEDIA ADA sebagai selesai/berhenti (pesakit yang sudah ada plan, kini inactive).
+    // Update status + BACKFILL baris sesi yang hilang (cth Sesi 2 utk pakej 2-sesi) dgn tarikh sedar-slot,
+    // + tanda Hadir minggu dalam julat yang tarikhnya DAH LEPAS. Tak turunkan yang dah hadir/cancel.
     async function markPlanInactive(planId, mode, currentWeekVal) {
       const planStatus = mode === 'stopped' ? 'paused' : 'completed';
+      const { data: plan } = await window.db.from('psy_treatment_plans')
+        .select('patient_id, start_date, duration_weeks, coaching_schedule, preferred_pair, template')
+        .eq('id', planId).maybeSingle();
+      if (!plan) return;
+      // sessions_per_week ada pada PAKEJ (bukan plan) — ambil utk fallback bilangan sesi.
+      let pkgSPW = 1;
+      if (plan.template) {
+        const { data: _pk } = await window.db.from('psy_packages').select('sessions_per_week').eq('package_id', plan.template).maybeSingle();
+        pkgSPW = _pk?.sessions_per_week || 1;
+      }
       await window.db.from('psy_treatment_plans').update({ status: planStatus }).eq('id', planId);
       const cw = Math.max(1, parseInt(currentWeekVal) || 1);
-      const attendedUpTo = mode === 'stopped' ? (cw - 1) : Infinity;  // Selesai = semua; Berhenti = sebelum minggu berhenti
+      const durationWeeks = plan.duration_weeks || 12;
+      const attendedUpTo = mode === 'stopped' ? (cw - 1) : durationWeeks;
+
+      // Slot rawatan + penutupan (untuk tarikh baris backfill)
+      let slotByDay = {}, allowedDays = []; const closureSet = new Set();
+      {
+        let { data: sl, error } = await window.db.from('psy_kob_slot_config')
+          .select('day_of_week, slot_start, sort_order').eq('is_active', true).eq('slot_type', 'rawatan').order('sort_order', { ascending: true });
+        if (error && /slot_type/i.test(error.message || '')) {
+          const fb = await window.db.from('psy_kob_slot_config').select('day_of_week, slot_start, sort_order').eq('is_active', true).order('sort_order', { ascending: true });
+          sl = fb.data;
+        }
+        (sl || []).forEach(s => { if (slotByDay[s.day_of_week] == null) slotByDay[s.day_of_week] = (s.slot_start || '09:00').slice(0, 5); });
+        allowedDays = Object.keys(slotByDay).map(Number);
+        const { data: cl } = await window.db.from('psy_clinic_closures').select('closure_date');
+        (cl || []).forEach(c => closureSet.add(c.closure_date));
+      }
+      const _ymd = d => { const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; };
+      const _nearest = from => { const d = new Date(from); d.setHours(0, 0, 0, 0); let g = 0; while (g++ < 180) { if (allowedDays.includes(d.getDay()) && !closureSet.has(_ymd(d))) return new Date(d); d.setDate(d.getDate() + 1); } return null; };
+
+      const { data: existing } = await window.db.from('psy_plan_weekly_progress')
+        .select('id, week_number, session_day, session_date, status').eq('plan_id', planId);
+      const map = {}; (existing || []).forEach(r => { map[`${r.week_number}_${r.session_day || 1}`] = r; });
+
+      const anchor = plan.start_date ? new Date(plan.start_date + 'T00:00:00') : null;
+      const canDate = !!anchor && allowedDays.length > 0;
+      const sched = Array.isArray(plan.coaching_schedule) ? plan.coaching_schedule : [];
       const nowMs = Date.now();
-      const { data: rows } = await window.db.from('psy_plan_weekly_progress')
-        .select('id, week_number, session_date, status').eq('plan_id', planId);
-      for (const r of (rows || [])) {
-        if (['hadir', 'consultation_done', 'cancel'].includes(r.status)) continue;  // jangan sentuh yang dah bertanda
-        if (r.week_number <= attendedUpTo && r.session_date && new Date(r.session_date).getTime() <= nowMs) {
-          await window.db.from('psy_plan_weekly_progress').update({ status: 'hadir' }).eq('id', r.id);
+      const toInsert = [];
+      for (let w = 1; w <= durationWeeks; w++) {
+        if (mode === 'stopped' && w >= cw) continue;  // minggu berhenti & selepas → kekal kosong
+        const wkCfg = sched.find(it => Number(it.week || it.day) === w);
+        const nSes = Math.min(2, Math.max(1,
+          (Array.isArray(wkCfg?.session_days) && wkCfg.session_days.length >= 2) ? 2 : ((plan.preferred_pair || pkgSPW >= 2) ? 2 : 1)));
+        let prev = null;
+        for (let day = 1; day <= nSes; day++) {
+          const row = map[`${w}_${day}`];
+          let sd = row?.session_date || null;
+          if (!sd && canDate) {
+            const target = day === 1 ? new Date(anchor.getTime() + (w - 1) * 7 * 86400000) : new Date((prev || anchor).getTime() + 86400000);
+            const avail = _nearest(target);
+            if (avail) { const [h, m] = (slotByDay[avail.getDay()] || '09:00').split(':').map(Number); avail.setHours(h || 9, m || 0, 0, 0); sd = avail.toISOString(); }
+          }
+          if (sd) prev = new Date(sd);
+          const attended = (w <= attendedUpTo) && sd && (new Date(sd).getTime() <= nowMs);
+          if (row) {
+            const patch = {};
+            if (!row.session_date && sd) patch.session_date = sd;
+            if (attended && !['hadir', 'consultation_done', 'cancel'].includes(row.status)) patch.status = 'hadir';
+            if (Object.keys(patch).length) await window.db.from('psy_plan_weekly_progress').update(patch).eq('id', row.id);
+          } else {
+            toInsert.push({ plan_id: planId, patient_id: plan.patient_id, week_number: w, session_day: day,
+              status: attended ? 'hadir' : (sd ? 'booked' : 'pending'), session_date: sd });
+          }
         }
       }
-      await auditLog('plan.marked_inactive', planId, { mode, current_week: cw });
+      if (toInsert.length) await window.db.from('psy_plan_weekly_progress').insert(toInsert);
+      await auditLog('plan.marked_inactive', planId, { mode, current_week: cw, backfilled: toInsert.length });
     }
 
     function toggleKobSlot(checked) {
