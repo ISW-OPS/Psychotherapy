@@ -182,30 +182,20 @@
               <select id="filter-status" onchange="filterPatients()"
                 class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
                 <option value="">Semua Status</option>
-                <option value="active">Aktif</option>
-                <option value="unregistered">Belum Aktif</option>
-                <option value="inactive">Tidak Aktif</option>
+                <optgroup label="Status">
+                  <option value="active">Aktif</option>
+                  <option value="unregistered">Belum Aktif</option>
+                  <option value="inactive">Tidak Aktif</option>
+                </optgroup>
+                <optgroup label="Tamat Rawatan">
+                  <option value="o:completed">Selesai</option>
+                  <option value="o:berhenti">Berhenti</option>
+                  <option value="o:meninggal">Meninggal</option>
+                </optgroup>
               </select>
               <select id="filter-pakej" onchange="filterPatients()"
                 class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
                 <option value="">Semua Pakej</option>
-              </select>
-              <select id="filter-outcome" onchange="filterPatients()"
-                class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
-                <option value="">Semua Outcome</option>
-                <option value="otw">OTW (On-going)</option>
-                <option value="completed">Selesai Rawatan</option>
-                <option value="berhenti">Berhenti</option>
-                <option value="meninggal">Meninggal Dunia</option>
-                <option value="__none__">Belum Ditetapkan</option>
-              </select>
-              <select id="filter-signup" onchange="filterPatients()"
-                class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
-                <option value="">Semua Signup</option>
-                <option value="signed_up">Signup Pakej</option>
-                <option value="active">Pakej Aktif</option>
-                <option value="not_signed">Tak Signup Pakej</option>
-                <option value="pre_kob">Belum Selesai KOB</option>
               </select>
               <button type="button" onclick="document.getElementById('adv-filters').classList.toggle('hidden')"
                 class="flex items-center gap-1.5 px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white hover:border-navy">
@@ -1877,7 +1867,7 @@
         const el = document.getElementById(id);
         if (el) el.value = '';
       });
-      ['filter-status','filter-pakej','filter-outcome','filter-signup','filter-gender','filter-age'].forEach(id => {
+      ['filter-status','filter-pakej','filter-gender','filter-age'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
       });
@@ -1888,8 +1878,6 @@
       const q = document.getElementById('search-patient').value.toLowerCase();
       const status = document.getElementById('filter-status').value;
       const pakej = document.getElementById('filter-pakej').value;
-      const outcome = document.getElementById('filter-outcome')?.value || '';
-      const signup  = document.getElementById('filter-signup')?.value || '';
       const gender  = document.getElementById('filter-gender')?.value || '';
       const ageRange = document.getElementById('filter-age')?.value || '';
       const stateQ  = (document.getElementById('filter-state')?.value || '').toLowerCase();
@@ -1908,11 +1896,10 @@
         const name = (p.psy_profiles?.full_name || p.full_name || '').toLowerCase();
         const phoneStr = (p.psy_profiles?.phone || p.phone || '').toLowerCase();
         const matchQ = !q || name.includes(q) || (p.mrn || '').toLowerCase().includes(q) || (p.ic_number || '').includes(q) || phoneStr.includes(q);
-        const matchS = !status || p.status === status;
+        // Status: nilai "o:xxx" = tapis ikut outcome (Selesai/Berhenti/Meninggal); selainnya ikut status pesakit.
+        const matchS = !status || (status.startsWith('o:') ? p.outcome_status === status.slice(2) : p.status === status);
         const matchP = !pakej
           || (pakej === '__none__' ? !p.active_package_name : p.active_package_name === pakej);
-        const matchO = !outcome
-          || (outcome === '__none__' ? !p.outcome_status : p.outcome_status === outcome);
         const matchG = !gender || p.gender === gender;
         let matchAge = true;
         if (ageRange) {
@@ -1925,22 +1912,7 @@
         }
         const matchState = !stateQ || (p.address || '').toLowerCase().includes(stateQ);
         const matchCond  = !condQ  || (p.medical_condition || '').toLowerCase().includes(condQ);
-        let matchSU = true;
-        if (signup) {
-          const now = new Date();
-          const hasPkg = !!p.active_package_id;
-          const hasActivePkg = hasPkg &&
-            (!p.package_expires_at || new Date(p.package_expires_at) >= now);
-          const kobDone = p.kob_status === 'completed' || p.kob_status === 'na';
-          // "Pakej Aktif" = ada pakej belum tamat DAN pesakit masih dalam rawatan
-          // (kecuali yang dah Tidak Aktif/Selesai, Berhenti/archived, Meninggal/deceased, dipadam).
-          const notActiveStatus = ['inactive', 'archived', 'deceased', 'deleted'].includes(p.status);
-          if (signup === 'signed_up') matchSU = kobDone && hasPkg;
-          else if (signup === 'active') matchSU = hasActivePkg && !notActiveStatus;
-          else if (signup === 'not_signed') matchSU = kobDone && !hasPkg;
-          else if (signup === 'pre_kob') matchSU = !kobDone;
-        }
-        return matchQ && matchS && matchP && matchO && matchG && matchAge && matchState && matchCond && matchSU;
+        return matchQ && matchS && matchP && matchG && matchAge && matchState && matchCond;
       });
       renderPatients(list);
       updateTabCounts();
@@ -2512,11 +2484,6 @@
       const editId = qs.get('edit');
       if (editId) {
         setTimeout(() => openEditPatient(editId), 500);
-      }
-      const signupQ = qs.get('signup');
-      if (signupQ) {
-        const sel = document.getElementById('filter-signup');
-        if (sel) { sel.value = signupQ; filterPatients(); }
       }
     })();
   </script>
