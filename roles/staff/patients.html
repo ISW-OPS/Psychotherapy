@@ -2381,6 +2381,26 @@
       filterPatients();
     }
 
+    // ── Realtime: senarai auto-refresh bila mana-mana pesakit berubah status (dari mana-mana UI) ──
+    let _listRtChannel = null;
+    function subscribeListRealtime() {
+      if (!window.db?.channel || _listRtChannel) return;
+      let t;
+      const debounced = () => {
+        clearTimeout(t);
+        t = setTimeout(async () => {
+          const keep = currentPage;
+          await loadAll(true);                     // re-fetch + render (reset page 1)
+          const totalPages = Math.max(1, Math.ceil(currentFiltered.length / PAGE_SIZE));
+          currentPage = Math.min(keep, totalPages);
+          renderPatients(currentFiltered, false);  // render semula pada page asal
+        }, 800);
+      };
+      _listRtChannel = window.db.channel('patients-list-rt')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'psy_patients' }, debounced)
+        .subscribe();
+    }
+
     function renderPatientStats() {
       // Stat = pesakit "sebenar" sahaja (kecualikan pra-KYC yg kini turut dimuatkan)
       const real = allPatients.filter(p => !isPreKyc(p));
@@ -2479,6 +2499,7 @@
         if (tog) tog.classList.replace('hidden', 'flex');
       }
       await loadAll();
+      subscribeListRealtime();  // auto-refresh senarai bila status pesakit berubah (tanpa refresh)
       const qs = new URLSearchParams(location.search);
       const tabQ = qs.get('tab');
       if (tabQ && ['all','unassigned','mine','prekyc'].includes(tabQ)) {

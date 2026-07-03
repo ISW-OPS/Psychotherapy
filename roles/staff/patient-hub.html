@@ -1396,7 +1396,32 @@ const patientId = params.get('patient_id');
   if (initialTab && ['overview','checkin','vitals','sessions','supply','dna','profile'].includes(initialTab)) {
     await switchTab(initialTab);
   }
+  subscribeHubRealtime();  // auto-update bila status pesakit / kehadiran berubah (tanpa refresh)
 })();
+
+// ── Realtime: pesakit ni / kehadiran plan dia berubah (dari mana-mana UI) → auto-update ──
+async function realtimeRefreshPatient() {
+  const { data: p } = await window.db.from('psy_patients').select('*').eq('id', patientId).maybeSingle();
+  if (!p) return;
+  patient = p;
+  const sc = document.getElementById('patient-status-chip');
+  if (sc) {
+    const cls = { active:'bg-green-light text-green-dark', pending_kyc:'bg-gold-light text-gold-dark', inactive:'bg-ink/10 text-ink/50', unregistered:'bg-amber-100 text-amber-800', rejected:'bg-terracotta/15 text-terracotta' }[p.status] || 'bg-ink/10 text-ink/50';
+    sc.textContent = window.STATUS_LABELS?.[p.status] || p.status || '—';
+    sc.className = `chip text-xs ${cls}`;
+  }
+}
+let _hubRtChannel = null;
+function subscribeHubRealtime() {
+  if (!window.db?.channel || !patientId || _hubRtChannel) return;
+  const ch = window.db.channel('hub-rt-' + patientId);
+  ch.on('postgres_changes', { event: '*', schema: 'public', table: 'psy_patients', filter: `id=eq.${patientId}` }, () => realtimeRefreshPatient());
+  if (activePlan?.id) {
+    ch.on('postgres_changes', { event: '*', schema: 'public', table: 'psy_plan_weekly_progress', filter: `plan_id=eq.${activePlan.id}` }, () => reloadOverviewKeepPage());
+  }
+  ch.subscribe();
+  _hubRtChannel = ch;
+}
 
 async function loadPatient() {
   // Patient + profile via FK join (same approach that works in assignments.html)
