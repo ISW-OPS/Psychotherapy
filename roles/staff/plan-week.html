@@ -299,6 +299,7 @@ let patientName  = '';     // nama pesakit (prefill tandatangan)
 let weekStart    = null;
 let weekEnd      = null;
 let backTab      = 'sessions';  // tab patient-hub untuk butang "Kembali" (ikut tempat asal)
+let _wantSession = 0;           // auto-pilih tab sesi dari param &session= (0 = default)
 let coachingChecks = {};
 let weekOverride = null;   // psy_plan_week_overrides row utk minggu ini (atau null = ikut pakej)
 
@@ -314,6 +315,7 @@ function escHtml(s) { const d = document.createElement('div'); d.textContent = S
   const planId = params.get('plan_id');
   weekNumber   = parseInt(params.get('week') || '1');
   backTab      = params.get('from') || 'sessions';  // kembali ke tab asal (cth 'overview')
+  _wantSession = parseInt(params.get('session') || '0');  // auto-pilih tab sesi ni (cth 2)
 
   if (!planId) { location.href = 'plans.html'; return; }
 
@@ -365,6 +367,12 @@ async function loadWeek() {
     .select('*').eq('plan_id', activePlan.id).eq('week_number', weekNumber).order('session_day');
   weekSessions = prog || [];
   weekEntry = prog?.[0] || null;
+  // Auto-pilih sesi dari param &session= (sekali sahaja) — cth &session=2 buka tab Sesi 2.
+  if (_wantSession) {
+    const match = weekSessions.find(r => (r.session_day || 1) === _wantSession);
+    if (match) weekEntry = match;
+    _wantSession = 0;
+  }
 
   // Override bekalan/sesi per-pesakit per-minggu (kalau ada). Null = ikut pakej.
   const { data: ovr } = await window.db.from('psy_plan_week_overrides')
