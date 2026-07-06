@@ -99,8 +99,12 @@
               </div>
             </div>
             <div>
+              <label class="block text-[11px] font-bold text-ink/70 mb-1.5">Tarikh</label>
+              <input id="vm-date" type="date" onclick="try{this.showPicker()}catch(_){}" class="cursor-pointer px-2.5 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy">
+            </div>
+            <div>
               <label class="block text-[11px] font-bold text-ink/70 mb-1.5">Masa</label>
-              <input id="vm-time" type="time" class="px-2.5 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy">
+              <input id="vm-time" type="time" onclick="try{this.showPicker()}catch(_){}" class="cursor-pointer px-2.5 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy">
             </div>
           </div>
 
@@ -2250,8 +2254,8 @@ async function loadVitals() {
     return t >= weekStart && t < weekEnd;
   });
   renderVitalsList(week);
-  const t = document.getElementById('vm-time');
-  if (t && !t.value) t.value = new Date().toTimeString().slice(0, 5);  // default masa = sekarang
+  const de = document.getElementById('vm-date');
+  if (de && !de.value) applyVitalsDefaults();  // tarikh & masa default = sesi ini
 }
 
 function renderVitalsList(readings) {
@@ -2472,12 +2476,32 @@ function scrollToSection(id) {
 }
 
 // ── Vitals (inline) ───────────────────────────────────
+// Tarikh & masa default borang vitals = SESI yang dipilih (tarikh pesakit
+// pilih untuk jumpa), fallback awal minggu / sekarang. Tak lampaui hari ini.
+function vitalsDefaults() {
+  const p = n => String(n).padStart(2, '0');
+  const today = new Date();
+  const todayYmd = `${today.getFullYear()}-${p(today.getMonth()+1)}-${p(today.getDate())}`;
+  const src = weekEntry?.session_date ? new Date(weekEntry.session_date)
+            : (weekStart ? new Date(weekStart) : today);
+  let ymd = `${src.getFullYear()}-${p(src.getMonth()+1)}-${p(src.getDate())}`;
+  if (ymd > todayYmd) ymd = todayYmd;  // sesi dijangka masa depan -> hari ini
+  const hm = weekEntry?.session_date ? `${p(src.getHours())}:${p(src.getMinutes())}`
+           : new Date().toTimeString().slice(0, 5);
+  return { ymd, hm, max: todayYmd };
+}
+function applyVitalsDefaults() {
+  const d = vitalsDefaults();
+  const de = document.getElementById('vm-date');
+  const te = document.getElementById('vm-time');
+  if (de) { de.value = d.ymd; de.max = d.max; }
+  if (te) te.value = d.hm;
+}
 function clearVitalsForm() {
   ['vm-sys','vm-dia','vm-hr','vm-spo2','vm-temp','vm-weight','vm-meds','vm-notes'].forEach(id => {
     const e = document.getElementById(id); if (e) e.value = '';
   });
-  const t = document.getElementById('vm-time');
-  if (t) t.value = new Date().toTimeString().slice(0, 5);  // default masa = sekarang
+  applyVitalsDefaults();  // tarikh & masa = sesi yang dipilih
 }
 
 async function saveWeekVitals() {
@@ -2496,8 +2520,8 @@ async function saveWeekVitals() {
     patient_id:   patientId,
     plan_id:      activePlan.id,
     week_number:  weekNumber,
-    reading_date: new Date().toISOString().slice(0, 10),
-    reading_time: val('vm-time') || new Date().toTimeString().slice(0, 5),
+    reading_date: val('vm-date') || vitalsDefaults().ymd,  // tarikh sesi pesakit pilih
+    reading_time: val('vm-time') || vitalsDefaults().hm,
     recorded_by:  window.currentUser.id,
     recorded_by_name: window.currentUser.full_name,
   };
