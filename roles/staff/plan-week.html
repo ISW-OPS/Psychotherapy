@@ -121,7 +121,7 @@
 
           <div class="flex justify-center gap-3 mt-5">
             <button onclick="clearVitalsForm()" class="inline-flex items-center gap-1.5 px-6 py-2.5 rounded-lg border border-ink/20 text-sm font-semibold text-ink/70 hover:bg-cream">↻ Reset</button>
-            <button onclick="saveWeekVitals()" class="inline-flex items-center justify-center gap-1.5 px-12 py-2.5 rounded-lg bg-green text-white text-sm font-semibold hover:bg-green-dark">💾 Simpan Vitals</button>
+            <button id="vm-save" onclick="saveWeekVitals()" class="inline-flex items-center justify-center gap-1.5 px-12 py-2.5 rounded-lg bg-green text-white text-sm font-semibold hover:bg-green-dark">💾 Simpan Vitals</button>
           </div>
         </div>
 
@@ -2261,10 +2261,13 @@ async function loadVitals() {
     const t = new Date(v.created_at);
     return t >= weekStart && t < weekEnd;
   });
+  weekVitals = week;
   renderVitalsList(week);
   const de = document.getElementById('vm-date');
   if (de && !de.value) applyVitalsDefaults();  // tarikh & masa default = sesi ini
 }
+let weekVitals = [];        // bacaan minggu ini (untuk suntingan)
+let editingVitalId = null;  // id bacaan yang sedang disunting (null = bacaan baru)
 
 function renderVitalsList(readings) {
   const host = document.getElementById('vitals-list');
@@ -2289,7 +2292,10 @@ function renderVitalsList(readings) {
       <td class="px-2 py-1.5 text-center">${v.temperature != null ? v.temperature + '°' : '—'}</td>
       <td class="px-2 py-1.5 text-center">${v.weight != null ? v.weight : '—'}</td>
       <td class="px-2.5 py-1.5 text-ink/60 max-w-[180px] truncate">${medNote || '—'}</td>
-      <td class="px-2 py-1.5 text-right"><button onclick="deleteVital('${v.id}')" class="text-ink/30 hover:text-red-500" title="Padam">✕</button></td>
+      <td class="px-2 py-1.5 text-right whitespace-nowrap">
+        <button onclick="editWeekVital('${v.id}')" class="text-navy/50 hover:text-navy font-semibold mr-2" title="Edit">✎</button>
+        <button onclick="deleteVital('${v.id}')" class="text-ink/30 hover:text-red-500" title="Padam">✕</button>
+      </td>
     </tr>`;
   }).join('');
   host.innerHTML = `<div class="overflow-x-auto border border-ink/10 rounded-lg">
@@ -2314,6 +2320,7 @@ function renderVitalsList(readings) {
 async function deleteVital(id) {
   if (!confirm('Padam bacaan vitals ini?')) return;
   await window.db.from('psy_vitals').delete().eq('id', id);
+  if (id === editingVitalId) clearVitalsForm();  // elak sunting rekod yang dah dipadam
   banner('Bacaan dipadam');
   await loadVitals();
 }
@@ -2509,7 +2516,32 @@ function clearVitalsForm() {
   ['vm-sys','vm-dia','vm-hr','vm-spo2','vm-temp','vm-weight','vm-meds','vm-notes'].forEach(id => {
     const e = document.getElementById(id); if (e) e.value = '';
   });
+  editingVitalId = null;
+  const sb = document.getElementById('vm-save'); if (sb) sb.textContent = '💾 Simpan Vitals';
   applyVitalsDefaults();  // tarikh & masa = sesi yang dipilih
+}
+
+// Muatkan bacaan minggu ke borang untuk disunting.
+function editWeekVital(id) {
+  const v = weekVitals.find(x => x.id === id);
+  if (!v) return;
+  editingVitalId = id;
+  const p = n => String(n).padStart(2, '0');
+  const now = new Date();
+  const de = document.getElementById('vm-date');
+  if (de) {
+    de.value = v.reading_date || new Date(v.created_at).toISOString().slice(0, 10);
+    de.max = `${now.getFullYear()}-${p(now.getMonth()+1)}-${p(now.getDate())}`;
+  }
+  const te = document.getElementById('vm-time');
+  if (te) te.value = v.reading_time ? String(v.reading_time).slice(0, 5)
+                   : (v.created_at ? new Date(v.created_at).toTimeString().slice(0, 5) : '');
+  const set = (id2, val) => { const e = document.getElementById(id2); if (e) e.value = val ?? ''; };
+  set('vm-sys', v.bp_systolic); set('vm-dia', v.bp_diastolic); set('vm-hr', v.heart_rate);
+  set('vm-spo2', v.spo2); set('vm-temp', v.temperature); set('vm-weight', v.weight);
+  set('vm-meds', v.medications); set('vm-notes', v.notes);
+  const sb = document.getElementById('vm-save'); if (sb) sb.textContent = '💾 Kemas Kini Vitals';
+  document.getElementById('sec-vitals')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 async function saveWeekVitals() {
@@ -2536,9 +2568,17 @@ async function saveWeekVitals() {
   if (!payload.bp_systolic && !payload.weight && !payload.heart_rate && !payload.temperature && !payload.spo2 && !payload.medications) {
     banner('Sila isi sekurang-kurangnya satu bacaan', 'error'); return;
   }
-  const { error } = await window.db.from('psy_vitals').insert(payload);
-  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
-  banner('Vitals disimpan ✅');
+  if (editingVitalId) {
+    // Sunting — kekalkan perekod asal; kemas kini nilai + tarikh/masa + minggu.
+    const { patient_id, recorded_by, recorded_by_name, ...upd } = payload;
+    const { error } = await window.db.from('psy_vitals').update(upd).eq('id', editingVitalId);
+    if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+    banner('Vitals dikemas kini ✅');
+  } else {
+    const { error } = await window.db.from('psy_vitals').insert(payload);
+    if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+    banner('Vitals disimpan ✅');
+  }
   flashSaved('vitals-saved');
   clearVitalsForm();
   await loadVitals();

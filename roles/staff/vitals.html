@@ -277,9 +277,36 @@ function renderTable() {
       <td class="py-3 px-3 text-xs">${v.temperature ? v.temperature + ' °C' : '—'}</td>
       <td class="py-3 px-3 text-xs">${v.weight ? v.weight + ' kg' : '—'}</td>
       <td class="py-3 px-3 text-xs text-ink/70 max-w-[200px] truncate" title="${escHtml(v.notes || '')}">${escHtml(v.notes || '—')}</td>
-      <td class="py-3 px-5 text-right"><button onclick="deleteReading('${v.id}')" class="text-ink/35 hover:text-red-500 text-sm" title="Padam">✕</button></td>
+      <td class="py-3 px-5 text-right whitespace-nowrap">
+        <button onclick="editReading('${v.id}')" class="text-navy/50 hover:text-navy text-sm mr-3 font-semibold" title="Edit">✎ Edit</button>
+        <button onclick="deleteReading('${v.id}')" class="text-ink/35 hover:text-red-500 text-sm" title="Padam">✕</button>
+      </td>
     </tr>`;
   }).join('');
+}
+
+// Muatkan bacaan sedia ada ke borang untuk disunting.
+function editReading(id) {
+  const v = allVitals.find(x => x.id === id);
+  if (!v) return;
+  editingId = id;
+  const p = n => String(n).padStart(2, '0');
+  const dt = new Date(v.created_at || (v.reading_date + 'T00:00:00'));
+  const now = new Date();
+  const de = document.getElementById('f-date');
+  de.value = v.reading_date || `${dt.getFullYear()}-${p(dt.getMonth()+1)}-${p(dt.getDate())}`;
+  de.max = `${now.getFullYear()}-${p(now.getMonth()+1)}-${p(now.getDate())}`;
+  document.getElementById('f-time').value = v.created_at ? `${p(dt.getHours())}:${p(dt.getMinutes())}` : '';
+  document.getElementById('f-sys').value = v.bp_systolic ?? '';
+  document.getElementById('f-dia').value = v.bp_diastolic ?? '';
+  document.getElementById('f-hr').value = v.heart_rate ?? '';
+  document.getElementById('f-temp').value = v.temperature ?? '';
+  document.getElementById('f-weight').value = v.weight ?? '';
+  document.getElementById('f-notes').value = v.notes ?? '';
+  updateNoteCount();
+  document.getElementById('f-error').classList.add('hidden');
+  document.getElementById('f-save').textContent = '💾 Kemas Kini Bacaan';
+  document.getElementById('vp-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // ── Borang ─────────────────────────────────────────────
@@ -303,6 +330,7 @@ function resetForm() {
 async function deleteReading(id) {
   if (!confirm('Padam bacaan vitals ini?')) return;
   await window.db.from('psy_vitals').delete().eq('id', id);
+  if (id === editingId) resetForm();  // elak sunting rekod yang dah dipadam
   banner('Bacaan dipadam');
   await loadVitals();
 }
@@ -342,7 +370,12 @@ async function saveReading() {
     const createdAt = new Date(`${date}T${time}:00`).toISOString();
     const payload = { reading_date: date, bp_systolic: sys, bp_diastolic: dia, heart_rate: hr, temperature: temp, weight: wt, notes };
     if (editingId) {
-      const { error } = await window.db.from('psy_vitals').update({ ...payload, created_at: createdAt }).eq('id', editingId);
+      // Re-tag minggu ikut tarikh baru (kalau ada plan aktif)
+      const upd = { ...payload, created_at: createdAt };
+      const { data: plans } = await window.db.from('psy_treatment_plans')
+        .select('start_date, created_at, duration_weeks').eq('patient_id', selectedPatient.id).eq('status', 'active').limit(1);
+      if (plans?.[0]) upd.week_number = weekForDate(plans[0], date);
+      const { error } = await window.db.from('psy_vitals').update(upd).eq('id', editingId);
       if (error) throw error;
     } else {
       let planId = null, weekNum = null;
