@@ -615,9 +615,24 @@ function cjCard(title, icon, count, bodyHtml, accent) {
     <div class="space-y-2">${bodyHtml}</div>
   </div>`;
 }
+// Senarai boleh kolaps — papar ~6 item, selebihnya sorok di belakang butang.
+let _cjCid = 0;
+function cjCollapse(rows, limit) {
+  limit = limit || 6;
+  if (rows.length <= limit) return rows.join('');
+  const id = 'cjm-' + (++_cjCid);
+  const more = rows.length - limit;
+  return `${rows.slice(0, limit).join('')}<div id="${id}" class="hidden space-y-2">${rows.slice(limit).join('')}</div>
+    <button type="button" onclick="cjToggleMore('${id}', this, ${more})" class="text-[11px] font-semibold text-navy hover:underline mt-1">+ Lihat ${more} lagi</button>`;
+}
+window.cjToggleMore = function (id, btn, more) {
+  const nowHidden = document.getElementById(id).classList.toggle('hidden');
+  btn.textContent = nowHidden ? `+ Lihat ${more} lagi` : 'Tunjuk kurang';
+};
 function cjList(items) {
   if (!items.length) return '<p class="text-xs text-ink/35 italic">Tiada</p>';
-  return items.map(x => `<div class="flex items-start gap-2 text-xs"><span class="text-ink/30 mt-0.5">•</span><span class="text-ink/80">${escHtml(x)}</span></div>`).join('');
+  const rows = items.map(x => `<div class="flex items-start gap-2 text-xs"><span class="text-ink/30 mt-0.5">•</span><span class="text-ink/80">${escHtml(x)}</span></div>`);
+  return cjCollapse(rows, 6);
 }
 function renderCjDetail(week) {
   const host = document.getElementById('cj-detail');
@@ -626,15 +641,16 @@ function renderCjDetail(week) {
   const modeBadge = w.mode ? `<span class="text-[11px] font-bold px-2.5 py-1 rounded-full ${w.mode === 'Online' ? 'bg-blue-100 text-blue-600' : w.mode === 'Fizikal' ? 'bg-green-100 text-green-700' : 'bg-ink/8 text-ink/55'}">${w.mode}</span>` : '';
   const headline = w.guidance[0] || w.aktiviti[0] || `Minggu ${w.week}`;
   const refIcon = t => /video/i.test(t) ? '🎬' : /pdf/i.test(t) ? '📑' : /audio/i.test(t) ? '🎧' : '📄';
-  const rujukanBody = w.rujukan.length ? w.rujukan.map(r => `<div class="flex items-center justify-between gap-2 text-xs">
+  const rujukanRows = w.rujukan.map(r => `<div class="flex items-center justify-between gap-2 text-xs">
     <span class="flex items-center gap-1.5 text-ink/80 min-w-0"><span>${refIcon(r.type || r.label)}</span><span class="truncate">${escHtml(r.type || r.label || 'Rujukan')}</span></span>
     ${r.url ? `<a href="${escHtml(r.url)}" target="_blank" class="flex-shrink-0 text-[10px] font-bold text-navy hover:underline px-2 py-0.5 rounded bg-navy/5">Lihat</a>` : ''}
-  </div>`).join('') : '<p class="text-xs text-ink/35 italic">Tiada rujukan</p>';
+  </div>`);
+  const rujukanBody = w.rujukan.length ? cjCollapse(rujukanRows, 6) : '<p class="text-xs text-ink/35 italic">Tiada rujukan</p>';
 
   host.innerHTML = `<div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4 md:p-5">
     <div class="flex items-center gap-2 flex-wrap mb-3"><h3 class="text-lg font-extrabold text-ink">Minggu ${w.week}</h3>${modeBadge}</div>
     <div class="bg-emerald-50/60 border border-emerald-100 rounded-lg px-3 py-2.5 text-xs text-ink/75 mb-4">${escHtml(headline)}</div>
-    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 items-start">
       ${cjCard('Bimbingan', '📗', w.guidance.length + ' item', cjList(w.guidance), 'text-green-600')}
       ${cjCard('Aktiviti', '🎯', w.aktiviti.length + ' item', cjList(w.aktiviti), 'text-blue-600')}
       ${cjCard('Bekalan', '📦', w.supplies.length + ' item', cjList(w.supplies), 'text-amber-600')}
