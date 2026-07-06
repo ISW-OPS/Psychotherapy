@@ -2589,7 +2589,10 @@ function vpRenderTable() {
       <td class="py-3 px-3 text-xs">${v.temperature ? v.temperature + ' °C' : '—'}</td>
       <td class="py-3 px-3 text-xs">${v.weight ? v.weight + ' kg' : '—'}</td>
       <td class="py-3 px-3 text-xs text-ink/70 max-w-[200px] truncate" title="${v.notes || ''}">${v.notes || '—'}</td>
-      <td class="py-3 px-5 text-right"><button onclick="deleteVitalsReading('${v.id}')" class="text-ink/35 hover:text-red-500 text-sm" title="Padam">✕</button></td>
+      <td class="py-3 px-5 text-right whitespace-nowrap">
+        ${canEditVitals ? `<button onclick="vpEditReading('${v.id}')" class="text-navy/50 hover:text-navy text-sm font-semibold mr-3" title="Edit">✎ Edit</button>` : ''}
+        <button onclick="deleteVitalsReading('${v.id}')" class="text-ink/35 hover:text-red-500 text-sm" title="Padam">✕</button>
+      </td>
     </tr>`;
   }).join('');
 }
@@ -2600,6 +2603,8 @@ function updateVitalsNoteCount() {
   if (el && cnt) cnt.textContent = `${el.value.length} / 200`;
 }
 
+let vpEditingId = null;  // id bacaan yang sedang disunting (null = bacaan baru)
+
 function resetVitalsForm() {
   const now = new Date();
   const ymd = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
@@ -2609,12 +2614,35 @@ function resetVitalsForm() {
   if (timeEl) timeEl.value = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
   ['vf-sys','vf-dia','vf-hr','vf-temp','vf-weight','vf-notes'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   document.getElementById('vf-error')?.classList.add('hidden');
+  vpEditingId = null;
+  const sb = document.getElementById('vf-save'); if (sb) sb.textContent = '💾 Simpan Bacaan';
   updateVitalsNoteCount();
+}
+
+// Muatkan bacaan sedia ada ke borang sisi untuk disunting.
+function vpEditReading(id) {
+  const v = allVitals.find(x => x.id === id);
+  if (!v) return;
+  vpEditingId = id;
+  const p = n => String(n).padStart(2, '0');
+  const now = new Date();
+  const dt = new Date(v.created_at || (v.reading_date + 'T00:00:00'));
+  const de = document.getElementById('vf-date');
+  if (de) { de.value = v.reading_date || `${dt.getFullYear()}-${p(dt.getMonth()+1)}-${p(dt.getDate())}`; de.max = `${now.getFullYear()}-${p(now.getMonth()+1)}-${p(now.getDate())}`; }
+  const te = document.getElementById('vf-time'); if (te) te.value = v.created_at ? `${p(dt.getHours())}:${p(dt.getMinutes())}` : '';
+  const set = (i, val) => { const e = document.getElementById(i); if (e) e.value = val ?? ''; };
+  set('vf-sys', v.bp_systolic); set('vf-dia', v.bp_diastolic); set('vf-hr', v.heart_rate);
+  set('vf-temp', v.temperature); set('vf-weight', v.weight); set('vf-notes', v.notes);
+  updateVitalsNoteCount();
+  document.getElementById('vf-error')?.classList.add('hidden');
+  const sb = document.getElementById('vf-save'); if (sb) sb.textContent = '💾 Kemas Kini Bacaan';
+  document.getElementById('vf-date')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 async function deleteVitalsReading(id) {
   if (!confirm('Padam bacaan vitals ini?')) return;
   await window.db.from('psy_vitals').delete().eq('id', id);
+  if (id === vpEditingId) resetVitalsForm();  // elak sunting rekod yang dah dipadam
   banner('Bacaan dipadam');
   await loadVitals();
 }
@@ -2642,14 +2670,25 @@ async function saveVitalsReading() {
     // Tag minggu ikut TARIKH bacaan (bukan minggu semasa) — bacaan backdate
     // jatuh bawah minggu sebenar ia berlaku.
     if (activePlan) { planId = activePlan.id; weekNum = phWeekForDate(activePlan, date); }
-    const { error } = await window.db.from('psy_vitals').insert({
-      reading_date: date, bp_systolic: sys, bp_diastolic: dia, heart_rate: hr,
-      temperature: temp, weight: wt, notes, created_at: createdAt,
-      patient_id: patientId, plan_id: planId, week_number: weekNum,
-      source: 'staff', recorded_by: window.currentUser?.id, recorded_by_name: window.currentUser?.full_name,
-    });
-    if (error) throw error;
-    banner('Vitals disimpan ✅');
+    if (vpEditingId) {
+      // Sunting — kemas kini nilai + tarikh/masa + minggu; kekalkan perekod asal.
+      const { error } = await window.db.from('psy_vitals').update({
+        reading_date: date, bp_systolic: sys, bp_diastolic: dia, heart_rate: hr,
+        temperature: temp, weight: wt, notes, created_at: createdAt,
+        plan_id: planId, week_number: weekNum,
+      }).eq('id', vpEditingId);
+      if (error) throw error;
+      banner('Vitals dikemas kini ✅');
+    } else {
+      const { error } = await window.db.from('psy_vitals').insert({
+        reading_date: date, bp_systolic: sys, bp_diastolic: dia, heart_rate: hr,
+        temperature: temp, weight: wt, notes, created_at: createdAt,
+        patient_id: patientId, plan_id: planId, week_number: weekNum,
+        source: 'staff', recorded_by: window.currentUser?.id, recorded_by_name: window.currentUser?.full_name,
+      });
+      if (error) throw error;
+      banner('Vitals disimpan ✅');
+    }
     resetVitalsForm();
     await loadVitals();
   } catch (e) {
