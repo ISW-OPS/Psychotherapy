@@ -1363,6 +1363,7 @@ let profile   = null;   // psy_profiles row
 let kyc       = null;   // psy_kyc_submissions row
 let activePlan = null;
 let canEdit    = false; // true if user is admin/doctor/manager OR assigned coach
+let canEditVitals = true; // vitals: mana-mana staff boleh rekod/edit (halaman ini staff-only)
 
 const params    = new URLSearchParams(location.search);
 const patientId = params.get('patient_id');
@@ -1537,11 +1538,8 @@ function applyAccessControl() {
   banner.innerHTML = '👁 Mod Paparan Sahaja — pesakit ini tidak ditugaskan kepada anda. Anda boleh lihat rekod tetapi tidak boleh menambah data.';
   document.querySelector('.p-4.md\\:p-6.space-y-4').insertBefore(banner, document.querySelector('.tab-bar'));
 
-  // Disable vitals form
-  document.querySelectorAll('#tab-vitals input, #tab-vitals textarea').forEach(el => el.disabled = true);
-  const vitalsBtn = document.querySelector('#tab-vitals button[onclick="saveVitalsReading()"]');
-  if (vitalsBtn) vitalsBtn.style.display = 'none';
-
+  // Nota: borang vitals TIDAK di-disable — semua staff boleh rekod/edit vitals
+  // (lihat canEditVitals). Gate view-only ini hanya sekat tindakan lain.
 }
 
 // ── Tab switching ─────────────────────────────────────
@@ -2468,7 +2466,7 @@ function renderCheckins() {
 // ── VITALS ────────────────────────────────────────────
 function vitalRow(v) {
   const date = new Date(v.created_at).toLocaleDateString('ms-MY',{day:'2-digit',month:'short',year:'numeric'});
-  const actions = canEdit ? `
+  const actions = canEditVitals ? `
     <td class="text-right">
       <button onclick="openEditVitals('${v.id}')" class="text-navy text-xs font-semibold hover:underline mr-2">Edit</button>
       <button onclick="deleteVitals('${v.id}')" class="text-terracotta text-xs font-semibold hover:underline">Padam</button>
@@ -2791,7 +2789,7 @@ function renderVitalsTable() {
       <td class="px-3 py-3 text-xs">${v.heart_rate ?? '—'}</td>
       <td class="px-3 py-3 text-xs text-ink/65 max-w-[200px] truncate" title="${escapeHtml(v.notes||'')}">${escapeHtml(v.notes || '—')}</td>
       <td class="px-5 py-3 text-right">
-        ${canEdit ? `<button onclick="openEditVitals('${v.id}')" class="text-xs text-[#6366f1] hover:underline font-semibold mr-2">Edit</button><button onclick="deleteVitals('${v.id}')" class="text-xs text-red-500 hover:underline font-semibold">🗑️</button>` : ''}
+        ${canEditVitals ? `<button onclick="openEditVitals('${v.id}')" class="text-xs text-[#6366f1] hover:underline font-semibold mr-2">Edit</button><button onclick="deleteVitals('${v.id}')" class="text-xs text-red-500 hover:underline font-semibold">🗑️</button>` : ''}
       </td>
     </tr>`;
   }).join('');
@@ -2857,7 +2855,7 @@ function renderVitalsSidebar() {
 }
 
 function openVitalsModal() {
-  if (!canEdit) { banner('Anda hanya boleh melihat rekod pesakit ini.', 'error'); return; }
+  if (!canEditVitals) { banner('Anda hanya boleh melihat rekod pesakit ini.', 'error'); return; }
   ['v-sys','v-dia','v-hr','v-weight','v-height','v-temp','v-rbs','v-notes'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   document.getElementById('vitals-modal').classList.remove('hidden');
 }
@@ -2894,7 +2892,7 @@ function getVitalsPayload(prefix = 'v') {
 }
 
 async function saveVitals() {
-  if (!canEdit) { banner('Anda hanya boleh melihat rekod pesakit ini.', 'error'); return; }
+  if (!canEditVitals) { banner('Anda hanya boleh melihat rekod pesakit ini.', 'error'); return; }
 
   const payload = getVitalsPayload('v');
 
