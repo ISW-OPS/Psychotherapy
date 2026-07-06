@@ -1638,6 +1638,19 @@ function phYmd(d) {
   const x = new Date(d); const p = n => String(n).padStart(2, '0');
   return `${x.getFullYear()}-${p(x.getMonth()+1)}-${p(x.getDate())}`;
 }
+// Padan tarikh (YYYY-MM-DD) -> minggu rawatan. Minggu 1 = anchor (start_date).
+// Setiap minggu = 7 hari. Clamp [1, duration_weeks]; null kalau tiada plan.
+function phWeekForDate(p, ymd) {
+  p = p || activePlan;
+  if (!p || !ymd) return null;
+  const anchor = phAnchorDate(p); anchor.setHours(0, 0, 0, 0);
+  const d = new Date(ymd + 'T00:00:00'); d.setHours(0, 0, 0, 0);
+  let wk = Math.floor((d - anchor) / (7 * 86400000)) + 1;
+  if (wk < 1) wk = 1;
+  const dur = p.duration_weeks || 0;
+  if (dur && wk > dur) wk = dur;
+  return wk;
+}
 
 function renderOvWeekPage() {
   // Kawalan Tarikh Mula Program (staf boleh-edit sahaja)
@@ -2626,7 +2639,9 @@ async function saveVitalsReading() {
   try {
     const createdAt = new Date(`${date}T${time}:00`).toISOString();
     let planId = null, weekNum = null;
-    if (activePlan) { planId = activePlan.id; weekNum = activePlan.current_week; }
+    // Tag minggu ikut TARIKH bacaan (bukan minggu semasa) — bacaan backdate
+    // jatuh bawah minggu sebenar ia berlaku.
+    if (activePlan) { planId = activePlan.id; weekNum = phWeekForDate(activePlan, date); }
     const { error } = await window.db.from('psy_vitals').insert({
       reading_date: date, bp_systolic: sys, bp_diastolic: dia, heart_rate: hr,
       temperature: temp, weight: wt, notes, created_at: createdAt,

@@ -307,6 +307,20 @@ async function deleteReading(id) {
   await loadVitals();
 }
 
+// Padan tarikh bacaan (YYYY-MM-DD) -> minggu rawatan. Minggu 1 = start_date
+// (fallback created_at). 7 hari/minggu. Clamp [1, duration_weeks].
+function weekForDate(p, ymd) {
+  if (!p || !ymd) return null;
+  const anchor = new Date((p.start_date ? p.start_date + 'T00:00:00' : p.created_at));
+  anchor.setHours(0, 0, 0, 0);
+  const d = new Date(ymd + 'T00:00:00'); d.setHours(0, 0, 0, 0);
+  let wk = Math.floor((d - anchor) / (7 * 86400000)) + 1;
+  if (wk < 1) wk = 1;
+  const dur = p.duration_weeks || 0;
+  if (dur && wk > dur) wk = dur;
+  return wk;
+}
+
 async function saveReading() {
   if (!selectedPatient) { banner('Sila pilih pesakit', 'error'); return; }
   const errEl = document.getElementById('f-error');
@@ -333,8 +347,8 @@ async function saveReading() {
     } else {
       let planId = null, weekNum = null;
       const { data: plans } = await window.db.from('psy_treatment_plans')
-        .select('id, current_week').eq('patient_id', selectedPatient.id).eq('status', 'active').limit(1);
-      if (plans?.[0]) { planId = plans[0].id; weekNum = plans[0].current_week; }
+        .select('id, current_week, start_date, created_at, duration_weeks').eq('patient_id', selectedPatient.id).eq('status', 'active').limit(1);
+      if (plans?.[0]) { planId = plans[0].id; weekNum = weekForDate(plans[0], date); }  // tag ikut TARIKH bacaan
       const { error } = await window.db.from('psy_vitals').insert({
         ...payload, created_at: createdAt, patient_id: selectedPatient.id,
         plan_id: planId, week_number: weekNum, source: 'staff',
