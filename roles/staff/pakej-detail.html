@@ -127,7 +127,17 @@
               <h3 class="font-semibold text-sm text-ink flex items-center gap-2">🗓️ Bimbingan &amp; Aktiviti Mingguan</h3>
               <span id="coaching-count" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-ink/8 text-ink/55"></span>
             </div>
-            <div id="coaching-body" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+            <div id="coaching-journey" class="hidden">
+              <div class="grid lg:grid-cols-[300px_1fr] gap-4 items-start">
+                <div id="cj-stepper" class="space-y-2"></div>
+                <div id="cj-detail" class="min-w-0"></div>
+              </div>
+              <div id="cj-upcoming-wrap" class="hidden mt-5">
+                <h4 class="font-bold text-sm text-ink mb-2">Minggu Seterusnya</h4>
+                <div id="cj-upcoming" class="space-y-2"></div>
+              </div>
+            </div>
+            <div id="coaching-body" class="hidden"></div>
             <div id="coaching-empty" class="hidden py-10 text-center text-sm text-ink/35">Belum ada bimbingan/aktiviti mingguan disetkan.</div>
 
             <!-- Jadual Harian (default) -->
@@ -536,61 +546,122 @@ function openClausesModal() {
 }
 function closeClausesModal() { document.getElementById('clauses-modal')?.remove(); }
 
+// Bimbingan & Aktiviti dalam gaya "journey": stepper minggu + detail minggu
+// terpilih (4 kad) + senarai minggu seterusnya. Ini TEMPLATE pakej — jadi
+// tiada status/progress pesakit; kad tunjuk kandungan & bilangan item.
+let cjWeeks = [];
+let cjSelected = null;
+
+function cjExtract(w) {
+  const supplyLabels = arr => (arr || []).map(s => {
+    const name = itemLabel(s) || lookupSupplyName(s);
+    const qty = s && typeof s === 'object' ? (s.qty || s.quantity) : null;
+    return name ? (qty ? `${name} (${qty})` : name) : null;
+  }).filter(Boolean);
+  const guidance = [...(w.guidance || []), ...(w.guidance_2 || [])].map(itemLabel).filter(Boolean);
+  const aktiviti = [...(w.aktiviti || []), ...(w.aktiviti_2 || [])].map(itemLabel).filter(Boolean);
+  const supplies = supplyLabels([...(w.supplies || []), ...(w.supplies_2 || [])]);
+  const rujukan = (w.rujukan || w.references || w.rujukan_1 || []).map(r => {
+    if (typeof r === 'string') return { label: r, url: (r.match(/https?:\/\/\S+/) || [])[0] || null, type: '' };
+    return { label: r.label || r.name || r.title || 'Rujukan', url: r.url || r.link || null, type: r.type || r.content_type || '' };
+  });
+  const mode = w.mode === 'online' ? 'Online' : w.mode === 'f2f' ? 'Fizikal' : (w.mode ? 'F2F + Online' : '');
+  return { week: w.week || 0, guidance, aktiviti, supplies, rujukan, mode };
+}
+
 function renderCoaching() {
   const list = Array.isArray(pkg.coaching_schedule) ? pkg.coaching_schedule : [];
   const valid = list.filter(w =>
-    (w.guidance && w.guidance.length) ||
-    (w.aktiviti && w.aktiviti.length) ||
-    (w.supplies && w.supplies.length) ||
-    (w.guidance_2 && w.guidance_2.length) ||
-    (w.aktiviti_2 && w.aktiviti_2.length) ||
-    (w.supplies_2 && w.supplies_2.length) ||
-    w.mode
+    (w.guidance && w.guidance.length) || (w.aktiviti && w.aktiviti.length) || (w.supplies && w.supplies.length) ||
+    (w.guidance_2 && w.guidance_2.length) || (w.aktiviti_2 && w.aktiviti_2.length) || (w.supplies_2 && w.supplies_2.length) || w.mode
   );
   const empty = document.getElementById('coaching-empty');
-  if (!valid.length) { empty.classList.remove('hidden'); document.getElementById('coaching-body').innerHTML = ''; return; }
+  const journey = document.getElementById('coaching-journey');
+  if (!valid.length) { empty.classList.remove('hidden'); journey.classList.add('hidden'); return; }
   empty.classList.add('hidden');
+  journey.classList.remove('hidden');
   document.getElementById('coaching-count').textContent = valid.length + ' minggu';
 
-  document.getElementById('coaching-body').innerHTML = valid.map(w => {
-    const guidance = (w.guidance || []).map(itemLabel).filter(Boolean);
-    const aktiviti = (w.aktiviti || []).map(itemLabel).filter(Boolean);
-    const supplyLabels = arr => (arr || []).map(s => {
-      const name = itemLabel(s);
-      const qty = s && typeof s === 'object' ? (s.qty || s.quantity) : null;
-      return name ? (qty ? `${name} (${qty})` : name) : null;
-    }).filter(Boolean);
-    const supplies  = supplyLabels(w.supplies);
-    const guidance2 = (w.guidance_2 || []).map(itemLabel).filter(Boolean);
-    const aktiviti2 = (w.aktiviti_2 || []).map(itemLabel).filter(Boolean);
-    const supplies2 = supplyLabels(w.supplies_2);
-    const has2Sesi  = Array.isArray(w.session_days) ? w.session_days.length >= 2 : (supplies2.length || guidance2.length || aktiviti2.length) > 0;
+  cjWeeks = valid.map(cjExtract).sort((a, b) => (a.week || 0) - (b.week || 0));
+  cjSelected = cjWeeks[0]?.week ?? null;
+  renderCjStepper();
+  renderCjDetail(cjSelected);
+  renderCjUpcoming();
+}
 
-    const modeChip = w.mode === 'online'
-      ? '<span class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-semibold">💻 Online</span>'
-      : w.mode === 'f2f'
-        ? '<span class="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-[10px] font-semibold">🏥 Fizikal</span>'
-        : '<span class="px-2 py-0.5 rounded-full bg-ink/8 text-ink/55 text-[10px] font-semibold">F2F + Online</span>';
+function cjFind(week) { return cjWeeks.find(w => w.week === week); }
 
-    const chipRow = (label, arr, cls) => arr.length ? `<div class="mb-1.5">
-      <div class="text-[10px] font-bold text-ink/45 uppercase tracking-wider mb-1">${label}</div>
-      <div class="flex flex-wrap gap-1">${arr.map(x => `<span class="text-[11px] px-2 py-0.5 rounded ${cls}">${escHtml(x)}</span>`).join('')}</div>
-    </div>` : '';
-    const sesBlock = (num, g, a, s) => `
-      ${has2Sesi ? `<div class="text-[10px] font-bold text-navy uppercase tracking-wider mt-2 mb-1">🗓️ Sesi ${num}</div>` : ''}
-      ${chipRow('Bimbingan', g, 'bg-emerald-50 text-emerald-700')}
-      ${chipRow('Aktiviti', a, 'bg-blue-50 text-blue-700')}
-      ${chipRow('Bekalan', s, 'bg-amber-50 text-amber-700')}`;
-
-    return `<div class="border border-ink/10 rounded-xl p-3 bg-ink/[0.01]">
-      <div class="flex items-center justify-between mb-2">
-        <div class="font-bold text-sm text-ink">Minggu ${w.week || '?'}</div>
-        ${modeChip}
+function renderCjStepper() {
+  const host = document.getElementById('cj-stepper');
+  host.innerHTML = cjWeeks.map((w, i) => {
+    const sel = w.week === cjSelected;
+    const modeBadge = w.mode ? `<span class="text-[10px] font-semibold px-1.5 py-0.5 rounded ${w.mode === 'Online' ? 'bg-blue-100 text-blue-600' : w.mode === 'Fizikal' ? 'bg-green-100 text-green-700' : 'bg-ink/8 text-ink/55'}">${w.mode}</span>` : '<span></span>';
+    const count = w.guidance.length + w.aktiviti.length + w.supplies.length;
+    return `<button onclick="selectCjWeek(${w.week})" class="w-full flex items-stretch gap-2.5 text-left">
+      <div class="flex flex-col items-center flex-shrink-0">
+        <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-extrabold ${sel ? 'bg-navy text-white' : 'bg-ink/10 text-ink/60'}">${w.week}</div>
+        ${i < cjWeeks.length - 1 ? '<div class="w-0.5 flex-1 min-h-[10px] bg-ink/10 my-1"></div>' : ''}
       </div>
-      ${sesBlock(1, guidance, aktiviti, supplies)}
-      ${has2Sesi ? sesBlock(2, guidance2, aktiviti2, supplies2) : ''}
-    </div>`;
+      <div class="flex-1 min-w-0 rounded-xl border ${sel ? 'border-navy/30 bg-navy/5' : 'border-ink/10 bg-white'} px-3 py-2 mb-1.5 shadow-sm transition-colors">
+        <div class="text-sm font-bold text-ink">Minggu ${w.week}</div>
+        <div class="flex items-center justify-between mt-1">${modeBadge}<span class="text-[10px] text-ink/40">${count} item</span></div>
+      </div>
+    </button>`;
   }).join('');
+}
+window.selectCjWeek = function (w) { cjSelected = w; renderCjStepper(); renderCjDetail(w); renderCjUpcoming(); };
+
+function cjCard(title, icon, count, bodyHtml, accent) {
+  return `<div class="border border-ink/10 rounded-xl p-3.5 bg-white">
+    <div class="flex items-center gap-2 mb-2.5">
+      <span class="text-base">${icon}</span>
+      <div class="min-w-0"><div class="text-sm font-bold text-ink leading-none">${title}</div><div class="text-[10px] ${accent} mt-1 font-semibold">${count}</div></div>
+    </div>
+    <div class="space-y-2">${bodyHtml}</div>
+  </div>`;
+}
+function cjList(items) {
+  if (!items.length) return '<p class="text-xs text-ink/35 italic">Tiada</p>';
+  return items.map(x => `<div class="flex items-start gap-2 text-xs"><span class="text-ink/30 mt-0.5">•</span><span class="text-ink/80">${escHtml(x)}</span></div>`).join('');
+}
+function renderCjDetail(week) {
+  const host = document.getElementById('cj-detail');
+  const w = cjFind(week);
+  if (!w) { host.innerHTML = ''; return; }
+  const modeBadge = w.mode ? `<span class="text-[11px] font-bold px-2.5 py-1 rounded-full ${w.mode === 'Online' ? 'bg-blue-100 text-blue-600' : w.mode === 'Fizikal' ? 'bg-green-100 text-green-700' : 'bg-ink/8 text-ink/55'}">${w.mode}</span>` : '';
+  const headline = w.guidance[0] || w.aktiviti[0] || `Minggu ${w.week}`;
+  const refIcon = t => /video/i.test(t) ? '🎬' : /pdf/i.test(t) ? '📑' : /audio/i.test(t) ? '🎧' : '📄';
+  const rujukanBody = w.rujukan.length ? w.rujukan.map(r => `<div class="flex items-center justify-between gap-2 text-xs">
+    <span class="flex items-center gap-1.5 text-ink/80 min-w-0"><span>${refIcon(r.type || r.label)}</span><span class="truncate">${escHtml(r.type || r.label || 'Rujukan')}</span></span>
+    ${r.url ? `<a href="${escHtml(r.url)}" target="_blank" class="flex-shrink-0 text-[10px] font-bold text-navy hover:underline px-2 py-0.5 rounded bg-navy/5">Lihat</a>` : ''}
+  </div>`).join('') : '<p class="text-xs text-ink/35 italic">Tiada rujukan</p>';
+
+  host.innerHTML = `<div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4 md:p-5">
+    <div class="flex items-center gap-2 flex-wrap mb-3"><h3 class="text-lg font-extrabold text-ink">Minggu ${w.week}</h3>${modeBadge}</div>
+    <div class="bg-emerald-50/60 border border-emerald-100 rounded-lg px-3 py-2.5 text-xs text-ink/75 mb-4">${escHtml(headline)}</div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+      ${cjCard('Bimbingan', '📗', w.guidance.length + ' item', cjList(w.guidance), 'text-green-600')}
+      ${cjCard('Aktiviti', '🎯', w.aktiviti.length + ' item', cjList(w.aktiviti), 'text-blue-600')}
+      ${cjCard('Bekalan', '📦', w.supplies.length + ' item', cjList(w.supplies), 'text-amber-600')}
+      ${cjCard('Rujukan', '📚', w.rujukan.length + ' rujukan', rujukanBody, 'text-indigo-600')}
+    </div>
+  </div>`;
+}
+function renderCjUpcoming() {
+  const wrap = document.getElementById('cj-upcoming-wrap');
+  const host = document.getElementById('cj-upcoming');
+  const rows = cjWeeks.filter(w => w.week > cjSelected).map(w => {
+    const headline = w.guidance[0] || w.aktiviti[0] || (w.supplies[0] ? 'Bekalan: ' + w.supplies[0] : `Minggu ${w.week}`);
+    const modeBadge = w.mode ? `<span class="text-[10px] text-ink/40">${w.mode}</span>` : '';
+    return `<button onclick="selectCjWeek(${w.week})" class="w-full flex items-center gap-3 bg-white rounded-xl border border-ink/10 px-4 py-3 text-left hover:border-navy/30 transition-colors shadow-sm">
+      <div class="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-extrabold bg-ink/10 text-ink/60">${w.week}</div>
+      <div class="flex-1 min-w-0"><div class="flex items-center gap-2"><span class="text-sm font-bold text-ink">Minggu ${w.week}</span>${modeBadge}</div><div class="text-xs text-ink/60 truncate mt-0.5">${escHtml(headline)}</div></div>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="flex-shrink-0 text-ink/30"><polyline points="9 18 15 12 9 6"/></svg>
+    </button>`;
+  });
+  if (!rows.length) { wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden');
+  host.innerHTML = rows.join('');
 }
 
 // Timeline ringkas gaya "Perjalanan Rawatan": node + kandungan + mod + legend.
