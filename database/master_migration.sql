@@ -866,6 +866,14 @@ CREATE TABLE IF NOT EXISTS psy_vitals (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- Penanda plan/minggu + tarikh & MASA bacaan (step78). Staff boleh rekod
+-- beberapa bacaan sehari; reading_time bezakan setiap satu.
+ALTER TABLE psy_vitals
+  ADD COLUMN IF NOT EXISTS plan_id      UUID REFERENCES psy_treatment_plans(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS week_number  INT,
+  ADD COLUMN IF NOT EXISTS reading_date DATE,
+  ADD COLUMN IF NOT EXISTS reading_time TIME;
+
 ALTER TABLE psy_vitals ENABLE ROW LEVEL SECURITY;
 DO $$ BEGIN
   CREATE POLICY "Staff manage vitals" ON psy_vitals FOR ALL
@@ -7340,6 +7348,24 @@ COMMENT ON COLUMN psy_plan_week_overrides.session_days_override IS
   'Hari-sesi aktif minggu ini untuk pesakit ini. NULL=ikut pakej; [1,2]/[1]/[2].';
 
 SELECT 'Step 76 OK -- session_days_override added' AS status;
+
+-- ════════════════════════════════════════════════════════════════
+-- step77: Override BIMBINGAN & AKTIVITI per-pesakit per-minggu  (Jul 2026)
+-- Sebelum ni hanya bekalan & sesi boleh override; bimbingan/aktiviti dibaca
+-- live dari pakej. Kini coach boleh override juga (mirror supplies_override).
+-- Bentuk: { "1":[...], "2":[...] } per-sesi. NULL=ikut pakej; []=tiada.
+-- ════════════════════════════════════════════════════════════════
+
+ALTER TABLE psy_plan_week_overrides
+  ADD COLUMN IF NOT EXISTS guidance_override JSONB,
+  ADD COLUMN IF NOT EXISTS aktiviti_override JSONB;
+
+COMMENT ON COLUMN psy_plan_week_overrides.guidance_override IS
+  'Bimbingan/Calling khas pesakit ini per-sesi. {"1":[...],"2":[...]}. NULL=ikut pakej; []=tiada.';
+COMMENT ON COLUMN psy_plan_week_overrides.aktiviti_override IS
+  'Aktiviti khas pesakit ini per-sesi. {"1":[...],"2":[...]}. NULL=ikut pakej; []=tiada.';
+
+SELECT 'Step 77 OK -- guidance_override + aktiviti_override added' AS status;
 
 -- ════════════════════════════════════════════════════════════════
 -- step77: Continuity package offers  (Jul 2026)
