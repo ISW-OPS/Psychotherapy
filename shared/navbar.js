@@ -660,9 +660,48 @@ async function subscribeNotifBadge() {
   const uid = (await window.db.auth.getUser()).data.user?.id;
   if (!uid) return;
   ensureNotifPermission();
+  primeNotifAudio();
   window.db.channel('notif-badge-' + uid)
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'psy_notifications', filter: `user_id=eq.${uid}` }, (payload) => { loadNotifBadge(); showDesktopToast(payload.new); })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'psy_notifications', filter: `user_id=eq.${uid}` }, (payload) => { loadNotifBadge(); playNotifSound(); showDesktopToast(payload.new); })
     .subscribe();
+}
+
+// Audio notifikasi (Web Audio — tiada fail perlu). Browser sekat autoplay
+// sebelum interaksi, jadi kita "prime" AudioContext pada klik pertama.
+let _notifAudioCtx = null;
+function _getAudioCtx() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    if (!_notifAudioCtx) _notifAudioCtx = new Ctx();
+    if (_notifAudioCtx.state === 'suspended') _notifAudioCtx.resume().catch(() => {});
+    return _notifAudioCtx;
+  } catch (_) { return null; }
+}
+function primeNotifAudio() {
+  if (window._notifAudioPrimed) return;
+  window._notifAudioPrimed = true;
+  const prime = () => { _getAudioCtx(); document.removeEventListener('click', prime); };
+  document.addEventListener('click', prime, { once: true });
+}
+function playNotifSound() {
+  const ctx = _getAudioCtx();
+  if (!ctx) return;
+  try {
+    const now = ctx.currentTime;
+    // Ding-dong pendek (dua nada)
+    [[880, 0], [1174.66, 0.13]].forEach(([freq, t]) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, now + t);
+      gain.gain.exponentialRampToValueAtTime(0.22, now + t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + t + 0.28);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(now + t); osc.stop(now + t + 0.3);
+    });
+  } catch (_) {}
 }
 
 // Minta kebenaran notifikasi desktop (sekali sahaja).
