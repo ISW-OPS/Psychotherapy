@@ -713,12 +713,15 @@ let pkgPatients = [];
 let pkgPatientFilter = 'all';  // all | active | inactive
 
 async function renderPatients() {
-  const { data } = await window.db.from('psy_patients')
+  // active_package_id tak konsisten: sesetengah data guna UUID (pkg.id),
+  // sesetengah guna kod (pkg.package_id) — padan kedua-dua supaya betul.
+  const { data, error } = await window.db.from('psy_patients')
     .select('id, mrn, full_name, created_at, status, psy_profiles!psy_patients_user_id_fkey(full_name)')
-    .eq('active_package_id', pkg.package_id)
+    .or(`active_package_id.eq.${pkg.id},active_package_id.eq.${pkg.package_id}`)
     .in('status', ['active', 'inactive'])
     .order('created_at', { ascending: false })
     .limit(300);
+  if (error) { console.error('[pesakit]', error); banner('Ralat muat pesakit: ' + error.message, 'error'); }
   pkgPatients = data || [];
   setPatientFilter(pkgPatientFilter);
 }
@@ -759,10 +762,11 @@ function renderPatientRows() {
     <div class="px-5 py-2 grid gap-3 items-center text-[10px] font-bold text-ink/40 uppercase tracking-wider border-b border-ink/5 bg-ink/[0.015]" style="grid-template-columns: 1fr 100px 90px 70px 80px">
       <span>Pesakit</span><span>Coach</span><span>Tarikh Mula</span><span class="text-center">Progress</span><span>Status</span>
     </div>
-    ${show.map(p => {
-      const name = p.full_name || p.psy_profiles?.full_name || p.mrn || 'Pesakit';
-      const initials = name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
-      const daysIn = Math.floor((Date.now() - new Date(p.created_at).getTime()) / 86400000);
+    ${show.map(p => { try {
+      const prof = Array.isArray(p.psy_profiles) ? p.psy_profiles[0] : p.psy_profiles;
+      const name = p.full_name || prof?.full_name || p.mrn || 'Pesakit';
+      const initials = String(name).trim().split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase() || '?';
+      const daysIn = Math.floor((Date.now() - new Date(p.created_at || Date.now()).getTime()) / 86400000);
       const pct = Math.min(100, Math.max(5, Math.round(daysIn / (weeks * 7) * 100)));
       const isActive = p.status === 'active';
       const statusBadge = isActive
@@ -781,7 +785,7 @@ function renderPatientRows() {
         </div>
         ${statusBadge}
       </a>`;
-    }).join('')}
+    } catch (e) { console.error('[pesakit row]', p?.id, e); return ''; } }).join('')}
   `;
 
   if (list.length > 20) {
