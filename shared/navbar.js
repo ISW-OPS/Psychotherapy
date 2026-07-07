@@ -161,7 +161,6 @@ const STAFF_NAV_MASTER = [
   {
     group: 'PENTADBIRAN', collapsible: true, items: [
       { id: 'surat', url: 'surat.html', icon: '📜', label: 'Surat Rasmi' },
-      { id: 'closures', url: 'closures.html', icon: '🚫', label: 'Penutupan Klinik' },
       { id: 'kob_slots', url: 'kob-slots.html', icon: '⏰', label: 'Slot Konsultasi' },
       { id: 'staff_mgmt', url: 'staff_management.html', icon: '👨‍⚕️', label: 'Manage Staff' },
     ]
