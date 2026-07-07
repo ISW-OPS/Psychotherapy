@@ -273,7 +273,48 @@
     </div>
     <div id="day-modal-body" class="p-4 overflow-y-auto space-y-3"></div>
     <div class="px-6 py-3 border-t border-ink/10 flex-shrink-0">
-      <button onclick="openBookFromDay()" class="w-full bg-navy text-white py-2.5 rounded-xl text-sm font-semibold">+ Tambah Sesi Pada Tarikh Ini</button>
+      <button onclick="openClosureForm()" class="w-full bg-terracotta text-white py-2.5 rounded-xl text-sm font-semibold">🚫 Tambah / Urus Cuti Tarikh Ini</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Cuti Konsultasi Modal (dari kalendar) ───────── -->
+<div id="cal-closure-modal" class="hidden fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-md">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-ink/10">
+      <h3 class="font-bold" id="cc-title">Tambah Cuti Konsultasi</h3>
+      <button onclick="document.getElementById('cal-closure-modal').classList.add('hidden')" class="text-ink/40 hover:text-ink text-2xl leading-none">&times;</button>
+    </div>
+    <div class="p-5 space-y-3">
+      <input type="hidden" id="cc-id">
+      <div>
+        <label class="block text-xs font-semibold mb-1">Tarikh *</label>
+        <input id="cc-date" type="date" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold mb-1">Label *</label>
+        <input id="cc-label" type="text" placeholder="cth: Hari Raya Aidilfitri" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold mb-1">Kategori</label>
+        <select id="cc-category" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
+          <option value="public_holiday">Cuti Umum</option>
+          <option value="hari_raya">Hari Raya</option>
+          <option value="clinic_closed">Konsultasi Tutup</option>
+          <option value="training">Training</option>
+          <option value="other">Lain-lain</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold mb-1">Nota</label>
+        <textarea id="cc-notes" rows="2" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm resize-none" placeholder="Optional"></textarea>
+      </div>
+      <p class="text-[11px] text-ink/45">🔒 Tarikh ini akan auto-lock — pesakit & staff tak boleh book sesi.</p>
+      <p id="cc-error" class="hidden text-xs text-terracotta"></p>
+      <div class="flex gap-2 pt-1">
+        <button onclick="document.getElementById('cal-closure-modal').classList.add('hidden')" class="flex-1 border border-ink/15 py-2 rounded-lg text-sm font-semibold text-ink/60">Batal</button>
+        <button id="cc-save" onclick="saveClosureFromCal()" class="flex-1 bg-terracotta text-white py-2 rounded-lg text-sm font-semibold">Simpan Cuti</button>
+      </div>
     </div>
   </div>
 </div>
@@ -516,11 +557,7 @@ async function loadSessions() {
   allPlansList = plans;
 
   // Load clinic closures for visual lock in calendar
-  const closuresRes = await window.db.from('psy_clinic_closures')
-    .select('closure_date, label, category')
-    .then(r => r.data || [], () => []);
-  window._closureMap = {};
-  closuresRes.forEach(c => { window._closureMap[c.closure_date] = c; });
+  await reloadClosures();
 
   // Load allowed rawatan days from slot config (dynamic — ikut slot yang ON)
   const slotRes = await window.db.from('psy_kob_slot_config')
@@ -841,11 +878,20 @@ function openDayModal(dateStr) {
   const dayCoachFilter = document.getElementById('f-coach')?.value || '';
   const daySessions = allSessions.filter(s => s.session_date && localDateStr(s.session_date) === dateStr
     && (!dayCoachFilter || patientMap[s.patient_id]?.coach_id === dayCoachFilter || s.substitute_coach_id === dayCoachFilter));
-  const isClosed    = [1, 2].includes(d.getDay()); // Mon/Tue closed
-  const addBtn      = document.querySelector('#day-modal > div > div:last-child');
-  if (addBtn) addBtn.style.display = isClosed ? 'none' : '';
+  // Banner cuti kalau tarikh ini ada cuti konsultasi
+  const closure = (window._closureMap || {})[dateStr];
+  const closureBanner = closure ? `<div class="bg-terracotta/10 border border-terracotta/30 rounded-xl p-3 flex items-start justify-between gap-2">
+      <div class="min-w-0">
+        <div class="text-sm font-bold text-terracotta">🚫 Cuti: ${escapeHtml(closure.label)}</div>
+        <div class="text-[11px] text-ink/55 mt-0.5">${CAL_CLOSURE_CAT[closure.category] || closure.category || ''}${closure.notes ? ' · ' + escapeHtml(closure.notes) : ''}</div>
+      </div>
+      <div class="flex gap-2 flex-shrink-0">
+        <button onclick="openClosureForm()" class="text-xs font-semibold text-navy hover:underline">Edit</button>
+        ${closure.id ? `<button onclick="deleteClosureFromCal('${closure.id}')" class="text-xs font-semibold text-terracotta hover:underline">Padam</button>` : ''}
+      </div>
+    </div>` : '';
 
-  document.getElementById('day-modal-body').innerHTML = daySessions.length
+  document.getElementById('day-modal-body').innerHTML = closureBanner + (daySessions.length
     ? daySessions.map(s => {
         const dt      = new Date(s.session_date);
         const patient = patientMap[s.patient_id];
@@ -876,7 +922,7 @@ function openDayModal(dateStr) {
           </div>
         </div>`;
       }).join('')
-    : '<p class="text-ink/40 text-sm text-center py-6">Tiada sesi pada tarikh ini.</p>';
+    : '<p class="text-ink/40 text-sm text-center py-6">Tiada sesi pada tarikh ini.</p>');
 
   document.getElementById('day-modal').classList.remove('hidden');
 }
@@ -885,6 +931,71 @@ function openBookFromDay() {
   document.getElementById('day-modal').classList.add('hidden');
   openBookModal(selectedDayDate);
 }
+
+// ── Cuti Konsultasi (urus terus dari kalendar) ─────────
+const CAL_CLOSURE_CAT = { public_holiday:'Cuti Umum', hari_raya:'Hari Raya', clinic_closed:'Konsultasi Tutup', training:'Training', other:'Lain-lain' };
+
+async function reloadClosures() {
+  const rows = await window.db.from('psy_clinic_closures')
+    .select('id, closure_date, label, category, notes')
+    .then(r => r.data || [], () => []);
+  window._closureMap = {};
+  rows.forEach(c => { window._closureMap[c.closure_date] = c; });
+}
+
+function openClosureForm() {
+  const date = selectedDayDate;
+  const existing = (window._closureMap || {})[date];
+  document.getElementById('cc-id').value = existing?.id || '';
+  document.getElementById('cc-date').value = date || '';
+  document.getElementById('cc-label').value = existing?.label || '';
+  document.getElementById('cc-category').value = existing?.category || 'public_holiday';
+  document.getElementById('cc-notes').value = existing?.notes || '';
+  document.getElementById('cc-error').classList.add('hidden');
+  document.getElementById('cc-title').textContent = existing ? 'Kemas Kini Cuti' : 'Tambah Cuti Konsultasi';
+  document.getElementById('day-modal').classList.add('hidden');
+  document.getElementById('cal-closure-modal').classList.remove('hidden');
+}
+window.openClosureForm = openClosureForm;
+
+async function saveClosureFromCal() {
+  const id = document.getElementById('cc-id').value;
+  const date = document.getElementById('cc-date').value;
+  const label = document.getElementById('cc-label').value.trim();
+  const category = document.getElementById('cc-category').value;
+  const notes = document.getElementById('cc-notes').value.trim() || null;
+  const errEl = document.getElementById('cc-error');
+  if (!date || !label) { errEl.textContent = 'Tarikh & label diperlukan'; errEl.classList.remove('hidden'); return; }
+  const btn = document.getElementById('cc-save'); btn.disabled = true; btn.textContent = 'Menyimpan...';
+  try {
+    const payload = { closure_date: date, label, category, notes, updated_at: new Date().toISOString() };
+    let error;
+    if (id) ({ error } = await window.db.from('psy_clinic_closures').update(payload).eq('id', id));
+    else   ({ error } = await window.db.from('psy_clinic_closures').insert({ ...payload, created_by: window.currentUser?.id }));
+    if (error) throw error;
+    if (typeof auditLog === 'function') { try { await auditLog(id ? 'closure.updated' : 'closure.created', date, { label, category }); } catch (_) {} }
+    banner(id ? 'Cuti dikemaskini ✅' : 'Cuti ditambah ✅');
+    document.getElementById('cal-closure-modal').classList.add('hidden');
+    await reloadClosures();
+    renderCalendar();
+  } catch (e) {
+    errEl.textContent = String(e.message || e).includes('duplicate') ? 'Tarikh ini sudah ada cuti' : (e.message || 'Ralat');
+    errEl.classList.remove('hidden');
+  } finally { btn.disabled = false; btn.textContent = 'Simpan Cuti'; }
+}
+window.saveClosureFromCal = saveClosureFromCal;
+
+async function deleteClosureFromCal(id) {
+  if (!confirm('Padam tarikh cuti ini?')) return;
+  const { error } = await window.db.from('psy_clinic_closures').delete().eq('id', id);
+  if (error) { banner('Gagal: ' + error.message, 'error'); return; }
+  if (typeof auditLog === 'function') { try { await auditLog('closure.deleted', id, {}); } catch (_) {} }
+  banner('Cuti dipadam');
+  document.getElementById('day-modal').classList.add('hidden');
+  await reloadClosures();
+  renderCalendar();
+}
+window.deleteClosureFromCal = deleteClosureFromCal;
 
 // ── List View ─────────────────────────────────────────
 function renderList() {
