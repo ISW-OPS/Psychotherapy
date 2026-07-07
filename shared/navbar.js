@@ -659,9 +659,32 @@ async function subscribeNotifBadge() {
   window._notifBadgeSub = true;
   const uid = (await window.db.auth.getUser()).data.user?.id;
   if (!uid) return;
+  ensureNotifPermission();
   window.db.channel('notif-badge-' + uid)
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'psy_notifications', filter: `user_id=eq.${uid}` }, () => loadNotifBadge())
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'psy_notifications', filter: `user_id=eq.${uid}` }, (payload) => { loadNotifBadge(); showDesktopToast(payload.new); })
     .subscribe();
+}
+
+// Minta kebenaran notifikasi desktop (sekali sahaja).
+function ensureNotifPermission() {
+  try {
+    if (!('Notification' in window) || Notification.permission !== 'default') return;
+    Notification.requestPermission().catch(() => {});
+  } catch (_) {}
+}
+
+// Toast desktop OS (macam Telegram Web) bila ada notifikasi baru — semasa browser terbuka.
+function showDesktopToast(n) {
+  try {
+    if (!n || !('Notification' in window) || Notification.permission !== 'granted') return;
+    const emoji = NOTIF_ICONS[n.type] || NOTIF_ICONS.default;
+    const toast = new Notification(`${emoji} ${n.title || 'Ibnu Sina Wellness'}`, {
+      body: n.body || '',
+      tag: 'isw-notif-' + (n.id || Math.random()),
+    });
+    toast.onclick = () => { window.focus(); if (n.link) location.href = n.link; toast.close(); };
+    setTimeout(() => { try { toast.close(); } catch (_) {} }, 8000);
+  } catch (_) {}
 }
 
 function subscribeWaBadge() {
