@@ -625,6 +625,7 @@ function buildTopbar(user, cfg, role, staffRole) {
         <div class="px-5 py-4 border-b border-ink/10 flex items-center justify-between">
           <h3 class="font-bold">Notifikasi</h3>
           <div class="flex items-center gap-2">
+            <button onclick="testNotif()" class="text-xs text-green-dark hover:underline px-1" title="Uji toast + bunyi">🔔 Uji</button>
             <button onclick="markAllRead()" class="text-xs text-navy hover:underline px-1">Baca semua</button>
             <button onclick="deleteAllNotif()" class="text-xs text-terracotta hover:underline px-1">Padam semua</button>
             <button onclick="closeNotifPanel()" class="text-ink/40 hover:text-ink text-xl leading-none ml-1">×</button>
@@ -684,6 +685,17 @@ function primeNotifAudio() {
   const prime = () => { _getAudioCtx(); document.removeEventListener('click', prime); };
   document.addEventListener('click', prime, { once: true });
 }
+// Uji notifikasi terus dari UI (butang 🔔 Uji dlm panel loceng) — tak perlu console.
+function testNotif() {
+  _getAudioCtx();          // prime dalam gesture klik
+  playNotifSound();
+  const fire = () => showDesktopToast({ id: 'test', type: 'system', title: 'Notifikasi Ujian 🔔', body: 'Ini ujian toast + bunyi.', link: '' });
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission().then(fire).catch(() => {});
+  } else { fire(); }
+}
+window.testNotif = testNotif;
+
 function playNotifSound() {
   const ctx = _getAudioCtx();
   if (!ctx) return;
