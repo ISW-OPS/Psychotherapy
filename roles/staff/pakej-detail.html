@@ -436,31 +436,61 @@ function renderContract() {
   if (!hasClauses && !hasPdf && !pkg.agreement_title) { empty.classList.remove('hidden'); return; }
   empty.classList.add('hidden');
 
-  const clauseCount = hasClauses ? pkg.agreement_clauses.length : 0;
-  document.getElementById('contract-clauses-badge').textContent = clauseCount + ' klausa';
+  const clauses = hasClauses ? pkg.agreement_clauses : [];
+  document.getElementById('contract-clauses-badge').textContent = clauses.length + ' klausa';
 
-  const rows = [];
-  if (pkg.agreement_title)   rows.push(`<div class="flex justify-between gap-3"><span class="text-ink/55 text-xs">Tajuk</span><span class="font-semibold text-ink/85 text-right">${escHtml(pkg.agreement_title)}</span></div>`);
-  if (pkg.agreement_version) rows.push(`<div class="flex justify-between gap-3"><span class="text-ink/55 text-xs">Version</span><span class="font-mono text-ink/65 text-xs text-right">${escHtml(pkg.agreement_version)}</span></div>`);
-  if (hasClauses) {
-    rows.push(`<div class="pt-2 border-t border-ink/10">
-      <div class="flex items-center justify-between mb-2">
-        <div class="text-[10px] font-bold text-ink/45 uppercase tracking-wider">${clauseCount} Klausa</div>
-        <button type="button" onclick="openClausesModal()" class="text-[11px] font-semibold text-navy hover:underline">Lihat penuh →</button>
+  const title = pkg.agreement_title || 'Kontrak Pelaburan Kesihatan';
+  const version = pkg.agreement_version || '';
+
+  const clausesHtml = clauses.map((c, i) => `
+    <div class="mb-5">
+      <h4 class="font-bold text-ink text-[15px] mb-1.5">${i + 1}. ${escHtml(c.title || c.heading || 'Klausa')}</h4>
+      ${(c.body || c.text) ? `<p class="text-sm text-ink/80 leading-relaxed whitespace-pre-wrap">${escHtml(c.body || c.text)}</p>` : ''}
+    </div>`).join('');
+
+  document.getElementById('contract-body').innerHTML = `
+    <div class="flex items-center justify-end gap-2 mb-4">
+      ${hasPdf ? `<a href="${escHtml(pkg.agreement_pdf)}" target="_blank" class="px-3 py-1.5 rounded-lg border border-ink/15 text-xs font-semibold text-navy hover:bg-navy/5">📄 PDF asal</a>` : ''}
+      <button onclick="printContract()" class="px-3 py-1.5 rounded-lg bg-navy text-white text-xs font-semibold hover:bg-navy-dark inline-flex items-center gap-1.5">🖨️ Cetak / Simpan PDF</button>
+    </div>
+    <!-- Dokumen gaya kertas -->
+    <div class="max-w-3xl mx-auto bg-white border border-ink/10 rounded-lg shadow-sm px-6 py-8 md:px-12 md:py-12">
+      <div class="text-center border-b border-ink/10 pb-5 mb-6">
+        <h2 class="text-xl font-extrabold text-ink">${escHtml(title)}</h2>
+        ${version ? `<div class="text-[11px] text-ink/50 font-mono mt-1.5">${escHtml(version)}</div>` : ''}
+        <div class="text-xs text-ink/45 mt-1">Pakej: ${escHtml(pkg.name || '')}${clauses.length ? ' · ' + clauses.length + ' klausa' : ''}</div>
       </div>
-      <ol class="space-y-1.5 text-xs text-ink/75 list-decimal list-inside">
-        ${pkg.agreement_clauses.slice(0, 8).map(c => `<li class="truncate">${escHtml(c.title || c.heading || c.text?.slice(0,60) || 'Klausa')}</li>`).join('')}
-        ${pkg.agreement_clauses.length > 8 ? `<li class="list-none text-ink/40 cursor-pointer hover:underline" onclick="openClausesModal()">... ${pkg.agreement_clauses.length - 8} lagi (klik untuk buka)</li>` : ''}
-      </ol>
-    </div>`);
-  }
-  if (hasPdf) {
-    rows.push(`<div class="pt-2 border-t border-ink/10">
-      <a href="${escHtml(pkg.agreement_pdf)}" target="_blank" class="inline-flex items-center gap-1.5 text-xs font-semibold text-navy hover:underline">📄 Lihat PDF Kontrak →</a>
-    </div>`);
-  }
-  document.getElementById('contract-body').innerHTML = rows.join('');
+      ${clausesHtml || '<p class="text-center text-ink/40 text-sm py-8">Tiada klausa berstruktur — sila rujuk PDF asal.</p>'}
+    </div>`;
 }
+
+// Buka dokumen kontrak versi kertas bersih di tab baru untuk cetak / Simpan PDF.
+function printContract() {
+  const clauses = Array.isArray(pkg.agreement_clauses) ? pkg.agreement_clauses : [];
+  const title = pkg.agreement_title || 'Kontrak Pelaburan Kesihatan';
+  const version = pkg.agreement_version || '';
+  const body = clauses.map((c, i) =>
+    `<h4>${i + 1}. ${escHtml(c.title || c.heading || 'Klausa')}</h4>${(c.body || c.text) ? `<p>${escHtml(c.body || c.text)}</p>` : ''}`
+  ).join('');
+  const w = window.open('', '_blank');
+  if (!w) { banner('Popup disekat — benarkan popup untuk cetak', 'error'); return; }
+  w.document.write(`<!doctype html><html lang="ms"><head><meta charset="utf-8"><title>${escHtml(title)} — ${escHtml(pkg.name || '')}</title>
+    <style>
+      body{font-family:Georgia,'Times New Roman',serif;max-width:720px;margin:36px auto;padding:0 28px;color:#1a1a1a;line-height:1.65}
+      h2{text-align:center;font-size:20px;margin:0 0 4px}
+      .meta{text-align:center;color:#666;font-size:12px;margin-bottom:26px;border-bottom:1px solid #ddd;padding-bottom:16px}
+      h4{font-size:14px;margin:16px 0 4px;font-weight:700}
+      p{font-size:13px;margin:0 0 8px;white-space:pre-wrap;text-align:justify}
+      @media print{body{margin:0}}
+    </style></head><body>
+    <h2>${escHtml(title)}</h2>
+    <div class="meta">${version ? escHtml(version) + ' · ' : ''}Pakej: ${escHtml(pkg.name || '')}${clauses.length ? ' · ' + clauses.length + ' klausa' : ''}</div>
+    ${body || '<p style="text-align:center;color:#999">Tiada klausa</p>'}
+    </body></html>`);
+  w.document.close(); w.focus();
+  setTimeout(() => { try { w.print(); } catch (_) {} }, 350);
+}
+window.printContract = printContract;
 
 function openClausesModal() {
   const clauses = Array.isArray(pkg.agreement_clauses) ? pkg.agreement_clauses : [];
