@@ -137,12 +137,16 @@
 
           <!-- ── PANEL: Pesakit ── -->
           <div id="panel-pesakit" class="pkgtab-panel hidden">
-            <div class="px-5 py-4 border-b border-ink/8 flex items-center justify-between">
+            <div class="px-5 py-4 border-b border-ink/8 flex items-center justify-between gap-3 flex-wrap">
               <h3 class="font-semibold text-sm text-ink">👥 Pesakit dalam Pakej Ini</h3>
-              <span id="pt-count-badge" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-ink/8 text-ink/55">0</span>
+              <div class="flex items-center gap-1.5">
+                <button class="pt-filter text-[11px] font-semibold px-2.5 py-1 rounded-lg transition-colors" data-ptf="all" onclick="setPatientFilter('all')">Semua <span id="ptc-all" class="opacity-70">0</span></button>
+                <button class="pt-filter text-[11px] font-semibold px-2.5 py-1 rounded-lg transition-colors" data-ptf="active" onclick="setPatientFilter('active')">Aktif <span id="ptc-active" class="opacity-70">0</span></button>
+                <button class="pt-filter text-[11px] font-semibold px-2.5 py-1 rounded-lg transition-colors" data-ptf="inactive" onclick="setPatientFilter('inactive')">Tidak Aktif <span id="ptc-inactive" class="opacity-70">0</span></button>
+              </div>
             </div>
             <div id="patients-body"></div>
-            <div id="patients-empty" class="hidden px-5 py-10 text-center text-sm text-ink/35">Belum ada pesakit aktif dalam pakej ini.</div>
+            <div id="patients-empty" class="hidden px-5 py-10 text-center text-sm text-ink/35">Tiada pesakit untuk penapis ini.</div>
             <div id="patients-footer" class="hidden px-5 py-3 border-t border-ink/8 text-center">
               <a id="see-all-patients" href="#" class="text-sm font-semibold text-navy hover:underline"><span>Lihat semua pesakit</span></a>
             </div>
@@ -702,17 +706,42 @@ function renderTimeline() {
     </div>`;
 }
 
+let pkgPatients = [];
+let pkgPatientFilter = 'all';  // all | active | inactive
+
 async function renderPatients() {
   const { data } = await window.db.from('psy_patients')
-    .select('id, mrn, created_at, psy_profiles!psy_patients_user_id_fkey(full_name)')
+    .select('id, mrn, created_at, status, psy_profiles!psy_patients_user_id_fkey(full_name)')
     .eq('active_package_id', pkg.package_id)
-    .eq('status', 'active')
+    .in('status', ['active', 'inactive'])
     .order('created_at', { ascending: false })
-    .limit(50);
+    .limit(300);
+  pkgPatients = data || [];
+  setPatientFilter(pkgPatientFilter);
+}
 
-  const list = data || [];
-  document.getElementById('pt-count-badge').textContent = list.length;
+function setPatientFilter(f) {
+  pkgPatientFilter = f;
+  document.querySelectorAll('.pt-filter').forEach(b => {
+    const on = b.dataset.ptf === f;
+    b.classList.toggle('bg-navy', on);
+    b.classList.toggle('text-white', on);
+    b.classList.toggle('bg-ink/5', !on);
+    b.classList.toggle('text-ink/60', !on);
+  });
+  renderPatientRows();
+}
+window.setPatientFilter = setPatientFilter;
 
+function renderPatientRows() {
+  const activeN = pkgPatients.filter(p => p.status === 'active').length;
+  const inactiveN = pkgPatients.filter(p => p.status === 'inactive').length;
+  document.getElementById('ptc-all').textContent = pkgPatients.length;
+  document.getElementById('ptc-active').textContent = activeN;
+  document.getElementById('ptc-inactive').textContent = inactiveN;
+  document.getElementById('pt-count-badge').textContent = pkgPatients.length;
+
+  const list = pkgPatients.filter(p => pkgPatientFilter === 'all' ? true : p.status === pkgPatientFilter);
   const empty = document.getElementById('patients-empty');
   const body  = document.getElementById('patients-body');
   const footer = document.getElementById('patients-footer');
@@ -721,10 +750,10 @@ async function renderPatients() {
   empty.classList.add('hidden');
 
   const weeks = Number(pkg.duration_weeks || 12);
-  const show = list.slice(0, 8);
+  const show = list.slice(0, 20);
 
   body.innerHTML = `
-    <div class="px-5 py-2 grid gap-3 items-center text-[10px] font-bold text-ink/40 uppercase tracking-wider border-b border-ink/5 bg-ink/[0.015]" style="grid-template-columns: 1fr 100px 90px 70px 70px">
+    <div class="px-5 py-2 grid gap-3 items-center text-[10px] font-bold text-ink/40 uppercase tracking-wider border-b border-ink/5 bg-ink/[0.015]" style="grid-template-columns: 1fr 100px 90px 70px 80px">
       <span>Pesakit</span><span>Coach</span><span>Tarikh Mula</span><span class="text-center">Progress</span><span>Status</span>
     </div>
     ${show.map(p => {
@@ -732,7 +761,11 @@ async function renderPatients() {
       const initials = name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
       const daysIn = Math.floor((Date.now() - new Date(p.created_at).getTime()) / 86400000);
       const pct = Math.min(100, Math.max(5, Math.round(daysIn / (weeks * 7) * 100)));
-      return `<a href="patient-hub.html?patient_id=${p.id}" class="grid gap-3 items-center px-5 py-3 hover:bg-ink/[0.015] transition-colors" style="grid-template-columns: 1fr 100px 90px 70px 70px">
+      const isActive = p.status === 'active';
+      const statusBadge = isActive
+        ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700">Aktif</span>'
+        : '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-ink/10 text-ink/50">Tidak Aktif</span>';
+      return `<a href="patient-hub.html?patient_id=${p.id}" class="grid gap-3 items-center px-5 py-3 hover:bg-ink/[0.015] transition-colors" style="grid-template-columns: 1fr 100px 90px 70px 80px">
         <div class="flex items-center gap-2 min-w-0">
           <div class="w-7 h-7 rounded-full bg-ink/8 flex items-center justify-center text-[10px] font-bold text-ink/60 flex-shrink-0">${initials}</div>
           <div class="text-sm font-semibold text-ink truncate">${escHtml(name)}</div>
@@ -740,18 +773,20 @@ async function renderPatients() {
         <div class="text-xs text-ink/55 truncate">—</div>
         <div class="text-xs text-ink/55">${fmtDate(p.created_at)}</div>
         <div>
-          <div class="w-full bg-ink/8 rounded-full h-1.5"><div class="h-1.5 rounded-full bg-green-400" style="width:${pct}%"></div></div>
+          <div class="w-full bg-ink/8 rounded-full h-1.5"><div class="h-1.5 rounded-full ${isActive ? 'bg-green-400' : 'bg-ink/25'}" style="width:${pct}%"></div></div>
           <div class="text-[10px] text-ink/45 text-center mt-0.5">${pct}%</div>
         </div>
-        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700">Aktif</span>
+        ${statusBadge}
       </a>`;
     }).join('')}
   `;
 
-  if (list.length > 8) {
+  if (list.length > 20) {
     footer.classList.remove('hidden');
     document.getElementById('see-all-patients').href = 'patients.html?package=' + pkg.id;
     document.getElementById('see-all-patients').querySelector('span').textContent = `Lihat semua pesakit (${list.length})`;
+  } else {
+    footer.classList.add('hidden');
   }
 }
 
