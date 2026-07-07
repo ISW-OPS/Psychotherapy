@@ -689,10 +689,24 @@ function primeNotifAudio() {
 function testNotif() {
   _getAudioCtx();          // prime dalam gesture klik
   playNotifSound();
-  const fire = () => showDesktopToast({ id: 'test', type: 'system', title: 'Notifikasi Ujian 🔔', body: 'Ini ujian toast + bunyi.', link: '' });
-  if ('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission().then(fire).catch(() => {});
-  } else { fire(); }
+  if (!('Notification' in window)) { alert('Browser ini tak sokong notifikasi desktop. Bunyi tetap berfungsi.'); return; }
+  const afterPerm = () => {
+    if (Notification.permission === 'granted') {
+      try {
+        const t = new Notification('🔔 Notifikasi Ujian', { body: 'Ini ujian toast + bunyi.', tag: 'isw-test-' + Date.now() });
+        t.onclick = () => { window.focus(); t.close(); };
+        setTimeout(() => { try { t.close(); } catch (_) {} }, 8000);
+      } catch (e) {
+        alert('Kebenaran OK tapi gagal cipta toast: ' + e.message);
+      }
+    } else if (Notification.permission === 'denied') {
+      alert('❌ Notifikasi desktop DISEKAT untuk laman ni.\n\nBenarkan: klik ikon 🔒 (kiri address bar) → Notifications → Allow → cuba semula.\n\n(Bunyi tetap main.)');
+    } else {
+      alert('Kebenaran belum diberi. Klik "🔔 Uji" sekali lagi & tekan Allow.');
+    }
+  };
+  if (Notification.permission === 'default') Notification.requestPermission().then(afterPerm).catch(afterPerm);
+  else afterPerm();
 }
 window.testNotif = testNotif;
 
