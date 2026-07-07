@@ -446,9 +446,11 @@ function renderContract() {
   const title = pkg.agreement_title || 'Kontrak Pelaburan Kesihatan';
   const version = pkg.agreement_version || '';
 
+  // Buang nombor sedia ada di depan tajuk (cth "1. ") supaya tak berganda.
+  const clauseTitle = c => (c.title || c.heading || 'Klausa').replace(/^\s*\d+[.)]\s*/, '');
   const clausesHtml = clauses.map((c, i) => `
     <div class="mb-5">
-      <h4 class="font-bold text-ink text-[15px] mb-1.5">${i + 1}. ${escHtml(c.title || c.heading || 'Klausa')}</h4>
+      <h4 class="font-bold text-ink text-[15px] mb-1.5">${i + 1}. ${escHtml(clauseTitle(c))}</h4>
       ${(c.body || c.text) ? `<p class="text-sm text-ink/80 leading-relaxed whitespace-pre-wrap">${escHtml(c.body || c.text)}</p>` : ''}
     </div>`).join('');
 
@@ -473,9 +475,10 @@ function printContract() {
   const clauses = Array.isArray(pkg.agreement_clauses) ? pkg.agreement_clauses : [];
   const title = pkg.agreement_title || 'Kontrak Pelaburan Kesihatan';
   const version = pkg.agreement_version || '';
-  const body = clauses.map((c, i) =>
-    `<h4>${i + 1}. ${escHtml(c.title || c.heading || 'Klausa')}</h4>${(c.body || c.text) ? `<p>${escHtml(c.body || c.text)}</p>` : ''}`
-  ).join('');
+  const body = clauses.map((c, i) => {
+    const t = (c.title || c.heading || 'Klausa').replace(/^\s*\d+[.)]\s*/, '');
+    return `<h4>${i + 1}. ${escHtml(t)}</h4>${(c.body || c.text) ? `<p>${escHtml(c.body || c.text)}</p>` : ''}`;
+  }).join('');
   const w = window.open('', '_blank');
   if (!w) { banner('Popup disekat — benarkan popup untuk cetak', 'error'); return; }
   w.document.write(`<!doctype html><html lang="ms"><head><meta charset="utf-8"><title>${escHtml(title)} — ${escHtml(pkg.name || '')}</title>
@@ -711,7 +714,7 @@ let pkgPatientFilter = 'all';  // all | active | inactive
 
 async function renderPatients() {
   const { data } = await window.db.from('psy_patients')
-    .select('id, mrn, created_at, status, psy_profiles!psy_patients_user_id_fkey(full_name)')
+    .select('id, mrn, full_name, created_at, status, psy_profiles!psy_patients_user_id_fkey(full_name)')
     .eq('active_package_id', pkg.package_id)
     .in('status', ['active', 'inactive'])
     .order('created_at', { ascending: false })
@@ -757,7 +760,7 @@ function renderPatientRows() {
       <span>Pesakit</span><span>Coach</span><span>Tarikh Mula</span><span class="text-center">Progress</span><span>Status</span>
     </div>
     ${show.map(p => {
-      const name = p.psy_profiles?.full_name || p.mrn || 'Pesakit';
+      const name = p.full_name || p.psy_profiles?.full_name || p.mrn || 'Pesakit';
       const initials = name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
       const daysIn = Math.floor((Date.now() - new Date(p.created_at).getTime()) / 86400000);
       const pct = Math.min(100, Math.max(5, Math.round(daysIn / (weeks * 7) * 100)));
