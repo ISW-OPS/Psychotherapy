@@ -7465,11 +7465,13 @@ CREATE TRIGGER trg_auto_inactive
 SELECT 'Step 80 OK -- trigger auto-inactive ready' AS status;
 
 -- ════════════════════════════════════════════════════════════════
--- step83: Rujukan Pesakit (referral)  (Jul 2026)
+-- step83: Rujukan Klinikal Pesakit (care referral)  (Jul 2026)
 -- Coach/staff rujuk pesakit kpd doctor / coach lain / manager (Hakeem/
 -- Hakeema). Sasaran spesifik (target_id). Notif type 'referral'.
+-- NOTA: psy_referrals sedia ada = ganjaran rujukan pesakit-ke-pesakit;
+-- ini feature berbeza → psy_clinical_referrals.
 -- ════════════════════════════════════════════════════════════════
-CREATE TABLE IF NOT EXISTS psy_referrals (
+CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id       UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
   referred_by      UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
@@ -7485,14 +7487,14 @@ CREATE TABLE IF NOT EXISTS psy_referrals (
   updated_at       TIMESTAMPTZ DEFAULT now(),
   resolved_at      TIMESTAMPTZ
 );
-ALTER TABLE psy_referrals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_clinical_referrals ENABLE ROW LEVEL SECURITY;
 DO $$ BEGIN
-  CREATE POLICY "Staff manage referrals" ON psy_referrals FOR ALL
+  CREATE POLICY "Staff manage clinical referrals" ON psy_clinical_referrals FOR ALL
     USING      (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
     WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-CREATE INDEX IF NOT EXISTS idx_psy_referrals_target  ON psy_referrals(target_id, status, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_psy_referrals_patient ON psy_referrals(patient_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_psy_clinical_referrals_target  ON psy_clinical_referrals(target_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_psy_clinical_referrals_patient ON psy_clinical_referrals(patient_id, created_at DESC);
 
 DO $$ DECLARE r RECORD; BEGIN
   FOR r IN SELECT conname FROM pg_constraint
@@ -7503,4 +7505,4 @@ END $$;
 ALTER TABLE psy_notifications ADD CONSTRAINT psy_notifications_type_check
   CHECK (type IN ('appointment','order','plan','system','reaksi','kyc','referral'));
 
-SELECT 'Step 83 OK -- psy_referrals ready' AS status;
+SELECT 'Step 83 OK -- psy_clinical_referrals ready' AS status;

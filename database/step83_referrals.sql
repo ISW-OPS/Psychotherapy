@@ -1,11 +1,13 @@
 -- ═══════════════════════════════════════════════════════════════
--- step83: Rujukan Pesakit (referral) — Jul 2026
+-- step83: Rujukan Klinikal Pesakit (care referral) — Jul 2026
 -- Coach/staff rujuk pesakit kepada doctor / coach lain / manager
 -- (Hakeem/Hakeema). Sasaran dipilih secara spesifik (target_id).
+-- NOTA: `psy_referrals` sedia ada = sistem GANJARAN rujukan pesakit-ke-
+-- pesakit (marketing). Ini feature BERBEZA → guna `psy_clinical_referrals`.
 -- Notifikasi guna psy_notifications type 'referral'.
 -- ═══════════════════════════════════════════════════════════════
 
-CREATE TABLE IF NOT EXISTS psy_referrals (
+CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id       UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
   referred_by      UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
@@ -22,15 +24,15 @@ CREATE TABLE IF NOT EXISTS psy_referrals (
   resolved_at      TIMESTAMPTZ
 );
 
-ALTER TABLE psy_referrals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_clinical_referrals ENABLE ROW LEVEL SECURITY;
 DO $$ BEGIN
-  CREATE POLICY "Staff manage referrals" ON psy_referrals FOR ALL
+  CREATE POLICY "Staff manage clinical referrals" ON psy_clinical_referrals FOR ALL
     USING      (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
     WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-CREATE INDEX IF NOT EXISTS idx_psy_referrals_target  ON psy_referrals(target_id, status, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_psy_referrals_patient ON psy_referrals(patient_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_psy_clinical_referrals_target  ON psy_clinical_referrals(target_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_psy_clinical_referrals_patient ON psy_clinical_referrals(patient_id, created_at DESC);
 
 -- Benarkan jenis notifikasi 'referral'
 DO $$ DECLARE r RECORD; BEGIN
@@ -42,4 +44,4 @@ END $$;
 ALTER TABLE psy_notifications ADD CONSTRAINT psy_notifications_type_check
   CHECK (type IN ('appointment','order','plan','system','reaksi','kyc','referral'));
 
-SELECT 'Step 83 OK -- psy_referrals + referral notif type' AS status;
+SELECT 'Step 83 OK -- psy_clinical_referrals + referral notif type' AS status;
