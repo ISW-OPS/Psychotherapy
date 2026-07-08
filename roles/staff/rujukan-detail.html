@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Detail Rujukan</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🔀</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-6 max-w-3xl mx-auto space-y-5">
+        <a href="rujukan.html" class="text-sm text-ink/55 hover:text-ink">← Kembali ke Rujukan</a>
+        <div id="ref-detail"></div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="../../shared/utils.js"></script>
+<script src="_shared.js"></script>
+<script>
+const BUCKET = 'referral-docs';
+const refId = new URLSearchParams(location.search).get('id');
+let ref = null, me = null;
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmt(d){ return d ? new Date(d).toLocaleDateString('ms-MY',{weekday:'short',day:'2-digit',month:'short',year:'numeric'}) : '—'; }
+const ROLE_LBL = { doctor:'🩺 Doctor', coach:'🧑‍🏫 Coach', manager:'🧑‍💼 Manager' };
+const STATUS_MAP = { pending:{lbl:'Pending',cls:'bg-amber-100 text-amber-700'}, accepted:{lbl:'Diterima',cls:'bg-blue-100 text-blue-700'}, resolved:{lbl:'Selesai',cls:'bg-green-100 text-green-700'}, declined:{lbl:'Ditolak',cls:'bg-ink/10 text-ink/50'} };
+
+async function loadRef() {
+  const { data } = await window.db.from('psy_clinical_referrals')
+    .select('*, psy_patients(full_name, mrn)').eq('id', refId).maybeSingle();
+  ref = data;
+  if (!ref) { document.getElementById('ref-detail').innerHTML = '<div class="bg-white rounded-2xl border border-ink/10 p-10 text-center text-ink/40">Rujukan tidak ditemui.</div>'; return; }
+  render();
+}
+
+function render() {
+  const st = STATUS_MAP[ref.status] || STATUS_MAP.pending;
+  const pName = ref.psy_patients?.full_name || ref.psy_patients?.mrn || 'Pesakit';
+  const isTarget = ref.target_id === me;
+  const editable = isTarget && ref.status !== 'resolved' && ref.status !== 'declined';
+  const atts = Array.isArray(ref.attachments) ? ref.attachments : [];
+
+  let actionBtn = '';
+  if (isTarget && ref.status === 'pending') actionBtn = `<button onclick="acceptRef()" class="bg-blue-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-blue-700">Terima Rujukan</button>`;
+  else if (isTarget && ref.status === 'accepted') actionBtn = `<button onclick="resolveRef()" class="bg-green text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-green-dark">✅ Tandakan Selesai</button>`;
+
+  document.getElementById('ref-detail').innerHTML = `
+    <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 md:p-6">
+      <div class="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <a href="patient-hub.html?patient_id=${ref.patient_id}" class="text-lg font-extrabold text-ink hover:underline">${esc(pName)}</a>
+            <span class="text-[11px] font-bold px-2 py-0.5 rounded-full ${st.cls}">${st.lbl}</span>
+          </div>
+          <div class="text-xs text-ink/55 mt-1">${esc(ref.referred_by_name||'Staff')} → ${ROLE_LBL[ref.target_role]||ref.target_role} <span class="font-semibold text-ink/70">${esc(ref.target_name||'')}</span></div>
+          ${ref.meet_date ? `<div class="text-xs font-semibold text-navy mt-1">📅 Perlu jumpa: ${fmt(ref.meet_date)}</div>` : ''}
+        </div>
+        <div>${actionBtn}</div>
+      </div>
+      <div class="mt-3">
+        <div class="text-[10px] font-bold text-ink/45 uppercase tracking-wider mb-1">Sebab rujukan</div>
+        <div class="text-sm text-ink/80 bg-cream/50 rounded-lg px-3 py-2">${esc(ref.reason)}</div>
+      </div>
+    </div>
+
+    <!-- Nota konsultasi -->
+    <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 md:p-6 mt-5">
+      <h3 class="font-bold text-sm text-ink mb-3">📝 Nota Sesi Rujukan</h3>
+      <textarea id="ref-note" rows="6" ${editable?'':'disabled'} class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy ${editable?'':'bg-ink/5 text-ink/60'}" placeholder="Tulis nota konsultasi / pemerhatian…">${esc(ref.consultation_note||'')}</textarea>
+      ${editable ? `<div class="flex justify-end mt-2"><button onclick="saveNote()" id="note-save" class="bg-navy text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-navy-dark">Simpan Nota</button></div>` : ''}
+    </div>
+
+    <!-- Transkrip / dokumen -->
+    <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 md:p-6 mt-5">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-bold text-sm text-ink">📎 Transkrip / Dokumen</h3>
+        ${editable ? `<label class="cursor-pointer bg-navy/10 text-navy text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-navy/20">➕ Upload<input type="file" id="ref-file" class="hidden" onchange="uploadDoc(this)"></label>` : ''}
+      </div>
+      <div id="att-list" class="space-y-2">${atts.length ? atts.map((a,i)=>attRow(a,i,editable)).join('') : '<p class="text-xs text-ink/35 italic">Tiada dokumen.</p>'}</div>
+    </div>
+
+    ${ref.resolution_note ? `<div class="bg-green-50 border border-green-200 rounded-2xl p-4 mt-5 text-sm text-green-800">✅ <span class="font-semibold">Selesai:</span> ${esc(ref.resolution_note)}</div>` : ''}`;
+}
+
+function attRow(a, i, editable) {
+  return `<div class="flex items-center justify-between gap-2 border border-ink/10 rounded-lg px-3 py-2">
+    <span class="text-sm text-ink/80 truncate">📄 ${esc(a.name)}</span>
+    <span class="flex items-center gap-2 flex-shrink-0">
+      <button onclick="viewDoc('${esc(a.path)}')" class="text-xs font-semibold text-navy hover:underline">Lihat</button>
+      ${editable ? `<button onclick="delDoc(${i})" class="text-xs font-semibold text-terracotta hover:underline">Padam</button>` : ''}
+    </span>
+  </div>`;
+}
+
+async function saveNote() {
+  const btn = document.getElementById('note-save'); btn.disabled = true; btn.textContent = 'Menyimpan...';
+  const note = document.getElementById('ref-note').value.trim() || null;
+  const { error } = await window.db.from('psy_clinical_referrals').update({ consultation_note: note, updated_at: new Date().toISOString() }).eq('id', refId);
+  if (error) { banner('Ralat: '+error.message,'error'); btn.disabled=false; btn.textContent='Simpan Nota'; return; }
+  ref.consultation_note = note;
+  banner('Nota disimpan ✅');
+  btn.disabled = false; btn.textContent = 'Simpan Nota';
+}
+window.saveNote = saveNote;
+
+async function uploadDoc(input) {
+  const file = input.files[0]; if (!file) return;
+  banner('Memuat naik…');
+  const path = `${refId}/${Date.now()}_${file.name.replace(/[^\w.\-]/g,'_')}`;
+  const { error } = await window.db.storage.from(BUCKET).upload(path, file, { contentType: file.type || undefined, upsert: false });
+  if (error) { banner('Gagal upload: '+error.message,'error'); return; }
+  const atts = Array.isArray(ref.attachments) ? ref.attachments.slice() : [];
+  atts.push({ name: file.name, path, uploaded_at: new Date().toISOString() });
+  const { error: uErr } = await window.db.from('psy_clinical_referrals').update({ attachments: atts, updated_at: new Date().toISOString() }).eq('id', refId);
+  if (uErr) { banner('Ralat simpan: '+uErr.message,'error'); return; }
+  ref.attachments = atts; input.value = ''; banner('Dokumen dimuat naik ✅'); render();
+}
+window.uploadDoc = uploadDoc;
+
+async function viewDoc(path) {
+  const { data, error } = await window.db.storage.from(BUCKET).createSignedUrl(path, 3600);
+  if (error || !data?.signedUrl) { banner('Gagal buka: '+(error?.message||''),'error'); return; }
+  window.open(data.signedUrl, '_blank');
+}
+window.viewDoc = viewDoc;
+
+async function delDoc(i) {
+  if (!confirm('Padam dokumen ini?')) return;
+  const atts = (ref.attachments||[]).slice();
+  const [removed] = atts.splice(i, 1);
+  if (removed?.path) { try { await window.db.storage.from(BUCKET).remove([removed.path]); } catch(_){} }
+  const { error } = await window.db.from('psy_clinical_referrals').update({ attachments: atts, updated_at: new Date().toISOString() }).eq('id', refId);
+  if (error) { banner('Ralat: '+error.message,'error'); return; }
+  ref.attachments = atts; banner('Dokumen dipadam'); render();
+}
+window.delDoc = delDoc;
+
+async function acceptRef() {
+  const { error } = await window.db.from('psy_clinical_referrals').update({ status:'accepted', updated_at:new Date().toISOString() }).eq('id', refId);
+  if (error) { banner('Ralat: '+error.message,'error'); return; }
+  ref.status = 'accepted'; banner('Rujukan diterima ✅'); render();
+}
+window.acceptRef = acceptRef;
+
+async function resolveRef() {
+  const note = prompt('Nota / hasil rujukan (pilihan):');
+  if (note === null) return;
+  const { error } = await window.db.from('psy_clinical_referrals').update({ status:'resolved', resolution_note: note.trim()||null, resolved_at:new Date().toISOString(), updated_at:new Date().toISOString() }).eq('id', refId);
+  if (error) { banner('Ralat: '+error.message,'error'); return; }
+  ref.status = 'resolved'; ref.resolution_note = note.trim()||null; banner('Rujukan selesai ✅'); render();
+}
+window.resolveRef = resolveRef;
+
+(async () => {
+  const user = await initStaff('rujukan', 'Detail rujukan pesakit');
+  if (!user) return;
+  me = window.currentUser?.id || user.id;
+  if (!refId) { document.getElementById('ref-detail').innerHTML = '<div class="text-center text-ink/40 py-10">ID rujukan tiada.</div>'; return; }
+  await loadRef();
+})();
+</script>
+</body>
+</html>

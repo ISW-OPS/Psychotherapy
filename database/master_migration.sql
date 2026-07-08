@@ -7483,11 +7483,16 @@ CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
   meet_date        DATE,
   priority         TEXT NOT NULL DEFAULT 'biasa' CHECK (priority IN ('biasa','segera')),
   status           TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','resolved','declined')),
-  resolution_note  TEXT,
+  resolution_note   TEXT,
+  consultation_note TEXT,
+  attachments       JSONB DEFAULT '[]'::jsonb,
   created_at       TIMESTAMPTZ DEFAULT now(),
   updated_at       TIMESTAMPTZ DEFAULT now(),
   resolved_at      TIMESTAMPTZ
 );
+ALTER TABLE psy_clinical_referrals
+  ADD COLUMN IF NOT EXISTS consultation_note TEXT,
+  ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE psy_clinical_referrals ENABLE ROW LEVEL SECURITY;
 DO $$ BEGIN
   CREATE POLICY "Staff manage clinical referrals" ON psy_clinical_referrals FOR ALL
@@ -7505,5 +7510,19 @@ DO $$ DECLARE r RECORD; BEGIN
 END $$;
 ALTER TABLE psy_notifications ADD CONSTRAINT psy_notifications_type_check
   CHECK (type IN ('appointment','order','plan','system','reaksi','kyc','referral'));
+
+INSERT INTO storage.buckets (id, name, public) VALUES ('referral-docs', 'referral-docs', false) ON CONFLICT DO NOTHING;
+DO $$ BEGIN
+  CREATE POLICY "Staff upload referral docs" ON storage.objects FOR INSERT
+    WITH CHECK (bucket_id = 'referral-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  CREATE POLICY "Staff read referral docs" ON storage.objects FOR SELECT
+    USING (bucket_id = 'referral-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  CREATE POLICY "Staff delete referral docs" ON storage.objects FOR DELETE
+    USING (bucket_id = 'referral-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 SELECT 'Step 83 OK -- psy_clinical_referrals ready' AS status;

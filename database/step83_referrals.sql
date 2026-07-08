@@ -19,11 +19,17 @@ CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
   meet_date        DATE,                    -- tarikh pesakit perlu jumpa (dari jadual rawatan)
   priority         TEXT NOT NULL DEFAULT 'biasa' CHECK (priority IN ('biasa','segera')),
   status           TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','resolved','declined')),
-  resolution_note  TEXT,
+  resolution_note   TEXT,
+  consultation_note TEXT,                       -- nota sesi rujukan (Hakeem/doctor/coach)
+  attachments       JSONB DEFAULT '[]'::jsonb,  -- transkrip/dokumen: [{name,path,uploaded_at}]
   created_at       TIMESTAMPTZ DEFAULT now(),
   updated_at       TIMESTAMPTZ DEFAULT now(),
   resolved_at      TIMESTAMPTZ
 );
+-- Tambah kolum kalau jadual dah wujud (idempotent)
+ALTER TABLE psy_clinical_referrals
+  ADD COLUMN IF NOT EXISTS consultation_note TEXT,
+  ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT '[]'::jsonb;
 
 ALTER TABLE psy_clinical_referrals ENABLE ROW LEVEL SECURITY;
 DO $$ BEGIN
@@ -45,4 +51,19 @@ END $$;
 ALTER TABLE psy_notifications ADD CONSTRAINT psy_notifications_type_check
   CHECK (type IN ('appointment','order','plan','system','reaksi','kyc','referral'));
 
-SELECT 'Step 83 OK -- psy_clinical_referrals + referral notif type' AS status;
+-- Storage bucket untuk transkrip/dokumen rujukan (private, staff sahaja)
+INSERT INTO storage.buckets (id, name, public) VALUES ('referral-docs', 'referral-docs', false) ON CONFLICT DO NOTHING;
+DO $$ BEGIN
+  CREATE POLICY "Staff upload referral docs" ON storage.objects FOR INSERT
+    WITH CHECK (bucket_id = 'referral-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  CREATE POLICY "Staff read referral docs" ON storage.objects FOR SELECT
+    USING (bucket_id = 'referral-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  CREATE POLICY "Staff delete referral docs" ON storage.objects FOR DELETE
+    USING (bucket_id = 'referral-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+SELECT 'Step 83 OK -- psy_clinical_referrals + docs bucket + referral notif type' AS status;
