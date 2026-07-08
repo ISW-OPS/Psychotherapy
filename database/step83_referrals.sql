@@ -33,10 +33,16 @@ ALTER TABLE psy_clinical_referrals
   ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT '[]'::jsonb,
   ADD COLUMN IF NOT EXISTS consultation JSONB DEFAULT '{}'::jsonb;  -- borang konsultasi berstruktur
 
--- Priori 3-tahap (rendah/sederhana/tinggi) — naik taraf dari biasa/segera
+-- Priori 3-tahap (rendah/sederhana/tinggi) — naik taraf dari biasa/segera.
+-- Buang SEMUA check constraint priority (tak kira nama) supaya bulletproof.
 UPDATE psy_clinical_referrals SET priority = CASE WHEN priority = 'segera' THEN 'tinggi' WHEN priority = 'biasa' THEN 'sederhana' ELSE priority END
-  WHERE priority NOT IN ('rendah','sederhana','tinggi');
-ALTER TABLE psy_clinical_referrals DROP CONSTRAINT IF EXISTS psy_clinical_referrals_priority_check;
+  WHERE priority IS NULL OR priority NOT IN ('rendah','sederhana','tinggi');
+DO $$ DECLARE r RECORD; BEGIN
+  FOR r IN SELECT conname FROM pg_constraint
+    WHERE conrelid = 'psy_clinical_referrals'::regclass AND contype = 'c'
+      AND pg_get_constraintdef(oid) ILIKE '%priority%'
+  LOOP EXECUTE 'ALTER TABLE psy_clinical_referrals DROP CONSTRAINT ' || quote_ident(r.conname); END LOOP;
+END $$;
 ALTER TABLE psy_clinical_referrals ALTER COLUMN priority SET DEFAULT 'sederhana';
 ALTER TABLE psy_clinical_referrals ADD CONSTRAINT psy_clinical_referrals_priority_check CHECK (priority IN ('rendah','sederhana','tinggi'));
 NOTIFY pgrst, 'reload schema';
