@@ -128,6 +128,7 @@ const STAFF_NAV_MASTER = [
       { id: 'kob_list', url: 'kob-list.html', icon: '🩺', label: 'Sesi KOB' },
       { id: 'kepatuhan', url: 'kepatuhan.html', icon: '📊', label: 'Kepatuhan' },
       { id: 'psy_vitals', url: 'vitals.html', icon: '💓', label: 'Bacaan Vitals' },
+      { id: 'rujukan', url: 'rujukan.html', icon: '🔀', label: 'Rujukan' },
       { id: 'risk', url: 'risk.html', icon: '⚠️', label: 'Amaran Risiko' },
     ]
   },
@@ -778,7 +779,7 @@ function renderHeader(title, subtitle) {
   if (header) header.style.display = 'none';
 }
 
-const NOTIF_ICONS = { appointment: '📅', order: '📦', plan: '💊', system: '📢', reaksi: '🌀', kyc: '🆔', default: '🔔' };
+const NOTIF_ICONS = { appointment: '📅', order: '📦', plan: '💊', system: '📢', reaksi: '🌀', kyc: '🆔', referral: '🔀', default: '🔔' };
 
 async function loadNotifBadge() {
   if (!window.db) return;
