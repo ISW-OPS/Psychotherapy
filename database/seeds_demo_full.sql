@@ -271,6 +271,68 @@ INSERT INTO psy_letter_requests (patient_id, patient_name, template_code, templa
 ('c0000000-0000-4000-8000-000000000006','Fatimah binti Omar','PERKESO','Surat untuk PERKESO','Tuntutan PERKESO','pending', now()-interval '4 days'),
 ('c0000000-0000-4000-8000-000000000010','Hajah Rohani binti Yusof','Sokongan','Surat Sokongan Rawatan','Sokongan biasiswa anak','pending', now()-interval '5 days');
 
+-- ════════════════════════ 17. KEPATUHAN — log harian (6 minggu) + override mingguan ════════════════════════
+-- Seed catatan harian checklist utk 6 pesakit AKTIF (fasa week1, 5 item aktif).
+-- Setiap pesakit ada profil kepatuhan berbeza (A/B/C) supaya Laporan Kepatuhan,
+-- heatmap, donut taburan, trend 6-minggu & alert "belum isi hari ini" ada data.
+-- Jumaat tak dipoll (ikut jadual GForm). Skor konsisten dgn jawapan (max 12 mata).
+
+-- Templat jawapan tetap (jawapan JSONB + skor_harian yang padan)
+CREATE TEMP TABLE _tp (code text PRIMARY KEY, jawapan jsonb, skor numeric(5,2)) ON COMMIT DROP;
+INSERT INTO _tp VALUES
+('A100', '{"madu_lth_ib":"5","madu_lthpg_yhpg":"5","zikir_bersanad":"subuh_maghrib","pantang_makan":"baik","reaksi_pemulihan":["tiada"]}',                       100.00),
+('A92',  '{"madu_lth_ib":"4","madu_lthpg_yhpg":"5","zikir_bersanad":"subuh_maghrib","pantang_makan":"baik","reaksi_pemulihan":["tiada"]}',                        91.67),
+('B67',  '{"madu_lth_ib":"4","madu_lthpg_yhpg":"3","zikir_bersanad":"subuh_maghrib","pantang_makan":"separa","reaksi_pemulihan":["kembung","mengantuk"]}',        66.67),
+('B50',  '{"madu_lth_ib":"3","madu_lthpg_yhpg":"3","zikir_bersanad":"subuh","pantang_makan":"separa","reaksi_pemulihan":["sakit_kepala"]}',                       50.00),
+('C33',  '{"madu_lth_ib":"3","madu_lthpg_yhpg":"2","zikir_bersanad":"maghrib","pantang_makan":"tidak","reaksi_pemulihan":["lemah","mengantuk"]}',                 33.33),
+('C17',  '{"madu_lth_ib":"2","madu_lthpg_yhpg":"2","zikir_bersanad":"tidak","pantang_makan":"tidak","reaksi_pemulihan":["batuk"]}',                               16.67);
+
+-- Profil kepatuhan per pesakit aktif: templat hari-baik (hi) / hari-kurang (lo),
+-- skip_mod (skip setiap ke-N hari dipoll; 99 = tiada skip tambahan), isi hari ini?
+CREATE TEMP TABLE _kp (pid uuid, tmpl_hi text, tmpl_lo text, skip_mod int, fills_today boolean) ON COMMIT DROP;
+INSERT INTO _kp VALUES
+('c0000000-0000-4000-8000-000000000001','A100','A92', 99, true),   -- Siti  — cemerlang (A), rajin
+('c0000000-0000-4000-8000-000000000002','B67', 'B50',  7, false),  -- Faizal— sederhana (B)
+('c0000000-0000-4000-8000-000000000003','C33', 'C17',  3, false),  -- Lim   — rendah (C), banyak tercicir
+('c0000000-0000-4000-8000-000000000004','A92', 'B50',  5, false),  -- Nurul — bercampur (A/B)
+('c0000000-0000-4000-8000-000000000005','A92', 'B67', 99, true),   -- Raj   — baik (A/B), rajin
+('c0000000-0000-4000-8000-000000000006','B67', 'C33',  4, false);  -- Fatimah— B/C, ada jurang
+
+INSERT INTO psy_kepatuhan_log (patient_id, log_date, fasa, jawapan, skor_harian, created_at, updated_at)
+SELECT k.pid, d.day::date, 'week1', t.jawapan, t.skor,
+       d.day + interval '20 hours', d.day + interval '20 hours'
+FROM _kp k
+JOIN _r r ON r.pid = k.pid
+CROSS JOIN LATERAL generate_series(
+         (current_date - LEAST(41, GREATEST(r.created_days - 1, 0)))::timestamp,
+         current_date::timestamp, interval '1 day'
+       ) AS d(day)
+CROSS JOIN LATERAL (
+  SELECT CASE
+    WHEN extract(dow FROM d.day) = 5 THEN NULL                                   -- Jumaat tak dipoll
+    WHEN k.skip_mod < 90 AND (current_date - d.day::date) <> 0
+         AND ((current_date - d.day::date) % k.skip_mod) = 0 THEN NULL           -- hari tercicir
+    WHEN ((current_date - d.day::date) % 2) = 0 THEN k.tmpl_hi
+    ELSE k.tmpl_lo
+  END AS code
+) pick
+JOIN _tp t ON t.code = pick.code
+WHERE pick.code IS NOT NULL
+  AND (d.day::date < current_date OR k.fills_today);
+
+-- Override mingguan (demo ciri coach pinda kelas + nota)
+INSERT INTO psy_kepatuhan_weekly
+  (patient_id, minggu_mula, fasa, skor, bil_hari_isi, kelas, override_kelas, override_by, override_at, nota_coach)
+VALUES
+-- Lim: auto C, coach naikkan ke B (usaha bertambah baik minggu lepas)
+('c0000000-0000-4000-8000-000000000003', date_trunc('week', current_date - interval '7 days')::date, 'week1',
+ 26.00, 4, 'C', 'B', '21c4417f-e212-400b-be82-9958456122f5', now()-interval '2 days',
+ 'Kelas dinaikkan — pesakit mula konsisten minum madu & hadir sesi. Teruskan pemantauan.'),
+-- Siti: auto A, nota pujian (tanpa override)
+('c0000000-0000-4000-8000-000000000001', date_trunc('week', current_date - interval '7 days')::date, 'week1',
+ 95.83, 6, 'A', NULL, '349a4c79-2051-4b5b-93d9-369b8464aa3e', now()-interval '2 days',
+ 'Kepatuhan cemerlang sepanjang minggu. Syabas!');
+
 COMMIT;
 
 -- ════════════════════════ SEMAKAN ════════════════════════
