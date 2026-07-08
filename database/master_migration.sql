@@ -7481,7 +7481,7 @@ CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
   target_name      TEXT,
   reason           TEXT NOT NULL,
   meet_date        DATE,
-  priority         TEXT NOT NULL DEFAULT 'biasa' CHECK (priority IN ('biasa','segera')),
+  priority         TEXT NOT NULL DEFAULT 'sederhana' CHECK (priority IN ('rendah','sederhana','tinggi')),
   status           TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','resolved','declined')),
   resolution_note   TEXT,
   consultation_note TEXT,
@@ -7494,6 +7494,11 @@ ALTER TABLE psy_clinical_referrals
   ADD COLUMN IF NOT EXISTS meet_date DATE,
   ADD COLUMN IF NOT EXISTS consultation_note TEXT,
   ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT '[]'::jsonb;
+UPDATE psy_clinical_referrals SET priority = CASE WHEN priority='segera' THEN 'tinggi' WHEN priority='biasa' THEN 'sederhana' ELSE priority END
+  WHERE priority NOT IN ('rendah','sederhana','tinggi');
+ALTER TABLE psy_clinical_referrals DROP CONSTRAINT IF EXISTS psy_clinical_referrals_priority_check;
+ALTER TABLE psy_clinical_referrals ALTER COLUMN priority SET DEFAULT 'sederhana';
+ALTER TABLE psy_clinical_referrals ADD CONSTRAINT psy_clinical_referrals_priority_check CHECK (priority IN ('rendah','sederhana','tinggi'));
 ALTER TABLE psy_clinical_referrals ENABLE ROW LEVEL SECURITY;
 DO $$ BEGIN
   CREATE POLICY "Staff manage clinical referrals" ON psy_clinical_referrals FOR ALL
