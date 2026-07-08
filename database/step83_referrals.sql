@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
   target_id        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
   target_name      TEXT,
   reason           TEXT NOT NULL,
+  meet_date        DATE,                    -- tarikh pesakit perlu jumpa (dari jadual rawatan)
   priority         TEXT NOT NULL DEFAULT 'biasa' CHECK (priority IN ('biasa','segera')),
   status           TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','resolved','declined')),
   resolution_note  TEXT,

@@ -1089,27 +1089,18 @@
     </div>
     <div class="p-5 space-y-4">
       <div>
-        <label class="block text-xs font-semibold text-ink/70 mb-1.5">Rujuk kepada</label>
-        <div class="grid grid-cols-3 gap-2">
-          <button type="button" data-refrole="doctor"  onclick="setReferralRole('doctor')"  class="ref-role-btn px-2 py-2 border rounded-lg text-xs font-semibold text-center">🩺<br>Doctor</button>
-          <button type="button" data-refrole="coach"   onclick="setReferralRole('coach')"   class="ref-role-btn px-2 py-2 border rounded-lg text-xs font-semibold text-center">🧑‍🏫<br>Coach</button>
-          <button type="button" data-refrole="manager" onclick="setReferralRole('manager')" class="ref-role-btn px-2 py-2 border rounded-lg text-xs font-semibold text-center">🕌<br>Hakeem/ah</button>
-        </div>
+        <label class="block text-xs font-semibold text-ink/70 mb-1.5">Rujuk kepada <span class="text-terracotta">*</span></label>
+        <select id="ref-target" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy"><option value="">— Pilih staff —</option></select>
       </div>
       <div>
-        <label class="block text-xs font-semibold text-ink/70 mb-1.5">Nama sasaran <span class="text-terracotta">*</span></label>
-        <select id="ref-target" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy"><option value="">— Pilih —</option></select>
+        <label class="block text-xs font-semibold text-ink/70 mb-1.5">Tarikh perlu jumpa</label>
+        <select id="ref-meetdate" onchange="onRefMeetDateChange()" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy"><option value="">— Pilih tarikh rawatan —</option></select>
+        <input id="ref-meetdate-custom" type="date" class="hidden w-full mt-2 px-3 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy">
+        <p class="text-[10px] text-ink/40 mt-1">Ikut tarikh rawatan sedia ada pesakit.</p>
       </div>
       <div>
-        <label class="block text-xs font-semibold text-ink/70 mb-1.5">Keutamaan</label>
-        <div class="flex gap-2">
-          <label class="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 border border-ink/15 rounded-lg text-sm cursor-pointer has-[:checked]:border-navy has-[:checked]:bg-navy/5"><input type="radio" name="ref-priority" value="biasa" checked class="accent-navy"> Biasa</label>
-          <label class="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 border border-ink/15 rounded-lg text-sm cursor-pointer has-[:checked]:border-terracotta has-[:checked]:bg-terracotta/5"><input type="radio" name="ref-priority" value="segera" class="accent-terracotta"> 🔴 Segera</label>
-        </div>
-      </div>
-      <div>
-        <label class="block text-xs font-semibold text-ink/70 mb-1.5">Sebab rujukan <span class="text-terracotta">*</span></label>
-        <textarea id="ref-reason" rows="3" maxlength="500" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm resize-none outline-none focus:border-navy" placeholder="Nyatakan sebab rujukan…"></textarea>
+        <label class="block text-xs font-semibold text-ink/70 mb-1.5">Sebab perlu jumpa <span class="text-terracotta">*</span></label>
+        <textarea id="ref-reason" rows="3" maxlength="500" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm resize-none outline-none focus:border-navy" placeholder="Nyatakan sebab perlu jumpa…"></textarea>
       </div>
       <p id="ref-error" class="hidden text-xs text-terracotta"></p>
       <div class="flex gap-2">
@@ -1400,39 +1391,64 @@ const escHtml = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').
 const escapeHtml = escHtml; // alias — banyak render guna nama escapeHtml
 
 // ── Rujuk Pesakit (referral) ──────────────────────────
-let _refRole = 'doctor';
-const _refStaff = { doctor: [], coach: [], manager: [], _loaded: false };
+const _refStaffMap = {};           // id -> { full_name, staff_role }
+let _refStaffLoaded = false;
 async function loadReferralStaff() {
-  if (_refStaff._loaded) return;
-  const { data } = await window.db.from('psy_profiles')
-    .select('id, full_name, staff_role').eq('role', 'staff')
-    .in('staff_role', ['doctor', 'coach', 'manager']).order('full_name');
-  (data || []).forEach(p => { if (_refStaff[p.staff_role]) _refStaff[p.staff_role].push(p); });
-  _refStaff._loaded = true;
-}
-function setReferralRole(role) {
-  _refRole = role;
-  document.querySelectorAll('.ref-role-btn').forEach(b => {
-    const on = b.dataset.refrole === role;
-    b.classList.toggle('border-navy', on);
-    b.classList.toggle('bg-navy/5', on);
-    b.classList.toggle('text-navy', on);
-    b.classList.toggle('border-ink/15', !on);
-    b.classList.toggle('text-ink/60', !on);
-  });
   const sel = document.getElementById('ref-target');
-  const list = _refStaff[role] || [];
-  sel.innerHTML = '<option value="">— Pilih —</option>' +
-    list.map(p => `<option value="${p.id}">${escHtml(p.full_name || '—')}</option>`).join('');
+  if (!_refStaffLoaded) {
+    const { data } = await window.db.from('psy_profiles')
+      .select('id, full_name, staff_role').eq('role', 'staff')
+      .in('staff_role', ['doctor', 'coach', 'manager']).order('full_name');
+    (data || []).forEach(p => { _refStaffMap[p.id] = p; });
+    const roleLbl = { doctor: 'Doctor', coach: 'Coach', manager: 'Hakeem/Hakeema' };
+    // Kumpul ikut role dalam satu dropdown (optgroup)
+    const groups = { doctor: [], coach: [], manager: [] };
+    (data || []).forEach(p => { if (groups[p.staff_role]) groups[p.staff_role].push(p); });
+    sel.innerHTML = '<option value="">— Pilih staff —</option>' +
+      ['manager', 'doctor', 'coach'].map(role => {
+        if (!groups[role].length) return '';
+        return `<optgroup label="${roleLbl[role]}">` +
+          groups[role].map(p => `<option value="${p.id}">${escHtml(p.full_name || '—')}</option>`).join('') +
+          '</optgroup>';
+      }).join('');
+    _refStaffLoaded = true;
+  }
 }
-window.setReferralRole = setReferralRole;
+// Tarikh jumpa = tarikh rawatan sedia ada pesakit (sesi akan datang).
+async function loadReferralDates() {
+  const sel = document.getElementById('ref-meetdate');
+  let rows = [];
+  try {
+    const q = window.db.from('psy_plan_weekly_progress')
+      .select('week_number, session_day, session_date, status')
+      .not('session_date', 'is', null)
+      .order('session_date', { ascending: true });
+    const { data } = activePlan ? await q.eq('plan_id', activePlan.id) : await q.eq('patient_id', patientId);
+    rows = data || [];
+  } catch (_) {}
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const upcoming = rows.filter(r => new Date(r.session_date) >= today && !['cancel'].includes(r.status));
+  const fmt = d => new Date(d).toLocaleDateString('ms-MY', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+  sel.innerHTML = '<option value="">— Pilih tarikh rawatan —</option>' +
+    upcoming.map(r => {
+      const ymd = new Date(r.session_date).toISOString().slice(0, 10);
+      return `<option value="${ymd}">${fmt(r.session_date)} · Minggu ${r.week_number}</option>`;
+    }).join('') +
+    '<option value="__custom">➕ Tarikh lain…</option>';
+}
+function onRefMeetDateChange() {
+  const custom = document.getElementById('ref-meetdate-custom');
+  const isCustom = document.getElementById('ref-meetdate').value === '__custom';
+  custom.classList.toggle('hidden', !isCustom);
+  if (isCustom) custom.focus();
+}
+window.onRefMeetDateChange = onRefMeetDateChange;
 async function openReferralModal() {
-  await loadReferralStaff();
   document.getElementById('ref-reason').value = '';
   document.getElementById('ref-error').classList.add('hidden');
-  const biasa = document.querySelector('input[name="ref-priority"][value="biasa"]');
-  if (biasa) biasa.checked = true;
-  setReferralRole('doctor');
+  document.getElementById('ref-meetdate-custom').value = '';
+  document.getElementById('ref-meetdate-custom').classList.add('hidden');
+  await Promise.all([loadReferralStaff(), loadReferralDates()]);
   document.getElementById('referral-modal').classList.remove('hidden');
 }
 window.openReferralModal = openReferralModal;
@@ -1441,30 +1457,31 @@ window.closeReferralModal = closeReferralModal;
 async function submitReferral() {
   const targetId = document.getElementById('ref-target').value;
   const reason = document.getElementById('ref-reason').value.trim();
-  const priority = document.querySelector('input[name="ref-priority"]:checked')?.value || 'biasa';
+  const mdSel = document.getElementById('ref-meetdate').value;
+  const meetDate = mdSel === '__custom' ? (document.getElementById('ref-meetdate-custom').value || null) : (mdSel || null);
   const errEl = document.getElementById('ref-error');
   errEl.classList.add('hidden');
-  if (!targetId) { errEl.textContent = 'Sila pilih nama sasaran.'; errEl.classList.remove('hidden'); return; }
-  if (!reason)   { errEl.textContent = 'Sila nyatakan sebab rujukan.'; errEl.classList.remove('hidden'); return; }
-  const target = (_refStaff[_refRole] || []).find(p => p.id === targetId);
+  if (!targetId) { errEl.textContent = 'Sila pilih staff untuk dirujuk.'; errEl.classList.remove('hidden'); return; }
+  if (!reason)   { errEl.textContent = 'Sila nyatakan sebab perlu jumpa.'; errEl.classList.remove('hidden'); return; }
+  const target = _refStaffMap[targetId];
   const btn = document.getElementById('ref-submit'); btn.disabled = true; btn.textContent = 'Menghantar...';
   try {
     const pName = document.getElementById('patient-name').textContent || 'Pesakit';
     const { error } = await window.db.from('psy_clinical_referrals').insert({
       patient_id: patientId,
       referred_by: window.currentUser?.id, referred_by_name: window.currentUser?.full_name,
-      target_role: _refRole, target_id: targetId, target_name: target?.full_name,
-      reason, priority,
+      target_role: target?.staff_role || null, target_id: targetId, target_name: target?.full_name,
+      reason, meet_date: meetDate,
     });
     if (error) throw error;
-    // Notifikasi sasaran → toast + bunyi
+    const dLbl = meetDate ? ` (jumpa ${new Date(meetDate + 'T00:00:00').toLocaleDateString('ms-MY', { day: '2-digit', month: 'short' })})` : '';
     await window.db.from('psy_notifications').insert({
       user_id: targetId, type: 'referral',
-      title: `${priority === 'segera' ? '🔴 SEGERA · ' : ''}Rujukan pesakit baru`,
-      body: `${window.currentUser?.full_name || 'Staff'} rujuk ${pName} kepada anda. Sebab: ${reason.slice(0, 90)}`,
+      title: 'Rujukan pesakit baru',
+      body: `${window.currentUser?.full_name || 'Staff'} rujuk ${pName} kepada anda${dLbl}. Sebab: ${reason.slice(0, 80)}`,
       link: 'rujukan.html',
     }).then(r => r, () => {});
-    if (typeof auditLog === 'function') { try { await auditLog('referral.created', patientId, { target_role: _refRole, target_id: targetId, priority }); } catch (_) {} }
+    if (typeof auditLog === 'function') { try { await auditLog('referral.created', patientId, { target_id: targetId, meet_date: meetDate }); } catch (_) {} }
     banner('Rujukan dihantar ✅');
     closeReferralModal();
     if (typeof loadReferralHistory === 'function') loadReferralHistory();
