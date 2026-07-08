@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Sesi Konsultasi</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🩺</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+      <div id="k-content" class="p-4 md:p-6 space-y-5"></div>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="../../shared/utils.js"></script>
+<script src="_shared.js"></script>
+<script>
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtDT(d){ return d ? new Date(d).toLocaleString('ms-MY',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; }
+function ageFrom(dob){ if(!dob) return null; const d=new Date(dob),t=new Date(); let a=t.getFullYear()-d.getFullYear(); if(t<new Date(t.getFullYear(),d.getMonth(),d.getDate()))a--; return a; }
+
+const refId = new URLSearchParams(location.search).get('id');
+const BUCKET = 'referral-docs';
+let ref = null, me = null, vitals = null, riskCount = 0;
+
+const SYMPTOMS = [['pening','Pening'],['cepat_letih','Cepat letih'],['berdebar','Berdebar'],['sukar_tidur','Sukar tidur'],['sakit_kepala','Sakit kepala'],['sakit_perut','Sakit perut'],['mual','Mual'],['kebas','Kebas / Semut-semut'],['sukar_fokus','Sukar fokus']];
+const TREAT_CATS = [['ubat','💊','Ubat / Suplemen'],['gaya_hidup','🌿','Gaya Hidup'],['pemakanan','🍎','Pemakanan'],['senaman','🏃','Senaman'],['tindak_lanjut','🔁','Tindakan Lanjut']];
+const PRIO_MAP = { tinggi:{lbl:'Tinggi',cls:'bg-terracotta/15 text-terracotta'}, sederhana:{lbl:'Sederhana',cls:'bg-gold/20 text-gold-dark'}, rendah:{lbl:'Rendah',cls:'bg-green-100 text-green-700'} };
+const STATUS_MAP = { pending:{lbl:'Pending',cls:'bg-amber-100 text-amber-700'}, accepted:{lbl:'Dijadualkan',cls:'bg-blue-100 text-blue-700'}, resolved:{lbl:'Selesai',cls:'bg-green-100 text-green-700'}, declined:{lbl:'Ditolak',cls:'bg-ink/10 text-ink/50'} };
+
+let treatData = { ubat:[], gaya_hidup:[], pemakanan:[], senaman:[], tindak_lanjut:[] };
+let consultAtts = [];
+
+async function loadAll() {
+  const { data, error } = await window.db.from('psy_clinical_referrals')
+    .select('*, psy_patients(full_name, mrn, date_of_birth, gender, active_package_name)').eq('id', refId).maybeSingle();
+  if (error) console.error('[konsultasi]', error);
+  ref = data;
+  if (!ref) { document.getElementById('k-content').innerHTML = '<div class="bg-white rounded-2xl border border-ink/10 p-10 text-center text-ink/40">Rujukan tidak ditemui.</div>'; return; }
+  const c = ref.consultation || {};
+  treatData = Object.assign({ ubat:[], gaya_hidup:[], pemakanan:[], senaman:[], tindak_lanjut:[] }, c.treatment || {});
+  consultAtts = Array.isArray(c.attachments) ? c.attachments : [];
+  const [v, risk] = await Promise.all([
+    window.db.from('psy_vitals').select('bp_systolic, bp_diastolic, heart_rate, temperature, weight, created_at').eq('patient_id', ref.patient_id).order('created_at',{ascending:false}).limit(1).then(r=>r.data?.[0]||null,()=>null),
+    window.db.from('psy_risk_alerts').select('id',{count:'exact',head:true}).eq('patient_id', ref.patient_id).neq('status','resolved').then(r=>r.count||0,()=>0),
+  ]);
+  vitals = v; riskCount = risk;
+  render();
+}
+
+function render() {
+  const c = ref.consultation || {};
+  const sym = Array.isArray(c.symptoms) ? c.symptoms : [];
+  const p = ref.psy_patients || {};
+  const nm = p.full_name || p.mrn || 'Pesakit';
+  const age = ageFrom(p.date_of_birth), g = p.gender==='M'?'Lelaki':p.gender==='F'?'Perempuan':'';
+  const st = STATUS_MAP[ref.status] || STATUS_MAP.pending;
+  const pr = PRIO_MAP[ref.priority] || PRIO_MAP.sederhana;
+  const editable = ref.target_id === me && ref.status !== 'resolved' && ref.status !== 'declined';
+  const refDocs = Array.isArray(ref.attachments) ? ref.attachments : [];
+  const done = { accepted: ['accepted','resolved'].includes(ref.status), resolved: ref.status === 'resolved' };
+
+  document.getElementById('k-content').innerHTML = `
+    <a href="rujukan-detail.html?id=${refId}" class="text-sm text-navy hover:underline">← Kembali ke Referral Detail</a>
+    <div class="flex items-start justify-between gap-4 flex-wrap">
+      <div>
+        <h1 class="text-2xl font-extrabold text-ink flex items-center gap-2">Sesi Konsultasi</h1>
+        <p class="text-sm text-ink/45 mt-0.5 flex items-center gap-2">Lengkapkan maklumat konsultasi dan tindakan. <span class="text-[11px] font-bold px-2 py-0.5 rounded-full ${st.cls}">${st.lbl}</span></p>
+      </div>
+      <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-3 flex items-center gap-3">
+        <div class="w-12 h-12 rounded-full bg-navy/10 flex items-center justify-center font-bold text-navy">${esc(nm.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase())}</div>
+        <div>
+          <div class="flex items-center gap-2"><span class="font-bold text-ink text-sm">${esc(nm)}</span><span class="text-[10px] font-mono text-ink/40">${esc(p.mrn||'')}</span></div>
+          <div class="text-[11px] text-ink/50">${[age!=null?age+' tahun':'', g, p.active_package_name?'Pakej: '+p.active_package_name:''].filter(Boolean).join(' · ')}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid lg:grid-cols-[300px_1fr] gap-5 items-start">
+      <!-- LEFT sidebar -->
+      <div class="space-y-5">
+        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 space-y-3">
+          <h3 class="font-bold text-sm text-ink">Ringkasan Rujukan</h3>
+          <div><div class="text-[10px] font-bold text-ink/45 uppercase tracking-wider">Sebab Rujukan</div><div class="text-sm text-ink/80 mt-0.5">⚠️ ${esc(ref.reason)}</div></div>
+          <div><div class="text-[10px] font-bold text-ink/45 uppercase tracking-wider">Keutamaan</div><span class="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full mt-1 ${pr.cls}">${pr.lbl}</span></div>
+          ${ref.meet_date ? `<div><div class="text-[10px] font-bold text-ink/45 uppercase tracking-wider">Tarikh Rujukan</div><div class="text-sm text-ink/80 mt-0.5">📅 ${new Date(ref.meet_date+'T00:00:00').toLocaleDateString('ms-MY',{day:'2-digit',month:'short',year:'numeric'})}</div></div>` : ''}
+          <div><div class="text-[10px] font-bold text-ink/45 uppercase tracking-wider">Dirujuk oleh</div><div class="text-sm text-ink/80 mt-0.5">👤 ${esc(ref.referred_by_name||'Staff')}</div></div>
+          ${refDocs.length ? `<div><div class="text-[10px] font-bold text-ink/45 uppercase tracking-wider mb-1">Dokumen Rujukan</div>${refDocs.map(a=>`<button onclick="viewDoc('${esc(a.path)}')" class="w-full flex items-center gap-2 border border-ink/10 rounded-lg px-2 py-1.5 text-xs text-ink/75 hover:bg-cream/50 mt-1"><span>📄</span><span class="truncate flex-1 text-left">${esc(a.name)}</span><span class="text-navy">⬇</span></button>`).join('')}</div>` : ''}
+        </div>
+        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+          <h3 class="font-bold text-sm text-ink mb-2">Vitals Terkini ${vitals?`<span class="text-[10px] font-normal text-ink/40">(${new Date(vitals.created_at).toLocaleDateString('ms-MY',{day:'2-digit',month:'short'})})</span>`:''}</h3>
+          ${vitals ? `<div class="grid grid-cols-4 gap-2 text-center">
+            <div><div class="font-bold text-ink text-sm">${vitals.bp_systolic&&vitals.bp_diastolic?`${vitals.bp_systolic}/${vitals.bp_diastolic}`:'—'}</div><div class="text-[9px] text-ink/40">mmHg</div></div>
+            <div><div class="font-bold text-ink text-sm">${vitals.heart_rate||'—'}</div><div class="text-[9px] text-ink/40">bpm</div></div>
+            <div><div class="font-bold text-ink text-sm">${vitals.temperature||'—'}</div><div class="text-[9px] text-ink/40">°C</div></div>
+            <div><div class="font-bold text-ink text-sm">${vitals.weight||'—'}</div><div class="text-[9px] text-ink/40">kg</div></div>
+          </div>` : '<p class="text-xs text-ink/40 italic">Tiada vitals.</p>'}
+          <a href="patient-hub.html?patient_id=${ref.patient_id}&tab=vitals" class="block text-xs font-semibold text-navy hover:underline mt-3">Lihat trend vitals →</a>
+        </div>
+        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+          <h3 class="font-bold text-sm text-ink mb-3">Timeline Rujukan</h3>
+          <div class="space-y-3 text-sm">
+            <div class="flex items-start gap-3"><div class="w-3 h-3 rounded-full mt-1 bg-green-500"></div><div><div class="font-semibold text-ink">Rujukan dihantar</div><div class="text-[11px] text-ink/40">${fmtDT(ref.created_at)}</div></div></div>
+            <div class="flex items-start gap-3"><div class="w-3 h-3 rounded-full mt-1 ${done.accepted?'bg-green-500':'bg-ink/20'}"></div><div><div class="${done.accepted?'font-semibold text-ink':'text-ink/40'}">Diterima</div><div class="text-[11px] text-ink/30 italic">${done.accepted?fmtDT(ref.updated_at):'Belum'}</div></div></div>
+            <div class="flex items-start gap-3"><div class="w-3 h-3 rounded-full mt-1 ${done.resolved?'bg-green-500':'bg-ink/20'}"></div><div><div class="${done.resolved?'font-semibold text-ink':'text-ink/40'}">Selesai</div><div class="text-[11px] text-ink/30 italic">${done.resolved?fmtDT(ref.resolved_at):'Belum'}</div></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MAIN form -->
+      <div class="space-y-5">
+        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+          <h3 class="font-bold text-sm text-ink mb-3">1. Simptom / Aduan Utama</h3>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+            ${SYMPTOMS.map(([k,l])=>`<label class="flex items-center gap-2 text-sm"><input type="checkbox" class="k-sym accent-navy" value="${k}" ${sym.includes(k)?'checked':''} ${editable?'':'disabled'}> ${l}</label>`).join('')}
+            <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="k-sym-lain-cb" class="accent-navy" ${c.symptoms_other?'checked':''} ${editable?'':'disabled'}> Lain-lain</label>
+          </div>
+          <input id="k-sym-other" value="${esc(c.symptoms_other||'')}" ${editable?'':'disabled'} placeholder="Nyatakan simptom lain…" class="w-full mt-2 px-3 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy">
+        </div>
+
+        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+          <h3 class="font-bold text-sm text-ink mb-3">2. Pemeriksaan & Penemuan Klinikal</h3>
+          <textarea id="k-exam" rows="3" ${editable?'':'disabled'} class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy" placeholder="Nyatakan penemuan berdasarkan pemeriksaan…">${esc(c.examination||'')}</textarea>
+        </div>
+
+        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+          <h3 class="font-bold text-sm text-ink mb-3">3. Diagnosis</h3>
+          <textarea id="k-diag" rows="3" ${editable?'':'disabled'} class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy" placeholder="Nyatakan diagnosis…">${esc(c.diagnosis||'')}</textarea>
+        </div>
+
+        <div class="grid md:grid-cols-3 gap-5 items-start">
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+            <h3 class="font-bold text-sm text-ink mb-3">4. Cadangan Rawatan</h3>
+            <div class="space-y-3">${TREAT_CATS.map(([k,ic,l])=>`
+              <div>
+                <div class="flex items-center gap-2 mb-1"><span>${ic}</span><span class="text-xs font-semibold text-ink/70 flex-1">${l}</span></div>
+                ${editable?`<div class="flex gap-1"><input id="tr-in-${k}" onkeydown="if(event.key==='Enter'){event.preventDefault();addTreat('${k}')}" placeholder="Tambah…" class="flex-1 min-w-0 px-2 py-1.5 border border-ink/15 rounded-lg text-xs outline-none focus:border-navy"><button onclick="addTreat('${k}')" class="bg-navy/10 text-navy px-2.5 rounded-lg text-sm font-bold">+</button></div>`:''}
+                <div id="tr-chips-${k}" class="flex flex-wrap gap-1 mt-1.5"></div>
+              </div>`).join('')}</div>
+          </div>
+
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+            <h3 class="font-bold text-sm text-ink mb-3">5. Lampiran (Jika ada)</h3>
+            ${editable?`<label class="block border-2 border-dashed border-ink/15 rounded-xl py-5 text-center cursor-pointer hover:border-navy/40"><div class="text-xl mb-1">☁️</div><div class="text-xs text-ink/60">Klik untuk pilih fail</div><div class="text-[10px] text-ink/40">PDF, JPG, PNG (Maks. 10MB)</div><input type="file" class="hidden" multiple onchange="uploadConsult(this)"></label>`:''}
+            <div id="k-att-list" class="space-y-1.5 mt-2"></div>
+          </div>
+
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+            <h3 class="font-bold text-sm text-ink mb-3">Nota Tambahan (Untuk Coach)</h3>
+            <textarea id="k-note" rows="6" ${editable?'':'disabled'} class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy" placeholder="Catatan atau arahan untuk coach…">${esc(c.summary||'')}</textarea>
+            <p class="text-[10px] text-ink/40 mt-1">Nota ini akan dapat dilihat oleh coach.</p>
+          </div>
+        </div>
+
+        <p id="k-error" class="hidden text-xs text-terracotta"></p>
+        ${editable ? `<div class="flex items-center justify-between gap-3 pb-10">
+          <button onclick="saveConsult(false)" class="px-5 py-2.5 border border-navy/20 rounded-xl text-sm font-semibold text-navy hover:bg-navy/5">💾 Simpan Draf</button>
+          <button onclick="saveConsult(true)" class="bg-green text-white px-6 py-2.5 rounded-xl text-sm font-semibold hover:bg-green-dark inline-flex items-center gap-2">✓ Selesaikan Konsultasi</button>
+        </div>` : '<div class="pb-10"></div>'}
+      </div>
+    </div>`;
+
+  TREAT_CATS.forEach(([k]) => renderTreatChips(k));
+  renderConsultAtts(editable);
+}
+
+function renderTreatChips(cat) {
+  const host = document.getElementById('tr-chips-' + cat);
+  if (!host) return;
+  const editable = ref.target_id === me && ref.status !== 'resolved' && ref.status !== 'declined';
+  host.innerHTML = (treatData[cat]||[]).map((x,i) =>
+    `<span class="inline-flex items-center gap-1 bg-cream border border-ink/10 rounded-full px-2 py-0.5 text-[11px]">${esc(x)}${editable?`<button onclick="removeTreat('${cat}',${i})" class="text-terracotta font-bold">×</button>`:''}</span>`).join('');
+}
+function addTreat(cat) {
+  const inp = document.getElementById('tr-in-'+cat);
+  const v = (inp.value||'').trim();
+  if (!v) return;
+  treatData[cat] = treatData[cat] || [];
+  treatData[cat].push(v); inp.value = ''; renderTreatChips(cat);
+}
+window.addTreat = addTreat;
+function removeTreat(cat, i) { treatData[cat].splice(i,1); renderTreatChips(cat); }
+window.removeTreat = removeTreat;
+
+function renderConsultAtts(editable) {
+  const host = document.getElementById('k-att-list');
+  if (!host) return;
+  host.innerHTML = consultAtts.length ? consultAtts.map((a,i)=>`<div class="flex items-center justify-between gap-2 border border-ink/10 rounded-lg px-2 py-1.5 text-xs"><button onclick="viewDoc('${esc(a.path)}')" class="truncate text-left flex-1">📄 ${esc(a.name)}</button>${editable?`<button onclick="removeConsultAtt(${i})" class="text-terracotta font-bold">×</button>`:''}</div>`).join('') : '<p class="text-[11px] text-ink/35 italic">Tiada fail.</p>';
+}
+async function uploadConsult(input) {
+  for (const f of [...input.files]) {
+    const path = `${refId}/consult_${Date.now()}_${f.name.replace(/[^\w.\-]/g,'_')}`;
+    const { error } = await window.db.storage.from(BUCKET).upload(path, f, { contentType: f.type||undefined });
+    if (!error) consultAtts.push({ name: f.name, path, uploaded_at: new Date().toISOString() });
+  }
+  input.value = '';
+  renderConsultAtts(true);
+  banner('Fail dimuat naik ✅');
+}
+window.uploadConsult = uploadConsult;
+async function removeConsultAtt(i) {
+  const [rm] = consultAtts.splice(i,1);
+  if (rm?.path) { try { await window.db.storage.from(BUCKET).remove([rm.path]); } catch(_){} }
+  renderConsultAtts(true);
+}
+window.removeConsultAtt = removeConsultAtt;
+async function viewDoc(path) {
+  const { data, error } = await window.db.storage.from(BUCKET).createSignedUrl(path, 3600);
+  if (error || !data?.signedUrl) { banner('Gagal buka fail','error'); return; }
+  window.open(data.signedUrl, '_blank');
+}
+window.viewDoc = viewDoc;
+
+async function saveConsult(finalize) {
+  const sym = [...document.querySelectorAll('.k-sym:checked')].map(x=>x.value);
+  const consultation = {
+    symptoms: sym,
+    symptoms_other: document.getElementById('k-sym-lain-cb').checked ? (document.getElementById('k-sym-other').value.trim()||'') : '',
+    examination: document.getElementById('k-exam').value.trim() || '',
+    diagnosis: document.getElementById('k-diag').value.trim() || '',
+    treatment: treatData,
+    summary: document.getElementById('k-note').value.trim() || '',
+    attachments: consultAtts,
+  };
+  const patch = { consultation, updated_at: new Date().toISOString() };
+  if (finalize) { patch.status = 'resolved'; patch.resolved_at = new Date().toISOString(); patch.resolution_note = consultation.summary || null; }
+  const { error } = await window.db.from('psy_clinical_referrals').update(patch).eq('id', refId);
+  if (error) { const e=document.getElementById('k-error'); e.textContent='Ralat: '+error.message; e.classList.remove('hidden'); return; }
+  Object.assign(ref, patch);
+  if (typeof auditLog === 'function') { try { await auditLog(finalize?'referral.resolved':'referral.consult_saved', ref.patient_id, {}); } catch(_){} }
+  if (finalize) { banner('Konsultasi selesai ✅'); location.href = 'rujukan-detail.html?id='+refId; }
+  else { banner('Draf disimpan ✅'); }
+}
+window.saveConsult = saveConsult;
+
+(async () => {
+  const user = await initStaff('rujukan', 'Sesi konsultasi rujukan');
+  if (!user) return;
+  me = window.currentUser?.id || user.id;
+  if (!refId) { document.getElementById('k-content').innerHTML = '<div class="text-center text-ink/40 py-10">ID rujukan tiada.</div>'; return; }
+  await loadAll();
+})();
+</script>
+</body>
+</html>
