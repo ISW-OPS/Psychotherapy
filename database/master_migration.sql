@@ -7493,7 +7493,8 @@ CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
 ALTER TABLE psy_clinical_referrals
   ADD COLUMN IF NOT EXISTS meet_date DATE,
   ADD COLUMN IF NOT EXISTS consultation_note TEXT,
-  ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT '[]'::jsonb;
+  ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS consultation JSONB DEFAULT '{}'::jsonb;
 UPDATE psy_clinical_referrals SET priority = CASE WHEN priority='segera' THEN 'tinggi' WHEN priority='biasa' THEN 'sederhana' ELSE priority END
   WHERE priority NOT IN ('rendah','sederhana','tinggi');
 ALTER TABLE psy_clinical_referrals DROP CONSTRAINT IF EXISTS psy_clinical_referrals_priority_check;
