@@ -26,10 +26,12 @@ CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
   updated_at       TIMESTAMPTZ DEFAULT now(),
   resolved_at      TIMESTAMPTZ
 );
--- Tambah kolum kalau jadual dah wujud (idempotent)
+-- Tambah kolum kalau jadual dah wujud dari run terdahulu (idempotent)
 ALTER TABLE psy_clinical_referrals
+  ADD COLUMN IF NOT EXISTS meet_date DATE,
   ADD COLUMN IF NOT EXISTS consultation_note TEXT,
   ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT '[]'::jsonb;
+NOTIFY pgrst, 'reload schema';
 
 ALTER TABLE psy_clinical_referrals ENABLE ROW LEVEL SECURITY;
 DO $$ BEGIN

@@ -7491,6 +7491,7 @@ CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
   resolved_at      TIMESTAMPTZ
 );
 ALTER TABLE psy_clinical_referrals
+  ADD COLUMN IF NOT EXISTS meet_date DATE,
   ADD COLUMN IF NOT EXISTS consultation_note TEXT,
   ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE psy_clinical_referrals ENABLE ROW LEVEL SECURITY;
