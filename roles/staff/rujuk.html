@@ -47,7 +47,7 @@
 
         <div class="grid lg:grid-cols-[1fr_360px] gap-5 items-stretch">
           <!-- LEFT: form -->
-          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 md:p-6 space-y-5">
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 space-y-5">
             <h3 class="font-bold text-sm text-ink">Maklumat Rujukan</h3>
 
             <div class="grid sm:grid-cols-2 gap-4">
@@ -127,7 +127,9 @@
 <script src="_shared.js"></script>
 <script>
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-const patientId = new URLSearchParams(location.search).get('patient_id');
+const _params = new URLSearchParams(location.search);
+const editId = _params.get('id');
+let patientId = _params.get('patient_id');
 const staffMap = {};
 let patient = null, prio = 'sederhana';
 let pendingFiles = [];
@@ -221,8 +223,31 @@ async function submitReferral() {
   if (!targetId) { errEl.textContent = 'Sila pilih staff untuk dirujuk.'; errEl.classList.remove('hidden'); return; }
   if (!reason)   { errEl.textContent = 'Sila nyatakan sebab perlu jumpa.'; errEl.classList.remove('hidden'); return; }
   const target = staffMap[targetId];
-  const btn = document.getElementById('f-submit'); btn.disabled = true; btn.textContent = 'Menghantar...';
+  const btn = document.getElementById('f-submit'); btn.disabled = true; btn.textContent = editId ? 'Menyimpan...' : 'Menghantar...';
   try {
+    // ── MOD EDIT ──
+    if (editId) {
+      const { error: uErr } = await window.db.from('psy_clinical_referrals').update({
+        target_role: target?.staff_role || null, target_id: targetId, target_name: target?.full_name,
+        reason, meet_date: meetDate, priority: prio, updated_at: new Date().toISOString(),
+      }).eq('id', editId);
+      if (uErr) throw uErr;
+      if (pendingFiles.length) {
+        const { data: cur } = await window.db.from('psy_clinical_referrals').select('attachments').eq('id', editId).maybeSingle();
+        const atts = Array.isArray(cur?.attachments) ? [...cur.attachments] : [];
+        for (const f of pendingFiles) {
+          const path = `${editId}/${Date.now()}_${f.name.replace(/[^\w.\-]/g,'_')}`;
+          const { error: sErr } = await window.db.storage.from('referral-docs').upload(path, f, { contentType: f.type||undefined });
+          if (!sErr) atts.push({ name: f.name, path, uploaded_at: new Date().toISOString() });
+        }
+        await window.db.from('psy_clinical_referrals').update({ attachments: atts }).eq('id', editId);
+      }
+      if (typeof auditLog === 'function') { try { await auditLog('referral.updated', patientId, { target_id: targetId, priority: prio }); } catch(_){} }
+      banner('Rujukan dikemas kini ✅');
+      location.href = 'rujukan.html';
+      return;
+    }
+    // ── MOD CIPTA ──
     const { data: ins, error } = await window.db.from('psy_clinical_referrals').insert({
       patient_id: patientId,
       referred_by: window.currentUser?.id, referred_by_name: window.currentUser?.full_name,
@@ -250,7 +275,7 @@ async function submitReferral() {
     }).then(r=>r,()=>{});
     if (typeof auditLog === 'function') { try { await auditLog('referral.created', patientId, { target_id: targetId, priority: prio }); } catch(_){} }
     banner('Rujukan dihantar ✅');
-    location.href = 'rujukan-detail.html?id=' + newId;
+    location.href = 'rujukan.html';
   } catch (e) {
     errEl.textContent = 'Ralat: ' + (e.message || e); errEl.classList.remove('hidden');
     btn.disabled = false; btn.textContent = '✈️ Hantar Rujukan';
@@ -261,6 +286,16 @@ window.submitReferral = submitReferral;
 (async () => {
   const user = await initStaff('rujukan', 'Rujuk pesakit kepada doctor / coach / manager');
   if (!user) return;
+  let editData = null;
+  if (editId) {
+    const { data: er } = await window.db.from('psy_clinical_referrals').select('*').eq('id', editId).maybeSingle();
+    if (!er) { document.getElementById('rujuk-content').innerHTML = '<div class="bg-white rounded-2xl border border-ink/10 p-10 text-center text-ink/40 mt-6">Rujukan tidak ditemui.</div>'; return; }
+    editData = er; patientId = er.patient_id;
+    const h1 = document.querySelector('#rujuk-content h1'); if (h1) h1.textContent = '✏️ Edit Rujukan';
+    const sub = h1 && h1.nextElementSibling; if (sub) sub.textContent = 'Kemas kini maklumat rujukan pesakit.';
+    document.getElementById('f-submit').textContent = '💾 Simpan Perubahan';
+    document.getElementById('back-link').href = 'rujukan.html';
+  }
   if (!patientId) { document.getElementById('rujuk-content').innerHTML = '<div class="bg-white rounded-2xl border border-ink/10 p-10 text-center text-ink/40 mt-6">Tiada pesakit dipilih. Buka rujukan dari halaman pesakit.</div>'; return; }
   const { data: pt } = await window.db.from('psy_patients').select('id, full_name, mrn, date_of_birth, gender, active_package_name').eq('id', patientId).maybeSingle();
   patient = pt;
@@ -274,8 +309,25 @@ window.submitReferral = submitReferral;
     document.getElementById('pt-profile').href = 'patient-hub.html?patient_id=' + patientId;
     document.getElementById('back-link').href = 'patient-hub.html?patient_id=' + patientId;
   }
-  setPrio('sederhana');
+  setPrio(editData?.priority || 'sederhana');
   await Promise.all([loadStaff(), loadDates(), loadClinical()]);
+  if (editData) {
+    document.getElementById('f-target').value = editData.target_id || '';
+    if (editData.meet_date) {
+      const sel = document.getElementById('f-meetdate');
+      if (![...sel.options].some(o => o.value === editData.meet_date)) {
+        const d = new Date(editData.meet_date + 'T00:00:00');
+        const opt = document.createElement('option');
+        opt.value = editData.meet_date;
+        opt.textContent = d.toLocaleDateString('ms-MY',{weekday:'short',day:'2-digit',month:'short',year:'numeric'}) + ' (asal)';
+        sel.appendChild(opt);
+      }
+      sel.value = editData.meet_date;
+      onMeetChange();
+    }
+    document.getElementById('f-reason').value = editData.reason || '';
+    document.getElementById('f-reason-count').textContent = (editData.reason||'').length + ' / 500';
+  }
 })();
 </script>
 </body>
