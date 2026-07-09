@@ -33,12 +33,23 @@
             <p class="text-sm text-ink/50 mt-1">Gambaran keseluruhan automasi mesej dan notifikasi yang dihantar kepada pesakit.</p>
           </div>
           <div class="flex items-center gap-2.5 flex-shrink-0">
-            <div class="flex items-center gap-2 bg-white border border-ink/12 rounded-xl px-3 py-2.5 text-sm text-ink/70 shadow-sm">
-              <span>🗓️</span>
-              <select id="range" onchange="load()" class="bg-transparent outline-none font-medium text-ink/70 cursor-pointer">
-                <option value="7">7 hari terakhir</option>
-                <option value="30">30 hari terakhir</option>
-              </select>
+            <div class="relative">
+              <button onclick="toggleRangePop(event)" class="flex items-center gap-2 bg-white border border-ink/12 rounded-xl px-3 py-2.5 text-sm text-ink/70 shadow-sm font-medium hover:border-navy/30">
+                <span>🗓️</span><span id="range-label">—</span><span class="text-ink/40 text-xs">▾</span>
+              </button>
+              <div id="range-pop" class="hidden absolute right-0 mt-2 w-72 bg-white border border-ink/12 rounded-xl shadow-lg p-3.5 z-30 space-y-3">
+                <div class="flex flex-wrap gap-1.5">
+                  <button onclick="setPreset(7)" class="text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-ink/15 hover:border-navy hover:text-navy">7 hari</button>
+                  <button onclick="setPreset(14)" class="text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-ink/15 hover:border-navy hover:text-navy">14 hari</button>
+                  <button onclick="setPreset(30)" class="text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-ink/15 hover:border-navy hover:text-navy">30 hari</button>
+                  <button onclick="setPresetMonth()" class="text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-ink/15 hover:border-navy hover:text-navy">Bulan ini</button>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                  <div><label class="text-[10px] font-semibold text-ink/45 uppercase">Dari</label><input id="r-from" type="date" class="w-full mt-1 px-2 py-1.5 border border-ink/15 rounded-lg text-xs outline-none focus:border-navy"></div>
+                  <div><label class="text-[10px] font-semibold text-ink/45 uppercase">Hingga</label><input id="r-to" type="date" class="w-full mt-1 px-2 py-1.5 border border-ink/15 rounded-lg text-xs outline-none focus:border-navy"></div>
+                </div>
+                <button onclick="applyRange()" class="w-full bg-navy hover:bg-navy-dark text-white text-sm font-semibold py-2 rounded-lg">Guna Julat</button>
+              </div>
             </div>
             <a href="automation-builder.html" class="bg-navy hover:bg-navy-dark text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm whitespace-nowrap flex items-center gap-1.5"><span class="text-base leading-none">+</span> Cipta Automasi</a>
           </div>
@@ -185,19 +196,31 @@ function donut(segments){
     <text x="70" y="84" font-size="10" fill="#9aa3ab" text-anchor="middle">Jumlah</text></svg>`;
 }
 
+// ── Pemilih julat tarikh ──
+let rFrom, rTo; // 'YYYY-MM-DD'
+function ymd(d){ const x=new Date(d.getTime()-d.getTimezoneOffset()*60000); return x.toISOString().slice(0,10); }
+function fmtLabel(){ const o={day:'2-digit',month:'short',year:'numeric'}; document.getElementById('range-label').textContent = `${new Date(rFrom+'T00:00:00').toLocaleDateString('ms-MY',o)} - ${new Date(rTo+'T00:00:00').toLocaleDateString('ms-MY',o)}`; }
+function toggleRangePop(e){ if(e)e.stopPropagation(); document.getElementById('range-pop').classList.toggle('hidden'); }
+function _applyPreset(from,to){ rFrom=ymd(from); rTo=ymd(to); document.getElementById('r-from').value=rFrom; document.getElementById('r-to').value=rTo; fmtLabel(); document.getElementById('range-pop').classList.add('hidden'); load(); }
+function setPreset(n){ _applyPreset(new Date(Date.now()-(n-1)*86400000), new Date()); }
+function setPresetMonth(){ const now=new Date(); _applyPreset(new Date(now.getFullYear(),now.getMonth(),1), now); }
+function applyRange(){ const f=document.getElementById('r-from').value, t=document.getElementById('r-to').value; if(f)rFrom=f; if(t)rTo=t; if(rFrom>rTo){ const x=rFrom; rFrom=rTo; rTo=x; } fmtLabel(); document.getElementById('range-pop').classList.add('hidden'); load(); }
+window.toggleRangePop=toggleRangePop; window.setPreset=setPreset; window.setPresetMonth=setPresetMonth; window.applyRange=applyRange;
+document.addEventListener('click', e=>{ const pop=document.getElementById('range-pop'); if(!pop) return; const onBtn=e.target.closest('[onclick^="toggleRangePop"]'); if(!pop.contains(e.target) && !onBtn) pop.classList.add('hidden'); });
+
 async function load(){
-  const N = parseInt(document.getElementById('range').value) || 7;
-  const now = Date.now();
-  const curSince = new Date(now - N*86400000).toISOString();
-  const prevSince = new Date(now - 2*N*86400000).toISOString();
+  const curSince = rFrom + 'T00:00:00.000Z';
+  const curUntil = rTo + 'T23:59:59.999Z';
+  const N = Math.max(1, Math.round((new Date(curUntil) - new Date(curSince)) / 86400000));
+  const prevSince = new Date(new Date(curSince).getTime() - N*86400000).toISOString();
   const [logsRes, autosRes] = await Promise.all([
     window.db.from('psy_notification_logs').select('status, channel, patient_id, created_at').gte('created_at', prevSince),
     window.db.from('psy_automations').select('id, name, trigger_category, trigger_timing, actions, is_active, status, created_at').order('created_at',{ascending:false}),
   ]);
   const allLogs = logsRes.data || [];
   const autos = autosRes.data || [];
-  const cur = allLogs.filter(l => l.created_at >= curSince);
-  const prev = allLogs.filter(l => l.created_at < curSince);
+  const cur = allLogs.filter(l => l.created_at >= curSince && l.created_at <= curUntil);
+  const prev = allLogs.filter(l => l.created_at >= prevSince && l.created_at < curSince);
 
   const sent = cur.filter(l=>l.status==='sent').length;
   const failed = cur.filter(l=>l.status==='failed').length;
@@ -220,7 +243,7 @@ async function load(){
 
   // Line chart
   const days=[];
-  for (let i=N-1;i>=0;i--){ const d=new Date(now-i*86400000); days.push({ ymd:d.toISOString().slice(0,10), lbl:d.toLocaleDateString('ms-MY',{day:'2-digit',month:'short'}), att:0, ok:0 }); }
+  for (let t=new Date(curSince).getTime(); t<=new Date(curUntil).getTime(); t+=86400000){ const d=new Date(t); days.push({ ymd:d.toISOString().slice(0,10), lbl:d.toLocaleDateString('ms-MY',{day:'2-digit',month:'short'}), att:0, ok:0 }); }
   cur.forEach(l=>{ const d=days.find(x=>x.ymd===(l.created_at||'').slice(0,10)); if(!d)return; if(l.status==='sent'){d.att++;d.ok++;} else if(l.status==='failed'){d.att++;} });
   const hasLine = days.some(d=>d.att>0);
   document.getElementById('line-empty').classList.toggle('hidden', hasLine);
@@ -271,6 +294,10 @@ async function load(){
 (async () => {
   const user = await initStaff('auto_dashboard', 'Dashboard Automasi', 'auto_messages');
   if (!user) return;
+  rFrom = ymd(new Date(Date.now()-6*86400000)); rTo = ymd(new Date());
+  document.getElementById('r-from').value = rFrom;
+  document.getElementById('r-to').value = rTo;
+  fmtLabel();
   await load();
 })();
 </script>
