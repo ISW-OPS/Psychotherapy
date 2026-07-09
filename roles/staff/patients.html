@@ -1235,13 +1235,23 @@
         // SATU SUMBER: kalau ada plan aktif, tarikh mula sebenar = plan.start_date (sama dgn
         // "Mula Program" di hub). Papar & jadikan baca-sahaja — ubah di hub supaya sesi turut dianjak.
         const { data: plan } = await window.db.from('psy_treatment_plans')
-          .select('start_date').eq('patient_id', p.id).eq('status', 'active')
+          .select('start_date, current_week, duration_weeks').eq('patient_id', p.id).eq('status', 'active')
           .order('created_at', { ascending: false }).limit(1).maybeSingle();
         if (plan?.start_date) {
           dateEl.value = plan.start_date.slice(0, 10);
           dateEl.readOnly = true;
           dateEl.classList.add('bg-cream/40');
           if (hintEl) hintEl.innerHTML = '🔒 Tarikh mula program diselaraskan dengan plan rawatan. Untuk ubah (dan anjak semua sesi), guna <b>Tab Overview → 📌 Mula Program</b> di hub pesakit.';
+        }
+        // Populate "Minggu Semasa" dengan minggu sebenar (ikut tarikh, sama cara hub) supaya
+        // staff nampak nilai betul & save boleh backfill Hadir minggu lepas.
+        const cwEl = document.getElementById('cp-current-week');
+        if (cwEl && plan?.start_date) {
+          const anchor = new Date(plan.start_date + 'T00:00:00'); anchor.setHours(0, 0, 0, 0);
+          const dur = plan.duration_weeks || 12;
+          let wk = Math.floor((Date.now() - anchor.getTime()) / (7 * 86400000)) + 1;
+          wk = Math.min(Math.max(1, wk), dur);
+          cwEl.value = Math.max(wk, plan.current_week || 1);
         }
       });
 
@@ -1524,6 +1534,30 @@
                 }).eq('id', _plan.id);
                 await auditLog('plan.package_changed', _plan.id, { to: pkg.package_id });
                 banner('Pakej ditukar — treatment plan dikemaskini ✅ (semak jadual sesi jika tempoh berubah)');
+              }
+            }
+          }
+
+          // Minggu Semasa + BACKFILL Hadir minggu lepas — untuk pesakit AKTIF dgn plan sedia ada.
+          // Set current_week ikut nilai staff, dan tanda sesi minggu 1..N-1 yang tarikhnya DAH LEPAS
+          // & masih 'booked'/'pending' sebagai 'hadir'. Tak sentuh cancel/no_show/hadir sedia ada.
+          if (isActive) {
+            const cwVal = parseInt(document.getElementById('cp-current-week')?.value) || 0;
+            const { data: actPlan } = await window.db.from('psy_treatment_plans')
+              .select('id, current_week').eq('patient_id', editingPatientId).eq('status', 'active')
+              .order('created_at', { ascending: false }).limit(1).maybeSingle();
+            if (actPlan?.id && cwVal >= 1) {
+              if ((actPlan.current_week || 0) !== cwVal) {
+                await window.db.from('psy_treatment_plans').update({ current_week: cwVal }).eq('id', actPlan.id);
+              }
+              if (cwVal > 1) {
+                await window.db.from('psy_plan_weekly_progress')
+                  .update({ status: 'hadir' })
+                  .eq('plan_id', actPlan.id)
+                  .lt('week_number', cwVal)
+                  .in('status', ['booked', 'pending'])
+                  .lte('session_date', new Date().toISOString());
+                await auditLog('plan.attendance_backfilled', actPlan.id, { up_to_week: cwVal - 1 });
               }
             }
           }
