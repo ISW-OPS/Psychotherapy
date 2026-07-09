@@ -146,7 +146,7 @@ const STAFF_NAV_MASTER = [
     group: 'KOMUNIKASI', collapsible: true, items: [
       { id: 'announcements', url: 'announcements.html', icon: '📢', label: 'Pengumuman' },
       { id: 'events_admin', url: 'events.html', icon: '📅', label: 'Acara & Kelas' },
-      { id: 'auto_messages', url: 'auto-mesej.html', icon: '🤖', label: 'Mesej Automatik' },
+      { id: 'auto_messages', url: 'automation-dashboard.html', icon: '🤖', label: 'Mesej Automatik' },
       { id: 'library', url: 'library.html', icon: '📚', label: 'Library' },
     ]
   },
