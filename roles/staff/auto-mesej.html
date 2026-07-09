@@ -30,18 +30,27 @@
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
       <section class="p-4 md:p-8 space-y-5">
-        <div id="submodnav"></div>
+        <div class="text-[12px] text-ink/45 font-medium">Mesej Automatik <span class="mx-1">/</span> <span class="text-ink/70">Template Mesej</span></div>
         <div class="flex items-start justify-between gap-3 flex-wrap">
           <div>
-            <h1 class="text-2xl font-extrabold text-ink">Template Mesej</h1>
-            <p class="text-sm text-ink/55 mt-0.5">Urus teks mesej sistem &amp; broadcast. Ubah di sini — terus berkesan tanpa perlu pasang semula.</p>
+            <h1 class="text-[26px] font-extrabold text-ink tracking-tight">Template Mesej</h1>
+            <p class="text-sm text-ink/50 mt-1">Guna template sedia ada &amp; mesej sistem untuk cipta automasi dengan lebih pantas.</p>
           </div>
-          <div class="flex items-center gap-2 flex-shrink-0">
-            <button onclick="openCreate()" class="bg-navy hover:bg-navy-dark text-white text-sm font-semibold px-4 py-2.5 rounded-xl whitespace-nowrap">+ Tambah Broadcast</button>
+          <div class="flex items-center gap-2.5 flex-shrink-0">
+            <div class="relative">
+              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-ink/35 text-sm">🔍</span>
+              <input id="t-search" oninput="render()" placeholder="Cari template…" class="pl-9 pr-3 py-2.5 border border-ink/15 rounded-xl text-sm outline-none focus:border-navy bg-white w-[220px]">
+            </div>
+            <button onclick="openCreate()" class="bg-navy hover:bg-navy-dark text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm whitespace-nowrap flex items-center gap-1.5"><span class="text-base leading-none">+</span> Tambah Broadcast</button>
           </div>
         </div>
-        <div id="list" class="space-y-3">
-          <div class="text-center py-16 text-ink/40 text-sm">Memuatkan...</div>
+
+        <!-- Category tabs -->
+        <div id="cat-tabs" class="flex flex-wrap gap-2"></div>
+
+        <!-- Gallery -->
+        <div id="list" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div class="col-span-full text-center py-16 text-ink/40 text-sm">Memuatkan...</div>
         </div>
       </section>
     </main>
@@ -203,25 +212,53 @@ function timingText(m){
   return m.minutes_before!=null ? (leadLabel(m.minutes_before) + ' sebelum') : 'Belum diset';
 }
 
+let activeCat = 'all';
+const CH_TAG = {
+  whatsapp:'<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-green/10 text-green-dark">WhatsApp</span>',
+  inapp:'<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-navy/8 text-navy">In-App</span>',
+  email:'<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gold/15 text-gold-dark">Email</span>',
+  announcement:'<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">Pengumuman</span>',
+};
+function renderTabs(){
+  const cats = [...new Set(MSGS.map(m=>m.trigger_type))];
+  const tabs = [['all','Semua',MSGS.length]].concat(cats.map(c=>[c,(TRIGGER_LABEL[c]?.l||c),MSGS.filter(x=>x.trigger_type===c).length]));
+  document.getElementById('cat-tabs').innerHTML = tabs.map(([k,l,n])=>`<button onclick="setCat('${k}')" class="text-[12px] font-semibold px-3.5 py-1.5 rounded-lg border transition-colors ${activeCat===k?'border-navy bg-navy text-white':'border-ink/15 text-ink/60 hover:border-navy'}">${esc(l)} <span class="${activeCat===k?'text-white/70':'text-ink/40'}">${n}</span></button>`).join('');
+}
+function setCat(c){ activeCat=c; renderTabs(); render(); }
+window.setCat=setCat;
+
 function render(){
-  document.getElementById('list').innerHTML = MSGS.map(m => {
+  const q=(document.getElementById('t-search')?.value||'').trim().toLowerCase();
+  const rows = MSGS.filter(m=>{
+    if (activeCat!=='all' && m.trigger_type!==activeCat) return false;
+    if (q && !`${m.name||''} ${m.description||''} ${m.message_template||''}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+  document.getElementById('list').innerHTML = rows.map(m => {
     const t = TRIGGER_LABEL[m.trigger_type] || { l:m.trigger_type, c:'bg-ink/8 text-ink/60' };
-    return `<div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-4 md:p-5 flex items-center gap-4">
-      <div class="w-12 h-12 rounded-xl bg-navy/8 text-navy flex items-center justify-center text-xl flex-shrink-0">💬</div>
-      <div class="flex-1 min-w-0">
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="font-bold text-ink text-[15px]">${esc(m.name)}</span>
-          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${t.c} uppercase tracking-wide">${t.l}</span>
-          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${m.is_active?'bg-green/10 text-green-dark':'bg-ink/8 text-ink/45'}">${m.is_active?'● Aktif':'○ Tidak aktif'}</span>
+    const isBroadcast = m.trigger_type==='recurring_broadcast';
+    const preview = esc(m.message_template||'').replace(/\{\{(.+?)\}\}/g,'<span class="text-navy font-semibold">{{$1}}</span>').replace(/\*(.+?)\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
+    const chList = (Array.isArray(m.channels)&&m.channels.length?m.channels:[m.channel]);
+    const chs = chList.map(c=>CH_TAG[c]||'').join(' ');
+    return `<div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-4 flex flex-col">
+      <div class="flex items-start justify-between gap-2 mb-2.5">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <span class="w-9 h-9 rounded-lg bg-navy/8 text-navy flex items-center justify-center flex-shrink-0">💬</span>
+          <div class="min-w-0"><div class="font-bold text-ink text-[14px] truncate">${esc(m.name)}</div><div class="text-[11px] text-ink/45 truncate">${esc(m.description||'')}</div></div>
         </div>
-        <div class="text-[12px] text-ink/50 mt-0.5 truncate">${esc(m.description||'')}</div>
-        <div class="text-[11px] text-ink/45 mt-1">📲 ${esc(m.channel)} · ⏱️ ${timingText(m)}</div>
+        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${m.is_active?'bg-green/10 text-green-dark':'bg-ink/8 text-ink/45'} flex-shrink-0 whitespace-nowrap">${m.is_active?'● Aktif':'○ Off'}</span>
       </div>
-      <div class="flex items-center gap-2 flex-shrink-0">
-        <button onclick="openEdit('${m.id}')" class="text-sm font-bold text-navy border border-navy/25 px-4 py-2 rounded-lg hover:bg-navy hover:text-white whitespace-nowrap">Edit</button>
-        ${m.trigger_type==='recurring_broadcast' ? `<button onclick="deleteMsg('${m.id}')" class="text-sm font-bold text-terracotta border border-terracotta/30 px-3 py-2 rounded-lg hover:bg-terracotta hover:text-white whitespace-nowrap">Padam</button>` : ''}
-      </div>`;
-  }).join('') || '<div class="text-center py-16 text-ink/40 text-sm">Tiada mesej automatik.</div>';
+      <div class="flex-1 bg-cream/40 border border-ink/8 rounded-xl p-3 text-[12px] text-ink/75 leading-relaxed mb-3 min-h-[86px] max-h-[140px] overflow-hidden">${preview||'<span class="text-ink/35 italic">Tiada teks</span>'}</div>
+      <div class="flex items-center gap-1.5 flex-wrap mb-3">
+        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${t.c}">${t.l}</span>${chs}
+      </div>
+      <div class="flex items-center gap-2 mt-auto">
+        <a href="automation-builder.html?tpl=${m.id}" class="flex-1 text-center text-[12px] font-bold text-navy border border-navy/25 py-2 rounded-lg hover:bg-navy hover:text-white">Guna Template</a>
+        <button onclick="openEdit('${m.id}')" title="Edit" class="text-[12px] font-bold text-ink/60 border border-ink/15 px-3 py-2 rounded-lg hover:bg-ink/5">Edit</button>
+        ${isBroadcast?`<button onclick="deleteMsg('${m.id}')" title="Padam" class="text-[12px] font-bold text-terracotta border border-terracotta/25 px-2.5 py-2 rounded-lg hover:bg-terracotta hover:text-white">🗑</button>`:''}
+      </div>
+    </div>`;
+  }).join('') || '<div class="col-span-full text-center py-16 text-ink/40 text-sm">Tiada template sepadan.</div>';
 }
 
 function openEdit(id){
@@ -430,6 +467,7 @@ async function saveMsg(){
 async function load(){
   const { data } = await window.db.from('psy_auto_messages').select('*').order('trigger_type', { ascending: true }).order('name', { ascending: true });
   MSGS = data || [];
+  renderTabs();
   render();
 }
 
