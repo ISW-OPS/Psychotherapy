@@ -124,7 +124,7 @@ function checkedVals(cls){ return Array.from(document.querySelectorAll('.'+cls+'
 function buildConditions(){
   const c=[];
   const stt=checkedVals('c-status'); if(stt.length===1)c.push({field:'patient_status',value:stt[0]});
-  const pk=checkedVals('c-pkg'); if(pk.length)c.push({field:'package',value:pk});
+  const pkBoxes=Array.from(document.querySelectorAll('.c-pkg:checked')); if(pkBoxes.length){ const vals=[]; pkBoxes.forEach(b=>{ vals.push(b.value); if(b.dataset.id&&b.dataset.id!==b.value)vals.push(b.dataset.id); }); c.push({field:'package',value:vals}); }
   const gn=checkedVals('c-gender'); if(gn.length===1)c.push({field:'gender',value:gn[0]});
   const mn=parseInt(document.getElementById('c-age-min').value), mx=parseInt(document.getElementById('c-age-max').value);
   if(!isNaN(mn)||!isNaN(mx))c.push({field:'age',value:{min:isNaN(mn)?null:mn,max:isNaN(mx)?null:mx}});
@@ -149,7 +149,9 @@ function donut(match, total){
   const R=52,C=2*Math.PI*R; const frac=total?match/total:0; const len=frac*C;
   return `<svg width="130" height="130" viewBox="0 0 130 130"><circle cx="65" cy="65" r="${R}" fill="none" stroke="#eceef1" stroke-width="16"/>${total?`<circle cx="65" cy="65" r="${R}" fill="none" stroke="#1a3a5c" stroke-width="16" stroke-dasharray="${len.toFixed(2)} ${(C-len).toFixed(2)}" transform="rotate(-90 65 65)" stroke-linecap="round"/>`:''}<text x="65" y="62" font-size="20" font-weight="800" fill="#26333d" text-anchor="middle">${match.toLocaleString()}</text><text x="65" y="80" font-size="9" fill="#9aa3ab" text-anchor="middle">Anggaran</text></svg>`;
 }
-function bar(label, n, tot){ const pct=tot?Math.round(n/tot*100):0; return `<div class="flex items-center gap-2"><span class="w-24 truncate text-ink/60">${esc(label)}</span><div class="flex-1 h-2 bg-ink/8 rounded-full overflow-hidden"><div class="bg-navy h-full rounded-full" style="width:${pct}%"></div></div><span class="w-16 text-right text-ink/50">${n} (${pct}%)</span></div>`; }
+const PALETTE = ['#2e9e6b','#e8a53d','#d9534f','#1a3a5c','#7c5cbf','#2c9fa3'];
+function bar(label, n, tot, color){ const pct=tot?Math.round(n/tot*100):0; color=color||'#1a3a5c'; return `<div class="flex items-center gap-2"><span class="w-28 truncate text-ink/60" title="${esc(label)}">${esc(label)}</span><div class="flex-1 h-2.5 bg-ink/8 rounded-full overflow-hidden"><div class="h-full rounded-full" style="width:${pct}%;background:${color}"></div></div><span class="w-16 text-right text-ink/50">${n} (${pct}%)</span></div>`; }
+function bars(entries, tot){ return entries.map(([k,v],i)=>bar(k,v,tot,PALETTE[i%PALETTE.length])).join(''); }
 
 function recompute(){
   const conds=buildConditions();
@@ -164,12 +166,12 @@ function recompute(){
   const byG={M:0,F:0}, byA={'18-25':0,'26-40':0,'41-60':0,'60+':0,'—':0}, byS={}, byP={};
   matched.forEach(p=>{ if(byG[p.gender]!=null)byG[p.gender]++; const a=age(p); byA[a==null?'—':a<=25?'18-25':a<=40?'26-40':a<=60?'41-60':'60+']++; if(p.state)byS[p.state]=(byS[p.state]||0)+1; if(p.active_package_id)byP[p.active_package_id]=(byP[p.active_package_id]||0)+1; });
   const topS=Object.entries(byS).sort((a,b)=>b[1]-a[1]).slice(0,4);
-  const topP=Object.entries(byP).sort((a,b)=>b[1]-a[1]).slice(0,4);
+  const topP=Object.entries(byP).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([k,v])=>[PKGMAP[k]||k, v]);
   document.getElementById('breakdown').innerHTML = `
-    <div><div class="font-semibold text-ink/70 mb-1.5">Jantina</div><div class="space-y-1">${bar('Lelaki',byG.M,m)}${bar('Perempuan',byG.F,m)}</div></div>
-    <div><div class="font-semibold text-ink/70 mb-1.5">Umur</div><div class="space-y-1">${Object.entries(byA).filter(([k,v])=>v>0).map(([k,v])=>bar(k,v,m)).join('')||'<div class="text-ink/40">—</div>'}</div></div>
-    <div><div class="font-semibold text-ink/70 mb-1.5">Negeri (top)</div><div class="space-y-1">${topS.map(([k,v])=>bar(k,v,m)).join('')||'<div class="text-ink/40">—</div>'}</div></div>
-    <div><div class="font-semibold text-ink/70 mb-1.5">Pakej (top)</div><div class="space-y-1">${topP.map(([k,v])=>bar(PKGMAP[k]||k,v,m)).join('')||'<div class="text-ink/40">—</div>'}</div></div>`;
+    <div><div class="font-semibold text-ink/70 mb-1.5">Jantina</div><div class="space-y-1">${bar('Lelaki',byG.M,m,'#1a3a5c')}${bar('Perempuan',byG.F,m,'#e8a53d')}</div></div>
+    <div><div class="font-semibold text-ink/70 mb-1.5">Umur</div><div class="space-y-1">${bars(Object.entries(byA).filter(([k,v])=>v>0),m)||'<div class="text-ink/40">—</div>'}</div></div>
+    <div><div class="font-semibold text-ink/70 mb-1.5">Negeri (top)</div><div class="space-y-1">${bars(topS,m)||'<div class="text-ink/40">—</div>'}</div></div>
+    <div><div class="font-semibold text-ink/70 mb-1.5">Pakej (top)</div><div class="space-y-1">${bars(topP,m)||'<div class="text-ink/40">—</div>'}</div></div>`;
 }
 window.recompute=recompute;
 
@@ -194,7 +196,7 @@ window.saveAudience=saveAudience;
 function loadConds(conds){
   (conds||[]).forEach(c=>{
     if(c.field==='patient_status'){ const el=document.querySelector(`.c-status[value="${c.value}"]`); if(el)el.checked=true; }
-    else if(c.field==='package'){ (Array.isArray(c.value)?c.value:[c.value]).forEach(v=>{ const el=document.querySelector(`.c-pkg[value="${v}"]`); if(el)el.checked=true; }); }
+    else if(c.field==='package'){ const vals=Array.isArray(c.value)?c.value:[c.value]; document.querySelectorAll('.c-pkg').forEach(el=>{ if(vals.includes(el.value)||vals.includes(el.dataset.id))el.checked=true; }); }
     else if(c.field==='gender'){ const el=document.querySelector(`.c-gender[value="${c.value}"]`); if(el)el.checked=true; }
     else if(c.field==='age'){ if(c.value?.min!=null)document.getElementById('c-age-min').value=c.value.min; if(c.value?.max!=null)document.getElementById('c-age-max').value=c.value.max; }
     else if(c.field==='state'){ (Array.isArray(c.value)?c.value:[c.value]).forEach(v=>{ const el=document.querySelector(`.c-state[value="${v}"]`); if(el)el.checked=true; }); }
@@ -207,11 +209,12 @@ function loadConds(conds){
   if (!user) return;
   const [pRes, pkgRes] = await Promise.all([
     window.db.from('psy_patients').select('id,status,gender,active_package_id,state,date_of_birth,created_at').neq('status','deleted').neq('status','rejected'),
-    window.db.from('psy_packages').select('package_id,name'),
+    window.db.from('psy_packages').select('id,package_id,name'),
   ]);
   PATIENTS = pRes.data || [];
-  (pkgRes.data||[]).forEach(p=>PKGMAP[p.package_id]=p.name);
-  document.getElementById('c-pkg').innerHTML = (pkgRes.data||[]).map(p=>`<label class="flex items-center gap-1.5 text-[12px] cursor-pointer"><input type="checkbox" class="c-pkg w-3.5 h-3.5 accent-navy" value="${esc(p.package_id)}" onchange="recompute()"> ${esc(p.name||p.package_id)}</label>`).join('') || '<div class="text-[12px] text-ink/40">Tiada pakej</div>';
+  // active_package_id boleh UUID (testing) atau kod (prod) — peta kedua-dua ke nama
+  (pkgRes.data||[]).forEach(p=>{ const nm=p.name||p.package_id; if(p.id)PKGMAP[p.id]=nm; if(p.package_id)PKGMAP[p.package_id]=nm; });
+  document.getElementById('c-pkg').innerHTML = (pkgRes.data||[]).map(p=>`<label class="flex items-center gap-1.5 text-[12px] cursor-pointer"><input type="checkbox" class="c-pkg w-3.5 h-3.5 accent-navy" value="${esc(p.package_id||p.id)}" data-id="${esc(p.id||'')}" onchange="recompute()"> ${esc(p.name||p.package_id)}</label>`).join('') || '<div class="text-[12px] text-ink/40">Tiada pakej</div>';
   document.getElementById('c-state').innerHTML = STATES.map(s=>`<label class="flex items-center gap-1.5 text-[12px] cursor-pointer"><input type="checkbox" class="c-state w-3.5 h-3.5 accent-navy" value="${s}" onchange="recompute()"> ${s}</label>`).join('');
   if(editId){ const {data}=await window.db.from('psy_audiences').select('*').eq('id',editId).maybeSingle(); if(data){ document.getElementById('page-title').textContent='Edit Audience'; document.getElementById('a-name').value=data.name||''; loadConds(data.conditions||[]); } }
   recompute();
