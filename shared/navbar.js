@@ -154,6 +154,7 @@ const STAFF_NAV_MASTER = [
         { id: 'auto_audience',  url: 'automation-audience.html', label: 'Audience' },
         { id: 'auto_queue',     url: 'automation-queue.html', label: 'Queue / Scheduled' },
         { id: 'auto_logs',      url: 'automation-logs.html', label: 'Log Penghantaran' },
+        { id: 'auto_test',      url: 'test-automation.html', label: 'Test Automation' },
       ] },
       { id: 'library', url: 'library.html', icon: '📚', label: 'Library' },
     ]
