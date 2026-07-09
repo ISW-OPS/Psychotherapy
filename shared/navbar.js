@@ -150,6 +150,7 @@ const STAFF_NAV_MASTER = [
         { id: 'auto_dashboard', url: 'automation-dashboard.html', label: 'Dashboard' },
         { id: 'auto_list',      url: 'automations.html', label: 'Senarai Automasi' },
         { id: 'auto_templates', url: 'auto-mesej.html', label: 'Template Mesej' },
+        { id: 'auto_audience',  url: 'automation-audience.html', label: 'Audience' },
         { id: 'auto_queue',     url: 'automation-queue.html', label: 'Queue / Scheduled' },
         { id: 'auto_logs',      url: 'automation-logs.html', label: 'Log Penghantaran' },
         { id: 'auto_analytics', url: 'automation-analytics.html', label: 'Analytics' },

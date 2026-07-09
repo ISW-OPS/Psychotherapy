@@ -78,6 +78,12 @@
             <div class="col">
               <div class="flex items-center gap-2 mb-1"><span class="w-6 h-6 rounded-full bg-ink/15 text-ink/70 text-xs font-bold flex items-center justify-center">2</span><h3 class="font-bold text-ink text-[15px]">Syarat <span class="text-[11px] font-normal text-ink/40">(pilihan)</span></h3></div>
               <p class="text-[11px] text-ink/45 mb-4">Sasarkan penerima yang betul.</p>
+              <div class="mb-3 p-3 rounded-xl bg-navy/[0.04] border border-navy/10">
+                <label class="lbl flex items-center justify-between">Audience Tersimpan <a href="automation-audience.html" target="_blank" class="text-[10px] font-semibold text-navy normal-case">+ Urus</a></label>
+                <select id="c-audience" class="fld" onchange="onAudiencePick()"><option value="">— Tetapkan sendiri di bawah —</option></select>
+                <div id="c-aud-note" class="hidden mt-2 text-[11px] text-navy"></div>
+              </div>
+              <div id="c-manual">
               <label class="lbl">Kumpulan Pesakit</label>
               <select id="c-group" class="fld"><option value="">Semua Pesakit</option><option value="active">Pesakit Aktif</option><option value="inactive">Pesakit Tidak Aktif</option></select>
               <label class="lbl mt-3 block">Program / Pakej</label>
@@ -100,6 +106,7 @@
               </div>
               <label class="lbl mt-3 block">Negeri</label>
               <select id="c-state" class="fld"><option value="">Semua Negeri</option></select>
+              </div>
             </div>
 
             <!-- 3. TINDAKAN -->
@@ -264,8 +271,26 @@ function onTemplatePick(){ const id=val('m-template'); const t=TEMPLATES.find(x=
 
 document.getElementById('f-active').addEventListener('change', e=>{ const el=document.getElementById('f-active-lbl'); el.textContent=e.target.checked?'Aktif':'Tidak aktif'; el.className='text-sm font-semibold '+(e.target.checked?'text-green-dark':'text-ink/45'); });
 
+// ── Audiences ──
+let AUDIENCES = [], AUD_CONDS = null;
+async function loadAudiences(){
+  const { data } = await window.db.from('psy_audiences').select('id,name,conditions,description').order('name');
+  AUDIENCES = data || [];
+  const sel=document.getElementById('c-audience');
+  sel.innerHTML = '<option value="">— Tetapkan sendiri di bawah —</option>' + AUDIENCES.map(a=>`<option value="${a.id}">${(a.name||'Audience').replace(/</g,'&lt;')}${a.description?' · '+a.description:''}</option>`).join('');
+}
+function onAudiencePick(){
+  const id=document.getElementById('c-audience').value;
+  const note=document.getElementById('c-aud-note'), manual=document.getElementById('c-manual');
+  const a=AUDIENCES.find(x=>x.id===id);
+  if(a){ AUD_CONDS = Array.isArray(a.conditions)?a.conditions:[]; note.textContent=`✓ Guna audience "${a.name}" (${AUD_CONDS.length} syarat). Syarat manual dilangkau.`; note.classList.remove('hidden'); manual.classList.add('opacity-40','pointer-events-none'); }
+  else { AUD_CONDS=null; note.classList.add('hidden'); manual.classList.remove('opacity-40','pointer-events-none'); }
+}
+window.onAudiencePick=onAudiencePick;
+
 // ── Conditions build/parse ──
 function buildConditions(){
+  if(AUD_CONDS) return AUD_CONDS;
   const c=[];
   const g=val('c-group'); if(g==='active')c.push({field:'patient_status',value:'active'}); else if(g==='inactive')c.push({field:'patient_status',value:'inactive'});
   const pkg=val('c-pkg'); if(pkg)c.push({field:'package',value:[pkg]});
@@ -393,6 +418,7 @@ async function loadExisting(){
   document.getElementById('c-state').innerHTML = '<option value="">Semua Negeri</option>' + STATES.map(s=>`<option value="${s}">${s}</option>`).join('');
   try { const { data } = await window.db.from('psy_packages').select('package_id, name').order('name'); document.getElementById('c-pkg').innerHTML = '<option value="">Semua Pakej</option>' + (data||[]).map(p=>`<option value="${esc(p.package_id)}">${esc(p.name||p.package_id)}</option>`).join(''); } catch(_){}
   try { const { data } = await window.db.from('psy_auto_messages').select('id, name, message_template').order('name'); TEMPLATES=data||[]; document.getElementById('m-template').innerHTML = '<option value="">— Pilih template —</option>' + TEMPLATES.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join(''); } catch(_){}
+  try { await loadAudiences(); } catch(_){}
   initCategory();
   renderActions(['whatsapp','inapp']);
   renderSteps(1);

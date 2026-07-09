@@ -41,7 +41,7 @@ function fmtDT(d){ return d ? new Date(d).toLocaleString('ms-MY',{day:'2-digit',
 const CAT_LABEL = { schedule:'Broadcast', appointment:'Sesi', package:'Pakej', checkin:'Catatan Harian', payment:'Bayaran', vitals:'Vitals', patient:'Pesakit', clinical:'Aliran Klinikal' };
 const DOWN = {0:'Ahd',1:'Isn',2:'Sel',3:'Rab',4:'Kha',5:'Jum',6:'Sab'};
 const CH_LABEL = { whatsapp:'📲 WhatsApp', inapp:'🔔 In-App', email:'✉️ Email' };
-const COND_LBL = { patient_status:'Status Pesakit', has_whatsapp:'Ada WhatsApp', gender:'Jantina', package:'Pakej', age:'Umur', state:'Negeri' };
+const COND_LBL = { patient_status:'Status Pesakit', has_whatsapp:'Ada WhatsApp', gender:'Jantina', package:'Pakej', age:'Umur', state:'Negeri', registered:'Tarikh Pendaftaran' };
 const COND_VAL = { active:'Aktif', inactive:'Tidak Aktif', yes:'Ya', no:'Tidak', M:'Lelaki', F:'Perempuan' };
 function aStatus(a){ return a.status || (a.is_active ? 'active' : 'draft'); }
 const ST_BADGE = { active:['● Aktif','bg-green/10 text-green-dark'], draft:['○ Draf','bg-ink/8 text-ink/45'], paused:['⏸ Tidak Aktif','bg-gold/15 text-gold-dark'] };
@@ -66,6 +66,7 @@ function applyConds(pats, a){
     else if(c.field==='package'){const arr=Array.isArray(c.value)?c.value:[c.value];t=t.filter(p=>arr.includes(p.active_package_id));}
     else if(c.field==='state'){const arr=Array.isArray(c.value)?c.value:[c.value];t=t.filter(p=>arr.includes(p.state));}
     else if(c.field==='age'){const mn=c.value?.min,mx=c.value?.max;t=t.filter(p=>{if(!p.date_of_birth)return false;const age=Math.floor((Date.now()-new Date(p.date_of_birth))/31557600000);return(mn==null||age>=mn)&&(mx==null||age<=mx);});}
+    else if(c.field==='registered'){const f=c.value?.from,u=c.value?.to;t=t.filter(p=>{const d=(p.created_at||'').slice(0,10);if(f&&d<f)return false;if(u&&d>u)return false;return true;});}
   }
   return t.length;
 }
@@ -84,7 +85,7 @@ async function load(){
   const [aRes,lRes,pRes]=await Promise.all([
     window.db.from('psy_automations').select('*').eq('id',id).maybeSingle(),
     window.db.from('psy_notification_logs').select('status,channel,created_at,patient_name').eq('automation_id',id).gte('created_at',since).order('created_at',{ascending:false}),
-    window.db.from('psy_patients').select('id,status,gender,phone,active_package_id,state,date_of_birth').neq('status','deleted').neq('status','rejected'),
+    window.db.from('psy_patients').select('id,status,gender,phone,active_package_id,state,date_of_birth,created_at').neq('status','deleted').neq('status','rejected'),
   ]);
   const a=aRes.data; A=a;
   if(!a){ document.getElementById('content').innerHTML='<div class="text-center py-16 text-ink/40">Automasi tidak ditemui.</div>'; return; }
@@ -96,7 +97,7 @@ async function load(){
   const conds=(a.conditions_enabled&&Array.isArray(a.conditions))?a.conditions:[];
   const audienceCount=applyConds(pats,a);
   const audienceBody = conds.length
-    ? '<ul class="space-y-1.5 text-[13px] text-ink/70">'+conds.map(c=>{ let v=c.value; if(c.field==='age')v=`${c.value?.min??'—'}–${c.value?.max??'—'} tahun`; else if(Array.isArray(v))v=v.join(', '); else v=COND_VAL[v]||v; return `<li>✓ ${esc(COND_LBL[c.field]||c.field)}: <b>${esc(String(v))}</b></li>`; }).join('')+'</ul>'
+    ? '<ul class="space-y-1.5 text-[13px] text-ink/70">'+conds.map(c=>{ let v=c.value; if(c.field==='age')v=`${c.value?.min??'—'}–${c.value?.max??'—'} tahun`; else if(c.field==='registered')v=`${c.value?.from||'—'} hingga ${c.value?.to||'—'}`; else if(Array.isArray(v))v=v.join(', '); else v=COND_VAL[v]||v; return `<li>✓ ${esc(COND_LBL[c.field]||c.field)}: <b>${esc(String(v))}</b></li>`; }).join('')+'</ul>'
     : '<div class="text-[13px] text-ink/50">✓ Semua pesakit layak (tiada syarat).</div>';
   const acts=Array.isArray(a.actions)?a.actions:[];
   const msgPrev=esc(a.message_template||'').replace(/\{\{(.+?)\}\}/g,(m,k)=>`<span class="text-navy font-semibold">${esc(PREV[k.trim()]||('{{'+k+'}}'))}</span>`).replace(/\*(.+?)\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
