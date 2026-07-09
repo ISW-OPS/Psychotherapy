@@ -44,6 +44,8 @@ const DOWN = {0:'Ahd',1:'Isn',2:'Sel',3:'Rab',4:'Kha',5:'Jum',6:'Sab'};
 const CH_LABEL = { whatsapp:'📲 WhatsApp', inapp:'🔔 In-App', email:'✉️ Email' };
 const COND_LBL = { patient_status:'Status Pesakit', has_whatsapp:'Ada WhatsApp', gender:'Jantina' };
 const COND_VAL = { active:'Aktif', inactive:'Tidak Aktif', yes:'Ya', no:'Tidak', M:'Lelaki', F:'Perempuan' };
+function aStatus(a){ return a.status || (a.is_active ? 'active' : 'draft'); }
+const ST_BADGE = { active:['● Aktif','bg-green/10 text-green-dark'], draft:['○ Draf','bg-ink/8 text-ink/45'], paused:['⏸ Tidak Aktif','bg-gold/15 text-gold-dark'] };
 
 const id = new URLSearchParams(location.search).get('id');
 
@@ -81,13 +83,13 @@ async function load(){
       <div>
         <div class="flex items-center gap-2 flex-wrap">
           <h1 class="text-2xl font-extrabold text-ink">${esc(a.name)}</h1>
-          <span class="text-[11px] font-bold px-2.5 py-0.5 rounded-full ${a.is_active?'bg-green/10 text-green-dark':'bg-ink/8 text-ink/45'}">${a.is_active?'● Aktif':'○ Draf'}</span>
+          <span class="text-[11px] font-bold px-2.5 py-0.5 rounded-full ${ST_BADGE[aStatus(a)][1]}">${ST_BADGE[aStatus(a)][0]}</span>
         </div>
         <p class="text-sm text-ink/55 mt-0.5">${esc(a.description||'')}</p>
       </div>
       <div class="flex items-center gap-2 flex-wrap">
         <a href="automation-builder.html?id=${a.id}" class="text-sm font-bold text-navy border border-navy/25 px-4 py-2 rounded-lg hover:bg-navy hover:text-white">✎ Edit</a>
-        <button onclick="togglePause()" class="text-sm font-bold text-ink/60 border border-ink/20 px-4 py-2 rounded-lg hover:bg-ink/5">${a.is_active?'⏸ Jeda':'▶ Aktifkan'}</button>
+        <button onclick="setStatus('${aStatus(a)==='active'?'paused':'active'}')" class="text-sm font-bold text-ink/60 border border-ink/20 px-4 py-2 rounded-lg hover:bg-ink/5">${aStatus(a)==='active'?'⏸ Jeda':'▶ Aktifkan'}</button>
         <button onclick="del()" class="text-sm font-bold text-terracotta border border-terracotta/30 px-4 py-2 rounded-lg hover:bg-terracotta hover:text-white">🗑 Padam</button>
       </div>
     </div>
@@ -118,12 +120,12 @@ async function load(){
   `;
 }
 
-async function togglePause(){
-  const { data:a } = await window.db.from('psy_automations').select('is_active').eq('id',id).maybeSingle();
-  await window.db.from('psy_automations').update({ is_active: !a.is_active, updated_at:new Date().toISOString() }).eq('id',id);
-  banner(!a.is_active ? 'Automasi diaktifkan ✅' : 'Automasi dijeda');
+async function setStatus(newStatus){
+  await window.db.from('psy_automations').update({ status:newStatus, is_active:newStatus==='active', updated_at:new Date().toISOString() }).eq('id',id);
+  banner(newStatus==='active' ? 'Automasi diaktifkan ✅' : 'Automasi dijeda (Tidak Aktif)');
   load();
 }
+window.setStatus = setStatus;
 async function del(){
   if (!confirm('Padam automasi ini? Tindakan kekal.')) return;
   const { error } = await window.db.from('psy_automations').delete().eq('id',id);

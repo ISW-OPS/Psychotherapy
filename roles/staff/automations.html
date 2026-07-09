@@ -46,7 +46,7 @@
           <div class="flex flex-wrap items-center gap-2">
             <input id="af-search" oninput="renderAutos()" placeholder="Cari automasi…" class="flex-1 min-w-[200px] px-3 py-2.5 border border-ink/15 rounded-xl text-sm outline-none focus:border-navy">
             <select id="af-cat" onchange="renderAutos()" class="px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white"><option value="">Semua Kategori</option></select>
-            <select id="af-status" onchange="renderAutos()" class="px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white"><option value="">Semua Status</option><option value="active">Aktif</option><option value="draft">Draf</option></select>
+            <select id="af-status" onchange="renderAutos()" class="px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white"><option value="">Semua Status</option><option value="active">Aktif</option><option value="draft">Draf</option><option value="paused">Tidak Aktif</option></select>
             <button onclick="resetAutoFilter()" class="px-3 py-2.5 border border-ink/15 rounded-xl text-sm text-ink/55 hover:bg-ink/5">↺ Reset</button>
           </div>
           <div id="auto-list" class="space-y-3">
@@ -99,6 +99,9 @@ const STATUS_LBL = { sent:'✅ Sent', pending:'🕒 Pending', failed:'❌ Failed
 
 let AUTOS = [];
 
+function autoStatus(a){ return a.status || (a.is_active ? 'active' : 'draft'); }
+const ST_BADGE = { active:['● Aktif','bg-green/10 text-green-dark'], draft:['○ Draf','bg-ink/8 text-ink/45'], paused:['⏸ Tidak Aktif','bg-gold/15 text-gold-dark'] };
+
 function timingText(a){
   const t = a.trigger_timing || {};
   if (t.when==='schedule') return `${(Array.isArray(t.days)?t.days:[]).map(d=>DOWN[d]).join(', ')||'—'} · ${t.time||'—'}`;
@@ -121,8 +124,7 @@ function renderAutos(){
   const fs = document.getElementById('af-status')?.value||'';
   const rows = AUTOS.filter(a => {
     if (fc && a.trigger_category!==fc) return false;
-    if (fs==='active' && !a.is_active) return false;
-    if (fs==='draft' && a.is_active) return false;
+    if (fs && autoStatus(a)!==fs) return false;
     if (q && !`${a.name||''} ${a.description||''}`.toLowerCase().includes(q)) return false;
     return true;
   });
@@ -138,13 +140,13 @@ function renderAutos(){
         <div class="flex items-center gap-2 flex-wrap">
           <a href="automation-detail.html?id=${a.id}" class="font-bold text-ink text-[15px] hover:text-navy hover:underline">${esc(a.name)}</a>
           <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-navy/8 text-navy uppercase tracking-wide">${esc(CAT_LABEL[a.trigger_category]||a.trigger_category)}</span>
-          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${a.is_active?'bg-green/10 text-green-dark':'bg-ink/8 text-ink/45'}">${a.is_active?'● Aktif':'○ Draf'}</span>
+          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${ST_BADGE[autoStatus(a)][1]}">${ST_BADGE[autoStatus(a)][0]}</span>
         </div>
         <div class="text-[12px] text-ink/50 mt-0.5 truncate">${esc(a.description||'')}</div>
         <div class="text-[11px] text-ink/45 mt-1">⏱️ ${esc(timingText(a))} · ${chs||'—'} · 📨 ${s.sent} dihantar (7h) · ✅ ${pct}</div>
       </div>
       <div class="flex items-center gap-2 flex-shrink-0">
-        <button onclick="toggleActive('${a.id}',${a.is_active?'true':'false'})" class="text-xs font-bold px-3 py-2 rounded-lg border ${a.is_active?'border-ink/20 text-ink/55 hover:bg-ink/5':'border-green text-green-dark hover:bg-green/5'} whitespace-nowrap">${a.is_active?'Jeda':'Aktifkan'}</button>
+        <button onclick="setStatus('${a.id}','${autoStatus(a)==='active'?'paused':'active'}')" class="text-xs font-bold px-3 py-2 rounded-lg border ${autoStatus(a)==='active'?'border-ink/20 text-ink/55 hover:bg-ink/5':'border-green text-green-dark hover:bg-green/5'} whitespace-nowrap">${autoStatus(a)==='active'?'Jeda':'Aktifkan'}</button>
         <button onclick="dupAuto('${a.id}')" title="Duplicate" class="text-sm font-bold text-ink/55 border border-ink/20 px-3 py-2 rounded-lg hover:bg-ink/5">⧉</button>
         <a href="automation-builder.html?id=${a.id}" class="text-sm font-bold text-navy border border-navy/25 px-4 py-2 rounded-lg hover:bg-navy hover:text-white">Edit</a>
         <button onclick="delAuto('${a.id}')" class="text-sm font-bold text-terracotta border border-terracotta/30 px-3 py-2 rounded-lg hover:bg-terracotta hover:text-white">Padam</button>
@@ -169,7 +171,7 @@ async function loadAutos(){
 // Duplicate automasi
 async function dupAuto(id){
   const a = AUTOS.find(x=>x.id===id); if(!a) return;
-  const copy = { ...a, name: a.name+' (salinan)', is_active:false, last_run_at:null, created_at:undefined, updated_at:undefined };
+  const copy = { ...a, name: a.name+' (salinan)', is_active:false, status:'draft', last_run_at:null, created_at:undefined, updated_at:undefined };
   delete copy.id;
   try { copy.created_by = window.currentUser.id; } catch(_){}
   const { error } = await window.db.from('psy_automations').insert(copy);
@@ -178,10 +180,12 @@ async function dupAuto(id){
   loadAutos();
 }
 
-async function toggleActive(id, isActive){
-  const { error } = await window.db.from('psy_automations').update({ is_active: !isActive, updated_at:new Date().toISOString() }).eq('id', id);
+// Tukar status: 'active' (jalan) / 'paused' (Tidak Aktif) — is_active disegerak.
+async function setStatus(id, newStatus){
+  const { error } = await window.db.from('psy_automations')
+    .update({ status: newStatus, is_active: newStatus==='active', updated_at:new Date().toISOString() }).eq('id', id);
   if (error){ banner('Ralat: '+error.message,'error'); return; }
-  banner(!isActive ? 'Automasi diaktifkan ✅' : 'Automasi dinyahaktif');
+  banner(newStatus==='active' ? 'Automasi diaktifkan ✅' : 'Automasi dijeda (Tidak Aktif)');
   loadAutos();
 }
 async function delAuto(id){

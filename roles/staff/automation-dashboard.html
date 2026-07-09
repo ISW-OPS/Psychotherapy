@@ -192,7 +192,7 @@ async function load(){
   const prevSince = new Date(now - 2*N*86400000).toISOString();
   const [logsRes, autosRes] = await Promise.all([
     window.db.from('psy_notification_logs').select('status, channel, patient_id, created_at').gte('created_at', prevSince),
-    window.db.from('psy_automations').select('id, name, trigger_category, trigger_timing, actions, is_active, created_at').order('created_at',{ascending:false}),
+    window.db.from('psy_automations').select('id, name, trigger_category, trigger_timing, actions, is_active, status, created_at').order('created_at',{ascending:false}),
   ]);
   const allLogs = logsRes.data || [];
   const autos = autosRes.data || [];
@@ -257,10 +257,12 @@ async function load(){
       <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gold/20 text-gold-dark flex-shrink-0">Menunggu</span>
     </div>`).join('') : '<div class="text-[12px] text-ink/40 text-center py-6">Tiada hantaran berjadual hari ini.</div>';
 
-  // Status automasi
-  const nAct = autos.filter(a=>a.is_active).length, nDraf = autos.length - nAct, tot = autos.length||1;
+  // Status automasi (draft / active / paused diasingkan)
+  const st = { active:0, draft:0, paused:0 };
+  autos.forEach(a => { const s = a.status || (a.is_active ? 'active' : 'draft'); st[s] != null ? st[s]++ : st.draft++; });
+  const tot = autos.length || 1;
   document.getElementById('status').innerHTML = [
-    ['Aktif', nAct, '#2e9e6b'], ['Draf / Tidak Aktif', nDraf, '#9aa3ab'],
+    ['Aktif', st.active, '#2e9e6b'], ['Draf', st.draft, '#9aa3ab'], ['Tidak Aktif', st.paused, '#d98c2b'],
   ].map(([l,n,c])=>`<div>
     <div class="flex justify-between text-[12px] mb-1.5"><span class="flex items-center gap-2 text-ink/70 font-medium"><span class="w-2.5 h-2.5 rounded-full" style="background:${c}"></span>${l}</span><span class="text-ink/50">${n} (${Math.round(n/tot*100)}%)</span></div>
     <div class="h-2 bg-ink/8 rounded-full overflow-hidden"><div class="h-full rounded-full" style="width:${Math.round(n/tot*100)}%;background:${c}"></div></div></div>`).join('');
