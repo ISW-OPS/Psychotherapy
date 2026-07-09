@@ -59,6 +59,11 @@
                 <input id="t-val" type="number" min="1" value="1" class="fld" style="width:80px;margin:0">
                 <select id="t-unit" class="fld" style="width:auto;margin:0"><option value="hour">Jam</option><option value="day" selected>Hari</option><option value="week">Minggu</option></select>
               </div>
+              <!-- Jadual (broadcast berulang) -->
+              <div id="t-schedule" class="hidden mt-3 space-y-3">
+                <div><label class="lbl">Hari hantar (setiap minggu)</label><div id="t-dows" class="flex flex-wrap gap-1.5 mt-1.5"></div></div>
+                <div><label class="lbl">Masa hantar</label><input id="t-time" type="time" class="fld" style="max-width:150px" onchange="renderPreview()"></div>
+              </div>
             </div>
 
             <div id="t-about" class="mt-4 text-[12px] text-navy bg-navy/[0.05] rounded-lg px-3 py-2.5"></div>
@@ -141,6 +146,9 @@ function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,
 
 // ── Registry kapabiliti — 'wired' = enjin sokong sekarang; else "Akan datang" ──
 const CATALOG = {
+  schedule: { label:'Jadual / Broadcast', events:[
+    { key:'recurring_broadcast', label:'Broadcast Berjadual', wired:true, timing:['schedule'], about:'Hantar mesej berulang kepada sasaran ikut hari & masa yang ditetapkan (cth peringatan mingguan).', vars:['{{nama}}'] },
+  ]},
   appointment: { label:'Sesi / Temujanji', events:[
     { key:'session_reminder', label:'Peringatan Sesi', wired:true, timing:['before','at'], about:'Dicetus sebelum/pada masa sesi rawatan pesakit.', vars:['{{nama}}','{{masa}}','{{tarikh}}'] },
   ]},
@@ -162,7 +170,10 @@ const CATALOG = {
     { key:'birthday', label:'Hari Jadi', wired:false, timing:['at'], about:'Dicetus pada tarikh lahir pesakit.', vars:['{{nama}}'] },
   ]},
 };
-const TIMING_LABEL = { before:'Sebelum event', after:'Selepas event', at:'Pada masa event', custom:'Tersuai' };
+const TIMING_LABEL = { before:'Sebelum event', after:'Selepas event', at:'Pada masa event', custom:'Tersuai', schedule:'Ikut jadual (hari & masa)' };
+const DOW = [['1','Isn'],['2','Sel'],['3','Rab'],['4','Kha'],['5','Jum'],['6','Sab'],['0','Ahd']];
+function renderDows(sel){ document.getElementById('t-dows').innerHTML = DOW.map(([v,l]) => `<button type="button" data-dow="${v}" onclick="this.classList.toggle('bg-navy');this.classList.toggle('text-white')" class="dow-btn px-3 py-1.5 rounded-lg text-xs font-semibold border border-ink/15 hover:border-navy ${(sel||[]).map(String).includes(v)?'bg-navy text-white':''}">${l}</button>`).join(''); }
+function getDows(){ return Array.from(document.querySelectorAll('#t-dows .dow-btn.bg-navy')).map(b => parseInt(b.dataset.dow)); }
 const ACTIONS = [
   { key:'whatsapp', label:'WhatsApp', icon:'📲', wired:true },
   { key:'inapp',    label:'Notifikasi App', icon:'🔔', wired:true },
@@ -212,6 +223,9 @@ function onEventChange(){
 function onTimingChange(){
   const when = document.querySelector('input[name=t-when]:checked')?.value;
   document.getElementById('t-timing-val').classList.toggle('hidden', !(when==='before'||when==='after'||when==='custom'));
+  const isSched = when==='schedule';
+  document.getElementById('t-schedule').classList.toggle('hidden', !isSched);
+  if (isSched && !document.querySelector('#t-dows .dow-btn')) renderDows([]);
 }
 
 // ── Conditions ──
@@ -282,13 +296,22 @@ async function save(activate){
 
   const when = document.querySelector('input[name=t-when]:checked')?.value || 'at';
   const ev = currentEvent();
+  let timing;
+  if (when === 'schedule') {
+    const days = getDows(), time = document.getElementById('t-time').value;
+    if (!days.length){ return showErr('Pilih sekurang-kurangnya satu hari hantar.'); }
+    if (!time){ return showErr('Sila set masa hantar.'); }
+    timing = { when:'schedule', days, time };
+  } else {
+    timing = { when, value: parseInt(document.getElementById('t-val').value)||null, unit: document.getElementById('t-unit').value };
+  }
   const payload = {
     name,
     description: document.getElementById('f-desc').value.trim() || null,
     is_active: activate ? document.getElementById('f-active').checked : false,
     trigger_category: document.getElementById('t-category').value,
     trigger_event: document.getElementById('t-event').value,
-    trigger_timing: { when, value: parseInt(document.getElementById('t-val').value)||null, unit: document.getElementById('t-unit').value },
+    trigger_timing: timing,
     conditions_enabled: document.getElementById('c-enabled').checked,
     conditions: document.getElementById('c-enabled').checked ? conditions : [],
     actions: acts,
@@ -324,6 +347,7 @@ async function loadExisting(){
   const when = data.trigger_timing?.when; if (when){ const r=document.querySelector(`input[name=t-when][value="${when}"]`); if(r){ r.checked=true; onTimingChange(); } }
   if (data.trigger_timing?.value) document.getElementById('t-val').value = data.trigger_timing.value;
   if (data.trigger_timing?.unit) document.getElementById('t-unit').value = data.trigger_timing.unit;
+  if (when === 'schedule'){ renderDows(data.trigger_timing?.days || []); if (data.trigger_timing?.time) document.getElementById('t-time').value = data.trigger_timing.time; }
   conditions = Array.isArray(data.conditions) ? data.conditions : [];
   document.getElementById('c-enabled').checked = !!data.conditions_enabled; toggleConditions();
   renderActions(Array.isArray(data.actions)?data.actions:[]);
