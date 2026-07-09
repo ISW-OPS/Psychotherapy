@@ -41,6 +41,7 @@ function ageFrom(dob){ if(!dob) return null; const d=new Date(dob),t=new Date();
 const refId = new URLSearchParams(location.search).get('id');
 const BUCKET = 'referral-docs';
 let ref = null, me = null, vitals = null, riskCount = 0;
+let sarananTemplate = null;   // templat mesej boleh-edit (psy_auto_messages key='referral_saranan')
 
 const SYMPTOMS = [['pening','Pening'],['cepat_letih','Cepat letih'],['berdebar','Berdebar'],['sukar_tidur','Sukar tidur'],['sakit_kepala','Sakit kepala'],['sakit_perut','Sakit perut'],['mual','Mual'],['kebas','Kebas / Semut-semut'],['sukar_fokus','Sukar fokus']];
 const TREAT_CATS = [['ubat','💊','Ubat / Suplemen'],['gaya_hidup','🌿','Gaya Hidup'],['pemakanan','🍎','Pemakanan'],['senaman','🏃','Senaman'],['tindak_lanjut','🔁','Tindakan Lanjut']];
@@ -59,11 +60,13 @@ async function loadAll() {
   const c = ref.consultation || {};
   treatData = Object.assign({ ubat:[], gaya_hidup:[], pemakanan:[], senaman:[], tindak_lanjut:[] }, c.treatment || {});
   consultAtts = Array.isArray(c.attachments) ? c.attachments : [];
-  const [v, risk] = await Promise.all([
+  const [v, risk, tpl] = await Promise.all([
     window.db.from('psy_vitals').select('bp_systolic, bp_diastolic, heart_rate, temperature, weight, created_at').eq('patient_id', ref.patient_id).order('created_at',{ascending:false}).limit(1).then(r=>r.data?.[0]||null,()=>null),
     window.db.from('psy_risk_alerts').select('id',{count:'exact',head:true}).eq('patient_id', ref.patient_id).neq('status','resolved').then(r=>r.count||0,()=>0),
+    window.db.from('psy_auto_messages').select('message_template,is_active').eq('key','referral_saranan').maybeSingle().then(r=>r.data,()=>null),
   ]);
   vitals = v; riskCount = risk;
+  sarananTemplate = (tpl && tpl.is_active !== false && tpl.message_template) ? tpl.message_template : null;
   render();
 }
 
@@ -360,12 +363,29 @@ function buildWaMessage(){
   const saranan = (document.getElementById('k-saranan')?.value || '').trim();
   const days = parseInt(document.getElementById('k-days')?.value)||0;
   const start = document.getElementById('k-start')?.value || '';
+  const pengesyor = ref.target_name || 'doktor';
+  const tarikh = start ? prettyYmd(start) : '';
+
+  // Guna templat boleh-edit (Mesej Automatik) kalau ada — staff edit sendiri via auto-mesej.html.
+  if (sarananTemplate) {
+    let t = sarananTemplate;
+    // Kalau tiada tempoh/tarikh, buang baris yg mengandungi placeholder tempoh/tarikh.
+    if (!days || !start) t = t.split('\n').filter(ln => !/\{tempoh\}|\{tarikh\}/.test(ln)).join('\n');
+    t = t.replace(/\{nama\}/g, nm)
+         .replace(/\{pengesyor\}/g, pengesyor)
+         .replace(/\{saranan\}/g, saranan)
+         .replace(/\{tempoh\}/g, String(days || ''))
+         .replace(/\{tarikh\}/g, tarikh);
+    return t.replace(/\n{3,}/g, '\n\n').trim();  // kemas baris kosong berlebihan
+  }
+
+  // Fallback hardcoded (kalau templat tiada / tak aktif).
   const L = [];
   L.push(`Salam ${nm}, 👋`);
-  L.push(`Berikut saranan daripada ${ref.target_name||'doktor'} (Ibnu Sina Wellness):`);
+  L.push(`Berikut saranan daripada ${pengesyor} (Ibnu Sina Wellness):`);
   L.push('');
   if (saranan) { L.push(saranan); L.push(''); }
-  if (days && start) { L.push(`⏱️ Sila ikut selama *${days} hari* bermula ${prettyYmd(start)}.`); L.push(''); }
+  if (days && start) { L.push(`⏱️ Sila ikut selama *${days} hari* bermula ${tarikh}.`); L.push(''); }
   L.push('Terima kasih & semoga cepat sihat. 🌿');
   return L.join('\n');
 }
