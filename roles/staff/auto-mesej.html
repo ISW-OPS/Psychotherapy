@@ -41,7 +41,7 @@
               <span class="absolute left-3 top-1/2 -translate-y-1/2 text-ink/35 text-sm">🔍</span>
               <input id="t-search" oninput="render()" placeholder="Cari template…" class="pl-9 pr-3 py-2.5 border border-ink/15 rounded-xl text-sm outline-none focus:border-navy bg-white w-[220px]">
             </div>
-            <button onclick="openCreate()" class="bg-navy hover:bg-navy-dark text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm whitespace-nowrap flex items-center gap-1.5"><span class="text-base leading-none">+</span> Tambah Broadcast</button>
+            <button onclick="openCreate()" class="bg-navy hover:bg-navy-dark text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm whitespace-nowrap flex items-center gap-1.5"><span class="text-base leading-none">+</span> Tambah Template</button>
           </div>
         </div>
 
@@ -181,6 +181,7 @@ const TRIGGER_LABEL = {
   daily_reminder:      { l: 'Harian',         c: 'bg-teal/10 text-teal' },
   recurring_broadcast: { l: 'Broadcast berulang', c: 'bg-green/10 text-green-dark' },
   on_action:           { l: 'Serta-merta',    c: 'bg-amber-100 text-amber-700' },
+  template:            { l: 'Template',       c: 'bg-blue-100 text-blue-700' },
 };
 const DOW = [['1','Isn'],['2','Sel'],['3','Rab'],['4','Kha'],['5','Jum'],['6','Sab'],['0','Ahd']];
 const CH_LABEL = { whatsapp:'WhatsApp', inapp:'Notifikasi', announcement:'Pengumuman' };
@@ -305,28 +306,20 @@ function openEdit(id){
 
 // Cipta broadcast baru (recurring_broadcast) — mesra staff, tiada kod.
 function openCreate(){
-  editing = { trigger_type: 'recurring_broadcast' };  // tiada id → mod cipta
+  editing = { trigger_type: 'template' };  // tiada id → cipta TEMPLATE boleh guna semula
   document.getElementById('m-id').value = '';
-  document.getElementById('m-name').textContent = 'Broadcast Baru';
-  document.getElementById('m-desc').textContent = 'Hantar mesej berulang ke pesakit ikut jadual';
+  document.getElementById('m-name').textContent = 'Template Baru';
+  document.getElementById('m-desc').textContent = 'Teks mesej boleh guna semula dalam automasi (Guna Template)';
   document.getElementById('create-fields').classList.remove('hidden');
   document.getElementById('m-name-input').value = '';
   document.getElementById('m-desc-input').value = '';
-  document.getElementById('m-tpl').value = 'Salam {nama}, 👋\n\n';
+  document.getElementById('m-tpl').value = 'Hi {{nama}}, ';
   document.getElementById('m-active').checked = true;
   document.getElementById('m-err').classList.add('hidden');
-  document.getElementById('save-btn').textContent = '➕ Cipta Broadcast';
-  // Broadcast guna timing-before + broadcast-extra
+  document.getElementById('save-btn').textContent = '➕ Cipta Template';
+  // Template: tiada masa/jadual/audience — cuma nama + teks mesej
   ['timing-before','timing-daily','timing-none','broadcast-extra'].forEach(id => document.getElementById(id).classList.add('hidden'));
-  document.getElementById('timing-before').classList.remove('hidden');
-  document.getElementById('broadcast-extra').classList.remove('hidden');
-  document.getElementById('m-min').value = 30; syncMinBtns();
-  document.getElementById('m-session').value = '';
-  document.getElementById('m-link').value = '';
-  renderDow([]);
-  document.querySelectorAll('.ch-cb').forEach(cb => cb.checked = cb.value==='whatsapp');
-  renderAudience({ package_ids: [] });
-  renderPhChips(['{nama}','{masa}','{lead}','{pautan}']);
+  renderPhChips(['{{nama}}','{{masa}}','{{tarikh}}','{{pakej}}']);
   renderPreview();
   document.getElementById('edit-modal').classList.remove('hidden');
 }
@@ -438,21 +431,22 @@ async function saveMsg(){
   let createName = '';
   if (isCreate){
     createName = document.getElementById('m-name-input').value.trim();
-    if (!createName){ err.textContent='Sila isi nama broadcast.'; err.classList.remove('hidden'); return; }
+    if (!createName){ err.textContent='Sila isi nama template.'; err.classList.remove('hidden'); return; }
   }
 
   const btn = document.getElementById('save-btn'); btn.disabled=true; btn.textContent='Menyimpan...';
   try {
     if (isCreate){
+      // Cipta TEMPLATE boleh guna semula (bukan broadcast — broadcast dicipta di Cipta Automasi)
       payload.name = createName;
       payload.description = document.getElementById('m-desc-input').value.trim() || null;
       payload.channel = 'whatsapp';
-      payload.trigger_type = 'recurring_broadcast';
-      payload.placeholders = ['{nama}','{masa}','{lead}','{pautan}'];
-      payload.key = 'bc_' + (createName.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,24) || 'broadcast') + '_' + Date.now().toString(36);
+      payload.trigger_type = 'template';
+      payload.placeholders = ['{{nama}}','{{masa}}','{{tarikh}}','{{pakej}}'];
+      payload.key = 'tpl_' + (createName.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,24) || 'template') + '_' + Date.now().toString(36);
       const { error } = await window.db.from('psy_auto_messages').insert(payload);
       if (error) throw error;
-      banner('Broadcast baru dicipta ✅');
+      banner('Template baru dicipta ✅');
     } else {
       const { error } = await window.db.from('psy_auto_messages').update(payload).eq('id', editing.id);
       if (error) throw error;
