@@ -4,7 +4,7 @@
 
 window.currentUser = null;
 
-async function initStaff(pageId, titleSub) {
+async function initStaff(pageId, titleSub, rbacId) {
   window.currentUser = await checkAuth('staff');
   if (!window.currentUser) return null;
 
@@ -12,8 +12,11 @@ async function initStaff(pageId, titleSub) {
 
   // Akses dikawal sepenuhnya oleh RBAC DB (psy_role_module_actions).
   // super_admin bypass semua; dashboard sentiasa allow.
-  if (staffRole !== 'super_admin' && pageId !== 'dashboard') {
-    if (!window.pageAllowed(pageId)) {
+  // rbacId: bila pageId ialah sub-menu (cth auto_dashboard), semak kebenaran
+  // terhadap modul INDUK (cth auto_messages) supaya tak perlu daftar setiap anak.
+  const permId = rbacId || pageId;
+  if (staffRole !== 'super_admin' && permId !== 'dashboard') {
+    if (!window.pageAllowed(permId)) {
       alert('Akses ditolak. Anda tidak mempunyai kebenaran untuk halaman ini.');
       window.location.href = 'dashboard.html';
       return null;
@@ -26,10 +29,14 @@ async function initStaff(pageId, titleSub) {
   // Apply role colour theme
   if (staffRole) document.body.classList.add('role-' + staffRole);
 
+  // activeScreen = pageId (highlight sub-menu); navbar akan kembang induknya.
   renderNavbar('staff', window.currentUser, null, pageId);
 
-  const nav = getNavItems('staff', staffRole).find(n => n.id === pageId);
-  renderHeader(nav?.label || '', titleSub || '');
+  // Cari label — cuba item induk, kemudian anak.
+  const items = getNavItems('staff', staffRole);
+  let nav = items.find(n => n.id === pageId);
+  if (!nav) { for (const it of items) { const c = (it.children||[]).find(x => x.id === pageId); if (c) { nav = c; break; } } }
+  renderHeader(nav?.label || titleSub || '', titleSub || '');
 
   return window.currentUser;
 }

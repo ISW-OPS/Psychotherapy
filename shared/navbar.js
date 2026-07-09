@@ -146,7 +146,14 @@ const STAFF_NAV_MASTER = [
     group: 'KOMUNIKASI', collapsible: true, items: [
       { id: 'announcements', url: 'announcements.html', icon: '📢', label: 'Pengumuman' },
       { id: 'events_admin', url: 'events.html', icon: '📅', label: 'Acara & Kelas' },
-      { id: 'auto_messages', url: 'automation-dashboard.html', icon: '🤖', label: 'Mesej Automatik' },
+      { id: 'auto_messages', url: 'automation-dashboard.html', icon: '🤖', label: 'Mesej Automatik', children: [
+        { id: 'auto_dashboard', url: 'automation-dashboard.html', label: 'Dashboard' },
+        { id: 'auto_list',      url: 'automations.html', label: 'Senarai Automasi' },
+        { id: 'auto_templates', url: 'auto-mesej.html', label: 'Template Mesej' },
+        { id: 'auto_queue',     url: 'automation-queue.html', label: 'Queue / Scheduled' },
+        { id: 'auto_logs',      url: 'automation-logs.html', label: 'Log Penghantaran' },
+        { id: 'auto_analytics', url: 'automation-analytics.html', label: 'Analytics' },
+      ] },
       { id: 'library', url: 'library.html', icon: '📚', label: 'Library' },
     ]
   },
@@ -234,13 +241,39 @@ function renderNavGroup(group, roleKey, activeScreen) {
          <span class="nav-label text-[9px] font-bold text-ink/30 uppercase tracking-widest">${group.group}</span>
        </div>`;
 
-  const items = group.items.map(item => `
+  const flatLink = (item) => `
     <a href="${item.url}" title="${item.label}"
       class="nav-item no-underline ${item.id === activeScreen ? 'active' : ''} w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-ink/60 hover:bg-ink/5 transition-colors">
       ${staffNavIconHtml(item.id, item.icon, item.id === activeScreen)}
       <span class="nav-label font-medium">${item.label}</span>
       <span id="nav-badge-${item.id}" class="hidden ml-auto nav-label min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold bg-terracotta text-white flex items-center justify-center"></span>
-    </a>`).join('');
+    </a>`;
+  const items = group.items.map(item => {
+    if (!(item.children && item.children.length)) return flatLink(item);
+    const childActive = item.id === activeScreen || item.children.some(c => c.id === activeScreen);
+    const expanded = childActive || localStorage.getItem('isw_pnav_' + item.id) === '1';
+    return `
+      <div>
+        <div class="flex items-center gap-0.5">
+          <a href="${item.url}" title="${item.label}"
+            class="nav-item no-underline ${item.id === activeScreen ? 'active' : ''} flex-1 min-w-0 flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-ink/60 hover:bg-ink/5 transition-colors">
+            ${staffNavIconHtml(item.id, item.icon, item.id === activeScreen)}
+            <span class="nav-label font-medium">${item.label}</span>
+          </a>
+          <button onclick="togglePNav('${item.id}')" title="Buka/tutup" class="nav-label p-2 rounded-lg text-ink/35 hover:text-ink hover:bg-ink/5 flex-shrink-0">
+            <svg id="pnv-${item.id}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" class="w-3.5 h-3.5 transition-transform duration-200 ${expanded ? '' : '-rotate-90'}"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        </div>
+        <div id="pni-${item.id}" class="${expanded ? '' : 'hidden'} space-y-0.5 mt-0.5">
+          ${item.children.map(c => `
+            <a href="${c.url}" title="${c.label}"
+              class="nav-item no-underline ${c.id === activeScreen ? 'active' : ''} w-full flex items-center gap-2.5 pl-9 pr-3 py-1.5 rounded-lg text-[13px] text-ink/55 hover:bg-ink/5 transition-colors">
+              <span class="nav-label">${c.label}</span>
+              <span id="nav-badge-${c.id}" class="hidden ml-auto nav-label min-w-[16px] h-[16px] px-1 rounded-full text-[9px] font-bold bg-terracotta text-white flex items-center justify-center"></span>
+            </a>`).join('')}
+        </div>
+      </div>`;
+  }).join('');
 
   return `
     <div class="mb-1">
