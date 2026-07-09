@@ -406,6 +406,9 @@ function applyConds(pats, conds) {
     if (c.field === 'patient_status') t = t.filter((p) => (c.value === 'active') ? p.status === 'active' : p.status !== 'active')
     else if (c.field === 'gender') t = t.filter((p) => p.gender === c.value)
     else if (c.field === 'has_whatsapp') t = t.filter((p) => (c.value === 'yes') ? !!p.phone : !p.phone)
+    else if (c.field === 'package') { const arr = Array.isArray(c.value) ? c.value : [c.value]; t = t.filter((p) => arr.includes(p.active_package_id)) }
+    else if (c.field === 'state') { const arr = Array.isArray(c.value) ? c.value : [c.value]; t = t.filter((p) => arr.includes(p.state)) }
+    else if (c.field === 'age') { const mn = c.value?.min, mx = c.value?.max; t = t.filter((p) => { if (!p.date_of_birth) return false; const age = Math.floor((Date.now() - new Date(p.date_of_birth).getTime()) / 31557600000); return (mn == null || age >= mn) && (mx == null || age <= mx) }) }
   }
   return t
 }
@@ -421,7 +424,7 @@ async function runAutomationOne(supabase, locationId, a) {
   const actions = Array.isArray(a.actions) ? a.actions : []
   const conds = (a.conditions_enabled && Array.isArray(a.conditions)) ? a.conditions : []
   const { data: pats } = await supabase.from('psy_patients')
-    .select('id, user_id, full_name, phone, email, gender, status, active_package_id').neq('status', 'deleted').neq('status', 'rejected')
+    .select('id, user_id, full_name, phone, email, gender, status, active_package_id, state, date_of_birth').neq('status', 'deleted').neq('status', 'rejected')
   const targets = applyConds(pats || [], conds)
   const render = (name) => fillAuto(a.message_template || '', { nama: name || '' })
   const res = { targets: targets.length, whatsapp: 0, inapp: 0, email: 0, failed: 0 }
