@@ -407,11 +407,12 @@ function fillAuto(tpl, vars) {
 const ISW_CLINIC = { name: 'Ibnu Sina Wellness', phone: '03-8966 3702', address: 'Lot 331, Lorong Senyum Matahari B, Country Heights, 43000 Kajang, Selangor.' }
 function fmtDateMs(d) { if (!d) return ''; try { return new Date(d).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' }) } catch (_) { return '' } }
 // Bina objek pembolehubah (variables) untuk seorang pesakit — kunci Melayu, sumber data sebenar
-function buildPatientVars(p, coachMap, pkgWeeksMap, planMap) {
+function buildPatientVars(p, coachMap, pkgWeeksMap, planMap, upcomingMap) {
   const now = new Date()
   const age = p.date_of_birth ? Math.floor((Date.now() - new Date(p.date_of_birth).getTime()) / 31557600000) : ''
   const plan = planMap[p.id]
   const totalWeeks = (pkgWeeksMap[p.active_package_id] ?? plan?.duration_weeks ?? '')
+  const upc = upcomingMap?.[p.id]
   return {
     nama: p.full_name || '', mrn: p.mrn || '', ic: p.ic_number || '', telefon: p.phone || '', emel: p.email || '',
     jantina: p.gender === 'M' ? 'Lelaki' : p.gender === 'F' ? 'Perempuan' : '', negeri: p.state || '', umur: age === '' ? '' : String(age),
@@ -421,6 +422,9 @@ function buildPatientVars(p, coachMap, pkgWeeksMap, planMap) {
     coach: coachMap[p.coach_id] || '', nama_klinik: ISW_CLINIC.name, telefon_klinik: ISW_CLINIC.phone, alamat_klinik: ISW_CLINIC.address,
     tarikh: fmtDateMs(now), masa: now.toLocaleTimeString('ms-MY', { hour: '2-digit', minute: '2-digit' }),
     hari: now.toLocaleDateString('ms-MY', { weekday: 'long' }), tahun: String(now.getFullYear()), bulan: now.toLocaleDateString('ms-MY', { month: 'long' }),
+    // Temujanji (sesi rawatan akan datang terdekat) — kosong jika tiada sesi 'booked'
+    sesi_akan_datang: upc ? sessLabel(upc.week_number, upc.session_day) : '',
+    tarikh_sesi: upc ? fmtSessDate(upc.session_date) : '', masa_sesi: upc ? fmtSessTime(upc.session_date) : '',
   }
 }
 function applyConds(pats, conds) {
@@ -450,15 +454,20 @@ async function runAutomationOne(supabase, locationId, a) {
   const { data: pats } = await supabase.from('psy_patients')
     .select('id, user_id, full_name, phone, email, gender, status, active_package_id, active_package_name, package_purchased_at, package_expires_at, mrn, ic_number, coach_id, state, date_of_birth, created_at').neq('status', 'deleted').neq('status', 'rejected')
   const targets = applyConds(pats || [], conds)
-  // Lookup untuk pembolehubah: coach, jumlah minggu pakej, minggu semasa
-  const coachMap = {}, pkgWeeksMap = {}, planMap = {}
+  // Lookup untuk pembolehubah: coach, jumlah minggu pakej, minggu semasa, sesi akan datang
+  const coachMap = {}, pkgWeeksMap = {}, planMap = {}, upcomingMap = {}
   try {
     const coachIds = [...new Set(targets.map((p) => p.coach_id).filter(Boolean))]
     if (coachIds.length) { const { data } = await supabase.from('psy_profiles').select('id, full_name').in('id', coachIds); (data || []).forEach((c) => coachMap[c.id] = c.full_name) }
     const { data: pkgs } = await supabase.from('psy_packages').select('id, package_id, duration_weeks'); (pkgs || []).forEach((pk) => { if (pk.package_id) pkgWeeksMap[pk.package_id] = pk.duration_weeks; if (pk.id) pkgWeeksMap[pk.id] = pk.duration_weeks })
-    const pids = targets.map((p) => p.id); if (pids.length) { const { data: plans } = await supabase.from('psy_treatment_plans').select('patient_id, current_week, duration_weeks').eq('status', 'active').in('patient_id', pids); (plans || []).forEach((pl) => { if (!planMap[pl.patient_id]) planMap[pl.patient_id] = pl }) }
+    const pids = targets.map((p) => p.id)
+    if (pids.length) {
+      const { data: plans } = await supabase.from('psy_treatment_plans').select('patient_id, current_week, duration_weeks').eq('status', 'active').in('patient_id', pids); (plans || []).forEach((pl) => { if (!planMap[pl.patient_id]) planMap[pl.patient_id] = pl })
+      const { data: upc } = await supabase.from('psy_plan_weekly_progress').select('patient_id, week_number, session_day, session_date').eq('status', 'booked').gt('session_date', new Date().toISOString()).in('patient_id', pids).order('session_date', { ascending: true })
+      ;(upc || []).forEach((u) => { if (!upcomingMap[u.patient_id]) upcomingMap[u.patient_id] = u })
+    }
   } catch (_) { /* lookup pilihan — jangan halang hantar */ }
-  const render = (p) => fillAuto(a.message_template || '', buildPatientVars(p, coachMap, pkgWeeksMap, planMap))
+  const render = (p) => fillAuto(a.message_template || '', buildPatientVars(p, coachMap, pkgWeeksMap, planMap, upcomingMap))
   const res = { targets: targets.length, whatsapp: 0, inapp: 0, email: 0, failed: 0 }
   if (actions.includes('inapp')) {
     const withAcct = targets.filter((p) => p.user_id)
@@ -563,9 +572,9 @@ async function runSessionConfirm(supabase, locationId) {
     for (const r of rows || []) {
       const p = r.psy_patients || {}
       const vars = {
-        nama: p.full_name || '', sesi: sessLabel(r.week_number, r.session_day),
-        tarikh: fmtSessDate(r.session_date), masa: fmtSessTime(r.session_date),
-        klinik: ISW_CLINIC.name,
+        nama: p.full_name || '', sesi_akan_datang: sessLabel(r.week_number, r.session_day),
+        tarikh_sesi: fmtSessDate(r.session_date), masa_sesi: fmtSessTime(r.session_date),
+        nama_klinik: ISW_CLINIC.name,
       }
       const msg = fillTemplate(cfg.message_template, vars)
       try {

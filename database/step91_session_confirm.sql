@@ -35,11 +35,17 @@ alter table psy_auto_messages add column if not exists last_broadcast_at timesta
 alter table psy_auto_messages add column if not exists category     text;
 alter table psy_auto_messages add column if not exists language     text default 'ms';
 
--- ── 3) Seed baris konfig 'session_confirm' (default OFF — staff hidupkan di UI) ──
+-- ── 3) Seed/kemaskini baris konfig 'session_confirm' (staff hidupkan di UI) ──
 --   rule.lead_days      : berapa hari sebelum sesi peringatan dihantar (default 3)
 --   rule.deadline_hours : had sahkan/tukar tarikh sebelum sesi (default 24)
 --   rule.escalate       : alert coach bila lepas had & belum ditandakan sahkan
 --   send_at_time        : jam harian peringatan dihantar (elak tengah malam)
+--   Pembolehubah {sesi_akan_datang}/{tarikh_sesi}/{masa_sesi}/{nama_klinik} —
+--   sepadan set kanonik (Variables Library, kategori "Temujanji"), supaya
+--   skrin Test Automation & Automation Builder pun boleh papar/uji betul.
+-- UPSERT: guna DO UPDATE (bukan DO NOTHING) supaya run semula step ni
+-- mengemaskini template/config sedia ada — is_active TIDAK disentuh (kekal
+-- toggle staff semasa).
 insert into psy_auto_messages
   (key, name, description, channel, trigger_type, send_at_time, message_template,
    placeholders, channels, rule, category, language, is_active)
@@ -48,12 +54,25 @@ values
    'Pengesahan Sesi Rawatan',
    'Sebelum sesi rawatan, WA minta pesakit balas teks utk sahkan kehadiran; staff tandakan di Kehadiran. Bila tinggal ≤ had jam & belum ditandakan, alert coach.',
    'whatsapp', 'before_session', '10:00',
-   E'Salam {nama} 👋\n\nPeringatan sesi rawatan anda:\n📅 {sesi}\n🗓️ {tarikh} · {masa}\n\nBoleh hadir? Sila *balas mesej ini* untuk sahkan kehadiran 🙏\nJika perlu tukar tarikh, beritahu kami — pihak klinik akan bantu aturkan (selewat-lewatnya 24 jam sebelum sesi).\n\nJika tiada maklum balas, slot mungkin dilepaskan & caj tidak hadir boleh dikenakan.\n\n— {klinik}',
-   '["{nama}","{sesi}","{tarikh}","{masa}","{klinik}"]'::jsonb,
+   E'Salam {nama} 👋\n\nPeringatan sesi rawatan anda:\n📅 {sesi_akan_datang}\n🗓️ {tarikh_sesi} · {masa_sesi}\n\nBoleh hadir? Sila *balas mesej ini* untuk sahkan kehadiran 🙏\nJika perlu tukar tarikh, beritahu kami — pihak klinik akan bantu aturkan (selewat-lewatnya 24 jam sebelum sesi).\n\nJika tiada maklum balas, slot mungkin dilepaskan & caj tidak hadir boleh dikenakan.\n\n— {nama_klinik}',
+   '["{nama}","{sesi_akan_datang}","{tarikh_sesi}","{masa_sesi}","{nama_klinik}"]'::jsonb,
    '["whatsapp","inapp"]'::jsonb,
    '{"lead_days":3,"deadline_hours":24,"escalate":{"on":true,"severity":"medium"}}'::jsonb,
    'temujanji', 'ms',
    false)
-on conflict (key) do nothing;
+on conflict (key) do update set
+  name             = excluded.name,
+  description      = excluded.description,
+  channel          = excluded.channel,
+  trigger_type     = excluded.trigger_type,
+  send_at_time     = excluded.send_at_time,
+  message_template = excluded.message_template,
+  placeholders     = excluded.placeholders,
+  channels         = excluded.channels,
+  rule             = excluded.rule,
+  category         = excluded.category,
+  language         = excluded.language,
+  updated_at       = now();
+  -- is_active SENGAJA tidak dikemaskini — kekal pilihan staff semasa
 
 select 'Step 91 OK — pengesahan sesi (session_confirm) sedia' as status;

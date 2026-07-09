@@ -134,9 +134,11 @@ const CH = [ ['whatsapp','📲','WhatsApp',true], ['inapp','🔔','In-App',true]
 let AUTOS=[], PTS=[], PVARS={}, selAuto=null, selPt=null, selCh='whatsapp';
 
 function fmtDate(d){ if(!d)return ''; try{ return new Date(d).toLocaleDateString('ms-MY',{day:'2-digit',month:'short',year:'numeric'}); }catch(_){ return ''; } }
+function sessLabel(w,d){ return `Minggu ${w} Sesi ${d||1}`; }
 function buildVars(p){
   const now=new Date(); const age=p.date_of_birth?Math.floor((Date.now()-new Date(p.date_of_birth))/31557600000):'';
   const plan=p._plan; const totalWeeks=(p._pkgWeeks ?? plan?.duration_weeks ?? '');
+  const upc=p._upcoming;
   return { nama:p.full_name||'', mrn:p.mrn||'', ic:p.ic_number||'', telefon:p.phone||'', emel:p.email||'',
     jantina:p.gender==='M'?'Lelaki':p.gender==='F'?'Perempuan':'', negeri:p.state||'', umur:age===''?'':String(age),
     pakej:p.active_package_name||'', kod_pakej:p.active_package_id||'',
@@ -144,7 +146,9 @@ function buildVars(p){
     tarikh_mula:fmtDate(p.package_purchased_at), tarikh_tamat:fmtDate(p.package_expires_at),
     coach:p._coach||'', nama_klinik:CLINIC.name, telefon_klinik:CLINIC.phone, alamat_klinik:CLINIC.address,
     tarikh:fmtDate(now), masa:now.toLocaleTimeString('ms-MY',{hour:'2-digit',minute:'2-digit'}),
-    hari:now.toLocaleDateString('ms-MY',{weekday:'long'}), tahun:String(now.getFullYear()), bulan:now.toLocaleDateString('ms-MY',{month:'long'}) };
+    hari:now.toLocaleDateString('ms-MY',{weekday:'long'}), tahun:String(now.getFullYear()), bulan:now.toLocaleDateString('ms-MY',{month:'long'}),
+    sesi_akan_datang:upc?sessLabel(upc.week_number,upc.session_day):'', tarikh_sesi:upc?fmtDate(upc.session_date):'',
+    masa_sesi:upc?new Date(upc.session_date).toLocaleTimeString('ms-MY',{hour:'2-digit',minute:'2-digit'}):'' };
 }
 function fillTpl(tpl, vars){ return Object.entries(vars).reduce((s,[k,v])=>s.split('{{'+k+'}}').join(v??'').split('{'+k+'}').join(v??''), tpl||''); }
 
@@ -213,9 +217,10 @@ window.sendTest=sendTest;
   const user = await initStaff('auto_test', 'Test Automation', 'auto_messages');
   if (!user) return;
   document.getElementById('channels').innerHTML = CH.map(([k,ic,l,ok])=>`<div class="chtile ${k==='whatsapp'?'on':''} ${ok?'':'dis'}" data-k="${k}" onclick="pickCh('${k}',${ok})"><div class="text-xl">${ic}</div><div class="text-[12px] font-semibold text-ink/75 mt-1">${l}</div><div class="text-[10px] ${ok?'text-green-dark':'text-ink/40'} mt-0.5">${k==='whatsapp'?'Disyorkan':ok?'Sokong':'Belum sokong'}</div></div>`).join('');
-  // Automasi + template
+  // Automasi + template (semua psy_auto_messages — termasuk mesej enjin cth
+  // session_confirm/event_reminder/catatan_harian, bukan trigger_type='template' sahaja)
   const { data: autos } = await window.db.from('psy_automations').select('id,name,message_template,status,is_active,message_channel').order('name');
-  const { data: tpls } = await window.db.from('psy_auto_messages').select('id,name,message_template,trigger_type').eq('trigger_type','template').order('name');
+  const { data: tpls } = await window.db.from('psy_auto_messages').select('id,name,message_template,trigger_type').order('name');
   AUTOS = [...(autos||[]).map(a=>({...a, _kind:'Automasi'})), ...(tpls||[]).map(t=>({...t, _kind:'Template'}))];
   const grp=(k)=>AUTOS.filter(a=>a._kind===k).map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('');
   document.getElementById('sel-auto').innerHTML = '<option value="">— Pilih —</option>' + (autos?.length?`<optgroup label="Automasi">${grp('Automasi')}</optgroup>`:'') + (tpls?.length?`<optgroup label="Template">${grp('Template')}</optgroup>`:'');
@@ -227,9 +232,13 @@ window.sendTest=sendTest;
   PTS=ptRes.data||[]; const pkgW={}; (pkgRes.data||[]).forEach(pk=>{ if(pk.package_id)pkgW[pk.package_id]=pk.duration_weeks; if(pk.id)pkgW[pk.id]=pk.duration_weeks; });
   const coachIds=[...new Set(PTS.map(p=>p.coach_id).filter(Boolean))]; const cMap={};
   if(coachIds.length){ const {data}=await window.db.from('psy_profiles').select('id,full_name').in('id',coachIds); (data||[]).forEach(c=>cMap[c.id]=c.full_name); }
-  const pids=PTS.map(p=>p.id); const plMap={};
-  if(pids.length){ const {data}=await window.db.from('psy_treatment_plans').select('patient_id,current_week,duration_weeks').eq('status','active').in('patient_id',pids); (data||[]).forEach(pl=>{ if(!plMap[pl.patient_id])plMap[pl.patient_id]=pl; }); }
-  PTS.forEach(p=>{ p._pkgWeeks=pkgW[p.active_package_id]; p._coach=cMap[p.coach_id]; p._plan=plMap[p.id]; PVARS[p.id]=buildVars(p); });
+  const pids=PTS.map(p=>p.id); const plMap={}; const upcMap={};
+  if(pids.length){
+    const {data}=await window.db.from('psy_treatment_plans').select('patient_id,current_week,duration_weeks').eq('status','active').in('patient_id',pids); (data||[]).forEach(pl=>{ if(!plMap[pl.patient_id])plMap[pl.patient_id]=pl; });
+    const {data:upc}=await window.db.from('psy_plan_weekly_progress').select('patient_id,week_number,session_day,session_date').eq('status','booked').gt('session_date',new Date().toISOString()).in('patient_id',pids).order('session_date',{ascending:true});
+    (upc||[]).forEach(u=>{ if(!upcMap[u.patient_id])upcMap[u.patient_id]=u; });
+  }
+  PTS.forEach(p=>{ p._pkgWeeks=pkgW[p.active_package_id]; p._coach=cMap[p.coach_id]; p._plan=plMap[p.id]; p._upcoming=upcMap[p.id]; PVARS[p.id]=buildVars(p); });
   renderPtList();
 })();
 </script>

@@ -49,14 +49,23 @@ bermula semula untuk tarikh baharu.
 **Config** `psy_auto_messages` key `session_confirm` (default **OFF**):
 - `rule.lead_days` (3) · `rule.deadline_hours` (24) · `rule.escalate` (on, medium)
 - `send_at_time` (10:00) · `channels` (`whatsapp`,`inapp`)
-- Template WA — edit terus di sini (tiada pautan diperlukan dalam mesej).
+- Template WA — edit terus di sini. Pembolehubah: `{nama}`, `{sesi_akan_datang}`,
+  `{tarikh_sesi}`, `{masa_sesi}`, `{nama_klinik}` — set kanonik, sama nama
+  digunakan di **Variables Library** (kategori "Temujanji", 🗓️) dan di
+  **Test Automation**, supaya pratonton/hantar-ujian papar nilai sebenar
+  (bukan `{sesi_akan_datang}` mentah). Elak guna `{tarikh}`/`{masa}` polos —
+  itu bermaksud *tarikh/masa hari ini* (pembolehubah Sistem sedia ada),
+  bukan tarikh sesi.
 
 ## Cara Test
 
 **A) Test hantar SATU mesej (tanpa tunggu cron/jadual):**
 Guna `roles/staff/test-automation.html` → pilih template "Pengesahan Sesi
-Rawatan" → pilih pesakit ujian → saluran WhatsApp → hantar. Ini hantar
-**terus** (bukan tunggu jam 10 pagi), bagus untuk semak wording & format.
+Rawatan" (dalam kumpulan **Template**) → pilih pesakit ujian yang **ada sesi
+`booked` akan datang** (kalau tiada, `{sesi_akan_datang}`/`{tarikh_sesi}`/
+`{masa_sesi}` akan kosong dalam pratonton — ini normal, bukan ralat) →
+saluran WhatsApp → hantar. Ini hantar **terus** (bukan tunggu jam 10 pagi),
+bagus untuk semak wording & format.
 ⚠️ Ini hantar WhatsApp **sebenar** — guna nombor telefon sendiri/pesakit ujian.
 
 **B) Test aliran PENUH (peringatan + panel staff + escalation):**
@@ -77,8 +86,14 @@ Rawatan" → pilih pesakit ujian → saluran WhatsApp → hantar. Ini hantar
 
 ## Langkah Deploy (ops)
 
+⚠️ **Jika step91 pernah di-run sebelum ni** (versi lama guna `{sesi}`/
+`{pautan}`/`{klinik}`): step91 kini guna `ON CONFLICT ... DO UPDATE`, jadi
+run semula fail ni akan **kemas kini** baris `session_confirm` sedia ada ke
+versi terkini. `is_active` TIDAK disentuh (toggle staff kekal).
+
 1. **Run SQL** `database/step91_session_confirm.sql` di **TESTING** & **PROD**
-   (idempotent). Mesti run **sebelum/serentak** deploy frontend.
+   (idempotent — selamat run berulang). Mesti run **sebelum/serentak** deploy
+   frontend.
 2. **Redeploy Edge Function** `event-reminders` ke **TESTING** & **PROD**
    (versi baharu ada `runSessionConfirm`). Cron 15-min sedia ada memanggilnya.
 3. **Uji** ikut langkah "Cara Test" di atas.
