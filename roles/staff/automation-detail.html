@@ -21,7 +21,7 @@
     <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
     <main class="main-content flex-1 min-w-0">
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
-      <section class="p-4 md:p-8 space-y-5">
+      <section class="p-4 md:p-8 space-y-4">
         <div class="text-[12px] text-ink/45 font-medium">Mesej Automatik <span class="mx-1">/</span> <a href="automations.html" class="hover:text-navy">Senarai Automasi</a> <span class="mx-1">/</span> <span id="crumb" class="text-ink/70">…</span></div>
         <div id="content"></div>
       </section>
@@ -41,14 +41,15 @@ function fmtDT(d){ return d ? new Date(d).toLocaleString('ms-MY',{day:'2-digit',
 const CAT_LABEL = { schedule:'Broadcast', appointment:'Sesi', package:'Pakej', checkin:'Catatan Harian', payment:'Bayaran', vitals:'Vitals', patient:'Pesakit', clinical:'Aliran Klinikal' };
 const DOWN = {0:'Ahd',1:'Isn',2:'Sel',3:'Rab',4:'Kha',5:'Jum',6:'Sab'};
 const CH_LABEL = { whatsapp:'📲 WhatsApp', inapp:'🔔 In-App', email:'✉️ Email' };
+const CH_ICON = { whatsapp:'📲', inapp:'🔔', email:'✉️' };
 const COND_LBL = { patient_status:'Status Pesakit', has_whatsapp:'Ada WhatsApp', gender:'Jantina', package:'Pakej', age:'Umur', state:'Negeri', registered:'Tarikh Pendaftaran' };
 const COND_VAL = { active:'Aktif', inactive:'Tidak Aktif', yes:'Ya', no:'Tidak', M:'Lelaki', F:'Perempuan' };
 function aStatus(a){ return a.status || (a.is_active ? 'active' : 'draft'); }
 const ST_BADGE = { active:['● Aktif','bg-green/10 text-green-dark'], draft:['○ Draf','bg-ink/8 text-ink/45'], paused:['⏸ Tidak Aktif','bg-gold/15 text-gold-dark'] };
-const PREV = { nama:'Encik Ali', masa:'10:00 PG', tarikh:'Kha, 09 Jul', pakej:'Overhaul Body', tarikh_tamat:'20 Jul', amaun:'RM 850', coach:'Coach Aina', mrn:'P-001', minggu:'3', tarikh_mula:'01 Jun', telefon:'012-3456789', emel:'ali@email.com' };
+const PREV = { nama:'Nur Aisyah', masa:'10:00 AM', tarikh:'09 Jul 2025', pakej:'Overhaul Body', kod_pakej:'OBDY1', tarikh_tamat:'20 Ogos', coach:'Coach Aina', mrn:'PISW-25028', minggu:'3', jumlah_minggu:'12', tarikh_mula:'01 Jun', telefon:'012-3456789', emel:'aisyah@email.com', ic:'900101-14-5566', jantina:'Perempuan', negeri:'Selangor', umur:'34', nama_klinik:'Ibnu Sina Wellness', telefon_klinik:'03-8966 3702', alamat_klinik:'Kajang', hari:'Rabu', tahun:'2025', bulan:'Julai' };
 
 const id = new URLSearchParams(location.search).get('id');
-let A = null;
+let A = null, LOGS = [];
 
 function timingText(t){
   if(!t) return '—';
@@ -76,8 +77,11 @@ function nextRun(t){
   for(let i=0;i<8;i++){const d=new Date(now.getFullYear(),now.getMonth(),now.getDate()+i,h,m,0); if(days.includes(d.getDay())&&d>now)return d;}
   return null;
 }
-const CARD_ACC = {'📅':'bg-navy/8 text-navy','👥':'bg-gold/15 text-gold-dark','📨':'bg-green/10 text-green-dark','🕐':'bg-purple-100 text-purple-700','💬':'bg-green/10 text-green-dark','🕒':'bg-navy/8 text-navy','⏱️':'bg-gold/15 text-gold-dark'};
+const CARD_ACC = {'📅':'bg-navy/8 text-navy','👥':'bg-gold/15 text-gold-dark','📨':'bg-green/10 text-green-dark','🕒':'bg-navy/8 text-navy','💬':'bg-green/10 text-green-dark','📊':'bg-purple-100 text-purple-700'};
 function card(title, icon, body){ const bg=CARD_ACC[icon]||'bg-navy/8 text-navy'; return `<div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5 flex flex-col"><div class="flex items-center gap-2.5 mb-3.5"><span class="w-8 h-8 rounded-lg ${bg} flex items-center justify-center text-[15px] flex-shrink-0">${icon}</span><h3 class="font-bold text-ink text-[14px]">${title}</h3></div><div class="flex-1">${body}</div></div>`; }
+function kpi(icon,label,val,color){ return `<div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-4"><div class="flex items-center gap-2 mb-1.5"><span class="w-8 h-8 rounded-lg bg-ink/[0.04] flex items-center justify-center text-sm">${icon}</span><span class="text-[11px] font-semibold text-ink/45 uppercase tracking-wide leading-tight">${label}</span></div><div class="text-[24px] font-extrabold ${color}">${val}</div></div>`; }
+function metaItem(label,val){ return `<div><div class="text-[10px] font-bold text-ink/40 uppercase tracking-wide">${label}</div><div class="text-[13px] text-ink/80 font-medium mt-0.5">${val}</div></div>`; }
+function donut(segs){ const total=segs.reduce((s,x)=>s+x.v,0); const R=44,C=2*Math.PI*R; let off=0; const arcs=total?segs.filter(s=>s.v>0).map(s=>{const len=s.v/total*C;const el=`<circle cx="56" cy="56" r="${R}" fill="none" stroke="${s.c}" stroke-width="15" stroke-dasharray="${len.toFixed(2)} ${(C-len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 56 56)"/>`;off+=len;return el;}).join(''):`<circle cx="56" cy="56" r="${R}" fill="none" stroke="#eceef1" stroke-width="15"/>`; return `<svg width="112" height="112" viewBox="0 0 112 112">${arcs}<text x="56" y="53" font-size="16" font-weight="800" fill="#26333d" text-anchor="middle">${total.toLocaleString()}</text><text x="56" y="69" font-size="9" fill="#9aa3ab" text-anchor="middle">Berjaya</text></svg>`; }
 
 async function load(){
   if(!id){ document.getElementById('content').innerHTML='<div class="text-center py-16 text-ink/40">ID automasi tiada.</div>'; return; }
@@ -90,9 +94,13 @@ async function load(){
   const a=aRes.data; A=a;
   if(!a){ document.getElementById('content').innerHTML='<div class="text-center py-16 text-ink/40">Automasi tidak ditemui.</div>'; return; }
   document.getElementById('crumb').textContent=a.name;
-  const logs=lRes.data||[]; const pats=pRes.data||[];
-  const sent=logs.filter(l=>l.status==='sent').length, failed=logs.filter(l=>l.status==='failed').length;
-  const rate=(sent+failed)?Math.round(sent/(sent+failed)*100)+'%':'—';
+  const logs=lRes.data||[]; LOGS=logs; const pats=pRes.data||[];
+  let creator='—';
+  const pmIds=[a.created_by,a.updated_by].filter(Boolean);
+  if(pmIds.length){ const {data:pf}=await window.db.from('psy_profiles').select('id,full_name').in('id',pmIds); const map={}; (pf||[]).forEach(x=>map[x.id]=x.full_name); creator=map[a.created_by]||map[a.updated_by]||'—'; }
+
+  const sent=logs.filter(l=>l.status==='sent').length, failed=logs.filter(l=>l.status==='failed').length, pending=logs.filter(l=>l.status==='pending').length;
+  const proc=sent+failed, tot=proc+pending, rate=proc?Math.round(sent/proc*100):0;
   const st=aStatus(a);
   const conds=(a.conditions_enabled&&Array.isArray(a.conditions))?a.conditions:[];
   const audienceCount=applyConds(pats,a);
@@ -100,49 +108,89 @@ async function load(){
     ? '<ul class="space-y-1.5 text-[13px] text-ink/70">'+conds.map(c=>{ let v=c.value; if(c.field==='age')v=`${c.value?.min??'—'}–${c.value?.max??'—'} tahun`; else if(c.field==='registered')v=`${c.value?.from||'—'} hingga ${c.value?.to||'—'}`; else if(Array.isArray(v))v=v.join(', '); else v=COND_VAL[v]||v; return `<li>✓ ${esc(COND_LBL[c.field]||c.field)}: <b>${esc(String(v))}</b></li>`; }).join('')+'</ul>'
     : '<div class="text-[13px] text-ink/50">✓ Semua pesakit layak (tiada syarat).</div>';
   const acts=Array.isArray(a.actions)?a.actions:[];
-  const msgPrev=esc(a.message_template||'').replace(/\{\{(.+?)\}\}/g,(m,k)=>`<span class="text-navy font-semibold">${esc(PREV[k.trim()]||('{{'+k+'}}'))}</span>`).replace(/\*(.+?)\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
-  const nr=nextRun(a.trigger_timing);
-  const t=a.trigger_timing||{};
-  const isSched=t.when==='schedule';
+  const msgPrev=esc(a.message_template||'').replace(/\{\{(.+?)\}\}/g,(m,k)=>`<span class="text-green-dark font-semibold">${esc(PREV[k.trim()]||('{{'+k+'}}'))}</span>`).replace(/\*(.+?)\*/g,'<b>$1</b>').replace(/_(.+?)_/g,'<i>$1</i>').replace(/\n/g,'<br>');
+  const nr=nextRun(a.trigger_timing); const t=a.trigger_timing||{}; const isSched=t.when==='schedule';
+  const primaryCh=a.message_channel||acts[0]||'whatsapp';
+  const ch={whatsapp:0,inapp:0,email:0}; logs.filter(l=>l.status==='sent').forEach(l=>{if(ch[l.channel]!=null)ch[l.channel]++;});
+  const chTot=ch.whatsapp+ch.inapp+ch.email;
+  const stBar=(label,n,color)=>{ const pct=tot?Math.round(n/tot*100):0; return `<div class="mb-2.5"><div class="flex justify-between text-[12px] mb-1"><span class="text-ink/65 font-medium">${label}</span><span class="text-ink/50">${n.toLocaleString()} (${pct}%)</span></div><div class="h-2.5 bg-ink/8 rounded-full overflow-hidden"><div class="h-full rounded-full" style="width:${pct}%;background:${color}"></div></div></div>`; };
 
   document.getElementById('content').innerHTML = `
-    <!-- Header -->
-    <div class="flex items-start justify-between gap-3 flex-wrap mt-2">
-      <div>
-        <div class="flex items-center gap-2 flex-wrap"><h1 class="text-[26px] font-extrabold text-ink tracking-tight">${esc(a.name)}</h1><span class="text-[11px] font-bold px-2.5 py-0.5 rounded-full ${ST_BADGE[st][1]}">${ST_BADGE[st][0]}</span></div>
-        <p class="text-sm text-ink/50 mt-1">${esc(a.description||'')}</p>
-      </div>
+    <!-- Title + actions -->
+    <div class="flex items-start justify-between gap-3 flex-wrap mt-1">
+      <div class="flex items-center gap-2"><a href="automations.html" class="text-ink/40 hover:text-navy text-2xl leading-none">←</a><h1 class="text-[24px] font-extrabold text-ink tracking-tight">Butiran Automasi</h1></div>
       <div class="flex items-center gap-2 flex-wrap">
+        <button onclick="exportCsv()" class="text-sm font-bold text-ink/60 border border-ink/20 px-4 py-2 rounded-lg hover:bg-ink/5">⭳ Export Log</button>
         <a href="automation-builder.html?id=${a.id}" class="text-sm font-bold text-navy border border-navy/25 px-4 py-2 rounded-lg hover:bg-navy hover:text-white">✎ Edit</a>
         <button onclick="setStatus('${st==='active'?'paused':'active'}')" class="text-sm font-bold text-ink/60 border border-ink/20 px-4 py-2 rounded-lg hover:bg-ink/5">${st==='active'?'⏸ Jeda':'▶ Aktifkan'}</button>
         <button onclick="del()" class="text-sm font-bold text-terracotta border border-terracotta/30 px-4 py-2 rounded-lg hover:bg-terracotta hover:text-white">🗑 Padam</button>
       </div>
     </div>
 
-    <!-- Info + performance -->
-    <div class="grid grid-cols-1 lg:grid-cols-4 gap-4 mt-4">
-      <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5"><div class="text-[11px] font-bold text-ink/45 uppercase mb-1">ID Automasi</div><div class="text-[13px] font-mono text-ink/70 flex items-center gap-2">${esc(a.id.slice(0,8))}… <button onclick="navigator.clipboard.writeText('${a.id}');banner('ID disalin')" class="text-ink/40 hover:text-navy" title="Salin">⧉</button></div><div class="text-[11px] text-ink/40 mt-3">Dicipta ${esc(fmtDT(a.created_at))}</div></div>
-      <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5"><div class="text-[11px] font-bold text-ink/45 uppercase mb-1">Kategori</div><span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-navy/8 text-navy">${esc(CAT_LABEL[a.trigger_category]||a.trigger_category)}</span><div class="text-[11px] text-ink/40 mt-3">Event: ${esc(a.trigger_event)}</div></div>
-      <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5"><div class="text-[11px] font-bold text-ink/45 uppercase mb-1">Status</div><span class="text-[11px] font-bold px-2 py-0.5 rounded-full ${ST_BADGE[st][1]}">${ST_BADGE[st][0]}</span><div class="text-[11px] text-ink/45 mt-2">${st==='active'?'Berjalan seperti dijadualkan.':st==='paused'?'Dijeda — tidak menghantar.':'Draf — belum diaktifkan.'}</div><div class="text-[10px] text-ink/40 mt-1">Kemaskini ${esc(fmtDT(a.updated_at||a.created_at))}</div></div>
-      <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5"><div class="text-[11px] font-bold text-ink/45 uppercase mb-3">Prestasi (30 hari)</div><div class="grid grid-cols-3 gap-2 text-center"><div class="bg-navy/5 rounded-xl py-2.5"><div class="text-lg font-extrabold text-navy">${sent.toLocaleString()}</div><div class="text-[9px] text-ink/50 font-medium mt-0.5">📨 Dihantar</div></div><div class="bg-green/5 rounded-xl py-2.5"><div class="text-lg font-extrabold text-green-dark">${rate}</div><div class="text-[9px] text-ink/50 font-medium mt-0.5">✅ Berjaya</div></div><div class="bg-terracotta/5 rounded-xl py-2.5"><div class="text-lg font-extrabold text-terracotta">${failed.toLocaleString()}</div><div class="text-[9px] text-ink/50 font-medium mt-0.5">⊗ Gagal</div></div></div><div class="text-[9px] text-ink/35 mt-2 text-center">*Dibaca/Respons tidak dijejak</div></div>
+    <!-- Hero -->
+    <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-6 mt-3 flex flex-col lg:flex-row gap-6">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-start gap-4">
+          <span class="w-14 h-14 rounded-2xl bg-green/10 text-green-dark flex items-center justify-center text-2xl flex-shrink-0">${CH_ICON[primaryCh]||'🤖'}</span>
+          <div class="min-w-0">
+            <div class="text-[10px] font-bold text-ink/40 uppercase tracking-wide">Nama Automasi</div>
+            <div class="flex items-center gap-2 flex-wrap"><h2 class="text-[22px] font-extrabold text-ink">${esc(a.name)}</h2><span class="text-[11px] font-bold px-2.5 py-0.5 rounded-full ${ST_BADGE[st][1]}">${ST_BADGE[st][0]}</span></div>
+            <p class="text-[13px] text-ink/50 mt-0.5">${esc(a.description||'Tiada penerangan.')}</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-4 mt-5 pt-5 border-t border-ink/8">
+          ${metaItem('Saluran', acts.map(x=>CH_LABEL[x]||x).join(' · ')||'—')}
+          ${metaItem('Kategori', esc(CAT_LABEL[a.trigger_category]||a.trigger_category||'—'))}
+          ${metaItem('Audiens', audienceCount.toLocaleString()+' pesakit')}
+          ${metaItem('Dicipta Oleh', esc(creator))}
+          ${metaItem('Tarikh Dicipta', esc(fmtDT(a.created_at)))}
+          ${metaItem('ID', '<span class="font-mono">'+esc(a.id.slice(0,8))+'…</span> <button onclick="navigator.clipboard.writeText(\''+a.id+'\');banner(\'ID disalin\')" class="text-ink/40 hover:text-navy">⧉</button>')}
+        </div>
+      </div>
+      <div class="lg:w-56 lg:border-l lg:border-ink/8 lg:pl-6 flex-shrink-0">
+        <div class="text-[10px] font-bold text-ink/40 uppercase tracking-wide mb-2">Status</div>
+        <div class="text-[16px] font-extrabold ${st==='active'?'text-green-dark':st==='paused'?'text-gold-dark':'text-ink/50'} mb-1">${ST_BADGE[st][0]}</div>
+        <p class="text-[12px] text-ink/50 mb-4">${st==='active'?'Berjalan seperti dijadualkan.':st==='paused'?'Dijeda — tidak menghantar.':'Draf — belum diaktifkan.'}</p>
+        <div class="space-y-2 text-[12px]">
+          <div class="flex justify-between gap-2"><span class="text-ink/45">Kemaskini</span><span class="text-ink/70 text-right">${esc(fmtDT(a.updated_at||a.created_at))}</span></div>
+          <div class="flex justify-between gap-2"><span class="text-ink/45">Hantaran akhir</span><span class="text-ink/70 text-right">${a.last_run_at?esc(fmtDT(a.last_run_at)):'—'}</span></div>
+          <div class="flex justify-between gap-2"><span class="text-ink/45">Seterusnya</span><span class="text-ink/70 text-right">${nr?esc(nr.toLocaleDateString('ms-MY',{day:'2-digit',month:'short'})+' '+nr.toLocaleTimeString('ms-MY',{hour:'2-digit',minute:'2-digit'})):(isSched?'—':'Ikut event')}</span></div>
+        </div>
+      </div>
     </div>
 
-    <!-- Config cards -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-4 mt-1">
-      ${card('1. Pencetus','📅',`<div class="text-[13px] text-ink/70 space-y-1.5"><div>Kategori: <b>${esc(CAT_LABEL[a.trigger_category]||a.trigger_category)}</b></div><div>Event: <b>${esc(a.trigger_event)}</b></div><div>Masa: <b>${esc(timingText(t))}</b></div><div class="text-[11px] text-ink/40 mt-1">Zon waktu: Asia/Kuala_Lumpur (GMT+8)</div></div>`)}
-      ${card('2. Sasaran','👥',`<div class="text-2xl font-extrabold text-ink mb-1">${audienceCount.toLocaleString()}<span class="text-[12px] font-medium text-ink/50"> pesakit</span></div>${audienceBody}`)}
-      ${card('3. Tindakan','📨',`<div class="flex flex-wrap gap-1.5 mb-3">${acts.map(x=>`<span class="text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-navy/8 text-navy">${CH_LABEL[x]||x}</span>`).join('')||'<span class="text-ink/40 text-sm">—</span>'}</div><div class="text-[11px] font-bold text-ink/45 uppercase mb-1">Personalisasi</div><div class="flex flex-wrap gap-1">${[...new Set((a.message_template||'').match(/\{\{.+?\}\}/g)||[])].map(v=>`<span class="text-[10px] px-1.5 py-0.5 rounded bg-cream text-ink/60">${esc(v)}</span>`).join('')||'<span class="text-ink/40 text-[11px]">tiada</span>'}</div>`)}
-      ${card('4. Jadual','🕐', isSched?`<div class="text-[13px] text-ink/70 space-y-1.5"><div>Kekerapan: <b>Mingguan</b></div><div>Hari: <b>${(Array.isArray(t.days)?t.days:[]).map(d=>DOWN[d]).join(', ')||'—'}</b></div><div>Masa: <b>${esc(t.time||'—')}</b></div></div>`:`<div class="text-[13px] text-ink/55">Dicetus oleh event (bukan jadual tetap).</div>`)}
+    <!-- Ringkasan Prestasi -->
+    <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 mt-4">
+      ${kpi('👥','Audiens', audienceCount.toLocaleString(),'text-ink')}
+      ${kpi('📨','Diproses (30h)', proc.toLocaleString(),'text-navy')}
+      ${kpi('✅','Berjaya', sent.toLocaleString(),'text-green-dark')}
+      ${kpi('⊗','Gagal', failed.toLocaleString(),'text-terracotta')}
+      ${kpi('📈','Kadar Berjaya', proc?rate+'%':'—','text-navy')}
+    </div>
+    <div class="text-[11px] text-ink/40">*Statistik 30 hari lepas. Metrik "Disalurkan / Dibaca / Respon" tidak dijejak oleh saluran hantar semasa.</div>
+
+    <!-- Preview + status + channel -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      ${card('Pratonton Mesej','💬',`<div class="rounded-xl p-3 flex-1" style="background:#e5ddd5"><div class="bg-[#dcf8c6] rounded-lg rounded-tl-none px-3 py-2 text-[12px] text-ink/85 leading-relaxed shadow-sm whitespace-pre-wrap">${msgPrev||'—'}</div></div>`)}
+      ${card('Status Penghantaran','📊', tot?`${stBar('✅ Berjaya',sent,'#2e9e6b')}${stBar('⊗ Gagal',failed,'#d9534f')}${pending?stBar('🕒 Menunggu',pending,'#c9a13b'):''}<div class="text-[11px] text-ink/40 mt-2">Jumlah diproses: ${tot.toLocaleString()}</div>`:'<div class="text-[13px] text-ink/45">Belum ada penghantaran direkod.</div>')}
+      ${card('Mengikut Saluran','📨', chTot?`<div class="flex items-center gap-4"><div class="flex-shrink-0">${donut([{v:ch.whatsapp,c:'#2e9e6b'},{v:ch.inapp,c:'#1a3a5c'},{v:ch.email,c:'#c9a13b'}])}</div><div class="flex-1 space-y-2 text-[12px]">${[['whatsapp','#2e9e6b'],['inapp','#1a3a5c'],['email','#c9a13b']].map(([k,c])=>{const n=ch[k],pct=chTot?Math.round(n/chTot*100):0;return `<div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full" style="background:${c}"></span><span class="flex-1 text-ink/65">${CH_LABEL[k]}</span><span class="text-ink/50">${n} (${pct}%)</span></div>`;}).join('')}</div></div>`:'<div class="text-[13px] text-ink/45">Tiada penghantaran berjaya lagi.</div>')}
     </div>
 
-    <!-- Bottom row -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-1">
-      ${card('5. Mesej (Pratonton)','💬',`<div class="rounded-xl p-3" style="background:#e5ddd5"><div class="bg-[#dcf8c6] rounded-lg rounded-tl-none px-3 py-2 text-[12px] text-ink/85 leading-relaxed shadow-sm">${msgPrev||'—'}</div></div>`)}
-      ${card('6. Aktiviti Terkini','🕒', logs.length?'<div class="space-y-2">'+logs.slice(0,8).map(l=>`<div class="flex items-center gap-2 text-[12px]"><span>${l.status==='sent'?'✅':l.status==='failed'?'❌':'🕒'}</span><span class="text-ink/50 whitespace-nowrap">${esc(fmtDT(l.created_at))}</span><span class="text-ink/70 truncate">${esc(l.patient_name||'—')}</span><span class="text-ink/35">· ${esc(l.channel||'')}</span></div>`).join('')+'</div>':'<div class="text-[13px] text-ink/45">Tiada aktiviti lagi.</div>')}
-      ${card('7. Pelaksanaan Seterusnya','⏱️',`<div class="text-[13px] text-ink/70 space-y-1.5"><div>Tarikh &amp; Masa: <b>${nr?esc(nr.toLocaleString('ms-MY',{weekday:'long',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})):(isSched?'—':'Ikut event')}</b></div><div>Anggaran Penerima: <b>${audienceCount.toLocaleString()} pesakit</b></div><div>Status: <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${st==='active'?'bg-green/10 text-green-dark':'bg-ink/8 text-ink/45'}">${st==='active'?'Akan dihantar':'Tidak aktif'}</span></div></div><div class="mt-4 pt-3 border-t border-ink/8"><div class="text-[10px] font-bold text-ink/45 uppercase mb-2">Tindakan Pantas</div><div class="flex gap-2"><button onclick="setStatus('${st==='active'?'paused':'active'}')" class="flex-1 text-[12px] font-bold border border-ink/15 py-2 rounded-lg hover:bg-ink/5">${st==='active'?'⏸ Jeda':'▶ Aktifkan'}</button><a href="automation-builder.html?id=${a.id}" class="text-[12px] font-bold text-navy border border-navy/25 px-3 py-2 rounded-lg hover:bg-navy hover:text-white">✎</a><button onclick="del()" class="text-[12px] font-bold text-terracotta border border-terracotta/25 px-3 py-2 rounded-lg hover:bg-terracotta hover:text-white">🗑</button></div></div>`)}
+    <!-- Pencetus + sasaran + aktiviti -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      ${card('Pencetus & Jadual','📅',`<div class="text-[13px] text-ink/70 space-y-1.5"><div>Kategori: <b>${esc(CAT_LABEL[a.trigger_category]||a.trigger_category||'—')}</b></div><div>Event: <b>${esc(a.trigger_event||'—')}</b></div><div>Masa: <b>${esc(timingText(t))}</b></div>${isSched?`<div>Hari: <b>${(Array.isArray(t.days)?t.days:[]).map(d=>DOWN[d]).join(', ')||'—'}</b></div>`:''}<div class="text-[11px] text-ink/40 mt-1">Zon: Asia/Kuala_Lumpur (GMT+8)</div></div>`)}
+      ${card('Sasaran (Audiens)','👥',`<div class="text-2xl font-extrabold text-ink mb-2">${audienceCount.toLocaleString()}<span class="text-[12px] font-medium text-ink/50"> pesakit</span></div>${audienceBody}`)}
+      ${card('Aktiviti Terkini','🕒', logs.length?'<div class="space-y-2">'+logs.slice(0,8).map(l=>`<div class="flex items-center gap-2 text-[12px]"><span>${l.status==='sent'?'✅':l.status==='failed'?'❌':'🕒'}</span><span class="text-ink/50 whitespace-nowrap">${esc(fmtDT(l.created_at))}</span><span class="text-ink/70 truncate">${esc(l.patient_name||'—')}</span><span class="text-ink/35 whitespace-nowrap">· ${esc(l.channel||'')}</span></div>`).join('')+'</div>':'<div class="text-[13px] text-ink/45">Tiada aktiviti lagi.</div>')}
     </div>`;
 }
 
+function exportCsv(){
+  if(!LOGS.length){ banner('Tiada log untuk export.','error'); return; }
+  const head=['Masa','Pesakit','Saluran','Status'];
+  const lines=[head.join(',')].concat(LOGS.map(l=>[fmtDT(l.created_at),`"${(l.patient_name||'').replace(/"/g,'""')}"`,l.channel||'',l.status].join(',')));
+  const blob=new Blob(['﻿'+lines.join('\n')],{type:'text/csv;charset=utf-8'});
+  const el=document.createElement('a'); el.href=URL.createObjectURL(blob); el.download=`automasi_${(A?.name||'log').replace(/[^a-z0-9]+/gi,'_')}.csv`; el.click(); URL.revokeObjectURL(el.href);
+}
 async function setStatus(newStatus){
   await window.db.from('psy_automations').update({ status:newStatus, is_active:newStatus==='active', updated_at:new Date().toISOString() }).eq('id',id);
   banner(newStatus==='active'?'Automasi diaktifkan ✅':'Automasi dijeda (Tidak Aktif)'); load();
@@ -153,7 +201,7 @@ async function del(){
   if(error){ banner('Ralat: '+error.message,'error'); return; }
   banner('Automasi dipadam ✅'); setTimeout(()=>location.href='automations.html',900);
 }
-window.setStatus=setStatus; window.del=del;
+window.exportCsv=exportCsv; window.setStatus=setStatus; window.del=del;
 
 (async () => {
   const user = await initStaff('auto_list', 'Butiran Automasi', 'auto_messages');
