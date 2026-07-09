@@ -400,6 +400,26 @@ async function runKepatuhanAlerts(supabase, locationId) {
 function fillAuto(tpl, vars) {
   return Object.entries(vars).reduce((s, [k, v]) => s.split(`{{${k}}}`).join(v ?? '').split(`{${k}}`).join(v ?? ''), tpl || '').replace(/\n{3,}/g, '\n\n').trim()
 }
+// Pemalar klinik (sumber: shared/letterTemplates.js)
+const ISW_CLINIC = { name: 'Ibnu Sina Wellness', phone: '03-8966 3702', address: 'Lot 331, Lorong Senyum Matahari B, Country Heights, 43000 Kajang, Selangor.' }
+function fmtDateMs(d) { if (!d) return ''; try { return new Date(d).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' }) } catch (_) { return '' } }
+// Bina objek pembolehubah (variables) untuk seorang pesakit — kunci Melayu, sumber data sebenar
+function buildPatientVars(p, coachMap, pkgWeeksMap, planMap) {
+  const now = new Date()
+  const age = p.date_of_birth ? Math.floor((Date.now() - new Date(p.date_of_birth).getTime()) / 31557600000) : ''
+  const plan = planMap[p.id]
+  const totalWeeks = (pkgWeeksMap[p.active_package_id] ?? plan?.duration_weeks ?? '')
+  return {
+    nama: p.full_name || '', mrn: p.mrn || '', ic: p.ic_number || '', telefon: p.phone || '', emel: p.email || '',
+    jantina: p.gender === 'M' ? 'Lelaki' : p.gender === 'F' ? 'Perempuan' : '', negeri: p.state || '', umur: age === '' ? '' : String(age),
+    pakej: p.active_package_name || '', kod_pakej: p.active_package_id || '',
+    minggu: plan?.current_week != null ? String(plan.current_week) : '', jumlah_minggu: totalWeeks !== '' ? String(totalWeeks) : '',
+    tarikh_mula: fmtDateMs(p.package_purchased_at), tarikh_tamat: fmtDateMs(p.package_expires_at),
+    coach: coachMap[p.coach_id] || '', nama_klinik: ISW_CLINIC.name, telefon_klinik: ISW_CLINIC.phone, alamat_klinik: ISW_CLINIC.address,
+    tarikh: fmtDateMs(now), masa: now.toLocaleTimeString('ms-MY', { hour: '2-digit', minute: '2-digit' }),
+    hari: now.toLocaleDateString('ms-MY', { weekday: 'long' }), tahun: String(now.getFullYear()), bulan: now.toLocaleDateString('ms-MY', { month: 'long' }),
+  }
+}
 function applyConds(pats, conds) {
   let t = pats
   for (const c of conds || []) {
@@ -425,15 +445,23 @@ async function runAutomationOne(supabase, locationId, a) {
   const actions = Array.isArray(a.actions) ? a.actions : []
   const conds = (a.conditions_enabled && Array.isArray(a.conditions)) ? a.conditions : []
   const { data: pats } = await supabase.from('psy_patients')
-    .select('id, user_id, full_name, phone, email, gender, status, active_package_id, state, date_of_birth, created_at').neq('status', 'deleted').neq('status', 'rejected')
+    .select('id, user_id, full_name, phone, email, gender, status, active_package_id, active_package_name, package_purchased_at, package_expires_at, mrn, ic_number, coach_id, state, date_of_birth, created_at').neq('status', 'deleted').neq('status', 'rejected')
   const targets = applyConds(pats || [], conds)
-  const render = (name) => fillAuto(a.message_template || '', { nama: name || '' })
+  // Lookup untuk pembolehubah: coach, jumlah minggu pakej, minggu semasa
+  const coachMap = {}, pkgWeeksMap = {}, planMap = {}
+  try {
+    const coachIds = [...new Set(targets.map((p) => p.coach_id).filter(Boolean))]
+    if (coachIds.length) { const { data } = await supabase.from('psy_profiles').select('id, full_name').in('id', coachIds); (data || []).forEach((c) => coachMap[c.id] = c.full_name) }
+    const { data: pkgs } = await supabase.from('psy_packages').select('id, package_id, duration_weeks'); (pkgs || []).forEach((pk) => { if (pk.package_id) pkgWeeksMap[pk.package_id] = pk.duration_weeks; if (pk.id) pkgWeeksMap[pk.id] = pk.duration_weeks })
+    const pids = targets.map((p) => p.id); if (pids.length) { const { data: plans } = await supabase.from('psy_treatment_plans').select('patient_id, current_week, duration_weeks').eq('status', 'active').in('patient_id', pids); (plans || []).forEach((pl) => { if (!planMap[pl.patient_id]) planMap[pl.patient_id] = pl }) }
+  } catch (_) { /* lookup pilihan — jangan halang hantar */ }
+  const render = (p) => fillAuto(a.message_template || '', buildPatientVars(p, coachMap, pkgWeeksMap, planMap))
   const res = { targets: targets.length, whatsapp: 0, inapp: 0, email: 0, failed: 0 }
   if (actions.includes('inapp')) {
     const withAcct = targets.filter((p) => p.user_id)
     if (withAcct.length) {
-      try { await supabase.from('psy_notifications').insert(withAcct.map((p) => ({ user_id: p.user_id, type: 'system', title: a.name, body: render(p.full_name).slice(0, 240) }))); res.inapp = withAcct.length } catch (_) { }
-      for (const p of withAcct) await logAuto(supabase, a, p, 'inapp', render(p.full_name), 'sent', null)
+      try { await supabase.from('psy_notifications').insert(withAcct.map((p) => ({ user_id: p.user_id, type: 'system', title: a.name, body: render(p).slice(0, 240) }))); res.inapp = withAcct.length } catch (_) { }
+      for (const p of withAcct) await logAuto(supabase, a, p, 'inapp', render(p), 'sent', null)
     }
   }
   if (actions.includes('whatsapp')) {
@@ -441,7 +469,7 @@ async function runAutomationOne(supabase, locationId, a) {
     const BATCH = 15
     for (let i = 0; i < withPhone.length; i += BATCH) {
       await Promise.all(withPhone.slice(i, i + BATCH).map(async (p) => {
-        const msg = render(p.full_name)
+        const msg = render(p)
         try { const cid = await upsertContact(locationId, p.e164, p.full_name); if (cid) { await sendWA(cid, msg); res.whatsapp++; await logAuto(supabase, a, p, 'whatsapp', msg, 'sent', null) } }
         catch (e) { res.failed++; await logAuto(supabase, a, p, 'whatsapp', msg, 'failed', String(e?.message || e)) }
       }))
@@ -451,7 +479,7 @@ async function runAutomationOne(supabase, locationId, a) {
     const emailFrom = Deno.env.get('GHL_EMAIL_FROM') || ''
     const withEmail = targets.filter((p) => p.email)
     for (const p of withEmail) {
-      const msg = render(p.full_name)
+      const msg = render(p)
       try { const cid = await upsertEmailContact(locationId, p.email, p.full_name); if (cid) { await sendEmail(cid, a.name, msg.replace(/\n/g, '<br>'), emailFrom); res.email++; await logAuto(supabase, a, p, 'email', msg, 'sent', null) } }
       catch (e) { res.failed++; await logAuto(supabase, a, p, 'email', msg, 'failed', String(e?.message || e)) }
     }
