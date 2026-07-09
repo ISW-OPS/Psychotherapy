@@ -84,6 +84,28 @@ const STATUS_LABELS = {
   ordered:      'Dipesan',
 };
 
+// ── Paparan identiti pesakit — SATU sumber kebenaran ──────────────────────
+// psy_profiles (akaun) vs psy_patients (rekod klinikal) menyimpan nama/telefon/
+// emel yang bertindih. Untuk elak "silap panggil", SEMUA halaman baca melalui
+// helper ini dengan keutamaan SAMA: profil (akaun) dulu → psy_patients → kyc.
+// Terima `patient` (mungkin ada join .psy_profiles / .profile), dan `profile`/`kyc`
+// pilihan bila diberi berasingan (cth patient-hub).
+function _iswProf(patient, profile) {
+  return profile || patient?.psy_profiles || patient?.profile || null;
+}
+window.iswPatientName = function (patient, profile, kyc) {
+  const pr = _iswProf(patient, profile);
+  return pr?.full_name || patient?.full_name || kyc?.patient_name || kyc?.full_name || '';
+};
+window.iswPatientPhone = function (patient, profile, kyc) {
+  const pr = _iswProf(patient, profile);
+  return pr?.phone || patient?.phone || kyc?.phone || patient?.emergency_contact_phone || '';
+};
+window.iswPatientEmail = function (patient, profile, kyc) {
+  const pr = _iswProf(patient, profile);
+  return pr?.email || patient?.email || '';
+};
+
 function statusChip(s) {
   const m = {
     scheduled:    'bg-navy-light text-navy',
