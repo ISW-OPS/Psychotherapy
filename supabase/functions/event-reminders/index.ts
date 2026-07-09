@@ -394,6 +394,77 @@ async function runKepatuhanAlerts(supabase, locationId) {
   return res
 }
 
+// ───────── 5) Automasi (psy_automations) — Broadcast Berjadual ─────────
+// Baca automasi AKTIF trigger 'schedule' → hari+masa (dedup 1×/hari) → tapis
+// conditions → hantar actions (whatsapp/inapp) → tulis psy_notification_logs.
+function fillAuto(tpl, vars) {
+  return Object.entries(vars).reduce((s, [k, v]) => s.split(`{{${k}}}`).join(v ?? '').split(`{${k}}`).join(v ?? ''), tpl || '').replace(/\n{3,}/g, '\n\n').trim()
+}
+function applyConds(pats, conds) {
+  let t = pats
+  for (const c of conds || []) {
+    if (c.field === 'patient_status') t = t.filter((p) => (c.value === 'active') ? p.status === 'active' : p.status !== 'active')
+    else if (c.field === 'gender') t = t.filter((p) => p.gender === c.value)
+    else if (c.field === 'has_whatsapp') t = t.filter((p) => (c.value === 'yes') ? !!p.phone : !p.phone)
+  }
+  return t
+}
+async function logAuto(supabase, a, p, channel, message, status, error) {
+  try {
+    await supabase.from('psy_notification_logs').insert({
+      automation_id: a.id, patient_id: p.id, patient_name: p.full_name, event: a.trigger_event,
+      channel, status, message: (message || '').slice(0, 2000), error, sent_at: status === 'sent' ? new Date().toISOString() : null,
+    })
+  } catch (_) { /* jangan halang */ }
+}
+async function runAutomationOne(supabase, locationId, a) {
+  const actions = Array.isArray(a.actions) ? a.actions : []
+  const conds = (a.conditions_enabled && Array.isArray(a.conditions)) ? a.conditions : []
+  const { data: pats } = await supabase.from('psy_patients')
+    .select('id, user_id, full_name, phone, gender, status, active_package_id').neq('status', 'deleted').neq('status', 'rejected')
+  const targets = applyConds(pats || [], conds)
+  const render = (name) => fillAuto(a.message_template || '', { nama: name || '' })
+  const res = { targets: targets.length, whatsapp: 0, inapp: 0, failed: 0 }
+  if (actions.includes('inapp')) {
+    const withAcct = targets.filter((p) => p.user_id)
+    if (withAcct.length) {
+      try { await supabase.from('psy_notifications').insert(withAcct.map((p) => ({ user_id: p.user_id, type: 'system', title: a.name, body: render(p.full_name).slice(0, 240) }))); res.inapp = withAcct.length } catch (_) { }
+      for (const p of withAcct) await logAuto(supabase, a, p, 'inapp', render(p.full_name), 'sent', null)
+    }
+  }
+  if (actions.includes('whatsapp')) {
+    const withPhone = targets.map((p) => ({ ...p, e164: toE164(p.phone) })).filter((p) => p.e164)
+    const BATCH = 15
+    for (let i = 0; i < withPhone.length; i += BATCH) {
+      await Promise.all(withPhone.slice(i, i + BATCH).map(async (p) => {
+        const msg = render(p.full_name)
+        try { const cid = await upsertContact(locationId, p.e164, p.full_name); if (cid) { await sendWA(cid, msg); res.whatsapp++; await logAuto(supabase, a, p, 'whatsapp', msg, 'sent', null) } }
+        catch (e) { res.failed++; await logAuto(supabase, a, p, 'whatsapp', msg, 'failed', String(e?.message || e)) }
+      }))
+    }
+  }
+  return res
+}
+async function runScheduledAutomations(supabase, locationId) {
+  const { data: autos } = await supabase.from('psy_automations').select('*').eq('is_active', true).eq('trigger_category', 'schedule')
+  const myNow = new Date(Date.now() + MY_OFFSET_MS)
+  const myDow = myNow.getUTCDay(), myDate = myNow.toISOString().slice(0, 10)
+  const nowMin = myNow.getUTCHours() * 60 + myNow.getUTCMinutes()
+  const out = []
+  for (const a of autos || []) {
+    const t = a.trigger_timing || {}
+    if (t.when !== 'schedule') continue
+    const days = Array.isArray(t.days) ? t.days : []
+    if (!days.includes(myDow) || !t.time) continue
+    const [h, m] = String(t.time).split(':').map(Number)
+    if (Math.abs(nowMin - (h * 60 + m)) > WINDOW_HALF_MIN) continue
+    if (a.last_run_at) { const last = new Date(new Date(a.last_run_at).getTime() + MY_OFFSET_MS).toISOString().slice(0, 10); if (last === myDate) continue }
+    await supabase.from('psy_automations').update({ last_run_at: new Date().toISOString() }).eq('id', a.id)
+    out.push({ id: a.id, name: a.name, ...(await runAutomationOne(supabase, locationId, a)) })
+  }
+  return out
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   try {
@@ -406,7 +477,8 @@ Deno.serve(async (req) => {
     const broadcasts = await runBroadcasts(supabase, locationId)
     const catatanHarian = await runCatatanHarianReminder(supabase, locationId)
     const kepatuhanAlerts = await runKepatuhanAlerts(supabase, locationId)
-    return new Response(JSON.stringify({ success: true, eventReminders, broadcasts, catatanHarian, kepatuhanAlerts }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    const automations = await runScheduledAutomations(supabase, locationId)
+    return new Response(JSON.stringify({ success: true, eventReminders, broadcasts, catatanHarian, kepatuhanAlerts, automations }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
   } catch (err) {
     console.error('event-reminders error:', err)
     return new Response(JSON.stringify({ error: String(err?.message || err) }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
