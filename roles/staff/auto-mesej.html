@@ -30,9 +30,12 @@
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
       <section class="p-4 md:p-8 max-w-[1000px] mx-auto space-y-5">
-        <div>
-          <h1 class="text-2xl font-extrabold text-ink">Mesej Automatik</h1>
-          <p class="text-sm text-ink/55 mt-0.5">Urus teks &amp; masa untuk semua mesej WhatsApp automatik. Ubah di sini — terus berkesan tanpa perlu pasang semula.</p>
+        <div class="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h1 class="text-2xl font-extrabold text-ink">Mesej Automatik</h1>
+            <p class="text-sm text-ink/55 mt-0.5">Urus teks &amp; masa untuk semua mesej WhatsApp automatik. Ubah di sini — terus berkesan tanpa perlu pasang semula.</p>
+          </div>
+          <button onclick="openCreate()" class="bg-navy hover:bg-navy-dark text-white text-sm font-semibold px-4 py-2.5 rounded-xl whitespace-nowrap flex-shrink-0">+ Tambah Broadcast</button>
         </div>
         <div id="list" class="space-y-3">
           <div class="text-center py-16 text-ink/40 text-sm">Memuatkan...</div>
@@ -55,6 +58,18 @@
     </div>
     <div class="p-5 space-y-4 overflow-y-auto">
       <input id="m-id" type="hidden">
+
+      <!-- Medan cipta (broadcast baru sahaja) -->
+      <div id="create-fields" class="hidden space-y-3 border-b border-ink/8 pb-4">
+        <div>
+          <label class="lbl">Nama broadcast <span class="text-ink/40 font-normal">(rujukan staff sahaja)</span></label>
+          <input id="m-name-input" class="fld" placeholder="cth: Peringatan Manzil Jumaat">
+        </div>
+        <div>
+          <label class="lbl">Penerangan ringkas <span class="text-ink/40 font-normal">(pilihan)</span></label>
+          <input id="m-desc-input" class="fld" placeholder="cth: Broadcast mingguan ke semua pesakit">
+        </div>
+      </div>
 
       <!-- Timing -->
       <div id="timing-before" class="hidden">
@@ -159,6 +174,16 @@ const CH_LABEL = { whatsapp:'WhatsApp', inapp:'Notifikasi', announcement:'Pengum
 // Nilai sampel untuk pratonton
 const SAMPLE = { nama: 'Encik Ali', acara: 'Kelas Mindfulness', masa: '10:00 PG', lead: '30 minit', pautan: 'https://meet.google.com/abc-defg',
   pengesyor: 'Dr. Aisyah', saranan: 'sila minum air kelapa setiap hari', tempoh: '4', tarikh: 'Kha, 09 Jul 2026' };
+// Label bahasa-biasa untuk chip merge-field — staff tak nampak {kod}, cuma nama mesra.
+const PH_LABEL = { '{nama}':'Nama pesakit', '{masa}':'Masa', '{lead}':'Tempoh awal', '{pautan}':'Pautan',
+  '{acara}':'Nama acara', '{pengesyor}':'Pengesyor', '{saranan}':'Saranan', '{tempoh}':'Bilangan hari',
+  '{tarikh}':'Tarikh mula', '{senarai}':'Senarai' };
+function renderPhChips(phs){
+  const el = document.getElementById('ph-list');
+  el.innerHTML = (Array.isArray(phs)&&phs.length)
+    ? phs.map(p => `<span class="ph-chip" onclick="insertPh('${p}')" title="Sisip ${esc(p)}">${esc(PH_LABEL[p]||p)}</span>`).join(' ')
+    : '<span class="text-[11px] text-ink/35">tiada</span>';
+}
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function leadLabel(min){ if(min==null) return '—'; if(min>=60) return min%60===0?`${min/60} jam`:`${Math.floor(min/60)} jam ${min%60} minit`; return `${min} minit`; }
@@ -188,14 +213,18 @@ function render(){
         <div class="text-[12px] text-ink/50 mt-0.5 truncate">${esc(m.description||'')}</div>
         <div class="text-[11px] text-ink/45 mt-1">📲 ${esc(m.channel)} · ⏱️ ${timingText(m)}</div>
       </div>
-      <button onclick="openEdit('${m.id}')" class="text-sm font-bold text-navy border border-navy/25 px-4 py-2 rounded-lg hover:bg-navy hover:text-white whitespace-nowrap">Edit</button>
-    </div>`;
+      <div class="flex items-center gap-2 flex-shrink-0">
+        <button onclick="openEdit('${m.id}')" class="text-sm font-bold text-navy border border-navy/25 px-4 py-2 rounded-lg hover:bg-navy hover:text-white whitespace-nowrap">Edit</button>
+        ${m.trigger_type==='recurring_broadcast' ? `<button onclick="deleteMsg('${m.id}')" class="text-sm font-bold text-terracotta border border-terracotta/30 px-3 py-2 rounded-lg hover:bg-terracotta hover:text-white whitespace-nowrap">Padam</button>` : ''}
+      </div>`;
   }).join('') || '<div class="text-center py-16 text-ink/40 text-sm">Tiada mesej automatik.</div>';
 }
 
 function openEdit(id){
   const m = MSGS.find(x=>x.id===id); if(!m) return;
   editing = m;
+  document.getElementById('create-fields').classList.add('hidden');
+  document.getElementById('save-btn').textContent = '💾 Simpan';
   document.getElementById('m-id').value = m.id;
   document.getElementById('m-name').textContent = m.name;
   document.getElementById('m-desc').textContent = m.description||'';
@@ -226,15 +255,55 @@ function openEdit(id){
     document.getElementById('timing-none').classList.remove('hidden');
   }
 
-  // Placeholder chips
-  const phs = Array.isArray(m.placeholders) ? m.placeholders : [];
-  document.getElementById('ph-list').innerHTML = phs.map(p => `<span class="ph-chip" onclick="insertPh('${p}')">${esc(p)}</span>`).join(' ')
-    || '<span class="text-[11px] text-ink/35">tiada</span>';
+  // Placeholder chips (label bahasa-biasa)
+  renderPhChips(Array.isArray(m.placeholders) ? m.placeholders : []);
 
   renderPreview();
   document.getElementById('edit-modal').classList.remove('hidden');
 }
+
+// Cipta broadcast baru (recurring_broadcast) — mesra staff, tiada kod.
+function openCreate(){
+  editing = { trigger_type: 'recurring_broadcast' };  // tiada id → mod cipta
+  document.getElementById('m-id').value = '';
+  document.getElementById('m-name').textContent = 'Broadcast Baru';
+  document.getElementById('m-desc').textContent = 'Hantar mesej berulang ke pesakit ikut jadual';
+  document.getElementById('create-fields').classList.remove('hidden');
+  document.getElementById('m-name-input').value = '';
+  document.getElementById('m-desc-input').value = '';
+  document.getElementById('m-tpl').value = 'Salam {nama}, 👋\n\n';
+  document.getElementById('m-active').checked = true;
+  document.getElementById('m-err').classList.add('hidden');
+  document.getElementById('save-btn').textContent = '➕ Cipta Broadcast';
+  // Broadcast guna timing-before + broadcast-extra
+  ['timing-before','timing-daily','timing-none','broadcast-extra'].forEach(id => document.getElementById(id).classList.add('hidden'));
+  document.getElementById('timing-before').classList.remove('hidden');
+  document.getElementById('broadcast-extra').classList.remove('hidden');
+  document.getElementById('m-min').value = 30; syncMinBtns();
+  document.getElementById('m-session').value = '';
+  document.getElementById('m-link').value = '';
+  renderDow([]);
+  document.querySelectorAll('.ch-cb').forEach(cb => cb.checked = cb.value==='whatsapp');
+  renderAudience({ package_ids: [] });
+  renderPhChips(['{nama}','{masa}','{lead}','{pautan}']);
+  renderPreview();
+  document.getElementById('edit-modal').classList.remove('hidden');
+}
+window.openCreate = openCreate;
+
 function closeEdit(){ document.getElementById('edit-modal').classList.add('hidden'); editing=null; }
+
+// Padam broadcast (recurring_broadcast sahaja) — mesej sistem dilindungi.
+async function deleteMsg(id){
+  const m = MSGS.find(x=>x.id===id); if(!m) return;
+  if (m.trigger_type!=='recurring_broadcast'){ banner('Mesej sistem tak boleh dipadam — Edit sahaja.','error'); return; }
+  if (!confirm(`Padam broadcast "${m.name}"?\n\nTindakan ini kekal.`)) return;
+  const { error } = await window.db.from('psy_auto_messages').delete().eq('id', id);
+  if (error){ banner('Ralat padam: '+error.message,'error'); return; }
+  banner('Broadcast dipadam ✅');
+  await load();
+}
+window.deleteMsg = deleteMsg;
 
 function setMin(v){ document.getElementById('m-min').value = v; syncMinBtns(); }
 function syncMinBtns(){
@@ -323,15 +392,35 @@ async function saveMsg(){
     payload.send_at_time = t;
   }
   try { payload.updated_by = window.currentUser.id; } catch(_){}
+
+  const isCreate = !editing.id;
+  let createName = '';
+  if (isCreate){
+    createName = document.getElementById('m-name-input').value.trim();
+    if (!createName){ err.textContent='Sila isi nama broadcast.'; err.classList.remove('hidden'); return; }
+  }
+
   const btn = document.getElementById('save-btn'); btn.disabled=true; btn.textContent='Menyimpan...';
   try {
-    const { error } = await window.db.from('psy_auto_messages').update(payload).eq('id', editing.id);
-    if (error) throw error;
-    banner('Mesej automatik dikemaskini ✅');
+    if (isCreate){
+      payload.name = createName;
+      payload.description = document.getElementById('m-desc-input').value.trim() || null;
+      payload.channel = 'whatsapp';
+      payload.trigger_type = 'recurring_broadcast';
+      payload.placeholders = ['{nama}','{masa}','{lead}','{pautan}'];
+      payload.key = 'bc_' + (createName.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,24) || 'broadcast') + '_' + Date.now().toString(36);
+      const { error } = await window.db.from('psy_auto_messages').insert(payload);
+      if (error) throw error;
+      banner('Broadcast baru dicipta ✅');
+    } else {
+      const { error } = await window.db.from('psy_auto_messages').update(payload).eq('id', editing.id);
+      if (error) throw error;
+      banner('Mesej automatik dikemaskini ✅');
+    }
     closeEdit();
     await load();
   } catch(e){ err.textContent='Ralat: '+e.message; err.classList.remove('hidden'); }
-  finally { btn.disabled=false; btn.textContent='💾 Simpan'; }
+  finally { btn.disabled=false; btn.textContent = isCreate ? '➕ Cipta Broadcast' : '💾 Simpan'; }
 }
 
 async function load(){
