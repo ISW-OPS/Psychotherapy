@@ -397,7 +397,7 @@
                 </select>
                 <input id="cp-pakej-date" type="date" class="w-36 px-3 py-2 border border-ink/20 rounded-lg text-sm" title="Tarikh sebenar mula program (anchor Minggu 1)">
               </div>
-              <p class="text-[11px] text-ink/45 mt-1">📌 Tarikh di sebelah = <b>tarikh sebenar mula program</b> (Minggu 1). Semua minggu dikira dari sini — untuk pesakit lama/sedang rawatan, letak tarikh dia mula dulu, bukan hari ini. Boleh ubah per-minggu kemudian.</p>
+              <p id="cp-pakej-hint" class="text-[11px] text-ink/45 mt-1">📌 Tarikh di sebelah = <b>tarikh sebenar mula program</b> (Minggu 1). Semua minggu dikira dari sini — untuk pesakit lama/sedang rawatan, letak tarikh dia mula dulu, bukan hari ini. Boleh ubah per-minggu kemudian.</p>
             </div>
           </div>
 
@@ -1040,6 +1040,15 @@
     }
 
     function resetCreateForm() {
+      // Pulihkan medan tarikh mula ke keadaan boleh-edit + hint asal (openEditPatient akan
+      // jadikan baca-sahaja semula jika pesakit ada plan aktif).
+      const _pd = document.getElementById('cp-pakej-date');
+      if (_pd) { _pd.readOnly = false; _pd.classList.remove('bg-cream/40'); }
+      const _ph = document.getElementById('cp-pakej-hint');
+      if (_ph) {
+        if (window.__cpPakejHintDefault == null) window.__cpPakejHintDefault = _ph.innerHTML;
+        else _ph.innerHTML = window.__cpPakejHintDefault;
+      }
       ['cp-name', 'cp-ic', 'cp-phone', 'cp-email', 'cp-address', 'cp-ref-code', 'cp-company', 'cp-medical-notes',
         'cp-emg-name', 'cp-emg-ic', 'cp-emg-phone', 'cp-occupation', 'cp-emg-rel', 'cp-emg-email',
         'cp-referred-by', 'cp-own-code'].forEach(id => {
@@ -1216,9 +1225,24 @@
       }
 
       // Package — load dropdown then pre-select existing package (stored as text code e.g. "M 001")
-      loadPackagesDropdown(p.active_package_id || '').then(() => {
-        if (p.package_purchased_at)
-          document.getElementById('cp-pakej-date').value = p.package_purchased_at.slice(0, 10);
+      loadPackagesDropdown(p.active_package_id || '').then(async () => {
+        const dateEl = document.getElementById('cp-pakej-date');
+        const hintEl = document.getElementById('cp-pakej-hint');
+        // Default: boleh edit, papar tarikh beli pakej.
+        dateEl.readOnly = false;
+        dateEl.classList.remove('bg-cream/40');
+        if (p.package_purchased_at) dateEl.value = p.package_purchased_at.slice(0, 10);
+        // SATU SUMBER: kalau ada plan aktif, tarikh mula sebenar = plan.start_date (sama dgn
+        // "Mula Program" di hub). Papar & jadikan baca-sahaja — ubah di hub supaya sesi turut dianjak.
+        const { data: plan } = await window.db.from('psy_treatment_plans')
+          .select('start_date').eq('patient_id', p.id).eq('status', 'active')
+          .order('created_at', { ascending: false }).limit(1).maybeSingle();
+        if (plan?.start_date) {
+          dateEl.value = plan.start_date.slice(0, 10);
+          dateEl.readOnly = true;
+          dateEl.classList.add('bg-cream/40');
+          if (hintEl) hintEl.innerHTML = '🔒 Tarikh mula program diselaraskan dengan plan rawatan. Untuk ubah (dan anjak semua sesi), guna <b>Tab Overview → 📌 Mula Program</b> di hub pesakit.';
+        }
       });
 
       document.getElementById('create-patient-modal').classList.remove('hidden');
