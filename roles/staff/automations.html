@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Automasi</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen bg-[#f7f8fa]">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">⚙️</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <section class="p-4 md:p-8 max-w-[1100px] mx-auto space-y-5">
+        <div class="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h1 class="text-2xl font-extrabold text-ink">Automasi</h1>
+            <p class="text-sm text-ink/55 mt-0.5">Urus automasi &amp; lihat sejarah hantaran mesej.</p>
+          </div>
+          <div class="flex items-center gap-2 flex-shrink-0">
+            <a href="auto-mesej.html" class="border border-ink/20 text-ink/60 text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-ink/5 whitespace-nowrap">Mesej Sistem</a>
+            <a href="automation-builder.html" class="bg-navy hover:bg-navy-dark text-white text-sm font-semibold px-4 py-2.5 rounded-xl whitespace-nowrap">+ Cipta Automasi</a>
+          </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="flex gap-1 border-b border-ink/10">
+          <button id="tab-auto" onclick="setTab('auto')" class="px-4 py-2.5 text-sm font-semibold border-b-2 border-navy text-navy">Automasi</button>
+          <button id="tab-logs" onclick="setTab('logs')" class="px-4 py-2.5 text-sm font-semibold border-b-2 border-transparent text-ink/50 hover:text-ink">Log Notifikasi</button>
+        </div>
+
+        <!-- Automasi list -->
+        <div id="pane-auto" class="space-y-3">
+          <div class="text-center py-16 text-ink/40 text-sm">Memuatkan...</div>
+        </div>
+
+        <!-- Logs -->
+        <div id="pane-logs" class="hidden">
+          <div class="bg-white rounded-2xl border border-ink/8 shadow-sm overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-cream/40 text-[11px] uppercase tracking-wide text-ink/45">
+                  <tr>
+                    <th class="text-left px-4 py-2.5 font-bold">Masa</th>
+                    <th class="text-left px-4 py-2.5 font-bold">Pesakit</th>
+                    <th class="text-left px-4 py-2.5 font-bold">Event</th>
+                    <th class="text-left px-4 py-2.5 font-bold">Saluran</th>
+                    <th class="text-left px-4 py-2.5 font-bold">Status</th>
+                    <th class="text-left px-4 py-2.5 font-bold">Ralat</th>
+                  </tr>
+                </thead>
+                <tbody id="logs-body" class="divide-y divide-ink/5"></tbody>
+              </table>
+            </div>
+            <div id="logs-empty" class="hidden px-4 py-12 text-center text-ink/40 text-sm">Tiada log lagi.</div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtDT(d){ return d ? new Date(d).toLocaleString('ms-MY',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; }
+
+const CAT_LABEL = { schedule:'Jadual/Broadcast', appointment:'Sesi', package:'Pakej', checkin:'Catatan Harian', payment:'Bayaran', vitals:'Vitals', patient:'Pesakit' };
+const DOWN = {0:'Ahd',1:'Isn',2:'Sel',3:'Rab',4:'Kha',5:'Jum',6:'Sab'};
+const CH_ICON = { whatsapp:'📲', inapp:'🔔', email:'✉️', sms:'💬' };
+const STATUS_CLS = { sent:'bg-green-100 text-green-700', pending:'bg-blue-100 text-blue-700', failed:'bg-terracotta/15 text-terracotta', cancelled:'bg-ink/10 text-ink/50' };
+const STATUS_LBL = { sent:'✅ Sent', pending:'🕒 Pending', failed:'❌ Failed', cancelled:'⊘ Cancelled' };
+
+let AUTOS = [];
+
+function timingText(a){
+  const t = a.trigger_timing || {};
+  if (t.when==='schedule') return `${(Array.isArray(t.days)?t.days:[]).map(d=>DOWN[d]).join(', ')||'—'} · ${t.time||'—'}`;
+  if (t.when==='before') return `${t.value||''} ${t.unit||''} sebelum`;
+  if (t.when==='after') return `${t.value||''} ${t.unit||''} selepas`;
+  return 'Pada masa event';
+}
+
+function renderAutos(){
+  const box = document.getElementById('pane-auto');
+  box.innerHTML = AUTOS.map(a => {
+    const chs = (Array.isArray(a.actions)?a.actions:[]).map(c=>CH_ICON[c]||c).join(' ');
+    return `<div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-4 md:p-5 flex items-center gap-4">
+      <div class="w-11 h-11 rounded-xl bg-navy/8 text-navy flex items-center justify-center text-lg flex-shrink-0">⚙️</div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="font-bold text-ink text-[15px]">${esc(a.name)}</span>
+          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-navy/8 text-navy uppercase tracking-wide">${esc(CAT_LABEL[a.trigger_category]||a.trigger_category)}</span>
+          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${a.is_active?'bg-green/10 text-green-dark':'bg-ink/8 text-ink/45'}">${a.is_active?'● Aktif':'○ Draf'}</span>
+        </div>
+        <div class="text-[12px] text-ink/50 mt-0.5 truncate">${esc(a.description||'')}</div>
+        <div class="text-[11px] text-ink/45 mt-1">⏱️ ${esc(timingText(a))} · ${chs||'—'}</div>
+      </div>
+      <div class="flex items-center gap-2 flex-shrink-0">
+        <button onclick="toggleActive('${a.id}',${a.is_active?'true':'false'})" class="text-xs font-bold px-3 py-2 rounded-lg border ${a.is_active?'border-ink/20 text-ink/55 hover:bg-ink/5':'border-green text-green-dark hover:bg-green/5'} whitespace-nowrap">${a.is_active?'Nyahaktif':'Aktifkan'}</button>
+        <a href="automation-builder.html?id=${a.id}" class="text-sm font-bold text-navy border border-navy/25 px-4 py-2 rounded-lg hover:bg-navy hover:text-white">Edit</a>
+        <button onclick="delAuto('${a.id}')" class="text-sm font-bold text-terracotta border border-terracotta/30 px-3 py-2 rounded-lg hover:bg-terracotta hover:text-white">Padam</button>
+      </div>
+    </div>`;
+  }).join('') || '<div class="text-center py-16 text-ink/40 text-sm">Tiada automasi lagi. Tekan "+ Cipta Automasi".</div>';
+}
+
+async function loadAutos(){
+  const { data } = await window.db.from('psy_automations').select('*').order('created_at',{ascending:false});
+  AUTOS = data || [];
+  renderAutos();
+}
+
+async function toggleActive(id, isActive){
+  const { error } = await window.db.from('psy_automations').update({ is_active: !isActive, updated_at:new Date().toISOString() }).eq('id', id);
+  if (error){ banner('Ralat: '+error.message,'error'); return; }
+  banner(!isActive ? 'Automasi diaktifkan ✅' : 'Automasi dinyahaktif');
+  loadAutos();
+}
+async function delAuto(id){
+  const a = AUTOS.find(x=>x.id===id); if(!a) return;
+  if (!confirm(`Padam automasi "${a.name}"?\n\nTindakan ini kekal.`)) return;
+  const { error } = await window.db.from('psy_automations').delete().eq('id', id);
+  if (error){ banner('Ralat padam: '+error.message,'error'); return; }
+  banner('Automasi dipadam ✅');
+  loadAutos();
+}
+
+async function loadLogs(){
+  const { data } = await window.db.from('psy_notification_logs').select('*').order('created_at',{ascending:false}).limit(200);
+  const rows = data || [];
+  const body = document.getElementById('logs-body');
+  document.getElementById('logs-empty').classList.toggle('hidden', rows.length>0);
+  body.innerHTML = rows.map(r => `<tr class="hover:bg-cream/30">
+    <td class="px-4 py-2.5 text-[12px] text-ink/60 whitespace-nowrap">${esc(fmtDT(r.created_at))}</td>
+    <td class="px-4 py-2.5 text-[13px] text-ink/80">${esc(r.patient_name||'—')}</td>
+    <td class="px-4 py-2.5 text-[12px] text-ink/60">${esc(r.event||'—')}</td>
+    <td class="px-4 py-2.5">${CH_ICON[r.channel]||''} <span class="text-[12px] text-ink/60">${esc(r.channel||'')}</span></td>
+    <td class="px-4 py-2.5"><span class="text-[11px] font-bold px-2 py-0.5 rounded-full ${STATUS_CLS[r.status]||'bg-ink/10 text-ink/50'}">${STATUS_LBL[r.status]||esc(r.status||'')}</span></td>
+    <td class="px-4 py-2.5 text-[11px] text-terracotta max-w-[240px] truncate" title="${esc(r.error||'')}">${esc(r.error||'')}</td>
+  </tr>`).join('');
+}
+
+let logsLoaded = false;
+function setTab(t){
+  const isAuto = t==='auto';
+  document.getElementById('pane-auto').classList.toggle('hidden', !isAuto);
+  document.getElementById('pane-logs').classList.toggle('hidden', isAuto);
+  document.getElementById('tab-auto').className = 'px-4 py-2.5 text-sm font-semibold border-b-2 ' + (isAuto?'border-navy text-navy':'border-transparent text-ink/50 hover:text-ink');
+  document.getElementById('tab-logs').className = 'px-4 py-2.5 text-sm font-semibold border-b-2 ' + (!isAuto?'border-navy text-navy':'border-transparent text-ink/50 hover:text-ink');
+  if (!isAuto && !logsLoaded){ logsLoaded = true; loadLogs(); }
+}
+
+(async () => {
+  const user = await initStaff('auto_messages', 'Automasi');
+  if (!user) return;
+  await loadAutos();
+})();
+</script>
+</body>
+</html>
