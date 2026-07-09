@@ -124,6 +124,7 @@
                     <button id="ov-autoschedule-btn" onclick="openAutoScheduleModal()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-emerald-400 text-emerald-600 hover:bg-emerald-500 hover:text-white transition whitespace-nowrap">📅 Jadualkan Semua Sesi</button>
                     <button id="ov-add-week-btn" onclick="openAddWeekModal()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-navy text-navy hover:bg-navy hover:text-white transition whitespace-nowrap">➕ Tambah Minggu</button>
                     <button id="ov-reset-sessions-btn" onclick="resetPlanSessions()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-red-300 text-red-500 hover:bg-red-50 transition whitespace-nowrap">🔄 Reset Sesi</button>
+                    <button id="ov-hardreset-sessions-btn" onclick="hardResetPlanSessions()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-red-500 bg-red-500 text-white hover:bg-red-600 transition whitespace-nowrap" title="Padam SEMUA sesi termasuk yang 'Hadir' — untuk data demo/awal yang salah">⚠️ Hard Reset</button>
                   </div>
                 </div>
                 <div id="ov-weekly-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3"></div>
@@ -1287,12 +1288,27 @@ async function submitReferral() {
     });
     if (error) throw error;
     const dLbl = meetDate ? ` (jumpa ${new Date(meetDate + 'T00:00:00').toLocaleDateString('ms-MY', { day: '2-digit', month: 'short' })})` : '';
+    // Notifikasi rujukan — guna templat automasi 'referral_created' jika aktif; else default.
+    let notifTitle = 'Rujukan pesakit baru';
+    let notifBody = `${window.currentUser?.full_name || 'Staff'} rujuk ${pName} kepada anda${dLbl}. Sebab: ${reason.slice(0, 80)}`;
+    let autoRow = null;
+    try {
+      const { data: auto } = await window.db.from('psy_automations')
+        .select('id, name, message_template, status').eq('trigger_event', 'referral_created').eq('status', 'active')
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      autoRow = auto || null;
+      if (autoRow?.message_template) {
+        const vars = { nama: pName, penerima: target?.full_name || 'anda', pengesyor: window.currentUser?.full_name || 'Staff', sebab: reason, tarikh: meetDate ? new Date(meetDate + 'T00:00:00').toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' }) : '—' };
+        notifBody = Object.entries(vars).reduce((s, [k, v]) => s.split('{{' + k + '}}').join(v).split('{' + k + '}').join(v), autoRow.message_template).slice(0, 240);
+        notifTitle = autoRow.name || notifTitle;
+      }
+    } catch (_) {}
     await window.db.from('psy_notifications').insert({
-      user_id: targetId, type: 'referral',
-      title: 'Rujukan pesakit baru',
-      body: `${window.currentUser?.full_name || 'Staff'} rujuk ${pName} kepada anda${dLbl}. Sebab: ${reason.slice(0, 80)}`,
-      link: 'rujukan.html',
+      user_id: targetId, type: 'referral', title: notifTitle, body: notifBody, link: 'rujukan.html',
     }).then(r => r, () => {});
+    if (autoRow?.id) {
+      try { await window.db.from('psy_notification_logs').insert({ automation_id: autoRow.id, patient_id: patientId, patient_name: target?.full_name || targetId, event: 'referral_created', channel: 'inapp', status: 'sent', message: notifBody, sent_at: new Date().toISOString() }); } catch (_) {}
+    }
     if (typeof auditLog === 'function') { try { await auditLog('referral.created', patientId, { target_id: targetId, meet_date: meetDate }); } catch (_) {} }
     banner('Rujukan dihantar ✅');
     closeReferralModal();
@@ -1872,6 +1888,7 @@ async function loadOverview() {
   // Butang "Tambah Minggu" hanya untuk staf boleh-edit & ada plan aktif
   document.getElementById('ov-add-week-btn')?.classList.toggle('hidden', !(canEdit && activePlan));
   document.getElementById('ov-reset-sessions-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
+  document.getElementById('ov-hardreset-sessions-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
   document.getElementById('ov-autoschedule-btn')?.classList.toggle('hidden', !((canEdit || window.currentUser?.staff_role === 'super_admin') && activePlan));
 
   // ─── KPI: Minggu Semasa + Kehadiran ───
@@ -4512,6 +4529,44 @@ async function resetPlanSessions() {
       .neq('status', 'consultation_done');
     if (error) throw error;
     banner('Sesi dipadam. Tarikh akan dijana semula apabila pesakit buka plan. ✅');
+    await loadOverview();
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+  }
+}
+
+// HARD RESET (super_admin) — padam SEMUA sesi TERMASUK 'hadir'/'consultation_done',
+// kemudian jana semula skeleton kosong ikut Timeline pakej. Untuk data demo/data awal
+// yang salah dimasukkan sebelum fix. Kehadiran sebenar akan hilang — sebab tu double-confirm.
+async function hardResetPlanSessions() {
+  if (!activePlan) return;
+  if (window.currentUser?.staff_role !== 'super_admin') { banner('Hanya super admin boleh hard reset.', 'error'); return; }
+  if (!confirm(`⚠️ HARD RESET plan "${activePlan.name}"\n\nPadam SEMUA sesi TERMASUK yang bertanda "Hadir" / "Consultation Done".\nGuna hanya untuk data demo / data awal yang salah — KEHADIRAN SEBENAR akan HILANG.\n\nTeruskan?`)) return;
+  if (!confirm(`Sahkan sekali lagi: padam kesemua rekod mingguan & jana semula skeleton kosong ikut pakej?`)) return;
+  try {
+    const { error: delErr } = await window.db
+      .from('psy_plan_weekly_progress').delete().eq('plan_id', activePlan.id);
+    if (delErr) throw delErr;
+
+    // Jana semula skeleton mingguan (pending, tiada tarikh) ikut bilangan sesi pakej
+    ovWeeklyRows = [];
+    const durationWeeks = activePlan.duration_weeks || 12;
+    const rows = [];
+    for (let w = 1; w <= durationWeeks; w++) {
+      const nSes = ovSessionsForWeek(w);
+      for (let day = 1; day <= nSes; day++) {
+        rows.push({ plan_id: activePlan.id, patient_id: patientId, week_number: w, session_day: day, status: 'pending', session_date: null });
+      }
+    }
+    if (rows.length) {
+      const { error: insErr } = await window.db.from('psy_plan_weekly_progress').insert(rows);
+      if (insErr) throw insErr;
+    }
+    await window.db.from('psy_treatment_plans').update({ current_week: 1 }).eq('id', activePlan.id);
+    activePlan.current_week = 1;
+
+    await auditLog('plan.hard_reset', activePlan.id, { weeks: durationWeeks, rows: rows.length });
+    banner('Hard reset selesai — skeleton dijana semula ikut pakej. Tekan "📅 Jadualkan Semua Sesi" untuk tetapkan tarikh. ✅');
     await loadOverview();
   } catch (e) {
     banner('Ralat: ' + e.message, 'error');
