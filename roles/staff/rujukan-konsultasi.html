@@ -255,7 +255,7 @@ function render() {
             </div>
 
             ${editable ? `<div class="flex items-center gap-2 flex-wrap mt-3">
-              <button onclick="sendWhatsApp()" class="inline-flex items-center gap-2 bg-green text-white text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-green-dark">📱 Hantar ke WhatsApp</button>
+              <button id="k-send-btn" onclick="sendWhatsApp()" class="inline-flex items-center gap-2 bg-green text-white text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-green-dark disabled:opacity-60">📱 Hantar ke WhatsApp</button>
               <span id="k-wa-sent" class="text-[11px] text-ink/50">${c.saranan_sent_at?('✅ Dihantar '+fmtDT(c.saranan_sent_at)):''}</span>
             </div>` : (c.saranan_sent_at?`<p class="text-[11px] text-ink/50 mt-2">✅ Saranan dihantar ${fmtDT(c.saranan_sent_at)}</p>`:'')}
           </section>
@@ -385,6 +385,18 @@ async function persistSaranan(extra){
   return true;
 }
 
+// Panggil Edge Function GHL (sama seperti inbox) — unwrap data & lempar ralat.
+async function ghlInvoke(action, extra = {}) {
+  const { data, error } = await window.db.functions.invoke('ghl-inbox', { body: { action, ...extra } });
+  if (error) {
+    let msg = error.message;
+    try { const ctx = await error.context?.json(); if (ctx?.error) msg = ctx.error; } catch(_){}
+    throw new Error(msg);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
 async function sendWhatsApp(){
   const p = ref.psy_patients || {};
   let phone = (p.phone || '').replace(/\D/g,'');
@@ -394,10 +406,26 @@ async function sendWhatsApp(){
   const saranan = (document.getElementById('k-saranan')?.value || '').trim();
   if (!saranan) { banner('Isi mesej saranan dahulu.','error'); return; }
   const msg = buildWaMessage();
-  // Guna INBOX dalam-sistem (hantar via GHL), bukan wa.me luar — staff desktop tak payah
-  // buka WhatsApp Web. Mesej pra-isi; staff semak & tekan Hantar dalam inbox.
-  const inboxUrl = `inbox.html?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(p.full_name || '')}&draft=${encodeURIComponent(msg)}`;
-  window.open(inboxUrl, '_blank');
+  // Mesej ke pesakit tak boleh tarik balik — sahkan dulu.
+  if (!confirm('Hantar saranan ini ke WhatsApp pesakit sekarang?')) return;
+
+  const btn = document.getElementById('k-send-btn');
+  const btnTxt = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Menghantar…'; }
+  try {
+    // AUTO-HANTAR terus via GHL: 1) pastikan contact wujud, 2) hantar mesej.
+    const ec = await ghlInvoke('ensurecontact', { phone, name: p.full_name || '' });
+    const contactId = ec?.contact?.contactId;
+    if (!contactId) throw new Error('Tak dapat sediakan contact GHL untuk nombor ini.');
+    await ghlInvoke('send', { contactId, message: msg });
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = btnTxt || '📱 Hantar ke WhatsApp'; }
+    banner('Gagal auto-hantar: ' + (e.message || e) + ' — inbox dibuka untuk hantar manual.', 'error');
+    // Fallback supaya saranan tak hilang — buka inbox dgn mesej pra-isi.
+    window.open(`inbox.html?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(p.full_name||'')}&draft=${encodeURIComponent(msg)}`, '_blank');
+    return;
+  }
+
   const now = new Date().toISOString();
   await persistSaranan({ saranan_sent_at: now });
   // notif dalam-app untuk pesakit (jika ada akaun)
@@ -409,7 +437,8 @@ async function sendWhatsApp(){
   }
   if (typeof auditLog === 'function') { try { await auditLog('referral.saranan_sent', ref.patient_id, {}); } catch(_){} }
   const el = document.getElementById('k-wa-sent'); if (el) el.textContent = '✅ Dihantar '+fmtDT(now);
-  banner('Inbox dibuka — semak mesej & tekan Hantar (➤). ✅');
+  if (btn) { btn.disabled = false; btn.textContent = btnTxt || '📱 Hantar ke WhatsApp'; }
+  banner('Saranan dihantar ke WhatsApp pesakit ✅');
 }
 window.sendWhatsApp = sendWhatsApp;
 
