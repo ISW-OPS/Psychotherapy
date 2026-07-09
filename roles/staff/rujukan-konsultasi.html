@@ -42,6 +42,7 @@ const refId = new URLSearchParams(location.search).get('id');
 const BUCKET = 'referral-docs';
 let ref = null, me = null, vitals = null, riskCount = 0;
 let sarananTemplate = null;   // templat mesej boleh-edit (psy_auto_messages key='referral_saranan')
+let sarananTemplateId = null; // id row templat (utk deep-link Edit ke Template Mesej)
 
 const SYMPTOMS = [['pening','Pening'],['cepat_letih','Cepat letih'],['berdebar','Berdebar'],['sukar_tidur','Sukar tidur'],['sakit_kepala','Sakit kepala'],['sakit_perut','Sakit perut'],['mual','Mual'],['kebas','Kebas / Semut-semut'],['sukar_fokus','Sukar fokus']];
 const TREAT_CATS = [['ubat','💊','Ubat / Suplemen'],['gaya_hidup','🌿','Gaya Hidup'],['pemakanan','🍎','Pemakanan'],['senaman','🏃','Senaman'],['tindak_lanjut','🔁','Tindakan Lanjut']];
@@ -63,10 +64,11 @@ async function loadAll() {
   const [v, risk, tpl] = await Promise.all([
     window.db.from('psy_vitals').select('bp_systolic, bp_diastolic, heart_rate, temperature, weight, created_at').eq('patient_id', ref.patient_id).order('created_at',{ascending:false}).limit(1).then(r=>r.data?.[0]||null,()=>null),
     window.db.from('psy_risk_alerts').select('id',{count:'exact',head:true}).eq('patient_id', ref.patient_id).neq('status','resolved').then(r=>r.count||0,()=>0),
-    window.db.from('psy_auto_messages').select('message_template,is_active').eq('key','referral_saranan').maybeSingle().then(r=>r.data,()=>null),
+    window.db.from('psy_auto_messages').select('id,message_template,is_active').eq('key','referral_saranan').maybeSingle().then(r=>r.data,()=>null),
   ]);
   vitals = v; riskCount = risk;
   sarananTemplate = (tpl && tpl.is_active !== false && tpl.message_template) ? tpl.message_template : null;
+  sarananTemplateId = tpl?.id || null;
   render();
 }
 
@@ -253,8 +255,16 @@ function render() {
 
             <!-- Pratonton mesej penuh yang pesakit akan terima -->
             <div class="mt-3">
-              <label class="block text-[11px] font-semibold text-ink/45 mb-1.5">👁️ Pratonton mesej WhatsApp</label>
-              <div id="k-preview" class="text-[13px] leading-relaxed text-ink/80 bg-white border border-green-200 rounded-xl px-3.5 py-3 min-h-[64px]"></div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="block text-[11px] font-semibold text-ink/45">👁️ Pratonton mesej WhatsApp</label>
+                <a href="${sarananTemplateId?`auto-mesej.html?edit=${sarananTemplateId}`:'auto-mesej.html'}" title="Edit ayat mesej saranan di Template Mesej" class="text-[11px] font-semibold text-navy hover:underline whitespace-nowrap">✎ Edit ayat mesej</a>
+              </div>
+              <div class="rounded-2xl overflow-hidden border border-ink/10 max-w-lg">
+                <div class="bg-[#075e54] text-white px-3 py-2 flex items-center gap-2 text-[13px]"><span class="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center">🏥</span><div><div class="font-semibold leading-tight">Ibnu Sina Wellness</div><div class="text-[10px] text-white/70">Online</div></div></div>
+                <div class="p-3 min-h-[80px]" style="background:#e5ddd5">
+                  <div id="k-preview" class="bg-[#dcf8c6] rounded-lg rounded-tl-none px-3 py-2 text-[12px] text-ink/85 leading-relaxed whitespace-pre-wrap shadow-sm max-w-[92%]"></div>
+                </div>
+              </div>
             </div>
 
             ${editable ? `<div class="flex items-center gap-2 flex-wrap mt-3">
