@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Butiran Automasi</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen bg-[#f7f8fa]">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">⚙️</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <section class="p-4 md:p-6 max-w-[1300px] mx-auto space-y-5">
+        <a href="automations.html" class="text-sm font-semibold text-navy hover:underline">← Kembali ke Senarai</a>
+        <div id="content"></div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtDT(d){ return d ? new Date(d).toLocaleString('ms-MY',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; }
+const CAT_LABEL = { schedule:'Jadual/Broadcast', appointment:'Sesi', package:'Pakej', checkin:'Catatan Harian', payment:'Bayaran', vitals:'Vitals', patient:'Pesakit' };
+const DOWN = {0:'Ahd',1:'Isn',2:'Sel',3:'Rab',4:'Kha',5:'Jum',6:'Sab'};
+const CH_LABEL = { whatsapp:'📲 WhatsApp', inapp:'🔔 In-App' };
+const COND_LBL = { patient_status:'Status Pesakit', has_whatsapp:'Ada WhatsApp', gender:'Jantina' };
+const COND_VAL = { active:'Aktif', inactive:'Tidak Aktif', yes:'Ya', no:'Tidak', M:'Lelaki', F:'Perempuan' };
+
+const id = new URLSearchParams(location.search).get('id');
+
+function timingText(t){
+  if(!t) return '—';
+  if (t.when==='schedule') return `${(Array.isArray(t.days)?t.days:[]).map(d=>DOWN[d]).join(', ')} · ${t.time||'—'}`;
+  if (t.when==='before') return `${t.value||''} ${t.unit||''} sebelum event`;
+  if (t.when==='after') return `${t.value||''} ${t.unit||''} selepas event`;
+  return 'Pada masa event';
+}
+function card(title, icon, body){ return `<div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5"><h3 class="font-bold text-ink text-[14px] mb-3">${icon} ${title}</h3>${body}</div>`; }
+
+async function load(){
+  if (!id){ document.getElementById('content').innerHTML='<div class="text-center py-16 text-ink/40">ID automasi tiada.</div>'; return; }
+  const since = new Date(Date.now()-30*86400000).toISOString();
+  const [aRes, lRes] = await Promise.all([
+    window.db.from('psy_automations').select('*').eq('id',id).maybeSingle(),
+    window.db.from('psy_notification_logs').select('status,channel,created_at,patient_name').eq('automation_id',id).gte('created_at',since).order('created_at',{ascending:false}),
+  ]);
+  const a = aRes.data;
+  if (!a){ document.getElementById('content').innerHTML='<div class="text-center py-16 text-ink/40">Automasi tidak ditemui.</div>'; return; }
+  const logs = lRes.data || [];
+  const sent = logs.filter(l=>l.status==='sent').length, failed = logs.filter(l=>l.status==='failed').length;
+  const rate = (sent+failed) ? Math.round(sent/(sent+failed)*100)+'%' : '—';
+
+  const conds = (a.conditions_enabled && Array.isArray(a.conditions)) ? a.conditions : [];
+  const audienceBody = conds.length
+    ? '<ul class="space-y-1.5 text-[13px] text-ink/70">'+conds.map(c=>`<li>✓ ${esc(COND_LBL[c.field]||c.field)}: <b>${esc(COND_VAL[c.value]||c.value)}</b></li>`).join('')+'</ul>'
+    : '<div class="text-[13px] text-ink/50">Semua pesakit layak (tiada syarat).</div>';
+  const actionsBody = '<div class="flex flex-wrap gap-2">'+(Array.isArray(a.actions)?a.actions:[]).map(x=>`<span class="text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-navy/8 text-navy">${CH_LABEL[x]||x}</span>`).join('')+'</div>';
+  const msgPrev = esc(a.message_template||'').replace(/\{\{(.+?)\}\}/g,'<span class="text-navy font-semibold">{{$1}}</span>').replace(/\n/g,'<br>');
+
+  document.getElementById('content').innerHTML = `
+    <div class="flex items-start justify-between gap-3 flex-wrap mt-2">
+      <div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <h1 class="text-2xl font-extrabold text-ink">${esc(a.name)}</h1>
+          <span class="text-[11px] font-bold px-2.5 py-0.5 rounded-full ${a.is_active?'bg-green/10 text-green-dark':'bg-ink/8 text-ink/45'}">${a.is_active?'● Aktif':'○ Draf'}</span>
+        </div>
+        <p class="text-sm text-ink/55 mt-0.5">${esc(a.description||'')}</p>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <a href="automation-builder.html?id=${a.id}" class="text-sm font-bold text-navy border border-navy/25 px-4 py-2 rounded-lg hover:bg-navy hover:text-white">✎ Edit</a>
+        <button onclick="togglePause()" class="text-sm font-bold text-ink/60 border border-ink/20 px-4 py-2 rounded-lg hover:bg-ink/5">${a.is_active?'⏸ Jeda':'▶ Aktifkan'}</button>
+        <button onclick="del()" class="text-sm font-bold text-terracotta border border-terracotta/30 px-4 py-2 rounded-lg hover:bg-terracotta hover:text-white">🗑 Padam</button>
+      </div>
+    </div>
+
+    <!-- Prestasi (30 hari) — data sebenar; Dibaca/Respons disorok -->
+    <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5 mt-4">
+      <h3 class="font-bold text-ink text-[14px] mb-3">Ringkasan Prestasi <span class="text-[11px] font-normal text-ink/40">(30 hari)</span></h3>
+      <div class="grid grid-cols-3 gap-4">
+        <div><div class="text-2xl font-extrabold text-ink">${sent.toLocaleString()}</div><div class="text-xs text-ink/55">Dihantar (berjaya)</div></div>
+        <div><div class="text-2xl font-extrabold text-terracotta">${failed.toLocaleString()}</div><div class="text-xs text-ink/55">Gagal</div></div>
+        <div><div class="text-2xl font-extrabold text-green-dark">${rate}</div><div class="text-xs text-ink/55">Kadar Hantar Berjaya</div></div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+      ${card('Pencetus (Trigger)','📅',`<div class="text-[13px] text-ink/70 space-y-1"><div>Kategori: <b>${esc(CAT_LABEL[a.trigger_category]||a.trigger_category)}</b></div><div>Event: <b>${esc(a.trigger_event)}</b></div><div>Masa: <b>${esc(timingText(a.trigger_timing))}</b></div></div>`)}
+      ${card('Sasaran (Audience)','👥',audienceBody)}
+      ${card('Tindakan (Actions)','📨',actionsBody)}
+      ${card('Mesej (Preview)','💬',`<div class="bg-[#dcf8c6] border border-green/20 rounded-xl p-3 text-[12px] text-ink/85 leading-relaxed">${msgPrev||'—'}</div>`)}
+    </div>
+
+    <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5 mt-4">
+      <h3 class="font-bold text-ink text-[14px] mb-3">Aktiviti Terkini</h3>
+      ${logs.length ? '<div class="space-y-1.5">'+logs.slice(0,10).map(l=>`<div class="flex items-center gap-2 text-[12px]"><span>${l.status==='sent'?'✅':l.status==='failed'?'❌':'🕒'}</span><span class="text-ink/50">${esc(fmtDT(l.created_at))}</span><span class="text-ink/70">${esc(l.patient_name||'—')}</span><span class="text-ink/40">· ${esc(l.channel||'')}</span></div>`).join('')+'</div>' : '<div class="text-[13px] text-ink/45">Tiada aktiviti lagi.</div>'}
+    </div>
+
+    <div class="text-[11px] text-ink/40 mt-3">ID: ${a.id} · Dicipta: ${esc(fmtDT(a.created_at))}</div>
+  `;
+}
+
+async function togglePause(){
+  const { data:a } = await window.db.from('psy_automations').select('is_active').eq('id',id).maybeSingle();
+  await window.db.from('psy_automations').update({ is_active: !a.is_active, updated_at:new Date().toISOString() }).eq('id',id);
+  banner(!a.is_active ? 'Automasi diaktifkan ✅' : 'Automasi dijeda');
+  load();
+}
+async function del(){
+  if (!confirm('Padam automasi ini? Tindakan kekal.')) return;
+  const { error } = await window.db.from('psy_automations').delete().eq('id',id);
+  if (error){ banner('Ralat: '+error.message,'error'); return; }
+  banner('Automasi dipadam ✅');
+  setTimeout(()=>location.href='automations.html', 1000);
+}
+
+(async () => {
+  const user = await initStaff('auto_messages', 'Butiran Automasi');
+  if (!user) return;
+  await load();
+})();
+</script>
+</body>
+</html>
