@@ -421,10 +421,10 @@ async function runAutomationOne(supabase, locationId, a) {
   const actions = Array.isArray(a.actions) ? a.actions : []
   const conds = (a.conditions_enabled && Array.isArray(a.conditions)) ? a.conditions : []
   const { data: pats } = await supabase.from('psy_patients')
-    .select('id, user_id, full_name, phone, gender, status, active_package_id').neq('status', 'deleted').neq('status', 'rejected')
+    .select('id, user_id, full_name, phone, email, gender, status, active_package_id').neq('status', 'deleted').neq('status', 'rejected')
   const targets = applyConds(pats || [], conds)
   const render = (name) => fillAuto(a.message_template || '', { nama: name || '' })
-  const res = { targets: targets.length, whatsapp: 0, inapp: 0, failed: 0 }
+  const res = { targets: targets.length, whatsapp: 0, inapp: 0, email: 0, failed: 0 }
   if (actions.includes('inapp')) {
     const withAcct = targets.filter((p) => p.user_id)
     if (withAcct.length) {
@@ -441,6 +441,15 @@ async function runAutomationOne(supabase, locationId, a) {
         try { const cid = await upsertContact(locationId, p.e164, p.full_name); if (cid) { await sendWA(cid, msg); res.whatsapp++; await logAuto(supabase, a, p, 'whatsapp', msg, 'sent', null) } }
         catch (e) { res.failed++; await logAuto(supabase, a, p, 'whatsapp', msg, 'failed', String(e?.message || e)) }
       }))
+    }
+  }
+  if (actions.includes('email')) {
+    const emailFrom = Deno.env.get('GHL_EMAIL_FROM') || ''
+    const withEmail = targets.filter((p) => p.email)
+    for (const p of withEmail) {
+      const msg = render(p.full_name)
+      try { const cid = await upsertEmailContact(locationId, p.email, p.full_name); if (cid) { await sendEmail(cid, a.name, msg.replace(/\n/g, '<br>'), emailFrom); res.email++; await logAuto(supabase, a, p, 'email', msg, 'sent', null) } }
+      catch (e) { res.failed++; await logAuto(supabase, a, p, 'email', msg, 'failed', String(e?.message || e)) }
     }
   }
   return res
