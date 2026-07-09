@@ -7,6 +7,9 @@
 //   3) catatan_harian       — WA kpd pesakit yg belum isi Catatan Harian
 //   4) kepatuhan_alert     — alert gabungan kpd COACH (amalan/checklist/skor/
 //      bacaan); psy_risk_alerts + loceng + email via GHL; dedup 1×/mgg/pesakit
+//   5) automations         — psy_automations (trigger 'schedule')
+//   6) session_confirm     — Pengesahan Sesi (dua-hala): peringatan sahkan
+//      kehadiran/tukar tarikh + escalation coach bila belum sahkan ≤ deadline
 // Konfig semua dari psy_auto_messages (boleh ubah di UI).
 // Secrets: GHL_ISW_TOKEN, GHL_ISW_LOCATION_ID, CRON_SECRET
 // ============================================================
@@ -506,6 +509,120 @@ async function runScheduledAutomations(supabase, locationId) {
   return out
 }
 
+// ───────── 6) Pengesahan Sesi — peringatan (WA teks) + escalation ─────────
+// Sebelum sesi rawatan: hantar peringatan WhatsApp minta pesakit BALAS TEKS
+// untuk sahkan kehadiran (staff baca balasan & tandakan di kehadiran.html —
+// butang "Tandakan Disahkan" / "Tukar Tarikh"). Notifikasi in-app turut
+// dihantar dengan pautan ke plan.html (pesakit yang guna app boleh sahkan
+// sendiri di sana — laluan pilihan, bukan wajib). Bila tinggal ≤
+// deadline_hours (cth 24 jam) & masih belum ditandakan sahkan → alert COACH
+// (psy_risk_alerts + loceng). Konfig psy_auto_messages key='session_confirm'.
+// Dedup per-sesi: confirm_reminder_sent_at / confirm_escalated_at.
+function sessLabel(w, d) { return `Minggu ${w} Sesi ${d || 1}` }
+function fmtSessDate(iso) {
+  const dt = new Date(new Date(iso).getTime() + MY_OFFSET_MS)
+  const days = ['Ahad', 'Isnin', 'Selasa', 'Rabu', 'Khamis', 'Jumaat', 'Sabtu']
+  const mons = ['Jan', 'Feb', 'Mac', 'Apr', 'Mei', 'Jun', 'Jul', 'Ogos', 'Sep', 'Okt', 'Nov', 'Dis']
+  return `${days[dt.getUTCDay()]}, ${dt.getUTCDate()} ${mons[dt.getUTCMonth()]} ${dt.getUTCFullYear()}`
+}
+function fmtSessTime(iso) {
+  const dt = new Date(new Date(iso).getTime() + MY_OFFSET_MS)
+  return fmtClock(dt.getUTCHours() * 60 + dt.getUTCMinutes())
+}
+async function runSessionConfirm(supabase, locationId) {
+  const { data: cfg } = await supabase.from('psy_auto_messages').select('*').eq('key', 'session_confirm').maybeSingle()
+  if (!cfg || !cfg.is_active) return { skipped: true }
+  const rule = cfg.rule || {}
+  const leadDays = Number(rule.lead_days ?? 3)
+  const deadlineHours = Number(rule.deadline_hours ?? 24)
+  const channels = Array.isArray(cfg.channels) ? cfg.channels : ['whatsapp', 'inapp']
+  const escalate = rule.escalate || { on: true, severity: 'medium' }
+  const nowMs = Date.now()
+  const nowIso = new Date(nowMs).toISOString()
+  const deadlineIso = new Date(nowMs + deadlineHours * 3600000).toISOString()
+  const leadIso = new Date(nowMs + leadDays * 86400000).toISOString()
+
+  const reminder = { due: 0, whatsapp: 0, inapp: 0, errors: [] }
+  const escal = { due: 0, alerts: 0, bells: 0, skippedNoCoach: 0, errors: [] }
+
+  // ── A) PERINGATAN — sesi dalam (deadline, lead], belum sahkan, belum diingat ──
+  // Time-gate ikut send_at_time supaya batch harian keluar waktu siang; dedup per-sesi.
+  let sendWindowOk = true
+  if (cfg.send_at_time) {
+    const myNow = new Date(nowMs + MY_OFFSET_MS)
+    const nowMin = myNow.getUTCHours() * 60 + myNow.getUTCMinutes()
+    const [sh, sm] = String(cfg.send_at_time).split(':').map(Number)
+    sendWindowOk = Math.abs(nowMin - (sh * 60 + sm)) <= WINDOW_HALF_MIN
+  }
+  if (sendWindowOk) {
+    const { data: rows } = await supabase.from('psy_plan_weekly_progress')
+      .select('id, week_number, session_day, session_date, patient_id, psy_patients(full_name, phone, user_id)')
+      .eq('status', 'booked').is('patient_confirmed', null).is('confirm_reminder_sent_at', null)
+      .gt('session_date', deadlineIso).lte('session_date', leadIso).limit(500)
+    reminder.due = (rows || []).length
+    for (const r of rows || []) {
+      const p = r.psy_patients || {}
+      const vars = {
+        nama: p.full_name || '', sesi: sessLabel(r.week_number, r.session_day),
+        tarikh: fmtSessDate(r.session_date), masa: fmtSessTime(r.session_date),
+        klinik: ISW_CLINIC.name,
+      }
+      const msg = fillTemplate(cfg.message_template, vars)
+      try {
+        if (channels.includes('whatsapp')) {
+          const e164 = toE164(p.phone)
+          if (e164) { const cid = await upsertContact(locationId, e164, p.full_name); if (cid) { await sendWA(cid, msg); reminder.whatsapp++ } }
+        }
+        if (channels.includes('inapp') && p.user_id) {
+          await supabase.from('psy_notifications').insert({
+            user_id: p.user_id, type: 'appointment',
+            title: `Sahkan kehadiran — ${sessLabel(r.week_number, r.session_day)}`,
+            body: `Sesi ${fmtSessDate(r.session_date)} · ${fmtSessTime(r.session_date)}. Sila sahkan atau tukar tarikh.`.slice(0, 240),
+            link: `plan.html?confirm=${r.week_number}.${r.session_day || 1}`,
+          })
+          reminder.inapp++
+        }
+        await supabase.from('psy_plan_weekly_progress').update({ confirm_reminder_sent_at: new Date().toISOString() }).eq('id', r.id)
+      } catch (e) { reminder.errors.push(`${r.id}: ${String(e?.message || e)}`) }
+    }
+  }
+
+  // ── B) ESCALATION — sesi ≤ deadline, belum sahkan, belum escalate → alert coach ──
+  if (escalate.on !== false) {
+    const severity = ['low', 'medium', 'high', 'critical'].includes(escalate.severity) ? escalate.severity : 'medium'
+    const { data: rows } = await supabase.from('psy_plan_weekly_progress')
+      .select('id, week_number, session_day, session_date, patient_id, psy_patients(full_name, coach_id)')
+      .eq('status', 'booked').is('patient_confirmed', null).is('confirm_escalated_at', null)
+      .gt('session_date', nowIso).lte('session_date', deadlineIso).limit(500)
+    escal.due = (rows || []).length
+    for (const r of rows || []) {
+      const p = r.psy_patients || {}
+      // Tanda dulu (elak double walau tiada coach / gagal separuh)
+      await supabase.from('psy_plan_weekly_progress').update({ confirm_escalated_at: new Date().toISOString() }).eq('id', r.id)
+      if (!p.coach_id) { escal.skippedNoCoach++; continue }
+      const label = sessLabel(r.week_number, r.session_day)
+      const desc = `${p.full_name || 'Pesakit'} belum sahkan kehadiran ${label} (${fmtSessDate(r.session_date)} · ${fmtSessTime(r.session_date)}) — tinggal ≤ ${deadlineHours} jam.`
+      try {
+        await supabase.from('psy_risk_alerts').insert({
+          patient_id: r.patient_id, patient_name: p.full_name, severity, category: 'temujanji',
+          description: desc, status: 'open', created_by_name: 'Sistem (Pengesahan Sesi)',
+        })
+        escal.alerts++
+        try {
+          await supabase.from('psy_notifications').insert({
+            user_id: p.coach_id, type: 'appointment',
+            title: `⏳ Belum sahkan: ${p.full_name || 'Pesakit'}`,
+            body: desc.slice(0, 240), link: '/roles/staff/kehadiran.html',
+          })
+          escal.bells++
+        } catch (e) { escal.errors.push(`bell ${r.id}: ${String(e?.message || e)}`) }
+      } catch (e) { escal.errors.push(`alert ${r.id}: ${String(e?.message || e)}`) }
+    }
+  }
+
+  return { reminder, escalation: escal }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   try {
@@ -519,7 +636,8 @@ Deno.serve(async (req) => {
     const catatanHarian = await runCatatanHarianReminder(supabase, locationId)
     const kepatuhanAlerts = await runKepatuhanAlerts(supabase, locationId)
     const automations = await runScheduledAutomations(supabase, locationId)
-    return new Response(JSON.stringify({ success: true, eventReminders, broadcasts, catatanHarian, kepatuhanAlerts, automations }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    const sessionConfirm = await runSessionConfirm(supabase, locationId)
+    return new Response(JSON.stringify({ success: true, eventReminders, broadcasts, catatanHarian, kepatuhanAlerts, automations, sessionConfirm }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
   } catch (err) {
     console.error('event-reminders error:', err)
     return new Response(JSON.stringify({ error: String(err?.message || err) }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })

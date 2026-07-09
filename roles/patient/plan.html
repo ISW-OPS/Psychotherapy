@@ -163,6 +163,25 @@
             </div>
           </div>
 
+          <!-- Modal Sahkan Kehadiran (dua-hala dari peringatan WA/in-app: ?confirm=<mgg>.<sesi>) -->
+          <div id="confirm-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-2xl p-6 max-w-md w-full text-center">
+              <div class="text-4xl mb-2">📅</div>
+              <h3 class="font-bold text-lg mb-1">Sahkan Kehadiran</h3>
+              <p class="text-sm text-ink/70 mb-1" id="confirm-sess-label"></p>
+              <p class="text-base font-semibold text-navy mb-3" id="confirm-sess-when"></p>
+              <p class="text-[11px] text-ink/55 mb-4 leading-snug" id="confirm-deadline-note"></p>
+              <div class="flex flex-col gap-2">
+                <button id="confirm-yes-btn" onclick="submitAttendanceConfirm()"
+                  class="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2.5 rounded-lg text-sm font-bold">✅ Ya, saya akan hadir</button>
+                <button id="confirm-resched-btn" onclick="confirmSwitchToReschedule()"
+                  class="w-full bg-navy hover:bg-navy-dark text-white px-4 py-2.5 rounded-lg text-sm font-semibold">📅 Tak boleh — tukar tarikh</button>
+                <button onclick="closeConfirmModal()"
+                  class="w-full bg-cream px-4 py-2 rounded-lg text-sm font-semibold">Tutup</button>
+              </div>
+            </div>
+          </div>
+
           <!-- Onboarding wizard (tunjuk bila schedule_setup_at null) -->
           <div id="setup-wizard" class="hidden bg-white rounded-xl p-5 border-2 border-navy/30 shadow-sm">
             <div class="flex items-start gap-3 mb-4">
@@ -936,6 +955,16 @@
       const existing = weeklyProgressRows.find(r => r.week_number === w && (r.session_day || 1) === day);
       pendingBookExistingId = existing?.id || null;
 
+      // Kunci 24 jam: tak boleh tukar tarikh sesi 'booked' yang tinggal ≤ had jam sebelum sesi.
+      // (Sesi tertinggal — cancel/reschedule — tetap boleh dijadual semula.)
+      if (isReschedule && existing?.status === 'booked' && existing?.session_date) {
+        const hrsLeft = (new Date(existing.session_date).getTime() - Date.now()) / 3600000;
+        if (hrsLeft > 0 && hrsLeft <= CONFIRM_DEADLINE_HOURS) {
+          banner(`Tidak boleh tukar tarikh kurang ${CONFIRM_DEADLINE_HOURS} jam sebelum sesi. Sila hubungi klinik.`, 'error');
+          return;
+        }
+      }
+
       document.getElementById('book-title').textContent = isReschedule
         ? `Reschedule — Minggu ${w} Sesi ${day}`
         : `Tempah — Minggu ${w} Sesi ${day}`;
@@ -989,6 +1018,68 @@
       pendingBookExistingId = null;
       pendingBookIsMiss = false;
       bookSetStep(2); // reset utk tempahan biasa seterusnya
+    }
+
+    // ──────── PENGESAHAN KEHADIRAN (dua-hala dari peringatan) ────────
+    // Had tukar/sahkan tarikh sebelum sesi (jam). Selaras rule.deadline_hours enjin.
+    const CONFIRM_DEADLINE_HOURS = 24;
+    let pendingConfirmRow = null;
+
+    // Dibuka oleh deep-link ?confirm=<mgg>.<sesi> (dari WA/loceng) atau butang di grid.
+    function openConfirmModal(w, day) {
+      const row = weeklyProgressRows.find(r => r.week_number === w && (r.session_day || 1) === (day || 1));
+      if (!row || !row.session_date || row.status !== 'booked') {
+        banner('Sesi ini tiada tempahan aktif untuk disahkan.', 'error');
+        return;
+      }
+      pendingConfirmRow = row;
+      const when = new Date(row.session_date);
+      const hrsLeft = (when.getTime() - Date.now()) / 3600000;
+      document.getElementById('confirm-sess-label').textContent = `Minggu ${w} · Sesi ${day || 1}`;
+      document.getElementById('confirm-sess-when').textContent =
+        when.toLocaleString('ms-MY', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const note = document.getElementById('confirm-deadline-note');
+      const yesBtn = document.getElementById('confirm-yes-btn');
+      const reschedBtn = document.getElementById('confirm-resched-btn');
+      yesBtn.classList.remove('hidden');
+      reschedBtn.classList.remove('hidden');
+      if (row.patient_confirmed) {
+        note.textContent = '✅ Anda sudah sahkan kehadiran untuk sesi ini.';
+        yesBtn.classList.add('hidden');
+        if (hrsLeft <= CONFIRM_DEADLINE_HOURS) reschedBtn.classList.add('hidden');
+      } else if (hrsLeft <= CONFIRM_DEADLINE_HOURS) {
+        note.textContent = `Tempoh tukar tarikh sudah tutup (kurang ${CONFIRM_DEADLINE_HOURS} jam sebelum sesi). Anda masih boleh sahkan kehadiran atau hubungi klinik.`;
+        reschedBtn.classList.add('hidden');
+      } else {
+        note.textContent = `Sila sahkan atau tukar tarikh selewat-lewatnya ${CONFIRM_DEADLINE_HOURS} jam sebelum sesi.`;
+      }
+      document.getElementById('confirm-modal').classList.remove('hidden');
+    }
+
+    function closeConfirmModal() {
+      document.getElementById('confirm-modal').classList.add('hidden');
+      pendingConfirmRow = null;
+    }
+
+    async function submitAttendanceConfirm() {
+      if (!pendingConfirmRow) return;
+      try {
+        await window.db.from('psy_plan_weekly_progress').update({
+          patient_confirmed: true,
+          patient_confirmed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }).eq('id', pendingConfirmRow.id);
+        await auditLog('plan.attendance_confirmed', activePlan?.id, { week: pendingConfirmRow.week_number, day: pendingConfirmRow.session_day });
+        banner('Terima kasih! Kehadiran anda telah disahkan. ✅');
+        closeConfirmModal();
+        await loadWeeklyProgress(true);
+      } catch (err) { banner('Ralat: ' + err.message, 'error'); }
+    }
+
+    function confirmSwitchToReschedule() {
+      const row = pendingConfirmRow;
+      closeConfirmModal();
+      if (row) openBookModal(row.week_number, row.session_day || 1, true);
     }
 
     // Tukar antara Langkah 1 (sebab tidak hadir) & Langkah 2 (tarikh/masa) dalam modal reschedule.
@@ -1062,6 +1153,11 @@
           session_date: sessionAt.toISOString(),
           status: 'booked',
           updated_at: new Date().toISOString(),
+          // Tarikh baharu → perlu sahkan semula & buka semula kitaran peringatan/escalation
+          patient_confirmed: null,
+          patient_confirmed_at: null,
+          confirm_reminder_sent_at: null,
+          confirm_escalated_at: null,
           ...(apptId ? { appointment_id: apptId } : {}),
           ...(absenceReason ? { absence_reason: absenceReason } : {}),
         };
@@ -1160,6 +1256,9 @@
             session_date: newDate.toISOString(),
             status: 'booked',
             updated_at: new Date().toISOString(),
+            // Tarikh anjak → buka semula kitaran peringatan/escalation utk tarikh baharu
+            confirm_reminder_sent_at: null,
+            confirm_escalated_at: null,
           }).eq('id', row.id);
           if (row.appointment_id) {
             await window.db.from('psy_appointments').update({
@@ -1431,6 +1530,12 @@
       if (_rp) {
         const [w, d] = _rp.split('.').map(Number);
         if (w) { try { await openBookModal(w, d || 1, true); } catch (e) { console.warn('reschedule deep-link:', e); } }
+      }
+      // Deep-link dari peringatan Pengesahan Sesi (WA/loceng): ?confirm=<minggu>.<sesi>
+      const _cf = new URLSearchParams(location.search).get('confirm');
+      if (_cf) {
+        const [w, d] = _cf.split('.').map(Number);
+        if (w) { try { openConfirmModal(w, d || 1); } catch (e) { console.warn('confirm deep-link:', e); } }
       }
     })();
   </script>
