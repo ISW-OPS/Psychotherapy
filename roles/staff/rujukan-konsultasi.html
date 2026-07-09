@@ -321,20 +321,39 @@ function renderConsultAtts(editable) {
   host.innerHTML = consultAtts.length ? consultAtts.map((a,i)=>`<div class="flex items-center justify-between gap-2 border border-ink/10 rounded-lg px-2 py-1.5 text-xs"><button onclick="viewDoc('${esc(a.path)}')" class="truncate text-left flex-1">📄 ${esc(a.name)}</button>${editable?`<button onclick="removeConsultAtt(${i})" class="text-terracotta font-bold">×</button>`:''}</div>`).join('') : '<p class="text-[11px] text-ink/35 italic">Tiada fail.</p>';
 }
 async function uploadConsult(input) {
-  for (const f of [...input.files]) {
+  const files = [...input.files]; input.value = '';
+  let ok = 0, errMsg = '';
+  for (const f of files) {
+    if (f.size > 10*1024*1024) { errMsg = `${f.name}: melebihi 10MB`; continue; }
     const path = `${refId}/consult_${Date.now()}_${f.name.replace(/[^\w.\-]/g,'_')}`;
     const { error } = await window.db.storage.from(BUCKET).upload(path, f, { contentType: f.type||undefined });
-    if (!error) consultAtts.push({ name: f.name, path, uploaded_at: new Date().toISOString() });
+    if (error) { errMsg = error.message; continue; }
+    consultAtts.push({ name: f.name, path, uploaded_at: new Date().toISOString() });
+    ok++;
   }
-  input.value = '';
   renderConsultAtts(true);
-  banner('Fail dimuat naik ✅');
+  if (ok) {
+    // Simpan terus ke rekod supaya lampiran kekal walaupun belum tekan "Simpan"
+    try {
+      const consultation = Object.assign({}, ref.consultation || {}, { attachments: consultAtts });
+      const { error } = await window.db.from('psy_clinical_referrals').update({ consultation, updated_at: new Date().toISOString() }).eq('id', refId);
+      if (error) throw error;
+      ref.consultation = consultation;
+      banner(`${ok} fail dimuat naik & disimpan ✅`);
+    } catch (e) { banner('Fail naik tapi gagal simpan rekod: ' + e.message, 'error'); }
+  }
+  if (errMsg) banner('Gagal muat naik: ' + errMsg, 'error');
 }
 window.uploadConsult = uploadConsult;
 async function removeConsultAtt(i) {
   const [rm] = consultAtts.splice(i,1);
   if (rm?.path) { try { await window.db.storage.from(BUCKET).remove([rm.path]); } catch(_){} }
   renderConsultAtts(true);
+  try {
+    const consultation = Object.assign({}, ref.consultation || {}, { attachments: consultAtts });
+    await window.db.from('psy_clinical_referrals').update({ consultation, updated_at: new Date().toISOString() }).eq('id', refId);
+    ref.consultation = consultation;
+  } catch (_) {}
 }
 window.removeConsultAtt = removeConsultAtt;
 async function viewDoc(path) {
