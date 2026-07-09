@@ -5,8 +5,9 @@ function renderAutoSubnav(active) {
     { key: 'dashboard', label: 'Dashboard', url: 'automation-dashboard.html', ready: true },
     { key: 'list',      label: 'Senarai Automasi', url: 'automations.html', ready: true },
     { key: 'templates', label: 'Template Mesej', url: 'auto-mesej.html', ready: true },
-    { key: 'queue',     label: 'Queue / Scheduled', url: 'automation-queue.html', ready: false },
-    { key: 'logs',      label: 'Log Penghantaran', url: 'automation-logs.html', ready: false },
+    { key: 'queue',     label: 'Queue / Scheduled', url: 'automation-queue.html', ready: true },
+    { key: 'logs',      label: 'Log Penghantaran', url: 'automation-logs.html', ready: true },
+    { key: 'analytics', label: 'Analytics', url: 'automation-analytics.html', ready: true },
   ];
   const el = document.getElementById('submodnav');
   if (!el) return;

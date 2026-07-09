@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Queue / Scheduled</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen bg-[#f7f8fa]">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🗓️</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <section class="p-4 md:p-6 max-w-[1400px] mx-auto space-y-5">
+        <div id="submodnav"></div>
+        <div>
+          <h1 class="text-2xl font-extrabold text-ink">Queue / Scheduled</h1>
+          <p class="text-sm text-ink/55 mt-0.5">Automasi berjadual yang akan dihantar. <span class="text-ink/40">Anggaran penerima ikut syarat semasa.</span></p>
+        </div>
+
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5"><div class="text-2xl font-extrabold text-ink" id="k-sched">—</div><div class="text-xs text-ink/55 font-medium mt-1">Automasi Berjadual (aktif)</div></div>
+          <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5"><div class="text-2xl font-extrabold text-navy" id="k-recip">—</div><div class="text-xs text-ink/55 font-medium mt-1">Anggaran Penerima</div></div>
+          <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5"><div class="text-2xl font-extrabold text-green-dark" id="k-today">—</div><div class="text-xs text-ink/55 font-medium mt-1">Dihantar Hari Ini</div></div>
+          <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5"><div class="text-2xl font-extrabold text-terracotta" id="k-fail">—</div><div class="text-xs text-ink/55 font-medium mt-1">Gagal Hari Ini</div></div>
+        </div>
+
+        <div class="bg-white rounded-2xl border border-ink/8 shadow-sm overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-cream/40 text-[11px] uppercase tracking-wide text-ink/45">
+                <tr>
+                  <th class="text-left px-4 py-2.5 font-bold">Hantaran Seterusnya</th>
+                  <th class="text-left px-4 py-2.5 font-bold">Automasi</th>
+                  <th class="text-left px-4 py-2.5 font-bold">Jadual</th>
+                  <th class="text-left px-4 py-2.5 font-bold">Saluran</th>
+                  <th class="text-left px-4 py-2.5 font-bold">Anggaran Penerima</th>
+                  <th class="text-left px-4 py-2.5 font-bold">Status</th>
+                </tr>
+              </thead>
+              <tbody id="body" class="divide-y divide-ink/5"></tbody>
+            </table>
+          </div>
+          <div id="empty" class="hidden px-4 py-16 text-center text-ink/40 text-sm">Tiada automasi berjadual. Cipta satu dengan trigger "Jadual / Broadcast Berjadual".</div>
+        </div>
+        <p class="text-[11px] text-ink/40">ℹ️ Progress hidup per-mesej (X/Y sedang dihantar) tidak dijejak — sistem hantar secara pukal pada masa jadual.</p>
+      </section>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script src="automation-subnav.js"></script>
+<script>
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+const DOWN = {0:'Ahd',1:'Isn',2:'Sel',3:'Rab',4:'Kha',5:'Jum',6:'Sab'};
+const CH_ICON = { whatsapp:'📲', inapp:'🔔' };
+
+function applyConds(pats, a){
+  const conds = (a.conditions_enabled && Array.isArray(a.conditions)) ? a.conditions : [];
+  let t = pats;
+  for (const c of conds){
+    if (c.field==='patient_status') t = t.filter(p => (c.value==='active')?p.status==='active':p.status!=='active');
+    else if (c.field==='gender') t = t.filter(p => p.gender===c.value);
+    else if (c.field==='has_whatsapp') t = t.filter(p => (c.value==='yes')?!!p.phone:!p.phone);
+  }
+  return t.length;
+}
+function nextRun(t){
+  const days = Array.isArray(t.days)?t.days:[]; if(!days.length||!t.time) return null;
+  const [h,m] = String(t.time).split(':').map(Number);
+  const now = new Date();
+  for (let i=0;i<8;i++){
+    const d = new Date(now.getFullYear(),now.getMonth(),now.getDate()+i,h,m,0);
+    if (days.includes(d.getDay()) && d>now) return d;
+  }
+  return null;
+}
+
+async function load(){
+  const [aRes, pRes] = await Promise.all([
+    window.db.from('psy_automations').select('*').eq('trigger_category','schedule').eq('is_active',true),
+    window.db.from('psy_patients').select('id,status,gender,phone').neq('status','deleted').neq('status','rejected'),
+  ]);
+  const autos = aRes.data || [], pats = pRes.data || [];
+  const since = new Date(new Date().setHours(0,0,0,0)).toISOString();
+  const { data: logsToday } = await window.db.from('psy_notification_logs').select('status').gte('created_at', since);
+  const lt = logsToday || [];
+
+  const rows = autos.map(a => ({ a, next: nextRun(a.trigger_timing||{}), recip: applyConds(pats, a) }))
+    .sort((x,y) => (x.next?x.next.getTime():Infinity) - (y.next?y.next.getTime():Infinity));
+
+  document.getElementById('k-sched').textContent = autos.length;
+  document.getElementById('k-recip').textContent = rows.reduce((s,r)=>s+r.recip,0).toLocaleString();
+  document.getElementById('k-today').textContent = lt.filter(l=>l.status==='sent').length.toLocaleString();
+  document.getElementById('k-fail').textContent = lt.filter(l=>l.status==='failed').length.toLocaleString();
+
+  document.getElementById('empty').classList.toggle('hidden', rows.length>0);
+  document.getElementById('body').innerHTML = rows.map(({a,next,recip}) => {
+    const t = a.trigger_timing||{};
+    const sched = `${(Array.isArray(t.days)?t.days:[]).map(d=>DOWN[d]).join(', ')} · ${t.time||'—'}`;
+    const chs = (Array.isArray(a.actions)?a.actions:[]).map(c=>CH_ICON[c]||c).join(' ');
+    const nextTxt = next ? next.toLocaleString('ms-MY',{weekday:'short',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
+    return `<tr class="hover:bg-cream/30">
+      <td class="px-4 py-3 text-[12px] font-semibold text-ink whitespace-nowrap">${esc(nextTxt)}</td>
+      <td class="px-4 py-3"><div class="text-[13px] font-semibold text-ink">${esc(a.name)}</div><div class="text-[11px] text-ink/45 truncate max-w-[240px]">${esc(a.description||'')}</div></td>
+      <td class="px-4 py-3 text-[12px] text-ink/60 whitespace-nowrap">${esc(sched)}</td>
+      <td class="px-4 py-3 whitespace-nowrap">${chs||'—'}</td>
+      <td class="px-4 py-3 text-[13px] text-ink/80">${recip.toLocaleString()} pesakit</td>
+      <td class="px-4 py-3"><span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-gold/20 text-gold-dark">Menunggu</span></td>
+    </tr>`;
+  }).join('');
+}
+
+(async () => {
+  const user = await initStaff('auto_messages', 'Queue / Scheduled');
+  if (!user) return;
+  renderAutoSubnav('queue');
+  await load();
+})();
+</script>
+</body>
+</html>

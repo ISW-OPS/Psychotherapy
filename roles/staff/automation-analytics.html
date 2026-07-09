@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Automation Analytics</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen bg-[#f7f8fa]">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📈</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <section class="p-4 md:p-6 max-w-[1400px] mx-auto space-y-5">
+        <div id="submodnav"></div>
+        <div>
+          <h1 class="text-2xl font-extrabold text-ink">Automation Analytics</h1>
+          <p class="text-sm text-ink/55 mt-0.5">Analisis prestasi mesej automatik (30 hari). <span class="text-ink/40">Metrik "dibaca/respons" tidak dijejak — disorok.</span></p>
+        </div>
+
+        <div class="grid grid-cols-2 lg:grid-cols-3 gap-4">
+          <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5"><div class="text-2xl font-extrabold text-ink" id="k-sent">—</div><div class="text-xs text-ink/55 font-medium mt-1">Mesej Dihantar (berjaya)</div></div>
+          <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5"><div class="text-2xl font-extrabold text-terracotta" id="k-failed">—</div><div class="text-xs text-ink/55 font-medium mt-1">Gagal</div></div>
+          <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5"><div class="text-2xl font-extrabold text-green-dark" id="k-rate">—</div><div class="text-xs text-ink/55 font-medium mt-1">Kadar Hantar Berjaya</div></div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div class="lg:col-span-2 bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+            <h3 class="font-bold text-ink text-[15px] mb-4">Trend Mesej Dihantar <span class="text-[11px] font-normal text-ink/40">(30 hari)</span></h3>
+            <div id="chart" class="flex items-end gap-1 h-40"></div>
+            <div id="chart-empty" class="hidden text-center text-sm text-ink/40 py-12">Tiada data lagi.</div>
+          </div>
+          <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+            <h3 class="font-bold text-ink text-[15px] mb-4">Prestasi Mengikut Saluran</h3>
+            <div id="channels" class="space-y-3"></div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+            <h3 class="font-bold text-ink text-[15px] mb-4">Top Automasi <span class="text-[11px] font-normal text-ink/40">(dihantar)</span></h3>
+            <div id="top" class="space-y-2.5"></div>
+          </div>
+          <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+            <h3 class="font-bold text-ink text-[15px] mb-4">Prestasi Mengikut Hari</h3>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="text-[11px] uppercase tracking-wide text-ink/45"><tr><th class="text-left py-2">Tarikh</th><th class="text-right py-2">Dihantar</th><th class="text-right py-2">Gagal</th><th class="text-right py-2">Kadar</th></tr></thead>
+                <tbody id="daily" class="divide-y divide-ink/5"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script src="automation-subnav.js"></script>
+<script>
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+async function load(){
+  const since = new Date(Date.now()-30*86400000).toISOString();
+  const [lRes, aRes] = await Promise.all([
+    window.db.from('psy_notification_logs').select('status,channel,automation_id,created_at').gte('created_at',since),
+    window.db.from('psy_automations').select('id,name'),
+  ]);
+  const logs = lRes.data || [];
+  const amap = {}; (aRes.data||[]).forEach(a=>amap[a.id]=a.name);
+  const sent = logs.filter(l=>l.status==='sent').length;
+  const failed = logs.filter(l=>l.status==='failed').length;
+  const denom = sent+failed;
+  document.getElementById('k-sent').textContent = sent.toLocaleString();
+  document.getElementById('k-failed').textContent = failed.toLocaleString();
+  document.getElementById('k-rate').textContent = denom ? Math.round(sent/denom*100)+'%' : '—';
+
+  // Trend 30 hari
+  const days = [];
+  for (let i=29;i>=0;i--){ const d=new Date(Date.now()-i*86400000); days.push({ymd:d.toISOString().slice(0,10), lbl:d.toLocaleDateString('ms-MY',{day:'2-digit',month:'short'}), sent:0, failed:0}); }
+  logs.forEach(l=>{ const y=(l.created_at||'').slice(0,10); const d=days.find(x=>x.ymd===y); if(!d)return; if(l.status==='sent')d.sent++; else if(l.status==='failed')d.failed++; });
+  const max = Math.max(1,...days.map(d=>d.sent));
+  const hasData = days.some(d=>d.sent>0||d.failed>0);
+  document.getElementById('chart-empty').classList.toggle('hidden', hasData);
+  document.getElementById('chart').classList.toggle('hidden', !hasData);
+  document.getElementById('chart').innerHTML = days.map(d=>`<div class="flex-1 flex flex-col items-center justify-end" title="${d.lbl}: ${d.sent} dihantar"><div class="w-full bg-navy/80 rounded-t" style="height:${Math.round(d.sent/max*130)+1}px"></div></div>`).join('');
+
+  // Saluran
+  const ch = { whatsapp:0, inapp:0 };
+  logs.filter(l=>l.status==='sent').forEach(l=>{ if(ch[l.channel]!=null)ch[l.channel]++; });
+  const chTot = ch.whatsapp+ch.inapp;
+  document.getElementById('channels').innerHTML = [['whatsapp','📲 WhatsApp','bg-green'],['inapp','🔔 In-App','bg-navy']].map(([k,l,c])=>{
+    const n=ch[k], pct=chTot?Math.round(n/chTot*100):0;
+    return `<div><div class="flex justify-between text-[12px] mb-1"><span class="text-ink/70 font-medium">${l}</span><span class="text-ink/50">${n.toLocaleString()} (${pct}%)</span></div><div class="h-2 bg-ink/8 rounded-full overflow-hidden"><div class="${c} h-full rounded-full" style="width:${pct}%"></div></div></div>`;
+  }).join('') + (chTot?'':'<div class="text-[12px] text-ink/40 text-center py-4">Tiada data.</div>');
+
+  // Top automasi
+  const byA = {}; logs.filter(l=>l.status==='sent').forEach(l=>{ if(l.automation_id) byA[l.automation_id]=(byA[l.automation_id]||0)+1; });
+  const top = Object.entries(byA).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const tmax = Math.max(1,...top.map(t=>t[1]));
+  document.getElementById('top').innerHTML = top.map(([id,n],i)=>`
+    <div class="flex items-center gap-2 text-[13px]"><span class="text-ink/40 w-4">${i+1}</span><span class="flex-1 truncate text-ink/80">${esc(amap[id]||'—')}</span>
+    <div class="w-28 h-2 bg-ink/8 rounded-full overflow-hidden"><div class="bg-navy h-full rounded-full" style="width:${Math.round(n/tmax*100)}%"></div></div><span class="text-ink/50 w-12 text-right">${n.toLocaleString()}</span></div>
+  `).join('') || '<div class="text-[12px] text-ink/40 text-center py-6">Tiada data lagi.</div>';
+
+  // Per hari (7 terakhir)
+  document.getElementById('daily').innerHTML = days.slice(-7).reverse().map(d=>{
+    const den=d.sent+d.failed, r=den?Math.round(d.sent/den*100)+'%':'—';
+    return `<tr><td class="py-2 text-[12px] text-ink/60">${d.lbl}</td><td class="py-2 text-right text-[13px] text-ink/80">${d.sent}</td><td class="py-2 text-right text-[13px] text-terracotta">${d.failed}</td><td class="py-2 text-right text-[13px] text-green-dark">${r}</td></tr>`;
+  }).join('');
+}
+
+(async () => {
+  const user = await initStaff('auto_messages', 'Automation Analytics');
+  if (!user) return;
+  renderAutoSubnav('analytics');
+  await load();
+})();
+</script>
+</body>
+</html>

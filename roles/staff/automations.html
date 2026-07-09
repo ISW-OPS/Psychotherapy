@@ -43,7 +43,15 @@
 
         <!-- Automasi list -->
         <div id="pane-auto" class="space-y-3">
-          <div class="text-center py-16 text-ink/40 text-sm">Memuatkan...</div>
+          <div class="flex flex-wrap items-center gap-2">
+            <input id="af-search" oninput="renderAutos()" placeholder="Cari automasi…" class="flex-1 min-w-[200px] px-3 py-2.5 border border-ink/15 rounded-xl text-sm outline-none focus:border-navy">
+            <select id="af-cat" onchange="renderAutos()" class="px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white"><option value="">Semua Kategori</option></select>
+            <select id="af-status" onchange="renderAutos()" class="px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white"><option value="">Semua Status</option><option value="active">Aktif</option><option value="draft">Draf</option></select>
+            <button onclick="resetAutoFilter()" class="px-3 py-2.5 border border-ink/15 rounded-xl text-sm text-ink/55 hover:bg-ink/5">↺ Reset</button>
+          </div>
+          <div id="auto-list" class="space-y-3">
+            <div class="text-center py-16 text-ink/40 text-sm">Memuatkan...</div>
+          </div>
         </div>
 
         <!-- Logs -->
@@ -99,10 +107,31 @@ function timingText(a){
   return 'Pada masa event';
 }
 
+let SENT7 = {};   // automation_id -> {sent, failed} dalam 7 hari
+
+function resetAutoFilter(){ document.getElementById('af-search').value=''; document.getElementById('af-cat').value=''; document.getElementById('af-status').value=''; renderAutos(); }
+function fillCatFilter(){
+  const cats = [...new Set(AUTOS.map(a=>a.trigger_category))];
+  const sel = document.getElementById('af-cat');
+  sel.innerHTML = '<option value="">Semua Kategori</option>' + cats.map(c=>`<option value="${c}">${esc(CAT_LABEL[c]||c)}</option>`).join('');
+}
 function renderAutos(){
-  const box = document.getElementById('pane-auto');
-  box.innerHTML = AUTOS.map(a => {
+  const q = (document.getElementById('af-search')?.value||'').trim().toLowerCase();
+  const fc = document.getElementById('af-cat')?.value||'';
+  const fs = document.getElementById('af-status')?.value||'';
+  const rows = AUTOS.filter(a => {
+    if (fc && a.trigger_category!==fc) return false;
+    if (fs==='active' && !a.is_active) return false;
+    if (fs==='draft' && a.is_active) return false;
+    if (q && !`${a.name||''} ${a.description||''}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const box = document.getElementById('auto-list');
+  box.innerHTML = rows.map(a => {
     const chs = (Array.isArray(a.actions)?a.actions:[]).map(c=>CH_ICON[c]||c).join(' ');
+    const s = SENT7[a.id] || { sent:0, failed:0 };
+    const denom = s.sent + s.failed;
+    const pct = denom ? Math.round(s.sent/denom*100)+'%' : '—';
     return `<div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-4 md:p-5 flex items-center gap-4">
       <div class="w-11 h-11 rounded-xl bg-navy/8 text-navy flex items-center justify-center text-lg flex-shrink-0">⚙️</div>
       <div class="flex-1 min-w-0">
@@ -112,21 +141,41 @@ function renderAutos(){
           <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${a.is_active?'bg-green/10 text-green-dark':'bg-ink/8 text-ink/45'}">${a.is_active?'● Aktif':'○ Draf'}</span>
         </div>
         <div class="text-[12px] text-ink/50 mt-0.5 truncate">${esc(a.description||'')}</div>
-        <div class="text-[11px] text-ink/45 mt-1">⏱️ ${esc(timingText(a))} · ${chs||'—'}</div>
+        <div class="text-[11px] text-ink/45 mt-1">⏱️ ${esc(timingText(a))} · ${chs||'—'} · 📨 ${s.sent} dihantar (7h) · ✅ ${pct}</div>
       </div>
       <div class="flex items-center gap-2 flex-shrink-0">
-        <button onclick="toggleActive('${a.id}',${a.is_active?'true':'false'})" class="text-xs font-bold px-3 py-2 rounded-lg border ${a.is_active?'border-ink/20 text-ink/55 hover:bg-ink/5':'border-green text-green-dark hover:bg-green/5'} whitespace-nowrap">${a.is_active?'Nyahaktif':'Aktifkan'}</button>
+        <button onclick="toggleActive('${a.id}',${a.is_active?'true':'false'})" class="text-xs font-bold px-3 py-2 rounded-lg border ${a.is_active?'border-ink/20 text-ink/55 hover:bg-ink/5':'border-green text-green-dark hover:bg-green/5'} whitespace-nowrap">${a.is_active?'Jeda':'Aktifkan'}</button>
+        <button onclick="dupAuto('${a.id}')" title="Duplicate" class="text-sm font-bold text-ink/55 border border-ink/20 px-3 py-2 rounded-lg hover:bg-ink/5">⧉</button>
         <a href="automation-builder.html?id=${a.id}" class="text-sm font-bold text-navy border border-navy/25 px-4 py-2 rounded-lg hover:bg-navy hover:text-white">Edit</a>
         <button onclick="delAuto('${a.id}')" class="text-sm font-bold text-terracotta border border-terracotta/30 px-3 py-2 rounded-lg hover:bg-terracotta hover:text-white">Padam</button>
       </div>
     </div>`;
-  }).join('') || '<div class="text-center py-16 text-ink/40 text-sm">Tiada automasi lagi. Tekan "+ Cipta Automasi".</div>';
+  }).join('') || '<div class="text-center py-16 text-ink/40 text-sm">Tiada automasi sepadan.</div>';
 }
 
 async function loadAutos(){
-  const { data } = await window.db.from('psy_automations').select('*').order('created_at',{ascending:false});
-  AUTOS = data || [];
+  const since = new Date(Date.now()-7*86400000).toISOString();
+  const [aRes, lRes] = await Promise.all([
+    window.db.from('psy_automations').select('*').order('created_at',{ascending:false}),
+    window.db.from('psy_notification_logs').select('automation_id,status').gte('created_at',since),
+  ]);
+  AUTOS = aRes.data || [];
+  SENT7 = {};
+  (lRes.data||[]).forEach(l => { if(!l.automation_id) return; (SENT7[l.automation_id] ||= {sent:0,failed:0}); if(l.status==='sent')SENT7[l.automation_id].sent++; else if(l.status==='failed')SENT7[l.automation_id].failed++; });
+  fillCatFilter();
   renderAutos();
+}
+
+// Duplicate automasi
+async function dupAuto(id){
+  const a = AUTOS.find(x=>x.id===id); if(!a) return;
+  const copy = { ...a, name: a.name+' (salinan)', is_active:false, last_run_at:null, created_at:undefined, updated_at:undefined };
+  delete copy.id;
+  try { copy.created_by = window.currentUser.id; } catch(_){}
+  const { error } = await window.db.from('psy_automations').insert(copy);
+  if (error){ banner('Ralat: '+error.message,'error'); return; }
+  banner('Automasi disalin (draf) ✅');
+  loadAutos();
 }
 
 async function toggleActive(id, isActive){
