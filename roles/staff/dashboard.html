@@ -828,12 +828,14 @@ async function renderCoachDashboard(user, today) {
       .then(r => r, () => ({ data: [] }));
     window._dashReferrals = refData || [];
 
-    // Follow-up saranan yang matang (follow_up_date <= hari ini, belum direkod) — auto keluar
-    const { data: fuData } = await window.db.from('psy_clinical_referrals')
+    // Follow-up saranan yang matang (follow_up_date <= hari ini, belum direkod) — auto keluar.
+    // Skop: SEMUA coach nampak semua follow-up matang; staff lain (doctor/manager)
+    // nampak yang dia jadi sasaran (target_id) sahaja.
+    let fuQuery = window.db.from('psy_clinical_referrals')
       .select('id, patient_id, consultation, psy_patients(full_name, mrn)')
-      .eq('target_id', user.id)
-      .order('updated_at', { ascending: false }).limit(200)
-      .then(r => r, () => ({ data: [] }));
+      .order('updated_at', { ascending: false }).limit(200);
+    if (user.staff_role !== 'coach') fuQuery = fuQuery.eq('target_id', user.id);
+    const { data: fuData } = await fuQuery.then(r => r, () => ({ data: [] }));
     window._dashFollowUps = (fuData || []).filter(r => {
       const c = r.consultation || {};
       return c.follow_up_date && c.follow_up_date <= todayStr && !c.follow_up_result;
