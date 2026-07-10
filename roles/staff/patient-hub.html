@@ -123,6 +123,8 @@
                     <span id="ov-plan-subtitle" class="text-xs text-ink/50"></span>
                     <button id="ov-autoschedule-btn" onclick="openAutoScheduleModal()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-emerald-400 text-emerald-600 hover:bg-emerald-500 hover:text-white transition whitespace-nowrap">📅 Jadualkan Semua Sesi</button>
                     <button id="ov-add-week-btn" onclick="openAddWeekModal()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-navy text-navy hover:bg-navy hover:text-white transition whitespace-nowrap">➕ Tambah Minggu</button>
+                    <button id="ov-sync-sessions-btn" onclick="syncPlanSessionsToPackage()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-indigo-400 text-indigo-600 hover:bg-indigo-500 hover:text-white transition whitespace-nowrap" title="Selaraskan bilangan sesi setiap minggu ikut pakej — buang 'Sesi 2 hantu', tambah sesi yang kurang. Kehadiran sebenar dikekalkan.">🔧 Selaraskan ikut Pakej</button>
+                    <button id="ov-backfill-btn" onclick="backfillPastSessionsAttended()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-green-500 text-green-dark hover:bg-green-dark hover:text-white transition whitespace-nowrap" title="Tandakan sesi minggu LEPAS yang belum bertanda sebagai Hadir — untuk data lama sebelum sistem dibetulkan. Hanya minggu sebelum minggu semasa & yang satu sesinya sudah Hadir.">✅ Tandakan Sesi Lepas Hadir</button>
                     <button id="ov-reset-sessions-btn" onclick="resetPlanSessions()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-red-300 text-red-500 hover:bg-red-50 transition whitespace-nowrap">🔄 Reset Sesi</button>
                     <button id="ov-hardreset-sessions-btn" onclick="hardResetPlanSessions()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-red-500 bg-red-500 text-white hover:bg-red-600 transition whitespace-nowrap" title="Padam SEMUA sesi termasuk yang 'Hadir' — untuk data demo/awal yang salah">⚠️ Hard Reset</button>
                   </div>
@@ -1887,9 +1889,11 @@ async function removeExtensionWeek(weekNo) {
 async function loadOverview() {
   // Butang "Tambah Minggu" hanya untuk staf boleh-edit & ada plan aktif
   document.getElementById('ov-add-week-btn')?.classList.toggle('hidden', !(canEdit && activePlan));
+  document.getElementById('ov-sync-sessions-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
+  document.getElementById('ov-backfill-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
   document.getElementById('ov-reset-sessions-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
   document.getElementById('ov-hardreset-sessions-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
-  document.getElementById('ov-autoschedule-btn')?.classList.toggle('hidden', !((canEdit || window.currentUser?.staff_role === 'super_admin') && activePlan));
+  document.getElementById('ov-autoschedule-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
 
   // ─── KPI: Minggu Semasa + Kehadiran ───
   if (activePlan) {
@@ -2062,7 +2066,10 @@ function renderPakejAktifTable(pkgs, declinedKob) {
     return `<tr class="hover:bg-ink/[0.01]">
       <td class="px-5 py-3">
         <div class="font-semibold text-sm text-ink">${escapeHtml(p.package_name || p.package_id || '—')}</div>
-        ${p.is_main ? '<span class="inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 mt-0.5">Pakej Utama</span>' : '<span class="inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 mt-0.5">Tambahan</span>'}
+        <div class="flex items-center gap-1.5 mt-0.5">
+          ${p.is_main ? '<span class="inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700">Pakej Utama</span>' : '<span class="inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-50 text-purple-700">Tambahan</span>'}
+          ${p.id ? `<a href="plan-week.html?plan_id=${p.id}&week=1&from=history" class="text-[10px] font-semibold text-navy hover:underline">Lihat sesi →</a>` : ''}
+        </div>
       </td>
       <td class="px-3 py-3 text-xs text-ink/65">${p.start_date ? new Date(p.start_date).toLocaleDateString('ms-MY',{day:'2-digit',month:'short',year:'numeric'}) : '—'}</td>
       <td class="px-3 py-3 text-xs text-ink/65">${p.end_date ? new Date(p.end_date).toLocaleDateString('ms-MY',{day:'2-digit',month:'short',year:'numeric'}) : '—'}</td>
@@ -4571,6 +4578,157 @@ async function hardResetPlanSessions() {
 
     await auditLog('plan.hard_reset', activePlan.id, { weeks: durationWeeks, rows: rows.length });
     banner('Hard reset selesai — skeleton dijana semula ikut pakej. Tekan "📅 Jadualkan Semua Sesi" untuk tetapkan tarikh. ✅');
+    await loadOverview();
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+  }
+}
+
+// SELARASKAN IKUT PAKEJ — betulkan bug "Sesi 2 hantu" (dan sebaliknya, Sesi 2 kurang)
+// tanpa hilang kehadiran. Dua langkah:
+//   1) Segarkan snapshot coaching_schedule plan dari pakej LIVE (punca pkgN salah).
+//   2) Selaraskan baris psy_plan_weekly_progress ikut session_days pakej setiap minggu:
+//      buang sesi berlebihan yang BELUM hadir (+ appointment terkait), tambah sesi yang kurang.
+// Sesi 'hadir'/'consultation_done' TAK PERNAH dibuang.
+async function syncPlanSessionsToPackage() {
+  if (!activePlan) return;
+  if (!(canEdit || window.currentUser?.staff_role === 'super_admin')) { banner('Anda hanya boleh melihat rekod pesakit ini.', 'error'); return; }
+  if (!confirm(`Selaraskan bilangan sesi setiap minggu ikut pakej?\n\n• Buang "Sesi 2 hantu" yang belum hadir\n• Tambah sesi yang kurang (pending, tiada tarikh)\n• Kehadiran sebenar DIKEKALKAN\n\nTeruskan?`)) return;
+  try {
+    // 1) Segarkan snapshot dari pakej live
+    let pkg = null;
+    if (activePlan.template) {
+      const { data } = await window.db.from('psy_packages').select('*').eq('package_id', activePlan.template).maybeSingle();
+      pkg = data;
+    }
+    if (!pkg && activePlan.name) {
+      const base = activePlan.name.replace(/ Treatment Plan$/, '');
+      const { data } = await window.db.from('psy_packages').select('*').eq('name', base).limit(1);
+      pkg = data?.[0] || null;
+    }
+    if (!pkg) { banner('Pakej tidak dijumpai — tidak dapat selaras. Semak nama/ID pakej.', 'error'); return; }
+
+    const liveSched = Array.isArray(pkg.coaching_schedule) ? pkg.coaching_schedule : [];
+    await window.db.from('psy_treatment_plans').update({ coaching_schedule: liveSched }).eq('id', activePlan.id);
+    activePlan.coaching_schedule = liveSched;
+
+    // Bilangan hari-sesi yang PAKEJ tetapkan untuk minggu w (mingguan sahaja; hari-sesi
+    // hilang → anggap [1] supaya tak jana Sesi 2 hantu balik).
+    const pkgDays = (w) => {
+      const e = liveSched.find(it => (it.period || 'week') !== 'day' && Number(it.week) === w);
+      if (e && Array.isArray(e.session_days) && e.session_days.length) {
+        return [...new Set(e.session_days.map(Number))].filter(d => d >= 1 && d <= 7).sort((a, b) => a - b);
+      }
+      return [1];
+    };
+
+    // 2) Selaraskan baris ikut pakej
+    const durationWeeks = activePlan.duration_weeks || 12;
+    const maxRowWeek = Math.max(0, ...ovWeeklyRows.map(r => r.week_number || 0));
+    const lastWeek = Math.max(durationWeeks, maxRowWeek);
+    const KEEP = new Set(['hadir', 'consultation_done']);
+
+    const toDeleteRowIds = [];
+    const toDeleteApptIds = [];
+    const toInsert = [];
+    let removed = 0, added = 0;
+
+    for (let w = 1; w <= lastWeek; w++) {
+      const rows = ovWeeklyRows.filter(r => Number(r.week_number) === w);
+      // Minggu tambahan (extension) — jangan sentuh, ikut aliran bayaran sendiri
+      if (rows.some(r => r.is_extension)) continue;
+      // Minggu > tempoh pakej dan bukan dalam jadual — biarkan
+      const want = new Set(pkgDays(w));
+
+      // Buang sesi berlebihan yang belum hadir
+      for (const r of rows) {
+        const d = r.session_day || 1;
+        if (!want.has(d) && !KEEP.has(r.status)) {
+          toDeleteRowIds.push(r.id);
+          if (r.appointment_id) toDeleteApptIds.push(r.appointment_id);
+          removed++;
+        }
+      }
+      // Tambah sesi yang kurang (pending, tiada tarikh)
+      const haveDays = new Set(rows.map(r => r.session_day || 1));
+      for (const d of want) {
+        if (!haveDays.has(d)) {
+          toInsert.push({ plan_id: activePlan.id, patient_id: patientId, week_number: w, session_day: d, status: 'pending', session_date: null });
+          added++;
+        }
+      }
+    }
+
+    if (toDeleteApptIds.length) await window.db.from('psy_appointments').delete().in('id', toDeleteApptIds);
+    if (toDeleteRowIds.length) {
+      const { error } = await window.db.from('psy_plan_weekly_progress').delete().in('id', toDeleteRowIds);
+      if (error) throw error;
+    }
+    if (toInsert.length) {
+      const { error } = await window.db.from('psy_plan_weekly_progress').insert(toInsert);
+      if (error) throw error;
+    }
+
+    await auditLog('plan.sessions_synced_to_package', activePlan.id, { package: pkg.package_id, removed, added });
+    banner(`Sesi diselaraskan ikut pakej ✅  (buang ${removed} sesi hantu, tambah ${added} sesi kurang). Kehadiran dikekalkan.`);
+    await loadOverview();
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+  }
+}
+
+// TANDAKAN SESI LEPAS HADIR — untuk data lama yang dimasukkan sebelum sistem dibetulkan:
+// Sesi 1 minggu lepas bertanda Hadir tapi Sesi 2 tersekat "pending" (walaupun pesakit dah
+// jauh ke hadapan). Peraturan (tak bergantung current_week — guna tarikh sesi sendiri):
+//   tanda sesi 'pending' sebagai 'hadir' JIKA (a) minggu itu ada sekurang-kurangnya satu sesi
+//   yang sudah Hadir (bukti minggu berlaku), DAN (b) tarikh sesi itu SUDAH LEPAS (< hari ini).
+// Tarikh sesi = tarikh sesi Hadir sedia ada + selisih hari (cth Sesi 1 = 28 Mac → Sesi 2 = 29
+// Mac). Sesi masa hadapan, 'Tidak Hadir'(cancel), booked, extension TAK disentuh.
+async function backfillPastSessionsAttended() {
+  if (!activePlan) return;
+  if (!(canEdit || window.currentUser?.staff_role === 'super_admin')) { banner('Anda hanya boleh melihat rekod pesakit ini.', 'error'); return; }
+  const KEEP = new Set(['hadir', 'consultation_done']);
+  const now = new Date();
+
+  const byWeek = {};
+  ovWeeklyRows.forEach(r => { (byWeek[r.week_number] ||= []).push(r); });
+
+  const updates = []; // { id, session_date, week, day }
+  for (const wStr of Object.keys(byWeek)) {
+    const w = Number(wStr);
+    const rows = byWeek[w];
+    if (rows.some(r => r.is_extension)) continue;    // minggu tambahan dilangkau
+    const attended = rows.filter(r => KEEP.has(r.status));
+    if (!attended.length) continue;                  // minggu tak terbukti berlaku → langkau
+    const anchor = attended.find(r => r.session_date) || attended[0];
+    for (const r of rows) {
+      if (r.status !== 'pending') continue;          // hanya sesi 'Belum dijadual'
+      let iso = r.session_date;
+      if (!iso) {
+        if (anchor?.session_date) {
+          const base = new Date(anchor.session_date);
+          base.setDate(base.getDate() + ((r.session_day || 1) - (anchor.session_day || 1)));
+          iso = base.toISOString();
+        } else {
+          iso = ovExpectedDate(w, r.session_day || 1).toISOString();
+        }
+      }
+      if (new Date(iso) >= now) continue;            // tarikh masih akan datang → biarkan
+      updates.push({ id: r.id, session_date: iso, week: w, day: r.session_day || 1 });
+    }
+  }
+
+  if (!updates.length) { banner('Tiada sesi lepas yang perlu ditandakan.'); return; }
+  const weeksTouched = [...new Set(updates.map(u => u.week))].sort((a, b) => a - b);
+  if (!confirm(`Tandakan ${updates.length} sesi LEPAS sebagai "Hadir"? (Minggu: ${weeksTouched.join(', ')})\n\n• Hanya sesi yang tarikhnya sudah lepas\n• Hanya minggu yang sekurang-kurangnya satu sesinya sudah Hadir\n• Sesi masa hadapan & "Tidak Hadir" tidak disentuh\n\nTeruskan?`)) return;
+
+  try {
+    for (const u of updates) {
+      await window.db.from('psy_plan_weekly_progress')
+        .update({ status: 'hadir', session_date: u.session_date }).eq('id', u.id);
+    }
+    await auditLog('plan.backfill_past_attended', activePlan.id, { count: updates.length, weeks: weeksTouched });
+    banner(`${updates.length} sesi lepas ditandakan Hadir ✅`);
     await loadOverview();
   } catch (e) {
     banner('Ralat: ' + e.message, 'error');

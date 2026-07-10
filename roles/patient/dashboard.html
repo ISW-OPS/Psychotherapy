@@ -454,12 +454,15 @@ async function acceptContinuity(id) {
   await window.db.from('psy_continuity_offers')
     .update({ status: 'accepted', responded_at: new Date().toISOString() }).eq('id', id);
   // Guna semula aliran pembayaran pakej sedia ada (isw_pending_payment → payment.html).
+  // continuity:true → jika pakej semasa masih aktif, bayaran ini BERATUR (queued) dan
+  // auto-aktif bila pakej semasa selesai (webhook + trigger step93), bukan aktif serta-merta.
   localStorage.setItem('isw_pending_payment', JSON.stringify({
     type: 'package',
     packageId: offer.package_uuid,
     packageName: offer.package_name,
     title: `Pakej: ${offer.package_name}`,
     amount: offer.price || 0,
+    continuity: true,
   }));
   location.href = 'payment.html';
 }
@@ -566,6 +569,22 @@ async function loadBanners(user) {
 
   // 🔄 Cadangan Pakej Sambungan (continuity) daripada coach
   await renderContinuityOffer(zone);
+
+  // ✅ Pakej sambungan sudah DIBAYAR & beratur — auto-mula selepas pakej semasa tamat (Kerja B).
+  if (patientRecord?.next_package_id) {
+    const _esc = s => String(s || '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    const nm = _esc(patientRecord.next_package_name || 'Pakej sambungan');
+    zone.insertAdjacentHTML('beforeend', `
+      <div class="rounded-2xl p-4 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white shadow-sm">
+        <div class="flex items-start gap-3">
+          <div class="text-2xl flex-shrink-0">✅</div>
+          <div class="min-w-0">
+            <div class="font-bold text-sm">Pakej Sambungan Tersedia</div>
+            <div class="text-xs text-white/90 mt-0.5"><b>${nm}</b> sudah dibayar dan akan <b>bermula secara automatik</b> sebaik pakej rawatan semasa anda tamat. Teruskan sesi anda seperti biasa.</div>
+          </div>
+        </div>
+      </div>`);
+  }
 
   // ⚠️ Sesi tidak hadir yang belum dijadual semula — alert paling atas (urgen, perlu tindakan)
   try {

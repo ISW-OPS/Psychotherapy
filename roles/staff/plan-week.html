@@ -486,7 +486,9 @@ function getWeekCoachingItems() {
   const isDaily = daily.length > 0;
   const slotOf = it => isDaily ? ('D' + it.day) : String(activeDay);
   const anyOv = weekOverride?.guidance_override || weekOverride?.aktiviti_override || weekOverride?.supplies_override;
-  if (!items.length && anyOv && !isDaily) {
+  // Minggu sambungan/tambahan (is_extension) TIADA entri dalam coaching_schedule pakej.
+  // Jana slot kosong supaya kad "Coaching Minggu Ini" tetap muncul & coach boleh isi inline.
+  if (!items.length && !isDaily && (anyOv || weekEntry?.is_extension)) {
     items = [{ week: weekNumber, guidance: [], aktiviti: [], supplies: [] }];
   }
   items = items.map(it => {
@@ -898,14 +900,23 @@ function renderHero() {
   // Kawalan minggu tambahan — hanya bila ada sesi tidak hadir minggu ini (& bukan minggu extension sendiri)
   const weekHasMiss = !weekEntry?.is_extension && weekSessions.some(r => r.status === 'cancel');
   const extPaid = extForThisWeek && extForThisWeek.some(r => r.status !== 'extension_pending_payment');
-  const extControl = weekHasMiss
+  // (a) Aliran absen sedia ada — tawar buka minggu ganti bila ada sesi tidak hadir.
+  const absenceExt = weekHasMiss
     ? (extForThisWeek
         ? `<div class="mt-3 text-xs text-ink/65 bg-cream rounded-lg px-3 py-2">🔁 Minggu tambahan sudah dibuka untuk minggu ini${extPaid ? ' <span class="text-green-dark font-semibold">(sudah dibayar)</span>' : ' — <span class="text-terracotta font-semibold">menunggu bayaran pesakit</span>'}.</div>`
         : `<div class="mt-3">
-             <button onclick="openExtensionManually()" class="inline-flex items-center gap-1.5 text-xs font-semibold border border-terracotta/40 text-terracotta px-3 py-1.5 rounded-lg hover:bg-terracotta hover:text-white transition">➕ Buka Minggu Tambahan (pesakit bayar)</button>
-             <div class="text-[11px] text-ink/45 mt-1">Tidak hadir <b>tidak</b> auto-caj. Tekan ini hanya bila pesakit sah nak sambung rawatan.</div>
+             <button onclick="openExtensionManually()" class="inline-flex items-center gap-1.5 text-xs font-semibold border border-terracotta/40 text-terracotta px-3 py-1.5 rounded-lg hover:bg-terracotta hover:text-white transition">➕ Buka Minggu Ganti (sesi tidak hadir)</button>
+             <div class="text-[11px] text-ink/45 mt-1">Tidak hadir <b>tidak</b> auto-caj. Tekan ini hanya bila pesakit sah nak ganti sesi tertinggal.</div>
            </div>`)
     : '';
+  // (b) Sambungan rawatan — coach tambah minggu bila-bila (tanpa perlu sesi tidak hadir), pesakit bayar.
+  const continuityExt = !weekEntry?.is_extension
+    ? `<div class="mt-3 pt-3 border-t border-ink/8">
+         <button onclick="openContinuityWeeksModal()" class="inline-flex items-center gap-1.5 text-xs font-semibold border border-navy/40 text-navy px-3 py-1.5 rounded-lg hover:bg-navy hover:text-white transition">➕ Tambah Minggu Sambungan (pesakit bayar)</button>
+         <div class="text-[11px] text-ink/45 mt-1">Untuk pesakit yang perlu <b>sambung rawatan</b> beberapa minggu lagi dalam pakej ini. Minggu baru mula kosong — isi bimbingan/bekalan sendiri.</div>
+       </div>`
+    : '';
+  const extControl = absenceExt + continuityExt;
   // Kawalan sesi tidak hadir (sesi aktif): ingatkan pesakit + coach reschedule terus
   const missControl = (status === 'cancel')
     ? `<div class="mt-3 pt-3 border-t border-ink/8">
@@ -1559,6 +1570,87 @@ async function openExtensionManually() {
   if (!confirm(`Buka 1 minggu tambahan berbayar untuk Minggu ${weekNumber}? Pesakit akan diminta membuat bayaran.`)) return;
   await createExtensionForWeek(weekNumber);
   await loadWeek();   // refresh — butang bertukar jadi nota "minggu tambahan dibuka"
+}
+
+// ── Sambungan rawatan: coach tambah N minggu (pesakit bayar). Minggu mula KOSONG; coach isi coaching inline. ──
+async function openContinuityWeeksModal() {
+  if (!weekEntry || weekEntry.is_extension) return;
+  // Harga cadangan (boleh ubah) dari pakej — extension_price_per_week, default 50.
+  let suggest = 50;
+  if (activePlan.template) {
+    const { data: pkg } = await window.db.from('psy_packages')
+      .select('extension_price_per_week').eq('package_id', activePlan.template).maybeSingle();
+    suggest = Number(pkg?.extension_price_per_week) || 50;
+  }
+  const old = document.getElementById('continuity-weeks-modal');
+  if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'continuity-weeks-modal';
+  ov.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4';
+  ov.innerHTML = `
+    <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5">
+      <h3 class="font-bold text-lg text-ink mb-1">➕ Tambah Minggu Sambungan</h3>
+      <p class="text-xs text-ink/60 mb-4">Minggu baru dicipta di hujung pelan (menunggu bayaran pesakit). Isi bimbingan / bekalan selepas ini.</p>
+      <label class="block text-xs font-semibold text-ink/60 mb-1">Bilangan minggu</label>
+      <input id="cw-weeks" type="number" min="1" max="12" value="1" class="w-full text-sm border border-ink/20 rounded-lg px-3 py-2 mb-3 outline-none focus:border-navy">
+      <label class="block text-xs font-semibold text-ink/60 mb-1">Harga seminggu (RM)</label>
+      <input id="cw-price" type="number" min="0" step="1" value="${suggest}" class="w-full text-sm border border-ink/20 rounded-lg px-3 py-2 mb-1 outline-none focus:border-navy">
+      <div class="text-[11px] text-ink/45 mb-3">Jumlah = bilangan minggu × harga seminggu. Coach boleh ubah harga.</div>
+      <div id="cw-total" class="text-sm font-semibold text-navy mb-4"></div>
+      <div class="flex gap-2 justify-end">
+        <button type="button" onclick="document.getElementById('continuity-weeks-modal').remove()" class="text-sm px-4 py-2 rounded-lg border border-ink/20 text-ink/70 hover:bg-cream">Batal</button>
+        <button type="button" id="cw-confirm" class="text-sm px-4 py-2 rounded-lg bg-navy text-white font-semibold hover:bg-navy-dark">Tambah & Notifikasi</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const recalc = () => {
+    const w = Math.max(1, parseInt(document.getElementById('cw-weeks').value) || 1);
+    const p = Number(document.getElementById('cw-price').value) || 0;
+    document.getElementById('cw-total').textContent = `Jumlah: RM ${(w * p).toFixed(2)}  (${w} minggu × RM ${p})`;
+  };
+  document.getElementById('cw-weeks').addEventListener('input', recalc);
+  document.getElementById('cw-price').addEventListener('input', recalc);
+  recalc();
+  document.getElementById('cw-confirm').addEventListener('click', async () => {
+    const w = Math.max(1, Math.min(12, parseInt(document.getElementById('cw-weeks').value) || 1));
+    const p = Number(document.getElementById('cw-price').value);
+    if (!(p >= 0)) { banner('Harga tidak sah.', 'error'); return; }
+    ov.remove();
+    await createContinuityWeeks(w, p);
+    await loadWeek();
+  });
+}
+
+// Cipta N minggu sambungan. extension_for_week = 0 → BUKAN ganti absen (immune drpd removePendingExtensionIfResolved).
+async function createContinuityWeeks(nWeeks, pricePerWeek) {
+  const n = Math.max(1, Math.min(12, parseInt(nWeeks) || 1));
+  const price = Number(pricePerWeek) || 0;
+  // Sesi seminggu ikut config pelan (minggu terakhir pakej), fallback ikut preferred_pair.
+  const lastWk = (activePlan.coaching_schedule || []).find(it => Number(it.week || it.day) === (activePlan.duration_weeks || 12));
+  const days = (lastWk && Array.isArray(lastWk.session_days) && lastWk.session_days.length)
+    ? lastWk.session_days
+    : (activePlan.preferred_pair ? [1, 2] : [1]);
+  const { data: allRows } = await window.db.from('psy_plan_weekly_progress')
+    .select('week_number').eq('plan_id', activePlan.id);
+  const maxWeek = Math.max(activePlan.duration_weeks || 12, ...(allRows || []).map(r => r.week_number || 0));
+  const inserts = [];
+  for (let i = 1; i <= n; i++) {
+    const wk = maxWeek + i;
+    days.forEach(d => inserts.push({
+      plan_id: activePlan.id, patient_id: patientId, week_number: wk, session_day: d,
+      status: 'extension_pending_payment', is_extension: true, extension_for_week: 0, extension_price: price,
+    }));
+  }
+  const { error } = await window.db.from('psy_plan_weekly_progress').insert(inserts);
+  if (error) { console.error('Create continuity weeks failed:', error); banner('Gagal tambah minggu: ' + error.message, 'error'); return; }
+  await auditLog('plan.continuity_weeks_created', activePlan.id, { weeks: n, from_week: maxWeek + 1, price_per_week: price });
+  if (patientUserId) {
+    await notify(patientUserId, 'plan',
+      `Minggu sambungan rawatan dibuka`,
+      `Coach menambah ${n} minggu sambungan (M${maxWeek + 1}–M${maxWeek + n}). Bayar RM ${(n * price).toFixed(2)} untuk teruskan rawatan.`,
+      'payment.html');
+  }
+  banner(`${n} minggu sambungan (M${maxWeek + 1}–M${maxWeek + n}) dibuka — pesakit perlu bayar RM ${(n * price).toFixed(2)}.`);
 }
 
 // Buka 1 minggu tambahan (2 sesi, pesakit bayar) untuk minggu yang ada ketidakhadiran.

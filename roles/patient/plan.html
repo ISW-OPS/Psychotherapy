@@ -1520,11 +1520,44 @@
 
     // Daily schedule moved to routine.html
 
+    // Sejarah Pakej — senarai pelan yang telah tamat (data sesi kekal, boleh dilihat semula).
+    async function renderPackageHistoryPatient() {
+      if (!patientRecord) return;
+      const plans = await dbQuery('psy_treatment_plans', { eq: { patient_id: patientRecord.id } }).catch(() => []);
+      const wantPlanId = new URLSearchParams(location.search).get('plan_id');
+      const past = (plans || [])
+        .filter(p => p.status === 'completed' && p.id !== wantPlanId)
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      const existing = document.getElementById('pkg-history-card');
+      if (existing) existing.remove();
+      if (!past.length) return;
+      const esc = s => String(s || '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+      const card = document.createElement('div');
+      card.id = 'pkg-history-card';
+      card.className = 'mt-6 bg-white rounded-2xl border border-ink/10 p-5';
+      card.innerHTML = `
+        <h3 class="font-bold text-base text-ink mb-1">📚 Sejarah Pakej</h3>
+        <p class="text-xs text-ink/55 mb-3">Pakej rawatan yang telah tamat. Semua data sesi kekal — tekan untuk lihat semula.</p>
+        <div class="space-y-2">
+          ${past.map(p => `
+            <a href="plan-week.html?plan_id=${p.id}&week=1&from=history" class="flex items-center justify-between gap-3 rounded-lg border border-ink/10 px-3 py-2.5 hover:bg-cream transition">
+              <div class="min-w-0">
+                <div class="text-sm font-semibold text-ink truncate">${esc(p.name || 'Pakej')}</div>
+                <div class="text-[11px] text-ink/50">${p.duration_weeks || 12} minggu · tamat</div>
+              </div>
+              <span class="text-xs font-semibold text-navy flex-shrink-0">Lihat →</span>
+            </a>`).join('')}
+        </div>`;
+      const host = document.getElementById('content');
+      if (host) host.appendChild(card);
+    }
+
     (async () => {
       const user = await initPatient('plan', 'Pelan BPS-S · 4 pillar · checklist');
       if (!user) return;
       await loadPlan();
       await loadWeeklyProgress();
+      await renderPackageHistoryPatient();
       // Deep-link dari dashboard "Jadual Akan Datang": ?reschedule=<minggu>.<sesi>
       const _rp = new URLSearchParams(location.search).get('reschedule');
       if (_rp) {
