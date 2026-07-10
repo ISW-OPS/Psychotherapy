@@ -4678,57 +4678,97 @@ async function syncPlanSessionsToPackage() {
 }
 
 // TANDAKAN SESI LEPAS HADIR — untuk data lama yang dimasukkan sebelum sistem dibetulkan:
-// Sesi 1 minggu lepas bertanda Hadir tapi Sesi 2 tersekat "pending" (walaupun pesakit dah
-// jauh ke hadapan). Peraturan (tak bergantung current_week — guna tarikh sesi sendiri):
-//   tanda sesi 'pending' sebagai 'hadir' JIKA (a) minggu itu ada sekurang-kurangnya satu sesi
-//   yang sudah Hadir (bukti minggu berlaku), DAN (b) tarikh sesi itu SUDAH LEPAS (< hari ini).
-// Tarikh sesi = tarikh sesi Hadir sedia ada + selisih hari (cth Sesi 1 = 28 Mac → Sesi 2 = 29
-// Mac). Sesi masa hadapan, 'Tidak Hadir'(cancel), booked, extension TAK disentuh.
+// Sesi 1 minggu lepas bertanda Hadir tapi Sesi 2 tersekat/tiada (walaupun pesakit dah jauh ke
+// hadapan). Sesi 2 yang tertera "Not scheduled" selalunya BUKAN baris sebenar — cuma placeholder
+// paparan (pakej kata 2 sesi tapi baris session_day=2 tak wujud). Jadi butang ini UPDATE baris
+// pending SEDIA ADA dan CIPTA baris yang hilang, terus jadi 'hadir'.
+// Peraturan (tak bergantung current_week — guna tarikh sesi sendiri):
+//   untuk setiap hari-sesi yang PAKEJ harapkan (ikut paparan), tanda/cipta 'hadir' JIKA
+//   (a) minggu itu ada ≥1 sesi sudah Hadir (bukti minggu berlaku), DAN (b) tarikh sesi itu SUDAH
+//   LEPAS (< hari ini). Tarikh = tarikh sesi Hadir + selisih hari (Sesi 1 28Mac→Sesi 2 29Mac).
+// Sesi masa hadapan, 'Tidak Hadir'(cancel), booked, extension TAK disentuh.
 async function backfillPastSessionsAttended() {
   if (!activePlan) return;
   if (!(canEdit || window.currentUser?.staff_role === 'super_admin')) { banner('Anda hanya boleh melihat rekod pesakit ini.', 'error'); return; }
   const KEEP = new Set(['hadir', 'consultation_done']);
   const now = new Date();
 
+  // SAHKAN dengan PAKEJ LIVE dulu — jangan percaya snapshot plan sahaja. Kalau pakej sebenar
+  // cuma 1 sesi/minggu, kita TIDAK cipta/menanda Sesi 2 walaupun paparan tersilap tunjuk.
+  let pkg = null;
+  if (activePlan.template) {
+    const { data } = await window.db.from('psy_packages').select('*').eq('package_id', activePlan.template).maybeSingle();
+    pkg = data;
+  }
+  if (!pkg && activePlan.name) {
+    const base = activePlan.name.replace(/ Treatment Plan$/, '');
+    const { data } = await window.db.from('psy_packages').select('*').eq('name', base).limit(1);
+    pkg = data?.[0] || null;
+  }
+  if (!pkg) { banner('Pakej tidak dijumpai — tak dapat sahkan bilangan sesi. Semak nama/ID pakej.', 'error'); return; }
+  const liveSched = Array.isArray(pkg.coaching_schedule) ? pkg.coaching_schedule : [];
+
+  // Bilangan hari-sesi yang PAKEJ SEBENAR tetapkan untuk minggu w (session_days kalau ada,
+  // jika tak fallback ke pkg.sessions_per_week). Inilah sumber kebenaran, bukan snapshot plan.
+  const wantDaysForWeek = (w) => {
+    const e = liveSched.find(it => (it.period || 'week') !== 'day' && Number(it.week) === w);
+    if (e && Array.isArray(e.session_days) && e.session_days.length) {
+      return [...new Set(e.session_days.map(Number))].filter(d => d >= 1 && d <= 7).sort((a, b) => a - b);
+    }
+    const n = (pkg.sessions_per_week || 1) >= 2 ? 2 : 1;
+    return Array.from({ length: n }, (_, i) => i + 1);
+  };
+
   const byWeek = {};
   ovWeeklyRows.forEach(r => { (byWeek[r.week_number] ||= []).push(r); });
+  const weeksWithRows = Object.keys(byWeek).map(Number);
 
-  const updates = []; // { id, session_date, week, day }
-  for (const wStr of Object.keys(byWeek)) {
-    const w = Number(wStr);
+  const updates = [];  // baris pending sedia ada → { id, session_date, week, day }
+  const inserts = [];  // baris hilang → row baru status 'hadir'
+  for (const w of weeksWithRows) {
     const rows = byWeek[w];
     if (rows.some(r => r.is_extension)) continue;    // minggu tambahan dilangkau
     const attended = rows.filter(r => KEEP.has(r.status));
     if (!attended.length) continue;                  // minggu tak terbukti berlaku → langkau
     const anchor = attended.find(r => r.session_date) || attended[0];
-    for (const r of rows) {
-      if (r.status !== 'pending') continue;          // hanya sesi 'Belum dijadual'
-      let iso = r.session_date;
+
+    for (const d of wantDaysForWeek(w)) {
+      const existing = rows.find(r => (r.session_day || 1) === d);
+      if (existing && KEEP.has(existing.status)) continue;        // dah hadir
+      if (existing && existing.status !== 'pending') continue;    // booked/cancel/dll → jangan sentuh
+      // tarikh sesi ini
+      let iso = existing?.session_date;
       if (!iso) {
         if (anchor?.session_date) {
           const base = new Date(anchor.session_date);
-          base.setDate(base.getDate() + ((r.session_day || 1) - (anchor.session_day || 1)));
+          base.setDate(base.getDate() + (d - (anchor.session_day || 1)));
           iso = base.toISOString();
         } else {
-          iso = ovExpectedDate(w, r.session_day || 1).toISOString();
+          iso = ovExpectedDate(w, d).toISOString();
         }
       }
       if (new Date(iso) >= now) continue;            // tarikh masih akan datang → biarkan
-      updates.push({ id: r.id, session_date: iso, week: w, day: r.session_day || 1 });
+      if (existing) updates.push({ id: existing.id, session_date: iso, week: w, day: d });
+      else inserts.push({ plan_id: activePlan.id, patient_id: patientId, week_number: w, session_day: d, status: 'hadir', session_date: iso });
     }
   }
 
-  if (!updates.length) { banner('Tiada sesi lepas yang perlu ditandakan.'); return; }
-  const weeksTouched = [...new Set(updates.map(u => u.week))].sort((a, b) => a - b);
-  if (!confirm(`Tandakan ${updates.length} sesi LEPAS sebagai "Hadir"? (Minggu: ${weeksTouched.join(', ')})\n\n• Hanya sesi yang tarikhnya sudah lepas\n• Hanya minggu yang sekurang-kurangnya satu sesinya sudah Hadir\n• Sesi masa hadapan & "Tidak Hadir" tidak disentuh\n\nTeruskan?`)) return;
+  const total = updates.length + inserts.length;
+  if (!total) { banner('Tiada sesi lepas yang perlu ditandakan.'); return; }
+  const weeksTouched = [...new Set([...updates.map(u => u.week), ...inserts.map(i => i.week_number)])].sort((a, b) => a - b);
+  if (!confirm(`Pakej "${pkg.name}" — tandakan ${total} sesi LEPAS sebagai "Hadir"? (Minggu: ${weeksTouched.join(', ')})\n\n• Bilangan sesi/minggu disahkan ikut pakej sebenar\n• ${updates.length} kemas kini + ${inserts.length} baris baru dicipta\n• Hanya sesi yang tarikhnya sudah lepas\n• Hanya minggu yang sekurang-kurangnya satu sesinya sudah Hadir\n• Sesi masa hadapan & "Tidak Hadir" tidak disentuh\n\nTeruskan?`)) return;
 
   try {
     for (const u of updates) {
       await window.db.from('psy_plan_weekly_progress')
         .update({ status: 'hadir', session_date: u.session_date }).eq('id', u.id);
     }
-    await auditLog('plan.backfill_past_attended', activePlan.id, { count: updates.length, weeks: weeksTouched });
-    banner(`${updates.length} sesi lepas ditandakan Hadir ✅`);
+    if (inserts.length) {
+      const { error } = await window.db.from('psy_plan_weekly_progress').insert(inserts);
+      if (error) throw error;
+    }
+    await auditLog('plan.backfill_past_attended', activePlan.id, { updated: updates.length, inserted: inserts.length, weeks: weeksTouched });
+    banner(`${total} sesi lepas ditandakan Hadir ✅ (${updates.length} update, ${inserts.length} baru)`);
     await loadOverview();
   } catch (e) {
     banner('Ralat: ' + e.message, 'error');
