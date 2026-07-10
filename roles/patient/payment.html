@@ -59,18 +59,11 @@
 
             <!-- Payment Methods -->
             <div id="payment-methods" class="hidden">
-              <h3 class="font-semibold mb-3">Kaedah pembayaran</h3>
-              <div class="space-y-2 mb-6">
-                <label class="flex items-center gap-3 border-2 border-navy bg-navy-light rounded-lg p-3 cursor-pointer">
-                  <input type="radio" name="pm" value="fpx" checked>
-                  <span class="flex-1 font-semibold text-sm">FPX Online Banking (ToyyibPay)</span>
-                  <span class="text-xs text-ink/60">Instant</span>
-                </label>
-                <label class="flex items-center gap-3 border-2 border-ink/10 rounded-lg p-3 cursor-pointer hover:border-navy">
-                  <input type="radio" name="pm" value="card">
-                  <span class="flex-1 font-semibold text-sm">Credit / Debit Card</span>
-                  <span class="text-xs text-ink/60">Visa / Master</span>
-                </label>
+              <h3 class="font-semibold mb-2">Kaedah pembayaran</h3>
+              <div class="border-2 border-navy/20 bg-navy-light rounded-lg p-3 mb-6 text-sm text-ink/70">
+                🔒 Anda akan dialihkan ke halaman pembayaran selamat untuk pilih
+                <span class="font-semibold">FPX Online Banking</span> atau
+                <span class="font-semibold">Kad Kredit/Debit</span>.
               </div>
 
               <button onclick="processPayment()" id="btn-pay" class="w-full bg-navy text-white py-3 rounded-lg font-semibold text-base hover:bg-navy-dark">
@@ -256,10 +249,14 @@ async function loadPayments() {
       byWeek[k].rowIds.push(r.id);
     });
     Object.values(byWeek).forEach(g => {
+      // extFor >= 1 → ganti sesi tidak hadir; 0/null → minggu sambungan rawatan (coach tambah).
+      const isContinuity = !g.extFor || Number(g.extFor) < 1;
       pendingItems.push({
         type: 'plan_extension',
         id: `ext-${g.week}`,
-        title: `Minggu Tambahan ${g.week} (ganti M${g.extFor})`,
+        title: isContinuity
+          ? `Minggu Sambungan Rawatan (M${g.week})`
+          : `Minggu Tambahan ${g.week} (ganti M${g.extFor})`,
         amount: g.price,
         rowIds: g.rowIds,
       });
@@ -311,7 +308,6 @@ function renderInvoice() {
 
 async function processPayment() {
   if (pendingItems.length === 0) return;
-  const method = document.querySelector('input[name="pm"]:checked').value;
   const btn = document.getElementById('btn-pay');
   btn.disabled = true;
   btn.textContent = 'Memproses...';
@@ -319,7 +315,9 @@ async function processPayment() {
   try {
     // CRITICAL: Fresh DB check — prevent duplicate package subscription
     // Termasuk 'package_existing' (bayar pakej sedia ada) — kedua-dua aktifkan pakej pada rekod pesakit.
-    const hasPackageInCart = pendingItems.some(i => i.type === 'package' || i.type === 'package_existing');
+    // KECUALI continuity (pakej sambungan) — ia sengaja dibayar semasa pakej lama masih aktif;
+    // ia BERATUR (queued) dan auto-aktif bila pakej lama selesai (webhook + trigger step93).
+    const hasPackageInCart = pendingItems.some(i => (i.type === 'package' || i.type === 'package_existing') && !i.continuity);
     if (hasPackageInCart && patientRecord) {
       const fresh = await dbQuery('psy_patients', { eq: { id: patientRecord.id }, single: true }).catch(() => null);
       if (fresh?.active_package_id &&
@@ -331,208 +329,33 @@ async function processPayment() {
       }
     }
 
-    await new Promise(r => setTimeout(r, 1200));
-    const receiptRef = 'RCP-' + Date.now().toString(36).toUpperCase();
-
-    for (const item of pendingItems) {
-      if (item.type === 'appointment') {
-        const cleanNotes = (item.raw?.notes || '').replace('[PENDING PAYMENT]', '').trim();
-        await dbUpdate('psy_appointments', item.id, { notes: `[PAID · ${receiptRef}] ${cleanNotes}` });
-
-      } else if (item.type === 'package') {
-        const expiresAt = new Date();
-        expiresAt.setMonth(expiresAt.getMonth() + 3);
-
-        // Insert without .single() to avoid RLS read-back issue
-        const { error: insertErr } = await window.db.from('psy_package_purchases').insert({
-          patient_id: patientRecord.id,
-          package_id: item.packageId,
-          package_name: item.packageName,
-          price: item.amount,
-          expires_at: expiresAt.toISOString(),
-          status: 'active',
-          payment_method: method,
-        });
-        if (insertErr) throw insertErr;
-
-        // Activate package on patient record
-        const { error: updateErr } = await window.db.from('psy_patients').update({
-          active_package_id: item.packageId,
-          active_package_name: item.packageName,
-          package_purchased_at: new Date().toISOString(),
-          package_expires_at: expiresAt.toISOString(),
-        }).eq('id', patientRecord.id);
-        if (updateErr) throw updateErr;
-
-      } else if (item.type === 'package_existing') {
-        await dbUpdate('psy_package_purchases', item.id, { status: 'active', payment_method: method });
-        // Aktifkan pakej pada rekod pesakit (sama seperti 'package' — sebelum ni terlepas).
-        const exp = item.raw?.expires_at
-          || (() => { const d = new Date(); d.setMonth(d.getMonth() + 3); return d.toISOString(); })();
-        const { error: paErr } = await window.db.from('psy_patients').update({
-          active_package_id:    item.raw?.package_id,
-          active_package_name:  item.raw?.package_name,
-          package_purchased_at: item.raw?.purchased_at || new Date().toISOString(),
-          package_expires_at:   exp,
-        }).eq('id', patientRecord.id);
-        if (paErr) throw paErr;
-
-      } else if (item.type === 'plan_extension') {
-        // Flip semua 2 sesi extension → extension_paid + status='booked' (ready for scheduling)
-        for (const rowId of (item.rowIds || [])) {
-          await dbUpdate('psy_plan_weekly_progress', rowId, {
-            status: 'extension_paid',
-            extension_paid_at: new Date().toISOString(),
-          });
-        }
-
-      } else if (item.type === 'kob') {
-        // KOB payment — flip patient.kob_status from pending_payment → paid
-        const { error: kobErr } = await window.db.from('psy_patients').update({
-          kob_status: 'paid',
-        }).eq('id', patientRecord.id);
-        if (kobErr) throw kobErr;
-
-      } else if (item.type === 'kob_package') {
-        // Doctor-recommended package payment during KOB
-        // Record payment on the KOB session + advance kob_status
-        if (item.kobSessionId) {
-          await window.db.from('psy_kob_sessions').update({
-            package_payment_status: 'paid',
-            package_paid_at: new Date().toISOString(),
-            package_receipt_ref: receiptRef,
-          }).eq('id', item.kobSessionId);
-        }
-        await window.db.from('psy_patients').update({
-          kob_status: 'package_paid',
-        }).eq('id', patientRecord.id);
-
-      } else if (item.type === 'shop_order') {
-        const { error } = await window.db.from('psy_orders').insert({
-          order_ref: item.orderRef,
-          patient_id: currentUser.id,
-          items: item.items,
-          total: item.amount,
-          status: 'paid',
-          paid_at: new Date().toISOString(),
-          delivery_method: item.deliveryMethod,
-          delivery_address: item.deliveryAddress || null,
-          courier: item.deliveryMethod === 'pos' ? 'JNT' : null,
-          notes: item.deliveryMethod === 'pickup' ? 'Pickup Konsultasi' : null,
-        });
-        if (error) throw error;
-        clearCart();
-
-        // Notify admin & manager: new order
-        (async () => {
-          try {
-            const { data: staffRows } = await window.db.from('psy_profiles')
-              .select('id').eq('role', 'staff').in('staff_role', ['admin', 'manager']);
-            if (staffRows?.length && typeof notify === 'function') {
-              const ptName = window.currentUser?.full_name || window.currentUser?.email || 'Pesakit';
-              const itemCount = item.items?.length || 1;
-              const total = item.amount ? `RM${(item.amount/100).toFixed(2)}` : '';
-              for (const s of staffRows) {
-                notify(s.id, 'order', 'Pesanan Baru Diterima',
-                  `${ptName} membuat pesanan (${itemCount} item${itemCount > 1 ? 's' : ''}${total ? ' · ' + total : ''}).`,
-                  '../staff/orders.html');
-              }
-            }
-          } catch (_) {}
-        })();
-      }
-    }
-
-    const subtotal = pendingItems.reduce((s, i) => s + i.amount, 0);
-
-    // Insert proper payment record
-    await window.db.from('psy_payments').insert({
-      receipt_ref: receiptRef,
-      patient_id: patientRecord?.id,
-      user_id: currentUser.id,
-      items: pendingItems.flatMap(i => {
-        // Pesanan shop — pecahkan kepada baris produk individu supaya resit tunjuk nama barang
-        if (i.type === 'shop_order' && Array.isArray(i.items)) {
-          const lines = i.items.map(p => ({
-            type: 'shop_order',
-            title: `${p.name}${Number(p.qty) > 1 ? ` ×${p.qty}` : ''}`,
-            amount: Number(p.price) * Number(p.qty || 1),
-            reference_id: p.id,
-          }));
-          if (Number(i.deliveryFee) > 0) {
-            lines.push({ type: 'delivery', title: 'Penghantaran', amount: Number(i.deliveryFee), reference_id: i.orderRef });
-          }
-          return lines;
-        }
-        return [{ type: i.type, title: i.title, amount: i.amount, reference_id: i.id || i.packageId }];
-      }),
-      subtotal,
-      service_charge: 0,
-      sst: 0,
-      total: grandTotal,
-      payment_method: method,
-      status: 'completed',
-      paid_at: new Date().toISOString(),
+    // === Gateway sebenar (HitPay) ===
+    // Client TIDAK lagi aktifkan pakej/plan di sini. Ia hanya MULAKAN bayaran;
+    // fulfillment berlaku dalam Edge Function payments-webhook selepas bayaran disahkan.
+    const returnUrl = window.location.origin + window.location.pathname;
+    const { data, error } = await window.db.functions.invoke('payments-initiate', {
+      body: { items: pendingItems, patientId: patientRecord?.id || null, returnUrl },
     });
-
-    await auditLog('payment.received', receiptRef, {
-      ref: receiptRef,
-      total: grandTotal,
-      method,
-    });
-
-    await notify(currentUser.id, 'system',
-      `Pembayaran Berjaya ✅`,
-      `Resit ${receiptRef} — RM ${grandTotal.toFixed(2)} diterima (${method}). Semak dalam Pesanan & Pembayaran.`,
-      'payment.html');
-
-    localStorage.removeItem('isw_pending_payment');
-
-    // Auto-create treatment plan if package was purchased
-    let createdPlan = false;
-    for (const item of pendingItems) {
-      if (item.type === 'package' && item.packageId && patientRecord) {
-        // Race guard: skip if active plan already exists
-        const existingPlans = await dbQuery('psy_treatment_plans', { eq: { patient_id: patientRecord.id, status: 'active' } }).catch(() => []);
-        if (existingPlans.length > 0) continue;
-        const template = await getPlanTemplate(item.packageId, item.packageName);
-        const { error: planErr } = await window.db.from('psy_treatment_plans').insert({
-          patient_id: patientRecord.id,
-          doctor_id: null,
-          name: template.name,
-          duration_unit: template.duration_unit,
-          duration_weeks: template.duration_weeks,
-          current_week: 1,
-          coaching_schedule: template.coaching_schedule,
-          status: 'active',
-        });
-        if (!planErr) createdPlan = true;
-      }
+    if (error) {
+      let m = error.message;
+      try { const c = await error.context?.json(); if (c?.error) m = c.error; } catch (_) {}
+      throw new Error(m);
     }
+    if (!data?.checkoutUrl) throw new Error(data?.error || 'Gagal memulakan bayaran.');
 
-    const paidKob = pendingItems.some(i => i.type === 'kob');
-    const paidKobPackage = pendingItems.some(i => i.type === 'kob_package');
-
-    banner(`Pembayaran berjaya! Resit: ${receiptRef}`);
-    pendingItems = [];
-
-    if (paidKobPackage) {
-      banner('Bayaran pakej diterima ✅ Sila sign agreement seterusnya.', 'ok');
-      setTimeout(() => { window.location.href = 'kob.html'; }, 2000);
-    } else if (paidKob) {
-      banner('Bayaran KOB diterima. Sila isi KYC seterusnya.', 'ok');
-      setTimeout(() => { window.location.href = 'kyc.html'; }, 2000);
-    } else if (createdPlan) {
-      setTimeout(() => { window.location.href = 'plan.html'; }, 2000);
-    } else {
-      loadPayments();
-    }
+    banner('Mengalihkan ke halaman bayaran…', 'info');
+    window.location.href = data.checkoutUrl;   // → HitPay (FPX/kad)
+    return;
   } catch (err) {
     banner('Ralat: ' + err.message, 'error');
     btn.disabled = false;
     btn.textContent = `Pay RM ${grandTotal.toFixed(2)} →`;
   }
 }
+
+// Nota: fulfillment (aktif pakej/plan/KOB/order + resit + notifikasi) kini
+// dikendalikan oleh Edge Function payments-webhook selepas gateway sahkan bayaran.
+// Lihat supabase/functions/payments-webhook/index.ts
 
 async function cancelAll() {
   if (!confirm('Pasti nak batal semua bayaran tertunggak?')) return;
@@ -569,7 +392,7 @@ function viewReceiptPDF(id) {
   const r = (window._receipts || []).find(x => x.id === id);
   if (!r) return;
 
-  const methodLabels = { fpx: 'FPX Online Banking', card: 'Credit/Debit Card', transfer: 'Bank Transfer', ghl: 'GHL Payment', manual: 'Manual' };
+  const methodLabels = { fpx: 'FPX Online Banking', card: 'Credit/Debit Card', transfer: 'Bank Transfer', ghl: 'GHL Payment', manual: 'Manual', gateway: 'Online (FPX/Kad)' };
 
   const modal = document.createElement('div');
   modal.id = 'pdf-modal';
@@ -673,7 +496,7 @@ async function loadReceipts() {
     limit: 50,
   }).catch(() => []);
 
-  const methodLabels = { fpx: 'FPX Online Banking', card: 'Credit/Debit Card', transfer: 'Bank Transfer', ghl: 'GHL Payment', manual: 'Manual' };
+  const methodLabels = { fpx: 'FPX Online Banking', card: 'Credit/Debit Card', transfer: 'Bank Transfer', ghl: 'GHL Payment', manual: 'Manual', gateway: 'Online (FPX/Kad)' };
 
   window._receipts = receipts;
 
@@ -704,9 +527,37 @@ async function loadReceipts() {
     : '<div class="bg-white rounded-xl border border-ink/10 p-6 text-center text-ink/40 text-sm">Tiada resit lagi</div>';
 }
 
+// Selepas pesakit kembali dari gateway (redirect ?ref=RCP-...), sahkan status.
+// Webhook mungkin ambil 1-2 saat untuk fulfill, jadi poll beberapa kali.
+async function handlePaymentReturn() {
+  const ref = new URLSearchParams(location.search).get('ref');
+  if (!ref) return;
+  // Bersihkan ?ref dari URL supaya refresh tak ulang
+  try { history.replaceState(null, '', location.pathname); } catch (_) {}
+  banner('Mengesahkan bayaran anda…', 'info');
+  for (let i = 0; i < 8; i++) {
+    const rows = await dbQuery('psy_payments', { eq: { receipt_ref: ref } }).catch(() => []);
+    const p = rows?.[0];
+    if (p?.status === 'completed') {
+      banner(`Pembayaran berjaya! Resit: ${ref}`, 'ok');
+      localStorage.removeItem('isw_pending_payment');
+      // Kalau ada pesanan shop, kosongkan troli (dulu dibuat client, kini server)
+      if ((p.items || []).some(it => it.type === 'shop_order') && typeof clearCart === 'function') clearCart();
+      return;
+    }
+    if (p?.status === 'failed') {
+      banner('Pembayaran gagal atau dibatalkan. Sila cuba lagi.', 'error');
+      return;
+    }
+    await new Promise(r => setTimeout(r, 1500));
+  }
+  banner('Bayaran sedang diproses. Status akan dikemas kini sebentar lagi.', 'info');
+}
+
 (async () => {
   const user = await initPatient('payment', 'Selesaikan bayaran · resit');
   if (!user) return;
+  await handlePaymentReturn();
   loadPayments();
 })();
 </script>
