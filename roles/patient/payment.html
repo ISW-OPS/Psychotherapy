@@ -32,6 +32,11 @@
       border-radius: 0 !important;
     }
   }
+  /* Stepper + spinner untuk aliran checkout */
+  .step-line { height:2px; flex:1; background:#DCE6F3; border-radius:2px; }
+  .step-line.done { background:#1B4E9C; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { animation: spin .9s linear infinite; }
 </style>
 </head>
 <body class="min-h-screen">
@@ -46,41 +51,111 @@
     <main class="main-content flex-1 min-w-0">
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
-      <div class="p-4 md:p-8 space-y-6">
-          <!-- Invoice / Checkout Section -->
-          <div id="checkout-section">
+      <div class="p-4 md:p-8">
 
-            <!-- Summary -->
-            <div id="invoice-box" class="bg-white rounded-xl p-5 mb-6 border border-ink/10">
-              <div id="invoice-content" class="text-sm">
-                <p class="text-ink/60 text-center py-4">Tiada invois belum bayar</p>
-              </div>
+        <!-- Stepper -->
+        <div id="stepper" class="hidden items-center gap-2 max-w-xl mb-6">
+          <div class="flex flex-col items-center gap-1 shrink-0"><div id="dot-1" class="w-8 h-8 rounded-full bg-navy text-white grid place-items-center text-sm font-semibold">1</div><span class="text-[11px] text-ink/60">Semakan</span></div>
+          <div id="ln-1" class="step-line"></div>
+          <div class="flex flex-col items-center gap-1 shrink-0"><div id="dot-2" class="w-8 h-8 rounded-full bg-ink/10 text-ink/50 grid place-items-center text-sm font-semibold">2</div><span class="text-[11px] text-ink/60">Pembayaran</span></div>
+          <div id="ln-2" class="step-line"></div>
+          <div class="flex flex-col items-center gap-1 shrink-0"><div id="dot-3" class="w-8 h-8 rounded-full bg-ink/10 text-ink/50 grid place-items-center text-sm font-semibold">3</div><span class="text-[11px] text-ink/60">Selesai</span></div>
+        </div>
+
+        <!-- Kosong -->
+        <div id="view-empty" class="hidden bg-white rounded-xl p-8 border border-ink/10 text-center">
+          <div class="text-4xl mb-2">✅</div>
+          <p class="text-green-dark font-semibold">Tiada bayaran tertunggak</p>
+          <p class="text-sm text-ink/50 mt-1">Semua invois anda telah dijelaskan.</p>
+        </div>
+
+        <!-- STEP 1: Semakan -->
+        <section id="view-review" class="hidden">
+         <div class="grid lg:grid-cols-3 gap-6">
+          <div class="lg:col-span-2 space-y-4">
+            <div class="bg-white rounded-xl p-5 border border-ink/10">
+              <h2 class="font-bold text-navy-dark mb-4">Ringkasan Pesanan</h2>
+              <div id="review-items" class="divide-y divide-ink/10"></div>
             </div>
-
-            <!-- Payment Methods -->
-            <div id="payment-methods" class="hidden">
-              <h3 class="font-semibold mb-2">Kaedah pembayaran</h3>
-              <div class="border-2 border-navy/20 bg-navy-light rounded-lg p-3 mb-6 text-sm text-ink/70">
-                🔒 Anda akan dialihkan ke halaman pembayaran selamat untuk pilih
-                <span class="font-semibold">FPX Online Banking</span> atau
-                <span class="font-semibold">Kad Kredit/Debit</span>.
+            <button onclick="cancelAll()" class="text-sm text-terracotta font-semibold hover:underline">✕ Batal semua bayaran tertunggak</button>
+          </div>
+          <aside>
+            <div class="bg-white rounded-xl p-5 border border-ink/10">
+              <h2 class="font-bold text-navy-dark mb-4">Jumlah</h2>
+              <div class="flex justify-between text-sm"><span class="text-ink/60">Subjumlah</span><span id="rv-subtotal">RM 0.00</span></div>
+              <div class="bg-navy-light rounded-xl p-4 text-center mt-4">
+                <div class="text-xs text-ink/60">Jumlah Bayaran</div>
+                <div id="rv-total" class="text-3xl font-bold text-navy mt-0.5">RM 0.00</div>
+                <div class="text-[11px] text-ink/50 mt-0.5">Termasuk 0% SST</div>
               </div>
+              <label class="flex items-start gap-2 mt-4 text-xs text-ink/70 cursor-pointer">
+                <input id="agree" type="checkbox" class="w-4 h-4 accent-navy mt-0.5" onchange="setAgree(this.checked)">
+                <span>Saya sahkan maklumat tepat & bersetuju dengan <span class="text-navy font-semibold">terma & syarat</span>. Bayaran tidak boleh dikembalikan.</span>
+              </label>
+              <button id="btn-proceed" disabled onclick="showStep('method')" class="w-full mt-4 bg-navy text-white py-3 rounded-lg font-semibold hover:bg-navy-dark disabled:opacity-40 disabled:cursor-not-allowed">Teruskan ke Pembayaran →</button>
+            </div>
+          </aside>
+         </div>
+        </section>
 
-              <button onclick="processPayment()" id="btn-pay" class="w-full bg-navy text-white py-3 rounded-lg font-semibold text-base hover:bg-navy-dark">
-                Pay RM 0 →
-              </button>
-
-              <button onclick="cancelAll()" class="w-full mt-2 border border-terracotta text-terracotta py-2.5 rounded-lg text-sm font-semibold hover:bg-terracotta hover:text-white">
-                Batal Semua
-              </button>
+        <!-- STEP 2: Pembayaran -->
+        <section id="view-method" class="hidden">
+         <div class="grid lg:grid-cols-3 gap-6">
+          <div class="lg:col-span-2 space-y-5">
+            <div class="bg-white rounded-xl p-5 border border-ink/10">
+              <h2 class="font-bold text-navy-dark mb-1">Kaedah Pembayaran</h2>
+              <p class="text-sm text-ink/60 mb-4">Anda akan dialihkan ke halaman pembayaran <span class="font-semibold">selamat</span> untuk memilih kaedah & selesaikan bayaran.</p>
+              <div class="grid sm:grid-cols-2 gap-2.5">
+                <div class="border border-ink/15 rounded-lg p-3 text-sm flex items-center gap-2">💳 FPX Online Banking</div>
+                <div class="border border-ink/15 rounded-lg p-3 text-sm flex items-center gap-2">💳 Kad Kredit / Debit</div>
+                <div class="border border-ink/15 rounded-lg p-3 text-sm flex items-center gap-2">📱 E-Wallet (GrabPay / DuitNow)</div>
+                <div class="border border-ink/15 rounded-lg p-3 text-sm flex items-center gap-2">🕒 Beli Sekarang Bayar Kemudian</div>
+              </div>
+              <div class="mt-4 flex items-center gap-2 text-xs text-ink/50 border border-ink/10 rounded-lg p-3">🔒 Pembayaran disulitkan & diproses oleh gateway berlesen.</div>
+            </div>
+            <div class="flex justify-between items-center">
+              <button onclick="showStep('review')" class="text-sm text-navy font-semibold">← Kembali</button>
+              <button id="btn-pay" onclick="processPayment()" class="bg-navy text-white px-8 py-3 rounded-lg font-semibold hover:bg-navy-dark">🔒 Bayar <span id="pay-amt">RM 0.00</span> →</button>
             </div>
           </div>
+          <aside>
+            <div class="bg-white rounded-xl p-5 border border-ink/10">
+              <h2 class="font-bold text-navy-dark mb-4">Ringkasan</h2>
+              <div id="method-items" class="text-sm space-y-1.5"></div>
+              <div class="flex justify-between font-bold text-base border-t border-ink/10 pt-2 mt-2"><span>Jumlah</span><span id="mt-total" class="text-navy">RM 0.00</span></div>
+            </div>
+          </aside>
+         </div>
+        </section>
 
-          <!-- Receipt history -->
-          <div>
-            <h3 class="font-bold text-lg mb-3">Resit Terdahulu</h3>
-            <div id="receipts-list" class="space-y-3"></div>
+        <!-- STEP 3: Memproses (bila balik dari gateway) -->
+        <section id="view-processing" class="hidden max-w-xl mx-auto">
+          <div class="bg-white rounded-xl p-8 border border-ink/10 text-center">
+            <div class="w-16 h-16 mx-auto rounded-full border-4 border-navy/20 border-t-navy spin mb-4"></div>
+            <h2 class="text-lg font-bold text-navy-dark">Mengesahkan Pembayaran…</h2>
+            <p class="text-sm text-ink/60 mt-1">Sila tunggu sebentar. Jangan tutup tetingkap ini.</p>
           </div>
+        </section>
+
+        <!-- STEP 4: Selesai -->
+        <section id="view-success" class="hidden max-w-xl mx-auto">
+          <div class="bg-white rounded-xl p-8 border border-ink/10 text-center">
+            <div class="w-16 h-16 mx-auto rounded-full bg-green text-white grid place-items-center text-3xl mb-3">✓</div>
+            <h2 class="text-2xl font-bold text-navy-dark">Pembayaran Berjaya!</h2>
+            <p class="text-sm text-ink/60 mt-1">Terima kasih, bayaran anda telah diterima.</p>
+            <div id="success-body" class="bg-cream/60 rounded-xl p-5 mt-5 text-sm text-left space-y-2.5"></div>
+            <div class="grid sm:grid-cols-2 gap-2 mt-5">
+              <button id="success-pdf" class="border border-navy/30 text-navy rounded-lg py-2.5 text-sm font-semibold hover:bg-navy-light">📄 Lihat Resit</button>
+              <a href="dashboard.html" class="bg-navy text-white rounded-lg py-2.5 text-sm font-semibold hover:bg-navy-dark grid place-items-center">Ke Papan Pemuka →</a>
+            </div>
+          </div>
+        </section>
+
+        <!-- Resit Terdahulu -->
+        <div class="mt-8">
+          <h3 class="font-bold text-lg mb-3">Resit Terdahulu</h3>
+          <div id="receipts-list" class="space-y-3"></div>
+        </div>
       </div>
     </main>
   </div>
@@ -263,54 +338,84 @@ async function loadPayments() {
     });
   }
 
-  renderInvoice();
+  renderReview();
   loadReceipts();
 }
 
-function renderInvoice() {
-  const box = document.getElementById('invoice-content');
-  const methods = document.getElementById('payment-methods');
+const money = (n) => 'RM ' + Number(n || 0).toFixed(2);
+const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+const VIEWS = ['view-empty', 'view-review', 'view-method', 'view-processing', 'view-success'];
 
-  if (pendingItems.length === 0) {
-    box.innerHTML = '<p class="text-green-dark text-center py-4 font-semibold">✓ Tiada bayaran tertunggak</p>';
-    methods.classList.add('hidden');
-    return;
+// Papar satu langkah + kemas kini stepper.
+function showStep(name) {
+  VIEWS.forEach(v => document.getElementById(v).classList.add('hidden'));
+  const view = document.getElementById('view-' + name);
+  if (view) view.classList.remove('hidden');
+  const stepper = document.getElementById('stepper');
+  if (name === 'empty') { stepper.classList.add('hidden'); stepper.classList.remove('flex'); return; }
+  stepper.classList.remove('hidden'); stepper.classList.add('flex');
+  const at = { review: 1, method: 2, processing: 2, success: 3 }[name] || 1;
+  const on = (id, active) => { const el = document.getElementById(id); if (el) el.className = 'w-8 h-8 rounded-full grid place-items-center text-sm font-semibold ' + (active ? 'bg-navy text-white' : 'bg-ink/10 text-ink/50'); };
+  const line = (id, done) => { const el = document.getElementById(id); if (el) el.className = 'step-line' + (done ? ' done' : ''); };
+  on('dot-1', at >= 1); on('dot-2', at >= 2); on('dot-3', at >= 3);
+  line('ln-1', at >= 2); line('ln-2', at >= 3);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function setAgree(v) { document.getElementById('btn-proceed').disabled = !v; }
+
+// Satu baris item dalam Semakan (generik — pelbagai jenis bayaran).
+function lineItemHtml(item) {
+  let extra = '';
+  if (item.type === 'shop_order') {
+    extra = `<div class="text-xs text-ink/50 mt-0.5">${item.subtitle || ''}</div>` +
+      (item.deliveryFee > 0
+        ? `<div class="flex justify-between text-ink/60 text-xs mt-0.5"><span>Penghantaran (${item.deliveryMethod === 'pos' ? 'Courier' : 'Pickup'})</span><span>${money(item.deliveryFee)}</span></div>`
+        : `<div class="text-xs text-ink/50 mt-0.5">Pickup Konsultasi · Penghantaran Percuma</div>`);
   }
+  return `<div class="py-3 first:pt-0 last:pb-0">
+    <div class="flex justify-between gap-3">
+      <span class="text-sm">${item.title}${item.date ? ' · <span class="text-ink/50">' + item.date + '</span>' : ''}</span>
+      <span class="font-semibold text-sm whitespace-nowrap">${money(item.amount)}</span>
+    </div>${extra}
+  </div>`;
+}
 
-  const subtotal = pendingItems.reduce((s, i) => s + i.amount, 0);
-  grandTotal = subtotal;
+// Render Semakan + Ringkasan (ganti renderInvoice lama).
+function renderReview() {
+  if (pendingItems.length === 0) { showStep('empty'); return; }
+  grandTotal = pendingItems.reduce((s, i) => s + i.amount, 0);
+  document.getElementById('review-items').innerHTML = pendingItems.map(lineItemHtml).join('');
+  document.getElementById('method-items').innerHTML = pendingItems.map(i =>
+    `<div class="flex justify-between gap-2"><span class="text-ink/60 truncate">${i.title}</span><span class="whitespace-nowrap">${money(i.amount)}</span></div>`).join('');
+  setText('rv-subtotal', money(grandTotal));
+  setText('rv-total', money(grandTotal));
+  setText('mt-total', money(grandTotal));
+  setText('pay-amt', money(grandTotal));
+  const agree = document.getElementById('agree'); if (agree) { agree.checked = false; }
+  document.getElementById('btn-proceed').disabled = true;
+  showStep('review');
+}
 
-  let html = `<div class="font-semibold mb-3">Ringkasan bayaran (${pendingItems.length} invois belum bayar)</div>`;
-
-  pendingItems.forEach(item => {
-    const sub = item.type === 'shop_order' ? `
-      <div class="text-xs text-ink/50 mt-0.5 mb-1">${item.subtitle || ''}</div>
-      ${item.deliveryFee > 0 ? `<div class="flex justify-between text-ink/60 text-xs py-0.5"><span>Penghantaran (${item.deliveryMethod === 'pos' ? 'Courier' : 'Pickup'})</span><span>RM ${item.deliveryFee.toFixed(2)}</span></div>` : `<div class="text-xs text-ink/50">Pickup Konsultasi · Penghantaran Percuma</div>`}` : '';
-    html += `<div class="py-1">
-      <div class="flex justify-between">
-        <span>${item.title}${item.date ? ' · ' + item.date : ''}</span>
-        <span class="font-semibold">RM ${item.amount.toFixed(2)}</span>
-      </div>${sub}
-    </div>`;
-  });
-
-  html += `
-    <div class="flex justify-between pt-3 mt-2 border-t border-ink/20">
-      <span class="font-bold text-base">Jumlah</span>
-      <span class="font-bold text-base text-navy">RM ${grandTotal.toFixed(2)}</span>
-    </div>
-  `;
-
-  box.innerHTML = html;
-  methods.classList.remove('hidden');
-  document.getElementById('btn-pay').textContent = `Pay RM ${grandTotal.toFixed(2)} →`;
+// Papar resit kejayaan selepas gateway sahkan.
+function renderSuccess(p) {
+  const methodLabels = { fpx: 'FPX Online Banking', card: 'Kad Kredit/Debit', transfer: 'Bank Transfer', ghl: 'GHL Payment', manual: 'Manual', gateway: 'Online (FPX/Kad)' };
+  document.getElementById('success-body').innerHTML = `
+    <div class="flex justify-between"><span class="text-ink/50">No. Resit</span><span class="font-semibold">${p.receipt_ref}</span></div>
+    <div class="flex justify-between"><span class="text-ink/50">Tarikh</span><span class="font-semibold">${new Date(p.paid_at || Date.now()).toLocaleString('ms-MY')}</span></div>
+    <div class="flex justify-between"><span class="text-ink/50">Kaedah</span><span class="font-semibold">${methodLabels[p.payment_method] || p.payment_method || '—'}</span></div>
+    <div class="flex justify-between"><span class="text-ink/50">Jumlah Dibayar</span><span class="font-bold text-green-dark">${money(p.total)}</span></div>
+    <div class="flex justify-between items-center"><span class="text-ink/50">Status</span><span class="text-xs bg-green-light text-green-dark rounded-full px-2.5 py-1 font-semibold">DIBAYAR ✓</span></div>`;
+  const pdfBtn = document.getElementById('success-pdf');
+  if (pdfBtn) pdfBtn.onclick = () => viewReceiptPDF(p.id);
+  showStep('success');
 }
 
 async function processPayment() {
   if (pendingItems.length === 0) return;
   const btn = document.getElementById('btn-pay');
   btn.disabled = true;
-  btn.textContent = 'Memproses...';
+  btn.innerHTML = 'Memproses…';
 
   try {
     // CRITICAL: Fresh DB check — prevent duplicate package subscription
@@ -349,7 +454,7 @@ async function processPayment() {
   } catch (err) {
     banner('Ralat: ' + err.message, 'error');
     btn.disabled = false;
-    btn.textContent = `Pay RM ${grandTotal.toFixed(2)} →`;
+    btn.innerHTML = `🔒 Bayar ${money(grandTotal)} →`;
   }
 }
 
@@ -531,34 +636,36 @@ async function loadReceipts() {
 // Webhook mungkin ambil 1-2 saat untuk fulfill, jadi poll beberapa kali.
 async function handlePaymentReturn() {
   const ref = new URLSearchParams(location.search).get('ref');
-  if (!ref) return;
+  if (!ref) return false;
   // Bersihkan ?ref dari URL supaya refresh tak ulang
   try { history.replaceState(null, '', location.pathname); } catch (_) {}
-  banner('Mengesahkan bayaran anda…', 'info');
+  showStep('processing');
   for (let i = 0; i < 8; i++) {
     const rows = await dbQuery('psy_payments', { eq: { receipt_ref: ref } }).catch(() => []);
     const p = rows?.[0];
     if (p?.status === 'completed') {
-      banner(`Pembayaran berjaya! Resit: ${ref}`, 'ok');
       localStorage.removeItem('isw_pending_payment');
       // Kalau ada pesanan shop, kosongkan troli (dulu dibuat client, kini server)
       if ((p.items || []).some(it => it.type === 'shop_order') && typeof clearCart === 'function') clearCart();
-      return;
+      renderSuccess(p);
+      return true;
     }
     if (p?.status === 'failed') {
       banner('Pembayaran gagal atau dibatalkan. Sila cuba lagi.', 'error');
-      return;
+      return false;   // jatuh ke Semakan supaya boleh cuba lagi
     }
     await new Promise(r => setTimeout(r, 1500));
   }
   banner('Bayaran sedang diproses. Status akan dikemas kini sebentar lagi.', 'info');
+  return true;   // kekal di view processing
 }
 
 (async () => {
   const user = await initPatient('payment', 'Selesaikan bayaran · resit');
   if (!user) return;
-  await handlePaymentReturn();
-  loadPayments();
+  const handled = await handlePaymentReturn();
+  if (!handled) await loadPayments();
+  else await loadReceipts();
 })();
 </script>
 </body>

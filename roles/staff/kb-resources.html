@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Semua Sumber</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+.kb-card{background:#fff;border:1px solid rgba(60,79,92,.10);border-radius:1rem;}
+.kb-row:hover{background:rgba(60,79,92,.03);}
+.kb-sel{border:1px solid rgba(60,79,92,.15);border-radius:.6rem;padding:.5rem .7rem;font-size:.8rem;background:#fff;color:#3C4F5C;}
+.kb-menu{position:absolute;right:0;top:100%;z-index:30;min-width:180px;}
+</style>
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📖</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+<div class="flex min-h-screen">
+<aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+<main class="main-content flex-1 min-w-0">
+<header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+<div class="p-4 md:p-8 space-y-5">
+  <div class="flex flex-col md:flex-row md:items-end justify-between gap-3">
+    <div>
+      <h1 class="text-2xl font-bold text-ink">Semua Sumber</h1>
+      <p class="text-sm text-ink/55 mt-1">Layari, cari dan akses semua dokumen dalam Knowledge Hub.</p>
+    </div>
+    <a href="kb-upload.html" id="btn-upload"
+      class="hidden self-start md:self-auto whitespace-nowrap bg-navy text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-dark">+ Muat Naik Sumber</a>
+  </div>
+
+  <div class="kb-card p-4 space-y-3">
+    <div class="relative">
+      <span class="absolute left-3 top-1/2 -translate-y-1/2 text-ink/40">🔍</span>
+      <input id="f-search" type="text" placeholder="Cari sumber..."
+        class="w-full pl-9 pr-3 py-2.5 rounded-xl border border-ink/15 text-sm focus:outline-none focus:border-navy/40">
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+      <select id="f-cat" class="kb-sel"><option value="">Semua Kategori</option></select>
+      <select id="f-type" class="kb-sel"><option value="">Semua Jenis</option></select>
+      <select id="f-vis" class="kb-sel">
+        <option value="">Semua Visibiliti</option>
+        <option value="public">Umum</option><option value="role">Peranan</option>
+        <option value="user">Orang Tertentu</option><option value="private">Peribadi</option>
+      </select>
+      <button id="f-clear" class="text-xs text-navy font-semibold px-2">Kosongkan</button>
+      <div class="ml-auto flex items-center gap-2">
+        <select id="f-sort" class="kb-sel">
+          <option value="updated">Terkini</option>
+          <option value="title">Nama A–Z</option>
+          <option value="views">Paling Dilihat</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="kb-card overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-[11px] uppercase text-ink/50 border-b border-ink/10 bg-ink/[0.015]">
+            <th class="px-4 py-3 font-semibold">Nama</th>
+            <th class="px-3 py-3 font-semibold">Kategori</th>
+            <th class="px-3 py-3 font-semibold">Jenis</th>
+            <th class="px-3 py-3 font-semibold hidden md:table-cell">Dikemaskini</th>
+            <th class="px-3 py-3 font-semibold hidden lg:table-cell">Saiz</th>
+            <th class="px-3 py-3 font-semibold">Visibiliti</th>
+            <th class="px-3 py-3 font-semibold text-right">Tindakan</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"><tr><td colspan="7" class="text-center text-xs text-ink/35 py-10">Memuatkan...</td></tr></tbody>
+      </table>
+    </div>
+    <div class="px-4 py-3 border-t border-ink/8 flex items-center justify-between gap-3 flex-wrap">
+      <span id="count-label" class="text-xs text-ink/50"></span>
+      <div id="pager" class="flex items-center gap-1"></div>
+    </div>
+  </div>
+</div>
+</main>
+</div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script src="_kb.js"></script>
+<script>
+const PAGE_SIZE = 10;
+let ALL = [], BM = { set: new Set() };
+const state = { q: '', cat: '', type: '', vis: '', sort: 'updated', page: 1 };
+let openMenu = null;
+
+function applyFilters() {
+  let list = ALL.slice();
+  if (state.q) {
+    const q = state.q.toLowerCase();
+    list = list.filter(r =>
+      (r.title || '').toLowerCase().includes(q) ||
+      (r.description || '').toLowerCase().includes(q) ||
+      (r.tags || []).some(t => t.toLowerCase().includes(q)) ||
+      (r.category?.name || '').toLowerCase().includes(q));
+  }
+  if (state.cat) list = list.filter(r => r.category_id === state.cat);
+  if (state.type) list = list.filter(r => r.res_type === state.type);
+  if (state.vis) list = list.filter(r => r.visibility === state.vis);
+  if (state.sort === 'title') list.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  else if (state.sort === 'views') list.sort((a, b) => (b.view_count || 0) - (a.view_count || 0));
+  else list.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+  return list;
+}
+
+function render() {
+  const list = applyFilters();
+  const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+  if (state.page > pages) state.page = pages;
+  const start = (state.page - 1) * PAGE_SIZE;
+  const rows = list.slice(start, start + PAGE_SIZE);
+  const canEdit = kbCanAuthor(), canDel = kbCanDelete();
+
+  document.getElementById('tbody').innerHTML = rows.length ? rows.map(r => {
+    const t = kbType(r.res_type), v = kbVis(r.visibility), cat = r.category;
+    const marked = BM.set.has(r.id);
+    return `<tr class="kb-row border-b border-ink/5">
+      <td class="px-4 py-3">
+        <a href="kb-detail.html?id=${r.id}" class="flex items-center gap-3 no-underline">
+          <span class="text-xl flex-shrink-0">${t.icon}</span>
+          <div class="min-w-0"><div class="font-semibold text-ink truncate max-w-[240px]">${kbEsc(r.title)}</div>
+          <div class="text-[11px] text-ink/45 truncate max-w-[240px]">${kbEsc(r.description||'')}</div></div>
+        </a>
+      </td>
+      <td class="px-3 py-3">${cat ? `<span class="chip ${kbCatCls(cat.color)} text-[10px]">${kbEsc(cat.name)}</span>` : '—'}</td>
+      <td class="px-3 py-3 text-xs text-ink/60">${t.ext}</td>
+      <td class="px-3 py-3 text-xs text-ink/55 hidden md:table-cell whitespace-nowrap">${timeAgo(r.updated_at)}</td>
+      <td class="px-3 py-3 text-xs text-ink/55 hidden lg:table-cell whitespace-nowrap">${kbFileSize(r.file_size)}</td>
+      <td class="px-3 py-3"><span class="chip ${v.cls} text-[10px]">${v.icon} ${v.label}</span></td>
+      <td class="px-3 py-3 text-right relative">
+        <button onclick="rowMenu(event,'${r.id}')" class="px-2 py-1 rounded-lg hover:bg-ink/5 text-ink/50">⋮</button>
+        <div id="menu-${r.id}" class="hidden kb-menu kb-card shadow-lg text-left text-[13px] overflow-hidden">
+          <a href="kb-detail.html?id=${r.id}" class="block px-4 py-2 hover:bg-ink/5 no-underline text-ink">👁️ Lihat</a>
+          ${r.file_url || r.external_url ? `<a href="${kbEsc(r.file_url||r.external_url)}" target="_blank" class="block px-4 py-2 hover:bg-ink/5 no-underline text-ink">⬇️ Muat turun</a>` : ''}
+          ${canEdit ? `<a href="kb-upload.html?id=${r.id}" class="block px-4 py-2 hover:bg-ink/5 no-underline text-ink">✏️ Edit</a>` : ''}
+          ${canEdit ? `<button onclick="archiveRes('${r.id}')" class="block w-full text-left px-4 py-2 hover:bg-ink/5 text-ink">🗄️ Arkib</button>` : ''}
+          ${canDel ? `<button onclick="delRes('${r.id}')" class="block w-full text-left px-4 py-2 hover:bg-terracotta/10 text-terracotta">🗑️ Padam</button>` : ''}
+        </div>
+      </td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="7" class="text-center text-xs text-ink/35 py-10">Tiada sumber sepadan.</td></tr>';
+
+  document.getElementById('count-label').textContent =
+    list.length ? `Papar ${start + 1}–${Math.min(start + PAGE_SIZE, list.length)} daripada ${list.length}` : '0 hasil';
+
+  let pg = '';
+  for (let i = 1; i <= pages; i++) {
+    pg += `<button onclick="goPage(${i})" class="w-8 h-8 rounded-lg text-xs font-semibold ${i === state.page ? 'bg-navy text-white' : 'hover:bg-ink/5 text-ink/60'}">${i}</button>`;
+  }
+  document.getElementById('pager').innerHTML = pages > 1 ? pg : '';
+}
+
+function goPage(p) { state.page = p; render(); }
+
+window.rowMenu = function (e, id) {
+  e.stopPropagation();
+  if (openMenu && openMenu !== id) document.getElementById('menu-' + openMenu)?.classList.add('hidden');
+  const m = document.getElementById('menu-' + id);
+  m.classList.toggle('hidden');
+  openMenu = m.classList.contains('hidden') ? null : id;
+};
+document.addEventListener('click', () => { if (openMenu) { document.getElementById('menu-' + openMenu)?.classList.add('hidden'); openMenu = null; } });
+
+window.toggleBm = async function (id, btn) {
+  const on = !BM.set.has(id);
+  if (on) BM.set.add(id); else BM.set.delete(id);
+  btn.textContent = on ? '⭐' : '☆';
+  try { await kbToggleBookmark(id, on); } catch (_) { banner('Gagal simpan bookmark', 'error'); }
+};
+
+window.archiveRes = async function (id) {
+  if (!confirm('Arkibkan sumber ini? Ia akan disembunyikan dari senarai.')) return;
+  try { await dbUpdate('psy_kb_resources', id, { is_archived: true }); ALL = ALL.filter(r => r.id !== id); render(); banner('Diarkibkan.'); }
+  catch (_) { banner('Gagal arkib', 'error'); }
+};
+window.delRes = async function (id) {
+  if (!confirm('Padam sumber ini secara kekal? Tindakan ini tidak boleh diundur.')) return;
+  try { await dbDelete('psy_kb_resources', id); ALL = ALL.filter(r => r.id !== id); render(); banner('Dipadam.'); }
+  catch (_) { banner('Gagal padam', 'error'); }
+};
+
+async function boot() {
+  const u = await initStaff('kb_resources', 'Semua Sumber');
+  if (!u) return;
+  if (kbCanAuthor()) document.getElementById('btn-upload').classList.remove('hidden');
+
+  const params = new URLSearchParams(location.search);
+  state.q = params.get('q') || '';
+  state.cat = params.get('cat') || '';
+  document.getElementById('f-search').value = state.q;
+
+  const [cats, resources, bm] = await Promise.all([
+    kbCategories().catch(() => []),
+    kbResources().catch(() => []),
+    kbMyBookmarkIds().catch(() => ({ set: new Set() })),
+  ]);
+  ALL = resources; BM = bm;
+
+  // populate filters
+  document.getElementById('f-cat').innerHTML = '<option value="">Semua Kategori</option>' +
+    cats.map(c => `<option value="${c.id}" ${c.id === state.cat ? 'selected' : ''}>${kbEsc(c.name)}</option>`).join('');
+  document.getElementById('f-type').innerHTML = '<option value="">Semua Jenis</option>' +
+    Object.entries(KB_TYPES).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
+
+  const bind = (id, key) => document.getElementById(id).addEventListener('change', e => { state[key] = e.target.value; state.page = 1; render(); });
+  bind('f-cat', 'cat'); bind('f-type', 'type'); bind('f-vis', 'vis'); bind('f-sort', 'sort');
+  document.getElementById('f-search').addEventListener('input', e => { state.q = e.target.value; state.page = 1; render(); });
+  document.getElementById('f-clear').addEventListener('click', () => {
+    state.q = state.cat = state.type = state.vis = ''; state.page = 1;
+    document.getElementById('f-search').value = '';
+    ['f-cat', 'f-type', 'f-vis'].forEach(i => document.getElementById(i).value = '');
+    render();
+  });
+
+  render();
+}
+boot();
+</script>
+</body>
+</html>

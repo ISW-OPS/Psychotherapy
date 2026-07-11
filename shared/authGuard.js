@@ -56,6 +56,10 @@ window.PAGE_MODULE = {
   events_admin:     'events',
   auto_messages:    'auto_messages',
   library:          'library',
+  kb:               'kb',
+  kb_dashboard:     'kb', kb_resources: 'kb', kb_categories: 'kb',
+  kb_notes:         'kb', kb_bookmarks: 'kb', kb_training: 'kb',
+  kb_upload:        'kb', kb_admin: 'kb', kb_detail: 'kb', kb_version: 'kb',
 
   // LAPORAN
   governance:       'governance',

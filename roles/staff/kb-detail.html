@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Sumber</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+.kb-card{background:#fff;border:1px solid rgba(60,79,92,.10);border-radius:1rem;}
+.info-row{display:flex;justify-content:space-between;gap:1rem;padding:.55rem 0;border-bottom:1px solid rgba(60,79,92,.06);font-size:.8rem;}
+.info-row:last-child{border-bottom:0;}
+.act-btn{display:flex;align-items:center;justify-content:center;gap:.4rem;padding:.6rem;border:1px solid rgba(60,79,92,.15);border-radius:.6rem;font-size:.78rem;font-weight:600;color:#3C4F5C;background:#fff;transition:all .12s;}
+.act-btn:hover{background:rgba(60,79,92,.04);border-color:var(--rpm);}
+</style>
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📖</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+<div class="flex min-h-screen">
+<aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+<main class="main-content flex-1 min-w-0">
+<header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+<div class="p-4 md:p-8">
+  <a href="kb-resources.html" class="text-xs text-navy font-semibold hover:underline">‹ Kembali ke Semua Sumber</a>
+
+  <div id="detail-wrap" class="mt-3"><div class="text-center text-xs text-ink/35 py-16">Memuatkan...</div></div>
+</div>
+</main>
+</div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script src="_kb.js"></script>
+<script>
+let RES = null, MARKED = false;
+
+function ytEmbed(url) {
+  const m = (url || '').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([\w-]+)/);
+  return m ? `https://www.youtube.com/embed/${m[1]}` : null;
+}
+
+function viewerHtml(r) {
+  const src = r.file_url || r.external_url || '';
+  if (r.res_type === 'video') {
+    const yt = ytEmbed(src);
+    if (yt) return `<iframe src="${yt}" class="w-full h-[70vh] rounded-xl" allowfullscreen frameborder="0"></iframe>`;
+    if (r.file_url) return `<video src="${kbEsc(r.file_url)}" controls class="w-full max-h-[70vh] rounded-xl bg-black"></video>`;
+  }
+  if (r.res_type === 'image' && src) return `<img src="${kbEsc(src)}" class="w-full rounded-xl" alt="${kbEsc(r.title)}">`;
+  if (r.res_type === 'pdf' && r.file_url) return `<iframe src="${kbEsc(r.file_url)}" class="w-full h-[75vh] rounded-xl border border-ink/10"></iframe>`;
+  if (r.res_type === 'link' || (src && !r.file_url)) {
+    return `<div class="flex flex-col items-center justify-center h-[40vh] text-center gap-3">
+      <div class="text-5xl">🔗</div><p class="text-sm text-ink/60">Sumber ini ialah pautan luaran.</p>
+      <a href="${kbEsc(src)}" target="_blank" class="bg-navy text-white px-5 py-2.5 rounded-xl text-sm font-semibold">Buka Pautan →</a></div>`;
+  }
+  // Office docs — no inline preview; offer download / Google viewer
+  if (src) {
+    const gv = `https://docs.google.com/gviewer?url=${encodeURIComponent(src)}&embedded=true`;
+    return `<iframe src="${gv}" class="w-full h-[70vh] rounded-xl border border-ink/10"></iframe>
+      <p class="text-[11px] text-ink/40 mt-2 text-center">Pratonton melalui Google Viewer. Jika tidak dipapar, <a href="${kbEsc(src)}" target="_blank" class="text-navy font-semibold">muat turun fail</a>.</p>`;
+  }
+  return `<div class="flex flex-col items-center justify-center h-[40vh] text-center gap-2 text-ink/40"><div class="text-5xl">📄</div><p class="text-sm">Tiada fail dilampirkan.</p></div>`;
+}
+
+function infoRow(icon, label, val) {
+  return `<div class="info-row"><span class="text-ink/55">${icon} ${label}</span><span class="text-ink font-medium text-right">${val}</span></div>`;
+}
+
+function render(r) {
+  RES = r;
+  const t = kbType(r.res_type), v = kbVis(r.visibility), cat = r.category;
+  const src = r.file_url || r.external_url;
+  const tags = (r.tags || []).map(x => `<span class="chip bg-navy-light text-navy text-[11px]">${kbEsc(x)}</span>`).join(' ');
+  const canEdit = kbCanAuthor();
+
+  document.getElementById('detail-wrap').innerHTML = `
+  <div class="flex flex-col lg:flex-row items-start justify-between gap-4 mt-2">
+    <div class="min-w-0">
+      <div class="flex items-center gap-3">
+        <span class="text-3xl">${t.icon}</span>
+        <h1 class="text-2xl font-bold text-ink">${kbEsc(r.title)}</h1>
+      </div>
+      <div class="flex items-center gap-1.5 flex-wrap mt-2">
+        ${cat ? `<span class="chip ${kbCatCls(cat.color)} text-[11px]">${kbEsc(cat.name)}</span>` : ''}${tags}
+      </div>
+    </div>
+    <div class="flex items-center gap-2 flex-shrink-0">
+      ${src ? `<a href="${kbEsc(src)}" target="_blank" class="act-btn">⬇️ Muat turun</a>` : ''}
+      ${canEdit ? `<a href="kb-upload.html?id=${r.id}" class="act-btn">✏️ Edit</a>` : ''}
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-6 mt-5 items-start">
+    <!-- Viewer -->
+    <div class="kb-card p-4">${viewerHtml(r)}</div>
+
+    <!-- Sidebar -->
+    <div class="space-y-5">
+      <div class="kb-card p-5">
+        <h3 class="font-semibold text-sm text-ink mb-2">Maklumat Sumber</h3>
+        ${infoRow('🏷️', 'Kategori', cat ? kbEsc(cat.name) : '—')}
+        ${infoRow('📎', 'Jenis', t.ext)}
+        ${infoRow('👤', 'Dimuat naik oleh', kbEsc(r.uploader?.full_name || 'Staf'))}
+        ${infoRow('🕒', 'Dimuat naik', formatDateTime(r.created_at))}
+        ${infoRow('💾', 'Saiz', kbFileSize(r.file_size))}
+        ${infoRow('👁️', 'Visibiliti', `<span class="chip ${v.cls} text-[10px]">${v.icon} ${v.label}</span>`)}
+        ${r.description ? `<div class="pt-3 text-xs text-ink/60 leading-relaxed">${kbEsc(r.description)}</div>` : ''}
+      </div>
+
+      <div class="kb-card p-5">
+        <h3 class="font-semibold text-sm text-ink mb-3">Tindakan</h3>
+        <div class="grid grid-cols-2 gap-2">
+          ${src ? `<a href="${kbEsc(src)}" target="_blank" class="act-btn">⬇️ Muat turun</a>` : ''}
+          ${src ? `<a href="${kbEsc(src)}" target="_blank" class="act-btn">⛶ Skrin penuh</a>` : ''}
+          <button onclick="window.print()" class="act-btn">🖨️ Cetak</button>
+          <button onclick="addToNotes()" class="act-btn">📝 Nota Saya</button>
+          <button onclick="reportRes()" class="act-btn text-terracotta border-terracotta/40">🚩 Lapor</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+window.toggleBm = async function () {
+  MARKED = !MARKED;
+  const b = document.getElementById('bm-btn');
+  b.textContent = MARKED ? '⭐ Ditanda' : '☆ Bookmark';
+  b.classList.toggle('border-gold', MARKED); b.classList.toggle('text-gold-dark', MARKED);
+  try { await kbToggleBookmark(RES.id, MARKED); } catch (_) { banner('Gagal simpan', 'error'); }
+};
+
+window.addToNotes = async function () {
+  try {
+    await window.db.from('psy_kb_notes').insert({
+      user_id: window.currentUser.id, resource_id: RES.id, title: RES.title,
+      body: RES.description || '', label: 'Reference',
+    });
+    banner('Ditambah ke Nota Saya.');
+  } catch (_) { banner('Gagal tambah nota', 'error'); }
+};
+
+window.reportRes = function () {
+  const msg = prompt('Laporkan masalah dengan sumber ini (cth: maklumat lapuk, pautan rosak):');
+  if (msg && msg.trim()) { auditLog?.('kb_report', RES.id, { title: RES.title, msg }); banner('Terima kasih. Laporan dihantar.'); }
+};
+
+async function boot() {
+  const u = await initStaff('kb_detail', 'Sumber', 'kb');
+  if (!u) return;
+  const id = new URLSearchParams(location.search).get('id');
+  if (!id) { document.getElementById('detail-wrap').innerHTML = '<p class="text-sm text-ink/50 py-10 text-center">Sumber tidak dijumpai.</p>'; return; }
+
+  const [{ data: r }, bm] = await Promise.all([
+    window.db.from('psy_kb_resources')
+      .select('*, category:psy_kb_categories(id,name,slug,color,icon), uploader:uploaded_by(id,full_name)')
+      .eq('id', id).single(),
+    kbMyBookmarkIds().catch(() => ({ set: new Set() })),
+  ]);
+
+  if (!r) { document.getElementById('detail-wrap').innerHTML = '<p class="text-sm text-ink/50 py-10 text-center">Sumber tidak dijumpai.</p>'; return; }
+  MARKED = bm.set.has(r.id);
+
+  render(r);
+  kbRecordView(id);
+}
+boot();
+</script>
+</body>
+</html>

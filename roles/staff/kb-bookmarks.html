@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Bookmark & Terkini</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+.kb-card{background:#fff;border:1px solid rgba(60,79,92,.10);border-radius:1rem;}
+.kb-row:hover{background:rgba(60,79,92,.03);}
+.tab-btn{padding:.6rem .2rem;font-size:.85rem;font-weight:600;color:rgba(60,79,92,.55);border-bottom:2px solid transparent;cursor:pointer;}
+.tab-btn.active{color:var(--rpm);border-bottom-color:var(--rpm);}
+</style>
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📖</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+<div class="flex min-h-screen">
+<aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+<main class="main-content flex-1 min-w-0">
+<header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+<div class="p-4 md:p-8 space-y-5">
+  <div>
+    <div class="text-xs text-ink/40 mb-1"><a href="kb-dashboard.html" class="hover:underline">Knowledge Hub</a> › <span class="text-navy font-semibold">Bookmark & Terkini</span></div>
+    <h1 class="text-2xl font-bold text-ink">Bookmark & Terkini</h1>
+    <p class="text-sm text-ink/55 mt-1">Akses pantas sumber ditanda, baru dilihat dan disematkan.</p>
+  </div>
+
+  <div class="grid grid-cols-1 xl:grid-cols-[1fr_300px] gap-6 items-start">
+    <div class="kb-card overflow-hidden">
+      <div class="flex items-center gap-6 px-5 border-b border-ink/10">
+        <div class="tab-btn active" data-tab="bookmarks" onclick="setTab('bookmarks')">⭐ Bookmark</div>
+        <div class="tab-btn" data-tab="recent" onclick="setTab('recent')">🕑 Baru Dilihat</div>
+        <div class="tab-btn" data-tab="pinned" onclick="setTab('pinned')">📌 Disematkan</div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead><tr class="text-left text-[11px] uppercase text-ink/50 border-b border-ink/10 bg-ink/[0.015]">
+            <th class="px-4 py-3 font-semibold">Tajuk</th>
+            <th class="px-3 py-3 font-semibold">Kategori</th>
+            <th class="px-3 py-3 font-semibold hidden md:table-cell">Jenis</th>
+            <th class="px-3 py-3 font-semibold hidden lg:table-cell" id="th-time">Ditambah</th>
+            <th class="px-3 py-3 font-semibold text-right">Tindakan</th>
+          </tr></thead>
+          <tbody id="tbody"><tr><td colspan="5" class="text-center text-xs text-ink/35 py-10">Memuatkan...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="space-y-5">
+      <div class="kb-card p-5" style="background:var(--rpl)">
+        <div class="text-2xl mb-1">🔖</div>
+        <h3 class="font-semibold text-ink">Pengetahuan Anda, Sentiasa Dekat</h3>
+        <p class="text-xs text-ink/60 mt-1">Tanda & susun sumber penting untuk akses bila-bila masa.</p>
+        <div class="mt-3 text-sm text-ink/70">Jumlah Bookmark: <span id="tot-bm" class="font-bold text-navy text-lg"></span></div>
+      </div>
+      <div class="kb-card p-5">
+        <h3 class="font-semibold text-sm text-ink mb-3">Penapis Pantas</h3>
+        <div id="quick-filters" class="space-y-1.5"></div>
+      </div>
+    </div>
+  </div>
+</div>
+</main>
+</div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script src="_kb.js"></script>
+<script>
+let RES_MAP = {}, BM = { set: new Set(), pinned: new Set() }, VIEWS = [];
+let tab = 'bookmarks';
+
+function rowsFor() {
+  if (tab === 'bookmarks') return [...BM.set].map(id => ({ r: RES_MAP[id], time: null })).filter(x => x.r);
+  if (tab === 'pinned') return [...BM.pinned].map(id => ({ r: RES_MAP[id], time: null })).filter(x => x.r);
+  return VIEWS.map(v => ({ r: RES_MAP[v.resource_id], time: v.viewed_at })).filter(x => x.r);
+}
+
+function render() {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.getElementById('th-time').textContent = tab === 'recent' ? 'Dilihat' : 'Ditambah';
+  const rows = rowsFor();
+  document.getElementById('tbody').innerHTML = rows.length ? rows.map(({ r, time }) => {
+    const t = kbType(r.res_type), cat = r.category, pinned = BM.pinned.has(r.id), marked = BM.set.has(r.id);
+    return `<tr class="kb-row border-b border-ink/5">
+      <td class="px-4 py-3"><a href="kb-detail.html?id=${r.id}" class="flex items-center gap-3 no-underline">
+        <span class="text-xl">${t.icon}</span><div class="min-w-0"><div class="font-semibold text-ink truncate max-w-[220px]">${kbEsc(r.title)}</div>
+        <div class="text-[11px] text-ink/45 truncate max-w-[220px]">${kbEsc(r.description || '')}</div></div></a></td>
+      <td class="px-3 py-3">${cat ? `<span class="chip ${kbCatCls(cat.color)} text-[10px]">${kbEsc(cat.name)}</span>` : '—'}</td>
+      <td class="px-3 py-3 text-xs text-ink/60 hidden md:table-cell">${t.ext}</td>
+      <td class="px-3 py-3 text-xs text-ink/55 hidden lg:table-cell whitespace-nowrap">${time ? timeAgo(time) : (r.updated_at ? formatDate(r.updated_at) : '—')}</td>
+      <td class="px-3 py-3 text-right whitespace-nowrap">
+        <button onclick="togglePin('${r.id}')" title="Pin" class="text-base ${pinned ? '' : 'opacity-40'}">📌</button>
+        <button onclick="toggleBm('${r.id}')" title="Bookmark" class="text-base ml-1">${marked ? '⭐' : '☆'}</button>
+      </td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="5" class="text-center text-xs text-ink/35 py-10">Tiada item.</td></tr>`;
+
+  document.getElementById('tot-bm').textContent = BM.set.size;
+
+  const types = {};
+  [...BM.set].map(id => RES_MAP[id]).filter(Boolean).forEach(r => { types[r.res_type] = (types[r.res_type] || 0) + 1; });
+  document.getElementById('quick-filters').innerHTML =
+    `<a href="#" onclick="setTab('bookmarks');return false" class="flex justify-between items-center py-1.5 text-[13px] text-ink hover:text-navy"><span>⭐ Semua Bookmark</span><span class="font-semibold text-ink/50">${BM.set.size}</span></a>
+     <a href="#" onclick="setTab('recent');return false" class="flex justify-between items-center py-1.5 text-[13px] text-ink hover:text-navy"><span>🕑 Baru Dilihat</span><span class="font-semibold text-ink/50">${VIEWS.length}</span></a>
+     <a href="#" onclick="setTab('pinned');return false" class="flex justify-between items-center py-1.5 text-[13px] text-ink hover:text-navy"><span>📌 Disematkan</span><span class="font-semibold text-ink/50">${BM.pinned.size}</span></a>
+     ${Object.entries(types).map(([k, v]) => `<a href="kb-resources.html?type=${k}" class="flex justify-between items-center py-1.5 text-[13px] text-ink hover:text-navy"><span>${kbType(k).icon} ${kbType(k).label}</span><span class="font-semibold text-ink/50">${v}</span></a>`).join('')}`;
+}
+
+window.setTab = t => { tab = t; render(); };
+window.toggleBm = async id => {
+  const on = !BM.set.has(id);
+  if (on) BM.set.add(id); else { BM.set.delete(id); BM.pinned.delete(id); }
+  try { await kbToggleBookmark(id, on); } catch (_) {}
+  render();
+};
+window.togglePin = async id => {
+  const on = !BM.pinned.has(id);
+  if (on) { BM.pinned.add(id); BM.set.add(id); } else BM.pinned.delete(id);
+  try { await kbTogglePin(id, on); } catch (_) {}
+  render();
+};
+
+async function boot() {
+  const u = await initStaff('kb_bookmarks', 'Bookmark & Terkini');
+  if (!u) return;
+  if (location.hash === '#recent') tab = 'recent';
+  const [resources, bm, views] = await Promise.all([
+    kbResources().catch(() => []),
+    kbMyBookmarkIds().catch(() => ({ set: new Set(), pinned: new Set() })),
+    window.db.from('psy_kb_views').select('resource_id,viewed_at').eq('user_id', u.id).order('viewed_at', { ascending: false }).limit(30).then(r => r.data || []).catch(() => []),
+  ]);
+  RES_MAP = Object.fromEntries(resources.map(r => [r.id, r]));
+  BM = bm; VIEWS = views;
+  render();
+}
+boot();
+</script>
+</body>
+</html>

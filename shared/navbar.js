@@ -160,6 +160,12 @@ const STAFF_NAV_MASTER = [
     ]
   },
   {
+    group: 'PENGETAHUAN', collapsible: true, items: [
+      { id: 'kb', url: 'kb-categories.html', icon: '📖', label: 'Knowledge Base' },
+      { id: 'kb_admin', url: 'kb-admin.html', icon: '⚙️', label: 'Pengurusan KB', saOnly: true },
+    ]
+  },
+  {
     group: 'LAPORAN', collapsible: true, items: [
       { id: 'governance', url: 'governance.html', icon: '📈', label: 'Governance' },
       { id: 'staff_stats', url: 'staff-stats.html', icon: '📊', label: 'Statistik' },
@@ -250,9 +256,14 @@ function renderNavGroup(group, roleKey, activeScreen) {
       <span class="nav-label font-medium">${item.label}</span>
       <span id="nav-badge-${item.id}" class="hidden ml-auto nav-label min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold bg-terracotta text-white flex items-center justify-center"></span>
     </a>`;
+  const isSA = roleKey === 'staff_super_admin' || window.currentUser?.staff_role === 'super_admin';
   const items = group.items.map(item => {
     if (!(item.children && item.children.length)) return flatLink(item);
-    const childActive = item.id === activeScreen || item.children.some(c => c.id === activeScreen);
+    // Tapis anak: saOnly (super_admin sahaja) + RBAC pageAllowed
+    const kids = item.children.filter(c =>
+      (!c.saOnly || isSA) && (isSA || typeof window.pageAllowed !== 'function' || window.pageAllowed(c.id)));
+    if (!kids.length) return flatLink(item);
+    const childActive = item.id === activeScreen || kids.some(c => c.id === activeScreen);
     const expanded = childActive || localStorage.getItem('isw_pnav_' + item.id) === '1';
     return `
       <div>
@@ -267,7 +278,7 @@ function renderNavGroup(group, roleKey, activeScreen) {
           </button>
         </div>
         <div id="pni-${item.id}" class="${expanded ? '' : 'hidden'} space-y-0.5 mt-0.5">
-          ${item.children.map(c => `
+          ${kids.map(c => `
             <a href="${c.url}" title="${c.label}"
               class="nav-item no-underline ${c.id === activeScreen ? 'active' : ''} w-full flex items-center gap-2.5 pl-9 pr-3 py-1.5 rounded-lg text-[13px] text-ink/55 hover:bg-ink/5 transition-colors">
               <span class="nav-label">${c.label}</span>
@@ -364,7 +375,8 @@ function renderNavbar(role, user, navItems, activeScreen) {
       .map(g => ({
         ...g,
         items: g.items.filter(item =>
-          isSA || typeof window.pageAllowed !== 'function' || window.pageAllowed(item.id)
+          (!item.saOnly || isSA) &&
+          (isSA || typeof window.pageAllowed !== 'function' || window.pageAllowed(item.id))
         ),
       }))
       .filter(g => g.items.length > 0);
