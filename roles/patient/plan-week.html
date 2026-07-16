@@ -62,7 +62,7 @@
         </div>
 
         <div id="coaching-schedule-section" class="bg-white rounded-xl p-5 border border-ink/10 hidden">
-          <h3 class="font-bold mb-1 flex items-center gap-2">✅ Bimbingan &amp; Bekalan Minggu Ini</h3>
+          <h3 class="font-bold mb-1 flex items-center gap-2"><span id="uh-guidance">✅ Bimbingan &amp; Bekalan Minggu Ini</span></h3>
           <p class="text-xs text-ink/60 mb-4">Status tugasan yang direkod oleh coach semasa sesi coaching anda.</p>
           <div id="coaching-schedule-view" class="grid md:grid-cols-2 gap-3"></div>
         </div>
@@ -71,12 +71,12 @@
         <div id="tasks-section" class="hidden">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div id="goals-card" class="hidden bg-white rounded-xl p-5 border border-ink/10">
-              <h3 class="font-bold mb-1 flex items-center gap-2">🎯 Goals Minggu Ini</h3>
+              <h3 class="font-bold mb-1 flex items-center gap-2"><span id="uh-goals">🎯 Goals Minggu Ini</span></h3>
               <p class="text-xs text-ink/60 mb-3">Tandakan goals yang telah anda capai.</p>
               <div id="goals-checklist" class="space-y-2"></div>
             </div>
             <div id="homework-card" class="hidden bg-white rounded-xl p-5 border border-ink/10">
-              <h3 class="font-bold mb-1 flex items-center gap-2">📚 Homework Minggu Ini</h3>
+              <h3 class="font-bold mb-1 flex items-center gap-2"><span id="uh-homework">📚 Homework Minggu Ini</span></h3>
               <p class="text-xs text-ink/60 mb-3">Tandakan tugasan yang telah anda siapkan.</p>
               <div id="homework-checklist" class="space-y-2"></div>
             </div>
@@ -87,7 +87,7 @@
         <div class="bg-white rounded-xl p-5 border border-ink/10">
           <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
             <div>
-              <h3 class="font-bold flex items-center gap-2">📎 Dokumen Minggu Ini
+              <h3 class="font-bold flex items-center gap-2"><span id="uh-doc">📎 Dokumen Minggu Ini</span>
                 <span id="wdoc-count" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-ink/8 text-ink/55">0</span>
               </h3>
               <p class="text-xs text-ink/60 mt-0.5">Dokumen dari coach dan muat naik anda sendiri.</p>
@@ -103,7 +103,7 @@
 
         <!-- Feedback Minggu Ini -->
         <div id="feedback-section" class="bg-white rounded-xl p-5 border border-ink/10">
-          <h3 class="font-bold mb-1 flex items-center gap-2">⭐ Feedback Minggu Ini</h3>
+          <h3 class="font-bold mb-1 flex items-center gap-2"><span id="uh-feedback">⭐ Feedback Minggu Ini</span></h3>
           <p class="text-xs text-ink/60 mb-4">Bagaimana minggu rawatan ini bagi anda?</p>
 
           <!-- Submitted state -->
@@ -184,6 +184,40 @@ let weekEnd = null;
 
 function escHtml(s) { const d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
 
+// Pakej harian → label "Hari" & jumlah tempoh ikut bil. hari (bukan duration_weeks).
+function isDailyPlan() { return activePlan?.duration_unit === 'day'; }
+// Label unit ikut bahasa semasa (BM: Hari/Minggu, EN: Day/Week).
+function UNIT() {
+  const en = (typeof window.iswGetLang === 'function') && window.iswGetLang() === 'en';
+  if (isDailyPlan()) return en ? 'Day' : 'Hari';
+  return en ? 'Week' : 'Minggu';
+}
+function planTotalPeriods() {
+  if (isDailyPlan()) return (activePlan?.coaching_schedule?.length) || parseInt(activePlan?.duration) || 7;
+  return activePlan?.duration_weeks || 12;
+}
+
+// Tukar tajuk seksyen "... Minggu Ini" → "... Hari Ini" untuk pakej harian.
+// Sumber teks (BM) frasa penuh supaya glosari i18n boleh terjemah kedua-dua arah.
+const UNIT_HEADERS = {
+  'uh-guidance': ['✅ Bimbingan & Bekalan Minggu Ini', '✅ Bimbingan & Bekalan Hari Ini'],
+  'uh-goals':    ['🎯 Goals Minggu Ini', '🎯 Goals Hari Ini'],
+  'uh-homework': ['📚 Homework Minggu Ini', '📚 Homework Hari Ini'],
+  'uh-doc':      ['📎 Dokumen Minggu Ini', '📎 Dokumen Hari Ini'],
+  'uh-feedback': ['⭐ Feedback Minggu Ini', '⭐ Feedback Hari Ini'],
+};
+function applyUnitHeaders() {
+  // Pakej mingguan kekal statik ("... Minggu Ini") + glosari sedia ada.
+  if (!isDailyPlan()) return;
+  for (const [id, [, day]] of Object.entries(UNIT_HEADERS)) {
+    const el = document.getElementById(id);
+    if (!el || el.dataset.unitSrc === day) continue;
+    el.dataset.unitSrc = day;
+    // Tulis frasa BM sumber "... Hari Ini"; MutationObserver i18n terjemah ikut bahasa.
+    el.textContent = day;
+  }
+}
+
 function parseWeekFromHash() {
   const sp = new URLSearchParams(location.search);
   if (sp.get('week')) return parseInt(sp.get('week'));
@@ -193,25 +227,29 @@ function parseWeekFromHash() {
 
 function navigateWeek(delta) {
   const next = weekNumber + delta;
-  if (next < 1 || next > (activePlan.duration_weeks || 12)) return;
+  if (next < 1 || next > planTotalPeriods()) return;
   const sp = new URLSearchParams(location.search);
   sp.set('week', next);
   location.search = sp.toString();
 }
 
 function updateWeekNav() {
-  const total = activePlan.duration_weeks || 12;
+  const total = planTotalPeriods();
   const crumb = document.getElementById('week-crumb');
   const planCrumb = document.getElementById('plan-name-crumb');
   const btnBack = document.getElementById('btn-back');
   const btnPrev = document.getElementById('btn-prev');
   const btnNext = document.getElementById('btn-next');
-  if (crumb) crumb.textContent = `Minggu ${weekNumber}`;
+  if (crumb) crumb.textContent = `${UNIT()} ${weekNumber}`;
   if (planCrumb) planCrumb.textContent = activePlan.name || 'Pelan Rawatan';
   if (btnBack) {
     const sp = new URLSearchParams(location.search);
     btnBack.href = `plan.html?plan_id=${sp.get('plan_id') || activePlan.id}`;
   }
+  // Label butang nav — ikut bahasa penuh supaya tiada campur BM/EN.
+  const en = (typeof window.iswGetLang === 'function') && window.iswGetLang() === 'en';
+  if (btnPrev) btnPrev.textContent = en ? `← Previous ${UNIT()}` : `← ${UNIT()} Sebelum`;
+  if (btnNext) btnNext.textContent = en ? `Next ${UNIT()} →` : `${UNIT()} Seterusnya →`;
   if (btnPrev) btnPrev.disabled = weekNumber <= 1;
   if (btnNext) btnNext.disabled = weekNumber >= total;
 }
@@ -243,7 +281,7 @@ async function loadWeekDetail() {
     if (pkg?.coaching_schedule?.length) activePlan.coaching_schedule = pkg.coaching_schedule;
   }
 
-  weekNumber = Math.max(1, Math.min(parseWeekFromHash(), activePlan.duration_weeks || 12));
+  weekNumber = Math.max(1, Math.min(parseWeekFromHash(), planTotalPeriods()));
   const range = computeWeekRange(activePlan, weekNumber);
   weekStart = range.start;
   weekEnd = range.end;
@@ -263,6 +301,7 @@ async function loadWeekDetail() {
   weekOverride = (ovr && ovr[0]) || null;
 
   updateWeekNav();
+  applyUnitHeaders();
   renderHero();
   renderCoachNotes();
   renderCoachingSchedule();
@@ -275,9 +314,8 @@ function getWeekCoachingItems() {
   const daily = schedule.filter(item => (item.period === 'day' || item.day) && !item.week);
   let items;
   if (daily.length) {
-    const startDay = (weekNumber - 1) * 7 + 1;
-    const endDay = weekNumber * 7;
-    items = daily.filter(item => Number(item.day) >= startDay && Number(item.day) <= endDay);
+    // Model harian: week_number = indeks hari (D1, D2…). Tunjuk HARI itu sahaja, bukan julat 7 hari.
+    items = daily.filter(item => Number(item.day) === weekNumber);
   } else {
     items = schedule.filter(item => Number(item.week || item.day) === weekNumber);
   }
@@ -468,7 +506,7 @@ function renderHero() {
   };
   const s = statusStyles[status] || statusStyles.unbooked;
   const isCurrent = weekNumber === activePlan.current_week;
-  const totalWeeks = activePlan.duration_weeks || 12;
+  const totalWeeks = planTotalPeriods();
   const pct = Math.round((weekNumber / totalWeeks) * 100);
 
   // Determine if session is in the future
@@ -501,7 +539,7 @@ function renderHero() {
           ${isCurrent ? '<span class="bg-gold text-ink text-[10px] font-bold px-2 py-0.5 rounded-full">SEMASA</span>' : ''}
           <span class="${s.color} text-xs font-semibold flex items-center gap-1">· ${s.icon} ${s.label}</span>
         </div>
-        <h2 class="text-2xl md:text-3xl font-bold text-ink">Minggu ${weekNumber}</h2>
+        <h2 class="text-2xl md:text-3xl font-bold text-ink">${UNIT()} ${weekNumber}</h2>
         <div class="text-sm text-ink/70 mt-1">
           ${sessionDate
             ? `📅 ${sessionDate.toLocaleDateString('ms-MY', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })} · 🕐 ${sessionDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`
@@ -514,7 +552,7 @@ function renderHero() {
     </div>
 
     <div class="mt-4 flex items-center gap-3 text-[11px] text-ink/60">
-      <span>Minggu ${weekNumber}/${totalWeeks}</span>
+      <span>${UNIT()} ${weekNumber}/${totalWeeks}</span>
       <div class="flex-1 bg-ink/10 rounded-full h-1">
         <div class="bg-navy rounded-full h-1 transition-all" style="width: ${pct}%"></div>
       </div>
@@ -933,12 +971,15 @@ const slugPR = s => String(s).toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0
 
 async function loadPatientReaksi() {
   if (!activePlan || !patientRecord) return;
-  const [{ data: items }, { data: report }] = await Promise.all([
+  const [{ data: items }, { data: report }, katRes] = await Promise.all([
     window.db.from('psy_reaksi_item').select('id,kumpulan,ikon,label,urutan').eq('aktif', true).order('urutan'),
     window.db.from('psy_patient_reaksi_reports').select('*')
       .eq('plan_id', activePlan.id).eq('patient_id', patientRecord.id).eq('week_number', weekNumber).maybeSingle(),
+    // Kategori dimatikan staff — sorok reaksi kumpulan itu (jadual tiada = tiada tapisan)
+    window.db.from('psy_reaksi_kategori').select('nama,aktif'),
   ]);
-  patientReaksiItems = items || [];
+  const katOff = new Set((katRes.data || []).filter(k => k.aktif === false).map(k => k.nama));
+  patientReaksiItems = (items || []).filter(it => !katOff.has(it.kumpulan));
   patientReaksiReport = report || null;
   renderPatientReaksiSection(false);
 }
@@ -1040,7 +1081,7 @@ async function submitPatientReaksi(isUpdate) {
     if (coachId && typeof notify === 'function') {
       const ptName = window.currentUser?.full_name || window.currentUser?.email || 'Pesakit';
       notify(coachId, 'reaksi', 'Reaksi Pemulihan Pesakit Baru',
-        `${ptName} telah ${isUpdate ? 'mengemas kini' : 'menghantar'} reaksi pemulihan untuk Minggu ${weekNumber}.`,
+        `${ptName} telah ${isUpdate ? 'mengemas kini' : 'menghantar'} reaksi pemulihan untuk ${isDailyPlan() ? 'Hari' : 'Minggu'} ${weekNumber}.`,
         `plan-week.html?plan_id=${activePlan?.id}&week=${weekNumber}`);
     }
   } catch (err) {
@@ -1049,6 +1090,14 @@ async function submitPatientReaksi(isUpdate) {
 }
 
 window.addEventListener('hashchange', () => loadWeekDetail());
+
+// Tukar bahasa → jana semula label unit yang dibina JS (hero, breadcrumb, butang nav).
+document.addEventListener('isw:langchange', () => {
+  if (!activePlan) return;
+  updateWeekNav();
+  applyUnitHeaders();
+  renderHero();
+});
 
 (async () => {
   const user = await initPatient('plan', 'Butiran rawatan mingguan');

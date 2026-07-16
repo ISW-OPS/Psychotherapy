@@ -6,7 +6,7 @@
    - Cross-origin (Supabase API, CDN auth) → network only (never cached)
    Bump CACHE_VERSION on each deploy to invalidate old assets.
    ============================================================ */
-const CACHE_VERSION = 'isw-v2';
+const CACHE_VERSION = 'isw-v25';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const PAGE_CACHE = `${CACHE_VERSION}-pages`;
 

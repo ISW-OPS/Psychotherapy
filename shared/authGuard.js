@@ -26,6 +26,16 @@ async function checkAuth(requiredRole) {
 
   await loadPermissions(session.user.id);
 
+  // window.currentUser belum di-set oleh caller pada ketika ini — simpan profil
+  // supaya can() boleh kenal super_admin serta-merta.
+  if (!window.currentUser) window.currentUser = { ...session.user, ...profile };
+
+  // Auto-hide elemen [data-rbac] tanpa kebenaran (staff sahaja; patient tiada tag)
+  if (profile.role === 'staff') {
+    if (document.body) startRbacObserver();
+    else document.addEventListener('DOMContentLoaded', startRbacObserver);
+  }
+
   return { ...session.user, ...profile };
 }
 
@@ -35,6 +45,7 @@ window.PAGE_MODULE = {
   // UTAMA — setiap navbar item ada modul sendiri
   dashboard:        'dashboard',
   psy_patients:     'patient',   patient_hub: 'patient',
+  progres_pesakit:  'patient',   // Progres Pesakit (1 view) — ikut kebenaran modul pesakit
   psy_vitals:       'vitals',    vitals: 'vitals',
   kyc_forms:        'kyc',
   psy_appointments: 'schedule',
@@ -42,6 +53,10 @@ window.PAGE_MODULE = {
   kob_list:         'kob',
   kepatuhan:        'kepatuhan',
   risk:             'risk',
+  reaksi_advice:    'reaksi',  reaksi_item: 'reaksi',
+  reaksi_laporan:   'reaksi',  reaksi_preview: 'reaksi',
+  rujukan:          'rujukan',
+  kehadiran:        'kehadiran',
 
   // OPERASI
   pakej:            'package',
@@ -55,6 +70,11 @@ window.PAGE_MODULE = {
   announcements:    'announcements',
   events_admin:     'events',
   auto_messages:    'auto_messages',
+  // sub-pages Mesej Automatik — semua ikut modul induk auto_messages
+  auto_dashboard:   'auto_messages', auto_list:      'auto_messages',
+  auto_templates:   'auto_messages', auto_variables: 'auto_messages',
+  auto_audience:    'auto_messages', auto_queue:     'auto_messages',
+  auto_logs:        'auto_messages', auto_test:      'auto_messages',
   library:          'library',
   kb:               'kb',
   kb_dashboard:     'kb', kb_resources: 'kb', kb_categories: 'kb',
@@ -74,6 +94,7 @@ window.PAGE_MODULE = {
   staff_mgmt:       'staff',
 
   // SISTEM
+  settings:         'settings',   // super_admin sahaja (tiada role lain diberi modul ini)
   peranan:          'rbac',
   audit_kebenaran:  'audit_kebenaran',
   audit:            'audit',
@@ -113,6 +134,31 @@ function can(moduleOrCode, action) {
   return window.__iswPerms.has(key);
 }
 
+// ── RBAC UI: butang/elemen bertag data-rbac="module.action" ──
+// Mana-mana elemen dengan atribut data-rbac akan DISEMBUNYIKAN secara automatik
+// jika pengguna tiada kebenaran tersebut (super_admin sentiasa nampak semua).
+// Berfungsi untuk elemen statik DAN yang di-render dinamik (MutationObserver).
+window.applyRbacUI = function (root) {
+  const scope = root && root.querySelectorAll ? root : document;
+  scope.querySelectorAll('[data-rbac]').forEach(el => {
+    const code = el.getAttribute('data-rbac');
+    if (!code) return;
+    if (can(code)) {
+      if (el.dataset.rbacHidden) { el.style.display = ''; delete el.dataset.rbacHidden; }
+    } else {
+      el.style.display = 'none';
+      el.dataset.rbacHidden = '1';
+    }
+  });
+};
+
+function startRbacObserver() {
+  if (window.__rbacObs || !document.body) return;
+  window.applyRbacUI(document);
+  window.__rbacObs = new MutationObserver(() => window.applyRbacUI(document));
+  window.__rbacObs.observe(document.body, { childList: true, subtree: true });
+}
+
 // Backward-compat alias
 function hasPermission(moduleOrCode, action) { return can(moduleOrCode, action); }
 function hasAnyPermission(...codes) { return codes.some(c => can(c)); }
@@ -148,12 +194,17 @@ window.PAGE_PATIENT_MODULE = {
   library:           'pat_library',
   shop:              'pat_shop',
   payment:           'pat_payment',
+  sejarah_pembayaran:'pat_sejarah',   // sejarah-pembayaran.html + resit.html
   psy_orders:        'pat_orders',
+  orders:            'pat_orders',    // orders.html hantar pageId 'orders'
   issue:             'pat_issue',
+  faq:               'pat_library',   // FAQ = anak nav Library
+  feedback:          'pat_issue',
+  checkin:           'pat_kepatuhan', // Daily Check-in = sebahagian Catatan Harian
   pulangan:          'pat_pulangan',
   surat:             'pat_surat',
   kyc:               'pat_kyc',
-  // profile & checkin: sentiasa allow (bukan item nav utama)
+  // profile: sentiasa allow (bukan item nav utama)
 };
 
 async function loadPatientFeatures() {

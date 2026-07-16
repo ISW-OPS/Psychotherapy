@@ -24,6 +24,7 @@ const NAV_ITEMS_BY_ROLE = {
     },
     { id: 'shop', url: 'shop.html', icon: '🛒', label: 'Produk' },
     { id: 'payment', url: 'payment.html', icon: '💳', label: 'Pembayaran' },
+    { id: 'sejarah_pembayaran', url: 'sejarah-pembayaran.html', icon: '🧾', label: 'Sejarah Pembayaran' },
     { id: 'psy_orders', url: 'orders.html', icon: '📦', label: 'Pesanan & Penjejakan' },
     { id: 'issue', url: 'issue.html', icon: '⚠️', label: 'Lapor Isu' },
     { id: 'pulangan', url: 'pulangan.html', icon: '🍯', label: 'Pulangan Botol' },
@@ -106,6 +107,7 @@ const STAFF_NAV_ICONS = {
 // Sidebar staf latar PUTIH: ikon gelap bila tak aktif, putih bila aktif (latar navy).
 function staffNavIconHtml(id, fallbackEmoji, isActive) {
   const f = STAFF_NAV_ICONS[id];
+  if (!fallbackEmoji) return '';
   if (!f) return `<span class="flex-shrink-0 text-base">${fallbackEmoji}</span>`;
   const base = window.location.pathname.includes('/roles/') ? '../../icon/' : 'icon/';
   const style = isActive
@@ -127,6 +129,7 @@ const STAFF_NAV_MASTER = [
       { id: 'plan_week', url: 'weekly-plan.html', icon: '📋', label: 'Weekly Plan' },
       { id: 'kob_list', url: 'kob-list.html', icon: '🩺', label: 'Sesi KOB' },
       { id: 'kepatuhan', url: 'kepatuhan.html', icon: '📊', label: 'Kepatuhan' },
+      { id: 'reaksi_advice', url: 'reaksi-item.html', icon: '🩹', label: 'Reaksi & Tindakan' },
       { id: 'psy_vitals', url: 'vitals.html', icon: '💓', label: 'Bacaan Vitals' },
       { id: 'rujukan', url: 'rujukan.html', icon: '🔀', label: 'Rujukan' },
       { id: 'risk', url: 'risk.html', icon: '⚠️', label: 'Amaran Risiko' },
@@ -167,6 +170,7 @@ const STAFF_NAV_MASTER = [
   },
   {
     group: 'LAPORAN', collapsible: true, items: [
+      { id: 'progres_pesakit', url: 'progres-pesakit.html', icon: '📈', label: 'Progres Pesakit' },
       { id: 'governance', url: 'governance.html', icon: '📈', label: 'Governance' },
       { id: 'staff_stats', url: 'staff-stats.html', icon: '📊', label: 'Statistik' },
       { id: 'kehadiran', url: 'kehadiran.html', icon: '📋', label: 'Laporan Kehadiran' },
@@ -183,9 +187,9 @@ const STAFF_NAV_MASTER = [
   },
   {
     group: 'SISTEM', collapsible: true, items: [
-      { id: 'peranan', url: 'peranan.html', icon: '🔐', label: 'Peranan & Kebenaran' },
-      { id: 'audit_kebenaran', url: 'audit-kebenaran.html', icon: '📋', label: 'Audit Kebenaran' },
-      { id: 'audit', url: 'audit.html', icon: '🔒', label: 'Audit Log' },
+      { id: 'settings', url: 'tetapan.html', icon: '⚙️', label: 'Tetapan Sistem', saOnly: true },
+      // Peranan & Kebenaran, Audit Kebenaran, Audit Log dipindah ke DALAM Tetapan Sistem
+      // (tab Peranan / Keselamatan). Dibuang dari nav untuk elak bertindih.
     ]
   },
 ];
@@ -652,7 +656,8 @@ function buildTopbar(user, cfg, role, staffRole) {
     // Kalau sidebar berada dalam shell 'overflow-hidden' (cth plan.html: flex h-screen overflow-hidden),
     // body padding-top dah offset shell di bawah top bar — jadi JANGAN tambah top:3.5rem lagi,
     // kalau tidak ada ruang kosong di atas sidebar (double offset).
-    let inFixedShell = false, el = sb.parentElement;
+    const wrapperEl = sb.parentElement;
+    let inFixedShell = false, el = wrapperEl;
     while (el && el !== document.body) {
       const cs = getComputedStyle(el);
       if (cs.overflow === 'hidden' || cs.overflowY === 'hidden') { inFixedShell = true; break; }
@@ -660,6 +665,14 @@ function buildTopbar(user, cfg, role, staffRole) {
     }
     sb.style.top = inFixedShell ? '0' : '3.5rem';
     sb.style.height = 'calc(100vh - 3.5rem)';
+    // Wrapper row (sidebar punya parent) selalunya bawa class Tailwind min-h-screen (100vh)
+    // dari markup — nilai tu TAK kira padding-top 56px yang kita baru tambah kat <body> untuk
+    // topbar tetap. Dua-dua min-height 100vh (wrapper) + padding-top 56px (body) bertindih,
+    // jadi page pendek pun terpaksa scroll lebih 56px yang tak perlu. Betulkan supaya wrapper
+    // guna baki ruang sebenar sahaja (bukan overflow:hidden — sekadar min-height yang tepat).
+    if (!inFixedShell && wrapperEl) {
+      wrapperEl.style.minHeight = 'calc(100vh - 3.5rem)';
+    }
   }
   document.querySelectorAll('#sidebar .nav-brand, #sidebar .nav-user').forEach(el => { el.style.display = 'none'; });
   const ph = document.getElementById('page-header'); if (ph) ph.style.display = 'none';
@@ -826,7 +839,7 @@ function renderHeader(title, subtitle) {
   if (header) header.style.display = 'none';
 }
 
-const NOTIF_ICONS = { appointment: '📅', order: '📦', plan: '💊', system: '📢', reaksi: '🌀', kyc: '🆔', referral: '🔀', default: '🔔' };
+const NOTIF_ICONS = { appointment: '📅', order: '📦', plan: '💊', system: '📢', reaksi: 'Reaksi', kyc: '🆔', referral: '🔀', default: '🔔' };
 
 async function loadNotifBadge() {
   if (!window.db) return;

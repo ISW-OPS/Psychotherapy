@@ -1,0 +1,1564 @@
+<!DOCTYPE html>
+<html lang="ms">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ibnu Sina Wellness — Reaksi & Tindakan</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="../../shared/theme.js"></script>
+  <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="_styles.css" rel="stylesheet">
+  <style>
+    /* Gaya asas tab supaya kemas SEBELUM JS pasang kelas Tailwind (elak flash teks kosong masa refresh) */
+    .rx-tab {
+      flex-shrink: 0;
+      padding: 0.875rem;
+      font-size: 13px;
+      font-weight: 700;
+      color: rgba(60, 79, 92, 0.5); /* ink #3C4F5C @ 50% */
+      border-bottom: 3px solid transparent;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+
+<body class="min-h-screen bg-cream">
+
+  <div id="app-loading" class="min-h-screen flex items-center justify-center">
+    <p class="text-ink/60 text-sm">Memuatkan...</p>
+  </div>
+
+  <div id="app-shell" class="hidden">
+    <div class="flex min-h-screen">
+      <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+      <main class="main-content flex-1 min-w-0">
+        <header id="page-header"
+          class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4">
+        </header>
+
+        <div class="p-4 md:p-6 space-y-4">
+
+          <div>
+            <h1 class="text-xl font-bold text-ink">Reaksi & Tindakan</h1>
+            <p class="text-sm text-ink/45 mt-0.5">Urus kategori, reaksi pemulihan dan tindakan cadangan.</p>
+          </div>
+
+          <div id="rx-mig-warn"
+            class="hidden bg-gold-light border border-gold/40 rounded-xl px-4 py-3 text-[13px] text-ink/70">
+            Migration <b>20260715_reaksi_engine_v2.sql</b> belum di-run — kategori/tetapan risiko/jenis tidak akan
+            disimpan sepenuhnya. Sila run migration dahulu.
+          </div>
+
+          <!-- Tab bar -->
+          <div
+            class="bg-white rounded-2xl border border-ink/10 shadow-sm px-3 md:px-5 flex items-center gap-1 overflow-x-auto">
+            <button data-rx-tab="kategori" class="rx-tab">Kategori</button>
+            <button data-rx-tab="reaksi" class="rx-tab">Reaksi</button>
+            <button data-rx-tab="tindakan" class="rx-tab">Tindakan</button>
+            <button data-rx-tab="gaya" class="rx-tab">Gaya Hidup Fitrah</button>
+            <button data-rx-tab="diet" class="rx-tab">Diet &amp; Nutrisi</button>
+            <button data-rx-tab="pemetaan" class="rx-tab">Pemetaan Reaksi-Tindakan</button>
+            <button data-rx-tab="import" class="rx-tab">Import Jadual</button>
+            <button data-rx-tab="preview" class="rx-tab">Preview Auto Cadangan</button>
+          </div>
+
+          <!-- ═══ TAB: KATEGORI ═══ -->
+          <div id="rx-pane-kategori" class="hidden space-y-4">
+            <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+              <div class="flex items-start justify-between gap-4 flex-wrap mb-4">
+                <div>
+                  <h3 class="text-[16px] font-bold text-ink">Senarai Kategori Reaksi</h3>
+                  <p class="text-[12.5px] text-ink/45 mt-0.5">Urus kategori utama untuk reaksi dan simptom pemulihan.
+                  </p>
+                </div>
+                <button data-rbac="reaksi.create" onclick="ktAddShow()"
+                  class="bg-navy text-white px-4 py-2.5 rounded-xl text-[13px] font-bold hover:bg-navy-dark shrink-0">+
+                  Tambah Kategori</button>
+              </div>
+              <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                  <thead>
+                    <tr class="border-b border-ink/10 bg-cream/40 text-[11px] uppercase text-ink/50 font-bold">
+                      <th class="px-4 py-2 w-10">#</th>
+                      <th class="px-3 py-2">Nama Kategori</th>
+                      <th class="px-3 py-2">Jumlah Reaksi</th>
+                      <th class="px-3 py-2">Status</th>
+                      <th class="px-3 py-2 text-right pr-5">Tindakan</th>
+                    </tr>
+                  </thead>
+                  <tbody id="kt-tbody">
+                    <tr><td colspan="5" class="px-4 py-8 text-center text-[13px] text-ink/40 italic">Memuatkan…</td></tr>
+                  </tbody>
+                  <tfoot>
+                    <!-- Baris tambah kategori inline — buka melalui butang + Tambah Kategori, tanpa popup -->
+                    <tr id="kt-add-row" class="hidden border-t border-ink/10 bg-cream/30">
+                      <td class="px-4 py-2 text-[12px] text-ink/30">+</td>
+                      <td class="px-3 py-2" colspan="2">
+                        <input id="kt-add-nama" placeholder="Nama kategori baru…"
+                          onkeydown="if(event.key==='Enter')ktAddSave(); else if(event.key==='Escape')ktAddHide()"
+                          class="w-full max-w-[320px] border border-ink/20 rounded-lg px-3 py-1.5 text-[13px] focus:border-navy outline-none bg-white">
+                      </td>
+                      <td class="px-3 py-2 text-right pr-5 whitespace-nowrap" colspan="2">
+                        <button data-rbac="reaksi.create" onclick="ktAddSave()"
+                          class="px-3 h-8 rounded-lg bg-navy text-white text-[12px] font-bold hover:bg-navy-dark">Simpan</button>
+                        <button onclick="ktAddHide()"
+                          class="px-3 h-8 rounded-lg border border-ink/15 text-[12px] font-semibold text-ink/60 hover:bg-ink/5">Batal</button>
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+              <div id="kt-pager" class="hidden items-center justify-between gap-3 pt-3 mt-1 border-t border-ink/[0.06]">
+                <span id="kt-pager-info" class="text-[12px] text-ink/45"></span>
+                <div class="flex items-center gap-1.5">
+                  <button onclick="rxGoPage('kt', rxPg.kt.page-1)" id="kt-pager-prev"
+                    class="px-2.5 h-8 rounded-lg border border-ink/15 text-[12px] font-bold text-ink/60 hover:bg-ink/5 disabled:opacity-35 disabled:pointer-events-none">‹
+                    Sebelum</button>
+                  <span id="kt-pager-pages" class="flex items-center gap-1"></span>
+                  <button onclick="rxGoPage('kt', rxPg.kt.page+1)" id="kt-pager-next"
+                    class="px-2.5 h-8 rounded-lg border border-ink/15 text-[12px] font-bold text-ink/60 hover:bg-ink/5 disabled:opacity-35 disabled:pointer-events-none">Seterus
+                    ›</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ═══ TAB: REAKSI ═══ -->
+          <div id="rx-pane-reaksi" class="hidden grid lg:grid-cols-[250px_1fr] gap-4">
+            <!-- Card kiri absolute (lg): tingginya IKUT card kanan, bukan menentukannya; senarai panjang skrol dalam card -->
+            <div class="relative">
+              <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4 flex flex-col lg:absolute lg:inset-0">
+                <h3 class="text-[14px] font-bold text-ink">Pilih Kategori</h3>
+                <p class="text-[11.5px] text-ink/40 mt-0.5 mb-2.5">Tapis reaksi mengikut kategori.</p>
+                <div id="rs-cat-list" class="space-y-1.5 flex-1 min-h-0 max-h-[400px] lg:max-h-none overflow-y-auto pr-1"></div>
+              </div>
+            </div>
+            <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+              <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
+                <div id="rs-cat-head" class="flex items-center gap-3 min-w-0"></div>
+                <div class="flex items-center gap-2 shrink-0">
+                  <input id="rs-f-cari" oninput="rsRenderList()" placeholder="Tapis reaksi..."
+                    class="border border-ink/15 rounded-lg px-3 py-2 text-[12.5px] focus:border-navy outline-none w-[170px]">
+                  <button data-rbac="reaksi.create" onclick="rsNew()"
+                    class="bg-navy text-white px-4 py-2 rounded-xl text-[13px] font-bold hover:bg-navy-dark">+ Tambah
+                    Reaksi</button>
+                </div>
+              </div>
+              <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                  <thead>
+                    <tr class="border-b border-ink/10 bg-cream/40 text-[11px] uppercase text-ink/50 font-bold">
+                      <th class="px-3 py-2 w-8">#</th>
+                      <th class="px-2 py-2">Nama Reaksi (Simptom)</th>
+                      <th class="px-2 py-2">Tahap Risiko</th>
+                      <th class="px-2 py-2">Status</th>
+                      <th class="px-2 py-2 text-right pr-3">Tindakan</th>
+                    </tr>
+                  </thead>
+                  <tbody id="rs-tbody">
+                    <tr><td colspan="5" class="px-4 py-8 text-center text-[13px] text-ink/40 italic">Memuatkan…</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div id="rs-pager" class="hidden items-center justify-between gap-3 pt-3 mt-1 border-t border-ink/[0.06]">
+                <span id="rs-pager-info" class="text-[12px] text-ink/45"></span>
+                <div class="flex items-center gap-1.5">
+                  <button onclick="rxGoPage('rs', rxPg.rs.page-1)" id="rs-pager-prev"
+                    class="px-2.5 h-8 rounded-lg border border-ink/15 text-[12px] font-bold text-ink/60 hover:bg-ink/5 disabled:opacity-35 disabled:pointer-events-none">‹
+                    Sebelum</button>
+                  <span id="rs-pager-pages" class="flex items-center gap-1"></span>
+                  <button onclick="rxGoPage('rs', rxPg.rs.page+1)" id="rs-pager-next"
+                    class="px-2.5 h-8 rounded-lg border border-ink/15 text-[12px] font-bold text-ink/60 hover:bg-ink/5 disabled:opacity-35 disabled:pointer-events-none">Seterus
+                    ›</button>
+                </div>
+              </div>
+              <p id="rs-count" class="text-[11.5px] text-ink/35 mt-3"></p>
+            </div>
+          </div>
+
+          <!-- ═══ TAB: TINDAKAN (tiada kategori — senarai penuh) ═══ -->
+          <div id="rx-pane-tindakan" class="hidden">
+            <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+              <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
+                <div id="td-cat-head" class="flex items-center gap-3 min-w-0"></div>
+                <div class="flex items-center gap-2 shrink-0 flex-wrap">
+                  <span id="td-bulkbar" class="flex items-center gap-2"></span>
+                  <input id="td-f-cari" oninput="tdRenderList()" placeholder="Tapis tindakan..."
+                    class="border border-ink/15 rounded-lg px-3 py-2 text-[12.5px] focus:border-navy outline-none w-[170px]">
+                  <button data-rbac="reaksi.create" onclick="tdNew()"
+                    class="bg-navy text-white px-4 py-2 rounded-xl text-[13px] font-bold hover:bg-navy-dark">+ Tambah
+                    Tindakan</button>
+                </div>
+              </div>
+              <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                  <thead>
+                    <tr class="border-b border-ink/10 bg-cream/40 text-[11px] uppercase text-ink/50 font-bold">
+                      <th class="px-3 py-2 w-8"><input type="checkbox" id="td-selall" title="Pilih semua hasil tapisan"
+                          onchange="rxSelAll('td', this.checked)" class="w-4 h-4 accent-navy align-middle"></th>
+                      <th class="px-2 py-2 w-8">#</th>
+                      <th class="px-2 py-2">Nama Tindakan (Cadangan)</th>
+                      <th class="px-2 py-2">Tahap Prioriti</th>
+                      <th class="px-2 py-2">Status</th>
+                      <th class="px-2 py-2 text-right pr-3">Tindakan</th>
+                    </tr>
+                  </thead>
+                  <tbody id="td-tbody">
+                    <tr><td colspan="6" class="px-4 py-8 text-center text-[13px] text-ink/40 italic">Memuatkan…</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div id="td-pager" class="hidden items-center justify-between gap-3 pt-3 mt-1 border-t border-ink/[0.06]">
+                <span id="td-pager-info" class="text-[12px] text-ink/45"></span>
+                <div class="flex items-center gap-1.5">
+                  <button onclick="rxGoPage('td', rxPg.td.page-1)" id="td-pager-prev"
+                    class="px-2.5 h-8 rounded-lg border border-ink/15 text-[12px] font-bold text-ink/60 hover:bg-ink/5 disabled:opacity-35 disabled:pointer-events-none">‹
+                    Sebelum</button>
+                  <span id="td-pager-pages" class="flex items-center gap-1"></span>
+                  <button onclick="rxGoPage('td', rxPg.td.page+1)" id="td-pager-next"
+                    class="px-2.5 h-8 rounded-lg border border-ink/15 text-[12px] font-bold text-ink/60 hover:bg-ink/5 disabled:opacity-35 disabled:pointer-events-none">Seterus
+                    ›</button>
+                </div>
+              </div>
+              <p id="td-count" class="text-[11.5px] text-ink/35 mt-3"></p>
+            </div>
+          </div>
+
+          <!-- ═══ TAB: DIET & NUTRISI (tindakan jenis 'pemakanan' — mesej WA ke-2) ═══ -->
+          <div id="rx-pane-diet" class="hidden">
+            <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+              <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
+                <div id="dt-cat-head" class="flex items-center gap-3 min-w-0"></div>
+                <div class="flex items-center gap-2 shrink-0 flex-wrap">
+                  <span id="dt-bulkbar" class="flex items-center gap-2"></span>
+                  <input id="dt-f-cari" oninput="dtRenderList()" placeholder="Tapis saranan..."
+                    class="border border-ink/15 rounded-lg px-3 py-2 text-[12.5px] focus:border-navy outline-none w-[170px]">
+                  <button data-rbac="reaksi.create" onclick="tdNew('pemakanan')"
+                    class="bg-navy text-white px-4 py-2 rounded-xl text-[13px] font-bold hover:bg-navy-dark">+ Tambah
+                    Saranan</button>
+                </div>
+              </div>
+              <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                  <thead>
+                    <tr class="border-b border-ink/10 bg-cream/40 text-[11px] uppercase text-ink/50 font-bold">
+                      <th class="px-3 py-2 w-8"><input type="checkbox" id="dt-selall" title="Pilih semua hasil tapisan"
+                          onchange="rxSelAll('dt', this.checked)" class="w-4 h-4 accent-navy align-middle"></th>
+                      <th class="px-2 py-2 w-8">#</th>
+                      <th class="px-2 py-2">Saranan &amp; Senarai Makanan</th>
+                      <th class="px-2 py-2">Tahap Prioriti</th>
+                      <th class="px-2 py-2">Status</th>
+                      <th class="px-2 py-2 text-right pr-3">Tindakan</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dt-tbody">
+                    <tr><td colspan="6" class="px-4 py-8 text-center text-[13px] text-ink/40 italic">Memuatkan…</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div id="dt-pager" class="hidden items-center justify-between gap-3 pt-3 mt-1 border-t border-ink/[0.06]">
+                <span id="dt-pager-info" class="text-[12px] text-ink/45"></span>
+                <div class="flex items-center gap-1.5">
+                  <button onclick="rxGoPage('dt', rxPg.dt.page-1)" id="dt-pager-prev"
+                    class="px-2.5 h-8 rounded-lg border border-ink/15 text-[12px] font-bold text-ink/60 hover:bg-ink/5 disabled:opacity-35 disabled:pointer-events-none">‹
+                    Sebelum</button>
+                  <span id="dt-pager-pages" class="flex items-center gap-1"></span>
+                  <button onclick="rxGoPage('dt', rxPg.dt.page+1)" id="dt-pager-next"
+                    class="px-2.5 h-8 rounded-lg border border-ink/15 text-[12px] font-bold text-ink/60 hover:bg-ink/5 disabled:opacity-35 disabled:pointer-events-none">Seterus
+                    ›</button>
+                </div>
+              </div>
+              <p id="dt-count" class="text-[11.5px] text-ink/35 mt-3"></p>
+            </div>
+          </div>
+
+          <!-- ═══ TAB: GAYA HIDUP FITRAH (tindakan jenis 'gaya_hidup' — mesej WA ke-3) ═══ -->
+          <div id="rx-pane-gaya" class="hidden">
+            <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+              <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
+                <div id="gh-cat-head" class="flex items-center gap-3 min-w-0"></div>
+                <div class="flex items-center gap-2 shrink-0 flex-wrap">
+                  <span id="gh-bulkbar" class="flex items-center gap-2"></span>
+                  <input id="gh-f-cari" oninput="ghRenderList()" placeholder="Tapis saranan..."
+                    class="border border-ink/15 rounded-lg px-3 py-2 text-[12.5px] focus:border-navy outline-none w-[170px]">
+                  <button data-rbac="reaksi.create" onclick="tdNew('gaya_hidup')"
+                    class="bg-navy text-white px-4 py-2 rounded-xl text-[13px] font-bold hover:bg-navy-dark">+ Tambah
+                    Saranan</button>
+                </div>
+              </div>
+              <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                  <thead>
+                    <tr class="border-b border-ink/10 bg-cream/40 text-[11px] uppercase text-ink/50 font-bold">
+                      <th class="px-3 py-2 w-8"><input type="checkbox" id="gh-selall" title="Pilih semua hasil tapisan"
+                          onchange="rxSelAll('gh', this.checked)" class="w-4 h-4 accent-navy align-middle"></th>
+                      <th class="px-2 py-2 w-8">#</th>
+                      <th class="px-2 py-2">Saranan Gaya Hidup</th>
+                      <th class="px-2 py-2">Tahap Prioriti</th>
+                      <th class="px-2 py-2">Status</th>
+                      <th class="px-2 py-2 text-right pr-3">Tindakan</th>
+                    </tr>
+                  </thead>
+                  <tbody id="gh-tbody">
+                    <tr><td colspan="6" class="px-4 py-8 text-center text-[13px] text-ink/40 italic">Memuatkan…</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div id="gh-pager" class="hidden items-center justify-between gap-3 pt-3 mt-1 border-t border-ink/[0.06]">
+                <span id="gh-pager-info" class="text-[12px] text-ink/45"></span>
+                <div class="flex items-center gap-1.5">
+                  <button onclick="rxGoPage('gh', rxPg.gh.page-1)" id="gh-pager-prev"
+                    class="px-2.5 h-8 rounded-lg border border-ink/15 text-[12px] font-bold text-ink/60 hover:bg-ink/5 disabled:opacity-35 disabled:pointer-events-none">‹
+                    Sebelum</button>
+                  <span id="gh-pager-pages" class="flex items-center gap-1"></span>
+                  <button onclick="rxGoPage('gh', rxPg.gh.page+1)" id="gh-pager-next"
+                    class="px-2.5 h-8 rounded-lg border border-ink/15 text-[12px] font-bold text-ink/60 hover:bg-ink/5 disabled:opacity-35 disabled:pointer-events-none">Seterus
+                    ›</button>
+                </div>
+              </div>
+              <p id="gh-count" class="text-[11.5px] text-ink/35 mt-3"></p>
+            </div>
+          </div>
+
+          <!-- ═══ TAB: PEMETAAN ═══ -->
+          <div id="rx-pane-pemetaan" class="hidden grid lg:grid-cols-[250px_1fr] gap-4">
+            <!-- Card kiri absolute (lg): tingginya IKUT card kanan, bukan menentukannya; senarai panjang skrol dalam card -->
+            <div class="relative">
+              <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4 flex flex-col lg:absolute lg:inset-0">
+                <h3 class="text-[14px] font-bold text-ink">Pilih Kategori</h3>
+                <p class="text-[11.5px] text-ink/40 mt-0.5 mb-2.5">Lihat pemetaan mengikut kategori.</p>
+                <input id="pm-f-cari" oninput="pmRender()" placeholder="Cari reaksi…"
+                  class="w-full border border-ink/15 rounded-lg px-3 py-2 text-[12.5px] focus:border-navy outline-none mb-2.5">
+                <div id="pm-cat-list" class="space-y-1.5 flex-1 min-h-0 max-h-[400px] lg:max-h-none overflow-y-auto pr-1"></div>
+              </div>
+            </div>
+            <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+              <div id="pm-cat-head" class="flex items-center gap-3 mb-3"></div>
+              <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                  <thead>
+                    <tr class="border-b border-ink/10 bg-cream/40 text-[11px] uppercase text-ink/50 font-bold">
+                      <th class="px-3 py-2 w-8">#</th>
+                      <th class="px-2 py-2">Nama Reaksi (Simptom)</th>
+                      <th class="px-2 py-2">Tahap Risiko</th>
+                      <th class="px-2 py-2">Tindakan Cadangan (Utama)</th>
+                      <th class="px-2 py-2">Tindakan Sokongan</th>
+                      <th class="px-2 py-2">Status</th>
+                      <th class="px-2 py-2 text-right pr-3">Tindakan</th>
+                    </tr>
+                  </thead>
+                  <tbody id="pm-tbody">
+                    <tr><td colspan="7" class="px-4 py-8 text-center text-[13px] text-ink/40 italic">Memuatkan…</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div id="pm-pager" class="hidden items-center justify-between gap-3 pt-3 mt-1 border-t border-ink/[0.06]">
+                <span id="pm-pager-info" class="text-[12px] text-ink/45"></span>
+                <div class="flex items-center gap-1.5">
+                  <button onclick="rxGoPage('pm', rxPg.pm.page-1)" id="pm-pager-prev"
+                    class="px-2.5 h-8 rounded-lg border border-ink/15 text-[12px] font-bold text-ink/60 hover:bg-ink/5 disabled:opacity-35 disabled:pointer-events-none">‹
+                    Sebelum</button>
+                  <span id="pm-pager-pages" class="flex items-center gap-1"></span>
+                  <button onclick="rxGoPage('pm', rxPg.pm.page+1)" id="pm-pager-next"
+                    class="px-2.5 h-8 rounded-lg border border-ink/15 text-[12px] font-bold text-ink/60 hover:bg-ink/5 disabled:opacity-35 disabled:pointer-events-none">Seterus
+                    ›</button>
+                </div>
+              </div>
+              <p id="pm-count" class="text-[11.5px] text-ink/35 mt-3"></p>
+            </div>
+          </div>
+
+          <!-- ═══ TAB: IMPORT JADUAL (salin terus dari jadual Word/Excel) ═══ -->
+          <div id="rx-pane-import" class="hidden space-y-4">
+            <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 space-y-4">
+              <div>
+                <h3 class="text-[16px] font-bold text-ink">Import Jadual Kategori</h3>
+                <p class="text-[12.5px] text-ink/45 mt-0.5">Salin (copy-paste) terus dari jadual Word/Excel — Solusi
+                  setiap reaksi, Saranan Diet &amp; Nutrisi dan Gaya Hidup Fitrah untuk seluruh kategori. Sistem akan
+                  auto-cipta tindakan, tetapkan jenis (pemakanan/gaya hidup) dan petakan ke reaksi berkaitan.
+                  Tindakan yang sudah wujud (nama sama) diguna semula — selamat di-import berulang kali.</p>
+              </div>
+
+              <div class="grid sm:grid-cols-2 gap-3 max-w-[640px]">
+                <div>
+                  <label class="text-[12px] font-semibold text-ink/60">Kategori sedia ada</label>
+                  <select id="im-cat" onchange="document.getElementById('im-cat-new').value='';imRenderSym()"
+                    class="w-full mt-1 border border-ink/20 rounded-lg px-2 py-2.5 text-[13px] focus:border-navy outline-none bg-white"></select>
+                </div>
+                <div>
+                  <label class="text-[12px] font-semibold text-ink/60">…ATAU kategori baru</label>
+                  <input id="im-cat-new" placeholder="cth: Pencernaan" oninput="imRenderSym()"
+                    class="w-full mt-1 border border-ink/20 rounded-lg px-3 py-2.5 text-[13px] focus:border-navy outline-none">
+                </div>
+              </div>
+
+              <!-- Bahagian A: Solusi per reaksi -->
+              <div class="bg-cream/40 border border-ink/8 rounded-xl p-4">
+                <div class="flex items-center justify-between gap-3 flex-wrap mb-1">
+                  <h4 class="text-[13.5px] font-bold text-ink">A · Solusi per Reaksi</h4>
+                  <button data-rbac="reaksi.create" onclick="imAddSymRow()"
+                    class="px-3 h-8 rounded-lg border border-navy/30 text-navy text-[12px] font-bold hover:bg-navy/5">+
+                    Tambah Reaksi</button>
+                </div>
+                <p class="text-[11.5px] text-ink/40 mb-3">Satu solusi per baris (nombor "1." di depan dibuang
+                  automatik) — setiap satu jadi tindakan dipetakan kepada reaksi itu sahaja. <b>Cara penyediaan?</b>
+                  Tulis "Tajuk: cara penyediaan…" pada baris sama, ATAU letak langkah sebagai bullet di bawah tajuk
+                  — ia disimpan dalam Panduan dan disertakan dalam mesej WhatsApp.</p>
+                <div id="im-sym-list" class="space-y-2.5"></div>
+              </div>
+
+              <!-- Bahagian B & C: peringkat kategori -->
+              <div class="grid lg:grid-cols-2 gap-3">
+                <div class="bg-cream/40 border border-ink/8 rounded-xl p-4">
+                  <h4 class="text-[13.5px] font-bold text-ink mb-1">B · Saranan Diet &amp; Nutrisi <span
+                      class="text-[11px] font-semibold text-ink/40">(seluruh kategori)</span></h4>
+                  <p class="text-[11.5px] text-ink/40 mb-2">Baris tanpa bullet = tajuk kumpulan; baris bullet
+                    (-/•) di bawahnya = senarai makanan. Dipetakan ke SEMUA reaksi kategori ini sebagai jenis
+                    <b>pemakanan</b> — dihantar dalam mesej WhatsApp ke-3 (+10 minit).</p>
+                  <textarea id="im-diet" rows="12" oninput="imPreviewDiet()" placeholder="1. Herba Pencernaan&#10;- Air halia&#10;- Daun Pudina&#10;- Ketumbar&#10;&#10;2. Serat&#10;- Beras merah&#10;- Brokoli&#10;- Bayam"
+                    class="w-full border border-ink/20 rounded-lg px-3 py-2.5 text-[12.5px] font-mono focus:border-navy outline-none resize-y bg-white"></textarea>
+                  <div id="im-diet-warn" class="hidden mt-2 bg-gold-light border border-gold/40 rounded-lg px-3 py-2 text-[11.5px] text-[#8a6d1a] space-y-0.5"></div>
+                  <div class="mt-2 bg-white border border-ink/10 rounded-lg p-3">
+                    <div class="flex items-center justify-between gap-2 mb-1">
+                      <span class="text-[10.5px] font-bold text-ink/40 uppercase">Pratonton — beginilah ia keluar dalam mesej</span>
+                      <span id="im-diet-sum" class="text-[11px] font-bold text-green-dark"></span>
+                    </div>
+                    <div id="im-diet-preview" class="text-[12px] text-ink/75 whitespace-pre-wrap leading-relaxed min-h-[20px]"><span class="text-ink/35 italic">Taip atau paste di atas untuk lihat hasil…</span></div>
+                  </div>
+                </div>
+                <div class="bg-cream/40 border border-ink/8 rounded-xl p-4">
+                  <h4 class="text-[13.5px] font-bold text-ink mb-1">C · Saranan Gaya Hidup Fitrah <span
+                      class="text-[11px] font-semibold text-ink/40">(seluruh kategori)</span></h4>
+                  <p class="text-[11.5px] text-ink/40 mb-2">Satu saranan per baris (bullet dibuang automatik).
+                    Dipetakan ke SEMUA reaksi kategori ini sebagai jenis <b>gaya hidup</b> — dihantar dalam mesej
+                    WhatsApp ke-2 (+5 minit).</p>
+                  <textarea id="im-life" rows="12" oninput="imPreviewLife()" placeholder="Kunyah makanan dengan sempurna&#10;Pernafasan Fitrah&#10;Berjalan ringan selepas makan&#10;Elakkan makan lewat malam&#10;Grounding&#10;Berjemur cahaya matahari pagi"
+                    class="w-full border border-ink/20 rounded-lg px-3 py-2.5 text-[12.5px] font-mono focus:border-navy outline-none resize-y bg-white"></textarea>
+                  <div class="mt-2 bg-white border border-ink/10 rounded-lg p-3">
+                    <div class="flex items-center justify-between gap-2 mb-1">
+                      <span class="text-[10.5px] font-bold text-ink/40 uppercase">Pratonton — beginilah ia keluar dalam mesej</span>
+                      <span id="im-life-sum" class="text-[11px] font-bold text-green-dark"></span>
+                    </div>
+                    <div id="im-life-preview" class="text-[12px] text-ink/75 whitespace-pre-wrap leading-relaxed min-h-[20px]"><span class="text-ink/35 italic">Taip atau paste di atas untuk lihat hasil…</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="flex items-center gap-3 flex-wrap">
+                <button data-rbac="reaksi.create" id="im-run-btn" onclick="imRun()"
+                  class="bg-navy text-white px-5 py-2.5 rounded-xl text-[13px] font-bold hover:bg-navy-dark">Import
+                  Sekarang</button>
+                <span id="im-status" class="text-[12.5px] text-ink/50"></span>
+              </div>
+              <div id="im-result" class="hidden bg-green-light/60 border border-green/25 rounded-xl px-4 py-3 text-[12.5px] text-green-dark whitespace-pre-wrap"></div>
+            </div>
+          </div>
+
+          <!-- ═══ TAB: PREVIEW AUTO CADANGAN (iframe embed reaksi-preview.html) ═══ -->
+          <div id="rx-pane-preview" class="hidden">
+            <iframe id="rx-frame-preview" data-src="reaksi-preview.html?embed=1"
+              class="w-full rounded-2xl border border-ink/10 bg-cream"
+              style="height: calc(100vh - 230px); min-height: 560px;"></iframe>
+          </div>
+
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ═══════ Drawer Butiran Reaksi ═══════ -->
+  <div id="rs-drawer" class="hidden fixed inset-0 z-50" onclick="rsClose()">
+    <div class="absolute inset-0 bg-black/40"></div>
+    <div class="absolute right-0 top-0 h-full w-full max-w-[520px] bg-white shadow-2xl overflow-y-auto p-6"
+      onclick="event.stopPropagation()">
+      <div class="flex items-start justify-between gap-3 mb-4">
+        <div>
+          <h3 class="text-[15px] font-bold text-ink">Butiran Reaksi</h3>
+          <p class="text-[12px] text-ink/45 mt-0.5">Kemaskini maklumat reaksi dan tindakan yang berkaitan.</p>
+        </div>
+        <button onclick="rsClose()" class="w-8 h-8 rounded-lg hover:bg-ink/5 text-ink/50 text-lg">x</button>
+      </div>
+      <div class="space-y-3">
+        <div>
+          <label class="text-[12px] font-semibold text-ink/60">Nama Reaksi (Simptom)</label>
+          <input id="rs-ed-label"
+            class="w-full mt-1 border border-ink/20 rounded-lg px-3 py-2.5 text-sm focus:border-navy outline-none">
+        </div>
+        <div class="grid grid-cols-3 gap-2.5">
+          <div>
+            <label class="text-[12px] font-semibold text-ink/60">Kategori</label>
+            <select id="rs-ed-group"
+              class="w-full mt-1 border border-ink/20 rounded-lg px-2 py-2.5 text-[13px] focus:border-navy outline-none bg-white"></select>
+          </div>
+          <div>
+            <label class="text-[12px] font-semibold text-ink/60">Tahap Risiko</label>
+            <select id="rs-ed-tahap"
+              class="w-full mt-1 border border-ink/20 rounded-lg px-2 py-2.5 text-[13px] focus:border-navy outline-none bg-white">
+              <option value="rendah">Rendah</option>
+              <option value="sederhana">Sederhana</option>
+              <option value="tinggi">Tinggi</option>
+            </select>
+          </div>
+          <div class="flex items-end pb-2">
+            <label class="flex items-center gap-2 text-[13px] text-ink/70 cursor-pointer font-medium"><input
+                type="checkbox" id="rs-ed-aktif" class="w-4 h-4 accent-green"> Aktif</label>
+          </div>
+        </div>
+        <div>
+          <label class="text-[12px] font-semibold text-ink/60">Penerangan (Opsional)</label>
+          <textarea id="rs-ed-penerangan" rows="2" maxlength="500"
+            class="w-full mt-1 border border-ink/20 rounded-lg px-3 py-2 text-[13px] focus:border-navy outline-none resize-y"></textarea>
+        </div>
+        <details class="bg-cream/50 rounded-xl border border-ink/8 p-3.5">
+          <summary class="text-[12.5px] font-bold text-ink cursor-pointer select-none">Tetapan Lanjutan (markah, contoh,
+            notifikasi)</summary>
+          <div class="mt-3 space-y-3">
+            <div>
+              <label class="text-[12px] font-semibold text-ink/60">Markah Risiko (1–100)</label>
+              <input id="rs-ed-markah" type="number" min="1" max="100"
+                class="w-full mt-1 border border-ink/20 rounded-lg px-3 py-2 text-sm focus:border-navy outline-none bg-white">
+            </div>
+            <div>
+              <label class="text-[12px] font-semibold text-ink/60">Contoh Simptom <span
+                  class="font-normal text-ink/40">(Enter utk tambah)</span></label>
+              <div id="rs-ed-contoh-chips" class="flex flex-wrap gap-1.5 my-1.5"></div>
+              <input id="rs-ed-contoh-input" placeholder="cth. Perut kembung selepas makan"
+                class="w-full border border-ink/20 rounded-lg px-3 py-2 text-[12.5px] focus:border-navy outline-none bg-white">
+            </div>
+            <div class="space-y-1.5 text-[12.5px] text-ink/70">
+              <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="rs-ed-pemantauan"
+                  class="w-4 h-4 accent-green"> Perlu pemantauan Coach</label>
+              <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="rs-ed-ringkasan"
+                  class="w-4 h-4 accent-green"> Tunjukkan dalam ringkasan risiko pesakit</label>
+              <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="rs-ed-notif"
+                  class="w-4 h-4 accent-green"> Hantar notifikasi kepada Coach</label>
+              <label class="flex items-center gap-2 cursor-pointer text-terracotta font-semibold"><input type="checkbox"
+                  id="rs-ed-emergency" class="w-4 h-4 accent-red-500"> Tandakan sebagai kecemasan</label>
+            </div>
+          </div>
+        </details>
+
+        <div id="rs-ed-actions-wrap">
+          <div class="flex items-center justify-between gap-2 mt-1">
+            <div>
+              <h4 class="text-[13.5px] font-bold text-ink">Tindakan Cadangan</h4>
+              <p class="text-[11.5px] text-ink/40">Pilih tindakan yang sesuai untuk reaksi ini.</p>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <select id="rs-ed-act-add"
+                class="border border-ink/15 rounded-lg px-2 py-1.5 text-[12px] focus:border-navy outline-none bg-white max-w-[150px]"></select>
+              <button data-rbac="reaksi.edit" onclick="rsMapAdd()"
+                class="text-[12px] font-bold text-navy border border-navy/25 rounded-lg px-2.5 py-1.5 hover:bg-navy/5 shrink-0">+
+                Tambah</button>
+            </div>
+          </div>
+          <div class="overflow-x-auto mt-2">
+            <table class="w-full text-left">
+              <thead>
+                <tr class="border-b border-ink/10 bg-cream/40 text-[10.5px] uppercase text-ink/50 font-bold">
+                  <th class="px-2.5 py-2 w-7">#</th>
+                  <th class="px-2 py-2">Tindakan</th>
+                  <th class="px-2 py-2">Prioriti</th>
+                  <th class="px-2 py-2">Status</th>
+                  <th class="px-2 py-2 text-right pr-2"></th>
+                </tr>
+              </thead>
+              <tbody id="rs-ed-act-tbody"></tbody>
+            </table>
+          </div>
+          <div id="rs-ed-panduan-note"
+            class="hidden mt-3 bg-gold-light/70 border border-gold/30 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+            <div>
+              <div class="text-[12.5px] font-bold text-[#8a6d1a]">Panduan / Cara Penyediaan</div>
+              <div class="text-[11.5px] text-ink/50" id="rs-ed-panduan-sub"></div>
+            </div>
+            <button onclick="rsTogglePanduan()"
+              class="text-[12px] font-bold text-[#8a6d1a] border border-gold/40 bg-white rounded-lg px-3 py-1.5 hover:bg-gold-light shrink-0">Lihat
+              Panduan</button>
+          </div>
+          <div id="rs-ed-panduan-list" class="hidden mt-2 space-y-2"></div>
+        </div>
+
+        <div class="flex items-center justify-between gap-2 pt-3 border-t border-ink/8">
+          <button data-rbac="reaksi.delete" onclick="rsDelete()"
+            class="text-[12.5px] font-semibold text-red-500 border border-red-200 rounded-xl px-3 py-2.5 hover:bg-red-50">Padam
+            Reaksi Ini</button>
+          <div class="flex gap-2">
+            <button onclick="rsClose()"
+              class="px-4 py-2.5 rounded-xl border border-ink/15 text-ink/70 text-[13px] font-semibold hover:bg-ink/5">Batal</button>
+            <button data-rbac="reaksi.edit" onclick="rsSave()"
+              class="px-5 py-2.5 rounded-xl bg-green hover:bg-green-dark text-white text-[13px] font-bold">Simpan
+              Perubahan</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ Drawer Butiran Tindakan ═══════ -->
+  <div id="td-drawer" class="hidden fixed inset-0 z-50" onclick="tdClose()">
+    <div class="absolute inset-0 bg-black/40"></div>
+    <div class="absolute right-0 top-0 h-full w-full max-w-[520px] bg-white shadow-2xl overflow-y-auto p-6"
+      onclick="event.stopPropagation()">
+      <div class="flex items-start justify-between gap-3 mb-4">
+        <div>
+          <h3 class="text-[15px] font-bold text-ink">Butiran Tindakan</h3>
+          <p class="text-[12px] text-ink/45 mt-0.5">Kemaskini maklumat tindakan dan simptom berkaitan.</p>
+        </div>
+        <button onclick="tdClose()" class="w-8 h-8 rounded-lg hover:bg-ink/5 text-ink/50 text-lg">x</button>
+      </div>
+      <div class="space-y-3">
+        <div>
+          <label class="text-[12px] font-semibold text-ink/60">Nama Tindakan</label>
+          <input id="td-ed-title"
+            class="w-full mt-1 border border-ink/20 rounded-lg px-3 py-2.5 text-sm focus:border-navy outline-none">
+        </div>
+        <div class="grid grid-cols-2 gap-2.5">
+          <div>
+            <label class="text-[12px] font-semibold text-ink/60">Jenis Saranan</label>
+            <select id="td-ed-jenis"
+              class="w-full mt-1 border border-ink/20 rounded-lg px-2 py-2.5 text-[13px] focus:border-navy outline-none bg-white">
+              <option value="am">Tindakan / Am — mesej 1</option>
+              <option value="tindakan">Tindakan khusus — mesej 1</option>
+              <option value="terapi">Terapi — mesej 1</option>
+              <option value="pemerhatian">Pemerhatian — mesej 1</option>
+              <option value="gaya_hidup">Gaya Hidup Fitrah — mesej 2</option>
+              <option value="pemakanan">Diet &amp; Nutrisi — mesej 3</option>
+              <option value="kecemasan">Kecemasan</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-[12px] font-semibold text-ink/60">Prioriti <span
+                class="font-normal text-ink/40">(kecil=dulu)</span></label>
+            <input id="td-ed-priority" type="number" min="1"
+              class="w-full mt-1 border border-ink/20 rounded-lg px-3 py-2.5 text-[13px] focus:border-navy outline-none">
+          </div>
+        </div>
+        <label class="flex items-center gap-2 text-[13px] text-ink/70 cursor-pointer font-medium"><input
+            type="checkbox" id="td-ed-aktif" class="w-4 h-4 accent-green"> Aktif</label>
+        <div>
+          <label class="text-[12px] font-semibold text-ink/60">Penerangan Ringkas</label>
+          <textarea id="td-ed-desc" rows="2" maxlength="500"
+            class="w-full mt-1 border border-ink/20 rounded-lg px-3 py-2 text-[13px] focus:border-navy outline-none resize-y"></textarea>
+        </div>
+        <div>
+          <label class="text-[12px] font-semibold text-ink/60">Panduan / Cara Penyediaan <span
+              class="font-normal text-ink/40">(Pilihan)</span></label>
+          <textarea id="td-ed-panduan" rows="4"
+            placeholder="cth.&#10;1. Ambil 1 sudu kecil jintan manis.&#10;2. Rebus bersama 100 ml air."
+            class="w-full mt-1 border border-ink/20 rounded-lg px-3 py-2 text-[12.5px] focus:border-navy outline-none resize-y"></textarea>
+        </div>
+        <label class="flex items-center gap-2 text-[13px] text-terracotta cursor-pointer font-semibold"><input
+            type="checkbox" id="td-ed-emergency" class="w-4 h-4 accent-red-500"> Tindakan Kecemasan</label>
+        <div class="bg-cream/50 rounded-xl border border-ink/8 p-3.5">
+          <h4 class="text-[12.5px] font-bold text-ink mb-1">Simptom Berkaitan <span id="td-ed-symcount"
+              class="text-navy font-bold"></span></h4>
+          <input id="td-ed-symcari" oninput="tdRenderSymList()" placeholder="Cari simptom…"
+            class="w-full border border-ink/20 rounded-lg px-3 py-2 text-[12px] focus:border-navy outline-none mb-2 bg-white">
+          <div id="td-ed-symlist" class="max-h-[180px] overflow-y-auto space-y-1 pr-1"></div>
+        </div>
+        <div class="flex items-center justify-between gap-2 pt-3 border-t border-ink/8">
+          <button data-rbac="reaksi.delete" onclick="tdDelete()"
+            class="text-[12.5px] font-semibold text-red-500 border border-red-200 rounded-xl px-3 py-2.5 hover:bg-red-50">Padam
+            Tindakan</button>
+          <div class="flex gap-2">
+            <button onclick="tdClose()"
+              class="px-4 py-2.5 rounded-xl border border-ink/15 text-ink/70 text-[13px] font-semibold hover:bg-ink/5">Batal</button>
+            <button data-rbac="reaksi.edit" onclick="tdSave()"
+              class="px-5 py-2.5 rounded-xl bg-green hover:bg-green-dark text-white text-[13px] font-bold">Simpan
+              Perubahan</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/shared/supabase.js"></script>
+  <script src="../../config/supabase.js"></script>
+  <script src="../../shared/authGuard.js"></script>
+  <script src="../../shared/logout.js"></script>
+  <script src="../../shared/navbar.js"></script>
+  <script src="_shared.js"></script>
+  <script>
+    // ══════════ Reaksi & Tindakan — hub bertab dgn sidebar kategori ══════════
+    const esc2 = s => String(s ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    let RXcats = [], RXitems = [], RXactions = [], RXmapBySym = {}, RXmapByAct = {};
+    let RXhasV2 = true, RXhasKatTable = true, RXutamaMax = 10;
+    let RXtab = 'reaksi', rsCat = null, pmCat = null;
+    let rsSel = null, tdSel = null, rsContoh = [], tdSelSym = new Set();
+
+    const TAHAP_BADGE2 = {
+      rendah: '<span class="inline-flex text-[11px] font-bold px-2 py-0.5 rounded-md bg-green-light text-green-dark">Rendah</span>',
+      sederhana: '<span class="inline-flex text-[11px] font-bold px-2 py-0.5 rounded-md bg-gold-light text-[#8a6d1a]">Sederhana</span>',
+      tinggi: '<span class="inline-flex text-[11px] font-bold px-2 py-0.5 rounded-md bg-terracotta-light text-terracotta">Tinggi</span>',
+    };
+    function prioBadge(p) {
+      const u = RXutamaMax;
+      const [l, c] = p <= u ? ['Utama', 'bg-terracotta-light text-terracotta'] :
+        p <= u * 2 ? ['Tinggi', 'bg-[#ffe9d6] text-[#c2570e]'] :
+          p <= u * 3 ? ['Sederhana', 'bg-gold-light text-[#8a6d1a]'] : ['Rendah', 'bg-ink/8 text-ink/55'];
+      return `<span class="inline-flex text-[11px] font-bold px-2 py-0.5 rounded-md ${c}">${p} (${l})</span>`;
+    }
+    function toggleHtml(on, fn) {
+      return `<span class="inline-flex items-center gap-1.5"><button data-rbac="reaksi.edit" onclick="${fn}" class="relative w-9 h-5 rounded-full transition-colors ${on ? 'bg-green' : 'bg-ink/20'}">
+    <span class="absolute top-0.5 ${on ? 'right-0.5' : 'left-0.5'} w-4 h-4 rounded-full bg-white shadow"></span></button>
+    <span class="text-[11.5px] font-medium text-ink/55">${on ? 'Aktif' : 'Off'}</span></span>`;
+    }
+
+    // ── Muat data ──
+    async function rxLoad() {
+      const [{ data: items }, { data: actions }, { data: maps }, katRes] = await Promise.all([
+        window.db.from('psy_reaksi_item').select('*').order('urutan'),
+        window.db.from('psy_reaksi_actions').select('*').order('priority'),
+        window.db.from('psy_reaksi_action_map').select('symptom_id,action_id'),
+        window.db.from('psy_reaksi_kategori').select('*').order('urutan'),
+      ]);
+      RXitems = items || []; RXactions = actions || [];
+      RXmapBySym = {}; RXmapByAct = {};
+      (maps || []).forEach(m => {
+        (RXmapBySym[m.symptom_id] ||= new Set()).add(m.action_id);
+        (RXmapByAct[m.action_id] ||= new Set()).add(m.symptom_id);
+      });
+      RXhasV2 = !RXitems.length || ('tahap_risiko' in RXitems[0]);
+      RXhasKatTable = !katRes.error;
+      if (RXhasKatTable && (katRes.data || []).length) {
+        RXcats = katRes.data;
+      } else {
+        // Fallback: terbit kategori dari kumpulan item sedia ada
+        const seen = {};
+        RXcats = [];
+        RXitems.forEach(it => { if (!seen[it.kumpulan]) { seen[it.kumpulan] = 1; RXcats.push({ id: null, nama: it.kumpulan, ikon: it.ikon || '', penerangan: null, aktif: true }); } });
+      }
+      document.getElementById('rx-mig-warn').classList.toggle('hidden', RXhasV2 && RXhasKatTable);
+      if (!rsCat || !RXcats.find(c => c.nama === rsCat)) rsCat = RXcats[0]?.nama || null;
+      if (!pmCat || !RXcats.find(c => c.nama === pmCat)) pmCat = RXcats[0]?.nama || null;
+      try {
+        const { data } = await window.db.from('psy_settings').select('value').eq('key', 'reaksi_utama_max').limit(1);
+        if (data && data[0] && data[0].value != null) RXutamaMax = parseInt(data[0].value, 10) || 10;
+      } catch (_) { }
+      // Bersihkan pilihan pukal yang merujuk tindakan yang sudah dipadam
+      const rxActIds = new Set(RXactions.map(a => a.id));
+      Object.values(rxSelIds).forEach(set => [...set].forEach(id => { if (!rxActIds.has(id)) set.delete(id); }));
+      rxRenderAll();
+    }
+    function itemsInCat(nama) { return RXitems.filter(it => it.kumpulan === nama); }
+    function rxRenderAll() { ktRender(); rsRenderCats(); rsRenderList(); tdRenderList(); dtRenderList(); ghRenderList(); pmRenderCats(); pmRender(); imRender(); }
+
+    // ── Tabs ──
+    function rxSetTab(t) {
+      RXtab = t;
+      ['kategori', 'reaksi', 'tindakan', 'diet', 'gaya', 'pemetaan', 'import', 'preview'].forEach(k =>
+        document.getElementById('rx-pane-' + k).classList.toggle('hidden', k !== t));
+      // Lazy-load iframe embed hanya bila tab dibuka kali pertama
+      if (t === 'preview') {
+        const f = document.getElementById('rx-frame-' + t);
+        if (f && !f.src) f.src = f.dataset.src;
+      }
+      document.querySelectorAll('.rx-tab').forEach(b => {
+        const on = b.dataset.rxTab === t;
+        b.className = 'rx-tab shrink-0 px-3.5 py-3.5 text-[13px] font-bold border-b-[3px] transition-colors ' +
+          (on ? 'border-navy text-navy' : 'border-transparent text-ink/50 hover:text-ink');
+      });
+      history.replaceState(null, '', '#' + t);
+    }
+    document.addEventListener('click', e => { const b = e.target.closest('[data-rx-tab]'); if (b) rxSetTab(b.dataset.rxTab); });
+
+    // Komponen sidebar kategori (dikongsi tab Reaksi & Pemetaan)
+    function catSidebar(hostId, selected, counts, onclickFn) {
+      document.getElementById(hostId).innerHTML = RXcats.map(c => `
+    <button onclick="${onclickFn}('${esc2(c.nama).replace(/'/g, "\\'")}')"
+      class="w-full flex items-center gap-2.5 rounded-xl border-2 px-3 py-2.5 text-left transition-colors ${selected === c.nama ? 'border-navy bg-navy/[0.05]' : 'border-ink/8 hover:border-navy/30'} ${c.aktif === false ? 'opacity-50' : ''}">
+      <span class="flex-1 text-[13px] font-bold text-ink truncate">${esc2(c.nama)}</span>
+      <span class="text-[11px] font-bold px-2 py-0.5 rounded-full ${selected === c.nama ? 'bg-navy text-white' : 'bg-ink/8 text-ink/55'}">${counts[c.nama] || 0}</span>
+    </button>`).join('') || '<p class="text-[12px] text-ink/40 italic">Tiada kategori. Tambah di tab Kategori.</p>';
+    }
+    function catHead(hostId, nama, countLabel) {
+      const c = RXcats.find(x => x.nama === nama);
+      document.getElementById(hostId).innerHTML = c ? `
+    <div class="min-w-0">
+      <div class="flex items-center gap-2"><span class="text-[16px] font-bold text-ink">${esc2(c.nama)}</span>
+        <span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-green-light text-green-dark">${countLabel}</span></div>
+      <div class="text-[12px] text-ink/45 truncate">${esc2(c.penerangan) || ''}</div>
+    </div>` : '<span class="text-[13px] text-ink/40 italic">Pilih kategori di sebelah kiri.</span>';
+    }
+
+    // ══════════ Pagination generik (10 sebaris, dikongsi semua jadual) ══════════
+    const RX_PER_PAGE = 10;
+    const rxPg = { kt: { page: 1, sig: '' }, rs: { page: 1, sig: '' }, td: { page: 1, sig: '' }, dt: { page: 1, sig: '' }, gh: { page: 1, sig: '' }, pm: { page: 1, sig: '' } };
+    function rxGoPage(key, p) {
+      rxPg[key].page = p;
+      ({ kt: ktRender, rs: rsRenderList, td: tdRenderList, dt: dtRenderList, gh: ghRenderList, pm: pmRender })[key]();
+    }
+    // Potong `rows` ikut halaman semasa + lukis bar pagination #<key>-pager.
+    // `sig` = tandatangan penapis (kategori+carian) — bila berubah, balik ke halaman 1.
+    function rxPaginate(key, allRows, sig, label) {
+      const st = rxPg[key];
+      if (st.sig !== sig) { st.page = 1; st.sig = sig; }
+      const total = allRows.length;
+      const maxPage = Math.max(1, Math.ceil(total / RX_PER_PAGE));
+      st.page = Math.min(Math.max(1, st.page), maxPage);
+      const start = (st.page - 1) * RX_PER_PAGE;
+      const pager = document.getElementById(key + '-pager');
+      if (total <= RX_PER_PAGE) {
+        pager.classList.add('hidden'); pager.classList.remove('flex');
+      } else {
+        pager.classList.remove('hidden'); pager.classList.add('flex');
+        document.getElementById(key + '-pager-info').textContent = `Menunjukkan ${start + 1}–${Math.min(start + RX_PER_PAGE, total)} daripada ${total} ${label}`;
+        document.getElementById(key + '-pager-prev').disabled = st.page <= 1;
+        document.getElementById(key + '-pager-next').disabled = st.page >= maxPage;
+        document.getElementById(key + '-pager-pages').innerHTML = Array.from({ length: maxPage }, (_, p) => `
+    <button onclick="rxGoPage('${key}', ${p + 1})" class="w-8 h-8 rounded-lg text-[12px] font-bold ${p + 1 === st.page ? 'bg-navy text-white' : 'text-ink/55 hover:bg-ink/5'}">${p + 1}</button>`).join('');
+      }
+      return { rows: allRows.slice(start, start + RX_PER_PAGE), start };
+    }
+    // Baris pengisi: penuhkan jadual hingga 10 baris supaya tinggi card konsisten antara halaman/kategori.
+    // Halaman penuh 10 baris = tiada baris pengisi (tiada jurang); baris kurang = ruang kosong terkawal.
+    function rxFiller(shown, colspan, h) {
+      const n = RX_PER_PAGE - Math.max(shown, 1);
+      return n > 0 ? Array.from({ length: n }, () => `<tr aria-hidden="true"><td colspan="${colspan}" style="height:${h}px"></td></tr>`).join('') : '';
+    }
+
+    // ══════════ TAB KATEGORI ══════════
+    let ktEdit = null; // nama kategori yang sedang diedit inline
+    function ktRender() {
+      const { rows, start } = rxPaginate('kt', RXcats, '', 'kategori');
+      document.getElementById('kt-tbody').innerHTML = (rows.map((c, i) => {
+        const editing = ktEdit === c.nama;
+        const arg = `'${esc2(c.nama).replace(/'/g, "\\'")}'`;
+        return `
+    <tr class="border-b border-ink/[0.05] last:border-0 hover:bg-ink/[0.015] ${c.aktif === false ? 'opacity-50' : ''}">
+      <td class="px-4 py-2 text-[12px] text-ink/40">${start + i + 1}</td>
+      <td class="px-3 py-2">${editing
+            ? `<input id="kt-edit-nama" value="${esc2(c.nama)}"
+                onkeydown="if(event.key==='Enter')ktEditSave(); else if(event.key==='Escape')ktEditCancel()"
+                class="w-full max-w-[280px] border border-ink/20 rounded-lg px-3 py-1.5 text-[13px] font-bold focus:border-navy outline-none bg-white">`
+            : `<span class="text-[13px] font-bold text-ink">${esc2(c.nama)}</span>`}</td>
+      <td class="px-3 py-2 text-[12.5px] font-bold text-green-dark">${itemsInCat(c.nama).length} reaksi</td>
+      <td class="px-3 py-2">${toggleHtml(c.aktif !== false, `ktToggleAktif(${arg})`)}</td>
+      <td class="px-3 py-2 text-right pr-5 whitespace-nowrap">${editing
+            ? `<button data-rbac="reaksi.edit" onclick="ktEditSave()" class="px-3 h-7 rounded-lg bg-navy text-white text-[12px] font-bold hover:bg-navy-dark">Simpan</button>
+               <button onclick="ktEditCancel()" class="px-3 h-7 rounded-lg border border-ink/15 text-[12px] font-semibold text-ink/60 hover:bg-ink/5">Batal</button>`
+            : `<button data-rbac="reaksi.edit" title="Edit" onclick="ktEditStart(${arg})" class="px-2 h-7 rounded-lg hover:bg-navy/10 text-navy text-[12px] font-bold">Edit</button>
+               <button data-rbac="reaksi.delete" title="Buang" onclick="ktDelete(${arg})" class="px-2 h-7 rounded-lg hover:bg-red-50 text-red-400 hover:text-red-600 text-[12px] font-bold">Buang</button>`}</td>
+    </tr>`;
+      }).join('') || '<tr><td colspan="5" class="px-4 py-8 text-center text-[13px] text-ink/40 italic">Tiada kategori lagi.</td></tr>') + rxFiller(rows.length, 5, 38);
+    }
+    // ── Edit kategori inline (terus dalam baris jadual, tanpa popup) ──
+    function ktEditStart(nama) {
+      if (!RXhasKatTable) return alert('Sila run migration 20260715 dahulu untuk urus kategori.');
+      ktEdit = nama;
+      ktRender();
+      const inp = document.getElementById('kt-edit-nama');
+      if (inp) { inp.focus(); inp.select(); }
+    }
+    function ktEditCancel() { ktEdit = null; ktRender(); }
+    async function ktEditSave() {
+      const c = RXcats.find(x => x.nama === ktEdit);
+      if (!c) return ktEditCancel();
+      const nama = document.getElementById('kt-edit-nama').value.trim();
+      if (!nama) return alert('Sila isi nama kategori.');
+      if (nama === ktEdit) return ktEditCancel();
+      if (RXcats.find(x => x.nama.toLowerCase() === nama.toLowerCase())) return alert(`Kategori "${nama}" sudah wujud.`);
+      const { error } = await window.db.from('psy_reaksi_kategori')
+        .update({ nama, updated_at: new Date().toISOString() }).eq('id', c.id);
+      if (error) return alert('Gagal: ' + error.message);
+      // Nama bertukar — kemaskini reaksi & tindakan yang guna nama lama
+      await window.db.from('psy_reaksi_item').update({ kumpulan: nama, ikon: '' }).eq('kumpulan', ktEdit);
+      await window.db.from('psy_reaksi_actions').update({ kategori: nama }).eq('kategori', ktEdit);
+      ktEdit = null;
+      await rxLoad();
+    }
+    // ── Tambah kategori inline (baris bawah jadual, tanpa popup) ──
+    function ktAddShow() {
+      if (!RXhasKatTable) return alert('Sila run migration 20260715 dahulu untuk urus kategori.');
+      document.getElementById('kt-add-row').classList.remove('hidden');
+      const inp = document.getElementById('kt-add-nama');
+      inp.value = ''; inp.focus();
+    }
+    function ktAddHide() { document.getElementById('kt-add-row').classList.add('hidden'); }
+    async function ktAddSave() {
+      const nama = document.getElementById('kt-add-nama').value.trim();
+      if (!nama) return alert('Sila isi nama kategori.');
+      if (RXcats.find(c => c.nama.toLowerCase() === nama.toLowerCase())) return alert(`Kategori "${nama}" sudah wujud.`);
+      const { error } = await window.db.from('psy_reaksi_kategori').insert({
+        nama, ikon: null, aktif: true,
+        urutan: Math.max(0, ...RXcats.map((c, i) => c.urutan || (i + 1) * 10)) + 10,
+        updated_at: new Date().toISOString(),
+      });
+      if (error) return alert('Gagal: ' + error.message);
+      ktAddHide();
+      await rxLoad();
+      // Lompat ke halaman terakhir supaya kategori baru terus kelihatan
+      rxPg.kt.page = 9999; ktRender();
+    }
+    async function ktToggleAktif(nama) {
+      if (!RXhasKatTable) return alert('Sila run migration 20260715 dahulu untuk urus kategori.');
+      const c = RXcats.find(x => x.nama === nama); if (!c || !c.id) return;
+      const baru = c.aktif === false;
+      const { error } = await window.db.from('psy_reaksi_kategori')
+        .update({ aktif: baru, updated_at: new Date().toISOString() }).eq('id', c.id);
+      if (error) return alert('Gagal: ' + error.message);
+      c.aktif = baru;
+      rxRenderAll();
+    }
+    async function ktDelete(nama) {
+      if (!RXhasKatTable) return alert('Sila run migration 20260715 dahulu.');
+      const n = itemsInCat(nama).length;
+      if (n) return alert(`Kategori "${nama}" ada ${n} reaksi — pindah/buang reaksi dahulu.`);
+      if (!confirm(`Buang kategori "${nama}"?`)) return;
+      const c = RXcats.find(x => x.nama === nama);
+      const { error } = await window.db.from('psy_reaksi_kategori').delete().eq('id', c.id);
+      if (error) return alert('Gagal: ' + error.message);
+      await window.db.from('psy_reaksi_actions').update({ kategori: null }).eq('kategori', nama);
+      await rxLoad();
+    }
+
+    // ══════════ TAB REAKSI ══════════
+    function rsSetCat(nama) { rsCat = nama; rsRenderCats(); rsRenderList(); }
+    function rsRenderCats() {
+      const counts = {}; RXitems.forEach(it => counts[it.kumpulan] = (counts[it.kumpulan] || 0) + 1);
+      catSidebar('rs-cat-list', rsCat, counts, 'rsSetCat');
+    }
+    function rsRenderList() {
+      catHead('rs-cat-head', rsCat, `${itemsInCat(rsCat).length} reaksi`);
+      const q = (document.getElementById('rs-f-cari').value || '').toLowerCase().trim();
+      const all = itemsInCat(rsCat).filter(it => !q || it.label.toLowerCase().includes(q) || (it.penerangan || '').toLowerCase().includes(q));
+      document.getElementById('rs-count').textContent = q ? `${all.length} daripada ${itemsInCat(rsCat).length} reaksi padan carian` : '';
+      const { rows, start } = rxPaginate('rs', all, `${rsCat}|${q}`, 'reaksi');
+      document.getElementById('rs-tbody').innerHTML = (rows.map((it, i) => `
+    <tr class="border-b border-ink/[0.05] last:border-0 hover:bg-ink/[0.015] ${it.aktif ? '' : 'opacity-50'}">
+      <td class="px-3 py-2 text-[12px] text-ink/40">${start + i + 1}</td>
+      <td class="px-2 py-2">
+        <div class="text-[13px] font-semibold text-ink">${esc2(it.label)}${it.is_emergency ? ' <span class="text-[10.5px] font-bold text-terracotta">(Kecemasan)</span>' : ''}</div>
+        <div class="text-[11.5px] text-ink/40">${esc2(it.penerangan) || ''}</div>
+      </td>
+      <td class="px-2 py-2">${TAHAP_BADGE2[it.tahap_risiko || 'rendah']}</td>
+      <td class="px-2 py-2">${toggleHtml(it.aktif, `rsToggleAktif('${it.id}')`)}</td>
+      <td class="px-2 py-2 text-right pr-3 whitespace-nowrap">
+        <button data-rbac="reaksi.edit" title="Edit" onclick="rsOpen('${it.id}')" class="px-2 h-7 rounded-lg hover:bg-navy/10 text-navy text-[12px] font-bold">Edit</button>
+        <button data-rbac="reaksi.delete" title="Buang" onclick="rsSel='${it.id}';rsDelete()" class="px-2 h-7 rounded-lg hover:bg-red-50 text-red-400 hover:text-red-600 text-[12px] font-bold">Buang</button>
+      </td>
+    </tr>`).join('') || '<tr><td colspan="5" class="px-4 py-8 text-center text-[13px] text-ink/40 italic">Tiada reaksi dalam kategori ini.</td></tr>') + rxFiller(rows.length, 5, 44);
+    }
+    async function rsToggleAktif(id) {
+      const it = RXitems.find(x => x.id === id); if (!it) return;
+      await window.db.from('psy_reaksi_item').update({ aktif: !it.aktif, updated_at: new Date().toISOString() }).eq('id', id);
+      it.aktif = !it.aktif; rsRenderList(); pmRender();
+    }
+    function rsNew() { rsSel = '__new__'; rsRenderDrawer(); document.getElementById('rs-drawer').classList.remove('hidden'); }
+    function rsOpen(id) { rsSel = id; rsRenderDrawer(); document.getElementById('rs-drawer').classList.remove('hidden'); }
+    function rsClose() { document.getElementById('rs-drawer').classList.add('hidden'); rsSel = null; }
+
+    function rsRenderDrawer() {
+      const it = rsSel && rsSel !== '__new__' ? RXitems.find(x => x.id === rsSel) : null;
+      const gsel = document.getElementById('rs-ed-group');
+      gsel.innerHTML = RXcats.map(c => `<option value="${esc2(c.nama)}">${esc2(c.nama)}</option>`).join('');
+      gsel.value = it ? it.kumpulan : (rsCat || RXcats[0]?.nama || '');
+      document.getElementById('rs-ed-label').value = it ? it.label : '';
+      document.getElementById('rs-ed-tahap').value = (it && it.tahap_risiko) || 'rendah';
+      document.getElementById('rs-ed-aktif').checked = it ? !!it.aktif : true;
+      document.getElementById('rs-ed-penerangan').value = (it && it.penerangan) || '';
+      document.getElementById('rs-ed-markah').value = (it && it.markah_risiko) || 5;
+      document.getElementById('rs-ed-pemantauan').checked = !!(it && it.perlu_pemantauan);
+      document.getElementById('rs-ed-ringkasan').checked = it ? it.tunjuk_ringkasan !== false : true;
+      document.getElementById('rs-ed-notif').checked = !!(it && it.notifikasi_coach);
+      document.getElementById('rs-ed-emergency').checked = !!(it && it.is_emergency);
+      rsContoh = Array.isArray(it?.contoh) ? [...it.contoh] : [];
+      rsRenderContoh();
+      document.getElementById('rs-ed-actions-wrap').style.display = it ? '' : 'none';
+      if (it) rsRenderActTable();
+    }
+    function rsRenderContoh() {
+      document.getElementById('rs-ed-contoh-chips').innerHTML = rsContoh.map((c, i) => `
+    <span class="inline-flex items-center gap-1.5 text-[11.5px] bg-navy-light text-navy px-2 py-0.5 rounded-md">${esc2(c)}
+      <button onclick="rsContoh.splice(${i},1);rsRenderContoh()" class="text-navy/50 hover:text-navy font-bold">x</button></span>`).join('');
+    }
+    document.addEventListener('keydown', e => {
+      if (e.target.id === 'rs-ed-contoh-input' && e.key === 'Enter') {
+        e.preventDefault(); const v = e.target.value.trim();
+        if (v) { rsContoh.push(v); e.target.value = ''; rsRenderContoh(); }
+      }
+    });
+    function rsMappedActs() {
+      return [...(RXmapBySym[rsSel] || [])].map(id => RXactions.find(a => a.id === id)).filter(Boolean).sort((a, b) => a.priority - b.priority);
+    }
+    function rsRenderActTable() {
+      const acts = rsMappedActs();
+      const jenisChip = a => rxJenis(a) === 'pemakanan'
+        ? ' <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-green-light text-green-dark">Diet</span>'
+        : rxJenis(a) === 'gaya_hidup'
+          ? ' <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gold-light text-[#8a6d1a]">Gaya Hidup</span>' : '';
+      document.getElementById('rs-ed-act-tbody').innerHTML = acts.map((a, i) => `
+    <tr class="border-b border-ink/[0.05] last:border-0 ${a.aktif ? '' : 'opacity-50'}">
+      <td class="px-2.5 py-2 text-[11.5px] text-ink/40">${i + 1}</td>
+      <td class="px-2 py-2 text-[12.5px] font-semibold text-ink">${esc2(a.title)}${a.is_emergency ? ' <span class="text-[10.5px] font-bold text-terracotta">(Kecemasan)</span>' : ''}${jenisChip(a)}</td>
+      <td class="px-2 py-2">${prioBadge(a.priority)}</td>
+      <td class="px-2 py-2">${toggleHtml(a.aktif, `rsActToggle('${a.id}')`)}</td>
+      <td class="px-2 py-2 text-right pr-2 whitespace-nowrap">
+        <button data-rbac="reaksi.edit" title="Buang pemetaan" onclick="rsUnmap('${a.id}')" class="px-2 h-7 rounded-lg hover:bg-red-50 text-red-400 hover:text-red-600 text-[12px] font-bold">Buang</button>
+      </td>
+    </tr>`).join('') || '<tr><td colspan="5" class="px-3 py-4 text-center text-[12px] text-ink/40 italic">Belum ada tindakan dipetakan.</td></tr>';
+      const mapped = RXmapBySym[rsSel] || new Set();
+      document.getElementById('rs-ed-act-add').innerHTML = '<option value="">— pilih tindakan —</option>' +
+        RXactions.filter(a => !mapped.has(a.id)).map(a => `<option value="${a.id}">${esc2(a.title)}</option>`).join('');
+      const withPanduan = acts.filter(a => a.panduan);
+      document.getElementById('rs-ed-panduan-note').classList.toggle('hidden', !withPanduan.length);
+      document.getElementById('rs-ed-panduan-list').classList.add('hidden');
+      if (withPanduan.length) {
+        document.getElementById('rs-ed-panduan-sub').textContent = `Tindakan seperti ${withPanduan.slice(0, 2).map(a => `'${a.title}'`).join(' dan ')} mempunyai panduan penyediaan.`;
+        document.getElementById('rs-ed-panduan-list').innerHTML = withPanduan.map(a => `
+      <div class="bg-white border border-gold/25 rounded-xl px-4 py-3">
+        <div class="text-[12.5px] font-bold text-[#8a6d1a] mb-1">${esc2(a.title)}</div>
+        <p class="text-[12px] text-ink/65 whitespace-pre-wrap leading-relaxed">${esc2(a.panduan)}</p>
+      </div>`).join('');
+      }
+    }
+    function rsTogglePanduan() { document.getElementById('rs-ed-panduan-list').classList.toggle('hidden'); }
+    async function rsActToggle(actionId) {
+      const a = RXactions.find(x => x.id === actionId); if (!a) return;
+      await window.db.from('psy_reaksi_actions').update({ aktif: !a.aktif, updated_at: new Date().toISOString() }).eq('id', actionId);
+      a.aktif = !a.aktif; rsRenderActTable(); tdRenderList(); dtRenderList(); ghRenderList();
+    }
+    async function rsMapAdd() {
+      const actionId = document.getElementById('rs-ed-act-add').value;
+      if (!actionId || !rsSel || rsSel === '__new__') return;
+      const { error } = await window.db.from('psy_reaksi_action_map').insert({ symptom_id: rsSel, action_id: actionId });
+      if (error) return alert('Gagal: ' + error.message);
+      (RXmapBySym[rsSel] ||= new Set()).add(actionId);
+      (RXmapByAct[actionId] ||= new Set()).add(rsSel);
+      rsRenderActTable(); pmRender();
+    }
+    async function rsUnmap(actionId) {
+      const { error } = await window.db.from('psy_reaksi_action_map').delete().eq('symptom_id', rsSel).eq('action_id', actionId);
+      if (error) return alert('Gagal: ' + error.message);
+      (RXmapBySym[rsSel] || new Set()).delete(actionId);
+      (RXmapByAct[actionId] || new Set()).delete(rsSel);
+      rsRenderActTable(); pmRender();
+    }
+    async function rsSave() {
+      const label = document.getElementById('rs-ed-label').value.trim();
+      if (!label) return alert('Sila isi nama reaksi.');
+      const kumpulan = document.getElementById('rs-ed-group').value;
+      if (!kumpulan) return alert('Sila pilih kategori (tambah di tab Kategori jika tiada).');
+      const kat = RXcats.find(c => c.nama === kumpulan);
+      const payload = { kumpulan, ikon: '', label, aktif: document.getElementById('rs-ed-aktif').checked, updated_at: new Date().toISOString() };
+      if (RXhasV2) Object.assign(payload, {
+        tahap_risiko: document.getElementById('rs-ed-tahap').value,
+        markah_risiko: Math.min(100, Math.max(1, parseInt(document.getElementById('rs-ed-markah').value, 10) || 5)),
+        penerangan: document.getElementById('rs-ed-penerangan').value.trim() || null,
+        contoh: rsContoh,
+        perlu_pemantauan: document.getElementById('rs-ed-pemantauan').checked,
+        tunjuk_ringkasan: document.getElementById('rs-ed-ringkasan').checked,
+        notifikasi_coach: document.getElementById('rs-ed-notif').checked,
+        is_emergency: document.getElementById('rs-ed-emergency').checked,
+      });
+      let error;
+      if (rsSel && rsSel !== '__new__') {
+        ({ error } = await window.db.from('psy_reaksi_item').update(payload).eq('id', rsSel));
+      } else {
+        payload.urutan = Math.max(0, ...RXitems.map(i => i.urutan || 0)) + 10;
+        ({ error } = await window.db.from('psy_reaksi_item').insert(payload));
+      }
+      if (error) return alert('Gagal: ' + error.message);
+      rsClose();
+      rsCat = kumpulan;
+      await rxLoad();
+    }
+    async function rsDelete() {
+      if (!rsSel || rsSel === '__new__') return rsClose();
+      const it = RXitems.find(x => x.id === rsSel);
+      if (!confirm(`Buang reaksi "${it?.label || ''}"?\n\nPemetaan tindakan simptom ini turut dibuang. Rekod poll lama tidak terjejas.`)) return;
+      const { error } = await window.db.from('psy_reaksi_item').delete().eq('id', rsSel);
+      if (error) return alert('Gagal: ' + error.message);
+      rsClose();
+      await rxLoad();
+    }
+
+    // ══════════ Pilih & padam pukal (dikongsi tab Tindakan / Diet / Gaya Hidup) ══════════
+    // Checkbox header = pilih SEMUA hasil tapisan semasa (merentas halaman).
+    const rxSelIds = { td: new Set(), dt: new Set(), gh: new Set() };
+    const rxLastFiltered = { td: [], dt: [], gh: [] }; // id hasil tapisan terkini per tab
+    const rxKeyRender = key => ({ td: tdRenderList, dt: dtRenderList, gh: ghRenderList })[key]();
+    function rxSelToggle(key, id, on) {
+      if (on) rxSelIds[key].add(id); else rxSelIds[key].delete(id);
+      rxBulkRefresh(key);
+    }
+    function rxSelAll(key, on) {
+      rxLastFiltered[key].forEach(id => on ? rxSelIds[key].add(id) : rxSelIds[key].delete(id));
+      rxKeyRender(key);
+    }
+    function rxSelClear(key) { rxSelIds[key].clear(); rxKeyRender(key); }
+    function rxBulkRefresh(key) { // bar + keadaan checkbox header tanpa render semula jadual
+      const n = rxSelIds[key].size;
+      document.getElementById(key + '-bulkbar').innerHTML = n ? `
+    <span class="text-[12px] font-bold text-navy whitespace-nowrap">${n} dipilih</span>
+    <button data-rbac="reaksi.delete" onclick="rxBulkDelete('${key}')"
+      class="px-3 h-9 rounded-xl bg-red-500 hover:bg-red-600 text-white text-[12.5px] font-bold whitespace-nowrap">Padam Dipilih</button>
+    <button onclick="rxSelClear('${key}')"
+      class="px-2.5 h-9 rounded-xl border border-ink/15 text-ink/60 text-[12.5px] font-semibold hover:bg-ink/5 whitespace-nowrap">Kosongkan</button>` : '';
+      const sa = document.getElementById(key + '-selall');
+      const selInFilter = rxLastFiltered[key].filter(id => rxSelIds[key].has(id)).length;
+      sa.checked = rxLastFiltered[key].length > 0 && selInFilter === rxLastFiltered[key].length;
+      sa.indeterminate = selInFilter > 0 && selInFilter < rxLastFiltered[key].length;
+    }
+    async function rxBulkDelete(key) {
+      const ids = [...rxSelIds[key]];
+      if (!ids.length) return;
+      if (!confirm(`Padam ${ids.length} saranan dipilih sepenuhnya?\n\nSemua pemetaan simptom berkaitan turut dibuang. Rekod poll lama tidak terjejas.`)) return;
+      const { error } = await window.db.from('psy_reaksi_actions').delete().in('id', ids);
+      if (error) return alert('Gagal: ' + error.message);
+      rxSelIds[key].clear();
+      await rxLoad();
+    }
+    const rxSelCellHtml = (key, id) => `<td class="px-3 py-2"><input type="checkbox" ${rxSelIds[key].has(id) ? 'checked' : ''}
+      onchange="rxSelToggle('${key}','${id}',this.checked)" class="w-4 h-4 accent-navy align-middle"></td>`;
+
+    // ══════════ TAB TINDAKAN (tiada kategori — senarai penuh) ══════════
+    // Saranan Diet & Nutrisi (jenis pemakanan) dan Gaya Hidup Fitrah (jenis
+    // gaya_hidup) TIDAK disenaraikan di sini — ada tab khas masing-masing.
+    const rxJenis = a => a.jenis || 'am';
+    function tdRenderList() {
+      const base = RXactions.filter(a => rxJenis(a) !== 'pemakanan' && rxJenis(a) !== 'gaya_hidup');
+      document.getElementById('td-cat-head').innerHTML = `
+    <div class="min-w-0">
+      <div class="flex items-center gap-2"><span class="text-[16px] font-bold text-ink">Senarai Tindakan (Cadangan)</span>
+        <span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-green-light text-green-dark">${base.length} tindakan</span></div>
+      <div class="text-[12px] text-ink/45">Tindakan mesej pertama — Diet &amp; Nutrisi dan Gaya Hidup Fitrah ada tab sendiri. Petakan ke simptom melalui butang Edit.</div>
+    </div>`;
+      const q = (document.getElementById('td-f-cari').value || '').toLowerCase().trim();
+      const all = base.filter(a => !q || a.title.toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q));
+      rxLastFiltered.td = all.map(a => a.id);
+      document.getElementById('td-count').textContent = q ? `${all.length} daripada ${base.length} tindakan padan carian` : '';
+      const { rows, start } = rxPaginate('td', all, q, 'tindakan');
+      document.getElementById('td-tbody').innerHTML = (rows.map((a, i) => `
+    <tr class="border-b border-ink/[0.05] last:border-0 hover:bg-ink/[0.015] ${a.aktif ? '' : 'opacity-50'}">
+      ${rxSelCellHtml('td', a.id)}
+      <td class="px-2 py-2 text-[12px] text-ink/40">${start + i + 1}</td>
+      <td class="px-2 py-2">
+        <div class="text-[13px] font-semibold text-ink">${esc2(a.title)}${a.is_emergency ? ' <span class="text-[10.5px] font-bold text-terracotta">(Kecemasan)</span>' : ''}</div>
+        <div class="text-[11.5px] text-ink/40">${esc2(a.description) || ''}</div>
+      </td>
+      <td class="px-2 py-2">${prioBadge(a.priority)}</td>
+      <td class="px-2 py-2">${toggleHtml(a.aktif, `tdToggleAktif('${a.id}')`)}</td>
+      <td class="px-2 py-2 text-right pr-3 whitespace-nowrap">
+        <button data-rbac="reaksi.edit" title="Edit" onclick="tdOpen('${a.id}')" class="px-2 h-7 rounded-lg hover:bg-navy/10 text-navy text-[12px] font-bold">Edit</button>
+        <button data-rbac="reaksi.delete" title="Buang" onclick="tdSel='${a.id}';tdDelete()" class="px-2 h-7 rounded-lg hover:bg-red-50 text-red-400 hover:text-red-600 text-[12px] font-bold">Buang</button>
+      </td>
+    </tr>`).join('') || '<tr><td colspan="6" class="px-4 py-8 text-center text-[13px] text-ink/40 italic">Tiada tindakan lagi.</td></tr>') + rxFiller(rows.length, 6, 44);
+      rxBulkRefresh('td');
+    }
+    async function tdToggleAktif(id) {
+      const a = RXactions.find(x => x.id === id); if (!a) return;
+      await window.db.from('psy_reaksi_actions').update({ aktif: !a.aktif, updated_at: new Date().toISOString() }).eq('id', id);
+      a.aktif = !a.aktif; tdRenderList(); dtRenderList(); ghRenderList(); pmRender();
+    }
+    let tdJenisDefault = 'am'; // pratetap Jenis Saranan ikut tab asal butang + Tambah
+    function tdNew(jenis) { tdJenisDefault = jenis || 'am'; tdSel = '__new__'; tdRenderDrawer(); document.getElementById('td-drawer').classList.remove('hidden'); }
+    function tdOpen(id) { tdSel = id; tdRenderDrawer(); document.getElementById('td-drawer').classList.remove('hidden'); }
+    function tdClose() { document.getElementById('td-drawer').classList.add('hidden'); tdSel = null; }
+
+    function tdRenderDrawer() {
+      const a = tdSel && tdSel !== '__new__' ? RXactions.find(x => x.id === tdSel) : null;
+      document.getElementById('td-ed-title').value = a ? a.title : '';
+      document.getElementById('td-ed-priority').value = a ? a.priority : 100;
+      document.getElementById('td-ed-aktif').checked = a ? !!a.aktif : true;
+      document.getElementById('td-ed-desc').value = (a && a.description) || '';
+      document.getElementById('td-ed-panduan').value = (a && a.panduan) || '';
+      document.getElementById('td-ed-jenis').value = a ? (a.jenis || 'am') : tdJenisDefault;
+      document.getElementById('td-ed-emergency').checked = !!(a && a.is_emergency);
+      document.getElementById('td-ed-symcari').value = '';
+      tdSelSym = new Set(a ? [...(RXmapByAct[a.id] || [])] : []);
+      tdRenderSymList();
+    }
+    function tdRenderSymList() {
+      const q = (document.getElementById('td-ed-symcari').value || '').toLowerCase().trim();
+      document.getElementById('td-ed-symcount').textContent = tdSelSym.size ? `· ${tdSelSym.size} dipilih` : '';
+      const groups = {};
+      RXitems.filter(s => !q || s.label.toLowerCase().includes(q)).forEach(s => (groups[s.kumpulan] ||= []).push(s));
+      document.getElementById('td-ed-symlist').innerHTML = Object.entries(groups).map(([g, items]) => `
+    <div class="text-[10px] uppercase font-bold text-ink/35 mt-1.5 first:mt-0">${esc2(g)}</div>
+    ${items.map(s => `<label class="flex items-center gap-2 text-[12px] text-ink/70 cursor-pointer py-0.5 ${s.aktif ? '' : 'opacity-50'}">
+      <input type="checkbox" ${tdSelSym.has(s.id) ? 'checked' : ''} onchange="tdSymToggle('${s.id}', this.checked)" class="w-4 h-4 accent-green"> ${esc2(s.label)}</label>`).join('')}`).join('')
+        || '<p class="text-[12px] text-ink/40 italic">Tiada simptom.</p>';
+    }
+    function tdSymToggle(id, on) { if (on) tdSelSym.add(id); else tdSelSym.delete(id); tdRenderSymList(); }
+    async function tdSave() {
+      const title = document.getElementById('td-ed-title').value.trim();
+      if (!title) return alert('Sila isi nama tindakan.');
+      const payload = {
+        title,
+        priority: Math.max(1, parseInt(document.getElementById('td-ed-priority').value, 10) || 100),
+        description: document.getElementById('td-ed-desc').value.trim() || null,
+        is_emergency: document.getElementById('td-ed-emergency').checked,
+        aktif: document.getElementById('td-ed-aktif').checked,
+        updated_at: new Date().toISOString(),
+      };
+      if (!RXactions.length || ('panduan' in RXactions[0])) {
+        payload.panduan = document.getElementById('td-ed-panduan').value.trim() || null;
+        payload.jenis = document.getElementById('td-ed-jenis').value || 'am';
+      }
+      let error, actionId = tdSel;
+      if (tdSel && tdSel !== '__new__') {
+        ({ error } = await window.db.from('psy_reaksi_actions').update(payload).eq('id', tdSel));
+      } else {
+        const res = await window.db.from('psy_reaksi_actions').insert(payload).select('id').single();
+        error = res.error; actionId = res.data?.id;
+      }
+      if (error) return alert('Gagal: ' + error.message);
+      const before = new Set(tdSel && tdSel !== '__new__' ? [...(RXmapByAct[tdSel] || [])] : []);
+      const toAdd = [...tdSelSym].filter(s => !before.has(s));
+      const toDel = [...before].filter(s => !tdSelSym.has(s));
+      if (toAdd.length) await window.db.from('psy_reaksi_action_map').insert(toAdd.map(s => ({ symptom_id: s, action_id: actionId })));
+      if (toDel.length) await window.db.from('psy_reaksi_action_map').delete().eq('action_id', actionId).in('symptom_id', toDel);
+      tdClose();
+      await rxLoad();
+    }
+    async function tdDelete() {
+      if (!tdSel || tdSel === '__new__') return tdClose();
+      const a = RXactions.find(x => x.id === tdSel);
+      if (!confirm(`Buang tindakan "${a?.title || ''}" sepenuhnya?\n\nSemua simptom yang dipetakan turut terjejas.`)) return;
+      const { error } = await window.db.from('psy_reaksi_actions').delete().eq('id', tdSel);
+      if (error) return alert('Gagal: ' + error.message);
+      tdClose();
+      await rxLoad();
+    }
+
+    // ══════════ TAB DIET & NUTRISI + GAYA HIDUP FITRAH ══════════
+    // Senarai tindakan ikut jenis — kongsi drawer Butiran Tindakan (tdOpen/tdNew).
+    function rxJenisList(key, jenis, tajuk, sub, itemLabel) {
+      const base = RXactions.filter(a => rxJenis(a) === jenis);
+      document.getElementById(key + '-cat-head').innerHTML = `
+    <div class="min-w-0">
+      <div class="flex items-center gap-2"><span class="text-[16px] font-bold text-ink">${tajuk}</span>
+        <span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-green-light text-green-dark">${base.length} saranan</span></div>
+      <div class="text-[12px] text-ink/45">${sub}</div>
+    </div>`;
+      const q = (document.getElementById(key + '-f-cari').value || '').toLowerCase().trim();
+      const all = base.filter(a => !q || a.title.toLowerCase().includes(q) || (a.panduan || '').toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q));
+      rxLastFiltered[key] = all.map(a => a.id);
+      document.getElementById(key + '-count').textContent = q ? `${all.length} daripada ${base.length} saranan padan carian` : '';
+      const panduanPreview = a => {
+        const items = String(a.panduan || '').split('\n').map(s => s.trim()).filter(Boolean);
+        if (!items.length) return `<div class="text-[11.5px] text-ink/40">${esc2(a.description) || ''}</div>`;
+        return `<div class="text-[11.5px] text-ink/45 mt-0.5">${esc2(items.slice(0, 4).join(' · '))}${items.length > 4 ? ` · <span class="font-semibold text-green-dark">+${items.length - 4} lagi</span>` : ''}</div>`;
+      };
+      const { rows, start } = rxPaginate(key, all, q, 'saranan');
+      document.getElementById(key + '-tbody').innerHTML = (rows.map((a, i) => `
+    <tr class="border-b border-ink/[0.05] last:border-0 hover:bg-ink/[0.015] ${a.aktif ? '' : 'opacity-50'}">
+      ${rxSelCellHtml(key, a.id)}
+      <td class="px-2 py-2 text-[12px] text-ink/40">${start + i + 1}</td>
+      <td class="px-2 py-2">
+        <div class="text-[13px] font-semibold text-ink">${esc2(a.title)}</div>
+        ${panduanPreview(a)}
+      </td>
+      <td class="px-2 py-2">${prioBadge(a.priority)}</td>
+      <td class="px-2 py-2">${toggleHtml(a.aktif, `tdToggleAktif('${a.id}')`)}</td>
+      <td class="px-2 py-2 text-right pr-3 whitespace-nowrap">
+        <button data-rbac="reaksi.edit" title="Edit" onclick="tdOpen('${a.id}')" class="px-2 h-7 rounded-lg hover:bg-navy/10 text-navy text-[12px] font-bold">Edit</button>
+        <button data-rbac="reaksi.delete" title="Buang" onclick="tdSel='${a.id}';tdDelete()" class="px-2 h-7 rounded-lg hover:bg-red-50 text-red-400 hover:text-red-600 text-[12px] font-bold">Buang</button>
+      </td>
+    </tr>`).join('') || `<tr><td colspan="6" class="px-4 py-8 text-center text-[13px] text-ink/40 italic">Tiada saranan ${itemLabel} lagi — tambah di sini atau guna tab Import Jadual.</td></tr>`) + rxFiller(rows.length, 6, 44);
+      rxBulkRefresh(key);
+    }
+    function dtRenderList() {
+      rxJenisList('dt', 'pemakanan', 'Saranan Diet & Nutrisi',
+        'Dihantar sebagai <b>mesej WhatsApp ke-3</b> (+10 minit) selepas Poll Harian. Senarai makanan diisi dalam medan Panduan (satu item per baris).',
+        'diet & nutrisi');
+    }
+    function ghRenderList() {
+      rxJenisList('gh', 'gaya_hidup', 'Saranan Gaya Hidup Fitrah',
+        'Dihantar sebagai <b>mesej WhatsApp ke-2</b> (+5 minit) selepas Poll Harian.',
+        'gaya hidup fitrah');
+    }
+
+    // ══════════ TAB PEMETAAN ══════════
+    function pmSetCat(nama) { pmCat = nama; pmRenderCats(); pmRender(); }
+    function pmRenderCats() {
+      const counts = {}; RXitems.forEach(it => counts[it.kumpulan] = (counts[it.kumpulan] || 0) + 1);
+      catSidebar('pm-cat-list', pmCat, counts, 'pmSetCat');
+    }
+    function pmRender() {
+      const c = RXcats.find(x => x.nama === pmCat);
+      document.getElementById('pm-cat-head').innerHTML = c ? `
+    <div class="min-w-0">
+      <div class="flex items-center gap-2"><span class="text-[16px] font-bold text-ink">${esc2(c.nama)}</span>
+        <span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-green-light text-green-dark">${itemsInCat(c.nama).length} reaksi</span></div>
+      <div class="text-[12px] text-ink/45">Pemetaan reaksi kategori ${esc2(c.nama)} dengan tindakan mesej pertama — saranan Diet &amp; Nutrisi / Gaya Hidup Fitrah tidak disenaraikan di sini (urus di tab masing-masing).</div>
+    </div>` : '<span class="text-[13px] text-ink/40 italic">Pilih kategori di sebelah kiri.</span>';
+      const q = (document.getElementById('pm-f-cari').value || '').toLowerCase().trim();
+      const all = itemsInCat(pmCat).filter(s => !q || s.label.toLowerCase().includes(q));
+      const actCell = (a, extra) => a ? `
+    <div class="flex items-start gap-2">
+      <div class="min-w-0">
+        <div class="text-[12.5px] font-semibold ${a.is_emergency ? 'text-terracotta' : 'text-ink'}">${esc2(a.title)}</div>
+        <div class="text-[11px] text-ink/40">${esc2(a.description) || ''}</div>
+        ${extra || ''}
+      </div>
+    </div>` : ('<span class="text-[12px] text-ink/30 italic">—</span>' + (extra || ''));
+      document.getElementById('pm-count').textContent = q ? `${all.length} daripada ${itemsInCat(pmCat).length} reaksi padan carian` : '';
+      const { rows, start } = rxPaginate('pm', all, `${pmCat}|${q}`, 'reaksi');
+      document.getElementById('pm-tbody').innerHTML = (rows.map((s, i) => {
+        // Hanya tindakan MESEJ 1 — saranan Diet & Gaya Hidup dipetakan seluruh
+        // kategori, jadi tidak disenaraikan di sini (lihat tab masing-masing);
+        // bilangannya ditunjuk sebagai nota kecil sahaja.
+        const allActs = [...(RXmapBySym[s.id] || [])].map(id => RXactions.find(a => a.id === id)).filter(Boolean);
+        const acts = allActs.filter(a => rxJenis(a) !== 'pemakanan' && rxJenis(a) !== 'gaya_hidup').sort((a, b) => a.priority - b.priority);
+        const nDG = allActs.length - acts.length;
+        const extra = [
+          acts.length > 2 ? `<div class="text-[11px] text-green-dark font-semibold mt-0.5">+ ${acts.length - 2} lagi</div>` : '',
+          nDG ? `<div class="text-[10.5px] text-ink/35 mt-0.5">+ ${nDG} saranan diet/gaya hidup</div>` : '',
+        ].join('');
+        return `
+    <tr class="border-b border-ink/[0.05] last:border-0 hover:bg-ink/[0.015] align-top ${s.aktif ? '' : 'opacity-50'}">
+      <td class="px-3 py-2 text-[12px] text-ink/40">${start + i + 1}</td>
+      <td class="px-2 py-2">
+        <div class="text-[13px] font-semibold text-ink">${esc2(s.label)}${s.is_emergency ? ' <span class="text-[10.5px] font-bold text-terracotta">(Kecemasan)</span>' : ''}</div>
+        <div class="text-[11.5px] text-ink/40">${esc2(s.penerangan) || ''}</div>
+      </td>
+      <td class="px-2 py-2">${TAHAP_BADGE2[s.tahap_risiko || 'rendah']}</td>
+      <td class="px-2 py-2">${actCell(acts[0])}</td>
+      <td class="px-2 py-2">${actCell(acts[1], extra)}</td>
+      <td class="px-2 py-2">${toggleHtml(s.aktif, `rsToggleAktif('${s.id}')`)}</td>
+      <td class="px-2 py-2 text-right pr-3"><button data-rbac="reaksi.edit" title="Edit pemetaan" onclick="rsOpen('${s.id}')" class="px-2 h-7 rounded-lg hover:bg-navy/10 text-navy text-[12px] font-bold">Edit</button></td>
+    </tr>`;
+      }).join('') || '<tr><td colspan="7" class="px-4 py-8 text-center text-[13px] text-ink/40 italic">Tiada reaksi dalam kategori ini.</td></tr>') + rxFiller(rows.length, 7, 52);
+    }
+
+    // ══════════ TAB IMPORT JADUAL ══════════
+    // Salin terus dari jadual Word/Excel: Solusi per reaksi (jenis 'tindakan',
+    // petakan ke reaksi itu sahaja) + Diet & Nutrisi (jenis 'pemakanan', tajuk
+    // bernombor + panduan = senarai makanan) + Gaya Hidup (jenis 'gaya_hidup')
+    // — dua yang terakhir dipetakan ke SEMUA reaksi dalam kategori.
+    let imRows = []; // { id: id item sedia ada | null, label, solusi }
+    // Aksara bullet pelbagai gaya Word/Docs: • ● ○ ◦ ▪ ▫ ■ □ ◆ ‣ ∙ · – — ► ➢ ➤ * - serta "o " sub-bullet Word
+    const IM_BULLET = '-–—*•‣●○◦▪▫■□◆∙·►➢➤';
+    const imStrip = s => String(s || '').replace(/\u00a0/g, ' ')
+      .replace(new RegExp('^\\s*(?:[' + IM_BULLET + 'o]\\s+|[' + IM_BULLET + ']|\\d+\\s*[.)])\\s*'), '').trim();
+    const imIsBullet = s => new RegExp('^\\s*(?:[' + IM_BULLET + ']|o\\s)').test(s) || /^(\t|\s{3,})/.test(s);
+    const imLines = t => String(t || '').split('\n').map(imStrip).filter(Boolean);
+    function imParseGroups(t) { // baris biasa = tajuk kumpulan; baris bullet/indent = item bawahnya
+      const groups = [];
+      String(t || '').split('\n').forEach(raw => {
+        const line = raw.replace(/\u00a0/g, ' ');
+        if (!line.trim()) return;
+        if (imIsBullet(line) && groups.length) groups[groups.length - 1].items.push(imStrip(line));
+        else groups.push({ title: imStrip(line), items: [] });
+      });
+      return groups.filter(g => g.title);
+    }
+    // Solusi → { title, panduan }. Dua format cara penyediaan disokong:
+    //   1. "Air jintan: Ambil 1 sudu kecil…"  → tajuk sebelum ':', cara selepasnya
+    //   2. Baris bullet/indent di bawah tajuk → langkah penyediaan (spt Bahagian B)
+    function imParseSolusi(t) {
+      return imParseGroups(t).map(g => {
+        let title = g.title, panduan = g.items.join('\n');
+        if (!panduan) {
+          const m = title.match(/^([^:]{3,60}):\s*(.{10,})$/);
+          if (m) { title = m[1].trim(); panduan = m[2].trim(); }
+        }
+        return { title, panduan: panduan || null };
+      });
+    }
+
+    function imCatName() {
+      return document.getElementById('im-cat-new').value.trim() || document.getElementById('im-cat').value;
+    }
+    function imRender() { // segarkan dropdown kategori (dipanggil rxRenderAll)
+      const sel = document.getElementById('im-cat');
+      const cur = sel.value;
+      sel.innerHTML = RXcats.map(c => `<option value="${esc2(c.nama)}">${esc2(c.nama)}</option>`).join('')
+        || '<option value="">— tiada kategori —</option>';
+      if (cur && RXcats.find(c => c.nama === cur)) sel.value = cur;
+      imRenderSym();
+    }
+    function imRenderSym() { // senarai reaksi ikut kategori dipilih (reset solusi)
+      const cat = imCatName();
+      imRows = RXitems.filter(it => it.kumpulan === cat).map(it => ({ id: it.id, label: it.label, solusi: '' }));
+      imDrawRows();
+    }
+    function imDrawRows() {
+      document.getElementById('im-sym-list').innerHTML = imRows.map((r, i) => `
+    <div class="grid sm:grid-cols-[220px_1fr] gap-2 items-start">
+      ${r.id
+          ? `<div class="text-[12.5px] font-bold text-ink pt-2.5 truncate" title="${esc2(r.label)}">${esc2(r.label)}</div>`
+          : `<input value="${esc2(r.label)}" placeholder="Nama reaksi baru…" oninput="imRows[${i}].label=this.value"
+          class="border border-navy/25 rounded-lg px-3 py-2 text-[12.5px] font-semibold focus:border-navy outline-none bg-white">`}
+      <div>
+        <textarea rows="3" placeholder="Satu solusi per baris — cth:&#10;1. Minum air suam&#10;2. Air jintan: Ambil 1 sudu kecil jintan manis, rebus bersama 100 ml air 'afiyah…&#10;3. Kurangkan makanan sukar dihadam" oninput="imRows[${i}].solusi=this.value;imSolCount(${i})"
+          class="w-full border border-ink/20 rounded-lg px-3 py-2 text-[12.5px] focus:border-navy outline-none resize-y bg-white">${esc2(r.solusi)}</textarea>
+        <div id="im-sol-n-${i}" class="text-[11px] font-semibold text-green-dark mt-0.5"></div>
+      </div>
+    </div>`).join('') || '<p class="text-[12px] text-ink/40 italic">Tiada reaksi dalam kategori ini lagi — guna butang + Tambah Reaksi.</p>';
+      imRows.forEach((_, i) => imSolCount(i));
+    }
+    function imAddSymRow() { imRows.push({ id: null, label: '', solusi: '' }); imDrawRows(); }
+    function imSolCount(i) {
+      const el = document.getElementById('im-sol-n-' + i); if (!el) return;
+      const sols = imParseSolusi(imRows[i]?.solusi);
+      const nPanduan = sols.filter(s => s.panduan).length;
+      el.textContent = sols.length
+        ? `${sols.length} tindakan akan dicipta${nPanduan ? ` (${nPanduan} dengan cara penyediaan 📝)` : ''}: ${sols.map(s => (s.title.length > 30 ? s.title.slice(0, 30) + '…' : s.title) + (s.panduan ? ' 📝' : '')).join(' · ')}`
+        : '';
+    }
+
+    // Pratonton langsung — coach nampak hasil SEBELUM import (elak salah format)
+    function imPreviewDiet() {
+      const raw = document.getElementById('im-diet').value;
+      const groups = imParseGroups(raw);
+      const warns = [];
+      const firstLine = String(raw || '').split('\n').find(l => l.trim());
+      if (firstLine && imIsBullet(firstLine)) warns.push('⚠ Baris pertama ialah bullet — letak tajuk kumpulan di atasnya dahulu (cth "1. Herba Pencernaan"), jika tidak bullet itu dianggap tajuk.');
+      groups.filter(g => !g.items.length).forEach(g => warns.push(`⚠ "${esc2(g.title)}" tiada senarai makanan (baris bullet -/•) di bawahnya — ia akan diimport tanpa senarai.`));
+      const warnEl = document.getElementById('im-diet-warn');
+      warnEl.innerHTML = warns.map(w => `<div>${w}</div>`).join('');
+      warnEl.classList.toggle('hidden', !warns.length);
+      const prevEl = document.getElementById('im-diet-preview'), sumEl = document.getElementById('im-diet-sum');
+      if (!groups.length) {
+        prevEl.innerHTML = '<span class="text-ink/35 italic">Taip atau paste di atas untuk lihat hasil…</span>';
+        sumEl.textContent = ''; return;
+      }
+      prevEl.textContent = groups.map((g, i) => [`${i + 1}. ${g.title}`, ...g.items.map(x => `   • ${x}`)].join('\n')).join('\n\n');
+      sumEl.textContent = `${groups.length} kumpulan · ${groups.reduce((s, g) => s + g.items.length, 0)} makanan`;
+    }
+    function imPreviewLife() {
+      const items = imLines(document.getElementById('im-life').value);
+      const prevEl = document.getElementById('im-life-preview'), sumEl = document.getElementById('im-life-sum');
+      if (!items.length) {
+        prevEl.innerHTML = '<span class="text-ink/35 italic">Taip atau paste di atas untuk lihat hasil…</span>';
+        sumEl.textContent = ''; return;
+      }
+      prevEl.textContent = items.map(x => `• ${x}`).join('\n');
+      sumEl.textContent = `${items.length} saranan`;
+    }
+
+    async function imRun() {
+      const btn = document.getElementById('im-run-btn'), stat = document.getElementById('im-status'), resBox = document.getElementById('im-result');
+      const cat = imCatName();
+      if (!cat) return alert('Sila pilih atau taip nama kategori.');
+      if (!RXhasV2 || !RXhasKatTable) return alert('Sila run migration 20260715 dahulu.');
+      if (RXactions.length && !('jenis' in RXactions[0])) return alert('Kolum jenis/panduan tiada — sila run migration 20260715 dahulu.');
+
+      const dietGroups = imParseGroups(document.getElementById('im-diet').value);
+      const lifeLines = imLines(document.getElementById('im-life').value);
+      const solRows = imRows.map(r => ({ ...r, label: r.label.trim(), sols: imParseSolusi(r.solusi) })).filter(r => r.label && r.sols.length);
+      if (!dietGroups.length && !lifeLines.length && !solRows.length) return alert('Tiada data untuk diimport — isi sekurang-kurangnya satu bahagian.');
+
+      btn.disabled = true; stat.textContent = 'Mengimport…'; resBox.classList.add('hidden');
+      try {
+        const out = { katBaru: 0, symBaru: 0, actBaru: 0, actGuna: 0, mapBaru: 0 };
+
+        // 1. Kategori baru jika belum wujud
+        if (!RXcats.find(c => c.nama.toLowerCase() === cat.toLowerCase())) {
+          const { error } = await window.db.from('psy_reaksi_kategori')
+            .insert({ nama: cat, ikon: '', urutan: 100 + RXcats.length * 10 });
+          if (error) throw error;
+          out.katBaru = 1;
+        }
+
+        // 2. Pastikan semua reaksi (simptom) wujud dalam kategori
+        const symByLabel = {};
+        RXitems.filter(it => it.kumpulan === cat).forEach(it => symByLabel[it.label.toLowerCase()] = it.id);
+        let urutanNext = Math.max(0, ...RXitems.map(i => i.urutan || 0)) + 10;
+        for (const r of solRows) {
+          const k = r.label.toLowerCase();
+          if (r.id) { symByLabel[k] = r.id; continue; }
+          if (symByLabel[k]) { r.id = symByLabel[k]; continue; }
+          const res = await window.db.from('psy_reaksi_item')
+            .insert({ kumpulan: cat, ikon: '', label: r.label, aktif: true, urutan: urutanNext }).select('id').single();
+          if (res.error) throw res.error;
+          r.id = res.data.id; symByLabel[k] = r.id; urutanNext += 10; out.symBaru++;
+        }
+        const allSymIds = Object.values(symByLabel);
+        if (!allSymIds.length) throw new Error('Kategori ini tiada reaksi — saranan diet/gaya hidup dipetakan kepada reaksi, tambah sekurang-kurangnya satu reaksi dahulu.');
+
+        // 3. Upsert tindakan — guna semula ikut nama (tak sensitif huruf besar/kecil)
+        const actByTitle = {};
+        RXactions.forEach(a => actByTitle[a.title.trim().toLowerCase()] = a);
+        let prioNext = Math.max(0, ...RXactions.map(a => a.priority || 0)) + 10;
+        async function upsertAct(title, jenis, panduan) {
+          const k = title.trim().toLowerCase();
+          const ex = actByTitle[k];
+          if (ex) {
+            out.actGuna++;
+            const upd = {};
+            if (jenis && ex.jenis !== jenis) upd.jenis = jenis;
+            if (panduan && (ex.panduan || '') !== panduan) upd.panduan = panduan;
+            if (Object.keys(upd).length) {
+              upd.updated_at = new Date().toISOString();
+              const { error } = await window.db.from('psy_reaksi_actions').update(upd).eq('id', ex.id);
+              if (error) throw error;
+              Object.assign(ex, upd);
+            }
+            return ex.id;
+          }
+          const payload = { title: title.trim(), priority: prioNext, aktif: true, is_emergency: false, jenis, panduan: panduan || null };
+          const res = await window.db.from('psy_reaksi_actions').insert(payload).select('id').single();
+          if (res.error) throw res.error;
+          prioNext += 10; out.actBaru++;
+          actByTitle[k] = { id: res.data.id, ...payload };
+          return res.data.id;
+        }
+
+        const wantPairs = [];
+        for (const r of solRows) for (const s of r.sols) {
+          wantPairs.push({ symptom_id: r.id, action_id: await upsertAct(s.title, 'tindakan', s.panduan) });
+        }
+        for (const g of dietGroups) {
+          const actId = await upsertAct(g.title, 'pemakanan', g.items.join('\n') || null);
+          allSymIds.forEach(s => wantPairs.push({ symptom_id: s, action_id: actId }));
+        }
+        for (const t of lifeLines) {
+          const actId = await upsertAct(t, 'gaya_hidup', null);
+          allSymIds.forEach(s => wantPairs.push({ symptom_id: s, action_id: actId }));
+        }
+
+        // 4. Insert pemetaan yang belum wujud sahaja (elak langgar PK)
+        const have = new Set();
+        Object.entries(RXmapBySym).forEach(([s, set]) => set.forEach(a => have.add(s + '|' + a)));
+        const newPairs = wantPairs.filter(p => {
+          const k = p.symptom_id + '|' + p.action_id;
+          if (have.has(k)) return false;
+          have.add(k); return true;
+        });
+        if (newPairs.length) {
+          const { error } = await window.db.from('psy_reaksi_action_map').insert(newPairs);
+          if (error) throw error;
+          out.mapBaru = newPairs.length;
+        }
+
+        // 5. Segarkan data & lapor hasil
+        document.getElementById('im-diet').value = '';
+        document.getElementById('im-life').value = '';
+        document.getElementById('im-cat-new').value = '';
+        imPreviewDiet(); imPreviewLife();
+        await rxLoad();
+        document.getElementById('im-cat').value = cat;
+        imRenderSym();
+        resBox.textContent = `✅ Import kategori "${cat}" selesai:` +
+          (out.katBaru ? '\n• Kategori baru dicipta' : '') +
+          (out.symBaru ? `\n• ${out.symBaru} reaksi baru` : '') +
+          `\n• ${out.actBaru} tindakan baru dicipta, ${out.actGuna} diguna semula` +
+          `\n• ${out.mapBaru} pemetaan ditambah` +
+          '\n\nSemak hasil di tab Pemetaan, kemudian uji mesej di tab Preview Auto Cadangan.';
+        resBox.classList.remove('hidden');
+      } catch (e) {
+        alert('Import gagal: ' + (e?.message || e));
+      } finally {
+        btn.disabled = false; stat.textContent = '';
+      }
+    }
+
+    (async () => {
+      const user = await initStaff('reaksi_item', 'Reaksi & Tindakan', 'reaksi_advice');
+      if (!user) return;
+      // Aktifkan tab dulu supaya UI terus kemas; data diisi selepas rxLoad siap
+      const h = (location.hash || '').replace('#', '');
+      rxSetTab(['kategori', 'reaksi', 'tindakan', 'diet', 'gaya', 'pemetaan', 'import', 'preview'].includes(h) ? h : 'kategori');
+      await rxLoad();
+    })();
+  </script>
+</body>
+
+</html>

@@ -169,6 +169,13 @@
     'B. Reaksi & Pemulihan': 'B. Reaction & Recovery',
     'C. Penjagaan Harian': 'C. Daily Care',
 
+    // — Patient plan-week: daily-plan section headers (unit "Hari") —
+    '✅ Bimbingan & Bekalan Hari Ini': '✅ Guidance & Supplies Today',
+    '🎯 Goals Hari Ini': '🎯 Goals Today',
+    '📚 Homework Hari Ini': '📚 Homework Today',
+    '📎 Dokumen Hari Ini': "📎 Today's Documents",
+    '⭐ Feedback Hari Ini': "⭐ Today's Feedback",
+
     // — PWA install chip —
     'Pasang': 'Install'
   };

@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Progres Pesakit</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+  .avatar-lg { width:56px; height:56px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:22px; font-weight:700; flex-shrink:0; }
+  .toc-chip { font-size:11px; font-weight:600; padding:5px 12px; border-radius:999px; background:white; border:1px solid #e2e8f0; color:#3c4f5c99; white-space:nowrap; transition:all .15s; }
+  .toc-chip:hover { border-color:#1B4E9C; color:#1B4E9C; }
+  .prog-bar { height:8px; border-radius:4px; background:#e2e8f0; overflow:hidden; }
+  .prog-bar-fill { height:100%; border-radius:4px; transition:width .3s; }
+  .tbl th { text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.03em; color:#3c4f5c80; font-weight:600; padding:6px 10px 6px 0; }
+  .tbl td { font-size:12px; padding:8px 10px 8px 0; border-top:1px solid #f1f5f9; vertical-align:top; }
+  #search-results { max-height:320px; overflow-y:auto; }
+  @media print {
+    #sidebar, #page-header, #picker-card, #toc-bar, .no-print { display:none !important; }
+    .main-content { margin:0 !important; }
+    body { background:white !important; }
+    .shadow-sm, .shadow-lg { box-shadow:none !important; }
+  }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📈</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-6 space-y-4">
+
+        <!-- ── Pemilih pesakit ── -->
+        <div id="picker-card" class="bg-white rounded-2xl border border-ink/10 p-4">
+          <div class="flex flex-wrap items-end gap-3">
+            <div class="flex-1 min-w-[220px] relative">
+              <label class="text-[10px] uppercase text-ink/50 font-semibold">Cari Pesakit</label>
+              <input id="patient-search" type="text" placeholder="Taip nama, MRN atau telefon..." autocomplete="off"
+                     class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm outline-none focus:border-navy">
+              <div id="search-results" class="hidden absolute left-0 right-0 top-full mt-1 bg-white border border-ink/10 rounded-xl shadow-lg z-20"></div>
+            </div>
+            <div class="min-w-[170px]">
+              <label class="text-[10px] uppercase text-ink/50 font-semibold">Coach</label>
+              <select id="filter-coach" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm outline-none focus:border-navy bg-white">
+                <option value="">Semua Coach</option>
+              </select>
+            </div>
+            <div class="min-w-[140px]">
+              <label class="text-[10px] uppercase text-ink/50 font-semibold">Status</label>
+              <select id="filter-status" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm outline-none focus:border-navy bg-white">
+                <option value="">Semua Status</option>
+                <option value="active">Aktif</option>
+                <option value="pending_kyc">Pending KYC</option>
+                <option value="inactive">Tidak Aktif</option>
+              </select>
+            </div>
+            <div class="text-xs text-ink/50 pb-2" id="picker-count"></div>
+            <button onclick="window.print()" class="no-print ml-auto bg-navy text-white text-xs px-4 py-2 rounded-lg font-semibold hover:bg-navy-dark">🖨️ Cetak / PDF</button>
+          </div>
+        </div>
+
+        <!-- ── Keadaan kosong ── -->
+        <div id="empty-state" class="bg-white rounded-2xl border border-dashed border-ink/20 p-12 text-center text-ink/50">
+          <div class="text-4xl mb-3">👆</div>
+          <p class="text-sm font-medium">Pilih pesakit untuk lihat progres penuh — semua rekod rawatan dalam satu paparan.</p>
+        </div>
+
+        <!-- ── Kandungan laporan ── -->
+        <div id="report-wrap" class="hidden space-y-4">
+
+          <!-- Kad kepala pesakit -->
+          <div class="bg-white rounded-2xl border border-ink/10 p-5">
+            <div class="flex items-center gap-4 flex-wrap">
+              <div id="patient-avatar" class="avatar-lg bg-navy text-white">?</div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <h1 id="patient-name" class="text-xl font-bold text-ink">—</h1>
+                  <span id="chips-row"></span>
+                </div>
+                <div id="patient-meta" class="flex gap-4 mt-1 text-xs text-ink/60 flex-wrap"></div>
+              </div>
+              <div class="flex gap-2 no-print">
+                <a id="link-hub" href="#" class="bg-navy text-white text-xs px-4 py-2 rounded-lg font-semibold hover:bg-navy-dark">👤 Patient Hub</a>
+              </div>
+            </div>
+          </div>
+
+          <!-- KPI -->
+          <div id="kpi-row" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3"></div>
+
+          <!-- TOC -->
+          <div id="toc-bar" class="flex gap-2 overflow-x-auto pb-1 sticky top-[73px] z-[5] bg-cream/95 backdrop-blur py-2 -my-2"></div>
+
+          <!-- Semua seksyen -->
+          <div id="report-body" class="grid lg:grid-cols-2 gap-4 items-start"></div>
+
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+const escHtml = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+// Palet carta — disahkan lulus semakan CVD (validator dataviz):
+// navy #1B4E9C (mood), gold #B8860B (tenaga), teal #0D9488 (tidur)
+const CHART_COLORS = { mood: '#1B4E9C', tenaga: '#B8860B', tidur: '#0D9488' };
+
+let allPatients = [];      // senarai psy_patients + join profil
+let staffMap    = {};      // id profil staff -> {full_name, staff_role}
+let selectedId  = null;
+let patient = null, profile = null, kyc = null, activePlan = null;
+let checkinChart = null;
+
+const params = new URLSearchParams(location.search);
+
+// ── Boot ──────────────────────────────────────────────
+(async () => {
+  const user = await initStaff('progres_pesakit', 'Progres Pesakit');
+  if (!user) return;
+  await Promise.all([loadPatientList(), loadStaffList()]);
+  const pre = params.get('patient_id');
+  if (pre && allPatients.some(p => p.id === pre)) selectPatient(pre);
+  bindPicker();
+})();
+
+// ── Senarai pesakit & staff ───────────────────────────
+async function loadPatientList() {
+  const { data, error } = await window.db.from('psy_patients')
+    .select('id, mrn, full_name, phone, status, coach_id, active_package_name, user_id, psy_profiles!psy_patients_user_id_fkey(full_name, phone, email, avatar_url)')
+    .neq('status', 'deleted')
+    .order('created_at', { ascending: false });
+  if (error) console.error('[progres] patients:', error);
+  allPatients = data || [];
+  document.getElementById('picker-count').textContent = `${allPatients.length} pesakit`;
+}
+
+async function loadStaffList() {
+  const { data } = await window.db.from('psy_profiles')
+    .select('id, full_name, staff_role').eq('role', 'staff').order('full_name');
+  (data || []).forEach(s => { staffMap[s.id] = s; });
+  const sel = document.getElementById('filter-coach');
+  const coaches = (data || []).filter(s => ['coach', 'manager'].includes(s.staff_role));
+  sel.innerHTML = '<option value="">Semua Coach</option>' +
+    coaches.map(c => `<option value="${c.id}">${escHtml(c.full_name || '—')}</option>`).join('');
+}
+
+// ── Pemilih (cari + tapis) ────────────────────────────
+function bindPicker() {
+  const input = document.getElementById('patient-search');
+  const box   = document.getElementById('search-results');
+  const render = () => {
+    const q = input.value.trim().toLowerCase();
+    const coach  = document.getElementById('filter-coach').value;
+    const status = document.getElementById('filter-status').value;
+    let list = allPatients;
+    if (coach)  list = list.filter(p => p.coach_id === coach);
+    if (status) list = list.filter(p => p.status === status);
+    if (q) list = list.filter(p => {
+      const nm = (iswPatientName(p) || '').toLowerCase();
+      const ph = (iswPatientPhone(p) || '').toLowerCase();
+      return nm.includes(q) || (p.mrn || '').toLowerCase().includes(q) || ph.includes(q);
+    });
+    document.getElementById('picker-count').textContent = `${list.length} pesakit`;
+    box.innerHTML = list.slice(0, 30).map(p => {
+      const nm = escHtml(iswPatientName(p) || `Pesakit ${p.mrn || ''}`);
+      const coachNm = p.coach_id && staffMap[p.coach_id] ? escHtml(staffMap[p.coach_id].full_name) : '—';
+      return `<button onclick="selectPatient('${p.id}')" class="w-full text-left px-4 py-2.5 hover:bg-navy-light/40 border-b border-ink/5 last:border-0">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-sm font-semibold text-ink">${nm}</span>
+          ${statusChip(p.status)}
+        </div>
+        <div class="text-[11px] text-ink/50 mt-0.5">🪪 ${escHtml(p.mrn || '—')} · Coach: ${coachNm}${p.active_package_name ? ' · 📦 ' + escHtml(p.active_package_name) : ''}</div>
+      </button>`;
+    }).join('') || '<div class="px-4 py-3 text-xs text-ink/50">Tiada padanan.</div>';
+    box.classList.remove('hidden');
+  };
+  input.addEventListener('input', render);
+  input.addEventListener('focus', render);
+  document.getElementById('filter-coach').addEventListener('change', render);
+  document.getElementById('filter-status').addEventListener('change', render);
+  document.addEventListener('click', e => {
+    if (!e.target.closest('#picker-card')) box.classList.add('hidden');
+  });
+}
+
+// ── Muatkan SEMUA rekod pesakit terpilih ──────────────
+window.selectPatient = async function (id) {
+  selectedId = id;
+  document.getElementById('search-results').classList.add('hidden');
+  history.replaceState(null, '', '?patient_id=' + id);
+  document.getElementById('empty-state').classList.add('hidden');
+  const wrap = document.getElementById('report-wrap');
+  wrap.classList.remove('hidden');
+  document.getElementById('report-body').innerHTML =
+    '<div class="lg:col-span-2 text-center text-ink/50 text-sm py-10">⏳ Memuatkan semua rekod rawatan...</div>';
+
+  // 1) Pesakit + profil
+  const { data: pt, error } = await window.db.from('psy_patients')
+    .select('*, psy_profiles!psy_patients_user_id_fkey(full_name, phone, email, avatar_url)')
+    .eq('id', id).single();
+  if (error || !pt) { banner('Gagal muat pesakit', 'error'); return; }
+  patient = pt;
+  profile = pt.psy_profiles || null;
+
+  // 2) Semua rekod secara selari — setiap query gagal → senarai kosong (jangan runtuhkan halaman)
+  const g = q => q.then(r => (r.error ? [] : (r.data || [])), () => []);
+  const [kycRows, plans, kepWeekly, checkins, vitals, kobs, payments, reports, referrals, notes, reaksi, supply, offers] = await Promise.all([
+    pt.user_id ? g(window.db.from('psy_kyc_submissions').select('*').eq('user_id', pt.user_id).order('created_at', { ascending: false }).limit(1)) : Promise.resolve([]),
+    g(window.db.from('psy_treatment_plans').select('*').eq('patient_id', id).order('created_at', { ascending: false })),
+    g(window.db.from('psy_kepatuhan_weekly').select('*').eq('patient_id', id).order('minggu_mula', { ascending: false }).limit(12)),
+    g(window.db.from('psy_daily_checkins').select('checkin_date, mood_score, energy_score, sleep_quality, sleep_hours').eq('patient_id', id).order('checkin_date', { ascending: false }).limit(30)),
+    g(window.db.from('psy_vitals').select('*').eq('patient_id', id).order('created_at', { ascending: false }).limit(5)),
+    g(window.db.from('psy_kob_sessions').select('*').eq('patient_id', id).order('scheduled_at', { ascending: false }).limit(10)),
+    g(window.db.from('psy_payments').select('receipt_ref, total, status, payment_method, paid_at, created_at').eq('patient_id', id).order('created_at', { ascending: false }).limit(10)),
+    g(window.db.from('psy_medical_reports').select('id, title, file_name, file_url, report_type, status, review_status, created_at').eq('patient_id', id).order('created_at', { ascending: false }).limit(10)),
+    g(window.db.from('psy_clinical_referrals').select('*').eq('patient_id', id).order('created_at', { ascending: false }).limit(10)),
+    g(window.db.from('psy_patient_notes').select('*').eq('patient_id', id).in('visibility', ['staff', 'both']).order('is_pinned', { ascending: false }).order('created_at', { ascending: false }).limit(10)),
+    g(window.db.from('psy_reaksi_advice_log').select('log_date, symptoms, is_emergency, status, sent_at').eq('patient_id', id).order('log_date', { ascending: false }).limit(30)),
+    g(window.db.from('psy_supply_disbursements').select('item_name, qty, given_by_name, created_at').eq('patient_id', id).order('created_at', { ascending: false }).limit(10)),
+    g(window.db.from('psy_continuity_offers').select('package_name, price, status, created_at').eq('patient_id', id).order('created_at', { ascending: false }).limit(5)),
+  ]);
+
+  kyc = kycRows[0] || null;
+  activePlan = plans.find(p => p.status === 'active') || plans[0] || null;
+
+  // Minggu progres + coaching_schedule LIVE dari pakej (bukan snapshot lama)
+  let weekly = [];
+  if (activePlan) {
+    weekly = await g(window.db.from('psy_plan_weekly_progress').select('*').eq('plan_id', activePlan.id).order('week_number').order('session_date'));
+    if (activePlan.template) {
+      const { data: livePkg } = await window.db.from('psy_packages')
+        .select('coaching_schedule, sessions_per_week').eq('package_id', activePlan.template).maybeSingle();
+      if (livePkg?.coaching_schedule?.length) activePlan.coaching_schedule = livePkg.coaching_schedule;
+    }
+  }
+
+  renderHeaderCard();
+  renderKpis(weekly, kepWeekly, checkins, payments);
+  renderSections({ weekly, kepWeekly, checkins, vitals, kobs, payments, reports, referrals, notes, reaksi, supply, offers, plans });
+};
+
+// ── Kad kepala ────────────────────────────────────────
+function renderHeaderCard() {
+  const name = iswPatientName(patient, profile, kyc) || `Pesakit ${patient.mrn || ''}`;
+  document.getElementById('patient-avatar').textContent =
+    name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
+  document.getElementById('patient-name').textContent = name;
+
+  const chips = [statusChip(patient.status)];
+  if (kyc) chips.push(statusChip(kyc.status).replace('">', '">KYC '));
+  if (patient.kob_status) chips.push(chip('KOB: ' + escHtml(patient.kob_status), 'teal'));
+  if (patient.outcome_status) chips.push(outcomeChip(patient.outcome_status));
+  document.getElementById('chips-row').innerHTML = chips.join(' ');
+
+  const phone = iswPatientPhone(patient, profile, kyc);
+  const coachNm = patient.coach_id && staffMap[patient.coach_id] ? staffMap[patient.coach_id].full_name : null;
+  const age = patient.date_of_birth ? Math.floor((Date.now() - new Date(patient.date_of_birth)) / 31557600000) : null;
+  document.getElementById('patient-meta').innerHTML = [
+    `🪪 ${escHtml(patient.mrn || '—')}`,
+    age ? `🎂 ${age} tahun` : '',
+    phone ? `📞 ${escHtml(phone)}` : '',
+    patient.active_package_name ? `📦 ${escHtml(patient.active_package_name)}` : '',
+    coachNm ? `🧑‍🏫 Coach: ${escHtml(coachNm)}` : '',
+  ].filter(Boolean).map(t => `<span>${t}</span>`).join('');
+
+  document.getElementById('link-hub').href = 'patient-hub.html?patient_id=' + selectedId;
+}
+
+// ── KPI ───────────────────────────────────────────────
+function renderKpis(weekly, kepWeekly, checkins, payments) {
+  const totalWeeks = activePlan?.duration_weeks || weekly.length || 0;
+  const curWeek    = activePlan?.current_week || 0;
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const past  = weekly.filter(w => w.session_date && new Date(w.session_date) <= today && w.status !== 'cancel');
+  const hadir = past.filter(w => ['hadir', 'consultation_done'].includes(w.status));
+  const pct   = past.length ? Math.round(hadir.length / past.length * 100) : null;
+
+  const kepLatest = kepWeekly[0] || null;
+  const kelas = kepLatest ? (kepLatest.override_kelas || kepLatest.kelas || '—') : '—';
+
+  const d7 = new Date(); d7.setDate(d7.getDate() - 6); d7.setHours(0, 0, 0, 0);
+  const ci7 = checkins.filter(c => new Date(c.checkin_date) >= d7).length;
+
+  const paid = payments.filter(p => p.status === 'completed');
+  const totalPaid = paid.reduce((s, p) => s + (Number(p.total) || 0), 0);
+
+  document.getElementById('kpi-row').innerHTML = [
+    statCard('Minggu Semasa', curWeek ? `${curWeek}/${totalWeeks}` : '—', activePlan ? escHtml(activePlan.name || '') : 'Tiada plan aktif'),
+    statCard('Kehadiran Sesi', pct == null ? '—' : pct + '%', `${hadir.length}/${past.length} sesi hadir`),
+    statCard('Kepatuhan', kelas, kepLatest ? `Skor ${kepLatest.skor ?? '—'}% · ${kepLatest.bil_hari_isi ?? 0} hari diisi` : 'Tiada rekod'),
+    statCard('Check-in 7 Hari', `${ci7}/7`, checkins[0] ? 'Terakhir: ' + formatDate(checkins[0].checkin_date) : 'Tiada check-in'),
+    statCard('Jumlah Bayaran', 'RM ' + totalPaid.toFixed(2), `${paid.length} resit selesai`),
+  ].join('');
+}
+
+// ── Seksyen ───────────────────────────────────────────
+function section(id, icon, title, count, bodyHtml, href, span2) {
+  return `<div id="sec-${id}" class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 space-y-3 ${span2 ? 'lg:col-span-2' : ''} scroll-mt-32">
+    <div class="flex items-center justify-between gap-2 flex-wrap">
+      <h3 class="font-bold text-sm text-ink flex items-center gap-2">${icon} ${title}
+        ${count != null ? `<span class="chip bg-ink/10 text-ink/60">${count}</span>` : ''}</h3>
+      ${href ? `<a href="${href}" class="no-print text-xs font-semibold text-navy hover:underline">Buka →</a>` : ''}
+    </div>
+    ${bodyHtml}
+  </div>`;
+}
+const emptyRow = msg => `<p class="text-xs text-ink/45 py-2">${msg || 'Tiada rekod.'}</p>`;
+const tbl = (heads, rows) => rows.length
+  ? `<div class="overflow-x-auto"><table class="tbl w-full"><thead><tr>${heads.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`
+  : emptyRow();
+
+const WEEK_STATUS = {
+  hadir: ['Hadir', 'bg-green-light text-green-dark'],
+  consultation_done: ['Konsultasi Selesai', 'bg-green-light text-green-dark'],
+  booked: ['Ditempah', 'bg-navy-light text-navy'],
+  pending: ['Pending', 'bg-gold/30 text-gold-dark'],
+  reschedule: ['Reschedule', 'bg-gold/30 text-gold-dark'],
+  cancel: ['Batal', 'bg-terracotta/20 text-terracotta'],
+  extension_pending_payment: ['Extension (Bayaran)', 'bg-gold/30 text-gold-dark'],
+};
+const weekChip = s => {
+  const [lbl, cls] = WEEK_STATUS[s] || [s || '—', 'bg-ink/10 text-ink/60'];
+  return `<span class="chip ${cls}">${escHtml(lbl)}</span>`;
+};
+
+function renderSections(d) {
+  const hub = t => `patient-hub.html?patient_id=${selectedId}&tab=${t}`;
+  const parts = [];
+
+  // 1) Sesi rawatan mingguan (penuh lebar)
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const hadirN = d.weekly.filter(w => ['hadir', 'consultation_done'].includes(w.status)).length;
+  const sesiRows = d.weekly.map(w => `<tr>
+    <td class="font-semibold">M${w.week_number}${w.is_extension ? ' <span class="chip bg-gold/30 text-gold-dark">Ext</span>' : ''}</td>
+    <td>${w.session_date ? formatDate(w.session_date) : '—'}</td>
+    <td>${weekChip(w.status)}</td>
+    <td>${w.score != null ? w.score + '/10' : '—'}</td>
+    <td class="text-ink/60 max-w-[380px]">${escHtml(w.notes || '')}</td>
+    <td class="text-ink/45">${escHtml(w.updated_by_name || '')}</td>
+  </tr>`);
+  const sesiBar = d.weekly.length ? `
+    <div class="flex items-center gap-3">
+      <div class="prog-bar flex-1"><div class="prog-bar-fill bg-green" style="width:${Math.round(hadirN / d.weekly.length * 100)}%"></div></div>
+      <span class="text-xs font-semibold text-ink/60">${hadirN}/${d.weekly.length} hadir</span>
+    </div>` : '';
+  parts.push(section('sesi', '📅', 'Sesi Rawatan Mingguan', d.weekly.length,
+    sesiBar + tbl(['Minggu', 'Tarikh', 'Status', 'Skor', 'Nota', 'Oleh'], sesiRows), hub('sessions'), true));
+
+  // 2) Kepatuhan mingguan
+  const kelasChip = k => {
+    const m = { A: 'bg-green-light text-green-dark', B: 'bg-gold/30 text-gold-dark', C: 'bg-terracotta/20 text-terracotta' };
+    return `<span class="chip ${m[k] || 'bg-ink/10 text-ink/60'}">${escHtml(k || '—')}</span>`;
+  };
+  const kepRows = d.kepWeekly.map(k => `<tr>
+    <td>${formatDate(k.minggu_mula)}</td>
+    <td><div class="flex items-center gap-2"><div class="prog-bar w-20"><div class="prog-bar-fill bg-navy" style="width:${Math.min(100, k.skor || 0)}%"></div></div><span>${k.skor ?? '—'}%</span></div></td>
+    <td>${kelasChip(k.override_kelas || k.kelas)}</td>
+    <td>${k.bil_hari_isi ?? 0} hari</td>
+    <td class="text-ink/60">${escHtml(k.nota_coach || '')}</td>
+  </tr>`);
+  parts.push(section('kepatuhan', '📊', 'Kepatuhan Mingguan', d.kepWeekly.length,
+    tbl(['Minggu Mula', 'Skor', 'Kelas', 'Diisi', 'Nota Coach'], kepRows), 'kepatuhan.html'));
+
+  // 3) Check-in harian (carta)
+  parts.push(section('checkin', '✅', 'Check-in Harian (30 Terkini)', d.checkins.length,
+    d.checkins.length
+      ? '<div class="relative h-56"><canvas id="checkin-chart"></canvas></div>'
+      : emptyRow('Pesakit belum buat check-in harian.'), hub('checkin')));
+
+  // 4) Reaksi pemulihan
+  // Satu submission Poll Harian = hingga 3 mesej (tindakan/diet/gaya hidup) — gabung ikut tarikh
+  const reaksiMerged = [];
+  {
+    const byDate = {};
+    d.reaksi.forEach(r => {
+      const k = r.log_date;
+      if (!byDate[k]) { byDate[k] = { ...r }; reaksiMerged.push(byDate[k]); }
+      else {
+        if (r.is_emergency) byDate[k].is_emergency = true;
+        if (r.status === 'draft') byDate[k].status = 'draft';
+      }
+    });
+  }
+  const symLbl = s => Array.isArray(s) ? s.map(x => (x && (x.label || x.name)) || (typeof x === 'string' ? x : '')).filter(Boolean) : [];
+  const reaksiRows = reaksiMerged.map(r => {
+    const syms = symLbl(r.symptoms);
+    return `<tr>
+      <td>${formatDate(r.log_date)}${r.is_emergency ? ' <span class="chip bg-terracotta/20 text-terracotta">🚨 Kecemasan</span>' : ''}</td>
+      <td class="text-ink/70 max-w-[300px]">${escHtml(syms.slice(0, 4).join(', '))}${syms.length > 4 ? ` +${syms.length - 4}` : ''}</td>
+      <td>${statusChip(r.status)}</td>
+    </tr>`;
+  });
+  parts.push(section('reaksi', '🩹', 'Reaksi Pemulihan', reaksiMerged.length,
+    tbl(['Tarikh', 'Simptom', 'Status'], reaksiRows), 'reaksi-laporan.html'));
+
+  // 5) Vitals terkini
+  const vitalRows = d.vitals.map(v => `<tr>
+    <td>${v.reading_date ? formatDate(v.reading_date) : formatDate(v.created_at)}</td>
+    <td>${v.bp_systolic && v.bp_diastolic ? `${v.bp_systolic}/${v.bp_diastolic}` : '—'}</td>
+    <td>${v.heart_rate ?? '—'}</td>
+    <td>${v.spo2 ?? '—'}</td>
+    <td>${v.weight ?? '—'}</td>
+    <td>${v.bmi ?? '—'}</td>
+    <td class="text-ink/45">${escHtml(v.recorded_by_name || '')}</td>
+  </tr>`);
+  parts.push(section('vitals', '💓', 'Bacaan Vitals Terkini', d.vitals.length,
+    tbl(['Tarikh', 'BP', 'Nadi', 'SpO2', 'Berat', 'BMI', 'Oleh'], vitalRows), hub('vitals')));
+
+  // 6) Sesi KOB
+  const kobRows = d.kobs.map(k => `<tr>
+    <td>${k.scheduled_at ? formatDateTime(k.scheduled_at) : '—'}</td>
+    <td>${escHtml(k.mode === 'f2f' ? 'Bersemuka' : (k.mode || '—'))}</td>
+    <td>${statusChip(k.status)}</td>
+    <td class="text-ink/60 max-w-[260px]">${escHtml(k.notes || '')}</td>
+  </tr>`);
+  parts.push(section('kob', '🩺', 'Sesi KOB', d.kobs.length,
+    tbl(['Masa', 'Mod', 'Status', 'Nota'], kobRows), 'kob-list.html'));
+
+  // 7) Bayaran
+  const payRows = d.payments.map(p => `<tr>
+    <td class="font-mono text-[11px]">${escHtml(p.receipt_ref || '—')}</td>
+    <td>${formatDate(p.paid_at || p.created_at)}</td>
+    <td class="font-semibold">RM ${(Number(p.total) || 0).toFixed(2)}</td>
+    <td>${escHtml(p.payment_method || '—')}</td>
+    <td>${statusChip(p.status)}</td>
+  </tr>`);
+  parts.push(section('bayaran', '💳', 'Bayaran & Resit', d.payments.length,
+    tbl(['Resit', 'Tarikh', 'Jumlah', 'Kaedah', 'Status'], payRows), 'payment-admin.html'));
+
+  // 8) Laporan perubatan
+  const repRows = d.reports.map(r => `<tr>
+    <td>${r.file_url ? `<a href="${escHtml(r.file_url)}" target="_blank" class="text-navy font-semibold hover:underline">${escHtml(r.title || r.file_name || 'Laporan')}</a>` : escHtml(r.title || r.file_name || 'Laporan')}</td>
+    <td class="uppercase text-[11px]">${escHtml(r.report_type || '—')}</td>
+    <td>${statusChip(r.review_status || r.status)}</td>
+    <td>${formatDate(r.created_at)}</td>
+  </tr>`);
+  parts.push(section('laporan', '🧾', 'Laporan Perubatan', d.reports.length,
+    tbl(['Laporan', 'Jenis', 'Status', 'Tarikh'], repRows), hub('dna')));
+
+  // 9) Rujukan klinikal
+  const refRows = d.referrals.map(r => `<tr>
+    <td>${formatDate(r.created_at)}</td>
+    <td>${escHtml(r.referred_by_name || '—')} → <b>${escHtml(r.target_name || '—')}</b> <span class="text-ink/45">(${escHtml(r.target_role || '')})</span></td>
+    <td class="text-ink/60 max-w-[260px]">${escHtml(r.reason || '')}</td>
+    <td>${statusChip(r.status)}</td>
+  </tr>`);
+  parts.push(section('rujukan', '🔀', 'Rujukan Klinikal', d.referrals.length,
+    tbl(['Tarikh', 'Rujukan', 'Sebab', 'Status'], refRows), 'rujukan.html'));
+
+  // 10) KYC + Pakej + Tawaran sambungan
+  const kycHtml = kyc ? `<div class="flex items-center gap-2 flex-wrap text-xs">
+      ${statusChip(kyc.status)} <span class="text-ink/60">Dihantar ${formatDate(kyc.created_at)}</span>
+      ${kyc.review_notes ? `<span class="text-ink/50">· ${escHtml(kyc.review_notes)}</span>` : ''}
+    </div>` : emptyRow('Tiada penyerahan KYC.');
+  const pkgHtml = patient.active_package_name ? `<div class="text-xs text-ink/70 space-y-1">
+      <div>📦 <b>${escHtml(patient.active_package_name)}</b></div>
+      ${patient.package_purchased_at ? `<div>Dibeli: ${formatDate(patient.package_purchased_at)}</div>` : ''}
+      ${patient.package_expires_at ? `<div>Tamat: ${formatDate(patient.package_expires_at)}</div>` : ''}
+    </div>` : emptyRow('Tiada pakej aktif.');
+  const offerRows = d.offers.map(o => `<div class="flex items-center justify-between text-xs border-t border-ink/5 py-1.5">
+      <span>${escHtml(o.package_name || '—')} · RM ${(Number(o.price) || 0).toFixed(2)}</span>${statusChip(o.status)}
+    </div>`).join('');
+  parts.push(section('kyc', '🆔', 'KYC · Pakej · Sambungan', null,
+    `<div class="space-y-3">
+       <div><div class="text-[10px] uppercase text-ink/50 font-semibold mb-1">KYC</div>${kycHtml}</div>
+       <div><div class="text-[10px] uppercase text-ink/50 font-semibold mb-1">Pakej Semasa</div>${pkgHtml}</div>
+       <div><div class="text-[10px] uppercase text-ink/50 font-semibold mb-1">Tawaran Sambungan</div>${offerRows || emptyRow('Tiada tawaran.')}</div>
+     </div>`, 'kyc-list.html'));
+
+  // 11) Nota pesakit
+  const noteRows = d.notes.map(n => `<div class="border-t border-ink/5 py-2 text-xs">
+      <div class="flex items-center gap-2 flex-wrap">
+        ${n.is_pinned ? '📌' : ''}<b class="text-ink/80">${escHtml(n.note_type || 'Nota')}</b>
+        <span class="text-ink/45">${formatDateTime(n.created_at)}${n.actor_name ? ' · ' + escHtml(n.actor_name) : ''}</span>
+      </div>
+      <p class="text-ink/70 mt-1 whitespace-pre-wrap">${escHtml(n.content || '')}</p>
+    </div>`).join('');
+  parts.push(section('nota', '📝', 'Nota Pesakit', d.notes.length, noteRows || emptyRow(), hub('profile')));
+
+  // 12) Bekalan
+  const supRows = d.supply.map(s => `<tr>
+    <td>${formatDate(s.created_at)}</td>
+    <td>${escHtml(s.item_name || '—')}</td>
+    <td>${s.qty ?? '—'}</td>
+    <td class="text-ink/45">${escHtml(s.given_by_name || '')}</td>
+  </tr>`);
+  parts.push(section('bekalan', '📦', 'Bekalan Diberi', d.supply.length,
+    tbl(['Tarikh', 'Item', 'Kuantiti', 'Oleh'], supRows), hub('supply')));
+
+  document.getElementById('report-body').innerHTML = parts.join('');
+
+  // TOC
+  const toc = [
+    ['sesi', '📅 Sesi'], ['kepatuhan', '📊 Kepatuhan'], ['checkin', '✅ Check-in'], ['reaksi', '🩹 Reaksi'],
+    ['vitals', '💓 Vitals'], ['kob', '🩺 KOB'], ['bayaran', '💳 Bayaran'], ['laporan', '🧾 Laporan'],
+    ['rujukan', '🔀 Rujukan'], ['kyc', '🆔 KYC'], ['nota', '📝 Nota'], ['bekalan', '📦 Bekalan'],
+  ];
+  document.getElementById('toc-bar').innerHTML = toc.map(([id, lbl]) =>
+    `<a href="#sec-${id}" class="toc-chip">${lbl}</a>`).join('');
+
+  renderCheckinChart(d.checkins);
+}
+
+// ── Carta check-in (mood/tenaga/tidur) ────────────────
+function renderCheckinChart(checkins) {
+  const el = document.getElementById('checkin-chart');
+  if (!el || !checkins.length) return;
+  if (checkinChart) { checkinChart.destroy(); checkinChart = null; }
+  const rows = [...checkins].sort((a, b) => a.checkin_date < b.checkin_date ? -1 : 1);
+  const labels = rows.map(r => new Date(r.checkin_date).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short' }));
+  const mk = (label, key, color) => ({
+    label, data: rows.map(r => r[key] ?? null), borderColor: color, backgroundColor: color,
+    borderWidth: 2, pointRadius: 3, pointHoverRadius: 5, tension: .3, spanGaps: true,
+  });
+  checkinChart = new Chart(el, {
+    type: 'line',
+    data: { labels, datasets: [
+      mk('Mood', 'mood_score', CHART_COLORS.mood),
+      mk('Tenaga', 'energy_score', CHART_COLORS.tenaga),
+      mk('Tidur', 'sleep_quality', CHART_COLORS.tidur),
+    ]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } },
+      scales: {
+        y: { min: 0, max: 10, ticks: { stepSize: 2, font: { size: 10 }, color: '#3c4f5c80' }, grid: { color: '#f1f5f9' } },
+        x: { ticks: { font: { size: 9 }, color: '#3c4f5c80', maxTicksLimit: 12 }, grid: { display: false } },
+      },
+    },
+  });
+}
+</script>
+</body>
+</html>

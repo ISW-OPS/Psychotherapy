@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Sejarah Pembayaran</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+  @media print {
+    body * { visibility: hidden; }
+    #receipt-print, #receipt-print * { visibility: visible; }
+    #receipt-print {
+      position: absolute; left: 0; top: 0; width: 100%;
+      max-height: none !important; overflow: visible !important;
+      background: white; padding: 40px;
+    }
+    #receipt-print .no-print { display: none !important; }
+    #pdf-modal { position: static !important; background: white !important; padding: 0 !important; }
+    #pdf-modal .absolute.inset-0 { display: none !important; }
+    #pdf-modal > div.relative {
+      position: static !important; max-height: none !important; max-width: 100% !important;
+      overflow: visible !important; box-shadow: none !important; border: 0 !important; border-radius: 0 !important;
+    }
+  }
+  .tab-btn { padding:.5rem .25rem; font-size:.875rem; font-weight:600; color:#3C4F5C99; border-bottom:2px solid transparent; white-space:nowrap; }
+  .tab-btn.active { color:#1F6E2B; border-bottom-color:#1F6E2B; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🧾</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8">
+
+        <!-- Tajuk + kawalan -->
+        <div class="flex items-start justify-between gap-4 flex-wrap mb-5">
+          <div>
+            <h1 class="text-2xl font-bold text-navy-dark">History Payment</h1>
+            <p class="text-sm text-ink/60 mt-1">Lihat semua rekod pembayaran anda.</p>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <div class="flex items-center gap-1.5 border border-ink/15 rounded-xl px-3 py-2 bg-white">
+              <span class="text-ink/40 text-sm">📅</span>
+              <input id="date-from" type="date" class="text-xs text-ink bg-transparent focus:outline-none">
+              <span class="text-ink/40 text-xs">—</span>
+              <input id="date-to" type="date" class="text-xs text-ink bg-transparent focus:outline-none">
+            </div>
+            <button onclick="exportCsv()" class="flex items-center gap-1.5 border border-ink/15 rounded-xl px-4 py-2 bg-white text-sm font-semibold text-ink hover:bg-cream/60">⬇ Export</button>
+          </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="flex items-center gap-5 border-b border-ink/10 mb-5 overflow-x-auto">
+          <button class="tab-btn active" data-tab="all" onclick="setTab('all')">Semua</button>
+          <button class="tab-btn" data-tab="completed" onclick="setTab('completed')">Berjaya</button>
+          <button class="tab-btn" data-tab="pending" onclick="setTab('pending')">Pending</button>
+          <button class="tab-btn" data-tab="failed" onclick="setTab('failed')">Gagal</button>
+          <button class="tab-btn" data-tab="refunded" onclick="setTab('refunded')">Refund</button>
+        </div>
+
+        <!-- Kad ringkasan -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6">
+          <div class="bg-white rounded-2xl border border-ink/10 p-4 md:p-5">
+            <div class="w-10 h-10 rounded-full bg-navy/10 text-navy grid place-items-center mb-3">💼</div>
+            <div class="text-xs text-ink/50 font-semibold">Jumlah Pembayaran</div>
+            <div id="sum-total" class="text-xl md:text-2xl font-bold text-ink mt-0.5">RM 0.00</div>
+            <div id="sum-total-cnt" class="text-[11px] text-ink/50 mt-0.5">0 transaksi</div>
+          </div>
+          <div class="bg-white rounded-2xl border border-ink/10 p-4 md:p-5">
+            <div class="w-10 h-10 rounded-full bg-green-light text-green-dark grid place-items-center mb-3">✓</div>
+            <div class="text-xs text-ink/50 font-semibold">Berjaya</div>
+            <div id="sum-ok" class="text-xl md:text-2xl font-bold text-green-dark mt-0.5">RM 0.00</div>
+            <div id="sum-ok-cnt" class="text-[11px] text-ink/50 mt-0.5">0 transaksi</div>
+          </div>
+          <div class="bg-white rounded-2xl border border-ink/10 p-4 md:p-5">
+            <div class="w-10 h-10 rounded-full bg-gold/20 text-gold-dark grid place-items-center mb-3">⏳</div>
+            <div class="text-xs text-ink/50 font-semibold">Pending</div>
+            <div id="sum-pending" class="text-xl md:text-2xl font-bold text-gold-dark mt-0.5">RM 0.00</div>
+            <div id="sum-pending-cnt" class="text-[11px] text-ink/50 mt-0.5">0 transaksi</div>
+          </div>
+          <div class="bg-white rounded-2xl border border-ink/10 p-4 md:p-5">
+            <div class="w-10 h-10 rounded-full bg-terracotta/15 text-terracotta grid place-items-center mb-3">✕</div>
+            <div class="text-xs text-ink/50 font-semibold">Gagal</div>
+            <div id="sum-fail" class="text-xl md:text-2xl font-bold text-terracotta mt-0.5">RM 0.00</div>
+            <div id="sum-fail-cnt" class="text-[11px] text-ink/50 mt-0.5">0 transaksi</div>
+          </div>
+        </div>
+
+        <!-- Jadual -->
+        <div class="bg-white rounded-2xl border border-ink/10 overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm min-w-[820px]">
+              <thead>
+                <tr class="text-left text-ink/50 text-xs uppercase border-b border-ink/10">
+                  <th class="font-semibold px-4 py-3">Tarikh &amp; Masa</th>
+                  <th class="font-semibold px-4 py-3">No. Resit</th>
+                  <th class="font-semibold px-4 py-3">Pakej / Keterangan</th>
+                  <th class="font-semibold px-4 py-3">Kaedah Pembayaran</th>
+                  <th class="font-semibold px-4 py-3 text-right">Jumlah (RM)</th>
+                  <th class="font-semibold px-4 py-3">Status</th>
+                  <th class="font-semibold px-4 py-3">Tindakan</th>
+                </tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+          <div class="flex items-center justify-between gap-3 flex-wrap px-4 py-3 border-t border-ink/10">
+            <div id="page-info" class="text-xs text-ink/50">—</div>
+            <div class="flex items-center gap-1">
+              <button id="prev-btn" onclick="changePage(-1)" class="w-8 h-8 grid place-items-center rounded-lg border border-ink/15 text-ink/60 hover:bg-cream/60 disabled:opacity-30">‹</button>
+              <span id="page-num" class="w-8 h-8 grid place-items-center rounded-lg bg-green-dark text-white text-sm font-semibold">1</span>
+              <button id="next-btn" onclick="changePage(1)" class="w-8 h-8 grid place-items-center rounded-lg border border-ink/15 text-ink/60 hover:bg-cream/60 disabled:opacity-30">›</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Nota -->
+        <div class="bg-cream/50 rounded-2xl border border-ink/10 p-4 md:p-5 mt-6 flex items-start gap-3">
+          <span class="w-9 h-9 rounded-full bg-navy/10 text-navy grid place-items-center flex-shrink-0">💬</span>
+          <div>
+            <div class="font-bold text-navy-dark text-sm">Nota</div>
+            <div class="text-xs text-ink/60 mt-0.5">Resit akan dihantar ke emel anda selepas pembayaran berjaya.</div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script src="../../shared/receipt.js"></script>
+<script>
+const money = (n) => 'RM ' + Number(n || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+const METHOD_LABELS = { fpx: 'FPX Online Banking', card: 'Kad Kredit/Debit', transfer: 'Bank Transfer', ghl: 'GHL Payment', manual: 'Manual', gateway: 'Online (FPX/Kad)' };
+
+// Normalkan status ke 4 kategori.
+function normStatus(s) {
+  s = (s || 'completed').toLowerCase();
+  if (s === 'completed' || s === 'paid' || s === 'success') return 'completed';
+  if (s === 'refunded' || s === 'refund') return 'refunded';
+  if (s === 'failed' || s === 'cancelled' || s === 'canceled') return 'failed';
+  return 'pending'; // pending / pending_payment / lain-lain
+}
+const STATUS_META = {
+  completed: { label: 'Berjaya', cls: 'bg-green-light text-green-dark' },
+  pending:   { label: 'Pending', cls: 'bg-gold/20 text-gold-dark' },
+  failed:    { label: 'Gagal',   cls: 'bg-terracotta/15 text-terracotta' },
+  refunded:  { label: 'Refund',  cls: 'bg-navy-light text-navy' },
+};
+
+let ALL = [];          // semua resit
+let currentTab = 'all';
+let page = 1;
+const PAGE_SIZE = 10;
+
+function itemLabel(r) {
+  const names = (r.items || [])
+    .map(it => (it.title || it.packageName || it.name || '').replace(/^Pakej:\s*/, ''))
+    .filter(Boolean);
+  return names.length ? names.join(', ') : '—';
+}
+
+// Resit tapisan mengikut tab + julat tarikh.
+function filtered() {
+  const from = document.getElementById('date-from').value;
+  const to = document.getElementById('date-to').value;
+  return ALL.filter(r => {
+    if (currentTab !== 'all' && normStatus(r.status) !== currentTab) return false;
+    const d = (r.paid_at || r.created_at || '').slice(0, 10);
+    if (from && d && d < from) return false;
+    if (to && d && d > to) return false;
+    return true;
+  });
+}
+
+function renderSummary() {
+  // Ringkasan ikut julat tarikh (semua tab), bukan tab semasa.
+  const from = document.getElementById('date-from').value;
+  const to = document.getElementById('date-to').value;
+  const inRange = ALL.filter(r => {
+    const d = (r.paid_at || r.created_at || '').slice(0, 10);
+    if (from && d && d < from) return false;
+    if (to && d && d > to) return false;
+    return true;
+  });
+  const agg = { completed: [0, 0], pending: [0, 0], failed: [0, 0], refunded: [0, 0] };
+  inRange.forEach(r => { const s = normStatus(r.status); agg[s][0] += Number(r.total || 0); agg[s][1]++; });
+  // Jumlah = semua kecuali refund
+  const totalAmt = agg.completed[0] + agg.pending[0] + agg.failed[0];
+  const totalCnt = agg.completed[1] + agg.pending[1] + agg.failed[1];
+  setText('sum-total', money(totalAmt));       setText('sum-total-cnt', `${totalCnt} transaksi`);
+  setText('sum-ok', money(agg.completed[0]));   setText('sum-ok-cnt', `${agg.completed[1]} transaksi`);
+  setText('sum-pending', money(agg.pending[0])); setText('sum-pending-cnt', `${agg.pending[1]} transaksi`);
+  setText('sum-fail', money(agg.failed[0]));    setText('sum-fail-cnt', `${agg.failed[1]} transaksi`);
+}
+
+function renderTable() {
+  const rows = filtered();
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  if (page > pages) page = pages;
+  const start = (page - 1) * PAGE_SIZE;
+  const slice = rows.slice(start, start + PAGE_SIZE);
+
+  document.getElementById('rows').innerHTML = slice.length ? slice.map(r => {
+    const sm = STATUS_META[normStatus(r.status)];
+    const canReceipt = normStatus(r.status) === 'completed';
+    return `<tr class="border-b border-ink/5 last:border-0 hover:bg-cream/30">
+      <td class="px-4 py-3 whitespace-nowrap">${r.paid_at ? new Date(r.paid_at).toLocaleString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+      <td class="px-4 py-3 whitespace-nowrap font-medium text-ink">${r.receipt_ref || '—'}</td>
+      <td class="px-4 py-3 max-w-[220px] truncate" title="${itemLabel(r)}">${itemLabel(r)}</td>
+      <td class="px-4 py-3 whitespace-nowrap text-ink/70">${METHOD_LABELS[r.payment_method] || r.payment_method || '—'}</td>
+      <td class="px-4 py-3 text-right font-semibold ${normStatus(r.status) === 'completed' ? 'text-green-dark' : 'text-ink'}">${Number(r.total || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+      <td class="px-4 py-3"><span class="text-xs font-semibold px-2.5 py-1 rounded-full ${sm.cls}">${sm.label}</span></td>
+      <td class="px-4 py-3">
+        ${canReceipt
+          ? `<a href="resit.html?id=${encodeURIComponent(r.id)}" class="inline-block text-xs font-semibold border border-ink/15 rounded-lg px-3 py-1.5 hover:bg-cream/60 whitespace-nowrap">📄 Lihat Resit</a>`
+          : `<span class="text-xs text-ink/40">—</span>`}
+      </td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="7" class="px-4 py-10 text-center text-ink/40 text-sm">Tiada rekod pembayaran</td></tr>`;
+
+  const showFrom = rows.length ? start + 1 : 0;
+  const showTo = Math.min(start + PAGE_SIZE, rows.length);
+  setText('page-info', `Menunjukkan ${showFrom} hingga ${showTo} daripada ${rows.length} rekod`);
+  setText('page-num', page);
+  document.getElementById('prev-btn').disabled = page <= 1;
+  document.getElementById('next-btn').disabled = page >= pages;
+}
+
+function setTab(t) {
+  currentTab = t; page = 1;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
+  renderTable();
+}
+
+function changePage(delta) {
+  page += delta;
+  if (page < 1) page = 1;
+  renderTable();
+}
+
+function onDateChange() { page = 1; renderSummary(); renderTable(); }
+
+function exportCsv() {
+  const rows = filtered();
+  if (!rows.length) { banner('Tiada rekod untuk dieksport', 'error'); return; }
+  const head = ['Tarikh', 'No. Resit', 'Pakej/Keterangan', 'Kaedah', 'Jumlah (RM)', 'Status'];
+  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const lines = rows.map(r => [
+    r.paid_at ? new Date(r.paid_at).toLocaleString('ms-MY') : '',
+    r.receipt_ref || '',
+    itemLabel(r),
+    METHOD_LABELS[r.payment_method] || r.payment_method || '',
+    Number(r.total || 0).toFixed(2),
+    STATUS_META[normStatus(r.status)].label,
+  ].map(esc).join(','));
+  const csv = [head.map(esc).join(','), ...lines].join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `sejarah-pembayaran-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// Resit PDF: viewReceiptPDF() disediakan oleh shared/receipt.js (baca window._receipts).
+
+async function loadHistory() {
+  if (!patientRecord) { ALL = []; }
+  else {
+    ALL = await dbQuery('psy_payments', {
+      eq: { patient_id: patientRecord.id },
+      order: { col: 'paid_at' },
+      limit: 200,
+    }).catch(() => []);
+  }
+  window._receipts = ALL;
+  renderSummary();
+  renderTable();
+}
+
+(async () => {
+  const user = await initPatient('sejarah_pembayaran', 'Lihat semua rekod pembayaran anda');
+  if (!user) return;
+  // Julat tarikh default: 12 bulan lepas → hari ini
+  const to = new Date();
+  const from = new Date(); from.setFullYear(from.getFullYear() - 1);
+  document.getElementById('date-to').value = to.toISOString().slice(0, 10);
+  document.getElementById('date-from').value = from.toISOString().slice(0, 10);
+  document.getElementById('date-from').addEventListener('change', onDateChange);
+  document.getElementById('date-to').addEventListener('change', onDateChange);
+  await loadHistory();
+})();
+</script>
+</body>
+</html>

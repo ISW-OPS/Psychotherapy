@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Laporan & Analitik Reaksi</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-6 space-y-4">
+
+        <div class="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-xl font-bold text-ink flex items-center gap-2">Laporan & Analitik Reaksi</h1>
+            <p class="text-sm text-ink/45 mt-0.5">Analisis reaksi pemulihan pesakit dan cadangan yang dijana sistem.</p>
+          </div>
+          <select id="lp-range" onchange="lpLoad()" class="border border-ink/15 rounded-xl px-3 py-2.5 text-[13px] font-semibold focus:border-navy outline-none bg-white shrink-0">
+            <option value="7">7 hari terakhir</option>
+            <option value="30" selected>30 hari terakhir</option>
+            <option value="90">90 hari terakhir</option>
+          </select>
+        </div>
+
+        <!-- Stat cards -->
+        <div id="lp-stats" class="grid grid-cols-2 lg:grid-cols-5 gap-3"></div>
+
+        <div class="grid lg:grid-cols-2 gap-4 items-start">
+          <!-- Reaksi teratas -->
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+            <h3 class="text-[14px] font-bold text-ink">Taburan Reaksi (Simptom) Teratas</h3>
+            <p class="text-[11.5px] text-ink/40 mb-3">10 simptom paling kerap direkodkan dalam tempoh ini.</p>
+            <div id="lp-top-sym" class="space-y-2"></div>
+          </div>
+
+          <!-- Tindakan teratas -->
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+            <h3 class="text-[14px] font-bold text-ink">Tindakan Paling Kerap Dicadangkan</h3>
+            <p class="text-[11.5px] text-ink/40 mb-3">10 tindakan teratas yang dijana automatik.</p>
+            <div id="lp-top-act" class="space-y-2"></div>
+          </div>
+
+          <!-- Taburan risiko + status -->
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+            <h3 class="text-[14px] font-bold text-ink mb-3">Taburan Tahap Risiko</h3>
+            <div id="lp-risk" class="space-y-2"></div>
+            <h3 class="text-[14px] font-bold text-ink mt-5 mb-3">Status Mesej Cadangan</h3>
+            <div id="lp-status" class="space-y-2"></div>
+          </div>
+
+          <!-- Pesakit perlukan perhatian -->
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+            <h3 class="text-[14px] font-bold text-ink">Pesakit Yang Memerlukan Perhatian</h3>
+            <p class="text-[11.5px] text-ink/40 mb-3">Kes kecemasan / reaksi paling kerap dalam tempoh ini.</p>
+            <div id="lp-patients" class="space-y-1.5"></div>
+          </div>
+        </div>
+
+        <p class="text-[11.5px] text-ink/35 text-center">Data dari log Saranan Reaksi (psy_reaksi_advice_log). Simptom tanpa saranan dijana tidak termasuk dalam laporan ini.</p>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+// ══════════ Laporan & Analitik Reaksi ══════════
+const lpEsc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+let lpTahapByLabel = {};
+
+function lpBar(label, count, max, color) {
+  const pct = max ? Math.round(count / max * 100) : 0;
+  return `<div class="flex items-center gap-2.5 text-[12px]">
+    <span class="w-40 shrink-0 text-ink/70 truncate" title="${lpEsc(label)}">${lpEsc(label)}</span>
+    <div class="flex-1 bg-ink/[0.06] rounded-full h-4 overflow-hidden"><div class="h-full rounded-full" style="width:${pct}%;background:${color}"></div></div>
+    <span class="w-10 text-right font-bold text-ink/70 shrink-0">${count}</span>
+  </div>`;
+}
+
+async function lpLoad() {
+  const days = parseInt(document.getElementById('lp-range').value, 10) || 30;
+  const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+
+  const [{ data: logs }, { data: items }] = await Promise.all([
+    window.db.from('psy_reaksi_advice_log')
+      .select('id, patient_id, kepatuhan_log_id, log_date, symptoms, actions, is_emergency, status, psy_patients(full_name, mrn)')
+      .gte('log_date', since).order('log_date', { ascending: false }).limit(2000),
+    window.db.from('psy_reaksi_item').select('label, tahap_risiko'),
+  ]);
+  const rows = logs || [];
+  lpTahapByLabel = {};
+  (items || []).forEach(it => { lpTahapByLabel[it.label] = it.tahap_risiko || 'rendah'; });
+
+  // ── Agregat ──
+  const patients = new Set(), symCount = {}, actCount = {}, riskCount = { rendah: 0, sederhana: 0, tinggi: 0 };
+  const statusCount = { draft: 0, sent: 0, skipped: 0 };
+  const perPatient = {};
+  let totalSym = 0, totalAct = 0, emergencyN = 0;
+
+  // Satu submission Poll Harian boleh jana hingga 3 baris mesej (tindakan/diet/
+  // gaya hidup) dengan symptoms SAMA — kira simptom sekali sahaja per submission.
+  // actions pula subset berlainan per baris, jadi kekal dikira per baris.
+  const subSeen = new Set();
+  rows.forEach(r => {
+    patients.add(r.patient_id);
+    statusCount[r.status] = (statusCount[r.status] || 0) + 1;
+
+    const subKey = r.kepatuhan_log_id || `${r.patient_id}|${r.log_date}`;
+    if (!subSeen.has(subKey)) {
+      subSeen.add(subKey);
+      if (r.is_emergency) emergencyN++;
+      const name = r.psy_patients?.full_name || r.psy_patients?.mrn || 'Pesakit';
+      const pp = (perPatient[r.patient_id] ||= { name, n: 0, emergency: 0, last: r.log_date });
+      pp.n++; if (r.is_emergency) pp.emergency++;
+      if (r.log_date > pp.last) pp.last = r.log_date;
+
+      (Array.isArray(r.symptoms) ? r.symptoms : []).forEach(v => {
+        const label = String(v).split('::').pop();
+        symCount[label] = (symCount[label] || 0) + 1;
+        totalSym++;
+        riskCount[lpTahapByLabel[label] || 'rendah']++;
+      });
+    }
+
+    (Array.isArray(r.actions) ? r.actions : []).forEach(a => {
+      const t = a && a.title; if (!t) return;
+      actCount[t] = (actCount[t] || 0) + 1;
+      totalAct++;
+    });
+  });
+
+  // ── Stat cards ──
+  const sentPct = rows.length ? Math.round((statusCount.sent || 0) / rows.length * 100) : 0;
+  const card = (label, val, sub, cls) => `
+    <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
+      <div class="text-[11px] text-ink/45 font-semibold">${label}</div>
+      <div class="text-[26px] font-extrabold mt-1 ${cls || 'text-ink'}">${val}</div>
+      <div class="text-[11px] text-ink/40">${sub}</div>
+    </div>`;
+  document.getElementById('lp-stats').innerHTML =
+    card('Pesakit Terlibat', patients.size, `${days} hari terakhir`) +
+    card('Reaksi Direkodkan', totalSym, `${subSeen.size} log saranan`) +
+    card('Tindakan Dicadangkan', totalAct, 'Dijana automatik') +
+    card('Kadar Terhantar', sentPct + '%', `${statusCount.sent || 0} daripada ${rows.length} mesej`, 'text-green-dark') +
+    card('Kes Kecemasan', emergencyN, 'Perlu semakan staff', emergencyN ? 'text-terracotta' : 'text-ink');
+
+  // ── Top simptom ──
+  const topSym = Object.entries(symCount).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const maxSym = topSym[0]?.[1] || 0;
+  document.getElementById('lp-top-sym').innerHTML = topSym.length
+    ? topSym.map(([l, n]) => lpBar(l, n, maxSym, lpTahapByLabel[l] === 'tinggi' ? '#B85042' : lpTahapByLabel[l] === 'sederhana' ? '#d4af37' : '#2E8B3E')).join('')
+    : '<p class="text-[12.5px] text-ink/35 italic">Tiada data dalam tempoh ini.</p>';
+
+  // ── Top tindakan ──
+  const topAct = Object.entries(actCount).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const maxAct = topAct[0]?.[1] || 0;
+  document.getElementById('lp-top-act').innerHTML = topAct.length
+    ? topAct.map(([l, n]) => lpBar(l, n, maxAct, '#1B4E9C')).join('')
+    : '<p class="text-[12.5px] text-ink/35 italic">Tiada data dalam tempoh ini.</p>';
+
+  // ── Taburan risiko ──
+  document.getElementById('lp-risk').innerHTML = [
+    ['Rendah (Green)', riskCount.rendah, '#2E8B3E'],
+    ['Sederhana (Yellow)', riskCount.sederhana, '#d4af37'],
+    ['Tinggi (Red)', riskCount.tinggi, '#B85042'],
+  ].map(([l, n, c]) => lpBar(l, n, totalSym || 1, c)).join('');
+
+  // ── Status mesej ──
+  document.getElementById('lp-status').innerHTML = [
+    ['Terhantar (sent)', statusCount.sent || 0, '#2E8B3E'],
+    ['Draf (menunggu staff)', statusCount.draft || 0, '#d4af37'],
+    ['Dilangkau (skipped)', statusCount.skipped || 0, '#9ca3af'],
+  ].map(([l, n, c]) => lpBar(l, n, rows.length || 1, c)).join('');
+
+  // ── Pesakit perlukan perhatian ──
+  const attn = Object.values(perPatient)
+    .sort((a, b) => (b.emergency - a.emergency) || (b.n - a.n)).slice(0, 8);
+  document.getElementById('lp-patients').innerHTML = attn.length
+    ? attn.map(p => `
+      <div class="flex items-center gap-3 py-2 px-2.5 rounded-xl hover:bg-cream/50 border border-ink/[0.05]">
+        <div class="w-9 h-9 rounded-full bg-navy/[0.08] text-navy flex items-center justify-center text-[13px] font-extrabold shrink-0">${lpEsc((p.name || 'P').trim()[0].toUpperCase())}</div>
+        <div class="flex-1 min-w-0">
+          <div class="text-[13px] font-semibold text-ink truncate">${lpEsc(p.name)}</div>
+          <div class="text-[11px] text-ink/40">Kemaskini: ${p.last}</div>
+        </div>
+        ${p.emergency ? `<span class="text-[10.5px] font-bold px-2 py-1 rounded-lg bg-terracotta-light text-terracotta shrink-0">${p.emergency} kecemasan</span>` : ''}
+        <span class="text-[10.5px] font-bold px-2 py-1 rounded-lg bg-navy-light text-navy shrink-0">${p.n} log</span>
+      </div>`).join('')
+    : '<p class="text-[12.5px] text-ink/35 italic">Tiada log dalam tempoh ini.</p>';
+}
+
+(async () => {
+  const user = await initStaff('reaksi_laporan', 'Laporan & Analitik', 'reaksi_advice');
+  if (!user) return;
+  await lpLoad();
+})();
+</script>
+</body>
+</html>

@@ -488,10 +488,10 @@ async function loadBanners(user) {
   const isKobFlow = kobStatus !== 'na' && kobStatus !== 'completed';
 
   if (isKobFlow) {
-    // GATE 1: KYC mesti DILULUSKAN admin dulu sebelum SEBARANG langkah KOB dipapar.
-    // Belum lulus → papar status KYC, tak kira sejauh mana kob_status telah dimajukan
+    // GATE 1: KYC mesti DIHANTAR (tak perlu tunggu admin lulus) sebelum langkah KOB dipapar.
+    // Belum hantar langsung → papar status KYC, tak kira sejauh mana kob_status telah dimajukan
     // (booked/hadir/package_recommended/package_paid pun tak boleh tunjuk Langkah 3-5).
-    if (!window.kycApproved) {
+    if (!window.kycSubmitted) {
       const subs = await dbQuery('psy_kyc_submissions', { eq: { user_id: user.id }, order: { col: 'created_at', ascending: false }, limit: 1 }).catch(() => []);
       zone.innerHTML = kycStatusBanner(subs[0]?.status);
       return;
@@ -546,9 +546,15 @@ async function loadBanners(user) {
         body:'Bayaran diterima. Sila sign agreement rawatan.',
         cta:'Sign Sekarang →', ctaUrl:'kob.html', ctaColor:'text-green-dark' });
     }
-  } else if (!window.kycApproved) {
+  } else if (!window.kycSubmitted) {
     const subs = await dbQuery('psy_kyc_submissions', { eq: { user_id: user.id }, order: { col: 'created_at', ascending: false }, limit: 1 }).catch(() => []);
     zone.innerHTML = kycStatusBanner(subs[0]?.status);
+  } else if (kobStatus === 'na') {
+    // KYC dah dihantar (pending/approved) tapi belum mula proses KOB langsung — galak tempah terus.
+    zone.innerHTML = bannerHtml({ id:'b-book', grad:'from-navy to-navy-dark', icon:'📅',
+      title:'Langkah 2/6: Tempah Slot KOB',
+      body:'KYC anda telah dihantar. Sila tempah tarikh sesi KOB bersama doktor.',
+      cta:'Pilih Tarikh →', ctaUrl:'kob.html', ctaColor:'text-navy' });
   }
 
   const hasActivePkg = patientRecord.active_package_id &&

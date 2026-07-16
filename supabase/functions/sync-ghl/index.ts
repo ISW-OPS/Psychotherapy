@@ -141,7 +141,9 @@ Deno.serve(async (req: Request) => {
         { key: CF.packageEnds, field_value: record.package_expires_at || '' },
         { key: CF.mrn,         field_value: record.mrn || '' },
       ],
-      tags: ['isw-kob', `kob:${status}`],
+      // 'patient' = penanda kekal utk automation GHL (cth. exclude dari
+      // sales flow "EOB CREATED" guna filter Tag none-of: patient)
+      tags: ['patient', 'isw-kob', `kob:${status}`],
     }
 
     const upsert = await ghl('/contacts/upsert', {

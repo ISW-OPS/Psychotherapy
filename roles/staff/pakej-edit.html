@@ -46,8 +46,8 @@
           <div class="flex items-center gap-2 flex-wrap">
             <span id="draft-indicator" class="hidden text-[10px] text-ink/45 italic mr-1">✓ Draf disimpan</span>
             <button onclick="cancelEdit()" class="px-4 py-2 border border-ink/20 rounded-xl text-sm font-semibold text-ink/65 hover:bg-ink/5 transition-colors flex items-center gap-1.5">✕ Batal</button>
-            <button onclick="saveAsDraft()" class="px-4 py-2 border border-ink/20 rounded-xl text-sm font-semibold text-ink/65 hover:bg-ink/5 transition-colors flex items-center gap-1.5">💾 Simpan Draft</button>
-            <button id="btn-save" onclick="savePackage()" class="bg-green-600 text-white px-5 py-2 rounded-xl text-sm font-semibold hover:bg-green-700 transition-colors flex items-center gap-1.5 shadow-sm">💾 Simpan Perubahan</button>
+            <button data-rbac="package.edit" onclick="saveAsDraft()" class="px-4 py-2 border border-ink/20 rounded-xl text-sm font-semibold text-ink/65 hover:bg-ink/5 transition-colors flex items-center gap-1.5">💾 Simpan Draft</button>
+            <button data-rbac="package.edit" id="btn-save" onclick="savePackage()" class="bg-green-600 text-white px-5 py-2 rounded-xl text-sm font-semibold hover:bg-green-700 transition-colors flex items-center gap-1.5 shadow-sm">💾 Simpan Perubahan</button>
           </div>
         </div>
 
@@ -121,7 +121,7 @@
                 <div>
                   <label class="text-xs font-semibold text-ink/70">Tempoh <span class="text-terracotta">*</span></label>
                   <div class="mt-1 grid grid-cols-[1fr_auto] gap-2">
-                    <input id="f-weeks" type="number" min="1" class="w-full px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-navy" placeholder="12">
+                    <input id="f-weeks" type="number" min="1" onchange="onDurationCountChange()" class="w-full px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-navy" placeholder="12">
                     <select id="f-duration-unit" onchange="onDurationUnitChange()" class="px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:outline-none focus:border-navy">
                       <option value="week">Minggu</option>
                       <option value="day">Hari</option>
@@ -129,9 +129,9 @@
                   </div>
                 </div>
 
-                <!-- ── Sesi per minggu (hanya muncul bila unit=Minggu) ── -->
+                <!-- ── Sesi/hari sesi (variant hari muncul utk Minggu & Hari) ── -->
                 <div id="f-sessions-wrap" class="md:col-span-3 grid md:grid-cols-2 gap-4 pt-2 border-t border-ink/8">
-                  <div>
+                  <div id="f-spw-col">
                     <label class="text-xs font-semibold text-ink/70">Bilangan sesi seminggu <span class="text-terracotta">*</span></label>
                     <select id="f-sessions-per-week" onchange="onSessionsPerWeekChange()" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:outline-none focus:border-navy">
                       <option value="1">1 sesi seminggu</option>
@@ -143,7 +143,7 @@
                     <label class="text-xs font-semibold text-ink/70">Pilihan hari sesi</label>
                     <div id="session-days-editor" class="mt-1 space-y-2"></div>
                     <button type="button" onclick="addSessionDaysVariant()" class="mt-2 text-[10px] font-semibold text-navy border border-dashed border-navy/30 px-3 py-1.5 rounded hover:bg-navy hover:text-white">+ Tambah pilihan variant</button>
-                    <p class="text-[10px] text-ink/40 mt-1.5">Patient akan pilih satu variant masa daftar pakej.</p>
+                    <p id="f-variant-hint" class="text-[10px] text-ink/40 mt-1.5">Patient akan pilih satu variant masa daftar pakej.</p>
                   </div>
                 </div>
 
@@ -265,6 +265,37 @@
                     <p class="text-[10px] text-ink/40 mt-1">Caj untuk 1 minggu tambahan bila miss sesi. Default RM 50.</p>
                   </div>
                 </div>
+
+                <!-- Pakej Termasuk — dipaparkan sebagai "Pakej Termasuk" di skrin cadangan pakej (KOB) pesakit -->
+                <div class="mt-4 pt-4 border-t border-ink/10">
+                  <h4 class="text-xs font-bold text-ink/70 mb-2">📦 Pakej Termasuk (papar di skrin KOB pesakit)</h4>
+                  <div class="grid md:grid-cols-2 gap-3">
+                    <div>
+                      <div class="flex items-center justify-between mb-1 gap-2 flex-wrap">
+                        <label class="text-xs font-semibold text-ink/70">Produk / Bekalan</label>
+                        <button type="button" onclick="autoFillProducts()"
+                          class="text-[10px] text-navy hover:underline font-semibold whitespace-nowrap">🔄 Auto-Isi
+                          dari Bekalan Mingguan</button>
+                      </div>
+                      <textarea id="f-products" rows="4"
+                        class="w-full px-3 py-2 border border-ink/20 rounded-lg text-sm"
+                        placeholder="Satu item setiap baris, cth: 2 botol Supplement X"></textarea>
+                    </div>
+                    <div>
+                      <div class="flex items-center justify-between mb-1 gap-2 flex-wrap">
+                        <label class="text-xs font-semibold text-ink/70">Bimbingan & Terapi</label>
+                        <button type="button" onclick="autoFillBimbingan()"
+                          class="text-[10px] text-navy hover:underline font-semibold whitespace-nowrap">🔄 Auto-Isi
+                          dari Coaching Mingguan</button>
+                      </div>
+                      <textarea id="f-bimbingan" rows="4"
+                        class="w-full px-3 py-2 border border-ink/20 rounded-lg text-sm"
+                        placeholder="Satu item setiap baris, cth: Individual Therapy (4 Sessions)"></textarea>
+                    </div>
+                  </div>
+                  <p class="text-[10px] text-ink/40 mt-2">Klik Auto-Isi selepas config Bekalan/Bimbingan mingguan di
+                    atas, atau tulis terus satu item setiap baris.</p>
+                </div>
               </div>
             </details>
 
@@ -275,8 +306,6 @@
               <div id="sched-val-wrap"></div>
               <span id="sched-unit-lbl"></span>
               <div id="sched-summary"></div>
-              <textarea id="f-products"></textarea>
-              <textarea id="f-bimbingan"></textarea>
             </div>
 
           </div>
@@ -479,29 +508,62 @@ const DAY_LABELS = ['Isn','Sel','Rab','Kha','Jum','Sab','Ahd'];  // index 1-7 ma
 
 function onDurationUnitChange() {
   toggleSessionsBlock();
+  renderSessionDaysEditor();      // panjang variant beza ikut unit
+  renderCoachingScheduleEditor(true);
+}
+
+// Duration NUMBER berubah (cth 7→3) → selaraskan Timeline + variant (Hari: panjang variant = tempoh).
+function onDurationCountChange() {
+  renderSessionDaysEditor();
   renderCoachingScheduleEditor(true);
 }
 
 function toggleSessionsBlock() {
-  // Sessions per week hanya relevan bila unit = 'week'.
-  // Pakej per-hari (cth 777) tak guna sessions_per_week.
+  // Editor variant hari muncul utk KEDUA-DUA unit (Minggu & Hari).
+  // "Bilangan sesi seminggu" hanya relevan utk unit Minggu; disembunyi utk Hari.
   const block = document.getElementById('f-sessions-wrap');
   if (!block) return;
   const isWeekly = getDurationUnit() === 'week';
-  block.style.display = isWeekly ? '' : 'none';
+  block.style.display = '';   // sentiasa papar (variant hari perlu utk dua-dua)
+  const spwCol = document.getElementById('f-spw-col');
+  if (spwCol) spwCol.style.display = isWeekly ? '' : 'none';
+  // Hint variant ikut unit
+  const hint = document.getElementById('f-variant-hint');
+  if (hint) hint.textContent = isWeekly
+    ? 'Patient akan pilih satu variant masa daftar pakej.'
+    : `Setiap variant = ${variantLength()} hari (ikut tempoh). Patient pilih satu variant.`;
+}
+
+// Panjang variant: Hari → ikut tempoh (getScheduleCount); Minggu → bilangan sesi/minggu.
+function variantLength() {
+  return getDurationUnit() === 'day'
+    ? getScheduleCount()
+    : (parseInt(document.getElementById('f-sessions-per-week')?.value) || 1);
 }
 
 function renderSessionDaysEditor() {
   const editor = document.getElementById('session-days-editor');
   if (!editor) return;
-  const N = parseInt(document.getElementById('f-sessions-per-week').value) || 1;
+  const N = variantLength();
 
   if (!_sessionDaysOptions.length) _sessionDaysOptions = [[]];
 
+    // Hari klinik buka rawatan (JS getDay 0-6). Kosong = tiada slot → jangan kunci.
+    const allowed = window._allowedRawatanDays || [];
+    const isOpen = (d) => !allowed.length || allowed.includes(d === 7 ? 0 : d);   // pkg 1-7 → JS
   editor.innerHTML = _sessionDaysOptions.map((variant, idx) => {
     const days = Array.isArray(variant) ? variant : [];
     const chips = [1,2,3,4,5,6,7].map(d => {
       const sel = days.includes(d);
+      const open = isOpen(d);
+      if (!open) {
+        // Tak buka + belum pilih → dikunci (tak boleh tambah).
+        if (!sel) return `<button type="button" disabled title="Klinik tidak buka rawatan pada hari ini"
+          class="px-2.5 py-1 rounded-lg text-[11px] font-semibold border bg-ink/5 text-ink/25 border-ink/10 cursor-not-allowed line-through">${DAY_LABELS[d-1]}</button>`;
+        // Tak buka + sudah dipilih (data lama) → benarkan BUANG sahaja.
+        return `<button type="button" onclick="toggleDayInVariant(${idx}, ${d})" title="Klinik tak buka — klik untuk buang"
+          class="px-2.5 py-1 rounded-lg text-[11px] font-semibold border bg-terracotta/15 text-terracotta border-terracotta/30">${DAY_LABELS[d-1]} ✕</button>`;
+      }
       return `<button type="button" onclick="toggleDayInVariant(${idx}, ${d})"
         class="px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${sel ? 'bg-navy text-white border-navy' : 'bg-white text-ink/60 border-ink/15 hover:border-navy'}">${DAY_LABELS[d-1]}</button>`;
     }).join(' ');
@@ -524,8 +586,14 @@ function renderSessionDaysEditor() {
 function toggleDayInVariant(idx, day) {
   const variant = _sessionDaysOptions[idx] || [];
   const pos = variant.indexOf(day);
-  if (pos >= 0) variant.splice(pos, 1);
-  else variant.push(day);
+  if (pos >= 0) { variant.splice(pos, 1); }
+  else {
+    const allowed = window._allowedRawatanDays || [];
+    if (allowed.length && !allowed.includes(day === 7 ? 0 : day)) {
+      banner('Klinik tidak buka rawatan pada hari ini', 'error'); return;
+    }
+    variant.push(day);
+  }
   variant.sort((a,b) => a - b);
   _sessionDaysOptions[idx] = variant;
   renderSessionDaysEditor();
@@ -542,7 +610,7 @@ function removeSessionDaysVariant(idx) {
   renderSessionDaysEditor();
 }
 
-// Default hari-sesi ikut "Bilangan sesi seminggu" pakej: 2 → [1,2], selainnya → [1].
+// Default hari-sesi (mingguan): 2 → [1,2], selainnya → [1]. (Hari: coaching ikut D1..Dn.)
 function defaultSessionDays() {
   const n = parseInt(document.getElementById('f-sessions-per-week')?.value) || 1;
   return n >= 2 ? [1, 2] : [1];
@@ -1416,7 +1484,9 @@ function collectCoachingSchedule() {
     })
     .filter(Boolean);
 
-  return coachingSchedule.map(item => ({
+  // Selaraskan ikut tempoh semasa dulu — elak simpan D/M lebih dari Duration (cth D6/D7 utk 3 Hari).
+  const synced = normalizeCoachingSchedule(coachingSchedule, getScheduleCount(), getDurationUnit());
+  return synced.map(item => ({
     ...item,
     guidance: clean(item.guidance),
     aktiviti: clean(item.aktiviti),
@@ -1898,6 +1968,18 @@ window.switchETab = switchETab;
       .select('id, name, type, category').eq('is_active', true).order('sort_order').order('name');
     window._coachingItems = data || [];
   } catch (e) { window._coachingItems = []; }
+
+  // Load hari rawatan yang klinik BUKA (psy_kob_slot_config) — untuk kunci chip variant.
+  // Kosong = tiada slot dikonfig → jangan kunci (benarkan semua).
+  try {
+    let { data: slots, error } = await window.db.from('psy_kob_slot_config')
+      .select('day_of_week').eq('is_active', true).eq('slot_type', 'rawatan');
+    if (error && /slot_type/i.test(error.message || '')) {
+      const fb = await window.db.from('psy_kob_slot_config').select('day_of_week').eq('is_active', true);
+      slots = fb.data;
+    }
+    window._allowedRawatanDays = [...new Set((slots || []).map(s => s.day_of_week))];
+  } catch (e) { window._allowedRawatanDays = []; }
 
   // Load kategori pakej (dynamic)
   try {

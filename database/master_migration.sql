@@ -282,6 +282,11 @@ DO $$ BEGIN
   CREATE POLICY "Staff manage reaksi item" ON psy_reaksi_item FOR ALL
     USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- Pesakit perlu BACA katalog reaksi utk wizard Catatan Harian (data rujukan sahaja)
+DO $$ BEGIN
+  CREATE POLICY "Authenticated boleh baca reaksi item" ON psy_reaksi_item FOR SELECT
+    TO authenticated USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- Seed reaksi pemulihan (7 kumpulan / 48 simptom + "Tiada simptom" tiap kumpulan).
 -- Hanya seed bila jadual kosong supaya tak timpa tambahan staff (CRUD).
@@ -345,6 +350,161 @@ FROM (VALUES
   ('Bengkak & Cecair','💧','Tiada simptom',550)
 ) AS v(kumpulan, ikon, label, urutan)
 WHERE NOT EXISTS (SELECT 1 FROM psy_reaksi_item);
+
+-- ============================================================
+-- Auto Recovery Advice + WhatsApp draft engine (20260714).
+-- Recovery Action (perpustakaan tindakan) + Recovery Mapping (simptom<->
+-- tindakan, many-to-many) disimpan dalam DB supaya doktor/admin boleh
+-- kemaskini saranan tanpa ubah kod. Advice log = draf mesej WA yang
+-- dijana auto lepas pesakit submit, staff semak/edit sebelum hantar.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS psy_reaksi_actions (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title        TEXT NOT NULL,
+  description  TEXT,
+  priority     INT NOT NULL DEFAULT 100,
+  is_emergency BOOLEAN NOT NULL DEFAULT false,
+  aktif        BOOLEAN NOT NULL DEFAULT true,
+  created_at   TIMESTAMPTZ DEFAULT now(),
+  updated_at   TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE psy_reaksi_actions ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  CREATE POLICY "Staff manage reaksi actions" ON psy_reaksi_actions FOR ALL
+    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  CREATE POLICY "Authenticated read reaksi actions" ON psy_reaksi_actions FOR SELECT
+    USING (auth.uid() IS NOT NULL);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE TABLE IF NOT EXISTS psy_reaksi_action_map (
+  symptom_id  UUID NOT NULL REFERENCES psy_reaksi_item(id)    ON DELETE CASCADE,
+  action_id   UUID NOT NULL REFERENCES psy_reaksi_actions(id) ON DELETE CASCADE,
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  PRIMARY KEY (symptom_id, action_id)
+);
+ALTER TABLE psy_reaksi_action_map ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  CREATE POLICY "Staff manage reaksi mapping" ON psy_reaksi_action_map FOR ALL
+    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  CREATE POLICY "Authenticated read reaksi mapping" ON psy_reaksi_action_map FOR SELECT
+    USING (auth.uid() IS NOT NULL);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS idx_reaksi_action_map_symptom ON psy_reaksi_action_map(symptom_id);
+CREATE INDEX IF NOT EXISTS idx_reaksi_action_map_action  ON psy_reaksi_action_map(action_id);
+
+CREATE TABLE IF NOT EXISTS psy_reaksi_advice_log (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id       UUID NOT NULL REFERENCES psy_patients(id)     ON DELETE CASCADE,
+  kepatuhan_log_id UUID REFERENCES psy_kepatuhan_log(id)         ON DELETE SET NULL,
+  log_date         DATE NOT NULL DEFAULT CURRENT_DATE,
+  symptoms         JSONB NOT NULL DEFAULT '[]',
+  actions          JSONB NOT NULL DEFAULT '[]',
+  message_text     TEXT NOT NULL,
+  is_emergency     BOOLEAN NOT NULL DEFAULT false,
+  status           TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','sent','skipped')),
+  reviewed_by      UUID REFERENCES psy_profiles(id),
+  reviewed_at      TIMESTAMPTZ,
+  sent_by          UUID REFERENCES psy_profiles(id),
+  sent_at          TIMESTAMPTZ,
+  created_at       TIMESTAMPTZ DEFAULT now(),
+  updated_at       TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE psy_reaksi_advice_log ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  CREATE POLICY "Staff manage advice log" ON psy_reaksi_advice_log FOR ALL
+    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  CREATE POLICY "Patient insert own advice log" ON psy_reaksi_advice_log FOR INSERT
+    WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS idx_reaksi_advice_log_status  ON psy_reaksi_advice_log(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_reaksi_advice_log_patient ON psy_reaksi_advice_log(patient_id, log_date);
+
+-- Seed contoh (Pencernaan + Peredaran Darah) supaya engine boleh diuji serta-merta.
+-- Staff tambah/kemaskini selebihnya dari Staff Portal (bukan hardcode).
+DO $$
+DECLARE
+  a_air_suam UUID; a_air_halia UUID; a_kurang_sukar UUID;
+  a_elak_sejuk UUID; a_rehat UUID; a_elak_berminyak UUID; a_pernafasan UUID;
+  s_kembung UUID; s_angin UUID; s_loya UUID; s_berdebar UUID;
+BEGIN
+  IF EXISTS (SELECT 1 FROM psy_reaksi_actions) THEN RETURN; END IF;
+
+  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Minum air suam', 10) RETURNING id INTO a_air_suam;
+  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Minum air halia', 20) RETURNING id INTO a_air_halia;
+  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Kurangkan makanan sukar dihadam', 30) RETURNING id INTO a_kurang_sukar;
+  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Elakkan minuman sejuk', 40) RETURNING id INTO a_elak_sejuk;
+  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Rehat secukupnya', 50) RETURNING id INTO a_rehat;
+  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Elakkan makanan berminyak', 60) RETURNING id INTO a_elak_berminyak;
+  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Lakukan Pernafasan Fitrah', 70) RETURNING id INTO a_pernafasan;
+
+  SELECT id INTO s_kembung FROM psy_reaksi_item WHERE kumpulan='Pencernaan' AND label='Kembung perut' LIMIT 1;
+  SELECT id INTO s_angin   FROM psy_reaksi_item WHERE kumpulan='Pencernaan' AND label='Banyak angin' LIMIT 1;
+  SELECT id INTO s_loya    FROM psy_reaksi_item WHERE kumpulan='Pencernaan' AND label='Loya' LIMIT 1;
+  SELECT id INTO s_berdebar FROM psy_reaksi_item WHERE kumpulan='Peredaran Darah' AND label='Berdebar-debar' LIMIT 1;
+
+  IF s_kembung IS NOT NULL THEN
+    INSERT INTO psy_reaksi_action_map (symptom_id, action_id) VALUES
+      (s_kembung, a_air_suam), (s_kembung, a_air_halia), (s_kembung, a_kurang_sukar);
+  END IF;
+  IF s_angin IS NOT NULL THEN
+    INSERT INTO psy_reaksi_action_map (symptom_id, action_id) VALUES
+      (s_angin, a_air_halia), (s_angin, a_elak_sejuk);
+  END IF;
+  IF s_loya IS NOT NULL THEN
+    INSERT INTO psy_reaksi_action_map (symptom_id, action_id) VALUES
+      (s_loya, a_air_halia), (s_loya, a_rehat), (s_loya, a_elak_berminyak);
+  END IF;
+  IF s_berdebar IS NOT NULL THEN
+    INSERT INTO psy_reaksi_action_map (symptom_id, action_id) VALUES
+      (s_berdebar, a_pernafasan);
+  END IF;
+END $$;
+
+-- Trigger: alert coach serta-merta bila advice log ditanda emergency
+-- (patient client tak boleh insert psy_notifications terus sebab RLS hanya
+-- benarkan staff — guna SECURITY DEFINER trigger).
+CREATE OR REPLACE FUNCTION trg_reaksi_advice_notify_emergency()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_coach_id     UUID;
+  v_patient_name TEXT;
+BEGIN
+  IF NOT NEW.is_emergency THEN RETURN NEW; END IF;
+
+  SELECT pt.coach_id, COALESCE(pr.full_name, pt.full_name, 'Pesakit')
+    INTO v_coach_id, v_patient_name
+  FROM psy_patients pt
+  LEFT JOIN psy_profiles pr ON pr.id = pt.user_id
+  WHERE pt.id = NEW.patient_id;
+
+  IF v_coach_id IS NOT NULL THEN
+    INSERT INTO psy_notifications (user_id, type, title, body, link)
+    VALUES (
+      v_coach_id, 'reaksi',
+      '🚨 Reaksi Kecemasan: ' || v_patient_name,
+      v_patient_name || ' melaporkan simptom kecemasan. Saranan telah dihantar automatik ke WhatsApp — sila susul pesakit dengan segera.',
+      'kepatuhan.html'
+    );
+  END IF;
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_reaksi_advice_notify_emergency: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_reaksi_advice_notify_emergency ON psy_reaksi_advice_log;
+CREATE TRIGGER trg_reaksi_advice_notify_emergency
+  AFTER INSERT ON psy_reaksi_advice_log
+  FOR EACH ROW EXECUTE FUNCTION trg_reaksi_advice_notify_emergency();
 
 CREATE TABLE IF NOT EXISTS psy_plan_check_ins (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -7579,3 +7739,116 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 SELECT 'Step 83 OK -- psy_clinical_referrals ready' AS status;
+
+
+-- ════════════════════════════════════════════════════════════════
+-- step97_flexible_schedule.sql
+-- ════════════════════════════════════════════════════════════════
+-- Jadual rawatan fleksibel (ikut pakej) + slot masa global.
+-- Wizard plan.html baca sessions_per_week (1-2) + session_days_options
+-- pakej, dan slot masa global (psy_settings), bukan hardcode fri_sat/sat_sun.
+
+-- Longgarkan CHECK preferred_pair (dulu IN ('fri_sat','sat_sun')).
+DO $$
+DECLARE r RECORD;
+BEGIN
+  FOR r IN
+    SELECT conname FROM pg_constraint
+    WHERE conrelid = 'psy_treatment_plans'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) ILIKE '%preferred_pair%'
+  LOOP
+    EXECUTE 'ALTER TABLE psy_treatment_plans DROP CONSTRAINT ' || quote_ident(r.conname);
+  END LOOP;
+END $$;
+
+ALTER TABLE psy_treatment_plans
+  ADD COLUMN IF NOT EXISTS preferred_days    JSONB DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS sessions_per_week INT   DEFAULT NULL;
+
+COMMENT ON COLUMN psy_treatment_plans.preferred_days IS
+  'Hari sesi terpilih dalam getDay() JS (0=Ahad..6=Sabtu), ikut turutan sesi. Cth [5,6]=Jum+Sab, [6]=Sab. Fallback ke preferred_pair utk plan lama.';
+COMMENT ON COLUMN psy_treatment_plans.sessions_per_week IS
+  'Bilangan sesi/minggu (1-2) disalin dari pakej masa setup jadual.';
+
+INSERT INTO psy_settings (key, value) VALUES
+  ('schedule_time_slots',
+   '[{"value":"09:00","label":"9:00 AM"},{"value":"10:00","label":"10:00 AM"},{"value":"14:00","label":"2:00 PM"},{"value":"15:00","label":"3:00 PM"},{"value":"16:00","label":"4:00 PM"}]'::jsonb)
+ON CONFLICT (key) DO NOTHING;
+
+SELECT 'Step 97 OK -- flexible schedule ready' AS status;
+
+
+-- ════════════════════════════════════════════════════════════════
+-- step98_rbac_all_pages_buttons.sql
+-- ════════════════════════════════════════════════════════════════
+-- ════════════════════════════════════════════════════════════════
+-- step98: RBAC penuh — SEMUA halaman berdaftar + SEMUA butang boleh on/off
+-- 1) Modul baru utk halaman yang tercicir: reaksi, rujukan, kehadiran (staff)
+--    + pat_sejarah (patient: sejarah-pembayaran.html & resit.html)
+-- 2) Daftar SEMUA action (view/create/edit/delete/export) utk setiap modul
+--    staff dalam psy_module_actions → setiap cell dalam matrix peranan.html
+--    boleh di-toggle.
+-- 3) Grant behaviour-preserving: role yang sudah ada 'view' pada satu modul
+--    diberi create/edit/delete/export sekali (sebelum ini butang TIDAK digate,
+--    jadi ini mengekalkan tingkah laku semasa — admin boleh untick kemudian).
+-- ════════════════════════════════════════════════════════════════
+
+-- ── 1) Modul baru ────────────────────────────────────────────────
+INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
+  ('reaksi',      'Reaksi & Tindakan',   '🩹', 'staff',    72),
+  ('rujukan',     'Rujukan',             '🔀', 'staff',    76),
+  ('kehadiran',   'Laporan Kehadiran',   '📋', 'staff',   205),
+  ('pat_sejarah', 'Sejarah Pembayaran',  '🧾', 'patient',  95)
+ON CONFLICT (code) DO UPDATE SET
+  label = EXCLUDED.label,
+  icon  = EXCLUDED.icon,
+  scope = EXCLUDED.scope,
+  sort_order = EXCLUDED.sort_order;
+
+-- ── 2) Daftar SEMUA action untuk SETIAP modul (staff + patient) ──
+--      Tiada lagi cell "—" (Tidak Berkenaan) dalam peranan.html —
+--      SEMUA kotak boleh di-toggle, dan boleh di-ON bila perlu kelak.
+INSERT INTO psy_module_actions (module_code, action_code)
+SELECT m.code, a.code
+FROM psy_modules m
+CROSS JOIN psy_actions a
+ON CONFLICT DO NOTHING;
+
+-- ── 3) Default grants modul baru ─────────────────────────────────
+-- Halaman ini sebelum step98 TERBUKA kepada semua staff (tiada guard),
+-- jadi grant view kepada semua role staff — kekalkan akses semasa.
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT r.code, m.code, 'view'
+FROM psy_roles r
+CROSS JOIN (VALUES ('reaksi'), ('rujukan'), ('kehadiran')) AS m(code)
+WHERE r.code IN ('super_admin','manager','admin','doctor','coach')
+ON CONFLICT DO NOTHING;
+
+-- Sejarah pembayaran pesakit: ON secara default
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+VALUES ('patient', 'pat_sejarah', 'view')
+ON CONFLICT DO NOTHING;
+
+-- ── 4) Behaviour-preserving: view ⇒ create/edit/delete/export ────
+-- Untuk setiap (role, modul staff) yang sudah ada 'view', beri juga
+-- action lain supaya butang yang baru digate tidak hilang serta-merta.
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT rma.role_code, rma.module_code, a.code
+FROM psy_role_module_actions rma
+JOIN psy_modules m ON m.code = rma.module_code AND m.scope = 'staff'
+CROSS JOIN psy_actions a
+WHERE rma.action_code = 'view'
+  AND a.code IN ('create','edit','delete','export')
+  AND rma.role_code <> 'patient'
+ON CONFLICT DO NOTHING;
+
+-- ── Verifikasi ──
+SELECT 'Step 98 OK — semua halaman dalam RBAC + semua butang boleh on/off' AS status;
+SELECT m.code, m.label, m.scope,
+       COUNT(ma.action_code) AS actions_berdaftar
+FROM psy_modules m
+LEFT JOIN psy_module_actions ma ON ma.module_code = m.code
+WHERE m.is_active
+GROUP BY m.code, m.label, m.scope, m.sort_order
+ORDER BY m.scope DESC, m.sort_order;

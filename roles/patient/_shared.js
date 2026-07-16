@@ -22,37 +22,44 @@ function hasCompletedKyc() {
   );
 }
 
-// Cached after initPatient — true only when KYC is formally approved
+// Cached after initPatient.
+// kycSubmitted = borang KYC telah dihantar (pending ATAU approved) — cukup utk mula proses KOB.
+// kycApproved  = KYC telah DILULUSKAN admin — diperlukan utk ciri penuh (GATE 2).
 window.kycApproved = false;
+window.kycSubmitted = false;
 
-async function resolveKycApproved() {
+async function resolveKycStatus() {
   const p = window.patientRecord;
   // Active patients (staff-created and claimed, or fully approved) skip KYC
-  if (p?.status === 'active') return true;
+  if (p?.status === 'active') return { approved: true, submitted: true };
   // Check latest KYC submission status (handles patient without patientRecord yet)
   const subs = await dbQuery('psy_kyc_submissions', {
     eq: { user_id: window.currentUser.id },
     order: { col: 'created_at', ascending: false },
     limit: 1,
   }).catch(() => []);
-  return subs[0]?.status === 'approved';
+  const status = subs[0]?.status;
+  return {
+    approved: status === 'approved',
+    submitted: status === 'approved' || status === 'pending',
+  };
 }
 
 async function enforceKyc(currentPageId) {
   // Sentiasa boleh (tiada data rawatan sensitif): KYC sendiri, profil, dashboard
   if (['kyc', 'profile', 'dashboard'].includes(currentPageId)) return true;
 
-  // ── GATE 1: KYC MESTI DILULUSKAN staff dulu sebelum akses apa-apa lain ──
-  // kycApproved = true bila psy_patients.status='active' ATAU submission terkini 'approved'.
-  // Pesakit belum lulus → terkunci, dihantar ke skrin KYC (papar status menunggu).
-  if (!window.kycApproved) { window.location.href = 'kyc.html'; return false; }
+  // ── GATE 1: KYC mesti DIHANTAR dulu (tak perlu tunggu admin lulus) sebelum mula KOB ──
+  // Pesakit belum hantar KYC langsung → terkunci, dihantar ke skrin KYC.
+  if (!window.kycSubmitted) { window.location.href = 'kyc.html'; return false; }
 
-  // (KYC sudah lulus) — boleh teruskan onboarding KOB + browse pakej/bayar
-  if (['kob', 'pakej', 'payment', 'routine', 'checkin', 'kepatuhan'].includes(currentPageId)) return true;
+  // (KYC sudah dihantar) — boleh teruskan onboarding KOB + browse pakej/bayar
+  // walaupun admin belum lulus lagi — kelulusan disemak semasa doktor jalankan sesi KOB.
+  if (['kob', 'pakej', 'payment', 'sejarah_pembayaran', 'routine', 'checkin', 'kepatuhan'].includes(currentPageId)) return true;
 
-  // ── GATE 2: features penuh (plan, vitals, library, dll) — mesti siap KOB dulu ──
+  // ── GATE 2: features penuh (plan, vitals, library, dll) — mesti KYC LULUS admin + siap KOB ──
   const kobStatus = window.patientRecord?.kob_status || 'na';
-  if (kobStatus !== 'na' && kobStatus !== 'completed') {
+  if (!window.kycApproved || (kobStatus !== 'na' && kobStatus !== 'completed')) {
     window.location.href = 'kob.html';
     return false;
   }
@@ -174,8 +181,10 @@ async function initPatient(pageId, titleSub) {
     return null;
   }
 
-  // Resolve KYC approval once and cache
-  window.kycApproved = await resolveKycApproved();
+  // Resolve KYC approval/submission once and cache
+  const kycStatus = await resolveKycStatus();
+  window.kycApproved = kycStatus.approved;
+  window.kycSubmitted = kycStatus.submitted;
 
   // Load patient feature toggles from RBAC
   await loadPatientFeatures();
@@ -199,7 +208,7 @@ async function initPatient(pageId, titleSub) {
   const navItems = getNavItems('patient').filter(item => {
     if (!canPatient(item.id)) return false;
     if (item.id === 'kyc' && window.kycApproved) return false;
-    if (item.id === 'kob' && !window.kycApproved) return false;   // KOB hanya lepas KYC lulus
+    if (item.id === 'kob' && !window.kycSubmitted) return false;   // KOB hanya lepas KYC dihantar
     return true;
   });
   renderNavbar('patient', window.currentUser, navItems, pageId);

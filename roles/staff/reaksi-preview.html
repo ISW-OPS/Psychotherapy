@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Preview Auto Cadangan</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<!-- Embed mode: bila dibuka dalam <iframe> dari reaksi-item.html (?embed=1) — sorok sidebar/topbar -->
+<style>
+  html.embed #sidebar, html.embed #page-header, html.embed #global-topbar, html.embed #isw-env-badge { display: none !important; }
+  html.embed body { padding-top: 0 !important; }
+</style>
+<script>
+  if (new URLSearchParams(location.search).get('embed') === '1') document.documentElement.classList.add('embed');
+</script>
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-6 space-y-4">
+
+        <div>
+          <h1 class="text-xl font-bold text-ink flex items-center gap-2">Preview Auto Cadangan <span class="text-[10px] font-bold bg-green-light text-green-dark px-2 py-0.5 rounded-full">Uji</span></h1>
+          <p class="text-sm text-ink/45 mt-0.5">Uji dan lihat cadangan tindakan serta mesej WhatsApp yang akan dijana secara automatik — tiada apa yang dihantar dari halaman ini.</p>
+        </div>
+
+        <div class="bg-green-light/60 border border-green/20 rounded-xl px-4 py-3 text-[13px] text-ink/70">
+          Pilih simptom yang dialami pesakit untuk melihat cadangan tindakan dan mesej WhatsApp yang dijana secara automatik.
+        </div>
+
+        <div class="grid lg:grid-cols-[300px_1fr] gap-4">
+
+          <!-- 1. Pilih simptom — card absolute (lg) supaya tingginya IKUT lajur kanan, bukan menentukannya;
+               senarai simptom panjang skrol dalam card -->
+          <div class="relative">
+            <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4 flex flex-col lg:absolute lg:inset-0">
+              <h3 class="text-[14px] font-bold text-ink">1. Pilih Simptom (Reaksi)</h3>
+              <p class="text-[11.5px] text-ink/40 mt-0.5 mb-2.5">Pilih satu atau lebih simptom yang dialami pesakit.</p>
+              <input id="pv-cari" oninput="pvRenderSym()" placeholder="Cari simptom…"
+                class="w-full border border-ink/15 rounded-lg px-3 py-2 text-[12.5px] focus:border-navy outline-none mb-2">
+              <div id="pv-symlist" class="flex-1 min-h-0 max-h-[55vh] lg:max-h-none overflow-y-auto pr-1"></div>
+              <div class="flex items-center justify-between gap-2 mt-3 pt-3 border-t border-ink/8">
+                <span id="pv-selcount" class="text-[12px] font-bold text-ink/50">0 simptom dipilih</span>
+                <button onclick="pvSel.clear();pvRenderSym();pvGenerate()" class="text-[12px] font-semibold text-ink/50 border border-ink/15 rounded-lg px-2.5 py-1.5 hover:bg-ink/5">Kosongkan</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 2 & 3. Hasil -->
+          <div class="space-y-4">
+            <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+              <h3 class="text-[14px] font-bold text-ink mb-3">2. Hasil Cadangan Automatik</h3>
+              <div id="pv-stats" class="grid sm:grid-cols-3 gap-3 mb-4"></div>
+              <div id="pv-hasil" class="grid md:grid-cols-2 gap-5 min-h-[180px]"></div>
+            </div>
+
+            <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+              <div class="flex items-center justify-between gap-3 flex-wrap mb-1">
+                <h3 class="text-[14px] font-bold text-ink">3. Preview Mesej WhatsApp</h3>
+                <span id="pv-info-mode" class="text-[12px] font-semibold"></span>
+              </div>
+              <p class="text-[11.5px] text-ink/40 mb-3">Satu Poll Harian boleh jana hingga 3 mesej berjarak ~5 minit
+                — Tindakan (terus), Gaya Hidup Fitrah (+5 min), Diet &amp; Nutrisi (+10 min). Kecemasan = SATU mesej
+                kritikal segera sahaja. Saluran: WhatsApp (GHL).</p>
+              <div id="pv-msgs" class="grid md:grid-cols-3 gap-3"></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+// ══════════ Preview Auto Cadangan (simulasi — tiada penghantaran) ══════════
+let pvSymptoms = [], pvActions = [], pvMap = {}, pvTemplates = [], pvSel = new Set(), pvMsgTexts = ['', '', ''];
+const pvEsc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const PV_TAHAP = { rendah: ['Rendah', 'bg-green-light text-green-dark'], sederhana: ['Sederhana', 'bg-gold-light text-[#8a6d1a]'], tinggi: ['Tinggi', 'bg-terracotta-light text-terracotta'] };
+
+async function pvLoad() {
+  const [{ data: items }, { data: actions }, { data: maps }, tplRes] = await Promise.all([
+    window.db.from('psy_reaksi_item').select('*').eq('aktif', true).order('urutan'),
+    window.db.from('psy_reaksi_actions').select('*').order('priority'),
+    window.db.from('psy_reaksi_action_map').select('symptom_id,action_id'),
+    window.db.from('psy_auto_messages').select('id, key, name, message_template').in('key', ['reaksi_harian', 'reaksi_kritikal', 'reaksi_diet', 'reaksi_gaya_hidup']).eq('is_active', true),
+  ]);
+  pvSymptoms = items || [];
+  pvActions = actions || [];
+  pvMap = {};
+  (maps || []).forEach(m => (pvMap[m.symptom_id] ||= new Set()).add(m.action_id));
+  pvTemplates = (tplRes.data || []).map(t => ({ id: t.id, key: t.key, nama: t.name, kandungan: t.message_template }));
+  pvRenderSym();
+  pvGenerate();
+}
+
+function pvRenderSym() {
+  const q = (document.getElementById('pv-cari').value || '').toLowerCase().trim();
+  const groups = {};
+  pvSymptoms.filter(s => !q || s.label.toLowerCase().includes(q)).forEach(s => (groups[s.kumpulan] ||= []).push(s));
+  document.getElementById('pv-selcount').textContent = `${pvSel.size} simptom dipilih`;
+  document.getElementById('pv-symlist').innerHTML = Object.entries(groups).map(([g, items]) => `
+    <div class="text-[10.5px] uppercase font-bold text-ink/35 mt-2.5 first:mt-0 mb-1">${pvEsc(g)}</div>
+    ${items.map(s => {
+      const t = PV_TAHAP[s.tahap_risiko || 'rendah'];
+      return `<label class="flex items-center gap-2 py-1 px-1.5 rounded-lg hover:bg-cream/60 cursor-pointer">
+        <input type="checkbox" ${pvSel.has(s.id) ? 'checked' : ''} onchange="pvToggle('${s.id}', this.checked)" class="w-4 h-4 accent-green">
+        <span class="flex-1 text-[12.5px] text-ink/80">${pvEsc(s.label)}</span>
+        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${t[1]}">${t[0]}</span>
+      </label>`;
+    }).join('')}`).join('') || '<p class="text-[12px] text-ink/40 italic">Tiada simptom sepadan.</p>';
+}
+function pvToggle(id, on) { if (on) pvSel.add(id); else pvSel.delete(id); pvRenderSym(); pvGenerate(); }
+
+function pvGenerate() {
+  const selSyms = pvSymptoms.filter(s => pvSel.has(s.id));
+  // Kumpul tindakan (dedupe, susun: emergency dulu, kemudian priority)
+  const seen = new Set(), acts = [];
+  selSyms.forEach(s => [...(pvMap[s.id] || [])].forEach(aid => {
+    const a = pvActions.find(x => x.id === aid);
+    if (a && a.aktif !== false && !seen.has(a.id)) { seen.add(a.id); acts.push(a); }
+  }));
+  acts.sort((x, y) => (Number(y.is_emergency) - Number(x.is_emergency)) || (x.priority - y.priority));
+  const isEmergency = acts.some(a => a.is_emergency) || selSyms.some(s => s.is_emergency);
+  const tahapMax = selSyms.some(s => s.tahap_risiko === 'tinggi') ? 'tinggi' : selSyms.some(s => s.tahap_risiko === 'sederhana') ? 'sederhana' : selSyms.length ? 'rendah' : null;
+
+  // Stat cards
+  const tMeta = tahapMax ? PV_TAHAP[tahapMax] : ['—', 'bg-ink/8 text-ink/50'];
+  document.getElementById('pv-stats').innerHTML = `
+    <div class="bg-cream/50 border border-ink/8 rounded-xl p-3.5">
+      <div class="text-[11px] text-ink/45 font-semibold">Jumlah Tindakan Dicadangkan</div>
+      <div class="text-2xl font-extrabold text-ink mt-0.5">${acts.length}</div>
+      <div class="text-[11px] text-ink/40">Berdasarkan ${selSyms.length} simptom dipilih</div>
+    </div>
+    <div class="bg-cream/50 border border-ink/8 rounded-xl p-3.5">
+      <div class="text-[11px] text-ink/45 font-semibold">Tahap Risiko Tertinggi</div>
+      <div class="mt-1"><span class="text-[13px] font-extrabold px-2.5 py-1 rounded-lg ${tMeta[1]}">${tMeta[0]}</span></div>
+      <div class="text-[11px] text-ink/40 mt-1">${isEmergency ? 'Ada simptom/tindakan kecemasan' : 'Tiada risiko kecemasan dikesan'}</div>
+    </div>
+    <div class="bg-cream/50 border border-ink/8 rounded-xl p-3.5">
+      <div class="text-[11px] text-ink/45 font-semibold">Saluran Cadangan</div>
+      <div class="text-[15px] font-extrabold text-green-dark mt-0.5">WhatsApp</div>
+      <div class="text-[11px] text-ink/40">${isEmergency ? '1 mesej kritikal segera' : 'Hingga 3 mesej berjarak ~5 minit'}</div>
+    </div>`;
+
+  // Hasil
+  document.getElementById('pv-hasil').innerHTML = `
+    <div>
+      <h4 class="text-[13px] font-bold text-ink mb-2">Reaksi Dikenal Pasti</h4>
+      ${selSyms.length ? selSyms.map(s => `<div class="flex items-center gap-1.5 text-[13px] text-ink/75 py-0.5"><span class="${s.tahap_risiko === 'tinggi' ? 'text-terracotta' : 'text-green'}">•</span> ${pvEsc(s.label)}${s.is_emergency ? ' <span class="text-[10.5px] font-bold text-terracotta">(Kecemasan)</span>' : ''}</div>`).join('')
+        : '<p class="text-[12.5px] text-ink/35 italic">Belum ada simptom dipilih.</p>'}
+      ${selSyms.length && !isEmergency ? '<div class="inline-flex items-center gap-1.5 mt-2 text-[12px] font-semibold text-green-dark bg-green-light px-2.5 py-1.5 rounded-lg">Tiada simptom risiko kecemasan dikesan</div>' : ''}
+      ${isEmergency ? '<div class="inline-flex items-center gap-1.5 mt-2 text-[12px] font-semibold text-terracotta bg-terracotta-light px-2.5 py-1.5 rounded-lg">Kecemasan — 1 mesej kritikal dihantar segera + notifikasi coach</div>' : ''}
+    </div>
+    <div>
+      <h4 class="text-[13px] font-bold text-ink mb-2">Tindakan / Cadangan Dicadangkan</h4>
+      ${acts.length ? acts.map((a, i) => `
+        <div class="flex items-start gap-2 py-1">
+          <span class="w-5 h-5 rounded-full ${a.is_emergency ? 'bg-terracotta' : 'bg-green'} text-white text-[10.5px] font-bold flex items-center justify-center shrink-0 mt-0.5">${i + 1}</span>
+          <span class="text-[13px] text-ink/80 ${a.is_emergency ? 'text-terracotta font-semibold' : ''}">${pvEsc(a.title)}</span>
+        </div>`).join('')
+        : '<p class="text-[12.5px] text-ink/35 italic">Tiada tindakan dipetakan untuk simptom dipilih.</p>'}
+    </div>`;
+
+  // Mesej — pecah tindakan ikut jenis (sama logik dgn generateReaksiAdvice pesakit):
+  //   pemakanan → mesej 2 {{diet_list}}, gaya_hidup → mesej 3 {{lifestyle_list}},
+  //   lain → mesej 1 {{action_list}}; kecemasan = SATU mesej kritikal sahaja.
+  const firstName = 'Ahmad';
+  const jenisOf = a => a.jenis || 'am';
+  const dietActs = acts.filter(a => jenisOf(a) === 'pemakanan');
+  const lifeActs = acts.filter(a => jenisOf(a) === 'gaya_hidup');
+  const tindakanActs = acts.filter(a => jenisOf(a) !== 'pemakanan' && jenisOf(a) !== 'gaya_hidup');
+  const panduanLines = a => String(a.panduan || '').split('\n').map(s => s.trim()).filter(Boolean)
+    .map(s => `   • ${s.replace(/^[-•*·]\s*/, '')}`);
+  const dietList = dietActs.map((a, i) => [`${i + 1}. ${a.title}`, ...panduanLines(a)].join('\n')).join('\n\n');
+  const lifestyleList = lifeActs.map(a => [`• ${a.title}`, ...panduanLines(a)].join('\n')).join('\n');
+  const symptomList = selSyms.map(s => `• ${s.label}`).join('\n') || '• (tiada)';
+  const emergencyMsg = isEmergency ? 'PENTING: Terdapat simptom yang memerlukan perhatian segera. Sila hubungi coach anda.\n\n' : '';
+  const tplByKey = k => pvTemplates.find(t => t.key === k);
+  const fill = (t, vars) => Object.entries(vars).reduce((acc, [k, v]) => acc.split('{{' + k + '}}').join(v), t);
+  const vars = { patient_name: firstName, symptom_list: symptomList, diet_list: dietList, lifestyle_list: lifestyleList, emergency_message: emergencyMsg };
+
+  // 3 slot mesej — text=null bermaksud slot itu TIDAK dihantar (sebab dalam `skip`)
+  // Susunan: mesej 2 = Gaya Hidup Fitrah (+5 min), mesej 3 = Diet & Nutrisi (+10 min)
+  const slots = [
+    { no: 1, tajuk: isEmergency ? 'Kritikal (Kecemasan)' : 'Tindakan', masa: 'Terus selepas Poll Harian', jam: '10:45 AM', warna: isEmergency ? 'bg-terracotta' : 'bg-navy', text: null, tplNama: '', skip: '' },
+    { no: 2, tajuk: 'Gaya Hidup Fitrah', masa: '+5 minit', jam: '10:50 AM', warna: 'bg-gold', text: null, tplNama: '', skip: '' },
+    { no: 3, tajuk: 'Diet & Nutrisi', masa: '+10 minit', jam: '10:55 AM', warna: 'bg-green', text: null, tplNama: '', skip: '' },
+  ];
+  if (!selSyms.length) {
+    slots.forEach(s => s.skip = 'Belum ada simptom dipilih.');
+  } else if (isEmergency) {
+    const t = tplByKey('reaksi_kritikal') || tplByKey('reaksi_harian');
+    const actionList = acts.map(a => `${a.is_emergency ? 'Kecemasan: ' : ''}${a.title}`).join('\n') || '(tiada cadangan)';
+    slots[0].text = t
+      ? fill(t.kandungan, { ...vars, action_list: actionList })
+      : `Assalamualaikum ${firstName},\n\nPENTING: Berdasarkan Poll Harian anda, terdapat simptom yang memerlukan perhatian segera.\n\nReaksi:\n${symptomList}\n\nTindakan disyorkan:\n${actionList}\n\nSila hubungi coach anda DENGAN SEGERA atau dapatkan rawatan di hospital berdekatan jika keadaan serius.`;
+    slots[0].tplNama = t ? t.nama : 'Format lalai';
+    slots[1].skip = slots[2].skip = 'Kecemasan — hanya 1 mesej kritikal dihantar segera.';
+  } else {
+    if (tindakanActs.length) {
+      const t = tplByKey('reaksi_harian');
+      const actionList = tindakanActs.map(a => [a.title, ...panduanLines(a)].join('\n')).join('\n');
+      slots[0].text = t
+        ? fill(t.kandungan, { ...vars, action_list: actionList })
+        : `Assalamualaikum ${firstName},\n\nTerima kasih kerana melengkapkan Poll Harian hari ini.\n\nReaksi:\n${symptomList}\n\nCadangan Hari Ini\n\n${actionList}\n\nJika simptom menjadi semakin teruk atau berpanjangan, sila hubungi coach anda.`;
+      slots[0].tplNama = t ? t.nama : 'Format lalai';
+    } else slots[0].skip = 'Tiada tindakan jenis ini dipetakan — mesej tidak dihantar.';
+    if (lifeActs.length) {
+      const t = tplByKey('reaksi_gaya_hidup');
+      slots[1].text = t
+        ? fill(t.kandungan, { ...vars, action_list: '' })
+        : `Assalamualaikum ${firstName},\n\n🌿 Saranan Gaya Hidup Fitrah untuk hari ini:\n\n${lifestyleList}\n\nSedikit demi sedikit, secara istiqamah — insyaAllah membantu pemulihan anda.`;
+      slots[1].tplNama = t ? t.nama : 'Format lalai';
+    } else slots[1].skip = 'Tiada saranan gaya hidup dipetakan — mesej tidak dihantar.';
+    if (dietActs.length) {
+      const t = tplByKey('reaksi_diet');
+      slots[2].text = t
+        ? fill(t.kandungan, { ...vars, action_list: '' })
+        : `Assalamualaikum ${firstName},\n\n🍽️ Saranan Diet & Nutrisi untuk membantu pemulihan anda hari ini:\n\n${dietList}\n\nAmalkan mengikut kemampuan dan secara konsisten, insyaAllah.`;
+      slots[2].tplNama = t ? t.nama : 'Format lalai';
+    } else slots[2].skip = 'Tiada saranan pemakanan dipetakan — mesej tidak dihantar.';
+  }
+
+  pvMsgTexts = slots.map(s => s.text || '');
+  document.getElementById('pv-msgs').innerHTML = slots.map((s, i) => `
+    <div class="border border-ink/10 rounded-xl overflow-hidden flex flex-col">
+      <div class="px-3 py-2 flex items-center gap-2 bg-cream/60 border-b border-ink/8">
+        <span class="w-5 h-5 rounded-full ${s.warna} text-white text-[10.5px] font-bold flex items-center justify-center shrink-0">${s.no}</span>
+        <div class="min-w-0 flex-1">
+          <div class="text-[12px] font-bold text-ink truncate">${s.tajuk}</div>
+          <div class="text-[10.5px] text-ink/40">${s.masa}</div>
+        </div>
+        ${s.text ? `<button onclick="pvCopy(${i})" class="text-[11px] font-bold text-navy border border-navy/25 rounded-lg px-2 py-1 hover:bg-navy/5 shrink-0">Salin</button>` : ''}
+      </div>
+      <div class="bg-[#e5ddd5] p-2.5 flex-1 h-[340px] overflow-y-auto">
+        ${s.text ? `
+        <div class="bg-[#dcf8c6] rounded-xl rounded-tl-sm px-3 py-2.5 shadow-sm">
+          <p class="text-[12px] text-[#111b21] leading-relaxed whitespace-pre-wrap break-words">${pvEsc(s.text)}</p>
+          <div class="text-right text-[10px] text-[#667781] mt-1">${s.jam}</div>
+        </div>` : `
+        <div class="h-full flex items-center justify-center">
+          <p class="text-[11.5px] text-ink/45 italic text-center px-4">${s.skip}</p>
+        </div>`}
+      </div>
+      <div class="px-3 py-1.5 text-[10.5px] text-ink/45 bg-white border-t border-ink/8 flex items-center justify-between gap-2">
+        <span class="truncate">${s.text ? 'Template: ' + pvEsc(s.tplNama) : '—'}</span>
+        <span class="shrink-0">${s.text ? s.text.length + ' aksara' : ''}</span>
+      </div>
+    </div>`).join('');
+
+  const nMsg = slots.filter(s => s.text).length;
+  const modeEl = document.getElementById('pv-info-mode');
+  modeEl.textContent = !selSyms.length ? '' :
+    isEmergency ? 'Auto-hantar segera — 1 mesej kritikal + notifikasi coach 🚨'
+      : `Auto-hantar — ${nMsg} mesej berjarak ~5 minit`;
+  modeEl.className = 'text-[12px] font-semibold ' + (isEmergency ? 'text-terracotta' : 'text-green-dark');
+}
+
+function pvCopy(i) {
+  navigator.clipboard.writeText(pvMsgTexts[i] || '')
+    .then(() => alert('Mesej disalin'))
+    .catch(() => alert('Gagal salin — sila salin manual.'));
+}
+
+(async () => {
+  const user = await initStaff('reaksi_preview', 'Preview Auto Cadangan', 'reaksi_advice');
+  if (!user) return;
+  await pvLoad();
+})();
+</script>
+</body>
+</html>
