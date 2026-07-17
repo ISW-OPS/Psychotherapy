@@ -143,8 +143,13 @@ function pvGenerate() {
   const isEmergency = acts.some(a => a.is_emergency) || selSyms.some(s => s.is_emergency);
   const tahapMax = selSyms.some(s => s.tahap_risiko === 'tinggi') ? 'tinggi' : selSyms.some(s => s.tahap_risiko === 'sederhana') ? 'sederhana' : selSyms.length ? 'rendah' : null;
 
-  // Stat cards
-  const tMeta = tahapMax ? PV_TAHAP[tahapMax] : ['—', 'bg-ink/8 text-ink/50'];
+  // Stat cards — Zon Protokol: merah (tinggi/kecemasan) / kuning (sederhana) / hijau
+  const zon = (isEmergency || tahapMax === 'tinggi') ? 'merah' : tahapMax === 'sederhana' ? 'kuning' : selSyms.length ? 'hijau' : null;
+  const zMeta = {
+    merah: ['🔴 MERAH', 'bg-terracotta-light text-terracotta', 'Pergi hospital SEGERA + coach dimaklumkan 🚨'],
+    kuning: ['🟡 KUNING', 'bg-gold-light text-[#8a6d1a]', 'Perlu perhatian coach — notifikasi dihantar'],
+    hijau: ['🟢 HIJAU', 'bg-green-light text-green-dark', 'Pesakit ikut saranan sahaja'],
+  }[zon] || ['—', 'bg-ink/8 text-ink/50', 'Pilih simptom untuk lihat zon'];
   document.getElementById('pv-stats').innerHTML = `
     <div class="bg-cream/50 border border-ink/8 rounded-xl p-3.5">
       <div class="text-[11px] text-ink/45 font-semibold">Jumlah Tindakan Dicadangkan</div>
@@ -152,9 +157,9 @@ function pvGenerate() {
       <div class="text-[11px] text-ink/40">Berdasarkan ${selSyms.length} simptom dipilih</div>
     </div>
     <div class="bg-cream/50 border border-ink/8 rounded-xl p-3.5">
-      <div class="text-[11px] text-ink/45 font-semibold">Tahap Risiko Tertinggi</div>
-      <div class="mt-1"><span class="text-[13px] font-extrabold px-2.5 py-1 rounded-lg ${tMeta[1]}">${tMeta[0]}</span></div>
-      <div class="text-[11px] text-ink/40 mt-1">${isEmergency ? 'Ada simptom/tindakan kecemasan' : 'Tiada risiko kecemasan dikesan'}</div>
+      <div class="text-[11px] text-ink/45 font-semibold">Zon Pesakit</div>
+      <div class="mt-1"><span class="text-[13px] font-extrabold px-2.5 py-1 rounded-lg ${zMeta[1]}">${zMeta[0]}</span></div>
+      <div class="text-[11px] text-ink/40 mt-1">${zMeta[2]}</div>
     </div>
     <div class="bg-cream/50 border border-ink/8 rounded-xl p-3.5">
       <div class="text-[11px] text-ink/45 font-semibold">Saluran Cadangan</div>
@@ -182,7 +187,7 @@ function pvGenerate() {
     </div>`;
 
   // Mesej — pecah tindakan ikut jenis (sama logik dgn generateReaksiAdvice pesakit):
-  //   pemakanan → mesej 2 {{diet_list}}, gaya_hidup → mesej 3 {{lifestyle_list}},
+  //   gaya_hidup → mesej 2 {{lifestyle_list}}, pemakanan → mesej 3 {{diet_list}},
   //   lain → mesej 1 {{action_list}}; kecemasan = SATU mesej kritikal sahaja.
   const firstName = 'Ahmad';
   const jenisOf = a => a.jenis || 'am';
@@ -197,7 +202,35 @@ function pvGenerate() {
   const emergencyMsg = isEmergency ? 'PENTING: Terdapat simptom yang memerlukan perhatian segera. Sila hubungi coach anda.\n\n' : '';
   const tplByKey = k => pvTemplates.find(t => t.key === k);
   const fill = (t, vars) => Object.entries(vars).reduce((acc, [k, v]) => acc.split('{{' + k + '}}').join(v), t);
-  const vars = { patient_name: firstName, symptom_list: symptomList, diet_list: dietList, lifestyle_list: lifestyleList, emergency_message: emergencyMsg };
+
+  // {{sections}} — mesej 1 berkumpulan ikut kategori, dedup GLOBAL (sama logik
+  // dgn generateReaksiAdvice pesakit): tindakan sama disebut sekali sahaja.
+  const katOrder = [], katData = {};
+  selSyms.forEach(s => {
+    const kat = s.kumpulan || 'Lain-lain';
+    if (!katData[kat]) { katData[kat] = { syms: [], acts: [] }; katOrder.push(kat); }
+    katData[kat].syms.push(s.label);
+    [...(pvMap[s.id] || [])].forEach(aid => {
+      const a = pvActions.find(x => x.id === aid);
+      if (a && a.aktif !== false) katData[kat].acts.push(a);
+    });
+  });
+  const sectSeen = new Set();
+  const sectionsText = katOrder.map(kat => {
+    const d = katData[kat];
+    const acts2 = d.acts
+      .filter(a => jenisOf(a) !== 'pemakanan' && jenisOf(a) !== 'gaya_hidup')
+      .filter(a => !sectSeen.has(a.id) && sectSeen.add(a.id))
+      .sort((x, y) => (x.priority || 0) - (y.priority || 0));
+    const lines = ['Reaksi yang dikesan:', `*${kat}*`, ...d.syms.map(s => `• ${s}`)];
+    if (acts2.length) {
+      lines.push('', 'Cadangan Pemulihan:');
+      acts2.forEach((a, i) => { lines.push(`${i + 1}. ${a.title}`); panduanLines(a).forEach(p => lines.push(p)); });
+    }
+    return lines.join('\n');
+  }).join('\n\n');
+
+  const vars = { patient_name: firstName, sections: sectionsText, symptom_list: symptomList, diet_list: dietList, lifestyle_list: lifestyleList, emergency_message: emergencyMsg };
 
   // 3 slot mesej — text=null bermaksud slot itu TIDAK dihantar (sebab dalam `skip`)
   // Susunan: mesej 2 = Gaya Hidup Fitrah (+5 min), mesej 3 = Diet & Nutrisi (+10 min)
@@ -222,7 +255,7 @@ function pvGenerate() {
       const actionList = tindakanActs.map(a => [a.title, ...panduanLines(a)].join('\n')).join('\n');
       slots[0].text = t
         ? fill(t.kandungan, { ...vars, action_list: actionList })
-        : `Assalamualaikum ${firstName},\n\nTerima kasih kerana melengkapkan Poll Harian hari ini.\n\nReaksi:\n${symptomList}\n\nCadangan Hari Ini\n\n${actionList}\n\nJika simptom menjadi semakin teruk atau berpanjangan, sila hubungi coach anda.`;
+        : `Assalamualaikum ${firstName},\n\nTerima kasih kerana melengkapkan Poll Harian hari ini.\n\nBerdasarkan jawapan anda, kami mengesan beberapa reaksi pemulihan.\n\n${sectionsText}\n\nJika simptom menjadi semakin teruk atau berpanjangan, sila hubungi coach anda.`;
       slots[0].tplNama = t ? t.nama : 'Format lalai';
     } else slots[0].skip = 'Tiada tindakan jenis ini dipetakan — mesej tidak dihantar.';
     if (lifeActs.length) {

@@ -1433,39 +1433,54 @@
         let maps = null;
         {
           const res = await window.db.from('psy_reaksi_action_map')
-            .select('action_id, psy_reaksi_actions(id,title,priority,is_emergency,aktif,jenis,panduan)')
+            .select('symptom_id, action_id, psy_reaksi_actions(id,title,priority,is_emergency,aktif,jenis,panduan)')
             .in('symptom_id', symptomIds);
           if (res.error) {
             const res2 = await window.db.from('psy_reaksi_action_map')
-              .select('action_id, psy_reaksi_actions(id,title,priority,is_emergency,aktif)')
+              .select('symptom_id, action_id, psy_reaksi_actions(id,title,priority,is_emergency,aktif)')
               .in('symptom_id', symptomIds);
             maps = res2.data;
           } else maps = res.data;
         }
         if (!maps || !maps.length) return;
 
-        const seen = new Set(), actions = [];
+        // Dedup GLOBAL ikut id — tindakan sama (cth dipetakan ke banyak simptom)
+        // hanya diambil SEKALI. actsBySym pula utk kumpulan per kategori (mesej 1).
+        const seen = new Set(), actions = [], actsBySym = {};
         maps.forEach(m => {
           const a = m.psy_reaksi_actions;
-          if (a && a.aktif !== false && !seen.has(a.id)) { seen.add(a.id); actions.push(a); }
+          if (!a || a.aktif === false) return;
+          (actsBySym[m.symptom_id] ||= []).push(a);
+          if (!seen.has(a.id)) { seen.add(a.id); actions.push(a); }
         });
         if (!actions.length) return;
         actions.sort((x, y) => (Number(y.is_emergency) - Number(x.is_emergency)) || (x.priority - y.priority));
 
-        // Kecemasan: tindakan ATAU simptom bertanda kecemasan (kolum v2; null jika migration belum run)
-        let symEmergency = false;
+        // ── ZON PROTOKOL (Red Emergency): ikut tahap risiko TERTINGGI simptom ──
+        //   hijau  = ikut saranan sahaja
+        //   kuning = + notifikasi coach (perlu perhatian) — via trigger DB
+        //   merah  = tahap tinggi / kecemasan → SATU mesej kritikal (hospital) + 🚨 coach
+        let zon = 'hijau';
         try {
-          const { data: symRows } = await window.db.from('psy_reaksi_item').select('id,is_emergency').in('id', symptomIds);
-          symEmergency = (symRows || []).some(s => s.is_emergency === true);
+          let symRows = null;
+          const r1 = await window.db.from('psy_reaksi_item').select('id,is_emergency,tahap_risiko').in('id', symptomIds);
+          if (r1.error) { // kolum v2 belum ada — fallback is_emergency sahaja
+            const r2 = await window.db.from('psy_reaksi_item').select('id,is_emergency').in('id', symptomIds);
+            symRows = r2.data;
+          } else symRows = r1.data;
+          const tahaps = (symRows || []).map(s => s.tahap_risiko || 'rendah');
+          if ((symRows || []).some(s => s.is_emergency === true) || tahaps.includes('tinggi')) zon = 'merah';
+          else if (tahaps.includes('sederhana')) zon = 'kuning';
         } catch (_) { }
-        const isEmergency = actions.some(a => a.is_emergency) || symEmergency;
+        if (actions.some(a => a.is_emergency)) zon = 'merah';
+        const isEmergency = zon === 'merah';
         const firstName = window.__firstName || (patientRecord.full_name || '').split(' ')[0] || 'Pesakit';
         const symptomLabels = [...new Set(labels.map(l => l.split('::').pop()))];
 
         // Template mesej dari psy_auto_messages (urus di Staff Portal > Mesej Automatik):
         //   reaksi_harian   — Mesej 1: tindakan/cadangan pemulihan (terus)
-        //   reaksi_diet     — Mesej 2: Saranan Diet & Nutrisi (+5 min, jenis 'pemakanan')
-        //   reaksi_gaya_hidup — Mesej 3: Saranan Gaya Hidup Fitrah (+10 min, jenis 'gaya_hidup')
+        //   reaksi_gaya_hidup — Mesej 2: Saranan Gaya Hidup Fitrah (+5 min, jenis 'gaya_hidup')
+        //   reaksi_diet     — Mesej 3: Saranan Diet & Nutrisi (+10 min, jenis 'pemakanan')
         //   reaksi_kritikal — kecemasan: SATU mesej segera (tidak dipecah)
         const tpl = {};
         try {
@@ -1494,6 +1509,35 @@
         // Cara penyediaan (panduan) disertakan sebagai bullet beranak bawah tindakan
         const tindakanList = tindakanActions.map(a => [`${a.is_emergency ? '🚨' : '✅'} ${a.title}`, ...panduanLines(a)].join('\n')).join('\n');
 
+        // ── {{sections}} — mesej 1 dikumpulkan IKUT KATEGORI ───────────────
+        // Setiap kategori: senarai reaksi + Cadangan Pemulihan bernombor.
+        // Tindakan sama disebut SEKALI SAHAJA utk seluruh mesej (dedup global) —
+        // kategori pertama yang menyebutnya "menang", kategori berikut tak ulang.
+        const katOrder = [], katData = {};
+        labels.forEach(l => {
+          const parts = String(l).split('::');
+          const lbl = parts.pop();
+          const kat = parts[0] || 'Lain-lain';
+          if (!katData[kat]) { katData[kat] = { syms: [], acts: [] }; katOrder.push(kat); }
+          katData[kat].syms.push(lbl);
+          const symId = REAKSI_ITEM_BY_KEY[l];
+          (actsBySym[symId] || []).forEach(a => katData[kat].acts.push(a));
+        });
+        const sectSeen = new Set();
+        const sectionsText = katOrder.map(kat => {
+          const d = katData[kat];
+          const acts2 = d.acts
+            .filter(a => jenisOf(a) !== 'pemakanan' && jenisOf(a) !== 'gaya_hidup')
+            .filter(a => !sectSeen.has(a.id) && sectSeen.add(a.id))
+            .sort((x, y) => (x.priority || 0) - (y.priority || 0));
+          const lines = ['Reaksi yang dikesan:', `*${kat}*`, ...d.syms.map(s => `• ${s}`)];
+          if (acts2.length) {
+            lines.push('', 'Cadangan Pemulihan:');
+            acts2.forEach((a, i) => { lines.push(`${i + 1}. ${a.title}`); panduanLines(a).forEach(p => lines.push(p)); });
+          }
+          return lines.join('\n');
+        }).join('\n\n');
+
         const actionsJson = arr => arr.map(a => ({ id: a.id, title: a.title, priority: a.priority, is_emergency: a.is_emergency, jenis: jenisOf(a) }));
         const msgs = []; // { msg_jenis, text, actions } — dihantar berjarak 5 minit ikut susunan
 
@@ -1512,14 +1556,15 @@
           msgs.push({ msg_jenis: 'tindakan', text, actions: actionsJson(actions) });
         } else {
           if (tindakanActions.length) {
+            // {{sections}} = format berkumpulan ikut kategori; {{symptom_list}}/
+            // {{action_list}} kekal diisi utk template lama yang belum dikemaskini.
             const text = tpl.reaksi_harian
-              ? fill(tpl.reaksi_harian, { patient_name: firstName, symptom_list: symptomList, action_list: tindakanList, emergency_message: '' })
+              ? fill(tpl.reaksi_harian, { patient_name: firstName, sections: sectionsText, symptom_list: symptomList, action_list: tindakanList, emergency_message: '' })
               : [
                   `Assalamualaikum ${firstName},`, '',
                   'Terima kasih kerana melengkapkan Poll Harian hari ini.', '',
-                  'Berdasarkan jawapan anda, sistem mengesan beberapa reaksi pemulihan.', '',
-                  'Reaksi:', symptomList, '',
-                  'Cadangan Hari Ini', '', tindakanList, '',
+                  'Berdasarkan jawapan anda, kami mengesan beberapa reaksi pemulihan.', '',
+                  sectionsText, '',
                   'Jika simptom menjadi semakin teruk atau berpanjangan, sila hubungi coach anda.', '',
                   'Semoga Allah mempermudahkan urusan pemulihan anda.',
                 ].join('\n');
@@ -1566,11 +1611,15 @@
           is_emergency: isEmergency,
           msg_jenis: m.msg_jenis,
           send_after: new Date(nowMs + i * 5 * 60 * 1000).toISOString(),
+          zon,
         }));
 
         let inserted = null;
         {
-          const res = await window.db.from('psy_reaksi_advice_log').insert(rows).select('id');
+          let res = await window.db.from('psy_reaksi_advice_log').insert(rows).select('id');
+          if (res.error) { // 20260717 (zon) belum run — cuba tanpa kolum zon
+            res = await window.db.from('psy_reaksi_advice_log').insert(rows.map(({ zon: _z, ...r }) => r)).select('id');
+          }
           if (res.error) {
             // Migration 20260716 belum run (tiada msg_jenis/send_after) —
             // fallback gaya lama: SATU mesej gabungan semua tindakan
@@ -1598,10 +1647,38 @@
           window.db.functions.invoke('reaksi-advice-send', { body: { advice_id: firstRow.id } })
             .catch(e => console.warn('Auto-hantar saranan gagal (kekal draf dalam psy_reaksi_advice_log):', e?.message || e));
         }
+
+        // Banner zon — pesakit terus tahu kedudukan & apa perlu dibuat
+        try { kfShowZonBanner(zon); } catch (_) { }
       } catch (e) {
         console.warn('generateReaksiAdvice gagal:', e.message);
       }
     }
+    // ── Banner ZON selepas Poll Harian (Red Emergency Protocol) ──
+    //   hijau  = ikut saranan sahaja
+    //   kuning = coach dimaklumkan & akan susul
+    //   merah  = pergi hospital SEGERA + hubungi coach (coach turut dimaklumkan)
+    function kfShowZonBanner(zon) {
+      const conf = {
+        hijau: { ikon: '🟢', tajuk: 'Zon Hijau', warna: '#3f7d4e', msg: 'Alhamdulillah, reaksi anda terkawal. Sila ikuti saranan yang dihantar ke WhatsApp anda.' },
+        kuning: { ikon: '🟡', tajuk: 'Zon Kuning', warna: '#8a6d1a', msg: 'Reaksi anda perlukan perhatian. Coach anda telah dimaklumkan dan akan menghubungi anda. Sila ikuti saranan yang dihantar ke WhatsApp anda.' },
+        merah: { ikon: '🔴', tajuk: 'Zon Merah', warna: '#b3402a', msg: 'Simptom anda memerlukan perhatian SEGERA. Sila dapatkan rawatan di hospital / klinik berdekatan dan hubungi coach anda. Coach anda telah dimaklumkan.' },
+      }[zon];
+      if (!conf) return;
+      const el = document.createElement('div');
+      el.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:16px';
+      el.innerHTML = `
+    <div style="background:#fff;border-radius:20px;max-width:420px;width:100%;padding:28px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+      <div style="font-size:44px;line-height:1">${conf.ikon}</div>
+      <div style="font-size:19px;font-weight:800;color:${conf.warna};margin-top:8px">${conf.tajuk}</div>
+      <p style="font-size:13.5px;color:#333;line-height:1.65;margin-top:10px">${conf.msg}</p>
+      <button style="margin-top:18px;background:${conf.warna};color:#fff;border:none;border-radius:12px;padding:11px 30px;font-weight:700;font-size:13.5px;cursor:pointer">Faham</button>
+    </div>`;
+      el.querySelector('button').onclick = () => el.remove();
+      if (zon !== 'merah') el.addEventListener('click', e => { if (e.target === el) el.remove(); });
+      document.body.appendChild(el);
+    }
+
     // Render satu skrin: semua kumpulan reaksi (checkbox per simptom + Lain-lain per kumpulan)
     function kfReaksiGroupedHtml(selArr) {
       if (!REAKSI_GROUPS.length) return '<p class="kf-hint">Tiada simptom reaksi dikonfigur.</p>';

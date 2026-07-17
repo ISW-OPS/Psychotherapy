@@ -2,8 +2,8 @@
 -- 20260716_reaksi_multi_msg.sql
 -- Reaksi Pemulihan — mesej berperingkat (jarak 5-10 minit):
 --   Mesej 1: Tindakan / Cadangan Pemulihan   (terus)
---   Mesej 2: Saranan Diet & Nutrisi          (+5 minit)
---   Mesej 3: Saranan Gaya Hidup Fitrah       (+10 minit)
+--   Mesej 2: Saranan Gaya Hidup Fitrah       (+5 minit)
+--   Mesej 3: Saranan Diet & Nutrisi          (+10 minit)
 --
 -- Sumber kandungan: psy_reaksi_actions.jenis
 --   'pemakanan'  -> mesej Diet & Nutrisi (title = tajuk, panduan = senarai makanan)
@@ -40,19 +40,31 @@ CREATE INDEX IF NOT EXISTS idx_reaksi_advice_log_queue ON psy_reaksi_advice_log(
 INSERT INTO psy_auto_messages (key, name, description, trigger_type, message_template, placeholders, is_active) VALUES
   ('reaksi_diet',
    'Saranan Diet & Nutrisi',
-   'Mesej ke-2 selepas Poll Harian (+5 minit) — saranan pemakanan berdasarkan reaksi dikesan (tindakan jenis "pemakanan").',
+   'Mesej ke-3 selepas Poll Harian (+10 minit) — saranan pemakanan berdasarkan reaksi dikesan (tindakan jenis "pemakanan").',
    'on_action',
    E'Assalamualaikum {{patient_name}},\n\n🍽️ *Saranan Diet & Nutrisi* untuk membantu pemulihan anda hari ini:\n\n{{diet_list}}\n\nAmalkan mengikut kemampuan dan secara konsisten, insyaAllah.\n\nSalam kasih,\nPasukan Ibnu Sina Wellness 💚',
    '["{{patient_name}}","{{diet_list}}"]'::jsonb,
    true),
   ('reaksi_gaya_hidup',
    'Saranan Gaya Hidup Fitrah',
-   'Mesej ke-3 selepas Poll Harian (+10 minit) — saranan gaya hidup fitrah berdasarkan reaksi dikesan (tindakan jenis "gaya_hidup").',
+   'Mesej ke-2 selepas Poll Harian (+5 minit) — saranan gaya hidup fitrah berdasarkan reaksi dikesan (tindakan jenis "gaya_hidup").',
    'on_action',
    E'Assalamualaikum {{patient_name}},\n\n🌿 *Saranan Gaya Hidup Fitrah* untuk hari ini:\n\n{{lifestyle_list}}\n\nSedikit demi sedikit, secara istiqamah — insyaAllah membantu pemulihan anda.\n\nSalam kasih,\nPasukan Ibnu Sina Wellness 💚',
    '["{{patient_name}}","{{lifestyle_list}}"]'::jsonb,
    true)
 ON CONFLICT (key) DO NOTHING;
+
+-- ── 2b. Template mesej 1 (reaksi_harian) — format BERKUMPULAN ikut kategori ──
+-- {{sections}} = blok per kategori: "Reaksi yang dikesan: <kategori> + senarai
+-- simptom" diikuti "Cadangan Pemulihan:" bernombor. Tindakan yang sama disebut
+-- SEKALI sahaja untuk seluruh mesej (dedup global oleh klien).
+-- UPDATE (bukan insert) supaya DB yang sudah seed versi lama turut dikemaskini.
+UPDATE psy_auto_messages SET
+  name = 'Cadangan Reaksi Harian',
+  description = 'Mesej 1 (terus) selepas Poll Harian — reaksi & Cadangan Pemulihan dikumpulkan ikut kategori; tindakan sama disebut sekali sahaja.',
+  message_template = E'Assalamualaikum {{patient_name}},\n\nTerima kasih kerana melengkapkan Poll Harian hari ini.\n\nBerdasarkan jawapan anda, kami mengesan beberapa reaksi pemulihan.\n\n{{sections}}\n\nJika simptom menjadi semakin teruk atau berpanjangan, sila hubungi coach anda.\n\nSemoga Allah mempermudahkan urusan pemulihan anda.\n\nSalam kasih,\nPasukan Ibnu Sina Wellness 💚',
+  placeholders = '["{{patient_name}}","{{sections}}"]'::jsonb
+WHERE key = 'reaksi_harian';
 
 -- ── 3. (WAJIB SEKALI) Jadualkan cron penghantar queue ─────────
 -- reaksi-advice-send perlu di-deploy dengan --no-verify-jwt
