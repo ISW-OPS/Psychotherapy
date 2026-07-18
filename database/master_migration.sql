@@ -1,893 +1,80 @@
 -- ISW System — master_migration.sql
-All schema DDL in correct dependency order.
-Safe to run on empty Supabase project.
--- Generated: 2026-06-12T04:04:17.826352Z
--- Total files: 125
--- Run this entire file in Supabase SQL Editor (new project).
+-- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
+-- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
+-- Generated: 2026-07-18T01:37:08.751145Z
+-- Jumlah fail: 23
+-- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
 
 -- ════════════════════════════════════════════════════════════════
--- step1_profiles.sql
+-- schema/02_profiles_staff.sql
 -- ════════════════════════════════════════════════════════════════
 
--- ============================================================
--- STEP 1 — PSY_PROFILES  (idempotent)
--- ============================================================
+-- ═══════════════════════════════════════════════════════════════════
+-- ISW System — Skema Domain: Profil Pengguna & Peranan Staf
+-- Jadual: psy_profiles
+-- Termasuk: trigger auth.users → handle_new_user, polisi storage staf
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ──── psy_profiles ────
+-- Profil semua pengguna (pesakit & staf). id = auth.users.id.
+-- staff_role bebas (tiada CHECK) supaya peranan custom boleh ditambah via UI.
 
 CREATE TABLE IF NOT EXISTS psy_profiles (
-  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  full_name TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('patient','staff')),
-  phone TEXT,
-  email TEXT,
-  avatar_url TEXT,
+  id              UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  full_name       TEXT NOT NULL,
+  role            TEXT NOT NULL CHECK (role IN ('patient','staff')),
+  staff_role      TEXT,
+  phone           TEXT,
+  email           TEXT,
+  avatar_url      TEXT,
   registration_no TEXT,
-  specialization TEXT,
-  is_active BOOLEAN DEFAULT true,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
+  specialization  TEXT,
+  is_active       BOOLEAN DEFAULT true,
+  birth_date      DATE,
+  gender          TEXT CHECK (gender IN ('lelaki','perempuan')),
+  language        TEXT,
+  marital_status  TEXT CHECK (marital_status IN ('bujang','berkahwin','bercerai','duda','janda')),
+  department      TEXT,
+  signature_url   TEXT,
+  created_at      TIMESTAMPTZ DEFAULT now(),
+  updated_at      TIMESTAMPTZ DEFAULT now()
 );
-
-ALTER TABLE psy_profiles ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN CREATE POLICY "Read all profiles authenticated" ON psy_profiles FOR SELECT USING (auth.role() = 'authenticated'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Update own profile" ON psy_profiles FOR UPDATE USING (auth.uid() = id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Insert own profile" ON psy_profiles FOR INSERT WITH CHECK (auth.uid() = id OR auth.role() = 'service_role'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE OR REPLACE FUNCTION handle_new_user()
-RETURNS TRIGGER AS $$
-BEGIN
-  INSERT INTO public.psy_profiles (id, full_name, role, email)
-  VALUES (
-    NEW.id,
-    COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
-    COALESCE(NEW.raw_user_meta_data->>'role', 'patient'),
-    NEW.email
-  );
-  RETURN NEW;
-EXCEPTION WHEN OTHERS THEN
-  RAISE LOG 'Error creating profile: %', SQLERRM;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
-
-DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
-CREATE TRIGGER on_auth_user_created
-  AFTER INSERT ON auth.users
-  FOR EACH ROW EXECUTE FUNCTION handle_new_user();
 
 CREATE INDEX IF NOT EXISTS idx_psy_profiles_role ON psy_profiles(role);
 
-SELECT 'Step 1 OK — psy_profiles ready' AS status;
+ALTER TABLE psy_profiles ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Read all profiles authenticated" ON psy_profiles;
+CREATE POLICY "Read all profiles authenticated" ON psy_profiles
+  FOR SELECT USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Update own profile" ON psy_profiles;
+CREATE POLICY "Update own profile" ON psy_profiles
+  FOR UPDATE USING (auth.uid() = id);
+
+DROP POLICY IF EXISTS "Insert own profile" ON psy_profiles;
+CREATE POLICY "Insert own profile" ON psy_profiles
+  FOR INSERT WITH CHECK (auth.uid() = id OR auth.role() = 'service_role');
+
+-- Staf boleh kemas kini profil pesakit (guna helper public.isw_is_staff())
+DROP POLICY IF EXISTS "Staff update patient profiles" ON psy_profiles;
+CREATE POLICY "Staff update patient profiles" ON psy_profiles
+  FOR UPDATE
+  USING (role = 'patient' AND public.isw_is_staff())
+  WITH CHECK (role = 'patient');
+
+COMMENT ON COLUMN psy_profiles.birth_date     IS 'Tarikh lahir staff (untuk paparan profil)';
+COMMENT ON COLUMN psy_profiles.gender         IS 'Jantina: lelaki / perempuan';
+COMMENT ON COLUMN psy_profiles.language       IS 'Bahasa utama yang digunakan';
+COMMENT ON COLUMN psy_profiles.marital_status IS 'Status perkahwinan staff';
+COMMENT ON COLUMN psy_profiles.department     IS 'Jabatan / Unit kerja';
+COMMENT ON COLUMN psy_profiles.signature_url  IS
+  'URL signature image staff. Embed dalam surat rasmi yang di-sign.';
+
+-- ──── auto-cipta profil bila auth user baru didaftar ────
+-- Staf baru dapat staff_role dari metadata (default 'coach').
 
-
--- ════════════════════════════════════════════════════════════════
--- step2_patients.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP 2 — PSY_PATIENTS + PSY_KYC_SUBMISSIONS  (idempotent)
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS psy_patients (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES psy_profiles(id),
-  mrn TEXT UNIQUE NOT NULL,
-  ic_number TEXT,
-  date_of_birth DATE,
-  gender TEXT CHECK (gender IN ('M','F')),
-  address TEXT,
-  emergency_contact_name TEXT,
-  emergency_contact_phone TEXT,
-  insurance_provider TEXT,
-  insurance_policy TEXT,
-  referral_source TEXT,
-  medical_condition TEXT,
-  condition_duration TEXT,
-  medical_notes TEXT,
-  active_package_id TEXT,
-  active_package_name TEXT,
-  package_purchased_at TIMESTAMPTZ,
-  package_expires_at TIMESTAMPTZ,
-  status TEXT DEFAULT 'active' CHECK (status IN ('pending_kyc','active','inactive','rejected')),
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE psy_patients ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN CREATE POLICY "Staff manage patients" ON psy_patients FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Patients read own record" ON psy_patients FOR SELECT USING (user_id = auth.uid()); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Patients update own record" ON psy_patients FOR UPDATE USING (user_id = auth.uid()); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Patients insert own record" ON psy_patients FOR INSERT WITH CHECK (user_id = auth.uid()); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE TABLE IF NOT EXISTS psy_kyc_submissions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES psy_profiles(id),
-  patient_name TEXT NOT NULL,
-  ic_number TEXT,
-  date_of_birth DATE,
-  gender TEXT,
-  phone TEXT,
-  email TEXT,
-  address TEXT,
-  emergency_contact TEXT,
-  emergency_contact_name TEXT,
-  emergency_contact_phone TEXT,
-  medical_condition TEXT,
-  condition_duration TEXT,
-  medical_notes TEXT,
-  insurance_info JSONB,
-  documents JSONB DEFAULT '{}',
-  consent_data_processing BOOLEAN DEFAULT false,
-  consent_health_records BOOLEAN DEFAULT false,
-  consent_research BOOLEAN DEFAULT false,
-  consent_marketing BOOLEAN DEFAULT false,
-  referral_source TEXT,
-  status TEXT DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','needs_docs')),
-  reviewed_by UUID REFERENCES psy_profiles(id),
-  review_notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE psy_kyc_submissions ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN CREATE POLICY "Staff manage KYC" ON psy_kyc_submissions FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Patients read own KYC" ON psy_kyc_submissions FOR SELECT USING (user_id = auth.uid()); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Patients insert own KYC" ON psy_kyc_submissions FOR INSERT WITH CHECK (user_id = auth.uid()); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Patients update own KYC" ON psy_kyc_submissions FOR UPDATE USING (user_id = auth.uid()); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE INDEX IF NOT EXISTS idx_psy_patients_user ON psy_patients(user_id);
-CREATE INDEX IF NOT EXISTS idx_psy_patients_mrn ON psy_patients(mrn);
-
-SELECT 'Step 2 OK — psy_patients + psy_kyc_submissions ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step3_audit.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP 3 — PSY_AUDIT_LOG  (idempotent)
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS psy_audit_log (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  actor_id UUID,
-  actor_name TEXT,
-  actor_role TEXT,
-  action TEXT NOT NULL,
-  target TEXT,
-  meta JSONB DEFAULT '{}',
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE psy_audit_log ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN CREATE POLICY "Staff read audit" ON psy_audit_log FOR SELECT USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "All authenticated insert audit" ON psy_audit_log FOR INSERT WITH CHECK (auth.uid() IS NOT NULL); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE INDEX IF NOT EXISTS idx_psy_audit_created ON psy_audit_log(created_at);
-
-SELECT 'Step 3 OK — psy_audit_log ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step4_plans.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP 4 — TREATMENT PLANS + APPOINTMENTS + NOTIFICATIONS
--- Run selepas step3_audit.sql
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS psy_appointments (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id UUID REFERENCES psy_patients(id),
-  staff_id UUID REFERENCES psy_profiles(id),
-  patient_name TEXT,
-  staff_name TEXT,
-  service TEXT NOT NULL,
-  appointment_time TIMESTAMPTZ NOT NULL,
-  duration_min INT DEFAULT 30,
-  status TEXT DEFAULT 'scheduled' CHECK (status IN ('scheduled','checked_in','in_progress','completed','no_show','cancelled')),
-  room TEXT,
-  notes TEXT,
-  ghl_booking_id TEXT,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE psy_appointments ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "Staff manage appointments" ON psy_appointments FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Patients read own appointments" ON psy_appointments FOR SELECT USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Patients insert own appointments" ON psy_appointments FOR INSERT WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Patients update own appointments" ON psy_appointments FOR UPDATE USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE TABLE IF NOT EXISTS psy_treatment_plans (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id UUID REFERENCES psy_patients(id) NOT NULL,
-  doctor_id UUID REFERENCES psy_profiles(id),
-  name TEXT NOT NULL,
-  template TEXT,
-  duration_unit TEXT DEFAULT 'week',
-  duration_weeks INT DEFAULT 13,
-  current_week INT DEFAULT 1,
-  coaching_schedule JSONB DEFAULT '[]',
-  status TEXT DEFAULT 'active' CHECK (status IN ('draft','active','completed','paused')),
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE psy_treatment_plans ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "Staff manage plans" ON psy_treatment_plans FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Patients read own plans" ON psy_treatment_plans FOR SELECT USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Patients insert own plans" ON psy_treatment_plans FOR INSERT WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE TABLE IF NOT EXISTS psy_plan_weekly_progress (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  plan_id UUID REFERENCES psy_treatment_plans(id) ON DELETE CASCADE NOT NULL,
-  patient_id UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
-  week_number INT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('booked','hadir','reschedule','cancel','pending')),
-  score INT CHECK (score BETWEEN 0 AND 10),
-  notes TEXT,
-  coaching_checks JSONB DEFAULT '{}',
-  reaksi_pemulihan JSONB DEFAULT '{}',   -- checklist Reaksi Pemulihan diisi coach masa sesi (tracking sahaja)
-  appointment_id UUID REFERENCES psy_appointments(id) ON DELETE SET NULL,
-  updated_by UUID REFERENCES psy_profiles(id),
-  updated_by_name TEXT,
-  session_date TIMESTAMPTZ,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now(),
-  UNIQUE (plan_id, week_number)
-);
-
-ALTER TABLE psy_plan_weekly_progress ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "Staff manage weekly progress" ON psy_plan_weekly_progress FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Patients read own progress" ON psy_plan_weekly_progress FOR SELECT USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Patients insert own progress" ON psy_plan_weekly_progress FOR INSERT WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Patients update own progress" ON psy_plan_weekly_progress FOR UPDATE USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- Senarai induk Reaksi Pemulihan (boleh diurus/CRUD dari UI staff kepatuhan.html).
--- Coach tanda item ini masa sesi (plan-week.html). Lihat migration 20260627_reaksi_item_table.sql.
-CREATE TABLE IF NOT EXISTS psy_reaksi_item (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  kumpulan    TEXT NOT NULL,
-  ikon        TEXT,
-  label       TEXT NOT NULL,
-  urutan      INT  NOT NULL DEFAULT 0,
-  aktif       BOOLEAN NOT NULL DEFAULT true,
-  created_at  TIMESTAMPTZ DEFAULT now(),
-  updated_at  TIMESTAMPTZ DEFAULT now()
-);
-ALTER TABLE psy_reaksi_item ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "Staff manage reaksi item" ON psy_reaksi_item FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
--- Pesakit perlu BACA katalog reaksi utk wizard Catatan Harian (data rujukan sahaja)
-DO $$ BEGIN
-  CREATE POLICY "Authenticated boleh baca reaksi item" ON psy_reaksi_item FOR SELECT
-    TO authenticated USING (true);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- Seed reaksi pemulihan (7 kumpulan / 48 simptom + "Tiada simptom" tiap kumpulan).
--- Hanya seed bila jadual kosong supaya tak timpa tambahan staff (CRUD).
-INSERT INTO psy_reaksi_item (kumpulan, ikon, label, urutan)
-SELECT v.kumpulan, v.ikon, v.label, v.urutan
-FROM (VALUES
-  ('Pencernaan','🍽️','Kembung perut',10),
-  ('Pencernaan','🍽️','Banyak angin',20),
-  ('Pencernaan','🍽️','Banyak sendawa',30),
-  ('Pencernaan','🍽️','Sakit perut',40),
-  ('Pencernaan','🍽️','Loya',50),
-  ('Pencernaan','🍽️','Muntah',60),
-  ('Pencernaan','🍽️','Hilang selera makan',70),
-  ('Pencernaan','🍽️','Banyak membuang air besar',80),
-  ('Pencernaan','🍽️','Cirit-birit',90),
-  ('Pencernaan','🍽️','Sembelit',100),
-  ('Pencernaan','🍽️','Najis hitam',110),
-  ('Pencernaan','🍽️','Tiada simptom',120),
-  ('Peredaran Darah','🩸','Tekanan darah tinggi',130),
-  ('Peredaran Darah','🩸','Tekanan darah rendah',140),
-  ('Peredaran Darah','🩸','Berdebar-debar',150),
-  ('Peredaran Darah','🩸','Tiada simptom',160),
-  ('Otot & Saraf','💪','Sakit badan',170),
-  ('Otot & Saraf','💪','Sakit sendi',180),
-  ('Otot & Saraf','💪','Sakit otot',190),
-  ('Otot & Saraf','💪','Sakit pinggang',200),
-  ('Otot & Saraf','💪','Sakit tengkuk',210),
-  ('Otot & Saraf','💪','Sakit belikat',220),
-  ('Otot & Saraf','💪','Kejang',230),
-  ('Otot & Saraf','💪','Kebas',240),
-  ('Otot & Saraf','💪','Tiada simptom',250),
-  ('Detoksifikasi','🧴','Mukus keluar',260),
-  ('Detoksifikasi','🧴','Jerawat keluar',270),
-  ('Detoksifikasi','🧴','Gatal-gatal',280),
-  ('Detoksifikasi','🧴','Ruam',290),
-  ('Detoksifikasi','🧴','Kulit mengelupas',300),
-  ('Detoksifikasi','🧴','Kulit menjadi lebih sensitif',310),
-  ('Detoksifikasi','🧴','Badan panas',320),
-  ('Detoksifikasi','🧴','Badan sejuk',330),
-  ('Detoksifikasi','🧴','Tiada simptom',340),
-  ('Emosi & Tenaga','⚡','Susah nak tidur (insomnia)',350),
-  ('Emosi & Tenaga','⚡','Mengantuk luar biasa',360),
-  ('Emosi & Tenaga','⚡','Kurang tenaga',370),
-  ('Emosi & Tenaga','⚡','Cepat letih',380),
-  ('Emosi & Tenaga','⚡','Lemah badan',390),
-  ('Emosi & Tenaga','⚡','Mudah sebak',400),
-  ('Emosi & Tenaga','⚡','Gelisah',410),
-  ('Emosi & Tenaga','⚡','Badan terasa berat',420),
-  ('Emosi & Tenaga','⚡','Tiada simptom',430),
-  ('Pernafasan','🫁','Sesak nafas',440),
-  ('Pernafasan','🫁','Batuk',450),
-  ('Pernafasan','🫁','Kahak',460),
-  ('Pernafasan','🫁','Mukus',470),
-  ('Pernafasan','🫁','Hidung berair',480),
-  ('Pernafasan','🫁','Bersin',490),
-  ('Pernafasan','🫁','Tiada simptom',500),
-  ('Bengkak & Cecair','💧','Bengkak kaki',510),
-  ('Bengkak & Cecair','💧','Bengkak tangan',520),
-  ('Bengkak & Cecair','💧','Bengkak muka',530),
-  ('Bengkak & Cecair','💧','Edema',540),
-  ('Bengkak & Cecair','💧','Tiada simptom',550)
-) AS v(kumpulan, ikon, label, urutan)
-WHERE NOT EXISTS (SELECT 1 FROM psy_reaksi_item);
-
--- ============================================================
--- Auto Recovery Advice + WhatsApp draft engine (20260714).
--- Recovery Action (perpustakaan tindakan) + Recovery Mapping (simptom<->
--- tindakan, many-to-many) disimpan dalam DB supaya doktor/admin boleh
--- kemaskini saranan tanpa ubah kod. Advice log = draf mesej WA yang
--- dijana auto lepas pesakit submit, staff semak/edit sebelum hantar.
--- ============================================================
-CREATE TABLE IF NOT EXISTS psy_reaksi_actions (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  title        TEXT NOT NULL,
-  description  TEXT,
-  priority     INT NOT NULL DEFAULT 100,
-  is_emergency BOOLEAN NOT NULL DEFAULT false,
-  aktif        BOOLEAN NOT NULL DEFAULT true,
-  created_at   TIMESTAMPTZ DEFAULT now(),
-  updated_at   TIMESTAMPTZ DEFAULT now()
-);
-ALTER TABLE psy_reaksi_actions ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "Staff manage reaksi actions" ON psy_reaksi_actions FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Authenticated read reaksi actions" ON psy_reaksi_actions FOR SELECT
-    USING (auth.uid() IS NOT NULL);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE TABLE IF NOT EXISTS psy_reaksi_action_map (
-  symptom_id  UUID NOT NULL REFERENCES psy_reaksi_item(id)    ON DELETE CASCADE,
-  action_id   UUID NOT NULL REFERENCES psy_reaksi_actions(id) ON DELETE CASCADE,
-  created_at  TIMESTAMPTZ DEFAULT now(),
-  PRIMARY KEY (symptom_id, action_id)
-);
-ALTER TABLE psy_reaksi_action_map ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "Staff manage reaksi mapping" ON psy_reaksi_action_map FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Authenticated read reaksi mapping" ON psy_reaksi_action_map FOR SELECT
-    USING (auth.uid() IS NOT NULL);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE INDEX IF NOT EXISTS idx_reaksi_action_map_symptom ON psy_reaksi_action_map(symptom_id);
-CREATE INDEX IF NOT EXISTS idx_reaksi_action_map_action  ON psy_reaksi_action_map(action_id);
-
-CREATE TABLE IF NOT EXISTS psy_reaksi_advice_log (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id       UUID NOT NULL REFERENCES psy_patients(id)     ON DELETE CASCADE,
-  kepatuhan_log_id UUID REFERENCES psy_kepatuhan_log(id)         ON DELETE SET NULL,
-  log_date         DATE NOT NULL DEFAULT CURRENT_DATE,
-  symptoms         JSONB NOT NULL DEFAULT '[]',
-  actions          JSONB NOT NULL DEFAULT '[]',
-  message_text     TEXT NOT NULL,
-  is_emergency     BOOLEAN NOT NULL DEFAULT false,
-  status           TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','sent','skipped')),
-  reviewed_by      UUID REFERENCES psy_profiles(id),
-  reviewed_at      TIMESTAMPTZ,
-  sent_by          UUID REFERENCES psy_profiles(id),
-  sent_at          TIMESTAMPTZ,
-  created_at       TIMESTAMPTZ DEFAULT now(),
-  updated_at       TIMESTAMPTZ DEFAULT now()
-);
-ALTER TABLE psy_reaksi_advice_log ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "Staff manage advice log" ON psy_reaksi_advice_log FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Patient insert own advice log" ON psy_reaksi_advice_log FOR INSERT
-    WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE INDEX IF NOT EXISTS idx_reaksi_advice_log_status  ON psy_reaksi_advice_log(status, created_at);
-CREATE INDEX IF NOT EXISTS idx_reaksi_advice_log_patient ON psy_reaksi_advice_log(patient_id, log_date);
-
--- Seed contoh (Pencernaan + Peredaran Darah) supaya engine boleh diuji serta-merta.
--- Staff tambah/kemaskini selebihnya dari Staff Portal (bukan hardcode).
-DO $$
-DECLARE
-  a_air_suam UUID; a_air_halia UUID; a_kurang_sukar UUID;
-  a_elak_sejuk UUID; a_rehat UUID; a_elak_berminyak UUID; a_pernafasan UUID;
-  s_kembung UUID; s_angin UUID; s_loya UUID; s_berdebar UUID;
-BEGIN
-  IF EXISTS (SELECT 1 FROM psy_reaksi_actions) THEN RETURN; END IF;
-
-  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Minum air suam', 10) RETURNING id INTO a_air_suam;
-  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Minum air halia', 20) RETURNING id INTO a_air_halia;
-  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Kurangkan makanan sukar dihadam', 30) RETURNING id INTO a_kurang_sukar;
-  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Elakkan minuman sejuk', 40) RETURNING id INTO a_elak_sejuk;
-  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Rehat secukupnya', 50) RETURNING id INTO a_rehat;
-  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Elakkan makanan berminyak', 60) RETURNING id INTO a_elak_berminyak;
-  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Lakukan Pernafasan Fitrah', 70) RETURNING id INTO a_pernafasan;
-
-  SELECT id INTO s_kembung FROM psy_reaksi_item WHERE kumpulan='Pencernaan' AND label='Kembung perut' LIMIT 1;
-  SELECT id INTO s_angin   FROM psy_reaksi_item WHERE kumpulan='Pencernaan' AND label='Banyak angin' LIMIT 1;
-  SELECT id INTO s_loya    FROM psy_reaksi_item WHERE kumpulan='Pencernaan' AND label='Loya' LIMIT 1;
-  SELECT id INTO s_berdebar FROM psy_reaksi_item WHERE kumpulan='Peredaran Darah' AND label='Berdebar-debar' LIMIT 1;
-
-  IF s_kembung IS NOT NULL THEN
-    INSERT INTO psy_reaksi_action_map (symptom_id, action_id) VALUES
-      (s_kembung, a_air_suam), (s_kembung, a_air_halia), (s_kembung, a_kurang_sukar);
-  END IF;
-  IF s_angin IS NOT NULL THEN
-    INSERT INTO psy_reaksi_action_map (symptom_id, action_id) VALUES
-      (s_angin, a_air_halia), (s_angin, a_elak_sejuk);
-  END IF;
-  IF s_loya IS NOT NULL THEN
-    INSERT INTO psy_reaksi_action_map (symptom_id, action_id) VALUES
-      (s_loya, a_air_halia), (s_loya, a_rehat), (s_loya, a_elak_berminyak);
-  END IF;
-  IF s_berdebar IS NOT NULL THEN
-    INSERT INTO psy_reaksi_action_map (symptom_id, action_id) VALUES
-      (s_berdebar, a_pernafasan);
-  END IF;
-END $$;
-
--- Trigger: alert coach serta-merta bila advice log ditanda emergency
--- (patient client tak boleh insert psy_notifications terus sebab RLS hanya
--- benarkan staff — guna SECURITY DEFINER trigger).
-CREATE OR REPLACE FUNCTION trg_reaksi_advice_notify_emergency()
-RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE
-  v_coach_id     UUID;
-  v_patient_name TEXT;
-BEGIN
-  IF NOT NEW.is_emergency THEN RETURN NEW; END IF;
-
-  SELECT pt.coach_id, COALESCE(pr.full_name, pt.full_name, 'Pesakit')
-    INTO v_coach_id, v_patient_name
-  FROM psy_patients pt
-  LEFT JOIN psy_profiles pr ON pr.id = pt.user_id
-  WHERE pt.id = NEW.patient_id;
-
-  IF v_coach_id IS NOT NULL THEN
-    INSERT INTO psy_notifications (user_id, type, title, body, link)
-    VALUES (
-      v_coach_id, 'reaksi',
-      '🚨 Reaksi Kecemasan: ' || v_patient_name,
-      v_patient_name || ' melaporkan simptom kecemasan. Saranan telah dihantar automatik ke WhatsApp — sila susul pesakit dengan segera.',
-      'kepatuhan.html'
-    );
-  END IF;
-  RETURN NEW;
-EXCEPTION WHEN OTHERS THEN
-  RAISE LOG 'trg_reaksi_advice_notify_emergency: %', SQLERRM;
-  RETURN NEW;
-END;
-$$;
-
-DROP TRIGGER IF EXISTS trg_reaksi_advice_notify_emergency ON psy_reaksi_advice_log;
-CREATE TRIGGER trg_reaksi_advice_notify_emergency
-  AFTER INSERT ON psy_reaksi_advice_log
-  FOR EACH ROW EXECUTE FUNCTION trg_reaksi_advice_notify_emergency();
-
-CREATE TABLE IF NOT EXISTS psy_plan_check_ins (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  plan_id UUID REFERENCES psy_treatment_plans(id) ON DELETE CASCADE NOT NULL,
-  patient_id UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
-  pillar TEXT NOT NULL CHECK (pillar IN ('bio','psycho','social','spiritual')),
-  goal_index INT NOT NULL,
-  goal_text TEXT,
-  completed_at TIMESTAMPTZ DEFAULT now(),
-  UNIQUE (plan_id, pillar, goal_index)
-);
-
-ALTER TABLE psy_plan_check_ins ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "Patients manage own check-ins" ON psy_plan_check_ins FOR ALL USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())) WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Staff read check-ins" ON psy_plan_check_ins FOR SELECT USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE TABLE IF NOT EXISTS psy_plan_compliance (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  plan_id UUID REFERENCES psy_treatment_plans(id) ON DELETE CASCADE NOT NULL,
-  patient_id UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
-  week_number INT NOT NULL,
-  madu_sudu INT,
-  nafas_kali INT,
-  bumi_minit INT,
-  berjemur BOOLEAN,
-  pantang BOOLEAN,
-  kelapa_kali INT,
-  kolon_kali INT,
-  notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now(),
-  UNIQUE (plan_id, week_number)
-);
-
-ALTER TABLE psy_plan_compliance ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "Staff manage compliance" ON psy_plan_compliance FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Patients manage own compliance" ON psy_plan_compliance FOR ALL USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())) WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE TABLE IF NOT EXISTS psy_notifications (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES psy_profiles(id) ON DELETE CASCADE NOT NULL,
-  type TEXT DEFAULT 'system' CHECK (type IN ('appointment','order','plan','system')),
-  title TEXT NOT NULL,
-  body TEXT,
-  link TEXT,
-  is_read BOOLEAN DEFAULT false,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE psy_notifications ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "Users read own notifications" ON psy_notifications FOR SELECT USING (user_id = auth.uid());
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Users update own notifications" ON psy_notifications FOR UPDATE USING (user_id = auth.uid());
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Staff insert notifications" ON psy_notifications FOR INSERT
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE INDEX IF NOT EXISTS idx_psy_appointments_time ON psy_appointments(appointment_time);
-CREATE INDEX IF NOT EXISTS idx_psy_appointments_patient ON psy_appointments(patient_id);
-CREATE INDEX IF NOT EXISTS idx_psy_weekly_plan ON psy_plan_weekly_progress(plan_id);
-CREATE INDEX IF NOT EXISTS idx_psy_weekly_patient ON psy_plan_weekly_progress(patient_id);
-CREATE INDEX IF NOT EXISTS idx_psy_compliance_plan ON psy_plan_compliance(plan_id, week_number);
-CREATE INDEX IF NOT EXISTS idx_psy_notifications_user ON psy_notifications(user_id, is_read, created_at DESC);
-
-SELECT 'Step 4 OK — plans + appointments + notifications ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step5_packages.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP 5 — PSY_PACKAGES + PSY_PACKAGE_PURCHASES
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS psy_packages (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  package_id TEXT UNIQUE NOT NULL,
-  name TEXT NOT NULL,
-  description TEXT,
-  price NUMERIC(10,2) DEFAULT 0,
-  duration TEXT,
-  duration_unit TEXT DEFAULT 'week',
-  duration_weeks INT DEFAULT 12,
-  icon TEXT DEFAULT '📦',
-  bg_color TEXT DEFAULT 'bg-cream',
-  tier TEXT,
-  is_active BOOLEAN DEFAULT true,
-  products JSONB DEFAULT '[]',
-  bimbingan JSONB DEFAULT '[]',
-  inclusions JSONB DEFAULT '[]',
-  coaching_schedule JSONB DEFAULT '[]',
-  bio_goals JSONB DEFAULT '[]',
-  psycho_goals JSONB DEFAULT '[]',
-  social_goals JSONB DEFAULT '[]',
-  spiritual_goals JSONB DEFAULT '[]',
-  phases JSONB,
-  sort_order INT DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE psy_packages ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN CREATE POLICY "Anyone read active packages" ON psy_packages FOR SELECT USING (true); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Staff manage packages" ON psy_packages FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')) WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE TABLE IF NOT EXISTS psy_package_purchases (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
-  package_id TEXT NOT NULL,
-  package_name TEXT NOT NULL,
-  price NUMERIC(10,2) NOT NULL,
-  purchased_at TIMESTAMPTZ DEFAULT now(),
-  expires_at TIMESTAMPTZ,
-  status TEXT DEFAULT 'pending_payment' CHECK (status IN ('pending_payment','paid','active','expired','cancelled')),
-  payment_method TEXT,
-  ghl_order_id TEXT,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE psy_package_purchases ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN CREATE POLICY "Patients manage own purchases" ON psy_package_purchases FOR ALL USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())) WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Staff read all purchases" ON psy_package_purchases FOR SELECT USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Staff update purchases" ON psy_package_purchases FOR UPDATE USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE INDEX IF NOT EXISTS idx_psy_packages_active ON psy_packages(is_active);
-CREATE INDEX IF NOT EXISTS idx_psy_packages_sort ON psy_packages(sort_order);
-CREATE INDEX IF NOT EXISTS idx_psy_purchases_patient ON psy_package_purchases(patient_id);
-
-SELECT 'Step 5 OK — packages ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step6_payments.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP 6 — PSY_PAYMENTS + PSY_ORDERS
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS psy_payments (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  receipt_ref TEXT UNIQUE NOT NULL,
-  patient_id UUID REFERENCES psy_patients(id),
-  user_id UUID REFERENCES psy_profiles(id),
-  items JSONB DEFAULT '[]',
-  subtotal NUMERIC(10,2) DEFAULT 0,
-  service_charge NUMERIC(10,2) DEFAULT 0,
-  sst NUMERIC(10,2) DEFAULT 0,
-  total NUMERIC(10,2) NOT NULL,
-  payment_method TEXT CHECK (payment_method IN ('fpx','card','transfer','ghl','manual')),
-  status TEXT DEFAULT 'completed' CHECK (status IN ('pending','completed','refunded','failed')),
-  ghl_transaction_id TEXT,
-  notes TEXT,
-  paid_at TIMESTAMPTZ DEFAULT now(),
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE psy_payments ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN CREATE POLICY "Patients read own payments" ON psy_payments FOR SELECT USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Patients insert own payments" ON psy_payments FOR INSERT WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Staff manage all payments" ON psy_payments FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE TABLE IF NOT EXISTS psy_orders (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  order_ref TEXT UNIQUE NOT NULL,
-  patient_id UUID NOT NULL,
-  items JSONB NOT NULL DEFAULT '[]',
-  total NUMERIC(10,2) DEFAULT 0,
-  status TEXT DEFAULT 'pending' CHECK (status IN ('pending','paid','packed','shipped','delivered','cancelled')),
-  delivery_method TEXT DEFAULT 'pos' CHECK (delivery_method IN ('pickup','pos')),
-  delivery_address TEXT,
-  courier TEXT,
-  tracking_number TEXT,
-  tracking_photo_url TEXT,
-  notes TEXT,
-  paid_at TIMESTAMPTZ,
-  packed_at TIMESTAMPTZ,
-  shipped_at TIMESTAMPTZ,
-  delivered_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE psy_orders ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN CREATE POLICY "Patient view own orders" ON psy_orders FOR SELECT USING (patient_id = auth.uid()); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Patient insert own orders" ON psy_orders FOR INSERT WITH CHECK (patient_id = auth.uid()); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Patient confirm delivery" ON psy_orders FOR UPDATE USING (patient_id = auth.uid() AND status = 'shipped') WITH CHECK (status = 'delivered'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Staff manage orders" ON psy_orders FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE INDEX IF NOT EXISTS idx_psy_payments_patient ON psy_payments(patient_id);
-CREATE INDEX IF NOT EXISTS idx_psy_payments_receipt ON psy_payments(receipt_ref);
-
-SELECT 'Step 6 OK — payments + orders ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step7_checkins.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP 7 — PSY_DAILY_CHECKINS
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS psy_daily_checkins (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
-  checkin_date DATE DEFAULT CURRENT_DATE NOT NULL,
-  mood_score INT CHECK (mood_score BETWEEN 1 AND 10),
-  energy_score INT CHECK (energy_score BETWEEN 1 AND 10),
-  sleep_quality INT CHECK (sleep_quality BETWEEN 1 AND 10),
-  sleep_hours NUMERIC(3,1),
-  symptoms JSONB DEFAULT '[]',
-  activities JSONB DEFAULT '[]',
-  notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  UNIQUE (patient_id, checkin_date)
-);
-
-ALTER TABLE psy_daily_checkins ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN CREATE POLICY "Patients manage daily check-ins" ON psy_daily_checkins FOR ALL USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())) WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Staff read daily check-ins" ON psy_daily_checkins FOR SELECT USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE INDEX IF NOT EXISTS idx_psy_checkins_patient ON psy_daily_checkins(patient_id);
-
-SELECT 'Step 7 OK — psy_daily_checkins ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step8_library.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP 8 — PSY_LIBRARY_ITEMS
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS psy_library_items (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  item_id TEXT UNIQUE,
-  title TEXT NOT NULL,
-  description TEXT,
-  content_type TEXT,
-  content_url TEXT,
-  category TEXT,
-  icon TEXT DEFAULT '📄',
-  gradient TEXT DEFAULT 'from-navy to-teal',
-  content_body TEXT,
-  is_active BOOLEAN DEFAULT true,
-  sort_order INT DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE psy_library_items ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN CREATE POLICY "Anyone read library" ON psy_library_items FOR SELECT USING (true); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Staff manage library" ON psy_library_items FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-INSERT INTO psy_library_items (item_id, title, description, content_type, category, icon, gradient, sort_order) VALUES
-  ('bps-s-intro', 'Apa itu BPS-S model?', 'Dr. Hamzah menerangkan 4 pillar holistik Ibn Sina', 'Video · 8 min', 'navy', '🎥', 'from-navy to-teal', 1),
-  ('santapan-panduan', 'Santapan Fitrah: Panduan Harian', 'Resipi + cara penyediaan untuk 7 hari pertama', 'Article · 5 min', 'green', '📝', 'from-green to-gold-dark', 2),
-  ('zikir-syifa', 'Zikir Pagi Petang Syifa', 'Audio + transliterasi untuk amalan harian', 'Doa & Zikir', 'terracotta', '🕌', 'from-terracotta to-gold-dark', 3),
-  ('breathing-muraqabah', 'Breathing & Muraqabah', 'Teknik pernafasan untuk ketenangan mental', 'Exercise · 15 min', 'gold', '🧘‍♀️', 'from-gold to-green', 4),
-  ('faq-baru', '10 Soalan Lazim Pesakit Baru', 'Apa yang perlu anda tahu sebelum memulakan', 'FAQ', 'teal', '💬', 'from-teal to-navy', 5),
-  ('mood-tracker', 'Mood & Progress Tracker', 'PDF printable untuk rekod harian', 'Worksheet', 'ink', '📊', 'from-navy to-terracotta', 6)
-ON CONFLICT (item_id) DO NOTHING;
-
-SELECT 'Step 8 OK — psy_library_items ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step9_products.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP 9 — PSY_PRODUCTS
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS psy_products (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  product_id TEXT UNIQUE NOT NULL,
-  name TEXT NOT NULL,
-  description TEXT,
-  category TEXT,
-  price NUMERIC(10,2) DEFAULT 0,
-  stock INT,
-  icon TEXT DEFAULT '📦',
-  bg_color TEXT DEFAULT 'bg-cream',
-  is_active BOOLEAN DEFAULT true,
-  sort_order INT DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE psy_products ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN CREATE POLICY "Anyone read products" ON psy_products FOR SELECT USING (true); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Staff manage products" ON psy_products FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-INSERT INTO psy_products (product_id, name, description, category, price, icon, bg_color, sort_order) VALUES
-  ('madu-shifa-500g',  'Madu Shifa 500g',        'Pure raw honey · acacia',            'Madu',           85,  '🍯', 'bg-gold-light',       1),
-  ('madu-kelulut',     'Madu Kelulut 400g',       'Stingless bee honey',                'Madu',          120,  '🍯', 'bg-gold-light',       2),
-  ('jus-halia',        'Jus Halia Concentrate',   '250ml · 100% natural',               'Herba',          45,  '🌿', 'bg-green-light',      3),
-  ('herba-zaitun',     'Minyak Zaitun Tulen',     '500ml · cold-pressed',               'Herba',          65,  '🫒', 'bg-green-light',      4),
-  ('magnesium',        'Magnesium Glycinate',      '60 caps · 200mg',                    'Supplements',    55,  '💊', 'bg-navy-light',       5),
-  ('vitamin-d',        'Vitamin D3 5000IU',        '90 softgels',                        'Supplements',    48,  '☀️', 'bg-gold-light',       6),
-  ('santapan-fitrah',  'Santapan Fitrah Set',      '7-day starter pack',                 'Santapan Fitrah',220, '🌱', 'bg-terracotta-light', 7),
-  ('rahsia-syifa',     'Rahsia Syifa Book',        'Ibn Sina & modern med',              'Books',          35,  '📖', 'bg-navy-light',       8),
-  ('doa-syifa-book',   'Kitab Doa Syifa',          'Tafsir + transliterasi',             'Books',          28,  '📖', 'bg-terracotta-light', 9)
-ON CONFLICT (product_id) DO NOTHING;
-
-SELECT 'Step 9 OK — psy_products ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step10_announcements.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP 10 — PSY_ANNOUNCEMENTS
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS psy_announcements (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  title TEXT NOT NULL,
-  body TEXT,
-  tag TEXT,
-  bg TEXT DEFAULT 'from-navy to-green-dark',
-  cta_label TEXT,
-  cta_url TEXT,
-  image_url TEXT,
-  is_active BOOLEAN DEFAULT true,
-  sort_order INT DEFAULT 0,
-  starts_at TIMESTAMPTZ,
-  ends_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE psy_announcements ADD COLUMN IF NOT EXISTS image_url TEXT;
-
-ALTER TABLE psy_announcements ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN CREATE POLICY "Anyone read active announcements" ON psy_announcements FOR SELECT USING (is_active = true); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE POLICY "Staff manage announcements" ON psy_announcements FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-INSERT INTO psy_announcements (title, body, tag, bg, cta_label, cta_url, sort_order) VALUES
-  ('Kelas Mindfulness Percuma', 'Setiap Sabtu 9AM — Sertai sesi meditasi & pernafasan bersama Coach Izzah.', 'Kelas Minggu Ini', 'from-navy to-teal', 'Daftar Sekarang', 'https://wa.me/60123456789', 1),
-  ('Program Detox Digital', 'Cabaran 7 hari kurangkan screen time untuk kesejahteraan mental anda.', 'Challenge Baru', 'from-green-dark to-teal', 'Sertai Cabaran', null, 2),
-  ('Pakej Ramadan Khas', 'Rawatan holistik dengan fokus spiritual — promosi sehingga hujung bulan.', 'Promosi', 'from-navy to-green-dark', 'Lihat Pakej', 'pakej.html', 3)
-ON CONFLICT DO NOTHING;
-
-SELECT 'Step 10 OK — psy_announcements ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step11_staff_roles.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP 11 — STAFF SUB-ROLES
--- Tambah staff_role ke psy_profiles
--- Run ini di Supabase SQL Editor
--- ============================================================
-
--- 1. Tambah kolum staff_role
-ALTER TABLE psy_profiles
-  ADD COLUMN IF NOT EXISTS staff_role TEXT CHECK (staff_role IN ('admin', 'coach', 'manager'));
-
--- 2. Staff yang ada sekarang → set admin by default supaya tak kena lock out
-UPDATE psy_profiles
-  SET staff_role = 'admin'
-  WHERE role = 'staff' AND staff_role IS NULL;
-
--- 3. Update trigger supaya staff baru boleh dapat staff_role dari metadata
 CREATE OR REPLACE FUNCTION handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -910,1073 +97,1282 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
-SELECT 'Step 11 OK — staff_role column added' AS status;
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION handle_new_user();
+
+-- Nota: trigger trg_new_patient_profile (auto-cipta rekod pesakit) berada
+-- dalam 04_patients.sql bersama fungsinya handle_new_patient_profile().
+
+-- Nota: semua polisi storage (medical-reports, kob, wa-outbox, referral-docs
+-- dll.) diselenggara berpusat dalam 24_storage.sql.
 
 
 -- ════════════════════════════════════════════════════════════════
--- step12_library_media.sql
+-- schema/03_rbac_security.sql
 -- ════════════════════════════════════════════════════════════════
 
--- ============================================================
--- STEP 12 — Add thumbnail_url to psy_library_items
--- Run in Supabase SQL Editor
--- ============================================================
+-- ═══════════════════════════════════════════════════════════════════
+-- SKEMA: KESELAMATAN & RBAC (Peranan, Kebenaran, Audit)
+-- Jadual: psy_audit_log, psy_roles, psy_modules, psy_actions,
+--         psy_module_actions, psy_role_module_actions,
+--         psy_user_overrides, psy_permission_audit
+-- View  : psy_user_effective_permissions
+-- Fungsi: isw_is_staff, settings_is_staff, settings_is_super_admin,
+--         user_has_perm
+-- Model RBAC = Role × Module × Action matrix:
+--   psy_roles (peranan) × psy_modules (modul app) × psy_actions (6 action
+--   standard). psy_module_actions = cell yang boleh ditick;
+--   psy_role_module_actions = grant default per role;
+--   psy_user_overrides = grant/revoke tambahan per user.
+--   Kebenaran akhir user diselesaikan oleh view psy_user_effective_permissions.
+-- ═══════════════════════════════════════════════════════════════════
 
-ALTER TABLE psy_library_items
-  ADD COLUMN IF NOT EXISTS thumbnail_url TEXT;
+-- ──── fungsi helper keselamatan (dipakai oleh RLS fail lain juga) ────
 
--- Create storage bucket for library media (run once)
--- In Supabase Dashboard → Storage → New Bucket → "library-media" → Public
--- OR run via API. Manual step needed in dashboard.
+-- Semak pengguna semasa ialah staff (SECURITY DEFINER — elak rekursi RLS
+-- bila polisi ON psy_profiles perlu query psy_profiles).
+CREATE OR REPLACE FUNCTION public.isw_is_staff()
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.psy_profiles
+    WHERE id = auth.uid() AND role = 'staff'
+  );
+$$;
 
-SELECT 'Step 12 OK — library thumbnail_url column added' AS status;
+GRANT EXECUTE ON FUNCTION public.isw_is_staff() TO authenticated;
 
+-- Helper RLS untuk modul tetapan sistem (psy_settings dll.)
+CREATE OR REPLACE FUNCTION settings_is_staff() RETURNS BOOLEAN AS $$
+  SELECT EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff');
+$$ LANGUAGE sql SECURITY DEFINER STABLE;
 
--- ════════════════════════════════════════════════════════════════
--- step13_coach_assignment.sql
--- ════════════════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION settings_is_super_admin() RETURNS BOOLEAN AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM psy_profiles
+    WHERE id = auth.uid() AND role = 'staff' AND staff_role = 'super_admin'
+  );
+$$ LANGUAGE sql SECURITY DEFINER STABLE;
 
--- STEP 13 — Coach assignment to patients
--- Run in Supabase SQL Editor
+-- ──── psy_audit_log ────
+-- Jejak audit umum sistem. Turut dipakai untuk:
+--   • Google Review tracking (action='google_review.clicked', meta={rating:N})
+--   • Report Issue pesakit (action='issue.reported'/'issue.followup'/'issue.responded')
 
-ALTER TABLE psy_patients
-  ADD COLUMN IF NOT EXISTS coach_id UUID REFERENCES psy_profiles(id),
-  ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
-
-CREATE INDEX IF NOT EXISTS idx_psy_patients_coach ON psy_patients(coach_id);
-
-SELECT 'Step 13 OK — coach_id + assigned_at added to psy_patients' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step14_doctor_role.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP 14 — Doctor Staff Role
--- Run in Supabase SQL Editor
--- ============================================================
-
--- 1. Update CHECK constraint on staff_role to include 'doctor'
-ALTER TABLE psy_profiles
-  DROP CONSTRAINT IF EXISTS psy_profiles_staff_role_check;
-
-ALTER TABLE psy_profiles
-  ADD CONSTRAINT psy_profiles_staff_role_check
-  CHECK (staff_role IN ('admin', 'doctor', 'coach', 'manager'));
-
--- 2. Verify
-SELECT 'Step 14 OK — doctor role added to staff_role constraint' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step15_kyc_extra_fields.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP 15 — Extra KYC fields (marital status, occupation, etc.)
--- Run in Supabase SQL Editor
--- ============================================================
-
--- 1. Add new columns to psy_kyc_submissions
-ALTER TABLE psy_kyc_submissions
-  ADD COLUMN IF NOT EXISTS marital_status TEXT,
-  ADD COLUMN IF NOT EXISTS occupation TEXT,
-  ADD COLUMN IF NOT EXISTS company TEXT,
-  ADD COLUMN IF NOT EXISTS emergency_contact_relationship TEXT,
-  ADD COLUMN IF NOT EXISTS emergency_contact_email TEXT;
-
--- 2. Add matching columns to psy_patients (for quick access without joining KYC)
-ALTER TABLE psy_patients
-  ADD COLUMN IF NOT EXISTS marital_status TEXT,
-  ADD COLUMN IF NOT EXISTS occupation TEXT,
-  ADD COLUMN IF NOT EXISTS company TEXT;
-
-SELECT 'Step 15 OK — extra KYC fields added' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step16_missing_tables.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP 16 — MISSING TABLES: vitals, coaching, risk, feedback
--- Run in Supabase SQL Editor
--- ============================================================
-
--- 1. PSY_VITALS
-CREATE TABLE IF NOT EXISTS psy_vitals (
+CREATE TABLE IF NOT EXISTS psy_audit_log (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
-  recorded_by UUID REFERENCES psy_profiles(id),
-  recorded_by_name TEXT,
-  bp_systolic INT,
-  bp_diastolic INT,
-  heart_rate INT,
-  spo2 NUMERIC(5,2),
-  temperature NUMERIC(4,1),
-  weight NUMERIC(5,2),
-  height NUMERIC(5,1),
-  bmi NUMERIC(4,1),
-  waist_cm NUMERIC(5,1),
-  rbs NUMERIC(6,2),
-  phq2_score INT,
-  medications TEXT,
-  notes TEXT,
+  actor_id UUID,
+  actor_name TEXT,
+  actor_role TEXT,
+  action TEXT NOT NULL,
+  target TEXT,
+  meta JSONB DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Penanda plan/minggu + tarikh & MASA bacaan (step78). Staff boleh rekod
--- beberapa bacaan sehari; reading_time bezakan setiap satu.
-ALTER TABLE psy_vitals
-  ADD COLUMN IF NOT EXISTS plan_id      UUID REFERENCES psy_treatment_plans(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS week_number  INT,
-  ADD COLUMN IF NOT EXISTS reading_date DATE,
-  ADD COLUMN IF NOT EXISTS reading_time TIME;
+CREATE INDEX IF NOT EXISTS idx_psy_audit_created ON psy_audit_log(created_at);
 
-ALTER TABLE psy_vitals ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "Staff manage vitals" ON psy_vitals FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Patients read own vitals" ON psy_vitals FOR SELECT
-    USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TABLE psy_audit_log ENABLE ROW LEVEL SECURITY;
 
-CREATE INDEX IF NOT EXISTS idx_psy_vitals_patient ON psy_vitals(patient_id, created_at DESC);
+DROP POLICY IF EXISTS "Staff read audit" ON psy_audit_log;
+CREATE POLICY "Staff read audit" ON psy_audit_log FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
--- 2. PSY_COACHING_SESSIONS
-CREATE TABLE IF NOT EXISTS psy_coaching_sessions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
-  coach_id UUID REFERENCES psy_profiles(id),
-  patient_name TEXT,
-  pillar TEXT CHECK (pillar IN ('bio','psycho','social','spiritual')),
-  session_date TIMESTAMPTZ DEFAULT now(),
-  duration_min INT DEFAULT 60,
-  mood_pre INT CHECK (mood_pre BETWEEN 1 AND 10),
-  mood_post INT CHECK (mood_post BETWEEN 1 AND 10),
-  notes TEXT,
-  goals_discussed JSONB DEFAULT '[]',
-  homework JSONB DEFAULT '[]',
-  status TEXT DEFAULT 'completed' CHECK (status IN ('completed','no_show','cancelled')),
-  created_at TIMESTAMPTZ DEFAULT now()
-);
+DROP POLICY IF EXISTS "All authenticated insert audit" ON psy_audit_log;
+CREATE POLICY "All authenticated insert audit" ON psy_audit_log FOR INSERT
+  WITH CHECK (true);
 
-ALTER TABLE psy_coaching_sessions ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "Staff manage coaching sessions" ON psy_coaching_sessions FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Patients read own coaching sessions" ON psy_coaching_sessions FOR SELECT
-    USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- Pesakit boleh baca issue sendiri, balasan staff, dan follow-up sendiri.
+DROP POLICY IF EXISTS "Patients read own issues" ON psy_audit_log;
+CREATE POLICY "Patients read own issues" ON psy_audit_log FOR SELECT
+  USING (
+    (action IN ('issue.reported', 'issue.followup') AND actor_id = auth.uid())
+    OR (action = 'issue.responded' AND target = auth.uid()::text)
+  );
 
-CREATE INDEX IF NOT EXISTS idx_psy_coaching_patient ON psy_coaching_sessions(patient_id, session_date DESC);
+COMMENT ON TABLE psy_audit_log IS
+  'Audit trail. Untuk Google Review tracking guna action=''google_review.clicked'', meta={rating: N}';
 
--- 3. PSY_RISK_ALERTS
-CREATE TABLE IF NOT EXISTS psy_risk_alerts (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
-  patient_name TEXT,
-  created_by UUID REFERENCES psy_profiles(id),
-  created_by_name TEXT,
-  severity TEXT DEFAULT 'medium' CHECK (severity IN ('low','medium','high','critical')),
-  category TEXT,
-  description TEXT,
-  status TEXT DEFAULT 'open' CHECK (status IN ('open','acknowledged','resolved')),
-  acknowledged_by UUID REFERENCES psy_profiles(id),
-  resolved_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
+-- ──── psy_roles ────
+-- Master list peranan (system roles + roles ciptaan UI peranan.html).
 
-ALTER TABLE psy_risk_alerts ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "Staff manage risk alerts" ON psy_risk_alerts FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE INDEX IF NOT EXISTS idx_psy_risk_patient ON psy_risk_alerts(patient_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_psy_risk_status ON psy_risk_alerts(status, created_at DESC);
-
--- 4. PSY_WEEKLY_FEEDBACK
-CREATE TABLE IF NOT EXISTS psy_weekly_feedback (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  plan_id UUID REFERENCES psy_treatment_plans(id) ON DELETE CASCADE NOT NULL,
-  patient_id UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
-  week_number INT NOT NULL,
-  rating INT CHECK (rating BETWEEN 1 AND 5),
-  comment TEXT,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  UNIQUE (plan_id, week_number)
-);
-
-ALTER TABLE psy_weekly_feedback ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "Patients manage own weekly feedback" ON psy_weekly_feedback FOR ALL
-    USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
-    WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Staff read all weekly feedback" ON psy_weekly_feedback FOR SELECT
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE INDEX IF NOT EXISTS idx_psy_feedback_plan ON psy_weekly_feedback(plan_id, week_number);
-
-SELECT 'Step 16 OK — psy_vitals, psy_coaching_sessions, psy_risk_alerts, psy_weekly_feedback ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step17_inventory.sql
--- ════════════════════════════════════════════════════════════════
-
--- step17_inventory.sql — placeholder (notes only, no DDL)
-/*
-Bimbingan Peminuman madu
-Bimbingan Diet dan Nutrisi
-Bimbingan Zikir bersanad
-*/
-
-
--- ════════════════════════════════════════════════════════════════
--- step18_reference_code.sql
--- ════════════════════════════════════════════════════════════════
-
--- Add reference_code column to store old patient codes (e.g. OB'25-0710, NLC'25-0177)
-ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS reference_code TEXT;
-
-
--- ════════════════════════════════════════════════════════════════
--- step19_kyc_patients_sync.sql
--- ════════════════════════════════════════════════════════════════
-
--- Add missing columns to psy_patients for full form sync (idempotent)
-ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS company TEXT;
-ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS referral_source TEXT;
-ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS condition_duration TEXT;
-ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS emergency_contact_ic TEXT;
-ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS reference_code TEXT;
-ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS documents JSONB DEFAULT '{}';
-ALTER TABLE psy_kyc_submissions ADD COLUMN IF NOT EXISTS emergency_contact_ic TEXT;
-
-INSERT INTO storage.buckets (id, name, public) VALUES ('medical-reports', 'medical-reports', false) ON CONFLICT DO NOTHING;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff can upload medical reports" ON storage.objects
-    FOR INSERT TO authenticated
-    WITH CHECK (bucket_id = 'medical-reports' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff can read all medical reports" ON storage.objects
-    FOR SELECT TO authenticated
-    USING (bucket_id = 'medical-reports' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Patients can upload own medical reports" ON storage.objects
-    FOR INSERT TO authenticated
-    WITH CHECK (bucket_id = 'medical-reports' AND (storage.foldername(name))[1] = 'patient' AND EXISTS (SELECT 1 FROM psy_patients WHERE user_id = auth.uid() AND id::text = (storage.foldername(name))[2]));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Patients can read own medical reports" ON storage.objects
-    FOR SELECT TO authenticated
-    USING (bucket_id = 'medical-reports' AND EXISTS (SELECT 1 FROM psy_patients WHERE user_id = auth.uid() AND id::text = (storage.foldername(name))[2]));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-
--- ════════════════════════════════════════════════════════════════
--- step20_soft_delete.sql
--- ════════════════════════════════════════════════════════════════
-
--- Soft delete: add 'deleted' as valid status for psy_patients
-ALTER TABLE psy_patients DROP CONSTRAINT IF EXISTS psy_patients_status_check;
-ALTER TABLE psy_patients ADD CONSTRAINT psy_patients_status_check
-  CHECK (status IN ('pending_kyc','active','inactive','rejected','deleted'));
-
-
--- ════════════════════════════════════════════════════════════════
--- step21_unregistered_status.sql
--- ════════════════════════════════════════════════════════════════
-
--- Step 21: New patient statuses — unregistered, archived, deceased
--- Run in Supabase SQL Editor after step20_soft_delete.sql
-
-ALTER TABLE psy_patients DROP CONSTRAINT IF EXISTS psy_patients_status_check;
-ALTER TABLE psy_patients ADD CONSTRAINT psy_patients_status_check
-  CHECK (status IN ('pending_kyc','active','inactive','rejected','deleted','unregistered','archived','deceased'));
-
--- Add email column + index for fast auto-link lookup on patient signup
-ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS email TEXT;
-CREATE INDEX IF NOT EXISTS idx_psy_patients_email ON psy_patients(email);
-
--- Default status for new staff-created patients going forward is 'unregistered'
--- (no DB default change needed — handled in application layer)
-
-SELECT 'Step 21 OK — unregistered / archived / deceased statuses added' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step22_session_type.sql
--- ════════════════════════════════════════════════════════════════
-
--- Add session_type and consultation_done status to psy_plan_weekly_progress
-
--- 1. Add session_type column (f2f / online)
-ALTER TABLE psy_plan_weekly_progress
-  ADD COLUMN IF NOT EXISTS session_type TEXT NOT NULL DEFAULT 'f2f'
-  CHECK (session_type IN ('f2f', 'online'));
-
--- 2. Add consultation_done to status constraint
-ALTER TABLE psy_plan_weekly_progress
-  DROP CONSTRAINT IF EXISTS psy_plan_weekly_progress_status_check;
-
-ALTER TABLE psy_plan_weekly_progress
-  ADD CONSTRAINT psy_plan_weekly_progress_status_check
-  CHECK (status IN ('pending', 'booked', 'hadir', 'consultation_done', 'reschedule', 'cancel', 'dna'));
-
-
--- ════════════════════════════════════════════════════════════════
--- step23_dna_reports.sql
--- ════════════════════════════════════════════════════════════════
-
--- DNA Reports table (idempotent)
-CREATE TABLE IF NOT EXISTS psy_dna_reports (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id      UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
-  file_name       TEXT NOT NULL,
-  file_path       TEXT NOT NULL,
-  file_url        TEXT NOT NULL,
-  notes           TEXT,
-  uploaded_by     UUID REFERENCES auth.users(id),
-  uploaded_by_name TEXT,
-  uploaded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-ALTER TABLE psy_dna_reports ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN
-  CREATE POLICY "staff_dna_all" ON psy_dna_reports FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "patient_dna_read" ON psy_dna_reports FOR SELECT
-    USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-
--- ════════════════════════════════════════════════════════════════
--- step24_session_notes.sql
--- ════════════════════════════════════════════════════════════════
-
--- Merge coaching session notes into weekly progress (single source of truth)
-ALTER TABLE psy_plan_weekly_progress
-  ADD COLUMN IF NOT EXISTS notes           TEXT,
-  ADD COLUMN IF NOT EXISTS mood_before     INT,
-  ADD COLUMN IF NOT EXISTS mood_after      INT,
-  ADD COLUMN IF NOT EXISTS goals_discussed TEXT[],
-  ADD COLUMN IF NOT EXISTS homework_given  TEXT[],
-  ADD COLUMN IF NOT EXISTS coach_id        UUID REFERENCES auth.users(id),
-  ADD COLUMN IF NOT EXISTS coach_name      TEXT;
-
-
--- ════════════════════════════════════════════════════════════════
--- step27_inventory_tables.sql
--- ════════════════════════════════════════════════════════════════
-
--- Create psy_inventory_items and psy_inventory_requests tables
--- Run this if step17_inventory.sql was missing/corrupt
-
--- ── Inventory Items ────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS psy_inventory_items (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name             TEXT NOT NULL,
-  category         TEXT NOT NULL DEFAULT 'Bekalan Coaching',
-  unit             TEXT NOT NULL DEFAULT 'unit',
-  qty_in_stock     NUMERIC(10,2) NOT NULL DEFAULT 0,
-  min_qty          NUMERIC(10,2) NOT NULL DEFAULT 5,
-  requires_approval BOOLEAN NOT NULL DEFAULT false,
-  notes            TEXT,
-  created_at       TIMESTAMPTZ DEFAULT now(),
-  updated_at       TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE psy_inventory_items ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff read inventory items" ON psy_inventory_items
-    FOR SELECT USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Admin manage inventory items" ON psy_inventory_items
-    FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('admin','manager')));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- ── Inventory Requests ─────────────────────────────────────
-CREATE TABLE IF NOT EXISTS psy_inventory_requests (
-  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  item_id           UUID REFERENCES psy_inventory_items(id) ON DELETE SET NULL,
-  item_name         TEXT NOT NULL,
-  qty_requested     NUMERIC(10,2) NOT NULL,
-  unit_price        NUMERIC(10,2),
-  total_amount      NUMERIC(10,2),
-  reason            TEXT,
-  status            TEXT NOT NULL DEFAULT 'pending_approval'
-                    CHECK (status IN ('pending_approval','approved','rejected','purchased')),
-  requested_by      UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-  requested_by_name TEXT NOT NULL DEFAULT '',
-  approved_by       UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-  approved_at       TIMESTAMPTZ,
-  rejected_reason   TEXT,
-  purchased_at      TIMESTAMPTZ,
-  created_at        TIMESTAMPTZ DEFAULT now(),
-  updated_at        TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE psy_inventory_requests ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff read all requests" ON psy_inventory_requests
-    FOR SELECT USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff insert own requests" ON psy_inventory_requests
-    FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Manager admin update requests" ON psy_inventory_requests
-    FOR UPDATE USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('admin','manager')));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-
--- ════════════════════════════════════════════════════════════════
--- step25_inventory_items.sql
--- ════════════════════════════════════════════════════════════════
-
--- ISW Default Inventory Items
--- Run this after step17_inventory.sql
--- Clears existing items and inserts fresh ISW defaults
-
-DELETE FROM psy_inventory_items;
-
-INSERT INTO psy_inventory_items (name, category, unit, qty_in_stock, min_qty, requires_approval, notes)
-VALUES
-
--- ── MADU & PRODUK ─────────────────────────────────────────
-('Lebah Thoharah (LTH)',            'Madu & Produk', 'kg',     0, 5,  false, 'Program NLC / JS / JS+ / EOL'),
-('LTH Plus Green (LTHPG)',          'Madu & Produk', 'kg',     0, 5,  false, 'Program NLC / JS / JS+ / EOL'),
-('Ibu Bumi (IB)',                   'Madu & Produk', 'kg',     0, 5,  false, 'Program OBD / OBP'),
-('Young & Healthy Plus Green (YHPG)','Madu & Produk','kg',     0, 5,  false, 'Program OBD / OBP'),
-('Madu Kelulut',                    'Madu & Produk', 'botol',  0, 3,  false, NULL),
-('Minyak Zaitun Tulen',             'Madu & Produk', 'botol',  0, 3,  false, NULL),
-
--- ── STARTER KIT ───────────────────────────────────────────
-('SDS OB',                          'Starter Kit',   'unit',   0, 5,  false, 'Starter kit OBD / OBP'),
-('GHF',                             'Starter Kit',   'unit',   0, 5,  false, 'Starter kit OBD / OBP'),
-('BNP',                             'Starter Kit',   'unit',   0, 5,  false, 'Bekalan pantang NLC / JS'),
-('NSS',                             'Starter Kit',   'unit',   0, 5,  false, 'Bekalan pantang NLC / JS'),
-('Voucher Konsultasi',              'Starter Kit',   'unit',   0, 10, false, 'Diedarkan semasa onboarding'),
-
--- ── SUPLEMEN & RESEPI ─────────────────────────────────────
-('Resepi Superimun',                'Suplemen & Resepi', 'unit', 0, 5, false, 'Diberi semasa onboarding'),
-('Resepi Superenergi',              'Suplemen & Resepi', 'unit', 0, 5, false, 'Diberi semasa onboarding'),
-('Barley Organik',                  'Suplemen & Resepi', 'kg',   0, 5, false, NULL),
-('Spirulina',                       'Suplemen & Resepi', 'botol',0, 3, false, NULL),
-('Probiotik Advanced',              'Suplemen & Resepi', 'botol',0, 3, false, NULL),
-('Magnesium Glycinate',             'Suplemen & Resepi', 'botol',0, 3, false, NULL),
-('Vitamin D3',                      'Suplemen & Resepi', 'botol',0, 3, false, NULL),
-('Omega-3 Fish Oil',                'Suplemen & Resepi', 'botol',0, 3, false, NULL),
-
--- ── BUKU & BAHAN CETAK ────────────────────────────────────
-('Buku P101',                       'Buku & Bahan Cetak', 'naskhah', 0, 10, false, '7 buku per set starter kit'),
-('List Pantang',                    'Buku & Bahan Cetak', 'naskhah', 0, 10, false, 'Diedarkan semasa onboarding'),
-('Peta OB',                         'Buku & Bahan Cetak', 'naskhah', 0, 10, false, 'Diedarkan semasa onboarding OBD / OBP'),
-('Workbook Refleksi Harian',        'Buku & Bahan Cetak', 'naskhah', 0, 10, false, NULL),
-('Jadual Terapi Mingguan',          'Buku & Bahan Cetak', 'naskhah', 0, 10, false, NULL),
-('Mood Tracker',                    'Buku & Bahan Cetak', 'naskhah', 0, 10, false, NULL),
-('Buku Gaya Hidup Fitrah',          'Buku & Bahan Cetak', 'naskhah', 0,  5, false, NULL),
-('Kitab Doa Syifa',                 'Buku & Bahan Cetak', 'naskhah', 0,  5, false, NULL),
-
--- ── BROSUR & MARKETING ────────────────────────────────────
-('Brochure Madu',                   'Brosur & Marketing', 'unit', 0, 20, false, NULL),
-('Brochure ISW',                    'Brosur & Marketing', 'unit', 0, 20, false, NULL),
-('Brochure OB',                     'Brosur & Marketing', 'unit', 0, 20, false, NULL),
-
--- ── BEKALAN COACHING ──────────────────────────────────────
-('Air Afiyah',                      'Bekalan Coaching', 'botol', 0, 10, false, '1 botol = 1.5L'),
-('Air Za''afaran',                  'Bekalan Coaching', 'botol', 0,  5, false, 'Untuk sesi Perubatan Rohani'),
-('Herba Kolon',                     'Bekalan Coaching', 'set',   0,  3, false, '1 set = 1 kursus rawatan'),
-('Kurma Ajwa',                      'Bekalan Coaching', 'biji',  0, 50, false, '49 biji per pesakit 777 VIP'),
-
--- ── PERALATAN KLINIK ──────────────────────────────────────
-('DNA Test Kit',                    'Peralatan Klinik', 'set',  0, 2, true,  'Perlu kelulusan · hantar ke lab luar'),
-('Enema Kit',                       'Peralatan Klinik', 'set',  0, 3, true,  'Perlu kelulusan'),
-('Mesin Ozon',                      'Peralatan Klinik', 'unit', 0, 1, true,  'Rekod nombor siri setiap unit')
-
-;
-
-
--- ════════════════════════════════════════════════════════════════
--- step26_meet_link.sql
--- ════════════════════════════════════════════════════════════════
-
--- Add meet_link column to psy_plan_weekly_progress for online sessions
-ALTER TABLE psy_plan_weekly_progress
-  ADD COLUMN IF NOT EXISTS meet_link TEXT;
-
-
--- ════════════════════════════════════════════════════════════════
--- step28_clinic_closures.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step28_clinic_closures.sql
--- Calendar lock for public holidays, Hari Raya, and ad-hoc clinic closure days.
--- Booking flow checks this table to auto-block the date.
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS psy_clinic_closures (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  closure_date DATE NOT NULL,
+CREATE TABLE IF NOT EXISTS psy_roles (
+  code        TEXT PRIMARY KEY,
   label       TEXT NOT NULL,
-  category    TEXT NOT NULL DEFAULT 'public_holiday'
-              CHECK (category IN ('public_holiday','hari_raya','clinic_closed','training','other')),
-  is_recurring BOOLEAN NOT NULL DEFAULT false,  -- annual recurrence on same MM-DD
-  notes       TEXT,
-  created_by  UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  description TEXT,
+  color       TEXT DEFAULT 'navy',
+  icon        TEXT DEFAULT '👤',
+  is_active   BOOLEAN DEFAULT true,
+  is_system   BOOLEAN DEFAULT false,
+  sort_order  INT DEFAULT 100,
   created_at  TIMESTAMPTZ DEFAULT now(),
   updated_at  TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_clinic_closure_date
-  ON psy_clinic_closures (closure_date);
+ALTER TABLE psy_roles ENABLE ROW LEVEL SECURITY;
 
-CREATE INDEX IF NOT EXISTS idx_clinic_closure_date
-  ON psy_clinic_closures (closure_date);
+DROP POLICY IF EXISTS "r_read_all" ON psy_roles;
+CREATE POLICY "r_read_all" ON psy_roles FOR SELECT USING (auth.role() = 'authenticated');
 
-ALTER TABLE psy_clinic_closures ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "r_write_sa" ON psy_roles;
+CREATE POLICY "r_write_sa" ON psy_roles FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'));
 
--- Everyone authenticated (staff + patient) can read — used by booking + patient dashboard
-DO $$ BEGIN
-  CREATE POLICY "Anyone read clinic closures" ON psy_clinic_closures
-    FOR SELECT USING (auth.uid() IS NOT NULL);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- ──── psy_modules ────
+-- Master list modul aplikasi. scope='staff' (navbar staff) atau 'patient'
+-- (portal pesakit, kod pat_*). sort_order ikut susunan navbar.
 
--- Only admin/manager can mutate
-DO $$ BEGIN
-  CREATE POLICY "Admin manage clinic closures" ON psy_clinic_closures
-    FOR ALL USING (
-      EXISTS (SELECT 1 FROM psy_profiles
-              WHERE id = auth.uid()
-              AND role = 'staff'
-              AND staff_role IN ('admin','manager','doctor','super_admin'))
-    );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+CREATE TABLE IF NOT EXISTS psy_modules (
+  code        TEXT PRIMARY KEY,
+  label       TEXT NOT NULL,
+  icon        TEXT,
+  scope       TEXT DEFAULT 'staff',
+  sort_order  INT DEFAULT 100,
+  is_active   BOOLEAN DEFAULT true
+);
+
+ALTER TABLE psy_modules ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "m_read_all" ON psy_modules;
+CREATE POLICY "m_read_all" ON psy_modules FOR SELECT USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "m_write_sa" ON psy_modules;
+CREATE POLICY "m_write_sa" ON psy_modules FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'));
+
+-- ──── psy_actions ────
+-- 6 action standard: Lihat / Tambah / Edit / Padam / Eksport / Tetapan.
+
+CREATE TABLE IF NOT EXISTS psy_actions (
+  code        TEXT PRIMARY KEY,
+  label       TEXT NOT NULL,
+  icon        TEXT,
+  sort_order  INT DEFAULT 100
+);
+
+ALTER TABLE psy_actions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "a_read_all" ON psy_actions;
+CREATE POLICY "a_read_all" ON psy_actions FOR SELECT USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "a_write_sa" ON psy_actions;
+CREATE POLICY "a_write_sa" ON psy_actions FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'));
+
+-- ──── psy_module_actions ────
+-- Module × Action applicability — cell yang boleh ditick dalam matrix.
+
+CREATE TABLE IF NOT EXISTS psy_module_actions (
+  module_code TEXT NOT NULL REFERENCES psy_modules(code) ON DELETE CASCADE,
+  action_code TEXT NOT NULL REFERENCES psy_actions(code) ON DELETE CASCADE,
+  PRIMARY KEY (module_code, action_code)
+);
+
+ALTER TABLE psy_module_actions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "ma_read_all" ON psy_module_actions;
+CREATE POLICY "ma_read_all" ON psy_module_actions FOR SELECT USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "ma_write_sa" ON psy_module_actions;
+CREATE POLICY "ma_write_sa" ON psy_module_actions FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'));
+
+-- ──── psy_role_module_actions ────
+-- Grant default per role (cell "✓" dalam matrix peranan.html).
+
+CREATE TABLE IF NOT EXISTS psy_role_module_actions (
+  role_code   TEXT NOT NULL REFERENCES psy_roles(code) ON DELETE CASCADE,
+  module_code TEXT NOT NULL,
+  action_code TEXT NOT NULL,
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  PRIMARY KEY (role_code, module_code, action_code),
+  FOREIGN KEY (module_code, action_code) REFERENCES psy_module_actions(module_code, action_code) ON DELETE CASCADE
+);
+
+ALTER TABLE psy_role_module_actions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "rma_read_all" ON psy_role_module_actions;
+CREATE POLICY "rma_read_all" ON psy_role_module_actions FOR SELECT USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "rma_write_sa" ON psy_role_module_actions;
+CREATE POLICY "rma_write_sa" ON psy_role_module_actions FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'));
+
+-- ──── psy_user_overrides ────
+-- Override per-user: grant tambahan atau revoke daripada default role.
+
+CREATE TABLE IF NOT EXISTS psy_user_overrides (
+  user_id     UUID NOT NULL REFERENCES psy_profiles(id) ON DELETE CASCADE,
+  module_code TEXT NOT NULL,
+  action_code TEXT NOT NULL,
+  grant_type  TEXT NOT NULL CHECK (grant_type IN ('grant','revoke')),
+  granted_by  UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  granted_at  TIMESTAMPTZ DEFAULT now(),
+  reason      TEXT,
+  PRIMARY KEY (user_id, module_code, action_code),
+  FOREIGN KEY (module_code, action_code) REFERENCES psy_module_actions(module_code, action_code) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_overrides_user ON psy_user_overrides(user_id);
+
+ALTER TABLE psy_user_overrides ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "uo_read_all" ON psy_user_overrides;
+CREATE POLICY "uo_read_all" ON psy_user_overrides FOR SELECT USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "uo_write_sa" ON psy_user_overrides;
+CREATE POLICY "uo_write_sa" ON psy_user_overrides FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'));
+
+-- ──── psy_permission_audit ────
+-- Log setiap perubahan permission (role/module/override). Bila staff
+-- dipadam, actor_id jadi NULL — rekod kekal.
+
+CREATE TABLE IF NOT EXISTS psy_permission_audit (
+  id          BIGSERIAL PRIMARY KEY,
+  actor_id    UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  actor_email TEXT,
+  action      TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id   TEXT NOT NULL,
+  module_code TEXT,
+  action_code TEXT,
+  details     JSONB,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_perm_audit_created ON psy_permission_audit(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_perm_audit_target  ON psy_permission_audit(target_type, target_id);
+
+ALTER TABLE psy_permission_audit ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "au_read_all" ON psy_permission_audit;
+CREATE POLICY "au_read_all" ON psy_permission_audit FOR SELECT USING (
+  EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin')
+);
+
+DROP POLICY IF EXISTS "au_write_sa" ON psy_permission_audit;
+CREATE POLICY "au_write_sa" ON psy_permission_audit FOR INSERT
+  WITH CHECK (auth.role() = 'authenticated');
+
+-- ──── view: psy_user_effective_permissions ────
+-- Kebenaran akhir per user = (default role − revokes) UNION grants.
+
+CREATE OR REPLACE VIEW psy_user_effective_permissions AS
+SELECT p.id AS user_id, rma.module_code, rma.action_code
+FROM psy_profiles p
+JOIN psy_role_module_actions rma ON rma.role_code = p.staff_role
+WHERE NOT EXISTS (
+  SELECT 1 FROM psy_user_overrides uo
+  WHERE uo.user_id = p.id
+    AND uo.module_code = rma.module_code
+    AND uo.action_code = rma.action_code
+    AND uo.grant_type = 'revoke'
+)
+UNION
+SELECT user_id, module_code, action_code
+FROM psy_user_overrides WHERE grant_type = 'grant';
+
+-- ──── fungsi: user_has_perm ────
+-- Cek user semasa ada permission tertentu (dipakai dalam polisi RLS
+-- jadual lain, cth surat: communication.edit / communication.delete).
+
+CREATE OR REPLACE FUNCTION user_has_perm(p_module TEXT, p_action TEXT)
+RETURNS BOOLEAN
+LANGUAGE SQL STABLE SECURITY DEFINER SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM psy_user_effective_permissions
+    WHERE user_id = auth.uid()
+      AND module_code = p_module
+      AND action_code = p_action
+  );
+$$;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- DATA RUJUKAN (SEED)
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ──── seed: actions (6 standard) ────
+INSERT INTO psy_actions (code, label, icon, sort_order) VALUES
+  ('view',     'Lihat',    '👁️',  10),
+  ('create',   'Tambah',   '➕',  20),
+  ('edit',     'Edit',     '✏️',  30),
+  ('delete',   'Padam',    '🗑️',  40),
+  ('export',   'Eksport',  '📤',  50),
+  ('settings', 'Tetapan',  '⚙️',  60)
+ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label, icon=EXCLUDED.icon, sort_order=EXCLUDED.sort_order;
+
+-- ──── seed: modules ────
+-- sort_order ikut susunan navbar staff:
+--   UTAMA(10-80) → OPERASI(90-140) → KOMUNIKASI(150-185)
+--   → LAPORAN(190-220) → PENTADBIRAN(230-260) → SISTEM(270-290)
+--   Modul broad/internal (sub-page checks, bukan navbar item) → 300+
+--   Modul portal pesakit (scope='patient') → kod pat_*
+INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
+  -- UTAMA
+  ('dashboard',        'Dashboard',            '🏠', 'staff',  10),
+  ('patient',          'Pesakit & KYC',        '👥', 'staff',  20),
+  ('kyc',              'KYC',                  '🆔', 'staff',  30),
+  ('schedule',         'Kalendar & Jadual',    '📅', 'staff',  40),
+  ('plan_week',        'Weekly Plan',          '📋', 'staff',  50),
+  ('kob',              'KOB',                  '🩺', 'staff',  60),
+  ('kepatuhan',        'Kepatuhan',            '📊', 'staff',  70),
+  ('reaksi',           'Reaksi & Tindakan',    '🩹', 'staff',  72),
+  ('vitals',           'Bacaan Vitals',        '💓', 'staff',  75),
+  ('rujukan',          'Rujukan',              '🔀', 'staff',  76),
+  ('risk',             'Amaran Risiko',        '⚠️', 'staff',  80),
+  -- OPERASI
+  ('package',          'Pakej & Pembayaran',   '🗂️', 'staff',  90),
+  ('products',         'Produk',               '🛍️', 'staff', 100),
+  ('inventory',        'Inventori & Produk',   '🏭', 'staff', 110),
+  ('orders',           'Orders & Tracking',    '📦', 'staff', 120),
+  ('pulangan',         'Pulangan Botol',       '🍯', 'staff', 130),
+  ('payment',          'Pembayaran',           '💳', 'staff', 140),
+  -- KOMUNIKASI
+  ('announcements',    'Pengumuman',           '📢', 'staff', 150),
+  ('events',           'Acara & Kelas',        '📅', 'staff', 160),
+  ('auto_messages',    'Mesej Automatik',      '🤖', 'staff', 170),
+  ('library',          'Library',              '📚', 'staff', 180),
+  ('kb',               'Knowledge Base',       '📖', 'staff', 185),
+  -- LAPORAN
+  ('governance',       'Governance',           '📈', 'staff', 190),
+  ('staff_stats',      'Statistik',            '📊', 'staff', 200),
+  ('kehadiran',        'Laporan Kehadiran',    '📋', 'staff', 205),
+  ('pakej_laporan',    'Laporan Pakej',        '📦', 'staff', 210),
+  ('issue',            'Report Issue',         '⚠️', 'staff', 220),
+  -- PENTADBIRAN
+  ('surat',            'Surat Rasmi',          '📜', 'staff', 230),
+  ('closures',         'Penutupan Klinik',     '🚫', 'staff', 240),
+  ('kob_slots',        'Slot Konsultasi',      '⏰', 'staff', 250),
+  ('staff',            'Manage Staff',         '👨‍⚕️','staff', 260),
+  -- SISTEM
+  ('rbac',             'Peranan & Kebenaran',  '🔐', 'staff', 270),
+  ('audit_kebenaran',  'Audit Kebenaran',      '📋', 'staff', 280),
+  ('audit',            'Audit Log',            '🔒', 'staff', 290),
+  -- Modul broad/internal (internal action checks)
+  ('coaching',         'Rawatan & Sesi',       '🧑‍🏫','staff', 300),
+  ('communication',    'Komunikasi & Library', '📢', 'staff', 310),
+  ('operations',       'Operasi Klinik',       '⚙️', 'staff', 320),
+  ('reports',          'Laporan & Audit',      '📊', 'staff', 330),
+  -- Portal pesakit
+  ('pat_announcements','Pengumuman',           '📢', 'patient', 12),
+  ('pat_events',       'Acara & Kelas',        '📅', 'patient', 15),
+  ('pat_sejarah',      'Sejarah Pembayaran',   '🧾', 'patient', 95)
+ON CONFLICT (code) DO UPDATE SET
+  label = EXCLUDED.label,
+  icon  = EXCLUDED.icon,
+  scope = EXCLUDED.scope,
+  sort_order = EXCLUDED.sort_order;
+
+-- ──── seed: system roles ────
+INSERT INTO psy_roles (code, label, description, color, icon, is_system, sort_order) VALUES
+  ('super_admin', 'Super Admin', 'Akses penuh ke semua modul dan tetapan sistem.', 'purple', '🛡️', true, 10),
+  ('manager',     'Manager',     'Pengurus klinik — operasi penuh + kewangan + governance.', 'navy', '👔', true, 20),
+  ('admin',       'Admin',       'Admin operasi — urus pesakit, pakej, inventori, surat.', 'teal', '🧑‍💼', true, 30),
+  ('doctor',      'Doctor',      'Doktor klinikal — pesakit, KYC, KOB, plan rawatan.', 'green', '🩺', true, 40),
+  ('coach',       'Coach',       'Coach — pesakit ditugaskan, plan, sesi coaching.', 'gold', '🧑‍🏫', true, 50)
+ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label, description=EXCLUDED.description, color=EXCLUDED.color, icon=EXCLUDED.icon, is_system=true;
+
+-- Role 'patient' — diperlukan oleh grant modul pat_* (FK ke psy_roles).
+INSERT INTO psy_roles (code, label, description, color, icon, is_system, sort_order) VALUES
+  ('patient', 'Patient', 'Akses portal pesakit (modul pat_*).', 'green', '🧑', true, 60)
+ON CONFLICT (code) DO NOTHING;
+
+-- ──── seed: module × action ────
+-- SEMUA action didaftar untuk SETIAP modul — tiada cell "—" (Tidak
+-- Berkenaan) dalam peranan.html; semua kotak boleh di-toggle.
+INSERT INTO psy_module_actions (module_code, action_code)
+SELECT m.code, a.code
+FROM psy_modules m
+CROSS JOIN psy_actions a
+ON CONFLICT DO NOTHING;
+
+-- ──── seed: grant default per role ────
+
+-- 1) Grant 'view' ikut liputan modul setiap role.
+-- Super Admin: semua modul staff.
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT 'super_admin', code, 'view' FROM psy_modules WHERE scope = 'staff'
+ON CONFLICT DO NOTHING;
+
+-- Manager: semua modul staff kecuali audit_kebenaran.
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT 'manager', code, 'view' FROM psy_modules
+WHERE scope = 'staff' AND code <> 'audit_kebenaran'
+ON CONFLICT DO NOTHING;
+
+-- Admin: operasi + klinikal; tiada governance/audit/audit_kebenaran/
+-- auto_messages/rbac.
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT 'admin', code, 'view' FROM psy_modules
+WHERE scope = 'staff'
+  AND code NOT IN ('governance','audit','audit_kebenaran','auto_messages','rbac')
+ON CONFLICT DO NOTHING;
+
+-- Doctor: fokus klinikal.
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT 'doctor', m.code, 'view'
+FROM (VALUES
+  ('dashboard'),('patient'),('kyc'),('schedule'),('plan_week'),('kob'),
+  ('kepatuhan'),('reaksi'),('vitals'),('rujukan'),('risk'),
+  ('announcements'),('events'),('library'),('kb'),
+  ('kehadiran'),('issue'),('surat'),('kob_slots'),
+  ('coaching'),('inventory'),('communication'),('operations')
+) AS m(code)
+ON CONFLICT DO NOTHING;
+
+-- Coach: pesakit ditugaskan + coaching.
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT 'coach', m.code, 'view'
+FROM (VALUES
+  ('dashboard'),('patient'),('kyc'),('schedule'),('plan_week'),
+  ('kepatuhan'),('reaksi'),('vitals'),('rujukan'),('risk'),('pulangan'),
+  ('announcements'),('events'),('library'),('kb'),
+  ('kehadiran'),('issue'),('surat'),
+  ('coaching'),('inventory'),('communication'),('operations')
+) AS m(code)
+ON CONFLICT DO NOTHING;
+
+-- 2) Grant 'settings' (Tetapan) — modul terpilih sahaja.
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT r.role, m.module, 'settings'
+FROM (VALUES
+  ('super_admin','patient'),('super_admin','schedule'),('super_admin','coaching'),
+  ('super_admin','kob'),('super_admin','inventory'),('super_admin','orders'),
+  ('super_admin','package'),('super_admin','communication'),('super_admin','operations'),
+  ('super_admin','reports'),('super_admin','staff'),('super_admin','rbac'),
+  ('super_admin','events'),('super_admin','auto_messages'),('super_admin','kb'),
+  ('manager','patient'),('manager','schedule'),('manager','coaching'),
+  ('manager','kob'),('manager','inventory'),('manager','orders'),
+  ('manager','package'),('manager','communication'),('manager','operations'),
+  ('manager','reports'),('manager','staff'),
+  ('manager','events'),('manager','kb'),
+  ('admin','kob'),('admin','kb'),
+  ('doctor','kob')
+) AS r(role, module)
+ON CONFLICT DO NOTHING;
+
+-- 3) Kembangan view ⇒ create/edit/delete/export:
+-- setiap (role, modul staff) yang ada 'view' turut diberi action lain
+-- supaya semua butang boleh di-toggle OFF kemudian oleh admin.
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT rma.role_code, rma.module_code, a.code
+FROM psy_role_module_actions rma
+JOIN psy_modules m ON m.code = rma.module_code AND m.scope = 'staff'
+CROSS JOIN psy_actions a
+WHERE rma.action_code = 'view'
+  AND a.code IN ('create','edit','delete','export')
+  AND rma.role_code <> 'patient'
+ON CONFLICT DO NOTHING;
+
+-- 4) Grant portal pesakit (role 'patient').
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code) VALUES
+  ('patient', 'pat_announcements', 'view'),
+  ('patient', 'pat_events',        'view'),
+  ('patient', 'pat_sejarah',       'view')
+ON CONFLICT DO NOTHING;
 
 
 -- ════════════════════════════════════════════════════════════════
--- step29_kyc_proxy.sql
+-- schema/04_patients.sql
 -- ════════════════════════════════════════════════════════════════
 
--- ============================================================
--- step29_kyc_proxy.sql
--- Track whether KYC submission was filled by patient themselves
--- or by a representative (pewaris/keluarga) — for review attention.
--- ============================================================
+-- ═══════════════════════════════════════════════════════════════════
+-- 04_patients.sql — Domain Pesakit
+-- Jadual: psy_patients, psy_kyc_submissions, psy_patient_notes,
+--         psy_patient_documents
+-- Fungsi/Trigger: MRN autogen, referral code, KYC→patient sync,
+--                 updated_at, auto-inactive, stub pesakit self-register
+-- Nota kebergantungan: psy_profiles (01), psy_treatment_plans /
+--   psy_plan_weekly_progress (plan), fungsi assign_referral_code
+--   (didefinisi dalam domain referral).
+-- ═══════════════════════════════════════════════════════════════════
 
-ALTER TABLE psy_kyc_submissions
-  ADD COLUMN IF NOT EXISTS submitted_by_proxy BOOLEAN NOT NULL DEFAULT false;
+-- ────────────────────────────────────────────────
+-- psy_patients — rekod induk pesakit
+-- ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_patients (
+  id                              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id                         UUID REFERENCES psy_profiles(id) ON DELETE CASCADE,
+  mrn                             TEXT UNIQUE,
+  full_name                       TEXT,
+  phone                           TEXT,
+  email                           TEXT,
+  ic_number                       TEXT,
+  date_of_birth                   DATE,
+  gender                          TEXT CHECK (gender IN ('M','F')),
+  marital_status                  TEXT,
+  occupation                      TEXT,
+  company                         TEXT,
+  address                         TEXT,
+  home_address                    TEXT,
+  city                            TEXT,
+  state                           TEXT,
+  emergency_contact_name          TEXT,
+  emergency_contact_phone         TEXT,
+  emergency_contact_ic            TEXT,
+  emergency_contact_relationship  TEXT,
+  emergency_contact_email         TEXT,
+  insurance_provider              TEXT,
+  insurance_policy                TEXT,
+  referral_source                 TEXT,
+  medical_condition               TEXT,
+  condition_duration              TEXT,
+  medical_notes                   TEXT,
+  height_cm                       NUMERIC,
+  active_package_id               TEXT,
+  active_package_name             TEXT,
+  package_purchased_at            TIMESTAMPTZ,
+  package_expires_at              TIMESTAMPTZ,
+  next_package_id                 TEXT,
+  next_package_name               TEXT,
+  daily_schedule                  JSONB,
+  status                          TEXT DEFAULT 'active',
+  kob_status                      TEXT NOT NULL DEFAULT 'paid',
+  outcome_status                  TEXT,
+  outcome_status_at               TIMESTAMPTZ,
+  outcome_status_notes            TEXT,
+  coach_id                        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  assigned_at                     TIMESTAMPTZ,
+  created_by_staff                BOOLEAN DEFAULT false,
+  reference_code                  TEXT,
+  documents                       JSONB DEFAULT '{}',
+  referral_code                   TEXT,
+  referred_by_code                TEXT,
+  referred_by_patient_id          UUID REFERENCES psy_patients(id) ON DELETE SET NULL,
+  created_at                      TIMESTAMPTZ DEFAULT now(),
+  updated_at                      TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT psy_patients_user_id_unique UNIQUE (user_id),
+  CONSTRAINT psy_patients_status_check CHECK (status IN (
+    'pending_kyc','active','inactive','rejected','deleted',
+    'unregistered','archived','deceased'
+  )),
+  CONSTRAINT psy_patients_kob_status_check CHECK (kob_status IN (
+    'pending_payment',      -- Patient baru daftar, belum bayar
+    'paid',                 -- Sudah bayar (bayaran luaran/GHL), KYC belum hantar
+    'kyc_done',             -- KYC selesai, belum book slot KOB
+    'booked',               -- Slot KOB ditempah
+    'hadir',                -- Doktor tekan Hadir (sesi sedang berlangsung)
+    'package_recommended',  -- Doktor pilih pakej, pesakit perlu bayar
+    'package_paid',         -- Pesakit sudah bayar pakej
+    'completed',            -- KOB selesai → pakej unlocked
+    'na'                    -- Not applicable (staff-created / grandfathered)
+  )),
+  CONSTRAINT psy_patients_outcome_status_check CHECK (
+    outcome_status IN ('otw','berhenti','meninggal','completed')
+  )
+);
 
-COMMENT ON COLUMN psy_kyc_submissions.submitted_by_proxy IS
-  'true = wakil/keluarga isi borang ini (info mesti tepat & boleh disahkan dengan pesakit sebenar)';
-
-
--- ════════════════════════════════════════════════════════════════
--- step30_outcome_status.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step30_outcome_status.sql
--- Clinical outcome status for reporting & statistics.
--- Separate from system 'status' (active/inactive) — this is treatment outcome.
--- ============================================================
-
-ALTER TABLE psy_patients
-  ADD COLUMN IF NOT EXISTS outcome_status TEXT
-  CHECK (outcome_status IN ('otw','berhenti','meninggal','completed'));
-
-ALTER TABLE psy_patients
-  ADD COLUMN IF NOT EXISTS outcome_status_at TIMESTAMPTZ;
-
-ALTER TABLE psy_patients
-  ADD COLUMN IF NOT EXISTS outcome_status_notes TEXT;
+-- ──── indeks psy_patients ────
+CREATE INDEX IF NOT EXISTS idx_psy_patients_user  ON psy_patients(user_id);
+CREATE INDEX IF NOT EXISTS idx_psy_patients_mrn   ON psy_patients(mrn);
+CREATE INDEX IF NOT EXISTS idx_psy_patients_coach ON psy_patients(coach_id);
+CREATE INDEX IF NOT EXISTS idx_psy_patients_email ON psy_patients(email);
+CREATE INDEX IF NOT EXISTS idx_psy_patients_full_name ON psy_patients(full_name);
+CREATE INDEX IF NOT EXISTS idx_psy_patients_phone     ON psy_patients(phone);
+CREATE INDEX IF NOT EXISTS idx_patients_state         ON psy_patients(state);
 
 CREATE INDEX IF NOT EXISTS idx_psy_patients_outcome_status
   ON psy_patients (outcome_status) WHERE outcome_status IS NOT NULL;
 
-COMMENT ON COLUMN psy_patients.outcome_status IS
-  'Clinical outcome: otw=On-going Treatment, berhenti=stopped, meninggal=passed away, completed=selesai rawatan';
+-- Untuk auto-link query (cari unlinked staff-created patients ikut IC)
+CREATE INDEX IF NOT EXISTS idx_psy_patients_created_by_staff
+  ON psy_patients(created_by_staff)
+  WHERE created_by_staff = true AND user_id IS NULL;
 
+-- Kod rujukan mesti unik (NULL dibenarkan berbilang)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_psy_patients_referral_code
+  ON psy_patients (referral_code) WHERE referral_code IS NOT NULL;
 
--- ════════════════════════════════════════════════════════════════
--- step31_patient_self_vitals.sql
--- ════════════════════════════════════════════════════════════════
+CREATE INDEX IF NOT EXISTS idx_psy_patients_referred_by
+  ON psy_patients (referred_by_patient_id) WHERE referred_by_patient_id IS NOT NULL;
 
--- ============================================================
--- step31_patient_self_vitals.sql
--- Allow patients to log own BP / HbA1c readings (e.g. taken at home).
--- Add hba1c column + source column to distinguish staff vs patient entries.
--- ============================================================
+-- ──── RLS psy_patients ────
+ALTER TABLE psy_patients ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE psy_vitals
-  ADD COLUMN IF NOT EXISTS hba1c NUMERIC(4,2);
+DROP POLICY IF EXISTS "Staff manage patients" ON psy_patients;
+CREATE POLICY "Staff manage patients" ON psy_patients FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
-ALTER TABLE psy_vitals
-  ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'staff'
-  CHECK (source IN ('staff','patient_self'));
+DROP POLICY IF EXISTS "Patients read own record" ON psy_patients;
+CREATE POLICY "Patients read own record" ON psy_patients FOR SELECT
+  USING (user_id = auth.uid());
 
-ALTER TABLE psy_vitals
-  ADD COLUMN IF NOT EXISTS reading_date DATE;
+DROP POLICY IF EXISTS "Patients update own record" ON psy_patients;
+CREATE POLICY "Patients update own record" ON psy_patients FOR UPDATE
+  USING (user_id = auth.uid());
 
-COMMENT ON COLUMN psy_vitals.hba1c IS 'HbA1c % (e.g. 6.5 = 6.5%)';
-COMMENT ON COLUMN psy_vitals.source IS 'Who entered the reading: staff at clinic, or patient self-reported';
-COMMENT ON COLUMN psy_vitals.reading_date IS 'Date the reading was actually taken (may differ from created_at for back-dated entries)';
+DROP POLICY IF EXISTS "Patients insert own record" ON psy_patients;
+CREATE POLICY "Patients insert own record" ON psy_patients FOR INSERT
+  WITH CHECK (user_id = auth.uid());
 
--- Allow patient to insert OWN readings (only with source = patient_self)
-DO $$ BEGIN
-  CREATE POLICY "Patients insert own vitals" ON psy_vitals FOR INSERT
-    WITH CHECK (
-      source = 'patient_self'
-      AND patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())
-    );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Patients update own vitals" ON psy_vitals FOR UPDATE
-    USING (
-      source = 'patient_self'
-      AND patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())
+-- ──── trigger: auto-update updated_at ────
+CREATE OR REPLACE FUNCTION set_patients_updated_at()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.updated_at := now();
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_set_patients_updated_at ON psy_patients;
+CREATE TRIGGER trg_set_patients_updated_at
+  BEFORE UPDATE ON psy_patients
+  FOR EACH ROW
+  EXECUTE FUNCTION set_patients_updated_at();
+
+-- ──── trigger: auto-jana MRN unik bila tidak dibekalkan ────
+-- Client tak boleh query MRN tertinggi sebab RLS — jadi jana di DB.
+CREATE OR REPLACE FUNCTION assign_patient_mrn()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  next_num INT;
+  candidate TEXT;
+BEGIN
+  -- Kalau MRN dah diset client, biar je (mungkin migration / staff create)
+  IF NEW.mrn IS NOT NULL AND NEW.mrn != '' THEN
+    RETURN NEW;
+  END IF;
+
+  -- Ambil nombor tertinggi dari MRN format 'P-NNN'
+  SELECT COALESCE(MAX(CAST(regexp_replace(mrn, '\D', '', 'g') AS INT)), 0)
+  INTO next_num
+  FROM psy_patients
+  WHERE mrn LIKE 'P-%';
+
+  -- Loop sampai dapat MRN yang unik (handle race condition)
+  LOOP
+    next_num := next_num + 1;
+    candidate := 'P-' || LPAD(next_num::TEXT, 3, '0');
+    EXIT WHEN NOT EXISTS (SELECT 1 FROM psy_patients WHERE mrn = candidate);
+  END LOOP;
+
+  NEW.mrn := candidate;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_assign_patient_mrn ON psy_patients;
+CREATE TRIGGER trg_assign_patient_mrn
+  BEFORE INSERT ON psy_patients
+  FOR EACH ROW
+  EXECUTE FUNCTION assign_patient_mrn();
+
+-- Nota: trigger trg_assign_referral_code (auto-jana referral code) berada
+-- dalam 20_referrals.sql bersama fungsinya assign_referral_code().
+
+-- ──── fungsi + trigger: auto-create stub pesakit untuk self-register ────
+-- Flow: signup → email confirm → login → KYC → KOB → ...
+CREATE OR REPLACE FUNCTION handle_new_patient_profile()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+BEGIN
+  IF NEW.role = 'patient' THEN
+    IF NOT EXISTS (SELECT 1 FROM psy_patients WHERE user_id = NEW.id) THEN
+      INSERT INTO psy_patients (user_id, full_name, status, kob_status, created_by_staff)
+      VALUES (NEW.id, NEW.full_name, 'pending_kyc', 'paid', false);
+    END IF;
+  END IF;
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'handle_new_patient_profile error: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_new_patient_profile ON psy_profiles;
+CREATE TRIGGER trg_new_patient_profile
+  AFTER INSERT ON psy_profiles
+  FOR EACH ROW
+  EXECUTE FUNCTION handle_new_patient_profile();
+
+-- ──── fungsi: auto-tandai pesakit Tidak Aktif bila rawatan selesai ────
+-- Dicetus bila mana-mana sesi ditanda hadir/consultation_done (trigger pada
+-- psy_plan_weekly_progress — didefinisi dalam domain plan). Pelan TIDAK
+-- auto-tutup selagi ada minggu sambungan (continuity, extension_for_week=0)
+-- yang sudah dibayar tetapi belum selesai.
+CREATE OR REPLACE FUNCTION fn_auto_inactive_on_session_done()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_patient_id   UUID;
+  v_pstatus      TEXT;
+  v_pkg_expired  BOOLEAN;
+  v_all_done     BOOLEAN;
+  v_has_core     BOOLEAN;
+BEGIN
+  IF NEW.status NOT IN ('hadir','consultation_done') THEN
+    RETURN NEW;
+  END IF;
+  IF TG_OP = 'UPDATE' AND OLD.status = NEW.status THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT patient_id INTO v_patient_id FROM psy_treatment_plans WHERE id = NEW.plan_id;
+  IF v_patient_id IS NULL THEN RETURN NEW; END IF;
+
+  -- v_has_core : ada sekurang-kurangnya satu sesi teras.
+  -- v_all_done : tiada baris "menghalang" yang belum selesai, iaitu
+  --   (a) sesi teras (is_extension=false) yang belum selesai, ATAU
+  --   (b) minggu continuity BERBAYAR (extension_for_week = 0, bukan pending bayaran) yang belum selesai.
+  SELECT
+    EXISTS (SELECT 1 FROM psy_plan_weekly_progress
+            WHERE plan_id = NEW.plan_id AND COALESCE(is_extension,false) = false),
+    NOT EXISTS (
+      SELECT 1 FROM psy_plan_weekly_progress
+      WHERE plan_id = NEW.plan_id
+        AND status NOT IN ('hadir','consultation_done')
+        AND (
+          COALESCE(is_extension,false) = false
+          OR (COALESCE(extension_for_week, -1) = 0 AND status <> 'extension_pending_payment')
+        )
     )
-    WITH CHECK (
-      source = 'patient_self'
-      AND patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())
-    );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    INTO v_has_core, v_all_done;
 
+  SELECT status, (package_expires_at IS NOT NULL AND package_expires_at < now())
+    INTO v_pstatus, v_pkg_expired
+    FROM psy_patients WHERE id = v_patient_id;
 
--- ════════════════════════════════════════════════════════════════
--- step32_package_extensions.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step32_package_extensions.sql
--- Sprint 1: Package System Foundation
---
--- Extends psy_packages with fields needed for:
--- - Jadual peminuman madu auto (10x/8x/4x ikut pakej)
--- - Lock butang ONLINE dari minggu 3 (kecuali pakej OB direct: OBD1/OBDX1/OBDY1/OBP1/OBPX1/OBPY1)
--- - Bekalan per minggu (foundation untuk inventory auto-deduct)
--- - Content unlock rule per minggu
--- - WhatsApp message template per minggu
--- ============================================================
-
-ALTER TABLE psy_packages
-  ADD COLUMN IF NOT EXISTS madu_frequency_per_day INT,
-  ADD COLUMN IF NOT EXISTS madu_schedule_label TEXT,
-  ADD COLUMN IF NOT EXISTS allow_online_full_duration BOOLEAN NOT NULL DEFAULT false,
-  ADD COLUMN IF NOT EXISTS online_lock_from_week INT NOT NULL DEFAULT 3,
-  ADD COLUMN IF NOT EXISTS weekly_supplies JSONB DEFAULT '[]',
-  ADD COLUMN IF NOT EXISTS weekly_content JSONB DEFAULT '[]',
-  ADD COLUMN IF NOT EXISTS weekly_message JSONB DEFAULT '[]';
-
-COMMENT ON COLUMN psy_packages.madu_frequency_per_day IS
-  'Frekuensi peminuman madu sehari. Examples: 10 (12-minggu), 8 (3-bulan), 4 (3-bulan-sekali). NULL = no madu schedule.';
-COMMENT ON COLUMN psy_packages.madu_schedule_label IS
-  'Human-readable label for madu schedule, e.g. "10x sehari (12 minggu)"';
-COMMENT ON COLUMN psy_packages.allow_online_full_duration IS
-  'true = online sessions allowed throughout (OBD1/OBDX1/OBDY1/OBP1/OBPX1/OBPY1). false = lock to f2f after online_lock_from_week.';
-COMMENT ON COLUMN psy_packages.online_lock_from_week IS
-  'Week number from which online sessions are locked (must use f2f). Default 3.';
-COMMENT ON COLUMN psy_packages.weekly_supplies IS
-  'Array of {week, items: [{product_id, qty, name}]} — bekalan auto-deduct per week';
-COMMENT ON COLUMN psy_packages.weekly_content IS
-  'Array of {week, content_ids: []} — library content unlock per week';
-COMMENT ON COLUMN psy_packages.weekly_message IS
-  'Array of {week, message} — WhatsApp template per week';
-
--- Mark OB-direct packages as allowing online full duration
-UPDATE psy_packages
-  SET allow_online_full_duration = true
-  WHERE LOWER(package_id) IN ('obd1','obdx1','obdy1','obp1','obpx1','obpy1');
-
-
--- ════════════════════════════════════════════════════════════════
--- step33_madu_tracking.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step33_madu_tracking.sql
--- Track madu intake count per day in daily check-in.
--- Target frequency comes from patient's active package (madu_frequency_per_day).
--- ============================================================
-
-ALTER TABLE psy_daily_checkins
-  ADD COLUMN IF NOT EXISTS madu_count INT NOT NULL DEFAULT 0;
-
-COMMENT ON COLUMN psy_daily_checkins.madu_count IS
-  'Bilangan kali pesakit minum madu hari ini. Target dari psy_packages.madu_frequency_per_day.';
-
-
--- ════════════════════════════════════════════════════════════════
--- step34_kob.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step34_kob.sql
--- Konsultasi Orang Baru (KOB) — mandatory paid entry-point.
---
--- Flow:
---   Register → Bayar RM199 → Isi KYC → Pilih tarikh KOB →
---   Doktor: Hadir → Patient sign agreement → Doktor isi notes + upload → Selesai →
---   Unlock pakej rawatan
--- ============================================================
-
--- ── 1. Extend psy_patients with KOB lifecycle status ──────
-ALTER TABLE psy_patients
-  ADD COLUMN IF NOT EXISTS kob_status TEXT NOT NULL DEFAULT 'pending_payment'
-  CHECK (kob_status IN (
-    'pending_payment',  -- Patient baru daftar, belum bayar RM199
-    'paid',             -- Sudah bayar, KYC belum hantar
-    'kyc_done',         -- KYC selesai, belum book slot KOB
-    'booked',           -- Slot KOB ditempah
-    'hadir',            -- Doktor tekan Hadir (sesi sedang berlangsung)
-    'completed',        -- Doktor tekan Selesai → pakej unlocked
-    'na'                -- Not applicable (patient staff-created, grandfathered)
-  ));
-
-COMMENT ON COLUMN psy_patients.kob_status IS
-  'Lifecycle KOB. Self-registered patient mula pending_payment → completed sebelum boleh pilih pakej. Staff-created patient = na.';
-
--- Existing patients: bulk-categorize
--- Staff-created (created_by_staff=true) → na (bypass KOB)
-DO $$ BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.columns
-             WHERE table_name='psy_patients' AND column_name='created_by_staff') THEN
-    EXECUTE $sql$
-      UPDATE psy_patients SET kob_status = 'na'
-      WHERE created_by_staff = true AND kob_status = 'pending_payment'
-    $sql$;
+  -- Sudah tak aktif → jangan ganggu
+  IF v_pstatus IN ('inactive','archived','deceased','deleted') THEN
+    RETURN NEW;
   END IF;
-END $$;
 
--- Existing patients with active package → grandfather as completed
-UPDATE psy_patients SET kob_status = 'completed'
-  WHERE active_package_id IS NOT NULL AND kob_status = 'pending_payment';
-
--- Patients with terminal outcome → na (skip if outcome_status column not yet present)
-DO $$ BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name='psy_patients' AND column_name='outcome_status'
-  ) THEN
-    EXECUTE $sql$
-      UPDATE psy_patients SET kob_status = 'na'
-      WHERE outcome_status IN ('berhenti','meninggal') AND kob_status = 'pending_payment'
-    $sql$;
+  IF (v_has_core AND v_all_done) OR v_pkg_expired THEN
+    UPDATE psy_patients
+      SET status = 'inactive',
+          outcome_status = CASE WHEN outcome_status IS NULL OR outcome_status = ''
+                                THEN 'completed' ELSE outcome_status END,
+          outcome_status_at = CASE WHEN outcome_status IS NULL OR outcome_status = ''
+                                   THEN now() ELSE outcome_status_at END
+      WHERE id = v_patient_id;
+    UPDATE psy_treatment_plans SET status = 'completed'
+      WHERE id = NEW.plan_id AND status <> 'completed';
   END IF;
-END $$;
 
--- ── 2. psy_kob_sessions: booking, attendance, notes ───────
-CREATE TABLE IF NOT EXISTS psy_kob_sessions (
-  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id          UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
-  scheduled_at        TIMESTAMPTZ NOT NULL,
-  mode                TEXT NOT NULL DEFAULT 'f2f' CHECK (mode IN ('f2f','online')),
-  meet_link           TEXT,
-  status              TEXT NOT NULL DEFAULT 'booked'
-                      CHECK (status IN ('booked','hadir','completed','reschedule','cancelled')),
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
-  -- Doctor who marked attendance (may differ from who completes)
-  doctor_hadir_id     UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
-  doctor_hadir_name   TEXT,
-  hadir_at            TIMESTAMPTZ,
-
-  -- Doctor who marked completion
-  doctor_selesai_id   UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
-  doctor_selesai_name TEXT,
-  selesai_at          TIMESTAMPTZ,
-
-  -- Clinical notes from doctor
-  notes               TEXT,
-  -- Uploaded reports / supporting docs for this KOB
-  documents           JSONB DEFAULT '[]',
-
-  reschedule_count    INT NOT NULL DEFAULT 0,
-  reschedule_reason   TEXT,
-
-  created_at          TIMESTAMPTZ DEFAULT now(),
-  updated_at          TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_kob_patient ON psy_kob_sessions(patient_id);
-CREATE INDEX IF NOT EXISTS idx_kob_scheduled ON psy_kob_sessions(scheduled_at);
-CREATE INDEX IF NOT EXISTS idx_kob_status ON psy_kob_sessions(status);
-
-ALTER TABLE psy_kob_sessions ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN
-  CREATE POLICY "Patient read own KOB" ON psy_kob_sessions FOR SELECT
-    USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Patient book own KOB" ON psy_kob_sessions FOR INSERT
-    WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Patient reschedule own KOB" ON psy_kob_sessions FOR UPDATE
-    USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff manage KOB sessions" ON psy_kob_sessions FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- ── 3. psy_kob_agreements: signed agreement record ────────
-CREATE TABLE IF NOT EXISTS psy_kob_agreements (
-  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id        UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
-  kob_session_id    UUID REFERENCES psy_kob_sessions(id) ON DELETE SET NULL,
-  agreement_version TEXT NOT NULL DEFAULT 'ISW.SOP OB KOB FORM 03 CONTRACT 250711',
-  patient_name      TEXT NOT NULL,
-  patient_ic        TEXT NOT NULL,
-  signature_url     TEXT NOT NULL,   -- raw PNG signature in storage
-  signed_pdf_url    TEXT,            -- generated PDF with signature embedded
-  signed_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-  ip_address        TEXT,
-  user_agent        TEXT,
-  created_at        TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_kob_agreements_patient ON psy_kob_agreements(patient_id);
-
-ALTER TABLE psy_kob_agreements ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN
-  CREATE POLICY "Patient read own agreement" ON psy_kob_agreements FOR SELECT
-    USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Patient sign own agreement" ON psy_kob_agreements FOR INSERT
-    WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff read all agreements" ON psy_kob_agreements FOR SELECT
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff insert agreement on behalf of patient" ON psy_kob_agreements FOR INSERT
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff update agreement" ON psy_kob_agreements FOR UPDATE
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- ── 4. Storage bucket for KOB documents + signatures ──────
--- Run separately in Supabase Storage UI or via:
---   INSERT INTO storage.buckets (id, name, public) VALUES ('kob-documents', 'kob-documents', false);
---   INSERT INTO storage.buckets (id, name, public) VALUES ('kob-signatures', 'kob-signatures', false);
-
-SELECT 'Step 34 OK — KOB tables ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step35_kob_skip_payment.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step35_kob_skip_payment.sql
--- Simplification: payment is handled externally (GHL), not in this system.
--- New patients land directly at KYC step.
--- When GHL integration ready, can revert default to 'pending_payment'
--- and re-introduce pay-banner.
--- ============================================================
-
--- Change default for new patients: skip payment, start at 'paid' (assumed paid externally)
-ALTER TABLE psy_patients ALTER COLUMN kob_status SET DEFAULT 'paid';
-
--- Bulk-update existing patients stuck at 'pending_payment' → 'paid'
-UPDATE psy_patients SET kob_status = 'paid' WHERE kob_status = 'pending_payment';
-
+-- ──── komen psy_patients ────
 COMMENT ON COLUMN psy_patients.kob_status IS
   'KOB lifecycle. Payment external (GHL). New self-registered patient starts at paid → kyc_done → booked → hadir → completed. Staff-created can be na (grandfathered).';
 
-SELECT 'Step 35 OK — payment step skipped, KYC is now first step' AS status;
+COMMENT ON COLUMN psy_patients.outcome_status IS
+  'Clinical outcome: otw=On-going Treatment, berhenti=stopped, meninggal=passed away, completed=selesai rawatan';
 
+COMMENT ON COLUMN psy_patients.daily_schedule IS
+  'Patient-customized daily schedule. NULL = inherit from active package template. Array = patient has overridden.';
 
--- ════════════════════════════════════════════════════════════════
--- step36_kob_slots.sql
--- ════════════════════════════════════════════════════════════════
+COMMENT ON COLUMN psy_patients.created_by_staff IS
+  'TRUE = pesakit didaftarkan oleh staff (bukan self-signup). Akan bypass KOB flow (kob_status=na) dan tunggu auto-link bila pesakit signup sendiri guna IC sama.';
 
--- ============================================================
--- step36_kob_slots.sql
--- KOB slot template configuration.
--- Slots are a fixed template — same 4 time slots for Wed-Sun.
--- Admin can toggle each slot on/off. No per-patient capacity (infinite per slot).
--- ============================================================
+COMMENT ON COLUMN psy_patients.full_name IS
+  'Nama pesakit. Bila ada user_id, biasanya match dgn psy_profiles.full_name. Snapshot untuk staff-created tanpa user_id.';
 
-CREATE TABLE IF NOT EXISTS psy_kob_slot_config (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  day_of_week  INT NOT NULL CHECK (day_of_week IN (0, 3, 4, 5, 6)),  -- 0=Sun, 3=Wed, 4=Thu, 5=Fri, 6=Sat
-  slot_start   TIME NOT NULL,
-  slot_end     TIME NOT NULL,
-  is_active    BOOLEAN NOT NULL DEFAULT true,
-  label        TEXT NOT NULL,         -- human-readable e.g. "8.30 AM - 10.00 AM"
-  sort_order   INT NOT NULL DEFAULT 0,
-  created_at   TIMESTAMPTZ DEFAULT now(),
-  updated_at   TIMESTAMPTZ DEFAULT now(),
-  UNIQUE (day_of_week, slot_start)
+COMMENT ON COLUMN psy_patients.phone IS
+  'Nombor telefon utama pesakit. Boleh berbeza dari psy_profiles.phone (cth: kalau staff tukar di sini).';
+
+COMMENT ON COLUMN psy_patients.emergency_contact_email IS
+  'Email kenalan kecemasan / waris.';
+
+COMMENT ON COLUMN psy_patients.emergency_contact_relationship IS
+  'Hubungan waris dengan pesakit (Suami, Isteri, Ibu, Bapa, Anak, dll).';
+
+COMMENT ON COLUMN psy_patients.updated_at IS
+  'Masa kemaskini terakhir rekod pesakit (auto dari trigger).';
+
+COMMENT ON COLUMN psy_patients.home_address IS
+  'Alamat kediaman pesakit (berbeza dari address yang digunakan untuk surat-menyurat / mailing).';
+
+COMMENT ON COLUMN psy_patients.city  IS 'Bandar (sebahagian dari alamat kediaman).';
+
+COMMENT ON COLUMN psy_patients.state IS 'Negeri (Selangor, Johor, dll.).';
+
+COMMENT ON COLUMN psy_patients.referral_code IS
+  'Kod rujukan unik pesakit ini untuk dikongsi (auto-jana dari nama/MRN).';
+
+COMMENT ON COLUMN psy_patients.referred_by_code IS
+  'Kod rujukan perujuk yang dimasukkan semasa pesakit ini mendaftar.';
+
+COMMENT ON COLUMN psy_patients.referred_by_patient_id IS
+  'Pesakit perujuk yang telah diselesaikan dari referred_by_code.';
+
+COMMENT ON COLUMN psy_patients.next_package_id IS
+  'Pakej sambungan (continuity) yang sudah dibayar & beratur; auto-aktif bila pakej semasa selesai (step93).';
+
+-- ────────────────────────────────────────────────
+-- psy_kyc_submissions — borang KYC pesakit
+-- ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_kyc_submissions (
+  id                              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id                         UUID REFERENCES psy_profiles(id) ON DELETE CASCADE,
+  patient_name                    TEXT NOT NULL,
+  ic_number                       TEXT,
+  date_of_birth                   DATE,
+  gender                          TEXT,
+  phone                           TEXT,
+  email                           TEXT,
+  address                         TEXT,
+  marital_status                  TEXT,
+  occupation                      TEXT,
+  company                         TEXT,
+  emergency_contact               TEXT,
+  emergency_contact_name          TEXT,
+  emergency_contact_phone         TEXT,
+  emergency_contact_ic            TEXT,
+  emergency_contact_relationship  TEXT,
+  emergency_contact_email         TEXT,
+  medical_condition               TEXT,
+  condition_duration              TEXT,
+  medical_notes                   TEXT,
+  insurance_info                  JSONB,
+  documents                       JSONB DEFAULT '{}',
+  consent_data_processing         BOOLEAN DEFAULT false,
+  consent_health_records          BOOLEAN DEFAULT false,
+  consent_research                BOOLEAN DEFAULT false,
+  consent_marketing               BOOLEAN DEFAULT false,
+  referral_source                 TEXT,
+  submitted_by_proxy              BOOLEAN NOT NULL DEFAULT false,
+  status                          TEXT DEFAULT 'pending'
+                                  CHECK (status IN ('pending','approved','rejected','needs_docs')),
+  reviewed_by                     UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  review_notes                    TEXT,
+  created_at                      TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_kob_slots_day ON psy_kob_slot_config(day_of_week, is_active);
+-- ──── RLS psy_kyc_submissions ────
+ALTER TABLE psy_kyc_submissions ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE psy_kob_slot_config ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Staff manage KYC" ON psy_kyc_submissions;
+CREATE POLICY "Staff manage KYC" ON psy_kyc_submissions FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
-DO $$ BEGIN
-  CREATE POLICY "Anyone read kob slots" ON psy_kob_slot_config
-    FOR SELECT USING (auth.uid() IS NOT NULL);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DROP POLICY IF EXISTS "Patients read own KYC" ON psy_kyc_submissions;
+CREATE POLICY "Patients read own KYC" ON psy_kyc_submissions FOR SELECT
+  USING (user_id = auth.uid());
 
-DO $$ BEGIN
-  CREATE POLICY "Admin manage kob slots" ON psy_kob_slot_config FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('admin','manager','doctor')));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DROP POLICY IF EXISTS "Patients insert own KYC" ON psy_kyc_submissions;
+CREATE POLICY "Patients insert own KYC" ON psy_kyc_submissions FOR INSERT
+  WITH CHECK (user_id = auth.uid());
 
--- ── Seed: 5 hari (Rabu-Ahad) × 4 slot ────────────────────
--- Slot 1: 8.30 AM - 10.00 AM
--- Slot 2: 10.30 AM - 12.00 PM
--- Slot 3: 2.00 PM - 3.30 PM
--- Slot 4: 3.30 PM - 5.00 PM
-INSERT INTO psy_kob_slot_config (day_of_week, slot_start, slot_end, label, sort_order) VALUES
-  (3, '08:30', '10:00', '8.30 AM - 10.00 AM', 1),
-  (3, '10:30', '12:00', '10.30 AM - 12.00 PM', 2),
-  (3, '14:00', '15:30', '2.00 PM - 3.30 PM', 3),
-  (3, '15:30', '17:00', '3.30 PM - 5.00 PM', 4),
-  (4, '08:30', '10:00', '8.30 AM - 10.00 AM', 1),
-  (4, '10:30', '12:00', '10.30 AM - 12.00 PM', 2),
-  (4, '14:00', '15:30', '2.00 PM - 3.30 PM', 3),
-  (4, '15:30', '17:00', '3.30 PM - 5.00 PM', 4),
-  (5, '08:30', '10:00', '8.30 AM - 10.00 AM', 1),
-  (5, '10:30', '12:00', '10.30 AM - 12.00 PM', 2),
-  (5, '14:00', '15:30', '2.00 PM - 3.30 PM', 3),
-  (5, '15:30', '17:00', '3.30 PM - 5.00 PM', 4),
-  (6, '08:30', '10:00', '8.30 AM - 10.00 AM', 1),
-  (6, '10:30', '12:00', '10.30 AM - 12.00 PM', 2),
-  (6, '14:00', '15:30', '2.00 PM - 3.30 PM', 3),
-  (6, '15:30', '17:00', '3.30 PM - 5.00 PM', 4),
-  (0, '08:30', '10:00', '8.30 AM - 10.00 AM', 1),
-  (0, '10:30', '12:00', '10.30 AM - 12.00 PM', 2),
-  (0, '14:00', '15:30', '2.00 PM - 3.30 PM', 3),
-  (0, '15:30', '17:00', '3.30 PM - 5.00 PM', 4)
-ON CONFLICT DO NOTHING;
+DROP POLICY IF EXISTS "Patients update own KYC" ON psy_kyc_submissions;
+CREATE POLICY "Patients update own KYC" ON psy_kyc_submissions FOR UPDATE
+  USING (user_id = auth.uid());
 
-SELECT 'Step 36 OK — KOB slot config ready' AS status;
+DROP POLICY IF EXISTS "Staff can read all kyc" ON psy_kyc_submissions;
+CREATE POLICY "Staff can read all kyc"
+  ON psy_kyc_submissions FOR SELECT
+  USING (
+    auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff')
+    OR auth.uid() = user_id
+  );
+
+-- ──── trigger: auto-sync KYC → patient bila KYC diluluskan ────
+-- Menjamin tiada desync walaupun patient row tak wujud masa KYC approved.
+CREATE OR REPLACE FUNCTION sync_kyc_to_patient()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+BEGIN
+  -- Hanya sync bila status berubah jadi 'approved'
+  IF NEW.status = 'approved' AND (OLD.status IS NULL OR OLD.status != 'approved') THEN
+    UPDATE psy_patients
+    SET
+      status                  = 'active',
+      full_name               = COALESCE(NULLIF(full_name, ''), NEW.patient_name),
+      phone                   = COALESCE(NULLIF(phone, ''), NEW.phone),
+      ic_number               = COALESCE(NULLIF(ic_number, ''), NEW.ic_number),
+      date_of_birth           = COALESCE(date_of_birth, NEW.date_of_birth),
+      gender                  = COALESCE(NULLIF(gender, ''), NEW.gender),
+      address                 = COALESCE(NULLIF(address, ''), NEW.address),
+      emergency_contact_name  = COALESCE(NULLIF(emergency_contact_name, ''), NEW.emergency_contact_name),
+      emergency_contact_phone = COALESCE(NULLIF(emergency_contact_phone, ''), NEW.emergency_contact_phone),
+      referral_source         = COALESCE(NULLIF(referral_source, ''), NEW.referral_source),
+      medical_condition       = COALESCE(NULLIF(medical_condition, ''), NEW.medical_condition),
+      condition_duration      = COALESCE(NULLIF(condition_duration, ''), NEW.condition_duration),
+      medical_notes           = COALESCE(NULLIF(medical_notes, ''), NEW.medical_notes)
+    WHERE user_id = NEW.user_id;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_sync_kyc_to_patient ON psy_kyc_submissions;
+CREATE TRIGGER trg_sync_kyc_to_patient
+  AFTER INSERT OR UPDATE ON psy_kyc_submissions
+  FOR EACH ROW
+  EXECUTE FUNCTION sync_kyc_to_patient();
+
+-- ──── komen psy_kyc_submissions ────
+COMMENT ON COLUMN psy_kyc_submissions.submitted_by_proxy IS
+  'true = wakil/keluarga isi borang ini (info mesti tepat & boleh disahkan dengan pesakit sebenar)';
+
+-- ────────────────────────────────────────────────
+-- psy_patient_notes — catatan pesakit (staff)
+-- ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_patient_notes (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id   UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  note_type    TEXT NOT NULL DEFAULT 'general'
+               CHECK (note_type IN ('general','coach','sesi','checkin','vitals','medical','dna','peringatan')),
+  content      TEXT NOT NULL,
+  related_session_id UUID,
+  related_report_id  UUID,
+  actor_id     UUID,
+  actor_name   TEXT,
+  actor_role   TEXT,
+  is_pinned    BOOLEAN DEFAULT false,
+  visibility   TEXT DEFAULT 'staff'
+               CHECK (visibility IN ('staff','patient','both')),
+  created_at   TIMESTAMPTZ DEFAULT now(),
+  updated_at   TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_patient_notes_patient ON psy_patient_notes(patient_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_patient_notes_type    ON psy_patient_notes(note_type);
+
+ALTER TABLE psy_patient_notes ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "staff_notes_all" ON psy_patient_notes;
+CREATE POLICY "staff_notes_all" ON psy_patient_notes FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "patient_notes_read" ON psy_patient_notes;
+CREATE POLICY "patient_notes_read" ON psy_patient_notes FOR SELECT
+  USING (visibility IN ('patient','both') AND
+         patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+-- ────────────────────────────────────────────────
+-- psy_patient_documents — dokumen pesakit
+--   plan_id NULL + week_number NULL -> dokumen umum (Patient Hub)
+--   plan_id + week_number diisi     -> dokumen khusus minggu (plan-week)
+-- ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_patient_documents (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id   UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  doc_type     TEXT NOT NULL DEFAULT 'other'
+               CHECK (doc_type IN ('kyc','ic','passport','persetujuan','laporan_perubatan','gambar','surat_rasmi','resit','other')),
+  doc_label    TEXT NOT NULL,
+  description  TEXT,
+  file_name    TEXT,
+  file_path    TEXT,
+  file_url     TEXT,
+  file_size    INT,
+  status       TEXT DEFAULT 'pending'
+               CHECK (status IN ('pending','disahkan','disemak','tertunggak','ditolak')),
+  uploaded_by  UUID,
+  uploaded_by_name TEXT,
+  uploaded_at  TIMESTAMPTZ DEFAULT now(),
+  approved_by  UUID,
+  approved_at  TIMESTAMPTZ,
+  plan_id      UUID,  -- FK → psy_treatment_plans (dipasang di hujung 07_treatment_plans.sql)
+  week_number  INT
+);
+
+CREATE INDEX IF NOT EXISTS idx_patient_docs_patient ON psy_patient_documents(patient_id, uploaded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_patient_docs_type    ON psy_patient_documents(doc_type);
+
+CREATE INDEX IF NOT EXISTS idx_patient_docs_plan_week
+  ON psy_patient_documents (plan_id, week_number)
+  WHERE plan_id IS NOT NULL;
+
+ALTER TABLE psy_patient_documents ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "staff_docs_all" ON psy_patient_documents;
+CREATE POLICY "staff_docs_all" ON psy_patient_documents FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "patient_docs_read_own" ON psy_patient_documents;
+CREATE POLICY "patient_docs_read_own" ON psy_patient_documents FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "patient_docs_insert_own" ON psy_patient_documents;
+CREATE POLICY "patient_docs_insert_own" ON psy_patient_documents FOR INSERT
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+COMMENT ON COLUMN psy_patient_documents.plan_id IS
+  'Jika diisi, dokumen ini dilampirkan pada plan rawatan tertentu (skop minggu).';
+
+COMMENT ON COLUMN psy_patient_documents.week_number IS
+  'Nombor minggu plan untuk dokumen ini (NULL = dokumen umum pesakit).';
+
+-- Nota: polisi storage pesakit (medical-reports, kob-signatures, kob-documents)
+-- diselenggara berpusat dalam 24_storage.sql.
+
+-- ────────────────────────────────────────────────
+-- Realtime — status pesakit / kehadiran auto-tolak ke UI
+-- (Realtime hormati RLS)
+-- ────────────────────────────────────────────────
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'psy_patients'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE psy_patients;
+  END IF;
+END $$;
+-- (realtime psy_plan_weekly_progress: lihat 07_treatment_plans.sql)
 
 
 -- ════════════════════════════════════════════════════════════════
--- step37_kob_questionnaire.sql
+-- schema/05_packages.sql
 -- ════════════════════════════════════════════════════════════════
 
--- ============================================================
--- step37_kob_questionnaire.sql
--- Structured questionnaire for KOB session — doctor fills during consultation.
--- Stored as JSONB so we can evolve the question set without schema changes.
--- ============================================================
+-- ═══════════════════════════════════════════════════════════════════
+-- SKEMA: PAKEJ & TAWARAN PAKEJ
+-- Jadual: psy_packages, psy_package_purchases, psy_package_categories,
+--         psy_continuity_offers
+-- ═══════════════════════════════════════════════════════════════════
 
-ALTER TABLE psy_kob_sessions
-  ADD COLUMN IF NOT EXISTS questionnaire JSONB DEFAULT '{}';
+-- ──────────────────────────────────────────────────────────────
+-- psy_packages — definisi pakej rawatan
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_packages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  package_id TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  price NUMERIC(10,2) DEFAULT 0,
+  duration TEXT,
+  duration_unit TEXT DEFAULT 'week',
+  duration_weeks INT DEFAULT 12,
+  icon TEXT DEFAULT '📦',
+  bg_color TEXT DEFAULT 'bg-cream',
+  tier TEXT,
+  is_active BOOLEAN DEFAULT true,
+  products JSONB DEFAULT '[]',
+  bimbingan JSONB DEFAULT '[]',
+  inclusions JSONB DEFAULT '[]',
+  coaching_schedule JSONB DEFAULT '[]',
+  phases JSONB,
+  sort_order INT DEFAULT 0,
+  -- jadual madu & kunci sesi online
+  madu_frequency_per_day INT,
+  madu_schedule_label TEXT,
+  allow_online_full_duration BOOLEAN NOT NULL DEFAULT false,
+  online_lock_from_week INT NOT NULL DEFAULT 3,
+  -- konfigurasi mingguan
+  weekly_supplies JSONB DEFAULT '[]',
+  weekly_content JSONB DEFAULT '[]',
+  weekly_message JSONB DEFAULT '[]',
+  -- perjanjian (kontrak) pakej
+  agreement_pdf TEXT,
+  agreement_clauses JSONB DEFAULT '[]',
+  agreement_version TEXT,
+  agreement_title TEXT DEFAULT 'Kontrak Pelaburan Kesihatan',
+  -- rutin harian & jadual sesi fleksibel
+  daily_schedule JSONB DEFAULT '[]'::jsonb,
+  sessions_per_week INT DEFAULT 1
+    CHECK (sessions_per_week BETWEEN 1 AND 7),
+  session_days_options JSONB DEFAULT '[]',
+  -- lain-lain
+  extension_price_per_week NUMERIC(10,2) DEFAULT 50,
+  meet_link TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
 
-COMMENT ON COLUMN psy_kob_sessions.questionnaire IS
-  'Structured Q&A captured during KOB. Keys: anak[], tidur{}, gaya_hidup{}, masalah_kesihatan{} — see kob-detail.html for shape.';
+CREATE INDEX IF NOT EXISTS idx_psy_packages_active ON psy_packages(is_active);
+CREATE INDEX IF NOT EXISTS idx_psy_packages_sort ON psy_packages(sort_order);
 
-SELECT 'Step 37 OK — KOB questionnaire column ready' AS status;
+ALTER TABLE psy_packages ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Anyone read active packages" ON psy_packages;
+CREATE POLICY "Anyone read active packages" ON psy_packages
+  FOR SELECT USING (true);
 
--- ════════════════════════════════════════════════════════════════
--- step38_kob_package_recommendation.sql
--- ════════════════════════════════════════════════════════════════
+DROP POLICY IF EXISTS "Staff manage packages" ON psy_packages;
+CREATE POLICY "Staff manage packages" ON psy_packages FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
--- ============================================================
--- step38_kob_package_recommendation.sql
--- Doctor recommends a treatment package during KOB session.
--- Patient pays for it → signs agreement → doctor marks Selesai → activates everything.
--- ============================================================
+COMMENT ON COLUMN psy_packages.madu_frequency_per_day IS
+  'Frekuensi peminuman madu sehari. Examples: 10 (12-minggu), 8 (3-bulan), 4 (3-bulan-sekali). NULL = no madu schedule.';
 
-ALTER TABLE psy_kob_sessions
-  ADD COLUMN IF NOT EXISTS recommended_package_id   TEXT,
-  ADD COLUMN IF NOT EXISTS recommended_package_name TEXT,
-  ADD COLUMN IF NOT EXISTS recommended_package_price NUMERIC(10,2),
-  ADD COLUMN IF NOT EXISTS recommended_at           TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS recommended_by           UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS recommended_by_name      TEXT,
-  ADD COLUMN IF NOT EXISTS package_payment_status   TEXT DEFAULT 'pending'
-    CHECK (package_payment_status IN ('pending','paid','skipped','na')),
-  ADD COLUMN IF NOT EXISTS package_paid_at          TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS package_receipt_ref      TEXT;
+COMMENT ON COLUMN psy_packages.madu_schedule_label IS
+  'Human-readable label for madu schedule, e.g. "10x sehari (12 minggu)"';
 
-COMMENT ON COLUMN psy_kob_sessions.recommended_package_id IS
-  'Package recommended by doctor during KOB. Patient must pay before agreement signing.';
+COMMENT ON COLUMN psy_packages.allow_online_full_duration IS
+  'true = online sessions allowed throughout (OBD1/OBDX1/OBDY1/OBP1/OBPX1/OBPY1). false = lock to f2f after online_lock_from_week.';
 
--- Extend patient kob_status enum with new transitional states
-ALTER TABLE psy_patients DROP CONSTRAINT IF EXISTS psy_patients_kob_status_check;
-ALTER TABLE psy_patients ADD CONSTRAINT psy_patients_kob_status_check
-  CHECK (kob_status IN (
-    'pending_payment',
-    'paid',
-    'kyc_done',
-    'booked',
-    'hadir',
-    'package_recommended',  -- Doctor picked a package, patient needs to pay
-    'package_paid',         -- Patient paid for the package
-    'completed',
-    'na'
-  ));
+COMMENT ON COLUMN psy_packages.online_lock_from_week IS
+  'Week number from which online sessions are locked (must use f2f). Default 3.';
 
-SELECT 'Step 38 OK — KOB package recommendation ready' AS status;
+COMMENT ON COLUMN psy_packages.weekly_supplies IS
+  'Array of {week, items: [{product_id, qty, name}]} — bekalan auto-deduct per week';
 
+COMMENT ON COLUMN psy_packages.weekly_content IS
+  'Array of {week, content_ids: []} — library content unlock per week';
 
--- ════════════════════════════════════════════════════════════════
--- step39_package_agreement.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step39_package_agreement.sql
--- Each package has its own agreement PDF template.
--- Patient signs the agreement matching their recommended package.
--- Fallback to generic 'agreement.pdf' if not set.
--- ============================================================
-
-ALTER TABLE psy_packages
-  ADD COLUMN IF NOT EXISTS agreement_pdf TEXT;
+COMMENT ON COLUMN psy_packages.weekly_message IS
+  'Array of {week, message} — WhatsApp template per week';
 
 COMMENT ON COLUMN psy_packages.agreement_pdf IS
   'Filename of agreement PDF in shared/documents/agreements/ (relative path). NULL = use default agreement.pdf';
 
--- Seed mapping for known packages (idempotent — only set if column currently null)
+COMMENT ON COLUMN psy_packages.agreement_clauses IS
+  'Array of {title, body} clauses for the patient agreement. Supports variables like {{patient_name}}.';
+
+COMMENT ON COLUMN psy_packages.agreement_version IS
+  'Version label, e.g. ISW.SOP OB KOB FORM 03 CONTRACT 250711';
+
+COMMENT ON COLUMN psy_packages.agreement_title IS
+  'Title shown at top of agreement (default: Kontrak Pelaburan Kesihatan)';
+
+COMMENT ON COLUMN psy_packages.daily_schedule IS
+  'Array of {time:"HH:MM", activity:"text"} — default daily routine for patients on this package.';
+
+COMMENT ON COLUMN psy_packages.sessions_per_week IS
+  'Bilangan sesi seminggu untuk pakej ini. 1 = sekali (OBG), 2 = dua kali (OB/NLC). Pakej per-hari (777) guna duration_unit=day, biarkan field ini = 1.';
+
+COMMENT ON COLUMN psy_packages.session_days_options IS
+  'Pilihan variant hari sesi yang patient boleh pilih. Format: array of array of int (1=Mon, 7=Sun). Cth OB: [[5,6],[6,7]] = pilihan Jum+Sab ATAU Sab+Ahd. OBG: [[6]] = Sabtu sahaja.';
+
+COMMENT ON COLUMN psy_packages.extension_price_per_week IS
+  'Harga (RM) untuk tambah satu minggu rawatan bila patient miss sesi. Default RM 50.';
+
+COMMENT ON COLUMN psy_packages.meet_link IS
+  'Pautan Gmeet recurring untuk pakej. Dipaparkan kepada patient bila minggu semasa adalah online/both.';
+
+-- ──────────────────────────────────────────────────────────────
+-- psy_package_purchases — pembelian pakej oleh pesakit
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_package_purchases (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
+  package_id TEXT NOT NULL,
+  package_name TEXT NOT NULL,
+  price NUMERIC(10,2) NOT NULL,
+  purchased_at TIMESTAMPTZ DEFAULT now(),
+  expires_at TIMESTAMPTZ,
+  status TEXT DEFAULT 'pending_payment' CHECK (status IN ('pending_payment','paid','active','expired','cancelled')),
+  payment_method TEXT,
+  ghl_order_id TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_psy_purchases_patient ON psy_package_purchases(patient_id);
+
+ALTER TABLE psy_package_purchases ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patients manage own purchases" ON psy_package_purchases;
+CREATE POLICY "Patients manage own purchases" ON psy_package_purchases FOR ALL
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff read all purchases" ON psy_package_purchases;
+CREATE POLICY "Staff read all purchases" ON psy_package_purchases FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff update purchases" ON psy_package_purchases;
+CREATE POLICY "Staff update purchases" ON psy_package_purchases FOR UPDATE
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ──────────────────────────────────────────────────────────────
+-- psy_package_categories — kategori pakej dinamik (CRUD dari UI)
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_package_categories (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  slug        TEXT NOT NULL UNIQUE,
+  label       TEXT NOT NULL,
+  badge_color TEXT,
+  sort_order  INTEGER NOT NULL DEFAULT 100,
+  is_active   BOOLEAN NOT NULL DEFAULT true,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE psy_package_categories ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Anyone read categories" ON psy_package_categories;
+CREATE POLICY "Anyone read categories" ON psy_package_categories
+  FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Staff manage categories" ON psy_package_categories;
+CREATE POLICY "Staff manage categories" ON psy_package_categories
+  FOR ALL USING (
+    EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
+  );
+
+COMMENT ON TABLE psy_package_categories IS 'Senarai kategori pakej (dahulu hardcoded: standard/free/vip). Slug disimpan dalam psy_packages.tier.';
+COMMENT ON COLUMN psy_package_categories.slug IS 'Stored value in psy_packages.tier (e.g. standard, free, vip, detox)';
+COMMENT ON COLUMN psy_package_categories.badge_color IS 'Tailwind color suffix for badge (e.g. gold, green, navy) — null = no badge';
+
+-- ──────────────────────────────────────────────────────────────
+-- psy_continuity_offers — cadangan pakej sambungan oleh coach
+-- package_uuid = psy_packages.id (UUID yg app guna sbg active_package_id)
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_continuity_offers (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  plan_id       UUID,  -- FK → psy_treatment_plans (dipasang di hujung 07_treatment_plans.sql)
+  patient_id    UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  suggested_by  UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  package_uuid  UUID,
+  package_name  TEXT,
+  price         NUMERIC(10,2),
+  note          TEXT,
+  status        TEXT DEFAULT 'sent' CHECK (status IN ('sent','viewed','accepted','declined','cancelled')),
+  created_at    TIMESTAMPTZ DEFAULT now(),
+  responded_at  TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_psy_continuity_offers_patient
+  ON psy_continuity_offers(patient_id, status, created_at DESC);
+
+ALTER TABLE psy_continuity_offers ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage continuity offers" ON psy_continuity_offers;
+CREATE POLICY "Staff manage continuity offers" ON psy_continuity_offers FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Patients read own continuity offers" ON psy_continuity_offers;
+CREATE POLICY "Patients read own continuity offers" ON psy_continuity_offers FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Patients respond own continuity offers" ON psy_continuity_offers;
+CREATE POLICY "Patients respond own continuity offers" ON psy_continuity_offers FOR UPDATE
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+COMMENT ON TABLE psy_continuity_offers IS
+  'Cadangan pakej sambungan oleh coach utk pesakit baki ≤4 minggu. Terima → pembayaran.';
+
+-- ══════════════════════════════════════════════════════════════
+-- DATA RUJUKAN (SEED)
+-- ══════════════════════════════════════════════════════════════
+
+-- ──── kategori pakej ────
+INSERT INTO psy_package_categories (slug, label, badge_color, sort_order)
+VALUES
+  ('standard', 'Program Intensif', NULL,    10),
+  ('free',     'Pakej Percuma',    'green', 20),
+  ('vip',      'VIP / Premium',    'gold',  30)
+ON CONFLICT (slug) DO NOTHING;
+
+-- ──── konfigurasi pakej OB-direct: online dibenarkan sepanjang tempoh ────
+UPDATE psy_packages
+  SET allow_online_full_duration = true
+  WHERE LOWER(package_id) IN ('obd1','obdx1','obdy1','obp1','obpx1','obpy1');
+
+-- ──── pemetaan PDF perjanjian per pakej (hanya jika belum ditetapkan) ────
 UPDATE psy_packages SET agreement_pdf = 'ELIXIR_EOL_CONTRACT_[TEMPLATE].pdf'
   WHERE LOWER(package_id) IN ('pkg-eol','eol') AND agreement_pdf IS NULL;
 
@@ -2010,77 +1406,7 @@ UPDATE psy_packages SET agreement_pdf = 'OBPX1_-_CONTRACT_[TEMPLATE].pdf'
 UPDATE psy_packages SET agreement_pdf = 'OBPY1_-_CONTRACT_[TEMPLATE].pdf'
   WHERE LOWER(package_id) IN ('pkg-obpy1','obpy1') AND agreement_pdf IS NULL;
 
-SELECT 'Step 39 OK — agreement_pdf mapping ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step40_agreement_storage.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step40_agreement_storage.sql
--- Storage bucket setup for package agreement PDFs.
--- Staff upload via pakej-edit.html → saved here → patient reads when signing.
--- ============================================================
-
--- Create the private bucket
-INSERT INTO storage.buckets (id, name, public)
-  VALUES ('agreement-templates', 'agreement-templates', false)
-ON CONFLICT (id) DO NOTHING;
-
--- All authenticated users can READ (so patient can preview + load to sign)
-DO $$ BEGIN
-  CREATE POLICY "Authenticated read agreement templates"
-    ON storage.objects FOR SELECT
-    USING (bucket_id = 'agreement-templates' AND auth.uid() IS NOT NULL);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- Only admin / manager / doctor can UPLOAD / UPDATE / DELETE
-DO $$ BEGIN
-  CREATE POLICY "Staff manage agreement templates"
-    ON storage.objects FOR ALL
-    USING (
-      bucket_id = 'agreement-templates'
-      AND EXISTS (
-        SELECT 1 FROM psy_profiles
-        WHERE id = auth.uid()
-        AND role = 'staff'
-        AND staff_role IN ('admin','manager','doctor')
-      )
-    );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-SELECT 'Step 40 OK — agreement-templates storage bucket ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step41_agreement_clauses.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step41_agreement_clauses.sql
--- Migrate from PDF upload to HTML text clauses approach.
--- Admin edit clauses → patient render as HTML → sign → auto-generate PDF.
---
--- agreement_clauses structure:
---   [{ "title": "1. Tanggungjawab", "body": "Saya bersetuju..." }, ...]
---
--- Supports variables: {{patient_name}}, {{patient_ic}}, {{package_name}}, {{today}}, {{price}}
--- ============================================================
-
-ALTER TABLE psy_packages
-  ADD COLUMN IF NOT EXISTS agreement_clauses JSONB DEFAULT '[]',
-  ADD COLUMN IF NOT EXISTS agreement_version TEXT,
-  ADD COLUMN IF NOT EXISTS agreement_title TEXT DEFAULT 'Kontrak Pelaburan Kesihatan';
-
-COMMENT ON COLUMN psy_packages.agreement_clauses IS
-  'Array of {title, body} clauses for the patient agreement. Supports variables like {{patient_name}}.';
-COMMENT ON COLUMN psy_packages.agreement_version IS
-  'Version label, e.g. ISW.SOP OB KOB FORM 03 CONTRACT 250711';
-COMMENT ON COLUMN psy_packages.agreement_title IS
-  'Title shown at top of agreement (default: Kontrak Pelaburan Kesihatan)';
-
--- Seed default clauses (matching the original PDF content) for all packages with empty clauses
+-- ──── klausa perjanjian lalai (hanya jika masih kosong) ────
 UPDATE psy_packages
 SET
   agreement_clauses = '[
@@ -2118,171 +1444,7 @@ SET
   agreement_title = 'Kontrak Pelaburan Kesihatan'
 WHERE agreement_clauses = '[]' OR agreement_clauses IS NULL;
 
-SELECT 'Step 41 OK — agreement clauses seeded for all packages' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step42_kob_storage_buckets.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step42_kob_storage_buckets.sql
--- Setup storage buckets for KOB signatures + documents.
--- Patient uploads signature PNG + generated signed PDF here.
--- Doctor uploads supporting documents here.
--- ============================================================
-
--- ── kob-signatures bucket (patient signature PNG + signed PDF) ──
-INSERT INTO storage.buckets (id, name, public)
-  VALUES ('kob-signatures', 'kob-signatures', false)
-ON CONFLICT (id) DO NOTHING;
-
--- Patient can upload their own signature
-DO $$ BEGIN
-  CREATE POLICY "Patient upload own signature"
-    ON storage.objects FOR INSERT
-    WITH CHECK (
-      bucket_id = 'kob-signatures'
-      AND auth.uid() IS NOT NULL
-      AND (storage.foldername(name))[1] IN (
-        SELECT id::text FROM psy_patients WHERE user_id = auth.uid()
-      )
-    );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- Patient can read own signature
-DO $$ BEGIN
-  CREATE POLICY "Patient read own signature"
-    ON storage.objects FOR SELECT
-    USING (
-      bucket_id = 'kob-signatures'
-      AND auth.uid() IS NOT NULL
-      AND (storage.foldername(name))[1] IN (
-        SELECT id::text FROM psy_patients WHERE user_id = auth.uid()
-      )
-    );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- Staff can read all signatures
-DO $$ BEGIN
-  CREATE POLICY "Staff read all signatures"
-    ON storage.objects FOR SELECT
-    USING (
-      bucket_id = 'kob-signatures'
-      AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
-    );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- ── kob-documents bucket (doctor uploads docs during KOB session) ──
-INSERT INTO storage.buckets (id, name, public)
-  VALUES ('kob-documents', 'kob-documents', false)
-ON CONFLICT (id) DO NOTHING;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff manage kob documents"
-    ON storage.objects FOR ALL
-    USING (
-      bucket_id = 'kob-documents'
-      AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
-    );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Patient read own kob documents"
-    ON storage.objects FOR SELECT
-    USING (
-      bucket_id = 'kob-documents'
-      AND auth.uid() IS NOT NULL
-      AND (storage.foldername(name))[1] IN (
-        SELECT id::text FROM psy_patients WHERE user_id = auth.uid()
-      )
-    );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-SELECT 'Step 42 OK — kob-signatures + kob-documents buckets ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step43_pakej_rujukan_storage.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step43_pakej_rujukan_storage.sql
--- Storage bucket for package weekly rujukan files (SOPs, scripts, docs).
--- Staff-only read+write. Patient does NOT see rujukan.
--- ============================================================
-
--- Create private bucket
-INSERT INTO storage.buckets (id, name, public)
-  VALUES ('pakej-rujukan', 'pakej-rujukan', false)
-ON CONFLICT (id) DO NOTHING;
-
--- Staff (any role) can read
-DO $$ BEGIN
-  CREATE POLICY "Staff read pakej rujukan"
-    ON storage.objects FOR SELECT
-    USING (
-      bucket_id = 'pakej-rujukan'
-      AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
-    );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- Only admin / manager / doctor can upload / update / delete
-DO $$ BEGIN
-  CREATE POLICY "Staff manage pakej rujukan"
-    ON storage.objects FOR ALL
-    USING (
-      bucket_id = 'pakej-rujukan'
-      AND EXISTS (
-        SELECT 1 FROM psy_profiles
-        WHERE id = auth.uid()
-        AND role = 'staff'
-        AND staff_role IN ('admin','manager','doctor')
-      )
-    );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-SELECT 'Step 43 OK — pakej-rujukan storage bucket ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step44_daily_schedule.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step44_daily_schedule.sql
--- Daily schedule template per package (staff defines)
--- + per-patient customized copy (patient can edit)
--- + in-app reminder fires when patient opens app at scheduled time
--- ============================================================
-
--- Template per package
-ALTER TABLE psy_packages
-  ADD COLUMN IF NOT EXISTS daily_schedule JSONB DEFAULT '[]'::jsonb;
-
-COMMENT ON COLUMN psy_packages.daily_schedule IS
-  'Array of {time:"HH:MM", activity:"text"} — default daily routine for patients on this package.';
-
--- Patient's customized copy (NULL = follow package template, [] or array = patient-customized)
-ALTER TABLE psy_patients
-  ADD COLUMN IF NOT EXISTS daily_schedule JSONB;
-
-COMMENT ON COLUMN psy_patients.daily_schedule IS
-  'Patient-customized daily schedule. NULL = inherit from active package template. Array = patient has overridden.';
-
-SELECT 'Step 44 OK — daily_schedule columns ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step45_seed_daily_schedule.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step45_seed_daily_schedule.sql
--- Seed sample daily_schedule for demo. Single UPDATE with CASE
--- to avoid deadlock between multiple UPDATE statements.
--- ============================================================
-
+-- ──── jadual harian lalai per pakej (hanya jika masih kosong) ────
 UPDATE psy_packages
 SET daily_schedule = CASE
   WHEN LOWER(package_id) IN (
@@ -2335,338 +1497,570 @@ WHERE LOWER(package_id) IN (
 )
 AND (daily_schedule IS NULL OR daily_schedule = '[]'::jsonb);
 
-SELECT
-  package_id,
-  name,
-  jsonb_array_length(COALESCE(daily_schedule,'[]'::jsonb)) AS items
-FROM psy_packages
-WHERE jsonb_array_length(COALESCE(daily_schedule,'[]'::jsonb)) > 0
-ORDER BY package_id;
-
 
 -- ════════════════════════════════════════════════════════════════
--- step46_daily_completions.sql
+-- schema/06_payments.sql
 -- ════════════════════════════════════════════════════════════════
 
--- ============================================================
--- step46_daily_completions.sql
--- Track patient's daily activity completion (checklist).
--- One row per checked item per day. Resets implicitly via log_date.
--- ============================================================
+-- ═══════════════════════════════════════════════════════════════════
+-- SKEMA: PEMBAYARAN & PESANAN
+-- Jadual: psy_payments, psy_orders
+-- Gateway bayaran provider-agnostic (HitPay/Fiuu) via kolum gateway_*.
+-- ═══════════════════════════════════════════════════════════════════
 
-CREATE TABLE IF NOT EXISTS psy_daily_completions (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id   UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
-  log_date     DATE NOT NULL DEFAULT CURRENT_DATE,
-  item_time    TEXT NOT NULL,      -- 'HH:MM' string from schedule
-  activity     TEXT NOT NULL,      -- snapshot of activity name for reference
-  completed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(patient_id, log_date, item_time)
+-- ──────────────────────────────────────────────────────────────
+-- psy_payments — rekod bayaran (manual + gateway)
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_payments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  receipt_ref TEXT UNIQUE NOT NULL,
+  patient_id UUID REFERENCES psy_patients(id),
+  user_id UUID REFERENCES psy_profiles(id) ON DELETE CASCADE,
+  items JSONB DEFAULT '[]',
+  subtotal NUMERIC(10,2) DEFAULT 0,
+  service_charge NUMERIC(10,2) DEFAULT 0,
+  sst NUMERIC(10,2) DEFAULT 0,
+  total NUMERIC(10,2) NOT NULL,
+  payment_method TEXT CHECK (payment_method IN ('fpx','card','transfer','ghl','manual','gateway')),
+  status TEXT DEFAULT 'completed' CHECK (status IN ('pending','completed','refunded','failed')),
+  ghl_transaction_id TEXT,
+  notes TEXT,
+  -- gateway bayaran (HitPay/Fiuu) — pending row dicipta sebelum redirect,
+  -- webhook padankan gateway_ref & jalankan fulfillment ikut intent
+  gateway_provider TEXT,                      -- 'hitpay' | 'fiuu' | NULL (manual)
+  gateway_ref      TEXT,                      -- id rujukan dari gateway
+  gateway_status   TEXT,                      -- status mentah dari gateway
+  intent           JSONB DEFAULT '{}'::jsonb, -- niat bayaran utk fulfillment
+  fulfilled_at     TIMESTAMPTZ,               -- bila fulfillment benar-benar jalan
+  paid_at TIMESTAMPTZ DEFAULT now(),
+  created_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_daily_completions_patient_date
-  ON psy_daily_completions(patient_id, log_date);
+CREATE INDEX IF NOT EXISTS idx_psy_payments_patient ON psy_payments(patient_id);
+CREATE INDEX IF NOT EXISTS idx_psy_payments_receipt ON psy_payments(receipt_ref);
+CREATE INDEX IF NOT EXISTS idx_psy_payments_gateway_ref ON psy_payments (gateway_ref);
 
-ALTER TABLE psy_daily_completions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_payments ENABLE ROW LEVEL SECURITY;
 
--- Patient manages own
-DO $$ BEGIN
-  CREATE POLICY "Patient manage own completions"
-    ON psy_daily_completions FOR ALL
-    USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
-    WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DROP POLICY IF EXISTS "Patients read own payments" ON psy_payments;
+CREATE POLICY "Patients read own payments" ON psy_payments FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
 
--- Staff read all (for compliance views)
-DO $$ BEGIN
-  CREATE POLICY "Staff read completions"
-    ON psy_daily_completions FOR SELECT
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- pesakit hanya boleh insert baris bayaran MILIK SENDIRI
+DROP POLICY IF EXISTS "Patients insert own payments" ON psy_payments;
+CREATE POLICY "Patients insert own payments" ON psy_payments
+  FOR INSERT WITH CHECK (
+    patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())
+  );
 
-SELECT 'Step 46 OK — psy_daily_completions ready' AS status;
+DROP POLICY IF EXISTS "Staff manage all payments" ON psy_payments;
+CREATE POLICY "Staff manage all payments" ON psy_payments FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+COMMENT ON COLUMN psy_payments.intent IS
+  'Snapshot pendingItems + konteks bayaran; dibaca oleh payments-webhook untuk fulfillment idempotent selepas gateway sahkan.';
+
+-- ──────────────────────────────────────────────────────────────
+-- psy_orders — pesanan produk pesakit (penghantaran bekalan)
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_orders (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_ref TEXT UNIQUE NOT NULL,
+  patient_id UUID NOT NULL,
+  items JSONB NOT NULL DEFAULT '[]',
+  total NUMERIC(10,2) DEFAULT 0,
+  status TEXT DEFAULT 'pending' CHECK (status IN ('pending','paid','packed','shipped','delivered','cancelled')),
+  delivery_method TEXT DEFAULT 'pos' CHECK (delivery_method IN ('pickup','pos')),
+  delivery_address TEXT,
+  courier TEXT,
+  tracking_number TEXT,
+  tracking_photo_url TEXT,
+  notes TEXT,
+  paid_at TIMESTAMPTZ,
+  packed_at TIMESTAMPTZ,
+  shipped_at TIMESTAMPTZ,
+  delivered_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE psy_orders ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patient view own orders" ON psy_orders;
+CREATE POLICY "Patient view own orders" ON psy_orders FOR SELECT
+  USING (patient_id = auth.uid());
+
+DROP POLICY IF EXISTS "Patient insert own orders" ON psy_orders;
+CREATE POLICY "Patient insert own orders" ON psy_orders FOR INSERT
+  WITH CHECK (patient_id = auth.uid());
+
+DROP POLICY IF EXISTS "Patient confirm delivery" ON psy_orders;
+CREATE POLICY "Patient confirm delivery" ON psy_orders FOR UPDATE
+  USING (patient_id = auth.uid() AND status = 'shipped')
+  WITH CHECK (status = 'delivered');
+
+DROP POLICY IF EXISTS "Staff manage orders" ON psy_orders;
+CREATE POLICY "Staff manage orders" ON psy_orders FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- Nota trigger pada psy_orders (diletak bersama fungsi masing-masing):
+--   trg_psy_order_deduct_inventory → 14_products_inventory.sql
+--   trg_notify_staff_new_order     → 18_notifications_automations.sql
 
 
 -- ════════════════════════════════════════════════════════════════
--- step47_slot_overhaul.sql
+-- schema/07_treatment_plans.sql
 -- ════════════════════════════════════════════════════════════════
 
--- ============================================================
--- step47_slot_overhaul.sql
--- 1. Add slot_type column ('kob' | 'rawatan') to existing slot config
--- 2. Replace old 4 slots with new 5 slots
--- 3. Seed for both KOB + Rawatan × 5 days
--- 4. Add per-date override table (staff manual lock/unlock specific dates)
--- ============================================================
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 07 — PELAN RAWATAN
+-- Jadual: psy_treatment_plans, psy_plan_weekly_progress, psy_plan_check_ins,
+--         psy_plan_compliance, psy_plan_week_overrides, psy_supply_disbursements
+-- Fungsi: fn_auto_inactive_on_session_done, fn_complete_expired_treatments
+-- ═══════════════════════════════════════════════════════════════════════════
 
--- ── 1. Add slot_type column ──
-ALTER TABLE psy_kob_slot_config
-  ADD COLUMN IF NOT EXISTS slot_type TEXT NOT NULL DEFAULT 'kob'
-  CHECK (slot_type IN ('kob','rawatan'));
+-- ──────────────────────────────────────────────────────────────
+-- psy_treatment_plans — pelan rawatan utama setiap pesakit
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_treatment_plans (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id          UUID NOT NULL REFERENCES psy_patients(id),
+  doctor_id           UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  name                TEXT NOT NULL,
+  template            TEXT,
+  duration_unit       TEXT DEFAULT 'week',
+  duration_weeks      INT DEFAULT 13,
+  current_week        INT DEFAULT 1,
+  coaching_schedule   JSONB DEFAULT '[]',
+  status              TEXT DEFAULT 'active' CHECK (status IN ('draft','active','completed','paused')),
+  -- jadual pilihan pesakit (wizard setup)
+  preferred_pair      TEXT,                     -- legacy: fri_sat / sat_sun (tiada CHECK lagi)
+  preferred_time_day1 TIME,                     -- jam sesi hari pertama
+  preferred_time_day2 TIME,                     -- jam sesi hari kedua
+  preferred_days      JSONB DEFAULT NULL,       -- [dow JS 0-6] ikut turutan sesi
+  sessions_per_week   INT   DEFAULT NULL,       -- disalin dari pakej masa setup
+  schedule_setup_at   TIMESTAMPTZ,
+  start_date          DATE,                     -- anchor sebenar Minggu 1
+  created_at          TIMESTAMPTZ DEFAULT now()
+);
 
--- Rebuild unique constraint to include slot_type
-ALTER TABLE psy_kob_slot_config
-  DROP CONSTRAINT IF EXISTS psy_kob_slot_config_day_of_week_slot_start_key;
+ALTER TABLE psy_treatment_plans ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE psy_kob_slot_config DROP CONSTRAINT IF EXISTS psy_kob_slot_config_unique;
-ALTER TABLE psy_kob_slot_config
-  ADD CONSTRAINT psy_kob_slot_config_unique UNIQUE (slot_type, day_of_week, slot_start);
+DROP POLICY IF EXISTS "Staff manage plans" ON psy_treatment_plans;
+CREATE POLICY "Staff manage plans" ON psy_treatment_plans FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
--- ── 2. Clear old slot definitions (template only, no FK to bookings) ──
-DELETE FROM psy_kob_slot_config;
+DROP POLICY IF EXISTS "Patients read own plans" ON psy_treatment_plans;
+CREATE POLICY "Patients read own plans" ON psy_treatment_plans FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
 
--- ── 3. Seed new 5 slots × 2 types × 5 days ──
--- Slots:
---   1: 07:00 - 09:00  "7-9 pg"
---   2: 09:30 - 11:30  "9.30-11.30 pg"
---   3: 14:00 - 16:00  "2-4 ptg"
---   4: 14:30 - 16:30  "2.30-4.30 ptg"
---   5: 16:30 - 18:30  "4.30-6.30 ptg"
--- Days: Rabu(3), Khamis(4), Jumaat(5), Sabtu(6), Ahad(0)
+DROP POLICY IF EXISTS "Patients insert own plans" ON psy_treatment_plans;
+CREATE POLICY "Patients insert own plans" ON psy_treatment_plans FOR INSERT
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
 
-INSERT INTO psy_kob_slot_config (slot_type, day_of_week, slot_start, slot_end, label, sort_order, is_active)
-SELECT
-  t.slot_type,
-  d.day_of_week,
-  s.slot_start::time,
-  s.slot_end::time,
-  s.label,
-  s.sort_order,
-  true
-FROM
-  (VALUES ('kob'), ('rawatan')) AS t(slot_type),
-  (VALUES (3), (4), (5), (6), (0)) AS d(day_of_week),
-  (VALUES
-    ('07:00', '09:00', '7-9 pg',          1),
-    ('09:30', '11:30', '9.30-11.30 pg',   2),
-    ('14:00', '16:00', '2-4 ptg',         3),
-    ('14:30', '16:30', '2.30-4.30 ptg',   4),
-    ('16:30', '18:30', '4.30-6.30 ptg',   5)
-  ) AS s(slot_start, slot_end, label, sort_order);
+-- Patient boleh update plan sendiri untuk setup jadual sahaja
+DROP POLICY IF EXISTS "Patients update own plan setup" ON psy_treatment_plans;
+CREATE POLICY "Patients update own plan setup" ON psy_treatment_plans FOR UPDATE
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
 
--- ── 4. Per-date override (staff lock/offer specific slots per date) ──
-CREATE TABLE IF NOT EXISTS psy_slot_date_overrides (
+DROP POLICY IF EXISTS "Staff can read all treatment plans" ON psy_treatment_plans;
+CREATE POLICY "Staff can read all treatment plans" ON psy_treatment_plans FOR SELECT
+  USING (
+    auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff')
+    OR auth.uid() IN (SELECT user_id FROM psy_patients WHERE id = patient_id)
+  );
+
+COMMENT ON COLUMN psy_treatment_plans.start_date IS
+  'Tarikh sebenar program bermula (anchor Minggu 1). NULL = fallback ke created_at. '
+  'Guna untuk pesakit yang dimasukkan lewat / mid-program (cth dah di week 7/12) supaya '
+  'semua tarikh sesi dikira dari tarikh sebenar, bukan tarikh plan dicipta.';
+
+COMMENT ON COLUMN psy_treatment_plans.preferred_pair IS
+  'Pasangan hari pilihan patient: fri_sat (Jumaat+Sabtu) atau sat_sun (Sabtu+Ahad).';
+
+COMMENT ON COLUMN psy_treatment_plans.preferred_time_day1 IS
+  'Jam pilihan hari pertama dalam pair (Jumaat untuk fri_sat, Sabtu untuk sat_sun).';
+
+COMMENT ON COLUMN psy_treatment_plans.preferred_time_day2 IS
+  'Jam pilihan hari kedua dalam pair (Sabtu untuk fri_sat, Ahad untuk sat_sun).';
+
+COMMENT ON COLUMN psy_treatment_plans.schedule_setup_at IS
+  'Bila patient siap setup jadual. NULL = belum setup, tunjuk wizard.';
+
+COMMENT ON COLUMN psy_treatment_plans.preferred_days IS
+  'Hari sesi terpilih dalam nombor getDay() JS (0=Ahad..6=Sabtu), ikut turutan sesi. Cth [5,6]=Jum+Sab, [6]=Sab sahaja. Sumber kebenaran baharu; fallback ke preferred_pair utk plan lama.';
+
+COMMENT ON COLUMN psy_treatment_plans.sessions_per_week IS
+  'Bilangan sesi/minggu (1-2) disalin dari pakej masa setup jadual.';
+
+-- ──────────────────────────────────────────────────────────────
+-- psy_plan_weekly_progress — rekod sesi mingguan (1 baris per sesi)
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_plan_weekly_progress (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  plan_id                  UUID NOT NULL REFERENCES psy_treatment_plans(id) ON DELETE CASCADE,
+  patient_id               UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  week_number              INT NOT NULL,
+  session_day              INT DEFAULT 1
+                             CONSTRAINT psy_plan_weekly_progress_session_day_check
+                             CHECK (session_day BETWEEN 1 AND 7),
+  status                   TEXT NOT NULL
+                             CONSTRAINT psy_plan_weekly_progress_status_check
+                             CHECK (status IN (
+                               'pending','booked','hadir','reschedule','cancel','consultation_done',
+                               'extension_pending_payment','extension_paid'
+                             )),
+  session_type             TEXT NOT NULL DEFAULT 'f2f' CHECK (session_type IN ('f2f','online')),
+  session_date             TIMESTAMPTZ,
+  meet_link                TEXT,
+  score                    INT CHECK (score BETWEEN 0 AND 10),
+  -- nota sesi coach (single source of truth)
+  notes                    TEXT,
+  mood_before              INT,
+  mood_after               INT,
+  goals_discussed          TEXT[],
+  homework_given           TEXT[],
+  coach_id                 UUID REFERENCES auth.users(id),
+  coach_name               TEXT,
+  substitute_coach_id      UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  coaching_checks          JSONB DEFAULT '{}',
+  reaksi_pemulihan         JSONB DEFAULT '{}',  -- checklist Reaksi Pemulihan diisi coach masa sesi
+  appointment_id           UUID,  -- FK → psy_appointments (dipasang di hujung 08_sessions_scheduling.sql)
+  -- extension (minggu tambahan berbayar)
+  is_extension             BOOLEAN DEFAULT false,
+  extension_for_week       INT,
+  extension_price          NUMERIC(10,2),
+  extension_paid_at        TIMESTAMPTZ,
+  absence_reason           TEXT,
+  -- pengesahan kehadiran pesakit
+  patient_confirmed        BOOLEAN DEFAULT NULL,
+  patient_absence_reason   TEXT DEFAULT NULL,
+  patient_confirmed_at     TIMESTAMPTZ DEFAULT NULL,
+  confirm_reminder_sent_at TIMESTAMPTZ,  -- dedup peringatan (per sesi)
+  confirm_escalated_at     TIMESTAMPTZ,  -- dedup escalation coach (per sesi)
+  -- tandatangan pesakit (pilihan; path dalam bucket medical-reports)
+  patient_signature_path   TEXT DEFAULT NULL,
+  patient_signed_at        TIMESTAMPTZ DEFAULT NULL,
+  patient_signed_name      TEXT DEFAULT NULL,
+  updated_by               UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  updated_by_name          TEXT,
+  created_at               TIMESTAMPTZ DEFAULT now(),
+  updated_at               TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT psy_plan_weekly_progress_plan_week_day_key UNIQUE (plan_id, week_number, session_day)
+);
+
+CREATE INDEX IF NOT EXISTS idx_psy_weekly_plan ON psy_plan_weekly_progress(plan_id);
+
+CREATE INDEX IF NOT EXISTS idx_psy_weekly_patient ON psy_plan_weekly_progress(patient_id);
+
+-- Index bantu enjin cari sesi belum-sahkan dalam tetingkap
+CREATE INDEX IF NOT EXISTS idx_pwp_confirm_window
+  ON psy_plan_weekly_progress (session_date)
+  WHERE status = 'booked' AND patient_confirmed IS NULL;
+
+ALTER TABLE psy_plan_weekly_progress ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage weekly progress" ON psy_plan_weekly_progress;
+CREATE POLICY "Staff manage weekly progress" ON psy_plan_weekly_progress FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Patients read own progress" ON psy_plan_weekly_progress;
+CREATE POLICY "Patients read own progress" ON psy_plan_weekly_progress FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Patients insert own progress" ON psy_plan_weekly_progress;
+CREATE POLICY "Patients insert own progress" ON psy_plan_weekly_progress FOR INSERT
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Patients update own progress" ON psy_plan_weekly_progress;
+CREATE POLICY "Patients update own progress" ON psy_plan_weekly_progress FOR UPDATE
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff can read all weekly progress" ON psy_plan_weekly_progress;
+CREATE POLICY "Staff can read all weekly progress" ON psy_plan_weekly_progress FOR SELECT
+  USING (
+    auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff')
+    OR auth.uid() IN (SELECT user_id FROM psy_patients WHERE id = patient_id)
+  );
+
+COMMENT ON COLUMN psy_plan_weekly_progress.session_day IS
+  '1 = sesi pertama dalam minggu (Jum/Sab), 2 = sesi kedua (Sab/Ahad). Default 1 untuk backward compat.';
+
+COMMENT ON COLUMN psy_plan_weekly_progress.is_extension IS
+  'true = minggu tambahan (extension) selepas miss sesi. Perlu bayar sebelum tempah.';
+
+COMMENT ON COLUMN psy_plan_weekly_progress.extension_for_week IS
+  'Refer minggu asal yang miss, untuk audit trail.';
+
+COMMENT ON COLUMN psy_plan_weekly_progress.absence_reason IS
+  'Sebab pesakit tidak hadir, diisi semasa pesakit menjadual semula (reschedule) sesi yang tertinggal. Dipaparkan kepada staff.';
+
+COMMENT ON COLUMN psy_plan_weekly_progress.substitute_coach_id IS
+  'Coach ganti untuk sesi ini sahaja — patient kekal bawah coach asal.';
+
+COMMENT ON COLUMN psy_plan_weekly_progress.reaksi_pemulihan IS
+  'Checklist Reaksi Pemulihan diisi coach masa sesi (tracking sahaja, tiada skor). Format: {item_key: true}';
+
+-- Nota: trigger trg_notify_patient_new_week berada dalam
+-- 18_notifications_automations.sql bersama fungsinya.
+
+-- ──────────────────────────────────────────────────────────────
+-- Fungsi: selesai semua sesi / pakej tamat → auto-complete pelan;
+-- pakej sambungan (continuity) beratur di-auto-aktif, jika tiada
+-- → pesakit ditanda inactive + outcome completed.
+-- ──────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION fn_auto_inactive_on_session_done()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_patient_id    UUID;
+  v_pstatus       TEXT;
+  v_pkg_expired   BOOLEAN;
+  v_all_done      BOOLEAN;
+  v_has_core      BOOLEAN;
+  v_next_pkg      TEXT;
+  v_next_name     TEXT;
+BEGIN
+  IF NEW.status NOT IN ('hadir','consultation_done') THEN
+    RETURN NEW;
+  END IF;
+  IF TG_OP = 'UPDATE' AND OLD.status = NEW.status THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT patient_id INTO v_patient_id FROM psy_treatment_plans WHERE id = NEW.plan_id;
+  IF v_patient_id IS NULL THEN RETURN NEW; END IF;
+
+  -- v_all_done: tiada sesi teras belum selesai + tiada minggu continuity BERBAYAR belum selesai.
+  -- Minggu continuity ditanda extension_for_week = 0; absen (extension_for_week >= 1) tak menghalang.
+  SELECT
+    EXISTS (SELECT 1 FROM psy_plan_weekly_progress
+            WHERE plan_id = NEW.plan_id AND COALESCE(is_extension,false) = false),
+    NOT EXISTS (
+      SELECT 1 FROM psy_plan_weekly_progress
+      WHERE plan_id = NEW.plan_id
+        AND status NOT IN ('hadir','consultation_done')
+        AND (
+          COALESCE(is_extension,false) = false
+          OR (COALESCE(extension_for_week, -1) = 0 AND status <> 'extension_pending_payment')
+        )
+    )
+    INTO v_has_core, v_all_done;
+
+  SELECT status, (package_expires_at IS NOT NULL AND package_expires_at < now()),
+         next_package_id, next_package_name
+    INTO v_pstatus, v_pkg_expired, v_next_pkg, v_next_name
+    FROM psy_patients WHERE id = v_patient_id;
+
+  IF v_pstatus IN ('inactive','archived','deceased','deleted') THEN
+    RETURN NEW;
+  END IF;
+
+  IF (v_has_core AND v_all_done) OR v_pkg_expired THEN
+    -- Pelan lama SELESAI (kekal di History — tiada data dipadam).
+    UPDATE psy_treatment_plans SET status = 'completed'
+      WHERE id = NEW.plan_id AND status <> 'completed';
+
+    IF v_next_pkg IS NOT NULL AND v_next_pkg <> '' THEN
+      -- ── Ada pakej sambungan beratur → AUTO-AKTIF, pesakit KEKAL aktif ──
+      UPDATE psy_patients
+        SET active_package_id    = v_next_pkg,
+            active_package_name  = COALESCE(v_next_name, active_package_name),
+            package_purchased_at = now(),
+            package_expires_at   = now() + interval '3 months',
+            next_package_id      = NULL,
+            next_package_name    = NULL,
+            status               = 'active'
+        WHERE id = v_patient_id;
+
+      -- Purchase beratur → aktif (tempoh 3 bulan bermula dari pengaktifan).
+      UPDATE psy_package_purchases
+        SET status = 'active', expires_at = now() + interval '3 months'
+        WHERE patient_id = v_patient_id AND package_id = v_next_pkg AND status = 'queued';
+
+      -- Cipta pelan baru dari pakej sambungan (jika belum wujud). Baris mingguan dijana
+      -- kemudian bila pesakit set jadual (sama seperti pakej baru biasa).
+      INSERT INTO psy_treatment_plans
+        (patient_id, name, template, duration_unit, duration_weeks, current_week, coaching_schedule, status)
+      SELECT v_patient_id, COALESCE(pk.name,'Pakej') || ' Treatment Plan', pk.package_id,
+             COALESCE(pk.duration_unit,'week'), COALESCE(pk.duration_weeks,12), 1,
+             COALESCE(pk.coaching_schedule, '[]'::jsonb), 'active'
+      FROM psy_packages pk
+      WHERE pk.package_id = v_next_pkg
+        AND NOT EXISTS (
+          SELECT 1 FROM psy_treatment_plans
+          WHERE patient_id = v_patient_id AND template = v_next_pkg AND status = 'active'
+        );
+    ELSE
+      -- ── Tiada sambungan → pesakit inactive + outcome completed ──
+      UPDATE psy_patients
+        SET status = 'inactive',
+            outcome_status = CASE WHEN outcome_status IS NULL OR outcome_status = ''
+                                  THEN 'completed' ELSE outcome_status END,
+            outcome_status_at = CASE WHEN outcome_status IS NULL OR outcome_status = ''
+                                     THEN now() ELSE outcome_status_at END
+        WHERE id = v_patient_id;
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_auto_inactive ON psy_plan_weekly_progress;
+
+CREATE TRIGGER trg_auto_inactive
+  AFTER UPDATE ON psy_plan_weekly_progress
+  FOR EACH ROW
+  EXECUTE FUNCTION fn_auto_inactive_on_session_done();
+
+-- ──────────────────────────────────────────────────────────────
+-- psy_plan_check_ins — check-in matlamat pillar (bio/psycho/social/spiritual)
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_plan_check_ins (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  plan_id      UUID NOT NULL REFERENCES psy_treatment_plans(id) ON DELETE CASCADE,
+  patient_id   UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  pillar       TEXT NOT NULL CHECK (pillar IN ('bio','psycho','social','spiritual')),
+  goal_index   INT NOT NULL,
+  goal_text    TEXT,
+  completed_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (plan_id, pillar, goal_index)
+);
+
+ALTER TABLE psy_plan_check_ins ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patients manage own check-ins" ON psy_plan_check_ins;
+CREATE POLICY "Patients manage own check-ins" ON psy_plan_check_ins FOR ALL
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff read check-ins" ON psy_plan_check_ins;
+CREATE POLICY "Staff read check-ins" ON psy_plan_check_ins FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ──────────────────────────────────────────────────────────────
+-- psy_plan_compliance — kepatuhan rawatan per minggu per sesi
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_plan_compliance (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  slot_date   DATE NOT NULL,
-  slot_type   TEXT NOT NULL CHECK (slot_type IN ('kob','rawatan')),
-  slot_start  TIME NOT NULL,
-  is_offered  BOOLEAN NOT NULL DEFAULT true,
-  note        TEXT,
-  created_by  UUID,
+  plan_id     UUID NOT NULL REFERENCES psy_treatment_plans(id) ON DELETE CASCADE,
+  patient_id  UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  week_number INT NOT NULL,
+  session_day INT NOT NULL DEFAULT 1,
+  madu_sudu   INT,
+  nafas_kali  INT,
+  bumi_minit  INT,
+  berjemur    BOOLEAN,
+  pantang     BOOLEAN,
+  kelapa_kali INT,
+  kolon_kali  INT,
+  notes       TEXT,
   created_at  TIMESTAMPTZ DEFAULT now(),
   updated_at  TIMESTAMPTZ DEFAULT now(),
-  UNIQUE (slot_date, slot_type, slot_start)
+  CONSTRAINT psy_plan_compliance_plan_week_session_key UNIQUE (plan_id, week_number, session_day)
 );
 
-CREATE INDEX IF NOT EXISTS idx_slot_overrides_date
-  ON psy_slot_date_overrides(slot_date, slot_type);
+CREATE INDEX IF NOT EXISTS idx_psy_compliance_plan ON psy_plan_compliance(plan_id, week_number);
 
-ALTER TABLE psy_slot_date_overrides ENABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_psy_compliance_plan_week_sess
+  ON psy_plan_compliance (plan_id, week_number, session_day);
 
-DO $$ BEGIN
-  CREATE POLICY "Anyone read slot overrides"
-    ON psy_slot_date_overrides FOR SELECT
-    USING (auth.uid() IS NOT NULL);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TABLE psy_plan_compliance ENABLE ROW LEVEL SECURITY;
 
-DO $$ BEGIN
-  CREATE POLICY "Staff manage slot overrides"
-    ON psy_slot_date_overrides FOR ALL
-    USING (EXISTS (
-      SELECT 1 FROM psy_profiles
-      WHERE id = auth.uid() AND role = 'staff'
-      AND staff_role IN ('admin','manager','doctor')
-    ));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DROP POLICY IF EXISTS "Staff manage compliance" ON psy_plan_compliance;
+CREATE POLICY "Staff manage compliance" ON psy_plan_compliance FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
-SELECT 'Step 47 OK — 5 slot template × 2 types × 5 days + per-date override ready' AS status;
+DROP POLICY IF EXISTS "Patients manage own compliance" ON psy_plan_compliance;
+CREATE POLICY "Patients manage own compliance" ON psy_plan_compliance FOR ALL
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
 
+DROP POLICY IF EXISTS "Staff can read all compliance" ON psy_plan_compliance;
+CREATE POLICY "Staff can read all compliance" ON psy_plan_compliance FOR SELECT
+  USING (
+    auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff')
+    OR auth.uid() IN (SELECT user_id FROM psy_patients WHERE id = patient_id)
+  );
 
--- ════════════════════════════════════════════════════════════════
--- step48_feedback_weekly.sql
--- ════════════════════════════════════════════════════════════════
+COMMENT ON COLUMN psy_plan_compliance.session_day IS
+  'Sesi dalam minggu (1 atau 2) untuk kepatuhan ini. Default 1.';
 
--- ============================================================
--- step48_feedback_weekly.sql
--- Extend psy_feedback to support weekly per-session feedback
--- + overall end-of-treatment feedback (existing behavior).
--- ============================================================
-
--- Create base table if not exists (was missing in earlier migrations)
-CREATE TABLE IF NOT EXISTS psy_feedback (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id  UUID REFERENCES psy_patients(id) ON DELETE CASCADE,
-  rating      INT CHECK (rating BETWEEN 1 AND 5),
-  comment     TEXT,
-  helpful_tags JSONB DEFAULT '[]',
-  created_at  TIMESTAMPTZ DEFAULT now()
+-- ──────────────────────────────────────────────────────────────
+-- psy_plan_week_overrides — pengecualian per-pesakit per-minggu
+-- (bekalan, sesi, hari-sesi, bimbingan, aktiviti). Templat pakej = DEFAULT;
+-- logik baca di UI: override ?? default_pakej.
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_plan_week_overrides (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  plan_id               UUID NOT NULL REFERENCES psy_treatment_plans(id) ON DELETE CASCADE,
+  week_number           INT  NOT NULL,
+  patient_id            UUID REFERENCES psy_patients(id) ON DELETE CASCADE,
+  sessions_override     INT
+                          CONSTRAINT psy_plan_week_overrides_sessions_override_check
+                          CHECK (sessions_override BETWEEN 1 AND 7),
+  supplies_override     JSONB,  -- NULL=ikut pakej; []=tiada bekalan; [..]=ganti penuh
+  session_days_override JSONB,
+  guidance_override     JSONB,
+  aktiviti_override     JSONB,
+  note                  TEXT,
+  updated_by            UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  updated_at            TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT psy_plan_week_overrides_plan_id_week_number_key UNIQUE (plan_id, week_number)
 );
 
-ALTER TABLE psy_feedback ENABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_psy_plan_week_overrides_plan
+  ON psy_plan_week_overrides(plan_id, week_number);
 
-DO $$ BEGIN
-  CREATE POLICY "Patients manage own feedback" ON psy_feedback FOR ALL
-    USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
-    WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TABLE psy_plan_week_overrides ENABLE ROW LEVEL SECURITY;
 
-DO $$ BEGIN
-  CREATE POLICY "Staff read all feedback" ON psy_feedback FOR SELECT
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DROP POLICY IF EXISTS "Staff manage week overrides" ON psy_plan_week_overrides;
+CREATE POLICY "Staff manage week overrides" ON psy_plan_week_overrides FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
-ALTER TABLE psy_feedback
-  ADD COLUMN IF NOT EXISTS feedback_type   TEXT NOT NULL DEFAULT 'overall'
-    CHECK (feedback_type IN ('weekly','overall')),
-  ADD COLUMN IF NOT EXISTS week_number     INT,
-  ADD COLUMN IF NOT EXISTS plan_id         UUID REFERENCES psy_treatment_plans(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS coach_id        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS coach_name      TEXT,
-  ADD COLUMN IF NOT EXISTS coach_rating    INT CHECK (coach_rating BETWEEN 1 AND 5),
-  ADD COLUMN IF NOT EXISTS supply_rating   INT CHECK (supply_rating BETWEEN 1 AND 5);
+DROP POLICY IF EXISTS "Patients read own week overrides" ON psy_plan_week_overrides;
+CREATE POLICY "Patients read own week overrides" ON psy_plan_week_overrides FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
 
-COMMENT ON COLUMN psy_feedback.feedback_type IS
-  '"weekly" = per-session feedback (rates coach + supplies); "overall" = end-of-treatment review';
+COMMENT ON TABLE psy_plan_week_overrides IS
+  'Pengecualian bekalan/sesi per-pesakit per-minggu. Kalau tiada baris = ikut default pakej sepenuhnya.';
 
-CREATE INDEX IF NOT EXISTS idx_feedback_type_patient
-  ON psy_feedback(patient_id, feedback_type);
+COMMENT ON COLUMN psy_plan_week_overrides.session_days_override IS
+  'Hari-sesi aktif minggu ini untuk pesakit ini. NULL=ikut pakej; [1,2]/[1]/[2].';
 
-CREATE INDEX IF NOT EXISTS idx_feedback_coach
-  ON psy_feedback(coach_id) WHERE coach_id IS NOT NULL;
+COMMENT ON COLUMN psy_plan_week_overrides.guidance_override IS
+  'Bimbingan/Calling khas pesakit ini per-sesi. {"1":[...],"2":[...]}. NULL=ikut pakej; []=tiada.';
 
-SELECT 'Step 48 OK — feedback weekly + KPI tracking ready' AS status;
+COMMENT ON COLUMN psy_plan_week_overrides.aktiviti_override IS
+  'Aktiviti khas pesakit ini per-sesi. {"1":[...],"2":[...]}. NULL=ikut pakej; []=tiada.';
 
-
--- ════════════════════════════════════════════════════════════════
--- step49_library_package_filter.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step49_library_package_filter.sql
--- Library content can be tagged with package IDs to restrict visibility.
--- NULL or empty array = visible to everyone (default).
--- Array of package_ids = only patients on matching package see it.
--- ============================================================
-
-ALTER TABLE psy_library_items
-  ADD COLUMN IF NOT EXISTS package_ids TEXT[];
-
-COMMENT ON COLUMN psy_library_items.package_ids IS
-  'Package IDs (psy_packages.package_id) that can access this content. NULL/empty = public for all.';
-
-CREATE INDEX IF NOT EXISTS idx_library_package_ids
-  ON psy_library_items USING GIN (package_ids);
-
-SELECT 'Step 49 OK — library package filter ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step50_package_categories.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step50_package_categories.sql
--- Dynamic categories for packages — admin boleh CRUD dari UI
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS psy_package_categories (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  slug        TEXT NOT NULL UNIQUE,
-  label       TEXT NOT NULL,
-  badge_color TEXT,
-  sort_order  INTEGER NOT NULL DEFAULT 100,
-  is_active   BOOLEAN NOT NULL DEFAULT true,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+-- ──────────────────────────────────────────────────────────────
+-- psy_supply_disbursements — barang diberi kepada pesakit dari stok inventori
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_supply_disbursements (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id    UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  item_id       UUID,  -- FK → psy_inventory_items (dipasang di hujung 14_products_inventory.sql)
+  item_name     TEXT NOT NULL,
+  unit          TEXT,
+  qty           NUMERIC(10,2) NOT NULL,
+  notes         TEXT,
+  given_by      UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  given_by_name TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-COMMENT ON TABLE psy_package_categories IS 'Senarai kategori pakej (dahulu hardcoded: standard/free/vip). Slug disimpan dalam psy_packages.tier.';
-COMMENT ON COLUMN psy_package_categories.slug IS 'Stored value in psy_packages.tier (e.g. standard, free, vip, detox)';
-COMMENT ON COLUMN psy_package_categories.badge_color IS 'Tailwind color suffix for badge (e.g. gold, green, navy) — null = no badge';
+ALTER TABLE psy_supply_disbursements ENABLE ROW LEVEL SECURITY;
 
--- Seed kategori sedia ada
-INSERT INTO psy_package_categories (slug, label, badge_color, sort_order)
-VALUES
-  ('standard', 'Program Intensif', NULL,    10),
-  ('free',     'Pakej Percuma',    'green', 20),
-  ('vip',      'VIP / Premium',    'gold',  30)
-ON CONFLICT (slug) DO NOTHING;
+DROP POLICY IF EXISTS "supply_disb_staff" ON psy_supply_disbursements;
+CREATE POLICY "supply_disb_staff" ON psy_supply_disbursements FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
--- RLS
-ALTER TABLE psy_package_categories ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN
-  CREATE POLICY "Anyone read categories" ON psy_package_categories
-    FOR SELECT USING (true);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff manage categories" ON psy_package_categories
-    FOR ALL USING (
-      EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
-    );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-
--- ════════════════════════════════════════════════════════════════
--- step50_library_topic_faq.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step50_library_topic_faq.sql
--- Library redesign: explicit media_type + topic category + FAQ support.
---   • media_type — jenis eksplisit (video/article/pdf/course/faq/image)
---     supaya tab & KPI tepat (sebelum ni jenis diteka dari content_url).
---   • topic       — kategori topik (Kesihatan Mental, Pemakanan, dll).
---     Berasingan dari `category` (yang simpan warna kad).
---   • FAQ disimpan sebagai media_type='faq': title = soalan, content_body = jawapan.
--- ============================================================
-
-ALTER TABLE psy_library_items
-  ADD COLUMN IF NOT EXISTS media_type TEXT,
-  ADD COLUMN IF NOT EXISTS topic      TEXT;
-
-COMMENT ON COLUMN psy_library_items.media_type IS
-  'Jenis eksplisit: video | article | pdf | course | faq | image. Sumber tunggal untuk tab/KPI.';
-COMMENT ON COLUMN psy_library_items.topic IS
-  'Kategori topik (cth: Kesihatan Mental, Pemakanan). Berbeza dari category (warna kad).';
-
--- ── Backfill media_type untuk rekod sedia ada (heuristik sama macam UI lama) ──
-UPDATE psy_library_items SET media_type = CASE
-  WHEN content_type ILIKE '%faq%' THEN 'faq'
-  WHEN lower(coalesce(content_url,'')) ~ '\.(jpg|jpeg|png|gif|webp)' THEN 'image'
-  WHEN lower(coalesce(content_url,'')) ~ '\.(mp4|webm|mov)' OR lower(coalesce(content_url,'')) LIKE '%youtube%' OR lower(coalesce(content_url,'')) LIKE '%youtu.be%' THEN 'video'
-  WHEN lower(coalesce(content_url,'')) ~ '\.pdf' OR lower(coalesce(content_url,'')) LIKE '%drive.google.com%' THEN 'pdf'
-  WHEN lower(coalesce(content_url,'')) ~ 'course|membership|portal' OR content_type ILIKE '%course%' THEN 'course'
-  ELSE 'article'
-END
-WHERE media_type IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_library_media_type ON psy_library_items(media_type);
-CREATE INDEX IF NOT EXISTS idx_library_topic      ON psy_library_items(topic);
-
-SELECT 'Step 50 OK — library media_type + topic ready' AS status,
-       count(*) FILTER (WHERE media_type='video')   AS video,
-       count(*) FILTER (WHERE media_type='article') AS article,
-       count(*) FILTER (WHERE media_type='faq')     AS faq,
-       count(*) AS total
-FROM psy_library_items;
-
-
--- ════════════════════════════════════════════════════════════════
--- step51_treatment_completion.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step51_treatment_completion.sql
--- Auto-complete treatment when package expires + audit Google Review clicks
--- ============================================================
-
--- Add outcome_status column kalau belum ada
-ALTER TABLE psy_patients
-  ADD COLUMN IF NOT EXISTS outcome_status TEXT;
-
--- Function: complete expired treatments
+-- ──────────────────────────────────────────────────────────────
+-- Fungsi: auto-complete pelan bila pakej pesakit tamat tempoh
+-- (panggil manual atau via pg_cron harian)
+-- ──────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION fn_complete_expired_treatments()
 RETURNS TABLE (patient_id UUID, plan_id UUID, action TEXT) AS $$
 BEGIN
@@ -2719,86 +2113,1249 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 COMMENT ON FUNCTION fn_complete_expired_treatments() IS
   'Auto-mark treatment plans + patient outcome_status sebagai completed bila pakej tamat. Insert notifikasi feedback. Boleh dipanggil manual atau via pg_cron.';
 
--- Optional: schedule daily (kalau pg_cron extension installed)
--- SELECT cron.schedule('complete-expired-treatments', '0 1 * * *', $$SELECT fn_complete_expired_treatments()$$);
+-- ──────────────────────────────────────────────────────────────
+-- Pautan silang domain (jadual dari fail 04/05 yang rujuk pelan;
+-- FK hanya boleh dipasang selepas psy_treatment_plans wujud)
+-- ──────────────────────────────────────────────────────────────
+ALTER TABLE psy_patient_documents DROP CONSTRAINT IF EXISTS psy_patient_documents_plan_id_fkey;
+ALTER TABLE psy_patient_documents ADD CONSTRAINT psy_patient_documents_plan_id_fkey
+  FOREIGN KEY (plan_id) REFERENCES psy_treatment_plans(id) ON DELETE CASCADE;
 
--- Jalankan sekali sekarang untuk catch existing expired
-SELECT * FROM fn_complete_expired_treatments();
+ALTER TABLE psy_continuity_offers DROP CONSTRAINT IF EXISTS psy_continuity_offers_plan_id_fkey;
+ALTER TABLE psy_continuity_offers ADD CONSTRAINT psy_continuity_offers_plan_id_fkey
+  FOREIGN KEY (plan_id) REFERENCES psy_treatment_plans(id) ON DELETE CASCADE;
 
--- ── AUDIT: Google Review click tracking ──
--- Audit log dah ada, tak perlu table baru. Action key: 'google_review.clicked'
-COMMENT ON TABLE psy_audit_log IS
-  'Audit trail. Untuk Google Review tracking guna action=''google_review.clicked'', meta={rating: N}';
-
-SELECT 'Step 51 OK — treatment auto-completion + audit setup' AS status;
+-- Realtime — kehadiran mingguan auto-tolak ke UI (RLS dihormati)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'psy_plan_weekly_progress'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE psy_plan_weekly_progress;
+  END IF;
+END $$;
 
 
 -- ════════════════════════════════════════════════════════════════
--- step51_library_editor_fields.sql
+-- schema/08_sessions_scheduling.sql
 -- ════════════════════════════════════════════════════════════════
 
--- ============================================================
--- step51_library_editor_fields.sql
--- Field tambahan untuk editor "Tambah Kandungan" reka bentuk baru:
---   • tags          — tag carian (max 5), array.
---   • duration       — tempoh video (mm:ss) — papar pada kad video.
---   • attachment_url — dokumen sokongan (PDF/DOC) opsional.
--- content_body kini boleh simpan HTML (rich text "Penerangan Kandungan").
--- ============================================================
+-- ═══════════════════════════════════════════════════════════════════
+-- 08 — SESI & PENJADUALAN
+-- Jadual: psy_appointments, psy_coaching_sessions, psy_clinic_closures,
+--         psy_slot_date_overrides, psy_coaching_catalog, psy_services
+-- Nota: psy_soap_notes telah DIBUANG (migrasi 20260626_remove_soap_consultation)
+--       dan TIDAK dicipta semula di sini.
+-- ═══════════════════════════════════════════════════════════════════
 
-ALTER TABLE psy_library_items
-  ADD COLUMN IF NOT EXISTS tags           TEXT[],
-  ADD COLUMN IF NOT EXISTS duration       TEXT,
-  ADD COLUMN IF NOT EXISTS attachment_url TEXT;
+-- ──── psy_appointments ────
+CREATE TABLE IF NOT EXISTS psy_appointments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id UUID REFERENCES psy_patients(id),
+  staff_id UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  patient_name TEXT,
+  staff_name TEXT,
+  service TEXT NOT NULL,
+  appointment_time TIMESTAMPTZ NOT NULL,
+  duration_min INT DEFAULT 30,
+  status TEXT DEFAULT 'scheduled' CHECK (status IN ('scheduled','checked_in','in_progress','completed','no_show','cancelled')),
+  room TEXT,
+  notes TEXT,
+  ghl_booking_id TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
 
+CREATE INDEX IF NOT EXISTS idx_psy_appointments_time ON psy_appointments(appointment_time);
+CREATE INDEX IF NOT EXISTS idx_psy_appointments_patient ON psy_appointments(patient_id);
+
+ALTER TABLE psy_appointments ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage appointments" ON psy_appointments;
+CREATE POLICY "Staff manage appointments" ON psy_appointments FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Patients read own appointments" ON psy_appointments;
+CREATE POLICY "Patients read own appointments" ON psy_appointments FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Patients insert own appointments" ON psy_appointments;
+CREATE POLICY "Patients insert own appointments" ON psy_appointments FOR INSERT
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Patients update own appointments" ON psy_appointments;
+CREATE POLICY "Patients update own appointments" ON psy_appointments FOR UPDATE
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+-- ──── psy_coaching_sessions ────
+CREATE TABLE IF NOT EXISTS psy_coaching_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
+  coach_id UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  patient_name TEXT,
+  pillar TEXT CHECK (pillar IN ('bio','psycho','social','spiritual')),
+  session_date TIMESTAMPTZ DEFAULT now(),
+  duration_min INT DEFAULT 60,
+  mood_pre INT CHECK (mood_pre BETWEEN 1 AND 10),
+  mood_post INT CHECK (mood_post BETWEEN 1 AND 10),
+  notes TEXT,
+  goals_discussed JSONB DEFAULT '[]',
+  homework JSONB DEFAULT '[]',
+  status TEXT DEFAULT 'completed' CHECK (status IN ('completed','no_show','cancelled')),
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_psy_coaching_patient ON psy_coaching_sessions(patient_id, session_date DESC);
+
+ALTER TABLE psy_coaching_sessions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage coaching sessions" ON psy_coaching_sessions;
+CREATE POLICY "Staff manage coaching sessions" ON psy_coaching_sessions FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Patients read own coaching sessions" ON psy_coaching_sessions;
+CREATE POLICY "Patients read own coaching sessions" ON psy_coaching_sessions FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+-- ──── psy_clinic_closures ────
+-- Kunci kalendar untuk cuti umum, Hari Raya & penutupan klinik ad-hoc.
+CREATE TABLE IF NOT EXISTS psy_clinic_closures (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  closure_date DATE NOT NULL,
+  label       TEXT NOT NULL,
+  category    TEXT NOT NULL DEFAULT 'public_holiday'
+              CHECK (category IN ('public_holiday','hari_raya','clinic_closed','training','other')),
+  is_recurring BOOLEAN NOT NULL DEFAULT false,  -- ulangan tahunan pada MM-DD sama
+  notes       TEXT,
+  created_by  UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  updated_at  TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_clinic_closure_date ON psy_clinic_closures (closure_date);
+CREATE INDEX IF NOT EXISTS idx_clinic_closure_date ON psy_clinic_closures (closure_date);
+
+ALTER TABLE psy_clinic_closures ENABLE ROW LEVEL SECURITY;
+
+-- Semua pengguna sah (staf + pesakit) boleh baca — diguna oleh tempahan + dashboard pesakit
+DROP POLICY IF EXISTS "Anyone read clinic closures" ON psy_clinic_closures;
+CREATE POLICY "Anyone read clinic closures" ON psy_clinic_closures
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+
+DROP POLICY IF EXISTS "Admin manage clinic closures" ON psy_clinic_closures;
+CREATE POLICY "Admin manage clinic closures" ON psy_clinic_closures FOR ALL
+  USING (EXISTS (
+    SELECT 1 FROM psy_profiles
+    WHERE id = auth.uid() AND role = 'staff'
+      AND staff_role IN ('admin','manager','doctor','super_admin')
+  ))
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM psy_profiles
+    WHERE id = auth.uid() AND role = 'staff'
+      AND staff_role IN ('admin','manager','doctor','super_admin')
+  ));
+
+-- ──── psy_slot_date_overrides ────
+-- Override per-tarikh: staf kunci/tawar slot tertentu pada tarikh tertentu.
+CREATE TABLE IF NOT EXISTS psy_slot_date_overrides (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  slot_date   DATE NOT NULL,
+  slot_type   TEXT NOT NULL CHECK (slot_type IN ('kob','rawatan')),
+  slot_start  TIME NOT NULL,
+  is_offered  BOOLEAN NOT NULL DEFAULT true,
+  note        TEXT,
+  created_by  UUID,
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  updated_at  TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (slot_date, slot_type, slot_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_slot_overrides_date ON psy_slot_date_overrides(slot_date, slot_type);
+
+ALTER TABLE psy_slot_date_overrides ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Anyone read slot overrides" ON psy_slot_date_overrides;
+CREATE POLICY "Anyone read slot overrides" ON psy_slot_date_overrides FOR SELECT
+  USING (auth.uid() IS NOT NULL);
+
+DROP POLICY IF EXISTS "Staff manage slot overrides" ON psy_slot_date_overrides;
+CREATE POLICY "Staff manage slot overrides" ON psy_slot_date_overrides FOR ALL
+  USING (EXISTS (
+    SELECT 1 FROM psy_profiles
+    WHERE id = auth.uid() AND role = 'staff'
+      AND staff_role IN ('admin','manager','doctor','super_admin')
+  ))
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM psy_profiles
+    WHERE id = auth.uid() AND role = 'staff'
+      AND staff_role IN ('admin','manager','doctor','super_admin')
+  ));
+
+-- ──── psy_coaching_catalog ────
+-- Katalog master untuk Bimbingan/Calling & Aktiviti/Rawatan.
+CREATE TABLE IF NOT EXISTS psy_coaching_catalog (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name          TEXT NOT NULL,
+  type          TEXT NOT NULL CHECK (type IN ('bimbingan','aktiviti')),
+  description   TEXT,
+  category      TEXT,             -- pengelompokan pilihan (cth: 'Terapi', 'Herba')
+  is_active     BOOLEAN DEFAULT true,
+  sort_order    INT DEFAULT 0,
+  created_by    UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  created_by_name TEXT,
+  created_at    TIMESTAMPTZ DEFAULT now(),
+  updated_at    TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (name, type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_coaching_catalog_type ON psy_coaching_catalog(type, sort_order);
+CREATE INDEX IF NOT EXISTS idx_coaching_catalog_active ON psy_coaching_catalog(is_active);
+
+ALTER TABLE psy_coaching_catalog ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Anyone read catalog" ON psy_coaching_catalog;
+CREATE POLICY "Anyone read catalog" ON psy_coaching_catalog
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+
+DROP POLICY IF EXISTS "Staff manage catalog" ON psy_coaching_catalog;
+CREATE POLICY "Staff manage catalog" ON psy_coaching_catalog FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ──── psy_services ────
+-- Senarai service (jenis temujanji) yang klinik tawarkan.
+CREATE TABLE IF NOT EXISTS psy_services (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  service_id    TEXT UNIQUE NOT NULL,
+  name          TEXT NOT NULL,
+  description   TEXT,
+  icon          TEXT DEFAULT '⚕',
+  price         NUMERIC(10,2) DEFAULT 0,
+  duration_min  INT DEFAULT 30,
+  sort_order    INT DEFAULT 100,
+  is_active     BOOLEAN DEFAULT true,
+  supplies      JSONB DEFAULT '[]'::jsonb,
+  created_at    TIMESTAMPTZ DEFAULT now(),
+  updated_at    TIMESTAMPTZ DEFAULT now()
+);
+
+COMMENT ON COLUMN psy_services.supplies IS
+  'Senarai item inventory yang diguna per session service. Format: [{item_id, item_name, qty}].';
+
+ALTER TABLE psy_services ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage services" ON psy_services;
+CREATE POLICY "Staff manage services" ON psy_services FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "All authenticated read services" ON psy_services;
+CREATE POLICY "All authenticated read services" ON psy_services FOR SELECT
+  USING (auth.uid() IS NOT NULL);
+
+-- ──── data rujukan ────
+
+-- Katalog bimbingan/aktiviti lalai
+INSERT INTO psy_coaching_catalog (name, type, category, sort_order) VALUES
+  ('Bimbingan Reaksi',              'bimbingan', 'Reaksi',     10),
+  ('Bimbingan Terapi Peminuman IB', 'bimbingan', 'Terapi',     20),
+  ('Bimbingan Terapi Zikir Bersanad','bimbingan', 'Terapi',    30),
+  ('Bimbingan Senaman Pernafasan',  'bimbingan', 'Senaman',    40),
+  ('Bimbingan Pemakanan',           'bimbingan', 'Diet',       50),
+  ('Herba Thoharah',                'aktiviti',  'Herba',      10),
+  ('Terapi Madu LTHPG',             'aktiviti',  'Terapi',     20),
+  ('Sesi Bekam',                    'aktiviti',  'Rawatan',    30),
+  ('Senaman Pernafasan',            'aktiviti',  'Senaman',    40),
+  ('Konsultasi Doktor',             'aktiviti',  'Konsultasi', 50),
+  ('Berjemur Matahari',             'aktiviti',  'Amalan',     60)
+ON CONFLICT (name, type) DO NOTHING;
+
+-- Service umum
+INSERT INTO psy_services (service_id, name, description, icon, price, duration_min, sort_order)
+VALUES
+  ('dna_test',     'DNA Test',                  'Ujian genetik untuk profil kesihatan',  '🧬', 350.00, 45, 20),
+  ('blood_test',   'Blood Test',                'Pemeriksaan darah asas',                '🩸', 120.00, 20, 30),
+  ('kob',          'Kursus Orientasi Bestari',  'Kursus orientasi pesakit baru',         '🎓',   0.00, 90, 40)
+ON CONFLICT (service_id) DO NOTHING;
+
+-- ──────────────────────────────────────────────────────────────
+-- Pautan silang domain: psy_plan_weekly_progress (fail 07) → temujanji
+-- ──────────────────────────────────────────────────────────────
+ALTER TABLE psy_plan_weekly_progress DROP CONSTRAINT IF EXISTS psy_plan_weekly_progress_appointment_id_fkey;
+ALTER TABLE psy_plan_weekly_progress ADD CONSTRAINT psy_plan_weekly_progress_appointment_id_fkey
+  FOREIGN KEY (appointment_id) REFERENCES psy_appointments(id) ON DELETE SET NULL;
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/09_kob.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 09 — KOB (KURSUS ORIENTASI BESTARI)
+-- Jadual: psy_kob_sessions, psy_kob_agreements, psy_kob_slot_config
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ──── psy_kob_sessions ────
+-- Tempahan, kehadiran & nota sesi KOB.
+CREATE TABLE IF NOT EXISTS psy_kob_sessions (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id          UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  scheduled_at        TIMESTAMPTZ NOT NULL,
+  mode                TEXT NOT NULL DEFAULT 'f2f' CHECK (mode IN ('f2f','online')),
+  meet_link           TEXT,
+  status              TEXT NOT NULL DEFAULT 'booked'
+                      CHECK (status IN ('booked','hadir','completed','reschedule','cancelled')),
+
+  -- Doktor yang tanda kehadiran (mungkin berbeza dengan yang selesaikan)
+  doctor_hadir_id     UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  doctor_hadir_name   TEXT,
+  hadir_at            TIMESTAMPTZ,
+
+  -- Doktor yang tanda selesai
+  doctor_selesai_id   UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  doctor_selesai_name TEXT,
+  selesai_at          TIMESTAMPTZ,
+
+  -- Nota klinikal doktor
+  notes               TEXT,
+  -- Laporan / dokumen sokongan yang dimuat naik untuk KOB ini
+  documents           JSONB DEFAULT '[]',
+
+  -- Soal selidik berstruktur diisi doktor semasa sesi
+  questionnaire       JSONB DEFAULT '{}',
+
+  -- Cadangan pakej rawatan oleh doktor semasa KOB
+  recommended_package_id    TEXT,
+  recommended_package_name  TEXT,
+  recommended_package_price NUMERIC(10,2),
+  recommended_at            TIMESTAMPTZ,
+  recommended_by            UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  recommended_by_name       TEXT,
+  package_payment_status    TEXT DEFAULT 'pending'
+                            CHECK (package_payment_status IN ('pending','paid','skipped','na')),
+  package_paid_at           TIMESTAMPTZ,
+  package_receipt_ref       TEXT,
+
+  reschedule_count    INT NOT NULL DEFAULT 0,
+  reschedule_reason   TEXT,
+
+  created_at          TIMESTAMPTZ DEFAULT now(),
+  updated_at          TIMESTAMPTZ DEFAULT now()
+);
+
+COMMENT ON COLUMN psy_kob_sessions.questionnaire IS
+  'Structured Q&A captured during KOB. Keys: anak[], tidur{}, gaya_hidup{}, masalah_kesihatan{} — see kob-detail.html for shape.';
+
+COMMENT ON COLUMN psy_kob_sessions.recommended_package_id IS
+  'Package recommended by doctor during KOB. Patient must pay before agreement signing.';
+
+CREATE INDEX IF NOT EXISTS idx_kob_patient ON psy_kob_sessions(patient_id);
+CREATE INDEX IF NOT EXISTS idx_kob_scheduled ON psy_kob_sessions(scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_kob_status ON psy_kob_sessions(status);
+
+ALTER TABLE psy_kob_sessions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patient read own KOB" ON psy_kob_sessions;
+CREATE POLICY "Patient read own KOB" ON psy_kob_sessions FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Patient book own KOB" ON psy_kob_sessions;
+CREATE POLICY "Patient book own KOB" ON psy_kob_sessions FOR INSERT
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Patient reschedule own KOB" ON psy_kob_sessions;
+CREATE POLICY "Patient reschedule own KOB" ON psy_kob_sessions FOR UPDATE
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff manage KOB sessions" ON psy_kob_sessions;
+CREATE POLICY "Staff manage KOB sessions" ON psy_kob_sessions FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ──── psy_kob_agreements ────
+-- Rekod perjanjian yang ditandatangani pesakit.
+CREATE TABLE IF NOT EXISTS psy_kob_agreements (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id        UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  kob_session_id    UUID REFERENCES psy_kob_sessions(id) ON DELETE SET NULL,
+  agreement_version TEXT NOT NULL DEFAULT 'ISW.SOP OB KOB FORM 03 CONTRACT 250711',
+  patient_name      TEXT NOT NULL,
+  patient_ic        TEXT NOT NULL,
+  signature_url     TEXT NOT NULL,   -- tandatangan PNG mentah dalam storage
+  signed_pdf_url    TEXT,            -- PDF terjana dengan tandatangan tertanam
+  signed_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ip_address        TEXT,
+  user_agent        TEXT,
+  created_at        TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_kob_agreements_patient ON psy_kob_agreements(patient_id);
+
+ALTER TABLE psy_kob_agreements ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patient read own agreement" ON psy_kob_agreements;
+CREATE POLICY "Patient read own agreement" ON psy_kob_agreements FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Patient sign own agreement" ON psy_kob_agreements;
+CREATE POLICY "Patient sign own agreement" ON psy_kob_agreements FOR INSERT
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Patient cancel own unfinalized agreement" ON psy_kob_agreements;
+CREATE POLICY "Patient cancel own unfinalized agreement" ON psy_kob_agreements FOR DELETE
+  USING (
+    patient_id IN (
+      SELECT id FROM psy_patients
+      WHERE user_id = auth.uid()
+        AND (kob_status IS NULL OR kob_status != 'completed')
+    )
+  );
+
+DROP POLICY IF EXISTS "Staff read all agreements" ON psy_kob_agreements;
+CREATE POLICY "Staff read all agreements" ON psy_kob_agreements FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff insert agreement on behalf of patient" ON psy_kob_agreements;
+CREATE POLICY "Staff insert agreement on behalf of patient" ON psy_kob_agreements FOR INSERT
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff update agreement" ON psy_kob_agreements;
+CREATE POLICY "Staff update agreement" ON psy_kob_agreements FOR UPDATE
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ──── psy_kob_slot_config ────
+-- Templat slot tetap untuk KOB & Rawatan (Rabu-Ahad). Admin boleh on/off
+-- setiap slot; tiada kapasiti per-pesakit.
+CREATE TABLE IF NOT EXISTS psy_kob_slot_config (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  slot_type    TEXT NOT NULL DEFAULT 'kob' CHECK (slot_type IN ('kob','rawatan')),
+  day_of_week  INT NOT NULL CHECK (day_of_week IN (0, 3, 4, 5, 6)),  -- 0=Ahad, 3=Rabu, 4=Khamis, 5=Jumaat, 6=Sabtu
+  slot_start   TIME NOT NULL,
+  slot_end     TIME NOT NULL,
+  is_active    BOOLEAN NOT NULL DEFAULT true,
+  label        TEXT NOT NULL,         -- paparan cth "7-9 pg"
+  sort_order   INT NOT NULL DEFAULT 0,
+  note         TEXT,                  -- nota peringatan untuk slot
+  created_at   TIMESTAMPTZ DEFAULT now(),
+  updated_at   TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT psy_kob_slot_config_unique UNIQUE (slot_type, day_of_week, slot_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kob_slots_day ON psy_kob_slot_config(day_of_week, is_active);
+
+ALTER TABLE psy_kob_slot_config ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Anyone read kob slots" ON psy_kob_slot_config;
+CREATE POLICY "Anyone read kob slots" ON psy_kob_slot_config
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+
+DROP POLICY IF EXISTS "Admin manage kob slots" ON psy_kob_slot_config;
+CREATE POLICY "Admin manage kob slots" ON psy_kob_slot_config FOR ALL
+  USING (EXISTS (
+    SELECT 1 FROM psy_profiles
+    WHERE id = auth.uid() AND role = 'staff'
+      AND staff_role IN ('admin','manager','doctor','super_admin')
+  ))
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM psy_profiles
+    WHERE id = auth.uid() AND role = 'staff'
+      AND staff_role IN ('admin','manager','doctor','super_admin')
+  ));
+
+-- ──── data rujukan ────
+-- Slot templat: 5 slot × 2 jenis (kob, rawatan) × 5 hari (Rabu-Ahad)
+INSERT INTO psy_kob_slot_config (slot_type, day_of_week, slot_start, slot_end, label, sort_order, is_active)
+SELECT
+  t.slot_type,
+  d.day_of_week,
+  s.slot_start::time,
+  s.slot_end::time,
+  s.label,
+  s.sort_order,
+  true
+FROM
+  (VALUES ('kob'), ('rawatan')) AS t(slot_type),
+  (VALUES (3), (4), (5), (6), (0)) AS d(day_of_week),
+  (VALUES
+    ('07:00', '09:00', '7-9 pg',          1),
+    ('09:30', '11:30', '9.30-11.30 pg',   2),
+    ('14:00', '16:00', '2-4 ptg',         3),
+    ('14:30', '16:30', '2.30-4.30 ptg',   4),
+    ('16:30', '18:30', '4.30-6.30 ptg',   5)
+  ) AS s(slot_start, slot_end, label, sort_order)
+ON CONFLICT ON CONSTRAINT psy_kob_slot_config_unique DO NOTHING;
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/10_vitals.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- SKEMA: VITALS (Bacaan Klinikal Pesakit)
+-- Jadual: psy_vitals
+-- Bacaan vital (BP, HR, SpO2, berat, gula, HbA1c dll.) direkod oleh
+-- staff di klinik atau oleh pesakit sendiri; boleh diikat pada plan
+-- rawatan + minggu, dengan tarikh & masa bacaan (berbilang sehari).
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ──── psy_vitals ────
+CREATE TABLE IF NOT EXISTS psy_vitals (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id       UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
+  recorded_by      UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  recorded_by_name TEXT,
+  bp_systolic      INT,
+  bp_diastolic     INT,
+  heart_rate       INT,
+  spo2             NUMERIC(5,2),
+  temperature      NUMERIC(4,1),
+  weight           NUMERIC(5,2),
+  height           NUMERIC(5,1),
+  bmi              NUMERIC(4,1),
+  waist_cm         NUMERIC(5,1),
+  rbs              NUMERIC(6,2),
+  hba1c            NUMERIC(4,2),
+  phq2_score       INT,
+  medications      TEXT,
+  notes            TEXT,
+  source           TEXT NOT NULL DEFAULT 'staff' CHECK (source IN ('staff','patient_self')),
+  plan_id          UUID REFERENCES psy_treatment_plans(id) ON DELETE SET NULL,
+  week_number      INT,
+  reading_date     DATE,
+  reading_time     TIME,
+  created_at       TIMESTAMPTZ DEFAULT now()
+);
+
+-- Indeks
+CREATE INDEX IF NOT EXISTS idx_psy_vitals_patient ON psy_vitals(patient_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_vitals_plan_week
+  ON psy_vitals(plan_id, week_number) WHERE plan_id IS NOT NULL;
+
+-- RLS
+ALTER TABLE psy_vitals ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage vitals" ON psy_vitals;
+CREATE POLICY "Staff manage vitals" ON psy_vitals FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Patients read own vitals" ON psy_vitals;
+CREATE POLICY "Patients read own vitals" ON psy_vitals FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+-- Pesakit hanya boleh masuk/edit bacaan sendiri (source = patient_self)
+DROP POLICY IF EXISTS "Patients insert own vitals" ON psy_vitals;
+CREATE POLICY "Patients insert own vitals" ON psy_vitals FOR INSERT
+  WITH CHECK (
+    source = 'patient_self'
+    AND patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())
+  );
+
+DROP POLICY IF EXISTS "Patients update own vitals" ON psy_vitals;
+CREATE POLICY "Patients update own vitals" ON psy_vitals FOR UPDATE
+  USING (
+    source = 'patient_self'
+    AND patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())
+  )
+  WITH CHECK (
+    source = 'patient_self'
+    AND patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())
+  );
+
+-- Komen
+COMMENT ON COLUMN psy_vitals.hba1c IS 'HbA1c % (e.g. 6.5 = 6.5%)';
+COMMENT ON COLUMN psy_vitals.source IS 'Who entered the reading: staff at clinic, or patient self-reported';
+COMMENT ON COLUMN psy_vitals.reading_date IS 'Date the reading was actually taken (may differ from created_at for back-dated entries)';
+COMMENT ON COLUMN psy_vitals.plan_id IS
+  'Refer treatment plan masa vitals direkod. NULL kalau direkod luar konteks plan.';
+COMMENT ON COLUMN psy_vitals.week_number IS
+  'Minggu rawatan ke berapa bila vitals direkod. NULL kalau tiada plan aktif.';
+COMMENT ON COLUMN psy_vitals.reading_time IS
+  'Masa bacaan (HH:MM). Staff boleh rekod beberapa bacaan sehari — masa bezakan setiap satu.';
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/11_checkins_kepatuhan.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- SKEMA: CATATAN HARIAN & KEPATUHAN
+-- Jadual: psy_daily_checkins, psy_daily_completions,
+--         psy_kepatuhan_item, psy_kepatuhan_log, psy_kepatuhan_weekly
+-- Daily check-in pesakit (mood/emosi/tidur/madu), checklist aktiviti
+-- harian, dan modul Kepatuhan (item config per fasa, log harian,
+-- kelas A/B/C mingguan auto + override coach).
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ──── psy_daily_checkins ────
+CREATE TABLE IF NOT EXISTS psy_daily_checkins (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id     UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
+  checkin_date   DATE DEFAULT CURRENT_DATE NOT NULL,
+  mood_score     INT CHECK (mood_score BETWEEN 1 AND 10),
+  energy_score   INT CHECK (energy_score BETWEEN 1 AND 10),
+  sleep_quality  INT CHECK (sleep_quality BETWEEN 1 AND 10),
+  sleep_hours    NUMERIC(3,1),
+  symptoms       JSONB DEFAULT '[]',
+  activities     JSONB DEFAULT '[]',
+  emotions       JSONB DEFAULT '[]',   -- senarai emosi dipilih
+  sleep_time     TEXT,                 -- tidur pukul (HH:MM)
+  wake_time      TEXT,                 -- bangun pukul (HH:MM)
+  activity_level TEXT,                 -- tahap gangguan aktiviti harian
+  madu_count     INT NOT NULL DEFAULT 0,
+  notes          TEXT,
+  created_at     TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (patient_id, checkin_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_psy_checkins_patient ON psy_daily_checkins(patient_id);
+
+ALTER TABLE psy_daily_checkins ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patients manage daily check-ins" ON psy_daily_checkins;
+CREATE POLICY "Patients manage daily check-ins" ON psy_daily_checkins FOR ALL
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff read daily check-ins" ON psy_daily_checkins;
+CREATE POLICY "Staff read daily check-ins" ON psy_daily_checkins FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff can read all checkins" ON psy_daily_checkins;
+CREATE POLICY "Staff can read all checkins"
+  ON psy_daily_checkins FOR SELECT
+  USING (
+    auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff')
+    OR auth.uid() IN (SELECT user_id FROM psy_patients WHERE id = patient_id)
+  );
+
+-- Staff isi Catatan Harian bagi pihak pesakit (mod staff borang kepatuhan)
+DROP POLICY IF EXISTS "Staff manage daily checkins" ON psy_daily_checkins;
+CREATE POLICY "Staff manage daily checkins" ON psy_daily_checkins FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+COMMENT ON COLUMN psy_daily_checkins.madu_count IS
+  'Bilangan kali pesakit minum madu hari ini. Target dari psy_packages.madu_frequency_per_day.';
+
+-- ──── psy_daily_completions ────
+-- Checklist aktiviti harian pesakit: 1 baris per item ditanda per hari.
+CREATE TABLE IF NOT EXISTS psy_daily_completions (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id   UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  log_date     DATE NOT NULL DEFAULT CURRENT_DATE,
+  item_time    TEXT NOT NULL,      -- 'HH:MM' dari jadual
+  activity     TEXT NOT NULL,      -- snapshot nama aktiviti
+  completed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(patient_id, log_date, item_time)
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_completions_patient_date
+  ON psy_daily_completions(patient_id, log_date);
+
+ALTER TABLE psy_daily_completions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patient manage own completions" ON psy_daily_completions;
+CREATE POLICY "Patient manage own completions"
+  ON psy_daily_completions FOR ALL
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff read completions" ON psy_daily_completions;
+CREATE POLICY "Staff read completions"
+  ON psy_daily_completions FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ──── psy_kepatuhan_item ────
+-- Config soalan checklist per fasa (coach boleh edit).
+-- Kelas: A >= 85%, B 50-84%, C < 50% (cutoff lalai).
+CREATE TABLE IF NOT EXISTS psy_kepatuhan_item (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  fasa        TEXT NOT NULL CHECK (fasa IN ('week1','week2_4','week5_12','fasa2','fasa3')),
+  item_key    TEXT NOT NULL,
+  label       TEXT NOT NULL,
+  nota        TEXT,                       -- keterangan (cth singkatan LTH/IB)
+  jenis_input TEXT NOT NULL DEFAULT 'pilih_satu'
+              CHECK (jenis_input IN ('kiraan','pilih_satu','pilih_banyak')),
+  period      TEXT NOT NULL DEFAULT 'harian'
+              CHECK (period IN ('harian','mingguan','bulanan')),
+  options     JSONB NOT NULL DEFAULT '[]', -- [{value,label,mata}] ; 'mata' = markah
+  meta        JSONB NOT NULL DEFAULT '{}', -- cth {"target":3} utk item kiraan (madu)
+  berskor     BOOLEAN NOT NULL DEFAULT true, -- false = tracking sahaja
+  urutan      INT NOT NULL DEFAULT 0,
+  aktif       BOOLEAN NOT NULL DEFAULT true,
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  updated_at  TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (fasa, item_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kepatuhan_item_fasa ON psy_kepatuhan_item(fasa, urutan);
+
+ALTER TABLE psy_kepatuhan_item ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "kepatuhan_item_staff_all" ON psy_kepatuhan_item;
+CREATE POLICY "kepatuhan_item_staff_all" ON psy_kepatuhan_item FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "kepatuhan_item_patient_read" ON psy_kepatuhan_item;
+CREATE POLICY "kepatuhan_item_patient_read" ON psy_kepatuhan_item FOR SELECT
+  USING (aktif = true);
+
+-- ──── psy_kepatuhan_log ────
+-- Jawapan pesakit, 1 baris / hari.
+CREATE TABLE IF NOT EXISTS psy_kepatuhan_log (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id  UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
+  log_date    DATE NOT NULL DEFAULT CURRENT_DATE,
+  fasa        TEXT NOT NULL CHECK (fasa IN ('week1','week2_4','week5_12','fasa2','fasa3')),
+  jawapan     JSONB NOT NULL DEFAULT '{}', -- {item_key: value | [values]}
+  skor_harian NUMERIC(5,2),                -- % markah hari itu (item berskor sahaja)
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  updated_at  TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (patient_id, log_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kepatuhan_log_patient ON psy_kepatuhan_log(patient_id, log_date);
+
+ALTER TABLE psy_kepatuhan_log ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "kepatuhan_log_patient_all" ON psy_kepatuhan_log;
+CREATE POLICY "kepatuhan_log_patient_all" ON psy_kepatuhan_log FOR ALL
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "kepatuhan_log_staff_read" ON psy_kepatuhan_log;
+CREATE POLICY "kepatuhan_log_staff_read" ON psy_kepatuhan_log FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- Staff boleh upsert log bagi pihak pesakit (kepatuhan-fill.html / mod staff)
+DROP POLICY IF EXISTS "kepatuhan_log_staff_write" ON psy_kepatuhan_log;
+CREATE POLICY "kepatuhan_log_staff_write" ON psy_kepatuhan_log FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff manage kepatuhan log" ON psy_kepatuhan_log;
+CREATE POLICY "Staff manage kepatuhan log" ON psy_kepatuhan_log FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ──── psy_kepatuhan_weekly ────
+-- Kelas A/B/C dikira mingguan (auto + coach override).
+CREATE TABLE IF NOT EXISTS psy_kepatuhan_weekly (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id     UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
+  minggu_mula    DATE NOT NULL,             -- tarikh Isnin minggu berkenaan
+  fasa           TEXT,
+  skor           NUMERIC(5,2),              -- % mingguan (purata item berskor)
+  bil_hari_isi   INT DEFAULT 0,             -- berapa hari pesakit isi minggu itu
+  kelas          CHAR(1) CHECK (kelas IN ('A','B','C')),           -- auto
+  override_kelas CHAR(1) CHECK (override_kelas IN ('A','B','C')),  -- coach pinda
+  override_by    UUID REFERENCES psy_profiles(id),
+  override_at    TIMESTAMPTZ,
+  nota_coach     TEXT,
+  created_at     TIMESTAMPTZ DEFAULT now(),
+  updated_at     TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (patient_id, minggu_mula)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kepatuhan_weekly_patient ON psy_kepatuhan_weekly(patient_id, minggu_mula);
+
+ALTER TABLE psy_kepatuhan_weekly ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "kepatuhan_weekly_patient_read" ON psy_kepatuhan_weekly;
+CREATE POLICY "kepatuhan_weekly_patient_read" ON psy_kepatuhan_weekly FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "kepatuhan_weekly_staff_all" ON psy_kepatuhan_weekly;
+CREATE POLICY "kepatuhan_weekly_staff_all" ON psy_kepatuhan_weekly FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "kepatuhan_weekly_staff_write" ON psy_kepatuhan_weekly;
+CREATE POLICY "kepatuhan_weekly_staff_write" ON psy_kepatuhan_weekly FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ═══════════════════════════════════════════════════════════════════
+-- SEED — item checklist kepatuhan WEEK 1
+-- Set asas semasa (5 item aktif): madu LTH/IB, madu LTHPG/YHPG,
+-- zikir bersanad, pantang makan, reaksi pemulihan (tracking sahaja).
+-- Item lain (pernafasan, terapi bumi, berjemur, air kelapa, yogurt)
+-- dinyahaktif buat sementara — diaktifkan balik bila set penuh diguna.
+-- Madu (jenis kiraan) guna mata bertingkat: Tidak=0, 2x=1, 3x=2,
+-- 4x=3, 5x=4, Lebih 5x=4 (maks 4 mata/item).
+-- ═══════════════════════════════════════════════════════════════════
+INSERT INTO psy_kepatuhan_item (fasa, item_key, label, nota, jenis_input, period, options, meta, berskor, urutan, aktif) VALUES
+('week1','madu_lth_ib','Minum Madu (LTH / IB)','LTH: Lote Tree Honey · IB: Immune Booster Honey','kiraan','harian',
+ '[{"value":"tidak","label":"Tidak minum","mata":0},{"value":"2","label":"2x","mata":1},{"value":"3","label":"3x","mata":2},{"value":"4","label":"4x","mata":3},{"value":"5","label":"5x","mata":4},{"value":"other","label":"Lebih 5x","mata":4}]',
+ '{"target":3}', true, 1, true),
+
+('week1','madu_lthpg_yhpg','Minum Madu (LTHPG / YHPG)','LTHPG: Lote Tree Honey Pearl Garlic · YHPG: Young & Healthy Pearl Garlic','kiraan','harian',
+ '[{"value":"tidak","label":"Tidak minum","mata":0},{"value":"2","label":"2x","mata":1},{"value":"3","label":"3x","mata":2},{"value":"4","label":"4x","mata":3},{"value":"5","label":"5x","mata":4},{"value":"other","label":"Lebih 5x","mata":4}]',
+ '{"target":3}', true, 2, true),
+
+('week1','zikir_bersanad','Zikir Bersanad Subuh & Maghrib',NULL,'pilih_satu','harian',
+ '[{"value":"subuh_maghrib","label":"Buat waktu Subuh & Maghrib","mata":2},{"value":"subuh","label":"Hanya waktu Subuh","mata":1},{"value":"maghrib","label":"Hanya waktu Maghrib","mata":1},{"value":"tidak","label":"Tidak buat","mata":0}]',
+ '{}', true, 3, true),
+
+('week1','pantang_makan','Pantang Makan',NULL,'pilih_satu','harian',
+ '[{"value":"baik","label":"Menjaga pantang dengan baik","mata":2},{"value":"separa","label":"Pantang tapi tak sepenuhnya","mata":1},{"value":"tidak","label":"Tidak menjaga pantang","mata":0}]',
+ '{}', true, 4, true),
+
+('week1','reaksi_pemulihan','Reaksi Pemulihan','Tracking sahaja — tidak dikira dalam skor','pilih_banyak','harian',
+ '[{"value":"kerap_kencing","label":"Kerap Kencing"},{"value":"kerap_bab","label":"Kerap Buang Air Besar"},{"value":"gatal","label":"Gatal"},{"value":"selera","label":"Berubah selera makan"},{"value":"bp_naik","label":"Tekanan darah naik"},{"value":"bp_turun","label":"Tekanan darah turun"},{"value":"haid","label":"Haid banyak"},{"value":"kembung","label":"Perut berangin atau kembung"},{"value":"sakit_kepala","label":"Sakit kepala"},{"value":"resdung","label":"Resdung"},{"value":"mencucuk","label":"Rasa sakit mencucuk"},{"value":"radang","label":"Radang, bengkak, kebas, sakit urat"},{"value":"sakit_dada","label":"Sakit dada atau susah bernafas"},{"value":"demam","label":"Demam"},{"value":"lemah","label":"Lemah"},{"value":"mengantuk","label":"Mengantuk"},{"value":"batuk","label":"Batuk atau berkahak"},{"value":"tiada","label":"Tiada"}]',
+ '{}', false, 5, true),
+
+('week1','pernafasan_fitrah','Pernafasan Fitrah 30 Minit',NULL,'pilih_satu','harian',
+ '[{"value":"cukup_30","label":"Cukup 30 minit","mata":2},{"value":"10_20","label":"10-20 minit","mata":1},{"value":"bawah_10","label":"Kurang dari 10 minit","mata":0}]',
+ '{}', true, 3, false),
+
+('week1','terapi_bumi','Terapi Bumi',NULL,'pilih_satu','harian',
+ '[{"value":"20_30","label":"20-30 minit","mata":2},{"value":"10_20","label":"10-20 minit","mata":1},{"value":"tidak","label":"Tidak buat","mata":0}]',
+ '{}', true, 5, false),
+
+('week1','berjemur','Berjemur Matahari',NULL,'pilih_satu','harian',
+ '[{"value":"20_30","label":"20-30 minit","mata":2},{"value":"10_20","label":"10-20 minit","mata":1},{"value":"tidak","label":"Tidak buat","mata":0},{"value":"other","label":"Other","mata":1}]',
+ '{}', true, 6, false),
+
+('week1','air_kelapa','Air Kelapa',NULL,'pilih_satu','harian',
+ '[{"value":"minum","label":"Minum","mata":2},{"value":"tidak","label":"Tidak minum","mata":0}]',
+ '{}', true, 7, false),
+
+('week1','yogurt','Yogurt',NULL,'pilih_satu','harian',
+ '[{"value":"ambil","label":"Ambil","mata":2},{"value":"tidak","label":"Tidak ambil","mata":0}]',
+ '{}', true, 8, false)
+
+ON CONFLICT (fasa, item_key) DO UPDATE SET
+  label       = EXCLUDED.label,
+  nota        = EXCLUDED.nota,
+  jenis_input = EXCLUDED.jenis_input,
+  period      = EXCLUDED.period,
+  options     = EXCLUDED.options,
+  meta        = EXCLUDED.meta,
+  berskor     = EXCLUDED.berskor,
+  urutan      = EXCLUDED.urutan,
+  aktif       = EXCLUDED.aktif,
+  updated_at  = now();
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/12_reaksi.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- REAKSI PEMULIHAN
+-- Katalog simptom + kategori, engine saranan auto (Recovery Advice v2),
+-- pemetaan simptom↔tindakan, log mesej WA berperingkat (queue + zon protokol),
+-- dan laporan reaksi mingguan pesakit.
+-- Jadual: psy_reaksi_item, psy_reaksi_kategori, psy_reaksi_actions,
+--         psy_reaksi_action_map, psy_reaksi_advice_log, psy_patient_reaksi_reports
+-- Nota: fungsi trigger trg_reaksi_advice_notify_emergency() dan
+--       trg_patient_reaksi_notify_coach() ditakrif dalam fail skema notifikasi.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- ──── psy_reaksi_item — katalog simptom reaksi pemulihan ────
+-- Sumber tunggal reaksi pemulihan; diguna di checklist harian pesakit
+-- (Catatan Harian item 5, grouped) + CRUD staff (kepatuhan.html).
+CREATE TABLE IF NOT EXISTS psy_reaksi_item (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  kumpulan         TEXT NOT NULL,                     -- nama kumpulan, cth 'Pencernaan'
+  ikon             TEXT,                              -- emoji kumpulan, cth '🍽️'
+  label            TEXT NOT NULL,                     -- simptom, cth 'Kembung perut'
+  urutan           INT  NOT NULL DEFAULT 0,           -- susunan global (kumpulan + item)
+  aktif            BOOLEAN NOT NULL DEFAULT true,
+  tahap_risiko     TEXT    NOT NULL DEFAULT 'rendah',
+  markah_risiko    INT     NOT NULL DEFAULT 5,
+  penerangan       TEXT,
+  contoh           JSONB   NOT NULL DEFAULT '[]',
+  perlu_pemantauan BOOLEAN NOT NULL DEFAULT false,
+  tunjuk_ringkasan BOOLEAN NOT NULL DEFAULT true,
+  notifikasi_coach BOOLEAN NOT NULL DEFAULT false,
+  is_emergency     BOOLEAN NOT NULL DEFAULT false,
+  created_at       TIMESTAMPTZ DEFAULT now(),
+  updated_at       TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT chk_reaksi_item_tahap CHECK (tahap_risiko IN ('rendah','sederhana','tinggi'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_reaksi_item_tahap ON psy_reaksi_item(tahap_risiko);
+
+ALTER TABLE psy_reaksi_item ENABLE ROW LEVEL SECURITY;
+
+-- Semua staff boleh urus (tambah/edit/buang) senarai.
+DROP POLICY IF EXISTS "Staff manage reaksi item" ON psy_reaksi_item;
+CREATE POLICY "Staff manage reaksi item" ON psy_reaksi_item FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- Pesakit perlu BACA katalog reaksi utk wizard Catatan Harian (data rujukan sahaja)
+DROP POLICY IF EXISTS "Authenticated boleh baca reaksi item" ON psy_reaksi_item;
+CREATE POLICY "Authenticated boleh baca reaksi item" ON psy_reaksi_item FOR SELECT
+  TO authenticated USING (true);
+
+COMMENT ON COLUMN psy_reaksi_item.tahap_risiko  IS 'rendah (Green) / sederhana (Yellow) / tinggi (Red)';
+COMMENT ON COLUMN psy_reaksi_item.markah_risiko IS 'Julat 1-100, semakin tinggi semakin berisiko';
+COMMENT ON COLUMN psy_reaksi_item.contoh        IS 'Array string — contoh bagaimana simptom dirasai pesakit';
+COMMENT ON COLUMN psy_reaksi_item.is_emergency  IS 'Simptom kecemasan: advice log ditanda emergency (tidak auto-hantar WA)';
+
+-- ──── psy_reaksi_kategori — kategori/kumpulan reaksi ────
+-- psy_reaksi_item.kumpulan kekal TEXT dan dipadankan dengan nama kategori.
+CREATE TABLE IF NOT EXISTS psy_reaksi_kategori (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  nama       TEXT NOT NULL UNIQUE,
+  ikon       TEXT,
+  penerangan TEXT,
+  aktif      BOOLEAN NOT NULL DEFAULT true,
+  urutan     INT NOT NULL DEFAULT 100,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE psy_reaksi_kategori ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage reaksi kategori" ON psy_reaksi_kategori;
+CREATE POLICY "Staff manage reaksi kategori" ON psy_reaksi_kategori FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Authenticated read reaksi kategori" ON psy_reaksi_kategori;
+CREATE POLICY "Authenticated read reaksi kategori" ON psy_reaksi_kategori FOR SELECT
+  USING (auth.uid() IS NOT NULL);
+
+-- ──── psy_reaksi_actions — perpustakaan tindakan (Recovery Action) ────
+-- Reusable merentasi simptom; doktor/admin kemaskini tanpa ubah kod.
+CREATE TABLE IF NOT EXISTS psy_reaksi_actions (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title        TEXT NOT NULL,
+  description  TEXT,
+  priority     INT NOT NULL DEFAULT 100,   -- kecil = diutamakan/dipapar dulu
+  is_emergency BOOLEAN NOT NULL DEFAULT false,
+  aktif        BOOLEAN NOT NULL DEFAULT true,
+  kategori     TEXT,
+  jenis        TEXT NOT NULL DEFAULT 'am',
+  panduan      TEXT,
+  created_at   TIMESTAMPTZ DEFAULT now(),
+  updated_at   TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT chk_reaksi_actions_jenis CHECK (jenis IN ('am','pemakanan','gaya_hidup','terapi','pemerhatian','tindakan','kecemasan'))
+);
+
+ALTER TABLE psy_reaksi_actions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage reaksi actions" ON psy_reaksi_actions;
+CREATE POLICY "Staff manage reaksi actions" ON psy_reaksi_actions FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Authenticated read reaksi actions" ON psy_reaksi_actions;
+CREATE POLICY "Authenticated read reaksi actions" ON psy_reaksi_actions FOR SELECT
+  USING (auth.uid() IS NOT NULL);
+
+COMMENT ON COLUMN psy_reaksi_actions.kategori IS 'Kategori bebas (biasanya kumpulan simptom, cth Pencernaan)';
+COMMENT ON COLUMN psy_reaksi_actions.jenis    IS 'am/pemakanan/gaya_hidup/terapi/pemerhatian/tindakan/kecemasan';
+COMMENT ON COLUMN psy_reaksi_actions.panduan  IS 'Panduan / cara penyediaan terperinci (teks; baris baharu dikekalkan)';
+
+-- ──── psy_reaksi_action_map — pemetaan simptom ↔ tindakan (many-to-many) ────
+CREATE TABLE IF NOT EXISTS psy_reaksi_action_map (
+  symptom_id  UUID NOT NULL REFERENCES psy_reaksi_item(id)    ON DELETE CASCADE,
+  action_id   UUID NOT NULL REFERENCES psy_reaksi_actions(id) ON DELETE CASCADE,
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  PRIMARY KEY (symptom_id, action_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_reaksi_action_map_symptom ON psy_reaksi_action_map(symptom_id);
+CREATE INDEX IF NOT EXISTS idx_reaksi_action_map_action  ON psy_reaksi_action_map(action_id);
+
+ALTER TABLE psy_reaksi_action_map ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage reaksi mapping" ON psy_reaksi_action_map;
+CREATE POLICY "Staff manage reaksi mapping" ON psy_reaksi_action_map FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Authenticated read reaksi mapping" ON psy_reaksi_action_map;
+CREATE POLICY "Authenticated read reaksi mapping" ON psy_reaksi_action_map FOR SELECT
+  USING (auth.uid() IS NOT NULL);
+
+-- ──── psy_reaksi_advice_log — log mesej saranan (draf WA, satu baris = satu mesej) ────
+-- Flow: pesakit submit Catatan Harian → client kumpul simptom ditanda →
+-- padankan tindakan (psy_reaksi_action_map) → dedupe + susun ikut priority →
+-- jana hingga 3 mesej (tindakan terus, gaya hidup +5 min, diet +10 min) →
+-- queue send_after; cron reaksi-advice-send proses tiap 5 minit.
+CREATE TABLE IF NOT EXISTS psy_reaksi_advice_log (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id       UUID NOT NULL REFERENCES psy_patients(id)     ON DELETE CASCADE,
+  kepatuhan_log_id UUID REFERENCES psy_kepatuhan_log(id)         ON DELETE SET NULL,
+  log_date         DATE NOT NULL DEFAULT CURRENT_DATE,
+  symptoms         JSONB NOT NULL DEFAULT '[]',   -- ["Pencernaan::Kembung perut", ...]
+  actions          JSONB NOT NULL DEFAULT '[]',   -- [{id,title,priority,is_emergency}] snapshot dijana
+  message_text     TEXT NOT NULL,                 -- boleh diedit staff sebelum hantar
+  is_emergency     BOOLEAN NOT NULL DEFAULT false,
+  status           TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','sent','skipped')),
+  msg_jenis        TEXT        NOT NULL DEFAULT 'tindakan',
+  send_after       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  send_attempts    INT         NOT NULL DEFAULT 0,
+  zon              TEXT,
+  reviewed_by      UUID REFERENCES psy_profiles(id),
+  reviewed_at      TIMESTAMPTZ,
+  sent_by          UUID REFERENCES psy_profiles(id),
+  sent_at          TIMESTAMPTZ,
+  created_at       TIMESTAMPTZ DEFAULT now(),
+  updated_at       TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT chk_reaksi_advice_msg_jenis CHECK (msg_jenis IN ('tindakan','diet','gaya_hidup')),
+  CONSTRAINT chk_reaksi_advice_zon       CHECK (zon IN ('hijau','kuning','merah'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_reaksi_advice_log_status  ON psy_reaksi_advice_log(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_reaksi_advice_log_patient ON psy_reaksi_advice_log(patient_id, log_date);
+CREATE INDEX IF NOT EXISTS idx_reaksi_advice_log_queue   ON psy_reaksi_advice_log(status, send_after);
+CREATE INDEX IF NOT EXISTS idx_reaksi_advice_log_zon     ON psy_reaksi_advice_log(zon, log_date);
+
+ALTER TABLE psy_reaksi_advice_log ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage advice log" ON psy_reaksi_advice_log;
+CREATE POLICY "Staff manage advice log" ON psy_reaksi_advice_log FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Patient insert own advice log" ON psy_reaksi_advice_log;
+CREATE POLICY "Patient insert own advice log" ON psy_reaksi_advice_log FOR INSERT
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+-- Pesakit perlu BACA baris sendiri (insert .select('id') utk auto-hantar WA)
+DROP POLICY IF EXISTS "Patient read own advice log" ON psy_reaksi_advice_log;
+CREATE POLICY "Patient read own advice log" ON psy_reaksi_advice_log FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+-- Nota: trigger trg_reaksi_advice_notify_emergency (zon merah → notif coach)
+-- berada dalam 18_notifications_automations.sql bersama fungsinya.
+
+COMMENT ON COLUMN psy_reaksi_advice_log.msg_jenis     IS 'tindakan / diet / gaya_hidup — satu submission Poll Harian boleh jana hingga 3 mesej';
+COMMENT ON COLUMN psy_reaksi_advice_log.send_after    IS 'Mesej hanya dihantar selepas waktu ini (queue; cron proses tiap 5 minit)';
+COMMENT ON COLUMN psy_reaksi_advice_log.send_attempts IS 'Bilangan percubaan hantar gagal; cron berhenti cuba selepas 5';
+COMMENT ON COLUMN psy_reaksi_advice_log.zon           IS 'hijau/kuning/merah — zon protokol dikira dari tahap_risiko tertinggi simptom submission ini';
+
+-- ──── psy_patient_reaksi_reports — laporan reaksi mingguan pesakit ────
+CREATE TABLE IF NOT EXISTS psy_patient_reaksi_reports (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  plan_id          UUID REFERENCES psy_treatment_plans(id) ON DELETE CASCADE NOT NULL,
+  patient_id       UUID REFERENCES psy_patients(id)        ON DELETE CASCADE NOT NULL,
+  week_number      INT  NOT NULL,
+  reaksi_pemulihan JSONB DEFAULT '{}',
+  submitted_at     TIMESTAMPTZ DEFAULT now(),
+  updated_at       TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (plan_id, patient_id, week_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_patient_reaksi_plan_week
+  ON psy_patient_reaksi_reports(plan_id, patient_id, week_number);
+
+ALTER TABLE psy_patient_reaksi_reports ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patient select own reaksi" ON psy_patient_reaksi_reports;
+CREATE POLICY "Patient select own reaksi" ON psy_patient_reaksi_reports
+  FOR SELECT USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Patient insert own reaksi" ON psy_patient_reaksi_reports;
+CREATE POLICY "Patient insert own reaksi" ON psy_patient_reaksi_reports
+  FOR INSERT WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Patient update own reaksi" ON psy_patient_reaksi_reports;
+CREATE POLICY "Patient update own reaksi" ON psy_patient_reaksi_reports
+  FOR UPDATE USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff read reaksi reports" ON psy_patient_reaksi_reports;
+CREATE POLICY "Staff read reaksi reports" ON psy_patient_reaksi_reports
+  FOR SELECT USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- Nota: trigger trg_patient_reaksi_notify_coach berada dalam
+-- 18_notifications_automations.sql bersama fungsinya.
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- DATA RUJUKAN (SEED)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- ──── Seed psy_reaksi_item — 7 kumpulan / 48 simptom ────
+-- (+ "Tiada simptom" setiap kumpulan; "Lain-lain" = free-text auto di UI).
+-- Hanya seed bila jadual kosong supaya tak timpa tambahan staff (CRUD).
+INSERT INTO psy_reaksi_item (kumpulan, ikon, label, urutan)
+SELECT v.kumpulan, v.ikon, v.label, v.urutan
+FROM (VALUES
+  -- 1. Pencernaan
+  ('Pencernaan','🍽️','Kembung perut',10),
+  ('Pencernaan','🍽️','Banyak angin',20),
+  ('Pencernaan','🍽️','Banyak sendawa',30),
+  ('Pencernaan','🍽️','Sakit perut',40),
+  ('Pencernaan','🍽️','Loya',50),
+  ('Pencernaan','🍽️','Muntah',60),
+  ('Pencernaan','🍽️','Hilang selera makan',70),
+  ('Pencernaan','🍽️','Banyak membuang air besar',80),
+  ('Pencernaan','🍽️','Cirit-birit',90),
+  ('Pencernaan','🍽️','Sembelit',100),
+  ('Pencernaan','🍽️','Najis hitam',110),
+  ('Pencernaan','🍽️','Tiada simptom',120),
+  -- 2. Peredaran Darah
+  ('Peredaran Darah','🩸','Tekanan darah tinggi',130),
+  ('Peredaran Darah','🩸','Tekanan darah rendah',140),
+  ('Peredaran Darah','🩸','Berdebar-debar',150),
+  ('Peredaran Darah','🩸','Tiada simptom',160),
+  -- 3. Otot & Saraf
+  ('Otot & Saraf','💪','Sakit badan',170),
+  ('Otot & Saraf','💪','Sakit sendi',180),
+  ('Otot & Saraf','💪','Sakit otot',190),
+  ('Otot & Saraf','💪','Sakit pinggang',200),
+  ('Otot & Saraf','💪','Sakit tengkuk',210),
+  ('Otot & Saraf','💪','Sakit belikat',220),
+  ('Otot & Saraf','💪','Kejang',230),
+  ('Otot & Saraf','💪','Kebas',240),
+  ('Otot & Saraf','💪','Tiada simptom',250),
+  -- 4. Detoksifikasi
+  ('Detoksifikasi','🧴','Mukus keluar',260),
+  ('Detoksifikasi','🧴','Jerawat keluar',270),
+  ('Detoksifikasi','🧴','Gatal-gatal',280),
+  ('Detoksifikasi','🧴','Ruam',290),
+  ('Detoksifikasi','🧴','Kulit mengelupas',300),
+  ('Detoksifikasi','🧴','Kulit menjadi lebih sensitif',310),
+  ('Detoksifikasi','🧴','Badan panas',320),
+  ('Detoksifikasi','🧴','Badan sejuk',330),
+  ('Detoksifikasi','🧴','Tiada simptom',340),
+  -- 5. Emosi & Tenaga
+  ('Emosi & Tenaga','⚡','Susah nak tidur (insomnia)',350),
+  ('Emosi & Tenaga','⚡','Mengantuk luar biasa',360),
+  ('Emosi & Tenaga','⚡','Kurang tenaga',370),
+  ('Emosi & Tenaga','⚡','Cepat letih',380),
+  ('Emosi & Tenaga','⚡','Lemah badan',390),
+  ('Emosi & Tenaga','⚡','Mudah sebak',400),
+  ('Emosi & Tenaga','⚡','Gelisah',410),
+  ('Emosi & Tenaga','⚡','Badan terasa berat',420),
+  ('Emosi & Tenaga','⚡','Tiada simptom',430),
+  -- 6. Pernafasan
+  ('Pernafasan','🫁','Sesak nafas',440),
+  ('Pernafasan','🫁','Batuk',450),
+  ('Pernafasan','🫁','Kahak',460),
+  ('Pernafasan','🫁','Mukus',470),
+  ('Pernafasan','🫁','Hidung berair',480),
+  ('Pernafasan','🫁','Bersin',490),
+  ('Pernafasan','🫁','Tiada simptom',500),
+  -- 7. Bengkak & Cecair
+  ('Bengkak & Cecair','💧','Bengkak kaki',510),
+  ('Bengkak & Cecair','💧','Bengkak tangan',520),
+  ('Bengkak & Cecair','💧','Bengkak muka',530),
+  ('Bengkak & Cecair','💧','Edema',540),
+  ('Bengkak & Cecair','💧','Tiada simptom',550)
+) AS v(kumpulan, ikon, label, urutan)
+WHERE NOT EXISTS (SELECT 1 FROM psy_reaksi_item);
+
+-- ──── Seed psy_reaksi_kategori — dijana dari kumpulan psy_reaksi_item ────
+INSERT INTO psy_reaksi_kategori (nama, ikon, urutan)
+SELECT kumpulan, MAX(COALESCE(ikon, '')), MIN(COALESCE(urutan, 100))
+FROM psy_reaksi_item GROUP BY kumpulan
+ON CONFLICT (nama) DO NOTHING;
+
+-- ──── Seed contoh psy_reaksi_actions + pemetaan (Pencernaan + Peredaran Darah) ────
+-- Supaya engine boleh diuji serta-merta; staff tambah/kemaskini selebihnya
+-- dari Staff Portal (bukan hardcode). Hanya jalan bila jadual masih kosong.
+DO $$
+DECLARE
+  a_air_suam UUID; a_air_halia UUID; a_kurang_sukar UUID;
+  a_elak_sejuk UUID; a_rehat UUID; a_elak_berminyak UUID; a_pernafasan UUID;
+  s_kembung UUID; s_angin UUID; s_loya UUID; s_berdebar UUID;
+BEGIN
+  IF EXISTS (SELECT 1 FROM psy_reaksi_actions) THEN RETURN; END IF;
+
+  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Minum air suam', 10) RETURNING id INTO a_air_suam;
+  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Minum air halia', 20) RETURNING id INTO a_air_halia;
+  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Kurangkan makanan sukar dihadam', 30) RETURNING id INTO a_kurang_sukar;
+  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Elakkan minuman sejuk', 40) RETURNING id INTO a_elak_sejuk;
+  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Rehat secukupnya', 50) RETURNING id INTO a_rehat;
+  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Elakkan makanan berminyak', 60) RETURNING id INTO a_elak_berminyak;
+  INSERT INTO psy_reaksi_actions (title, priority) VALUES ('Lakukan Pernafasan Fitrah', 70) RETURNING id INTO a_pernafasan;
+
+  SELECT id INTO s_kembung  FROM psy_reaksi_item WHERE kumpulan='Pencernaan' AND label='Kembung perut' LIMIT 1;
+  SELECT id INTO s_angin    FROM psy_reaksi_item WHERE kumpulan='Pencernaan' AND label='Banyak angin' LIMIT 1;
+  SELECT id INTO s_loya     FROM psy_reaksi_item WHERE kumpulan='Pencernaan' AND label='Loya' LIMIT 1;
+  SELECT id INTO s_berdebar FROM psy_reaksi_item WHERE kumpulan='Peredaran Darah' AND label='Berdebar-debar' LIMIT 1;
+
+  IF s_kembung IS NOT NULL THEN
+    INSERT INTO psy_reaksi_action_map (symptom_id, action_id) VALUES
+      (s_kembung, a_air_suam), (s_kembung, a_air_halia), (s_kembung, a_kurang_sukar);
+  END IF;
+  IF s_angin IS NOT NULL THEN
+    INSERT INTO psy_reaksi_action_map (symptom_id, action_id) VALUES
+      (s_angin, a_air_halia), (s_angin, a_elak_sejuk);
+  END IF;
+  IF s_loya IS NOT NULL THEN
+    INSERT INTO psy_reaksi_action_map (symptom_id, action_id) VALUES
+      (s_loya, a_air_halia), (s_loya, a_rehat), (s_loya, a_elak_berminyak);
+  END IF;
+  IF s_berdebar IS NOT NULL THEN
+    INSERT INTO psy_reaksi_action_map (symptom_id, action_id) VALUES
+      (s_berdebar, a_pernafasan);
+  END IF;
+END $$;
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/13_library_faq.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- SKEMA: Perpustakaan Kandungan & Soalan Lazim (Library + FAQ)
+-- Jadual: psy_library_items, psy_library_bookmarks, psy_library_feedback,
+--         psy_library_views, psy_library_categories,
+--         psy_faq_sections, psy_faq_items
+-- Fungsi: psy_library_bump_view (kiraan bacaan unik per pesakit)
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ──── psy_library_items — kandungan perpustakaan ────
+
+CREATE TABLE IF NOT EXISTS psy_library_items (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  item_id         TEXT UNIQUE,
+  title           TEXT NOT NULL,
+  description     TEXT,
+  content_type    TEXT,
+  content_url     TEXT,
+  category        TEXT,
+  icon            TEXT DEFAULT '📄',
+  gradient        TEXT DEFAULT 'from-navy to-teal',
+  content_body    TEXT,
+  is_active       BOOLEAN DEFAULT true,
+  sort_order      INT DEFAULT 0,
+  thumbnail_url   TEXT,
+  package_ids     TEXT[],
+  media_type      TEXT,
+  topic           TEXT,
+  tags            TEXT[],
+  duration        TEXT,
+  attachment_url  TEXT,
+  view_count      INT DEFAULT 0,
+  created_by_name TEXT,
+  status          TEXT,
+  created_at      TIMESTAMPTZ DEFAULT now(),
+  updated_at      TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_library_package_ids ON psy_library_items USING GIN (package_ids);
+CREATE INDEX IF NOT EXISTS idx_library_media_type  ON psy_library_items(media_type);
+CREATE INDEX IF NOT EXISTS idx_library_topic       ON psy_library_items(topic);
+CREATE INDEX IF NOT EXISTS idx_library_tags        ON psy_library_items USING GIN (tags);
+
+ALTER TABLE psy_library_items ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Anyone read library" ON psy_library_items;
+CREATE POLICY "Anyone read library" ON psy_library_items FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Staff manage library" ON psy_library_items;
+CREATE POLICY "Staff manage library" ON psy_library_items FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+COMMENT ON COLUMN psy_library_items.package_ids IS
+  'Package IDs (psy_packages.package_id) that can access this content. NULL/empty = public for all.';
+COMMENT ON COLUMN psy_library_items.media_type IS
+  'Jenis eksplisit: video | article | pdf | course | faq | image. Sumber tunggal untuk tab/KPI.';
+COMMENT ON COLUMN psy_library_items.topic IS
+  'Kategori topik (cth: Kesihatan Mental, Pemakanan). Berbeza dari category (warna kad).';
 COMMENT ON COLUMN psy_library_items.tags IS 'Tag carian (max 5).';
 COMMENT ON COLUMN psy_library_items.duration IS 'Tempoh video mm:ss (papar pada kad).';
 COMMENT ON COLUMN psy_library_items.attachment_url IS 'Dokumen sokongan (PDF/DOC) opsional.';
-
-CREATE INDEX IF NOT EXISTS idx_library_tags ON psy_library_items USING GIN (tags);
-
-SELECT 'Step 51 OK — library editor fields ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step52_library_view_meta.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step52_library_view_meta.sql
--- Meta untuk page "Lihat Kandungan" (view detail):
---   • view_count      — Jumlah Tontonan (auto-increment bila pesakit buka).
---   • created_by_name — "Diterbitkan Oleh" (nama staff yang cipta).
--- ============================================================
-
-ALTER TABLE psy_library_items
-  ADD COLUMN IF NOT EXISTS view_count      INT DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS created_by_name TEXT;
-
 COMMENT ON COLUMN psy_library_items.view_count IS 'Jumlah tontonan — increment bila pesakit buka library-detail.';
 COMMENT ON COLUMN psy_library_items.created_by_name IS 'Nama staff yang cipta kandungan (Diterbitkan Oleh).';
+COMMENT ON COLUMN psy_library_items.status IS
+  'published | draft | inactive. is_active = (status=published). Pesakit nampak published sahaja.';
 
--- Increment selamat tanpa race (dipanggil dari client via RPC)
-CREATE OR REPLACE FUNCTION psy_library_bump_view(p_item_id TEXT)
-RETURNS void LANGUAGE sql SECURITY DEFINER AS $$
-  UPDATE psy_library_items SET view_count = COALESCE(view_count,0) + 1 WHERE item_id = p_item_id;
-$$;
-
-GRANT EXECUTE ON FUNCTION psy_library_bump_view(TEXT) TO anon, authenticated;
-
-SELECT 'Step 52 OK — library view meta ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step53_library_bookmark_feedback.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step53_library_bookmark_feedback.sql
--- Interaksi pesakit pada page baca kandungan:
---   • psy_library_bookmarks — "Simpan" (bookmark) per pesakit.
---   • psy_library_feedback  — "Adakah ini membantu?" 👍/👎 per pesakit.
--- ============================================================
+-- ──── psy_library_bookmarks — "Simpan" (bookmark) per pesakit ────
 
 CREATE TABLE IF NOT EXISTS psy_library_bookmarks (
   user_id    UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -2806,11 +3363,16 @@ CREATE TABLE IF NOT EXISTS psy_library_bookmarks (
   created_at TIMESTAMPTZ DEFAULT now(),
   PRIMARY KEY (user_id, item_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_lib_bookmark_user ON psy_library_bookmarks(user_id);
+
 ALTER TABLE psy_library_bookmarks ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "own bookmarks" ON psy_library_bookmarks FOR ALL
-    USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DROP POLICY IF EXISTS "own bookmarks" ON psy_library_bookmarks;
+CREATE POLICY "own bookmarks" ON psy_library_bookmarks FOR ALL
+  USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+-- ──── psy_library_feedback — "Adakah ini membantu?" 👍/👎 per pesakit ────
 
 CREATE TABLE IF NOT EXISTS psy_library_feedback (
   user_id    UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -2820,29 +3382,14 @@ CREATE TABLE IF NOT EXISTS psy_library_feedback (
   updated_at TIMESTAMPTZ DEFAULT now(),
   PRIMARY KEY (user_id, item_id)
 );
+
 ALTER TABLE psy_library_feedback ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "own feedback" ON psy_library_feedback FOR ALL
-    USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-CREATE INDEX IF NOT EXISTS idx_lib_bookmark_user ON psy_library_bookmarks(user_id);
+DROP POLICY IF EXISTS "own feedback" ON psy_library_feedback;
+CREATE POLICY "own feedback" ON psy_library_feedback FOR ALL
+  USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
 
-SELECT 'Step 53 OK — library bookmark + feedback ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step54_library_unique_views.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step54_library_unique_views.sql
--- Jumlah Bacaan = UNIK per pesakit (bukan setiap buka).
---   • psy_library_views — log satu baris per (pesakit, kandungan).
---   • psy_library_bump_view() ditakrif semula: increment view_count
---     HANYA kali pertama pesakit buka kandungan tersebut.
--- Client (patient library-detail.html) panggil RPC sama — tiada perubahan kod.
--- ============================================================
+-- ──── psy_library_views — log bacaan unik per (pesakit, kandungan) ────
 
 CREATE TABLE IF NOT EXISTS psy_library_views (
   user_id    UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -2850,13 +3397,15 @@ CREATE TABLE IF NOT EXISTS psy_library_views (
   created_at TIMESTAMPTZ DEFAULT now(),
   PRIMARY KEY (user_id, item_id)
 );
-ALTER TABLE psy_library_views ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "own views" ON psy_library_views FOR ALL
-    USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
--- Redefine: hanya kira sekali per pesakit
+ALTER TABLE psy_library_views ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "own views" ON psy_library_views;
+CREATE POLICY "own views" ON psy_library_views FOR ALL
+  USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+-- ──── psy_library_bump_view — increment view_count sekali per pesakit ────
+
 CREATE OR REPLACE FUNCTION psy_library_bump_view(p_item_id TEXT)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE v_uid UUID := auth.uid();
@@ -2874,186 +3423,92 @@ END $$;
 
 GRANT EXECUTE ON FUNCTION psy_library_bump_view(TEXT) TO anon, authenticated;
 
-SELECT 'Step 54 OK — unique-per-patient view count ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step55_library_status.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step55_library_status.sql
--- Status 3-keadaan untuk kandungan (terutama FAQ editor):
---   published | draft | inactive
--- is_active kekal sebagai gate paparan pesakit (is_active = status='published').
--- Kedua-dua editor tulis status + is_active serentak (app-level).
--- ============================================================
-
-ALTER TABLE psy_library_items
-  ADD COLUMN IF NOT EXISTS status TEXT;
-
-COMMENT ON COLUMN psy_library_items.status IS
-  'published | draft | inactive. is_active = (status=published). Pesakit nampak published sahaja.';
-
--- Backfill dari is_active sedia ada
-UPDATE psy_library_items
-  SET status = CASE WHEN is_active THEN 'published' ELSE 'draft' END
-  WHERE status IS NULL;
-
-SELECT 'Step 55 OK — library status ready' AS status,
-       count(*) FILTER (WHERE status='published') AS published,
-       count(*) FILTER (WHERE status='draft')     AS draft,
-       count(*) AS total
-FROM psy_library_items;
-
-
--- ════════════════════════════════════════════════════════════════
--- step56_patient_medical_upload.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step56_patient_medical_upload.sql
--- Benarkan PESAKIT upload laporan perubatan berkategori
--- (X-Ray, Ultrasound, CT, MRI, Colonoscopy, Endoscopy, Blood, dll)
--- ke table kanonikal psy_medical_reports — terus mengalir ke
--- patient-hub doktor untuk semakan.
---
--- Idempotent: satukan psy_dna_reports → psy_medical_reports kalau perlu,
--- pastikan semua column wujud, kemudian tambah policy INSERT/DELETE pesakit.
--- ============================================================
-
--- 1. Satukan nama table (kalau lama masih wujud)
-DO $$ BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='psy_dna_reports')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='psy_medical_reports') THEN
-    ALTER TABLE psy_dna_reports RENAME TO psy_medical_reports;
-  END IF;
-END $$;
-
--- 2. Pastikan table + column wujud
-CREATE TABLE IF NOT EXISTS psy_medical_reports (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id       UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
-  file_name        TEXT NOT NULL,
-  file_path        TEXT,
-  file_url         TEXT,
-  notes            TEXT,
-  uploaded_by      UUID,
-  uploaded_by_name TEXT,
-  uploaded_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-ALTER TABLE psy_medical_reports
-  ADD COLUMN IF NOT EXISTS report_type   TEXT DEFAULT 'dna',
-  ADD COLUMN IF NOT EXISTS title         TEXT,
-  ADD COLUMN IF NOT EXISTS status        TEXT DEFAULT 'pending',
-  ADD COLUMN IF NOT EXISTS sample_date   DATE,
-  ADD COLUMN IF NOT EXISTS doctor_name   TEXT,
-  ADD COLUMN IF NOT EXISTS doctor_review TEXT,
-  ADD COLUMN IF NOT EXISTS review_status TEXT DEFAULT 'pending',
-  ADD COLUMN IF NOT EXISTS reviewed_at   TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS shared_with_patient BOOLEAN DEFAULT false;
-
-CREATE INDEX IF NOT EXISTS idx_medical_reports_patient ON psy_medical_reports(patient_id, uploaded_at DESC);
-CREATE INDEX IF NOT EXISTS idx_medical_reports_type    ON psy_medical_reports(report_type);
-
-ALTER TABLE psy_medical_reports ENABLE ROW LEVEL SECURITY;
-
--- 3. Policy sedia ada (idempotent)
-DO $$ BEGIN
-  CREATE POLICY "staff_medical_all" ON psy_medical_reports FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "patient_medical_read" ON psy_medical_reports FOR SELECT
-    USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- 4. BARU: pesakit boleh INSERT laporan sendiri
-DO $$ BEGIN
-  CREATE POLICY "patient_medical_insert" ON psy_medical_reports FOR INSERT
-    WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- 5. BARU: pesakit boleh PADAM laporan yang dia upload sendiri (belum disemak)
-DO $$ BEGIN
-  CREATE POLICY "patient_medical_delete_own" ON psy_medical_reports FOR DELETE
-    USING (
-      uploaded_by = auth.uid()
-      AND patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())
-      AND COALESCE(review_status,'pending') = 'pending'
-    );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-SELECT 'Step 56 OK — patient medical upload ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step57_medical_storage_policies.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step57_medical_storage_policies.sql
--- Policy STORAGE untuk bucket 'medical-reports' (private).
--- Membolehkan signed URL berfungsi:
---   • Pesakit: upload + baca + padam fail SENDIRI (owner = auth.uid()).
---   • Staff:   baca semua fail.
--- Bucket kekal PRIVATE (data perubatan sensitif) — akses via signed URL.
--- ============================================================
-
--- Pastikan bucket wujud & private
-INSERT INTO storage.buckets (id, name, public)
-  VALUES ('medical-reports', 'medical-reports', false)
-  ON CONFLICT (id) DO NOTHING;
-
--- Upload: pengguna authenticated boleh insert ke medical-reports
-DO $$ BEGIN
-  CREATE POLICY "medical_upload" ON storage.objects FOR INSERT TO authenticated
-    WITH CHECK (bucket_id = 'medical-reports');
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- Baca: pemilik fail sendiri (signed URL pesakit)
-DO $$ BEGIN
-  CREATE POLICY "medical_read_own" ON storage.objects FOR SELECT TO authenticated
-    USING (bucket_id = 'medical-reports' AND owner = auth.uid());
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- Baca: staff baca semua laporan pesakit
-DO $$ BEGIN
-  CREATE POLICY "medical_read_staff" ON storage.objects FOR SELECT TO authenticated
-    USING (bucket_id = 'medical-reports'
-           AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- Padam: pemilik fail sendiri
-DO $$ BEGIN
-  CREATE POLICY "medical_delete_own" ON storage.objects FOR DELETE TO authenticated
-    USING (bucket_id = 'medical-reports' AND owner = auth.uid());
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-SELECT 'Step 57 OK — medical-reports storage policies ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step58_library_categories.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step58_library_categories.sql
--- Sumber TUNGGAL untuk kategori library (topic).
--- Editor + filter baca dari sini → tukar sekali, semua ikut.
--- psy_library_items.topic = name kategori (text).
--- ============================================================
+-- ──── psy_library_categories — sumber tunggal kategori (content + faq) ────
 
 CREATE TABLE IF NOT EXISTS psy_library_categories (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name        TEXT NOT NULL,
   sort_order  INT DEFAULT 0,
   is_active   BOOLEAN DEFAULT true,
+  scope       TEXT DEFAULT 'content',
   created_at  TIMESTAMPTZ DEFAULT now()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS uq_library_cat_name ON psy_library_categories(lower(name));
 
--- Seed kategori sedia ada (skip kalau dah ada)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_library_cat_name ON psy_library_categories(lower(name));
+CREATE UNIQUE INDEX IF NOT EXISTS uq_library_cat_scope_name
+  ON psy_library_categories(scope, lower(name));
+
+ALTER TABLE psy_library_categories ENABLE ROW LEVEL SECURITY;
+
+-- Semua boleh baca (untuk dropdown/filter pesakit & staff)
+DROP POLICY IF EXISTS "read_categories" ON psy_library_categories;
+CREATE POLICY "read_categories" ON psy_library_categories FOR SELECT USING (true);
+
+-- Staff urus
+DROP POLICY IF EXISTS "staff_categories_all" ON psy_library_categories;
+CREATE POLICY "staff_categories_all" ON psy_library_categories FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ──── psy_faq_sections — bahagian FAQ ────
+
+CREATE TABLE IF NOT EXISTS psy_faq_sections (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code       TEXT NOT NULL UNIQUE,
+  title      TEXT NOT NULL,
+  sort_order INT  NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE psy_faq_sections ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "faq_sections_staff_all" ON psy_faq_sections;
+CREATE POLICY "faq_sections_staff_all" ON psy_faq_sections FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "faq_sections_public_read" ON psy_faq_sections;
+CREATE POLICY "faq_sections_public_read" ON psy_faq_sections FOR SELECT USING (true);
+
+-- ──── psy_faq_items — soal jawab individu dalam setiap bahagian ────
+
+CREATE TABLE IF NOT EXISTS psy_faq_items (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  section_id UUID NOT NULL REFERENCES psy_faq_sections(id) ON DELETE CASCADE,
+  soalan     TEXT NOT NULL,
+  jawapan    TEXT NOT NULL,
+  sort_order INT  NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_faq_items_section ON psy_faq_items(section_id, sort_order);
+
+ALTER TABLE psy_faq_items ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "faq_items_staff_all" ON psy_faq_items;
+CREATE POLICY "faq_items_staff_all" ON psy_faq_items FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "faq_items_public_read" ON psy_faq_items;
+CREATE POLICY "faq_items_public_read" ON psy_faq_items FOR SELECT USING (true);
+
+-- ═══════════════════════════════════════════════════════════════════
+-- DATA RUJUKAN (SEED)
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ──── Seed kandungan perpustakaan asas ────
+INSERT INTO psy_library_items (item_id, title, description, content_type, category, icon, gradient, sort_order) VALUES
+  ('bps-s-intro', 'Apa itu BPS-S model?', 'Dr. Hamzah menerangkan 4 pillar holistik Ibn Sina', 'Video · 8 min', 'navy', '🎥', 'from-navy to-teal', 1),
+  ('santapan-panduan', 'Santapan Fitrah: Panduan Harian', 'Resipi + cara penyediaan untuk 7 hari pertama', 'Article · 5 min', 'green', '📝', 'from-green to-gold-dark', 2),
+  ('zikir-syifa', 'Zikir Pagi Petang Syifa', 'Audio + transliterasi untuk amalan harian', 'Doa & Zikir', 'terracotta', '🕌', 'from-terracotta to-gold-dark', 3),
+  ('breathing-muraqabah', 'Breathing & Muraqabah', 'Teknik pernafasan untuk ketenangan mental', 'Exercise · 15 min', 'gold', '🧘‍♀️', 'from-gold to-green', 4),
+  ('faq-baru', '10 Soalan Lazim Pesakit Baru', 'Apa yang perlu anda tahu sebelum memulakan', 'FAQ', 'teal', '💬', 'from-teal to-navy', 5),
+  ('mood-tracker', 'Mood & Progress Tracker', 'PDF printable untuk rekod harian', 'Worksheet', 'ink', '📊', 'from-navy to-terracotta', 6)
+ON CONFLICT (item_id) DO NOTHING;
+
+-- ──── Seed kategori kandungan (scope='content') ────
 INSERT INTO psy_library_categories (name, sort_order)
 SELECT v.name, v.ord FROM (VALUES
   ('Kesihatan Mental',1),('Pemakanan',2),('Kecergasan',3),('Gaya Hidup',4),
@@ -3061,46 +3516,7 @@ SELECT v.name, v.ord FROM (VALUES
 ) AS v(name, ord)
 WHERE NOT EXISTS (SELECT 1 FROM psy_library_categories c WHERE lower(c.name) = lower(v.name));
 
-ALTER TABLE psy_library_categories ENABLE ROW LEVEL SECURITY;
-
--- Semua boleh baca (untuk dropdown/filter pesakit & staff)
-DO $$ BEGIN
-  CREATE POLICY "read_categories" ON psy_library_categories FOR SELECT USING (true);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- Staff urus
-DO $$ BEGIN
-  CREATE POLICY "staff_categories_all" ON psy_library_categories FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-SELECT 'Step 58 OK — library categories ready' AS status, count(*) AS jumlah FROM psy_library_categories;
-
-
--- ════════════════════════════════════════════════════════════════
--- step59_faq_categories.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step59_faq_categories.sql
--- Kategori FAQ ADA set tersendiri (berbeza dari kategori kandungan).
--- Tambah kolum `scope` ('content' | 'faq') pada psy_library_categories.
---   content → editor Video/Artikel + filter library
---   faq     → editor FAQ + page Soalan Lazim pesakit
--- ============================================================
-
-ALTER TABLE psy_library_categories
-  ADD COLUMN IF NOT EXISTS scope TEXT DEFAULT 'content';
-
-UPDATE psy_library_categories SET scope = 'content' WHERE scope IS NULL;
-
--- Unik ikut (scope, name) — nama boleh sama merentas scope
-DROP INDEX IF EXISTS uq_library_cat_name;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_library_cat_scope_name
-  ON psy_library_categories(scope, lower(name));
-
--- Seed 13 kategori FAQ (skip kalau dah ada)
+-- ──── Seed 13 kategori FAQ (scope='faq') ────
 INSERT INTO psy_library_categories (name, scope, sort_order)
 SELECT v.name, 'faq', v.ord FROM (VALUES
   ('Pendahuluan Rawatan Overhaul Body',1),
@@ -3122,1027 +3538,61 @@ WHERE NOT EXISTS (
   WHERE c.scope = 'faq' AND lower(c.name) = lower(v.name)
 );
 
-SELECT 'Step 59 OK — FAQ categories ready' AS status,
-       count(*) FILTER (WHERE scope='content') AS content_cats,
-       count(*) FILTER (WHERE scope='faq')     AS faq_cats
-FROM psy_library_categories;
+-- ──── Seed bahagian FAQ asas ────
+INSERT INTO psy_faq_sections (code, title, sort_order) VALUES
+  ('umum',     'Soalan Umum',                1),
+  ('rawatan',  'Tentang Rawatan',            2),
+  ('pakej',    'Pakej & Pembayaran',         3),
+  ('kepatuhan','Kepatuhan & Catatan Harian', 4),
+  ('teknikal', 'Teknikal & Akaun',           5)
+ON CONFLICT (code) DO NOTHING;
 
 
 -- ════════════════════════════════════════════════════════════════
--- step60_medical_records_v2.sql
+-- schema/14_products_inventory.sql
 -- ════════════════════════════════════════════════════════════════
 
--- ============================================================
--- step60_medical_records_v2.sql
--- Rekod Perubatan v2:
---   • report_type = 5 kategori: laporan | ujian | imaging | rujukan | lain
---   • source (klinik/sumber), file_size (saiz fail untuk ruang simpanan)
---   • psy_medical_report_comments — thread komen doktor (banyak komen/banyak doktor)
--- ============================================================
+-- ═══════════════════════════════════════════════════════════════════
+-- SKEMA: PRODUK & INVENTORI
+-- Jadual: psy_inventory_items, psy_inventory_requests, psy_products,
+--         psy_procedure_kits, psy_bottle_returns
+-- Katalog produk kedai (shop), inventori klinik dengan auto-request
+-- bila stok rendah, kit prosedur, dan pulangan botol madu pesakit.
+-- ═══════════════════════════════════════════════════════════════════
 
-ALTER TABLE psy_medical_reports
-  ADD COLUMN IF NOT EXISTS source    TEXT,
-  ADD COLUMN IF NOT EXISTS file_size BIGINT;
-
--- Thread komen doktor
-CREATE TABLE IF NOT EXISTS psy_medical_report_comments (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  report_id   UUID NOT NULL REFERENCES psy_medical_reports(id) ON DELETE CASCADE,
-  author_id   UUID,
-  author_name TEXT,
-  author_role TEXT,
-  comment     TEXT NOT NULL,
-  created_at  TIMESTAMPTZ DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_med_comments_report ON psy_medical_report_comments(report_id, created_at);
-
-ALTER TABLE psy_medical_report_comments ENABLE ROW LEVEL SECURITY;
-
--- Staff (doktor) urus semua komen
-DO $$ BEGIN
-  CREATE POLICY "staff_comments_all" ON psy_medical_report_comments FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- Pesakit baca komen pada laporan sendiri
-DO $$ BEGIN
-  CREATE POLICY "patient_read_comments" ON psy_medical_report_comments FOR SELECT
-    USING (report_id IN (
-      SELECT id FROM psy_medical_reports
-      WHERE patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())
-    ));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-SELECT 'Step 60 OK — medical records v2 ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step61_whatsapp_inbox.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step61_whatsapp_inbox.sql
--- Cache untuk ISW WhatsApp Inbox (Fasa 2 GHL integration).
--- ISW jadi muka depan; GHL Conversations API jadi sumber sebenar.
--- Edge Function `ghl-inbox` (service role) yang tulis ke jadual ni;
--- staff hanya SELECT (paparan inbox dalam roles/staff/inbox.html).
---
--- Idempotent — selamat jalan berulang.
--- ============================================================
-
--- ── 1. Perbualan (satu baris per perbualan GHL) ─────────────
-CREATE TABLE IF NOT EXISTS psy_wa_conversations (
+-- ──── psy_inventory_items ────
+CREATE TABLE IF NOT EXISTS psy_inventory_items (
   id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  ghl_conversation_id  TEXT UNIQUE NOT NULL,
-  ghl_contact_id       TEXT,
-  contact_name         TEXT,
-  phone_e164           TEXT,
-  wa_number            TEXT,                 -- nombor talian mana mesej masuk
-  last_message         TEXT,
-  last_message_at      TIMESTAMPTZ,
-  unread               INT DEFAULT 0,
-  patient_id           UUID REFERENCES psy_patients(id) ON DELETE SET NULL, -- diisi bila phone padan (Fasa +1)
-  synced_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_wa_conv_last      ON psy_wa_conversations(last_message_at DESC);
-CREATE INDEX IF NOT EXISTS idx_wa_conv_phone     ON psy_wa_conversations(phone_e164);
-CREATE INDEX IF NOT EXISTS idx_wa_conv_patient   ON psy_wa_conversations(patient_id);
-
--- ── 2. Mesej (satu baris per mesej) ─────────────────────────
-CREATE TABLE IF NOT EXISTS psy_wa_messages (
-  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  ghl_message_id       TEXT UNIQUE,
-  ghl_conversation_id  TEXT NOT NULL,
-  direction            TEXT,                 -- 'inbound' / 'outbound'
-  body                 TEXT,
-  msg_type             TEXT DEFAULT 'whatsapp',
-  sent_by              UUID,                 -- staff id ISW kalau dihantar dari ISW
-  sent_by_name         TEXT,
-  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_wa_msg_conv ON psy_wa_messages(ghl_conversation_id, created_at ASC);
-
--- ── 3. RLS — staff baca; tulis hanya via service role (Edge Fn) ──
-ALTER TABLE psy_wa_conversations ENABLE ROW LEVEL SECURITY;
-ALTER TABLE psy_wa_messages      ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN
-  CREATE POLICY "staff_wa_conv_read" ON psy_wa_conversations FOR SELECT
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "staff_wa_msg_read" ON psy_wa_messages FOR SELECT
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- (Tiada policy INSERT/UPDATE untuk client — service role bypass RLS,
---  jadi Edge Function ghl-inbox sahaja yang boleh tulis.)
-
-SELECT 'Step 61 OK — WhatsApp inbox cache ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step62_whatsapp_realtime.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step62_whatsapp_realtime.sql
--- Fasa +2 — aktifkan Supabase Realtime untuk WhatsApp Inbox
--- supaya mesej baru muncul sendiri + badge unread live.
---
--- Realtime hantar event INSERT/UPDATE ke client yang subscribe
--- (RLS tetap dikuatkuasakan — staff sahaja baca, lihat step61).
---
--- Idempotent — selamat jalan berulang.
--- ============================================================
-
-DO $$ BEGIN
-  ALTER PUBLICATION supabase_realtime ADD TABLE psy_wa_messages;
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  ALTER PUBLICATION supabase_realtime ADD TABLE psy_wa_conversations;
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- REPLICA IDENTITY FULL supaya payload UPDATE bawa nilai lama (untuk kira unread)
-ALTER TABLE psy_wa_messages      REPLICA IDENTITY FULL;
-ALTER TABLE psy_wa_conversations REPLICA IDENTITY FULL;
-
-SELECT 'Step 62 OK — WhatsApp realtime enabled' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step63_wa_outbox_storage.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step63_wa_outbox_storage.sql
--- Fasa +3 — bucket storage untuk media yang coach HANTAR dari ISW.
--- Fail di-upload ke bucket awam 'wa-outbox', URL awam dihantar ke
--- GHL (GHL muat turun & hantar ke WhatsApp pesakit).
---
--- Idempotent — selamat jalan berulang.
--- ============================================================
-
--- 1. Bucket awam (URL boleh diakses GHL untuk muat turun)
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('wa-outbox', 'wa-outbox', true)
-ON CONFLICT (id) DO UPDATE SET public = true;
-
--- 2. Staff boleh upload
-DO $$ BEGIN
-  CREATE POLICY "wa_outbox_staff_insert" ON storage.objects FOR INSERT
-    WITH CHECK (
-      bucket_id = 'wa-outbox'
-      AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
-    );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- 3. Baca awam (bucket public — GHL & browser boleh akses URL)
-DO $$ BEGIN
-  CREATE POLICY "wa_outbox_public_read" ON storage.objects FOR SELECT
-    USING (bucket_id = 'wa-outbox');
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- 4. Staff boleh padam fail sendiri (kemas kalau perlu)
-DO $$ BEGIN
-  CREATE POLICY "wa_outbox_staff_delete" ON storage.objects FOR DELETE
-    USING (
-      bucket_id = 'wa-outbox'
-      AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
-    );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-SELECT 'Step 63 OK — wa-outbox storage ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step64_kepatuhan.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step64_kepatuhan.sql
--- Modul Kepatuhan — ganti Google Form checklist amalan harian.
--- Pesakit isi HARIAN dalam app; kelas A/B/C dikira MINGGUAN.
---
--- Reka bentuk (disahkan user 9 Jun 2026):
---   1. Item checklist BEZA ikut fasa  -> psy_kepatuhan_item (config)
---   2. Pesakit isi 1 baris / hari      -> psy_kepatuhan_log
---   3. Skor A/B/C dikira mingguan      -> psy_kepatuhan_weekly (auto, coach override)
---
--- Kadar (period) per item: harian / mingguan / bulanan.
--- Kelas: A >= 85%, B 50-84%, C < 50%  (cutoff lalai; coach boleh ubah kelak).
---
--- Kod fasa: 'week1', 'week2_4', 'week5_12', 'fasa2', 'fasa3'.
---
--- Idempotent — selamat jalan berulang.
--- ============================================================
-
--- ============================================================
--- 1. CONFIG — soalan checklist per fasa (coach boleh edit)
--- ============================================================
-CREATE TABLE IF NOT EXISTS psy_kepatuhan_item (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  fasa        TEXT NOT NULL CHECK (fasa IN ('week1','week2_4','week5_12','fasa2','fasa3')),
-  item_key    TEXT NOT NULL,
-  label       TEXT NOT NULL,
-  nota        TEXT,                       -- keterangan (cth singkatan LTH/IB)
-  jenis_input TEXT NOT NULL DEFAULT 'pilih_satu'
-              CHECK (jenis_input IN ('kiraan','pilih_satu','pilih_banyak')),
-  period      TEXT NOT NULL DEFAULT 'harian'
-              CHECK (period IN ('harian','mingguan','bulanan')),
-  options     JSONB NOT NULL DEFAULT '[]', -- [{value,label,mata}] ; 'mata' = markah (0/1/2)
-  meta        JSONB NOT NULL DEFAULT '{}', -- cth {"target":3} utk item kiraan (madu)
-  berskor     BOOLEAN NOT NULL DEFAULT true, -- false = tracking sahaja (reaksi pemulihan)
-  urutan      INT NOT NULL DEFAULT 0,
-  aktif       BOOLEAN NOT NULL DEFAULT true,
-  created_at  TIMESTAMPTZ DEFAULT now(),
-  updated_at  TIMESTAMPTZ DEFAULT now(),
-  UNIQUE (fasa, item_key)
-);
-
-ALTER TABLE psy_kepatuhan_item ENABLE ROW LEVEL SECURITY;
--- Staff/coach urus penuh config
-DO $$ BEGIN
-  CREATE POLICY "kepatuhan_item_staff_all" ON psy_kepatuhan_item FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
--- Pesakit baca sahaja (untuk render borang harian)
-DO $$ BEGIN
-  CREATE POLICY "kepatuhan_item_patient_read" ON psy_kepatuhan_item FOR SELECT
-    USING (aktif = true);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE INDEX IF NOT EXISTS idx_kepatuhan_item_fasa ON psy_kepatuhan_item(fasa, urutan);
-
--- ============================================================
--- 2. LOG — jawapan pesakit, 1 baris / hari
--- ============================================================
-CREATE TABLE IF NOT EXISTS psy_kepatuhan_log (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id  UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
-  log_date    DATE NOT NULL DEFAULT CURRENT_DATE,
-  fasa        TEXT NOT NULL CHECK (fasa IN ('week1','week2_4','week5_12','fasa2','fasa3')),
-  jawapan     JSONB NOT NULL DEFAULT '{}', -- {item_key: value | [values]}
-  skor_harian NUMERIC(5,2),                -- % markah hari itu (item berskor sahaja)
-  created_at  TIMESTAMPTZ DEFAULT now(),
-  updated_at  TIMESTAMPTZ DEFAULT now(),
-  UNIQUE (patient_id, log_date)
-);
-
-ALTER TABLE psy_kepatuhan_log ENABLE ROW LEVEL SECURITY;
--- Pesakit urus log sendiri
-DO $$ BEGIN
-  CREATE POLICY "kepatuhan_log_patient_all" ON psy_kepatuhan_log FOR ALL
-    USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
-    WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
--- Staff/coach baca semua
-DO $$ BEGIN
-  CREATE POLICY "kepatuhan_log_staff_read" ON psy_kepatuhan_log FOR SELECT
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "kepatuhan_log_staff_write" ON psy_kepatuhan_log FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE INDEX IF NOT EXISTS idx_kepatuhan_log_patient ON psy_kepatuhan_log(patient_id, log_date);
-
--- ============================================================
--- 3. WEEKLY — kelas A/B/C dikira mingguan (auto + coach override)
--- ============================================================
-CREATE TABLE IF NOT EXISTS psy_kepatuhan_weekly (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id    UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
-  minggu_mula   DATE NOT NULL,             -- tarikh Isnin minggu berkenaan
-  fasa          TEXT,
-  skor          NUMERIC(5,2),              -- % mingguan (purata item berskor)
-  bil_hari_isi  INT DEFAULT 0,             -- berapa hari pesakit isi minggu itu
-  kelas         CHAR(1) CHECK (kelas IN ('A','B','C')),       -- auto
-  override_kelas CHAR(1) CHECK (override_kelas IN ('A','B','C')), -- coach pinda
-  override_by   UUID REFERENCES psy_profiles(id),
-  override_at   TIMESTAMPTZ,
-  nota_coach    TEXT,
-  created_at    TIMESTAMPTZ DEFAULT now(),
-  updated_at    TIMESTAMPTZ DEFAULT now(),
-  UNIQUE (patient_id, minggu_mula)
-);
-
-ALTER TABLE psy_kepatuhan_weekly ENABLE ROW LEVEL SECURITY;
--- Pesakit baca kelas sendiri
-DO $$ BEGIN
-  CREATE POLICY "kepatuhan_weekly_patient_read" ON psy_kepatuhan_weekly FOR SELECT
-    USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
--- Staff/coach urus penuh (kira auto + override)
-DO $$ BEGIN
-  CREATE POLICY "kepatuhan_weekly_staff_all" ON psy_kepatuhan_weekly FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE INDEX IF NOT EXISTS idx_kepatuhan_weekly_patient ON psy_kepatuhan_weekly(patient_id, minggu_mula);
-
--- ============================================================
--- 4. SEED — item checklist WEEK 1 (10 item; 9 berskor + reaksi tracking)
---    Markah: penuh=2, separa=1, tidak=0.
---    Item kiraan (madu): meta.target = bil "cukup" (Week 1 = 3x, ubah kelak).
--- ============================================================
-INSERT INTO psy_kepatuhan_item (fasa, item_key, label, nota, jenis_input, period, options, meta, berskor, urutan) VALUES
-('week1','madu_lth_ib','Minum Madu (LTH / IB)','LTH: Lote Tree Honey · IB: Immune Booster Honey','kiraan','harian',
- '[{"value":"tidak","label":"Tidak minum","mata":0},{"value":"2","label":"2x","mata":1},{"value":"3","label":"3x","mata":2},{"value":"4","label":"4x","mata":3},{"value":"5","label":"5x","mata":4},{"value":"other","label":"Lebih 5x","mata":4}]',
- '{"target":3}', true, 1),
-
-('week1','madu_lthpg_yhpg','Minum Madu (LTHPG / YHPG)','LTHPG: Lote Tree Honey Pearl Garlic · YHPG: Young & Healthy Pearl Garlic','kiraan','harian',
- '[{"value":"tidak","label":"Tidak minum","mata":0},{"value":"2","label":"2x","mata":1},{"value":"3","label":"3x","mata":2},{"value":"4","label":"4x","mata":3},{"value":"5","label":"5x","mata":4},{"value":"other","label":"Lebih 5x","mata":4}]',
- '{"target":3}', true, 2),
-
-('week1','pernafasan_fitrah','Pernafasan Fitrah 30 Minit',NULL,'pilih_satu','harian',
- '[{"value":"cukup_30","label":"Cukup 30 minit","mata":2},{"value":"10_20","label":"10-20 minit","mata":1},{"value":"bawah_10","label":"Kurang dari 10 minit","mata":0}]',
- '{}', true, 3),
-
-('week1','zikir_bersanad','Zikir Bersanad Subuh & Maghrib',NULL,'pilih_satu','harian',
- '[{"value":"subuh_maghrib","label":"Buat waktu Subuh & Maghrib","mata":2},{"value":"subuh","label":"Hanya waktu Subuh","mata":1},{"value":"maghrib","label":"Hanya waktu Maghrib","mata":1},{"value":"tidak","label":"Tidak buat","mata":0}]',
- '{}', true, 4),
-
-('week1','terapi_bumi','Terapi Bumi',NULL,'pilih_satu','harian',
- '[{"value":"20_30","label":"20-30 minit","mata":2},{"value":"10_20","label":"10-20 minit","mata":1},{"value":"tidak","label":"Tidak buat","mata":0}]',
- '{}', true, 5),
-
-('week1','berjemur','Berjemur Matahari',NULL,'pilih_satu','harian',
- '[{"value":"20_30","label":"20-30 minit","mata":2},{"value":"10_20","label":"10-20 minit","mata":1},{"value":"tidak","label":"Tidak buat","mata":0},{"value":"other","label":"Other","mata":1}]',
- '{}', true, 6),
-
-('week1','air_kelapa','Air Kelapa',NULL,'pilih_satu','harian',
- '[{"value":"minum","label":"Minum","mata":2},{"value":"tidak","label":"Tidak minum","mata":0}]',
- '{}', true, 7),
-
-('week1','yogurt','Yogurt',NULL,'pilih_satu','harian',
- '[{"value":"ambil","label":"Ambil","mata":2},{"value":"tidak","label":"Tidak ambil","mata":0}]',
- '{}', true, 8),
-
-('week1','pantang_makan','Pantang Makan',NULL,'pilih_satu','harian',
- '[{"value":"baik","label":"Menjaga pantang dengan baik","mata":2},{"value":"separa","label":"Pantang tapi tak sepenuhnya","mata":1},{"value":"tidak","label":"Tidak menjaga pantang","mata":0}]',
- '{}', true, 9),
-
-('week1','reaksi_pemulihan','Reaksi Pemulihan','Tracking sahaja — tidak dikira dalam skor','pilih_banyak','harian',
- '[{"value":"kerap_kencing","label":"Kerap Kencing"},{"value":"kerap_bab","label":"Kerap Buang Air Besar"},{"value":"gatal","label":"Gatal"},{"value":"selera","label":"Berubah selera makan"},{"value":"bp_naik","label":"Tekanan darah naik"},{"value":"bp_turun","label":"Tekanan darah turun"},{"value":"haid","label":"Haid banyak"},{"value":"kembung","label":"Perut berangin atau kembung"},{"value":"sakit_kepala","label":"Sakit kepala"},{"value":"resdung","label":"Resdung"},{"value":"mencucuk","label":"Rasa sakit mencucuk"},{"value":"radang","label":"Radang, bengkak, kebas, sakit urat"},{"value":"sakit_dada","label":"Sakit dada atau susah bernafas"},{"value":"demam","label":"Demam"},{"value":"lemah","label":"Lemah"},{"value":"mengantuk","label":"Mengantuk"},{"value":"batuk","label":"Batuk atau berkahak"},{"value":"tiada","label":"Tiada"}]',
- '{}', false, 10)
-
-ON CONFLICT (fasa, item_key) DO UPDATE SET
-  label       = EXCLUDED.label,
-  nota        = EXCLUDED.nota,
-  jenis_input = EXCLUDED.jenis_input,
-  period      = EXCLUDED.period,
-  options     = EXCLUDED.options,
-  meta        = EXCLUDED.meta,
-  berskor     = EXCLUDED.berskor,
-  urutan      = EXCLUDED.urutan,
-  updated_at  = now();
-
-SELECT 'Step 64 OK — modul kepatuhan (item config + log + weekly) sedia; Week 1 di-seed' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step65_checkin_detail.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step65_checkin_detail.sql
--- Perkayakan Daily Check-in (digabung dalam Catatan Harian):
---   - emosi (5 domain), reaksi pemulihan terperinci, masa tidur/bangun,
---     tahap gangguan aktiviti harian.
--- Reaksi pemulihan dipindah ke check-in → nyahaktif item dalam checklist amalan.
---
--- Idempotent.
--- ============================================================
-
-ALTER TABLE psy_daily_checkins
-  ADD COLUMN IF NOT EXISTS emotions       JSONB DEFAULT '[]',   -- senarai emosi dipilih
-  ADD COLUMN IF NOT EXISTS sleep_time     TEXT,                 -- tidur pukul (HH:MM)
-  ADD COLUMN IF NOT EXISTS wake_time      TEXT,                 -- bangun pukul (HH:MM)
-  ADD COLUMN IF NOT EXISTS activity_level TEXT;                 -- tahap gangguan aktiviti
-
--- Set asas Week 1 (GForm biasa) — buat masa ini hanya 5 item aktif:
---   madu LTH/IB, madu LTHPG/YHPG, zikir bersanad, pantang makan, reaksi pemulihan (multi-pilih, tracking).
--- Item lain (pernafasan, terapi bumi, berjemur, air kelapa, yogurt) dinyahaktif buat sementara —
--- akan diaktifkan balik bila set penuh digunakan. Daily Check-in (mood/tidur/aktiviti) disembunyi
--- di UI patient (flag SHOW_CHECKIN=false dalam roles/patient/kepatuhan.html).
-UPDATE psy_kepatuhan_item SET aktif = false
-  WHERE item_key IN ('pernafasan_fitrah','terapi_bumi','berjemur','air_kelapa','yogurt');
-UPDATE psy_kepatuhan_item SET aktif = true,  urutan = 5 WHERE item_key = 'reaksi_pemulihan';
-UPDATE psy_kepatuhan_item SET urutan = 3 WHERE item_key = 'zikir_bersanad';
-UPDATE psy_kepatuhan_item SET urutan = 4 WHERE item_key = 'pantang_makan';
-
-SELECT 'Step 65 OK — daily check-in detail fields ready; reaksi checklist dinyahaktifkan' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step66_patient_dedup.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step66_patient_dedup.sql
--- Cegah & bersihkan rekod pesakit BERGANDA (duplicate).
---
--- Punca: stub staff (created_by_staff, user_id NULL) + rekod auto-cipta
---   semasa signup boleh berkongsi user_id / No.KP yang SAMA apabila
---   padanan email gagal. Contoh: P-002 & P-017 (Sh Noraimiza).
---
--- Pencegahan di aplikasi sudah ditambah:
---   • patients.html savePatient()  → halang cipta jika No.KP sudah wujud
---   • patients.html autoLinkStaffPatients() → langkau link jika user_id
---     sudah dipegang rekod lain
---   • assignments.html → chip "KYC Cleared ⚠" tanda rekod tak sync
---
--- Migration ini = jaring keselamatan peringkat DATA.
--- ⚠️ JALANKAN MENGIKUT TURUTAN. Semak output BAHAGIAN 1 sebelum
---    nyahkomen BAHAGIAN 2 & 3.
--- Idempotent.
--- ============================================================
-
-
--- ============================================================
--- BAHAGIAN 1 — DIAGNOSTIK  (SELAMAT — hanya SELECT, tiada ubah data)
--- Jalankan dahulu. Lihat berapa banyak duplicate sebenar.
--- ============================================================
-
--- 1a. user_id dengan >1 rekod aktif (duplicate kongsi akaun)
-SELECT user_id,
-       count(*)                                   AS bil,
-       array_agg(mrn    ORDER BY created_at)       AS mrn_list,
-       array_agg(status ORDER BY created_at)       AS status_list
-FROM   psy_patients
-WHERE  user_id IS NOT NULL
-  AND  status NOT IN ('deleted','archived')
-GROUP  BY user_id
-HAVING count(*) > 1;
-
--- 1b. No.KP dengan >1 rekod aktif
-SELECT ic_number,
-       count(*)                              AS bil,
-       array_agg(mrn ORDER BY created_at)     AS mrn_list,
-       array_agg(status ORDER BY created_at)  AS status_list
-FROM   psy_patients
-WHERE  ic_number IS NOT NULL
-  AND  status NOT IN ('deleted','archived')
-GROUP  BY ic_number
-HAVING count(*) > 1;
-
-
--- ============================================================
--- BAHAGIAN 2 — PEMBERSIHAN  (⚠️ UBAH DATA — nyahkomen selepas semak Bhg 1)
---
--- Bagi setiap user_id berganda, SIMPAN satu rekod terbaik dan
--- ARKIB (status='archived') yang lain. Keutamaan simpan:
---   1) status = 'active'         (sudah lulus KYC / dalam rawatan)
---   2) ada pakej (active_package_id)
---   3) paling baharu (created_at)
---
--- 'archived' BUKAN padam — masih boleh dipulihkan dari senarai pesakit.
--- ============================================================
-
--- WITH ranked AS (
---   SELECT id,
---          row_number() OVER (
---            PARTITION BY user_id
---            ORDER BY (status = 'active')            DESC,
---                     (active_package_id IS NOT NULL) DESC,
---                     created_at                      DESC
---          ) AS rn
---   FROM   psy_patients
---   WHERE  user_id IS NOT NULL
---     AND  status NOT IN ('deleted','archived')
--- )
--- UPDATE psy_patients p
--- SET    status = 'archived'
--- FROM   ranked r
--- WHERE  p.id = r.id
---   AND  r.rn > 1;
-
--- (Pilihan) Stub staff TANPA user_id yang No.KP-nya bertindih dengan
--- rekod aktif lain — arkib juga. Semak dahulu di Bhg 1b.
--- UPDATE psy_patients s
--- SET    status = 'archived'
--- WHERE  s.user_id IS NULL
---   AND  s.created_by_staff = true
---   AND  s.status NOT IN ('deleted','archived')
---   AND  EXISTS (
---          SELECT 1 FROM psy_patients o
---          WHERE  o.ic_number = s.ic_number
---            AND  o.id <> s.id
---            AND  o.user_id IS NOT NULL
---            AND  o.status NOT IN ('deleted','archived')
---        );
-
-
--- ============================================================
--- BAHAGIAN 3 — UNIQUE INDEX  (jalankan SELEPAS Bhg 2 bersih)
--- Jaminan kukuh: tiada lagi dua rekod LIVE kongsi user_id / No.KP.
--- Index ini akan GAGAL dicipta jika masih ada duplicate live —
--- itu petanda Bhg 2 belum selesai (semak semula Bhg 1).
--- ============================================================
-
--- CREATE UNIQUE INDEX IF NOT EXISTS uq_patient_user_live
---   ON psy_patients (user_id)
---   WHERE user_id IS NOT NULL AND status NOT IN ('deleted','archived');
-
--- CREATE UNIQUE INDEX IF NOT EXISTS uq_patient_ic_live
---   ON psy_patients (ic_number)
---   WHERE ic_number IS NOT NULL AND status NOT IN ('deleted','archived');
-
-
-SELECT 'Step 66 — semak BAHAGIAN 1 dahulu, kemudian nyahkomen BAHAGIAN 2 & 3' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_patients_created_by_staff.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP — Add psy_patients.created_by_staff
--- Column ini digunakan dalam kod (patients.html) untuk flag pesakit
--- yang didaftarkan oleh staff (bypass KOB flow), tapi belum dicipta
--- dalam schema. Tambah sekarang.
--- ============================================================
-
-ALTER TABLE psy_patients
-  ADD COLUMN IF NOT EXISTS created_by_staff BOOLEAN DEFAULT false;
-
-COMMENT ON COLUMN psy_patients.created_by_staff IS
-  'TRUE = pesakit didaftarkan oleh staff (bukan self-signup). Akan bypass KOB flow (kob_status=na) dan tunggu auto-link bila pesakit signup sendiri guna IC sama.';
-
--- Backfill: existing patients dengan user_id (self-registered) → false
--- Tanpa user_id (likely staff-created) → true
-UPDATE psy_patients
-SET created_by_staff = (user_id IS NULL)
-WHERE created_by_staff IS NULL OR created_by_staff = false;
-
--- Index untuk auto-link query (cari unlinked staff-created patients ikut IC)
-CREATE INDEX IF NOT EXISTS idx_psy_patients_created_by_staff
-  ON psy_patients(created_by_staff)
-  WHERE created_by_staff = true AND user_id IS NULL;
-
--- Verifikasi
-SELECT
-  COUNT(*) FILTER (WHERE created_by_staff = true) AS staff_created,
-  COUNT(*) FILTER (WHERE created_by_staff = false) AS self_registered,
-  COUNT(*) AS total
-FROM psy_patients;
-
-SELECT 'OK — created_by_staff column ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_patients_missing_columns.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP — psy_patients missing columns (full audit)
--- Cover semua field yang patients.html (Tambah/Edit Pesakit) hantar
--- tapi tidak wujud dalam schema asal psy_patients.
--- ============================================================
-
--- ── 1. Tambah column yang missing ──────────────────────────
-ALTER TABLE psy_patients
-  ADD COLUMN IF NOT EXISTS full_name                       TEXT,
-  ADD COLUMN IF NOT EXISTS phone                           TEXT,
-  ADD COLUMN IF NOT EXISTS emergency_contact_email         TEXT,
-  ADD COLUMN IF NOT EXISTS emergency_contact_relationship  TEXT;
-
--- ── 2. Comments untuk dokumentasi ──────────────────────────
-COMMENT ON COLUMN psy_patients.full_name IS
-  'Nama pesakit. Bila ada user_id, biasanya match dgn psy_profiles.full_name. Snapshot untuk staff-created tanpa user_id.';
-COMMENT ON COLUMN psy_patients.phone IS
-  'Nombor telefon utama pesakit. Boleh berbeza dari psy_profiles.phone (cth: kalau staff tukar di sini).';
-COMMENT ON COLUMN psy_patients.emergency_contact_email IS
-  'Email kenalan kecemasan / waris.';
-COMMENT ON COLUMN psy_patients.emergency_contact_relationship IS
-  'Hubungan waris dengan pesakit (Suami, Isteri, Ibu, Bapa, Anak, dll).';
-
--- ── 3. Backfill: salin nama + phone dari profile (untuk patient yang ada user_id) ──
-UPDATE psy_patients p
-SET full_name = COALESCE(p.full_name, pr.full_name),
-    phone     = COALESCE(p.phone,     pr.phone)
-FROM psy_profiles pr
-WHERE p.user_id = pr.id
-  AND (p.full_name IS NULL OR p.phone IS NULL);
-
--- ── 4. Index untuk search ──────────────────────────────────
-CREATE INDEX IF NOT EXISTS idx_psy_patients_full_name ON psy_patients(full_name);
-CREATE INDEX IF NOT EXISTS idx_psy_patients_phone     ON psy_patients(phone);
-
--- ── 5. Verification — semua column yang patients.html guna ──
-DO $$
-DECLARE
-  required_cols TEXT[] := ARRAY[
-    'full_name','phone','email',
-    'ic_number','date_of_birth','gender','marital_status',
-    'address','home_address','city','state',
-    'occupation','company','referral_source',
-    'medical_condition','condition_duration','medical_notes',
-    'emergency_contact_name','emergency_contact_phone',
-    'emergency_contact_ic','emergency_contact_relationship','emergency_contact_email',
-    'active_package_id','active_package_name','package_purchased_at','package_expires_at',
-    'reference_code','documents',
-    'status','kob_status','outcome_status','outcome_status_at','outcome_status_notes',
-    'coach_id','assigned_at','created_by_staff','user_id','mrn'
-  ];
-  missing_cols TEXT[] := '{}';
-  col TEXT;
-BEGIN
-  FOREACH col IN ARRAY required_cols LOOP
-    IF NOT EXISTS (
-      SELECT 1 FROM information_schema.columns
-      WHERE table_name = 'psy_patients' AND column_name = col
-    ) THEN
-      missing_cols := array_append(missing_cols, col);
-    END IF;
-  END LOOP;
-
-  IF array_length(missing_cols, 1) > 0 THEN
-    RAISE NOTICE 'MASIH MISSING: %', missing_cols;
-  ELSE
-    RAISE NOTICE 'OK — semua column patients.html sudah ada dalam schema';
-  END IF;
-END $$;
-
-SELECT 'OK — psy_patients missing columns added + verified' AS status;
-
--- ── 6. Diagnostic ──────────────────────────────────────────
-SELECT
-  COUNT(*) FILTER (WHERE full_name IS NOT NULL) AS ada_nama,
-  COUNT(*) FILTER (WHERE phone IS NOT NULL)     AS ada_phone,
-  COUNT(*) FILTER (WHERE user_id IS NOT NULL)   AS ada_user_id,
-  COUNT(*) FILTER (WHERE created_by_staff)      AS staff_created,
-  COUNT(*) AS total
-FROM psy_patients;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_profile_personal_fields.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP — Profile Personal Fields
--- Tambah maklumat peribadi staff (tarikh lahir, jantina, bahasa,
--- status perkahwinan, jabatan) untuk halaman profil yang lebih
--- lengkap.
--- ============================================================
-
-ALTER TABLE psy_profiles
-  ADD COLUMN IF NOT EXISTS birth_date     DATE,
-  ADD COLUMN IF NOT EXISTS gender         TEXT CHECK (gender IN ('lelaki','perempuan')),
-  ADD COLUMN IF NOT EXISTS language       TEXT,
-  ADD COLUMN IF NOT EXISTS marital_status TEXT CHECK (marital_status IN ('bujang','berkahwin','bercerai','duda','janda')),
-  ADD COLUMN IF NOT EXISTS department     TEXT;
-
-COMMENT ON COLUMN psy_profiles.birth_date     IS 'Tarikh lahir staff (untuk paparan profil)';
-COMMENT ON COLUMN psy_profiles.gender         IS 'Jantina: lelaki / perempuan';
-COMMENT ON COLUMN psy_profiles.language       IS 'Bahasa utama yang digunakan';
-COMMENT ON COLUMN psy_profiles.marital_status IS 'Status perkahwinan staff';
-COMMENT ON COLUMN psy_profiles.department     IS 'Jabatan / Unit kerja';
-
-SELECT 'OK — psy_profiles personal fields added' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_add_patients_updated_at.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step_add_patients_updated_at.sql  (idempotent)
--- Tambah kolum updated_at pada psy_patients + trigger auto-update.
--- Punca: borang "Edit Profil Pesakit" (patient-hub.html saveProfileEdit)
---        & dashboard.html menulis/baca updated_at, tetapi kolum tiada
---        -> ralat "Could not find the 'updated_at' column ... in schema cache".
--- ============================================================
-
--- ── 1. Kolum updated_at ────────────────────────────────────
-ALTER TABLE psy_patients
-  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
-
--- Isi nilai awal untuk rekod sedia ada (guna created_at jika ada)
-UPDATE psy_patients
-  SET updated_at = COALESCE(updated_at, created_at, now())
-  WHERE updated_at IS NULL;
-
-COMMENT ON COLUMN psy_patients.updated_at IS
-  'Masa kemaskini terakhir rekod pesakit (auto dari trigger).';
-
--- ── 2. Trigger auto-update updated_at ──────────────────────
-CREATE OR REPLACE FUNCTION set_patients_updated_at()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  NEW.updated_at := now();
-  RETURN NEW;
-END;
-$$;
-
-DROP TRIGGER IF EXISTS trg_set_patients_updated_at ON psy_patients;
-CREATE TRIGGER trg_set_patients_updated_at
-  BEFORE UPDATE ON psy_patients
-  FOR EACH ROW
-  EXECUTE FUNCTION set_patients_updated_at();
-
-SELECT 'OK — psy_patients.updated_at + trigger ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_sessions_per_week.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP — Sessions Per Week (per-pakej configuration)
--- Sokong pakej yang ada variasi sesi/minggu:
---   • OB/NLC = 2 sesi/minggu (Jum+Sab atau Sab+Ahd)
---   • OBG    = 1 sesi/minggu
---   • 777    = per-hari (guna duration_unit='day' yang sedia ada)
---
--- BACKWARD COMPAT: Sistem sudah ada `preferred_pair` (fri_sat|sat_sun),
--- `preferred_time_day1/2`, dan `session_day` (1|2) untuk handle 2 sesi.
--- Migration ni TAMBAH lapisan KONFIGURASI PER-PAKEJ supaya tidak hardcoded
--- pada 2 pilihan sahaja, dan boleh extend kepada 1 sesi/minggu.
--- ============================================================
-
--- ── psy_packages: konfigurasi pakej ─────────────────
-ALTER TABLE psy_packages
-  ADD COLUMN IF NOT EXISTS sessions_per_week INT DEFAULT 1
-    CHECK (sessions_per_week BETWEEN 1 AND 7),
-  ADD COLUMN IF NOT EXISTS session_days_options JSONB DEFAULT '[]';
-
-COMMENT ON COLUMN psy_packages.sessions_per_week IS
-  'Bilangan sesi seminggu untuk pakej ini. 1 = sekali (OBG), 2 = dua kali (OB/NLC). Pakej per-hari (777) guna duration_unit=day, biarkan field ini = 1.';
-
-COMMENT ON COLUMN psy_packages.session_days_options IS
-  'Pilihan variant hari sesi yang patient boleh pilih. Format: array of array of int (1=Mon, 7=Sun). Cth OB: [[5,6],[6,7]] = pilihan Jum+Sab ATAU Sab+Ahd. OBG: [[6]] = Sabtu sahaja.';
-
--- ── Existing columns (untuk rujukan, tak diubah): ──
--- psy_treatment_plans.preferred_pair       — 'fri_sat' atau 'sat_sun' (hardcoded, masih kekal)
--- psy_treatment_plans.preferred_time_day1  — masa sesi hari pertama
--- psy_treatment_plans.preferred_time_day2  — masa sesi hari kedua (NULL kalau 1 sesi/minggu)
--- psy_treatment_plans.schedule_setup_at    — bila setup siap
--- psy_plan_weekly_progress.session_day     — 1 atau 2 (sesi pertama/kedua minggu tu)
---
--- Bila migrate untuk extend lebih dari 2 pasangan (mis: Isn+Kha), boleh
--- ubah CHECK constraint pada `preferred_pair` jadi text bebas atau remove
--- check tu. Buat masa ni biar existing constraint kekal — tambah variant
--- baru dalam pakej `session_days_options` dan handle di UI/JS.
-
--- ── Verification ────────────────────────────────────
-SELECT 'OK — sessions_per_week schema ready (build on existing preferred_pair/session_day)' AS status;
-
--- Senarai pakej sedia ada (untuk admin set sessions_per_week)
-SELECT id, package_id, name, duration_unit, sessions_per_week, session_days_options
-FROM psy_packages
-ORDER BY name;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_adherence_alerts.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step_adherence_alerts.sql
--- Track patient adherence alerts (madu, dll).
--- Coach dapat notif bila patient kurang madu 4+ hari berturut.
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS psy_adherence_alerts (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id    UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
-  alert_type    TEXT NOT NULL,             -- 'madu_low_5days' / 'madu_low_4days'
-  trigger_date  DATE NOT NULL,             -- tarikh alert dikira
-  details       JSONB DEFAULT '{}',        -- snapshot: { target, days_below: [...], counts: {} }
-  notified_coach_id UUID REFERENCES psy_profiles(id),
-  acknowledged_by   UUID REFERENCES psy_profiles(id),
-  acknowledged_at   TIMESTAMPTZ,
-  created_at    TIMESTAMPTZ DEFAULT now(),
-  UNIQUE (patient_id, alert_type, trigger_date)  -- elak duplicate sehari
-);
-
-CREATE INDEX IF NOT EXISTS idx_adherence_patient ON psy_adherence_alerts(patient_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_adherence_unack   ON psy_adherence_alerts(acknowledged_at) WHERE acknowledged_at IS NULL;
-
-ALTER TABLE psy_adherence_alerts ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN
-  CREATE POLICY "Patient read own adherence" ON psy_adherence_alerts
-    FOR SELECT USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff read all adherence" ON psy_adherence_alerts
-    FOR SELECT USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff manage adherence" ON psy_adherence_alerts
-    FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
-    WITH CHECK (auth.uid() IS NOT NULL);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- Patient pun boleh insert (sebab patient dashboard akan trigger check)
-DO $$ BEGIN
-  CREATE POLICY "Patient insert own adherence" ON psy_adherence_alerts
-    FOR INSERT WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_bottle_returns.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step_bottle_returns.sql
--- Sistem pulangan botol madu untuk patient.
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS psy_bottle_returns (
-  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id           UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
-  patient_name         TEXT NOT NULL,
-  qty                  INT NOT NULL CHECK (qty > 0),
-  photo_urls           TEXT[] DEFAULT '{}',
-  criteria_confirmed   JSONB NOT NULL DEFAULT '{}',
+  name                 TEXT NOT NULL,
+  category             TEXT NOT NULL DEFAULT 'Bekalan Coaching',
+  unit                 TEXT NOT NULL DEFAULT 'unit',
+  qty_in_stock         NUMERIC(10,2) NOT NULL DEFAULT 0,
+  min_qty              NUMERIC(10,2) NOT NULL DEFAULT 5,
+  requires_approval    BOOLEAN NOT NULL DEFAULT false,
   notes                TEXT,
-  status               TEXT NOT NULL DEFAULT 'pending'
-                       CHECK (status IN ('pending','received','rejected')),
-  reject_reason        TEXT,
-  verified_by          UUID REFERENCES psy_profiles(id),
-  verified_by_name     TEXT,
-  verified_at          TIMESTAMPTZ,
+  max_qty              NUMERIC(10,2),
+  auto_reorder_qty     NUMERIC(10,2),
+  auto_reorder_enabled BOOLEAN DEFAULT false,
+  last_auto_po_at      TIMESTAMPTZ,
+  consumption_type     TEXT DEFAULT 'package'
+                       CHECK (consumption_type IN ('package','service','general')),
+  supplier_info        JSONB DEFAULT '{}'::jsonb,
   created_at           TIMESTAMPTZ DEFAULT now(),
   updated_at           TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_bottle_returns_patient ON psy_bottle_returns(patient_id);
-CREATE INDEX IF NOT EXISTS idx_bottle_returns_status  ON psy_bottle_returns(status, created_at DESC);
+-- RLS
+ALTER TABLE psy_inventory_items ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE psy_bottle_returns ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Staff read inventory items" ON psy_inventory_items;
+CREATE POLICY "Staff read inventory items" ON psy_inventory_items
+  FOR SELECT USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
-DO $$ BEGIN
-  CREATE POLICY "Patient manage own returns" ON psy_bottle_returns
-    FOR ALL USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
-    WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DROP POLICY IF EXISTS "Admin manage inventory items" ON psy_inventory_items;
+CREATE POLICY "Admin manage inventory items" ON psy_inventory_items
+  FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('admin','manager')));
 
-DO $$ BEGIN
-  CREATE POLICY "Staff read all returns" ON psy_bottle_returns
-    FOR SELECT USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff update returns" ON psy_bottle_returns
-    FOR UPDATE USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-COMMENT ON TABLE psy_bottle_returns IS
-  'Permohonan pulangan botol madu patient. Chat thread guna psy_audit_log dengan meta.return_id.';
-COMMENT ON COLUMN psy_bottle_returns.criteria_confirmed IS
-  'JSONB: {tidak_berkarat, bersih, getah_ada, besi_kemas} - semua mesti true sebelum patient boleh submit.';
-COMMENT ON COLUMN psy_bottle_returns.photo_urls IS
-  'Array URL foto bukti botol (boleh upload multiple).';
-
--- Storage bucket untuk photos (manual setup di Supabase Dashboard atau via SQL kalau extension dah enable)
--- Bucket name: 'bottle-returns', public read, authenticated insert
-
-
--- ════════════════════════════════════════════════════════════════
--- step_coaching_catalog.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step_coaching_catalog.sql
--- Master catalog untuk Bimbingan/Calling & Aktiviti/Rawatan.
--- Admin CRUD via dedicated page. Pakej-edit pakai picker.
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS psy_coaching_catalog (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name          TEXT NOT NULL,
-  type          TEXT NOT NULL CHECK (type IN ('bimbingan','aktiviti')),
-  description   TEXT,
-  category      TEXT,             -- optional grouping (cth: 'Bimbingan Reaksi', 'Herba', dll)
-  is_active     BOOLEAN DEFAULT true,
-  sort_order    INT DEFAULT 0,
-  created_by    UUID REFERENCES psy_profiles(id),
-  created_by_name TEXT,
-  created_at    TIMESTAMPTZ DEFAULT now(),
-  updated_at    TIMESTAMPTZ DEFAULT now(),
-  UNIQUE (name, type)
-);
-
-CREATE INDEX IF NOT EXISTS idx_coaching_catalog_type ON psy_coaching_catalog(type, sort_order);
-CREATE INDEX IF NOT EXISTS idx_coaching_catalog_active ON psy_coaching_catalog(is_active);
-
-ALTER TABLE psy_coaching_catalog ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN
-  CREATE POLICY "Anyone read catalog" ON psy_coaching_catalog
-    FOR SELECT USING (auth.uid() IS NOT NULL);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff manage catalog" ON psy_coaching_catalog
-    FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- Seed beberapa default
-INSERT INTO psy_coaching_catalog (name, type, category, sort_order) VALUES
-  ('Bimbingan Reaksi',              'bimbingan', 'Reaksi',     10),
-  ('Bimbingan Terapi Peminuman IB', 'bimbingan', 'Terapi',     20),
-  ('Bimbingan Terapi Zikir Bersanad','bimbingan', 'Terapi',    30),
-  ('Bimbingan Senaman Pernafasan',  'bimbingan', 'Senaman',    40),
-  ('Bimbingan Pemakanan',           'bimbingan', 'Diet',       50),
-  ('Herba Thoharah',                'aktiviti',  'Herba',      10),
-  ('Terapi Madu LTHPG',             'aktiviti',  'Terapi',     20),
-  ('Sesi Bekam',                    'aktiviti',  'Rawatan',    30),
-  ('Senaman Pernafasan',            'aktiviti',  'Senaman',    40),
-  ('Konsultasi Doktor',             'aktiviti',  'Konsultasi', 50),
-  ('Berjemur Matahari',             'aktiviti',  'Amalan',     60)
-ON CONFLICT (name, type) DO NOTHING;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_compliance_session_day.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step_compliance_session_day.sql  (idempotent)
--- Jadikan kepatuhan rawatan boleh diskop ikut SESI (session_day),
--- bukan hanya ikut minggu. Plan 2-sesi/minggu (cth Jum + Sab) kini
--- boleh ada kepatuhan berasingan untuk setiap sesi.
---   • Rekod sedia ada → session_day = 1
---   • UNIQUE lama (plan_id, week_number) ditukar ke
---     (plan_id, week_number, session_day)
--- Nota: app pesakit baca rows[0] sahaja — tidak terjejas.
--- ============================================================
-
-ALTER TABLE psy_plan_compliance
-  ADD COLUMN IF NOT EXISTS session_day INT NOT NULL DEFAULT 1;
-
--- Tukar kekangan UNIQUE supaya merangkumi session_day
-ALTER TABLE psy_plan_compliance
-  DROP CONSTRAINT IF EXISTS psy_plan_compliance_plan_id_week_number_key;
-
-DO $$ BEGIN
-  ALTER TABLE psy_plan_compliance
-    ADD CONSTRAINT psy_plan_compliance_plan_week_session_key
-    UNIQUE (plan_id, week_number, session_day);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE INDEX IF NOT EXISTS idx_psy_compliance_plan_week_sess
-  ON psy_plan_compliance (plan_id, week_number, session_day);
-
-COMMENT ON COLUMN psy_plan_compliance.session_day IS
-  'Sesi dalam minggu (1 atau 2) untuk kepatuhan ini. Default 1.';
-
-SELECT 'OK — psy_plan_compliance session_day ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_feedback_patient_meta.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step_feedback_patient_meta.sql  (idempotent)
--- Tambah lajur yang dijangka oleh kod tetapi tertinggal dari skema:
---   • user_id      — profil yang hantar feedback
---   • patient_name — nama pesakit (dipapar di feedback.html staf)
--- Diperlukan oleh borang feedback weekly (plan-week.html & feedback.html).
--- ============================================================
-
-ALTER TABLE psy_feedback
-  ADD COLUMN IF NOT EXISTS user_id      UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS patient_name TEXT;
-
-SELECT 'OK — psy_feedback.user_id + patient_name ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_inventory_auto_po.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step_inventory_auto_po.sql
--- Auto-trigger purchase invoice bila stok ≤ 30% dari max.
--- ============================================================
-
-ALTER TABLE psy_inventory_items
-  ADD COLUMN IF NOT EXISTS max_qty NUMERIC(10,2),
-  ADD COLUMN IF NOT EXISTS auto_reorder_qty NUMERIC(10,2),
-  ADD COLUMN IF NOT EXISTS auto_reorder_enabled BOOLEAN DEFAULT false,
-  ADD COLUMN IF NOT EXISTS last_auto_po_at TIMESTAMPTZ;
-
+-- Komen
 COMMENT ON COLUMN psy_inventory_items.max_qty IS
   'Saiz stok penuh / target. Trigger auto-PO bila qty_in_stock <= 30% dari max_qty.';
 COMMENT ON COLUMN psy_inventory_items.auto_reorder_qty IS
@@ -4151,38 +3601,54 @@ COMMENT ON COLUMN psy_inventory_items.auto_reorder_enabled IS
   'true = auto-create purchase invoice bila stok rendah; false = manual sahaja.';
 COMMENT ON COLUMN psy_inventory_items.last_auto_po_at IS
   'Tarikh auto-PO terakhir dijana — elak duplikat dalam tempoh pendek.';
+COMMENT ON COLUMN psy_inventory_items.consumption_type IS
+  'package = bekalan pakej (dynamic auto-calc); service = guna semasa service one-off; general = consumable umum (manual min sahaja).';
+COMMENT ON COLUMN psy_inventory_items.supplier_info IS
+  'Format: { name, cost_per_unit, lead_days, po_min, po_max }. Maklumat pembekal dan cadangan PO.';
 
--- Mark auto-generated requests
-ALTER TABLE psy_inventory_requests
-  ADD COLUMN IF NOT EXISTS is_auto_generated BOOLEAN DEFAULT false;
+-- ──── psy_inventory_requests ────
+CREATE TABLE IF NOT EXISTS psy_inventory_requests (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  item_id           UUID REFERENCES psy_inventory_items(id) ON DELETE SET NULL,
+  item_name         TEXT NOT NULL,
+  qty_requested     NUMERIC(10,2) NOT NULL,
+  unit_price        NUMERIC(10,2),
+  total_amount      NUMERIC(10,2),
+  reason            TEXT,
+  status            TEXT NOT NULL DEFAULT 'pending_approval'
+                    CHECK (status IN ('pending_approval','approved','rejected','purchased')),
+  requested_by      UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  requested_by_name TEXT NOT NULL DEFAULT '',
+  approved_by       UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  approved_at       TIMESTAMPTZ,
+  rejected_reason   TEXT,
+  purchased_at      TIMESTAMPTZ,
+  is_auto_generated BOOLEAN DEFAULT false,
+  created_at        TIMESTAMPTZ DEFAULT now(),
+  updated_at        TIMESTAMPTZ DEFAULT now()
+);
+
+-- RLS
+ALTER TABLE psy_inventory_requests ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff read all requests" ON psy_inventory_requests;
+CREATE POLICY "Staff read all requests" ON psy_inventory_requests
+  FOR SELECT USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff insert own requests" ON psy_inventory_requests;
+CREATE POLICY "Staff insert own requests" ON psy_inventory_requests
+  FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Manager admin update requests" ON psy_inventory_requests;
+CREATE POLICY "Manager admin update requests" ON psy_inventory_requests
+  FOR UPDATE USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('admin','manager')));
 
 COMMENT ON COLUMN psy_inventory_requests.is_auto_generated IS
   'true = dijana automatik bila stok ≤ 30%, false = manual request oleh staff.';
 
-
--- ════════════════════════════════════════════════════════════════
--- step_inventory_auto_trigger.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step_inventory_auto_trigger.sql
--- Auto-create psy_inventory_requests bila stok turun ≤ threshold.
---
--- Threshold:
---   - Kalau max_qty diset → 30% daripada max_qty
---   - Kalau tidak → min_qty (fallback)
---
--- Status request:
---   - requires_approval = TRUE  → 'pending_approval' (manager kena approve)
---   - requires_approval = FALSE → 'approved' (staff terus boleh beli)
---
--- Duplicate guard:
---   - Skip kalau dah ada request status 'pending_approval' atau 'approved'
---     untuk item yang sama (belum purchased).
---   - Cooldown 24 jam guna last_auto_po_at — elak spam masa stok
---     turun-naik berkali-kali dalam masa singkat.
--- ============================================================
-
+-- ──── Trigger: auto-request bila stok rendah ────
+-- Threshold: 30% dari max_qty (fallback: min_qty). Hormat requires_approval,
+-- duplicate guard (request pending/approved sedia ada) + cooldown 24 jam.
 CREATE OR REPLACE FUNCTION psy_inventory_auto_request()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -4278,7 +3744,6 @@ END;
 $$;
 
 DROP TRIGGER IF EXISTS trg_psy_inventory_auto_request ON psy_inventory_items;
-
 CREATE TRIGGER trg_psy_inventory_auto_request
 BEFORE UPDATE OF qty_in_stock ON psy_inventory_items
 FOR EACH ROW
@@ -4287,770 +3752,99 @@ EXECUTE FUNCTION psy_inventory_auto_request();
 COMMENT ON FUNCTION psy_inventory_auto_request() IS
   'Auto-cipta inventory_request bila stok turun ≤ 30% max_qty (atau ≤ min_qty kalau max_qty tiada). Hormat requires_approval untuk status.';
 
-
--- ════════════════════════════════════════════════════════════════
--- step_inventory_consumption_type.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step_inventory_consumption_type.sql
--- Klasifikasi barang inventory ikut sifat consumption:
---   package  = pakai sebagai bekalan pakej (kira dynamic dari patient × pakej supplies)
---   service  = pakai untuk service one-off (cth: DNA test kit, swab, urine cup)
---   general  = consumable umum (sarung tangan, alcohol swab, tissue) — manual min sahaja
--- ============================================================
-
-ALTER TABLE psy_inventory_items
-  ADD COLUMN IF NOT EXISTS consumption_type TEXT DEFAULT 'package'
-    CHECK (consumption_type IN ('package','service','general'));
-
-COMMENT ON COLUMN psy_inventory_items.consumption_type IS
-  'package = bekalan pakej (dynamic auto-calc); service = guna semasa service one-off; general = consumable umum (manual min sahaja).';
-
-UPDATE psy_inventory_items SET consumption_type = 'package' WHERE consumption_type IS NULL;
-
--- ============================================================
--- psy_services — Senarai service (appointment types) yang clinic tawarkan.
--- Page services.html dan service-detail.html guna table ni.
--- ============================================================
-CREATE TABLE IF NOT EXISTS psy_services (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  service_id    TEXT UNIQUE NOT NULL,
-  name          TEXT NOT NULL,
-  description   TEXT,
-  icon          TEXT DEFAULT '⚕',
-  price         NUMERIC(10,2) DEFAULT 0,
-  duration_min  INT DEFAULT 30,
-  sort_order    INT DEFAULT 100,
-  is_active     BOOLEAN DEFAULT true,
-  supplies      JSONB DEFAULT '[]'::jsonb,
-  created_at    TIMESTAMPTZ DEFAULT now(),
-  updated_at    TIMESTAMPTZ DEFAULT now()
+-- ──── psy_products ────
+CREATE TABLE IF NOT EXISTS psy_products (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  product_id         TEXT UNIQUE NOT NULL,
+  name               TEXT NOT NULL,
+  description        TEXT,
+  description_short  TEXT,
+  category           TEXT,
+  sku                TEXT,
+  brand              TEXT,
+  price              NUMERIC(10,2) DEFAULT 0,
+  promo_price        NUMERIC(10,2),
+  promo_until        DATE,
+  stock              INT,
+  min_stock          INT DEFAULT 5,
+  unit               TEXT DEFAULT 'unit',
+  track_inventory    BOOLEAN DEFAULT true,
+  low_stock_alert    BOOLEAN DEFAULT true,
+  inventory_item_id  UUID REFERENCES psy_inventory_items(id) ON DELETE SET NULL,
+  icon               TEXT DEFAULT '📦',
+  bg_color           TEXT DEFAULT 'bg-cream',
+  image_url          TEXT,
+  image_urls         JSONB DEFAULT '[]',
+  weight_size        TEXT,
+  supplier           TEXT,
+  tags               JSONB DEFAULT '[]',
+  notes              TEXT,
+  status             TEXT DEFAULT 'active',
+  is_active          BOOLEAN DEFAULT true,
+  visible_in_shop    BOOLEAN DEFAULT true,
+  featured           BOOLEAN DEFAULT false,
+  online_purchase    BOOLEAN DEFAULT true,
+  sort_order         INT DEFAULT 0,
+  created_at         TIMESTAMPTZ DEFAULT now(),
+  updated_at         TIMESTAMPTZ DEFAULT now()
 );
 
-COMMENT ON COLUMN psy_services.supplies IS
-  'Senarai item inventory yang diguna per session service. Format: [{item_id, item_name, qty}].';
-
-ALTER TABLE psy_services ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff manage services" ON psy_services FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "All authenticated read services" ON psy_services FOR SELECT
-    USING (auth.uid() IS NOT NULL);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- Kalau table sudah pernah wujud tanpa column supplies (cth. di-create melalui jalan lain), tambah dia.
-ALTER TABLE psy_services
-  ADD COLUMN IF NOT EXISTS supplies JSONB DEFAULT '[]'::jsonb;
-
--- Seed beberapa service umum (idempotent — skip jika sudah ada)
-INSERT INTO psy_services (service_id, name, description, icon, price, duration_min, sort_order)
-VALUES
-  ('dna_test',     'DNA Test',                  'Ujian genetik untuk profil kesihatan',  '🧬', 350.00, 45, 20),
-  ('blood_test',   'Blood Test',                'Pemeriksaan darah asas',                '🩸', 120.00, 20, 30),
-  ('kob',          'Kursus Orientasi Bestari',  'Kursus orientasi pesakit baru',         '🎓',   0.00, 90, 40)
-ON CONFLICT (service_id) DO NOTHING;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_inventory_supplier_info.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step_inventory_supplier_info.sql
--- Tambah supplier_info JSONB pada psy_inventory_items
--- Format: { name, cost_per_unit, lead_days, po_min, po_max }
--- ============================================================
-
-ALTER TABLE psy_inventory_items
-  ADD COLUMN IF NOT EXISTS supplier_info JSONB DEFAULT '{}'::jsonb;
-
-COMMENT ON COLUMN psy_inventory_items.supplier_info IS
-  'Format: { name, cost_per_unit, lead_days, po_min, po_max }. Maklumat pembekal dan cadangan PO.';
-
-
--- ════════════════════════════════════════════════════════════════
--- step_letter_base.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step_letters.sql
--- Sistem generate surat rasmi (KWSP, PERKESO, RELA, dll).
--- Patient request → Staff fill template → sign → patient download PDF.
--- ============================================================
-
--- Staff signature (upload sekali, reuse semua surat)
-ALTER TABLE psy_profiles
-  ADD COLUMN IF NOT EXISTS signature_url TEXT;
-
-COMMENT ON COLUMN psy_profiles.signature_url IS
-  'URL signature image staff. Embed dalam surat rasmi yang di-sign.';
-
--- Permintaan surat dari patient
-CREATE TABLE IF NOT EXISTS psy_letter_requests (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id      UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
-  patient_name    TEXT NOT NULL,
-  template_code   TEXT NOT NULL,
-  template_name   TEXT NOT NULL,
-  reason          TEXT,
-  field_values    JSONB DEFAULT '{}',
-  status          TEXT NOT NULL DEFAULT 'pending'
-                  CHECK (status IN ('pending','issued','rejected','cancelled')),
-  reject_reason   TEXT,
-  created_at      TIMESTAMPTZ DEFAULT now(),
-  updated_at      TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_letter_req_patient ON psy_letter_requests(patient_id);
-CREATE INDEX IF NOT EXISTS idx_letter_req_status  ON psy_letter_requests(status, created_at DESC);
-
-ALTER TABLE psy_letter_requests ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN
-  CREATE POLICY "Patient manage own letter requests" ON psy_letter_requests
-    FOR ALL USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
-    WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff read all letter requests" ON psy_letter_requests
-    FOR SELECT USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff update letter requests" ON psy_letter_requests
-    FOR UPDATE USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-
--- Surat yang telah dikeluarkan & disign
-CREATE TABLE IF NOT EXISTS psy_letter_issued (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  request_id      UUID REFERENCES psy_letter_requests(id) ON DELETE SET NULL,
-  patient_id      UUID REFERENCES psy_patients(id) ON DELETE CASCADE,  -- nullable: NULL = internal document
-  patient_name    TEXT NOT NULL,
-  template_code   TEXT NOT NULL,
-  template_name   TEXT NOT NULL,
-  field_values    JSONB NOT NULL DEFAULT '{}',
-  ref_number      TEXT,  -- cth: ISW/RELA/2026/0001
-  signed_by       UUID REFERENCES psy_profiles(id),
-  signed_by_name  TEXT NOT NULL,
-  signed_by_role  TEXT,
-  signature_url   TEXT,  -- snapshot signature staff masa sign
-  signed_at       TIMESTAMPTZ DEFAULT now(),
-  created_at      TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_letter_issued_patient ON psy_letter_issued(patient_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_letter_issued_code    ON psy_letter_issued(template_code);
-
-ALTER TABLE psy_letter_issued ENABLE ROW LEVEL SECURITY;
-
--- Untuk DB sedia ada — drop NOT NULL kalau ada
-ALTER TABLE psy_letter_issued ALTER COLUMN patient_id DROP NOT NULL;
-
-DO $$ BEGIN
-  CREATE POLICY "Patient read own issued letters" ON psy_letter_issued
-    FOR SELECT USING (patient_id IS NOT NULL AND patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff manage issued letters" ON psy_letter_issued
-    FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_letter_template_overrides.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step_letter_template_overrides.sql
--- Staff boleh override templates surat hardcoded.
--- Cara kerja: DB override → kalau tiada, fallback ke hardcoded JS templates.
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS psy_letter_template_overrides (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  template_code   TEXT UNIQUE NOT NULL,  -- 'rela', 'kwsp', etc.
-  name            TEXT NOT NULL,
-  description     TEXT,
-  icon            TEXT,
-  body_html       TEXT NOT NULL,
-  fields          JSONB NOT NULL DEFAULT '[]',  -- [{key,label,type,required,autofill}]
-  updated_by      UUID REFERENCES psy_profiles(id),
-  updated_by_name TEXT,
-  updated_at      TIMESTAMPTZ DEFAULT now(),
-  created_at      TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE psy_letter_template_overrides ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff read templates" ON psy_letter_template_overrides
-    FOR SELECT USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff manage templates" ON psy_letter_template_overrides
-    FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- Patient juga boleh read (untuk render surat masa download — sebab template_code dirujuk)
-DO $$ BEGIN
-  CREATE POLICY "Patient read templates" ON psy_letter_template_overrides
-    FOR SELECT USING (auth.uid() IS NOT NULL);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-COMMENT ON TABLE psy_letter_template_overrides IS
-  'Override templates surat hardcoded. Tiada row = guna hardcoded defaults.';
-
-
--- ════════════════════════════════════════════════════════════════
--- step_letter_files.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step_letter_files.sql
--- Refactor sistem surat ke document repository (Word/PDF upload).
--- Staff upload templates → download → fill dalam Word → save PDF →
--- upload PDF balik untuk patient.
--- ============================================================
-
--- ── Storage untuk uploaded template files ────────────────────
-CREATE TABLE IF NOT EXISTS psy_letter_template_files (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name            TEXT NOT NULL,            -- cth: "Surat Permohonan KWSP"
-  description     TEXT,
-  file_url        TEXT NOT NULL,
-  file_name       TEXT NOT NULL,            -- nama original file
-  file_size       INT,                      -- bytes
-  file_type       TEXT,                     -- 'docx', 'pdf', 'doc'
-  uploaded_by     UUID REFERENCES psy_profiles(id),
-  uploaded_by_name TEXT,
-  created_at      TIMESTAMPTZ DEFAULT now()
-);
-
--- Sokong dua jenis templat: 'file' (upload Word/PDF) atau 'inline' (cipta dalam sistem)
-ALTER TABLE psy_letter_template_files
-  ADD COLUMN IF NOT EXISTS template_type TEXT DEFAULT 'file'
-    CHECK (template_type IN ('file','inline')),
-  ADD COLUMN IF NOT EXISTS body_html TEXT;
-
--- Buat file_url nullable (inline tak ada file)
-ALTER TABLE psy_letter_template_files ALTER COLUMN file_url DROP NOT NULL;
-ALTER TABLE psy_letter_template_files ALTER COLUMN file_name DROP NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_letter_tpl_files_created ON psy_letter_template_files(created_at DESC);
-
-ALTER TABLE psy_letter_template_files ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff manage template files" ON psy_letter_template_files
-    FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-
--- ── Issued letters: tambah file_url untuk uploaded PDF ───────
-ALTER TABLE psy_letter_issued
-  ADD COLUMN IF NOT EXISTS file_url     TEXT,
-  ADD COLUMN IF NOT EXISTS file_name    TEXT,
-  ADD COLUMN IF NOT EXISTS file_size    INT,
-  ADD COLUMN IF NOT EXISTS template_file_id UUID REFERENCES psy_letter_template_files(id) ON DELETE SET NULL;
-
-COMMENT ON COLUMN psy_letter_issued.file_url IS
-  'URL PDF/Word file lengkap yang dah disign (upload oleh staff).';
-COMMENT ON COLUMN psy_letter_issued.template_file_id IS
-  'Refer template yang digunakan (untuk track sahaja).';
-
--- Field lama (field_values, signature_url, body_html) jadi optional/legacy
--- Tak perlu drop sebab old data mungkin ada.
-
-
--- ════════════════════════════════════════════════════════════════
--- step_letter_simple.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step_letter_simple.sql
--- Sistem surat: format tetap (letterhead auto), admin define
--- template body + fields, staff fill form → generate PDF.
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS psy_letter_templates (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name            TEXT NOT NULL,
-  description     TEXT,
-  category        TEXT NOT NULL DEFAULT 'patient'
-                  CHECK (category IN ('patient','internal')),
-  recipient       TEXT,                 -- "Pengurus Besar, KWSP, ..."
-  title           TEXT,                 -- "PERMOHONAN PENGELUARAN AHLI KWSP"
-  body            TEXT NOT NULL,        -- plain text + [PLACEHOLDER]
-  fields          JSONB NOT NULL DEFAULT '[]',  -- [{key,label,type,autofill}]
-  created_by      UUID REFERENCES psy_profiles(id),
-  created_by_name TEXT,
-  created_at      TIMESTAMPTZ DEFAULT now(),
-  updated_at      TIMESTAMPTZ DEFAULT now()
-);
-
--- Tambah kalau table dah wujud
-ALTER TABLE psy_letter_templates
-  ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'patient';
-
-ALTER TABLE psy_letter_templates ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN
-  CREATE POLICY "Anyone read templates" ON psy_letter_templates
-    FOR SELECT USING (auth.uid() IS NOT NULL);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff manage templates" ON psy_letter_templates
-    FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- Cleanup old tables (jika ada, dari iterasi lepas)
-DROP TABLE IF EXISTS psy_letter_template_overrides;
-
--- Drop column dalam psy_letter_issued yang refer psy_letter_template_files dulu
-ALTER TABLE psy_letter_issued DROP COLUMN IF EXISTS template_file_id;
-DROP TABLE IF EXISTS psy_letter_template_files;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_letter_auto_fields.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step_letter_auto_fields.sql
--- Admin boleh tambah auto-field tambahan (selain yang hardcoded).
--- Cth: [BMI], [BERAT], [PEKERJAAN] — sistem ambil dari column DB.
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS psy_letter_auto_fields (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  key             TEXT UNIQUE NOT NULL,        -- "BMI" (akan jadi [BMI] dalam templat)
-  label           TEXT NOT NULL,               -- "BMI Patient" (yang muncul dalam palette)
-  source          TEXT NOT NULL CHECK (source IN ('patient','staff','system')),
-  data_path       TEXT NOT NULL,               -- nama column dalam table (cth: 'bmi', 'address', 'phone')
-  format_type     TEXT,                        -- optional: 'date' / 'currency' / null
-  is_active       BOOLEAN DEFAULT true,
-  is_default      BOOLEAN DEFAULT false,       -- true = pre-seeded; boleh delete tapi reset bawa balik
-  sort_order      INT DEFAULT 0,
-  created_by      UUID REFERENCES psy_profiles(id),
-  created_by_name TEXT,
-  created_at      TIMESTAMPTZ DEFAULT now(),
-  updated_at      TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE psy_letter_auto_fields
-  ADD COLUMN IF NOT EXISTS is_default BOOLEAN DEFAULT false,
-  ADD COLUMN IF NOT EXISTS sort_order INT DEFAULT 0;
-
-ALTER TABLE psy_letter_auto_fields ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN
-  CREATE POLICY "Anyone read auto fields" ON psy_letter_auto_fields
-    FOR SELECT USING (auth.uid() IS NOT NULL);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Staff manage auto fields" ON psy_letter_auto_fields
-    FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-COMMENT ON TABLE psy_letter_auto_fields IS
-  'Auto-fields untuk surat. Admin manage via UI. Sistem ambil value dari DB column yang ditentukan.';
-
--- ── Seed default auto-fields ────────────────────────────────
-INSERT INTO psy_letter_auto_fields (key, label, source, data_path, format_type, is_default, sort_order) VALUES
-  ('NAMA',                'Nama Patient',          'patient', 'full_name',             NULL,       true, 10),
-  ('IC',                  'No. K/P',                'patient', 'ic_number',             NULL,       true, 20),
-  ('PHONE',               'No. Telefon',            'patient', 'phone',                 NULL,       true, 30),
-  ('ALAMAT',              'Alamat Patient',         'patient', 'address',               NULL,       true, 40),
-  ('TARIKH_LAHIR',        'Tarikh Lahir',           'patient', 'dob',                   'date',     true, 50),
-  ('JANTINA',             'Jantina',                'patient', 'gender',                NULL,       true, 60),
-  ('BANGSA',              'Bangsa',                 'patient', 'race',                  NULL,       true, 70),
-  ('AGAMA',               'Agama',                  'patient', 'religion',              NULL,       true, 80),
-  ('PEKERJAAN',           'Pekerjaan',              'patient', 'occupation',            NULL,       true, 90),
-  ('PAKEJ',               'Pakej Aktif',            'patient', 'active_package_name',   NULL,       true, 100),
-  ('TARIKH_MULA_RAWATAN', 'Tarikh Mula Rawatan',    'patient', 'package_purchased_at',  'date',     true, 110),
-  ('STAFF_NAMA',          'Nama Staff',             'staff',   'full_name',             NULL,       true, 200),
-  ('STAFF_JAWATAN',       'Jawatan Staff',          'staff',   'staff_role',            NULL,       true, 210),
-  ('STAFF_REG_NO',        'No. Pendaftaran Staff',  'staff',   'registration_no',       NULL,       true, 220),
-  ('STAFF_SPECIALIZATION','Pengkhususan Staff',     'staff',   'specialization',        NULL,       true, 230),
-  ('TARIKH',              'Tarikh Hari Ini',        'system',  '__today__',             NULL,       true, 300),
-  ('RUJUKAN',             'Nombor Rujukan',         'system',  '__ref_number__',        NULL,       true, 310)
-ON CONFLICT (key) DO NOTHING;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_surat_template_v2.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP SURAT — TEMPLATE V2 (wizard fields)
--- Tambah column untuk match mockup wizard UI
--- ============================================================
-
-ALTER TABLE psy_letter_templates
-  ADD COLUMN IF NOT EXISTS jenis_surat TEXT,           -- sub-category bebas: "Tujuan Rawatan", "KWSP", "RELA"
-  ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'ms', -- 'ms' atau 'en'
-  ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
-
-COMMENT ON COLUMN psy_letter_templates.jenis_surat IS
-  'Sub-category template (cth: Tujuan Rawatan, KWSP, RELA). Boleh diisi bebas.';
-COMMENT ON COLUMN psy_letter_templates.language IS
-  'Bahasa default template: ms (Bahasa Melayu) atau en (English).';
-COMMENT ON COLUMN psy_letter_templates.is_active IS
-  'Template aktif boleh diguna pakai. Tak aktif = draft / disembunyikan dari list patient.';
-
-CREATE INDEX IF NOT EXISTS idx_letter_tpl_active ON psy_letter_templates(category, is_active);
-
-SELECT 'Step Surat Template V2 OK' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_surat_approval.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP SURAT — APPROVAL ROUTING
--- Setiap template boleh assign signer/approver specific (cth: RELA → Manager Shamsinar)
--- Patient request akan route ke approver tu sahaja, bukan semua staff
--- ============================================================
-
--- ── TEMPLATE: tambah approver ──
-ALTER TABLE psy_letter_templates
-  ADD COLUMN IF NOT EXISTS assigned_signer_id UUID REFERENCES psy_profiles(id) ON DELETE SET NULL;
-ALTER TABLE psy_letter_templates
-  ADD COLUMN IF NOT EXISTS requires_specific_approver BOOLEAN DEFAULT false;
-
-COMMENT ON COLUMN psy_letter_templates.assigned_signer_id IS
-  'Staff yang ditetapkan untuk sign template ini. NULL = mana-mana staff dengan permission boleh sign.';
-COMMENT ON COLUMN psy_letter_templates.requires_specific_approver IS
-  'true = HANYA assigned_signer (atau super_admin) boleh approve/sign. false = pilihan default sahaja.';
-
--- ── REQUEST: tambah approval tracking ──
-ALTER TABLE psy_letter_requests
-  ADD COLUMN IF NOT EXISTS assigned_signer_id UUID REFERENCES psy_profiles(id) ON DELETE SET NULL;
-ALTER TABLE psy_letter_requests
-  ADD COLUMN IF NOT EXISTS approved_by UUID REFERENCES psy_profiles(id) ON DELETE SET NULL;
-ALTER TABLE psy_letter_requests
-  ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
-
-COMMENT ON COLUMN psy_letter_requests.assigned_signer_id IS
-  'Snapshot signer ID dari template masa request dicipta. Tak berubah walau template di-edit kemudian.';
-
--- Update CHECK constraint untuk include 'cancelled'
-ALTER TABLE psy_letter_requests DROP CONSTRAINT IF EXISTS psy_letter_requests_status_check;
-ALTER TABLE psy_letter_requests ADD CONSTRAINT psy_letter_requests_status_check
-  CHECK (status IN ('pending','issued','rejected','cancelled'));
-
--- ── Index untuk filter "show only mine" ──
-CREATE INDEX IF NOT EXISTS idx_letter_req_signer ON psy_letter_requests(assigned_signer_id, status);
-
--- ── RLS update: assigned signer + super_admin/manager boleh nampak request mereka ──
--- (Sedia ada policy "req_staff_read" via user_has_perm('communication','view') — kekal.
---  Filter "milik saya sahaja" akan handle di UI layer.)
-
-SELECT 'Step Surat Approval OK — assigned_signer columns added' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_package_extension_price.sql
--- ════════════════════════════════════════════════════════════════
-
--- Phase 1: Harga tambah minggu rawatan (extension) — admin tetapkan per pakej.
-
-ALTER TABLE psy_packages
-  ADD COLUMN IF NOT EXISTS extension_price_per_week NUMERIC(10,2) DEFAULT 50;
-
-COMMENT ON COLUMN psy_packages.extension_price_per_week IS
-  'Harga (RM) untuk tambah satu minggu rawatan bila patient miss sesi. Default RM 50.';
-
-
--- ════════════════════════════════════════════════════════════════
--- step_package_meet_link.sql
--- ════════════════════════════════════════════════════════════════
-
--- Add single Gmeet link per package — used for all weeks with online/both mode.
-ALTER TABLE psy_packages
-  ADD COLUMN IF NOT EXISTS meet_link TEXT;
-
-COMMENT ON COLUMN psy_packages.meet_link IS
-  'Pautan Gmeet recurring untuk pakej. Dipaparkan kepada patient bila minggu semasa adalah online/both.';
-
-
--- ════════════════════════════════════════════════════════════════
--- step_patient_address_residence.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP — Patient Address: Residence + City/State columns
--- Tambah alamat kediaman (berasingan dari surat-menyurat) +
--- pecahkan bandar / negeri untuk filter & laporan.
--- ============================================================
-
-ALTER TABLE psy_patients
-  ADD COLUMN IF NOT EXISTS home_address TEXT,
-  ADD COLUMN IF NOT EXISTS city         TEXT,
-  ADD COLUMN IF NOT EXISTS state        TEXT;
-
-COMMENT ON COLUMN psy_patients.home_address IS
-  'Alamat kediaman pesakit (berbeza dari address yang digunakan untuk surat-menyurat / mailing).';
-COMMENT ON COLUMN psy_patients.city  IS 'Bandar (sebahagian dari alamat kediaman).';
-COMMENT ON COLUMN psy_patients.state IS 'Negeri (Selangor, Johor, dll.).';
-
-CREATE INDEX IF NOT EXISTS idx_patients_state ON psy_patients(state);
-
-SELECT 'Step Patient Address OK — home_address, city, state added' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_patient_hub_v2.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP — Patient Hub v2 schema
--- 1. Rename psy_dna_reports → psy_medical_reports + expand
--- 2. NEW psy_patient_notes (Nota Coach / Sesi / General)
--- 3. NEW psy_patient_documents (KYC, IC, Persetujuan, Laporan, Gambar)
--- 4. Patient supplies = derived dari coaching_schedule + audit log (no new table)
--- ============================================================
-
--- ───────── 1. EXPAND DNA → Medical Reports (general purpose) ─────────
--- Rename only if old table exists with old name; otherwise skip
-DO $$ BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'psy_dna_reports')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'psy_medical_reports') THEN
-    ALTER TABLE psy_dna_reports RENAME TO psy_medical_reports;
+-- RLS
+ALTER TABLE psy_products ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Anyone read products" ON psy_products;
+CREATE POLICY "Anyone read products" ON psy_products FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Staff manage products" ON psy_products;
+CREATE POLICY "Staff manage products" ON psy_products
+  FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- Komen
+COMMENT ON COLUMN psy_products.inventory_item_id IS
+  'Link ke inventory item. Bila order status=paid, qty_in_stock auto-deduct ikut quantity dibeli.';
+COMMENT ON COLUMN psy_products.image_url IS
+  'URL gambar utama produk (single). Untuk gallery multi-gambar, guna image_urls (JSONB array).';
+
+-- ──── Fungsi: auto-deduct inventori bila order paid ────
+-- Trigger function untuk jadual order (items JSONB: [{product_id, qty, ...}]).
+CREATE OR REPLACE FUNCTION psy_order_deduct_inventory()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_item       JSONB;
+  v_product    psy_products%ROWTYPE;
+  v_qty        NUMERIC;
+BEGIN
+  IF NEW.status = 'paid' AND (OLD.status IS DISTINCT FROM 'paid') THEN
+    FOR v_item IN SELECT * FROM jsonb_array_elements(COALESCE(NEW.items, '[]'::jsonb))
+    LOOP
+      -- Match by product_id (text id) atau id (UUID) — support kedua-dua format
+      SELECT * INTO v_product FROM psy_products
+        WHERE product_id = v_item->>'product_id'
+           OR id::text   = v_item->>'product_id'
+        LIMIT 1;
+
+      IF v_product.inventory_item_id IS NOT NULL THEN
+        v_qty := COALESCE((v_item->>'qty')::numeric, (v_item->>'quantity')::numeric, 1);
+        UPDATE psy_inventory_items
+          SET qty_in_stock = GREATEST(0, qty_in_stock - v_qty),
+              updated_at   = now()
+          WHERE id = v_product.inventory_item_id;
+      END IF;
+    END LOOP;
   END IF;
-END $$;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
--- If neither exists, create fresh
-CREATE TABLE IF NOT EXISTS psy_medical_reports (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id      UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
-  file_name       TEXT NOT NULL,
-  file_path       TEXT,
-  file_url        TEXT,
-  notes           TEXT,
-  uploaded_by     UUID,
-  uploaded_by_name TEXT,
-  uploaded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+-- Trigger pada psy_orders (jadual dari 06_payments.sql) — diletak di sini
+-- kerana fungsinya ditakrif di atas.
+DROP TRIGGER IF EXISTS trg_psy_order_deduct_inventory ON psy_orders;
+CREATE TRIGGER trg_psy_order_deduct_inventory
+  AFTER UPDATE ON psy_orders
+  FOR EACH ROW EXECUTE FUNCTION psy_order_deduct_inventory();
 
--- Add expanded columns
-ALTER TABLE psy_medical_reports
-  ADD COLUMN IF NOT EXISTS report_type    TEXT DEFAULT 'dna',
-  ADD COLUMN IF NOT EXISTS title          TEXT,
-  ADD COLUMN IF NOT EXISTS status         TEXT DEFAULT 'pending',
-  ADD COLUMN IF NOT EXISTS sample_date    DATE,
-  ADD COLUMN IF NOT EXISTS sample_type    TEXT,
-  ADD COLUMN IF NOT EXISTS result_date    DATE,
-  ADD COLUMN IF NOT EXISTS analysis_duration_days INT,
-  ADD COLUMN IF NOT EXISTS categories     JSONB DEFAULT '{}',
-  ADD COLUMN IF NOT EXISTS summary        TEXT,
-  ADD COLUMN IF NOT EXISTS doctor_id      UUID,
-  ADD COLUMN IF NOT EXISTS doctor_name    TEXT,
-  ADD COLUMN IF NOT EXISTS doctor_review  TEXT,
-  ADD COLUMN IF NOT EXISTS review_status  TEXT DEFAULT 'pending',
-  ADD COLUMN IF NOT EXISTS reviewed_at    TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS shared_with_patient BOOLEAN DEFAULT false,
-  ADD COLUMN IF NOT EXISTS shared_at      TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS attached_files JSONB DEFAULT '[]';
-
-COMMENT ON COLUMN psy_medical_reports.report_type IS
-  'dna | xray | ct | mri | ultrasound | blood | colonoscopy | endoscopy | other';
-COMMENT ON COLUMN psy_medical_reports.status IS
-  'pending | sampling | lab | ready | reviewed';
-COMMENT ON COLUMN psy_medical_reports.review_status IS
-  'pending | diluluskan | ditolak';
-
-CREATE INDEX IF NOT EXISTS idx_medical_reports_patient ON psy_medical_reports(patient_id, uploaded_at DESC);
-CREATE INDEX IF NOT EXISTS idx_medical_reports_type    ON psy_medical_reports(report_type);
-
-ALTER TABLE psy_medical_reports ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "staff_medical_all" ON psy_medical_reports FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "patient_medical_read" ON psy_medical_reports FOR SELECT
-    USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- ───────── 2. NEW: Patient Notes ─────────
-CREATE TABLE IF NOT EXISTS psy_patient_notes (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id   UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
-  note_type    TEXT NOT NULL DEFAULT 'general'
-               CHECK (note_type IN ('general','coach','sesi','checkin','vitals','medical','dna','peringatan')),
-  content      TEXT NOT NULL,
-  related_session_id UUID,
-  related_report_id  UUID,
-  actor_id     UUID,
-  actor_name   TEXT,
-  actor_role   TEXT,
-  is_pinned    BOOLEAN DEFAULT false,
-  visibility   TEXT DEFAULT 'staff'
-               CHECK (visibility IN ('staff','patient','both')),
-  created_at   TIMESTAMPTZ DEFAULT now(),
-  updated_at   TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_patient_notes_patient ON psy_patient_notes(patient_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_patient_notes_type    ON psy_patient_notes(note_type);
-
-ALTER TABLE psy_patient_notes ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "staff_notes_all" ON psy_patient_notes FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "patient_notes_read" ON psy_patient_notes FOR SELECT
-    USING (visibility IN ('patient','both') AND
-           patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- ───────── 3. NEW: Patient Documents ─────────
-CREATE TABLE IF NOT EXISTS psy_patient_documents (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id   UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
-  doc_type     TEXT NOT NULL DEFAULT 'other'
-               CHECK (doc_type IN ('kyc','ic','passport','persetujuan','laporan_perubatan','gambar','surat_rasmi','resit','other')),
-  doc_label    TEXT NOT NULL,
-  description  TEXT,
-  file_name    TEXT,
-  file_path    TEXT,
-  file_url     TEXT,
-  file_size    INT,
-  status       TEXT DEFAULT 'pending'
-               CHECK (status IN ('pending','disahkan','disemak','tertunggak','ditolak')),
-  uploaded_by  UUID,
-  uploaded_by_name TEXT,
-  uploaded_at  TIMESTAMPTZ DEFAULT now(),
-  approved_by  UUID,
-  approved_at  TIMESTAMPTZ
-);
-
-CREATE INDEX IF NOT EXISTS idx_patient_docs_patient ON psy_patient_documents(patient_id, uploaded_at DESC);
-CREATE INDEX IF NOT EXISTS idx_patient_docs_type    ON psy_patient_documents(doc_type);
-
-ALTER TABLE psy_patient_documents ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "staff_docs_all" ON psy_patient_documents FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "patient_docs_read_own" ON psy_patient_documents FOR SELECT
-    USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "patient_docs_insert_own" ON psy_patient_documents FOR INSERT
-    WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-SELECT 'Step Patient Hub v2 OK — medical_reports expanded, notes + documents created' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_plan_schedule_setup.sql
--- ════════════════════════════════════════════════════════════════
-
--- Phase 1: Treatment plan schedule preferences
--- Patient pilih sekali masa onboarding: pasangan hari + jam untuk setiap hari.
--- Sistem auto-seed 24 sesi (12 minggu × 2 hari).
-
-ALTER TABLE psy_treatment_plans
-  ADD COLUMN IF NOT EXISTS preferred_pair TEXT CHECK (preferred_pair IN ('fri_sat','sat_sun')),
-  ADD COLUMN IF NOT EXISTS preferred_time_day1 TIME,   -- jam hari pertama (Jum atau Sab)
-  ADD COLUMN IF NOT EXISTS preferred_time_day2 TIME,   -- jam hari kedua (Sab atau Ahad)
-  ADD COLUMN IF NOT EXISTS schedule_setup_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS start_date DATE;             -- tarikh SEBENAR mula program (anchor minggu 1)
-
-COMMENT ON COLUMN psy_treatment_plans.start_date IS
-  'Tarikh sebenar program bermula (anchor Minggu 1). NULL = fallback ke created_at. '
-  'Guna untuk pesakit yang dimasukkan lewat / mid-program (cth dah di week 7/12) supaya '
-  'semua tarikh sesi dikira dari tarikh sebenar, bukan tarikh plan dicipta.';
-
-COMMENT ON COLUMN psy_treatment_plans.preferred_pair IS
-  'Pasangan hari pilihan patient: fri_sat (Jumaat+Sabtu) atau sat_sun (Sabtu+Ahad).';
-COMMENT ON COLUMN psy_treatment_plans.preferred_time_day1 IS
-  'Jam pilihan hari pertama dalam pair (Jumaat untuk fri_sat, Sabtu untuk sat_sun).';
-COMMENT ON COLUMN psy_treatment_plans.preferred_time_day2 IS
-  'Jam pilihan hari kedua dalam pair (Sabtu untuk fri_sat, Ahad untuk sat_sun).';
-COMMENT ON COLUMN psy_treatment_plans.schedule_setup_at IS
-  'Bila patient siap setup jadual. NULL = belum setup, tunjuk wizard.';
-
-
--- ════════════════════════════════════════════════════════════════
--- step_plan_session_day.sql
--- ════════════════════════════════════════════════════════════════
-
--- Phase 1: 2 sesi seminggu — tambah session_day untuk pisahkan sesi A vs B.
--- Existing rows tetap session_day=1 supaya plan lama tak terjejas.
-
-ALTER TABLE psy_plan_weekly_progress
-  ADD COLUMN IF NOT EXISTS session_day INT DEFAULT 1 CHECK (session_day IN (1,2)),
-  ADD COLUMN IF NOT EXISTS is_extension BOOLEAN DEFAULT false,
-  ADD COLUMN IF NOT EXISTS extension_for_week INT,
-  ADD COLUMN IF NOT EXISTS extension_price NUMERIC(10,2),
-  ADD COLUMN IF NOT EXISTS extension_paid_at TIMESTAMPTZ;
-
--- Drop old uniqueness yang assume 1 row per minggu
-ALTER TABLE psy_plan_weekly_progress
-  DROP CONSTRAINT IF EXISTS psy_plan_weekly_progress_plan_id_week_number_key;
-
--- Composite unique: 1 row per sesi (plan + minggu + day)
-DO $$ BEGIN
-  ALTER TABLE psy_plan_weekly_progress
-    ADD CONSTRAINT psy_plan_weekly_progress_plan_week_day_key
-    UNIQUE (plan_id, week_number, session_day);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- Status tambahan untuk extension flow
-ALTER TABLE psy_plan_weekly_progress
-  DROP CONSTRAINT IF EXISTS psy_plan_weekly_progress_status_check;
-
-ALTER TABLE psy_plan_weekly_progress
-  ADD CONSTRAINT psy_plan_weekly_progress_status_check
-  CHECK (status IN (
-    'pending','booked','hadir','reschedule','cancel','consultation_done',
-    'extension_pending_payment','extension_paid'
-  ));
-
-COMMENT ON COLUMN psy_plan_weekly_progress.session_day IS
-  '1 = sesi pertama dalam minggu (Jum/Sab), 2 = sesi kedua (Sab/Ahad). Default 1 untuk backward compat.';
-COMMENT ON COLUMN psy_plan_weekly_progress.is_extension IS
-  'true = minggu tambahan (extension) selepas miss sesi. Perlu bayar sebelum tempah.';
-COMMENT ON COLUMN psy_plan_weekly_progress.extension_for_week IS
-  'Refer minggu asal yang miss, untuk audit trail.';
-
-
--- ════════════════════════════════════════════════════════════════
--- step_procedure_kits.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step_procedure_kits.sql
--- Kit prosedur — satu kit = set item inventory yang diguna
--- untuk satu prosedur (cth: IV Drip Setup, DNA Test Kit).
--- Bila pakej ada kit dalam supplies, demand auto-expand
--- kepada semua sub-items dalam kit.
--- ============================================================
-
+-- ──── psy_procedure_kits ────
+-- Satu kit = set item inventori untuk satu prosedur (cth: IV Drip Setup).
 CREATE TABLE IF NOT EXISTS psy_procedure_kits (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name         TEXT NOT NULL UNIQUE,
@@ -5066,13 +3860,138 @@ CREATE TABLE IF NOT EXISTS psy_procedure_kits (
 COMMENT ON COLUMN psy_procedure_kits.items IS
   'Format: [{item_id, item_name, qty, unit}]. Senarai inventory item yang diperlukan per satu prosedur.';
 
+-- RLS
 ALTER TABLE psy_procedure_kits ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "Staff manage kits" ON psy_procedure_kits FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
--- Seed contoh kits
+DROP POLICY IF EXISTS "Staff manage kits" ON psy_procedure_kits;
+CREATE POLICY "Staff manage kits" ON psy_procedure_kits FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ──── psy_bottle_returns ────
+-- Permohonan pulangan botol madu oleh pesakit.
+CREATE TABLE IF NOT EXISTS psy_bottle_returns (
+  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id           UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
+  patient_name         TEXT NOT NULL,
+  qty                  INT NOT NULL CHECK (qty > 0),
+  photo_urls           TEXT[] DEFAULT '{}',
+  criteria_confirmed   JSONB NOT NULL DEFAULT '{}',
+  notes                TEXT,
+  status               TEXT NOT NULL DEFAULT 'pending'
+                       CHECK (status IN ('pending','received','rejected')),
+  reject_reason        TEXT,
+  verified_by          UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  verified_by_name     TEXT,
+  verified_at          TIMESTAMPTZ,
+  created_at           TIMESTAMPTZ DEFAULT now(),
+  updated_at           TIMESTAMPTZ DEFAULT now()
+);
+
+-- Indeks
+CREATE INDEX IF NOT EXISTS idx_bottle_returns_patient ON psy_bottle_returns(patient_id);
+CREATE INDEX IF NOT EXISTS idx_bottle_returns_status  ON psy_bottle_returns(status, created_at DESC);
+
+-- RLS
+ALTER TABLE psy_bottle_returns ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patient manage own returns" ON psy_bottle_returns;
+CREATE POLICY "Patient manage own returns" ON psy_bottle_returns
+  FOR ALL USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff read all returns" ON psy_bottle_returns;
+CREATE POLICY "Staff read all returns" ON psy_bottle_returns
+  FOR SELECT USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff update returns" ON psy_bottle_returns;
+CREATE POLICY "Staff update returns" ON psy_bottle_returns
+  FOR UPDATE USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- Komen
+COMMENT ON TABLE psy_bottle_returns IS
+  'Permohonan pulangan botol madu patient. Chat thread guna psy_audit_log dengan meta.return_id.';
+COMMENT ON COLUMN psy_bottle_returns.criteria_confirmed IS
+  'JSONB: {tidak_berkarat, bersih, getah_ada, besi_kemas} - semua mesti true sebelum patient boleh submit.';
+COMMENT ON COLUMN psy_bottle_returns.photo_urls IS
+  'Array URL foto bukti botol (boleh upload multiple).';
+
+-- ═══════════════════════════════════════════════════════════════════
+-- DATA RUJUKAN (SEED)
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ──── Seed: produk kedai ────
+INSERT INTO psy_products (product_id, name, description, category, price, icon, bg_color, sort_order) VALUES
+  ('madu-shifa-500g',  'Madu Shifa 500g',        'Pure raw honey · acacia',            'Madu',           85,  '🍯', 'bg-gold-light',       1),
+  ('madu-kelulut',     'Madu Kelulut 400g',       'Stingless bee honey',                'Madu',          120,  '🍯', 'bg-gold-light',       2),
+  ('jus-halia',        'Jus Halia Concentrate',   '250ml · 100% natural',               'Herba',          45,  '🌿', 'bg-green-light',      3),
+  ('herba-zaitun',     'Minyak Zaitun Tulen',     '500ml · cold-pressed',               'Herba',          65,  '🫒', 'bg-green-light',      4),
+  ('magnesium',        'Magnesium Glycinate',      '60 caps · 200mg',                    'Supplements',    55,  '💊', 'bg-navy-light',       5),
+  ('vitamin-d',        'Vitamin D3 5000IU',        '90 softgels',                        'Supplements',    48,  '☀️', 'bg-gold-light',       6),
+  ('santapan-fitrah',  'Santapan Fitrah Set',      '7-day starter pack',                 'Santapan Fitrah',220, '🌱', 'bg-terracotta-light', 7),
+  ('rahsia-syifa',     'Rahsia Syifa Book',        'Ibn Sina & modern med',              'Books',          35,  '📖', 'bg-navy-light',       8),
+  ('doa-syifa-book',   'Kitab Doa Syifa',          'Tafsir + transliterasi',             'Books',          28,  '📖', 'bg-terracotta-light', 9)
+ON CONFLICT (product_id) DO NOTHING;
+
+-- ──── Seed: item inventori lalai ISW (re-seed penuh) ────
+DELETE FROM psy_inventory_items;
+
+INSERT INTO psy_inventory_items (name, category, unit, qty_in_stock, min_qty, requires_approval, notes)
+VALUES
+
+-- ── MADU & PRODUK ─────────────────────────────────────────
+('Lebah Thoharah (LTH)',            'Madu & Produk', 'kg',     0, 5,  false, 'Program NLC / JS / JS+ / EOL'),
+('LTH Plus Green (LTHPG)',          'Madu & Produk', 'kg',     0, 5,  false, 'Program NLC / JS / JS+ / EOL'),
+('Ibu Bumi (IB)',                   'Madu & Produk', 'kg',     0, 5,  false, 'Program OBD / OBP'),
+('Young & Healthy Plus Green (YHPG)','Madu & Produk','kg',     0, 5,  false, 'Program OBD / OBP'),
+('Madu Kelulut',                    'Madu & Produk', 'botol',  0, 3,  false, NULL),
+('Minyak Zaitun Tulen',             'Madu & Produk', 'botol',  0, 3,  false, NULL),
+
+-- ── STARTER KIT ───────────────────────────────────────────
+('SDS OB',                          'Starter Kit',   'unit',   0, 5,  false, 'Starter kit OBD / OBP'),
+('GHF',                             'Starter Kit',   'unit',   0, 5,  false, 'Starter kit OBD / OBP'),
+('BNP',                             'Starter Kit',   'unit',   0, 5,  false, 'Bekalan pantang NLC / JS'),
+('NSS',                             'Starter Kit',   'unit',   0, 5,  false, 'Bekalan pantang NLC / JS'),
+('Voucher Konsultasi',              'Starter Kit',   'unit',   0, 10, false, 'Diedarkan semasa onboarding'),
+
+-- ── SUPLEMEN & RESEPI ─────────────────────────────────────
+('Resepi Superimun',                'Suplemen & Resepi', 'unit', 0, 5, false, 'Diberi semasa onboarding'),
+('Resepi Superenergi',              'Suplemen & Resepi', 'unit', 0, 5, false, 'Diberi semasa onboarding'),
+('Barley Organik',                  'Suplemen & Resepi', 'kg',   0, 5, false, NULL),
+('Spirulina',                       'Suplemen & Resepi', 'botol',0, 3, false, NULL),
+('Probiotik Advanced',              'Suplemen & Resepi', 'botol',0, 3, false, NULL),
+('Magnesium Glycinate',             'Suplemen & Resepi', 'botol',0, 3, false, NULL),
+('Vitamin D3',                      'Suplemen & Resepi', 'botol',0, 3, false, NULL),
+('Omega-3 Fish Oil',                'Suplemen & Resepi', 'botol',0, 3, false, NULL),
+
+-- ── BUKU & BAHAN CETAK ────────────────────────────────────
+('Buku P101',                       'Buku & Bahan Cetak', 'naskhah', 0, 10, false, '7 buku per set starter kit'),
+('List Pantang',                    'Buku & Bahan Cetak', 'naskhah', 0, 10, false, 'Diedarkan semasa onboarding'),
+('Peta OB',                         'Buku & Bahan Cetak', 'naskhah', 0, 10, false, 'Diedarkan semasa onboarding OBD / OBP'),
+('Workbook Refleksi Harian',        'Buku & Bahan Cetak', 'naskhah', 0, 10, false, NULL),
+('Jadual Terapi Mingguan',          'Buku & Bahan Cetak', 'naskhah', 0, 10, false, NULL),
+('Mood Tracker',                    'Buku & Bahan Cetak', 'naskhah', 0, 10, false, NULL),
+('Buku Gaya Hidup Fitrah',          'Buku & Bahan Cetak', 'naskhah', 0,  5, false, NULL),
+('Kitab Doa Syifa',                 'Buku & Bahan Cetak', 'naskhah', 0,  5, false, NULL),
+
+-- ── BROSUR & MARKETING ────────────────────────────────────
+('Brochure Madu',                   'Brosur & Marketing', 'unit', 0, 20, false, NULL),
+('Brochure ISW',                    'Brosur & Marketing', 'unit', 0, 20, false, NULL),
+('Brochure OB',                     'Brosur & Marketing', 'unit', 0, 20, false, NULL),
+
+-- ── BEKALAN COACHING ──────────────────────────────────────
+('Air Afiyah',                      'Bekalan Coaching', 'botol', 0, 10, false, '1 botol = 1.5L'),
+('Air Za''afaran',                  'Bekalan Coaching', 'botol', 0,  5, false, 'Untuk sesi Perubatan Rohani'),
+('Herba Kolon',                     'Bekalan Coaching', 'set',   0,  3, false, '1 set = 1 kursus rawatan'),
+('Kurma Ajwa',                      'Bekalan Coaching', 'biji',  0, 50, false, '49 biji per pesakit 777 VIP'),
+
+-- ── PERALATAN KLINIK ──────────────────────────────────────
+('DNA Test Kit',                    'Peralatan Klinik', 'set',  0, 2, true,  'Perlu kelulusan · hantar ke lab luar'),
+('Enema Kit',                       'Peralatan Klinik', 'set',  0, 3, true,  'Perlu kelulusan'),
+('Mesin Ozon',                      'Peralatan Klinik', 'unit', 0, 1, true,  'Rekod nombor siri setiap unit')
+
+;
+
+-- ──── Seed: contoh kit prosedur ────
 INSERT INTO psy_procedure_kits (name, description, category, items) VALUES
 (
   'IV Drip Setup',
@@ -5114,195 +4033,1267 @@ INSERT INTO psy_procedure_kits (name, description, category, items) VALUES
 )
 ON CONFLICT DO NOTHING;
 
+-- ──────────────────────────────────────────────────────────────
+-- Pautan silang domain: psy_supply_disbursements (fail 07) → item inventori
+-- ──────────────────────────────────────────────────────────────
+ALTER TABLE psy_supply_disbursements DROP CONSTRAINT IF EXISTS psy_supply_disbursements_item_id_fkey;
+ALTER TABLE psy_supply_disbursements ADD CONSTRAINT psy_supply_disbursements_item_id_fkey
+  FOREIGN KEY (item_id) REFERENCES psy_inventory_items(id) ON DELETE SET NULL;
+
 
 -- ════════════════════════════════════════════════════════════════
--- step_product_inventory_link.sql
+-- schema/15_letters.sql
 -- ════════════════════════════════════════════════════════════════
 
--- ============================================================
--- step_product_inventory_link.sql
--- Link psy_products → psy_inventory_items supaya stok shop
--- auto-deduct dari inventory bila order paid.
--- ============================================================
+-- ═══════════════════════════════════════════════════════════════════
+-- SKEMA: SURAT (Sistem Surat Rasmi)
+-- Jadual: psy_letter_templates, psy_letter_requests, psy_letter_issued,
+--         psy_letter_auto_fields
+-- Admin define template (body + placeholder fields + approver spesifik),
+-- pesakit mohon surat, staff/approver approve & sign → surat dikeluarkan.
+-- Auto-fields ([NAMA], [IC], ...) diisi automatik dari kolum DB.
+-- RLS staff guna user_has_perm('communication', ...).
+-- ═══════════════════════════════════════════════════════════════════
 
-ALTER TABLE psy_products
-  ADD COLUMN IF NOT EXISTS inventory_item_id UUID REFERENCES psy_inventory_items(id) ON DELETE SET NULL;
+-- ──── psy_letter_templates ────
+CREATE TABLE IF NOT EXISTS psy_letter_templates (
+  id                         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name                       TEXT NOT NULL,
+  description                TEXT,
+  category                   TEXT NOT NULL DEFAULT 'patient'
+                             CHECK (category IN ('patient','internal')),
+  jenis_surat                TEXT,
+  language                   TEXT DEFAULT 'ms',
+  recipient                  TEXT,                 -- "Pengurus Besar, KWSP, ..."
+  title                      TEXT,                 -- "PERMOHONAN PENGELUARAN AHLI KWSP"
+  body                       TEXT NOT NULL,        -- plain text + [PLACEHOLDER]
+  fields                     JSONB NOT NULL DEFAULT '[]',  -- [{key,label,type,autofill}]
+  assigned_signer_id         UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  requires_specific_approver BOOLEAN DEFAULT false,
+  is_active                  BOOLEAN DEFAULT true,
+  created_by                 UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  created_by_name            TEXT,
+  created_at                 TIMESTAMPTZ DEFAULT now(),
+  updated_at                 TIMESTAMPTZ DEFAULT now()
+);
 
-COMMENT ON COLUMN psy_products.inventory_item_id IS
-  'Link ke inventory item. Bila order status=paid, qty_in_stock auto-deduct ikut quantity dibeli.';
+-- Indeks
+CREATE INDEX IF NOT EXISTS idx_letter_tpl_active ON psy_letter_templates(category, is_active);
 
--- ============================================================
--- Trigger: auto-deduct inventory bila order status tukar ke 'paid'.
--- Items JSONB format: [{product_id: "...", qty: N, ...}, ...]
--- ============================================================
-CREATE OR REPLACE FUNCTION psy_order_deduct_inventory()
-RETURNS TRIGGER AS $$
-DECLARE
-  v_item       JSONB;
-  v_product    psy_products%ROWTYPE;
-  v_qty        NUMERIC;
+-- RLS
+ALTER TABLE psy_letter_templates ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Anyone read templates" ON psy_letter_templates;
+CREATE POLICY "Anyone read templates" ON psy_letter_templates
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+
+DROP POLICY IF EXISTS "Staff manage templates" ON psy_letter_templates;
+CREATE POLICY "Staff manage templates" ON psy_letter_templates
+  FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "tpl_select" ON psy_letter_templates;
+CREATE POLICY "tpl_select" ON psy_letter_templates FOR SELECT
+  USING (user_has_perm('communication','view'));
+
+DROP POLICY IF EXISTS "tpl_insert" ON psy_letter_templates;
+CREATE POLICY "tpl_insert" ON psy_letter_templates FOR INSERT
+  WITH CHECK (user_has_perm('communication','create'));
+
+DROP POLICY IF EXISTS "tpl_update" ON psy_letter_templates;
+CREATE POLICY "tpl_update" ON psy_letter_templates FOR UPDATE
+  USING (user_has_perm('communication','edit'))
+  WITH CHECK (user_has_perm('communication','edit'));
+
+DROP POLICY IF EXISTS "tpl_delete" ON psy_letter_templates;
+CREATE POLICY "tpl_delete" ON psy_letter_templates FOR DELETE
+  USING (user_has_perm('communication','delete'));
+
+-- Komen
+COMMENT ON COLUMN psy_letter_templates.jenis_surat IS
+  'Sub-category template (cth: Tujuan Rawatan, KWSP, RELA). Boleh diisi bebas.';
+COMMENT ON COLUMN psy_letter_templates.language IS
+  'Bahasa default template: ms (Bahasa Melayu) atau en (English).';
+COMMENT ON COLUMN psy_letter_templates.is_active IS
+  'Template aktif boleh diguna pakai. Tak aktif = draft / disembunyikan dari list patient.';
+COMMENT ON COLUMN psy_letter_templates.assigned_signer_id IS
+  'Staff yang ditetapkan untuk sign template ini. NULL = mana-mana staff dengan permission boleh sign.';
+COMMENT ON COLUMN psy_letter_templates.requires_specific_approver IS
+  'true = HANYA assigned_signer (atau super_admin) boleh approve/sign. false = pilihan default sahaja.';
+
+-- ──── psy_letter_requests ────
+-- Permintaan surat dari patient.
+CREATE TABLE IF NOT EXISTS psy_letter_requests (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id         UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
+  patient_name       TEXT NOT NULL,
+  template_code      TEXT NOT NULL,
+  template_name      TEXT NOT NULL,
+  reason             TEXT,
+  field_values       JSONB DEFAULT '{}',
+  status             TEXT NOT NULL DEFAULT 'pending'
+                     CHECK (status IN ('pending','issued','rejected','cancelled')),
+  reject_reason      TEXT,
+  assigned_signer_id UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  approved_by        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  approved_at        TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ DEFAULT now(),
+  updated_at         TIMESTAMPTZ DEFAULT now()
+);
+
+-- Indeks
+CREATE INDEX IF NOT EXISTS idx_letter_req_patient ON psy_letter_requests(patient_id);
+CREATE INDEX IF NOT EXISTS idx_letter_req_status  ON psy_letter_requests(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_letter_req_signer  ON psy_letter_requests(assigned_signer_id, status);
+
+-- RLS
+ALTER TABLE psy_letter_requests ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patient manage own letter requests" ON psy_letter_requests;
+CREATE POLICY "Patient manage own letter requests" ON psy_letter_requests
+  FOR ALL USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "req_staff_read" ON psy_letter_requests;
+CREATE POLICY "req_staff_read" ON psy_letter_requests FOR SELECT
+  USING (user_has_perm('communication','view'));
+
+DROP POLICY IF EXISTS "req_staff_update" ON psy_letter_requests;
+CREATE POLICY "req_staff_update" ON psy_letter_requests FOR UPDATE
+  USING (user_has_perm('communication','edit'))
+  WITH CHECK (user_has_perm('communication','edit'));
+
+DROP POLICY IF EXISTS "req_staff_delete" ON psy_letter_requests;
+CREATE POLICY "req_staff_delete" ON psy_letter_requests FOR DELETE
+  USING (user_has_perm('communication','delete'));
+
+-- Komen
+COMMENT ON COLUMN psy_letter_requests.assigned_signer_id IS
+  'Snapshot signer ID dari template masa request dicipta. Tak berubah walau template di-edit kemudian.';
+
+-- ──── psy_letter_issued ────
+-- Surat yang telah dikeluarkan & disign.
+CREATE TABLE IF NOT EXISTS psy_letter_issued (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id      UUID REFERENCES psy_letter_requests(id) ON DELETE SET NULL,
+  patient_id      UUID REFERENCES psy_patients(id) ON DELETE CASCADE,  -- nullable: NULL = internal document
+  patient_name    TEXT NOT NULL,
+  template_code   TEXT NOT NULL,
+  template_name   TEXT NOT NULL,
+  field_values    JSONB NOT NULL DEFAULT '{}',
+  ref_number      TEXT,  -- cth: ISW/RELA/2026/0001
+  signed_by       UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  signed_by_name  TEXT NOT NULL,
+  signed_by_role  TEXT,
+  signature_url   TEXT,  -- snapshot signature staff masa sign
+  file_url        TEXT,
+  file_name       TEXT,
+  file_size       INT,
+  signed_at       TIMESTAMPTZ DEFAULT now(),
+  created_at      TIMESTAMPTZ DEFAULT now()
+);
+
+-- Indeks
+CREATE INDEX IF NOT EXISTS idx_letter_issued_patient ON psy_letter_issued(patient_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_letter_issued_code    ON psy_letter_issued(template_code);
+
+-- RLS
+ALTER TABLE psy_letter_issued ENABLE ROW LEVEL SECURITY;
+
+-- Patient hanya boleh baca surat sendiri
+DROP POLICY IF EXISTS "issued_patient_read" ON psy_letter_issued;
+CREATE POLICY "issued_patient_read" ON psy_letter_issued FOR SELECT
+  USING (
+    patient_id IS NOT NULL
+    AND patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())
+  );
+
+-- Staff dengan permission communication
+DROP POLICY IF EXISTS "issued_staff_read" ON psy_letter_issued;
+CREATE POLICY "issued_staff_read" ON psy_letter_issued FOR SELECT
+  USING (user_has_perm('communication','view'));
+
+DROP POLICY IF EXISTS "issued_staff_insert" ON psy_letter_issued;
+CREATE POLICY "issued_staff_insert" ON psy_letter_issued FOR INSERT
+  WITH CHECK (user_has_perm('communication','create'));
+
+DROP POLICY IF EXISTS "issued_staff_update" ON psy_letter_issued;
+CREATE POLICY "issued_staff_update" ON psy_letter_issued FOR UPDATE
+  USING (user_has_perm('communication','edit'))
+  WITH CHECK (user_has_perm('communication','edit'));
+
+DROP POLICY IF EXISTS "issued_staff_delete" ON psy_letter_issued;
+CREATE POLICY "issued_staff_delete" ON psy_letter_issued FOR DELETE
+  USING (user_has_perm('communication','delete'));
+
+-- Komen
+COMMENT ON COLUMN psy_letter_issued.file_url IS
+  'URL PDF/Word file lengkap yang dah disign (upload oleh staff).';
+
+-- ──── psy_letter_auto_fields ────
+-- Auto-field tambahan (cth [BMI], [PEKERJAAN]) — sistem ambil dari kolum DB.
+CREATE TABLE IF NOT EXISTS psy_letter_auto_fields (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  key             TEXT UNIQUE NOT NULL,        -- "BMI" (akan jadi [BMI] dalam templat)
+  label           TEXT NOT NULL,               -- "BMI Patient" (yang muncul dalam palette)
+  source          TEXT NOT NULL CHECK (source IN ('patient','staff','system')),
+  data_path       TEXT NOT NULL,               -- nama column dalam table (cth: 'bmi', 'address', 'phone')
+  format_type     TEXT,                        -- optional: 'date' / 'currency' / null
+  is_active       BOOLEAN DEFAULT true,
+  is_default      BOOLEAN DEFAULT false,       -- true = pre-seeded; boleh delete tapi reset bawa balik
+  sort_order      INT DEFAULT 0,
+  created_by      UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  created_by_name TEXT,
+  created_at      TIMESTAMPTZ DEFAULT now(),
+  updated_at      TIMESTAMPTZ DEFAULT now()
+);
+
+-- RLS
+ALTER TABLE psy_letter_auto_fields ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Anyone read auto fields" ON psy_letter_auto_fields;
+CREATE POLICY "Anyone read auto fields" ON psy_letter_auto_fields
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+
+DROP POLICY IF EXISTS "Staff manage auto fields" ON psy_letter_auto_fields;
+CREATE POLICY "Staff manage auto fields" ON psy_letter_auto_fields
+  FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- Komen
+COMMENT ON TABLE psy_letter_auto_fields IS
+  'Auto-fields untuk surat. Admin manage via UI. Sistem ambil value dari DB column yang ditentukan.';
+
+-- ═══════════════════════════════════════════════════════════════════
+-- DATA RUJUKAN (SEED)
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ──── Seed: auto-fields lalai ────
+INSERT INTO psy_letter_auto_fields (key, label, source, data_path, format_type, is_default, sort_order) VALUES
+  ('NAMA',                'Nama Patient',          'patient', 'full_name',             NULL,       true, 10),
+  ('IC',                  'No. K/P',                'patient', 'ic_number',             NULL,       true, 20),
+  ('PHONE',               'No. Telefon',            'patient', 'phone',                 NULL,       true, 30),
+  ('ALAMAT',              'Alamat Patient',         'patient', 'address',               NULL,       true, 40),
+  ('TARIKH_LAHIR',        'Tarikh Lahir',           'patient', 'dob',                   'date',     true, 50),
+  ('JANTINA',             'Jantina',                'patient', 'gender',                NULL,       true, 60),
+  ('BANGSA',              'Bangsa',                 'patient', 'race',                  NULL,       true, 70),
+  ('AGAMA',               'Agama',                  'patient', 'religion',              NULL,       true, 80),
+  ('PEKERJAAN',           'Pekerjaan',              'patient', 'occupation',            NULL,       true, 90),
+  ('PAKEJ',               'Pakej Aktif',            'patient', 'active_package_name',   NULL,       true, 100),
+  ('TARIKH_MULA_RAWATAN', 'Tarikh Mula Rawatan',    'patient', 'package_purchased_at',  'date',     true, 110),
+  ('STAFF_NAMA',          'Nama Staff',             'staff',   'full_name',             NULL,       true, 200),
+  ('STAFF_JAWATAN',       'Jawatan Staff',          'staff',   'staff_role',            NULL,       true, 210),
+  ('STAFF_REG_NO',        'No. Pendaftaran Staff',  'staff',   'registration_no',       NULL,       true, 220),
+  ('STAFF_SPECIALIZATION','Pengkhususan Staff',     'staff',   'specialization',        NULL,       true, 230),
+  ('TARIKH',              'Tarikh Hari Ini',        'system',  '__today__',             NULL,       true, 300),
+  ('RUJUKAN',             'Nombor Rujukan',         'system',  '__ref_number__',        NULL,       true, 310)
+ON CONFLICT (key) DO NOTHING;
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/16_medical_records.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- SKEMA: Rekod Perubatan Pesakit (Medical Records)
+-- Jadual: psy_medical_reports, psy_medical_report_comments
+-- Nota: psy_dna_reports (legasi) telah dinamakan semula ke
+--       psy_medical_reports — hanya nama akhir digunakan di sini.
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ──── psy_medical_reports — laporan perubatan pesakit ────
+-- Diupload oleh staff ATAU pesakit sendiri; mengalir ke patient-hub
+-- doktor untuk semakan.
+
+CREATE TABLE IF NOT EXISTS psy_medical_reports (
+  id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id              UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  file_name               TEXT NOT NULL,
+  file_path               TEXT NOT NULL,
+  file_url                TEXT NOT NULL,
+  notes                   TEXT,
+  uploaded_by             UUID REFERENCES auth.users(id),
+  uploaded_by_name        TEXT,
+  uploaded_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  report_type             TEXT DEFAULT 'dna',
+  title                   TEXT,
+  status                  TEXT DEFAULT 'pending',
+  sample_date             DATE,
+  sample_type             TEXT,
+  result_date             DATE,
+  analysis_duration_days  INT,
+  categories              JSONB DEFAULT '{}',
+  summary                 TEXT,
+  doctor_id               UUID,
+  doctor_name             TEXT,
+  doctor_review           TEXT,
+  review_status           TEXT DEFAULT 'pending',
+  reviewed_at             TIMESTAMPTZ,
+  shared_with_patient     BOOLEAN DEFAULT false,
+  shared_at               TIMESTAMPTZ,
+  attached_files          JSONB DEFAULT '[]',
+  source                  TEXT,
+  file_size               BIGINT
+);
+
+CREATE INDEX IF NOT EXISTS idx_medical_reports_patient ON psy_medical_reports(patient_id, uploaded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_medical_reports_type    ON psy_medical_reports(report_type);
+
+ALTER TABLE psy_medical_reports ENABLE ROW LEVEL SECURITY;
+
+-- Staff urus semua laporan
+DROP POLICY IF EXISTS "staff_medical_all" ON psy_medical_reports;
+CREATE POLICY "staff_medical_all" ON psy_medical_reports FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- Pesakit baca laporan sendiri
+DROP POLICY IF EXISTS "patient_medical_read" ON psy_medical_reports;
+CREATE POLICY "patient_medical_read" ON psy_medical_reports FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+-- Pesakit boleh INSERT laporan sendiri
+DROP POLICY IF EXISTS "patient_medical_insert" ON psy_medical_reports;
+CREATE POLICY "patient_medical_insert" ON psy_medical_reports FOR INSERT
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+-- Pesakit boleh PADAM laporan yang dia upload sendiri (belum disemak)
+DROP POLICY IF EXISTS "patient_medical_delete_own" ON psy_medical_reports;
+CREATE POLICY "patient_medical_delete_own" ON psy_medical_reports FOR DELETE
+  USING (
+    uploaded_by = auth.uid()
+    AND patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())
+    AND COALESCE(review_status,'pending') = 'pending'
+  );
+
+COMMENT ON COLUMN psy_medical_reports.report_type IS
+  'dna | xray | ct | mri | ultrasound | blood | colonoscopy | endoscopy | other';
+COMMENT ON COLUMN psy_medical_reports.status IS
+  'pending | sampling | lab | ready | reviewed';
+COMMENT ON COLUMN psy_medical_reports.review_status IS
+  'pending | diluluskan | ditolak';
+
+-- ──── psy_medical_report_comments — thread komen doktor ────
+-- Banyak komen / banyak doktor per laporan.
+
+CREATE TABLE IF NOT EXISTS psy_medical_report_comments (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  report_id   UUID NOT NULL REFERENCES psy_medical_reports(id) ON DELETE CASCADE,
+  author_id   UUID,
+  author_name TEXT,
+  author_role TEXT,
+  comment     TEXT NOT NULL,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_med_comments_report ON psy_medical_report_comments(report_id, created_at);
+
+ALTER TABLE psy_medical_report_comments ENABLE ROW LEVEL SECURITY;
+
+-- Staff (doktor) urus semua komen
+DROP POLICY IF EXISTS "staff_comments_all" ON psy_medical_report_comments;
+CREATE POLICY "staff_comments_all" ON psy_medical_report_comments FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- Pesakit baca komen pada laporan sendiri
+DROP POLICY IF EXISTS "patient_read_comments" ON psy_medical_report_comments;
+CREATE POLICY "patient_read_comments" ON psy_medical_report_comments FOR SELECT
+  USING (report_id IN (
+    SELECT id FROM psy_medical_reports
+    WHERE patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())
+  ));
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/17_whatsapp.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 17 — WHATSAPP INBOX (cache GHL Conversations)
+-- ISW jadi muka depan; GHL Conversations API sumber sebenar.
+-- Edge Function `ghl-inbox` (service role) yang tulis; staff hanya SELECT.
+-- Jadual: psy_wa_conversations, psy_wa_messages
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ──── psy_wa_conversations — satu baris per perbualan GHL ────
+CREATE TABLE IF NOT EXISTS psy_wa_conversations (
+  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ghl_conversation_id  TEXT UNIQUE NOT NULL,
+  ghl_contact_id       TEXT,
+  contact_name         TEXT,
+  phone_e164           TEXT,
+  wa_number            TEXT,                 -- nombor talian mana mesej masuk
+  last_message         TEXT,
+  last_message_at      TIMESTAMPTZ,
+  unread               INT DEFAULT 0,
+  patient_id           UUID REFERENCES psy_patients(id) ON DELETE SET NULL, -- diisi bila phone padan
+  synced_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_wa_conv_last      ON psy_wa_conversations(last_message_at DESC);
+CREATE INDEX IF NOT EXISTS idx_wa_conv_phone     ON psy_wa_conversations(phone_e164);
+CREATE INDEX IF NOT EXISTS idx_wa_conv_patient   ON psy_wa_conversations(patient_id);
+
+ALTER TABLE psy_wa_conversations ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "staff_wa_conv_read" ON psy_wa_conversations;
+CREATE POLICY "staff_wa_conv_read" ON psy_wa_conversations FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ──── psy_wa_messages — satu baris per mesej ────
+CREATE TABLE IF NOT EXISTS psy_wa_messages (
+  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ghl_message_id       TEXT UNIQUE,
+  ghl_conversation_id  TEXT NOT NULL,
+  direction            TEXT,                 -- 'inbound' / 'outbound'
+  body                 TEXT,
+  msg_type             TEXT DEFAULT 'whatsapp',
+  sent_by              UUID,                 -- staff id ISW kalau dihantar dari ISW
+  sent_by_name         TEXT,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_wa_msg_conv ON psy_wa_messages(ghl_conversation_id, created_at ASC);
+
+ALTER TABLE psy_wa_messages ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "staff_wa_msg_read" ON psy_wa_messages;
+CREATE POLICY "staff_wa_msg_read" ON psy_wa_messages FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ──── Realtime — mesej baru muncul sendiri + badge unread live ────
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE psy_wa_messages;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE psy_wa_conversations;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- REPLICA IDENTITY FULL supaya payload UPDATE bawa nilai lama (untuk kira unread)
+ALTER TABLE psy_wa_messages      REPLICA IDENTITY FULL;
+ALTER TABLE psy_wa_conversations REPLICA IDENTITY FULL;
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/18_notifications_automations.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 18 — NOTIFIKASI & AUTOMASI
+-- Notifikasi dalam-app, mesej automatik (template WhatsApp), builder
+-- automasi + log, audience tersimpan, alert kepatuhan & risiko, task coach.
+-- Jadual: psy_notifications, psy_auto_messages, psy_automations,
+--         psy_notification_logs, psy_audiences, psy_adherence_alerts,
+--         psy_risk_alerts, psy_coach_tasks
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ──── psy_notifications — notifikasi loceng dalam-app ────
+CREATE TABLE IF NOT EXISTS psy_notifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES psy_profiles(id) ON DELETE CASCADE NOT NULL,
+  type TEXT DEFAULT 'system'
+    CHECK (type IN ('appointment','order','plan','system','reaksi','kyc','referral')),
+  title TEXT NOT NULL,
+  body TEXT,
+  link TEXT,
+  is_read BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_psy_notifications_user ON psy_notifications(user_id, is_read, created_at DESC);
+
+ALTER TABLE psy_notifications ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users read own notifications" ON psy_notifications;
+CREATE POLICY "Users read own notifications" ON psy_notifications FOR SELECT
+  USING (user_id = auth.uid());
+
+DROP POLICY IF EXISTS "Users update own notifications" ON psy_notifications;
+CREATE POLICY "Users update own notifications" ON psy_notifications FOR UPDATE
+  USING (user_id = auth.uid());
+
+-- INSERT dihadkan kepada staff sahaja; pesakit cetus notif via trigger SECURITY DEFINER
+DROP POLICY IF EXISTS "Staff insert notifications" ON psy_notifications;
+CREATE POLICY "Staff insert notifications" ON psy_notifications FOR INSERT
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- Nota: fn_complete_expired_treatments() ditakrif dalam 07_treatment_plans.sql
+-- (domain rawatan); fungsi itu insert ke psy_notifications di atas.
+
+-- ──── Fungsi trigger: notif pesakit bila coach buka minggu baru ────
+CREATE OR REPLACE FUNCTION trg_notify_patient_new_week()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_user_id UUID;
 BEGIN
-  IF NEW.status = 'paid' AND (OLD.status IS DISTINCT FROM 'paid') THEN
-    FOR v_item IN SELECT * FROM jsonb_array_elements(COALESCE(NEW.items, '[]'::jsonb))
-    LOOP
-      -- Match by product_id (text id) atau id (UUID) — support kedua-dua format
-      SELECT * INTO v_product FROM psy_products
-        WHERE product_id = v_item->>'product_id'
-           OR id::text   = v_item->>'product_id'
-        LIMIT 1;
+  SELECT user_id INTO v_user_id FROM psy_patients WHERE id = NEW.patient_id;
+  IF v_user_id IS NULL THEN RETURN NEW; END IF;
 
-      IF v_product.inventory_item_id IS NOT NULL THEN
-        v_qty := COALESCE((v_item->>'qty')::numeric, (v_item->>'quantity')::numeric, 1);
-        UPDATE psy_inventory_items
-          SET qty_in_stock = GREATEST(0, qty_in_stock - v_qty),
-              updated_at   = now()
-          WHERE id = v_product.inventory_item_id;
-      END IF;
-    END LOOP;
-  END IF;
+  -- Dedup: satu notifikasi per pesakit per plan+minggu
+  IF EXISTS (
+    SELECT 1 FROM psy_notifications
+    WHERE user_id = v_user_id
+      AND type = 'plan'
+      AND link LIKE '%plan_id=' || NEW.plan_id::TEXT || '%week=' || NEW.week_number
+    LIMIT 1
+  ) THEN RETURN NEW; END IF;
+
+  INSERT INTO psy_notifications (user_id, type, title, body, link)
+  VALUES (
+    v_user_id, 'plan',
+    'Sila Hantar Laporan Reaksi — Minggu ' || NEW.week_number,
+    'Minggu ' || NEW.week_number || ' rawatan anda bermula. Rekod simptom reaksi pemulihan yang anda alami.',
+    'plan-week.html?plan_id=' || NEW.plan_id::TEXT || '&week=' || NEW.week_number
+  );
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_notify_patient_new_week: %', SQLERRM;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
-DROP TRIGGER IF EXISTS trg_psy_order_deduct_inventory ON psy_orders;
-CREATE TRIGGER trg_psy_order_deduct_inventory
-  AFTER UPDATE ON psy_orders
-  FOR EACH ROW EXECUTE FUNCTION psy_order_deduct_inventory();
+DROP TRIGGER IF EXISTS trg_notify_patient_new_week ON psy_plan_weekly_progress;
+CREATE TRIGGER trg_notify_patient_new_week
+  AFTER INSERT ON psy_plan_weekly_progress
+  FOR EACH ROW EXECUTE FUNCTION trg_notify_patient_new_week();
 
-
--- ════════════════════════════════════════════════════════════════
--- step_products_enhanced.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP — psy_products enhanced fields
--- Untuk sokong mockup baru: jenama, promo, stok lanjut, media, butiran, visibility
--- ============================================================
-
-ALTER TABLE psy_products
-  ADD COLUMN IF NOT EXISTS sku           TEXT,
-  ADD COLUMN IF NOT EXISTS brand         TEXT,
-  ADD COLUMN IF NOT EXISTS description_short TEXT,
-  ADD COLUMN IF NOT EXISTS status        TEXT DEFAULT 'active',
-  ADD COLUMN IF NOT EXISTS promo_price   NUMERIC(10,2),
-  ADD COLUMN IF NOT EXISTS promo_until   DATE,
-  ADD COLUMN IF NOT EXISTS min_stock     INT DEFAULT 5,
-  ADD COLUMN IF NOT EXISTS unit          TEXT DEFAULT 'unit',
-  ADD COLUMN IF NOT EXISTS track_inventory  BOOLEAN DEFAULT true,
-  ADD COLUMN IF NOT EXISTS low_stock_alert  BOOLEAN DEFAULT true,
-  ADD COLUMN IF NOT EXISTS image_urls    JSONB DEFAULT '[]',
-  ADD COLUMN IF NOT EXISTS weight_size   TEXT,
-  ADD COLUMN IF NOT EXISTS supplier      TEXT,
-  ADD COLUMN IF NOT EXISTS tags          JSONB DEFAULT '[]',
-  ADD COLUMN IF NOT EXISTS notes         TEXT,
-  ADD COLUMN IF NOT EXISTS visible_in_shop  BOOLEAN DEFAULT true,
-  ADD COLUMN IF NOT EXISTS featured      BOOLEAN DEFAULT false,
-  ADD COLUMN IF NOT EXISTS online_purchase BOOLEAN DEFAULT true;
-
--- Backfill sku from product_id if null
-UPDATE psy_products SET sku = product_id WHERE sku IS NULL;
-
--- Backfill status from is_active
-UPDATE psy_products SET status = 'active'   WHERE status IS NULL AND is_active = true;
-UPDATE psy_products SET status = 'inactive' WHERE status IS NULL AND is_active = false;
-
-SELECT 'Step psy_products enhanced OK' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_products_image_url.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP — psy_products.image_url (single primary image)
--- Schema sedia ada: image_urls JSONB (array, plural).
--- UI product-edit.html guna image_url (singular, satu gambar utama).
--- Tambah column untuk match dengan kod, kekal image_urls untuk future.
--- ============================================================
-
-ALTER TABLE psy_products
-  ADD COLUMN IF NOT EXISTS image_url TEXT;
-
-COMMENT ON COLUMN psy_products.image_url IS
-  'URL gambar utama produk (single). Untuk gallery multi-gambar, guna image_urls (JSONB array).';
-
--- Backfill: kalau image_urls ada element pertama, copy ke image_url
-UPDATE psy_products
-SET image_url = image_urls->>0
-WHERE image_url IS NULL
-  AND image_urls IS NOT NULL
-  AND jsonb_array_length(image_urls) > 0;
-
--- ── Verification: semua column yang product-edit.html guna ──
-DO $$
+-- ──── Fungsi trigger: notif coach bila pesakit hantar laporan reaksi ────
+CREATE OR REPLACE FUNCTION trg_patient_reaksi_notify_coach()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
-  required_cols TEXT[] := ARRAY[
-    'name','sku','product_id','category','status','is_active',
-    'brand','description','description_short',
-    'price','promo_price','promo_until',
-    'stock','min_stock','unit','track_inventory','low_stock_alert',
-    'image_url','image_urls','weight_size','supplier','tags','notes',
-    'visible_in_shop','featured','online_purchase',
-    'inventory_item_id','updated_at'
-  ];
-  missing_cols TEXT[] := '{}';
-  col TEXT;
+  v_coach_id    UUID;
+  v_patient_name TEXT;
 BEGIN
-  FOREACH col IN ARRAY required_cols LOOP
-    IF NOT EXISTS (
-      SELECT 1 FROM information_schema.columns
-      WHERE table_name = 'psy_products' AND column_name = col
-    ) THEN
-      missing_cols := array_append(missing_cols, col);
-    END IF;
-  END LOOP;
+  -- Hantar sekali sahaja pada INSERT, bukan UPDATE
+  IF TG_OP != 'INSERT' THEN RETURN NEW; END IF;
 
-  IF array_length(missing_cols, 1) > 0 THEN
-    RAISE NOTICE 'MASIH MISSING dalam psy_products: %', missing_cols;
-  ELSE
-    RAISE NOTICE 'OK — semua column product-edit.html sudah ada';
+  SELECT pr.full_name INTO v_patient_name
+  FROM psy_patients pt
+  JOIN psy_profiles pr ON pr.id = pt.user_id
+  WHERE pt.id = NEW.patient_id;
+
+  -- Coach dari psy_patients.coach_id dahulu
+  SELECT coach_id INTO v_coach_id FROM psy_patients WHERE id = NEW.patient_id;
+
+  -- Fallback: baris progres mingguan terkini untuk plan ini
+  IF v_coach_id IS NULL THEN
+    SELECT coach_id INTO v_coach_id FROM psy_plan_weekly_progress
+    WHERE plan_id = NEW.plan_id AND patient_id = NEW.patient_id
+    ORDER BY created_at DESC LIMIT 1;
   END IF;
-END $$;
 
-SELECT 'OK — psy_products.image_url added + verified' AS status;
+  IF v_coach_id IS NOT NULL THEN
+    INSERT INTO psy_notifications (user_id, type, title, body, link)
+    VALUES (
+      v_coach_id, 'reaksi',
+      '🌀 Laporan Reaksi: ' || COALESCE(v_patient_name, 'Pesakit'),
+      'Minggu ' || NEW.week_number || ' — ' || COALESCE(v_patient_name, 'Pesakit') || ' telah hantar laporan reaksi pemulihan.',
+      'plan-week.html?plan_id=' || NEW.plan_id::TEXT || '&week=' || NEW.week_number
+    );
+  END IF;
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_patient_reaksi_notify_coach: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_patient_reaksi_notify_coach ON psy_patient_reaksi_reports;
+CREATE TRIGGER trg_patient_reaksi_notify_coach
+  AFTER INSERT ON psy_patient_reaksi_reports
+  FOR EACH ROW EXECUTE FUNCTION trg_patient_reaksi_notify_coach();
+
+-- ──── Fungsi trigger: notif semua staff bila pesanan baru ────
+CREATE OR REPLACE FUNCTION trg_notify_staff_new_order()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_patient_name TEXT;
+  v_staff        RECORD;
+BEGIN
+  SELECT full_name INTO v_patient_name FROM psy_profiles WHERE id = NEW.patient_id;
+
+  FOR v_staff IN SELECT id FROM psy_profiles WHERE role = 'staff' LOOP
+    INSERT INTO psy_notifications (user_id, type, title, body, link)
+    VALUES (
+      v_staff.id, 'order',
+      '📦 Pesanan Baru: ' || COALESCE(v_patient_name, 'Pesakit'),
+      'Pesanan ' || COALESCE(NEW.order_ref, '') || ' diterima. Sila proses penghantaran.',
+      'orders.html'
+    );
+  END LOOP;
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_notify_staff_new_order: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_notify_staff_new_order ON psy_orders;
+CREATE TRIGGER trg_notify_staff_new_order
+  AFTER INSERT ON psy_orders
+  FOR EACH ROW EXECUTE FUNCTION trg_notify_staff_new_order();
+
+-- ──── Fungsi trigger: alert coach bila advice log zon merah/kuning ────
+-- Satu submission boleh insert hingga 3 baris mesej serentak; notifikasi
+-- hanya utk BARIS PERTAMA (send_after ≈ created_at; baris 2/3 = +5/+10 min).
+CREATE OR REPLACE FUNCTION trg_reaksi_advice_notify_emergency()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_coach_id     UUID;
+  v_patient_name TEXT;
+  v_first_row    BOOLEAN;
+BEGIN
+  -- Baris pertama submission sahaja (elak notifikasi berganda 3x)
+  v_first_row := (NEW.send_after IS NULL OR NEW.send_after <= NEW.created_at + interval '2 minutes');
+  IF NOT v_first_row THEN RETURN NEW; END IF;
+
+  IF NOT (NEW.is_emergency OR NEW.zon IN ('merah','kuning')) THEN RETURN NEW; END IF;
+
+  SELECT pt.coach_id, COALESCE(pr.full_name, pt.full_name, 'Pesakit')
+    INTO v_coach_id, v_patient_name
+  FROM psy_patients pt
+  LEFT JOIN psy_profiles pr ON pr.id = pt.user_id
+  WHERE pt.id = NEW.patient_id;
+  IF v_coach_id IS NULL THEN RETURN NEW; END IF;
+
+  IF NEW.is_emergency OR NEW.zon = 'merah' THEN
+    INSERT INTO psy_notifications (user_id, type, title, body, link)
+    VALUES (
+      v_coach_id, 'reaksi',
+      '🔴 ZON MERAH: ' || v_patient_name,
+      v_patient_name || ' melaporkan simptom tahap tinggi/kecemasan dalam Poll Harian. Pesakit dinasihatkan ke hospital & telah dihantar mesej kritikal — sila susul SEGERA.',
+      'kepatuhan.html'
+    );
+  ELSE
+    INSERT INTO psy_notifications (user_id, type, title, body, link)
+    VALUES (
+      v_coach_id, 'reaksi',
+      '🟡 Zon Kuning: ' || v_patient_name,
+      v_patient_name || ' melaporkan simptom tahap sederhana dalam Poll Harian — perlukan perhatian coach. Sila semak dan susul pesakit.',
+      'kepatuhan.html'
+    );
+  END IF;
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_reaksi_advice_notify_emergency: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_reaksi_advice_notify_emergency ON psy_reaksi_advice_log;
+CREATE TRIGGER trg_reaksi_advice_notify_emergency
+  AFTER INSERT ON psy_reaksi_advice_log
+  FOR EACH ROW EXECUTE FUNCTION trg_reaksi_advice_notify_emergency();
+
+-- ──── psy_auto_messages — Mesej Automatik (template + masa + on/off) ────
+-- Edge function (cth event-reminders) baca konfig dari sini; ubah di UI
+-- auto-mesej.html = terus berkesan tanpa re-deploy.
+create table if not exists psy_auto_messages (
+  id uuid primary key default gen_random_uuid(),
+  key text not null unique,               -- 'event_reminder', 'catatan_harian', ...
+  name text not null,
+  description text,
+  channel text not null default 'whatsapp',
+  trigger_type text not null,             -- before_event | before_session | daily_reminder | on_action | recurring_broadcast
+  minutes_before int,                     -- untuk before_* (cth 15/30/60)
+  send_at_time time,                      -- untuk daily_reminder (cth 20:00)
+  days_of_week jsonb,                     -- [3,4,5] = Rab/Kha/Jum (0=Ahad .. 6=Sabtu)
+  session_time time,                      -- masa sesi bermula (recurring_broadcast)
+  audience jsonb default '["patient"]'::jsonb,
+  package_ids jsonb default '[]'::jsonb,
+  channels jsonb default '["whatsapp"]'::jsonb,  -- whatsapp | inapp | announcement | email
+  link text,
+  last_broadcast_at timestamptz,          -- dedup: kali terakhir dihantar
+  rule jsonb,                             -- ambang utk alert berasaskan logik (cth kepatuhan)
+  message_template text not null,
+  placeholders jsonb default '[]'::jsonb, -- senarai placeholder sah (rujukan UI)
+  category text,
+  language text default 'ms',
+  tags jsonb default '[]'::jsonb,
+  created_by uuid references psy_profiles(id) on delete set null,
+  is_active boolean default true,
+  updated_by uuid references psy_profiles(id) on delete set null,
+  updated_at timestamptz default now(),
+  created_at timestamptz default now()
+);
+
+alter table psy_auto_messages enable row level security;
+
+drop policy if exists "auto_msg staff read" on psy_auto_messages;
+create policy "auto_msg staff read" on psy_auto_messages for select
+  using (auth.uid() in (select id from psy_profiles where role = 'staff'));
+
+drop policy if exists "auto_msg super manage" on psy_auto_messages;
+create policy "auto_msg super manage" on psy_auto_messages for all
+  using (auth.uid() in (select id from psy_profiles where staff_role = 'super_admin'))
+  with check (auth.uid() in (select id from psy_profiles where staff_role = 'super_admin'));
+
+-- Pesakit perlu BACA template reaksi sahaja (client jana mesej semasa submit
+-- Poll Harian). Template auto-mesej lain kekal staff-only.
+drop policy if exists "auto_msg patient read reaksi" on psy_auto_messages;
+create policy "auto_msg patient read reaksi" on psy_auto_messages for select
+  using (auth.uid() is not null and key like 'reaksi_%' and is_active = true);
+
+comment on column psy_auto_messages.rule is
+  'Peraturan/ambang untuk alert berasaskan logik. Cth kepatuhan: {"severity":"high","window_days":7,"email_from":"support@ibnusinawellness.com","checks":{"amalan":{"on":true,"min_days_short":3},"checklist":{"on":true,"min_days_missing":3},"skor":{"on":true,"min_score":80},"vitals":{"on":true,"min_days_since":7}}}';
+
+-- ──── psy_automations — builder automasi (trigger + conditions + actions) ────
+-- Enjin (Edge Function) baca automasi aktif → nilai syarat → laksana aksi →
+-- tulis ke psy_notification_logs.
+create table if not exists psy_automations (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  description text,
+  is_active boolean default true,
+  -- status bertiga (is_active disegerakkan: is_active = status='active')
+  status text default 'draft',                -- draft | active | paused
+  -- 1. TRIGGER
+  trigger_category text not null,             -- appointment | payment | checkin | vitals | package | patient
+  trigger_event text not null,                -- cth: session_reminder, payment_success, checkin_missed
+  trigger_timing jsonb default '{}'::jsonb,   -- {when:'before'|'after'|'at'|'custom', value:1, unit:'day'}
+  -- 2. CONDITIONS (AND) — pilihan
+  conditions_enabled boolean default false,
+  conditions jsonb default '[]'::jsonb,       -- [{field, op, value}]
+  -- 3. ACTIONS
+  actions jsonb default '[]'::jsonb,          -- ['whatsapp','inapp','email',...] + aksi lain
+  -- 4. MESSAGE
+  message_template text,                      -- teks inline (dgn {{placeholder}})
+  message_channel text default 'whatsapp',
+  -- Jadual jalan
+  run_mode text default 'always',             -- always | scheduled
+  run_days jsonb,                             -- [1,2,..] utk scheduled
+  run_time time,
+  -- Meta
+  last_run_at timestamptz,
+  created_by uuid references psy_profiles(id) on delete set null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists idx_psy_automations_active on psy_automations(is_active);
+create index if not exists idx_psy_automations_trigger on psy_automations(trigger_category, trigger_event);
+
+alter table psy_automations enable row level security;
+
+-- Staff boleh baca; super_admin/manager urus automasi.
+drop policy if exists "automations staff read" on psy_automations;
+create policy "automations staff read" on psy_automations for select
+  using (auth.uid() in (select id from psy_profiles where role = 'staff'));
+
+drop policy if exists "automations mgr manage" on psy_automations;
+create policy "automations mgr manage" on psy_automations for all
+  using (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager')))
+  with check (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager')));
+
+-- ──── psy_notification_logs — log hantaran enjin automasi ────
+create table if not exists psy_notification_logs (
+  id uuid primary key default gen_random_uuid(),
+  automation_id uuid references psy_automations(id) on delete set null,
+  patient_id uuid,
+  patient_name text,
+  event text,
+  channel text,
+  status text default 'pending',              -- sent | pending | failed | cancelled
+  message text,
+  response text,
+  error text,
+  sent_at timestamptz,
+  created_at timestamptz default now()
+);
+
+create index if not exists idx_psy_notif_logs_created on psy_notification_logs(created_at desc);
+create index if not exists idx_psy_notif_logs_automation on psy_notification_logs(automation_id);
+
+alter table psy_notification_logs enable row level security;
+
+-- Log: staff baca; sistem (service_role) tulis dari Edge Function (bypass RLS).
+drop policy if exists "notif_logs staff read" on psy_notification_logs;
+create policy "notif_logs staff read" on psy_notification_logs for select
+  using (auth.uid() in (select id from psy_profiles where role = 'staff'));
+
+-- ──── psy_audiences — audience tersimpan (guna semula merentas automasi) ────
+-- Bentuk conditions SAMA dengan psy_automations: [{field, op, value}]
+--   field: patient_status | gender | has_whatsapp | package | state | age
+--   op:    eq | in | between
+create table if not exists psy_audiences (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  description text,
+  conditions jsonb default '[]'::jsonb,
+  created_by uuid references psy_profiles(id) on delete set null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+alter table psy_audiences enable row level security;
+
+drop policy if exists "audiences staff read" on psy_audiences;
+create policy "audiences staff read" on psy_audiences for select
+  using (auth.uid() in (select id from psy_profiles where role = 'staff'));
+
+drop policy if exists "audiences mgr manage" on psy_audiences;
+create policy "audiences mgr manage" on psy_audiences for all
+  using (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager')))
+  with check (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager')));
+
+-- ──── psy_adherence_alerts — alert kepatuhan pesakit (madu, dll) ────
+-- Coach dapat notif bila patient kurang madu 4+ hari berturut.
+CREATE TABLE IF NOT EXISTS psy_adherence_alerts (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id    UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
+  alert_type    TEXT NOT NULL,             -- 'madu_low_5days' / 'madu_low_4days'
+  trigger_date  DATE NOT NULL,             -- tarikh alert dikira
+  details       JSONB DEFAULT '{}',        -- snapshot: { target, days_below: [...], counts: {} }
+  notified_coach_id UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  acknowledged_by   UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  acknowledged_at   TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (patient_id, alert_type, trigger_date)  -- elak duplicate sehari
+);
+
+CREATE INDEX IF NOT EXISTS idx_adherence_patient ON psy_adherence_alerts(patient_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_adherence_unack   ON psy_adherence_alerts(acknowledged_at) WHERE acknowledged_at IS NULL;
+
+ALTER TABLE psy_adherence_alerts ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patient read own adherence" ON psy_adherence_alerts;
+CREATE POLICY "Patient read own adherence" ON psy_adherence_alerts
+  FOR SELECT USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff read all adherence" ON psy_adherence_alerts;
+CREATE POLICY "Staff read all adherence" ON psy_adherence_alerts
+  FOR SELECT USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff manage adherence" ON psy_adherence_alerts;
+CREATE POLICY "Staff manage adherence" ON psy_adherence_alerts
+  FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (auth.uid() IS NOT NULL);
+
+-- Patient pun boleh insert (patient dashboard trigger check)
+DROP POLICY IF EXISTS "Patient insert own adherence" ON psy_adherence_alerts;
+CREATE POLICY "Patient insert own adherence" ON psy_adherence_alerts
+  FOR INSERT WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+-- ──── psy_risk_alerts — alert risiko pesakit ────
+CREATE TABLE IF NOT EXISTS psy_risk_alerts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
+  patient_name TEXT,
+  created_by UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  created_by_name TEXT,
+  severity TEXT DEFAULT 'medium' CHECK (severity IN ('low','medium','high','critical')),
+  category TEXT,
+  description TEXT,
+  status TEXT DEFAULT 'open' CHECK (status IN ('open','acknowledged','resolved')),
+  acknowledged_by UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  resolved_at TIMESTAMPTZ,
+  resolution_notes TEXT,                    -- nota tindakan semasa resolve
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_psy_risk_patient ON psy_risk_alerts(patient_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_psy_risk_status ON psy_risk_alerts(status, created_at DESC);
+
+ALTER TABLE psy_risk_alerts ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage risk alerts" ON psy_risk_alerts;
+CREATE POLICY "Staff manage risk alerts" ON psy_risk_alerts FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ──── psy_coach_tasks — task harian peribadi coach (ClickUp-style) ────
+CREATE TABLE IF NOT EXISTS psy_coach_tasks (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  coach_id     UUID NOT NULL REFERENCES psy_profiles(id) ON DELETE CASCADE,
+  title        TEXT NOT NULL,
+  notes        TEXT,
+  task_date    DATE NOT NULL,
+  status       TEXT DEFAULT 'belum_mula' CHECK (status IN ('belum_mula','dalam_proses','selesai')),
+  priority     TEXT DEFAULT 'sederhana'  CHECK (priority IN ('rendah','sederhana','tinggi')),
+  patient_id   UUID REFERENCES psy_patients(id) ON DELETE SET NULL,
+  session_id   UUID REFERENCES psy_plan_weekly_progress(id) ON DELETE SET NULL,
+  created_at   TIMESTAMPTZ DEFAULT now(),
+  updated_at   TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_coach_tasks_coach_date ON psy_coach_tasks (coach_id, task_date);
+
+ALTER TABLE psy_coach_tasks ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "coach_tasks_own" ON psy_coach_tasks;
+CREATE POLICY "coach_tasks_own" ON psy_coach_tasks
+  USING (coach_id = auth.uid())
+  WITH CHECK (coach_id = auth.uid());
+
+DROP POLICY IF EXISTS "coach_tasks_manager_read" ON psy_coach_tasks;
+CREATE POLICY "coach_tasks_manager_read" ON psy_coach_tasks
+  FOR SELECT USING (
+    EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('manager','admin'))
+  );
+
+-- ═══════════════════════════════════════════════════════════════════
+-- SEED — template Mesej Automatik (psy_auto_messages)
+-- ═══════════════════════════════════════════════════════════════════
+
+-- Peringatan acara/kelas + Catatan Harian + hari jadi
+insert into psy_auto_messages (key, name, description, trigger_type, minutes_before, send_at_time, days_of_week, audience, channels, message_template, placeholders, is_active) values
+  ('event_reminder',
+   'Peringatan Acara & Kelas',
+   'Hantar peringatan kepada pesakit yang telah daftar, sebelum acara/kelas bermula.',
+   'before_event', 30, null, null, '["patient"]'::jsonb, '["whatsapp"]'::jsonb,
+   E'Salam {nama} 👋\n\nPeringatan: acara *{acara}* akan bermula lebih kurang {lead} lagi ({masa}).\n{pautan}\n\n— Ibnu Sina Wellness',
+   '["{nama}","{acara}","{masa}","{lead}","{pautan}"]'::jsonb,
+   true),
+
+  ('catatan_harian',
+   'Peringatan Catatan Harian',
+   'Hantar WA kpd pesakit aktif yang belum isi Catatan Harian pada masa ditetapkan (cth 20:00). Dedup 1×/hari. Aktifkan di UI bila sedia.',
+   'daily_reminder', null, '20:00', '[0,1,2,3,4,5,6]'::jsonb, '["patient"]'::jsonb, '["whatsapp"]'::jsonb,
+   E'Salam {nama} 👋\n\nKami perasan anda belum isi *Catatan Harian* hari ini. Luangkan 2 minit untuk rekod amalan & perasaan anda — konsistensi setiap hari membantu pemulihan anda lebih cepat. 🌱\n\nIsi sekarang di aplikasi Ibnu Sina Wellness.\n\n— Ibnu Sina Wellness',
+   '["{nama}"]'::jsonb,
+   false),
+
+  ('birthday',
+   'Ucapan Hari Jadi',
+   'Hantar ucapan pada tarikh lahir pesakit. Pencetus belum disambung.',
+   'daily_reminder', null, '09:00', null, '["patient"]'::jsonb, '["whatsapp"]'::jsonb,
+   E'Selamat Hari Jadi, {nama}! 🎂\n\nSemoga sihat sejahtera & dimurahkan rezeki. Kami doakan kesembuhan & kebahagiaan anda.\n\n— Ibnu Sina Wellness',
+   '["{nama}"]'::jsonb,
+   false)
+on conflict (key) do nothing;
+
+-- Broadcast berulang: Manzil Live (draf — staff lengkapkan link & aktifkan)
+insert into psy_auto_messages
+  (key, name, description, trigger_type, minutes_before, session_time, days_of_week, audience, package_ids, channels, link, message_template, placeholders, is_active)
+values
+  ('manzil_live',
+   'Live Bacaan Manzil & Perubatan Alami',
+   'Broadcast jemputan sesi Manzil live kepada pesakit, sebelum sesi bermula pada hari terpilih.',
+   'recurring_broadcast', 30, '08:45', '[3,4,5]'::jsonb, '["patient"]'::jsonb, '[]'::jsonb,
+   '["whatsapp","inapp","announcement"]'::jsonb, 'https://meet.google.com/xxx-xxxx-xxx',
+   E'Salam {nama} 👋\n\n📿 *Sesi Rohani Eksklusif: Alunan Manzil*\nBersama Sheikh Fares Mohammed\n\nSesi akan bermula {lead} lagi (pukul {masa}). Jom sertai untuk ketenangan & perlindungan hari anda.\n\n📹 Sertai: {pautan}\n\n— Ibnu Sina Wellness',
+   '["{nama}","{masa}","{lead}","{pautan}"]'::jsonb,
+   false)
+on conflict (key) do nothing;
+
+-- Alert Coach — Kepatuhan Pesakit (gabungan multi-check, runner runKepatuhanAlerts)
+insert into psy_auto_messages
+  (key, name, description, trigger_type, send_at_time, days_of_week, audience, channels, rule, message_template, placeholders, is_active)
+values
+  ('kepatuhan_alert',
+   'Alert Coach — Kepatuhan Pesakit',
+   'Setiap malam, semak kepatuhan setiap pesakit aktif (amalan Catatan Harian tak dibuat/bawah sasaran, hari tak isi, skor rendah, tiada bacaan kesihatan). Gabung jadi SATU alert kepada COACH yang di-assign (papan pemuka + loceng + email) supaya boleh hubungi pesakit esok pagi. Dedup 1×/minggu/pesakit.',
+   'daily_reminder',                 -- supaya UI papar pemilih masa harian
+   '21:00',                          -- nilai hujung hari
+   '[0,1,2,3,4,5,6]'::jsonb,          -- setiap hari (0=Ahad .. 6=Sabtu)
+   '["coach"]'::jsonb,               -- sasaran = coach (bukan pesakit)
+   '["inapp"]'::jsonb,               -- loceng dalam app sahaja (tambah "email" utk hidupkan via GHL)
+   '{"severity":"high","window_days":7,"email_from":"support@ibnusinawellness.com","checks":{"amalan":{"on":true,"min_days_short":3},"checklist":{"on":true,"min_days_missing":3},"skor":{"on":true,"min_score":80},"vitals":{"on":true,"min_days_since":7}}}'::jsonb,
+   E'Assalamualaikum Coach 👋\n\nPesakit {nama} memerlukan perhatian anda.\n\nBerikut perkara yang perlu diberi perhatian (7 hari lepas):\n{senarai}\n\nTindakan Disyorkan:\n📞 Hubungi pesakit untuk membuat semakan keadaan semasa dan memberikan sokongan agar rawatan dapat diteruskan dengan lebih konsisten.\n\nTerima kasih atas perhatian dan bimbingan anda.\n\n— Sistem Auto-Kepatuhan ISW',
+   '["{nama}","{senarai}"]'::jsonb,
+   false)
+on conflict (key) do update set
+   name = excluded.name, description = excluded.description, audience = excluded.audience,
+   channels = excluded.channels, rule = excluded.rule, message_template = excluded.message_template,
+   placeholders = excluded.placeholders;
+
+-- Templat "Saranan Rujukan" (boleh-edit oleh staff; placeholder diganti oleh kod)
+INSERT INTO psy_auto_messages (key, name, description, channel, trigger_type, channels, audience, message_template, placeholders, is_active)
+VALUES (
+  'referral_saranan',
+  'Saranan Rujukan (WhatsApp)',
+  'Mesej yang dihantar ke pesakit selepas konsultasi rujukan (butang "Hantar ke WhatsApp"). Boleh edit ayat & susun placeholder.',
+  'whatsapp',
+  'on_action',
+  '["whatsapp"]'::jsonb,
+  '["patient"]'::jsonb,
+  E'Salam {nama}, \U0001F44B\nBerikut saranan daripada {pengesyor} (Ibnu Sina Wellness):\n\n{saranan}\n\n⏱️ Sila ikut selama *{tempoh} hari* bermula {tarikh}.\n\nTerima kasih & semoga cepat sihat. \U0001F33F',
+  '["{nama}","{pengesyor}","{saranan}","{tempoh}","{tarikh}"]'::jsonb,
+  true
+)
+ON CONFLICT (key) DO NOTHING;
+
+-- Pengesahan Sesi Rawatan (session_confirm) — UPSERT dgn DO UPDATE supaya
+-- run semula mengemaskini template/config; is_active TIDAK disentuh.
+--   rule.lead_days      : berapa hari sebelum sesi peringatan dihantar (default 3)
+--   rule.deadline_hours : had sahkan/tukar tarikh sebelum sesi (default 24)
+--   rule.escalate       : alert coach bila lepas had & belum ditandakan sahkan
+insert into psy_auto_messages
+  (key, name, description, channel, trigger_type, send_at_time, message_template,
+   placeholders, channels, rule, category, language, is_active)
+values
+  ('session_confirm',
+   'Pengesahan Sesi Rawatan',
+   'Sebelum sesi rawatan, WA minta pesakit balas teks utk sahkan kehadiran; staff tandakan di Kehadiran. Bila tinggal ≤ had jam & belum ditandakan, alert coach.',
+   'whatsapp', 'before_session', '10:00',
+   E'Salam {nama} 👋\n\nPeringatan sesi rawatan anda:\n📅 {sesi_akan_datang}\n🗓️ {tarikh_sesi} · {masa_sesi}\n\nBoleh hadir? Sila *balas mesej ini* untuk sahkan kehadiran 🙏\nJika perlu tukar tarikh, beritahu kami — pihak klinik akan bantu aturkan (selewat-lewatnya 24 jam sebelum sesi).\n\nJika tiada maklum balas, slot mungkin dilepaskan & caj tidak hadir boleh dikenakan.\n\n— {nama_klinik}',
+   '["{nama}","{sesi_akan_datang}","{tarikh_sesi}","{masa_sesi}","{nama_klinik}"]'::jsonb,
+   '["whatsapp","inapp"]'::jsonb,
+   '{"lead_days":3,"deadline_hours":24,"escalate":{"on":true,"severity":"medium"}}'::jsonb,
+   'temujanji', 'ms',
+   false)
+on conflict (key) do update set
+  name             = excluded.name,
+  description      = excluded.description,
+  channel          = excluded.channel,
+  trigger_type     = excluded.trigger_type,
+  send_at_time     = excluded.send_at_time,
+  message_template = excluded.message_template,
+  placeholders     = excluded.placeholders,
+  channels         = excluded.channels,
+  rule             = excluded.rule,
+  category         = excluded.category,
+  language         = excluded.language,
+  updated_at       = now();
+
+-- Template Reaksi Pemulihan (pesakit boleh baca — policy 'reaksi_%')
+-- reaksi_harian: mesej 1 (terus) — {{sections}} = blok per kategori,
+-- tindakan sama disebut SEKALI sahaja (dedup global oleh klien).
+INSERT INTO psy_auto_messages (key, name, description, trigger_type, message_template, placeholders, is_active) VALUES
+  ('reaksi_harian',
+   'Cadangan Reaksi Harian',
+   'Mesej 1 (terus) selepas Poll Harian — reaksi & Cadangan Pemulihan dikumpulkan ikut kategori; tindakan sama disebut sekali sahaja.',
+   'on_action',
+   E'Assalamualaikum {{patient_name}},\n\nTerima kasih kerana melengkapkan Poll Harian hari ini.\n\nBerdasarkan jawapan anda, kami mengesan beberapa reaksi pemulihan.\n\n{{sections}}\n\nJika simptom menjadi semakin teruk atau berpanjangan, sila hubungi coach anda.\n\nSemoga Allah mempermudahkan urusan pemulihan anda.\n\nSalam kasih,\nPasukan Ibnu Sina Wellness 💚',
+   '["{{patient_name}}","{{sections}}"]'::jsonb,
+   true),
+  ('reaksi_kritikal',
+   'Cadangan Reaksi Kritikal',
+   'Draf mesej untuk reaksi berisiko tinggi / kecemasan — TIDAK auto-hantar, staff semak & hantar dari halaman Semak & Hantar Mesej.',
+   'on_action',
+   E'Assalamualaikum {{patient_name}},\n\n🚨 PENTING: Berdasarkan Poll Harian anda, terdapat simptom yang memerlukan perhatian segera.\n\nReaksi yang dikesan:\n{{symptom_list}}\n\nTindakan disyorkan:\n{{action_list}}\n\nSila hubungi coach anda DENGAN SEGERA atau dapatkan rawatan di hospital berdekatan jika keadaan serius.\n\nPasukan Ibnu Sina Wellness',
+   '["{{patient_name}}","{{symptom_list}}","{{action_list}}"]'::jsonb,
+   true),
+  ('reaksi_gaya_hidup',
+   'Saranan Gaya Hidup Fitrah',
+   'Mesej ke-2 selepas Poll Harian (+5 minit) — saranan gaya hidup fitrah berdasarkan reaksi dikesan (tindakan jenis "gaya_hidup").',
+   'on_action',
+   E'Assalamualaikum {{patient_name}},\n\n🌿 *Saranan Gaya Hidup Fitrah* untuk hari ini:\n\n{{lifestyle_list}}\n\nSedikit demi sedikit, secara istiqamah — insyaAllah membantu pemulihan anda.\n\nSalam kasih,\nPasukan Ibnu Sina Wellness 💚',
+   '["{{patient_name}}","{{lifestyle_list}}"]'::jsonb,
+   true),
+  ('reaksi_diet',
+   'Saranan Diet & Nutrisi',
+   'Mesej ke-3 selepas Poll Harian (+10 minit) — saranan pemakanan berdasarkan reaksi dikesan (tindakan jenis "pemakanan").',
+   'on_action',
+   E'Assalamualaikum {{patient_name}},\n\n🍽️ *Saranan Diet & Nutrisi* untuk membantu pemulihan anda hari ini:\n\n{{diet_list}}\n\nAmalkan mengikut kemampuan dan secara konsisten, insyaAllah.\n\nSalam kasih,\nPasukan Ibnu Sina Wellness 💚',
+   '["{{patient_name}}","{{diet_list}}"]'::jsonb,
+   true)
+ON CONFLICT (key) DO NOTHING;
 
 
 -- ════════════════════════════════════════════════════════════════
--- step_referral_system.sql
+-- schema/19_events_announcements.sql
 -- ════════════════════════════════════════════════════════════════
 
--- ============================================================
--- step_referral_system.sql  (idempotent)
--- FASA 1: Sistem Referral Code — DB + auto-jana kod.
---   • Setiap pesakit dapat kod unik (referral_code)
---   • Rekod siapa rujuk siapa (referred_by_*)
---   • Lejar jejak + ganjaran manual (psy_referrals)
--- Ganjaran 100% manual (staf beri baucar) — tiada logik auto-diskaun.
--- ============================================================
+-- ═══════════════════════════════════════════════════════════════
+-- ACARA & PENGUMUMAN
+-- Jadual: psy_announcements, psy_events, psy_event_registrations,
+--         psy_event_materials, psy_announcement_categories,
+--         psy_announcement_types
+-- ═══════════════════════════════════════════════════════════════
 
--- ── 1. Kolum baharu pada psy_patients ──────────────────────
-ALTER TABLE psy_patients
-  ADD COLUMN IF NOT EXISTS referral_code         TEXT,
-  ADD COLUMN IF NOT EXISTS referred_by_code      TEXT,
-  ADD COLUMN IF NOT EXISTS referred_by_patient_id UUID REFERENCES psy_patients(id) ON DELETE SET NULL;
+-- ──── psy_announcements ────
+CREATE TABLE IF NOT EXISTS psy_announcements (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title       TEXT NOT NULL,
+  body        TEXT,
+  tag         TEXT,
+  bg          TEXT DEFAULT 'from-navy to-green-dark',
+  cta_label   TEXT,
+  cta_url     TEXT,
+  image_url   TEXT,
+  is_active   BOOLEAN DEFAULT true,
+  sort_order  INT DEFAULT 0,
+  starts_at   TIMESTAMPTZ,
+  ends_at     TIMESTAMPTZ,
+  category    TEXT,
+  content     TEXT,
+  audience    JSONB DEFAULT '["patient"]'::jsonb,
+  expires_at  TIMESTAMPTZ,
+  package_ids JSONB DEFAULT '[]'::jsonb,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
 
--- Kod mesti unik (NULL dibenarkan berbilang dalam Postgres)
-CREATE UNIQUE INDEX IF NOT EXISTS idx_psy_patients_referral_code
-  ON psy_patients (referral_code) WHERE referral_code IS NOT NULL;
+ALTER TABLE psy_announcements ENABLE ROW LEVEL SECURITY;
 
-CREATE INDEX IF NOT EXISTS idx_psy_patients_referred_by
-  ON psy_patients (referred_by_patient_id) WHERE referred_by_patient_id IS NOT NULL;
+DROP POLICY IF EXISTS "Anyone read active announcements" ON psy_announcements;
+CREATE POLICY "Anyone read active announcements" ON psy_announcements FOR SELECT
+  USING (is_active = true);
 
-COMMENT ON COLUMN psy_patients.referral_code IS
-  'Kod rujukan unik pesakit ini untuk dikongsi (auto-jana dari nama/MRN).';
-COMMENT ON COLUMN psy_patients.referred_by_code IS
-  'Kod rujukan perujuk yang dimasukkan semasa pesakit ini mendaftar.';
-COMMENT ON COLUMN psy_patients.referred_by_patient_id IS
-  'Pesakit perujuk yang telah diselesaikan dari referred_by_code.';
+DROP POLICY IF EXISTS "Staff manage announcements" ON psy_announcements;
+CREATE POLICY "Staff manage announcements" ON psy_announcements FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
--- ── 2. Trigger auto-jana referral_code (fallback dari MRN) ──
+-- ──── psy_events (acara / kelas) ────
+CREATE TABLE IF NOT EXISTS psy_events (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title                 TEXT NOT NULL,
+  description           TEXT,
+  type                  TEXT DEFAULT 'kelas',
+  start_at              TIMESTAMPTZ NOT NULL,
+  end_at                TIMESTAMPTZ,
+  mode                  TEXT DEFAULT 'online',
+  meet_link             TEXT,
+  location              TEXT,
+  address               TEXT,
+  maps_url              TEXT,
+  capacity              INT,
+  registration_deadline TIMESTAMPTZ,
+  cover_image           TEXT,
+  tag                   TEXT,
+  host                  TEXT,
+  host_role             TEXT, -- Penceramah / Coach / Moderator
+  price                 NUMERIC DEFAULT 0,
+  status                TEXT DEFAULT 'published',
+  recording_url         TEXT,
+  audience              JSONB DEFAULT '["patient"]'::jsonb,
+  package_ids           JSONB DEFAULT '[]'::jsonb,
+  created_by            UUID,
+  created_at            TIMESTAMPTZ DEFAULT now(),
+  updated_at            TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE psy_events ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "events read" ON psy_events;
+CREATE POLICY "events read" ON psy_events FOR SELECT USING (
+  status = 'published' OR auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff'));
+
+DROP POLICY IF EXISTS "events staff manage" ON psy_events;
+CREATE POLICY "events staff manage" ON psy_events FOR ALL
+  USING (auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff'))
+  WITH CHECK (auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff'));
+
+-- ──── psy_event_registrations (pendaftaran acara) ────
+CREATE TABLE IF NOT EXISTS psy_event_registrations (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id         UUID REFERENCES psy_events(id) ON DELETE CASCADE,
+  patient_id       UUID REFERENCES psy_patients(id) ON DELETE CASCADE,
+  status           TEXT DEFAULT 'registered',
+  reminder_sent_at TIMESTAMPTZ, -- penanda dedup peringatan WhatsApp 1 jam (Edge Function event-reminders)
+  registered_at    TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (event_id, patient_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_regs_event   ON psy_event_registrations(event_id);
+CREATE INDEX IF NOT EXISTS idx_event_regs_patient ON psy_event_registrations(patient_id);
+
+ALTER TABLE psy_event_registrations ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "regs read" ON psy_event_registrations;
+CREATE POLICY "regs read" ON psy_event_registrations FOR SELECT USING (
+  patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())
+  OR auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff'));
+
+DROP POLICY IF EXISTS "regs patient insert" ON psy_event_registrations;
+CREATE POLICY "regs patient insert" ON psy_event_registrations FOR INSERT WITH CHECK (
+  patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "regs patient update" ON psy_event_registrations;
+CREATE POLICY "regs patient update" ON psy_event_registrations FOR UPDATE USING (
+  patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())
+  OR auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff'));
+
+DROP POLICY IF EXISTS "regs staff delete" ON psy_event_registrations;
+CREATE POLICY "regs staff delete" ON psy_event_registrations FOR DELETE USING (
+  auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff'));
+
+-- ──── psy_event_materials (bahan / rakaman acara) ────
+CREATE TABLE IF NOT EXISTS psy_event_materials (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id   UUID REFERENCES psy_events(id) ON DELETE CASCADE,
+  title      TEXT NOT NULL,
+  type       TEXT DEFAULT 'pautan',
+  url        TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_materials_event ON psy_event_materials(event_id);
+
+ALTER TABLE psy_event_materials ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "materials read" ON psy_event_materials;
+CREATE POLICY "materials read" ON psy_event_materials FOR SELECT USING (
+  EXISTS (SELECT 1 FROM psy_events e WHERE e.id = event_id
+          AND (e.status = 'published' OR auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff'))));
+
+DROP POLICY IF EXISTS "materials staff manage" ON psy_event_materials;
+CREATE POLICY "materials staff manage" ON psy_event_materials FOR ALL
+  USING (auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff'))
+  WITH CHECK (auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff'));
+
+-- ──── psy_announcement_categories (kategori pengumuman — super admin CRUD) ────
+CREATE TABLE IF NOT EXISTS psy_announcement_categories (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name       TEXT NOT NULL UNIQUE,
+  sort_order INT DEFAULT 0,
+  is_active  BOOLEAN DEFAULT true,
+  created_by UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE psy_announcement_categories ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "ann_cat read" ON psy_announcement_categories;
+CREATE POLICY "ann_cat read" ON psy_announcement_categories FOR SELECT USING (
+  auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff'));
+
+DROP POLICY IF EXISTS "ann_cat manage" ON psy_announcement_categories;
+CREATE POLICY "ann_cat manage" ON psy_announcement_categories FOR ALL
+  USING (auth.uid() IN (SELECT id FROM psy_profiles WHERE staff_role = 'super_admin'))
+  WITH CHECK (auth.uid() IN (SELECT id FROM psy_profiles WHERE staff_role = 'super_admin'));
+
+-- ──── psy_announcement_types (jenis pengumuman — super admin CRUD) ────
+CREATE TABLE IF NOT EXISTS psy_announcement_types (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  key         TEXT NOT NULL UNIQUE,
+  title       TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  kind        TEXT NOT NULL DEFAULT 'announcement',
+  mode        TEXT,
+  etype       TEXT,
+  label       TEXT,
+  sort_order  INT DEFAULT 0,
+  is_active   BOOLEAN DEFAULT true,
+  created_by  UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ann_types_sort ON psy_announcement_types(sort_order);
+
+ALTER TABLE psy_announcement_types ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "ann_types read" ON psy_announcement_types;
+CREATE POLICY "ann_types read" ON psy_announcement_types FOR SELECT USING (
+  auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff'));
+
+DROP POLICY IF EXISTS "ann_types manage" ON psy_announcement_types;
+CREATE POLICY "ann_types manage" ON psy_announcement_types FOR ALL
+  USING (auth.uid() IN (SELECT id FROM psy_profiles WHERE staff_role = 'super_admin'))
+  WITH CHECK (auth.uid() IN (SELECT id FROM psy_profiles WHERE staff_role = 'super_admin'));
+
+-- ──── data rujukan ────
+INSERT INTO psy_announcements (title, body, tag, bg, cta_label, cta_url, sort_order) VALUES
+  ('Kelas Mindfulness Percuma', 'Setiap Sabtu 9AM — Sertai sesi meditasi & pernafasan bersama Coach Izzah.', 'Kelas Minggu Ini', 'from-navy to-teal', 'Daftar Sekarang', 'https://wa.me/60123456789', 1),
+  ('Program Detox Digital', 'Cabaran 7 hari kurangkan screen time untuk kesejahteraan mental anda.', 'Challenge Baru', 'from-green-dark to-teal', 'Sertai Cabaran', null, 2),
+  ('Pakej Ramadan Khas', 'Rawatan holistik dengan fokus spiritual — promosi sehingga hujung bulan.', 'Promosi', 'from-navy to-green-dark', 'Lihat Pakej', 'pakej.html', 3)
+ON CONFLICT DO NOTHING;
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/20_referrals.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════
+-- RUJUKAN
+-- Jadual: psy_referrals (ganjaran rujukan pesakit-ke-pesakit),
+--         psy_clinical_referrals (coach/staff rujuk pesakit kpd
+--         doctor / coach lain / manager)
+-- Fungsi: assign_referral_code (trigger fn), check_referral_code (RPC)
+-- ═══════════════════════════════════════════════════════════════
+
+-- ──── assign_referral_code (auto-jana kod rujukan pesakit) ────
 -- Client (JS) akan set kod cantik (nama+MRN) sebelum insert; jika
--- masih NULL, trigger ini jamin satu kod unik tetap wujud.
+-- masih NULL, fungsi trigger ini jamin satu kod unik tetap wujud.
 -- Nota: trigger MRN (trg_assign_patient_mrn) berjalan dulu ikut abjad
 -- nama, jadi NEW.mrn sudah diisi bila trigger ini berjalan.
 CREATE OR REPLACE FUNCTION assign_referral_code()
@@ -5337,36 +5328,34 @@ BEGIN
 END;
 $$;
 
+-- Trigger pada psy_patients (jadual dari 04_patients.sql) — diletak di sini
+-- kerana fungsinya ditakrif di atas.
 DROP TRIGGER IF EXISTS trg_assign_referral_code ON psy_patients;
 CREATE TRIGGER trg_assign_referral_code
   BEFORE INSERT ON psy_patients
   FOR EACH ROW
   EXECUTE FUNCTION assign_referral_code();
 
--- ── 3. Backfill kod untuk pesakit sedia ada ────────────────
-DO $$
-DECLARE
-  r         RECORD;
-  base      TEXT;
-  candidate TEXT;
-  n         INT;
+-- ──── check_referral_code (RPC) ────
+-- Semak sama ada kod rujukan wujud. SECURITY DEFINER supaya pesakit
+-- baru boleh semak tanpa RLS.
+CREATE OR REPLACE FUNCTION check_referral_code(p_code TEXT)
+RETURNS TABLE (valid BOOLEAN, referrer_name TEXT)
+LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
-  FOR r IN SELECT id, mrn FROM psy_patients WHERE referral_code IS NULL LOOP
-    base := 'ISW' || regexp_replace(COALESCE(r.mrn, ''), '\D', '', 'g');
-    IF base = 'ISW' THEN
-      base := 'ISW' || to_char((random() * 9000 + 1000)::int, 'FM0000');
-    END IF;
-    candidate := base;
-    n := 1;
-    WHILE EXISTS (SELECT 1 FROM psy_patients WHERE referral_code = candidate) LOOP
-      n := n + 1;
-      candidate := base || n;
-    END LOOP;
-    UPDATE psy_patients SET referral_code = candidate WHERE id = r.id;
-  END LOOP;
-END $$;
+  RETURN QUERY
+  SELECT TRUE, p.full_name
+  FROM psy_patients p
+  WHERE upper(trim(p.referral_code)) = upper(trim(p_code))
+  LIMIT 1;
 
--- ── 4. Lejar referral (jejak + ganjaran manual) ────────────
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT FALSE, NULL::TEXT;
+  END IF;
+END;
+$$;
+
+-- ──── psy_referrals (lejar ganjaran rujukan pesakit-ke-pesakit) ────
 CREATE TABLE IF NOT EXISTS psy_referrals (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   referrer_patient_id UUID REFERENCES psy_patients(id) ON DELETE CASCADE,
@@ -5390,1320 +5379,517 @@ CREATE TABLE IF NOT EXISTS psy_referrals (
 CREATE INDEX IF NOT EXISTS idx_psy_referrals_referrer ON psy_referrals (referrer_patient_id);
 CREATE INDEX IF NOT EXISTS idx_psy_referrals_status   ON psy_referrals (status);
 
--- ── 5. RLS ─────────────────────────────────────────────────
 ALTER TABLE psy_referrals ENABLE ROW LEVEL SECURITY;
 
-DO $$ BEGIN
-  CREATE POLICY "Staff manage referrals" ON psy_referrals FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DROP POLICY IF EXISTS "Staff manage referrals" ON psy_referrals;
+CREATE POLICY "Staff manage referrals" ON psy_referrals FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
-DO $$ BEGIN
-  CREATE POLICY "Patients read own referrals" ON psy_referrals FOR SELECT
-    USING (EXISTS (
-      SELECT 1 FROM psy_patients pp
-      WHERE pp.id IN (psy_referrals.referrer_patient_id, psy_referrals.referee_patient_id)
-        AND pp.user_id = auth.uid()
-    ));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DROP POLICY IF EXISTS "Patients read own referrals" ON psy_referrals;
+CREATE POLICY "Patients read own referrals" ON psy_referrals FOR SELECT
+  USING (EXISTS (
+    SELECT 1 FROM psy_patients pp
+    WHERE pp.id IN (psy_referrals.referrer_patient_id, psy_referrals.referee_patient_id)
+      AND pp.user_id = auth.uid()
+  ));
 
-SELECT 'OK — referral system (DB + auto-gen kod) ready' AS status;
+-- ──── psy_clinical_referrals (rujukan klinikal pesakit) ────
+-- Coach/staff rujuk pesakit kepada doctor / coach lain / manager
+-- (Hakeem/Hakeema). Sasaran dipilih secara spesifik (target_id).
+-- Notifikasi guna psy_notifications type 'referral'.
+CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id        UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  referred_by       UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  referred_by_name  TEXT,
+  target_role       TEXT NOT NULL CHECK (target_role IN ('doctor','coach','manager')),
+  target_id         UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  target_name       TEXT,
+  reason            TEXT NOT NULL,
+  meet_date         DATE,                       -- tarikh pesakit perlu jumpa (dari jadual rawatan)
+  priority          TEXT NOT NULL DEFAULT 'sederhana'
+                      CHECK (priority IN ('rendah','sederhana','tinggi')),
+  status            TEXT NOT NULL DEFAULT 'pending'
+                      CHECK (status IN ('pending','accepted','resolved','declined')),
+  resolution_note   TEXT,
+  consultation_note TEXT,                       -- nota sesi rujukan (Hakeem/doctor/coach)
+  consultation      JSONB DEFAULT '{}'::jsonb,  -- borang konsultasi berstruktur
+  attachments       JSONB DEFAULT '[]'::jsonb,  -- transkrip/dokumen: [{name,path,uploaded_at}]
+  created_at        TIMESTAMPTZ DEFAULT now(),
+  updated_at        TIMESTAMPTZ DEFAULT now(),
+  resolved_at       TIMESTAMPTZ
+);
 
+CREATE INDEX IF NOT EXISTS idx_psy_clinical_referrals_target  ON psy_clinical_referrals(target_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_psy_clinical_referrals_patient ON psy_clinical_referrals(patient_id, created_at DESC);
 
--- ════════════════════════════════════════════════════════════════
--- step_session_notes_soap.sql
--- ════════════════════════════════════════════════════════════════
+ALTER TABLE psy_clinical_referrals ENABLE ROW LEVEL SECURITY;
 
--- ============================================================
--- SESSION NOTES — SOAP format  (DIBUANG — ciri SOAP/Konsultasi tak digunakan)
--- Kolum coach notes (notes, mood_*, goals_discussed, homework_given, coach_*)
--- dikekalkan di step24 di atas. SOAP-eksklusif tidak lagi dicipta.
--- ============================================================
-
-SELECT 'OK — SOAP feature removed' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_sync_kyc_to_patient.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- FIX: Sync KYC data ke psy_patients
--- Untuk patient yang KYC dah diluluskan tapi patient row created lewat
--- (jadi ic_number, address dll kosong)
--- ============================================================
-
--- ── One-time backfill: sync KYC approved → patient row ──
-UPDATE psy_patients p
-SET
-  status                  = 'active',
-  full_name               = COALESCE(NULLIF(p.full_name, ''), k.patient_name),
-  phone                   = COALESCE(NULLIF(p.phone, ''), k.phone),
-  ic_number               = COALESCE(NULLIF(p.ic_number, ''), k.ic_number),
-  date_of_birth           = COALESCE(p.date_of_birth, k.date_of_birth),
-  gender                  = COALESCE(NULLIF(p.gender, ''), k.gender),
-  address                 = COALESCE(NULLIF(p.address, ''), k.address),
-  emergency_contact_name  = COALESCE(NULLIF(p.emergency_contact_name, ''), k.emergency_contact_name),
-  emergency_contact_phone = COALESCE(NULLIF(p.emergency_contact_phone, ''), k.emergency_contact_phone),
-  referral_source         = COALESCE(NULLIF(p.referral_source, ''), k.referral_source),
-  medical_condition       = COALESCE(NULLIF(p.medical_condition, ''), k.medical_condition),
-  condition_duration      = COALESCE(NULLIF(p.condition_duration, ''), k.condition_duration),
-  medical_notes           = COALESCE(NULLIF(p.medical_notes, ''), k.medical_notes)
-FROM psy_kyc_submissions k
-WHERE k.user_id = p.user_id
-  AND k.status  = 'approved'
-  AND (p.ic_number IS NULL OR p.ic_number = '');
-
--- ── Trigger: auto-sync KYC → patient bila KYC diluluskan ──
--- Ini menjamin masa depan tak akan ada desync, walaupun patient row tak wujud masa KYC approved.
-CREATE OR REPLACE FUNCTION sync_kyc_to_patient()
-RETURNS TRIGGER
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
-AS $$
-BEGIN
-  -- Hanya sync bila status berubah jadi 'approved'
-  IF NEW.status = 'approved' AND (OLD.status IS NULL OR OLD.status != 'approved') THEN
-    UPDATE psy_patients
-    SET
-      status                  = 'active',
-      full_name               = COALESCE(NULLIF(full_name, ''), NEW.patient_name),
-      phone                   = COALESCE(NULLIF(phone, ''), NEW.phone),
-      ic_number               = COALESCE(NULLIF(ic_number, ''), NEW.ic_number),
-      date_of_birth           = COALESCE(date_of_birth, NEW.date_of_birth),
-      gender                  = COALESCE(NULLIF(gender, ''), NEW.gender),
-      address                 = COALESCE(NULLIF(address, ''), NEW.address),
-      emergency_contact_name  = COALESCE(NULLIF(emergency_contact_name, ''), NEW.emergency_contact_name),
-      emergency_contact_phone = COALESCE(NULLIF(emergency_contact_phone, ''), NEW.emergency_contact_phone),
-      referral_source         = COALESCE(NULLIF(referral_source, ''), NEW.referral_source),
-      medical_condition       = COALESCE(NULLIF(medical_condition, ''), NEW.medical_condition),
-      condition_duration      = COALESCE(NULLIF(condition_duration, ''), NEW.condition_duration),
-      medical_notes           = COALESCE(NULLIF(medical_notes, ''), NEW.medical_notes)
-    WHERE user_id = NEW.user_id;
-  END IF;
-  RETURN NEW;
-END;
-$$;
-
-DROP TRIGGER IF EXISTS trg_sync_kyc_to_patient ON psy_kyc_submissions;
-CREATE TRIGGER trg_sync_kyc_to_patient
-  AFTER INSERT OR UPDATE ON psy_kyc_submissions
-  FOR EACH ROW
-  EXECUTE FUNCTION sync_kyc_to_patient();
-
--- ── Verifikasi ──
-SELECT p.mrn, p.full_name, p.ic_number, p.status, k.status AS kyc_status
-FROM psy_patients p
-LEFT JOIN psy_kyc_submissions k ON k.user_id = p.user_id AND k.status = 'approved'
-WHERE k.id IS NOT NULL
-ORDER BY p.created_at DESC
-LIMIT 10;
-
-SELECT 'OK — KYC→patient sync done + future trigger ready' AS status;
+DROP POLICY IF EXISTS "Staff manage clinical referrals" ON psy_clinical_referrals;
+CREATE POLICY "Staff manage clinical referrals" ON psy_clinical_referrals FOR ALL
+  USING      (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
 
 -- ════════════════════════════════════════════════════════════════
--- 20260628_patient_self_register_flow.sql
+-- schema/21_feedback.sql
 -- ════════════════════════════════════════════════════════════════
 
--- ============================================================
--- Auto-create psy_patients stub for self-registered patients.
--- Flow: signup → email confirm → login → KYC → KOB → ...
--- ============================================================
+-- ═══════════════════════════════════════════════════════════════
+-- MAKLUM BALAS
+-- Jadual: psy_feedback (mingguan per-sesi + keseluruhan rawatan),
+--         psy_weekly_feedback (rating mingguan ringkas per pelan)
+-- ═══════════════════════════════════════════════════════════════
 
-CREATE OR REPLACE FUNCTION handle_new_patient_profile()
-RETURNS TRIGGER
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
-AS $$
-BEGIN
-  IF NEW.role = 'patient' THEN
-    INSERT INTO psy_patients (user_id, full_name, status, kob_status, created_by_staff)
-    VALUES (NEW.id, NEW.full_name, 'pending_kyc', 'paid', false)
-    ON CONFLICT (user_id) DO NOTHING;
-  END IF;
-  RETURN NEW;
-EXCEPTION WHEN OTHERS THEN
-  RAISE LOG 'handle_new_patient_profile error: %', SQLERRM;
-  RETURN NEW;
-END;
-$$;
+-- ──── psy_feedback ────
+CREATE TABLE IF NOT EXISTS psy_feedback (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id    UUID REFERENCES psy_patients(id) ON DELETE CASCADE,
+  user_id       UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  patient_name  TEXT,
+  feedback_type TEXT NOT NULL DEFAULT 'overall'
+                  CHECK (feedback_type IN ('weekly','overall')),
+  week_number   INT,
+  plan_id       UUID REFERENCES psy_treatment_plans(id) ON DELETE SET NULL,
+  coach_id      UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  coach_name    TEXT,
+  rating        INT CHECK (rating BETWEEN 1 AND 5),
+  coach_rating  INT CHECK (coach_rating BETWEEN 1 AND 5),
+  supply_rating INT CHECK (supply_rating BETWEEN 1 AND 5),
+  comment       TEXT,
+  helpful_tags  JSONB DEFAULT '[]',
+  created_at    TIMESTAMPTZ DEFAULT now()
+);
 
-DROP TRIGGER IF EXISTS trg_new_patient_profile ON psy_profiles;
-CREATE TRIGGER trg_new_patient_profile
-  AFTER INSERT ON psy_profiles
-  FOR EACH ROW
-  EXECUTE FUNCTION handle_new_patient_profile();
+CREATE INDEX IF NOT EXISTS idx_feedback_type_patient
+  ON psy_feedback(patient_id, feedback_type);
 
-ALTER TABLE psy_patients
-  ADD CONSTRAINT IF NOT EXISTS psy_patients_user_id_unique UNIQUE (user_id);
+CREATE INDEX IF NOT EXISTS idx_feedback_coach
+  ON psy_feedback(coach_id) WHERE coach_id IS NOT NULL;
 
-SELECT 'OK — patient self-register auto-stub trigger ready' AS status;
+ALTER TABLE psy_feedback ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Patients manage own feedback" ON psy_feedback;
+CREATE POLICY "Patients manage own feedback" ON psy_feedback FOR ALL
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
 
--- ════════════════════════════════════════════════════════════════
--- step_vitals_link_to_week.sql
--- ════════════════════════════════════════════════════════════════
+DROP POLICY IF EXISTS "Staff read all feedback" ON psy_feedback;
+CREATE POLICY "Staff read all feedback" ON psy_feedback FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
--- ============================================================
--- STEP — Link psy_vitals ke minggu rawatan
--- Vitals patut "duduk dalam minggu" supaya boleh paparkan dalam
--- plan-week.html sebagai sebahagian dari rekod sesi minggu tu.
--- ============================================================
+COMMENT ON COLUMN psy_feedback.feedback_type IS
+  '"weekly" = per-session feedback (rates coach + supplies); "overall" = end-of-treatment review';
 
-ALTER TABLE psy_vitals
-  ADD COLUMN IF NOT EXISTS plan_id     UUID REFERENCES psy_treatment_plans(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS week_number INT;
+-- ──── psy_weekly_feedback ────
+CREATE TABLE IF NOT EXISTS psy_weekly_feedback (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  plan_id     UUID REFERENCES psy_treatment_plans(id) ON DELETE CASCADE NOT NULL,
+  patient_id  UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
+  week_number INT NOT NULL,
+  rating      INT CHECK (rating BETWEEN 1 AND 5),
+  comment     TEXT,
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (plan_id, week_number)
+);
 
-COMMENT ON COLUMN psy_vitals.plan_id IS
-  'Refer treatment plan masa vitals direkod. NULL kalau direkod luar konteks plan.';
-COMMENT ON COLUMN psy_vitals.week_number IS
-  'Minggu rawatan ke berapa bila vitals direkod. NULL kalau tiada plan aktif.';
+CREATE INDEX IF NOT EXISTS idx_psy_feedback_plan ON psy_weekly_feedback(plan_id, week_number);
 
--- Backfill: cuba match vitals lama dengan plan aktif patient + minggu ikut tarikh
-UPDATE psy_vitals v
-SET plan_id     = tp.id,
-    week_number = tp.current_week
-FROM psy_treatment_plans tp
-WHERE v.patient_id = tp.patient_id
-  AND tp.status = 'active'
-  AND v.plan_id IS NULL;
+ALTER TABLE psy_weekly_feedback ENABLE ROW LEVEL SECURITY;
 
--- Index untuk query "vitals minggu X plan Y"
-CREATE INDEX IF NOT EXISTS idx_vitals_plan_week
-  ON psy_vitals(plan_id, week_number) WHERE plan_id IS NOT NULL;
+DROP POLICY IF EXISTS "Patients manage own weekly feedback" ON psy_weekly_feedback;
+CREATE POLICY "Patients manage own weekly feedback" ON psy_weekly_feedback FOR ALL
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
 
--- Verifikasi
-SELECT
-  COUNT(*) FILTER (WHERE plan_id IS NOT NULL) AS linked_to_plan,
-  COUNT(*) FILTER (WHERE plan_id IS NULL)     AS no_plan,
-  COUNT(*) AS total
-FROM psy_vitals;
-
-SELECT 'OK — psy_vitals linked to plan + week_number' AS status;
+DROP POLICY IF EXISTS "Staff read all weekly feedback" ON psy_weekly_feedback;
+CREATE POLICY "Staff read all weekly feedback" ON psy_weekly_feedback FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
 
 -- ════════════════════════════════════════════════════════════════
--- step_rbac_01_permissions.sql
+-- schema/22_knowledge_base.sql
 -- ════════════════════════════════════════════════════════════════
 
--- ============================================================
--- STEP RBAC 01 — PERMISSIONS SCHEMA
--- 3 jadual + 1 view untuk Role-Based Access Control
--- Run di Supabase SQL Editor
--- ============================================================
+-- ═══════════════════════════════════════════════════════════════════
+-- SKEMA: KNOWLEDGE BASE (Knowledge Hub — Pusat Rujukan Dalaman Staff)
+-- Jadual: psy_kb_categories, psy_kb_resources, psy_kb_versions,
+--         psy_kb_bookmarks, psy_kb_views, psy_kb_note_folders,
+--         psy_kb_notes, psy_kb_trainings, psy_kb_training_progress,
+--         psy_kb_certificates
+-- Modul rujukan dalaman: SOP, garis panduan klinikal, latihan, borang,
+-- template, video, pautan. Termasuk bookmark, nota peribadi, versioning
+-- dan pusat latihan (training center). Fail disimpan dalam bucket
+-- 'kb-media' (lihat 24_storage.sql).
+-- ═══════════════════════════════════════════════════════════════════
 
--- 1. Tambah 'super_admin' kepada staff_role check constraint
-ALTER TABLE psy_profiles DROP CONSTRAINT IF EXISTS psy_profiles_staff_role_check;
-ALTER TABLE psy_profiles ADD CONSTRAINT psy_profiles_staff_role_check
-  CHECK (staff_role IS NULL OR staff_role IN ('admin','coach','manager','doctor','super_admin'));
+-- ──── fungsi helper: adakah auth.uid() seorang staff? ────
+CREATE OR REPLACE FUNCTION kb_is_staff() RETURNS BOOLEAN AS $$
+  SELECT EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff');
+$$ LANGUAGE sql SECURITY DEFINER STABLE;
 
--- 2. Master list permission
-CREATE TABLE IF NOT EXISTS psy_permissions (
-  code        TEXT PRIMARY KEY,
-  module      TEXT NOT NULL,
-  action      TEXT NOT NULL,
+-- ──── fungsi: sentuh updated_at ────
+CREATE OR REPLACE FUNCTION kb_touch_updated_at() RETURNS TRIGGER AS $$
+BEGIN NEW.updated_at = now(); RETURN NEW; END; $$ LANGUAGE plpgsql;
+
+-- ──── psy_kb_categories ────
+CREATE TABLE IF NOT EXISTS psy_kb_categories (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        TEXT NOT NULL,
+  slug        TEXT UNIQUE NOT NULL,
   description TEXT,
-  is_wired    BOOLEAN DEFAULT false,
+  icon        TEXT DEFAULT '📁',
+  color       TEXT DEFAULT 'navy',     -- token warna ISW: navy|green|gold|terracotta|teal|grey
+  sort_order  INT  DEFAULT 100,
+  is_active   BOOLEAN DEFAULT true,
   created_at  TIMESTAMPTZ DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_psy_permissions_module ON psy_permissions(module);
 
--- 3. Default bundle per staff_role
-CREATE TABLE IF NOT EXISTS psy_role_permissions (
-  staff_role      TEXT NOT NULL,
-  permission_code TEXT NOT NULL REFERENCES psy_permissions(code) ON DELETE CASCADE,
-  created_at      TIMESTAMPTZ DEFAULT now(),
-  PRIMARY KEY (staff_role, permission_code)
+ALTER TABLE psy_kb_categories ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "kb_cat_read" ON psy_kb_categories;
+CREATE POLICY "kb_cat_read"  ON psy_kb_categories FOR SELECT USING (kb_is_staff());
+DROP POLICY IF EXISTS "kb_cat_write" ON psy_kb_categories;
+CREATE POLICY "kb_cat_write" ON psy_kb_categories FOR ALL    USING (kb_is_staff()) WITH CHECK (kb_is_staff());
+
+-- ──── psy_kb_resources ────
+CREATE TABLE IF NOT EXISTS psy_kb_resources (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title         TEXT NOT NULL,
+  description   TEXT,
+  category_id   UUID REFERENCES psy_kb_categories(id) ON DELETE SET NULL,
+  res_type      TEXT NOT NULL DEFAULT 'pdf'
+                CHECK (res_type IN ('pdf','document','spreadsheet','presentation','video','image','link')),
+  file_url      TEXT,          -- untuk fail yang dimuat naik (bucket kb-media)
+  external_url  TEXT,          -- untuk res_type='link' atau pautan luar (GDrive/YouTube)
+  file_size     BIGINT,        -- bait
+  file_ext      TEXT,          -- pdf/docx/xlsx/pptx/mp4/png…
+  tags          TEXT[] DEFAULT '{}',
+  department    TEXT,          -- Clinical/Coaching/Medical/Admin/HR/Counselling/Education…
+  visibility    TEXT NOT NULL DEFAULT 'public'
+                CHECK (visibility IN ('public','department','role','user','private')),
+  allowed_roles TEXT[] DEFAULT '{}',   -- bila visibility='role'
+  allowed_users UUID[] DEFAULT '{}',   -- bila visibility='user' (kongsi kepada staf tertentu)
+  version       TEXT DEFAULT 'v1.0',
+  source        TEXT,
+  language      TEXT DEFAULT 'ms',
+  expiry_date   DATE,
+  view_count    INT DEFAULT 0,
+  is_archived   BOOLEAN DEFAULT false,
+  uploaded_by   UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  created_at    TIMESTAMPTZ DEFAULT now(),
+  updated_at    TIMESTAMPTZ DEFAULT now()
 );
 
--- 4. Override per-user (grant tambahan atau revoke default)
-CREATE TABLE IF NOT EXISTS psy_user_permissions (
-  user_id         UUID NOT NULL REFERENCES psy_profiles(id) ON DELETE CASCADE,
-  permission_code TEXT NOT NULL REFERENCES psy_permissions(code) ON DELETE CASCADE,
-  grant_type      TEXT NOT NULL CHECK (grant_type IN ('grant','revoke')),
-  granted_by      UUID REFERENCES psy_profiles(id),
-  granted_at      TIMESTAMPTZ DEFAULT now(),
-  reason          TEXT,
-  PRIMARY KEY (user_id, permission_code)
+CREATE INDEX IF NOT EXISTS idx_kb_res_category ON psy_kb_resources(category_id);
+CREATE INDEX IF NOT EXISTS idx_kb_res_type     ON psy_kb_resources(res_type);
+CREATE INDEX IF NOT EXISTS idx_kb_res_archived ON psy_kb_resources(is_archived);
+CREATE INDEX IF NOT EXISTS idx_kb_res_tags     ON psy_kb_resources USING GIN(tags);
+
+ALTER TABLE psy_kb_resources ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "kb_res_read" ON psy_kb_resources;
+CREATE POLICY "kb_res_read"  ON psy_kb_resources  FOR SELECT USING (kb_is_staff());
+DROP POLICY IF EXISTS "kb_res_write" ON psy_kb_resources;
+CREATE POLICY "kb_res_write" ON psy_kb_resources  FOR ALL    USING (kb_is_staff()) WITH CHECK (kb_is_staff());
+
+DROP TRIGGER IF EXISTS trg_kb_res_touch ON psy_kb_resources;
+CREATE TRIGGER trg_kb_res_touch BEFORE UPDATE ON psy_kb_resources
+  FOR EACH ROW EXECUTE FUNCTION kb_touch_updated_at();
+
+-- ──── psy_kb_versions (sejarah versi) ────
+CREATE TABLE IF NOT EXISTS psy_kb_versions (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  resource_id     UUID NOT NULL REFERENCES psy_kb_resources(id) ON DELETE CASCADE,
+  version         TEXT NOT NULL,
+  file_url        TEXT,
+  external_url    TEXT,
+  file_size       BIGINT,
+  changes_summary TEXT,
+  is_current      BOOLEAN DEFAULT false,
+  uploaded_by     UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  created_at      TIMESTAMPTZ DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_psy_user_permissions_user ON psy_user_permissions(user_id);
 
--- 5. View: resolve final permission per user
---    final = (role_defaults - user_revokes) UNION user_grants
-CREATE OR REPLACE VIEW psy_user_effective_permissions AS
-SELECT p.id AS user_id, rp.permission_code
-FROM psy_profiles p
-JOIN psy_role_permissions rp ON rp.staff_role = p.staff_role
-WHERE NOT EXISTS (
-  SELECT 1 FROM psy_user_permissions up
-  WHERE up.user_id = p.id
-    AND up.permission_code = rp.permission_code
-    AND up.grant_type = 'revoke'
-)
-UNION
-SELECT user_id, permission_code
-FROM psy_user_permissions
-WHERE grant_type = 'grant';
+CREATE INDEX IF NOT EXISTS idx_kb_ver_resource ON psy_kb_versions(resource_id);
 
--- 6. RLS — semua authenticated boleh read permissions; hanya super_admin boleh write
-ALTER TABLE psy_permissions       ENABLE ROW LEVEL SECURITY;
-ALTER TABLE psy_role_permissions  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE psy_user_permissions  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_kb_versions ENABLE ROW LEVEL SECURITY;
 
-DO $$ BEGIN
-  CREATE POLICY "perm_read_all"  ON psy_permissions      FOR SELECT USING (auth.role() = 'authenticated');
-  CREATE POLICY "rperm_read_all" ON psy_role_permissions FOR SELECT USING (auth.role() = 'authenticated');
-  CREATE POLICY "uperm_read_all" ON psy_user_permissions FOR SELECT USING (auth.role() = 'authenticated');
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DROP POLICY IF EXISTS "kb_ver_read" ON psy_kb_versions;
+CREATE POLICY "kb_ver_read"  ON psy_kb_versions   FOR SELECT USING (kb_is_staff());
+DROP POLICY IF EXISTS "kb_ver_write" ON psy_kb_versions;
+CREATE POLICY "kb_ver_write" ON psy_kb_versions   FOR ALL    USING (kb_is_staff()) WITH CHECK (kb_is_staff());
 
-DO $$ BEGIN
-  CREATE POLICY "perm_write_superadmin" ON psy_permissions FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'));
-  CREATE POLICY "rperm_write_superadmin" ON psy_role_permissions FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'));
-  CREATE POLICY "uperm_write_superadmin" ON psy_user_permissions FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- ──── psy_kb_bookmarks (bookmark / pinned per-user) ────
+CREATE TABLE IF NOT EXISTS psy_kb_bookmarks (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID NOT NULL REFERENCES psy_profiles(id) ON DELETE CASCADE,
+  resource_id UUID NOT NULL REFERENCES psy_kb_resources(id) ON DELETE CASCADE,
+  is_pinned   BOOLEAN DEFAULT false,
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (user_id, resource_id)
+);
 
-SELECT 'Step RBAC 01 OK — schema ready' AS status;
+CREATE INDEX IF NOT EXISTS idx_kb_bm_user ON psy_kb_bookmarks(user_id);
 
+ALTER TABLE psy_kb_bookmarks ENABLE ROW LEVEL SECURITY;
 
--- ════════════════════════════════════════════════════════════════
--- step_rbac_02_seed_permissions.sql
--- ════════════════════════════════════════════════════════════════
+DROP POLICY IF EXISTS "kb_bm_own" ON psy_kb_bookmarks;
+CREATE POLICY "kb_bm_own"    ON psy_kb_bookmarks         FOR ALL USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
 
--- ============================================================
--- STEP RBAC 02 — SEED MASTER PERMISSIONS
--- ~55 permission default, semua tanda is_wired=false (kena update bila code dah check)
--- ============================================================
+-- ──── psy_kb_views (recently viewed per-user) ────
+CREATE TABLE IF NOT EXISTS psy_kb_views (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID NOT NULL REFERENCES psy_profiles(id) ON DELETE CASCADE,
+  resource_id UUID NOT NULL REFERENCES psy_kb_resources(id) ON DELETE CASCADE,
+  viewed_at   TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (user_id, resource_id)
+);
 
-INSERT INTO psy_permissions (code, module, action, description) VALUES
-  -- Patient & KYC
-  ('patient.view_all',          'patient',      'view_all',        'Lihat semua pesakit'),
-  ('patient.view_assigned',     'patient',      'view_assigned',   'Lihat pesakit yang ditugaskan sahaja'),
-  ('patient.create',            'patient',      'create',          'Daftar pesakit baru'),
-  ('patient.edit',              'patient',      'edit',            'Edit maklumat pesakit'),
-  ('patient.delete',            'patient',      'delete',          'Padam (soft delete) pesakit'),
-  ('kyc.view',                  'kyc',          'view',            'Lihat borang KYC'),
-  ('kyc.review',                'kyc',          'review',          'Semak borang KYC'),
-  ('kyc.approve',               'kyc',          'approve',         'Lulus / tolak KYC'),
-  ('vitals.view',               'vitals',       'view',            'Lihat tanda vital pesakit'),
-  ('vitals.edit',               'vitals',       'edit',            'Rekod / edit tanda vital'),
+CREATE INDEX IF NOT EXISTS idx_kb_views_user ON psy_kb_views(user_id, viewed_at DESC);
 
-  -- Coaching & Sesi
-  ('assignment.view',           'assignment',   'view',            'Lihat assignment pesakit'),
-  ('assignment.create',         'assignment',   'create',          'Cipta assignment'),
-  ('assignment.review',         'assignment',   'review',          'Semak hasil assignment'),
-  ('coaching.view',             'coaching',     'view',            'Lihat sesi coaching'),
-  ('coaching.create',           'coaching',     'create',          'Cipta sesi coaching'),
-  ('coaching.edit',             'coaching',     'edit',            'Edit sesi coaching'),
-  ('plan.view',                 'plan',         'view',            'Lihat plan rawatan'),
-  ('plan.edit',                 'plan',         'edit',            'Edit plan rawatan'),
-  ('plan.weekly_manage',        'plan',         'weekly_manage',   'Urus jadual mingguan'),
-  ('session_notes.view',        'session_notes','view',            'Lihat nota sesi'),
-  ('session_notes.edit',        'session_notes','edit',            'Edit nota sesi'),
+ALTER TABLE psy_kb_views ENABLE ROW LEVEL SECURITY;
 
-  -- KOB
-  ('kob.view',                  'kob',          'view',            'Lihat KOB list'),
-  ('kob.create',                'kob',          'create',          'Cipta KOB baru'),
-  ('kob.manage_slots',          'kob',          'manage_slots',    'Urus slot KOB'),
-  ('kob.recommend_package',     'kob',          'recommend',       'Cadang pakej dari KOB'),
+DROP POLICY IF EXISTS "kb_views_own" ON psy_kb_views;
+CREATE POLICY "kb_views_own" ON psy_kb_views             FOR ALL USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
 
-  -- Inventori & Produk
-  ('inventory.view',            'inventory',    'view',            'Lihat inventori'),
-  ('inventory.edit',            'inventory',    'edit',            'Edit stok inventori'),
-  ('inventory.issue',           'inventory',    'issue',           'Issue item kepada pesakit'),
-  ('inventory.receive_return',  'inventory',    'receive_return',  'Terima pulangan botol/item'),
-  ('product.view',              'product',      'view',            'Lihat produk'),
-  ('product.edit',              'product',      'edit',            'Edit produk'),
-  ('orders.view',               'orders',       'view',            'Lihat purchase orders'),
-  ('orders.create',             'orders',       'create',          'Cipta PO'),
-  ('orders.approve',            'orders',       'approve',         'Lulus PO'),
-  ('kit.view',                  'kit',          'view',            'Lihat kit prosedur'),
-  ('kit.edit',                  'kit',          'edit',            'Edit kit prosedur'),
+-- ──── psy_kb_note_folders (folder nota per-user) ────
+CREATE TABLE IF NOT EXISTS psy_kb_note_folders (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    UUID NOT NULL REFERENCES psy_profiles(id) ON DELETE CASCADE,
+  name       TEXT NOT NULL,
+  color      TEXT DEFAULT 'navy',
+  created_at TIMESTAMPTZ DEFAULT now()
+);
 
-  -- Pakej & Bayaran
-  ('pakej.view',                'pakej',        'view',            'Lihat senarai pakej'),
-  ('pakej.edit',                'pakej',        'edit',            'Edit pakej'),
-  ('pakej.report',              'pakej',        'report',          'Lihat laporan pakej'),
-  ('agreement.view',            'agreement',    'view',            'Lihat agreement pesakit'),
-  ('agreement.sign',            'agreement',    'sign',            'Hantar agreement untuk tandatangan'),
-  ('agreement.manage_clauses',  'agreement',    'manage_clauses',  'Urus klausa agreement'),
-  ('payment.view',              'payment',      'view',            'Lihat bayaran'),
-  ('payment.manage',            'payment',      'manage',          'Urus bayaran & invois'),
+CREATE INDEX IF NOT EXISTS idx_kb_folders_user ON psy_kb_note_folders(user_id);
 
-  -- Surat & Library
-  ('surat.view',                'surat',        'view',            'Lihat surat'),
-  ('surat.issue',               'surat',        'issue',           'Isu surat kepada pesakit'),
-  ('surat.edit_template',       'surat',        'edit_template',   'Edit template surat'),
-  ('library.view',              'library',      'view',            'Lihat library media'),
-  ('library.edit',              'library',      'edit',            'Edit library media'),
+ALTER TABLE psy_kb_note_folders ENABLE ROW LEVEL SECURITY;
 
-  -- Operasi Klinik
-  ('announcement.view',         'announcement', 'view',            'Lihat pengumuman'),
-  ('announcement.create',       'announcement', 'create',          'Cipta pengumuman'),
-  ('announcement.edit',         'announcement', 'edit',            'Edit pengumuman'),
-  ('closures.view',             'closures',     'view',            'Lihat penutupan klinik'),
-  ('closures.manage',           'closures',     'manage',          'Urus penutupan klinik'),
-  ('kepatuhan.view',            'kepatuhan',    'view',            'Lihat status kepatuhan'),
-  ('kepatuhan.manage',          'kepatuhan',    'manage',          'Urus peraturan kepatuhan'),
-  ('risk_alert.view',           'risk_alert',   'view',            'Lihat risk alert'),
-  ('risk_alert.respond',        'risk_alert',   'respond',         'Respon risk alert'),
-  ('feedback.view',             'feedback',     'view',            'Lihat feedback pesakit'),
-  ('feedback.respond',          'feedback',     'respond',         'Balas feedback'),
+DROP POLICY IF EXISTS "kb_fold_own" ON psy_kb_note_folders;
+CREATE POLICY "kb_fold_own"  ON psy_kb_note_folders      FOR ALL USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
 
-  -- Governance & Staff
-  ('audit.view',                'audit',        'view',            'Lihat audit log'),
-  ('governance.view',           'governance',   'view',            'Lihat governance'),
-  ('governance.manage',         'governance',   'manage',          'Urus governance'),
-  ('staff.view',                'staff',        'view',            'Lihat senarai staff'),
-  ('staff.manage',              'staff',        'manage',          'Urus staff (tambah/buang/edit)'),
-  ('staff.stats_view',          'staff',        'stats_view',      'Lihat statistik staff'),
-  ('permissions.manage',        'permissions',  'manage',          'Urus permission & role (super admin only)')
-ON CONFLICT (code) DO UPDATE
-  SET module = EXCLUDED.module,
-      action = EXCLUDED.action,
-      description = EXCLUDED.description;
-
-SELECT COUNT(*) || ' permissions seeded' AS status FROM psy_permissions;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_rbac_03_role_defaults.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP RBAC 03 — DEFAULT ROLE BUNDLES
--- Tetapkan permission default untuk setiap staff_role
--- Boleh diubah kemudian via UI Tab "Role Matrix"
--- ============================================================
-
--- Reset bundle (idempotent)
-DELETE FROM psy_role_permissions WHERE staff_role IN ('coach','doctor','admin','manager','super_admin');
-
--- ── COACH ──
-INSERT INTO psy_role_permissions (staff_role, permission_code) VALUES
-  ('coach','patient.view_assigned'),
-  ('coach','vitals.view'),
-  ('coach','assignment.view'),('coach','assignment.create'),('coach','assignment.review'),
-  ('coach','coaching.view'),('coach','coaching.create'),('coach','coaching.edit'),
-  ('coach','plan.view'),('coach','plan.edit'),('coach','plan.weekly_manage'),
-  ('coach','session_notes.view'),('coach','session_notes.edit'),
-  ('coach','library.view'),
-  ('coach','inventory.view'),('coach','inventory.issue'),('coach','inventory.receive_return'),
-  ('coach','kit.view'),
-  ('coach','surat.view'),('coach','surat.issue'),
-  ('coach','announcement.view'),
-  ('coach','kepatuhan.view'),
-  ('coach','feedback.view'),('coach','feedback.respond');
-
--- ── DOCTOR (semua coach + extra) ──
-INSERT INTO psy_role_permissions (staff_role, permission_code)
-SELECT 'doctor', permission_code FROM psy_role_permissions WHERE staff_role = 'coach';
-INSERT INTO psy_role_permissions (staff_role, permission_code) VALUES
-  ('doctor','patient.view_all'),
-  ('doctor','vitals.edit'),
-  ('doctor','kyc.view'),('doctor','kyc.review'),
-  ('doctor','risk_alert.view'),('doctor','risk_alert.respond'),
-  ('doctor','kob.view'),('doctor','kob.manage_slots')
-ON CONFLICT DO NOTHING;
-
--- ── ADMIN ──
-INSERT INTO psy_role_permissions (staff_role, permission_code) VALUES
-  ('admin','patient.view_all'),('admin','patient.create'),('admin','patient.edit'),
-  ('admin','kyc.view'),('admin','kyc.review'),('admin','kyc.approve'),
-  ('admin','vitals.view'),
-  ('admin','assignment.view'),
-  ('admin','plan.view'),
-  ('admin','kob.view'),('admin','kob.create'),('admin','kob.manage_slots'),('admin','kob.recommend_package'),
-  ('admin','inventory.view'),('admin','inventory.edit'),('admin','inventory.issue'),('admin','inventory.receive_return'),
-  ('admin','product.view'),('admin','product.edit'),
-  ('admin','orders.view'),('admin','orders.create'),
-  ('admin','kit.view'),('admin','kit.edit'),
-  ('admin','pakej.view'),('admin','pakej.edit'),
-  ('admin','agreement.view'),('admin','agreement.sign'),
-  ('admin','payment.view'),
-  ('admin','surat.view'),('admin','surat.issue'),
-  ('admin','library.view'),
-  ('admin','announcement.view'),('admin','announcement.create'),('admin','announcement.edit'),
-  ('admin','closures.view'),
-  ('admin','kepatuhan.view'),
-  ('admin','feedback.view'),
-  ('admin','staff.view');
-
--- ── MANAGER (semua admin + extra) ──
-INSERT INTO psy_role_permissions (staff_role, permission_code)
-SELECT 'manager', permission_code FROM psy_role_permissions WHERE staff_role = 'admin';
-INSERT INTO psy_role_permissions (staff_role, permission_code) VALUES
-  ('manager','patient.delete'),
-  ('manager','orders.approve'),
-  ('manager','pakej.report'),
-  ('manager','agreement.manage_clauses'),
-  ('manager','payment.manage'),
-  ('manager','surat.edit_template'),
-  ('manager','library.edit'),
-  ('manager','closures.manage'),
-  ('manager','kepatuhan.manage'),
-  ('manager','risk_alert.view'),
-  ('manager','feedback.respond'),
-  ('manager','audit.view'),
-  ('manager','governance.view'),('manager','governance.manage'),
-  ('manager','staff.manage'),('manager','staff.stats_view')
-ON CONFLICT DO NOTHING;
-
--- ── SUPER ADMIN (semua) ──
-INSERT INTO psy_role_permissions (staff_role, permission_code)
-SELECT 'super_admin', code FROM psy_permissions
-ON CONFLICT DO NOTHING;
-
-SELECT staff_role, COUNT(*) AS jumlah_permission
-FROM psy_role_permissions
-GROUP BY staff_role
-ORDER BY staff_role;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_rbac_04_super_admin.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP RBAC 04 — ASSIGN SUPER ADMIN
--- Email: adminiswcustomer@ibnusinawellness.com
---
--- PRA-SYARAT:
---   Akaun mesti sudah signup melalui auth flow biasa
---   (psy_profiles row mesti wujud). Skrip ini tidak boleh cipta auth user.
--- ============================================================
-
-UPDATE psy_profiles
-SET role       = 'staff',
-    staff_role = 'super_admin',
-    updated_at = now()
-WHERE email = 'adminiswcustomer@ibnusinawellness.com';
-
--- Verifikasi
-SELECT email, full_name, role, staff_role, is_active
-FROM psy_profiles
-WHERE email = 'adminiswcustomer@ibnusinawellness.com';
-
--- Diagnostik: kalau kosong, ertinya belum signup
-SELECT CASE
-  WHEN EXISTS (SELECT 1 FROM psy_profiles WHERE email = 'adminiswcustomer@ibnusinawellness.com')
-    THEN 'OK - super_admin assigned'
-  ELSE 'BELUM SIGNUP - Daftar dulu via Sign Up page, kemudian run skrip ini semula'
-END AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_rbac_05_v2_redesign.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP RBAC 05 — V2 REDESIGN (Module × Action matrix)
--- Refactor RBAC ikut mockup baru. Schema lama (step 01-03) di-drop
--- dan diganti dengan struktur Roles + Modules + Actions yang
--- boleh diurus sepenuhnya via UI.
---
--- AMARAN: Skrip ini akan DROP jadual psy_permissions, psy_role_permissions,
--- psy_user_permissions, dan view psy_user_effective_permissions.
--- Jalankan dengan teliti — semua mapping lama akan diseed semula di step_06.
--- ============================================================
-
--- 1) Drop schema lama
-DROP VIEW  IF EXISTS psy_user_effective_permissions CASCADE;
-DROP TABLE IF EXISTS psy_user_permissions          CASCADE;
-DROP TABLE IF EXISTS psy_role_permissions          CASCADE;
-DROP TABLE IF EXISTS psy_permissions               CASCADE;
-
--- 2) Buang CHECK constraint pada staff_role supaya boleh tambah role custom via UI
-ALTER TABLE psy_profiles DROP CONSTRAINT IF EXISTS psy_profiles_staff_role_check;
-
--- 3) Roles (master list)
-CREATE TABLE psy_roles (
-  code        TEXT PRIMARY KEY,
-  label       TEXT NOT NULL,
-  description TEXT,
-  color       TEXT DEFAULT 'navy',
-  icon        TEXT DEFAULT '👤',
-  is_active   BOOLEAN DEFAULT true,
-  is_system   BOOLEAN DEFAULT false,
-  sort_order  INT DEFAULT 100,
+-- ──── psy_kb_notes (nota peribadi per-user) ────
+CREATE TABLE IF NOT EXISTS psy_kb_notes (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID NOT NULL REFERENCES psy_profiles(id) ON DELETE CASCADE,
+  folder_id   UUID REFERENCES psy_kb_note_folders(id) ON DELETE SET NULL,
+  resource_id UUID REFERENCES psy_kb_resources(id) ON DELETE SET NULL,  -- "Add to My Notes"
+  title       TEXT NOT NULL,
+  body        TEXT,
+  label       TEXT,          -- Checklist/Clinical Notes/Communication/Ideas/To-Do/Reference/Template/Meeting Notes/Plan/Reminder
+  is_pinned   BOOLEAN DEFAULT false,
   created_at  TIMESTAMPTZ DEFAULT now(),
   updated_at  TIMESTAMPTZ DEFAULT now()
 );
 
--- 4) Modules (master list of areas in the app)
-CREATE TABLE psy_modules (
-  code        TEXT PRIMARY KEY,
-  label       TEXT NOT NULL,
-  icon        TEXT,
-  sort_order  INT DEFAULT 100,
-  is_active   BOOLEAN DEFAULT true
+CREATE INDEX IF NOT EXISTS idx_kb_notes_user ON psy_kb_notes(user_id, updated_at DESC);
+
+ALTER TABLE psy_kb_notes ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "kb_notes_own" ON psy_kb_notes;
+CREATE POLICY "kb_notes_own" ON psy_kb_notes             FOR ALL USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+DROP TRIGGER IF EXISTS trg_kb_notes_touch ON psy_kb_notes;
+CREATE TRIGGER trg_kb_notes_touch BEFORE UPDATE ON psy_kb_notes
+  FOR EACH ROW EXECUTE FUNCTION kb_touch_updated_at();
+
+-- ──── psy_kb_trainings (Training Center) ────
+CREATE TABLE IF NOT EXISTS psy_kb_trainings (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title         TEXT NOT NULL,
+  description   TEXT,
+  category      TEXT,          -- System/Clinical/Communication/Compliance/General Knowledge
+  duration_min  INT DEFAULT 0,
+  thumbnail_url TEXT,
+  content_url   TEXT,          -- video / dokumen / resource pautan
+  resource_id   UUID REFERENCES psy_kb_resources(id) ON DELETE SET NULL,
+  sort_order    INT DEFAULT 100,
+  is_active     BOOLEAN DEFAULT true,
+  created_at    TIMESTAMPTZ DEFAULT now()
 );
 
--- 5) Actions (standard 6: Lihat / Tambah / Edit / Padam / Eksport / Tetapan)
-CREATE TABLE psy_actions (
-  code        TEXT PRIMARY KEY,
-  label       TEXT NOT NULL,
-  icon        TEXT,
-  sort_order  INT DEFAULT 100
+ALTER TABLE psy_kb_trainings ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "kb_train_read" ON psy_kb_trainings;
+CREATE POLICY "kb_train_read"  ON psy_kb_trainings FOR SELECT USING (kb_is_staff());
+DROP POLICY IF EXISTS "kb_train_write" ON psy_kb_trainings;
+CREATE POLICY "kb_train_write" ON psy_kb_trainings FOR ALL    USING (kb_is_staff()) WITH CHECK (kb_is_staff());
+
+-- ──── psy_kb_training_progress ────
+CREATE TABLE IF NOT EXISTS psy_kb_training_progress (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       UUID NOT NULL REFERENCES psy_profiles(id) ON DELETE CASCADE,
+  training_id   UUID NOT NULL REFERENCES psy_kb_trainings(id) ON DELETE CASCADE,
+  status        TEXT DEFAULT 'not_started' CHECK (status IN ('not_started','in_progress','completed')),
+  progress_pct  INT DEFAULT 0,
+  last_accessed TIMESTAMPTZ,
+  completed_at  TIMESTAMPTZ,
+  UNIQUE (user_id, training_id)
 );
 
--- 6) Module × Action applicability — tentukan cell mana yang boleh ditick
---    Cell yang tiada dalam jadual ini akan paparkan "—" (Tidak Berkenaan)
-CREATE TABLE psy_module_actions (
-  module_code TEXT NOT NULL REFERENCES psy_modules(code) ON DELETE CASCADE,
-  action_code TEXT NOT NULL REFERENCES psy_actions(code) ON DELETE CASCADE,
-  PRIMARY KEY (module_code, action_code)
-);
+CREATE INDEX IF NOT EXISTS idx_kb_tprog_user ON psy_kb_training_progress(user_id);
 
--- 7) Role → Module × Action grants (yang ditick "✓" dalam matrix)
-CREATE TABLE psy_role_module_actions (
-  role_code   TEXT NOT NULL REFERENCES psy_roles(code) ON DELETE CASCADE,
-  module_code TEXT NOT NULL,
-  action_code TEXT NOT NULL,
-  created_at  TIMESTAMPTZ DEFAULT now(),
-  PRIMARY KEY (role_code, module_code, action_code),
-  FOREIGN KEY (module_code, action_code) REFERENCES psy_module_actions(module_code, action_code) ON DELETE CASCADE
-);
+ALTER TABLE psy_kb_training_progress ENABLE ROW LEVEL SECURITY;
 
--- 8) User override (grant / revoke specific cell)
-CREATE TABLE psy_user_overrides (
+DROP POLICY IF EXISTS "kb_tprog_own" ON psy_kb_training_progress;
+CREATE POLICY "kb_tprog_own" ON psy_kb_training_progress FOR ALL USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+-- ──── psy_kb_certificates ────
+CREATE TABLE IF NOT EXISTS psy_kb_certificates (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id     UUID NOT NULL REFERENCES psy_profiles(id) ON DELETE CASCADE,
-  module_code TEXT NOT NULL,
-  action_code TEXT NOT NULL,
-  grant_type  TEXT NOT NULL CHECK (grant_type IN ('grant','revoke')),
-  granted_by  UUID REFERENCES psy_profiles(id),
-  granted_at  TIMESTAMPTZ DEFAULT now(),
-  reason      TEXT,
-  PRIMARY KEY (user_id, module_code, action_code),
-  FOREIGN KEY (module_code, action_code) REFERENCES psy_module_actions(module_code, action_code) ON DELETE CASCADE
+  training_id UUID REFERENCES psy_kb_trainings(id) ON DELETE SET NULL,
+  title       TEXT NOT NULL,
+  cert_url    TEXT,
+  earned_at   TIMESTAMPTZ DEFAULT now()
 );
-CREATE INDEX idx_user_overrides_user ON psy_user_overrides(user_id);
 
--- 9) Audit log untuk setiap perubahan permission
-CREATE TABLE psy_permission_audit (
-  id          BIGSERIAL PRIMARY KEY,
-  actor_id    UUID REFERENCES psy_profiles(id),
-  actor_email TEXT,
-  action      TEXT NOT NULL,
-  target_type TEXT NOT NULL,
-  target_id   TEXT NOT NULL,
-  module_code TEXT,
-  action_code TEXT,
-  details     JSONB,
-  created_at  TIMESTAMPTZ DEFAULT now()
+CREATE INDEX IF NOT EXISTS idx_kb_cert_user ON psy_kb_certificates(user_id);
+
+ALTER TABLE psy_kb_certificates ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "kb_cert_own" ON psy_kb_certificates;
+CREATE POLICY "kb_cert_own"  ON psy_kb_certificates      FOR ALL USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+-- ──── fungsi: view_count increment (RPC, elak race + patuh RLS) ────
+CREATE OR REPLACE FUNCTION kb_bump_view(res UUID) RETURNS void AS $$
+  UPDATE psy_kb_resources SET view_count = view_count + 1 WHERE id = res;
+$$ LANGUAGE sql SECURITY DEFINER;
+
+-- ──── seed: kategori (11) ────
+INSERT INTO psy_kb_categories (name, slug, description, icon, color, sort_order) VALUES
+  ('SOP',                  'sop',                  'Standard Operating Procedures dan arahan kerja.',       '📄', 'navy',       10),
+  ('Clinical Guidelines',  'clinical-guidelines',  'Garis panduan klinikal, protokol dan amalan terbaik.',  '🩺', 'green',      20),
+  ('Training Materials',   'training-materials',   'Modul latihan, slaid pembentangan dan bahan belajar.',  '🎓', 'gold',       30),
+  ('Video Tutorials',      'video-tutorials',      'Panduan video langkah demi langkah.',                    '🎬', 'terracotta', 40),
+  ('Forms & Templates',    'forms-templates',      'Template borang dan dokumen.',                           '📋', 'teal',       50),
+  ('Medication References','medication-references','Maklumat ubat, interaksi dan rujukan.',                 '💊', 'navy',       60),
+  ('Psychotherapy Modules','psychotherapy-modules','Modul terapi, teknik dan pendekatan rawatan.',          '🧠', 'teal',       70),
+  ('FAQ',                  'faq',                  'Soalan lazim dan jawapan.',                              '❓', 'gold',       80),
+  ('Policies & Procedures','policies-procedures',  'Dasar syarikat dan prosedur pentadbiran.',              '🛡️', 'navy',       90),
+  ('Announcements',        'kb-announcements',     'Pengumuman dan notis penting.',                          '📢', 'green',     100),
+  ('Other Resources',      'other-resources',      'Sumber dan rujukan lain yang berguna.',                  '📦', 'grey',      110)
+ON CONFLICT (slug) DO NOTHING;
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/23_settings.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- SKEMA: TETAPAN SISTEM (System Settings — konfigurasi global)
+-- Jadual: psy_settings
+-- Simpanan key/value (JSONB) untuk tetapan peringkat sistem: nama app,
+-- zon masa, deadline pengesahan sesi, mod gateway pembayaran, slot masa
+-- jadual, dsb. Kunci API rahsia TIDAK disimpan di sini — ia kekal di
+-- env Edge Function.
+-- Akses: BACA → semua staff; TULIS → super_admin sahaja.
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ──── psy_settings ────
+CREATE TABLE IF NOT EXISTS psy_settings (
+  key        TEXT PRIMARY KEY,
+  value      JSONB,
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  updated_by UUID REFERENCES psy_profiles(id) ON DELETE SET NULL
 );
-CREATE INDEX idx_perm_audit_created ON psy_permission_audit(created_at DESC);
-CREATE INDEX idx_perm_audit_target  ON psy_permission_audit(target_type, target_id);
 
--- 10) View: effective permission per user (role default - revokes UNION grants)
-CREATE OR REPLACE VIEW psy_user_effective_permissions AS
-SELECT p.id AS user_id, rma.module_code, rma.action_code
-FROM psy_profiles p
-JOIN psy_role_module_actions rma ON rma.role_code = p.staff_role
-WHERE NOT EXISTS (
-  SELECT 1 FROM psy_user_overrides uo
-  WHERE uo.user_id = p.id
-    AND uo.module_code = rma.module_code
-    AND uo.action_code = rma.action_code
-    AND uo.grant_type = 'revoke'
-)
-UNION
-SELECT user_id, module_code, action_code
-FROM psy_user_overrides WHERE grant_type = 'grant';
+ALTER TABLE psy_settings ENABLE ROW LEVEL SECURITY;
 
--- 11) RLS
-ALTER TABLE psy_roles                ENABLE ROW LEVEL SECURITY;
-ALTER TABLE psy_modules              ENABLE ROW LEVEL SECURITY;
-ALTER TABLE psy_actions              ENABLE ROW LEVEL SECURITY;
-ALTER TABLE psy_module_actions       ENABLE ROW LEVEL SECURITY;
-ALTER TABLE psy_role_module_actions  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE psy_user_overrides       ENABLE ROW LEVEL SECURITY;
-ALTER TABLE psy_permission_audit     ENABLE ROW LEVEL SECURITY;
+-- Semua staff boleh baca tetapan (untuk pakai nilai global di halaman lain).
+DROP POLICY IF EXISTS "settings_read_staff" ON psy_settings;
+CREATE POLICY "settings_read_staff" ON psy_settings
+  FOR SELECT USING (settings_is_staff());
 
-DO $$ BEGIN
-  CREATE POLICY "r_read_all"   ON psy_roles               FOR SELECT USING (auth.role() = 'authenticated');
-  CREATE POLICY "m_read_all"   ON psy_modules             FOR SELECT USING (auth.role() = 'authenticated');
-  CREATE POLICY "a_read_all"   ON psy_actions             FOR SELECT USING (auth.role() = 'authenticated');
-  CREATE POLICY "ma_read_all"  ON psy_module_actions      FOR SELECT USING (auth.role() = 'authenticated');
-  CREATE POLICY "rma_read_all" ON psy_role_module_actions FOR SELECT USING (auth.role() = 'authenticated');
-  CREATE POLICY "uo_read_all"  ON psy_user_overrides      FOR SELECT USING (auth.role() = 'authenticated');
-  CREATE POLICY "au_read_all"  ON psy_permission_audit    FOR SELECT USING (
-    EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin')
-  );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- Hanya super_admin boleh cipta / kemaskini / padam.
+DROP POLICY IF EXISTS "settings_write_sa" ON psy_settings;
+CREATE POLICY "settings_write_sa" ON psy_settings
+  FOR ALL USING (settings_is_super_admin()) WITH CHECK (settings_is_super_admin());
 
-DO $$ BEGIN
-  CREATE POLICY "r_write_sa"   ON psy_roles               FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'));
-  CREATE POLICY "m_write_sa"   ON psy_modules             FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'));
-  CREATE POLICY "a_write_sa"   ON psy_actions             FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'));
-  CREATE POLICY "ma_write_sa"  ON psy_module_actions      FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'));
-  CREATE POLICY "rma_write_sa" ON psy_role_module_actions FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'));
-  CREATE POLICY "uo_write_sa"  ON psy_user_overrides      FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND staff_role = 'super_admin'));
-  CREATE POLICY "au_write_sa"  ON psy_permission_audit    FOR INSERT
-    WITH CHECK (auth.role() = 'authenticated');
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- ──── fungsi + trigger: sentuh updated_at ────
+CREATE OR REPLACE FUNCTION settings_touch() RETURNS TRIGGER AS $$
+BEGIN NEW.updated_at = now(); RETURN NEW; END; $$ LANGUAGE plpgsql;
 
-SELECT 'Step RBAC 05 OK — v2 schema ready' AS status;
+DROP TRIGGER IF EXISTS trg_settings_touch ON psy_settings;
+CREATE TRIGGER trg_settings_touch BEFORE UPDATE ON psy_settings
+  FOR EACH ROW EXECUTE FUNCTION settings_touch();
+
+-- ──── seed: nilai default ────
+-- Setiap baris = satu tetapan. value disimpan sebagai JSONB (skalar pun boleh).
+INSERT INTO psy_settings (key, value) VALUES
+  -- Umum
+  ('app_name',        to_jsonb('Ibnu Sina Wellness CMS'::text)),
+  ('app_version',     to_jsonb('1.0.0'::text)),
+  ('language',        to_jsonb('ms'::text)),
+  ('date_format',     to_jsonb('DD/MM/YYYY'::text)),
+  ('timezone',        to_jsonb('Asia/Kuala_Lumpur'::text)),
+  ('currency',        to_jsonb('MYR'::text)),
+  -- Klinik
+  ('clinic_name',     to_jsonb('Ibnu Sina Wellness'::text)),
+  ('clinic_phone',    to_jsonb(''::text)),
+  ('clinic_email',    to_jsonb(''::text)),
+  ('clinic_address',  to_jsonb(''::text)),
+  ('operating_hours', to_jsonb('9:00 pagi - 6:00 petang'::text)),
+  ('session_confirm_deadline_hours', to_jsonb(24)),
+  ('session_escalation_hours',       to_jsonb(12)),
+  ('absence_reschedule_enabled',     to_jsonb(true)),
+  -- Notifikasi (togol peringkat sistem)
+  ('notif_event_reminder', to_jsonb(true)),
+  ('notif_daily_checkin',  to_jsonb(false)),
+  ('notif_birthday',       to_jsonb(false)),
+  -- Integrasi (config BUKAN rahsia; kunci API kekal di env Edge Function)
+  ('payment_provider',  to_jsonb('hitpay'::text)),
+  ('payment_mode',      to_jsonb('sandbox'::text)),
+  ('whatsapp_provider', to_jsonb('ghl'::text))
+ON CONFLICT (key) DO NOTHING;
+
+-- Slot masa global default untuk jadual rawatan (jika belum wujud)
+INSERT INTO psy_settings (key, value) VALUES
+  ('schedule_time_slots',
+   '[{"value":"09:00","label":"9:00 AM"},{"value":"10:00","label":"10:00 AM"},{"value":"14:00","label":"2:00 PM"},{"value":"15:00","label":"3:00 PM"},{"value":"16:00","label":"4:00 PM"}]'::jsonb)
+ON CONFLICT (key) DO NOTHING;
 
 
 -- ════════════════════════════════════════════════════════════════
--- step_rbac_06_v2_seed.sql
+-- schema/24_storage.sql
 -- ════════════════════════════════════════════════════════════════
 
--- ============================================================
--- STEP RBAC 06 — SEED V2 (roles, modules, actions, defaults)
--- ============================================================
+-- ═══════════════════════════════════════════════════════════════════
+-- 24 — STORAGE (Supabase Storage)
+-- Semua bucket + polisi storage.objects sistem dalam satu fail.
+-- Bucket: medical-reports, kob-documents, kob-signatures, agreement-templates,
+--         pakej-rujukan, wa-outbox, avatars, referral-docs, kb-media
+-- Nota: polisi merujuk jadual/fungsi domain lain (psy_profiles, psy_patients,
+--       kb_is_staff) — fail ini mesti dijalankan paling akhir.
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ---- Buckets ----
+
+INSERT INTO storage.buckets (id, name, public)
+  VALUES ('medical-reports', 'medical-reports', false)
+  ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO storage.buckets (id, name, public)
+  VALUES ('kob-documents', 'kob-documents', false)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO storage.buckets (id, name, public)
+  VALUES ('kob-signatures', 'kob-signatures', false)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO storage.buckets (id, name, public)
+  VALUES ('agreement-templates', 'agreement-templates', false)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO storage.buckets (id, name, public)
+  VALUES ('pakej-rujukan', 'pakej-rujukan', false)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('wa-outbox', 'wa-outbox', true)
+ON CONFLICT (id) DO UPDATE SET public = true;
 
--- ── 1) Actions (6 standard) ──
-INSERT INTO psy_actions (code, label, icon, sort_order) VALUES
-  ('view',     'Lihat',    '👁️',  10),
-  ('create',   'Tambah',   '➕',  20),
-  ('edit',     'Edit',     '✏️',  30),
-  ('delete',   'Padam',    '🗑️',  40),
-  ('export',   'Eksport',  '📤',  50),
-  ('settings', 'Tetapan',  '⚙️',  60)
-ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label, icon=EXCLUDED.icon, sort_order=EXCLUDED.sort_order;
-
--- ── 2) Modules — sort_order ikut susunan navbar ──
---      UTAMA(10-80) → OPERASI(90-140) → KOMUNIKASI(150-180)
---      → LAPORAN(190-220) → PENTADBIRAN(230-260) → SISTEM(270-290)
---      Modul broad/internal (untuk internal action checks) → 300+
-INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
-  -- UTAMA
-  ('dashboard',     'Dashboard',            '🏠', 'staff',  10),
-  ('patient',       'Pesakit',              '👥', 'staff',  20),
-  ('kyc',           'KYC',                  '🆔', 'staff',  30),
-  ('schedule',      'Kalendar & Jadual',    '📅', 'staff',  40),
-  ('plan_week',     'Weekly Plan',          '📋', 'staff',  50),
-  ('kob',           'KOB',                  '🩺', 'staff',  60),
-  ('kepatuhan',     'Kepatuhan',            '📊', 'staff',  70),
-  ('vitals',        'Bacaan Vitals',        '💓', 'staff',  75),
-  ('risk',          'Amaran Risiko',        '⚠️', 'staff',  80),
-  -- OPERASI
-  ('package',       'Pakej Rawatan',        '🗂️', 'staff',  90),
-  ('products',      'Produk',              '🛍️', 'staff', 100),
-  ('inventory',     'Inventori',            '🏭', 'staff', 110),
-  ('orders',        'Orders & Tracking',    '📦', 'staff', 120),
-  ('pulangan',      'Pulangan Botol',      '🍯', 'staff', 130),
-  ('payment',       'Pembayaran',          '💳', 'staff', 140),
-  -- KOMUNIKASI
-  ('announcements', 'Pengumuman',          '📢', 'staff', 150),
-  ('events',        'Acara & Kelas',       '📅', 'staff', 160),
-  ('auto_messages', 'Mesej Automatik',     '🤖', 'staff', 170),
-  ('library',       'Library',             '📚', 'staff', 180),
-  -- LAPORAN
-  ('governance',    'Governance',          '📈', 'staff', 190),
-  ('staff_stats',   'Statistik',           '📊', 'staff', 200),
-  ('pakej_laporan', 'Laporan Pakej',       '📦', 'staff', 210),
-  ('issue',         'Report Issue',        '⚠️', 'staff', 220),
-  -- PENTADBIRAN
-  ('surat',         'Surat Rasmi',         '📜', 'staff', 230),
-  ('closures',      'Penutupan Klinik',    '🚫', 'staff', 240),
-  ('kob_slots',     'Slot Konsultasi',     '⏰', 'staff', 250),
-  ('staff',         'Pengurusan Staff',     '👨‍⚕️','staff', 260),
-  -- SISTEM
-  ('rbac',          'Peranan & Kebenaran',  '🔐', 'staff', 270),
-  ('audit_kebenaran','Audit Kebenaran',    '📋', 'staff', 280),
-  ('audit',         'Audit Log',           '🔒', 'staff', 290),
-  -- Modul broad/internal (sub-page checks, bukan navbar item sendiri)
-  ('coaching',      'Coaching & Sesi',      '🧑‍🏫','staff', 300),
-  ('communication', 'Komunikasi',           '📢', 'staff', 310),
-  ('operations',    'Operasi Klinik',       '⚙️', 'staff', 320),
-  ('reports',       'Laporan',              '📊', 'staff', 330)
-ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label, icon=EXCLUDED.icon, scope=EXCLUDED.scope, sort_order=EXCLUDED.sort_order;
-
--- ── 3) Module × Action applicability ──
--- Dashboard hanya boleh "Lihat"
--- Audit/Reports tiada padam
--- RBAC tiada eksport
-INSERT INTO psy_module_actions (module_code, action_code) VALUES
-  ('dashboard','view'),
-
-  ('patient','view'),('patient','create'),('patient','edit'),('patient','delete'),('patient','export'),('patient','settings'),
-
-  ('vitals','view'),('vitals','create'),('vitals','edit'),('vitals','delete'),
-
-  ('schedule','view'),('schedule','create'),('schedule','edit'),('schedule','delete'),('schedule','export'),('schedule','settings'),
-
-  ('coaching','view'),('coaching','create'),('coaching','edit'),('coaching','delete'),('coaching','export'),('coaching','settings'),
-
-  ('kob','view'),('kob','create'),('kob','edit'),('kob','delete'),('kob','export'),('kob','settings'),
-
-  ('inventory','view'),('inventory','create'),('inventory','edit'),('inventory','delete'),('inventory','export'),('inventory','settings'),
-
-  ('orders','view'),('orders','create'),('orders','edit'),('orders','delete'),('orders','export'),('orders','settings'),
-
-  ('package','view'),('package','create'),('package','edit'),('package','delete'),('package','export'),('package','settings'),
-
-  ('communication','view'),('communication','create'),('communication','edit'),('communication','delete'),('communication','export'),('communication','settings'),
-
-  ('operations','view'),('operations','create'),('operations','edit'),('operations','delete'),('operations','export'),('operations','settings'),
-
-  ('reports','view'),('reports','export'),('reports','settings'),
-
-  ('staff','view'),('staff','create'),('staff','edit'),('staff','delete'),('staff','export'),('staff','settings'),
-
-  ('rbac','view'),('rbac','create'),('rbac','edit'),('rbac','delete'),('rbac','settings')
-ON CONFLICT DO NOTHING;
-
--- ── 4) System Roles (5) ──
-INSERT INTO psy_roles (code, label, description, color, icon, is_system, sort_order) VALUES
-  ('super_admin', 'Super Admin', 'Akses penuh ke semua modul dan tetapan sistem.', 'purple', '🛡️', true, 10),
-  ('manager',     'Manager',     'Pengurus klinik — operasi penuh + kewangan + governance.', 'navy', '👔', true, 20),
-  ('admin',       'Admin',       'Admin operasi — urus pesakit, pakej, inventori, surat.', 'teal', '🧑‍💼', true, 30),
-  ('doctor',      'Doctor',      'Doktor klinikal — pesakit, KYC, KOB, plan rawatan.', 'green', '🩺', true, 40),
-  ('coach',       'Coach',       'Coach — pesakit ditugaskan, plan, sesi coaching.', 'gold', '🧑‍🏫', true, 50)
-ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label, description=EXCLUDED.description, color=EXCLUDED.color, icon=EXCLUDED.icon, is_system=true;
-
--- ── 5) Role × Module × Action default grants ──
--- Super Admin: semua
-INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
-SELECT 'super_admin', module_code, action_code FROM psy_module_actions
-ON CONFLICT DO NOTHING;
-
--- Manager: semua kecuali rbac.create/edit/delete (hanya view)
-INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
-SELECT 'manager', module_code, action_code FROM psy_module_actions
-WHERE NOT (module_code = 'rbac' AND action_code IN ('create','edit','delete','settings'))
-ON CONFLICT DO NOTHING;
-
--- Admin: operasi penuh, tiada governance/audit settings/staff manage/rbac
-INSERT INTO psy_role_module_actions (role_code, module_code, action_code) VALUES
-  ('admin','dashboard','view'),
-  ('admin','patient','view'),('admin','patient','create'),('admin','patient','edit'),('admin','patient','export'),
-  ('admin','vitals','view'),('admin','vitals','create'),('admin','vitals','edit'),('admin','vitals','delete'),
-  ('admin','schedule','view'),('admin','schedule','create'),('admin','schedule','edit'),('admin','schedule','delete'),
-  ('admin','coaching','view'),('admin','coaching','create'),('admin','coaching','edit'),('admin','coaching','delete'),
-  ('admin','kob','view'),('admin','kob','create'),('admin','kob','edit'),('admin','kob','settings'),
-  ('admin','inventory','view'),('admin','inventory','create'),('admin','inventory','edit'),('admin','inventory','delete'),('admin','inventory','export'),
-  ('admin','orders','view'),('admin','orders','create'),('admin','orders','edit'),
-  ('admin','package','view'),('admin','package','create'),('admin','package','edit'),
-  ('admin','communication','view'),('admin','communication','create'),('admin','communication','edit'),('admin','communication','delete'),
-  ('admin','operations','view'),
-  ('admin','reports','view'),
-  ('admin','staff','view')
-ON CONFLICT DO NOTHING;
-
--- Doctor: klinikal
-INSERT INTO psy_role_module_actions (role_code, module_code, action_code) VALUES
-  ('doctor','dashboard','view'),
-  ('doctor','patient','view'),('doctor','patient','edit'),
-  ('doctor','vitals','view'),('doctor','vitals','create'),('doctor','vitals','edit'),('doctor','vitals','delete'),
-  ('doctor','schedule','view'),('doctor','schedule','create'),('doctor','schedule','edit'),
-  ('doctor','coaching','view'),('doctor','coaching','create'),('doctor','coaching','edit'),
-  ('doctor','kob','view'),('doctor','kob','create'),('doctor','kob','edit'),('doctor','kob','settings'),
-  ('doctor','inventory','view'),
-  ('doctor','communication','view'),
-  ('doctor','operations','view')
-ON CONFLICT DO NOTHING;
-
--- Coach: pesakit ditugaskan sahaja
-INSERT INTO psy_role_module_actions (role_code, module_code, action_code) VALUES
-  ('coach','dashboard','view'),
-  ('coach','patient','view'),
-  ('coach','vitals','view'),('coach','vitals','create'),('coach','vitals','edit'),('coach','vitals','delete'),
-  ('coach','schedule','view'),('coach','schedule','create'),('coach','schedule','edit'),
-  ('coach','coaching','view'),('coach','coaching','create'),('coach','coaching','edit'),
-  ('coach','inventory','view'),
-  ('coach','communication','view'),
-  ('coach','operations','view')
-ON CONFLICT DO NOTHING;
-
--- ── 6) Pastikan adminiswcustomer kekal super_admin ──
-UPDATE psy_profiles
-SET staff_role = 'super_admin', updated_at = now()
-WHERE email = 'adminiswcustomer@ibnusinawellness.com';
-
--- ── Verifikasi ──
-SELECT
-  (SELECT COUNT(*) FROM psy_roles)               AS roles,
-  (SELECT COUNT(*) FROM psy_modules)             AS modules,
-  (SELECT COUNT(*) FROM psy_actions)             AS actions,
-  (SELECT COUNT(*) FROM psy_module_actions)      AS module_action_cells,
-  (SELECT COUNT(*) FROM psy_role_module_actions) AS role_grants;
-
-SELECT r.code, r.label, COUNT(rma.*) AS jumlah_kebenaran
-FROM psy_roles r
-LEFT JOIN psy_role_module_actions rma ON rma.role_code = r.code
-GROUP BY r.code, r.label, r.sort_order
-ORDER BY r.sort_order;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_rbac_07_fix_fk_on_delete.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP RBAC 07 — FIX FK CONSTRAINTS untuk staff delete
--- Bila staff dipadam, kolum granted_by / actor_id sepatutnya jadi NULL,
--- bukan block delete.
--- ============================================================
-
--- psy_user_overrides.granted_by → SET NULL
-ALTER TABLE psy_user_overrides
-  DROP CONSTRAINT IF EXISTS psy_user_overrides_granted_by_fkey;
-ALTER TABLE psy_user_overrides
-  ADD CONSTRAINT psy_user_overrides_granted_by_fkey
-  FOREIGN KEY (granted_by) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
--- psy_permission_audit.actor_id → SET NULL (rekod kekal, actor jadi NULL)
-ALTER TABLE psy_permission_audit
-  DROP CONSTRAINT IF EXISTS psy_permission_audit_actor_id_fkey;
-ALTER TABLE psy_permission_audit
-  ADD CONSTRAINT psy_permission_audit_actor_id_fkey
-  FOREIGN KEY (actor_id) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
-SELECT 'Step RBAC 07 OK — FK constraints fixed' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_rbac_08_fix_all_profile_fks.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP RBAC 08 — FIX SEMUA FK ke psy_profiles
--- Tukar semua "NO ACTION" jadi:
---   • SET NULL untuk kolum audit trail (*_by, coach_id, staff_id, dll)
---   • CASCADE untuk kolum user_id (row milik user — kalau user dipadam,
---     row sepatutnya hilang juga)
--- Ni buatkan delete staff/patient tak block oleh FK.
--- ============================================================
-
--- Helper untuk replace constraint dengan cepat
--- (idempotent — kalau constraint tak wujud, ALTER akan continue)
-
--- ── SET NULL (audit / actor trail) ──
-
-ALTER TABLE psy_adherence_alerts DROP CONSTRAINT IF EXISTS psy_adherence_alerts_notified_coach_id_fkey;
-ALTER TABLE psy_adherence_alerts ADD  CONSTRAINT psy_adherence_alerts_notified_coach_id_fkey
-  FOREIGN KEY (notified_coach_id) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
-ALTER TABLE psy_adherence_alerts DROP CONSTRAINT IF EXISTS psy_adherence_alerts_acknowledged_by_fkey;
-ALTER TABLE psy_adherence_alerts ADD  CONSTRAINT psy_adherence_alerts_acknowledged_by_fkey
-  FOREIGN KEY (acknowledged_by) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
-ALTER TABLE psy_appointments DROP CONSTRAINT IF EXISTS psy_appointments_staff_id_fkey;
-ALTER TABLE psy_appointments ADD  CONSTRAINT psy_appointments_staff_id_fkey
-  FOREIGN KEY (staff_id) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
-ALTER TABLE psy_bottle_returns DROP CONSTRAINT IF EXISTS psy_bottle_returns_verified_by_fkey;
-ALTER TABLE psy_bottle_returns ADD  CONSTRAINT psy_bottle_returns_verified_by_fkey
-  FOREIGN KEY (verified_by) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
-ALTER TABLE psy_coaching_catalog DROP CONSTRAINT IF EXISTS psy_coaching_catalog_created_by_fkey;
-ALTER TABLE psy_coaching_catalog ADD  CONSTRAINT psy_coaching_catalog_created_by_fkey
-  FOREIGN KEY (created_by) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
-ALTER TABLE psy_coaching_sessions DROP CONSTRAINT IF EXISTS psy_coaching_sessions_coach_id_fkey;
-ALTER TABLE psy_coaching_sessions ADD  CONSTRAINT psy_coaching_sessions_coach_id_fkey
-  FOREIGN KEY (coach_id) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
-ALTER TABLE psy_kyc_submissions DROP CONSTRAINT IF EXISTS psy_kyc_submissions_reviewed_by_fkey;
-ALTER TABLE psy_kyc_submissions ADD  CONSTRAINT psy_kyc_submissions_reviewed_by_fkey
-  FOREIGN KEY (reviewed_by) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
-ALTER TABLE psy_letter_auto_fields DROP CONSTRAINT IF EXISTS psy_letter_auto_fields_created_by_fkey;
-ALTER TABLE psy_letter_auto_fields ADD  CONSTRAINT psy_letter_auto_fields_created_by_fkey
-  FOREIGN KEY (created_by) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
-ALTER TABLE psy_letter_issued DROP CONSTRAINT IF EXISTS psy_letter_issued_signed_by_fkey;
-ALTER TABLE psy_letter_issued ADD  CONSTRAINT psy_letter_issued_signed_by_fkey
-  FOREIGN KEY (signed_by) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
--- psy_letter_template_overrides dropped in step_letter_simple — skip if not present
-DO $$ BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'psy_letter_template_overrides') THEN
-    ALTER TABLE psy_letter_template_overrides DROP CONSTRAINT IF EXISTS psy_letter_template_overrides_updated_by_fkey;
-    ALTER TABLE psy_letter_template_overrides ADD CONSTRAINT psy_letter_template_overrides_updated_by_fkey
-      FOREIGN KEY (updated_by) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-  END IF;
-END $$;
-
-ALTER TABLE psy_letter_templates DROP CONSTRAINT IF EXISTS psy_letter_templates_created_by_fkey;
-ALTER TABLE psy_letter_templates ADD  CONSTRAINT psy_letter_templates_created_by_fkey
-  FOREIGN KEY (created_by) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
-ALTER TABLE psy_patients DROP CONSTRAINT IF EXISTS psy_patients_coach_id_fkey;
-ALTER TABLE psy_patients ADD  CONSTRAINT psy_patients_coach_id_fkey
-  FOREIGN KEY (coach_id) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
-ALTER TABLE psy_plan_weekly_progress DROP CONSTRAINT IF EXISTS psy_plan_weekly_progress_updated_by_fkey;
-ALTER TABLE psy_plan_weekly_progress ADD  CONSTRAINT psy_plan_weekly_progress_updated_by_fkey
-  FOREIGN KEY (updated_by) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
-ALTER TABLE psy_risk_alerts DROP CONSTRAINT IF EXISTS psy_risk_alerts_acknowledged_by_fkey;
-ALTER TABLE psy_risk_alerts ADD  CONSTRAINT psy_risk_alerts_acknowledged_by_fkey
-  FOREIGN KEY (acknowledged_by) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
-ALTER TABLE psy_risk_alerts DROP CONSTRAINT IF EXISTS psy_risk_alerts_created_by_fkey;
-ALTER TABLE psy_risk_alerts ADD  CONSTRAINT psy_risk_alerts_created_by_fkey
-  FOREIGN KEY (created_by) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
-ALTER TABLE psy_treatment_plans DROP CONSTRAINT IF EXISTS psy_treatment_plans_doctor_id_fkey;
-ALTER TABLE psy_treatment_plans ADD  CONSTRAINT psy_treatment_plans_doctor_id_fkey
-  FOREIGN KEY (doctor_id) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
-ALTER TABLE psy_vitals DROP CONSTRAINT IF EXISTS psy_vitals_recorded_by_fkey;
-ALTER TABLE psy_vitals ADD  CONSTRAINT psy_vitals_recorded_by_fkey
-  FOREIGN KEY (recorded_by) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
--- ── CASCADE (kolum user_id — row milik user, hilang sekali) ──
--- Logik: kalau user (patient) dipadam, rekod patient/kyc/payment dia memang
--- patut ikut hilang. Untuk staff, kolum ni biasanya kosong jadi tak kena.
-
-ALTER TABLE psy_patients DROP CONSTRAINT IF EXISTS psy_patients_user_id_fkey;
-ALTER TABLE psy_patients ADD  CONSTRAINT psy_patients_user_id_fkey
-  FOREIGN KEY (user_id) REFERENCES psy_profiles(id) ON DELETE CASCADE;
-
-ALTER TABLE psy_kyc_submissions DROP CONSTRAINT IF EXISTS psy_kyc_submissions_user_id_fkey;
-ALTER TABLE psy_kyc_submissions ADD  CONSTRAINT psy_kyc_submissions_user_id_fkey
-  FOREIGN KEY (user_id) REFERENCES psy_profiles(id) ON DELETE CASCADE;
-
-ALTER TABLE psy_payments DROP CONSTRAINT IF EXISTS psy_payments_user_id_fkey;
-ALTER TABLE psy_payments ADD  CONSTRAINT psy_payments_user_id_fkey
-  FOREIGN KEY (user_id) REFERENCES psy_profiles(id) ON DELETE CASCADE;
-
--- ── Verifikasi: pastikan tiada lagi "NO ACTION" ke psy_profiles ──
-SELECT
-  tc.table_schema || '.' || tc.table_name AS table_with_fk,
-  kcu.column_name,
-  rc.delete_rule
-FROM information_schema.table_constraints tc
-JOIN information_schema.key_column_usage kcu
-  ON tc.constraint_name = kcu.constraint_name
-JOIN information_schema.constraint_column_usage ccu
-  ON tc.constraint_name = ccu.constraint_name
-JOIN information_schema.referential_constraints rc
-  ON tc.constraint_name = rc.constraint_name
-WHERE tc.constraint_type = 'FOREIGN KEY'
-  AND ccu.table_schema = 'public' AND ccu.table_name = 'psy_profiles'
-  AND rc.delete_rule NOT IN ('CASCADE','SET NULL')
-ORDER BY table_with_fk;
-
--- Kalau result query atas KOSONG, maksudnya semua FK dah handled.
-SELECT 'Step RBAC 08 OK — semua FK psy_profiles handled' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_rbac_09_rename_modules.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP RBAC 09 — RENAME MODULES untuk match navbar
--- ============================================================
-
-UPDATE psy_modules SET label = 'Dashboard'           WHERE code = 'dashboard';
-UPDATE psy_modules SET label = 'Pesakit & KYC'       WHERE code = 'patient';
-UPDATE psy_modules SET label = 'Kalendar & Jadual'   WHERE code = 'schedule';
-UPDATE psy_modules SET label = 'Rawatan & Sesi'      WHERE code = 'coaching';
-UPDATE psy_modules SET label = 'KOB'                 WHERE code = 'kob';
-UPDATE psy_modules SET label = 'Inventori & Produk'  WHERE code = 'inventory';
-UPDATE psy_modules SET label = 'Orders & Tracking'   WHERE code = 'orders';
-UPDATE psy_modules SET label = 'Pakej & Pembayaran'  WHERE code = 'package';
-UPDATE psy_modules SET label = 'Komunikasi & Library' WHERE code = 'communication';
-UPDATE psy_modules SET label = 'Operasi Klinik'      WHERE code = 'operations';
-UPDATE psy_modules SET label = 'Laporan & Audit'     WHERE code = 'reports';
-UPDATE psy_modules SET label = 'Manage Staff'        WHERE code = 'staff';
-UPDATE psy_modules SET label = 'Peranan & Kebenaran' WHERE code = 'rbac';
-
-SELECT code, label FROM psy_modules ORDER BY sort_order;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_surat_rbac_tighten.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP SURAT — RLS tighten dengan RBAC
--- Sebelum: semua role='staff' boleh padam/edit template & surat issued
--- Selepas: kena ada effective permission communication.delete / edit
--- ============================================================
-
--- Helper function: cek user ada permission tertentu
-CREATE OR REPLACE FUNCTION user_has_perm(p_module TEXT, p_action TEXT)
-RETURNS BOOLEAN
-LANGUAGE SQL STABLE SECURITY DEFINER SET search_path = public
-AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM psy_user_effective_permissions
-    WHERE user_id = auth.uid()
-      AND module_code = p_module
-      AND action_code = p_action
-  );
-$$;
-
--- ─────────────── TEMPLATES ───────────────
-DROP POLICY IF EXISTS "Staff manage letter templates"  ON psy_letter_templates;
-DROP POLICY IF EXISTS "Staff read letter templates"    ON psy_letter_templates;
-DROP POLICY IF EXISTS "Staff insert letter templates"  ON psy_letter_templates;
-DROP POLICY IF EXISTS "Staff update letter templates"  ON psy_letter_templates;
-DROP POLICY IF EXISTS "Staff delete letter templates"  ON psy_letter_templates;
-
-CREATE POLICY "tpl_select" ON psy_letter_templates FOR SELECT
-  USING (user_has_perm('communication','view'));
-
-CREATE POLICY "tpl_insert" ON psy_letter_templates FOR INSERT
-  WITH CHECK (user_has_perm('communication','create'));
-
-CREATE POLICY "tpl_update" ON psy_letter_templates FOR UPDATE
-  USING (user_has_perm('communication','edit'))
-  WITH CHECK (user_has_perm('communication','edit'));
-
-CREATE POLICY "tpl_delete" ON psy_letter_templates FOR DELETE
-  USING (user_has_perm('communication','delete'));
-
--- ─────────────── ISSUED LETTERS ───────────────
-DROP POLICY IF EXISTS "Patient read own issued letters" ON psy_letter_issued;
-DROP POLICY IF EXISTS "Staff manage issued letters"     ON psy_letter_issued;
-
--- Patient hanya boleh baca surat sendiri (kekal)
-CREATE POLICY "issued_patient_read" ON psy_letter_issued FOR SELECT
-  USING (
-    patient_id IS NOT NULL
-    AND patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())
-  );
-
--- Staff dengan view permission boleh baca semua
-CREATE POLICY "issued_staff_read" ON psy_letter_issued FOR SELECT
-  USING (user_has_perm('communication','view'));
-
-CREATE POLICY "issued_staff_insert" ON psy_letter_issued FOR INSERT
-  WITH CHECK (user_has_perm('communication','create'));
-
-CREATE POLICY "issued_staff_update" ON psy_letter_issued FOR UPDATE
-  USING (user_has_perm('communication','edit'))
-  WITH CHECK (user_has_perm('communication','edit'));
-
-CREATE POLICY "issued_staff_delete" ON psy_letter_issued FOR DELETE
-  USING (user_has_perm('communication','delete'));
-
--- ─────────────── LETTER REQUESTS ───────────────
--- Patient policy kekal (manage own)
-DROP POLICY IF EXISTS "Staff read all letter requests"   ON psy_letter_requests;
-DROP POLICY IF EXISTS "Staff update letter requests"     ON psy_letter_requests;
-
-CREATE POLICY "req_staff_read" ON psy_letter_requests FOR SELECT
-  USING (user_has_perm('communication','view'));
-
-CREATE POLICY "req_staff_update" ON psy_letter_requests FOR UPDATE
-  USING (user_has_perm('communication','edit'))
-  WITH CHECK (user_has_perm('communication','edit'));
-
-CREATE POLICY "req_staff_delete" ON psy_letter_requests FOR DELETE
-  USING (user_has_perm('communication','delete'));
-
-SELECT 'Step Surat RBAC OK — RLS tightened via permission check' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_cleanup_session_no.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- CLEANUP — buang session_no + constraint yang saya tersilap tambah
--- Sistem sudah ada session_day untuk handle 2 sesi/minggu.
--- Jalankan SEKALI sahaja.
--- ============================================================
-
--- Drop the wrong constraint
-ALTER TABLE psy_plan_weekly_progress
-  DROP CONSTRAINT IF EXISTS psy_plan_weekly_progress_plan_week_session_unique;
-
--- Drop the duplicate column
-ALTER TABLE psy_plan_weekly_progress
-  DROP COLUMN IF EXISTS session_no;
-
--- Drop the redundant index (kalau wujud)
-DROP INDEX IF EXISTS idx_plan_progress_week_session;
-
--- Verifikasi: constraint yang betul masih ada (session_day-based)
-SELECT conname
-FROM pg_constraint
-WHERE conrelid = 'psy_plan_weekly_progress'::regclass
-  AND contype = 'u'
-ORDER BY conname;
-
--- Verifikasi: column session_day masih ada
-SELECT column_name, data_type, column_default
-FROM information_schema.columns
-WHERE table_name = 'psy_plan_weekly_progress'
-  AND column_name IN ('session_day', 'session_no');
-
-SELECT 'OK — session_no removed, system uses session_day' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_patient_plan_setup_rls.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- STEP — Patient Plan Setup RLS
--- Benarkan patient update plan SENDIRI untuk setup jadual sahaja
--- (preferred_pair, preferred_time_day1/2, schedule_setup_at).
--- Bukan kebenaran penuh — staff masih perlu untuk ubah status,
--- duration, goals, dsb.
--- ============================================================
-
-DO $$ BEGIN
-  CREATE POLICY "Patients update own plan setup"
-  ON psy_treatment_plans
-  FOR UPDATE
-  USING (
-    patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())
-  )
-  WITH CHECK (
-    patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid())
-  );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- NOTA: Policy ni bagi UPDATE pada SEMUA column untuk patient sendiri.
--- Kalau mahu lebih ketat (cth: cuma boleh update preferred_pair + masa),
--- guna kombinasi dengan trigger BEFORE UPDATE untuk reject column lain.
--- Untuk MVP, ini cukup sebab UI patient hanya expose 4 field setup.
-
-SELECT 'OK — patient plan setup RLS policy added' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_patient_docs_week_scope.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- step_patient_docs_week_scope.sql  (idempotent)
--- Benarkan dokumen pesakit diskop ikut plan + minggu.
---   • plan_id NULL + week_number NULL  -> dokumen umum (Patient Hub)
---   • plan_id + week_number diisi       -> dokumen khusus minggu (plan-week)
--- ============================================================
-
-ALTER TABLE psy_patient_documents
-  ADD COLUMN IF NOT EXISTS plan_id     UUID REFERENCES psy_treatment_plans(id) ON DELETE CASCADE,
-  ADD COLUMN IF NOT EXISTS week_number INT;
-
-CREATE INDEX IF NOT EXISTS idx_patient_docs_plan_week
-  ON psy_patient_documents (plan_id, week_number)
-  WHERE plan_id IS NOT NULL;
-
-COMMENT ON COLUMN psy_patient_documents.plan_id IS
-  'Jika diisi, dokumen ini dilampirkan pada plan rawatan tertentu (skop minggu).';
-COMMENT ON COLUMN psy_patient_documents.week_number IS
-  'Nombor minggu plan untuk dokumen ini (NULL = dokumen umum pesakit).';
-
-SELECT 'OK — psy_patient_documents plan_id + week_number ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_fix_patient_mrn_autogen.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- FIX: Auto-generate MRN untuk patient bila tidak dibekalkan
--- Punca: client tak boleh query MRN tertinggi sebab RLS, jadi
--- collision MRN biasa berlaku semasa self-signup.
--- Fix: trigger BEFORE INSERT yang auto-assign MRN unik.
--- ============================================================
-
-CREATE OR REPLACE FUNCTION assign_patient_mrn()
-RETURNS TRIGGER
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
-AS $$
-DECLARE
-  next_num INT;
-  candidate TEXT;
-BEGIN
-  -- Kalau MRN dah diset client, biar je (mungkin migration / staff create)
-  IF NEW.mrn IS NOT NULL AND NEW.mrn != '' THEN
-    RETURN NEW;
-  END IF;
-
-  -- Ambil nombor tertinggi dari MRN format 'P-NNN'
-  SELECT COALESCE(MAX(CAST(regexp_replace(mrn, '\D', '', 'g') AS INT)), 0)
-  INTO next_num
-  FROM psy_patients
-  WHERE mrn LIKE 'P-%';
-
-  -- Loop sampai dapat MRN yang unik (handle race condition)
-  LOOP
-    next_num := next_num + 1;
-    candidate := 'P-' || LPAD(next_num::TEXT, 3, '0');
-    EXIT WHEN NOT EXISTS (SELECT 1 FROM psy_patients WHERE mrn = candidate);
-  END LOOP;
-
-  NEW.mrn := candidate;
-  RETURN NEW;
-END;
-$$;
-
-DROP TRIGGER IF EXISTS trg_assign_patient_mrn ON psy_patients;
-CREATE TRIGGER trg_assign_patient_mrn
-  BEFORE INSERT ON psy_patients
-  FOR EACH ROW
-  EXECUTE FUNCTION assign_patient_mrn();
-
--- Allow client untuk insert TANPA mrn (sebelum ni NOT NULL constraint blok ni)
-ALTER TABLE psy_patients ALTER COLUMN mrn DROP NOT NULL;
-
-SELECT 'OK — patient MRN auto-gen trigger ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_fix_slot_rls_superadmin.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- FIX: Tambah super_admin ke RLS policy untuk slot config + override
--- ============================================================
-
--- ── psy_kob_slot_config ──
-DROP POLICY IF EXISTS "Admin manage kob slots" ON psy_kob_slot_config;
-CREATE POLICY "Admin manage kob slots" ON psy_kob_slot_config FOR ALL
-  USING (EXISTS (
-    SELECT 1 FROM psy_profiles
-    WHERE id = auth.uid() AND role = 'staff'
-      AND staff_role IN ('admin','manager','doctor','super_admin')
-  ));
-
--- ── psy_slot_date_overrides (kalau wujud dari step47) ──
-DO $$ BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'psy_slot_date_overrides') THEN
-    DROP POLICY IF EXISTS "Staff manage slot overrides" ON psy_slot_date_overrides;
-    CREATE POLICY "Staff manage slot overrides" ON psy_slot_date_overrides FOR ALL
-      USING (EXISTS (
-        SELECT 1 FROM psy_profiles
-        WHERE id = auth.uid() AND role = 'staff'
-          AND staff_role IN ('admin','manager','doctor','super_admin')
-      ));
-  END IF;
-END $$;
-
-SELECT 'OK — super_admin boleh manage slot sekarang' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_create_avatars_bucket.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- Cipta storage bucket 'avatars' + policy
--- Untuk upload profile picture staff & patient
--- ============================================================
-
--- Cipta bucket public (boleh accessed tanpa auth — sebab profile pic biasanya public)
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES ('avatars', 'avatars', true, 5242880, ARRAY['image/png','image/jpeg','image/jpg','image/webp','image/gif'])
 ON CONFLICT (id) DO UPDATE
@@ -6711,1144 +5897,220 @@ ON CONFLICT (id) DO UPDATE
       file_size_limit = EXCLUDED.file_size_limit,
       allowed_mime_types = EXCLUDED.allowed_mime_types;
 
--- Policies: authenticated user boleh upload, sesiapa boleh lihat
-DO $$ BEGIN
-  CREATE POLICY "avatars_public_read" ON storage.objects FOR SELECT
-    USING (bucket_id = 'avatars');
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+INSERT INTO storage.buckets (id, name, public) VALUES ('referral-docs', 'referral-docs', false) ON CONFLICT DO NOTHING;
 
-DO $$ BEGIN
-  CREATE POLICY "avatars_authenticated_upload" ON storage.objects FOR INSERT
-    WITH CHECK (bucket_id = 'avatars' AND auth.role() = 'authenticated');
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "avatars_owner_update" ON storage.objects FOR UPDATE
-    USING (bucket_id = 'avatars' AND auth.uid()::text = (storage.foldername(name))[1])
-    WITH CHECK (bucket_id = 'avatars' AND auth.uid()::text = (storage.foldername(name))[1]);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "avatars_owner_delete" ON storage.objects FOR DELETE
-    USING (bucket_id = 'avatars' AND auth.uid()::text = (storage.foldername(name))[1]);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-SELECT 'OK — avatars bucket created' AS status;
+INSERT INTO storage.buckets (id, name, public) VALUES ('kb-media', 'kb-media', true)
+ON CONFLICT (id) DO NOTHING;
 
 
--- ════════════════════════════════════════════════════════════════
--- step_agreement_delete_policy.sql
--- ════════════════════════════════════════════════════════════════
+-- ---- Polisi storage.objects ----
 
--- ============================================================
--- FIX: Patient delete agreement sendiri sebelum doktor finalize
--- ============================================================
+DROP POLICY IF EXISTS "Staff can upload medical reports" ON storage.objects;
+CREATE POLICY "Staff can upload medical reports" ON storage.objects
+    FOR INSERT TO authenticated
+    WITH CHECK (bucket_id = 'medical-reports' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
-DO $$ BEGIN
-  CREATE POLICY "Patient cancel own unfinalized agreement"
-    ON psy_kob_agreements FOR DELETE
+DROP POLICY IF EXISTS "Staff can read all medical reports" ON storage.objects;
+CREATE POLICY "Staff can read all medical reports" ON storage.objects
+    FOR SELECT TO authenticated
+    USING (bucket_id = 'medical-reports' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Patients can upload own medical reports" ON storage.objects;
+CREATE POLICY "Patients can upload own medical reports" ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    bucket_id = 'medical-reports'
+    AND (storage.foldername(name))[1] = 'patient'
+    AND EXISTS (
+      SELECT 1 FROM psy_patients
+      WHERE user_id = auth.uid() AND id::text = (storage.foldername(name))[2]
+    )
+  );
+
+DROP POLICY IF EXISTS "Patients can read own medical reports" ON storage.objects;
+CREATE POLICY "Patients can read own medical reports" ON storage.objects
+    FOR SELECT TO authenticated
+    USING (bucket_id = 'medical-reports' AND EXISTS (SELECT 1 FROM psy_patients WHERE user_id = auth.uid() AND id::text = (storage.foldername(name))[2]));
+
+DROP POLICY IF EXISTS "Authenticated read agreement templates" ON storage.objects;
+CREATE POLICY "Authenticated read agreement templates"
+    ON storage.objects FOR SELECT
+    USING (bucket_id = 'agreement-templates' AND auth.uid() IS NOT NULL);
+
+DROP POLICY IF EXISTS "Staff manage agreement templates" ON storage.objects;
+CREATE POLICY "Staff manage agreement templates"
+    ON storage.objects FOR ALL
     USING (
-      patient_id IN (
-        SELECT id FROM psy_patients
-        WHERE user_id = auth.uid()
-          AND (kob_status IS NULL OR kob_status != 'completed')
+      bucket_id = 'agreement-templates'
+      AND EXISTS (
+        SELECT 1 FROM psy_profiles
+        WHERE id = auth.uid()
+        AND role = 'staff'
+        AND staff_role IN ('admin','manager','doctor')
       )
     );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-SELECT 'OK — patient boleh padam agreement sendiri sebelum kob_status=completed' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- fix_audit_policy.sql
--- ════════════════════════════════════════════════════════════════
-
--- Fix RLS policy for psy_audit_log — allow any authenticated user to insert
-DROP POLICY IF EXISTS "All authenticated insert audit" ON psy_audit_log;
-CREATE POLICY "All authenticated insert audit" ON psy_audit_log FOR INSERT
-  WITH CHECK (true);
-
-SELECT 'Fix OK — audit_log insert policy updated' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- fix_coach_assignment.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- FIX: Coach Assignment Columns
--- Run this in Supabase SQL Editor to enable "Assign to me"
--- ============================================================
-
--- 1. Add coach_id and assigned_at to psy_patients
-ALTER TABLE psy_patients
-  ADD COLUMN IF NOT EXISTS coach_id UUID REFERENCES psy_profiles(id),
-  ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
-
--- 2. Index for fast coach lookup
-CREATE INDEX IF NOT EXISTS idx_psy_patients_coach ON psy_patients(coach_id);
-
--- 3. Make sure staff can update these columns (policy already covers FOR ALL)
--- No change needed — existing "Staff manage patients" policy covers UPDATE
-
-SELECT 'Fix OK — coach_id + assigned_at columns are ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- fix_issue_patient_read.sql
--- ════════════════════════════════════════════════════════════════
-
--- Allow patients to read their own issues, staff replies, and their own follow-ups
--- Run this in Supabase SQL Editor
-
--- Drop old policy first if exists
-DROP POLICY IF EXISTS "Patients read own issues" ON psy_audit_log;
-
--- Recreate with followup included
-CREATE POLICY "Patients read own issues" ON psy_audit_log FOR SELECT
-  USING (
-    (action IN ('issue.reported', 'issue.followup') AND actor_id = auth.uid())
-    OR (action = 'issue.responded' AND target = auth.uid()::text)
-  );
-
-SELECT 'Fix OK — patients can read reported, responded, and followup entries' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- fix_staff_delete_fk.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- FIX: Staff & Patient delete FK constraints
--- Run dalam Supabase SQL Editor
--- ============================================================
-
--- ── STAFF REFERENCES → SET NULL ──────────────────────────────
-
-ALTER TABLE psy_appointments
-  DROP CONSTRAINT IF EXISTS psy_appointments_staff_id_fkey;
-ALTER TABLE psy_appointments
-  ADD CONSTRAINT psy_appointments_staff_id_fkey
-  FOREIGN KEY (staff_id) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
-ALTER TABLE psy_treatment_plans
-  DROP CONSTRAINT IF EXISTS psy_treatment_plans_doctor_id_fkey;
-ALTER TABLE psy_treatment_plans
-  ADD CONSTRAINT psy_treatment_plans_doctor_id_fkey
-  FOREIGN KEY (doctor_id) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
-ALTER TABLE psy_kyc_submissions
-  DROP CONSTRAINT IF EXISTS psy_kyc_submissions_reviewed_by_fkey;
-ALTER TABLE psy_kyc_submissions
-  ADD CONSTRAINT psy_kyc_submissions_reviewed_by_fkey
-  FOREIGN KEY (reviewed_by) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
-ALTER TABLE psy_plan_weekly_progress
-  DROP CONSTRAINT IF EXISTS psy_plan_weekly_progress_updated_by_fkey;
-ALTER TABLE psy_plan_weekly_progress
-  ADD CONSTRAINT psy_plan_weekly_progress_updated_by_fkey
-  FOREIGN KEY (updated_by) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
--- coach_id ditambah dalam step13
-ALTER TABLE psy_patients
-  DROP CONSTRAINT IF EXISTS psy_patients_coach_id_fkey;
-ALTER TABLE psy_patients
-  ADD CONSTRAINT psy_patients_coach_id_fkey
-  FOREIGN KEY (coach_id) REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
--- ── PATIENT REFERENCES → CASCADE ─────────────────────────────
-
-ALTER TABLE psy_patients
-  DROP CONSTRAINT IF EXISTS psy_patients_user_id_fkey;
-ALTER TABLE psy_patients
-  ADD CONSTRAINT psy_patients_user_id_fkey
-  FOREIGN KEY (user_id) REFERENCES psy_profiles(id) ON DELETE CASCADE;
-
-ALTER TABLE psy_kyc_submissions
-  DROP CONSTRAINT IF EXISTS psy_kyc_submissions_user_id_fkey;
-ALTER TABLE psy_kyc_submissions
-  ADD CONSTRAINT psy_kyc_submissions_user_id_fkey
-  FOREIGN KEY (user_id) REFERENCES psy_profiles(id) ON DELETE CASCADE;
-
-ALTER TABLE psy_payments
-  DROP CONSTRAINT IF EXISTS psy_payments_user_id_fkey;
-ALTER TABLE psy_payments
-  ADD CONSTRAINT psy_payments_user_id_fkey
-  FOREIGN KEY (user_id) REFERENCES psy_profiles(id) ON DELETE CASCADE;
-
-SELECT 'FK fix OK — delete staff/patient sekarang berfungsi' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- fix_staff_rls.sql
--- ════════════════════════════════════════════════════════════════
-
--- ============================================================
--- Fix RLS: Allow staff to read patient profiles & plans
--- Run AFTER step16_missing_tables.sql
--- Run in Supabase SQL Editor
--- ============================================================
-
--- NOTE: psy_profiles already has "Read all profiles authenticated" policy (step1)
--- Adding another SELECT policy with a self-referencing subquery causes recursion
--- No change needed for psy_profiles
-
--- 1. Staff can read all treatment plans
-DROP POLICY IF EXISTS "Staff can read all treatment plans" ON psy_treatment_plans;
-CREATE POLICY "Staff can read all treatment plans"
-  ON psy_treatment_plans FOR SELECT
-  USING (
-    auth.uid() IN (
-      SELECT id FROM psy_profiles WHERE role = 'staff'
-    )
-    OR auth.uid() IN (
-      SELECT user_id FROM psy_patients WHERE id = patient_id
-    )
-  );
-
--- 3. Staff can read all weekly progress
-DROP POLICY IF EXISTS "Staff can read all weekly progress" ON psy_plan_weekly_progress;
-CREATE POLICY "Staff can read all weekly progress"
-  ON psy_plan_weekly_progress FOR SELECT
-  USING (
-    auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff')
-    OR auth.uid() IN (SELECT user_id FROM psy_patients WHERE id = patient_id)
-  );
-
--- 4. Staff can read all compliance records
-DROP POLICY IF EXISTS "Staff can read all compliance" ON psy_plan_compliance;
-CREATE POLICY "Staff can read all compliance"
-  ON psy_plan_compliance FOR SELECT
-  USING (
-    auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff')
-    OR auth.uid() IN (SELECT user_id FROM psy_patients WHERE id = patient_id)
-  );
-
--- 5. Staff can read all daily checkins
-DROP POLICY IF EXISTS "Staff can read all checkins" ON psy_daily_checkins;
-CREATE POLICY "Staff can read all checkins"
-  ON psy_daily_checkins FOR SELECT
-  USING (
-    auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff')
-    OR auth.uid() IN (SELECT user_id FROM psy_patients WHERE id = patient_id)
-  );
-
--- 6. Staff can read all KYC submissions
-DROP POLICY IF EXISTS "Staff can read all kyc" ON psy_kyc_submissions;
-CREATE POLICY "Staff can read all kyc"
-  ON psy_kyc_submissions FOR SELECT
-  USING (
-    auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff')
-    OR auth.uid() = user_id
-  );
-
-SELECT 'RLS fix OK — staff can now read all patient data' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step67_pengumuman_event_system.sql   (Jun 2026)
--- Sistem Pengumuman & Acara — events, pendaftaran, bahan, kategori,
--- jenis, sasaran audiens/pakej, tinggi pesakit. Semua idempotent.
--- (Seed lalai kategori/jenis ada dalam seeds.sql)
--- ════════════════════════════════════════════════════════════════
-
--- Pesakit: tinggi (untuk auto-BMI)
-alter table psy_patients add column if not exists height_cm numeric;
-
--- Acara / Kelas + pendaftaran
-create table if not exists psy_events (
-  id uuid primary key default gen_random_uuid(),
-  title text not null,
-  description text,
-  type text default 'kelas',
-  start_at timestamptz not null,
-  end_at timestamptz,
-  mode text default 'online',
-  meet_link text,
-  location text,
-  capacity int,
-  registration_deadline timestamptz,
-  cover_image text,
-  tag text,
-  host text,
-  price numeric default 0,
-  status text default 'published',
-  recording_url text,
-  created_by uuid,
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
-);
-create table if not exists psy_event_registrations (
-  id uuid primary key default gen_random_uuid(),
-  event_id uuid references psy_events(id) on delete cascade,
-  patient_id uuid references psy_patients(id) on delete cascade,
-  status text default 'registered',
-  registered_at timestamptz default now(),
-  unique(event_id, patient_id)
-);
-create index if not exists idx_event_regs_event on psy_event_registrations(event_id);
-create index if not exists idx_event_regs_patient on psy_event_registrations(patient_id);
-alter table psy_events enable row level security;
-alter table psy_event_registrations enable row level security;
-drop policy if exists "events read" on psy_events;
-create policy "events read" on psy_events for select using (
-  status = 'published' or auth.uid() in (select id from psy_profiles where role='staff'));
-drop policy if exists "events staff manage" on psy_events;
-create policy "events staff manage" on psy_events for all
-  using (auth.uid() in (select id from psy_profiles where role='staff'))
-  with check (auth.uid() in (select id from psy_profiles where role='staff'));
-drop policy if exists "regs read" on psy_event_registrations;
-create policy "regs read" on psy_event_registrations for select using (
-  patient_id in (select id from psy_patients where user_id = auth.uid())
-  or auth.uid() in (select id from psy_profiles where role='staff'));
-drop policy if exists "regs patient insert" on psy_event_registrations;
-create policy "regs patient insert" on psy_event_registrations for insert with check (
-  patient_id in (select id from psy_patients where user_id = auth.uid()));
-drop policy if exists "regs patient update" on psy_event_registrations;
-create policy "regs patient update" on psy_event_registrations for update using (
-  patient_id in (select id from psy_patients where user_id = auth.uid())
-  or auth.uid() in (select id from psy_profiles where role='staff'));
-drop policy if exists "regs staff delete" on psy_event_registrations;
-create policy "regs staff delete" on psy_event_registrations for delete using (
-  auth.uid() in (select id from psy_profiles where role='staff'));
-
--- Lajur tambahan (pengumuman & event)
-alter table psy_announcements add column if not exists category    text;
-alter table psy_announcements add column if not exists content     text;
-alter table psy_announcements add column if not exists audience    jsonb default '["patient"]'::jsonb;
-alter table psy_announcements add column if not exists expires_at  timestamptz;
-alter table psy_announcements add column if not exists package_ids jsonb default '[]'::jsonb;
-alter table psy_events add column if not exists address     text;
-alter table psy_events add column if not exists maps_url    text;
-alter table psy_events add column if not exists audience    jsonb default '["patient"]'::jsonb;
-alter table psy_events add column if not exists package_ids jsonb default '[]'::jsonb;
-alter table psy_events add column if not exists host_role   text;  -- Penceramah / Coach / Moderator
-
--- Peringatan WhatsApp 1 jam sebelum acara (Edge Function event-reminders) — penanda dedup
-alter table psy_event_registrations add column if not exists reminder_sent_at timestamptz;
-
--- Mesej Automatik (rangka umum: template + masa + on/off; Edge function baca dari sini)
-create table if not exists psy_auto_messages (
-  id uuid primary key default gen_random_uuid(),
-  key text not null unique,
-  name text not null,
-  description text,
-  channel text not null default 'whatsapp',
-  trigger_type text not null,            -- before_event | before_session | daily_reminder | on_action | recurring_broadcast
-  minutes_before int,
-  send_at_time time,
-  days_of_week jsonb,                     -- [3,4,5] = Rab/Kha/Jum (recurring_broadcast)
-  session_time time,                      -- masa sesi bermula (recurring_broadcast)
-  audience jsonb default '["patient"]'::jsonb,
-  package_ids jsonb default '[]'::jsonb,
-  channels jsonb default '["whatsapp"]'::jsonb,  -- whatsapp | inapp | announcement
-  link text,
-  last_broadcast_at timestamptz,
-  rule jsonb,                            -- ambang utk alert berasaskan logik (cth kepatuhan madu)
-  message_template text not null,
-  placeholders jsonb default '[]'::jsonb,
-  is_active boolean default true,
-  updated_by uuid references psy_profiles(id) on delete set null,
-  updated_at timestamptz default now(),
-  created_at timestamptz default now()
-);
-alter table psy_auto_messages enable row level security;
-do $$ begin
-  create policy "auto_msg staff read" on psy_auto_messages for select
-    using (auth.uid() in (select id from psy_profiles where role = 'staff'));
-exception when duplicate_object then null; end $$;
-do $$ begin
-  create policy "auto_msg super manage" on psy_auto_messages for all
-    using (auth.uid() in (select id from psy_profiles where staff_role = 'super_admin'))
-    with check (auth.uid() in (select id from psy_profiles where staff_role = 'super_admin'));
-exception when duplicate_object then null; end $$;
-
--- Bahan / rakaman acara
-create table if not exists psy_event_materials (
-  id uuid primary key default gen_random_uuid(),
-  event_id uuid references psy_events(id) on delete cascade,
-  title text not null,
-  type text default 'pautan',
-  url text not null,
-  created_at timestamptz default now()
-);
-create index if not exists idx_event_materials_event on psy_event_materials(event_id);
-alter table psy_event_materials enable row level security;
-drop policy if exists "materials read" on psy_event_materials;
-create policy "materials read" on psy_event_materials for select using (
-  exists (select 1 from psy_events e where e.id = event_id
-          and (e.status = 'published' or auth.uid() in (select id from psy_profiles where role='staff'))));
-drop policy if exists "materials staff manage" on psy_event_materials;
-create policy "materials staff manage" on psy_event_materials for all
-  using (auth.uid() in (select id from psy_profiles where role='staff'))
-  with check (auth.uid() in (select id from psy_profiles where role='staff'));
-
--- Kategori pengumuman (super admin CRUD)
-create table if not exists psy_announcement_categories (
-  id uuid primary key default gen_random_uuid(),
-  name text not null unique,
-  sort_order int default 0,
-  is_active boolean default true,
-  created_by uuid references psy_profiles(id) on delete set null,
-  created_at timestamptz default now()
-);
-alter table psy_announcement_categories enable row level security;
-drop policy if exists "ann_cat read" on psy_announcement_categories;
-create policy "ann_cat read" on psy_announcement_categories for select using (
-  auth.uid() in (select id from psy_profiles where role = 'staff'));
-drop policy if exists "ann_cat manage" on psy_announcement_categories;
-create policy "ann_cat manage" on psy_announcement_categories for all
-  using (auth.uid() in (select id from psy_profiles where staff_role = 'super_admin'))
-  with check (auth.uid() in (select id from psy_profiles where staff_role = 'super_admin'));
-
--- Jenis pengumuman (super admin CRUD)
-create table if not exists psy_announcement_types (
-  id uuid primary key default gen_random_uuid(),
-  key text not null unique,
-  title text not null,
-  description text default '',
-  kind text not null default 'announcement',
-  mode text,
-  etype text,
-  label text,
-  sort_order int default 0,
-  is_active boolean default true,
-  created_by uuid references psy_profiles(id) on delete set null,
-  created_at timestamptz default now()
-);
-create index if not exists idx_ann_types_sort on psy_announcement_types(sort_order);
-alter table psy_announcement_types enable row level security;
-drop policy if exists "ann_types read" on psy_announcement_types;
-create policy "ann_types read" on psy_announcement_types for select using (
-  auth.uid() in (select id from psy_profiles where role = 'staff'));
-drop policy if exists "ann_types manage" on psy_announcement_types;
-create policy "ann_types manage" on psy_announcement_types for all
-  using (auth.uid() in (select id from psy_profiles where staff_role = 'super_admin'))
-  with check (auth.uid() in (select id from psy_profiles where staff_role = 'super_admin'));
-
-SELECT 'Pengumuman & Acara system OK' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step_supply_disbursements.sql
--- Barang yang diberi kepada pesakit dari stok inventori.
--- ════════════════════════════════════════════════════════════════
-create table if not exists psy_supply_disbursements (
-  id            uuid primary key default gen_random_uuid(),
-  patient_id    uuid not null references psy_patients(id) on delete cascade,
-  item_id       uuid references psy_inventory_items(id) on delete set null,
-  item_name     text not null,
-  unit          text,
-  qty           numeric(10,2) not null,
-  notes         text,
-  given_by      uuid references psy_profiles(id) on delete set null,
-  given_by_name text,
-  created_at    timestamptz not null default now()
-);
-alter table psy_supply_disbursements enable row level security;
-drop policy if exists "supply_disb_staff" on psy_supply_disbursements;
-create policy "supply_disb_staff" on psy_supply_disbursements for all using (
-  exists (select 1 from psy_profiles where id = auth.uid() and role = 'staff'));
-
-SELECT 'Supply disbursements OK' AS status;
-
--- ════════════════════════════════════════════════════════════════
--- step68: Jadual FAQ — psy_faq_sections, psy_faq_items
---         (psy_soap_notes DIBUANG — ciri SOAP/Konsultasi tak digunakan)
--- ════════════════════════════════════════════════════════════════
-
-CREATE TABLE IF NOT EXISTS psy_faq_sections (
-  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  code       TEXT NOT NULL UNIQUE,
-  title      TEXT NOT NULL,
-  sort_order INT  NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-ALTER TABLE psy_faq_sections ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "faq_sections_staff_all" ON psy_faq_sections FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "faq_sections_public_read" ON psy_faq_sections FOR SELECT USING (true);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-CREATE TABLE IF NOT EXISTS psy_faq_items (
-  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  section_id UUID NOT NULL REFERENCES psy_faq_sections(id) ON DELETE CASCADE,
-  soalan     TEXT NOT NULL,
-  jawapan    TEXT NOT NULL,
-  sort_order INT  NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
-);
-ALTER TABLE psy_faq_items ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "faq_items_staff_all" ON psy_faq_items FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "faq_items_public_read" ON psy_faq_items FOR SELECT USING (true);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-CREATE INDEX IF NOT EXISTS idx_faq_items_section ON psy_faq_items(section_id, sort_order);
-
-INSERT INTO psy_faq_sections (code, title, sort_order) VALUES
-  ('umum',     'Soalan Umum',                1),
-  ('rawatan',  'Tentang Rawatan',            2),
-  ('pakej',    'Pakej & Pembayaran',         3),
-  ('kepatuhan','Kepatuhan & Catatan Harian', 4),
-  ('teknikal', 'Teknikal & Akaun',           5)
-ON CONFLICT (code) DO NOTHING;
-
-CREATE OR REPLACE FUNCTION check_referral_code(p_code TEXT)
-RETURNS TABLE (valid BOOLEAN, referrer_name TEXT)
-LANGUAGE plpgsql SECURITY DEFINER AS $$
-BEGIN
-  RETURN QUERY
-  SELECT TRUE, p.full_name
-  FROM psy_patients p
-  WHERE upper(trim(p.referral_code)) = upper(trim(p_code))
-  LIMIT 1;
-  IF NOT FOUND THEN
-    RETURN QUERY SELECT FALSE, NULL::TEXT;
-  END IF;
-END;
-$$;
-
-SELECT 'Missing tables OK' AS status;
-
--- ════════════════════════════════════════════════════════════════
--- step69: Kolum hilang — resolution_notes, kob_slot note
--- ════════════════════════════════════════════════════════════════
-ALTER TABLE psy_risk_alerts      ADD COLUMN IF NOT EXISTS resolution_notes TEXT;
-ALTER TABLE psy_kob_slot_config  ADD COLUMN IF NOT EXISTS note TEXT;
-
-SELECT 'Schema fixes OK' AS status;
-
--- ════════════════════════════════════════════════════════════════
--- step70: Sebab tidak hadir — pesakit isi bila reschedule sesi yang
---         ditanda tidak hadir / perlu jadual semula; staff boleh lihat.
--- ════════════════════════════════════════════════════════════════
-ALTER TABLE psy_plan_weekly_progress ADD COLUMN IF NOT EXISTS absence_reason TEXT;
-
-COMMENT ON COLUMN psy_plan_weekly_progress.absence_reason IS
-  'Sebab pesakit tidak hadir, diisi semasa pesakit menjadual semula (reschedule) sesi yang tertinggal. Dipaparkan kepada staff.';
-
-SELECT 'OK — psy_plan_weekly_progress.absence_reason ready' AS status;
-
--- ════════════════════════════════════════════════════════════════
--- step71: Patient reaksi reports + notification triggers
---   • psy_patient_reaksi_reports — patient self-report per week
---   • Notify patient when coach opens new week row
---   • Notify coach when patient submits reaksi (INSERT only)
---   • Notify all staff when new order placed
--- ════════════════════════════════════════════════════════════════
-
--- Extend psy_notifications type CHECK
-DO $$
-DECLARE r RECORD;
-BEGIN
-  FOR r IN
-    SELECT conname FROM pg_constraint
-    WHERE conrelid = 'psy_notifications'::regclass
-      AND contype = 'c'
-      AND pg_get_constraintdef(oid) LIKE '%type%'
-  LOOP
-    EXECUTE 'ALTER TABLE psy_notifications DROP CONSTRAINT ' || quote_ident(r.conname);
-  END LOOP;
-END $$;
-ALTER TABLE psy_notifications ADD CONSTRAINT psy_notifications_type_check
-  CHECK (type IN ('appointment','order','plan','system','reaksi','kyc'));
-
-CREATE TABLE IF NOT EXISTS psy_patient_reaksi_reports (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  plan_id          UUID REFERENCES psy_treatment_plans(id) ON DELETE CASCADE NOT NULL,
-  patient_id       UUID REFERENCES psy_patients(id)        ON DELETE CASCADE NOT NULL,
-  week_number      INT  NOT NULL,
-  reaksi_pemulihan JSONB DEFAULT '{}',
-  submitted_at     TIMESTAMPTZ DEFAULT now(),
-  updated_at       TIMESTAMPTZ DEFAULT now(),
-  UNIQUE (plan_id, patient_id, week_number)
-);
-ALTER TABLE psy_patient_reaksi_reports ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "Patient select own reaksi" ON psy_patient_reaksi_reports
-    FOR SELECT USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Patient insert own reaksi" ON psy_patient_reaksi_reports
-    FOR INSERT WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Patient update own reaksi" ON psy_patient_reaksi_reports
-    FOR UPDATE USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Staff read reaksi reports" ON psy_patient_reaksi_reports
-    FOR SELECT USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-CREATE INDEX IF NOT EXISTS idx_patient_reaksi_plan_week
-  ON psy_patient_reaksi_reports(plan_id, patient_id, week_number);
-
-CREATE OR REPLACE FUNCTION trg_notify_patient_new_week()
-RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE v_user_id UUID;
-BEGIN
-  SELECT user_id INTO v_user_id FROM psy_patients WHERE id = NEW.patient_id;
-  IF v_user_id IS NULL THEN RETURN NEW; END IF;
-  IF EXISTS (
-    SELECT 1 FROM psy_notifications
-    WHERE user_id = v_user_id AND type = 'plan'
-      AND link LIKE '%plan_id=' || NEW.plan_id::TEXT || '%week=' || NEW.week_number
-    LIMIT 1
-  ) THEN RETURN NEW; END IF;
-  INSERT INTO psy_notifications (user_id, type, title, body, link)
-  VALUES (v_user_id, 'plan',
-    'Sila Hantar Laporan Reaksi — Minggu ' || NEW.week_number,
-    'Minggu ' || NEW.week_number || ' rawatan anda bermula. Rekod simptom reaksi pemulihan yang anda alami.',
-    'plan-week.html?plan_id=' || NEW.plan_id::TEXT || '&week=' || NEW.week_number);
-  RETURN NEW;
-EXCEPTION WHEN OTHERS THEN RAISE LOG 'trg_notify_patient_new_week: %', SQLERRM; RETURN NEW; END;
-$$;
-DROP TRIGGER IF EXISTS trg_notify_patient_new_week ON psy_plan_weekly_progress;
-CREATE TRIGGER trg_notify_patient_new_week
-  AFTER INSERT ON psy_plan_weekly_progress
-  FOR EACH ROW EXECUTE FUNCTION trg_notify_patient_new_week();
-
-CREATE OR REPLACE FUNCTION trg_patient_reaksi_notify_coach()
-RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE v_coach_id UUID; v_patient_name TEXT;
-BEGIN
-  IF TG_OP != 'INSERT' THEN RETURN NEW; END IF;
-  SELECT pr.full_name INTO v_patient_name
-  FROM psy_patients pt JOIN psy_profiles pr ON pr.id = pt.user_id WHERE pt.id = NEW.patient_id;
-  SELECT coach_id INTO v_coach_id FROM psy_patients WHERE id = NEW.patient_id;
-  IF v_coach_id IS NULL THEN
-    SELECT coach_id INTO v_coach_id FROM psy_plan_weekly_progress
-    WHERE plan_id = NEW.plan_id AND patient_id = NEW.patient_id ORDER BY created_at DESC LIMIT 1;
-  END IF;
-  IF v_coach_id IS NOT NULL THEN
-    INSERT INTO psy_notifications (user_id, type, title, body, link)
-    VALUES (v_coach_id, 'reaksi',
-      '🌀 Laporan Reaksi: ' || COALESCE(v_patient_name, 'Pesakit'),
-      'Minggu ' || NEW.week_number || ' — ' || COALESCE(v_patient_name, 'Pesakit') || ' telah hantar laporan reaksi pemulihan.',
-      'plan-week.html?plan_id=' || NEW.plan_id::TEXT || '&week=' || NEW.week_number);
-  END IF;
-  RETURN NEW;
-EXCEPTION WHEN OTHERS THEN RAISE LOG 'trg_patient_reaksi_notify_coach: %', SQLERRM; RETURN NEW; END;
-$$;
-DROP TRIGGER IF EXISTS trg_patient_reaksi_notify_coach ON psy_patient_reaksi_reports;
-CREATE TRIGGER trg_patient_reaksi_notify_coach
-  AFTER INSERT ON psy_patient_reaksi_reports
-  FOR EACH ROW EXECUTE FUNCTION trg_patient_reaksi_notify_coach();
-
-CREATE OR REPLACE FUNCTION trg_notify_staff_new_order()
-RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE v_patient_name TEXT; v_staff RECORD;
-BEGIN
-  SELECT full_name INTO v_patient_name FROM psy_profiles WHERE id = NEW.patient_id;
-  FOR v_staff IN SELECT id FROM psy_profiles WHERE role = 'staff' LOOP
-    INSERT INTO psy_notifications (user_id, type, title, body, link)
-    VALUES (v_staff.id, 'order',
-      '📦 Pesanan Baru: ' || COALESCE(v_patient_name, 'Pesakit'),
-      'Pesanan ' || COALESCE(NEW.order_ref, '') || ' diterima. Sila proses penghantaran.',
-      'orders.html');
-  END LOOP;
-  RETURN NEW;
-EXCEPTION WHEN OTHERS THEN RAISE LOG 'trg_notify_staff_new_order: %', SQLERRM; RETURN NEW; END;
-$$;
-DROP TRIGGER IF EXISTS trg_notify_staff_new_order ON psy_orders;
-CREATE TRIGGER trg_notify_staff_new_order
-  AFTER INSERT ON psy_orders
-  FOR EACH ROW EXECUTE FUNCTION trg_notify_staff_new_order();
-
-SELECT 'OK — step71 reaksi reports + order notifications ready' AS status;
-
--- ════════════════════════════════════════════════════════════════
--- step72: Coach Tasks + Substitute Coach  (Jun 2026)
--- ════════════════════════════════════════════════════════════════
-
--- Coach ganti untuk sesi tertentu (patient tetap under coach asal)
-ALTER TABLE psy_plan_weekly_progress
-  ADD COLUMN IF NOT EXISTS substitute_coach_id UUID REFERENCES psy_profiles(id) ON DELETE SET NULL;
-
-COMMENT ON COLUMN psy_plan_weekly_progress.substitute_coach_id IS
-  'Coach ganti untuk sesi ini sahaja — patient kekal bawah coach asal.';
-
--- Task harian peribadi coach (ClickUp-style)
-CREATE TABLE IF NOT EXISTS psy_coach_tasks (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  coach_id     UUID NOT NULL REFERENCES psy_profiles(id) ON DELETE CASCADE,
-  title        TEXT NOT NULL,
-  notes        TEXT,
-  task_date    DATE NOT NULL,
-  status       TEXT DEFAULT 'belum_mula' CHECK (status IN ('belum_mula','dalam_proses','selesai')),
-  priority     TEXT DEFAULT 'sederhana'  CHECK (priority IN ('rendah','sederhana','tinggi')),
-  patient_id   UUID REFERENCES psy_patients(id) ON DELETE SET NULL,
-  session_id   UUID REFERENCES psy_plan_weekly_progress(id) ON DELETE SET NULL,
-  created_at   TIMESTAMPTZ DEFAULT now(),
-  updated_at   TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE psy_coach_tasks ENABLE ROW LEVEL SECURITY;
-
-CREATE INDEX IF NOT EXISTS idx_coach_tasks_coach_date ON psy_coach_tasks (coach_id, task_date);
-
-DROP POLICY IF EXISTS "coach_tasks_own" ON psy_coach_tasks;
-CREATE POLICY "coach_tasks_own" ON psy_coach_tasks
-  USING (coach_id = auth.uid())
-  WITH CHECK (coach_id = auth.uid());
-
-DROP POLICY IF EXISTS "coach_tasks_manager_read" ON psy_coach_tasks;
-CREATE POLICY "coach_tasks_manager_read" ON psy_coach_tasks
-  FOR SELECT USING (
-    EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('manager','admin'))
-  );
-
-SELECT 'Step 72 OK -- coach tasks + substitute coach ready' AS status;
-
--- ════════════════════════════════════════════════════════════════
--- step73: Patient attendance confirmation  (Jun 2026)
--- ════════════════════════════════════════════════════════════════
-
-ALTER TABLE psy_plan_weekly_progress
-  ADD COLUMN IF NOT EXISTS patient_confirmed BOOLEAN DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS patient_absence_reason TEXT DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS patient_confirmed_at TIMESTAMPTZ DEFAULT NULL;
-
-SELECT 'Step 73 OK -- patient attendance confirmation columns added' AS status;
-
--- ════════════════════════════════════════════════════════════════
--- step74: Patient per-session signature  (Jul 2026)
--- Tandatangan pesakit di depan coach (device coach) untuk sahkan sesi.
--- Pilihan sahaja — tidak block status 'hadir'. PNG disimpan di bucket
--- medical-reports; kolum simpan PATH sahaja (signed URL dijana masa papar).
--- ════════════════════════════════════════════════════════════════
-
-ALTER TABLE psy_plan_weekly_progress
-  ADD COLUMN IF NOT EXISTS patient_signature_path TEXT DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS patient_signed_at       TIMESTAMPTZ DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS patient_signed_name     TEXT DEFAULT NULL;
-
-SELECT 'Step 74 OK -- patient per-session signature columns added' AS status;
-
--- ════════════════════════════════════════════════════════════════
--- step75: Override bekalan & sesi PER-PESAKIT PER-MINGGU  (Jul 2026)
--- Templat pakej (psy_packages.coaching_schedule + sessions_per_week) kekal
--- sebagai DEFAULT. Jadual ini simpan PENGECUALIAN untuk satu pesakit, satu
--- minggu sahaja — langsung tak sentuh templat pakej atau pesakit lain.
--- Logik baca di UI: override ?? default_pakej.
---   supplies_override: NULL = ikut pakej; [] = minggu ni TIADA bekalan;
---                      [..] = GANTI penuh senarai bekalan minggu ni.
---   sessions_override: NULL = ikut pakej; 1..7 = paksa bilangan sesi minggu ni.
--- ════════════════════════════════════════════════════════════════
-
--- Longgarkan had session_day (dulu IN (1,2)) supaya boleh >2 sesi seminggu.
-ALTER TABLE psy_plan_weekly_progress
-  DROP CONSTRAINT IF EXISTS psy_plan_weekly_progress_session_day_check;
-ALTER TABLE psy_plan_weekly_progress
-  ADD CONSTRAINT psy_plan_weekly_progress_session_day_check
-  CHECK (session_day BETWEEN 1 AND 7);
-
--- Cipta jadual asas; kolum penuh dipastikan di bawah (kalis jadual separa dari run lama).
-CREATE TABLE IF NOT EXISTS psy_plan_week_overrides (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  plan_id     UUID NOT NULL REFERENCES psy_treatment_plans(id) ON DELETE CASCADE,
-  week_number INT  NOT NULL
-);
-
-ALTER TABLE psy_plan_week_overrides
-  ADD COLUMN IF NOT EXISTS patient_id        UUID REFERENCES psy_patients(id) ON DELETE CASCADE,
-  ADD COLUMN IF NOT EXISTS sessions_override INT,
-  ADD COLUMN IF NOT EXISTS supplies_override JSONB,
-  ADD COLUMN IF NOT EXISTS note              TEXT,
-  ADD COLUMN IF NOT EXISTS updated_by        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS updated_at        TIMESTAMPTZ DEFAULT now();
-
-DO $$ BEGIN
-  ALTER TABLE psy_plan_week_overrides
-    ADD CONSTRAINT psy_plan_week_overrides_sessions_override_check CHECK (sessions_override BETWEEN 1 AND 7);
-EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
-DO $$ BEGIN
-  ALTER TABLE psy_plan_week_overrides
-    ADD CONSTRAINT psy_plan_week_overrides_plan_id_week_number_key UNIQUE (plan_id, week_number);
-EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
-
-CREATE INDEX IF NOT EXISTS idx_psy_plan_week_overrides_plan
-  ON psy_plan_week_overrides(plan_id, week_number);
-
-ALTER TABLE psy_plan_week_overrides ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Staff manage week overrides" ON psy_plan_week_overrides;
-CREATE POLICY "Staff manage week overrides" ON psy_plan_week_overrides FOR ALL
-  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-DROP POLICY IF EXISTS "Patients read own week overrides" ON psy_plan_week_overrides;
-CREATE POLICY "Patients read own week overrides" ON psy_plan_week_overrides FOR SELECT
-  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-
-COMMENT ON TABLE psy_plan_week_overrides IS
-  'Pengecualian bekalan/sesi per-pesakit per-minggu. Kalau tiada baris = ikut default pakej sepenuhnya.';
-
-SELECT 'Step 75 OK -- psy_plan_week_overrides + session_day CHECK relaxed' AS status;
-
--- ════════════════════════════════════════════════════════════════
--- step76: Override HARI-SESI per-pesakit per-minggu  (Jul 2026)
--- Melengkapkan step75. Bilangan sesi seminggu kini boleh beza per-minggu:
---   Peringkat PAKEJ  : psy_packages.coaching_schedule[w].session_days (cth [1,2] / [1] / [2])
---   Peringkat PESAKIT: kolum di bawah — override untuk satu pesakit satu minggu.
--- session_days_override: NULL = ikut pakej; [1,2]=dua sesi; [1]=sesi 1 saja; [2]=sesi 2 saja.
--- (sessions_override INT dari step75 dikekalkan sbg fallback ringkas; session_days lebih tepat.)
--- ════════════════════════════════════════════════════════════════
-
-ALTER TABLE psy_plan_week_overrides
-  ADD COLUMN IF NOT EXISTS session_days_override JSONB;
-
-COMMENT ON COLUMN psy_plan_week_overrides.session_days_override IS
-  'Hari-sesi aktif minggu ini untuk pesakit ini. NULL=ikut pakej; [1,2]/[1]/[2].';
-
-SELECT 'Step 76 OK -- session_days_override added' AS status;
-
--- ════════════════════════════════════════════════════════════════
--- step77: Override BIMBINGAN & AKTIVITI per-pesakit per-minggu  (Jul 2026)
--- Sebelum ni hanya bekalan & sesi boleh override; bimbingan/aktiviti dibaca
--- live dari pakej. Kini coach boleh override juga (mirror supplies_override).
--- Bentuk: { "1":[...], "2":[...] } per-sesi. NULL=ikut pakej; []=tiada.
--- ════════════════════════════════════════════════════════════════
-
-ALTER TABLE psy_plan_week_overrides
-  ADD COLUMN IF NOT EXISTS guidance_override JSONB,
-  ADD COLUMN IF NOT EXISTS aktiviti_override JSONB;
-
-COMMENT ON COLUMN psy_plan_week_overrides.guidance_override IS
-  'Bimbingan/Calling khas pesakit ini per-sesi. {"1":[...],"2":[...]}. NULL=ikut pakej; []=tiada.';
-COMMENT ON COLUMN psy_plan_week_overrides.aktiviti_override IS
-  'Aktiviti khas pesakit ini per-sesi. {"1":[...],"2":[...]}. NULL=ikut pakej; []=tiada.';
-
-SELECT 'Step 77 OK -- guidance_override + aktiviti_override added' AS status;
-
--- ════════════════════════════════════════════════════════════════
--- step77: Continuity package offers  (Jul 2026)
--- Coach cadang pakej sambungan kpd pesakit yang tinggal ≤4 minggu rawatan.
--- Tawaran tersimpan (bukan sekadar notifikasi) supaya coach nampak status.
--- Pesakit Terima → terus ke pembayaran (localStorage isw_pending_payment).
--- package_uuid = psy_packages.id (UUID yg app guna sbg active_package_id).
--- ════════════════════════════════════════════════════════════════
-
-CREATE TABLE IF NOT EXISTS psy_continuity_offers (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  plan_id       UUID REFERENCES psy_treatment_plans(id) ON DELETE CASCADE,
-  patient_id    UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
-  suggested_by  UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
-  package_uuid  UUID,
-  package_name  TEXT,
-  price         NUMERIC(10,2),
-  note          TEXT,
-  status        TEXT DEFAULT 'sent' CHECK (status IN ('sent','viewed','accepted','declined','cancelled')),
-  created_at    TIMESTAMPTZ DEFAULT now(),
-  responded_at  TIMESTAMPTZ
-);
-
-CREATE INDEX IF NOT EXISTS idx_psy_continuity_offers_patient
-  ON psy_continuity_offers(patient_id, status, created_at DESC);
-
-ALTER TABLE psy_continuity_offers ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "Staff manage continuity offers" ON psy_continuity_offers FOR ALL
-    USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Patients read own continuity offers" ON psy_continuity_offers FOR SELECT
-    USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Patients respond own continuity offers" ON psy_continuity_offers FOR UPDATE
-    USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-COMMENT ON TABLE psy_continuity_offers IS
-  'Cadangan pakej sambungan oleh coach utk pesakit baki ≤4 minggu. Terima → pembayaran.';
-
-SELECT 'Step 77 OK -- psy_continuity_offers ready' AS status;
-
--- ════════════════════════════════════════════════════════════════
--- step80: Auto-tandai pesakit "Tidak Aktif" bila semua sesi selesai / pakej tamat
--- ════════════════════════════════════════════════════════════════
-CREATE OR REPLACE FUNCTION fn_auto_inactive_on_session_done()
-RETURNS TRIGGER AS $$
-DECLARE
-  v_patient_id  UUID;
-  v_pstatus     TEXT;
-  v_pkg_expired BOOLEAN;
-  v_all_done    BOOLEAN;
-  v_has_core    BOOLEAN;
-  v_next_pkg    TEXT;
-  v_next_name   TEXT;
-BEGIN
-  IF NEW.status NOT IN ('hadir','consultation_done') THEN RETURN NEW; END IF;
-  IF TG_OP = 'UPDATE' AND OLD.status = NEW.status THEN RETURN NEW; END IF;
-
-  SELECT patient_id INTO v_patient_id FROM psy_treatment_plans WHERE id = NEW.plan_id;
-  IF v_patient_id IS NULL THEN RETURN NEW; END IF;
-
-  -- v_all_done kira sesi teras BELUM selesai + minggu continuity BERBAYAR belum selesai (step92).
-  -- Minggu continuity ditanda extension_for_week = 0; absen (extension_for_week >= 1) tak menghalang.
-  SELECT
-    EXISTS (SELECT 1 FROM psy_plan_weekly_progress
-            WHERE plan_id = NEW.plan_id AND COALESCE(is_extension,false) = false),
-    NOT EXISTS (
-      SELECT 1 FROM psy_plan_weekly_progress
-      WHERE plan_id = NEW.plan_id
-        AND status NOT IN ('hadir','consultation_done')
-        AND (
-          COALESCE(is_extension,false) = false
-          OR (COALESCE(extension_for_week, -1) = 0 AND status <> 'extension_pending_payment')
-        )
-    )
-    INTO v_has_core, v_all_done;
-
-  SELECT status, (package_expires_at IS NOT NULL AND package_expires_at < now()),
-         next_package_id, next_package_name
-    INTO v_pstatus, v_pkg_expired, v_next_pkg, v_next_name
-    FROM psy_patients WHERE id = v_patient_id;
-
-  IF v_pstatus IN ('inactive','archived','deceased','deleted') THEN RETURN NEW; END IF;
-
-  IF (v_has_core AND v_all_done) OR v_pkg_expired THEN
-    -- Pelan lama SELESAI (kekal di History — data sesi tak dipadam).
-    UPDATE psy_treatment_plans SET status = 'completed'
-      WHERE id = NEW.plan_id AND status <> 'completed';
-
-    IF v_next_pkg IS NOT NULL AND v_next_pkg <> '' THEN
-      -- Pakej sambungan (continuity) beratur → AUTO-AKTIF, pesakit KEKAL aktif (step93).
-      UPDATE psy_patients
-        SET active_package_id    = v_next_pkg,
-            active_package_name  = COALESCE(v_next_name, active_package_name),
-            package_purchased_at = now(),
-            package_expires_at   = now() + interval '3 months',
-            next_package_id      = NULL,
-            next_package_name    = NULL,
-            status               = 'active'
-        WHERE id = v_patient_id;
-      UPDATE psy_package_purchases
-        SET status = 'active', expires_at = now() + interval '3 months'
-        WHERE patient_id = v_patient_id AND package_id = v_next_pkg AND status = 'queued';
-      INSERT INTO psy_treatment_plans
-        (patient_id, name, template, duration_unit, duration_weeks, current_week, coaching_schedule, status)
-      SELECT v_patient_id, COALESCE(pk.name,'Pakej') || ' Treatment Plan', pk.package_id,
-             COALESCE(pk.duration_unit,'week'), COALESCE(pk.duration_weeks,12), 1,
-             COALESCE(pk.coaching_schedule, '[]'::jsonb), 'active'
-      FROM psy_packages pk
-      WHERE pk.package_id = v_next_pkg
-        AND NOT EXISTS (
-          SELECT 1 FROM psy_treatment_plans
-          WHERE patient_id = v_patient_id AND template = v_next_pkg AND status = 'active'
-        );
-    ELSE
-      -- Tiada sambungan → kelakuan lama: pesakit inactive + outcome completed.
-      UPDATE psy_patients
-        SET status = 'inactive',
-            outcome_status = CASE WHEN outcome_status IS NULL OR outcome_status = ''
-                                  THEN 'completed' ELSE outcome_status END,
-            outcome_status_at = CASE WHEN outcome_status IS NULL OR outcome_status = ''
-                                     THEN now() ELSE outcome_status_at END
-        WHERE id = v_patient_id;
-    END IF;
-  END IF;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
-DROP TRIGGER IF EXISTS trg_auto_inactive ON psy_plan_weekly_progress;
-CREATE TRIGGER trg_auto_inactive
-  AFTER UPDATE ON psy_plan_weekly_progress
-  FOR EACH ROW EXECUTE FUNCTION fn_auto_inactive_on_session_done();
-
-SELECT 'Step 80 OK -- trigger auto-inactive ready' AS status;
-
--- ════════════════════════════════════════════════════════════════
--- step83: Rujukan Klinikal Pesakit (care referral)  (Jul 2026)
--- Coach/staff rujuk pesakit kpd doctor / coach lain / manager (Hakeem/
--- Hakeema). Sasaran spesifik (target_id). Notif type 'referral'.
--- NOTA: psy_referrals sedia ada = ganjaran rujukan pesakit-ke-pesakit;
--- ini feature berbeza → psy_clinical_referrals.
--- ════════════════════════════════════════════════════════════════
-CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id       UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
-  referred_by      UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
-  referred_by_name TEXT,
-  target_role      TEXT NOT NULL CHECK (target_role IN ('doctor','coach','manager')),
-  target_id        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
-  target_name      TEXT,
-  reason           TEXT NOT NULL,
-  meet_date        DATE,
-  priority         TEXT NOT NULL DEFAULT 'sederhana' CHECK (priority IN ('rendah','sederhana','tinggi')),
-  status           TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','resolved','declined')),
-  resolution_note   TEXT,
-  consultation_note TEXT,
-  attachments       JSONB DEFAULT '[]'::jsonb,
-  created_at       TIMESTAMPTZ DEFAULT now(),
-  updated_at       TIMESTAMPTZ DEFAULT now(),
-  resolved_at      TIMESTAMPTZ
-);
-ALTER TABLE psy_clinical_referrals
-  ADD COLUMN IF NOT EXISTS meet_date DATE,
-  ADD COLUMN IF NOT EXISTS consultation_note TEXT,
-  ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT '[]'::jsonb,
-  ADD COLUMN IF NOT EXISTS consultation JSONB DEFAULT '{}'::jsonb;
-UPDATE psy_clinical_referrals SET priority = CASE WHEN priority='segera' THEN 'tinggi' WHEN priority='biasa' THEN 'sederhana' ELSE priority END
-  WHERE priority IS NULL OR priority NOT IN ('rendah','sederhana','tinggi');
-DO $$ DECLARE r RECORD; BEGIN
-  FOR r IN SELECT conname FROM pg_constraint
-    WHERE conrelid='psy_clinical_referrals'::regclass AND contype='c' AND pg_get_constraintdef(oid) ILIKE '%priority%'
-  LOOP EXECUTE 'ALTER TABLE psy_clinical_referrals DROP CONSTRAINT '||quote_ident(r.conname); END LOOP;
-END $$;
-ALTER TABLE psy_clinical_referrals ALTER COLUMN priority SET DEFAULT 'sederhana';
-ALTER TABLE psy_clinical_referrals ADD CONSTRAINT psy_clinical_referrals_priority_check CHECK (priority IN ('rendah','sederhana','tinggi'));
-ALTER TABLE psy_clinical_referrals ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  CREATE POLICY "Staff manage clinical referrals" ON psy_clinical_referrals FOR ALL
-    USING      (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
-    WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-CREATE INDEX IF NOT EXISTS idx_psy_clinical_referrals_target  ON psy_clinical_referrals(target_id, status, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_psy_clinical_referrals_patient ON psy_clinical_referrals(patient_id, created_at DESC);
-
-DO $$ DECLARE r RECORD; BEGIN
-  FOR r IN SELECT conname FROM pg_constraint
-    WHERE conrelid = 'psy_notifications'::regclass AND contype = 'c'
-      AND pg_get_constraintdef(oid) LIKE '%type%'
-  LOOP EXECUTE 'ALTER TABLE psy_notifications DROP CONSTRAINT ' || quote_ident(r.conname); END LOOP;
-END $$;
-ALTER TABLE psy_notifications ADD CONSTRAINT psy_notifications_type_check
-  CHECK (type IN ('appointment','order','plan','system','reaksi','kyc','referral'));
-
-INSERT INTO storage.buckets (id, name, public) VALUES ('referral-docs', 'referral-docs', false) ON CONFLICT DO NOTHING;
-DO $$ BEGIN
-  CREATE POLICY "Staff upload referral docs" ON storage.objects FOR INSERT
+DROP POLICY IF EXISTS "Patient upload own signature" ON storage.objects;
+CREATE POLICY "Patient upload own signature"
+    ON storage.objects FOR INSERT
+    WITH CHECK (
+      bucket_id = 'kob-signatures'
+      AND auth.uid() IS NOT NULL
+      AND (storage.foldername(name))[1] IN (
+        SELECT id::text FROM psy_patients WHERE user_id = auth.uid()
+      )
+    );
+
+DROP POLICY IF EXISTS "Patient read own signature" ON storage.objects;
+CREATE POLICY "Patient read own signature"
+    ON storage.objects FOR SELECT
+    USING (
+      bucket_id = 'kob-signatures'
+      AND auth.uid() IS NOT NULL
+      AND (storage.foldername(name))[1] IN (
+        SELECT id::text FROM psy_patients WHERE user_id = auth.uid()
+      )
+    );
+
+DROP POLICY IF EXISTS "Staff read all signatures" ON storage.objects;
+CREATE POLICY "Staff read all signatures"
+    ON storage.objects FOR SELECT
+    USING (
+      bucket_id = 'kob-signatures'
+      AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
+    );
+
+DROP POLICY IF EXISTS "Staff manage kob documents" ON storage.objects;
+CREATE POLICY "Staff manage kob documents"
+    ON storage.objects FOR ALL
+    USING (
+      bucket_id = 'kob-documents'
+      AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
+    );
+
+DROP POLICY IF EXISTS "Patient read own kob documents" ON storage.objects;
+CREATE POLICY "Patient read own kob documents"
+    ON storage.objects FOR SELECT
+    USING (
+      bucket_id = 'kob-documents'
+      AND auth.uid() IS NOT NULL
+      AND (storage.foldername(name))[1] IN (
+        SELECT id::text FROM psy_patients WHERE user_id = auth.uid()
+      )
+    );
+
+DROP POLICY IF EXISTS "Staff read pakej rujukan" ON storage.objects;
+CREATE POLICY "Staff read pakej rujukan"
+    ON storage.objects FOR SELECT
+    USING (
+      bucket_id = 'pakej-rujukan'
+      AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
+    );
+
+DROP POLICY IF EXISTS "Staff manage pakej rujukan" ON storage.objects;
+CREATE POLICY "Staff manage pakej rujukan"
+    ON storage.objects FOR ALL
+    USING (
+      bucket_id = 'pakej-rujukan'
+      AND EXISTS (
+        SELECT 1 FROM psy_profiles
+        WHERE id = auth.uid()
+        AND role = 'staff'
+        AND staff_role IN ('admin','manager','doctor')
+      )
+    );
+
+DROP POLICY IF EXISTS "medical_upload" ON storage.objects;
+CREATE POLICY "medical_upload" ON storage.objects FOR INSERT TO authenticated
+    WITH CHECK (bucket_id = 'medical-reports');
+
+DROP POLICY IF EXISTS "medical_read_own" ON storage.objects;
+CREATE POLICY "medical_read_own" ON storage.objects FOR SELECT TO authenticated
+    USING (bucket_id = 'medical-reports' AND owner = auth.uid());
+
+DROP POLICY IF EXISTS "medical_read_staff" ON storage.objects;
+CREATE POLICY "medical_read_staff" ON storage.objects FOR SELECT TO authenticated
+    USING (bucket_id = 'medical-reports'
+           AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "medical_delete_own" ON storage.objects;
+CREATE POLICY "medical_delete_own" ON storage.objects FOR DELETE TO authenticated
+    USING (bucket_id = 'medical-reports' AND owner = auth.uid());
+
+DROP POLICY IF EXISTS "wa_outbox_staff_insert" ON storage.objects;
+CREATE POLICY "wa_outbox_staff_insert" ON storage.objects FOR INSERT
+    WITH CHECK (
+      bucket_id = 'wa-outbox'
+      AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
+    );
+
+DROP POLICY IF EXISTS "wa_outbox_public_read" ON storage.objects;
+CREATE POLICY "wa_outbox_public_read" ON storage.objects FOR SELECT
+    USING (bucket_id = 'wa-outbox');
+
+DROP POLICY IF EXISTS "wa_outbox_staff_delete" ON storage.objects;
+CREATE POLICY "wa_outbox_staff_delete" ON storage.objects FOR DELETE
+    USING (
+      bucket_id = 'wa-outbox'
+      AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff')
+    );
+
+DROP POLICY IF EXISTS "avatars_public_read" ON storage.objects;
+CREATE POLICY "avatars_public_read" ON storage.objects FOR SELECT
+    USING (bucket_id = 'avatars');
+
+DROP POLICY IF EXISTS "avatars_authenticated_upload" ON storage.objects;
+CREATE POLICY "avatars_authenticated_upload" ON storage.objects FOR INSERT
+    WITH CHECK (bucket_id = 'avatars' AND auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "avatars_owner_update" ON storage.objects;
+CREATE POLICY "avatars_owner_update" ON storage.objects FOR UPDATE
+    USING (bucket_id = 'avatars' AND auth.uid()::text = (storage.foldername(name))[1])
+    WITH CHECK (bucket_id = 'avatars' AND auth.uid()::text = (storage.foldername(name))[1]);
+
+DROP POLICY IF EXISTS "avatars_owner_delete" ON storage.objects;
+CREATE POLICY "avatars_owner_delete" ON storage.objects FOR DELETE
+    USING (bucket_id = 'avatars' AND auth.uid()::text = (storage.foldername(name))[1]);
+
+DROP POLICY IF EXISTS "Staff upload referral docs" ON storage.objects;
+CREATE POLICY "Staff upload referral docs" ON storage.objects FOR INSERT
     WITH CHECK (bucket_id = 'referral-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Staff read referral docs" ON storage.objects FOR SELECT
+
+DROP POLICY IF EXISTS "Staff read referral docs" ON storage.objects;
+CREATE POLICY "Staff read referral docs" ON storage.objects FOR SELECT
     USING (bucket_id = 'referral-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  CREATE POLICY "Staff delete referral docs" ON storage.objects FOR DELETE
+
+DROP POLICY IF EXISTS "Staff delete referral docs" ON storage.objects;
+CREATE POLICY "Staff delete referral docs" ON storage.objects FOR DELETE
     USING (bucket_id = 'referral-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-SELECT 'Step 83 OK -- psy_clinical_referrals ready' AS status;
+DROP POLICY IF EXISTS "kb_media_staff_write" ON storage.objects;
+CREATE POLICY "kb_media_staff_write" ON storage.objects
+    FOR INSERT TO authenticated
+    WITH CHECK (bucket_id = 'kb-media' AND kb_is_staff());
 
+DROP POLICY IF EXISTS "kb_media_staff_update" ON storage.objects;
+CREATE POLICY "kb_media_staff_update" ON storage.objects
+    FOR UPDATE TO authenticated
+    USING (bucket_id = 'kb-media' AND kb_is_staff());
 
--- ════════════════════════════════════════════════════════════════
--- step97_flexible_schedule.sql
--- ════════════════════════════════════════════════════════════════
--- Jadual rawatan fleksibel (ikut pakej) + slot masa global.
--- Wizard plan.html baca sessions_per_week (1-2) + session_days_options
--- pakej, dan slot masa global (psy_settings), bukan hardcode fri_sat/sat_sun.
+DROP POLICY IF EXISTS "kb_media_staff_delete" ON storage.objects;
+CREATE POLICY "kb_media_staff_delete" ON storage.objects
+    FOR DELETE TO authenticated
+    USING (bucket_id = 'kb-media' AND kb_is_staff());
 
--- Longgarkan CHECK preferred_pair (dulu IN ('fri_sat','sat_sun')).
-DO $$
-DECLARE r RECORD;
-BEGIN
-  FOR r IN
-    SELECT conname FROM pg_constraint
-    WHERE conrelid = 'psy_treatment_plans'::regclass
-      AND contype = 'c'
-      AND pg_get_constraintdef(oid) ILIKE '%preferred_pair%'
-  LOOP
-    EXECUTE 'ALTER TABLE psy_treatment_plans DROP CONSTRAINT ' || quote_ident(r.conname);
-  END LOOP;
-END $$;
+DROP POLICY IF EXISTS "kb_media_public_read" ON storage.objects;
+CREATE POLICY "kb_media_public_read" ON storage.objects
+    FOR SELECT USING (bucket_id = 'kb-media');
 
-ALTER TABLE psy_treatment_plans
-  ADD COLUMN IF NOT EXISTS preferred_days    JSONB DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS sessions_per_week INT   DEFAULT NULL;
-
-COMMENT ON COLUMN psy_treatment_plans.preferred_days IS
-  'Hari sesi terpilih dalam getDay() JS (0=Ahad..6=Sabtu), ikut turutan sesi. Cth [5,6]=Jum+Sab, [6]=Sab. Fallback ke preferred_pair utk plan lama.';
-COMMENT ON COLUMN psy_treatment_plans.sessions_per_week IS
-  'Bilangan sesi/minggu (1-2) disalin dari pakej masa setup jadual.';
-
-INSERT INTO psy_settings (key, value) VALUES
-  ('schedule_time_slots',
-   '[{"value":"09:00","label":"9:00 AM"},{"value":"10:00","label":"10:00 AM"},{"value":"14:00","label":"2:00 PM"},{"value":"15:00","label":"3:00 PM"},{"value":"16:00","label":"4:00 PM"}]'::jsonb)
-ON CONFLICT (key) DO NOTHING;
-
-SELECT 'Step 97 OK -- flexible schedule ready' AS status;
-
-
--- ════════════════════════════════════════════════════════════════
--- step98_rbac_all_pages_buttons.sql
--- ════════════════════════════════════════════════════════════════
--- ════════════════════════════════════════════════════════════════
--- step98: RBAC penuh — SEMUA halaman berdaftar + SEMUA butang boleh on/off
--- 1) Modul baru utk halaman yang tercicir: reaksi, rujukan, kehadiran (staff)
---    + pat_sejarah (patient: sejarah-pembayaran.html & resit.html)
--- 2) Daftar SEMUA action (view/create/edit/delete/export) utk setiap modul
---    staff dalam psy_module_actions → setiap cell dalam matrix peranan.html
---    boleh di-toggle.
--- 3) Grant behaviour-preserving: role yang sudah ada 'view' pada satu modul
---    diberi create/edit/delete/export sekali (sebelum ini butang TIDAK digate,
---    jadi ini mengekalkan tingkah laku semasa — admin boleh untick kemudian).
--- ════════════════════════════════════════════════════════════════
-
--- ── 1) Modul baru ────────────────────────────────────────────────
-INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
-  ('reaksi',      'Reaksi & Tindakan',   '🩹', 'staff',    72),
-  ('rujukan',     'Rujukan',             '🔀', 'staff',    76),
-  ('kehadiran',   'Laporan Kehadiran',   '📋', 'staff',   205),
-  ('pat_sejarah', 'Sejarah Pembayaran',  '🧾', 'patient',  95)
-ON CONFLICT (code) DO UPDATE SET
-  label = EXCLUDED.label,
-  icon  = EXCLUDED.icon,
-  scope = EXCLUDED.scope,
-  sort_order = EXCLUDED.sort_order;
-
--- ── 2) Daftar SEMUA action untuk SETIAP modul (staff + patient) ──
---      Tiada lagi cell "—" (Tidak Berkenaan) dalam peranan.html —
---      SEMUA kotak boleh di-toggle, dan boleh di-ON bila perlu kelak.
-INSERT INTO psy_module_actions (module_code, action_code)
-SELECT m.code, a.code
-FROM psy_modules m
-CROSS JOIN psy_actions a
-ON CONFLICT DO NOTHING;
-
--- ── 3) Default grants modul baru ─────────────────────────────────
--- Halaman ini sebelum step98 TERBUKA kepada semua staff (tiada guard),
--- jadi grant view kepada semua role staff — kekalkan akses semasa.
-INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
-SELECT r.code, m.code, 'view'
-FROM psy_roles r
-CROSS JOIN (VALUES ('reaksi'), ('rujukan'), ('kehadiran')) AS m(code)
-WHERE r.code IN ('super_admin','manager','admin','doctor','coach')
-ON CONFLICT DO NOTHING;
-
--- Sejarah pembayaran pesakit: ON secara default
-INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
-VALUES ('patient', 'pat_sejarah', 'view')
-ON CONFLICT DO NOTHING;
-
--- ── 4) Behaviour-preserving: view ⇒ create/edit/delete/export ────
--- Untuk setiap (role, modul staff) yang sudah ada 'view', beri juga
--- action lain supaya butang yang baru digate tidak hilang serta-merta.
-INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
-SELECT rma.role_code, rma.module_code, a.code
-FROM psy_role_module_actions rma
-JOIN psy_modules m ON m.code = rma.module_code AND m.scope = 'staff'
-CROSS JOIN psy_actions a
-WHERE rma.action_code = 'view'
-  AND a.code IN ('create','edit','delete','export')
-  AND rma.role_code <> 'patient'
-ON CONFLICT DO NOTHING;
-
--- ── Verifikasi ──
-SELECT 'Step 98 OK — semua halaman dalam RBAC + semua butang boleh on/off' AS status;
-SELECT m.code, m.label, m.scope,
-       COUNT(ma.action_code) AS actions_berdaftar
-FROM psy_modules m
-LEFT JOIN psy_module_actions ma ON ma.module_code = m.code
-WHERE m.is_active
-GROUP BY m.code, m.label, m.scope, m.sort_order
-ORDER BY m.scope DESC, m.sort_order;
+DROP POLICY IF EXISTS "Patients can upload own medical reports" ON storage.objects;
+CREATE POLICY "Patients can upload own medical reports" ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    bucket_id = 'medical-reports'
+    AND (storage.foldername(name))[1] = 'patient'
+    AND EXISTS (
+      SELECT 1 FROM psy_patients
+      WHERE user_id = auth.uid() AND id::text = (storage.foldername(name))[2]
+    )
+  );
