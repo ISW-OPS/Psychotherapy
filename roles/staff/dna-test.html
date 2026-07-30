@@ -61,6 +61,16 @@
     justify-content:center; flex-shrink:0; }
 
   .dt-section-title { font-weight:700; color:#111; display:flex; align-items:center; gap:6px; margin-bottom:10px; }
+
+  /* Scan Barcode modal — bingkai + garis imbas */
+  .dt-scan-frame { position:absolute; inset:12%; border:2px solid rgba(255,255,255,.85); border-radius:10px; pointer-events:none; }
+  .dt-scan-frame::before, .dt-scan-frame::after { content:''; position:absolute; width:22px; height:22px; border-color:#4ade80; }
+  .dt-scan-line { position:absolute; left:4%; right:4%; height:2px; background:linear-gradient(90deg,transparent,#4ade80,transparent);
+    box-shadow:0 0 8px 1px #4ade80; animation:dt-scan-move 1.8s ease-in-out infinite; }
+  @keyframes dt-scan-move { 0%,100% { top:6%; } 50% { top:94%; } }
+  .dt-scan-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#4ade80; margin-right:5px;
+    animation:dt-scan-pulse 1s ease-in-out infinite; }
+  @keyframes dt-scan-pulse { 0%,100% { opacity:1; } 50% { opacity:.25; } }
 </style>
 </head>
 <body class="min-h-screen bg-cream">
@@ -513,14 +523,20 @@ function renderStep2() {
     </div>
 
     <!-- Modal Scan Barcode -->
-    <div id="dt-scan-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div class="bg-white rounded-2xl p-4 max-w-sm w-full">
+    <div id="dt-scan-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-2 sm:p-4">
+      <div class="bg-white rounded-2xl p-4 max-w-lg w-full">
         <div class="flex items-center justify-between mb-2">
           <h3 class="font-bold text-sm text-ink">Scan Barcode</h3>
-          <button onclick="closeScanModal()" class="text-ink/40 hover:text-ink text-lg leading-none">✕</button>
+          <div class="flex items-center gap-2">
+            <button id="dt-scan-torch-btn" onclick="toggleScanTorch()" class="hidden text-xs font-semibold px-2.5 py-1 rounded-lg border border-ink/15 text-ink/60 hover:bg-ink/5">🔦 Lampu Suluh</button>
+            <button onclick="closeScanModal()" class="text-ink/40 hover:text-ink text-lg leading-none">✕</button>
+          </div>
         </div>
-        <video id="dt-scan-video" class="w-full rounded-lg bg-black aspect-video" autoplay playsinline muted></video>
-        <p id="dt-scan-status" class="text-xs text-ink/50 mt-2 text-center">Halakan kamera ke barcode…</p>
+        <div class="relative w-full rounded-lg bg-black overflow-hidden" style="height:min(70vh,480px);">
+          <video id="dt-scan-video" class="w-full h-full object-cover" autoplay playsinline muted></video>
+          <div class="dt-scan-frame"><div class="dt-scan-line"></div></div>
+        </div>
+        <p id="dt-scan-status" class="text-xs text-ink/50 mt-2 text-center"><span class="dt-scan-dot"></span>Halakan kamera ke barcode — dekatkan sehingga barcode penuhi bingkai</p>
       </div>
     </div>
 
@@ -608,6 +624,7 @@ window.shareCoordinatorPhoto = shareCoordinatorPhoto;
 
 // ── Scan Barcode (kamera) — guna ZXing (library JS, berfungsi di semua browser termasuk Safari/iOS) ──
 let _zxingReader = null;
+let _dtScanNoResultTimer = null;
 
 async function openScanModal() {
   if (typeof ZXing === 'undefined') {
@@ -615,8 +632,9 @@ async function openScanModal() {
     return;
   }
   document.getElementById('dt-scan-modal').classList.remove('hidden');
+  document.getElementById('dt-scan-torch-btn').classList.add('hidden');
   const statusEl = document.getElementById('dt-scan-status');
-  statusEl.textContent = 'Halakan kamera ke barcode…';
+  statusEl.innerHTML = '<span class="dt-scan-dot"></span>Halakan kamera ke barcode — dekatkan sehingga barcode penuhi bingkai';
   const onResult = (result, err) => {
     if (result) {
       document.getElementById('dt-s2-barcode').value = result.getText();
@@ -624,20 +642,70 @@ async function openScanModal() {
       closeScanModal();
     }
   };
+  // Cuba dapatkan resolusi lebih tinggi + minta kamera fokus rapat (macro/continuous) —
+  // barcode kecil pada kit ATGC perlukan fokus jarak dekat, bukan default fokus jauh.
+  const constraints = {
+    video: {
+      facingMode: 'environment',
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      advanced: [{ focusMode: 'continuous' }]
+    }
+  };
   try {
-    _zxingReader = new ZXing.BrowserMultiFormatReader();
+    // hints: TRY_HARDER buat ZXing analisa lebih teliti (frame lebih perlahan tapi kesan lebih tepat)
+    const hints = new Map();
+    if (ZXing.DecodeHintType) hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+    _zxingReader = new ZXing.BrowserMultiFormatReader(hints, 150);
     if (typeof _zxingReader.decodeFromConstraints === 'function') {
-      await _zxingReader.decodeFromConstraints({ video: { facingMode: 'environment' } }, 'dt-scan-video', onResult);
+      await _zxingReader.decodeFromConstraints(constraints, 'dt-scan-video', onResult);
     } else {
       await _zxingReader.decodeFromVideoDevice(undefined, 'dt-scan-video', onResult);
     }
+    setupScanTrackControls();
+    clearTimeout(_dtScanNoResultTimer);
+    _dtScanNoResultTimer = setTimeout(() => {
+      if (!document.getElementById('dt-scan-modal').classList.contains('hidden')) {
+        statusEl.innerHTML = '<span class="dt-scan-dot"></span>Masih mencari… cuba dekat/jauhkan sikit, elak bayang & pastikan cukup cahaya';
+      }
+    }, 6000);
   } catch (e) {
     statusEl.textContent = 'Gagal akses kamera: ' + e.message;
   }
 }
 window.openScanModal = openScanModal;
 
+// Dedah kawalan track (autofocus + torch) — sokongan berbeza ikut peranti/browser, jadi semua dibalut try/catch senyap.
+function setupScanTrackControls() {
+  const video = document.getElementById('dt-scan-video');
+  const track = video.srcObject && video.srcObject.getVideoTracks ? video.srcObject.getVideoTracks()[0] : null;
+  if (!track || !track.getCapabilities) return;
+  let caps = {};
+  try { caps = track.getCapabilities(); } catch (e) { return; }
+  if (caps.focusMode && caps.focusMode.includes('continuous')) {
+    track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+  }
+  if (caps.torch) {
+    document.getElementById('dt-scan-torch-btn').classList.remove('hidden');
+  }
+}
+
+async function toggleScanTorch() {
+  const video = document.getElementById('dt-scan-video');
+  const track = video.srcObject && video.srcObject.getVideoTracks ? video.srcObject.getVideoTracks()[0] : null;
+  if (!track) return;
+  const btn = document.getElementById('dt-scan-torch-btn');
+  const on = btn.dataset.on === '1';
+  try {
+    await track.applyConstraints({ advanced: [{ torch: !on }] });
+    btn.dataset.on = on ? '0' : '1';
+    btn.classList.toggle('bg-amber-100', !on);
+  } catch (e) { /* torch tak disokong walau capability wujud — abaikan senyap */ }
+}
+window.toggleScanTorch = toggleScanTorch;
+
 function closeScanModal() {
+  clearTimeout(_dtScanNoResultTimer);
   document.getElementById('dt-scan-modal').classList.add('hidden');
   if (_zxingReader) { _zxingReader.reset(); _zxingReader = null; }
 }
