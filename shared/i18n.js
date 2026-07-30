@@ -1,8 +1,10 @@
 /* ============================================================
    ISW i18n — bilingual (BM ⇄ EN) engine + shared glossary.
-   ─ Approach: source text in HTML is Malay (BM). When the user
-     picks English, we swap matching text using the EN glossary
-     below. Untranslated strings stay BM until added here.
+   ─ Approach: most source text in HTML is Malay (BM) — picking
+     English swaps it via the EN glossary below. Some UI text was
+     authored directly in English instead; picking BM swaps THAT
+     via the MS glossary (shared/i18n-dict-ms.js). Either way,
+     whatever isn't in the matching dict simply stays as-authored.
    ─ Persistence: choice saved in localStorage('isw_lang').
    ─ Coverage: text nodes + placeholder/title/aria-label attrs,
      plus dynamically-added content (navbar, topbar, lists…) via
@@ -185,6 +187,14 @@
   if (window.ISW_I18N_EXTRA) { for (var k in window.ISW_I18N_EXTRA) if (!(k in EN)) EN[k] = window.ISW_I18N_EXTRA[k]; }
   window.ISW_I18N_EN = EN;
 
+  // ── Reverse glossary: English (source) → Malay ──────────────
+  // Some UI text was authored directly in English (not translated from a BM
+  // source). This dict lets BM mode translate that text too, instead of just
+  // leaving it in English. Populated entirely from shared/i18n-dict-ms.js.
+  var MS = {};
+  if (window.ISW_I18N_EXTRA_MS) { for (var k3 in window.ISW_I18N_EXTRA_MS) MS[k3] = window.ISW_I18N_EXTRA_MS[k3]; }
+  window.ISW_I18N_MS = MS;
+
   var SKIP_TAGS = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEXTAREA: 1, CODE: 1, PRE: 1, SVG: 1 };
   var ATTRS = ['placeholder', 'title', 'aria-label'];
 
@@ -199,17 +209,32 @@
     return lead + t + trail;
   }
 
+  function translateToMs(s) {
+    if (s == null) return null;
+    var key = s.trim();
+    if (!key) return null;
+    var t = MS[key];
+    if (t == null) return null;
+    var lead = s.match(/^\s*/)[0];
+    var trail = s.match(/\s*$/)[0];
+    return lead + t + trail;
+  }
+
+  // Resolves the text to show for the given original (as-authored) string:
+  // BM source → EN dict when lang is 'en'; English-authored source → MS dict
+  // when lang is 'ms'. Falls back to the original when no entry matches.
+  function resolve(orig, lang) {
+    var t = lang === 'en' ? translate(orig) : translateToMs(orig);
+    return t != null ? t : orig;
+  }
+
   function handleTextNode(node, lang) {
     if (!node.nodeValue || !node.nodeValue.trim()) return;
     var p = node.parentNode;
     if (p && SKIP_TAGS[p.nodeName]) return;
     if (node.__iswOrig == null) node.__iswOrig = node.nodeValue;
-    if (lang === 'en') {
-      var t = translate(node.__iswOrig);
-      if (t != null) node.nodeValue = t;
-    } else if (node.nodeValue !== node.__iswOrig) {
-      node.nodeValue = node.__iswOrig;
-    }
+    var next = resolve(node.__iswOrig, lang);
+    if (node.nodeValue !== next) node.nodeValue = next;
   }
 
   function handleAttrs(el, lang) {
@@ -218,12 +243,8 @@
       if (!el.hasAttribute || !el.hasAttribute(a)) continue;
       var ck = '__iswOrig_' + a;
       if (el[ck] == null) el[ck] = el.getAttribute(a);
-      if (lang === 'en') {
-        var t = translate(el[ck]);
-        if (t != null) el.setAttribute(a, t);
-      } else {
-        el.setAttribute(a, el[ck]);
-      }
+      var next = resolve(el[ck], lang);
+      if (el.getAttribute(a) !== next) el.setAttribute(a, next);
     }
   }
 

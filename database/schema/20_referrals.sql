@@ -130,6 +130,11 @@ CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
   consultation_note TEXT,                       -- nota sesi rujukan (Hakeem/doctor/coach)
   consultation      JSONB DEFAULT '{}'::jsonb,  -- borang konsultasi berstruktur
   attachments       JSONB DEFAULT '[]'::jsonb,  -- transkrip/dokumen: [{name,path,uploaded_at}]
+  -- Sesi 1:1 auto-jana dari week plan (cth Hakeema 1:1 minggu 6/11) — plan_id+week_number
+  -- kekal NULL utk rujukan manual biasa. source='plan_1on1' + unique index elak duplicate.
+  plan_id           UUID REFERENCES psy_treatment_plans(id) ON DELETE SET NULL,
+  week_number       INT,
+  source            TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','plan_1on1')),
   created_at        TIMESTAMPTZ DEFAULT now(),
   updated_at        TIMESTAMPTZ DEFAULT now(),
   resolved_at       TIMESTAMPTZ
@@ -137,6 +142,8 @@ CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
 
 CREATE INDEX IF NOT EXISTS idx_psy_clinical_referrals_target  ON psy_clinical_referrals(target_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_psy_clinical_referrals_patient ON psy_clinical_referrals(patient_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_psy_clinical_referrals_plan_1on1
+  ON psy_clinical_referrals(plan_id, week_number) WHERE source = 'plan_1on1';
 
 ALTER TABLE psy_clinical_referrals ENABLE ROW LEVEL SECURITY;
 

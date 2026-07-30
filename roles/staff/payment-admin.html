@@ -568,10 +568,23 @@ async function loadData() {
   renderTable();
 }
 
+function subscribePaymentsRealtime() {
+  if (!window.db || window._paymentsRtSub) return;
+  window._paymentsRtSub = true;
+  window.db.channel('payments-live')
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'psy_payments' }, (p) => {
+      loadData();
+      if (p.new?.status === 'completed') banner('💳 Pembayaran diterima — RM ' + Number(p.new.total || 0).toFixed(2), 'ok');
+    })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'psy_payments' }, () => loadData())
+    .subscribe();
+}
+
 async function init() {
   const user = await initStaff('payment_admin', 'Pembayaran');
   if (!user) return;
   await loadData();
+  subscribePaymentsRealtime();
 }
 
 init();

@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS psy_reaksi_item (
   urutan           INT  NOT NULL DEFAULT 0,           -- susunan global (kumpulan + item)
   aktif            BOOLEAN NOT NULL DEFAULT true,
   tahap_risiko     TEXT    NOT NULL DEFAULT 'rendah',
+  boleh_pilih_teruk BOOLEAN NOT NULL DEFAULT true,  -- pesakit pilih Biasa/Teruk (Teruk→Merah terus); false = ikut tahap_risiko tetap
   markah_risiko    INT     NOT NULL DEFAULT 5,
   penerangan       TEXT,
   contoh           JSONB   NOT NULL DEFAULT '[]',
@@ -47,6 +48,7 @@ CREATE POLICY "Authenticated boleh baca reaksi item" ON psy_reaksi_item FOR SELE
   TO authenticated USING (true);
 
 COMMENT ON COLUMN psy_reaksi_item.tahap_risiko  IS 'rendah (Green) / sederhana (Yellow) / tinggi (Red)';
+COMMENT ON COLUMN psy_reaksi_item.boleh_pilih_teruk IS 'true = pesakit tanda Biasa/Teruk di Catatan Harian (Teruk→Merah terus, apa-apa tahap_risiko pun); false = tiada pilihan, terus ikut tahap_risiko';
 COMMENT ON COLUMN psy_reaksi_item.markah_risiko IS 'Julat 1-100, semakin tinggi semakin berisiko';
 COMMENT ON COLUMN psy_reaksi_item.contoh        IS 'Array string — contoh bagaimana simptom dirasai pesakit';
 COMMENT ON COLUMN psy_reaksi_item.is_emergency  IS 'Simptom kecemasan: advice log ditanda emergency (tidak auto-hantar WA)';

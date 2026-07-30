@@ -81,7 +81,7 @@ const STAFF_NAV_ICONS = {
   kob_list:         'KOB.png',
   kepatuhan:        'catatan-harian.png',
   psy_vitals:       'Vital-rekod.png',
-  risk:             'Risk.png',
+  emergency:        'Risk.png',
   pakej:            'Pakej-rawatan.png',
   psy_products:     'shop.png',
   psy_orders:       'Orders&tracking.png',
@@ -128,11 +128,13 @@ const STAFF_NAV_MASTER = [
       { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Kalendar & Jadual' },
       { id: 'plan_week', url: 'weekly-plan.html', icon: '📋', label: 'Weekly Plan' },
       { id: 'kob_list', url: 'kob-list.html', icon: '🩺', label: 'Sesi KOB' },
-      { id: 'kepatuhan', url: 'kepatuhan.html', icon: '📊', label: 'Kepatuhan' },
+      { id: 'kepatuhan', url: 'kepatuhan.html', icon: '📊', label: 'Poll' },
       { id: 'reaksi_advice', url: 'reaksi-item.html', icon: '🩹', label: 'Reaksi & Tindakan' },
       { id: 'psy_vitals', url: 'vitals.html', icon: '💓', label: 'Bacaan Vitals' },
       { id: 'rujukan', url: 'rujukan.html', icon: '🔀', label: 'Rujukan' },
-      { id: 'risk', url: 'risk.html', icon: '⚠️', label: 'Amaran Risiko' },
+      { id: 'emergency', url: 'emergency.html', icon: '🚨', label: 'Red Emergency Protocol' },
+      { id: 'peristiwa', url: 'peristiwa.html', icon: '🏥', label: 'Peristiwa Pesakit' },
+      { id: 'dna_test', url: 'dna-test-list.html', icon: '🧬', label: 'DNA Test' },
     ]
   },
   {
@@ -143,6 +145,7 @@ const STAFF_NAV_MASTER = [
       { id: 'psy_orders', url: 'orders.html', icon: '📦', label: 'Orders & Tracking' },
       { id: 'pulangan', url: 'pulangan.html', icon: '🍯', label: 'Pulangan Botol' },
       { id: 'payment_admin', url: 'payment-admin.html', icon: '💳', label: 'Pembayaran' },
+      { id: 'affiliate', url: 'affiliate.html', icon: '🤝', label: 'Affiliate' },
     ]
   },
   {
@@ -545,7 +548,7 @@ async function loadNavBadges(role, _staffRole, userId) {
   if (!window.db || !userId) return;
   try {
     if (role === 'staff') {
-      const [ordersRes, kycRes, issuesRes, closedRes, invRes, kobRes, patientsRes, riskRes] = await Promise.all([
+      const [ordersRes, kycRes, issuesRes, closedRes, invRes, kobRes, patientsRes, peRes] = await Promise.all([
         window.db.from('psy_orders').select('id', { count: 'exact', head: true }).in('status', ['paid', 'packed']),
         window.db.from('psy_kyc_submissions').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
         window.db.from('psy_audit_log').select('id').eq('action', 'issue.reported'),
@@ -553,7 +556,7 @@ async function loadNavBadges(role, _staffRole, userId) {
         window.db.from('psy_inventory_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending_approval'),
         window.db.from('psy_kob_sessions').select('id', { count: 'exact', head: true }).eq('status', 'booked'),
         window.db.from('psy_patients').select('id', { count: 'exact', head: true }).eq('status', 'pending_kyc'),
-        window.db.from('psy_risk_alerts').select('id', { count: 'exact', head: true }).eq('status', 'open'),
+        window.db.from('psy_patient_events').select('id', { count: 'exact', head: true }).eq('status', 'open'),
       ]);
 
       setNavBadge('psy_orders', ordersRes.count || 0);
@@ -561,7 +564,7 @@ async function loadNavBadges(role, _staffRole, userId) {
       setNavBadge('inventory', invRes.count || 0);
       setNavBadge('kob_list', kobRes.count || 0);
       setNavBadge('psy_patients', patientsRes.count || 0);
-      setNavBadge('risk', riskRes.count || 0); // semua staff nampak semua amaran terbuka
+      setNavBadge('peristiwa', peRes?.count || 0); // peristiwa pesakit terbuka
 
       const closedIds = new Set((closedRes.data || []).map(r => r.meta?.issue_id).filter(Boolean));
       const openCount = (issuesRes.data || []).filter(i => !closedIds.has(i.id)).length;
@@ -839,7 +842,7 @@ function renderHeader(title, subtitle) {
   if (header) header.style.display = 'none';
 }
 
-const NOTIF_ICONS = { appointment: '📅', order: '📦', plan: '💊', system: '📢', reaksi: 'Reaksi', kyc: '🆔', referral: '🔀', default: '🔔' };
+const NOTIF_ICONS = { appointment: '📅', order: '📦', plan: '💊', system: '📢', reaksi: 'Reaksi', kyc: '🆔', referral: '🔀', event: '🏥', payment: '💳', default: '🔔' };
 
 async function loadNotifBadge() {
   if (!window.db) return;
@@ -973,6 +976,11 @@ if (!window.__iswI18n && !document.getElementById('isw-i18n-loader')) {
   d.src = '/shared/i18n-dict.js';
   d.async = false;
   document.head.appendChild(d);
+  const dMs = document.createElement('script');
+  dMs.id = 'isw-i18n-dict-ms-loader';
+  dMs.src = '/shared/i18n-dict-ms.js';
+  dMs.async = false;
+  document.head.appendChild(dMs);
   const s = document.createElement('script');
   s.id = 'isw-i18n-loader';
   s.src = '/shared/i18n.js';

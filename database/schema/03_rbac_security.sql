@@ -306,6 +306,12 @@ ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label, icon=EXCLUDED.icon, sort_
 --   → LAPORAN(190-220) → PENTADBIRAN(230-260) → SISTEM(270-290)
 --   Modul broad/internal (sub-page checks, bukan navbar item) → 300+
 --   Modul portal pesakit (scope='patient') → kod pat_*
+
+-- 'risk' (Amaran Risiko) DIBUANG 22 Jul 2026 — halaman risk.html dipadam
+-- (data demo sahaja, tiada enjin sebenar), digantikan modul 'emergency'
+-- (Red Emergency Protocol) di bawah. CASCADE buang grant lama sekali.
+DELETE FROM psy_modules WHERE code = 'risk';
+
 INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
   -- UTAMA
   ('dashboard',        'Dashboard',            '🏠', 'staff',  10),
@@ -318,7 +324,9 @@ INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
   ('reaksi',           'Reaksi & Tindakan',    '🩹', 'staff',  72),
   ('vitals',           'Bacaan Vitals',        '💓', 'staff',  75),
   ('rujukan',          'Rujukan',              '🔀', 'staff',  76),
-  ('risk',             'Amaran Risiko',        '⚠️', 'staff',  80),
+  ('emergency',        'Red Emergency Protocol','🚨', 'staff',  80),
+  ('patient_events',   'Peristiwa Pesakit',    '🏥', 'staff',  82),
+  ('dna_test',         'DNA Test',             '🧬', 'staff',  84),
   -- OPERASI
   ('package',          'Pakej & Pembayaran',   '🗂️', 'staff',  90),
   ('products',         'Produk',               '🛍️', 'staff', 100),
@@ -326,6 +334,7 @@ INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
   ('orders',           'Orders & Tracking',    '📦', 'staff', 120),
   ('pulangan',         'Pulangan Botol',       '🍯', 'staff', 130),
   ('payment',          'Pembayaran',           '💳', 'staff', 140),
+  ('affiliate',        'Affiliate',            '🤝', 'staff', 145),
   -- KOMUNIKASI
   ('announcements',    'Pengumuman',           '📢', 'staff', 150),
   ('events',           'Acara & Kelas',        '📅', 'staff', 160),
@@ -412,7 +421,7 @@ INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
 SELECT 'doctor', m.code, 'view'
 FROM (VALUES
   ('dashboard'),('patient'),('kyc'),('schedule'),('plan_week'),('kob'),
-  ('kepatuhan'),('reaksi'),('vitals'),('rujukan'),('risk'),
+  ('kepatuhan'),('reaksi'),('vitals'),('rujukan'),('emergency'),('patient_events'),
   ('announcements'),('events'),('library'),('kb'),
   ('kehadiran'),('issue'),('surat'),('kob_slots'),
   ('coaching'),('inventory'),('communication'),('operations')
@@ -424,7 +433,7 @@ INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
 SELECT 'coach', m.code, 'view'
 FROM (VALUES
   ('dashboard'),('patient'),('kyc'),('schedule'),('plan_week'),
-  ('kepatuhan'),('reaksi'),('vitals'),('rujukan'),('risk'),('pulangan'),
+  ('kepatuhan'),('reaksi'),('vitals'),('rujukan'),('emergency'),('patient_events'),('pulangan'),('dna_test'),
   ('announcements'),('events'),('library'),('kb'),
   ('kehadiran'),('issue'),('surat'),
   ('coaching'),('inventory'),('communication'),('operations')
@@ -440,6 +449,7 @@ FROM (VALUES
   ('super_admin','package'),('super_admin','communication'),('super_admin','operations'),
   ('super_admin','reports'),('super_admin','staff'),('super_admin','rbac'),
   ('super_admin','events'),('super_admin','auto_messages'),('super_admin','kb'),
+  ('super_admin','patient_events'),('manager','patient_events'),
   ('manager','patient'),('manager','schedule'),('manager','coaching'),
   ('manager','kob'),('manager','inventory'),('manager','orders'),
   ('manager','package'),('manager','communication'),('manager','operations'),

@@ -210,12 +210,15 @@ FROM _r r JOIN generate_series(0,9) g(d) ON true
 WHERE r.status='active';
 
 -- ════════════════════════ 8. ORDERS ════════════════════════
+-- NOTA: psy_orders.patient_id simpan AUTH/profile id (user_id), BUKAN psy_patients.id
+-- (lihat payments-webhook: patient_id: intent.userId) — dashboard/orders.html cari nama
+-- guna psy_profiles.id. Guna 'd0000...' (user_id), bukan 'c0000...' (psy_patients.id).
 INSERT INTO psy_orders (order_ref, patient_id, items, total, status, created_at) VALUES
-('ORD-2026-0101','c0000000-0000-4000-8000-000000000001','[{"name":"Madu LTH 500g","qty":2}]'::jsonb, 360, 'pending',   now() - interval '2 days'),
-('ORD-2026-0102','c0000000-0000-4000-8000-000000000002','[{"name":"Herba Thoharah","qty":1}]'::jsonb, 180, 'paid',      now() - interval '4 days'),
-('ORD-2026-0103','c0000000-0000-4000-8000-000000000005','[{"name":"Madu LTHPG","qty":3}]'::jsonb, 540, 'packed',        now() - interval '6 days'),
-('ORD-2026-0104','c0000000-0000-4000-8000-000000000006','[{"name":"Minyak Kelapa Dara","qty":2}]'::jsonb, 120, 'delivered', now() - interval '12 days'),
-('ORD-2026-0105','c0000000-0000-4000-8000-000000000003','[{"name":"Probiotik Sachet","qty":1},{"name":"Madu LTH 500g","qty":1}]'::jsonb, 300, 'pending', now() - interval '1 day');
+('ORD-2026-0101','d0000000-0000-4000-8000-000000000001','[{"name":"Madu LTH 500g","qty":2}]'::jsonb, 360, 'pending',   now() - interval '2 days'),
+('ORD-2026-0102','d0000000-0000-4000-8000-000000000002','[{"name":"Herba Thoharah","qty":1}]'::jsonb, 180, 'paid',      now() - interval '4 days'),
+('ORD-2026-0103','d0000000-0000-4000-8000-000000000005','[{"name":"Madu LTHPG","qty":3}]'::jsonb, 540, 'packed',        now() - interval '6 days'),
+('ORD-2026-0104','d0000000-0000-4000-8000-000000000006','[{"name":"Minyak Kelapa Dara","qty":2}]'::jsonb, 120, 'delivered', now() - interval '12 days'),
+('ORD-2026-0105','d0000000-0000-4000-8000-000000000003','[{"name":"Probiotik Sachet","qty":1},{"name":"Madu LTH 500g","qty":1}]'::jsonb, 300, 'pending', now() - interval '1 day');
 
 -- ════════════════════════ 9. PAYMENTS (bayaran pakej) ════════════════════════
 INSERT INTO psy_payments (receipt_ref, patient_id, items, subtotal, service_charge, sst, total, payment_method, status, paid_at, created_at) VALUES

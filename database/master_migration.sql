@@ -1,8 +1,8 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-07-18T01:37:08.751145Z
--- Jumlah fail: 23
+-- Generated: 2026-07-29T14:44:10.297895Z
+-- Jumlah fail: 26
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
 
@@ -421,6 +421,12 @@ ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label, icon=EXCLUDED.icon, sort_
 --   → LAPORAN(190-220) → PENTADBIRAN(230-260) → SISTEM(270-290)
 --   Modul broad/internal (sub-page checks, bukan navbar item) → 300+
 --   Modul portal pesakit (scope='patient') → kod pat_*
+
+-- 'risk' (Amaran Risiko) DIBUANG 22 Jul 2026 — halaman risk.html dipadam
+-- (data demo sahaja, tiada enjin sebenar), digantikan modul 'emergency'
+-- (Red Emergency Protocol) di bawah. CASCADE buang grant lama sekali.
+DELETE FROM psy_modules WHERE code = 'risk';
+
 INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
   -- UTAMA
   ('dashboard',        'Dashboard',            '🏠', 'staff',  10),
@@ -433,7 +439,9 @@ INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
   ('reaksi',           'Reaksi & Tindakan',    '🩹', 'staff',  72),
   ('vitals',           'Bacaan Vitals',        '💓', 'staff',  75),
   ('rujukan',          'Rujukan',              '🔀', 'staff',  76),
-  ('risk',             'Amaran Risiko',        '⚠️', 'staff',  80),
+  ('emergency',        'Red Emergency Protocol','🚨', 'staff',  80),
+  ('patient_events',   'Peristiwa Pesakit',    '🏥', 'staff',  82),
+  ('dna_test',         'DNA Test',             '🧬', 'staff',  84),
   -- OPERASI
   ('package',          'Pakej & Pembayaran',   '🗂️', 'staff',  90),
   ('products',         'Produk',               '🛍️', 'staff', 100),
@@ -441,6 +449,7 @@ INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
   ('orders',           'Orders & Tracking',    '📦', 'staff', 120),
   ('pulangan',         'Pulangan Botol',       '🍯', 'staff', 130),
   ('payment',          'Pembayaran',           '💳', 'staff', 140),
+  ('affiliate',        'Affiliate',            '🤝', 'staff', 145),
   -- KOMUNIKASI
   ('announcements',    'Pengumuman',           '📢', 'staff', 150),
   ('events',           'Acara & Kelas',        '📅', 'staff', 160),
@@ -527,7 +536,7 @@ INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
 SELECT 'doctor', m.code, 'view'
 FROM (VALUES
   ('dashboard'),('patient'),('kyc'),('schedule'),('plan_week'),('kob'),
-  ('kepatuhan'),('reaksi'),('vitals'),('rujukan'),('risk'),
+  ('kepatuhan'),('reaksi'),('vitals'),('rujukan'),('emergency'),('patient_events'),
   ('announcements'),('events'),('library'),('kb'),
   ('kehadiran'),('issue'),('surat'),('kob_slots'),
   ('coaching'),('inventory'),('communication'),('operations')
@@ -539,7 +548,7 @@ INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
 SELECT 'coach', m.code, 'view'
 FROM (VALUES
   ('dashboard'),('patient'),('kyc'),('schedule'),('plan_week'),
-  ('kepatuhan'),('reaksi'),('vitals'),('rujukan'),('risk'),('pulangan'),
+  ('kepatuhan'),('reaksi'),('vitals'),('rujukan'),('emergency'),('patient_events'),('pulangan'),('dna_test'),
   ('announcements'),('events'),('library'),('kb'),
   ('kehadiran'),('issue'),('surat'),
   ('coaching'),('inventory'),('communication'),('operations')
@@ -555,6 +564,7 @@ FROM (VALUES
   ('super_admin','package'),('super_admin','communication'),('super_admin','operations'),
   ('super_admin','reports'),('super_admin','staff'),('super_admin','rbac'),
   ('super_admin','events'),('super_admin','auto_messages'),('super_admin','kb'),
+  ('super_admin','patient_events'),('manager','patient_events'),
   ('manager','patient'),('manager','schedule'),('manager','coaching'),
   ('manager','kob'),('manager','inventory'),('manager','orders'),
   ('manager','package'),('manager','communication'),('manager','operations'),
@@ -1606,6 +1616,33 @@ CREATE POLICY "Staff manage orders" ON psy_orders FOR ALL
 -- Nota trigger pada psy_orders (diletak bersama fungsi masing-masing):
 --   trg_psy_order_deduct_inventory → 14_products_inventory.sql
 --   trg_notify_staff_new_order     → 18_notifications_automations.sql
+
+-- ──── psy_notifications: benarkan type 'payment' ────
+-- GOTCHA (rujuk 27_affiliate.sql): jangan tulis semula senarai type inline
+-- dalam CREATE TABLE — kekalkan semua nilai sedia ada + tambah 'payment'.
+-- Dipakai oleh payments-webhook (notifyStaffPaymentReceived) supaya coach
+-- + admin/manager dapat notifikasi loceng bila pesakit bayar apa-apa jenis
+-- (pakej/KOB/temujanji/sambungan minggu), bukan sekadar shop_order.
+DO $$
+DECLARE
+  v_types TEXT;
+BEGIN
+  SELECT COALESCE(string_agg(DISTINCT quote_literal(type), ','), '') INTO v_types
+  FROM psy_notifications;
+
+  IF v_types = '' THEN
+    v_types := quote_literal('system');
+  END IF;
+  IF position('payment' in v_types) = 0 THEN
+    v_types := v_types || ',' || quote_literal('payment');
+  END IF;
+
+  ALTER TABLE psy_notifications DROP CONSTRAINT IF EXISTS psy_notifications_type_check;
+  EXECUTE format(
+    'ALTER TABLE psy_notifications ADD CONSTRAINT psy_notifications_type_check CHECK (type IN (%s))',
+    v_types
+  );
+END $$;
 
 
 -- ════════════════════════════════════════════════════════════════
@@ -2876,53 +2913,58 @@ CREATE POLICY "kepatuhan_weekly_staff_write" ON psy_kepatuhan_weekly FOR ALL
 
 -- ═══════════════════════════════════════════════════════════════════
 -- SEED — item checklist kepatuhan WEEK 1
--- Set asas semasa (5 item aktif): madu LTH/IB, madu LTHPG/YHPG,
--- zikir bersanad, pantang makan, reaksi pemulihan (tracking sahaja).
--- Item lain (pernafasan, terapi bumi, berjemur, air kelapa, yogurt)
--- dinyahaktif buat sementara — diaktifkan balik bila set penuh diguna.
+-- Set PENUH (11 item aktif) — sepadan checklist manual GForm asal.
+-- Fasa lain (week2_4/week5_12/fasa2/fasa3) sengaja dibiar kosong;
+-- roles/patient/kepatuhan.html carry-forward ke week1 bila fasa
+-- semasa tiada item, jadi set ni terpakai sepanjang rawatan tanpa
+-- perlu pecah ikut minggu/fasa (keputusan user 21 Jul 2026).
 -- Madu (jenis kiraan) guna mata bertingkat: Tidak=0, 2x=1, 3x=2,
 -- 4x=3, 5x=4, Lebih 5x=4 (maks 4 mata/item).
 -- ═══════════════════════════════════════════════════════════════════
 INSERT INTO psy_kepatuhan_item (fasa, item_key, label, nota, jenis_input, period, options, meta, berskor, urutan, aktif) VALUES
 ('week1','madu_lth_ib','Minum Madu (LTH / IB)','LTH: Lote Tree Honey · IB: Immune Booster Honey','kiraan','harian',
- '[{"value":"tidak","label":"Tidak minum","mata":0},{"value":"2","label":"2x","mata":1},{"value":"3","label":"3x","mata":2},{"value":"4","label":"4x","mata":3},{"value":"5","label":"5x","mata":4},{"value":"other","label":"Lebih 5x","mata":4}]',
+ '[{"value":"tidak","label":"Tidak minum","mata":0},{"value":"1","label":"1x","mata":1},{"value":"2","label":"2x","mata":2},{"value":"3","label":"3x","mata":3},{"value":"4","label":"4x","mata":4},{"value":"5","label":"5x","mata":5}]',
  '{"target":3}', true, 1, true),
 
 ('week1','madu_lthpg_yhpg','Minum Madu (LTHPG / YHPG)','LTHPG: Lote Tree Honey Pearl Garlic · YHPG: Young & Healthy Pearl Garlic','kiraan','harian',
- '[{"value":"tidak","label":"Tidak minum","mata":0},{"value":"2","label":"2x","mata":1},{"value":"3","label":"3x","mata":2},{"value":"4","label":"4x","mata":3},{"value":"5","label":"5x","mata":4},{"value":"other","label":"Lebih 5x","mata":4}]',
+ '[{"value":"tidak","label":"Tidak minum","mata":0},{"value":"1","label":"1x","mata":1},{"value":"2","label":"2x","mata":2},{"value":"3","label":"3x","mata":3},{"value":"4","label":"4x","mata":4},{"value":"5","label":"5x","mata":5}]',
  '{"target":3}', true, 2, true),
-
-('week1','zikir_bersanad','Zikir Bersanad Subuh & Maghrib',NULL,'pilih_satu','harian',
- '[{"value":"subuh_maghrib","label":"Buat waktu Subuh & Maghrib","mata":2},{"value":"subuh","label":"Hanya waktu Subuh","mata":1},{"value":"maghrib","label":"Hanya waktu Maghrib","mata":1},{"value":"tidak","label":"Tidak buat","mata":0}]',
- '{}', true, 3, true),
-
-('week1','pantang_makan','Pantang Makan',NULL,'pilih_satu','harian',
- '[{"value":"baik","label":"Menjaga pantang dengan baik","mata":2},{"value":"separa","label":"Pantang tapi tak sepenuhnya","mata":1},{"value":"tidak","label":"Tidak menjaga pantang","mata":0}]',
- '{}', true, 4, true),
-
-('week1','reaksi_pemulihan','Reaksi Pemulihan','Tracking sahaja — tidak dikira dalam skor','pilih_banyak','harian',
- '[{"value":"kerap_kencing","label":"Kerap Kencing"},{"value":"kerap_bab","label":"Kerap Buang Air Besar"},{"value":"gatal","label":"Gatal"},{"value":"selera","label":"Berubah selera makan"},{"value":"bp_naik","label":"Tekanan darah naik"},{"value":"bp_turun","label":"Tekanan darah turun"},{"value":"haid","label":"Haid banyak"},{"value":"kembung","label":"Perut berangin atau kembung"},{"value":"sakit_kepala","label":"Sakit kepala"},{"value":"resdung","label":"Resdung"},{"value":"mencucuk","label":"Rasa sakit mencucuk"},{"value":"radang","label":"Radang, bengkak, kebas, sakit urat"},{"value":"sakit_dada","label":"Sakit dada atau susah bernafas"},{"value":"demam","label":"Demam"},{"value":"lemah","label":"Lemah"},{"value":"mengantuk","label":"Mengantuk"},{"value":"batuk","label":"Batuk atau berkahak"},{"value":"tiada","label":"Tiada"}]',
- '{}', false, 5, true),
 
 ('week1','pernafasan_fitrah','Pernafasan Fitrah 30 Minit',NULL,'pilih_satu','harian',
  '[{"value":"cukup_30","label":"Cukup 30 minit","mata":2},{"value":"10_20","label":"10-20 minit","mata":1},{"value":"bawah_10","label":"Kurang dari 10 minit","mata":0}]',
- '{}', true, 3, false),
+ '{}', true, 3, true),
+
+('week1','zikir_bersanad','Zikir Bersanad Subuh & Maghrib',NULL,'pilih_satu','harian',
+ '[{"value":"subuh_maghrib","label":"Buat waktu Subuh & Maghrib","mata":2},{"value":"subuh","label":"Hanya waktu Subuh","mata":1},{"value":"maghrib","label":"Hanya waktu Maghrib","mata":1},{"value":"tidak","label":"Tidak buat","mata":0}]',
+ '{}', true, 4, true),
 
 ('week1','terapi_bumi','Terapi Bumi',NULL,'pilih_satu','harian',
  '[{"value":"20_30","label":"20-30 minit","mata":2},{"value":"10_20","label":"10-20 minit","mata":1},{"value":"tidak","label":"Tidak buat","mata":0}]',
- '{}', true, 5, false),
+ '{}', true, 5, true),
 
 ('week1','berjemur','Berjemur Matahari',NULL,'pilih_satu','harian',
  '[{"value":"20_30","label":"20-30 minit","mata":2},{"value":"10_20","label":"10-20 minit","mata":1},{"value":"tidak","label":"Tidak buat","mata":0},{"value":"other","label":"Other","mata":1}]',
- '{}', true, 6, false),
+ '{}', true, 6, true),
 
 ('week1','air_kelapa','Air Kelapa',NULL,'pilih_satu','harian',
  '[{"value":"minum","label":"Minum","mata":2},{"value":"tidak","label":"Tidak minum","mata":0}]',
- '{}', true, 7, false),
+ '{}', true, 7, true),
 
 ('week1','yogurt','Yogurt',NULL,'pilih_satu','harian',
  '[{"value":"ambil","label":"Ambil","mata":2},{"value":"tidak","label":"Tidak ambil","mata":0}]',
- '{}', true, 8, false)
+ '{}', true, 8, true),
+
+('week1','pantang_makan','Pantang Makan',NULL,'pilih_satu','harian',
+ '[{"value":"baik","label":"Menjaga pantang dengan baik","mata":2},{"value":"separa","label":"Pantang tapi tak sepenuhnya","mata":1},{"value":"tidak","label":"Tidak menjaga pantang","mata":0}]',
+ '{}', true, 9, true),
+
+('week1','terapi_kolon','Terapi Kolon',NULL,'pilih_satu','harian',
+ '[{"value":"buat","label":"Buat","mata":2},{"value":"tidak","label":"Tidak buat","mata":0}]',
+ '{}', true, 10, true),
+
+('week1','reaksi_pemulihan','Reaksi Pemulihan','Tracking sahaja — tidak dikira dalam skor','pilih_banyak','harian',
+ '[{"value":"kerap_kencing","label":"Kerap Kencing"},{"value":"kerap_bab","label":"Kerap Buang Air Besar"},{"value":"gatal","label":"Gatal"},{"value":"selera","label":"Berubah selera makan"},{"value":"bp_naik","label":"Tekanan darah naik"},{"value":"bp_turun","label":"Tekanan darah turun"},{"value":"haid","label":"Haid banyak"},{"value":"kembung","label":"Perut berangin atau kembung"},{"value":"sakit_kepala","label":"Sakit kepala"},{"value":"resdung","label":"Resdung"},{"value":"mencucuk","label":"Rasa sakit mencucuk"},{"value":"radang","label":"Radang, bengkak, kebas, sakit urat"},{"value":"sakit_dada","label":"Sakit dada atau susah bernafas"},{"value":"demam","label":"Demam"},{"value":"lemah","label":"Lemah"},{"value":"mengantuk","label":"Mengantuk"},{"value":"batuk","label":"Batuk atau berkahak"},{"value":"tiada","label":"Tiada"}]',
+ '{}', false, 11, true)
 
 ON CONFLICT (fasa, item_key) DO UPDATE SET
   label       = EXCLUDED.label,
@@ -2963,6 +3005,7 @@ CREATE TABLE IF NOT EXISTS psy_reaksi_item (
   urutan           INT  NOT NULL DEFAULT 0,           -- susunan global (kumpulan + item)
   aktif            BOOLEAN NOT NULL DEFAULT true,
   tahap_risiko     TEXT    NOT NULL DEFAULT 'rendah',
+  boleh_pilih_teruk BOOLEAN NOT NULL DEFAULT true,  -- pesakit pilih Biasa/Teruk (Teruk→Merah terus); false = ikut tahap_risiko tetap
   markah_risiko    INT     NOT NULL DEFAULT 5,
   penerangan       TEXT,
   contoh           JSONB   NOT NULL DEFAULT '[]',
@@ -2990,6 +3033,7 @@ CREATE POLICY "Authenticated boleh baca reaksi item" ON psy_reaksi_item FOR SELE
   TO authenticated USING (true);
 
 COMMENT ON COLUMN psy_reaksi_item.tahap_risiko  IS 'rendah (Green) / sederhana (Yellow) / tinggi (Red)';
+COMMENT ON COLUMN psy_reaksi_item.boleh_pilih_teruk IS 'true = pesakit tanda Biasa/Teruk di Catatan Harian (Teruk→Merah terus, apa-apa tahap_risiko pun); false = tiada pilihan, terus ikut tahap_risiko';
 COMMENT ON COLUMN psy_reaksi_item.markah_risiko IS 'Julat 1-100, semakin tinggi semakin berisiko';
 COMMENT ON COLUMN psy_reaksi_item.contoh        IS 'Array string — contoh bagaimana simptom dirasai pesakit';
 COMMENT ON COLUMN psy_reaksi_item.is_emergency  IS 'Simptom kecemasan: advice log ditanda emergency (tidak auto-hantar WA)';
@@ -4485,7 +4529,7 @@ ALTER TABLE psy_wa_conversations REPLICA IDENTITY FULL;
 -- automasi + log, audience tersimpan, alert kepatuhan & risiko, task coach.
 -- Jadual: psy_notifications, psy_auto_messages, psy_automations,
 --         psy_notification_logs, psy_audiences, psy_adherence_alerts,
---         psy_risk_alerts, psy_coach_tasks
+--         psy_risk_alerts, psy_emergency_alerts, psy_coach_tasks
 -- ═══════════════════════════════════════════════════════════════════
 
 -- ──── psy_notifications — notifikasi loceng dalam-app ────
@@ -4493,7 +4537,7 @@ CREATE TABLE IF NOT EXISTS psy_notifications (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES psy_profiles(id) ON DELETE CASCADE NOT NULL,
   type TEXT DEFAULT 'system'
-    CHECK (type IN ('appointment','order','plan','system','reaksi','kyc','referral')),
+    CHECK (type IN ('appointment','order','plan','system','reaksi','kyc','referral','event')),
   title TEXT NOT NULL,
   body TEXT,
   link TEXT,
@@ -4633,7 +4677,51 @@ CREATE TRIGGER trg_notify_staff_new_order
   AFTER INSERT ON psy_orders
   FOR EACH ROW EXECUTE FUNCTION trg_notify_staff_new_order();
 
--- ──── Fungsi trigger: alert coach bila advice log zon merah/kuning ────
+-- ──── psy_emergency_alerts — Red Emergency Protocol (worklist zon merah/kuning) ────
+-- Satu alert AKTIF (status <> 'resolved') per pesakit pada satu-satu masa
+-- (dedup dlm trigger di bawah). Bukan gantian psy_risk_alerts (kekal, domain
+-- lain) — khas utk worklist zon.
+CREATE TABLE IF NOT EXISTS psy_emergency_alerts (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id               UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
+  zon                      TEXT NOT NULL CHECK (zon IN ('kuning','merah')),
+  symptoms                 JSONB DEFAULT '[]',   -- snapshot, sama bentuk dgn psy_reaksi_advice_log.symptoms
+  -- source 'patient' ditambah 22 Jul 2026 via migration adaptif (20260722c) —
+  -- pesakit lapor sendiri dari seksyen Protokol Kecemasan di roles/patient/dashboard.html
+  -- (butang kecemasan; bukan lagi halaman berasingan — consolidated 22 Jul 2026).
+  source                   TEXT DEFAULT 'auto' CHECK (source IN ('auto','manual','patient')),
+  source_log_id            UUID REFERENCES psy_reaksi_advice_log(id) ON DELETE SET NULL,
+  reported_at              TIMESTAMPTZ DEFAULT now(),
+  response_target_minutes  INT NOT NULL,          -- 15 (merah) / 60 (kuning)
+  assigned_to               UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,  -- default = coach_id pesakit
+  status                    TEXT DEFAULT 'waiting_coach'
+                             CHECK (status IN ('waiting_coach','contacted','waiting_vital','follow_up','resolved')),
+  resolved_at                TIMESTAMPTZ,
+  resolved_by                UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  notes                     TEXT,                 -- catatan terakhir (staff boleh kemaskini)
+  created_by                 UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,  -- NULL = auto (trigger)
+  created_at                TIMESTAMPTZ DEFAULT now(),
+  updated_at                TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_emergency_alerts_status  ON psy_emergency_alerts(status, reported_at);
+CREATE INDEX IF NOT EXISTS idx_emergency_alerts_patient ON psy_emergency_alerts(patient_id);
+
+ALTER TABLE psy_emergency_alerts ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage emergency alerts" ON psy_emergency_alerts;
+CREATE POLICY "Staff manage emergency alerts" ON psy_emergency_alerts FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- Pesakit boleh BACA alert sendiri sahaja (papar status "Coach akan hubungi
+-- anda" di seksyen Protokol Kecemasan, roles/patient/dashboard.html). INSERT/UPDATE
+-- kekal staff-only — pesakit lapor sendiri via RPC SECURITY DEFINER fn_patient_report_emergency().
+DROP POLICY IF EXISTS "Patient read own emergency alert" ON psy_emergency_alerts;
+CREATE POLICY "Patient read own emergency alert" ON psy_emergency_alerts FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+-- ──── Fungsi trigger: alert coach + worklist kecemasan bila advice log zon merah/kuning ────
 -- Satu submission boleh insert hingga 3 baris mesej serentak; notifikasi
 -- hanya utk BARIS PERTAMA (send_after ≈ created_at; baris 2/3 = +5/+10 min).
 CREATE OR REPLACE FUNCTION trg_reaksi_advice_notify_emergency()
@@ -4642,6 +4730,10 @@ DECLARE
   v_coach_id     UUID;
   v_patient_name TEXT;
   v_first_row    BOOLEAN;
+  v_zon          TEXT;
+  v_target_min   INT;
+  v_open_id      UUID;
+  v_open_zon     TEXT;
 BEGIN
   -- Baris pertama submission sahaja (elak notifikasi berganda 3x)
   v_first_row := (NEW.send_after IS NULL OR NEW.send_after <= NEW.created_at + interval '2 minutes');
@@ -4656,13 +4748,16 @@ BEGIN
   WHERE pt.id = NEW.patient_id;
   IF v_coach_id IS NULL THEN RETURN NEW; END IF;
 
-  IF NEW.is_emergency OR NEW.zon = 'merah' THEN
+  v_zon := CASE WHEN NEW.is_emergency THEN 'merah' ELSE NEW.zon END;
+  v_target_min := CASE WHEN v_zon = 'merah' THEN 15 ELSE 60 END;
+
+  IF v_zon = 'merah' THEN
     INSERT INTO psy_notifications (user_id, type, title, body, link)
     VALUES (
       v_coach_id, 'reaksi',
       '🔴 ZON MERAH: ' || v_patient_name,
       v_patient_name || ' melaporkan simptom tahap tinggi/kecemasan dalam Poll Harian. Pesakit dinasihatkan ke hospital & telah dihantar mesej kritikal — sila susul SEGERA.',
-      'kepatuhan.html'
+      'emergency.html?patient_id=' || NEW.patient_id::TEXT
     );
   ELSE
     INSERT INTO psy_notifications (user_id, type, title, body, link)
@@ -4670,9 +4765,30 @@ BEGIN
       v_coach_id, 'reaksi',
       '🟡 Zon Kuning: ' || v_patient_name,
       v_patient_name || ' melaporkan simptom tahap sederhana dalam Poll Harian — perlukan perhatian coach. Sila semak dan susul pesakit.',
-      'kepatuhan.html'
+      'emergency.html?patient_id=' || NEW.patient_id::TEXT
     );
   END IF;
+
+  -- Worklist: satu alert AKTIF per pesakit — kemaskini kalau dah ada, jangan gandakan.
+  -- Taraf naik kuning→merah dibenarkan; JANGAN turun taraf merah→kuning.
+  SELECT id, zon INTO v_open_id, v_open_zon
+  FROM psy_emergency_alerts WHERE patient_id = NEW.patient_id AND status <> 'resolved'
+  ORDER BY created_at DESC LIMIT 1;
+
+  IF v_open_id IS NOT NULL THEN
+    IF NOT (v_open_zon = 'merah' AND v_zon = 'kuning') THEN
+      UPDATE psy_emergency_alerts
+      SET zon = v_zon, symptoms = COALESCE(NEW.symptoms, symptoms),
+          reported_at = now(), response_target_minutes = v_target_min, updated_at = now()
+      WHERE id = v_open_id;
+    END IF;
+  ELSE
+    INSERT INTO psy_emergency_alerts
+      (patient_id, zon, symptoms, source, source_log_id, response_target_minutes, assigned_to)
+    VALUES
+      (NEW.patient_id, v_zon, COALESCE(NEW.symptoms, '[]'::jsonb), 'auto', NEW.id, v_target_min, v_coach_id);
+  END IF;
+
   RETURN NEW;
 EXCEPTION WHEN OTHERS THEN
   RAISE LOG 'trg_reaksi_advice_notify_emergency: %', SQLERRM;
@@ -4684,6 +4800,65 @@ DROP TRIGGER IF EXISTS trg_reaksi_advice_notify_emergency ON psy_reaksi_advice_l
 CREATE TRIGGER trg_reaksi_advice_notify_emergency
   AFTER INSERT ON psy_reaksi_advice_log
   FOR EACH ROW EXECUTE FUNCTION trg_reaksi_advice_notify_emergency();
+
+-- ──── Fungsi RPC: pesakit tekan butang kecemasan (seksyen Protokol Kecemasan, roles/patient/dashboard.html) ────
+-- Satu alert AKTIF per pesakit — dedup sama logic dgn trigger di atas. Taraf
+-- sentiasa naik ke 'merah' (pesakit tekan butang kecemasan = tahap tertinggi),
+-- tak pernah turun taraf. SECURITY DEFINER supaya pesakit tak perlu grant
+-- INSERT/UPDATE terus ke psy_emergency_alerts (RLS kekal staff-only).
+CREATE OR REPLACE FUNCTION fn_patient_report_emergency(p_channel TEXT DEFAULT 'unknown')
+RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_patient_id   UUID;
+  v_coach_id     UUID;
+  v_patient_name TEXT;
+  v_open_id      UUID;
+  v_alert_id     UUID;
+  v_note         TEXT;
+BEGIN
+  SELECT id, coach_id INTO v_patient_id, v_coach_id FROM psy_patients WHERE user_id = auth.uid() LIMIT 1;
+  IF v_patient_id IS NULL THEN
+    RAISE EXCEPTION 'Rekod pesakit tidak dijumpai';
+  END IF;
+
+  SELECT COALESCE(pr.full_name, pt.full_name, 'Pesakit') INTO v_patient_name
+  FROM psy_patients pt LEFT JOIN psy_profiles pr ON pr.id = pt.user_id
+  WHERE pt.id = v_patient_id;
+
+  v_note := 'Pesakit tekan butang kecemasan (' || COALESCE(p_channel, 'unknown') || ') pada '
+            || to_char(now(), 'DD Mon YYYY HH24:MI');
+
+  SELECT id INTO v_open_id FROM psy_emergency_alerts
+  WHERE patient_id = v_patient_id AND status <> 'resolved'
+  ORDER BY created_at DESC LIMIT 1;
+
+  IF v_open_id IS NOT NULL THEN
+    UPDATE psy_emergency_alerts
+    SET zon = 'merah', reported_at = now(), response_target_minutes = 15, updated_at = now(),
+        notes = CASE WHEN notes IS NULL OR notes = '' THEN v_note ELSE notes || E'\n' || v_note END
+    WHERE id = v_open_id
+    RETURNING id INTO v_alert_id;
+  ELSE
+    INSERT INTO psy_emergency_alerts (patient_id, zon, source, response_target_minutes, assigned_to, notes)
+    VALUES (v_patient_id, 'merah', 'patient', 15, v_coach_id, v_note)
+    RETURNING id INTO v_alert_id;
+  END IF;
+
+  IF v_coach_id IS NOT NULL THEN
+    INSERT INTO psy_notifications (user_id, type, title, body, link)
+    VALUES (
+      v_coach_id, 'reaksi',
+      '🚨 Pesakit Tekan Butang Kecemasan: ' || v_patient_name,
+      v_patient_name || ' menekan butang kecemasan (' || COALESCE(p_channel, 'unknown') || ') di Protokol Kecemasan. Sila hubungi SEGERA.',
+      'emergency.html?patient_id=' || v_patient_id::TEXT
+    );
+  END IF;
+
+  RETURN v_alert_id;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION fn_patient_report_emergency(TEXT) TO authenticated;
 
 -- ──── psy_auto_messages — Mesej Automatik (template + masa + on/off) ────
 -- Edge function (cth event-reminders) baca konfig dari sini; ubah di UI
@@ -5415,6 +5590,11 @@ CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
   consultation_note TEXT,                       -- nota sesi rujukan (Hakeem/doctor/coach)
   consultation      JSONB DEFAULT '{}'::jsonb,  -- borang konsultasi berstruktur
   attachments       JSONB DEFAULT '[]'::jsonb,  -- transkrip/dokumen: [{name,path,uploaded_at}]
+  -- Sesi 1:1 auto-jana dari week plan (cth Hakeema 1:1 minggu 6/11) — plan_id+week_number
+  -- kekal NULL utk rujukan manual biasa. source='plan_1on1' + unique index elak duplicate.
+  plan_id           UUID REFERENCES psy_treatment_plans(id) ON DELETE SET NULL,
+  week_number       INT,
+  source            TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','plan_1on1')),
   created_at        TIMESTAMPTZ DEFAULT now(),
   updated_at        TIMESTAMPTZ DEFAULT now(),
   resolved_at       TIMESTAMPTZ
@@ -5422,6 +5602,8 @@ CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
 
 CREATE INDEX IF NOT EXISTS idx_psy_clinical_referrals_target  ON psy_clinical_referrals(target_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_psy_clinical_referrals_patient ON psy_clinical_referrals(patient_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_psy_clinical_referrals_plan_1on1
+  ON psy_clinical_referrals(plan_id, week_number) WHERE source = 'plan_1on1';
 
 ALTER TABLE psy_clinical_referrals ENABLE ROW LEVEL SECURITY;
 
@@ -5802,6 +5984,13 @@ DROP POLICY IF EXISTS "settings_read_staff" ON psy_settings;
 CREATE POLICY "settings_read_staff" ON psy_settings
   FOR SELECT USING (settings_is_staff());
 
+-- Pesakit turut perlu BACA sebahagian tetapan (cth clinic_phone — fallback no.
+-- panggilan di seksyen Protokol Kecemasan bila coach tiada/tiada no. telefon).
+-- Selamat dibuka: jadual ni TIDAK simpan kunci API rahsia (lihat nota atas).
+DROP POLICY IF EXISTS "settings_read_authenticated" ON psy_settings;
+CREATE POLICY "settings_read_authenticated" ON psy_settings
+  FOR SELECT USING (auth.role() = 'authenticated');
+
 -- Hanya super_admin boleh cipta / kemaskini / padam.
 DROP POLICY IF EXISTS "settings_write_sa" ON psy_settings;
 CREATE POLICY "settings_write_sa" ON psy_settings
@@ -5900,6 +6089,14 @@ ON CONFLICT (id) DO UPDATE
 INSERT INTO storage.buckets (id, name, public) VALUES ('referral-docs', 'referral-docs', false) ON CONFLICT DO NOTHING;
 
 INSERT INTO storage.buckets (id, name, public) VALUES ('kb-media', 'kb-media', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- Peristiwa Pesakit (lampiran dokumen/gambar) — staff sahaja
+INSERT INTO storage.buckets (id, name, public) VALUES ('event-docs', 'event-docs', false)
+ON CONFLICT (id) DO NOTHING;
+
+-- DNA Test (gambar sample/barcode + 3 laporan PDF ATGC) — staff sahaja
+INSERT INTO storage.buckets (id, name, public) VALUES ('dna-test', 'dna-test', false)
 ON CONFLICT (id) DO NOTHING;
 
 
@@ -6103,6 +6300,28 @@ DROP POLICY IF EXISTS "kb_media_public_read" ON storage.objects;
 CREATE POLICY "kb_media_public_read" ON storage.objects
     FOR SELECT USING (bucket_id = 'kb-media');
 
+DROP POLICY IF EXISTS "event_docs_staff_all" ON storage.objects;
+CREATE POLICY "event_docs_staff_all" ON storage.objects
+    FOR ALL TO authenticated
+    USING (bucket_id = 'event-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (bucket_id = 'event-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "dna_test_staff_all" ON storage.objects;
+CREATE POLICY "dna_test_staff_all" ON storage.objects
+    FOR ALL TO authenticated
+    USING (bucket_id = 'dna-test' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (bucket_id = 'dna-test' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "dna_test_patient_read_own" ON storage.objects;
+CREATE POLICY "dna_test_patient_read_own" ON storage.objects
+    FOR SELECT TO authenticated
+    USING (
+      bucket_id = 'dna-test'
+      AND (storage.foldername(name))[1] IN (
+        SELECT id::text FROM psy_patients WHERE user_id = auth.uid()
+      )
+    );
+
 DROP POLICY IF EXISTS "Patients can upload own medical reports" ON storage.objects;
 CREATE POLICY "Patients can upload own medical reports" ON storage.objects
   FOR INSERT TO authenticated
@@ -6114,3 +6333,633 @@ CREATE POLICY "Patients can upload own medical reports" ON storage.objects
       WHERE user_id = auth.uid() AND id::text = (storage.foldername(name))[2]
     )
   );
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/25_patient_events.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 25 — PERISTIWA PESAKIT (Patient Events)
+-- Rekod kejadian kritikal pesakit: masuk wad, ICU, temujanji doktor,
+-- pembedahan, kecemasan, kematian, discaj, rehat rumah — dengan
+-- notifikasi automatik kepada staff + penjejakan lawatan (visit).
+-- Jadual: psy_patient_events, psy_patient_event_visits,
+--         psy_patient_event_logs, psy_patient_event_docs
+-- Trigger: notifikasi staff (loceng), auto-lockdown kematian
+--          (status pesakit → deceased, automasi terhenti), log timeline.
+-- Nota: bucket storage 'event-docs' didaftar dalam 24_storage.sql.
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ──── psy_patient_events — jadual induk peristiwa ────
+-- event_type (tiada CHECK — fleksibel utk jenis baru):
+--   warded | icu | temujanji_doktor | pembedahan | kecemasan |
+--   kematian | discaj | rehat_rumah
+CREATE TABLE IF NOT EXISTS psy_patient_events (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id            UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  event_type            TEXT NOT NULL,
+  priority              TEXT DEFAULT 'medium' CHECK (priority IN ('critical','high','medium','low')),
+  status                TEXT DEFAULT 'open'   CHECK (status IN ('open','closed')),
+  event_date            DATE NOT NULL,
+  event_time            TIME,
+  expected_discharge    DATE,
+  hospital_name         TEXT,
+  ward_room             TEXT,
+  bed_unit              TEXT,
+  doctor_in_charge      TEXT,
+  diagnosis             TEXT,
+  reference_no          TEXT,
+  emergency_contact_name         TEXT,
+  emergency_contact_phone        TEXT,
+  emergency_contact_relationship TEXT,
+  need_visit            BOOLEAN DEFAULT false,
+  visit_priority        TEXT CHECK (visit_priority IS NULL OR visit_priority IN ('high','medium','low')),
+  expected_visit_date   DATE,
+  assigned_to           UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  notify_roles          JSONB DEFAULT '["manager","coach"]'::jsonb,
+  notes                 TEXT,
+  reported_by           UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  closed_by             UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  closed_at             TIMESTAMPTZ,
+  created_at            TIMESTAMPTZ DEFAULT now(),
+  updated_at            TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pe_patient  ON psy_patient_events(patient_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pe_status   ON psy_patient_events(status, event_date DESC);
+CREATE INDEX IF NOT EXISTS idx_pe_type     ON psy_patient_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_pe_assigned ON psy_patient_events(assigned_to) WHERE assigned_to IS NOT NULL;
+
+ALTER TABLE psy_patient_events ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "pe staff manage" ON psy_patient_events;
+CREATE POLICY "pe staff manage" ON psy_patient_events FOR ALL
+  USING (isw_is_staff()) WITH CHECK (isw_is_staff());
+
+-- ──── psy_patient_event_visits — rekod lawatan / susulan ────
+CREATE TABLE IF NOT EXISTS psy_patient_event_visits (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id          UUID NOT NULL REFERENCES psy_patient_events(id) ON DELETE CASCADE,
+  patient_id        UUID REFERENCES psy_patients(id) ON DELETE CASCADE,
+  visit_date        DATE NOT NULL,
+  visit_time        TIME,
+  visit_type        TEXT DEFAULT 'hospital' CHECK (visit_type IN ('hospital','rumah','klinik','panggilan')),
+  visited_by        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  status            TEXT DEFAULT 'pending' CHECK (status IN ('pending','in_progress','completed','cancelled')),
+  patient_condition TEXT CHECK (patient_condition IS NULL OR patient_condition IN
+                      ('sangat_lemah','lemah','stabil','beransur_baik','sangat_baik')),
+  location          TEXT,
+  ward_room         TEXT,
+  person_met        TEXT,
+  relationship      TEXT,
+  notes             TEXT,
+  vitals            JSONB DEFAULT '{}'::jsonb,   -- {bp, hr, temp, spo2, sugar}
+  next_visit_date   DATE,
+  next_visit_time   TIME,
+  next_visit_type   TEXT,
+  completed_at      TIMESTAMPTZ,
+  created_by        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  created_at        TIMESTAMPTZ DEFAULT now(),
+  updated_at        TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pev_event   ON psy_patient_event_visits(event_id, visit_date);
+CREATE INDEX IF NOT EXISTS idx_pev_status  ON psy_patient_event_visits(status, visit_date);
+CREATE INDEX IF NOT EXISTS idx_pev_visitor ON psy_patient_event_visits(visited_by) WHERE visited_by IS NOT NULL;
+
+ALTER TABLE psy_patient_event_visits ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "pev staff manage" ON psy_patient_event_visits;
+CREATE POLICY "pev staff manage" ON psy_patient_event_visits FOR ALL
+  USING (isw_is_staff()) WITH CHECK (isw_is_staff());
+
+-- ──── psy_patient_event_logs — timeline + nota peristiwa ────
+-- action: created | updated | notified | assigned | visit_scheduled |
+--         visit_completed | note | doc_uploaded | closed | reopened
+CREATE TABLE IF NOT EXISTS psy_patient_event_logs (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id   UUID NOT NULL REFERENCES psy_patient_events(id) ON DELETE CASCADE,
+  visit_id   UUID REFERENCES psy_patient_event_visits(id) ON DELETE SET NULL,
+  actor_id   UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  actor_name TEXT,
+  action     TEXT NOT NULL,
+  detail     TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pel_event ON psy_patient_event_logs(event_id, created_at);
+
+ALTER TABLE psy_patient_event_logs ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "pel staff manage" ON psy_patient_event_logs;
+CREATE POLICY "pel staff manage" ON psy_patient_event_logs FOR ALL
+  USING (isw_is_staff()) WITH CHECK (isw_is_staff());
+
+-- ──── psy_patient_event_docs — lampiran dokumen / gambar ────
+CREATE TABLE IF NOT EXISTS psy_patient_event_docs (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id         UUID NOT NULL REFERENCES psy_patient_events(id) ON DELETE CASCADE,
+  visit_id         UUID REFERENCES psy_patient_event_visits(id) ON DELETE SET NULL,
+  name             TEXT NOT NULL,
+  path             TEXT NOT NULL,              -- path dalam bucket event-docs
+  size_kb          INT,
+  mime             TEXT,
+  uploaded_by      UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  uploaded_by_name TEXT,
+  created_at       TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ped_event ON psy_patient_event_docs(event_id);
+
+ALTER TABLE psy_patient_event_docs ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "ped staff manage" ON psy_patient_event_docs;
+CREATE POLICY "ped staff manage" ON psy_patient_event_docs FOR ALL
+  USING (isw_is_staff()) WITH CHECK (isw_is_staff());
+
+-- ──── Fungsi trigger: updated_at ────
+CREATE OR REPLACE FUNCTION pe_touch_updated_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN NEW.updated_at = now(); RETURN NEW; END; $$;
+
+DROP TRIGGER IF EXISTS trg_pe_touch ON psy_patient_events;
+CREATE TRIGGER trg_pe_touch BEFORE UPDATE ON psy_patient_events
+  FOR EACH ROW EXECUTE FUNCTION pe_touch_updated_at();
+
+DROP TRIGGER IF EXISTS trg_pev_touch ON psy_patient_event_visits;
+CREATE TRIGGER trg_pev_touch BEFORE UPDATE ON psy_patient_event_visits
+  FOR EACH ROW EXECUTE FUNCTION pe_touch_updated_at();
+
+-- ──── Fungsi trigger: notifikasi loceng staff bila peristiwa baru ────
+-- Penerima = coach pesakit (jika 'coach' dlm notify_roles) + semua staff
+-- dgn staff_role dalam notify_roles + staff yang ditugaskan (assigned_to).
+-- Dedup penerima; notifikasi type='event' → peristiwa-detail.html.
+CREATE OR REPLACE FUNCTION trg_patient_event_notify()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_patient_name TEXT;
+  v_coach        UUID;
+  v_roles        JSONB;
+  v_recipients   UUID[] := '{}';
+  v_uid          UUID;
+  v_title        TEXT;
+  v_body         TEXT;
+  v_type_lbl     TEXT;
+BEGIN
+  SELECT COALESCE(pr.full_name, pt.full_name, pt.mrn, 'Pesakit'), pt.coach_id
+    INTO v_patient_name, v_coach
+  FROM psy_patients pt
+  LEFT JOIN psy_profiles pr ON pr.id = pt.user_id
+  WHERE pt.id = NEW.patient_id;
+
+  v_roles := COALESCE(NEW.notify_roles, '["manager","coach"]'::jsonb);
+
+  IF v_roles ? 'coach' AND v_coach IS NOT NULL THEN
+    v_recipients := array_append(v_recipients, v_coach);
+  END IF;
+
+  FOR v_uid IN
+    SELECT id FROM psy_profiles
+    WHERE role = 'staff'
+      AND staff_role IN (SELECT jsonb_array_elements_text(v_roles))
+      AND staff_role <> 'coach'
+  LOOP
+    v_recipients := array_append(v_recipients, v_uid);
+  END LOOP;
+
+  IF NEW.assigned_to IS NOT NULL THEN
+    v_recipients := array_append(v_recipients, NEW.assigned_to);
+  END IF;
+
+  v_type_lbl := CASE NEW.event_type
+    WHEN 'warded'           THEN 'Masuk Wad'
+    WHEN 'icu'              THEN 'ICU'
+    WHEN 'temujanji_doktor' THEN 'Temujanji Doktor'
+    WHEN 'pembedahan'       THEN 'Pembedahan'
+    WHEN 'kecemasan'        THEN 'Kecemasan'
+    WHEN 'kematian'         THEN 'Meninggal Dunia'
+    WHEN 'discaj'           THEN 'Discaj'
+    WHEN 'rehat_rumah'      THEN 'Rehat di Rumah'
+    ELSE NEW.event_type END;
+
+  IF NEW.event_type = 'kematian' THEN
+    v_title := '🕊️ Kematian: ' || v_patient_name;
+    v_body  := 'Salam takziah. ' || v_patient_name || ' telah dilaporkan meninggal dunia'
+               || COALESCE(' di ' || NEW.hospital_name, '') || ' pada '
+               || to_char(NEW.event_date, 'DD/MM/YYYY')
+               || '. Semua automasi & mesej kepada pesakit ini dihentikan secara automatik.';
+  ELSIF NEW.priority = 'critical' THEN
+    v_title := '🚨 KRITIKAL — ' || v_type_lbl || ': ' || v_patient_name;
+    v_body  := v_patient_name || ' — ' || v_type_lbl
+               || COALESCE(' di ' || NEW.hospital_name, '')
+               || ' (' || to_char(NEW.event_date, 'DD/MM/YYYY') || ').'
+               || CASE WHEN NEW.need_visit THEN ' Perlu lawatan — sila atur & maklum manager.' ELSE '' END;
+  ELSE
+    v_title := '🏥 ' || v_type_lbl || ': ' || v_patient_name;
+    v_body  := v_patient_name || ' — ' || v_type_lbl
+               || COALESCE(' di ' || NEW.hospital_name, '')
+               || ' (' || to_char(NEW.event_date, 'DD/MM/YYYY') || ').'
+               || CASE WHEN NEW.need_visit THEN ' Perlu lawatan.' ELSE '' END;
+  END IF;
+
+  FOR v_uid IN SELECT DISTINCT u FROM unnest(v_recipients) u LOOP
+    INSERT INTO psy_notifications (user_id, type, title, body, link)
+    VALUES (v_uid, 'event', v_title, v_body, 'peristiwa-detail.html?id=' || NEW.id);
+  END LOOP;
+
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_patient_event_notify: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_patient_event_notify ON psy_patient_events;
+CREATE TRIGGER trg_patient_event_notify
+  AFTER INSERT ON psy_patient_events
+  FOR EACH ROW EXECUTE FUNCTION trg_patient_event_notify();
+
+-- ──── Fungsi trigger: auto-lockdown bila peristiwa KEMATIAN ────
+-- status pesakit → 'deceased' + outcome 'meninggal'. Kesan: semua automasi/
+-- mesej auto (WA, peringatan, birthday) skip pesakit ini kerana penapis
+-- status='active'; tawaran sambungan pakej yang pending dibatalkan.
+CREATE OR REPLACE FUNCTION trg_patient_event_kematian()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF NEW.event_type <> 'kematian' THEN RETURN NEW; END IF;
+
+  UPDATE psy_patients SET
+    status            = 'deceased',
+    outcome_status    = 'meninggal',
+    outcome_status_at = now(),
+    outcome_status_notes = COALESCE(outcome_status_notes,
+      'Direkod melalui modul Peristiwa Pesakit (' || to_char(NEW.event_date,'DD/MM/YYYY') || ')')
+  WHERE id = NEW.patient_id;
+
+  -- Batal tawaran sambungan pakej yang belum diterima (jika modul wujud)
+  BEGIN
+    IF to_regclass('public.psy_continuity_offers') IS NOT NULL THEN
+      EXECUTE 'UPDATE psy_continuity_offers SET status = ''cancelled''
+               WHERE patient_id = $1 AND status = ''pending''' USING NEW.patient_id;
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE LOG 'trg_patient_event_kematian (continuity): %', SQLERRM;
+  END;
+
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_patient_event_kematian: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_patient_event_kematian ON psy_patient_events;
+CREATE TRIGGER trg_patient_event_kematian
+  AFTER INSERT ON psy_patient_events
+  FOR EACH ROW EXECUTE FUNCTION trg_patient_event_kematian();
+
+-- ──── Fungsi trigger: log 'created' automatik ke timeline ────
+CREATE OR REPLACE FUNCTION trg_patient_event_log_created()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_name TEXT;
+BEGIN
+  SELECT full_name INTO v_name FROM psy_profiles WHERE id = NEW.reported_by;
+  INSERT INTO psy_patient_event_logs (event_id, actor_id, actor_name, action, detail)
+  VALUES (NEW.id, NEW.reported_by, v_name, 'created',
+          'Peristiwa direkodkan' || COALESCE(' oleh ' || v_name, ''));
+  INSERT INTO psy_patient_event_logs (event_id, action, detail)
+  VALUES (NEW.id, 'notified',
+          'Notifikasi dihantar kepada: ' ||
+          COALESCE((SELECT string_agg(x, ', ') FROM jsonb_array_elements_text(
+            COALESCE(NEW.notify_roles,'["manager","coach"]'::jsonb)) x), '-'));
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_patient_event_log_created: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_patient_event_log_created ON psy_patient_events;
+CREATE TRIGGER trg_patient_event_log_created
+  AFTER INSERT ON psy_patient_events
+  FOR EACH ROW EXECUTE FUNCTION trg_patient_event_log_created();
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/26_dna_test.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 26 — DNA TEST (OH MY GENE / ATGC)
+-- Proses ujian DNA per-pesakit: Sample Collection → Barcode & Packaging
+-- → Activate Kit (ATGC) → Muat Naik Laporan → Consultation → Completed.
+-- Jadual: psy_dna_test_process (satu baris = satu proses ujian DNA).
+-- Nota: bucket storage 'dna-test' didaftar dalam 24_storage.sql.
+-- Nota: Consultation (Step 5) reuse psy_appointments sedia ada
+--       (service='DNA Test Consultation'), rujuk via appointment_id.
+-- ═══════════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS psy_dna_test_process (
+  id                              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id                      UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  coach_id                        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  current_step                    INT NOT NULL DEFAULT 1 CHECK (current_step BETWEEN 1 AND 6),
+  status                          TEXT NOT NULL DEFAULT 'in_progress'
+                                    CHECK (status IN ('in_progress','completed','cancelled')),
+
+  -- Step 1: Sample Collection
+  kit_received_at                 DATE,       -- tarikh pesakit terima DNA Test Kit
+  sample_checklist                JSONB DEFAULT '{}'::jsonb,
+  sample_notes                    TEXT,
+  sample_collected_at             TIMESTAMPTZ,
+  sample_collected_by             UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+
+  -- Step 2: Barcode & Packaging
+  barcode_number                  TEXT,
+  packaging_checklist             JSONB DEFAULT '{}'::jsonb,
+  sample_photo_path               TEXT,
+  packaging_notes                 TEXT,
+  packaging_completed_at          TIMESTAMPTZ,
+  sample_sent_to_lab_at           DATE,       -- tarikh sample dihantar ke makmal
+
+  -- Step 3: Activate Kit (ATGC — portal luar, dikemaskini manual)
+  atgc_status                     TEXT DEFAULT 'not_activated' CHECK (atgc_status IN ('not_activated','activated')),
+  atgc_activated_at               TIMESTAMPTZ,
+  atgc_activated_by               UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+
+  -- Step 4: Muat Naik Laporan DNA (dari portal ATGC — boleh >1 fail setiap kategori)
+  -- report_files: {"plant_based": ["path1","path2"], "health_risk": [...], "carrier_drug": [...]}
+  report_files                    JSONB DEFAULT '{}'::jsonb,
+  report_notes                    TEXT,
+  reports_uploaded_at              TIMESTAMPTZ,
+  lab_report_issued_at            DATE,       -- tarikh laporan dikeluarkan oleh lab (bukan tarikh upload)
+  reports_emailed_at              TIMESTAMPTZ, -- tarikh laporan dihantar ke pesakit via emel
+
+  -- Step 5: Consultation (reuse psy_appointments)
+  appointment_id                  UUID REFERENCES psy_appointments(id) ON DELETE SET NULL,
+  consultation_prep_checklist     JSONB DEFAULT '{}'::jsonb,
+  consultation_notes              TEXT,
+  consultation_marked_ready_at    TIMESTAMPTZ,
+  consultation_attachments        JSONB DEFAULT '[]'::jsonb,  -- lampiran bebas (skrip/nota/dll) khusus proses ni
+
+  -- Step 6: Completed
+  completed_at                    TIMESTAMPTZ,
+  completed_by                    UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+
+  created_by                      UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  created_at                      TIMESTAMPTZ DEFAULT now(),
+  updated_at                      TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_dna_test_patient ON psy_dna_test_process(patient_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dna_test_status  ON psy_dna_test_process(status);
+
+ALTER TABLE psy_dna_test_process ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "dna_test staff manage" ON psy_dna_test_process;
+CREATE POLICY "dna_test staff manage" ON psy_dna_test_process FOR ALL
+  USING (isw_is_staff()) WITH CHECK (isw_is_staff());
+
+DROP POLICY IF EXISTS "dna_test patient read own" ON psy_dna_test_process;
+CREATE POLICY "dna_test patient read own" ON psy_dna_test_process FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+-- ──── Fungsi trigger: updated_at ────
+CREATE OR REPLACE FUNCTION dna_test_touch_updated_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN NEW.updated_at = now(); RETURN NEW; END; $$;
+
+DROP TRIGGER IF EXISTS trg_dna_test_touch ON psy_dna_test_process;
+CREATE TRIGGER trg_dna_test_touch BEFORE UPDATE ON psy_dna_test_process
+  FOR EACH ROW EXECUTE FUNCTION dna_test_touch_updated_at();
+
+COMMENT ON COLUMN psy_dna_test_process.atgc_status IS
+  'ATGC = portal lab luar (ohmygene). Diaktifkan manual oleh coach di luar sistem, status dikemaskini manual selepas itu.';
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/27_affiliate.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 27 — AFFILIATE (KOMISEN RUJUKAN PESAKIT + PAYOUT)
+-- Extend fasa 1 rujukan (20_referrals.sql, psy_referrals): ganjaran kini
+-- boleh jadi komisen RM sebenar (bukan sekadar baucar manual), kadar
+-- boleh beza ikut pakej (psy_affiliate_commission_rules), dan staff boleh
+-- proses bayaran keluar (psy_affiliate_payouts). Skop: pesakit sedia ada
+-- sahaja (guna psy_patients.referral_code + psy_referrals yang dah wujud)
+-- — bukan affiliate luar/influencer dengan login berasingan.
+--
+-- Payout guna bank transfer MANUAL dahulu (staff proses & tandakan
+-- dibayar). Kolum `method` sengaja termasuk 'hitpay' sebagai tempat letak
+-- masa depan — automasi HitPay Payout/Send API belum disambung (perlu
+-- akses/approval berasingan yang belum disahkan).
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ──── psy_affiliate_commission_rules — kadar komisen per pakej ────
+CREATE TABLE IF NOT EXISTS psy_affiliate_commission_rules (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  package_id       UUID REFERENCES psy_packages(id) ON DELETE CASCADE, -- NULL = kadar lalai (pakej lain)
+  commission_type  TEXT NOT NULL DEFAULT 'fixed' CHECK (commission_type IN ('fixed','percent')),
+  amount           NUMERIC(10,2),  -- RM tetap (bila commission_type='fixed')
+  rate_percent     NUMERIC(5,2),   -- % (bila commission_type='percent')
+  cap_amount       NUMERIC(10,2),  -- had maksimum RM utk 'percent' (NULL = tiada had)
+  is_active        BOOLEAN DEFAULT true,
+  created_at       TIMESTAMPTZ DEFAULT now(),
+  updated_at       TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_psy_affiliate_commission_rules_package
+  ON psy_affiliate_commission_rules (package_id)
+  WHERE package_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_psy_affiliate_commission_rules_default
+  ON psy_affiliate_commission_rules ((1))
+  WHERE package_id IS NULL;
+
+ALTER TABLE psy_affiliate_commission_rules ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage commission rules" ON psy_affiliate_commission_rules;
+CREATE POLICY "Staff manage commission rules" ON psy_affiliate_commission_rules FOR ALL
+  USING      (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- Kadar lalai (package_id NULL) — wajib wujud supaya pakej tanpa rule
+-- khusus tetap dapat komisen asas RM50.
+INSERT INTO psy_affiliate_commission_rules (package_id, commission_type, amount)
+SELECT NULL, 'fixed', 50.00
+WHERE NOT EXISTS (SELECT 1 FROM psy_affiliate_commission_rules WHERE package_id IS NULL);
+
+-- ──── psy_patients — maklumat bank (untuk payout) ────
+ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS bank_name TEXT;
+ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS bank_account_no TEXT;
+ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS bank_account_holder TEXT;
+
+-- ──── psy_referrals — tambah kolum komisen ────
+ALTER TABLE psy_referrals ADD COLUMN IF NOT EXISTS qualifying_payment_id UUID REFERENCES psy_payments(id) ON DELETE SET NULL;
+ALTER TABLE psy_referrals ADD COLUMN IF NOT EXISTS qualifying_package_id UUID REFERENCES psy_packages(id) ON DELETE SET NULL;
+ALTER TABLE psy_referrals ADD COLUMN IF NOT EXISTS commission_amount NUMERIC(10,2) DEFAULT 0;
+ALTER TABLE psy_referrals ADD COLUMN IF NOT EXISTS payout_id UUID; -- FK ditambah di bawah (selepas psy_affiliate_payouts wujud)
+
+-- ──── psy_affiliate_payouts — lejar bayaran keluar (batch per pesakit) ────
+CREATE TABLE IF NOT EXISTS psy_affiliate_payouts (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id    UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  amount        NUMERIC(10,2) NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','paid','rejected')),
+  method        TEXT NOT NULL DEFAULT 'bank_transfer' CHECK (method IN ('bank_transfer','hitpay')),
+  bank_snapshot JSONB DEFAULT '{}'::jsonb, -- salinan bank_name/account_no/holder masa mohon
+  payout_ref    TEXT,                      -- rujukan transaksi (manual, atau HitPay txn id kelak)
+  note          TEXT,
+  requested_at  TIMESTAMPTZ DEFAULT now(),
+  processed_at  TIMESTAMPTZ,
+  processed_by  UUID REFERENCES psy_profiles(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_psy_affiliate_payouts_patient ON psy_affiliate_payouts(patient_id, status);
+
+ALTER TABLE psy_affiliate_payouts ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patients view own payouts" ON psy_affiliate_payouts;
+CREATE POLICY "Patients view own payouts" ON psy_affiliate_payouts FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Patients request own payout" ON psy_affiliate_payouts;
+CREATE POLICY "Patients request own payout" ON psy_affiliate_payouts FOR INSERT
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff manage payouts" ON psy_affiliate_payouts;
+CREATE POLICY "Staff manage payouts" ON psy_affiliate_payouts FOR ALL
+  USING      (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- FK psy_referrals.payout_id → psy_affiliate_payouts (jadual sasaran kini wujud)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_psy_referrals_payout' AND table_name = 'psy_referrals'
+  ) THEN
+    ALTER TABLE psy_referrals
+      ADD CONSTRAINT fk_psy_referrals_payout FOREIGN KEY (payout_id)
+      REFERENCES psy_affiliate_payouts(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_psy_referrals_payout ON psy_referrals(payout_id);
+
+-- ──── psy_notifications: benarkan type 'affiliate' ────
+-- GOTCHA (dah pernah berlaku): ADD CONSTRAINT hardcode senarai 'type' boleh
+-- gagal/mengecilkan liputan di PROD sebab constraint sebenar mungkin dah
+-- melencong dari senarai inline dalam CREATE TABLE (banyak jenis notif
+-- ditambah oleh modul lain, cth 'emergency'/'patient_event', tanpa
+-- constraint fail ini diselaraskan). Jadi kita kekalkan SEMUA nilai type
+-- sedia ada dalam jadual + tambah 'affiliate', bukan tulis semula senarai.
+DO $$
+DECLARE
+  v_types TEXT;
+BEGIN
+  SELECT COALESCE(string_agg(DISTINCT quote_literal(type), ','), '') INTO v_types
+  FROM psy_notifications;
+
+  IF v_types = '' THEN
+    v_types := quote_literal('system');
+  END IF;
+  IF position('affiliate' in v_types) = 0 THEN
+    v_types := v_types || ',' || quote_literal('affiliate');
+  END IF;
+
+  ALTER TABLE psy_notifications DROP CONSTRAINT IF EXISTS psy_notifications_type_check;
+  EXECUTE format(
+    'ALTER TABLE psy_notifications ADD CONSTRAINT psy_notifications_type_check CHECK (type IN (%s))',
+    v_types
+  );
+END $$;
+
+-- ──── fn: kelayakan & kira komisen bila bayaran pesakit selesai ────
+CREATE OR REPLACE FUNCTION trg_referral_qualify_on_payment()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_ref_id    UUID;
+  v_pkg_text  TEXT;
+  v_pkg_id    UUID;
+  v_rule      RECORD;
+  v_amount    NUMERIC(10,2);
+BEGIN
+  IF NEW.status IS DISTINCT FROM 'completed' OR NEW.patient_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+  IF TG_OP = 'UPDATE' AND OLD.status = 'completed' THEN
+    RETURN NEW; -- elak kira dua kali
+  END IF;
+
+  SELECT id INTO v_ref_id FROM psy_referrals
+  WHERE referee_patient_id = NEW.patient_id AND status = 'pending'
+  LIMIT 1;
+  IF v_ref_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  -- Cuba kesan pakej dari baris pertama items[] (teks kod ATAU UUID —
+  -- ikut ketidakkonsistenan active_package_id yang direkod dlm memory).
+  BEGIN
+    v_pkg_text := NEW.items -> 0 ->> 'packageId';
+  EXCEPTION WHEN OTHERS THEN
+    v_pkg_text := NULL;
+  END;
+
+  IF v_pkg_text IS NOT NULL THEN
+    SELECT id INTO v_pkg_id FROM psy_packages
+    WHERE id::text = v_pkg_text OR package_id = v_pkg_text
+    LIMIT 1;
+  END IF;
+
+  SELECT * INTO v_rule FROM psy_affiliate_commission_rules
+  WHERE package_id = v_pkg_id AND is_active LIMIT 1;
+
+  IF NOT FOUND THEN
+    SELECT * INTO v_rule FROM psy_affiliate_commission_rules
+    WHERE package_id IS NULL AND is_active LIMIT 1;
+  END IF;
+
+  IF v_rule.id IS NOT NULL THEN
+    IF v_rule.commission_type = 'fixed' THEN
+      v_amount := COALESCE(v_rule.amount, 0);
+    ELSE
+      v_amount := ROUND(COALESCE(NEW.total, 0) * COALESCE(v_rule.rate_percent, 0) / 100, 2);
+      IF v_rule.cap_amount IS NOT NULL THEN
+        v_amount := LEAST(v_amount, v_rule.cap_amount);
+      END IF;
+    END IF;
+  ELSE
+    v_amount := 0;
+  END IF;
+
+  UPDATE psy_referrals SET
+    status = 'qualified',
+    qualified_at = now(),
+    qualifying_payment_id = NEW.id,
+    qualifying_package_id = v_pkg_id,
+    commission_amount = v_amount
+  WHERE id = v_ref_id;
+
+  INSERT INTO psy_notifications (user_id, type, title, body, link)
+  SELECT id, 'affiliate',
+    '💰 Komisen Affiliate Layak',
+    'Satu rujukan pesakit layak komisen RM ' || v_amount::text || '.',
+    'affiliate.html'
+  FROM psy_profiles WHERE role = 'staff';
+
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_referral_qualify_on_payment: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_referral_qualify_on_payment ON psy_payments;
+CREATE TRIGGER trg_referral_qualify_on_payment
+  AFTER INSERT OR UPDATE ON psy_payments
+  FOR EACH ROW EXECUTE FUNCTION trg_referral_qualify_on_payment();

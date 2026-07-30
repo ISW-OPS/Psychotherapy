@@ -45,6 +45,14 @@ INSERT INTO storage.buckets (id, name, public) VALUES ('referral-docs', 'referra
 INSERT INTO storage.buckets (id, name, public) VALUES ('kb-media', 'kb-media', true)
 ON CONFLICT (id) DO NOTHING;
 
+-- Peristiwa Pesakit (lampiran dokumen/gambar) — staff sahaja
+INSERT INTO storage.buckets (id, name, public) VALUES ('event-docs', 'event-docs', false)
+ON CONFLICT (id) DO NOTHING;
+
+-- DNA Test (gambar sample/barcode + 3 laporan PDF ATGC) — staff sahaja
+INSERT INTO storage.buckets (id, name, public) VALUES ('dna-test', 'dna-test', false)
+ON CONFLICT (id) DO NOTHING;
+
 
 -- ---- Polisi storage.objects ----
 
@@ -245,6 +253,28 @@ CREATE POLICY "kb_media_staff_delete" ON storage.objects
 DROP POLICY IF EXISTS "kb_media_public_read" ON storage.objects;
 CREATE POLICY "kb_media_public_read" ON storage.objects
     FOR SELECT USING (bucket_id = 'kb-media');
+
+DROP POLICY IF EXISTS "event_docs_staff_all" ON storage.objects;
+CREATE POLICY "event_docs_staff_all" ON storage.objects
+    FOR ALL TO authenticated
+    USING (bucket_id = 'event-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (bucket_id = 'event-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "dna_test_staff_all" ON storage.objects;
+CREATE POLICY "dna_test_staff_all" ON storage.objects
+    FOR ALL TO authenticated
+    USING (bucket_id = 'dna-test' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (bucket_id = 'dna-test' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "dna_test_patient_read_own" ON storage.objects;
+CREATE POLICY "dna_test_patient_read_own" ON storage.objects
+    FOR SELECT TO authenticated
+    USING (
+      bucket_id = 'dna-test'
+      AND (storage.foldername(name))[1] IN (
+        SELECT id::text FROM psy_patients WHERE user_id = auth.uid()
+      )
+    );
 
 DROP POLICY IF EXISTS "Patients can upload own medical reports" ON storage.objects;
 CREATE POLICY "Patients can upload own medical reports" ON storage.objects

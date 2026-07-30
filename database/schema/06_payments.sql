@@ -102,3 +102,30 @@ CREATE POLICY "Staff manage orders" ON psy_orders FOR ALL
 -- Nota trigger pada psy_orders (diletak bersama fungsi masing-masing):
 --   trg_psy_order_deduct_inventory → 14_products_inventory.sql
 --   trg_notify_staff_new_order     → 18_notifications_automations.sql
+
+-- ──── psy_notifications: benarkan type 'payment' ────
+-- GOTCHA (rujuk 27_affiliate.sql): jangan tulis semula senarai type inline
+-- dalam CREATE TABLE — kekalkan semua nilai sedia ada + tambah 'payment'.
+-- Dipakai oleh payments-webhook (notifyStaffPaymentReceived) supaya coach
+-- + admin/manager dapat notifikasi loceng bila pesakit bayar apa-apa jenis
+-- (pakej/KOB/temujanji/sambungan minggu), bukan sekadar shop_order.
+DO $$
+DECLARE
+  v_types TEXT;
+BEGIN
+  SELECT COALESCE(string_agg(DISTINCT quote_literal(type), ','), '') INTO v_types
+  FROM psy_notifications;
+
+  IF v_types = '' THEN
+    v_types := quote_literal('system');
+  END IF;
+  IF position('payment' in v_types) = 0 THEN
+    v_types := v_types || ',' || quote_literal('payment');
+  END IF;
+
+  ALTER TABLE psy_notifications DROP CONSTRAINT IF EXISTS psy_notifications_type_check;
+  EXECUTE format(
+    'ALTER TABLE psy_notifications ADD CONSTRAINT psy_notifications_type_check CHECK (type IN (%s))',
+    v_types
+  );
+END $$;

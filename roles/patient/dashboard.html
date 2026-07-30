@@ -277,6 +277,54 @@
           </div>
         </div>
 
+        <!-- ROW 3: Protokol Kecemasan -->
+        <div id="emg-alert-banner" class="hidden"></div>
+
+        <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-4 md:p-5">
+          <div class="flex items-center justify-between gap-3 flex-wrap mb-4">
+            <h2 class="font-bold text-sm text-ink tracking-wide">KENALI ZON RISIKO</h2>
+            <button onclick="openEmgModal('emg-info-modal')" class="text-xs text-navy hover:underline flex items-center gap-1">
+              <span>ⓘ</span> Bagaimana sistem ini berfungsi?
+            </button>
+          </div>
+          <div id="emg-zone-cards" class="grid grid-cols-1 md:grid-cols-3 gap-3"></div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 items-stretch">
+          <!-- KECEMASAN? -->
+          <div class="bg-red-50/60 border border-red-100 rounded-2xl p-4 md:p-5 flex flex-col">
+            <h2 class="font-bold text-sm text-red-600 tracking-wide">KECEMASAN?</h2>
+            <p class="text-xs text-ink/60 mt-1">Jika anda mengalami simptom serius, jangan tunggu!</p>
+
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mt-4">
+              <a href="tel:999" onclick="emgLog('999')"
+                 class="flex flex-col items-center justify-center gap-0.5 bg-red-600 hover:bg-red-700 text-white font-bold text-sm rounded-xl py-3.5">
+                📞 CALL 999
+                <span class="text-[10px] font-normal opacity-80">Kecemasan hospital</span>
+              </a>
+              <a id="emg-btn-coach" href="#" onclick="return emgCallCoach()"
+                 class="flex flex-col items-center justify-center gap-0.5 border-2 border-red-200 text-red-600 hover:bg-red-50 font-bold text-sm rounded-xl py-3.5">
+                📞 CALL COACH
+                <span id="emg-btn-coach-sub" class="text-[10px] font-normal opacity-70">—</span>
+              </a>
+              <a id="emg-btn-family" href="#" onclick="return emgCallFamily()"
+                 class="flex flex-col items-center justify-center gap-0.5 border-2 border-red-200 text-red-600 hover:bg-red-50 font-bold text-sm rounded-xl py-3.5">
+                👪 HUBUNGI KELUARGA
+                <span id="emg-btn-family-sub" class="text-[10px] font-normal opacity-70">—</span>
+              </a>
+            </div>
+          </div>
+
+          <!-- CONTOH SIMPTOM SERIUS (RED ZONE) -->
+          <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-4 md:p-5 flex flex-col">
+            <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
+              <h2 class="font-bold text-sm text-red-600 tracking-wide">CONTOH SIMPTOM SERIUS (RED ZONE)</h2>
+              <button onclick="emgOpenAllRed()" class="text-xs text-navy hover:underline whitespace-nowrap">Lihat semua →</button>
+            </div>
+            <div id="emg-red-strip" class="grid grid-cols-3 sm:grid-cols-6 gap-3"></div>
+          </div>
+        </div>
+
       </section>
     </main>
   </div>
@@ -288,6 +336,8 @@
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
 <script src="../../shared/adherence.js"></script>
+<script src="../../shared/utils.js"></script>
+<script src="../../shared/settings.js"></script>
 <script src="_shared.js"></script>
 <script>
 function togglePanduan(id) {
@@ -611,6 +661,178 @@ async function loadBanners(user) {
   } catch (_) {}
 }
 
+// ── Protokol Kecemasan (bawah dashboard): zon risiko, butang kecemasan, simptom serius ──
+const EMG_ZONE_INFO = {
+  hijau:  { label: 'GREEN ZONE',  sub: 'Risiko Rendah',
+            bullets: ['Simptom ringan', 'Boleh dikawal sendiri', 'Teruskan rawatan'], check: '✅',
+            card: 'bg-green-50/60 border-green-100', title: 'text-green-700', dot: 'bg-green-500' },
+  kuning: { label: 'YELLOW ZONE', sub: 'Perlu Perhatian',
+            bullets: ['Simptom sederhana', 'Perlu pemantauan', 'Hubungi Coach'], check: '⚠️',
+            card: 'bg-amber-50/60 border-amber-100', title: 'text-amber-600', dot: 'bg-amber-400' },
+  merah:  { label: 'RED ZONE',    sub: 'Kecemasan',
+            bullets: ['Simptom serius', 'Jangan tunggu', 'Dapatkan bantuan segera'], check: '🚨',
+            card: 'bg-red-50/60 border-red-100', title: 'text-red-600', dot: 'bg-red-500' },
+};
+const EMG_FALLBACK_RED = [
+  { ikon: '🫁', label: 'Sesak nafas' }, { ikon: '😵', label: 'Pengsan' },
+  { ikon: '💔', label: 'Sakit dada teruk' }, { ikon: '🧠', label: 'Tidak sedarkan diri' },
+  { ikon: '⚡', label: 'Sawan' }, { ikon: '🩸', label: 'Muntah darah' },
+];
+let emgReaksiItems = [];
+
+function emgItemsForZone(tahap) {
+  return emgReaksiItems.filter(r => r.tahap_risiko === tahap || (tahap === 'tinggi' && r.is_emergency));
+}
+
+async function emgLoadReaksiCatalog() {
+  const { data } = await window.db.from('psy_reaksi_item')
+    .select('kumpulan, ikon, label, tahap_risiko, is_emergency')
+    .eq('aktif', true).order('urutan', { ascending: true });
+  emgReaksiItems = (data || []).filter(r => r.label !== 'Tiada simptom');
+}
+
+function emgRenderZoneCards() {
+  const wrap = document.getElementById('emg-zone-cards');
+  if (!wrap) return;
+  wrap.innerHTML = Object.entries(EMG_ZONE_INFO).map(([key, z]) => `
+    <div class="${z.card} border rounded-2xl p-4 flex flex-col">
+      <div class="flex items-center gap-2">
+        <span class="w-2.5 h-2.5 rounded-full ${z.dot}"></span>
+        <span class="font-bold text-xs ${z.title} tracking-wide">${z.label}</span>
+      </div>
+      <div class="font-bold text-sm text-ink mt-1">${z.sub}</div>
+      <ul class="mt-2.5 space-y-1">
+        ${z.bullets.map(b => `<li class="text-xs text-ink/70 flex items-start gap-1.5"><span>${z.check}</span><span>${escapeHtml(b)}</span></li>`).join('')}
+      </ul>
+    </div>
+  `).join('');
+}
+
+function emgRenderRedStrip() {
+  const wrap = document.getElementById('emg-red-strip');
+  if (!wrap) return;
+  let list = emgItemsForZone('tinggi').slice(0, 6).map(r => ({ ikon: r.ikon || '🚨', label: r.label }));
+  if (!list.length) list = EMG_FALLBACK_RED;
+  wrap.innerHTML = list.map(s => `
+    <div class="flex flex-col items-center text-center gap-1.5">
+      <div class="w-12 h-12 rounded-full bg-red-50 border border-red-100 flex items-center justify-center text-xl">${s.ikon}</div>
+      <div class="text-[11px] font-medium text-ink/70 leading-tight">${escapeHtml(s.label)}</div>
+    </div>
+  `).join('');
+}
+
+function emgGroupByKumpulan(list) {
+  const groups = {};
+  list.forEach(r => { (groups[r.kumpulan] ||= []).push(r); });
+  return groups;
+}
+
+function emgOpenAllRed() {
+  let list = emgItemsForZone('tinggi');
+  if (!list.length) list = EMG_FALLBACK_RED.map(s => ({ kumpulan: 'Simptom Serius', ikon: s.ikon, label: s.label }));
+  const groups = emgGroupByKumpulan(list);
+  document.getElementById('emg-red-modal-body').innerHTML = Object.entries(groups).map(([kumpulan, items]) => `
+    <div class="mb-2">
+      <div class="text-xs font-bold text-ink/50 uppercase tracking-wide mb-1.5">${items[0]?.ikon || ''} ${escapeHtml(kumpulan)}</div>
+      <div class="flex flex-wrap gap-1.5">
+        ${items.map(i => `<span class="chip bg-red-50 text-red-600 border border-red-100">${escapeHtml(i.label)}</span>`).join('')}
+      </div>
+    </div>
+  `).join('');
+  openEmgModal('emg-red-modal');
+}
+
+function openEmgModal(id) { document.getElementById(id).classList.remove('hidden'); }
+function closeEmgModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+// Butang kecemasan: dail + log ke worklist staff (fire-and-forget RPC)
+function emgLog(channel) {
+  window.db.rpc('fn_patient_report_emergency', { p_channel: channel })
+    .then(({ error }) => { if (error) console.warn('emgLog:', error.message); })
+    .catch(e => console.warn('emgLog:', e.message));
+}
+function emgCallCoach() {
+  const href = document.getElementById('emg-btn-coach').dataset.tel;
+  if (!href) { banner('Coach belum ditugaskan — sila hubungi 999 atau klinik', 'error'); return false; }
+  emgLog('coach');
+  window.location.href = 'tel:' + href;
+  return false;
+}
+function emgCallFamily() {
+  const href = document.getElementById('emg-btn-family').dataset.tel;
+  if (!href) { banner('Kontak waris tiada dalam rekod — sila lengkapkan di KYC', 'error'); return false; }
+  emgLog('keluarga');
+  window.location.href = 'tel:' + href;
+  return false;
+}
+
+async function emgLoadContacts() {
+  const coachBtn = document.getElementById('emg-btn-coach');
+  const coachSub = document.getElementById('emg-btn-coach-sub');
+
+  let coach = null;
+  if (patientRecord.coach_id) {
+    const { data } = await window.db.from('psy_profiles').select('full_name, phone')
+      .eq('id', patientRecord.coach_id).maybeSingle();
+    coach = data;
+  }
+
+  if (coach?.phone) {
+    coachBtn.dataset.tel = coach.phone.replace(/[^0-9+]/g, '');
+    coachSub.textContent = coach.full_name || 'Coach anda';
+  } else {
+    // Tiada coach ditugaskan / tiada no. telefon coach — guna no. klinik (Tetapan Sistem) sebagai fallback
+    // supaya butang sentiasa boleh diguna, bukan terus dikunci.
+    await iswLoadSettings().catch(() => {});
+    const clinicPhone = (iswGetSetting('clinic_phone', '') || '').toString().trim();
+    if (clinicPhone) {
+      coachBtn.dataset.tel = clinicPhone.replace(/[^0-9+]/g, '');
+      coachSub.textContent = 'Ibnu Sina Wellness';
+    } else {
+      coachBtn.classList.add('opacity-40');
+      coachSub.textContent = coach ? 'Tiada no. telefon' : 'Belum ditugaskan';
+    }
+  }
+
+  const familyBtn = document.getElementById('emg-btn-family');
+  const familySub = document.getElementById('emg-btn-family-sub');
+  if (patientRecord.emergency_contact_phone) {
+    familyBtn.dataset.tel = patientRecord.emergency_contact_phone.replace(/[^0-9+]/g, '');
+    familySub.textContent = patientRecord.emergency_contact_name || 'Waris';
+  } else {
+    familyBtn.classList.add('opacity-40');
+    familySub.textContent = 'Belum didaftar';
+  }
+}
+
+async function emgLoadActiveAlertBanner() {
+  const { data } = await window.db.from('psy_emergency_alerts')
+    .select('zon, status, reported_at, response_target_minutes')
+    .eq('patient_id', patientRecord.id).neq('status', 'resolved')
+    .order('reported_at', { ascending: false }).limit(1).maybeSingle();
+  const el = document.getElementById('emg-alert-banner');
+  if (!el) return;
+  if (!data) { el.classList.add('hidden'); return; }
+  const zoneLabel = data.zon === 'merah' ? '🔴 Merah' : '🟡 Kuning';
+  const statusLabel = { waiting_coach: 'Menunggu Coach', contacted: 'Coach sedang bertindak', waiting_vital: 'Menunggu bacaan vital', follow_up: 'Susulan diperlukan' }[data.status] || data.status;
+  el.innerHTML = `<div class="bg-navy text-white rounded-2xl p-4 flex items-center gap-3 flex-wrap">
+    <div class="text-xl">🔔</div>
+    <div class="flex-1 min-w-0">
+      <div class="font-bold text-sm">Alert Kecemasan Anda Aktif — ${zoneLabel}</div>
+      <div class="text-[11px] text-white/75 mt-0.5">Status: ${escapeHtml(statusLabel)} · Sasaran tindak balas ${data.response_target_minutes} minit. Coach anda telah dimaklumkan.</div>
+    </div>
+  </div>`;
+  el.classList.remove('hidden');
+}
+
+async function emgInit() {
+  if (!patientRecord) return;
+  await emgLoadReaksiCatalog();
+  emgRenderZoneCards();
+  emgRenderRedStrip();
+  await Promise.all([emgLoadContacts(), emgLoadActiveAlertBanner()]);
+}
+
 (async () => {
   try {
     const user = await initPatient('dashboard', 'Overview rawatan anda');
@@ -632,6 +854,8 @@ async function loadBanners(user) {
     const weekAgoKey = `${weekAgo.getFullYear()}-${String(weekAgo.getMonth()+1).padStart(2,'0')}-${String(weekAgo.getDate()).padStart(2,'0')}`;
 
     if (!patientRecord) return;
+
+    emgInit();  // Protokol Kecemasan — bebas dari data utama dashboard, tak perlu tunggu
 
     const [plans, completionsWeek, vitalsRows, upcomingRows, announces, activePkgRows, todayKepLog, todayCheckin, myEventRegs, upcomingEvents, allProgressRows] = await Promise.all([
       dbQuery('psy_treatment_plans', { eq: { patient_id: patientRecord.id, status: 'active' } }).catch(() => []),
@@ -1136,6 +1360,42 @@ async function ptSubmitAbsent() {
         class="px-4 py-2 rounded-lg text-sm text-ink/60 hover:bg-ink/5 transition-colors">Batal</button>
       <button onclick="ptSubmitAbsent()"
         class="px-4 py-2 rounded-lg text-sm font-semibold bg-terracotta text-white hover:bg-terracotta-dark transition-colors">Hantar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal: Bagaimana sistem zon berfungsi ── -->
+<div id="emg-info-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-md">
+    <div class="px-5 py-4 border-b border-ink/10 flex items-center justify-between">
+      <h3 class="font-bold text-sm text-ink">ⓘ Bagaimana Sistem Ini Berfungsi</h3>
+      <button onclick="closeEmgModal('emg-info-modal')" class="text-ink/40 text-2xl leading-none">&times;</button>
+    </div>
+    <div class="p-5 space-y-3 text-[13px] text-ink/70 leading-relaxed">
+      <p>Setiap kali anda isi <b>Catatan Harian</b>, sistem menyemak simptom yang anda tandakan dan mengelaskannya secara automatik ke salah satu zon:</p>
+      <ul class="space-y-1.5 pl-1">
+        <li>🟢 <b>Green</b> — simptom ringan, tiada tindakan khas.</li>
+        <li>🟡 <b>Yellow</b> — Coach anda dimaklumkan untuk pemantauan (dalam 60 minit).</li>
+        <li>🔴 <b>Red</b> — Coach dimaklumkan SEGERA (dalam 15 minit) dan anda akan menerima mesej tindakan kecemasan.</li>
+      </ul>
+      <p>Sekiranya keadaan anda memburuk pada bila-bila masa — <b>tak perlu tunggu Catatan Harian</b> — terus tekan salah satu butang kecemasan di bawah (999 / Coach / Keluarga).</p>
+    </div>
+    <div class="p-5 pt-0">
+      <button onclick="closeEmgModal('emg-info-modal')" class="w-full bg-navy hover:bg-navy-dark text-white py-2.5 rounded-xl text-sm font-semibold">Faham</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal: Semua simptom serius (red zone) ── -->
+<div id="emg-red-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[80vh] flex flex-col">
+    <div class="px-5 py-4 border-b border-ink/10 flex items-center justify-between flex-shrink-0">
+      <h3 class="font-bold text-sm text-red-600">🔴 Semua Simptom Serius (Red Zone)</h3>
+      <button onclick="closeEmgModal('emg-red-modal')" class="text-ink/40 text-2xl leading-none">&times;</button>
+    </div>
+    <div id="emg-red-modal-body" class="p-5 space-y-2 overflow-y-auto"></div>
+    <div class="p-5 pt-0 flex-shrink-0">
+      <p class="text-[11px] text-ink/45 text-center">Alami mana-mana simptom di atas? Jangan tunggu — tekan salah satu butang kecemasan.</p>
     </div>
   </div>
 </div>

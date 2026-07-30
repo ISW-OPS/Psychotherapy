@@ -52,11 +52,13 @@ window.PAGE_MODULE = {
   plan_week:        'plan_week',
   kob_list:         'kob',
   kepatuhan:        'kepatuhan',
-  risk:             'risk',
+  emergency:        'emergency',
   reaksi_advice:    'reaksi',  reaksi_item: 'reaksi',
   reaksi_laporan:   'reaksi',  reaksi_preview: 'reaksi',
   rujukan:          'rujukan',
   kehadiran:        'kehadiran',
+  peristiwa:          'patient_events',
+  dna_test:           'dna_test',
 
   // OPERASI
   pakej:            'package',
@@ -65,6 +67,7 @@ window.PAGE_MODULE = {
   pulangan:         'pulangan',
   psy_orders:       'orders',
   payment_admin:    'payment',
+  affiliate:        'affiliate',
 
   // KOMUNIKASI
   announcements:    'announcements',

@@ -60,6 +60,8 @@
               </div>
             </div>
             <div class="flex gap-2">
+              <button data-rbac="dna_test.create" onclick="location.href='dna-test.html?patient_id='+patientId" class="bg-white border border-navy/40 text-navy text-xs px-4 py-2 rounded-lg font-semibold hover:bg-navy/5">🧬 DNA Test</button>
+              <button data-rbac="patient_events.create" onclick="location.href='peristiwa-baru.html?patient_id='+patientId" class="bg-white border border-terracotta/50 text-terracotta text-xs px-4 py-2 rounded-lg font-semibold hover:bg-terracotta/5">🏥 Peristiwa</button>
               <button data-rbac="patient.edit" onclick="openReferralModal()" class="bg-terracotta text-white text-xs px-4 py-2 rounded-lg font-semibold hover:bg-terracotta/90">🔀 Rujuk</button>
               <a id="patient-wa-link" href="#" class="hidden bg-green text-white text-xs px-4 py-2 rounded-lg font-semibold hover:bg-green-dark">💬 WhatsApp</a>
               <a id="patient-plan-link" href="#" class="bg-navy text-white text-xs px-4 py-2 rounded-lg font-semibold hover:bg-navy-dark">📅 Plan Minggu Ini</a>
@@ -75,6 +77,7 @@
           <button class="tab-btn" onclick="switchTab('sessions')">📝 Sesi</button>
           <button class="tab-btn" onclick="switchTab('supply')">📦 Bekalan</button>
           <button class="tab-btn" onclick="switchTab('dna')">🧬 Laporan</button>
+          <button class="tab-btn" onclick="switchTab('peristiwa')">🏥 Peristiwa</button>
           <button class="tab-btn" onclick="switchTab('profile')">👤 Profil</button>
         </div>
 
@@ -885,6 +888,7 @@
                 <option value="ujian">Hasil Ujian</option>
                 <option value="imaging">Imbasan (Imaging)</option>
                 <option value="rujukan">Surat Rujukan</option>
+                <option value="dna_test">DNA Test</option>
                 <option value="lain">Lain-lain</option>
               </select>
               <label data-rbac="patient.create" class="cursor-pointer purple-btn px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-1.5">
@@ -902,6 +906,38 @@
             </div>
             <div id="dna-reports-list" class="space-y-3"></div>
             <div id="dna-files-empty" class="hidden text-center py-8 text-xs text-ink/35">Tiada fail. Pesakit boleh upload di "Rekod Perubatan", atau tekan "+ Upload Laporan".</div>
+          </div>
+        </div>
+
+        <!-- ═══════════════ TAB: PERISTIWA ═══════════════ -->
+        <div id="tab-peristiwa" class="tab-content space-y-5">
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h3 class="font-bold text-ink flex items-center gap-2">🏥 Sejarah Peristiwa</h3>
+              <p class="text-xs text-ink/45 mt-0.5">Rekod kejadian kritikal pesakit — masuk wad, ICU, temujanji, kecemasan, discaj.</p>
+            </div>
+            <a id="pe-hub-new" data-rbac="patient_events.create" href="#" class="text-xs font-semibold px-4 py-2 rounded-lg bg-navy text-white hover:bg-navy/90 no-underline">➕ Rekod Peristiwa</a>
+          </div>
+
+          <!-- Senarai peristiwa (jadual berkepala) -->
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="bg-ink/[0.02] text-[10px] uppercase tracking-wider text-ink/45 border-b border-ink/8">
+                    <th class="text-left px-5 py-3.5 w-12">#</th>
+                    <th class="text-left px-3 py-3.5">Jenis Peristiwa</th>
+                    <th class="text-left px-3 py-3.5 w-52">Tarikh</th>
+                    <th class="text-left px-3 py-3.5">Hospital / Lokasi</th>
+                    <th class="text-left px-3 py-3.5 w-28">Status</th>
+                    <th class="text-right px-5 py-3.5 w-10"></th>
+                  </tr>
+                </thead>
+                <tbody id="pe-hub-list" class="divide-y divide-ink/6"></tbody>
+              </table>
+            </div>
+            <div id="pe-hub-empty" class="hidden text-center py-10 text-sm text-ink/40">Tiada peristiwa direkodkan untuk pesakit ini.</div>
+            <div id="pe-hub-pager" class="hidden items-center justify-between px-5 py-3.5 border-t border-ink/8"></div>
           </div>
         </div>
 
@@ -1210,6 +1246,8 @@
 <script src="../../shared/navbar.js"></script>
 <script src="../../shared/inventoryDeduct.js"></script>
 <script src="_shared.js"></script>
+<script src="../../shared/settings.js"></script>
+<script src="_peristiwa.js"></script>
 <script>
 const escHtml = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const escapeHtml = escHtml; // alias — banyak render guna nama escapeHtml
@@ -1510,7 +1548,7 @@ let loadedTabs = new Set(['overview']);
 
 async function switchTab(tab) {
   document.querySelectorAll('.tab-btn').forEach((b,i) => {
-    const tabs = ['overview','checkin','vitals','sessions','supply','dna','profile'];
+    const tabs = ['overview','checkin','vitals','sessions','supply','dna','peristiwa','profile'];
     b.classList.toggle('active', tabs[i] === tab);
   });
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -1529,6 +1567,7 @@ async function loadTabData(tab) {
   if (tab === 'sessions')  await loadSessions();
   if (tab === 'supply')    await loadSupply();
   if (tab === 'dna')       await loadDnaReports();
+  if (tab === 'peristiwa') await loadPeristiwa();
   if (tab === 'profile')   renderProfile();
 }
 
@@ -4029,6 +4068,81 @@ async function arkibPatientFromHub() {
   }
 }
 
+// ── Peristiwa Pesakit (sejarah kejadian) ──────────────
+async function loadPeristiwa() {
+  document.getElementById('pe-hub-new').href = 'peristiwa-baru.html?patient_id=' + patientId;
+  if (typeof peLoadTypes === 'function') { try { await peLoadTypes(); } catch (_) {} }
+
+  const { data, error } = await window.db.from('psy_patient_events')
+    .select('*, psy_patient_event_visits(id, status)')
+    .eq('patient_id', patientId)
+    .order('event_date', { ascending: false });
+
+  const list = document.getElementById('pe-hub-list');
+  const empty = document.getElementById('pe-hub-empty');
+  if (error) { list.innerHTML = ''; empty.textContent = 'Ralat: ' + error.message; empty.classList.remove('hidden'); return; }
+
+  const evs = data || [];
+  if (!evs.length) { list.innerHTML = ''; empty.classList.remove('hidden'); document.getElementById('pe-hub-pager').classList.add('hidden'); return; }
+  empty.classList.add('hidden');
+  peHubEvents = evs;
+  peHubPage = 1;
+  renderPeHubPage();
+}
+
+let peHubEvents = [];
+let peHubPage = 1;
+const PE_HUB_PAGE_SIZE = 10;
+
+function renderPeHubPage() {
+  const list = document.getElementById('pe-hub-list');
+  const total = peHubEvents.length;
+  const totalPages = Math.max(1, Math.ceil(total / PE_HUB_PAGE_SIZE));
+  if (peHubPage > totalPages) peHubPage = totalPages;
+  const shown = peHubEvents.slice((peHubPage - 1) * PE_HUB_PAGE_SIZE, peHubPage * PE_HUB_PAGE_SIZE);
+  const now = new Date();
+  const monthAgo = (d) => {
+    const diff = Math.floor((now - new Date(d + 'T00:00:00')) / 86400000);
+    if (diff < 0) return 'akan datang';
+    if (diff === 0) return 'hari ini';
+    if (diff < 30) return `${diff} hari lepas`;
+    const m = Math.floor(diff / 30);
+    return m === 1 ? 'bulan lepas' : `${m} bulan lepas`;
+  };
+
+  list.innerHTML = shown.map((e, idx) => {
+    const rowNum = (peHubPage - 1) * PE_HUB_PAGE_SIZE + idx + 1;
+    const typeLbl = (typeof PE_TYPES !== 'undefined' && PE_TYPES[e.event_type]?.lbl) || e.event_type;
+    const statusChip = e.status === 'open'
+      ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-terracotta/15 text-terracotta">Terbuka</span>'
+      : '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-ink/10 text-ink/60">Selesai</span>';
+    const dt = new Date(e.event_date + 'T00:00:00').toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' });
+    const loc = [e.hospital_name, e.ward_room].filter(Boolean).join(' · ');
+    return `<tr class="hover:bg-cream/30 cursor-pointer" onclick="location.href='peristiwa-detail.html?id=${e.id}'">
+      <td class="px-5 py-4 text-ink/40">${rowNum}</td>
+      <td class="px-3 py-4"><span class="font-semibold text-ink">${escapeHtml(typeLbl)}</span></td>
+      <td class="px-3 py-4 text-ink/70 whitespace-nowrap">${dt}<div class="text-[11px] text-ink/40">${monthAgo(e.event_date)}</div></td>
+      <td class="px-3 py-4 text-ink/70"><div class="max-w-[220px] truncate">${escapeHtml(loc) || '<span class="text-ink/30">—</span>'}</div></td>
+      <td class="px-3 py-4">${statusChip}</td>
+      <td class="px-5 py-4 text-right text-ink/30 text-lg">›</td>
+    </tr>`;
+  }).join('');
+
+  const pager = document.getElementById('pe-hub-pager');
+  if (totalPages <= 1) { pager.classList.add('hidden'); return; }
+  pager.classList.remove('hidden'); pager.classList.add('flex');
+  const start = (peHubPage - 1) * PE_HUB_PAGE_SIZE + 1;
+  pager.innerHTML = `
+    <span class="text-[11px] text-ink/45">${start}–${Math.min(peHubPage * PE_HUB_PAGE_SIZE, total)} drpd ${total}</span>
+    <span class="flex items-center gap-1">
+      <button onclick="peHubGo(${peHubPage - 1})" class="px-2.5 py-1 rounded-lg border border-ink/15 text-xs ${peHubPage === 1 ? 'opacity-40 pointer-events-none' : 'hover:bg-ink/5'}">‹</button>
+      <span class="text-xs text-ink/60 px-1">${peHubPage} / ${totalPages}</span>
+      <button onclick="peHubGo(${peHubPage + 1})" class="px-2.5 py-1 rounded-lg border border-ink/15 text-xs ${peHubPage === totalPages ? 'opacity-40 pointer-events-none' : 'hover:bg-ink/5'}">›</button>
+    </span>`;
+}
+function peHubGo(p) { peHubPage = p; renderPeHubPage(); }
+window.peHubGo = peHubGo;
+
 // ── DNA Reports ───────────────────────────────────────
 let allMedicalReports = [];
 
@@ -4040,7 +4154,31 @@ async function loadDnaReports() {
     const r = await window.db.from('psy_dna_reports').select('*').eq('patient_id', patientId).order('uploaded_at', { ascending: false });
     data = r.data; error = r.error;
   }
-  allMedicalReports = data || [];
+
+  // Cermin (read-only) laporan dari modul DNA Test — fail sebenar kekal di bucket 'dna-test'
+  const { data: dnaProcs } = await window.db.from('psy_dna_test_process')
+    .select('id, report_files, reports_uploaded_at, created_at').eq('patient_id', patientId);
+  const dnaSynthetic = [];
+  (dnaProcs || []).forEach(proc => {
+    Object.entries(proc.report_files || {}).forEach(([key, paths]) => {
+      (paths || []).forEach(path => {
+        dnaSynthetic.push({
+          id: 'dna:' + path,
+          report_type: 'dna_test',
+          file_name: path.split('/').pop(),
+          uploaded_at: proc.reports_uploaded_at || proc.created_at,
+          uploaded_by_name: 'DNA Test',
+          _isDna: true,
+          _bucket: 'dna-test',
+          _path: path,
+          _processId: proc.id,
+        });
+      });
+    });
+  });
+
+  allMedicalReports = [...(data || []), ...dnaSynthetic]
+    .sort((a, b) => new Date(b.uploaded_at) - new Date(a.uploaded_at));
   renderDnaList();
 }
 
@@ -4049,6 +4187,7 @@ const REPORT_TYPE_META = {
   ujian:      { lbl: 'Hasil Ujian', icon: '🧪', cls: 'bg-emerald-100 text-emerald-700' },
   imaging:    { lbl: 'Imbasan', icon: '🩻', cls: 'bg-purple-100 text-purple-700' },
   rujukan:    { lbl: 'Surat Rujukan', icon: '✉️', cls: 'bg-amber-100 text-amber-700' },
+  dna_test:   { lbl: 'DNA Test', icon: '🧬', cls: 'bg-purple-100 text-purple-700' },
   lain:       { lbl: 'Lain-lain', icon: '📁', cls: 'bg-ink/8 text-ink/55' },
   // legacy (rekod lama)
   dna:        { lbl: 'DNA', icon: '🧬', cls: 'bg-purple-100 text-purple-700' },
@@ -4063,9 +4202,16 @@ const REPORT_TYPE_META = {
 };
 
 async function openMedReport(id) {
+  id = decodeURIComponent(id);
   const r = allMedicalReports.find(x => x.id === id);
   if (!r) return;
   const win = window.open('', '_blank');   // buka serentak (dalam gesture) elak popup blocker
+  if (r._isDna) {
+    const { data, error } = await window.db.storage.from(r._bucket).createSignedUrl(r._path, 3600);
+    if (error || !data?.signedUrl) { if (win) win.close(); banner('Gagal buka fail: ' + (error?.message || 'akses ditolak'), 'error'); return; }
+    if (win) win.location = data.signedUrl; else window.location.href = data.signedUrl;
+    return;
+  }
   let url = r.file_url || null;
   if (r.file_path) {
     const { data, error } = await window.db.storage.from('medical-reports').createSignedUrl(r.file_path, 3600);
@@ -4088,6 +4234,17 @@ function renderDnaList() {
     const meta = REPORT_TYPE_META[t] || REPORT_TYPE_META.other;
     const d = new Date(r.uploaded_at);
     const reviewed = r.review_status === 'diluluskan' && r.doctor_review;
+
+    if (r._isDna) {
+      return `<div class="flex items-center gap-3 border border-ink/10 rounded-xl px-4 py-2.5">
+        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${meta.cls}">${meta.lbl}</span>
+        <span class="text-sm text-ink truncate flex-1">${escapeHtml(r.file_name)}</span>
+        <span class="text-[11px] text-ink/40 flex-shrink-0">${d.toLocaleDateString('ms-MY',{day:'2-digit',month:'short',year:'numeric'})}</span>
+        <button onclick="openMedReport('${encodeURIComponent(r.id)}')" class="text-xs font-semibold text-navy hover:underline whitespace-nowrap flex-shrink-0">👁️ Lihat</button>
+        <a href="dna-test.html?patient_id=${patientId}&process_id=${r._processId}&from=list" class="text-xs font-semibold text-[#6366f1] hover:underline whitespace-nowrap flex-shrink-0">🧬 Proses</a>
+      </div>`;
+    }
+
     return `<div class="border border-ink/10 rounded-xl p-4">
       <div class="flex items-start gap-3">
         <span class="text-2xl flex-shrink-0">${meta.icon}</span>
@@ -4103,8 +4260,8 @@ function renderDnaList() {
           ${reviewed ? `<div class="mt-2 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 text-[11px] text-emerald-900"><strong>Komen ${escapeHtml(r.doctor_name||'doktor')}:</strong> ${escapeHtml(r.doctor_review)}</div>` : ''}
         </div>
         <div class="flex flex-col items-end gap-1.5 flex-shrink-0">
-          <button onclick="openMedReport('${r.id}')" class="text-xs font-semibold text-navy hover:underline whitespace-nowrap">👁️ Lihat</button>
-          <button data-rbac="patient.create" onclick="commentReport('${r.id}')" class="text-xs font-semibold text-[#6366f1] hover:underline whitespace-nowrap">💬 Tambah Komen</button>
+          <button onclick="openMedReport('${encodeURIComponent(r.id)}')" class="text-xs font-semibold text-navy hover:underline whitespace-nowrap">👁️ Lihat</button>
+          <button data-rbac="patient.create" onclick="commentReport('${encodeURIComponent(r.id)}')" class="text-xs font-semibold text-[#6366f1] hover:underline whitespace-nowrap">💬 Tambah Komen</button>
         </div>
       </div>
     </div>`;
@@ -4112,8 +4269,9 @@ function renderDnaList() {
 }
 
 async function commentReport(id) {
+  id = decodeURIComponent(id);
   const r = allMedicalReports.find(x => x.id === id);
-  if (!r) return;
+  if (!r || r._isDna) return;
   const txt = prompt('Tambah komen doktor untuk laporan ini (pesakit akan nampak):', '');
   if (txt === null) return;
   const comment = txt.trim();

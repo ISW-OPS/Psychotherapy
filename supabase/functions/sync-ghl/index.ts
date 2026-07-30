@@ -62,6 +62,42 @@ function toE164(raw: string | null | undefined): string | null {
   return '+' + n
 }
 
+// Format timestamp → waktu Malaysia, mudah dibaca closer: "26/07/2026, 10:00 am"
+function fmtMYT(iso: string | null | undefined): string {
+  if (!iso) return ''
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kuala_Lumpur',
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: true,
+    }).format(new Date(iso))
+  } catch { return String(iso) }
+}
+
+// Label tarikh sesi KOB utk custom field: tarikh + mod ("... (online)")
+function kobDateLabel(scheduledAt: string | null | undefined, mode: string | null | undefined): string {
+  const d = fmtMYT(scheduledAt)
+  if (!d) return ''
+  return `${d} (${mode === 'online' ? 'online' : 'fizikal'})`
+}
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  })
+}
+
+// Query Supabase REST guna service role (auto-injected oleh Supabase).
+async function sbSelect(path: string): Promise<any[]> {
+  const url = Deno.env.get('SUPABASE_URL')!
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+  const res = await fetch(`${url}/rest/v1/${path}`, {
+    headers: { apikey: key, Authorization: `Bearer ${key}` },
+  })
+  if (!res.ok) throw new Error(`DB ${path} → ${res.status}: ${await res.text()}`)
+  return res.json()
+}
+
 async function ghl(path: string, init: RequestInit = {}) {
   const token = Deno.env.get('GHL_ISW_TOKEN')!
   const res = await fetch(`${GHL_BASE}${path}`, {
@@ -102,6 +138,11 @@ Deno.serve(async (req: Request) => {
     const record = payload.record ?? payload
     const oldRecord = payload.old_record ?? null
 
+    // ── Cabang ikut jadual sumber webhook ───────────────────
+    if (payload.table === 'psy_kob_sessions') {
+      return await handleKobSession(record, oldRecord)
+    }
+
     // ── 2. Hanya proses bila kob_status betul-betul berubah ──
     const status = record?.kob_status as string | undefined
     if (!status) {
@@ -127,6 +168,18 @@ Deno.serve(async (req: Request) => {
     }
 
     // ── 3. Upsert contact ikut phone + set custom fields ────
+    // Tarikh sesi KOB terkini (booked/reschedule/hadir/completed) — jangan
+    // gagalkan sync utama kalau lookup gagal.
+    let kobDate = ''
+    try {
+      const sessions = await sbSelect(
+        `psy_kob_sessions?patient_id=eq.${record.id}` +
+        `&status=in.(booked,reschedule,hadir,completed)` +
+        `&order=scheduled_at.desc&limit=1&select=scheduled_at,mode`,
+      )
+      if (sessions?.[0]) kobDate = kobDateLabel(sessions[0].scheduled_at, sessions[0].mode)
+    } catch (e) { console.error('sync-ghl: kob date lookup failed:', e) }
+
     const [firstName, ...rest] = String(record.full_name || '').trim().split(/\s+/)
     const upsertBody = {
       locationId,
@@ -140,6 +193,7 @@ Deno.serve(async (req: Request) => {
         { key: CF.package,     field_value: record.active_package_name || '' },
         { key: CF.packageEnds, field_value: record.package_expires_at || '' },
         { key: CF.mrn,         field_value: record.mrn || '' },
+        { key: CF.kobDate,     field_value: kobDate },
       ],
       // 'patient' = penanda kekal utk automation GHL (cth. exclude dari
       // sales flow "EOB CREATED" guna filter Tag none-of: patient)
@@ -192,3 +246,56 @@ Deno.serve(async (req: Request) => {
     })
   }
 })
+
+// ── Webhook psy_kob_sessions: sync tarikh booking → GHL ─────
+// Dicetus bila patient tempah / reschedule / batal slot KOB.
+// Hanya update custom field tarikh pada contact — Opportunity stage
+// diuruskan oleh aliran psy_patients (kob_status → 'booked').
+async function handleKobSession(record: any, oldRecord: any): Promise<Response> {
+  if (!record?.patient_id) return json({ skipped: 'no patient_id' })
+
+  // Skip kalau tarikh & status tak berubah (elak spam GHL pada update lain)
+  if (oldRecord &&
+      oldRecord.scheduled_at === record.scheduled_at &&
+      oldRecord.status === record.status) {
+    return json({ skipped: 'session unchanged' })
+  }
+
+  const relevant = ['booked', 'reschedule', 'cancelled']
+  if (!relevant.includes(record.status)) {
+    return json({ skipped: `status ${record.status}` })
+  }
+
+  const [patient] = await sbSelect(
+    `psy_patients?id=eq.${record.patient_id}&select=id,full_name,phone,mrn`,
+  )
+  if (!patient) return json({ skipped: 'patient not found', patient_id: record.patient_id })
+
+  const phone = toE164(patient.phone)
+  if (!phone) return json({ skipped: 'no phone', patient: patient.id })
+
+  // Batal → kosongkan tarikh; booked/reschedule → tarikh baru
+  const dateValue = record.status === 'cancelled'
+    ? ''
+    : kobDateLabel(record.scheduled_at, record.mode)
+
+  const locationId = Deno.env.get('GHL_ISW_LOCATION_ID')!
+  const [firstName, ...rest] = String(patient.full_name || '').trim().split(/\s+/)
+  const upsert = await ghl('/contacts/upsert', {
+    method: 'POST',
+    body: JSON.stringify({
+      locationId,
+      phone,
+      firstName: firstName || undefined,
+      lastName: rest.join(' ') || undefined,
+      name: patient.full_name || undefined,
+      customFields: [
+        { key: CF.kobDate, field_value: dateValue },
+        { key: CF.mrn,     field_value: patient.mrn || '' },
+      ],
+      tags: ['patient', 'isw-kob'],
+    }),
+  })
+  const contactId = upsert?.contact?.id || upsert?.id
+  return json({ success: true, contactId, kob_session_date: dateValue, session_status: record.status })
+}

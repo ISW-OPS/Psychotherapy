@@ -632,6 +632,53 @@ async function runSessionConfirm(supabase, locationId) {
   return { reminder, escalation: escal }
 }
 
+// ───────── 7) Auto Tidak Hadir — sesi lepas >24 jam belum direkod ─────────
+// Sesi 'booked'/'pending' yang session_date dah lepas >24 jam & masih belum
+// ditanda hadir/tidak-hadir oleh coach → auto-tanda 'cancel' (Tidak Hadir),
+// notifikasi pesakit (minta hubungi coach) + loceng coach (segera hubungi
+// pesakit & jadual semula). Tiada dedup khas — status 'cancel' terus keluar
+// dari filter booked/pending pada run seterusnya.
+async function runAutoAbsence(supabase) {
+  const DEADLINE_HOURS = 24
+  const cutoff = new Date(Date.now() - DEADLINE_HOURS * 3600000).toISOString()
+  const { data: rows } = await supabase.from('psy_plan_weekly_progress')
+    .select('id, week_number, session_day, plan_id, patient_id, session_date, psy_patients(full_name, coach_id, user_id)')
+    .in('status', ['booked', 'pending']).lt('session_date', cutoff).limit(500)
+  const res = { due: (rows || []).length, marked: 0, notified: 0, bells: 0, errors: [] }
+  for (const r of rows || []) {
+    const p = r.psy_patients || {}
+    try {
+      await supabase.from('psy_plan_weekly_progress').update({
+        status: 'cancel', absence_reason: 'Tiada rekod kehadiran — auto-tanda selepas 24 jam',
+        updated_by_name: 'Sistem (Auto-Kehadiran)', updated_at: new Date().toISOString(),
+      }).eq('id', r.id)
+      res.marked++
+    } catch (e) { res.errors.push(`update ${r.id}: ${String(e?.message || e)}`); continue }
+    if (p.user_id) {
+      try {
+        await supabase.from('psy_notifications').insert({
+          user_id: p.user_id, type: 'plan', title: 'Sesi Ditanda Tidak Hadir',
+          body: `Sesi Minggu ${r.week_number} anda ditanda tidak hadir (tiada rekod dalam 24 jam). Sila hubungi coach untuk jadual semula.`.slice(0, 240),
+          link: 'plan.html',
+        })
+        res.notified++
+      } catch (e) { res.errors.push(`notify-patient ${r.id}: ${String(e?.message || e)}`) }
+    }
+    if (p.coach_id) {
+      try {
+        await supabase.from('psy_notifications').insert({
+          user_id: p.coach_id, type: 'appointment',
+          title: `❌ Auto: Tidak Hadir — ${p.full_name || 'Pesakit'}`,
+          body: `Sesi Minggu ${r.week_number} tak direkod >24 jam, auto-tanda tidak hadir. Sila hubungi pesakit & jadual semula.`.slice(0, 240),
+          link: '/roles/staff/patient-hub.html?patient_id=' + r.patient_id,
+        })
+        res.bells++
+      } catch (e) { res.errors.push(`bell ${r.id}: ${String(e?.message || e)}`) }
+    }
+  }
+  return res
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   try {
@@ -646,7 +693,8 @@ Deno.serve(async (req) => {
     const kepatuhanAlerts = await runKepatuhanAlerts(supabase, locationId)
     const automations = await runScheduledAutomations(supabase, locationId)
     const sessionConfirm = await runSessionConfirm(supabase, locationId)
-    return new Response(JSON.stringify({ success: true, eventReminders, broadcasts, catatanHarian, kepatuhanAlerts, automations, sessionConfirm }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    const autoAbsence = await runAutoAbsence(supabase)
+    return new Response(JSON.stringify({ success: true, eventReminders, broadcasts, catatanHarian, kepatuhanAlerts, automations, sessionConfirm, autoAbsence }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
   } catch (err) {
     console.error('event-reminders error:', err)
     return new Response(JSON.stringify({ error: String(err?.message || err) }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })

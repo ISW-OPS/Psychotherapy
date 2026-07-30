@@ -1,0 +1,1168 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — DNA Test</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+  .dt-step-wrap { display:flex; flex-direction:column; align-items:center; gap:6px; flex-shrink:0; min-width:76px; }
+  .dt-step-circ { width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    font-size:13px; font-weight:700; background:#e5e1d8; color:#9c9690; transition:all .15s; }
+  .dt-step-label { font-size:10.5px; font-weight:600; color:#9c9690; text-align:center; white-space:nowrap; }
+  .dt-step-wrap.current .dt-step-circ { background:#1a3a5c; color:#fff; box-shadow:0 0 0 4px rgba(26,58,92,.15); }
+  .dt-step-wrap.current .dt-step-label { color:#1a3a5c; }
+  .dt-step-wrap.done .dt-step-circ { background:#3f7a57; color:#fff; }
+  .dt-step-wrap.done .dt-step-label { color:#3f7a57; }
+  .dt-step-wrap.clickable { cursor:pointer; }
+  .dt-step-line { flex:1; height:2px; background:#e5e1d8; margin:17px 2px 0; min-width:16px; }
+  .dt-step-line.done { background:#3f7a57; }
+
+  /* Checklist rows (kad + ikon + badge) */
+  .dt-check-row { display:flex; align-items:center; gap:.7rem; padding:.65rem .25rem; border-bottom:1px solid rgba(0,0,0,.05); }
+  .dt-check-row:last-child { border:none; }
+  .dt-check-row input[type=checkbox] { width:18px; height:18px; accent-color:#1a3a5c; cursor:pointer; flex-shrink:0; }
+  .dt-chk-icon { width:30px; height:30px; border-radius:9px; background:#eef1f5; display:flex; align-items:center;
+    justify-content:center; font-size:14px; flex-shrink:0; }
+  .dt-badge-req { font-size:9.5px; font-weight:700; text-transform:uppercase; letter-spacing:.03em;
+    background:#eef1f5; color:#6b7280; padding:3px 9px; border-radius:999px; white-space:nowrap; flex-shrink:0; }
+
+  /* Info / peringatan box */
+  .dt-info-box { background:#eff6ff; border:1px solid #bfdbfe; border-radius:14px; padding:14px 16px; }
+  .dt-info-box b { color:#1e3a5f; }
+
+  /* Kad tujuan (2 kotak berwarna) */
+  .dt-purpose-card { border-radius:16px; padding:16px; }
+
+  /* Ilustrasi langkah bernombor + anak panah */
+  .dt-illust-row { display:flex; align-items:flex-start; flex-wrap:wrap; gap:14px 10px; padding-bottom:4px; }
+  .dt-illust-item { display:flex; flex-direction:column; align-items:center; gap:8px; width:112px; flex-shrink:0; text-align:center; }
+  .dt-illust-arrow-wrap { display:flex; align-items:center; flex-shrink:0; }
+  .dt-illust-circle { width:72px; height:72px; border-radius:50%; background:#eef1f5; display:flex; align-items:center;
+    justify-content:center; font-size:28px; position:relative; overflow:hidden; }
+  .dt-illust-num { position:absolute; top:-3px; right:-3px; width:18px; height:18px; border-radius:50%; background:#1a3a5c;
+    color:#fff; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+  .dt-illust-arrow { color:#c7c2b8; font-size:16px; margin-top:26px; }
+  .dt-illust-cap { font-size:11px; color:#6b7280; line-height:1.3; }
+
+  /* Langkah bernombor menegak (Barcode/Activate) */
+  .dt-vstep { display:flex; gap:12px; padding:12px 0; border-bottom:1px solid rgba(0,0,0,.05); }
+  .dt-vstep:last-child { border:none; }
+  .dt-vstep-num { width:30px; height:30px; border-radius:50%; background:#1a3a5c; color:#fff; font-size:12px; font-weight:700;
+    display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .dt-vstep-icon { width:44px; height:44px; border-radius:12px; background:#eef1f5; display:flex; align-items:center;
+    justify-content:center; font-size:20px; flex-shrink:0; }
+  .dt-vstep-icon-lg { width:64px; height:64px; border-radius:14px; background:#eef1f5; display:flex; align-items:center;
+    justify-content:center; flex-shrink:0; }
+
+  .dt-section-title { font-weight:700; color:#111; display:flex; align-items:center; gap:6px; margin-bottom:10px; }
+</style>
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🧬</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-6 space-y-4">
+
+        <div class="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <a id="dt-back" href="patient-hub.html" class="text-xs text-ink/50 hover:text-navy no-underline">← Kembali ke Patient Hub</a>
+            <h1 class="text-xl font-bold text-ink mt-0.5">🧬 Proses DNA Test</h1>
+            <p id="dt-patient-crumb" class="text-xs text-ink/40 mt-0.5">Memuatkan pesakit…</p>
+          </div>
+        </div>
+
+        <!-- Stepper -->
+        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
+          <div id="dt-stepper" class="flex items-start overflow-x-auto pb-1"></div>
+        </div>
+
+        <!-- Bar maklumat pesakit -->
+        <div id="dt-patient-bar" class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5"></div>
+
+        <div id="dt-step-content" class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5"></div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="../../shared/utils.js"></script>
+<script src="_shared.js"></script>
+<script src="../../shared/settings.js"></script>
+<script>
+const STEP_LABELS = ['', 'Sample Collection', 'Barcode & Packaging', 'Activate Kit (ATGC)', 'Muat Naik Laporan', 'Consultation', 'Selesai'];
+
+const SAMPLE_CHECKLIST = [
+  { k: 'makan_2jam', icon: '🍽️', lbl: 'Pesakit makan sekurang-kurangnya 2 jam sebelum ujian' },
+  { k: 'tidak_makan_30min', icon: '🥤', lbl: 'Pesakit tidak makan/minum 30 minit sebelum ujian' },
+  { k: 'terang_tujuan', icon: '🧬', lbl: 'Terangkan tujuan DNA Test (Nutrigenomic & Genetik Keturunan)' },
+  { k: 'swab_kanan', icon: '👄', lbl: 'Swab pipi kanan (10 kali atas & bawah)' },
+  { k: 'swab_kiri', icon: '👄', lbl: 'Swab pipi kiri (10 kali atas & bawah)' },
+  { k: 'masuk_tiub', icon: '🧪', lbl: 'Masukkan swab ke dalam tiub' },
+  { k: 'tutup_tiub', icon: '🔒', lbl: 'Tutup tiub dengan ketat' },
+  { k: 'goncang', icon: '🌀', lbl: 'Goncangkan tiub 15 kali' },
+];
+
+// Ilustrasi langkah swab (Step 1) — checklist tertanam terus pada setiap langkah
+// (elak duplicate teks dengan kad checklist berasingan). Key sepadan dgn SAMPLE_CHECKLIST.
+const SWAB_ILLUST = [
+  ['../../icon/Swab 1.png', 'Sapu hujung swab di bahagian dalam pipi kanan (10 kali atas & bawah).', 'swab_kanan'],
+  ['../../icon/Swab 1.png', 'Ulang langkah yang sama di pipi kiri menggunakan swab yang sama.', 'swab_kiri'],
+  ['../../icon/3.png', 'Buka penutup tiub dan masukkan hujung swab ke dalam tiub.', 'masuk_tiub'],
+  ['../../icon/4.png', 'Tutup tiub dengan ketat.', 'tutup_tiub'],
+  ['../../icon/5.png', 'Goncangkan tiub sebanyak 15 kali supaya swab diselaputi larutan.', 'goncang'],
+];
+
+// Langkah Barcode & Packaging (Step 2) — panduan menegak
+const PACKAGING_STEPS = [
+  ['../../icon/barcode 1.png', 'Sticker 1 (Botol Tiub)', 'Tampal barcode secara menegak bermula dari mulut botol.', 'sticker1'],
+  ['../../icon/barcode 2.png', 'Sticker 2 (Sampul Putih)', 'Tampal barcode pada sampul putih dan isi maklumat pesakit.', 'sticker2'],
+  ['../../icon/barcode 3.png', 'Masukkan ke Packaging Coklat', 'Masukkan tiub ke dalam packaging coklat.', 'masuk_packaging'],
+  ['../../icon/barcode 4.png', 'Seal Packaging Coklat', 'Seal packaging coklat dengan kemas.', 'seal_packaging'],
+  ['../../icon/barcode 5.png', 'Masukkan ke Sampul Putih', 'Masukkan packaging coklat ke dalam sampul putih.', 'masuk_sampul'],
+  ['📸', 'Ambil Gambar & Upload', 'Ambil gambar bahagian depan sampul putih (dengan barcode jelas).', 'ambil_gambar'],
+  ['../../icon/whatsapp.png', 'Hantar Gambar', 'Hantar gambar melalui WhatsApp kepada penyelaras.', 'hantar_gambar'],
+];
+
+// Langkah Aktivasi ATGC (Step 3) — panduan menegak
+const ATGC_STEPS = [
+  ['../../icon/ATGC 1.png', 'Log Masuk ATGC', 'Log masuk portal ATGC menggunakan e-mel & kata laluan yang diberi oleh penyelaras makmal.'],
+  ['../../icon/ATGC 2.png', 'Klik "Activate Kit"', 'Pada dashboard ATGC, klik butang Activate Kit.'],
+  ['../../icon/ATGC 3.png', 'Masukkan Barcode Kit', 'Masukkan Barcode Number (ATGC Kit) yang sama seperti Step 2, klik Next.'],
+  ['../../icon/ATGC 4.png', 'Isi Maklumat Pesakit', 'Isi nama, tarikh lahir & jantina pesakit.'],
+  ['../../icon/ATGC 5.png', 'Terms of Service', 'Semak & terima terma perkhidmatan pada portal.'],
+  ['../../icon/ATGC 6.png', 'Review & Aktifkan', 'Semak semua maklumat dan klik Activate untuk selesaikan di portal ATGC.'],
+];
+
+const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+// Terima emoji ATAU path gambar (.png) — papar <img> kalau path, emoji kalau tidak
+function iconHtml(v, cls) { return v && v.endsWith('.png') ? `<img src="${v}" alt="" class="${cls || 'w-6 h-6'} object-contain">` : v; }
+function fmtDate(d) { if (!d) return '—'; const dt = new Date(d + 'T00:00:00'); return dt.toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric' }); }
+function fmtDT(ts) { if (!ts) return '—'; const dt = new Date(ts); return dt.toLocaleString('ms-MY', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }); }
+function ageOf(dob) { if (!dob) return null; const d = new Date(dob); const diff = Date.now() - d.getTime(); return Math.floor(diff / (365.25*24*3600*1000)); }
+function qs(k) { return new URLSearchParams(location.search).get(k); }
+
+let PATIENT_ID = null;
+let PROCESS_ID = null;
+let FROM = null;
+let PATIENT = null;
+let COACHES = [];
+let ALL_STAFF = [];
+let ACTIVE_PLAN = null;
+let PROC = null;      // baris psy_dna_test_process semasa
+let VIEW_STEP = 1;    // step yg sedang dipaparkan (boleh < current_step utk semak semula)
+
+// pending files (belum dimuat naik)
+let pendingSamplePhoto = null;
+
+function checklistObj(items) { const o = {}; items.forEach(it => o[it.k] = false); return o; }
+
+// ── Muatkan pesakit + proses DNA test ─────────────────────
+async function loadPatient() {
+  const { data, error } = await window.db.from('psy_patients')
+    .select('id, full_name, mrn, phone, gender, date_of_birth, coach_id, user_id, psy_profiles!psy_patients_user_id_fkey(full_name, phone)')
+    .eq('id', PATIENT_ID).single();
+  if (error || !data) { banner('Pesakit tidak dijumpai', 'error'); return null; }
+  return data;
+}
+
+async function loadCoaches() {
+  const { data } = await window.db.from('psy_profiles')
+    .select('id, full_name, staff_role').eq('role', 'staff')
+    .in('staff_role', ['coach', 'doctor']).order('full_name');
+  COACHES = data || [];
+}
+
+async function loadAllStaff() {
+  const { data } = await window.db.from('psy_profiles')
+    .select('id, full_name').eq('role', 'staff').order('full_name');
+  ALL_STAFF = data || [];
+}
+
+async function loadActivePlan() {
+  const { data } = await window.db.from('psy_treatment_plans')
+    .select('id, name, template, current_week, status').eq('patient_id', PATIENT_ID)
+    .order('created_at', { ascending: false });
+  const plans = data || [];
+  return plans.find(p => p.status === 'active') || plans[0] || null;
+}
+
+async function loadOrCreateProcess() {
+  if (PROCESS_ID) {
+    const { data, error } = await window.db.from('psy_dna_test_process')
+      .select('*').eq('id', PROCESS_ID).eq('patient_id', PATIENT_ID).maybeSingle();
+    if (error) { banner('Ralat memuatkan proses: ' + error.message, 'error'); return null; }
+    if (data) return data;
+    banner('Proses DNA Test tidak dijumpai', 'error');
+  }
+  const { data } = await window.db.from('psy_dna_test_process')
+    .select('*').eq('patient_id', PATIENT_ID).eq('status', 'in_progress')
+    .order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if (data) return data;
+  const row = {
+    patient_id: PATIENT_ID,
+    coach_id: PATIENT.coach_id || window.currentUser.id,
+    created_by: window.currentUser.id,
+    sample_checklist: checklistObj(SAMPLE_CHECKLIST),
+  };
+  const { data: created, error } = await window.db.from('psy_dna_test_process').insert(row).select('*').single();
+  if (error) { banner('Ralat mencipta proses DNA Test: ' + error.message, 'error'); return null; }
+  return created;
+}
+
+async function saveProc(patch) {
+  const { data, error } = await window.db.from('psy_dna_test_process')
+    .update(patch).eq('id', PROC.id).select('*').single();
+  if (error) { banner('Ralat menyimpan: ' + error.message, 'error'); return false; }
+  PROC = data;
+  return true;
+}
+
+// ── Render: bar maklumat pesakit (macam Patient Workspace header) ──
+function renderPatientSummary() {
+  const p = PATIENT;
+  const name = iswPatientName(p) || p.mrn || 'Pesakit';
+  const age = ageOf(p.date_of_birth);
+  const coach = COACHES.find(c => c.id === PROC?.coach_id) || COACHES.find(c => c.id === p.coach_id);
+  const backLink = document.getElementById('dt-back');
+  if (FROM === 'list') {
+    document.getElementById('dt-patient-crumb').textContent = `DNA Test › ${name}`;
+    backLink.href = 'dna-test-list.html';
+    backLink.textContent = '← Kembali ke Senarai DNA Test';
+  } else {
+    document.getElementById('dt-patient-crumb').textContent = `Patient Workspace › ${name}`;
+    backLink.href = 'patient-hub.html?id=' + PATIENT_ID;
+    backLink.textContent = '← Kembali ke Patient Hub';
+  }
+
+  const statusBadge = p.status === 'active'
+    ? '<span class="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-green-light text-green-dark">Active Patient</span>'
+    : `<span class="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-ink/10 text-ink/60">${esc(p.status || '—')}</span>`;
+
+  const miniStat = (icon, lbl, val) => `<div>
+    <div class="text-[10px] uppercase tracking-wide text-ink/40 font-semibold mb-0.5">${lbl}</div>
+    <div class="text-sm font-semibold text-ink flex items-center gap-1">${icon} ${esc(val || '—')}</div>
+  </div>`;
+
+  document.getElementById('dt-patient-bar').innerHTML = `
+    <div class="flex items-center justify-between gap-4 flex-wrap">
+      <div class="flex items-center gap-4 flex-wrap">
+        <div class="w-14 h-14 rounded-full bg-navy text-white text-xl font-bold flex items-center justify-center flex-shrink-0">${esc(name.slice(0,1).toUpperCase())}</div>
+        <div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="font-bold text-ink text-lg">${esc(name)}</span>${statusBadge}
+          </div>
+          <div class="flex gap-4 mt-1 text-xs text-ink/55 flex-wrap">
+            <span>🆔 ${esc(p.mrn || '—')}</span>
+            <span>📞 ${esc(iswPatientPhone(p) || '—')}</span>
+            <span>🎂 ${age ? age + ' Years Old' : '—'}${p.gender === 'M' ? ' · Lelaki' : p.gender === 'F' ? ' · Perempuan' : ''}</span>
+          </div>
+        </div>
+      </div>
+      <div class="flex items-center gap-6 flex-wrap">
+        ${miniStat('📅', 'Treatment Week', ACTIVE_PLAN?.current_week ? 'Week ' + ACTIVE_PLAN.current_week : '—')}
+        ${miniStat('📦', 'Package', ACTIVE_PLAN?.name)}
+        ${miniStat('🧑‍🏫', 'Coach', coach?.full_name)}
+      </div>
+    </div>`;
+}
+
+// ── Stepper ────────────────────────────────────────────────
+function renderStepper() {
+  const reached = PROC.current_step;
+  let html = '';
+  for (let i = 1; i <= 6; i++) {
+    const done = i < reached || (i === 6 && PROC.status === 'completed');
+    const current = i === VIEW_STEP;
+    const clickable = i <= reached;
+    html += `<div class="dt-step-wrap ${current ? 'current' : ''} ${done ? 'done' : ''} ${clickable ? 'clickable' : ''}"
+        ${clickable ? `onclick="goStep(${i})"` : ''}>
+      <div class="dt-step-circ">${done && !current ? '✓' : i}</div>
+      <span class="dt-step-label">${STEP_LABELS[i]}</span>
+    </div>`;
+    if (i < 6) html += `<div class="dt-step-line ${i < reached ? 'done' : ''}"></div>`;
+  }
+  document.getElementById('dt-stepper').innerHTML = html;
+}
+
+function goStep(n) {
+  if (n > PROC.current_step) return;
+  VIEW_STEP = n;
+  renderStepper();
+  renderStepContent();
+}
+window.goStep = goStep;
+
+// ── Checklist renderer (generik) ──────────────────────────
+function renderChecklist(containerId, items, savedObj, badgeLabel) {
+  document.getElementById(containerId).innerHTML = items.map(it => `
+    <label class="dt-check-row">
+      <input type="checkbox" data-k="${it.k}" ${savedObj?.[it.k] ? 'checked' : ''}>
+      <span class="text-sm text-ink flex-1">${esc(it.lbl)}</span>
+      ${badgeLabel ? `<span class="dt-badge-req">${esc(badgeLabel)}</span>` : ''}
+    </label>`).join('');
+}
+function readChecklist(containerId, items) {
+  const el = document.getElementById(containerId);
+  const o = {};
+  items.forEach(it => { o[it.k] = !!el.querySelector(`input[data-k="${it.k}"]`)?.checked; });
+  return o;
+}
+function checklistAllChecked(o, items) { return items.every(it => o?.[it.k]); }
+
+// ── STEP 1: Sample Collection ──────────────────────────────
+function renderStep1() {
+  const sc = PROC.sample_checklist || {};
+  const chk = k => sc[k] ? 'checked' : '';
+  document.getElementById('dt-step-content').innerHTML = `
+    <h2 class="font-bold text-ink mb-1 flex items-center gap-2">🧪 Step 1: Sample Collection</h2>
+    <p class="text-xs text-ink/45 mb-4">Kutip sampel DNA pesakit menggunakan DNA Test Kit. Tandakan setiap langkah selepas selesai.</p>
+
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <!-- Kiri: Peringatan + Tujuan -->
+      <div class="space-y-4">
+        <div class="dt-info-box">
+          <div class="text-sm font-bold text-[#1e3a5f] mb-1">ℹ️ Peringatan Penting</div>
+          <label class="flex items-start gap-2 text-xs text-[#1e3a5f]/80 py-1 cursor-pointer">
+            <input type="checkbox" data-sk="makan_2jam" ${chk('makan_2jam')} class="mt-0.5">
+            <span>Pastikan pesakit telah makan sekurang-kurangnya 2 jam sebelum ujian.</span>
+          </label>
+          <label class="flex items-start gap-2 text-xs text-[#1e3a5f]/80 py-1 cursor-pointer">
+            <input type="checkbox" data-sk="tidak_makan_30min" ${chk('tidak_makan_30min')} class="mt-0.5">
+            <span>Pastikan pesakit tidak makan atau minum sekurang-kurangnya 30 minit sebelum ujian.</span>
+          </label>
+        </div>
+
+        <div>
+          <div class="dt-section-title text-sm flex items-center justify-between">
+            <span>Terangkan 2 Tujuan Utama DNA Test</span>
+            <label class="flex items-center gap-1.5 text-xs font-normal text-ink/55 cursor-pointer">
+              <input type="checkbox" data-sk="terang_tujuan" ${chk('terang_tujuan')}> Sudah diterangkan
+            </label>
+          </div>
+          <div class="grid grid-cols-1 gap-3">
+            <div class="dt-purpose-card bg-green-light/25 border border-green/20">
+              <div class="text-sm font-bold text-green-dark mb-1">1. Nutrigenomic</div>
+              <p class="text-[11px] text-ink/60 leading-relaxed">Mengetahui bagaimana makanan mempengaruhi genetik seseorang. Contoh: ada individu lebih bertenaga selepas minum caffeine, ada pula yang menjadi pening.</p>
+            </div>
+            <div class="dt-purpose-card bg-navy/5 border border-navy/15">
+              <div class="text-sm font-bold text-navy mb-1">2. Genetik Keturunan</div>
+              <p class="text-[11px] text-ink/60 leading-relaxed">Mengenal pasti potensi penyakit yang diwarisi dan langkah pencegahannya.</p>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-ink/70 mb-1.5">Nota (pilihan)</label>
+          <textarea id="dt-s1-notes" rows="3" class="w-full border border-ink/15 rounded-lg px-3 py-2.5 text-sm bg-white outline-none resize-y" placeholder="Tambah nota jika perlu…"></textarea>
+        </div>
+      </div>
+
+      <!-- Kanan: Langkah Swab (senarai menegak) -->
+      <div>
+        <div class="dt-section-title text-sm">Langkah Pengambilan Sampel DNA (Swab)</div>
+        <div>
+          ${SWAB_ILLUST.map(([img, cap, key]) => `
+            <div class="dt-vstep">
+              <img src="${img}" alt="" class="w-16 h-16 object-contain flex-shrink-0">
+              <div class="flex-1 min-w-0 text-sm text-ink">${esc(cap)}</div>
+              <label class="flex items-center gap-1.5 text-xs text-ink/50 cursor-pointer flex-shrink-0">
+                <input type="checkbox" data-sk="${key}" ${chk(key)}> Completed
+              </label>
+            </div>`).join('')}
+        </div>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-end gap-2 mt-5 pt-4 border-t border-ink/8">
+      <button onclick="saveStep1(false)" class="text-sm font-semibold px-5 py-2.5 rounded-lg border border-ink/15 text-ink/60 hover:bg-ink/5">Save as Draft</button>
+      <button id="dt-s1-next" onclick="saveStep1(true)" class="text-sm font-semibold px-6 py-2.5 rounded-lg bg-navy text-white hover:bg-navy/90">Sample Collection Completed →</button>
+    </div>`;
+  document.getElementById('dt-s1-notes').value = PROC.sample_notes || '';
+}
+
+function readStep1Checklist() {
+  const o = {};
+  document.querySelectorAll('#dt-step-content [data-sk]').forEach(el => { o[el.dataset.sk] = el.checked; });
+  return o;
+}
+
+async function saveStep1(advance) {
+  const checklist = readStep1Checklist();
+  const notes = document.getElementById('dt-s1-notes').value.trim() || null;
+  if (advance && !checklistAllChecked(checklist, SAMPLE_CHECKLIST)) {
+    banner('Sila tandakan semua langkah sebelum teruskan', 'error');
+    return;
+  }
+  const patch = { sample_checklist: checklist, sample_notes: notes };
+  if (advance && !PROC.kit_received_at) patch.kit_received_at = new Date().toISOString().slice(0, 10);
+  if (advance) {
+    patch.sample_collected_at = new Date().toISOString();
+    patch.sample_collected_by = window.currentUser.id;
+    patch.current_step = Math.max(PROC.current_step, 2);
+  }
+  const ok = await saveProc(patch);
+  if (!ok) return;
+  banner(advance ? 'Sample Collection selesai ✅' : 'Draf disimpan');
+  if (advance) { VIEW_STEP = 2; renderStepper(); renderStepContent(); }
+}
+window.saveStep1 = saveStep1;
+
+// ── STEP 2: Barcode & Packaging ─────────────────────────────
+function renderStep2() {
+  document.getElementById('dt-step-content').innerHTML = `
+    <h2 class="font-bold text-ink mb-1 flex items-center gap-2">🏷️ Step 2: Barcode & Packaging</h2>
+    <p class="text-xs text-ink/45 mb-4">Label sampel dengan betul dan bungkus dengan selamat.</p>
+
+    <div class="grid grid-cols-1 lg:grid-cols-5 gap-5">
+      <!-- Kiri: Panduan SOP (rujukan sahaja, bukan checklist) -->
+      <div class="lg:col-span-3">
+        <div class="dt-section-title text-sm">Barcode & Packaging Steps</div>
+        <div>
+          ${PACKAGING_STEPS.map(([icon, title, desc, key]) => `
+            <div class="dt-vstep">
+              ${icon.endsWith('.png')
+                ? `<img src="${icon}" alt="" class="w-12 h-12 object-contain flex-shrink-0">`
+                : `<div class="dt-vstep-icon">${icon}</div>`}
+              <div class="flex-1 min-w-0">
+                <div class="text-sm font-bold text-ink">${esc(title)}</div>
+                <div class="text-[11px] text-ink/50">${esc(desc)}</div>
+              </div>
+              ${key === 'ambil_gambar' ? `
+                <button type="button" onclick="document.getElementById('dt-s2-photo').click()" class="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-navy/30 text-navy hover:bg-navy/5 whitespace-nowrap flex-shrink-0">📤 Upload</button>
+                <input id="dt-s2-photo" type="file" accept="image/*" capture="environment" class="hidden">` : ''}
+              ${key === 'hantar_gambar' ? `<div class="flex items-center gap-1.5 flex-shrink-0">
+                <button type="button" onclick="openCoordinatorWhatsApp()" class="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-green text-white hover:bg-green-dark whitespace-nowrap">💬 Buka WhatsApp</button>
+                <button type="button" onclick="shareCoordinatorPhoto()" title="Share fail gambar terus (mobile/tablet sahaja)" class="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-navy/30 text-navy hover:bg-navy/5 whitespace-nowrap">📤 Share Gambar</button>
+              </div>` : ''}
+            </div>
+            ${key === 'ambil_gambar' ? '<div id="dt-s2-photo-preview" class="pl-16 pb-3"></div>' : ''}`).join('')}
+        </div>
+      </div>
+
+      <!-- Tengah: Maklumat Sample -->
+      <div class="lg:col-span-2 space-y-4">
+        <div class="border border-ink/10 rounded-2xl p-3.5">
+          <div class="dt-section-title text-xs mb-2">Maklumat Sample</div>
+          <label class="block text-[11px] font-semibold text-ink/70 mb-1">Barcode Number (ATGC Kit) <span class="text-terracotta">*</span></label>
+          <div class="flex gap-1.5 mb-2">
+            <input id="dt-s2-barcode" type="text" placeholder="cth: ATGC-250722-00125" class="flex-1 border border-ink/15 rounded-lg px-2.5 py-1.5 text-xs bg-white outline-none">
+            <button type="button" onclick="openScanModal()" class="flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-navy/30 text-navy hover:bg-navy/5 whitespace-nowrap">⛶ Scan</button>
+          </div>
+
+          <div class="space-y-2 mb-2">
+            <div>
+              <label class="block text-[11px] font-semibold text-ink/70 mb-1">Nama Pesakit</label>
+              <input disabled value="${esc(iswPatientName(PATIENT) || '—')}" class="w-full border border-ink/10 rounded-lg px-2.5 py-1.5 text-xs bg-ink/5 text-ink/50 cursor-not-allowed">
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div>
+                <label class="block text-[11px] font-semibold text-ink/70 mb-1">Tarikh Lahir</label>
+                <input disabled value="${PATIENT.date_of_birth ? fmtDate(PATIENT.date_of_birth) : '—'}" class="w-full border border-ink/10 rounded-lg px-2.5 py-1.5 text-xs bg-ink/5 text-ink/50 cursor-not-allowed">
+              </div>
+              <div>
+                <label class="block text-[11px] font-semibold text-ink/70 mb-1">Jantina</label>
+                <input disabled value="${PATIENT.gender === 'M' ? 'Lelaki' : PATIENT.gender === 'F' ? 'Perempuan' : '—'}" class="w-full border border-ink/10 rounded-lg px-2.5 py-1.5 text-xs bg-ink/5 text-ink/50 cursor-not-allowed">
+              </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div>
+                <label class="block text-[11px] font-semibold text-ink/70 mb-1">Tarikh Pengambilan Sampel</label>
+                <input disabled value="${fmtDT(PROC.sample_collected_at)}" class="w-full border border-ink/10 rounded-lg px-2.5 py-1.5 text-xs bg-ink/5 text-ink/50 cursor-not-allowed">
+              </div>
+              <div>
+                <label class="block text-[11px] font-semibold text-ink/70 mb-1">Diambil Oleh</label>
+                <select id="dt-s2-collector" class="w-full border border-ink/15 rounded-lg px-2.5 py-1.5 text-xs bg-white text-ink outline-none">
+                  ${ALL_STAFF.map(s => `<option value="${s.id}">${esc(s.full_name)}</option>`).join('')}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <label class="block text-[11px] font-semibold text-ink/70 mb-1">Tarikh Hantar Sample ke Makmal</label>
+          <input id="dt-s2-sent-to-lab" type="date" class="w-full border border-ink/15 rounded-lg px-2.5 py-1.5 text-xs bg-white outline-none mb-2">
+
+          <label class="block text-[11px] font-semibold text-ink/70 mb-1">Catatan (Optional)</label>
+          <textarea id="dt-s2-notes" rows="2" maxlength="300" oninput="document.getElementById('dt-s2-notes-count').textContent=this.value.length+'/300 characters'" placeholder="Tambah catatan jika perlu…" class="w-full border border-ink/15 rounded-lg px-2.5 py-1.5 text-xs bg-white outline-none resize-y"></textarea>
+          <div id="dt-s2-notes-count" class="text-right text-[10px] text-ink/40 mb-1">0/300 characters</div>
+
+          <div id="dt-s2-barcode-banner" class="hidden bg-green-light/25 border border-green/25 rounded-lg px-2.5 py-2 text-[11px] text-green-dark">
+            ✅ Barcode telah direkodkan. Sila pastikan pembungkusan dilakukan dengan betul.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Scan Barcode -->
+    <div id="dt-scan-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl p-4 max-w-sm w-full">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="font-bold text-sm text-ink">Scan Barcode</h3>
+          <button onclick="closeScanModal()" class="text-ink/40 hover:text-ink text-lg leading-none">✕</button>
+        </div>
+        <video id="dt-scan-video" class="w-full rounded-lg bg-black aspect-video" autoplay playsinline muted></video>
+        <p id="dt-scan-status" class="text-xs text-ink/50 mt-2 text-center">Halakan kamera ke barcode…</p>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-between gap-2 mt-5 pt-4 border-t border-ink/8">
+      <button onclick="goStep(1)" class="text-sm font-semibold px-5 py-2.5 rounded-lg border border-ink/15 text-ink/60 hover:bg-ink/5">← Previous Step</button>
+      <div class="flex items-center gap-2">
+        <button onclick="saveStep2(false)" class="text-sm font-semibold px-5 py-2.5 rounded-lg border border-ink/15 text-ink/60 hover:bg-ink/5">Save as Draft</button>
+        <button onclick="saveStep2(true)" class="text-sm font-semibold px-6 py-2.5 rounded-lg bg-navy text-white hover:bg-navy/90">Packaging Completed & Next Step →</button>
+      </div>
+    </div>`;
+  document.getElementById('dt-s2-barcode').value = PROC.barcode_number || '';
+  document.getElementById('dt-s2-notes').value = PROC.packaging_notes || '';
+  document.getElementById('dt-s2-notes-count').textContent = (PROC.packaging_notes || '').length + '/300 characters';
+  document.getElementById('dt-s2-barcode-banner').classList.toggle('hidden', !PROC.barcode_number);
+  document.getElementById('dt-s2-collector').value = PROC.sample_collected_by || window.currentUser.id;
+  document.getElementById('dt-s2-sent-to-lab').value = PROC.sample_sent_to_lab_at || '';
+  renderStep2PhotoPreview();
+  document.getElementById('dt-s2-photo').addEventListener('change', e => {
+    pendingSamplePhoto = e.target.files[0] || null;
+    renderStep2PhotoPreview();
+  });
+}
+
+async function renderStep2PhotoPreview() {
+  const el = document.getElementById('dt-s2-photo-preview');
+  if (pendingSamplePhoto) {
+    const url = URL.createObjectURL(pendingSamplePhoto);
+    el.innerHTML = `<img src="${url}" onclick="openImageLightbox('${url}')" class="w-40 h-40 object-cover rounded-lg border border-ink/10 cursor-zoom-in hover:opacity-90">
+      <div class="text-[11px] text-ink/45 mt-1">${esc(pendingSamplePhoto.name)} · belum disimpan (klik gambar untuk lihat penuh)</div>`;
+    return;
+  }
+  if (!PROC.sample_photo_path) { el.innerHTML = ''; return; }
+  const { data, error } = await window.db.storage.from('dna-test').createSignedUrl(PROC.sample_photo_path, 300);
+  el.innerHTML = error ? '' : `<img src="${data.signedUrl}" onclick="openImageLightbox('${data.signedUrl}')" class="w-40 h-40 object-cover rounded-lg border border-ink/10 cursor-zoom-in hover:opacity-90">
+    <div class="text-[11px] text-ink/45 mt-1">📎 Gambar sedia ada — klik untuk lihat penuh, pilih fail baharu untuk gantikan.</div>`;
+}
+
+function openImageLightbox(url) {
+  const modal = document.createElement('div');
+  modal.className = 'fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 cursor-zoom-out';
+  modal.innerHTML = `<img src="${url}" class="max-w-full max-h-full rounded-lg">`;
+  modal.onclick = () => modal.remove();
+  document.body.appendChild(modal);
+}
+window.openImageLightbox = openImageLightbox;
+
+function coordinatorMsg(withManualAttachNote) {
+  const coordName = iswGetSetting('dna_test_coordinator_name', '') || 'Penyelaras';
+  const barcode = document.getElementById('dt-s2-barcode')?.value.trim() || PROC.barcode_number || '-';
+  return `Salam ${coordName}, gambar packaging kit DNA Test.\nPesakit: ${iswPatientName(PATIENT)}\nBarcode: ${barcode}` +
+    (withManualAttachNote ? '\n(Sila attach gambar packaging secara manual)' : '');
+}
+
+function openCoordinatorWhatsApp() {
+  const phone = (iswGetSetting('dna_test_coordinator_phone', '') || '').replace(/\D/g, '');
+  if (!phone) {
+    banner('Nombor WhatsApp penyelaras belum ditetapkan — sila set di Tetapan Sistem > Tetapan Klinik', 'error');
+    return;
+  }
+  window.open(`https://wa.me/${phone}?text=${encodeURIComponent(coordinatorMsg(true))}`, '_blank');
+}
+window.openCoordinatorWhatsApp = openCoordinatorWhatsApp;
+
+// Alternatif: share terus fail gambar (Web Share API — mobile/tablet sahaja).
+// Staff pilih sendiri chat Shamsinar dalam WhatsApp lepas share sheet terbuka.
+async function shareCoordinatorPhoto() {
+  let file = pendingSamplePhoto;
+  if (!file && PROC.sample_photo_path) {
+    const { data, error } = await window.db.storage.from('dna-test').download(PROC.sample_photo_path);
+    if (!error && data) file = new File([data], 'packaging.jpg', { type: data.type || 'image/jpeg' });
+  }
+  if (!file) {
+    banner('Sila upload gambar packaging dahulu sebelum share', 'error');
+    return;
+  }
+  if (!navigator.canShare || !navigator.canShare({ files: [file] })) {
+    banner('Share fail tidak disokong pada peranti/browser ini — guna butang "Buka WhatsApp" sebaliknya', 'error');
+    return;
+  }
+  try {
+    await navigator.share({ files: [file], text: coordinatorMsg(false) });
+  } catch (e) { /* pengguna batal share — abaikan */ }
+}
+window.shareCoordinatorPhoto = shareCoordinatorPhoto;
+
+// ── Scan Barcode (kamera) — guna ZXing (library JS, berfungsi di semua browser termasuk Safari/iOS) ──
+let _zxingReader = null;
+
+async function openScanModal() {
+  if (typeof ZXing === 'undefined') {
+    banner('Library scan gagal dimuatkan — sila taip barcode secara manual', 'error');
+    return;
+  }
+  document.getElementById('dt-scan-modal').classList.remove('hidden');
+  const statusEl = document.getElementById('dt-scan-status');
+  statusEl.textContent = 'Halakan kamera ke barcode…';
+  const onResult = (result, err) => {
+    if (result) {
+      document.getElementById('dt-s2-barcode').value = result.getText();
+      banner('Barcode dikesan: ' + result.getText());
+      closeScanModal();
+    }
+  };
+  try {
+    _zxingReader = new ZXing.BrowserMultiFormatReader();
+    if (typeof _zxingReader.decodeFromConstraints === 'function') {
+      await _zxingReader.decodeFromConstraints({ video: { facingMode: 'environment' } }, 'dt-scan-video', onResult);
+    } else {
+      await _zxingReader.decodeFromVideoDevice(undefined, 'dt-scan-video', onResult);
+    }
+  } catch (e) {
+    statusEl.textContent = 'Gagal akses kamera: ' + e.message;
+  }
+}
+window.openScanModal = openScanModal;
+
+function closeScanModal() {
+  document.getElementById('dt-scan-modal').classList.add('hidden');
+  if (_zxingReader) { _zxingReader.reset(); _zxingReader = null; }
+}
+window.closeScanModal = closeScanModal;
+
+async function saveStep2(advance) {
+  const barcode = document.getElementById('dt-s2-barcode').value.trim();
+  if (advance && !barcode) { banner('Sila isi Barcode Number', 'error'); return; }
+  const notes = document.getElementById('dt-s2-notes').value.trim() || null;
+  const collectedBy = document.getElementById('dt-s2-collector').value || null;
+  const sentToLabAt = document.getElementById('dt-s2-sent-to-lab').value || null;
+  const patch = { barcode_number: barcode || null, packaging_notes: notes, sample_collected_by: collectedBy, sample_sent_to_lab_at: sentToLabAt };
+  if (pendingSamplePhoto) {
+    const path = `${PATIENT_ID}/${PROC.id}/sample_photo_${Date.now()}.${(pendingSamplePhoto.name.split('.').pop() || 'jpg')}`;
+    const { error: upErr } = await window.db.storage.from('dna-test').upload(path, pendingSamplePhoto, { upsert: true });
+    if (upErr) { banner('Gagal muat naik gambar: ' + upErr.message, 'error'); return; }
+    patch.sample_photo_path = path;
+  }
+  if (advance) {
+    patch.packaging_completed_at = new Date().toISOString();
+    patch.current_step = Math.max(PROC.current_step, 3);
+  }
+  const ok = await saveProc(patch);
+  if (!ok) return;
+  pendingSamplePhoto = null;
+  banner(advance ? 'Barcode & Packaging selesai ✅' : 'Draf disimpan');
+  if (advance) { VIEW_STEP = 3; renderStepper(); renderStepContent(); }
+  else renderStep2();
+}
+window.saveStep2 = saveStep2;
+
+// ── STEP 3: Activate Kit (ATGC) ──────────────────────────────
+function renderStep3() {
+  const activated = PROC.atgc_status === 'activated';
+  const atgcUrl = iswGetSetting('dna_test_atgc_url', '');
+  const activatedByName = ALL_STAFF.find(s => s.id === PROC.atgc_activated_by)?.full_name;
+  document.getElementById('dt-step-content').innerHTML = `
+    <div class="flex items-center justify-between gap-3 flex-wrap mb-1">
+      <h2 class="font-bold text-ink flex items-center gap-2">🧬 Activate on ATGC Portal</h2>
+      ${atgcUrl ? `<a href="${esc(atgcUrl)}" target="_blank" rel="noopener" class="inline-block text-sm font-semibold px-4 py-2.5 rounded-lg bg-navy text-white hover:bg-navy/90 no-underline whitespace-nowrap">↗ Open ATGC Portal</a>` : ''}
+    </div>
+    <p class="text-xs text-ink/45 mb-4">Activation is done on the external laboratory portal (ATGC). Please follow the steps below.</p>
+    ${atgcUrl ? '' : `<p class="text-xs text-terracotta mb-4">URL Portal ATGC belum ditetapkan — sila set di Tetapan Sistem &gt; Tetapan Klinik.</p>`}
+
+    <div class="mb-5">
+      <div class="dt-section-title text-sm">Steps to Activate DNA Kit on ATGC</div>
+      <div class="dt-illust-row" style="flex-wrap:nowrap;">
+        ${ATGC_STEPS.map(([icon, title], i) => `
+          <div class="dt-illust-item" style="width:auto; flex:1; min-width:0;">
+            <div class="relative inline-flex mx-auto" style="width:120px;height:120px;">${iconHtml(icon, 'w-[120px] h-[120px]')}<span class="dt-illust-num">${i + 1}</span></div>
+            <div class="text-xs font-bold text-ink text-center">${esc(title)}</div>
+          </div>
+          ${i < ATGC_STEPS.length - 1 ? '<div class="dt-illust-arrow-wrap"><span class="dt-illust-arrow">→</span></div>' : ''}`).join('')}
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
+      <div class="lg:col-span-3 border border-ink/10 rounded-2xl p-4">
+        <div class="dt-section-title text-sm">Activation Status in This System</div>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <div><div class="text-ink/45 mb-1">ATGC Kit Barcode</div><div class="font-semibold text-ink">${esc(PROC.barcode_number || '—')}</div></div>
+          <div><div class="text-ink/45 mb-1">Current Status</div><span class="font-semibold ${activated ? 'text-green-dark' : 'text-gold-dark'}">${activated ? 'Activated' : 'Not Activated'}</span></div>
+          <div><div class="text-ink/45 mb-1">Activated By</div><div class="font-semibold text-ink">${esc(activatedByName || '—')}</div></div>
+          <div><div class="text-ink/45 mb-1">Activation Date</div><div class="font-semibold text-ink">${activated ? fmtDT(PROC.atgc_activated_at) : '—'}</div></div>
+        </div>
+      </div>
+      <div class="lg:col-span-2 rounded-2xl border border-navy/15 bg-navy/5 p-4">
+        <div class="text-sm font-bold text-navy mb-1">After Activation</div>
+        <p class="text-xs text-ink/60 mb-3">After you have successfully activated the kit on ATGC, please click the button below to update the status.</p>
+        <button onclick="toggleAtgcActivated()" class="w-full text-sm font-semibold px-4 py-2.5 rounded-lg ${activated ? 'border border-ink/15 text-ink/60 hover:bg-ink/5 bg-white' : 'bg-navy text-white hover:bg-navy/90'}">${activated ? 'Batalkan' : '✓ Mark as Activated'}</button>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-between gap-2 mt-5 pt-4 border-t border-ink/8">
+      <button onclick="goStep(2)" class="text-sm font-semibold px-5 py-2.5 rounded-lg border border-ink/15 text-ink/60 hover:bg-ink/5">← Previous Step</button>
+      <button id="dt-s3-next" onclick="advanceStep3()" ${activated ? '' : 'disabled'} class="text-sm font-semibold px-6 py-2.5 rounded-lg ${activated ? 'bg-navy text-white hover:bg-navy/90' : 'bg-ink/10 text-ink/40 cursor-not-allowed'}">Next: Muat Naik Laporan →</button>
+    </div>`;
+}
+
+async function toggleAtgcActivated() {
+  const activated = PROC.atgc_status === 'activated';
+  const patch = activated
+    ? { atgc_status: 'not_activated', atgc_activated_at: null, atgc_activated_by: null }
+    : { atgc_status: 'activated', atgc_activated_at: new Date().toISOString(), atgc_activated_by: window.currentUser.id };
+  const ok = await saveProc(patch);
+  if (!ok) return;
+  renderStepContent();
+}
+window.toggleAtgcActivated = toggleAtgcActivated;
+
+async function advanceStep3() {
+  if (PROC.atgc_status !== 'activated') return;
+  const ok = await saveProc({ current_step: Math.max(PROC.current_step, 4) });
+  if (!ok) return;
+  VIEW_STEP = 4; renderStepper(); renderStepContent();
+}
+window.advanceStep3 = advanceStep3;
+
+// ── STEP 4: Muat Naik Laporan DNA ────────────────────────────
+const REPORT_SLOTS = [
+  ['plant_based', 'ISW Wellness Plant-Based Report', 'Nutrition, Food Sensitivity, Wellbeing, Fitness, Skin Care, Traits', 'IB-LIFE'],
+  ['health_risk', 'ISW Health Risk Report', 'System Risks, Diseases, Conditions', 'IB-HRCD'],
+  ['carrier_drug', 'ISW Carrier Status & Drug Sensitivity Report', 'Carrier Status, Drug Sensitivity, Cancer Risk', 'IB-CANC'],
+];
+
+const REPORT_ICONS = { plant_based: '🌿', health_risk: '⚠️', carrier_drug: '🧫' };
+
+function reportFilesFor(key) { return (PROC.report_files || {})[key] || []; }
+
+// Upload terus (immediate) — boleh >1 fail sekali gus, digunakan Step 4 & Step 5
+async function addReportFiles(key, code, fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  const current = { ...(PROC.report_files || {}) };
+  const arr = [...(current[key] || [])];
+  const patientName = (iswPatientName(PATIENT) || 'Pesakit').replace(/[\/\\?#%]/g, '').trim();
+  for (const file of files) {
+    const idx = arr.length + 1;
+    const fileName = `${code} - ${patientName}${idx > 1 ? ' (' + idx + ')' : ''}.pdf`;
+    const path = `${PATIENT_ID}/${PROC.id}/${fileName}`;
+    const { error } = await window.db.storage.from('dna-test').upload(path, file, { upsert: true });
+    if (error) { banner(`Gagal muat naik: ${error.message}`, 'error'); continue; }
+    arr.push(path);
+  }
+  current[key] = arr;
+  const ok = await saveProc({ report_files: current });
+  if (!ok) return;
+  banner('Laporan dimuat naik ✅');
+  renderStepContent();
+}
+window.addReportFiles = addReportFiles;
+
+async function removeReportFile(key, path) {
+  if (!confirm('Padam fail ini?')) return;
+  await window.db.storage.from('dna-test').remove([path]);
+  const current = { ...(PROC.report_files || {}) };
+  current[key] = (current[key] || []).filter(p => p !== path);
+  const ok = await saveProc({ report_files: current });
+  if (!ok) return;
+  renderStepContent();
+}
+window.removeReportFile = removeReportFile;
+
+function renderStep4() {
+  document.getElementById('dt-step-content').innerHTML = `
+    <h2 class="font-bold text-ink mb-1 flex items-center gap-2">📄 Step 4: Muat Naik Laporan DNA</h2>
+    <p class="text-xs text-ink/45 mb-4">Muat turun laporan dari portal ATGC, kemudian muat naik di sini (PDF sahaja). Boleh lebih dari satu fail setiap kategori.</p>
+    <div class="dt-info-box mb-4">
+      <div class="text-xs text-[#1e3a5f]">ℹ️ Pastikan semua data betul sebelum memuat turun laporan dari ATGC, kemudian muat naik salinan PDF di bawah.</div>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+      ${REPORT_SLOTS.map(([key, , , code]) => {
+        const files = reportFilesFor(key);
+        return `<div class="border rounded-2xl p-4 ${files.length ? 'border-green/30 bg-green-light/10' : 'border-ink/10'}">
+          <div class="text-2xl mb-2">${REPORT_ICONS[key]}</div>
+          <div class="text-sm font-bold text-ink mb-2">${esc(code)}</div>
+          <div class="space-y-1 mb-2">
+            ${files.length ? files.map(p => `
+              <div class="flex items-center justify-between gap-2 text-[11px]">
+                <button type="button" onclick="downloadReport('${p}')" class="text-green-dark font-semibold hover:underline truncate">✅ ${esc(p.split('/').pop())}</button>
+                <button type="button" onclick="removeReportFile('${key}','${p}')" class="text-terracotta hover:underline flex-shrink-0">Padam</button>
+              </div>`).join('') : '<div class="text-[11px] text-ink/40">Belum dimuat naik</div>'}
+          </div>
+          <input type="file" accept="application/pdf" multiple onchange="addReportFiles('${key}','${code}', this.files); this.value='';" class="w-full text-xs">
+        </div>`;
+      }).join('')}
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+      <div>
+        <label class="block text-xs font-semibold text-ink/70 mb-1.5">Tarikh Laporan Dikeluarkan (oleh Lab)</label>
+        <input id="dt-s4-lab-issued" type="date" class="w-full border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white outline-none">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-ink/70 mb-1.5">Emel ke Pesakit</label>
+        <button type="button" onclick="emailReportsToPatient()" class="w-full text-sm font-semibold px-3 py-2 rounded-lg border border-navy/30 text-navy hover:bg-navy/5">📧 Emel Laporan ke Pesakit</button>
+        <div id="dt-s4-email-status" class="text-[11px] text-ink/45 mt-1"></div>
+      </div>
+    </div>
+
+    <label class="block text-xs font-semibold text-ink/70 mb-1.5">Nota (pilihan)</label>
+    <textarea id="dt-s4-notes" rows="3" class="w-full border border-ink/15 rounded-lg px-3 py-2.5 text-sm bg-white outline-none resize-y"></textarea>
+    <div class="flex items-center justify-between gap-2 mt-5 pt-4 border-t border-ink/8">
+      <button onclick="goStep(3)" class="text-sm font-semibold px-5 py-2.5 rounded-lg border border-ink/15 text-ink/60 hover:bg-ink/5">← Previous Step</button>
+      <div class="flex items-center gap-2">
+        <button onclick="saveStep4(false)" class="text-sm font-semibold px-5 py-2.5 rounded-lg border border-ink/15 text-ink/60 hover:bg-ink/5">Save as Draft</button>
+        <button onclick="saveStep4(true)" class="text-sm font-semibold px-6 py-2.5 rounded-lg bg-navy text-white hover:bg-navy/90">Reports Uploaded & Next Step →</button>
+      </div>
+    </div>`;
+  document.getElementById('dt-s4-notes').value = PROC.report_notes || '';
+  document.getElementById('dt-s4-lab-issued').value = PROC.lab_report_issued_at || '';
+  document.getElementById('dt-s4-email-status').textContent = PROC.reports_emailed_at ? `Dihantar pada ${fmtDT(PROC.reports_emailed_at)}` : 'Belum dihantar';
+}
+
+async function emailReportsToPatient() {
+  const allUploaded = REPORT_SLOTS.every(([key]) => reportFilesFor(key).length > 0);
+  if (!allUploaded) { banner('Sila muat naik ketiga-tiga kategori laporan dahulu', 'error'); return; }
+  if (!confirm('Hantar laporan DNA ke emel pesakit sekarang?')) return;
+  const { data, error } = await window.db.functions.invoke('dna-test-email-report', { body: { process_id: PROC.id } });
+  if (error) {
+    let msg = error.message;
+    try { const c = await error.context?.json(); if (c?.error) msg = c.error; } catch (_) {}
+    banner('Gagal hantar emel: ' + msg, 'error');
+    return;
+  }
+  PROC.reports_emailed_at = new Date().toISOString();
+  document.getElementById('dt-s4-email-status').textContent = `Dihantar pada ${fmtDT(PROC.reports_emailed_at)} (${data.sent_to})`;
+  banner('Laporan dihantar ke emel pesakit ✅');
+}
+window.emailReportsToPatient = emailReportsToPatient;
+
+async function saveStep4(advance) {
+  const notes = document.getElementById('dt-s4-notes').value.trim() || null;
+  const labIssuedAt = document.getElementById('dt-s4-lab-issued').value || null;
+  const allUploaded = REPORT_SLOTS.every(([key]) => reportFilesFor(key).length > 0);
+  if (advance && !allUploaded) { banner('Sila muat naik ketiga-tiga kategori laporan dahulu', 'error'); return; }
+  const patch = { report_notes: notes, lab_report_issued_at: labIssuedAt };
+  if (advance) {
+    patch.reports_uploaded_at = new Date().toISOString();
+    patch.current_step = Math.max(PROC.current_step, 5);
+  }
+  const ok = await saveProc(patch);
+  if (!ok) return;
+  banner(advance ? 'Laporan DNA disahkan ✅' : 'Draf disimpan');
+  if (advance) { VIEW_STEP = 5; renderStepper(); renderStepContent(); }
+}
+window.saveStep4 = saveStep4;
+
+// ── STEP 5: Consultation ──────────────────────────────────────
+
+let CURRENT_APPT = null;
+
+const APPT_STATUS_LABEL = {
+  scheduled: 'Dijadualkan', checked_in: 'Sudah Daftar Masuk', in_progress: 'Sedang Berjalan',
+  completed: 'Pesakit Hadir (Selesai)', no_show: 'Tidak Hadir', cancelled: 'Dibatalkan',
+};
+
+function renderStep5() {
+  const attended = CURRENT_APPT?.status === 'completed';
+  document.getElementById('dt-step-content').innerHTML = `
+    <h2 class="font-bold text-ink mb-1 flex items-center gap-2">👥 Step 5: Consultation</h2>
+    <p class="text-xs text-ink/45 mb-4">Sediakan & jadualkan sesi konsultasi keputusan DNA dengan pesakit.</p>
+
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+      <div>
+        <label class="block text-xs font-semibold text-ink/70 mb-1.5">Tarikh Konsultasi <span class="text-terracotta">*</span></label>
+        <input id="dt-s5-date" type="date" min="${new Date().toISOString().slice(0, 10)}" class="w-full border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white outline-none">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-ink/70 mb-1.5">Masa Konsultasi <span class="text-terracotta">*</span></label>
+        <input id="dt-s5-time" type="time" class="w-full border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white outline-none">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-ink/70 mb-1.5">Mod</label>
+        <select id="dt-s5-mode" class="w-full border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white outline-none">
+          <option value="physical">Fizikal</option>
+          <option value="online">Online</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-ink/70 mb-1.5">Konsultasi Bersama</label>
+        <select id="dt-s5-with" class="w-full border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white outline-none">
+          ${COACHES.map(c => `<option value="${c.id}">${esc(c.full_name)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+
+    <div class="mt-4">
+      <div class="dt-section-title text-sm">Laporan DNA</div>
+      ${REPORT_SLOTS.map(([key, , , code], i) => {
+        const files = reportFilesFor(key);
+        return `<div class="py-2 ${i < REPORT_SLOTS.length - 1 ? 'border-b border-ink/8' : ''}">
+          <div class="flex items-center justify-between gap-3 text-xs mb-1">
+            <span class="font-semibold text-ink">📄 ${esc(code)}</span>
+            <label class="text-navy font-semibold hover:underline cursor-pointer">
+              + Tambah Fail
+              <input type="file" accept="application/pdf" multiple class="hidden" onchange="addReportFiles('${key}','${code}', this.files); this.value='';">
+            </label>
+          </div>
+          ${files.length ? files.map(p => `
+            <div class="flex items-center justify-between text-[11px] py-0.5">
+              <button type="button" onclick="downloadReport('${p}')" class="text-navy hover:underline truncate">${esc(p.split('/').pop())}</button>
+              <button type="button" onclick="removeReportFile('${key}','${p}')" class="text-terracotta hover:underline flex-shrink-0 ml-2">Padam</button>
+            </div>`).join('') : '<div class="text-[11px] text-ink/40">Belum dimuat naik</div>'}
+        </div>`;
+      }).join('')}
+    </div>
+
+    <div class="mt-4">
+      <div class="dt-section-title text-sm">Lampiran</div>
+      <p class="text-[11px] text-ink/45 mb-2">Upload apa-apa fail tambahan yang perlu untuk konsultasi ni (skrip, nota, dll).</p>
+      ${(PROC.consultation_attachments || []).map(p => `
+        <div class="flex items-center justify-between text-xs py-1">
+          <button type="button" onclick="downloadReport('${p}')" class="text-navy hover:underline truncate">📎 ${esc(p.split('/').pop())}</button>
+          <button type="button" onclick="removeConsultationAttachment('${p}')" class="text-terracotta hover:underline flex-shrink-0 ml-2">Padam</button>
+        </div>`).join('')}
+      <label class="text-xs text-navy font-semibold hover:underline cursor-pointer">
+        + Tambah Lampiran
+        <input type="file" multiple class="hidden" onchange="addConsultationAttachments(this.files); this.value='';">
+      </label>
+    </div>
+
+    <div class="mt-4">
+      <label class="block text-xs font-semibold text-ink/70 mb-1.5">Nota Konsultasi (pilihan)</label>
+      <textarea id="dt-s5-notes" rows="3" class="w-full border border-ink/15 rounded-lg px-3 py-2.5 text-sm bg-white outline-none resize-y" placeholder="cth: Pesakit faham keputusan dan cadangan yang diberikan…"></textarea>
+    </div>
+
+    ${PROC.appointment_id ? `
+      <div class="mt-4 rounded-xl border ${attended ? 'border-green/30 bg-green-light/15' : 'border-gold/30 bg-gold/10'} p-4 flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <div class="text-sm font-bold ${attended ? 'text-green-dark' : 'text-gold-dark'}">Status Janji Temu: ${esc(APPT_STATUS_LABEL[CURRENT_APPT?.status] || CURRENT_APPT?.status || '—')}</div>
+          <div class="text-xs text-ink/50">Proses DNA Test hanya boleh diselesaikan selepas pesakit hadir ke konsultasi.</div>
+        </div>
+        <button onclick="markAttendedAndComplete()" ${attended ? 'disabled' : ''} class="text-sm font-semibold px-4 py-2.5 rounded-lg whitespace-nowrap ${attended ? 'bg-ink/10 text-ink/40 cursor-not-allowed' : 'bg-navy text-white hover:bg-navy/90'}">✓ Pesakit Hadir — Selesaikan Proses</button>
+      </div>` : ''}
+
+    <div class="flex items-center justify-between gap-2 mt-5 pt-4 border-t border-ink/8">
+      <button onclick="goStep(4)" class="text-sm font-semibold px-5 py-2.5 rounded-lg border border-ink/15 text-ink/60 hover:bg-ink/5">← Previous Step</button>
+      <button onclick="saveStep5()" class="text-sm font-semibold px-5 py-2.5 rounded-lg border border-ink/15 text-ink/60 hover:bg-ink/5">💾 ${PROC.appointment_id ? 'Simpan Perubahan Jadual' : 'Jadualkan Konsultasi'}</button>
+    </div>`;
+  document.getElementById('dt-s5-with').value = PROC.coach_id || PATIENT.coach_id || (COACHES[0]?.id || '');
+  document.getElementById('dt-s5-notes').value = PROC.consultation_notes || '';
+  loadAppointmentIntoForm();
+}
+
+async function loadAppointmentIntoForm() {
+  if (!PROC.appointment_id) { CURRENT_APPT = null; return; }
+  const { data: appt } = await window.db.from('psy_appointments').select('*').eq('id', PROC.appointment_id).maybeSingle();
+  CURRENT_APPT = appt || null;
+  if (!appt) return;
+  const dt = new Date(appt.appointment_time);
+  document.getElementById('dt-s5-date').value = dt.toISOString().slice(0, 10);
+  document.getElementById('dt-s5-time').value = dt.toTimeString().slice(0, 5);
+  document.getElementById('dt-s5-with').value = appt.staff_id || document.getElementById('dt-s5-with').value;
+  document.getElementById('dt-s5-mode').value = (appt.room || '').toLowerCase().includes('online') ? 'online' : 'physical';
+}
+
+async function markAttendedAndComplete() {
+  if (!PROC.appointment_id) return;
+  if (!confirm('Sahkan pesakit telah hadir ke konsultasi dan proses DNA Test ini boleh diselesaikan?')) return;
+  await window.db.from('psy_appointments').update({ status: 'completed' }).eq('id', PROC.appointment_id);
+  const notes = document.getElementById('dt-s5-notes').value.trim() || null;
+  const ok = await saveProc({
+    consultation_notes: notes,
+    current_step: 6,
+    status: 'completed',
+    completed_at: new Date().toISOString(),
+    completed_by: window.currentUser.id,
+  });
+  if (!ok) return;
+  banner('Proses DNA Test selesai ✅');
+  VIEW_STEP = 6; renderStepper(); renderStepContent();
+}
+window.markAttendedAndComplete = markAttendedAndComplete;
+
+async function saveStep5() {
+  const date = document.getElementById('dt-s5-date').value;
+  const time = document.getElementById('dt-s5-time').value;
+  const mode = document.getElementById('dt-s5-mode').value;
+  const withId = document.getElementById('dt-s5-with').value;
+
+  if (!date || !time) { banner('Sila isi tarikh & masa konsultasi', 'error'); return; }
+  if (date < new Date().toISOString().slice(0, 10)) { banner('Tarikh konsultasi tidak boleh tarikh yang telah lepas', 'error'); return; }
+
+  let appointmentId = PROC.appointment_id;
+  const withStaff = COACHES.find(c => c.id === withId);
+  const apptRow = {
+    patient_id: PATIENT_ID,
+    staff_id: withId || null,
+    patient_name: iswPatientName(PATIENT),
+    staff_name: withStaff?.full_name || null,
+    service: 'DNA Test Consultation',
+    appointment_time: new Date(`${date}T${time}:00`).toISOString(),
+    duration_min: 60,
+    room: mode === 'online' ? 'Online' : (iswGetSetting('clinic_name', '') || null),
+  };
+  if (appointmentId) {
+    await window.db.from('psy_appointments').update(apptRow).eq('id', appointmentId);
+  } else {
+    const { data: created, error } = await window.db.from('psy_appointments').insert(apptRow).select('id').single();
+    if (error) { banner('Ralat menjadualkan appointment: ' + error.message, 'error'); return; }
+    appointmentId = created.id;
+  }
+
+  const notes = document.getElementById('dt-s5-notes').value.trim() || null;
+  const patch = { appointment_id: appointmentId, consultation_notes: notes, consultation_marked_ready_at: new Date().toISOString() };
+  const ok = await saveProc(patch);
+  if (!ok) return;
+  banner('Konsultasi dijadualkan ✅');
+  renderStepContent();
+}
+window.saveStep5 = saveStep5;
+
+// ── STEP 6: Completed ─────────────────────────────────────────
+async function renderStep6() {
+  let appt = null;
+  if (PROC.appointment_id) {
+    const { data } = await window.db.from('psy_appointments').select('*').eq('id', PROC.appointment_id).maybeSingle();
+    appt = data;
+  }
+  const docRow = (icon, key, code) => {
+    const files = reportFilesFor(key);
+    if (!files.length) return '';
+    return files.map(p => `<div class="flex items-center justify-between gap-3 py-2.5 border-b border-ink/5 last:border-0">
+         <span class="text-sm text-ink">${icon} ${esc(code)} <span class="text-ink/40 text-xs">${esc(p.split('/').pop())}</span></span>
+         <button onclick="downloadReport('${p}')" class="text-xs font-semibold text-navy hover:underline">⬇️ Muat Turun</button>
+       </div>`).join('');
+  };
+  const timeline = [
+    ['🧪', 'Sample Collection', PROC.sample_collected_at],
+    ['🏷️', 'Barcode & Packaging', PROC.packaging_completed_at],
+    ['🧬', 'Activate Kit (ATGC)', PROC.atgc_activated_at],
+    ['📄', 'Muat Naik Laporan', PROC.reports_uploaded_at],
+    ['👥', 'Consultation', appt?.appointment_time],
+    ['✅', 'Selesai', PROC.completed_at],
+  ];
+  document.getElementById('dt-step-content').innerHTML = `
+    <div class="text-center py-6 mb-2 rounded-2xl bg-green-light/20 border border-green/20">
+      <div class="text-4xl mb-2">✅</div>
+      <h2 class="font-bold text-green-dark text-lg">DNA Test Process Completed!</h2>
+      <p class="text-xs text-ink/50 mt-1">Semua langkah telah selesai direkodkan bagi pesakit ini.</p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4 items-stretch">
+      <div class="border border-ink/10 rounded-2xl p-4">
+        <div class="dt-section-title text-sm">Process Summary</div>
+        <div class="space-y-0.5">
+          ${timeline.map(([icon, lbl, ts], i) => `
+            <div class="flex items-center gap-3 py-2 ${i < timeline.length - 1 ? 'border-b border-ink/5' : ''}">
+              <span class="w-6 h-6 rounded-full bg-green text-white text-xs font-bold flex items-center justify-center flex-shrink-0">✓</span>
+              <span class="text-sm text-ink flex-1">${i + 1}. ${esc(lbl)}</span>
+              <span class="text-[11px] text-ink/45">${fmtDT(ts)}</span>
+            </div>`).join('')}
+        </div>
+      </div>
+
+      <div class="border border-ink/10 rounded-2xl p-4">
+        <div class="dt-section-title text-sm">Consultation Summary</div>
+        ${appt ? `<div class="grid grid-cols-2 gap-3 text-xs">
+          <div><div class="text-ink/45 mb-0.5">Consultation Date</div><div class="font-semibold text-ink">${fmtDate(appt.appointment_time.slice(0, 10))}</div></div>
+          <div><div class="text-ink/45 mb-0.5">Consultation Time</div><div class="font-semibold text-ink">${new Date(appt.appointment_time).toLocaleTimeString('ms-MY', { hour: '2-digit', minute: '2-digit' })}</div></div>
+          <div><div class="text-ink/45 mb-0.5">Consultation With</div><div class="font-semibold text-ink">${esc(appt.staff_name || '—')}</div></div>
+          <div><div class="text-ink/45 mb-0.5">Mode</div><span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-navy/10 text-navy">${(appt.room || '').toLowerCase() === 'online' ? 'Online' : 'Physical'}</span></div>
+          <div class="col-span-2"><div class="text-ink/45 mb-0.5">Location</div><div class="font-semibold text-ink">${esc(appt.room || '—')}</div></div>
+          <div class="col-span-2"><div class="text-ink/45 mb-0.5">Outcome</div><span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-light text-green-dark">Completed</span></div>
+          ${PROC.consultation_notes ? `<div class="col-span-2"><div class="text-ink/45 mb-0.5">Notes</div><div class="text-ink whitespace-pre-wrap">${esc(PROC.consultation_notes)}</div></div>` : ''}
+        </div>` : '<div class="text-xs text-ink/40">Tiada konsultasi dijadualkan.</div>'}
+      </div>
+
+      <div class="border border-ink/10 rounded-2xl p-4">
+        <div class="dt-section-title text-sm">Reports & Documents</div>
+        ${REPORT_SLOTS.map(([key, , , code]) => docRow(REPORT_ICONS[key], key, code)).join('')}
+      </div>
+    </div>
+
+    <div class="flex justify-end gap-2 pt-4 mt-2 border-t border-ink/8">
+      <button onclick="window.print()" class="text-sm font-semibold px-5 py-2.5 rounded-lg border border-ink/15 text-ink/60 hover:bg-ink/5">🖨️ Print Summary</button>
+      <a href="patient-hub.html?id=${PATIENT_ID}" class="text-sm font-semibold px-6 py-2.5 rounded-lg bg-navy text-white hover:bg-navy/90 no-underline">Back to Patient Workspace</a>
+    </div>`;
+}
+
+async function downloadReport(path) {
+  const { data, error } = await window.db.storage.from('dna-test').createSignedUrl(path, 300);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  window.open(data.signedUrl, '_blank');
+}
+window.downloadReport = downloadReport;
+
+async function addConsultationAttachments(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  const arr = [...(PROC.consultation_attachments || [])];
+  for (const file of files) {
+    const path = `${PATIENT_ID}/${PROC.id}/${file.name}`;
+    const { error } = await window.db.storage.from('dna-test').upload(path, file, { upsert: true });
+    if (error) { banner(`Gagal muat naik: ${error.message}`, 'error'); continue; }
+    if (!arr.includes(path)) arr.push(path);
+  }
+  const ok = await saveProc({ consultation_attachments: arr });
+  if (!ok) return;
+  banner('Lampiran dimuat naik ✅');
+  renderStepContent();
+}
+window.addConsultationAttachments = addConsultationAttachments;
+
+async function removeConsultationAttachment(path) {
+  if (!confirm('Padam lampiran ini?')) return;
+  await window.db.storage.from('dna-test').remove([path]);
+  const arr = (PROC.consultation_attachments || []).filter(p => p !== path);
+  const ok = await saveProc({ consultation_attachments: arr });
+  if (!ok) return;
+  renderStepContent();
+}
+window.removeConsultationAttachment = removeConsultationAttachment;
+
+// ── Router ─────────────────────────────────────────────────
+function renderStepContent() {
+  if (VIEW_STEP === 1) renderStep1();
+  else if (VIEW_STEP === 2) renderStep2();
+  else if (VIEW_STEP === 3) renderStep3();
+  else if (VIEW_STEP === 4) renderStep4();
+  else if (VIEW_STEP === 5) renderStep5();
+  else renderStep6();
+}
+
+(async () => {
+  const user = await initStaff('dna_test', 'Proses ujian DNA pesakit');
+  if (!user) return;
+  await iswLoadSettings();
+  PATIENT_ID = qs('patient_id') || qs('id');
+  PROCESS_ID = qs('process_id');
+  FROM = qs('from');
+  if (!PATIENT_ID) { banner('Tiada pesakit dipilih', 'error'); return; }
+  PATIENT = await loadPatient();
+  if (!PATIENT) return;
+  await loadCoaches();
+  await loadAllStaff();
+  ACTIVE_PLAN = await loadActivePlan();
+  PROC = await loadOrCreateProcess();
+  if (!PROC) return;
+  VIEW_STEP = PROC.current_step;
+  renderPatientSummary();
+  renderStepper();
+  renderStepContent();
+})();
+</script>
+</body>
+</html>

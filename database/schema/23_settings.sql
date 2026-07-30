@@ -23,6 +23,13 @@ DROP POLICY IF EXISTS "settings_read_staff" ON psy_settings;
 CREATE POLICY "settings_read_staff" ON psy_settings
   FOR SELECT USING (settings_is_staff());
 
+-- Pesakit turut perlu BACA sebahagian tetapan (cth clinic_phone — fallback no.
+-- panggilan di seksyen Protokol Kecemasan bila coach tiada/tiada no. telefon).
+-- Selamat dibuka: jadual ni TIDAK simpan kunci API rahsia (lihat nota atas).
+DROP POLICY IF EXISTS "settings_read_authenticated" ON psy_settings;
+CREATE POLICY "settings_read_authenticated" ON psy_settings
+  FOR SELECT USING (auth.role() = 'authenticated');
+
 -- Hanya super_admin boleh cipta / kemaskini / padam.
 DROP POLICY IF EXISTS "settings_write_sa" ON psy_settings;
 CREATE POLICY "settings_write_sa" ON psy_settings

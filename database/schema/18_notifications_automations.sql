@@ -4,7 +4,7 @@
 -- automasi + log, audience tersimpan, alert kepatuhan & risiko, task coach.
 -- Jadual: psy_notifications, psy_auto_messages, psy_automations,
 --         psy_notification_logs, psy_audiences, psy_adherence_alerts,
---         psy_risk_alerts, psy_coach_tasks
+--         psy_risk_alerts, psy_emergency_alerts, psy_coach_tasks
 -- ═══════════════════════════════════════════════════════════════════
 
 -- ──── psy_notifications — notifikasi loceng dalam-app ────
@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS psy_notifications (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES psy_profiles(id) ON DELETE CASCADE NOT NULL,
   type TEXT DEFAULT 'system'
-    CHECK (type IN ('appointment','order','plan','system','reaksi','kyc','referral')),
+    CHECK (type IN ('appointment','order','plan','system','reaksi','kyc','referral','event')),
   title TEXT NOT NULL,
   body TEXT,
   link TEXT,
@@ -152,7 +152,51 @@ CREATE TRIGGER trg_notify_staff_new_order
   AFTER INSERT ON psy_orders
   FOR EACH ROW EXECUTE FUNCTION trg_notify_staff_new_order();
 
--- ──── Fungsi trigger: alert coach bila advice log zon merah/kuning ────
+-- ──── psy_emergency_alerts — Red Emergency Protocol (worklist zon merah/kuning) ────
+-- Satu alert AKTIF (status <> 'resolved') per pesakit pada satu-satu masa
+-- (dedup dlm trigger di bawah). Bukan gantian psy_risk_alerts (kekal, domain
+-- lain) — khas utk worklist zon.
+CREATE TABLE IF NOT EXISTS psy_emergency_alerts (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id               UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
+  zon                      TEXT NOT NULL CHECK (zon IN ('kuning','merah')),
+  symptoms                 JSONB DEFAULT '[]',   -- snapshot, sama bentuk dgn psy_reaksi_advice_log.symptoms
+  -- source 'patient' ditambah 22 Jul 2026 via migration adaptif (20260722c) —
+  -- pesakit lapor sendiri dari seksyen Protokol Kecemasan di roles/patient/dashboard.html
+  -- (butang kecemasan; bukan lagi halaman berasingan — consolidated 22 Jul 2026).
+  source                   TEXT DEFAULT 'auto' CHECK (source IN ('auto','manual','patient')),
+  source_log_id            UUID REFERENCES psy_reaksi_advice_log(id) ON DELETE SET NULL,
+  reported_at              TIMESTAMPTZ DEFAULT now(),
+  response_target_minutes  INT NOT NULL,          -- 15 (merah) / 60 (kuning)
+  assigned_to               UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,  -- default = coach_id pesakit
+  status                    TEXT DEFAULT 'waiting_coach'
+                             CHECK (status IN ('waiting_coach','contacted','waiting_vital','follow_up','resolved')),
+  resolved_at                TIMESTAMPTZ,
+  resolved_by                UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  notes                     TEXT,                 -- catatan terakhir (staff boleh kemaskini)
+  created_by                 UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,  -- NULL = auto (trigger)
+  created_at                TIMESTAMPTZ DEFAULT now(),
+  updated_at                TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_emergency_alerts_status  ON psy_emergency_alerts(status, reported_at);
+CREATE INDEX IF NOT EXISTS idx_emergency_alerts_patient ON psy_emergency_alerts(patient_id);
+
+ALTER TABLE psy_emergency_alerts ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage emergency alerts" ON psy_emergency_alerts;
+CREATE POLICY "Staff manage emergency alerts" ON psy_emergency_alerts FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- Pesakit boleh BACA alert sendiri sahaja (papar status "Coach akan hubungi
+-- anda" di seksyen Protokol Kecemasan, roles/patient/dashboard.html). INSERT/UPDATE
+-- kekal staff-only — pesakit lapor sendiri via RPC SECURITY DEFINER fn_patient_report_emergency().
+DROP POLICY IF EXISTS "Patient read own emergency alert" ON psy_emergency_alerts;
+CREATE POLICY "Patient read own emergency alert" ON psy_emergency_alerts FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+-- ──── Fungsi trigger: alert coach + worklist kecemasan bila advice log zon merah/kuning ────
 -- Satu submission boleh insert hingga 3 baris mesej serentak; notifikasi
 -- hanya utk BARIS PERTAMA (send_after ≈ created_at; baris 2/3 = +5/+10 min).
 CREATE OR REPLACE FUNCTION trg_reaksi_advice_notify_emergency()
@@ -161,6 +205,10 @@ DECLARE
   v_coach_id     UUID;
   v_patient_name TEXT;
   v_first_row    BOOLEAN;
+  v_zon          TEXT;
+  v_target_min   INT;
+  v_open_id      UUID;
+  v_open_zon     TEXT;
 BEGIN
   -- Baris pertama submission sahaja (elak notifikasi berganda 3x)
   v_first_row := (NEW.send_after IS NULL OR NEW.send_after <= NEW.created_at + interval '2 minutes');
@@ -175,13 +223,16 @@ BEGIN
   WHERE pt.id = NEW.patient_id;
   IF v_coach_id IS NULL THEN RETURN NEW; END IF;
 
-  IF NEW.is_emergency OR NEW.zon = 'merah' THEN
+  v_zon := CASE WHEN NEW.is_emergency THEN 'merah' ELSE NEW.zon END;
+  v_target_min := CASE WHEN v_zon = 'merah' THEN 15 ELSE 60 END;
+
+  IF v_zon = 'merah' THEN
     INSERT INTO psy_notifications (user_id, type, title, body, link)
     VALUES (
       v_coach_id, 'reaksi',
       '🔴 ZON MERAH: ' || v_patient_name,
       v_patient_name || ' melaporkan simptom tahap tinggi/kecemasan dalam Poll Harian. Pesakit dinasihatkan ke hospital & telah dihantar mesej kritikal — sila susul SEGERA.',
-      'kepatuhan.html'
+      'emergency.html?patient_id=' || NEW.patient_id::TEXT
     );
   ELSE
     INSERT INTO psy_notifications (user_id, type, title, body, link)
@@ -189,9 +240,30 @@ BEGIN
       v_coach_id, 'reaksi',
       '🟡 Zon Kuning: ' || v_patient_name,
       v_patient_name || ' melaporkan simptom tahap sederhana dalam Poll Harian — perlukan perhatian coach. Sila semak dan susul pesakit.',
-      'kepatuhan.html'
+      'emergency.html?patient_id=' || NEW.patient_id::TEXT
     );
   END IF;
+
+  -- Worklist: satu alert AKTIF per pesakit — kemaskini kalau dah ada, jangan gandakan.
+  -- Taraf naik kuning→merah dibenarkan; JANGAN turun taraf merah→kuning.
+  SELECT id, zon INTO v_open_id, v_open_zon
+  FROM psy_emergency_alerts WHERE patient_id = NEW.patient_id AND status <> 'resolved'
+  ORDER BY created_at DESC LIMIT 1;
+
+  IF v_open_id IS NOT NULL THEN
+    IF NOT (v_open_zon = 'merah' AND v_zon = 'kuning') THEN
+      UPDATE psy_emergency_alerts
+      SET zon = v_zon, symptoms = COALESCE(NEW.symptoms, symptoms),
+          reported_at = now(), response_target_minutes = v_target_min, updated_at = now()
+      WHERE id = v_open_id;
+    END IF;
+  ELSE
+    INSERT INTO psy_emergency_alerts
+      (patient_id, zon, symptoms, source, source_log_id, response_target_minutes, assigned_to)
+    VALUES
+      (NEW.patient_id, v_zon, COALESCE(NEW.symptoms, '[]'::jsonb), 'auto', NEW.id, v_target_min, v_coach_id);
+  END IF;
+
   RETURN NEW;
 EXCEPTION WHEN OTHERS THEN
   RAISE LOG 'trg_reaksi_advice_notify_emergency: %', SQLERRM;
@@ -203,6 +275,65 @@ DROP TRIGGER IF EXISTS trg_reaksi_advice_notify_emergency ON psy_reaksi_advice_l
 CREATE TRIGGER trg_reaksi_advice_notify_emergency
   AFTER INSERT ON psy_reaksi_advice_log
   FOR EACH ROW EXECUTE FUNCTION trg_reaksi_advice_notify_emergency();
+
+-- ──── Fungsi RPC: pesakit tekan butang kecemasan (seksyen Protokol Kecemasan, roles/patient/dashboard.html) ────
+-- Satu alert AKTIF per pesakit — dedup sama logic dgn trigger di atas. Taraf
+-- sentiasa naik ke 'merah' (pesakit tekan butang kecemasan = tahap tertinggi),
+-- tak pernah turun taraf. SECURITY DEFINER supaya pesakit tak perlu grant
+-- INSERT/UPDATE terus ke psy_emergency_alerts (RLS kekal staff-only).
+CREATE OR REPLACE FUNCTION fn_patient_report_emergency(p_channel TEXT DEFAULT 'unknown')
+RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_patient_id   UUID;
+  v_coach_id     UUID;
+  v_patient_name TEXT;
+  v_open_id      UUID;
+  v_alert_id     UUID;
+  v_note         TEXT;
+BEGIN
+  SELECT id, coach_id INTO v_patient_id, v_coach_id FROM psy_patients WHERE user_id = auth.uid() LIMIT 1;
+  IF v_patient_id IS NULL THEN
+    RAISE EXCEPTION 'Rekod pesakit tidak dijumpai';
+  END IF;
+
+  SELECT COALESCE(pr.full_name, pt.full_name, 'Pesakit') INTO v_patient_name
+  FROM psy_patients pt LEFT JOIN psy_profiles pr ON pr.id = pt.user_id
+  WHERE pt.id = v_patient_id;
+
+  v_note := 'Pesakit tekan butang kecemasan (' || COALESCE(p_channel, 'unknown') || ') pada '
+            || to_char(now(), 'DD Mon YYYY HH24:MI');
+
+  SELECT id INTO v_open_id FROM psy_emergency_alerts
+  WHERE patient_id = v_patient_id AND status <> 'resolved'
+  ORDER BY created_at DESC LIMIT 1;
+
+  IF v_open_id IS NOT NULL THEN
+    UPDATE psy_emergency_alerts
+    SET zon = 'merah', reported_at = now(), response_target_minutes = 15, updated_at = now(),
+        notes = CASE WHEN notes IS NULL OR notes = '' THEN v_note ELSE notes || E'\n' || v_note END
+    WHERE id = v_open_id
+    RETURNING id INTO v_alert_id;
+  ELSE
+    INSERT INTO psy_emergency_alerts (patient_id, zon, source, response_target_minutes, assigned_to, notes)
+    VALUES (v_patient_id, 'merah', 'patient', 15, v_coach_id, v_note)
+    RETURNING id INTO v_alert_id;
+  END IF;
+
+  IF v_coach_id IS NOT NULL THEN
+    INSERT INTO psy_notifications (user_id, type, title, body, link)
+    VALUES (
+      v_coach_id, 'reaksi',
+      '🚨 Pesakit Tekan Butang Kecemasan: ' || v_patient_name,
+      v_patient_name || ' menekan butang kecemasan (' || COALESCE(p_channel, 'unknown') || ') di Protokol Kecemasan. Sila hubungi SEGERA.',
+      'emergency.html?patient_id=' || v_patient_id::TEXT
+    );
+  END IF;
+
+  RETURN v_alert_id;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION fn_patient_report_emergency(TEXT) TO authenticated;
 
 -- ──── psy_auto_messages — Mesej Automatik (template + masa + on/off) ────
 -- Edge function (cth event-reminders) baca konfig dari sini; ubah di UI

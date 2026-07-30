@@ -23,6 +23,11 @@
 .chip-cancel            { background:#fee2e2; color:#991b1b; }
 .chip-reschedule        { background:#fef3c7; color:#92400e; }
 .chip-consultation_done { background:#064e3b; color:#ffffff; }
+.ev-chip {
+  display: block; font-size: 10px; padding: 2px 5px; border-radius: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: pointer; margin-bottom: 2px; line-height: 1.4; font-weight: 600;
+}
 
 /* Weekly time grid */
 .wk-day-col   { border-left: 1px solid rgba(30,30,60,0.06); }
@@ -146,11 +151,15 @@
           </div>
 
           <!-- Legend -->
-          <div class="flex gap-3 mb-3 flex-wrap print-hide">
+          <div class="flex gap-3 mb-3 flex-wrap items-center print-hide">
             <span class="flex items-center gap-1 text-xs"><span class="w-3 h-3 rounded bg-[#dbeafe] inline-block"></span>Ditempah</span>
             <span class="flex items-center gap-1 text-xs"><span class="w-3 h-3 rounded bg-[#d1fae5] inline-block"></span>Hadir</span>
             <span class="flex items-center gap-1 text-xs"><span class="w-3 h-3 rounded bg-[#fef3c7] inline-block"></span>Reschedule</span>
             <span class="flex items-center gap-1 text-xs"><span class="w-3 h-3 rounded bg-[#fee2e2] inline-block"></span>Tidak Hadir</span>
+            <span class="flex items-center gap-1 text-xs"><span class="w-3 h-3 rounded bg-[#f3e8ff] border border-purple-300 inline-block"></span>🏥 Peristiwa</span>
+            <label class="flex items-center gap-1.5 text-xs cursor-pointer ml-auto text-ink/70">
+              <input type="checkbox" id="toggle-events" onchange="toggleEventsLayer()" checked> Tunjuk peristiwa pesakit
+            </label>
           </div>
 
           <!-- Calendar grid -->
@@ -410,6 +419,8 @@
 <script src="../../shared/utils.js"></script>
 <script src="../../shared/inventoryDeduct.js"></script>
 <script src="_shared.js"></script>
+<script src="../../shared/settings.js"></script>
+<script src="_peristiwa.js"></script>
 <script>
 let allSessions = [], patientMap = {}, planMap = {}, profileMap = {};
 let allPatientsList = [], allPlansList = [];
@@ -499,6 +510,51 @@ let apptStaffMap = {}; // id → full_name (for coach ganti)
 async function loadApptStaffMap() {
   const { data } = await window.db.from('psy_profiles').select('id, full_name, staff_role').eq('role', 'staff').then(r => r, () => ({ data: [] }));
   (data || []).forEach(p => { apptStaffMap[p.id] = { name: p.full_name, role: p.staff_role }; });
+}
+
+// ── Lapisan Peristiwa Pesakit (digabung ke kalendar sesi) ──
+let calEvents = [], calVisits = [];
+let showEvents = localStorage.getItem('isw_cal_show_events') !== '0';
+
+async function loadPatientEvents() {
+  try {
+    const [evRes, vsRes] = await Promise.all([
+      window.db.from('psy_patient_events')
+        .select('id, event_type, event_date, priority, status, hospital_name, need_visit, expected_visit_date, psy_patients(full_name, mrn, user_id, psy_profiles!psy_patients_user_id_fkey(full_name))')
+        .limit(3000),
+      window.db.from('psy_patient_event_visits')
+        .select('id, visit_date, visit_time, status, event_id, psy_patient_events(event_type, psy_patients(full_name, mrn, user_id, psy_profiles!psy_patients_user_id_fkey(full_name)))')
+        .limit(3000),
+    ]);
+    calEvents = evRes.data || [];
+    calVisits = vsRes.data || [];
+  } catch (_) { calEvents = []; calVisits = []; }
+}
+
+function evName(o) { const pt = o?.psy_patients || {}; return pt.psy_profiles?.full_name || pt.full_name || pt.mrn || 'Pesakit'; }
+function evTypeIcon(t) { return (typeof PE_TYPES !== 'undefined' && PE_TYPES[t]?.icon) || '🏥'; }
+function evTypeLbl(t) { return (typeof PE_TYPES !== 'undefined' && PE_TYPES[t]?.lbl) || t; }
+
+function toggleEventsLayer() {
+  showEvents = document.getElementById('toggle-events').checked;
+  localStorage.setItem('isw_cal_show_events', showEvents ? '1' : '0');
+  renderCalendar();
+}
+window.toggleEventsLayer = toggleEventsLayer;
+
+// Chip peristiwa+lawatan untuk satu tarikh (dipakai dalam sel kalendar)
+function eventChipsForDate(dateStr) {
+  if (!showEvents) return '';
+  const evs = calEvents.filter(e => e.event_date === dateStr);
+  const vs  = calVisits.filter(v => v.visit_date === dateStr);
+  if (!evs.length && !vs.length) return '';
+  const items = [];
+  evs.slice(0, 2).forEach(e => items.push(
+    `<span class="ev-chip" style="background:#f3e8ff;color:#6b21a8" onclick="event.stopPropagation(); openDayModal('${dateStr}')" title="${escapeHtml(evTypeLbl(e.event_type))}: ${escapeHtml(evName(e))}">${evTypeIcon(e.event_type)} ${escapeHtml(evName(e).split(' ')[0])}</span>`));
+  vs.slice(0, 1).forEach(v => items.push(
+    `<span class="ev-chip" style="background:#e0e7ff;color:#3730a3" onclick="event.stopPropagation(); openDayModal('${dateStr}')" title="Lawatan: ${escapeHtml(evName(v.psy_patient_events))}">🚶 ${escapeHtml(evName(v.psy_patient_events).split(' ')[0])}</span>`));
+  const extra = (evs.length + vs.length) - items.length;
+  return items.join('') + (extra > 0 ? `<span class="text-[9px] text-purple-500 pl-1">+${extra} peristiwa</span>` : '');
 }
 
 // Local date string (YYYY-MM-DD) without UTC conversion
@@ -808,15 +864,17 @@ function renderCalendar() {
     const isClosed = CLOSED.has(d.getDay());
     const closure = (window._closureMap || {})[dateStr];
     const daySessions = sessionMap[dateStr] || [];
+    const evChips = eventChipsForDate(dateStr);
 
     if (isClosed || closure) {
       const labelText = closure ? closure.label : 'Tutup';
       const safeLabel = (window.escapeHtml ? window.escapeHtml(labelText) : labelText);
       const bgCls = closure ? 'bg-terracotta/10' : 'bg-ink/[0.04]';
       const txtCls = closure ? 'text-terracotta/70' : 'text-ink/25';
-      html += `<div class="cal-day border-b border-r border-ink/10 p-1.5 cursor-not-allowed select-none ${bgCls} ${isOther ? 'other-month' : ''}" title="${safeLabel}">
+      // Hari tutup pun boleh ada peristiwa pesakit (warded/kematian) — masih papar & boleh klik.
+      html += `<div class="cal-day border-b border-r border-ink/10 p-1.5 select-none ${bgCls} ${isOther ? 'other-month' : ''} ${evChips ? 'cursor-pointer' : 'cursor-not-allowed'}" title="${safeLabel}" ${evChips ? `onclick="openDayModal('${dateStr}')"` : ''}>
         <div class="text-xs font-semibold mb-1 ${txtCls}">${d.getDate()}</div>
-        <div class="text-[9px] ${txtCls} font-medium mt-1 truncate">${closure ? '🎉 ' + safeLabel : 'Tutup'}</div>
+        ${evChips || `<div class="text-[9px] ${txtCls} font-medium mt-1 truncate">${closure ? '🎉 ' + safeLabel : 'Tutup'}</div>`}
       </div>`;
       continue;
     }
@@ -834,7 +892,7 @@ function renderCalendar() {
     html += `<div class="cal-day border-b border-r border-ink/10 p-1.5 cursor-pointer hover:bg-navy-light/30 transition-colors ${isOther ? 'other-month' : ''} ${isToday ? 'today' : ''}"
       onclick="openDayModal('${dateStr}')">
       <div class="text-xs font-semibold mb-1 ${isToday ? 'text-navy' : 'text-ink/70'}">${d.getDate()}</div>
-      ${chips}${more}
+      ${chips}${more}${evChips}
     </div>`;
   }
   document.getElementById('cal-grid').innerHTML = html;
@@ -863,7 +921,35 @@ function openDayModal(dateStr) {
       </div>
     </div>` : '';
 
-  document.getElementById('day-modal-body').innerHTML = closureBanner + (daySessions.length
+  // Seksyen Peristiwa Pesakit + Lawatan pada tarikh ini
+  const dayEvents = calEvents.filter(e => e.event_date === dateStr);
+  const dayVisits = calVisits.filter(v => v.visit_date === dateStr);
+  let eventsBlock = '';
+  if (dayEvents.length || dayVisits.length) {
+    eventsBlock = `<div class="mb-3">
+      <div class="text-[11px] uppercase tracking-wide text-ink/40 font-bold mb-1.5">🏥 Peristiwa Pesakit</div>
+      <div class="space-y-1.5">
+        ${dayEvents.map(e => `
+          <a href="peristiwa-detail.html?id=${e.id}" class="flex items-center justify-between gap-2 bg-purple-50 border border-purple-200 rounded-xl px-3 py-2 no-underline hover:bg-purple-100">
+            <div class="min-w-0">
+              <div class="text-sm font-semibold text-ink truncate">${evTypeIcon(e.event_type)} ${escapeHtml(evName(e))}</div>
+              <div class="text-[11px] text-ink/50">${escapeHtml(evTypeLbl(e.event_type))}${e.hospital_name ? ' · ' + escapeHtml(e.hospital_name) : ''}</div>
+            </div>
+            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${e.priority === 'critical' ? 'bg-red-100 text-red-700' : 'bg-ink/10 text-ink/60'} flex-shrink-0">${e.priority === 'critical' ? 'Kritikal' : (e.status === 'closed' ? 'Selesai' : 'Terbuka')}</span>
+          </a>`).join('')}
+        ${dayVisits.map(v => `
+          <a href="lawatan-detail.html?id=${v.id}" class="flex items-center justify-between gap-2 bg-indigo-50 border border-indigo-200 rounded-xl px-3 py-2 no-underline hover:bg-indigo-100">
+            <div class="min-w-0">
+              <div class="text-sm font-semibold text-ink truncate">🚶 ${escapeHtml(evName(v.psy_patient_events))}</div>
+              <div class="text-[11px] text-ink/50">Lawatan${v.visit_time ? ' · ' + v.visit_time.slice(0,5) : ''}</div>
+            </div>
+            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 flex-shrink-0">${(typeof PE_VISIT_STATUS !== 'undefined' && PE_VISIT_STATUS[v.status]?.lbl) || v.status}</span>
+          </a>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  document.getElementById('day-modal-body').innerHTML = closureBanner + eventsBlock + (daySessions.length
     ? daySessions.map(s => {
         const dt      = new Date(s.session_date);
         const patient = patientMap[s.patient_id];
@@ -894,7 +980,7 @@ function openDayModal(dateStr) {
           </div>
         </div>`;
       }).join('')
-    : '<p class="text-ink/40 text-sm text-center py-6">Tiada sesi pada tarikh ini.</p>');
+    : (eventsBlock ? '' : '<p class="text-ink/40 text-sm text-center py-6">Tiada sesi pada tarikh ini.</p>'));
 
   document.getElementById('day-modal').classList.remove('hidden');
 }
@@ -1514,7 +1600,9 @@ async function loadAbsentAlert() {
   const now = new Date();
   calYear  = now.getFullYear();
   calMonth = now.getMonth();
-  await Promise.all([loadSessions(), loadApptStaffMap()]);
+  await Promise.all([loadSessions(), loadApptStaffMap(), loadPatientEvents(), (typeof peLoadTypes === 'function' ? peLoadTypes() : Promise.resolve())]);
+  const tgl = document.getElementById('toggle-events'); if (tgl) tgl.checked = showEvents;
+  renderCalendar();
   populateCoachFilter();
   loadAbsentAlert();
 

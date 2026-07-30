@@ -125,6 +125,8 @@
           </div>
         </div>
 
+        <div id="hakeema1on1-card"></div>
+
         <div id="coaching-schedule-section" class="bg-white rounded-xl p-5 border border-ink/10 hidden">
           <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
             <div>
@@ -450,6 +452,8 @@ async function loadWeek() {
 
   updateBreadcrumb();
   renderHero();
+  await loadHakeema1on1();
+  renderHakeema1on1Card();
   renderCoachingSchedule();
   fillCoachForm();
   renderSignoff();
@@ -681,6 +685,370 @@ function renderOverrideNote() {
   el.innerHTML = `<span>✏️ Sebahagian bimbingan / aktiviti / bekalan diubah khas untuk pesakit ini${noteTxt}. Templat pakej tidak terjejas.</span>`;
 }
 
+// ── Sesi 1:1 Hakeema — borang native terus di sini (macam Bacaan Vitals: auto-cipta
+// rekod & sentiasa terbuka, tiada langkah "buka konsultasi" berasingan). Guna jadual +
+// field sama dgn psy_clinical_referrals/rujukan-konsultasi.html supaya data konsisten
+// walau dibuka dari rujukan.html.
+let hakeema1on1Wanted = false;
+let hakeema1on1Ref = null;         // rekod psy_clinical_referrals penuh
+let hakeema1on1SarananTpl = null;  // templat mesej WA boleh-edit (psy_auto_messages key='referral_saranan')
+const STATUS_1ON1_MAP = {
+  pending:  { lbl: 'Belum konsultasi', cls: 'bg-amber-100 text-amber-700' },
+  accepted: { lbl: 'Dijadualkan',      cls: 'bg-blue-100 text-blue-700' },
+  resolved: { lbl: 'Selesai',          cls: 'bg-green-100 text-green-700' },
+  declined: { lbl: 'Ditolak',          cls: 'bg-ink/10 text-ink/50' },
+};
+
+function hk1TodayYmd() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function hk1AddDaysYmd(ymd, n) { const d = new Date(ymd+'T00:00:00'); d.setDate(d.getDate()+n); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function hk1PrettyYmd(ymd) { return ymd ? new Date(ymd+'T00:00:00').toLocaleDateString('ms-MY',{weekday:'short',day:'2-digit',month:'short',year:'numeric'}) : ''; }
+function hk1FmtDT(d) { return d ? new Date(d).toLocaleString('ms-MY',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; }
+
+// meet_date = HARI SEBENAR pesakit di klinik (dari sesi rawatan minggu ini), bukan
+// Isnin anchor minggu — dashboard "Sesi 1:1 Hari Ini" bergantung pada field ni.
+function hk1SessionYmd() {
+  const d = weekEntry?.session_date ? new Date(weekEntry.session_date) : weekStart;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+async function loadHakeema1on1() {
+  hakeema1on1Wanted = getWeekCoachingItems().some(it => it.hakeema_1on1);
+  hakeema1on1Ref = null;
+  if (!hakeema1on1Wanted) return;
+
+  const { data: existing } = await window.db.from('psy_clinical_referrals')
+    .select('*').eq('plan_id', activePlan.id).eq('week_number', weekNumber).eq('source', 'plan_1on1').maybeSingle();
+
+  if (existing) {
+    hakeema1on1Ref = existing;
+    // Selaraskan meet_date kalau tarikh sesi minggu ni berubah (cth reschedule).
+    const sessYmd = hk1SessionYmd();
+    if (sessYmd !== existing.meet_date) {
+      const { data: updated } = await window.db.from('psy_clinical_referrals')
+        .update({ meet_date: sessYmd }).eq('id', existing.id).select('*').maybeSingle();
+      if (updated) hakeema1on1Ref = updated;
+    }
+  } else {
+    const { data: managers } = await window.db.from('psy_profiles')
+      .select('id, full_name').eq('role', 'staff').eq('staff_role', 'manager');
+    const mgr = (managers && managers.length === 1) ? managers[0] : null;
+    const { data: created, error } = await window.db.from('psy_clinical_referrals').insert({
+      patient_id: patientId, plan_id: activePlan.id, week_number: weekNumber, source: 'plan_1on1',
+      referred_by: window.currentUser?.id, referred_by_name: window.currentUser?.full_name,
+      target_role: 'manager', target_id: mgr?.id || null, target_name: mgr?.full_name || 'Hakeema',
+      reason: `Sesi 1:1 Hakeema — Minggu ${weekNumber}`, meet_date: hk1SessionYmd(), priority: 'sederhana',
+    }).select('*').single();
+    if (error) { banner('Gagal cipta rekod Sesi 1:1: ' + error.message, 'error'); return; }
+    hakeema1on1Ref = created;
+  }
+
+  if (hakeema1on1SarananTpl === null) {
+    const { data: tpl } = await window.db.from('psy_auto_messages')
+      .select('message_template, is_active').eq('key', 'referral_saranan').maybeSingle();
+    hakeema1on1SarananTpl = (tpl && tpl.is_active !== false && tpl.message_template) ? tpl.message_template : '';
+  }
+}
+
+function renderHakeema1on1Card() {
+  const host = document.getElementById('hakeema1on1-card');
+  if (!host) return;
+  if (!hakeema1on1Wanted || !hakeema1on1Ref) { host.innerHTML = ''; return; }
+  const ref = hakeema1on1Ref;
+  const c = ref.consultation || {};
+  const editable = ref.status !== 'resolved' && ref.status !== 'declined';
+  const st = STATUS_1ON1_MAP[ref.status] || STATUS_1ON1_MAP.pending;
+  const dis = editable ? '' : 'disabled';
+
+  host.innerHTML = `<div class="bg-white rounded-xl p-5 border border-teal-600/25">
+    <div class="flex items-center justify-between gap-3 flex-wrap mb-1">
+      <h3 class="font-bold text-base flex items-center gap-2">🧑‍💼 Sesi 1:1 Hakeema
+        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${st.cls}">${st.lbl}</span>
+      </h3>
+      <span id="hk1-saved" class="save-indicator">✓ Tersimpan</span>
+    </div>
+    <p class="text-xs text-ink/60 mb-4">Rekod soal-jawab &amp; dokumen konsultasi Minggu ${weekNumber}. Saranan dihantar terus ke WhatsApp pesakit.</p>
+
+    <div class="mb-4">
+      <label class="block text-[11px] font-bold text-ink/70 mb-1.5">🕐 Masa dijangka jumpa Hakeema (pilihan)</label>
+      <input id="hk1-time" type="time" value="${c.scheduled_time || ''}" ${dis} onchange="hk1SaveTime()" class="w-40 px-2.5 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy">
+      <p class="text-[10px] text-ink/40 mt-1">Bukan masa sesi rawatan am — ini slot khas jumpa Hakeema (kosong = tiada masa spesifik, dashboard papar ikut hari sahaja).</p>
+    </div>
+
+    <div class="mb-4">
+      <label class="block text-[11px] font-bold text-ink/70 mb-1.5">Nota / Soal-Jawab</label>
+      <textarea id="hk1-notes" rows="3" ${dis} onblur="hk1SaveNotes()" placeholder="Ringkasan soal-jawab / konsultasi..." class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy resize-y">${escHtml(c.examination || '')}</textarea>
+    </div>
+
+    <div class="mb-5">
+      <label class="block text-[11px] font-bold text-ink/70 mb-1.5">📎 Dokumen</label>
+      ${editable ? `<label class="inline-flex items-center gap-1.5 text-xs font-semibold text-navy border border-navy/30 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-navy hover:text-white transition-colors">⬆ Muat Naik<input type="file" multiple class="hidden" onchange="hk1UploadDoc(this)"></label>` : ''}
+      <div id="hk1-att-list" class="flex flex-wrap gap-1.5 mt-2"></div>
+    </div>
+
+    <div class="grid lg:grid-cols-2 gap-5 pt-4 border-t border-ink/10">
+      <div>
+        <label class="block text-[11px] font-bold text-ink/70 mb-1.5">Saranan ringkas</label>
+        <textarea id="hk1-saranan" rows="4" ${dis} oninput="hk1UpdPreview()" placeholder="Cth: Sila ambil ubat 2x sehari selepas makan..." class="w-full px-3 py-2 border border-green-300 bg-white rounded-lg text-sm outline-none focus:border-green resize-y">${escHtml(c.saranan || '')}</textarea>
+        <div class="grid grid-cols-2 gap-2 mt-2">
+          <div>
+            <label class="block text-[11px] font-bold text-ink/70 mb-1">Tempoh (hari)</label>
+            <input id="hk1-days" type="number" min="1" max="90" value="${c.saranan_days || ''}" ${dis} oninput="hk1UpdPreview()" placeholder="cth: 4" class="w-full px-2.5 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy">
+          </div>
+          <div>
+            <label class="block text-[11px] font-bold text-ink/70 mb-1">Tarikh mula</label>
+            <input id="hk1-start" type="date" value="${c.saranan_start || hk1TodayYmd()}" ${dis} onchange="hk1UpdPreview()" class="w-full px-2.5 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy">
+          </div>
+        </div>
+        ${editable ? `<button type="button" data-rbac="rujukan.edit" id="hk1-send-btn" onclick="hk1Send()" class="mt-3 inline-flex items-center gap-2 bg-green text-white text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-green-dark disabled:opacity-60">📱 Hantar ke WhatsApp</button>` : ''}
+        <span id="hk1-wa-sent" class="block text-[11px] text-ink/50 mt-2">${c.saranan_sent_at ? ('✅ Dihantar ' + hk1FmtDT(c.saranan_sent_at)) : ''}</span>
+      </div>
+      <div class="flex flex-col h-full">
+        <label class="block text-[11px] font-semibold text-ink/45 mb-1.5">👁️ Pratonton mesej WhatsApp</label>
+        <div class="rounded-xl overflow-hidden border border-ink/10 flex-1 flex flex-col">
+          <div class="bg-[#075e54] text-white px-3 py-2 flex items-center gap-2 text-[13px]"><span class="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center">🏥</span><div><div class="font-semibold leading-tight">Ibnu Sina Wellness</div><div class="text-[10px] text-white/70">Online</div></div></div>
+          <div class="p-3 flex-1 min-h-[120px]" style="background:#e5ddd5"><div id="hk1-preview" class="bg-[#dcf8c6] rounded-lg rounded-tl-none px-3 py-2 text-[12px] text-ink/85 leading-relaxed whitespace-pre-wrap shadow-sm max-w-[92%]"></div></div>
+        </div>
+      </div>
+    </div>
+
+    ${hk1FollowUpHtml(c, editable)}
+
+    ${editable ? `<div class="mt-5 pt-4 border-t border-ink/10 flex justify-end">
+      <button type="button" data-rbac="rujukan.edit" onclick="hk1MarkResolved()" class="px-4 py-2 rounded-lg bg-navy text-white text-sm font-semibold hover:bg-navy-dark">✓ Tandakan Selesai</button>
+    </div>` : ''}
+  </div>`;
+
+  renderHk1AttList(editable);
+  hk1UpdPreview();
+}
+
+function hk1FollowUpHtml(c, editable) {
+  if (!c.saranan_sent_at && !c.follow_up_date) return '';
+  const fu = c.follow_up_date;
+  const fuStr = fu ? hk1PrettyYmd(fu) : '—';
+  const due = fu && fu <= hk1TodayYmd();
+  const res = c.follow_up_result;
+  let body;
+  if (res) {
+    const ok = res === 'ikut';
+    body = `<div class="flex items-center gap-2 text-sm font-semibold ${ok ? 'text-green-700' : 'text-terracotta'}">${ok ? '✅ Pesakit ikut saranan' : '❌ Pesakit tidak ikut saranan'}</div>${c.follow_up_note ? `<div class="text-xs text-ink/60 mt-1">📝 ${escHtml(c.follow_up_note)}</div>` : ''}`;
+  } else if (editable) {
+    body = `<div class="text-sm ${due ? 'text-gold-dark font-semibold' : 'text-ink/60'} mb-3">${due ? '⏰ Masa untuk follow-up — mesej pesakit & rekod jawapannya.' : 'Follow-up dijadualkan pada ' + fuStr}</div>
+      <div class="flex gap-2 flex-wrap">
+        <button data-rbac="rujukan.edit" onclick="hk1WaFollowUp()" class="bg-green text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-green-dark inline-flex items-center gap-1.5">📱 Mesej pesakit</button>
+        <button data-rbac="rujukan.edit" onclick="hk1RecordFollowUp('ikut')" class="border border-green text-green-dark text-sm font-semibold px-4 py-2 rounded-lg hover:bg-green/5">✅ Ikut</button>
+        <button data-rbac="rujukan.edit" onclick="hk1RecordFollowUp('tak_ikut')" class="border border-terracotta text-terracotta text-sm font-semibold px-4 py-2 rounded-lg hover:bg-terracotta/5">❌ Tak ikut</button>
+      </div>`;
+  } else {
+    body = `<div class="text-sm text-ink/60">Follow-up dijadualkan pada ${fuStr}${due ? ' (matang)' : ''}</div>`;
+  }
+  return `<div class="mt-5 pt-4 border-t border-ink/10 ${due && !res ? 'ring-1 ring-inset ring-gold/40 rounded-lg p-3 -m-3 bg-gold/[0.04]' : ''}">
+    <div class="text-xs font-bold text-ink mb-1">🩺 Follow-up Saranan</div>
+    <div class="text-[11px] text-ink/55 mb-3">Dihantar: ${c.saranan_sent_at ? hk1FmtDT(c.saranan_sent_at) : '—'} · Follow-up: ${fuStr}${c.saranan_days ? ` (${c.saranan_days} hari)` : ''}</div>
+    ${body}
+  </div>`;
+}
+
+function hk1ComputeFollowUp() {
+  const days = parseInt(document.getElementById('hk1-days')?.value) || 0;
+  const start = document.getElementById('hk1-start')?.value || '';
+  if (!days || !start) return null;
+  return hk1AddDaysYmd(start, days);
+}
+
+function hk1BuildWaMessage() {
+  const nm = patientName || 'Pesakit';
+  const saranan = (document.getElementById('hk1-saranan')?.value || '').trim();
+  const days = parseInt(document.getElementById('hk1-days')?.value) || 0;
+  const start = document.getElementById('hk1-start')?.value || '';
+  const pengesyor = hakeema1on1Ref?.target_name || 'Hakeema';
+  const tarikh = start ? hk1PrettyYmd(start) : '';
+
+  if (hakeema1on1SarananTpl) {
+    let t = hakeema1on1SarananTpl;
+    if (!days || !start) t = t.split('\n').filter(ln => !/\{tempoh\}|\{tarikh\}/.test(ln)).join('\n');
+    t = t.replace(/\{nama\}/g, nm).replace(/\{pengesyor\}/g, pengesyor).replace(/\{saranan\}/g, saranan)
+         .replace(/\{tempoh\}/g, String(days || '')).replace(/\{tarikh\}/g, tarikh);
+    return t.replace(/\n{3,}/g, '\n\n').trim();
+  }
+  const L = [];
+  L.push(`Salam ${nm}, 👋`);
+  L.push(`Berikut saranan daripada ${pengesyor} (Ibnu Sina Wellness):`);
+  L.push('');
+  if (saranan) { L.push(saranan); L.push(''); }
+  if (days && start) { L.push(`⏱️ Sila ikut selama *${days} hari* bermula ${tarikh}.`); L.push(''); }
+  L.push('Terima kasih & semoga cepat sihat. 🌿');
+  return L.join('\n');
+}
+
+function hk1UpdPreview() {
+  const box = document.getElementById('hk1-preview');
+  if (!box) return;
+  const saranan = (document.getElementById('hk1-saranan')?.value || '').trim();
+  if (!saranan) { box.innerHTML = '<span class="italic text-ink/40">Isi saranan di atas untuk lihat pratonton mesej…</span>'; return; }
+  box.innerHTML = escHtml(hk1BuildWaMessage()).replace(/\*(.+?)\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
+}
+window.hk1UpdPreview = hk1UpdPreview;
+
+async function hk1Persist(patch) {
+  const c = Object.assign({}, hakeema1on1Ref.consultation || {}, patch);
+  const { error } = await window.db.from('psy_clinical_referrals')
+    .update({ consultation: c, updated_at: new Date().toISOString() }).eq('id', hakeema1on1Ref.id);
+  if (error) { banner('Ralat simpan: ' + error.message, 'error'); return false; }
+  hakeema1on1Ref.consultation = c;
+  flashSaved('hk1-saved');
+  return true;
+}
+
+async function hk1SaveNotes() {
+  await hk1Persist({ examination: document.getElementById('hk1-notes').value.trim() });
+}
+window.hk1SaveNotes = hk1SaveNotes;
+
+async function hk1SaveTime() {
+  await hk1Persist({ scheduled_time: document.getElementById('hk1-time').value || null });
+}
+window.hk1SaveTime = hk1SaveTime;
+
+function renderHk1AttList(editable) {
+  const host = document.getElementById('hk1-att-list');
+  if (!host) return;
+  const atts = Array.isArray(hakeema1on1Ref?.consultation?.attachments) ? hakeema1on1Ref.consultation.attachments : [];
+  host.innerHTML = atts.length ? atts.map((a, i) => `<span class="inline-flex items-center gap-1 px-2 py-1 bg-cream border border-ink/15 rounded text-[11px]"><button type="button" onclick="hk1ViewDoc('${escHtml(a.path)}')" class="text-navy hover:underline truncate max-w-[140px]">📄 ${escHtml(a.name)}</button>${editable ? `<button type="button" data-rbac="rujukan.delete" onclick="hk1RemoveDoc(${i})" class="text-terracotta font-bold">×</button>` : ''}</span>`).join('') : '<p class="text-[11px] text-ink/35 italic">Tiada fail.</p>';
+}
+
+async function hk1UploadDoc(input) {
+  const files = [...input.files]; input.value = '';
+  const atts = Array.isArray(hakeema1on1Ref.consultation?.attachments) ? hakeema1on1Ref.consultation.attachments.slice() : [];
+  let ok = 0, errMsg = '';
+  for (const f of files) {
+    if (f.size > 10 * 1024 * 1024) { errMsg = `${f.name}: melebihi 10MB`; continue; }
+    const path = `${hakeema1on1Ref.id}/consult_${Date.now()}_${f.name.replace(/[^\w.\-]/g, '_')}`;
+    const { error } = await window.db.storage.from('referral-docs').upload(path, f, { contentType: f.type || undefined });
+    if (error) { errMsg = error.message; continue; }
+    atts.push({ name: f.name, path, uploaded_at: new Date().toISOString() });
+    ok++;
+  }
+  if (ok) { await hk1Persist({ attachments: atts }); banner(`${ok} fail dimuat naik ✅`); }
+  if (errMsg) banner('Gagal muat naik: ' + errMsg, 'error');
+  renderHk1AttList(hakeema1on1Ref.status !== 'resolved' && hakeema1on1Ref.status !== 'declined');
+}
+window.hk1UploadDoc = hk1UploadDoc;
+
+async function hk1RemoveDoc(i) {
+  const atts = (hakeema1on1Ref.consultation?.attachments || []).slice();
+  const [rm] = atts.splice(i, 1);
+  if (rm?.path) { try { await window.db.storage.from('referral-docs').remove([rm.path]); } catch (_) {} }
+  await hk1Persist({ attachments: atts });
+  renderHk1AttList(hakeema1on1Ref.status !== 'resolved' && hakeema1on1Ref.status !== 'declined');
+}
+window.hk1RemoveDoc = hk1RemoveDoc;
+
+async function hk1ViewDoc(path) {
+  const { data, error } = await window.db.storage.from('referral-docs').createSignedUrl(path, 3600);
+  if (error || !data?.signedUrl) { banner('Gagal buka fail', 'error'); return; }
+  window.open(data.signedUrl, '_blank');
+}
+window.hk1ViewDoc = hk1ViewDoc;
+
+async function hk1GetPhone() {
+  const { data: pt } = await window.db.from('psy_patients').select('phone').eq('id', patientId).maybeSingle();
+  let phone = (pt?.phone || '').replace(/\D/g, '');
+  if (!phone) return '';
+  if (phone.startsWith('0')) phone = '60' + phone.slice(1);
+  else if (!phone.startsWith('60')) phone = '60' + phone;
+  return phone;
+}
+
+async function hk1GhlInvoke(action, extra = {}) {
+  const { data, error } = await window.db.functions.invoke('ghl-inbox', { body: { action, ...extra } });
+  if (error) {
+    let msg = error.message;
+    try { const ctx = await error.context?.json(); if (ctx?.error) msg = ctx.error; } catch (_) {}
+    throw new Error(msg);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+async function hk1Send() {
+  const phone = await hk1GetPhone();
+  if (!phone) { banner('Pesakit tiada nombor telefon — kemas kini di profil pesakit.', 'error'); return; }
+  const saranan = (document.getElementById('hk1-saranan')?.value || '').trim();
+  if (!saranan) { banner('Isi mesej saranan dahulu.', 'error'); return; }
+  const msg = hk1BuildWaMessage();
+  if (!confirm('Hantar saranan ini ke WhatsApp pesakit sekarang?')) return;
+
+  const btn = document.getElementById('hk1-send-btn');
+  const btnTxt = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Menghantar…'; }
+  try {
+    const ec = await hk1GhlInvoke('ensurecontact', { phone, name: patientName || '' });
+    const contactId = ec?.contact?.contactId;
+    if (!contactId) throw new Error('Tak dapat sediakan contact GHL untuk nombor ini.');
+    await hk1GhlInvoke('send', { contactId, message: msg });
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = btnTxt || '📱 Hantar ke WhatsApp'; }
+    banner('Gagal auto-hantar: ' + (e.message || e), 'error');
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const ok = await hk1Persist({
+    saranan, saranan_days: parseInt(document.getElementById('hk1-days')?.value) || null,
+    saranan_start: document.getElementById('hk1-start')?.value || null,
+    follow_up_date: hk1ComputeFollowUp(), saranan_sent_at: now,
+  });
+  if (ok && patientUserId) {
+    try { await window.db.from('psy_notifications').insert({ user_id: patientUserId, type: 'referral', title: 'Saranan Hakeema', body: saranan || 'Anda ada saranan baru. Sila semak WhatsApp.', link: 'dashboard.html' }); } catch (_) {}
+  }
+  if (typeof auditLog === 'function') { try { await auditLog('referral.saranan_sent', patientId, { source: 'plan_1on1' }); } catch (_) {} }
+  if (btn) { btn.disabled = false; btn.textContent = btnTxt || '📱 Hantar ke WhatsApp'; }
+  banner('Saranan dihantar ke WhatsApp pesakit ✅');
+  renderHakeema1on1Card();
+}
+window.hk1Send = hk1Send;
+
+async function hk1WaFollowUp() {
+  const phone = await hk1GetPhone();
+  if (!phone) { banner('Pesakit tiada nombor telefon.', 'error'); return; }
+  const c = hakeema1on1Ref.consultation || {};
+  const nm = patientName || 'Pesakit';
+  const days = c.saranan_days ? `${c.saranan_days} hari` : 'tempoh yang disarankan';
+  const L = [
+    `Salam ${nm}, 👋`, `Follow-up daripada ${hakeema1on1Ref.target_name || 'Hakeema'} (Ibnu Sina Wellness).`, ``,
+    `Adakah anda telah mengikut saranan yang diberi selama ${days}?`,
+    c.saranan ? `\nSaranan: ${c.saranan}` : '', ``,
+    `Mohon balas: *Ya, saya ikut* atau *Belum / Tidak ikut*. Terima kasih. 🌿`,
+  ].filter(x => x !== '');
+  window.open(`https://wa.me/${phone}?text=${encodeURIComponent(L.join('\n'))}`, '_blank');
+}
+window.hk1WaFollowUp = hk1WaFollowUp;
+
+async function hk1RecordFollowUp(result) {
+  let note = '';
+  if (result === 'tak_ikut') note = prompt('Catatan (kenapa tak ikut / tindakan susulan):') || '';
+  const ok = await hk1Persist({ follow_up_result: result, follow_up_note: note.trim() || null, follow_up_done_at: new Date().toISOString() });
+  if (!ok) return;
+  if (typeof auditLog === 'function') { try { await auditLog('referral.followup_recorded', patientId, { result, source: 'plan_1on1' }); } catch (_) {} }
+  banner('Follow-up direkod ✅');
+  renderHakeema1on1Card();
+}
+window.hk1RecordFollowUp = hk1RecordFollowUp;
+
+async function hk1MarkResolved() {
+  if (!confirm('Tandakan Sesi 1:1 ini sebagai selesai?')) return;
+  const { error } = await window.db.from('psy_clinical_referrals')
+    .update({ status: 'resolved', resolved_at: new Date().toISOString() }).eq('id', hakeema1on1Ref.id);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  hakeema1on1Ref.status = 'resolved';
+  hakeema1on1Ref.resolved_at = new Date().toISOString();
+  if (typeof auditLog === 'function') { try { await auditLog('referral.resolved', patientId, { source: 'plan_1on1' }); } catch (_) {} }
+  banner('Sesi 1:1 ditandakan selesai ✅');
+  renderHakeema1on1Card();
+}
+window.hk1MarkResolved = hk1MarkResolved;
+
 function renderCoachingSchedule() {
   const items = getWeekCoachingItems();
   const section = document.getElementById('coaching-schedule-section');
@@ -689,7 +1057,7 @@ function renderCoachingSchedule() {
   renderOverrideNote();
 
   // Sentiasa papar kad supaya coach boleh EDIT inline (tambah item walau kosong).
-  if (!items.length) {
+  if (!items.length && !hakeema1on1Wanted) {
     section.classList.add('hidden');
     return;
   }

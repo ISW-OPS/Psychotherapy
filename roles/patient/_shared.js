@@ -47,6 +47,7 @@ async function resolveKycStatus() {
 
 async function enforceKyc(currentPageId) {
   // Sentiasa boleh (tiada data rawatan sensitif): KYC sendiri, profil, dashboard
+  // (Protokol Kecemasan kini sebahagian dashboard.html — bukan halaman berasingan)
   if (['kyc', 'profile', 'dashboard'].includes(currentPageId)) return true;
 
   // ── GATE 1: KYC mesti DIHANTAR dulu (tak perlu tunggu admin lulus) sebelum mula KOB ──

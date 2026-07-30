@@ -60,6 +60,16 @@
           </svg>
         </div>
 
+        <!-- DNA TEST -->
+        <div id="dna-section" class="hidden bg-white rounded-2xl border border-ink/10 p-5">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h2 class="text-lg font-bold text-navy-dark flex items-center gap-2">🧬 DNA Test</h2>
+            <span id="dna-consult-date" class="text-xs text-ink/50"></span>
+          </div>
+          <div id="dna-files" class="space-y-2"></div>
+          <div id="dna-files-empty" class="hidden text-xs text-ink/40">Laporan DNA Test anda belum siap dimuat naik.</div>
+        </div>
+
         <!-- CATEGORY TABS -->
         <div class="bg-white rounded-2xl border border-ink/10 px-3 md:px-5">
           <div class="flex items-center gap-5 md:gap-8 overflow-x-auto sh">
@@ -341,6 +351,43 @@ function setStatus(s){ state.status=s; state.page=1;
   document.getElementById('filter-menu').classList.add('hidden'); render(); }
 document.addEventListener('click',e=>{ if(!e.target.closest('#filter-menu') && !e.target.closest('button[onclick="toggleFilter()"]')) document.getElementById('filter-menu')?.classList.add('hidden'); });
 
+async function viewDnaFile(encPath){
+  const path=decodeURIComponent(encPath);
+  const win=window.open('','_blank');
+  const { data, error }=await window.db.storage.from('dna-test').createSignedUrl(path,3600);
+  if(error || !data?.signedUrl){ if(win) win.close(); banner('Gagal buka fail: '+(error?.message||'akses ditolak'),'error'); return; }
+  if(win) win.location=data.signedUrl; else window.location.href=data.signedUrl;
+}
+window.viewDnaFile=viewDnaFile;
+
+async function loadDnaTest(){
+  const { data: procs }=await window.db.from('psy_dna_test_process')
+    .select('id, report_files, appointment_id').eq('patient_id',patientRecord.id)
+    .order('created_at',{ascending:false});
+  if(!procs || !procs.length) return;
+  const proc=procs.find(p=>Object.values(p.report_files||{}).some(a=>(a||[]).length)) || procs[0];
+  const files=[];
+  Object.values(proc.report_files||{}).forEach(paths=>(paths||[]).forEach(p=>files.push(p)));
+
+  let apptText='Belum dijadualkan';
+  if(proc.appointment_id){
+    const { data: appt }=await window.db.from('psy_appointments').select('appointment_time').eq('id',proc.appointment_id).maybeSingle();
+    if(appt?.appointment_time) apptText=new Date(appt.appointment_time).toLocaleString('ms-MY',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+  }
+  if(!files.length && !proc.appointment_id) return;
+
+  document.getElementById('dna-section').classList.remove('hidden');
+  document.getElementById('dna-consult-date').textContent='Consultation: '+apptText;
+  const box=document.getElementById('dna-files'), empty=document.getElementById('dna-files-empty');
+  if(!files.length){ box.innerHTML=''; empty.classList.remove('hidden'); return; }
+  empty.classList.add('hidden');
+  box.innerHTML=files.map(p=>`
+    <div class="flex items-center justify-between gap-3 border border-ink/10 rounded-xl px-4 py-2.5">
+      <span class="text-sm text-ink truncate">${escH(p.split('/').pop())}</span>
+      <button onclick="viewDnaFile('${encodeURIComponent(p)}')" class="text-xs font-semibold text-navy hover:underline flex-shrink-0">👁️ Lihat</button>
+    </div>`).join('');
+}
+
 (async()=>{
   const user=await initPatient('rekod-perubatan','Rekod & laporan perubatan'); if(!user) return;
   if(!window.patientRecord){ document.getElementById('app-loading').innerHTML='<p class="text-ink/60 text-sm">Tiada rekod pesakit dijumpai.</p>'; return; }
@@ -348,6 +395,7 @@ document.addEventListener('click',e=>{ if(!e.target.closest('#filter-menu') && !
   RECS=data||[];
   document.getElementById('tc-all').textContent='('+RECS.length+')';
   renderStats(); render();
+  loadDnaTest();
 })();
 </script>
 </body>

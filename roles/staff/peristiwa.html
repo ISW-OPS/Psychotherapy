@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Peristiwa Pesakit</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🏥</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-6 space-y-4">
+
+        <div class="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h1 class="text-xl font-bold text-ink flex items-center gap-2">🏥 Peristiwa Pesakit</h1>
+            <p class="text-sm text-ink/45 mt-0.5">Pantau kejadian kritikal pesakit & lawatan susulan.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button data-rbac="patient_events.export" onclick="exportActive()" class="text-sm font-semibold px-4 py-2 rounded-lg border border-ink/15 text-ink/70 bg-white hover:bg-ink/5">⬇️ Export</button>
+            <a data-rbac="patient_events.create" href="peristiwa-baru.html" class="text-sm font-semibold px-4 py-2 rounded-lg bg-navy text-white hover:bg-navy/90 no-underline">➕ Cipta Peristiwa</a>
+          </div>
+        </div>
+
+        <!-- Tab utama (Lawatan dahulu — keutamaan staff: siapa perlu dilawat) -->
+        <div class="flex items-center gap-1 border-b border-ink/10">
+          <button id="mt-visits" onclick="switchMain('visits')" class="px-4 py-2.5 text-sm font-semibold border-b-2 border-navy text-navy">🚶 Lawatan <span id="mt-visits-n" class="text-[11px] opacity-70"></span></button>
+          <button id="mt-events" onclick="switchMain('events')" class="px-4 py-2.5 text-sm font-semibold border-b-2 border-transparent text-ink/55 hover:text-ink">🏥 Semua Peristiwa <span id="mt-events-n" class="text-[11px] opacity-70"></span></button>
+        </div>
+
+        <!-- ═══════════ SEKSYEN: PERISTIWA ═══════════ -->
+        <div id="sec-events" class="hidden space-y-4">
+          <div class="bg-white rounded-2xl border border-ink/10 p-3 flex items-center gap-2 flex-wrap">
+            <input id="f-search" oninput="page=1;evRender()" type="text" placeholder="🔍 Cari pesakit, hospital…" class="flex-1 min-w-[200px] border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-navy">
+            <select id="f-type" onchange="page=1;evRender()" class="border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white outline-none"><option value="">Semua Jenis</option></select>
+            <select id="f-status" onchange="page=1;evRender()" class="border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white outline-none">
+              <option value="">Semua Status</option><option value="open">Terbuka</option><option value="closed">Selesai</option>
+            </select>
+            <input id="f-from" type="date" onchange="page=1;evRender()" class="border border-ink/15 rounded-lg px-2.5 py-2 text-sm bg-white outline-none" title="Dari tarikh">
+            <input id="f-to" type="date" onchange="page=1;evRender()" class="border border-ink/15 rounded-lg px-2.5 py-2 text-sm bg-white outline-none" title="Hingga tarikh">
+            <select id="f-sort" onchange="evRender()" class="border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white outline-none">
+              <option value="new">Terbaru Dulu</option><option value="old">Terlama Dulu</option>
+            </select>
+          </div>
+
+          <div class="flex items-center gap-1.5 overflow-x-auto pb-1"><button data-tab="" class="pe-tab"></button></div>
+
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-b border-ink/8 bg-ink/[0.015] text-[10px] uppercase tracking-wider text-ink/45">
+                  <th class="text-left px-5 py-3">Pesakit</th>
+                  <th class="text-left px-3 py-3">Jenis Peristiwa</th>
+                  <th class="text-left px-3 py-3">Hospital / Lokasi</th>
+                  <th class="text-left px-3 py-3 w-32">Tarikh</th>
+                  <th class="text-left px-3 py-3 w-24">Status</th>
+                  <th class="text-left px-3 py-3 w-20">Lawatan</th>
+                  <th class="text-right px-5 py-3 w-28">Tindakan</th>
+                </tr>
+              </thead>
+              <tbody id="pe-tbody" class="divide-y divide-ink/5"></tbody>
+            </table>
+            <div id="pe-empty" class="hidden py-16 text-center text-sm text-ink/40">Tiada peristiwa.</div>
+            <div class="flex items-center justify-between px-5 py-3 border-t border-ink/8">
+              <div id="pe-count" class="text-xs text-ink/45"></div>
+              <div id="pe-pager" class="flex items-center gap-1"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ═══════════ SEKSYEN: LAWATAN ═══════════ -->
+        <div id="sec-visits" class="space-y-4">
+          <div class="bg-white rounded-2xl border border-ink/10 p-3 flex items-center gap-2 flex-wrap">
+            <input id="vf-search" oninput="vwRender()" type="text" placeholder="🔍 Cari pesakit / lokasi…" class="flex-1 min-w-[180px] border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-navy">
+            <select id="vf-staff" onchange="vwRender()" class="border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white outline-none"><option value="">Semua Staff</option></select>
+            <input id="vf-from" type="date" onchange="vwRender()" class="border border-ink/15 rounded-lg px-2.5 py-2 text-sm bg-white outline-none">
+            <input id="vf-to" type="date" onchange="vwRender()" class="border border-ink/15 rounded-lg px-2.5 py-2 text-sm bg-white outline-none">
+          </div>
+
+          <div id="v-tabs-wrap" class="flex items-center gap-1.5 overflow-x-auto pb-1"></div>
+
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-b border-ink/8 bg-ink/[0.015] text-[10px] uppercase tracking-wider text-ink/45">
+                  <th class="text-left px-5 py-3">Pesakit</th>
+                  <th class="text-left px-3 py-3">Peristiwa</th>
+                  <th class="text-left px-3 py-3">Lokasi</th>
+                  <th class="text-left px-3 py-3 w-36">Tarikh Lawatan</th>
+                  <th class="text-left px-3 py-3 w-28">Status</th>
+                  <th class="text-right px-5 py-3 w-20">Tindakan</th>
+                </tr>
+              </thead>
+              <tbody id="v-tbody" class="divide-y divide-ink/5"></tbody>
+            </table>
+            <div id="v-empty" class="hidden py-16 text-center text-sm text-ink/40">Tiada lawatan.</div>
+            <div id="v-count" class="px-5 py-3 text-xs text-ink/45 border-t border-ink/8"></div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="../../shared/utils.js"></script>
+<script src="_shared.js"></script>
+<script src="../../shared/settings.js"></script>
+<script src="_peristiwa.js"></script>
+<script>
+// ═══════════ Tab utama ═══════════
+let mainTab = 'visits';   // lalai = Lawatan (keutamaan: siapa perlu dilawat)
+function switchMain(k) {
+  mainTab = k;
+  document.getElementById('sec-events').classList.toggle('hidden', k !== 'events');
+  document.getElementById('sec-visits').classList.toggle('hidden', k !== 'visits');
+  const on = 'border-navy text-navy', off = 'border-transparent text-ink/55';
+  document.getElementById('mt-events').className = 'px-4 py-2.5 text-sm font-semibold border-b-2 ' + (k === 'events' ? on : off);
+  document.getElementById('mt-visits').className = 'px-4 py-2.5 text-sm font-semibold border-b-2 ' + (k === 'visits' ? on : off);
+  history.replaceState(null, '', location.pathname + '?view=' + k);
+}
+window.switchMain = switchMain;
+function exportActive() { mainTab === 'visits' ? vwExport() : evExport(); }
+window.exportActive = exportActive;
+
+// ═══════════════════════════════════════════════════════
+//  SEKSYEN PERISTIWA
+// ═══════════════════════════════════════════════════════
+const PAGE_SIZE = 10;
+let allEvents = [];
+let visitCounts = {};   // event_id -> {total, done}
+let evTab = '';
+let page = 1;
+
+const TABS = [
+  { key: '',            lbl: 'Semua',          match: () => true },
+  { key: 'warded',      lbl: 'Warded / ICU',   match: e => ['warded','icu'].includes(e.event_type) },
+  { key: 'temujanji',   lbl: 'Temujanji',      match: e => ['temujanji_doktor','pembedahan'].includes(e.event_type) },
+  { key: 'need_visit',  lbl: 'Perlu Lawatan',  match: e => e.need_visit && e.status === 'open' },
+  { key: 'kematian',    lbl: 'Meninggal',      match: e => e.event_type === 'kematian' },
+  { key: 'closed',      lbl: 'Selesai',        match: e => e.status === 'closed' },
+];
+
+async function loadEvents() {
+  const { data, error } = await window.db.from('psy_patient_events')
+    .select(PE_SELECT).order('created_at', { ascending: false }).limit(1000);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  allEvents = data || [];
+  const ids = allEvents.map(e => e.id);
+  visitCounts = {};
+  if (ids.length) {
+    const { data: vs } = await window.db.from('psy_patient_event_visits').select('event_id, status').in('event_id', ids);
+    (vs || []).forEach(v => {
+      const c = visitCounts[v.event_id] || (visitCounts[v.event_id] = { total: 0, done: 0 });
+      c.total++; if (v.status === 'completed') c.done++;
+    });
+  }
+  document.getElementById('mt-events-n').textContent = allEvents.length ? allEvents.length : '';
+  evRender();
+}
+
+function initFilters() {
+  document.getElementById('f-type').innerHTML = '<option value="">Semua Jenis</option>' +
+    Object.entries(PE_TYPES).map(([k, v]) => `<option value="${k}">${v.lbl}</option>`).join('');
+}
+function setTab(k) { evTab = k; page = 1; evRender(); }
+window.setTab = setTab;
+
+function evFiltered() {
+  const q = (document.getElementById('f-search').value || '').toLowerCase().trim();
+  const ft = document.getElementById('f-type').value, fs = document.getElementById('f-status').value;
+  const from = document.getElementById('f-from').value, to = document.getElementById('f-to').value;
+  const tabDef = TABS.find(t => t.key === evTab) || TABS[0];
+  let list = allEvents.filter(tabDef.match);
+  if (ft) list = list.filter(e => e.event_type === ft);
+  if (fs) list = list.filter(e => e.status === fs);
+  if (from) list = list.filter(e => e.event_date >= from);
+  if (to) list = list.filter(e => e.event_date <= to);
+  if (q) list = list.filter(e => pePatientName(e).toLowerCase().includes(q)
+    || (e.psy_patients?.mrn || '').toLowerCase().includes(q) || (e.hospital_name || '').toLowerCase().includes(q));
+  const asc = document.getElementById('f-sort').value === 'old';
+  list.sort((a, b) => {
+    const ka = a.event_date + 'T' + (a.event_time || '00:00'), kb = b.event_date + 'T' + (b.event_time || '00:00');
+    return asc ? ka.localeCompare(kb) : kb.localeCompare(ka);
+  });
+  return list;
+}
+
+function evRenderTabs() {
+  const wrap = document.querySelector('.pe-tab')?.parentElement;
+  if (!wrap) return;
+  wrap.innerHTML = TABS.map(t => {
+    const n = allEvents.filter(t.match).length, on = t.key === evTab;
+    return `<button onclick="setTab('${t.key}')" class="pe-tab whitespace-nowrap text-xs font-semibold px-3.5 py-2 rounded-full border transition-colors ${on ? 'bg-navy text-white border-navy' : 'bg-white text-ink/60 border-ink/15 hover:border-navy/40'}">${t.lbl} <span class="opacity-70">${n}</span></button>`;
+  }).join('');
+}
+
+function evRender() {
+  evRenderTabs();
+  const list = evFiltered();
+  const tbody = document.getElementById('pe-tbody'), empty = document.getElementById('pe-empty');
+  const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+  if (page > totalPages) page = totalPages;
+  const shown = list.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  if (!shown.length) { tbody.innerHTML = ''; empty.classList.remove('hidden'); }
+  else {
+    empty.classList.add('hidden');
+    tbody.innerHTML = shown.map(e => {
+      const nm = pePatientName(e), vc = visitCounts[e.id];
+      const visitCell = e.need_visit
+        ? `<span class="text-xs text-ink/70">Ya${vc ? ` (${vc.done}/${vc.total})` : ''}</span>`
+        : '<span class="text-xs text-ink/40">Tidak</span>';
+      return `<tr class="hover:bg-cream/30 cursor-pointer" onclick="location.href='peristiwa-detail.html?id=${e.id}'">
+        <td class="px-5 py-3"><div class="font-semibold text-ink">${peEsc(nm)}</div><div class="text-[11px] text-ink/40">${peEsc(e.psy_patients?.mrn || '')}</div></td>
+        <td class="px-3 py-3"><span class="text-sm font-medium text-ink">${peEsc(PE_TYPES[e.event_type]?.lbl || e.event_type)}</span></td>
+        <td class="px-3 py-3 text-ink/75"><div class="max-w-[180px] truncate" title="${peEsc(e.hospital_name)}">${peEsc(e.hospital_name || '—')}</div>${e.ward_room ? `<div class="text-[11px] text-ink/40">${peEsc(e.ward_room)}${e.bed_unit ? ' / ' + peEsc(e.bed_unit) : ''}</div>` : ''}</td>
+        <td class="px-3 py-3 text-ink/70 whitespace-nowrap">${peFmtDate(e.event_date)}</td>
+        <td class="px-3 py-3"><span class="text-xs ${e.status === 'open' ? 'text-terracotta' : 'text-ink/50'}">${e.status === 'open' ? 'Terbuka' : 'Selesai'}</span></td>
+        <td class="px-3 py-3">${visitCell}</td>
+        <td class="px-5 py-3" onclick="event.stopPropagation()"><div class="flex items-center justify-end gap-1.5">
+          <a href="peristiwa-detail.html?id=${e.id}" class="text-[11px] px-2 py-1 rounded-lg border border-ink/15 text-ink/60 hover:bg-ink/5" title="Lihat">👁️</a>
+          <a data-rbac="patient_events.edit" href="peristiwa-baru.html?id=${e.id}" class="text-[11px] px-2 py-1 rounded-lg border border-ink/15 text-ink/60 hover:bg-ink/5" title="Edit">✏️</a>
+          <button data-rbac="patient_events.delete" onclick="delEvent('${e.id}')" class="text-[11px] px-2 py-1 rounded-lg border border-terracotta/40 text-terracotta hover:bg-terracotta/5" title="Padam">🗑️</button>
+        </div></td>
+      </tr>`;
+    }).join('');
+  }
+  const start = list.length ? (page - 1) * PAGE_SIZE + 1 : 0;
+  document.getElementById('pe-count').textContent = `Menunjukkan ${start} hingga ${Math.min(page * PAGE_SIZE, list.length)} daripada ${list.length} rekod`;
+  const pager = document.getElementById('pe-pager');
+  let html = `<button onclick="page=Math.max(1,page-1);evRender()" class="px-2.5 py-1.5 rounded-lg border border-ink/15 text-xs ${page === 1 ? 'opacity-40' : 'hover:bg-ink/5'}">‹</button>`;
+  for (let p = 1; p <= totalPages; p++) {
+    if (totalPages > 7 && p > 2 && p < totalPages - 1 && Math.abs(p - page) > 1) {
+      if (!html.endsWith('…</span>')) html += '<span class="px-1 text-xs text-ink/40">…</span>';
+      continue;
+    }
+    html += `<button onclick="page=${p};evRender()" class="px-2.5 py-1.5 rounded-lg text-xs font-semibold ${p === page ? 'bg-navy text-white' : 'border border-ink/15 hover:bg-ink/5'}">${p}</button>`;
+  }
+  html += `<button onclick="page=Math.min(${totalPages},page+1);evRender()" class="px-2.5 py-1.5 rounded-lg border border-ink/15 text-xs ${page === totalPages ? 'opacity-40' : 'hover:bg-ink/5'}">›</button>`;
+  pager.innerHTML = html;
+  if (typeof applyRbacUI === 'function') applyRbacUI(tbody);
+}
+
+async function delEvent(id) {
+  if (!confirm('Padam peristiwa ini beserta semua lawatan, nota & dokumen? Tindakan ini tidak boleh dibatalkan.')) return;
+  const { error } = await window.db.from('psy_patient_events').delete().eq('id', id);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  banner('Peristiwa dipadam'); await loadEvents(); await loadVisits();
+}
+window.delEvent = delEvent;
+
+function evExport() {
+  const list = evFiltered();
+  const rows = [['Pesakit','MRN','Jenis','Hospital/Lokasi','Wad/Bilik','Tarikh','Prioriti','Status','Perlu Lawatan','Ditugaskan','Nota']];
+  list.forEach(e => rows.push([
+    pePatientName(e), e.psy_patients?.mrn || '', PE_TYPES[e.event_type]?.lbl || e.event_type,
+    e.hospital_name || '', [e.ward_room, e.bed_unit].filter(Boolean).join(' / '),
+    e.event_date, PE_PRIORITY[e.priority]?.lbl || '', PE_STATUS[e.status]?.lbl || '',
+    e.need_visit ? 'Ya' : 'Tidak', e.assigned?.full_name || '', (e.notes || '').replace(/\n/g, ' '),
+  ]));
+  downloadCSV(rows, `peristiwa-pesakit-${new Date().toISOString().slice(0, 10)}.csv`);
+}
+
+// ═══════════════════════════════════════════════════════
+//  SEKSYEN LAWATAN
+// ═══════════════════════════════════════════════════════
+let allVisits = [];
+let vTab = 'all';
+const V_TABS = [
+  { key: 'all',       lbl: 'Semua',   match: () => true },
+  { key: 'pending',   lbl: 'Pending', match: v => v.status !== 'completed' && v.status !== 'cancelled' },
+  { key: 'completed', lbl: 'Selesai', match: v => v.status === 'completed' },
+];
+
+async function loadVisits() {
+  const { data, error } = await window.db.from('psy_patient_event_visits')
+    .select(PEV_SELECT).order('visit_date', { ascending: true }).limit(1000);
+  if (error) { banner('Ralat muat lawatan: ' + error.message, 'error'); allVisits = []; }
+  else allVisits = data || [];
+  vwRender();
+}
+
+// Peristiwa yang perlu lawatan tapi BELUM ada rekod lawatan → papar sebagai "Belum Diatur"
+function virtualVisits() {
+  const have = new Set(allVisits.map(v => v.event_id));
+  return allEvents.filter(e => e.need_visit && e.status === 'open' && !have.has(e.id)).map(e => ({
+    _virtual: true, _eventId: e.id, event_id: e.id,
+    visit_date: e.expected_visit_date || null, visit_time: null,
+    status: 'pending', location: e.hospital_name, ward_room: e.ward_room,
+    visitor: e.assigned || null,
+    psy_patient_events: { event_type: e.event_type, priority: e.priority, status: e.status, hospital_name: e.hospital_name, psy_patients: e.psy_patients },
+  }));
+}
+function combinedVisits() { return [...virtualVisits(), ...allVisits]; }
+
+function vwPatientName(v) {
+  const pt = v.psy_patient_events?.psy_patients || {};
+  return pt.psy_profiles?.full_name || pt.full_name || pt.mrn || 'Pesakit';
+}
+function relDate(d) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const diff = Math.round((new Date(d + 'T00:00:00') - today) / 86400000);
+  if (diff === 0) return 'Hari ini'; if (diff === 1) return 'Esok'; if (diff === -1) return 'Semalam';
+  return diff > 0 ? `Dalam ${diff} hari` : `${-diff} hari lepas`;
+}
+function vwFiltered() {
+  const q = (document.getElementById('vf-search').value || '').toLowerCase().trim();
+  const fs = document.getElementById('vf-staff').value, from = document.getElementById('vf-from').value, to = document.getElementById('vf-to').value;
+  let list = combinedVisits();
+  const tabDef = V_TABS.find(t => t.key === vTab) || V_TABS[0];
+  list = list.filter(tabDef.match);
+  if (fs) list = list.filter(v => v.visitor?.id === fs);
+  if (from) list = list.filter(v => v.visit_date >= from);
+  if (to) list = list.filter(v => v.visit_date <= to);
+  if (q) list = list.filter(v => vwPatientName(v).toLowerCase().includes(q) || (v.location || '').toLowerCase().includes(q));
+  return list;
+}
+function setVTab(k) { vTab = k; vwRender(); }
+window.setVTab = setVTab;
+
+function vwRender() {
+  const all = combinedVisits();
+  document.getElementById('mt-visits-n').textContent = all.length ? all.length : '';
+  // Dropdown staff (dari semua lawatan termasuk virtual)
+  const staffSel = document.getElementById('vf-staff');
+  if (staffSel.options.length <= 1) {
+    const seen = new Map();
+    all.forEach(v => { if (v.visitor?.id && !seen.has(v.visitor.id)) seen.set(v.visitor.id, v.visitor.full_name); });
+    staffSel.innerHTML = '<option value="">Semua Staff</option>' + [...seen].map(([id, nm]) => `<option value="${id}">${peEsc(nm || id)}</option>`).join('');
+  }
+  document.getElementById('v-tabs-wrap').innerHTML = V_TABS.map(t => {
+    const n = all.filter(t.match).length;
+    const on = t.key === vTab;
+    return `<button onclick="setVTab('${t.key}')" class="whitespace-nowrap text-xs font-semibold px-3.5 py-2 rounded-full border transition-colors ${on ? 'bg-navy text-white border-navy' : 'bg-white text-ink/60 border-ink/15 hover:border-navy/40'}">${t.lbl} <span class="opacity-70">${n}</span></button>`;
+  }).join('');
+
+  const list = vwFiltered();
+  const tbody = document.getElementById('v-tbody'), empty = document.getElementById('v-empty');
+  if (!list.length) { tbody.innerHTML = ''; empty.classList.remove('hidden'); }
+  else {
+    empty.classList.add('hidden');
+    tbody.innerHTML = list.map(v => {
+      const ev = v.psy_patient_events || {};
+      const noDate = !v.visit_date;
+      const st = noDate ? 'pending' : peVisitEffectiveStatus(v);
+      const isPast = st === 'overdue';
+      const href = v._virtual ? `peristiwa-detail.html?id=${v._eventId}` : `lawatan-detail.html?id=${v.id}`;
+      const statusCell = (v._virtual && noDate)
+        ? '<span class="text-xs text-ink/50">Belum dijadualkan</span>'
+        : `<span class="text-xs ${st === 'overdue' ? 'text-terracotta font-semibold' : 'text-ink/60'}">${PE_VISIT_STATUS[st]?.lbl || st}</span>`;
+      const dateCell = noDate
+        ? '<span class="text-ink/30">—</span>'
+        : `<div class="text-ink/80">📅 ${peFmtDate(v.visit_date)}</div><div class="text-[11px] ${isPast ? 'text-terracotta font-semibold' : 'text-ink/40'}">${relDate(v.visit_date)}${v.visit_time ? ', ' + peFmtTime(v.visit_time) : ''}</div>`;
+      return `<tr class="hover:bg-cream/30 cursor-pointer" onclick="location.href='${href}'">
+        <td class="px-5 py-3"><div class="font-semibold text-ink">${peEsc(vwPatientName(v))}</div><div class="text-[11px] text-ink/40">${peEsc(ev.psy_patients?.mrn || '')}</div></td>
+        <td class="px-3 py-3"><span class="text-sm font-medium text-ink">${peEsc(PE_TYPES[ev.event_type]?.lbl || ev.event_type)}</span></td>
+        <td class="px-3 py-3 text-ink/75"><div class="max-w-[160px] truncate">${peEsc(v.location || ev.hospital_name || '—')}</div>${v.ward_room ? `<div class="text-[11px] text-ink/40">${peEsc(v.ward_room)}</div>` : ''}</td>
+        <td class="px-3 py-3 whitespace-nowrap">${dateCell}</td>
+        <td class="px-3 py-3">${statusCell}</td>
+        <td class="px-5 py-3 text-right" onclick="event.stopPropagation()"><a href="${href}" class="text-[11px] px-2 py-1 rounded-lg border border-ink/15 text-ink/60 hover:bg-ink/5" title="${v._virtual ? 'Atur lawatan' : 'Lihat'}">${v._virtual ? '📅' : '👁️'}</a></td>
+      </tr>`;
+    }).join('');
+  }
+  document.getElementById('v-count').textContent = `Menunjukkan ${list.length} lawatan`;
+}
+
+function vwExport() {
+  const list = vwFiltered();
+  const rows = [['Pesakit','MRN','Peristiwa','Lokasi','Tarikh','Masa','Status','Ditugaskan','Keadaan Pesakit','Nota']];
+  list.forEach(v => rows.push([
+    vwPatientName(v), v.psy_patient_events?.psy_patients?.mrn || '', PE_TYPES[v.psy_patient_events?.event_type]?.lbl || '',
+    v.location || '', v.visit_date, v.visit_time || '', PE_VISIT_STATUS[peVisitEffectiveStatus(v)]?.lbl || '',
+    v.visitor?.full_name || '', PE_CONDITION[v.patient_condition]?.lbl || '', (v.notes || '').replace(/\n/g, ' '),
+  ]));
+  downloadCSV(rows, `lawatan-${new Date().toISOString().slice(0, 10)}.csv`);
+}
+
+// ── Util CSV ──
+function downloadCSV(rows, name) {
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = name; a.click();
+}
+
+(async () => {
+  const user = await initStaff('peristiwa', 'Pantau kejadian & lawatan pesakit');
+  if (!user) return;
+  await peLoadTypes();
+  initFilters();
+  const params = new URLSearchParams(location.search);
+  const view = params.get('view');
+  const evTabParam = params.get('tab');
+  if (evTabParam && TABS.some(x => x.key === evTabParam)) evTab = evTabParam;
+  await Promise.all([loadEvents(), loadVisits()]);
+  vwRender(); // pastikan lawatan "belum diatur" (guna allEvents) dikira selepas kedua-dua siap
+  // Lalai = Lawatan; hanya tukar ke Peristiwa jika diminta (?view=events) atau tab kategori peristiwa dipautkan
+  if (view === 'events' || (evTabParam && view !== 'visits' && view !== 'lawatan')) switchMain('events');
+  else switchMain('visits');
+})();
+</script>
+</body>
+</html>

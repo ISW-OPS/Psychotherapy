@@ -62,6 +62,7 @@
               <span>📲</span> Kongsi via WhatsApp
             </button>
             <div id="ref-count" class="text-[11px] text-ink/50 text-center mt-2 hidden"></div>
+            <div id="ref-earnings" class="text-[11px] text-center mt-1.5 font-semibold hidden"></div>
           </div>
         </div>
 
@@ -130,6 +131,59 @@
               <p class="text-xs text-ink/40 italic">Tiada dokumen dimuat naik</p>
             </div>
           </div>
+
+          <!-- Affiliate — Komisen Rujukan -->
+          <div id="aff-section" class="py-8 hidden">
+            <div class="mb-6">
+              <h3 class="font-bold text-base">🤝 Affiliate — Komisen Rujukan</h3>
+              <p class="text-xs text-ink/50 mt-0.5">Komisen dari kawan yang anda rujuk & buat bayaran pakej pertama.</p>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4 mb-6">
+              <div class="border border-ink/12 rounded-xl p-4">
+                <div class="text-[10px] uppercase text-ink/50 font-semibold">Belum Dibayar</div>
+                <div id="aff-pending-total" class="text-xl font-bold text-ink mt-1">RM 0.00</div>
+              </div>
+              <div class="border border-ink/12 rounded-xl p-4">
+                <div class="text-[10px] uppercase text-ink/50 font-semibold">Dah Dibayar</div>
+                <div id="aff-paid-total" class="text-xl font-bold text-ink mt-1">RM 0.00</div>
+              </div>
+            </div>
+
+            <div class="mb-6">
+              <h4 class="text-sm font-semibold text-ink mb-2">Senarai Rujukan</h4>
+              <div id="aff-ref-list" class="space-y-1.5 text-sm"></div>
+              <p id="aff-ref-empty" class="text-xs text-ink/40 italic hidden">Belum ada kawan dirujuk.</p>
+            </div>
+
+            <div class="mb-6">
+              <h4 class="text-sm font-semibold text-ink mb-2">Maklumat Bank (untuk bayaran komisen)</h4>
+              <div class="grid grid-cols-3 gap-4">
+                <div>
+                  <label class="text-xs font-semibold text-ink/60 uppercase tracking-wide">Nama Bank</label>
+                  <input id="aff-bank-name" class="w-full mt-2 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none bg-white" placeholder="cth Maybank">
+                </div>
+                <div>
+                  <label class="text-xs font-semibold text-ink/60 uppercase tracking-wide">No. Akaun</label>
+                  <input id="aff-bank-no" class="w-full mt-2 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none bg-white">
+                </div>
+                <div>
+                  <label class="text-xs font-semibold text-ink/60 uppercase tracking-wide">Nama Pemegang Akaun</label>
+                  <input id="aff-bank-holder" class="w-full mt-2 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none bg-white">
+                </div>
+              </div>
+              <div class="flex items-center gap-3 mt-4">
+                <button onclick="saveAffBank()" class="bg-ink text-white text-sm px-6 py-2 rounded-lg font-semibold hover:bg-ink/80">Simpan Maklumat Bank</button>
+                <button id="aff-request-btn" onclick="requestAffPayout()" disabled class="bg-navy text-white text-sm px-6 py-2 rounded-lg font-semibold hover:bg-navy-dark disabled:opacity-40 disabled:cursor-not-allowed">Mohon Bayaran</button>
+              </div>
+              <p id="aff-request-hint" class="text-[11px] text-ink/40 mt-2"></p>
+            </div>
+
+            <div id="aff-payouts-wrap" class="hidden">
+              <h4 class="text-sm font-semibold text-ink mb-2">Sejarah Permohonan Bayaran</h4>
+              <div id="aff-payouts-list" class="space-y-1.5 text-sm"></div>
+            </div>
+          </div>
         </div>
       </div>
     </main>
@@ -150,6 +204,8 @@
 <script src="../../shared/navbar.js"></script>
 <script src="_shared.js"></script>
 <script>
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
 function loadProfileForm() {
   const name = currentUser.full_name || '';
   const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() || '?';
@@ -185,7 +241,152 @@ function loadReferralCard() {
       }
     })
     .catch(() => {});
+
+  document.getElementById('aff-section')?.classList.remove('hidden');
+  loadAffiliateSection();
 }
+
+// ── Affiliate — komisen rujukan & payout ─────────────────────
+let affReferrals = [];
+let affPayouts = [];
+
+async function loadAffiliateSection() {
+  if (!patientRecord?.id) return;
+  const [{ data: refs }, { data: payouts }] = await Promise.all([
+    window.db.from('psy_referrals')
+      .select('*, referee:referee_patient_id(full_name, mrn), payout:payout_id(status)')
+      .eq('referrer_patient_id', patientRecord.id)
+      .order('created_at', { ascending: false }),
+    window.db.from('psy_affiliate_payouts')
+      .select('*')
+      .eq('patient_id', patientRecord.id)
+      .order('requested_at', { ascending: false }),
+  ]);
+  affReferrals = refs || [];
+  affPayouts = payouts || [];
+
+  document.getElementById('aff-bank-name').value = patientRecord.bank_name || '';
+  document.getElementById('aff-bank-no').value = patientRecord.bank_account_no || '';
+  document.getElementById('aff-bank-holder').value = patientRecord.bank_account_holder || '';
+
+  renderAffSummaryAndList();
+  renderAffPayouts();
+}
+
+function affRefStatus(r) {
+  if (r.status === 'pending') return { lbl: 'Menunggu bayaran pertama', cls: 'text-ink/40' };
+  if (r.status === 'void') return { lbl: 'Void', cls: 'text-terracotta' };
+  if (r.status === 'qualified') {
+    if (r.payout_id && r.payout?.status === 'paid') return { lbl: 'Dibayar', cls: 'text-green-dark' };
+    return { lbl: 'Layak — belum dibayar', cls: 'text-gold-dark' };
+  }
+  return { lbl: r.status, cls: 'text-ink/40' };
+}
+
+function renderAffSummaryAndList() {
+  let pending = 0, paid = 0;
+  affReferrals.forEach(r => {
+    if (r.status !== 'qualified') return;
+    if (r.payout_id && r.payout?.status === 'paid') paid += Number(r.commission_amount || 0);
+    else pending += Number(r.commission_amount || 0);
+  });
+  document.getElementById('aff-pending-total').textContent = fmtRMprofile(pending);
+  document.getElementById('aff-paid-total').textContent = fmtRMprofile(paid);
+
+  const earn = document.getElementById('ref-earnings');
+  if (pending > 0 || paid > 0) {
+    earn.classList.remove('hidden');
+    earn.className = 'text-[11px] text-center mt-1.5 font-semibold text-navy';
+    earn.textContent = `💰 ${fmtRMprofile(pending)} belum dibayar`;
+  }
+
+  const list = document.getElementById('aff-ref-list');
+  const empty = document.getElementById('aff-ref-empty');
+  if (!affReferrals.length) { list.innerHTML = ''; empty.classList.remove('hidden'); }
+  else {
+    empty.classList.add('hidden');
+    list.innerHTML = affReferrals.map(r => {
+      const st = affRefStatus(r);
+      const nm = r.referee?.full_name || r.referee?.mrn || 'Kawan';
+      return `<div class="flex items-center justify-between border border-ink/10 rounded-lg px-3 py-2">
+        <span class="text-ink/80">${esc(nm)}</span>
+        <span class="text-xs font-semibold ${st.cls}">${st.lbl}${r.commission_amount ? ' · ' + fmtRMprofile(r.commission_amount) : ''}</span>
+      </div>`;
+    }).join('');
+  }
+
+  // Butang mohon bayaran
+  const btn = document.getElementById('aff-request-btn');
+  const hint = document.getElementById('aff-request-hint');
+  const hasOpenPayout = affPayouts.some(p => p.status === 'pending' || p.status === 'processing');
+  if (hasOpenPayout) {
+    btn.disabled = true;
+    hint.textContent = 'Anda ada permohonan bayaran sedang diproses.';
+  } else if (pending <= 0) {
+    btn.disabled = true;
+    hint.textContent = 'Tiada komisen tertunggak buat masa ini.';
+  } else {
+    const hasBank = !!(patientRecord.bank_name && patientRecord.bank_account_no && patientRecord.bank_account_holder);
+    btn.disabled = !hasBank;
+    hint.textContent = hasBank ? `Anda boleh mohon bayaran ${fmtRMprofile(pending)}.` : 'Sila lengkapkan & simpan maklumat bank dahulu.';
+  }
+}
+
+function renderAffPayouts() {
+  const wrap = document.getElementById('aff-payouts-wrap');
+  if (!affPayouts.length) { wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden');
+  const lbl = { pending: 'Menunggu', processing: 'Diproses', paid: 'Dibayar', rejected: 'Ditolak' };
+  document.getElementById('aff-payouts-list').innerHTML = affPayouts.map(p => `
+    <div class="flex items-center justify-between border border-ink/10 rounded-lg px-3 py-2">
+      <span class="text-ink/60">${new Date(p.requested_at).toLocaleDateString('ms-MY',{day:'2-digit',month:'short',year:'numeric'})}</span>
+      <span class="font-semibold text-ink">${fmtRMprofile(p.amount)}</span>
+      <span class="text-xs font-semibold">${lbl[p.status] || p.status}</span>
+    </div>`).join('');
+}
+
+function fmtRMprofile(n) { return 'RM ' + (Number(n) || 0).toFixed(2); }
+
+async function saveAffBank() {
+  const bank_name = document.getElementById('aff-bank-name').value.trim();
+  const bank_account_no = document.getElementById('aff-bank-no').value.trim();
+  const bank_account_holder = document.getElementById('aff-bank-holder').value.trim();
+  try {
+    const updated = await dbUpdate('psy_patients', patientRecord.id, { bank_name, bank_account_no, bank_account_holder });
+    Object.assign(patientRecord, updated || { bank_name, bank_account_no, bank_account_holder });
+    banner('Maklumat bank disimpan ✅');
+    renderAffSummaryAndList();
+  } catch (e) {
+    banner('Gagal simpan: ' + (e.message || e), 'error');
+  }
+}
+window.saveAffBank = saveAffBank;
+
+async function requestAffPayout() {
+  const eligible = affReferrals.filter(r => r.status === 'qualified' && !r.payout_id);
+  const amount = eligible.reduce((s, r) => s + Number(r.commission_amount || 0), 0);
+  if (amount <= 0) return;
+  if (!confirm(`Mohon bayaran komisen ${fmtRMprofile(amount)}?`)) return;
+  try {
+    const payout = await dbInsert('psy_affiliate_payouts', {
+      patient_id: patientRecord.id,
+      amount,
+      bank_snapshot: {
+        bank_name: patientRecord.bank_name,
+        bank_account_no: patientRecord.bank_account_no,
+        bank_account_holder: patientRecord.bank_account_holder,
+      },
+    });
+    const ids = eligible.map(r => r.id);
+    const { error } = await window.db.from('psy_referrals').update({ payout_id: payout.id }).in('id', ids);
+    if (error) throw error;
+    banner('Permohonan bayaran dihantar ✅');
+    await loadAffiliateSection();
+  } catch (e) {
+    banner('Gagal hantar permohonan: ' + (e.message || e), 'error');
+  }
+}
+window.requestAffPayout = requestAffPayout;
 
 function copyRefCode() {
   const code = patientRecord?.referral_code;
