@@ -1394,28 +1394,23 @@ function renderHero() {
     ${attendance}`;
 }
 
-// Hari-sesi ikut template pakej untuk minggu semasa (fallback [1,2]).
-function sessionDaysForWeekStaff() {
-  const sched = (activePlan.coaching_schedule || []).find(it => Number(it.week || it.day) === weekNumber);
+// Hari-sesi ikut template pakej untuk minggu w (default minggu semasa; fallback [1,2]).
+function sessionDaysForWeekStaff(w = weekNumber) {
+  const sched = (activePlan.coaching_schedule || []).find(it => Number(it.week || it.day) === w);
   if (sched && Array.isArray(sched.session_days) && sched.session_days.length) return sched.session_days;
   return [1, 2];
 }
 
-// Tarikh DIJANGKA (paparan "dijangka" di hero) — unjur dari chainAnchor (sesi bertarikh sebenar
-// plg terkini <= minggu ini) supaya ikut lencongan sebenar; fallback ke weekStart (jadual ideal)
-// kalau tiada langsung sesi bertarikh lagi (cth minggu-minggu paling awal).
-function chainedExpectedDate(day) {
+// Unjur tarikh minggu `w` sesi `day` dari satu titik anchor (minggu+tarikh bertarikh sebenar),
+// +7 hari × beza minggu, snap ke hari-sesi yang dibenarkan (preferred_days/preferred_pair).
+// Teras kongsi antara paparan "dijangka" (chainedExpectedDate) & cascade auto-tempah minggu akan datang.
+function computeChainedDate(w, day, anchorWeek, anchorDate) {
   const PAIR = { fri_sat: [5, 6], sat_sun: [6, 0] };
   const dows = (Array.isArray(activePlan.preferred_days) && activePlan.preferred_days.length)
     ? activePlan.preferred_days
     : PAIR[activePlan.preferred_pair];
-  let d;
-  if (chainAnchor) {
-    d = new Date(chainAnchor.session_date); d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() + (weekNumber - chainAnchor.week_number) * 7);
-  } else {
-    d = new Date(weekStart); d.setHours(0, 0, 0, 0);
-  }
+  const d = new Date(anchorDate); d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + (w - anchorWeek) * 7);
   if (dows) {
     const targetDow = dows[day - 1] != null ? dows[day - 1] : dows[dows.length - 1];
     let guard = 0;
@@ -1423,6 +1418,16 @@ function chainedExpectedDate(day) {
   } else if (day === 2) {
     d.setDate(d.getDate() + 1);
   }
+  return d;
+}
+
+// Tarikh DIJANGKA (paparan "dijangka" di hero) — unjur dari chainAnchor (sesi bertarikh sebenar
+// plg terkini <= minggu ini) supaya ikut lencongan sebenar; fallback ke weekStart (jadual ideal)
+// kalau tiada langsung sesi bertarikh lagi (cth minggu-minggu paling awal).
+function chainedExpectedDate(day) {
+  const d = chainAnchor
+    ? computeChainedDate(weekNumber, day, chainAnchor.week_number, new Date(chainAnchor.session_date))
+    : computeChainedDate(weekNumber, day, weekNumber, weekStart);
   return d.toISOString();
 }
 
@@ -1876,6 +1881,50 @@ async function setSessionDate() {
   await auditLog('plan.session_date_edited', activePlan.id, { week: weekNumber, session: weekEntry.session_day || 1, session_date: iso });
   renderHero();
   banner('Tarikh sesi dikemaskini ✅');
+  await cascadeBookFutureWeeks(weekNumber, iso);
+}
+
+// Selepas tukar/tetapkan tarikh satu minggu, teruskan corak (+7 hari/minggu) untuk minggu
+// AKAN DATANG yang masih belum ditempah sahaja — minggu yang sudah ditempah/hadir/tidak
+// hadir/lanjutan TIDAK disentuh. Minta pengesahan dulu sebelum tulis pukal.
+async function cascadeBookFutureWeeks(fromWeek, anchorIso) {
+  const maxWeek = planMaxWeek || activePlan.duration_weeks || fromWeek;
+  if (fromWeek >= maxWeek) return;
+  const { data: futureRows } = await window.db.from('psy_plan_weekly_progress')
+    .select('id, week_number, session_day, status, session_date, is_extension')
+    .eq('plan_id', activePlan.id).gt('week_number', fromWeek);
+  const SKIP = new Set(['hadir', 'consultation_done', 'booked', 'reschedule', 'cancel', 'extension_pending_payment', 'extension_paid']);
+  const byWeekDay = {};
+  (futureRows || []).forEach(r => { byWeekDay[`${r.week_number}_${r.session_day || 1}`] = r; });
+
+  const anchorDate = new Date(anchorIso);
+  const toInsert = [], toUpdate = [];
+  for (let w = fromWeek + 1; w <= maxWeek; w++) {
+    for (const day of sessionDaysForWeekStaff(w)) {
+      const row = byWeekDay[`${w}_${day}`];
+      if (row && (row.is_extension || row.session_date || SKIP.has(row.status))) continue;
+      const d = computeChainedDate(w, day, fromWeek, anchorDate);
+      d.setHours(anchorDate.getHours(), anchorDate.getMinutes(), 0, 0);
+      const iso2 = d.toISOString();
+      if (row) toUpdate.push({ id: row.id, session_date: iso2 });
+      else toInsert.push({ plan_id: activePlan.id, patient_id: patientId, week_number: w, session_day: day, status: 'booked', session_date: iso2 });
+    }
+  }
+  const total = toInsert.length + toUpdate.length;
+  if (!total) return;
+  if (!confirm(`Teruskan corak tarikh ini (setiap 7 hari) untuk ${total} sesi minggu akan datang yang belum ditempah?\n\nMinggu yang sudah ditempah/hadir/tidak hadir TIDAK disentuh.`)) return;
+
+  try {
+    for (const u of toUpdate) {
+      await window.db.from('psy_plan_weekly_progress').update({ status: 'booked', session_date: u.session_date }).eq('id', u.id);
+    }
+    if (toInsert.length) {
+      const { error } = await window.db.from('psy_plan_weekly_progress').insert(toInsert);
+      if (error) throw error;
+    }
+    await auditLog('plan.cascade_dates', activePlan.id, { from_week: fromWeek, count: total });
+    banner(`${total} sesi akan datang turut dikemaskini ikut corak ✅`);
+  } catch (e) { banner('Ralat cascade: ' + e.message, 'error'); }
 }
 
 // Set "Tarikh Mula Program" (anchor Minggu 1). Semua tarikh sesi sedia ada DIANJAK
