@@ -237,7 +237,11 @@ async function fulfillOrder(admin: any, payment: any) {
           package_payment_status: 'paid', package_paid_at: now, package_receipt_ref: receiptRef,
         }).eq('id', item.kobSessionId)
       }
-      await admin.from('psy_patients').update({ kob_status: 'package_paid' }).eq('id', patientId)
+      // ELAK race condition: kalau doktor dah tandakan KOB 'completed' (markSelesai
+      // di kob-detail.html) SEBELUM webhook ni sempat jalan (cth webhook lambat/
+      // pembayaran lewat disahkan), jangan turunkan balik status ke 'package_paid'.
+      await admin.from('psy_patients').update({ kob_status: 'package_paid' })
+        .eq('id', patientId).neq('kob_status', 'completed')
 
     } else if (item.type === 'shop_order') {
       await admin.from('psy_orders').insert({

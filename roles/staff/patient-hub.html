@@ -1579,16 +1579,33 @@ const OV_PAGE_SIZE = 6;
 const ovFmt  = d => new Date(d).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' });
 const ovFmtT = d => new Date(d).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 
-// Tarikh DIJANGKA sesi (bila belum ditempah) — dikira dari anchor (Tarikh Mula Program)
-// + hari-sesi pakej. Placeholder sahaja; tidak ditulis ke DB.
+// Tarikh DIJANGKA sesi (bila belum ditempah) — dikira dari sesi BERTARIKH SEBENAR
+// paling terkini sebelum minggu ini (kalau ada), supaya unjuran ikut lencongan tarikh
+// sebenar (reschedule/tidak hadir/tarikh diedit); fallback ke anchor (Tarikh Mula Program)
+// kalau belum ada langsung sesi bertarikh (cth minggu-minggu awal). Placeholder sahaja; tidak ditulis ke DB.
 function ovExpectedDate(w, day) {
-  const anchor = phAnchorDate(activePlan); anchor.setHours(0, 0, 0, 0);
-  const d = new Date(anchor); d.setDate(d.getDate() + (w - 1) * 7);
   const PAIR = { fri_sat: [5, 6], sat_sun: [6, 0] };
   // preferred_days (baharu) = [dow JS ikut turutan sesi]; fallback PAIR[preferred_pair] (legasi)
   const dows = (Array.isArray(activePlan.preferred_days) && activePlan.preferred_days.length)
     ? activePlan.preferred_days
     : PAIR[activePlan.preferred_pair];
+
+  let base = null, baseWeek = 0;
+  for (const r of ovWeeklyRows) {
+    if (!r.session_date || r.week_number > w) continue;
+    if (r.week_number > baseWeek || (r.week_number === baseWeek && (!base || new Date(r.session_date) > base))) {
+      baseWeek = r.week_number; base = new Date(r.session_date);
+    }
+  }
+
+  let d;
+  if (base) {
+    d = base; d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + (w - baseWeek) * 7);
+  } else {
+    d = phAnchorDate(activePlan); d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + (w - 1) * 7);
+  }
   if (dows) {
     const targetDow = dows[day - 1] != null ? dows[day - 1] : dows[dows.length - 1];
     let guard = 0;

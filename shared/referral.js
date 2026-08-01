@@ -51,18 +51,22 @@ async function referralCodeExists(code) {
 async function resolveReferrer(code) {
   const c = normalizeReferralCode(code);
   if (!c) return null;
-  const { data } = await window.db
+  // psy_patients ada DUA FK ke psy_profiles (user_id + coach_id) — embed
+  // psy_profiles(...) tanpa disambiguasi punca PostgREST error diam-diam
+  // (data jadi undefined), jadi resolveReferrer sentiasa "gagal jumpa".
+  const { data, error } = await window.db
     .from('psy_patients')
-    .select('id, mrn, referral_code, psy_profiles(full_name)')
+    .select('id, mrn, referral_code, full_name, psy_profiles!user_id(full_name)')
     .ilike('referral_code', c)
     .limit(1);
+  if (error) console.warn('[resolveReferrer] query error:', error.message);
   if (!data || !data.length) return null;
   const p = data[0];
   return {
     id: p.id,
     mrn: p.mrn,
     referral_code: p.referral_code,
-    full_name: p.psy_profiles?.full_name || null,
+    full_name: p.psy_profiles?.full_name || p.full_name || null,
   };
 }
 

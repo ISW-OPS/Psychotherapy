@@ -67,6 +67,25 @@ Deno.serve(async (req) => {
     }
     if (!(total > 0)) return json({ error: 'Jumlah bayaran tidak sah' }, 400)
 
+    // 3b. Diskaun ganjaran (psy_vouchers) — cth baucar pendaftaran rujukan.
+    //     Terpakai utk MANA-MANA pembelian (bukan terhad pakej pertama sahaja) —
+    //     supaya baucar tak "terperap" tak boleh guna kalau pakej pesakit
+    //     diaktifkan melalui laluan lain (cth staff Tandakan Selesai KOB terus).
+    //     Guna voucher AKTIF terlama (FIFO); ditanda 'used' oleh trigger DB
+    //     bila psy_payments jadi 'completed' (lihat 28_rewards.sql).
+    let voucherId: string | null = null
+    let voucherDiscount = 0
+    if (patientId) {
+      const { data: voucher } = await admin.from('psy_vouchers')
+        .select('id, amount').eq('patient_id', patientId).eq('status', 'active')
+        .order('created_at', { ascending: true }).limit(1).maybeSingle()
+      if (voucher) {
+        voucherId = voucher.id
+        voucherDiscount = Math.min(Number(voucher.amount) || 0, total)
+        total = Math.max(1, total - voucherDiscount) // elak jumlah RM0 ke gateway
+      }
+    }
+
     // 4. Cipta baris PENDING + simpan intent (untuk fulfillment oleh webhook)
     const receiptRef = 'RCP-' + Date.now().toString(36).toUpperCase() +
       '-' + Math.floor(performance.now()).toString(36).toUpperCase()
@@ -83,7 +102,7 @@ Deno.serve(async (req) => {
       status: 'pending',
       gateway_provider: provider,
       gateway_status: 'pending',
-      intent: { items, patientId, userId: user.id, method },
+      intent: { items, patientId, userId: user.id, method, voucherId, voucherDiscount },
     })
     if (insErr) throw new Error('Gagal simpan bayaran pending: ' + insErr.message)
 
@@ -107,7 +126,7 @@ Deno.serve(async (req) => {
       .update({ gateway_ref: created.gatewayRef })
       .eq('receipt_ref', receiptRef)
 
-    return json({ ok: true, checkoutUrl: created.checkoutUrl, receiptRef })
+    return json({ ok: true, checkoutUrl: created.checkoutUrl, receiptRef, voucherDiscount })
   } catch (err) {
     return json({ error: (err as Error).message || 'Ralat tidak diketahui' }, 500)
   }

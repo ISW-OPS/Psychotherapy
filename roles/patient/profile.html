@@ -132,6 +132,16 @@
             </div>
           </div>
 
+          <!-- Ganjaran Saya — semua baucar (rujukan, dsb) — tak bergantung status pakej -->
+          <div id="rewards-section" class="py-8 hidden">
+            <div class="mb-6">
+              <h3 class="font-bold text-base">🎁 Ganjaran Saya</h3>
+              <p class="text-xs text-ink/50 mt-0.5">Baucar & ganjaran yang anda terima.</p>
+            </div>
+            <div id="rewards-list" class="space-y-2"></div>
+            <p id="rewards-empty" class="text-xs text-ink/40 italic hidden">Belum ada ganjaran.</p>
+          </div>
+
           <!-- Affiliate — Komisen Rujukan -->
           <div id="aff-section" class="py-8 hidden">
             <div class="mb-6">
@@ -161,7 +171,26 @@
               <div class="grid grid-cols-3 gap-4">
                 <div>
                   <label class="text-xs font-semibold text-ink/60 uppercase tracking-wide">Nama Bank</label>
-                  <input id="aff-bank-name" class="w-full mt-2 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none bg-white" placeholder="cth Maybank">
+                  <select id="aff-bank-name" onchange="toggleAffBankOther()" class="w-full mt-2 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none bg-white">
+                    <option value="">— Pilih Bank —</option>
+                    <option>Maybank</option>
+                    <option>CIMB Bank</option>
+                    <option>Public Bank</option>
+                    <option>RHB Bank</option>
+                    <option>Hong Leong Bank</option>
+                    <option>AmBank</option>
+                    <option>Bank Islam</option>
+                    <option>Bank Rakyat</option>
+                    <option>Bank Simpanan Nasional (BSN)</option>
+                    <option>Alliance Bank</option>
+                    <option>Affin Bank</option>
+                    <option>UOB</option>
+                    <option>OCBC Bank</option>
+                    <option>HSBC Bank</option>
+                    <option>Standard Chartered</option>
+                    <option value="__other__">Lain-lain</option>
+                  </select>
+                  <input id="aff-bank-name-other" placeholder="Nyatakan nama bank" class="hidden w-full mt-2 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none bg-white">
                 </div>
                 <div>
                   <label class="text-xs font-semibold text-ink/60 uppercase tracking-wide">No. Akaun</label>
@@ -174,13 +203,12 @@
               </div>
               <div class="flex items-center gap-3 mt-4">
                 <button onclick="saveAffBank()" class="bg-ink text-white text-sm px-6 py-2 rounded-lg font-semibold hover:bg-ink/80">Simpan Maklumat Bank</button>
-                <button id="aff-request-btn" onclick="requestAffPayout()" disabled class="bg-navy text-white text-sm px-6 py-2 rounded-lg font-semibold hover:bg-navy-dark disabled:opacity-40 disabled:cursor-not-allowed">Mohon Bayaran</button>
               </div>
               <p id="aff-request-hint" class="text-[11px] text-ink/40 mt-2"></p>
             </div>
 
             <div id="aff-payouts-wrap" class="hidden">
-              <h4 class="text-sm font-semibold text-ink mb-2">Sejarah Permohonan Bayaran</h4>
+              <h4 class="text-sm font-semibold text-ink mb-2">Sejarah Bayaran</h4>
               <div id="aff-payouts-list" class="space-y-1.5 text-sm"></div>
             </div>
           </div>
@@ -246,6 +274,53 @@ function loadReferralCard() {
   loadAffiliateSection();
 }
 
+// ── Ganjaran Saya — semua baucar (psy_vouchers), tak kira jenis sumber ──
+const REWARD_SOURCE_LABELS = {
+  referral_signup: '🎉 Baucar Pendaftaran Rujukan',
+  spend_threshold: '💰 Baucar Perbelanjaan',
+  checkin_streak:  '🔥 Baucar Konsisten Catatan Harian',
+  manual:          '🎁 Baucar Diberikan Staff',
+};
+const REWARD_STATUS_MAP = {
+  active:  { lbl: 'Boleh Guna', cls: 'bg-green-100 text-green-700' },
+  used:    { lbl: 'Telah Digunakan', cls: 'bg-ink/10 text-ink/50' },
+  expired: { lbl: 'Luput', cls: 'bg-terracotta/15 text-terracotta' },
+  void:    { lbl: 'Dibatalkan', cls: 'bg-terracotta/15 text-terracotta' },
+};
+
+async function loadRewardsSection() {
+  if (!patientRecord?.id) return;
+  const { data } = await window.db.from('psy_vouchers')
+    .select('*').eq('patient_id', patientRecord.id)
+    .order('created_at', { ascending: false });
+  const vouchers = data || [];
+
+  const section = document.getElementById('rewards-section');
+  const list = document.getElementById('rewards-list');
+  const empty = document.getElementById('rewards-empty');
+  if (!vouchers.length) {
+    section?.classList.add('hidden');
+    return;
+  }
+  section?.classList.remove('hidden');
+  empty.classList.add('hidden');
+
+  list.innerHTML = vouchers.map(v => {
+    const st = REWARD_STATUS_MAP[v.status] || REWARD_STATUS_MAP.active;
+    const label = REWARD_SOURCE_LABELS[v.source_type] || '🎁 Baucar';
+    return `<div class="flex items-center justify-between border border-ink/10 rounded-xl p-3.5">
+      <div>
+        <div class="text-sm font-semibold text-ink">${esc(label)}</div>
+        <div class="text-[11px] text-ink/40 mt-0.5">${esc(v.note || '')}</div>
+      </div>
+      <div class="text-right">
+        <div class="font-bold text-navy">${fmtRMprofile(v.amount)}</div>
+        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${st.cls}">${st.lbl}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
 // ── Affiliate — komisen rujukan & payout ─────────────────────
 let affReferrals = [];
 let affPayouts = [];
@@ -265,7 +340,15 @@ async function loadAffiliateSection() {
   affReferrals = refs || [];
   affPayouts = payouts || [];
 
-  document.getElementById('aff-bank-name').value = patientRecord.bank_name || '';
+  const bankSelect = document.getElementById('aff-bank-name');
+  const knownBank = [...bankSelect.options].some(o => o.value === (patientRecord.bank_name || '') && o.value !== '__other__');
+  if (patientRecord.bank_name && !knownBank) {
+    bankSelect.value = '__other__';
+    document.getElementById('aff-bank-name-other').value = patientRecord.bank_name;
+  } else {
+    bankSelect.value = patientRecord.bank_name || '';
+  }
+  toggleAffBankOther();
   document.getElementById('aff-bank-no').value = patientRecord.bank_account_no || '';
   document.getElementById('aff-bank-holder').value = patientRecord.bank_account_holder || '';
 
@@ -315,20 +398,18 @@ function renderAffSummaryAndList() {
     }).join('');
   }
 
-  // Butang mohon bayaran
-  const btn = document.getElementById('aff-request-btn');
+  // Status bayaran — staff yang proses (tiada butang mohon; pesakit cuma lihat status).
   const hint = document.getElementById('aff-request-hint');
   const hasOpenPayout = affPayouts.some(p => p.status === 'pending' || p.status === 'processing');
+  const hasBank = !!(patientRecord.bank_name && patientRecord.bank_account_no && patientRecord.bank_account_holder);
   if (hasOpenPayout) {
-    btn.disabled = true;
-    hint.textContent = 'Anda ada permohonan bayaran sedang diproses.';
+    hint.textContent = 'Permohonan bayaran anda sedang diproses oleh staff.';
   } else if (pending <= 0) {
-    btn.disabled = true;
     hint.textContent = 'Tiada komisen tertunggak buat masa ini.';
+  } else if (!hasBank) {
+    hint.textContent = 'Sila lengkapkan & simpan maklumat bank supaya staff boleh proses bayaran anda.';
   } else {
-    const hasBank = !!(patientRecord.bank_name && patientRecord.bank_account_no && patientRecord.bank_account_holder);
-    btn.disabled = !hasBank;
-    hint.textContent = hasBank ? `Anda boleh mohon bayaran ${fmtRMprofile(pending)}.` : 'Sila lengkapkan & simpan maklumat bank dahulu.';
+    hint.textContent = `Komisen ${fmtRMprofile(pending)} akan diproses oleh staff secara berkala.`;
   }
 }
 
@@ -347,8 +428,15 @@ function renderAffPayouts() {
 
 function fmtRMprofile(n) { return 'RM ' + (Number(n) || 0).toFixed(2); }
 
+function toggleAffBankOther() {
+  const isOther = document.getElementById('aff-bank-name').value === '__other__';
+  document.getElementById('aff-bank-name-other').classList.toggle('hidden', !isOther);
+}
+window.toggleAffBankOther = toggleAffBankOther;
+
 async function saveAffBank() {
-  const bank_name = document.getElementById('aff-bank-name').value.trim();
+  const bankSel = document.getElementById('aff-bank-name').value;
+  const bank_name = bankSel === '__other__' ? document.getElementById('aff-bank-name-other').value.trim() : bankSel;
   const bank_account_no = document.getElementById('aff-bank-no').value.trim();
   const bank_account_holder = document.getElementById('aff-bank-holder').value.trim();
   try {
@@ -361,32 +449,6 @@ async function saveAffBank() {
   }
 }
 window.saveAffBank = saveAffBank;
-
-async function requestAffPayout() {
-  const eligible = affReferrals.filter(r => r.status === 'qualified' && !r.payout_id);
-  const amount = eligible.reduce((s, r) => s + Number(r.commission_amount || 0), 0);
-  if (amount <= 0) return;
-  if (!confirm(`Mohon bayaran komisen ${fmtRMprofile(amount)}?`)) return;
-  try {
-    const payout = await dbInsert('psy_affiliate_payouts', {
-      patient_id: patientRecord.id,
-      amount,
-      bank_snapshot: {
-        bank_name: patientRecord.bank_name,
-        bank_account_no: patientRecord.bank_account_no,
-        bank_account_holder: patientRecord.bank_account_holder,
-      },
-    });
-    const ids = eligible.map(r => r.id);
-    const { error } = await window.db.from('psy_referrals').update({ payout_id: payout.id }).in('id', ids);
-    if (error) throw error;
-    banner('Permohonan bayaran dihantar ✅');
-    await loadAffiliateSection();
-  } catch (e) {
-    banner('Gagal hantar permohonan: ' + (e.message || e), 'error');
-  }
-}
-window.requestAffPayout = requestAffPayout;
 
 function copyRefCode() {
   const code = patientRecord?.referral_code;
@@ -493,6 +555,7 @@ async function loadPatientDocs() {
   if (!user) return;
   loadProfileForm();
   loadReferralCard();
+  loadRewardsSection();
   await loadPatientDocs();
 })();
 </script>

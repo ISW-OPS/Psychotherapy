@@ -361,6 +361,7 @@ let patientUserId = null;  // psy_profiles.id (for notify)
 let patientName  = '';     // nama pesakit (prefill tandatangan)
 let weekStart    = null;
 let weekEnd      = null;
+let chainAnchor  = null;   // { week_number, session_date } bertarikh sebenar plg terkini <= minggu ini
 let backTab      = 'sessions';  // tab patient-hub untuk butang "Kembali" (ikut tempat asal)
 let _wantSession = 0;           // auto-pilih tab sesi dari param &session= (0 = default)
 let coachingChecks = {};
@@ -449,6 +450,13 @@ async function loadWeek() {
   const { data: extRows } = await window.db.from('psy_plan_weekly_progress')
     .select('id,status').eq('plan_id', activePlan.id).eq('is_extension', true).eq('extension_for_week', weekNumber);
   extForThisWeek = (extRows && extRows.length) ? extRows : null;
+
+  // Sesi bertarikh sebenar plg terkini <= minggu ini — anchor unjuran "dijangka" supaya
+  // ikut lencongan sebenar (tak hadir/reschedule/tarikh diedit), bukan jadual ideal asal.
+  const { data: anchorRows } = await window.db.from('psy_plan_weekly_progress')
+    .select('week_number, session_date').eq('plan_id', activePlan.id).lte('week_number', weekNumber)
+    .not('session_date', 'is', null).order('week_number', { ascending: false }).order('session_date', { ascending: false }).limit(1);
+  chainAnchor = anchorRows?.[0] || null;
 
   updateBreadcrumb();
   renderHero();
@@ -1246,10 +1254,10 @@ function renderHero() {
   const total = activePlan.duration_weeks || 48;
   const pct   = Math.round((weekNumber / total) * 100);
   const progStartYmd = ymdLocal(planAnchorDate(activePlan));
-  // Tarikh DIJANGKA untuk sesi ini bila belum ditempah — dikira dari anchor (Tarikh Mula Program),
-  // ikut hari-sesi pakej. Placeholder sahaja; tidak ditulis ke DB (session_date kekal null).
-  const expectedIso = suggestSessionDate(weekEntry?.session_day || 1, null)
-    || (() => { const d = new Date(weekStart); d.setHours(0, 0, 0, 0); return d.toISOString(); })();
+  // Tarikh DIJANGKA untuk sesi ini bila belum ditempah — dikira dari chainAnchor (sesi bertarikh
+  // sebenar plg terkini) kalau ada, fallback ke jadual ideal (weekStart). Placeholder sahaja;
+  // tidak ditulis ke DB (session_date kekal null).
+  const expectedIso = chainedExpectedDate(weekEntry?.session_day || 1);
 
   const dayName = r => r?.session_date ? new Date(r.session_date).toLocaleDateString('ms-MY', { weekday: 'short' }) : `Sesi ${r?.session_day || 1}`;
 
@@ -1391,6 +1399,31 @@ function sessionDaysForWeekStaff() {
   const sched = (activePlan.coaching_schedule || []).find(it => Number(it.week || it.day) === weekNumber);
   if (sched && Array.isArray(sched.session_days) && sched.session_days.length) return sched.session_days;
   return [1, 2];
+}
+
+// Tarikh DIJANGKA (paparan "dijangka" di hero) — unjur dari chainAnchor (sesi bertarikh sebenar
+// plg terkini <= minggu ini) supaya ikut lencongan sebenar; fallback ke weekStart (jadual ideal)
+// kalau tiada langsung sesi bertarikh lagi (cth minggu-minggu paling awal).
+function chainedExpectedDate(day) {
+  const PAIR = { fri_sat: [5, 6], sat_sun: [6, 0] };
+  const dows = (Array.isArray(activePlan.preferred_days) && activePlan.preferred_days.length)
+    ? activePlan.preferred_days
+    : PAIR[activePlan.preferred_pair];
+  let d;
+  if (chainAnchor) {
+    d = new Date(chainAnchor.session_date); d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + (weekNumber - chainAnchor.week_number) * 7);
+  } else {
+    d = new Date(weekStart); d.setHours(0, 0, 0, 0);
+  }
+  if (dows) {
+    const targetDow = dows[day - 1] != null ? dows[day - 1] : dows[dows.length - 1];
+    let guard = 0;
+    while (d.getDay() !== targetDow && guard++ < 8) d.setDate(d.getDate() + 1);
+  } else if (day === 2) {
+    d.setDate(d.getDate() + 1);
+  }
+  return d.toISOString();
 }
 
 // Cadang tarikh untuk sesi baru ikut preferred_pair + masa pesakit.

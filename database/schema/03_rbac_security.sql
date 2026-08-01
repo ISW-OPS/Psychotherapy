@@ -442,7 +442,7 @@ ON CONFLICT DO NOTHING;
 
 -- 2) Grant 'settings' (Tetapan) — modul terpilih sahaja.
 INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
-SELECT r.role, m.module, 'settings'
+SELECT r.role, r.module, 'settings'
 FROM (VALUES
   ('super_admin','patient'),('super_admin','schedule'),('super_admin','coaching'),
   ('super_admin','kob'),('super_admin','inventory'),('super_admin','orders'),

@@ -62,9 +62,9 @@ CREATE TABLE IF NOT EXISTS psy_affiliate_payouts (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id    UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
   amount        NUMERIC(10,2) NOT NULL,
-  status        TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','paid','rejected')),
+  status        TEXT NOT NULL DEFAULT 'processing' CHECK (status IN ('pending','processing','paid','rejected')),
   method        TEXT NOT NULL DEFAULT 'bank_transfer' CHECK (method IN ('bank_transfer','hitpay')),
-  bank_snapshot JSONB DEFAULT '{}'::jsonb, -- salinan bank_name/account_no/holder masa mohon
+  bank_snapshot JSONB DEFAULT '{}'::jsonb, -- salinan bank_name/account_no/holder masa payout dicipta
   payout_ref    TEXT,                      -- rujukan transaksi (manual, atau HitPay txn id kelak)
   note          TEXT,
   requested_at  TIMESTAMPTZ DEFAULT now(),
@@ -80,10 +80,8 @@ DROP POLICY IF EXISTS "Patients view own payouts" ON psy_affiliate_payouts;
 CREATE POLICY "Patients view own payouts" ON psy_affiliate_payouts FOR SELECT
   USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
 
-DROP POLICY IF EXISTS "Patients request own payout" ON psy_affiliate_payouts;
-CREATE POLICY "Patients request own payout" ON psy_affiliate_payouts FOR INSERT
-  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
-
+-- Payout dicipta oleh STAFF sahaja (staff proses & cetuskan bayaran, cth
+-- sekali sebulan) — pesakit tak "mohon", cuma tengok status di profile.
 DROP POLICY IF EXISTS "Staff manage payouts" ON psy_affiliate_payouts;
 CREATE POLICY "Staff manage payouts" ON psy_affiliate_payouts FOR ALL
   USING      (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
@@ -143,6 +141,8 @@ DECLARE
   v_pkg_id    UUID;
   v_rule      RECORD;
   v_amount    NUMERIC(10,2);
+  v_referrer_patient_id UUID;
+  v_referrer_user_id    UUID;
 BEGIN
   IF NEW.status IS DISTINCT FROM 'completed' OR NEW.patient_id IS NULL THEN
     RETURN NEW;
@@ -151,7 +151,7 @@ BEGIN
     RETURN NEW; -- elak kira dua kali
   END IF;
 
-  SELECT id INTO v_ref_id FROM psy_referrals
+  SELECT id, referrer_patient_id INTO v_ref_id, v_referrer_patient_id FROM psy_referrals
   WHERE referee_patient_id = NEW.patient_id AND status = 'pending'
   LIMIT 1;
   IF v_ref_id IS NULL THEN
@@ -207,6 +207,21 @@ BEGIN
     'Satu rujukan pesakit layak komisen RM ' || v_amount::text || '.',
     'affiliate.html'
   FROM psy_profiles WHERE role = 'staff';
+
+  -- Bagitahu pesakit perujuk juga (kalau ada akaun) — supaya dia tahu
+  -- serta-merta tanpa perlu check Profile secara manual.
+  IF v_amount > 0 THEN
+    SELECT user_id INTO v_referrer_user_id FROM psy_patients WHERE id = v_referrer_patient_id;
+    IF v_referrer_user_id IS NOT NULL THEN
+      INSERT INTO psy_notifications (user_id, type, title, body, link)
+      VALUES (
+        v_referrer_user_id, 'affiliate',
+        '🎉 Kawan Anda Dah Daftar!',
+        'Anda layak komisen RM ' || v_amount::text || ' dari rujukan anda.',
+        'profile.html'
+      );
+    END IF;
+  END IF;
 
   RETURN NEW;
 EXCEPTION WHEN OTHERS THEN
