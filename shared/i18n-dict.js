@@ -7313,7 +7313,7 @@ window.ISW_I18N_EXTRA = {
   "Tukar tab Minggu untuk batal sesi sedia ada": "Switch to the Week tab to cancel an existing session",
   "Tukar tab Minggu untuk reschedule sesi sedia ada": "Switch to the Week tab to reschedule an existing session",
   "Tukar Tarikh": "Change Date",
-  "Tukar tarikh & slot sesi ini sahaja (hanya slot rawatan dibuka, elak penutupan). Minggu lain tidak terjejas.": "Change the date & slot for this session only (only open treatment slots, avoiding closures). Other weeks are unaffected.",
+  "Hanya slot rawatan dibuka (elak penutupan). Sesi pasangan minggu ini & minggu-minggu selepas auto anjak sekali ikut corak baru.": "Only open treatment slots (avoiding closures). The paired session this week & following weeks auto-shift too, following the new pattern.",
   "Tukar tarikh sesi ini": "Change this session's date",
   "Tukar thumbnail": "Change thumbnail",
   "Tulis \"Tajuk: cara penyediaan…\" pada baris sama, ATAU letak langkah sebagai bullet di bawah tajuk\n                  — ia disimpan dalam Panduan dan disertakan dalam mesej WhatsApp.": "Write \"Title: preparation method…\" on the same line, OR put the steps as bullets under the title — it's saved in the Guide and included in the WhatsApp message.",

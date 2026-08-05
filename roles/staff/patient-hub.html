@@ -4609,7 +4609,7 @@ async function openEditSessionDate(id, w) {
     <div class="absolute inset-0 bg-black/50" onclick="document.getElementById('editdate-modal').remove()"></div>
     <div class="relative bg-white rounded-2xl max-w-sm w-full p-6 space-y-4">
       <h3 class="font-bold text-base">🔄 Jadual Semula Sesi — Minggu ${w}</h3>
-      <p class="text-sm text-ink/60">Tukar tarikh & slot sesi ini sahaja (hanya slot rawatan dibuka, elak penutupan). Minggu lain tidak terjejas.</p>
+      <p class="text-sm text-ink/60">Hanya slot rawatan dibuka (elak penutupan). Sesi pasangan minggu ini & minggu-minggu selepas auto anjak sekali ikut corak baru.</p>
       <div>
         <label class="text-xs font-semibold text-ink/60 uppercase">Tarikh baru</label>
         <input id="ed-date" type="date" min="${ovTodayYmd()}" value="${curYmd}" onchange="ovOnDateChange('ed-date','ed-slot','ed-warn')" class="w-full mt-1.5 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-navy">
@@ -4656,7 +4656,7 @@ async function saveEditSessionDate(id) {
     }
     if (row) row.session_date = iso; // supaya jadi anchor terkini utk cascade di bawah
     await auditLog('plan.session_date_edited', activePlan.id, { week: row?.week_number, session: row?.session_day || 1, session_date: iso });
-    const cascaded = row?.week_number ? await recomputeWeeksFrom(row.week_number) : 0;
+    const cascaded = row?.week_number ? await recomputeWeeksFrom(row.week_number, row.session_day || 1) : 0;
     banner(cascaded ? `Sesi dijadual semula ✅ — ${cascaded} sesi minggu seterusnya turut dianjak` : 'Sesi dijadual semula ✅');
     await reloadOverviewKeepPage();
   } catch (e) {
@@ -4670,8 +4670,8 @@ async function saveEditSessionDate(id) {
 // TIDAK disentuh. Snap ke hari-sesi TETAP plan (preferred_days/preferred_pair, cth
 // Sabtu/Ahad) — bukan ikut hari mingguan anchor itu sendiri (elak corak "lari" hari
 // kalau anchor tu kebetulan tersasar drpd corak asal, cth direschedule ke Jumaat).
-function ovComputeWhenFrom(baseWeek, firstDate, firstSlotStart, w, day) {
-  if (w === baseWeek && day === 1) return new Date(firstDate);
+function ovComputeWhenFrom(baseWeek, firstDate, firstSlotStart, w, day, anchorDay = 1) {
+  if (w === baseWeek && day === anchorDay) return new Date(firstDate);
   const PAIR = { fri_sat: [5, 6], sat_sun: [6, 0] };
   const dows = (Array.isArray(activePlan.preferred_days) && activePlan.preferred_days.length)
     ? activePlan.preferred_days
@@ -4694,14 +4694,15 @@ function ovComputeWhenFrom(baseWeek, firstDate, firstSlotStart, w, day) {
   return avail;
 }
 
-// Bila tarikh SATU sesi ditukar (saveEditSessionDate), minggu-minggu SELEPASNYA auto
-// dikira semula ikut kadensi slot rawatan dari anchor baru itu — tiada butang/prompt
-// berasingan lagi. Minggu sebelum & minggu anchor sendiri tidak disentuh. Pulangkan
-// bilangan sesi yang dianjak (0 jika tiada apa-apa utk dikira, senyap — bukan ralat).
-async function recomputeWeeksFrom(baseWeek) {
+// Bila tarikh SATU sesi ditukar (saveEditSessionDate), sesi PASANGAN dalam minggu yang
+// sama (cth Sesi 2 bila Sesi 1 ditukar) dan minggu-minggu SELEPASNYA auto dikira semula
+// ikut kadensi slot rawatan dari anchor baru itu — tiada butang/prompt berasingan lagi.
+// Minggu sebelum anchor tidak disentuh. Pulangkan bilangan sesi yang dianjak (0 jika
+// tiada apa-apa utk dikira, senyap — bukan ralat).
+async function recomputeWeeksFrom(baseWeek, anchorDay = 1) {
   if (!activePlan) return 0;
   const baseRows = ovWeeklyRows.filter(r => Number(r.week_number) === baseWeek && r.session_date);
-  const anchorRow = baseRows.find(r => (r.session_day || 1) === 1) || baseRows[0];
+  const anchorRow = baseRows.find(r => (r.session_day || 1) === anchorDay) || baseRows[0];
   if (!anchorRow) return 0;
   await loadRawatanAvailability();
   if (!_allowedRawatanDays.length) return 0;
@@ -4709,13 +4710,13 @@ async function recomputeWeeksFrom(baseWeek) {
   const anchorDate = new Date(anchorRow.session_date);
   const firstSlotStart = `${String(anchorDate.getHours()).padStart(2, '0')}:${String(anchorDate.getMinutes()).padStart(2, '0')}`;
   const maxWeek = Math.max(activePlan.duration_weeks || 12, ...ovWeeklyRows.map(r => r.week_number || 0));
-  if (baseWeek >= maxWeek) return 0;
 
   const updates = [];
-  for (let w = baseWeek + 1; w <= maxWeek; w++) {
+  for (let w = baseWeek; w <= maxWeek; w++) {
     const nSes = ovSessionsForWeek(w);
     for (let day = 1; day <= nSes; day++) {
-      const when = ovComputeWhenFrom(baseWeek, anchorDate, firstSlotStart, w, day);
+      if (w === baseWeek && day === anchorDay) continue; // sesi ini baru sahaja disimpan — dia sendiri anchor
+      const when = ovComputeWhenFrom(baseWeek, anchorDate, firstSlotStart, w, day, anchorDay);
       if (!when) continue;
       const row = ovWeeklyRows.find(r => Number(r.week_number) === w && (r.session_day || 1) === day);
       updates.push({ row, w, day, when });

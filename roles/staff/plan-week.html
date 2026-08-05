@@ -1881,26 +1881,27 @@ async function setSessionDate() {
   await auditLog('plan.session_date_edited', activePlan.id, { week: weekNumber, session: weekEntry.session_day || 1, session_date: iso });
   renderHero();
   banner('Tarikh sesi dikemaskini ✅');
-  await cascadeBookFutureWeeks(weekNumber, iso);
+  await cascadeBookFutureWeeks(weekNumber, iso, weekEntry.session_day || 1);
 }
 
-// Selepas tukar/tetapkan tarikh satu minggu, teruskan corak (+7 hari/minggu) untuk SEMUA
-// minggu AKAN DATANG — termasuk yang sudah ditempah/hadir/dibatalkan (tarikh sahaja
-// dianjak, status & data lain kekal; 'pending' tanpa tarikh jadi 'booked'). Minggu
-// lanjutan (is_extension) tidak disentuh — jadual sendiri. Auto terus, tiada pengesahan.
-async function cascadeBookFutureWeeks(fromWeek, anchorIso) {
+// Selepas tukar/tetapkan tarikh satu sesi, teruskan corak (+7 hari/minggu) untuk sesi
+// PASANGAN dalam minggu yang sama (cth Sesi 2 bila Sesi 1 ditukar) dan SEMUA minggu
+// AKAN DATANG — termasuk yang sudah ditempah/hadir/dibatalkan (tarikh sahaja dianjak,
+// status & data lain kekal; 'pending' tanpa tarikh jadi 'booked'). Minggu lanjutan
+// (is_extension) tidak disentuh — jadual sendiri. Auto terus, tiada pengesahan.
+async function cascadeBookFutureWeeks(fromWeek, anchorIso, anchorDay = 1) {
   const maxWeek = planMaxWeek || activePlan.duration_weeks || fromWeek;
-  if (fromWeek >= maxWeek) return;
   const { data: futureRows } = await window.db.from('psy_plan_weekly_progress')
     .select('id, week_number, session_day, status, session_date, is_extension, appointment_id')
-    .eq('plan_id', activePlan.id).gt('week_number', fromWeek);
+    .eq('plan_id', activePlan.id).gte('week_number', fromWeek);
   const byWeekDay = {};
   (futureRows || []).forEach(r => { byWeekDay[`${r.week_number}_${r.session_day || 1}`] = r; });
 
   const anchorDate = new Date(anchorIso);
   const toInsert = [], toUpdate = [];
-  for (let w = fromWeek + 1; w <= maxWeek; w++) {
+  for (let w = fromWeek; w <= maxWeek; w++) {
     for (const day of sessionDaysForWeekStaff(w)) {
+      if (w === fromWeek && day === anchorDay) continue; // sesi ini baru sahaja disimpan — dia sendiri anchor
       const row = byWeekDay[`${w}_${day}`];
       if (row?.is_extension) continue;
       const d = computeChainedDate(w, day, fromWeek, anchorDate);
