@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="ms">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ibnu Sina Wellness — Voucher Saya</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="../../shared/theme.js"></script>
+  <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="_styles.css" rel="stylesheet">
+</head>
+
+<body class="min-h-screen">
+
+  <div id="app-loading" class="min-h-screen flex items-center justify-center">
+    <div class="text-center">
+      <div class="text-4xl mb-3">🎟️</div>
+      <p class="text-ink/60 text-sm">Memuatkan...</p>
+    </div>
+  </div>
+
+  <div id="app-shell" class="hidden">
+    <div class="flex min-h-screen">
+      <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+      <main class="main-content flex-1 min-w-0">
+        <header id="page-header"
+          class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4">
+        </header>
+        <div class="p-4 md:p-8 max-w-2xl mx-auto space-y-5">
+
+          <!-- Mata Anda -->
+          <div class="bg-navy rounded-2xl p-5 text-white flex items-center justify-between">
+            <div>
+              <div class="text-xs opacity-70">Mata Anda</div>
+              <div id="points-balance" class="text-3xl font-bold mt-0.5">0 pts</div>
+            </div>
+            <div class="text-4xl">⭐</div>
+          </div>
+
+          <!-- Tukar Ganjaran -->
+          <div id="rewards-section" class="hidden">
+            <div class="text-sm font-bold text-ink mb-2">Tukar Ganjaran</div>
+            <div id="rewards-list" class="space-y-2"></div>
+          </div>
+
+          <!-- Tabs -->
+          <div class="flex gap-2 border-b border-ink/10">
+            <button id="tab-btn-active" onclick="switchVoucherTab('active')"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2 border-navy text-navy">Active</button>
+            <button id="tab-btn-past" onclick="switchVoucherTab('past')"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2 border-transparent text-ink/50 hover:text-ink transition-colors">Past</button>
+          </div>
+
+          <!-- Claim box (Active sahaja) -->
+          <div id="claim-box" class="bg-cream/70 rounded-xl p-4">
+            <div class="text-xs font-semibold text-ink/60 mb-2">Add a voucher</div>
+            <div class="flex gap-2">
+              <input id="claim-input" type="text" placeholder="E.g.: RAYA10"
+                class="flex-1 border border-ink/20 rounded-full px-4 py-2.5 text-sm outline-none focus:border-navy bg-white uppercase">
+              <button onclick="claimVoucher()"
+                class="px-6 py-2.5 rounded-full bg-navy text-white text-sm font-semibold hover:bg-navy-dark whitespace-nowrap">CLAIM</button>
+            </div>
+          </div>
+
+          <div id="voucher-list" class="space-y-3"></div>
+          <div id="voucher-empty" class="hidden text-center text-sm text-ink/40 py-12">Tiada voucher lagi</div>
+
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="/shared/supabase.js"></script>
+  <script src="../../config/supabase.js"></script>
+  <script src="../../shared/authGuard.js"></script>
+  <script src="../../shared/logout.js"></script>
+  <script src="../../shared/navbar.js"></script>
+  <script src="_shared.js"></script>
+  <script>
+    let allClaims = [];
+    let voucherTab = 'active';
+
+    function switchVoucherTab(name) {
+      voucherTab = name;
+      const isActive = name === 'active';
+      document.getElementById('tab-btn-active').className = `px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors ${isActive ? 'border-navy text-navy' : 'border-transparent text-ink/50 hover:text-ink'}`;
+      document.getElementById('tab-btn-past').className = `px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors ${!isActive ? 'border-navy text-navy' : 'border-transparent text-ink/50 hover:text-ink'}`;
+      document.getElementById('claim-box').classList.toggle('hidden', !isActive);
+      renderVoucherList();
+    }
+
+    function isExpired(v) { return v.expires_at && new Date(v.expires_at) < new Date(); }
+
+    function validityLabel(v) {
+      if (v.status === 'used') return 'Digunakan';
+      if (isExpired(v)) return 'Luput';
+      if (!v.expires_at) return 'Tiada had masa';
+      const days = Math.ceil((new Date(v.expires_at) - new Date()) / 86400000);
+      return days <= 0 ? 'Luput hari ini' : `${days} hari lagi`;
+    }
+
+    function discountLabel(v) {
+      return v.discount_type === 'percent' ? `${Number(v.discount_value)}% OFF` : `RM${Number(v.discount_value).toFixed(0)} OFF`;
+    }
+
+    function renderVoucherList() {
+      const list = voucherTab === 'active'
+        ? allClaims.filter(v => v.status === 'active' && !isExpired(v))
+        : allClaims.filter(v => v.status === 'used' || isExpired(v));
+
+      const wrap = document.getElementById('voucher-list');
+      const empty = document.getElementById('voucher-empty');
+      if (!list.length) {
+        wrap.innerHTML = '';
+        empty.classList.remove('hidden');
+        return;
+      }
+      empty.classList.add('hidden');
+      wrap.innerHTML = list.map(v => {
+        const faded = voucherTab === 'past' ? 'opacity-60 grayscale' : '';
+        return `
+      <div class="rounded-2xl overflow-hidden border border-ink/10 ${faded}">
+        <div class="bg-navy text-white p-5">
+          <div class="text-2xl font-bold">${discountLabel(v)}</div>
+          <div class="text-sm opacity-80 mt-0.5">${v.code}${v.description ? ' · ' + v.description : ''}</div>
+        </div>
+        <div class="flex items-center justify-between px-5 py-3 text-xs text-ink/60">
+          <div>Validity<div class="font-semibold text-ink">${validityLabel(v)}</div></div>
+          <div class="text-right">Min. Belanja<div class="font-semibold text-ink">RM${Number(v.min_subtotal).toFixed(0)}</div></div>
+        </div>
+      </div>`;
+      }).join('');
+    }
+
+    async function loadVouchers() {
+      if (!window.patientRecord?.id) return;
+      const { data, error } = await window.db.from('psy_promo_claims')
+        .select('*').eq('patient_id', window.patientRecord.id)
+        .order('claimed_at', { ascending: false });
+      if (error) { banner('Gagal muat voucher: ' + error.message, 'error'); return; }
+      allClaims = data || [];
+      renderVoucherList();
+    }
+
+    async function claimVoucher() {
+      const input = document.getElementById('claim-input');
+      const code = input.value.trim();
+      if (!code) return;
+      try {
+        const { error } = await window.db.rpc('claim_promo_code', { p_code: code });
+        if (error) throw error;
+        banner('🎉 Voucher berjaya dituntut!');
+        input.value = '';
+        await loadVouchers();
+      } catch (e) {
+        banner(e.message || 'Gagal tuntut kod.', 'error');
+      }
+    }
+
+    let pointsBalance = 0;
+    let allRewards = [];
+
+    async function loadPointsBalance() {
+      if (!window.patientRecord?.id) return;
+      const { data } = await window.db.from('psy_points_balance')
+        .select('balance').eq('patient_id', window.patientRecord.id).maybeSingle();
+      pointsBalance = data?.balance || 0;
+      document.getElementById('points-balance').textContent = `${pointsBalance} pts`;
+      renderRewards();
+    }
+
+    async function loadRewards() {
+      const { data } = await window.db.from('psy_point_rewards')
+        .select('*').eq('is_active', true).order('points_cost', { ascending: true });
+      allRewards = data || [];
+      renderRewards();
+    }
+
+    function renderRewards() {
+      const section = document.getElementById('rewards-section');
+      if (!allRewards.length) { section.classList.add('hidden'); return; }
+      section.classList.remove('hidden');
+      document.getElementById('rewards-list').innerHTML = allRewards.map(r => {
+        const canAfford = pointsBalance >= r.points_cost;
+        return `
+      <div class="flex items-center justify-between border border-ink/10 rounded-xl p-3.5">
+        <div>
+          <div class="text-sm font-semibold text-ink">${r.name}</div>
+          <div class="text-[11px] text-ink/50 mt-0.5">${r.description ? r.description + ' · ' : ''}RM${Number(r.voucher_amount).toFixed(0)} baucar · ${r.points_cost} pts</div>
+        </div>
+        <button onclick="redeemReward('${r.id}')" ${canAfford ? '' : 'disabled'}
+          class="px-4 py-2 rounded-lg text-xs font-semibold whitespace-nowrap ${canAfford ? 'bg-navy text-white hover:bg-navy-dark' : 'bg-ink/10 text-ink/40 cursor-not-allowed'}">Tukar</button>
+      </div>`;
+      }).join('');
+    }
+
+    async function redeemReward(id) {
+      try {
+        const { error } = await window.db.rpc('redeem_point_reward', { p_reward_id: id });
+        if (error) throw error;
+        banner('🎉 Baucar berjaya ditukar! Akan digunakan automatik pembelian seterusnya.');
+        await loadPointsBalance();
+      } catch (e) {
+        banner(e.message || 'Gagal tukar ganjaran.', 'error');
+      }
+    }
+
+    (async () => {
+      const user = await initPatient('vouchers', 'Voucher Saya · tuntut & guna kod diskaun');
+      if (!user) return;
+      await loadVouchers();
+      await loadPointsBalance();
+      await loadRewards();
+    })();
+  </script>
+</body>
+
+</html>

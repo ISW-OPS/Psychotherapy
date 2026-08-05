@@ -23,6 +23,7 @@ const NAV_ITEMS_BY_ROLE = {
       ]
     },
     { id: 'shop', url: 'shop.html', icon: '🛒', label: 'Produk' },
+    { id: 'vouchers', url: 'vouchers.html', icon: '🎟️', label: 'Voucher Saya' },
     { id: 'payment', url: 'payment.html', icon: '💳', label: 'Pembayaran' },
     { id: 'sejarah_pembayaran', url: 'sejarah-pembayaran.html', icon: '🧾', label: 'Sejarah Pembayaran' },
     { id: 'psy_orders', url: 'orders.html', icon: '📦', label: 'Pesanan & Penjejakan' },
@@ -141,11 +142,15 @@ const STAFF_NAV_MASTER = [
     group: 'OPERASI', collapsible: true, items: [
       { id: 'pakej', url: 'pakej.html', icon: '🗂️', label: 'Pakej Rawatan' },
       { id: 'psy_products', url: 'products.html', icon: '🛍️', label: 'Produk' },
+      { id: 'ganjaran', url: 'promo-codes.html', icon: '🎁', label: 'Ganjaran', children: [
+        { id: 'promo_codes',   url: 'promo-codes.html',   icon: '🏷️', label: 'Kod Promo' },
+        { id: 'point_rewards', url: 'point-rewards.html', icon: '🏆', label: 'Ganjaran Mata' },
+        { id: 'affiliate',     url: 'affiliate.html',     icon: '🤝', label: 'Affiliate' },
+      ] },
       { id: 'inventory', url: 'inventory.html', icon: '🏭', label: 'Inventori' },
       { id: 'psy_orders', url: 'orders.html', icon: '📦', label: 'Orders & Tracking' },
       { id: 'pulangan', url: 'pulangan.html', icon: '🍯', label: 'Pulangan Botol' },
       { id: 'payment_admin', url: 'payment-admin.html', icon: '💳', label: 'Pembayaran' },
-      { id: 'affiliate', url: 'affiliate.html', icon: '🤝', label: 'Affiliate' },
     ]
   },
   {

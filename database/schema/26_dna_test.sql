@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS psy_dna_test_process (
 
   -- Step 1: Sample Collection
   kit_received_at                 DATE,       -- tarikh pesakit terima DNA Test Kit
+  sample_appointment_id           UUID REFERENCES psy_appointments(id) ON DELETE SET NULL,
+                                               -- janji temu pesakit datang ambil sampel (reuse psy_appointments, macam Step 5)
+  sample_reminder_sent_at         TIMESTAMPTZ, -- dedup peringatan WA sehari sebelum tarikh janji temu sampel
   sample_checklist                JSONB DEFAULT '{}'::jsonb,
   sample_notes                    TEXT,
   sample_collected_at             TIMESTAMPTZ,
@@ -37,7 +40,7 @@ CREATE TABLE IF NOT EXISTS psy_dna_test_process (
   atgc_activated_by               UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
 
   -- Step 4: Muat Naik Laporan DNA (dari portal ATGC — boleh >1 fail setiap kategori)
-  -- report_files: {"plant_based": ["path1","path2"], "health_risk": [...], "carrier_drug": [...]}
+  -- report_files: {"plant_based": ["path1","path2"], "health_risk": [...], "carrier_drug": [...], "summary": [...]}
   report_files                    JSONB DEFAULT '{}'::jsonb,
   report_notes                    TEXT,
   reports_uploaded_at              TIMESTAMPTZ,

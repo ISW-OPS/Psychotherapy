@@ -28,6 +28,7 @@ const REPORT_LABELS: Record<string, string> = {
   plant_based: 'ISW Wellness Plant-Based Report (IB-LIFE)',
   health_risk: 'ISW Health Risk Report (IB-HRCD)',
   carrier_drug: 'ISW Carrier Status & Drug Sensitivity Report (IB-CANC)',
+  summary: 'Ringkasan 3 Laporan (Summary)',
 }
 
 Deno.serve(async (req: Request) => {

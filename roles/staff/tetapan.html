@@ -375,6 +375,9 @@
                   <button onclick="addAffRule()" data-rbac="settings.edit" class="bg-navy text-white text-sm font-semibold px-4 py-2.5 rounded-lg hover:bg-navy-dark">+ Tambah Kadar Pakej</button>
                 </div>
 
+                <div id="aff-default-rate-box" class="mb-5"></div>
+
+                <div class="text-[10px] uppercase tracking-wider text-ink/45 font-semibold px-1 mb-1.5">Kadar Khusus Pakej</div>
                 <div class="overflow-x-auto border border-ink/10 rounded-xl">
                   <table class="w-full text-sm">
                     <thead>
@@ -389,10 +392,11 @@
                     </thead>
                     <tbody id="aff-rules-tbody" class="divide-y divide-ink/6"></tbody>
                   </table>
+                  <div id="aff-rules-empty" class="hidden py-10 text-center text-sm text-ink/40">Tiada kadar khusus pakej lagi — semua pakej guna Kadar Lalai di atas.</div>
                 </div>
 
-                <div class="mt-3 bg-navy-light/40 border border-navy/10 rounded-xl px-4 py-3 text-[11px] text-ink/60 leading-relaxed">
-                  ℹ️ Baris <b>Kadar Lalai</b> terpakai untuk pakej yang tiada kadar khusus. Komisen dikira automatik bila pesakit rujukan selesai bayaran pakej pertama.
+                <div class="mt-3 text-[11px] text-ink/50 leading-relaxed px-1">
+                  Komisen dikira automatik bila pesakit rujukan selesai bayaran pakej pertama.
                 </div>
 
                 <div class="mt-6 pt-6 border-t border-ink/10">
@@ -730,7 +734,7 @@ function affEditRow(rule) {
     <td class="px-4 py-2.5">
       ${isNew
         ? `<select id="aff-ed-pkg" class="w-full border border-ink/20 rounded-lg px-2.5 py-1.5 text-sm focus:border-navy outline-none"><option value="">— Pilih Pakej —</option>${pkgOptions}</select>`
-        : `<span class="font-semibold text-ink">${r.package_id ? peEsc2(affPkgName(r.package_id) || 'Pakej dipadam') : 'Kadar Lalai (Pakej Lain)'}</span>`}
+        : `<span class="font-semibold text-ink">${peEsc2(affPkgName(r.package_id) || 'Pakej dipadam')}</span>`}
     </td>
     <td class="px-3 py-2.5">
       <select id="aff-ed-type" onchange="document.getElementById('aff-ed-amount').placeholder = this.value === 'percent' ? '10 (=10%)' : '50.00'" class="w-full border border-ink/20 rounded-lg px-2.5 py-1.5 text-sm focus:border-navy outline-none">
@@ -752,12 +756,60 @@ function affEditRow(rule) {
   </tr>`;
 }
 
+function renderDefaultRateBox() {
+  const box = document.getElementById('aff-default-rate-box');
+  const r = _affRules.find(x => !x.package_id);
+  if (!r) { box.innerHTML = ''; return; }
+
+  if (_affEditId === r.id) {
+    box.innerHTML = `<div class="bg-navy-light/40 border border-navy/15 rounded-xl p-4">
+      <div class="text-[10px] uppercase tracking-wider text-navy/70 font-semibold mb-3">Ubah Kadar Lalai</div>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 items-end">
+        <div>
+          <label class="text-[10px] font-semibold text-ink/50 uppercase tracking-wide">Jenis</label>
+          <select id="aff-ed-type" onchange="document.getElementById('aff-ed-amount').placeholder = this.value === 'percent' ? '10 (=10%)' : '50.00'" class="w-full mt-1 border border-ink/20 rounded-lg px-2.5 py-1.5 text-sm focus:border-navy outline-none bg-white">
+            <option value="fixed" ${r.commission_type === 'fixed' ? 'selected' : ''}>RM Tetap</option>
+            <option value="percent" ${r.commission_type === 'percent' ? 'selected' : ''}>Peratus (%)</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-[10px] font-semibold text-ink/50 uppercase tracking-wide">Kadar</label>
+          <input id="aff-ed-amount" type="number" step="0.01" min="0" value="${r.commission_type === 'percent' ? peEsc2(r.rate_percent ?? '') : peEsc2(r.amount ?? '')}" placeholder="${r.commission_type === 'percent' ? '10 (=10%)' : '50.00'}" class="w-full mt-1 border border-ink/20 rounded-lg px-2.5 py-1.5 text-sm focus:border-navy outline-none bg-white">
+        </div>
+        <div>
+          <label class="text-[10px] font-semibold text-ink/50 uppercase tracking-wide">Had Maks (RM)</label>
+          <input id="aff-ed-cap" type="number" step="0.01" min="0" value="${peEsc2(r.cap_amount ?? '')}" placeholder="Tiada had" class="w-full mt-1 border border-ink/20 rounded-lg px-2.5 py-1.5 text-sm focus:border-navy outline-none bg-white">
+        </div>
+        <div class="flex gap-3 pb-1.5">
+          <button onclick="affSaveRow('${r.id}')" class="text-navy font-semibold hover:underline text-xs">Simpan</button>
+          <button onclick="affCancelRow()" class="text-ink/50 hover:underline text-xs">Batal</button>
+        </div>
+      </div>
+    </div>`;
+    return;
+  }
+
+  const rateTxt = r.commission_type === 'percent'
+    ? `${r.rate_percent ?? 0}%${r.cap_amount ? ' (had ' + fmtRM2(r.cap_amount) + ')' : ''}`
+    : fmtRM2(r.amount);
+  box.innerHTML = `<div class="bg-navy-light/40 border border-navy/15 rounded-xl px-4 py-3.5 flex items-center justify-between gap-3 flex-wrap">
+    <div class="flex items-center gap-3">
+      <span class="text-lg">🔒</span>
+      <div>
+        <div class="text-sm font-semibold text-ink">Kadar Lalai <span class="font-normal text-ink/50">— pakej tanpa kadar khusus</span></div>
+        <div class="text-xs text-ink/55 mt-0.5">${r.commission_type === 'percent' ? 'Peratus' : 'RM Tetap'} · <span class="font-semibold text-ink/80">${rateTxt}</span>${r.is_active === false ? ' · <span class="text-terracotta">Tidak Aktif</span>' : ''}</div>
+      </div>
+    </div>
+    <button data-rbac="settings.edit" onclick="affEditStart('${r.id}')" class="text-navy font-semibold hover:underline text-xs">Edit</button>
+  </div>`;
+  if (typeof applyRbacUI === 'function') applyRbacUI(box);
+}
+
 function renderAffRules() {
-  const sorted = [..._affRules].sort((a, b) => {
-    if (!a.package_id) return -1;
-    if (!b.package_id) return 1;
-    return (affPkgName(a.package_id) || '').localeCompare(affPkgName(b.package_id) || '');
-  });
+  renderDefaultRateBox();
+
+  const sorted = _affRules.filter(r => r.package_id)
+    .sort((a, b) => (affPkgName(a.package_id) || '').localeCompare(affPkgName(b.package_id) || ''));
 
   const rows = sorted.map(r => {
     if (_affEditId === r.id) return affEditRow(r);
@@ -766,7 +818,7 @@ function renderAffRules() {
       : fmtRM2(r.amount);
     return `<tr class="${r.is_active === false ? 'opacity-55' : ''} hover:bg-cream/30">
       <td class="px-4 py-3">
-        <div class="font-semibold text-ink">${r.package_id ? peEsc2(affPkgName(r.package_id) || 'Pakej dipadam') : 'Kadar Lalai (Pakej Lain)'} ${!r.package_id ? '<span title="Kadar sistem" class="text-[11px]">🔒</span>' : ''}</div>
+        <div class="font-semibold text-ink">${peEsc2(affPkgName(r.package_id) || 'Pakej dipadam')}</div>
       </td>
       <td class="px-3 py-3 text-ink/70">${r.commission_type === 'percent' ? 'Peratus (%)' : 'RM Tetap'}</td>
       <td class="px-3 py-3 text-ink/70">${rateTxt}</td>
@@ -774,12 +826,13 @@ function renderAffRules() {
       <td class="px-3 py-3">${peToggleHtml(r.is_active !== false, `affToggleAktif('${r.id}')`, false)}</td>
       <td class="px-4 py-3 text-right whitespace-nowrap">
         <button onclick="affEditStart('${r.id}')" class="text-navy font-semibold hover:underline text-xs mr-3">Edit</button>
-        ${r.package_id ? `<button onclick="delAffRule('${r.id}')" class="text-terracotta font-semibold hover:underline text-xs">Buang</button>` : '<span class="text-ink/25 text-xs">Buang</span>'}
+        <button onclick="delAffRule('${r.id}')" class="text-terracotta font-semibold hover:underline text-xs">Buang</button>
       </td>
     </tr>`;
   });
   if (_affEditId === 'new') rows.push(affEditRow('new'));
   document.getElementById('aff-rules-tbody').innerHTML = rows.join('');
+  document.getElementById('aff-rules-empty').classList.toggle('hidden', rows.length > 0);
   if (typeof applyRbacUI === 'function') applyRbacUI(document.getElementById('aff-rules-tbody'));
 }
 

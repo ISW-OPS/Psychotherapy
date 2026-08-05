@@ -695,6 +695,37 @@ on conflict (key) do update set
   language         = excluded.language,
   updated_at       = now();
 
+-- Peringatan Pengambilan Sampel DNA (dna_sample_reminder) — sehari sebelum tarikh
+-- janji temu (psy_dna_test_process.sample_appointment_id), hantar WA + syarat
+-- persediaan. Dedup via sample_reminder_sent_at. UPSERT dgn DO UPDATE macam session_confirm.
+--   rule.lead_days : berapa hari sebelum tarikh peringatan dihantar (default 1)
+insert into psy_auto_messages
+  (key, name, description, channel, trigger_type, message_template,
+   placeholders, channels, rule, category, language, is_active)
+values
+  ('dna_sample_reminder',
+   'Peringatan Pengambilan Sampel DNA',
+   'Sehari sebelum tarikh janji temu pengambilan sampel DNA Test, hantar WA kpd pesakit — nyatakan tarikh/masa & syarat persediaan (makan 2 jam sebelum, jangan makan/minum 30 minit sebelum).',
+   'whatsapp', 'before_event',
+   E'Salam {nama} 👋\n\nPeringatan: esok anda dijadualkan untuk *Pengambilan Sampel DNA Test* di klinik.\n\n📅 {tarikh_sample} · {masa_sample}\n\n⚠️ Sila patuhi sebelum ujian:\n• Pastikan anda telah makan sekurang-kurangnya 2 jam sebelum ujian.\n• Jangan makan atau minum sekurang-kurangnya 30 minit sebelum ujian.\n\nJumpa esok!\n\n— {nama_klinik}',
+   '["{nama}","{tarikh_sample}","{masa_sample}","{nama_klinik}"]'::jsonb,
+   '["whatsapp"]'::jsonb,
+   '{"lead_days":1}'::jsonb,
+   'dna_test', 'ms',
+   false)
+on conflict (key) do update set
+  name             = excluded.name,
+  description      = excluded.description,
+  channel          = excluded.channel,
+  trigger_type     = excluded.trigger_type,
+  message_template = excluded.message_template,
+  placeholders     = excluded.placeholders,
+  channels         = excluded.channels,
+  rule             = excluded.rule,
+  category         = excluded.category,
+  language         = excluded.language,
+  updated_at       = now();
+
 -- Template Reaksi Pemulihan (pesakit boleh baca — policy 'reaksi_%')
 -- reaksi_harian: mesej 1 (terus) — {{sections}} = blok per kategori,
 -- tindakan sama disebut SEKALI sahaja (dedup global oleh klien).

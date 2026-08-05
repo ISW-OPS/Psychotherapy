@@ -63,6 +63,8 @@ window.PAGE_MODULE = {
   // OPERASI
   pakej:            'package',
   psy_products:     'products',
+  promo_codes:      'products',
+  point_rewards:    'products',
   inventory:        'inventory', kit_prosedur: 'inventory',
   pulangan:         'pulangan',
   psy_orders:       'orders',

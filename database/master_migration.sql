@@ -1,8 +1,8 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-07-31T06:27:58.488224Z
--- Jumlah fail: 27
+-- Generated: 2026-08-05T02:02:34.375609Z
+-- Jumlah fail: 30
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
 
@@ -5220,6 +5220,37 @@ on conflict (key) do update set
   language         = excluded.language,
   updated_at       = now();
 
+-- Peringatan Pengambilan Sampel DNA (dna_sample_reminder) — sehari sebelum tarikh
+-- janji temu (psy_dna_test_process.sample_appointment_id), hantar WA + syarat
+-- persediaan. Dedup via sample_reminder_sent_at. UPSERT dgn DO UPDATE macam session_confirm.
+--   rule.lead_days : berapa hari sebelum tarikh peringatan dihantar (default 1)
+insert into psy_auto_messages
+  (key, name, description, channel, trigger_type, message_template,
+   placeholders, channels, rule, category, language, is_active)
+values
+  ('dna_sample_reminder',
+   'Peringatan Pengambilan Sampel DNA',
+   'Sehari sebelum tarikh janji temu pengambilan sampel DNA Test, hantar WA kpd pesakit — nyatakan tarikh/masa & syarat persediaan (makan 2 jam sebelum, jangan makan/minum 30 minit sebelum).',
+   'whatsapp', 'before_event',
+   E'Salam {nama} 👋\n\nPeringatan: esok anda dijadualkan untuk *Pengambilan Sampel DNA Test* di klinik.\n\n📅 {tarikh_sample} · {masa_sample}\n\n⚠️ Sila patuhi sebelum ujian:\n• Pastikan anda telah makan sekurang-kurangnya 2 jam sebelum ujian.\n• Jangan makan atau minum sekurang-kurangnya 30 minit sebelum ujian.\n\nJumpa esok!\n\n— {nama_klinik}',
+   '["{nama}","{tarikh_sample}","{masa_sample}","{nama_klinik}"]'::jsonb,
+   '["whatsapp"]'::jsonb,
+   '{"lead_days":1}'::jsonb,
+   'dna_test', 'ms',
+   false)
+on conflict (key) do update set
+  name             = excluded.name,
+  description      = excluded.description,
+  channel          = excluded.channel,
+  trigger_type     = excluded.trigger_type,
+  message_template = excluded.message_template,
+  placeholders     = excluded.placeholders,
+  channels         = excluded.channels,
+  rule             = excluded.rule,
+  category         = excluded.category,
+  language         = excluded.language,
+  updated_at       = now();
+
 -- Template Reaksi Pemulihan (pesakit boleh baca — policy 'reaksi_%')
 -- reaksi_harian: mesej 1 (terus) — {{sections}} = blok per kategori,
 -- tindakan sama disebut SEKALI sahaja (dedup global oleh klien).
@@ -6670,6 +6701,9 @@ CREATE TABLE IF NOT EXISTS psy_dna_test_process (
 
   -- Step 1: Sample Collection
   kit_received_at                 DATE,       -- tarikh pesakit terima DNA Test Kit
+  sample_appointment_id           UUID REFERENCES psy_appointments(id) ON DELETE SET NULL,
+                                               -- janji temu pesakit datang ambil sampel (reuse psy_appointments, macam Step 5)
+  sample_reminder_sent_at         TIMESTAMPTZ, -- dedup peringatan WA sehari sebelum tarikh janji temu sampel
   sample_checklist                JSONB DEFAULT '{}'::jsonb,
   sample_notes                    TEXT,
   sample_collected_at             TIMESTAMPTZ,
@@ -6689,7 +6723,7 @@ CREATE TABLE IF NOT EXISTS psy_dna_test_process (
   atgc_activated_by               UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
 
   -- Step 4: Muat Naik Laporan DNA (dari portal ATGC — boleh >1 fail setiap kategori)
-  -- report_files: {"plant_based": ["path1","path2"], "health_risk": [...], "carrier_drug": [...]}
+  -- report_files: {"plant_based": ["path1","path2"], "health_risk": [...], "carrier_drug": [...], "summary": [...]}
   report_files                    JSONB DEFAULT '{}'::jsonb,
   report_notes                    TEXT,
   reports_uploaded_at              TIMESTAMPTZ,
@@ -6806,7 +6840,10 @@ CREATE TABLE IF NOT EXISTS psy_affiliate_payouts (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id    UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
   amount        NUMERIC(10,2) NOT NULL,
-  status        TEXT NOT NULL DEFAULT 'processing' CHECK (status IN ('pending','processing','paid','rejected')),
+  -- 'pending' sengaja tak dimasukkan: staff yang cetus bayaran (butang
+  -- "Mulakan Bayaran"), payout terus jadi 'processing' — tiada laluan
+  -- kelulusan pesakit-mohon dalam design semasa (Ags 2026).
+  status        TEXT NOT NULL DEFAULT 'processing' CHECK (status IN ('processing','paid','rejected')),
   method        TEXT NOT NULL DEFAULT 'bank_transfer' CHECK (method IN ('bank_transfer','hitpay')),
   bank_snapshot JSONB DEFAULT '{}'::jsonb, -- salinan bank_name/account_no/holder masa payout dicipta
   payout_ref    TEXT,                      -- rujukan transaksi (manual, atau HitPay txn id kelak)
@@ -6815,6 +6852,37 @@ CREATE TABLE IF NOT EXISTS psy_affiliate_payouts (
   processed_at  TIMESTAMPTZ,
   processed_by  UUID REFERENCES psy_profiles(id)
 );
+
+-- Sesuaikan constraint utk table sedia ada (idempotent).
+-- GOTCHA (sama corak psy_notifications type_check): jangan teka nama
+-- constraint (cth 'psy_affiliate_payouts_status_check') — kalau table
+-- ni pernah dicipta/diubah melalui laluan lain, nama sebenar mungkin
+-- tak sepadan dan DROP CONSTRAINT IF EXISTS senyap gagal (constraint
+-- lama kekal, ADD baru pun gagal/insert lama-lama tersekat). Cari &
+-- buang SEMUA check constraint pada kolum status secara dinamik.
+UPDATE psy_affiliate_payouts SET status = 'processing' WHERE status NOT IN ('processing','paid','rejected');
+DO $$
+DECLARE c RECORD;
+BEGIN
+  FOR c IN
+    SELECT con.conname FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    WHERE rel.relname = 'psy_affiliate_payouts' AND con.contype = 'c'
+      AND pg_get_constraintdef(con.oid) ILIKE '%status%'
+  LOOP
+    EXECUTE format('ALTER TABLE psy_affiliate_payouts DROP CONSTRAINT %I', c.conname);
+  END LOOP;
+END $$;
+ALTER TABLE psy_affiliate_payouts ADD CONSTRAINT psy_affiliate_payouts_status_check
+  CHECK (status IN ('processing','paid','rejected'));
+
+-- GOTCHA lanjutan: CREATE TABLE IF NOT EXISTS tak ubah DEFAULT pada
+-- jadual sedia ada — pada jadual yg dicipta sebelum ni, default kolum
+-- `status` didapati kekal 'pending' (drift dari versi awal migration)
+-- walaupun definisi CREATE TABLE atas kata 'processing'. Insert tanpa
+-- nyatakan status (cth startPayout() di affiliate.html) jadi gagal
+-- constraint. Paksa default betul secara eksplisit, idempotent.
+ALTER TABLE psy_affiliate_payouts ALTER COLUMN status SET DEFAULT 'processing';
 
 CREATE INDEX IF NOT EXISTS idx_psy_affiliate_payouts_patient ON psy_affiliate_payouts(patient_id, status);
 
@@ -7026,7 +7094,9 @@ CREATE POLICY "Staff manage vouchers" ON psy_vouchers FOR ALL
 -- ──── Peraturan #1: baucar untuk pesakit yang DIRUJUK (referee) ────
 -- Bila rekod psy_referrals baru dicipta (status='pending', masa KYC
 -- diluluskan), terus jana SATU baucar aktif untuk pesakit yang dirujuk
--- (referee) — layak digunakan pada pembelian PAKEJ PERTAMA dia.
+-- (referee) — boleh digunakan untuk MANA-MANA bayaran akan datang (bukan
+-- terhad pakej pertama — elak baucar "terperap" kalau pakej diaktifkan
+-- melalui laluan lain, cth staff Tandakan Selesai KOB terus tanpa checkout).
 -- Kadar RM boleh diubah staff di Tetapan → Affiliate (psy_settings
 -- key 'referral_signup_voucher_amount'), lalai RM30.
 CREATE OR REPLACE FUNCTION trg_create_referral_signup_voucher()
@@ -7092,3 +7162,394 @@ DROP TRIGGER IF EXISTS trg_voucher_mark_used_on_payment ON psy_payments;
 CREATE TRIGGER trg_voucher_mark_used_on_payment
   AFTER INSERT OR UPDATE ON psy_payments
   FOR EACH ROW EXECUTE FUNCTION trg_voucher_mark_used_on_payment();
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/29_promo_codes.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 29 — KOD PROMO (KEDAI)
+-- Jadual: psy_promo_codes, psy_promo_redemptions
+-- Kod diskaun umum (cth 'RAYA10') dicipta staff, ditaip pesakit di cart
+-- kedai (shop.html). Berbeza dari psy_vouchers (28_rewards.sql) yang
+-- auto-apply ganjaran khusus per-pesakit — kod promo ni umum & manual.
+-- Logik sah & redeem terpusat dalam payments-initiate; trigger di sini
+-- cuma kunci penggunaan bila bayaran SAHAJA disahkan 'completed'.
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ──── psy_promo_codes ────
+CREATE TABLE IF NOT EXISTS psy_promo_codes (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code                  TEXT UNIQUE NOT NULL,
+  description           TEXT,
+  discount_type         TEXT NOT NULL CHECK (discount_type IN ('percent','fixed')),
+  discount_value        NUMERIC(10,2) NOT NULL CHECK (discount_value > 0),
+  min_subtotal          NUMERIC(10,2) NOT NULL DEFAULT 0,
+  max_uses              INT,                       -- NULL = tiada had keseluruhan
+  used_count            INT NOT NULL DEFAULT 0,
+  max_uses_per_patient  INT NOT NULL DEFAULT 1,     -- NULL = tiada had per-pesakit
+  valid_from            DATE,
+  valid_until           DATE,
+  is_active             BOOLEAN NOT NULL DEFAULT true,
+  created_by            UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  created_at            TIMESTAMPTZ DEFAULT now(),
+  updated_at            TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_psy_promo_codes_code ON psy_promo_codes(code);
+
+ALTER TABLE psy_promo_codes ENABLE ROW LEVEL SECURITY;
+
+-- Baca terbuka (macam psy_products) — client perlu preview kod sebelum checkout.
+DROP POLICY IF EXISTS "Anyone read promo codes" ON psy_promo_codes;
+CREATE POLICY "Anyone read promo codes" ON psy_promo_codes FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Staff manage promo codes" ON psy_promo_codes;
+CREATE POLICY "Staff manage promo codes" ON psy_promo_codes
+  FOR ALL USING      (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+           WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+COMMENT ON COLUMN psy_promo_codes.code IS
+  'Disimpan uppercase (cth RAYA10). Sentiasa banding upper(trim(input)) semasa sah kod.';
+COMMENT ON COLUMN psy_promo_codes.min_subtotal IS
+  'Subjumlah troli minimum (RM) sebelum kod boleh diguna. 0 = tiada syarat.';
+COMMENT ON COLUMN psy_promo_codes.max_uses_per_patient IS
+  'Had berapa kali SATU pesakit boleh guna kod ni (dikira dari psy_promo_redemptions).';
+
+-- ──── psy_promo_redemptions ────
+-- Lejar penggunaan — dicipta oleh trigger (bukan client) bila bayaran sah selesai.
+CREATE TABLE IF NOT EXISTS psy_promo_redemptions (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  promo_id         UUID NOT NULL REFERENCES psy_promo_codes(id) ON DELETE CASCADE,
+  patient_id       UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  payment_id       UUID REFERENCES psy_payments(id) ON DELETE SET NULL,
+  discount_amount  NUMERIC(10,2) NOT NULL,
+  created_at       TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_psy_promo_redemptions_promo_patient
+  ON psy_promo_redemptions(promo_id, patient_id);
+
+ALTER TABLE psy_promo_redemptions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patients view own promo redemptions" ON psy_promo_redemptions;
+CREATE POLICY "Patients view own promo redemptions" ON psy_promo_redemptions FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff view all promo redemptions" ON psy_promo_redemptions;
+CREATE POLICY "Staff view all promo redemptions" ON psy_promo_redemptions FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ──── Redeem: kunci kod promo bila bayaran yang memakainya SAHAJA selesai ────
+-- payments-initiate simpan promoCodeId + promoDiscount dalam psy_payments.intent
+-- bila kod diguna pakai (total dah ditolak). Trigger ni sahkan bayaran itu betul-
+-- betul SELESAI sebelum log penggunaan + naikkan used_count (elak bayaran
+-- gagal/dibatal "makan" kuota kod orang). Sama pattern dengan
+-- trg_voucher_mark_used_on_payment (28_rewards.sql).
+CREATE OR REPLACE FUNCTION trg_promo_mark_used_on_payment()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_promo_id UUID;
+  v_discount NUMERIC;
+  v_patient_id UUID;
+BEGIN
+  IF NEW.status IS DISTINCT FROM 'completed' THEN RETURN NEW; END IF;
+  IF TG_OP = 'UPDATE' AND OLD.status = 'completed' THEN RETURN NEW; END IF;
+
+  v_promo_id := (NEW.intent ->> 'promoCodeId')::uuid;
+  IF v_promo_id IS NULL THEN RETURN NEW; END IF;
+
+  v_discount := COALESCE((NEW.intent ->> 'promoDiscount')::numeric, 0);
+  v_patient_id := NEW.patient_id;
+  IF v_patient_id IS NULL THEN RETURN NEW; END IF;
+
+  INSERT INTO psy_promo_redemptions (promo_id, patient_id, payment_id, discount_amount)
+  VALUES (v_promo_id, v_patient_id, NEW.id, v_discount);
+
+  UPDATE psy_promo_codes SET used_count = used_count + 1, updated_at = now()
+  WHERE id = v_promo_id;
+
+  -- Tandakan claim wallet (30_promo_claims.sql) sebagai 'used' kalau pesakit
+  -- claim kod ni dulu sebelum checkout. No-op senyap kalau tiada claim padan
+  -- (pesakit taip kod terus tanpa claim pun sah — wallet cuma lapisan UX).
+  UPDATE psy_promo_claims SET status = 'used', used_at = now(), used_in_payment_id = NEW.id
+  WHERE promo_id = v_promo_id AND patient_id = v_patient_id AND status = 'active';
+
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_promo_mark_used_on_payment: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_promo_mark_used_on_payment ON psy_payments;
+CREATE TRIGGER trg_promo_mark_used_on_payment
+  AFTER INSERT OR UPDATE ON psy_payments
+  FOR EACH ROW EXECUTE FUNCTION trg_promo_mark_used_on_payment();
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/30_promo_claims.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 30 — VOUCHER WALLET (CLAIM KOD PROMO)
+-- Jadual: psy_promo_claims. Fungsi: claim_promo_code().
+-- Lapisan kedua di atas psy_promo_codes (29_promo_codes.sql) — pesakit
+-- boleh "claim" kod ke wallet peribadi (gaya ZUS: tab Active/Past,
+-- kotak "Add a voucher") supaya tak perlu ingat/taip kod setiap kali
+-- checkout. Cara "taip terus di cart" (29) KEKAL berfungsi tanpa claim.
+-- ═══════════════════════════════════════════════════════════════════
+
+ALTER TABLE psy_promo_codes
+  ADD COLUMN IF NOT EXISTS wallet_validity_days INT;
+
+COMMENT ON COLUMN psy_promo_codes.wallet_validity_days IS
+  'Bilangan hari sah dari tarikh CLAIM (bukan dari cipta kod) — dipakai bila valid_until tiada. NULL + valid_until tiada = tiada had.';
+
+-- ──── psy_promo_claims ────
+-- Snapshot nilai kod pada masa claim (elak join semasa papar wallet,
+-- & kekal betul walaupun kod dipinda/dipadam kemudian).
+CREATE TABLE IF NOT EXISTS psy_promo_claims (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id        UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  promo_id          UUID NOT NULL REFERENCES psy_promo_codes(id) ON DELETE CASCADE,
+  code              TEXT NOT NULL,
+  discount_type     TEXT NOT NULL,
+  discount_value    NUMERIC(10,2) NOT NULL,
+  min_subtotal      NUMERIC(10,2) NOT NULL DEFAULT 0,
+  claimed_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at        TIMESTAMPTZ,
+  status            TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','used')),
+  used_at           TIMESTAMPTZ,
+  used_in_payment_id UUID REFERENCES psy_payments(id) ON DELETE SET NULL,
+  UNIQUE (promo_id, patient_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_psy_promo_claims_patient ON psy_promo_claims(patient_id, status);
+
+ALTER TABLE psy_promo_claims ENABLE ROW LEVEL SECURITY;
+
+-- Pesakit cuma boleh BACA claim sendiri. TIADA INSERT/UPDATE policy untuk
+-- pesakit — semua tulisan lalui claim_promo_code() (SECURITY DEFINER) atau
+-- trigger trg_promo_mark_used_on_payment (29_promo_codes.sql). Ini elak
+-- pesakit forge discount_value/discount_type terus via client insert.
+DROP POLICY IF EXISTS "Patients view own promo claims" ON psy_promo_claims;
+CREATE POLICY "Patients view own promo claims" ON psy_promo_claims FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff view all promo claims" ON psy_promo_claims;
+CREATE POLICY "Staff view all promo claims" ON psy_promo_claims FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+COMMENT ON TABLE psy_promo_claims IS
+  'Wallet peribadi pesakit — 1 baris = 1 kod yang di-"claim" (gaya ZUS Voucher Wallet). status=used ditanda oleh trg_promo_mark_used_on_payment bila bayaran yg guna kod ni SELESAI.';
+
+-- ──── claim_promo_code() ────
+-- RPC dipanggil client (window.db.rpc('claim_promo_code', { p_code })).
+-- Sah kod SEPENUHNYA server-side (sama syarat macam blok promo dalam
+-- payments-initiate) sebelum insert snapshot. RAISE EXCEPTION dgn mesej
+-- BM mesra bila gagal — client papar terus error.message.
+CREATE OR REPLACE FUNCTION claim_promo_code(p_code TEXT)
+RETURNS psy_promo_claims
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_patient_id UUID;
+  v_promo      psy_promo_codes%ROWTYPE;
+  v_today      DATE := now()::date;
+  v_expires_at TIMESTAMPTZ;
+  v_claim      psy_promo_claims%ROWTYPE;
+BEGIN
+  SELECT id INTO v_patient_id FROM psy_patients WHERE user_id = auth.uid() LIMIT 1;
+  IF v_patient_id IS NULL THEN
+    RAISE EXCEPTION 'Rekod pesakit tidak dijumpai.';
+  END IF;
+
+  SELECT * INTO v_promo FROM psy_promo_codes WHERE code = upper(trim(p_code));
+  IF v_promo.id IS NULL OR NOT v_promo.is_active THEN
+    RAISE EXCEPTION 'Kod tidak sah atau telah luput.';
+  END IF;
+  IF v_promo.valid_from IS NOT NULL AND v_promo.valid_from > v_today THEN
+    RAISE EXCEPTION 'Kod tidak sah atau telah luput.';
+  END IF;
+  IF v_promo.valid_until IS NOT NULL AND v_promo.valid_until < v_today THEN
+    RAISE EXCEPTION 'Kod tidak sah atau telah luput.';
+  END IF;
+  IF v_promo.max_uses IS NOT NULL AND v_promo.used_count >= v_promo.max_uses THEN
+    RAISE EXCEPTION 'Kod ini telah mencapai had penggunaan.';
+  END IF;
+
+  v_expires_at := CASE
+    WHEN v_promo.valid_until IS NOT NULL THEN v_promo.valid_until::timestamptz + INTERVAL '1 day' - INTERVAL '1 second'
+    WHEN v_promo.wallet_validity_days IS NOT NULL THEN now() + (v_promo.wallet_validity_days || ' days')::interval
+    ELSE NULL
+  END;
+
+  BEGIN
+    INSERT INTO psy_promo_claims (patient_id, promo_id, code, discount_type, discount_value, min_subtotal, expires_at)
+    VALUES (v_patient_id, v_promo.id, v_promo.code, v_promo.discount_type, v_promo.discount_value, v_promo.min_subtotal, v_expires_at)
+    RETURNING * INTO v_claim;
+  EXCEPTION WHEN unique_violation THEN
+    RAISE EXCEPTION 'Anda sudah menuntut kod ini.';
+  END;
+
+  RETURN v_claim;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION claim_promo_code(TEXT) TO authenticated;
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/31_points.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 31 — SISTEM MATA (POINTS)
+-- Jadual: psy_points_ledger, psy_point_rewards. View: psy_points_balance.
+-- Fungsi: redeem_point_reward(). Trigger: trg_award_daily_checkin_point.
+-- Pesakit dapat 1 mata setiap hari isi Catatan Harian (psy_kepatuhan_log,
+-- 11_checkins_kepatuhan.sql), tukar mata jadi baucar RM (reuse psy_vouchers,
+-- 28_rewards.sql — auto-apply FIFO checkout, tiada kerja tambahan).
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ──── psy_points_ledger ────
+-- Lejar mata generik (append-only) — sama falsafah dgn psy_vouchers:
+-- setiap peraturan cuma perlu INSERT satu baris, logik baki dikira sekali.
+CREATE TABLE IF NOT EXISTS psy_points_ledger (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id   UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  source_type  TEXT NOT NULL,      -- 'daily_checkin' | 'reward_redeem' | ...
+  source_ref   UUID,               -- rujukan longgar (psy_kepatuhan_log.id / psy_point_rewards.id)
+  points       INT NOT NULL CHECK (points <> 0),  -- positif = dapat, negatif = belanja
+  note         TEXT,
+  created_at   TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_psy_points_ledger_patient ON psy_points_ledger(patient_id, created_at);
+
+ALTER TABLE psy_points_ledger ENABLE ROW LEVEL SECURITY;
+
+-- Tiada INSERT policy pesakit — semua tulisan lalui trigger/RPC SECURITY
+-- DEFINER (elak pesakit forge mata sendiri).
+DROP POLICY IF EXISTS "Patients view own points" ON psy_points_ledger;
+CREATE POLICY "Patients view own points" ON psy_points_ledger FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff view all points" ON psy_points_ledger;
+CREATE POLICY "Staff view all points" ON psy_points_ledger FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- View baki mata per-pesakit — senang dibaca client (SELECT terus, bukan
+-- aggregate manual di JS). security_invoker=true WAJIB — tanpa ni, view
+-- jalan dengan hak pemilik (bypass RLS psy_points_ledger), pesakit boleh
+-- nampak baki SEMUA orang.
+CREATE OR REPLACE VIEW psy_points_balance
+  WITH (security_invoker = true) AS
+  SELECT patient_id, COALESCE(SUM(points), 0)::INT AS balance
+  FROM psy_points_ledger
+  GROUP BY patient_id;
+
+-- ──── Trigger: 1 mata setiap hari isi Catatan Harian ────
+-- kepatuhan.html simpan guna .upsert(payload, {onConflict:'patient_id,log_date'})
+-- — AFTER INSERT cuma fire pada submission PERTAMA hari tu; edit berulang
+-- hari sama jatuh ke laluan UPDATE (conflict), trigger INSERT tak fire
+-- semula. Jadi 1 hari = 1 mata, auto, tiada duplicate-guard tambahan perlu.
+CREATE OR REPLACE FUNCTION trg_award_daily_checkin_point()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO psy_points_ledger (patient_id, source_type, source_ref, points, note)
+  VALUES (NEW.patient_id, 'daily_checkin', NEW.id, 1, 'Catatan Harian — ' || NEW.log_date);
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_award_daily_checkin_point: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_award_daily_checkin_point ON psy_kepatuhan_log;
+CREATE TRIGGER trg_award_daily_checkin_point
+  AFTER INSERT ON psy_kepatuhan_log
+  FOR EACH ROW EXECUTE FUNCTION trg_award_daily_checkin_point();
+
+-- ──── psy_point_rewards ────
+-- Katalog ganjaran (staff-managed) — tukar mata jadi baucar RM.
+CREATE TABLE IF NOT EXISTS psy_point_rewards (
+  id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name                        TEXT NOT NULL,
+  description                 TEXT,
+  points_cost                 INT NOT NULL CHECK (points_cost > 0),
+  voucher_amount              NUMERIC(10,2) NOT NULL CHECK (voucher_amount > 0),
+  max_redemptions_per_patient INT,   -- NULL = tiada had
+  is_active                   BOOLEAN NOT NULL DEFAULT true,
+  created_by                  UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  created_at                  TIMESTAMPTZ DEFAULT now(),
+  updated_at                  TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE psy_point_rewards ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Anyone read point rewards" ON psy_point_rewards;
+CREATE POLICY "Anyone read point rewards" ON psy_point_rewards FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Staff manage point rewards" ON psy_point_rewards;
+CREATE POLICY "Staff manage point rewards" ON psy_point_rewards
+  FOR ALL USING      (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+           WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ──── redeem_point_reward() ────
+-- RPC dipanggil client (window.db.rpc('redeem_point_reward', { p_reward_id })).
+-- Kira baki mata SENDIRI dalam function (bukan baca view) elak race/staleness.
+-- Belanja mata + cipta baucar RM (psy_vouchers) dalam SATU transaksi.
+CREATE OR REPLACE FUNCTION redeem_point_reward(p_reward_id UUID)
+RETURNS psy_vouchers
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_patient_id UUID;
+  v_reward     psy_point_rewards%ROWTYPE;
+  v_balance    INT;
+  v_redeemed   INT;
+  v_voucher    psy_vouchers%ROWTYPE;
+BEGIN
+  SELECT id INTO v_patient_id FROM psy_patients WHERE user_id = auth.uid() LIMIT 1;
+  IF v_patient_id IS NULL THEN
+    RAISE EXCEPTION 'Rekod pesakit tidak dijumpai.';
+  END IF;
+
+  SELECT * INTO v_reward FROM psy_point_rewards WHERE id = p_reward_id;
+  IF v_reward.id IS NULL OR NOT v_reward.is_active THEN
+    RAISE EXCEPTION 'Ganjaran ini tidak sah atau tidak lagi ditawarkan.';
+  END IF;
+
+  IF v_reward.max_redemptions_per_patient IS NOT NULL THEN
+    SELECT COUNT(*) INTO v_redeemed FROM psy_points_ledger
+      WHERE patient_id = v_patient_id AND source_type = 'reward_redeem' AND source_ref = v_reward.id;
+    IF v_redeemed >= v_reward.max_redemptions_per_patient THEN
+      RAISE EXCEPTION 'Anda telah mencapai had tukaran untuk ganjaran ini.';
+    END IF;
+  END IF;
+
+  SELECT COALESCE(SUM(points), 0) INTO v_balance FROM psy_points_ledger WHERE patient_id = v_patient_id;
+  IF v_balance < v_reward.points_cost THEN
+    RAISE EXCEPTION 'Mata tidak mencukupi.';
+  END IF;
+
+  INSERT INTO psy_points_ledger (patient_id, source_type, source_ref, points, note)
+  VALUES (v_patient_id, 'reward_redeem', v_reward.id, -v_reward.points_cost, 'Tukar: ' || v_reward.name);
+
+  INSERT INTO psy_vouchers (patient_id, source_type, source_ref, amount, note)
+  VALUES (v_patient_id, 'point_redeem', v_reward.id, v_reward.voucher_amount, 'Ditukar dari mata: ' || v_reward.name)
+  RETURNING * INTO v_voucher;
+
+  RETURN v_voucher;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION redeem_point_reward(UUID) TO authenticated;

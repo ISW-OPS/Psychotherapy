@@ -679,6 +679,49 @@ async function runAutoAbsence(supabase) {
   return res
 }
 
+// ───────── 8) Peringatan Pengambilan Sampel DNA (sehari sebelum janji temu) ─────────
+// psy_dna_test_process.sample_appointment_id (reuse psy_appointments) → hantar WA
+// bila appointment_time jatuh dlm lead_days akan datang & belum diingat (dedup via
+// sample_reminder_sent_at). Hanya proses yang masih Step 1 (belum kutip sampel).
+async function runDnaSampleReminder(supabase, locationId) {
+  const { data: cfg } = await supabase.from('psy_auto_messages').select('*').eq('key', 'dna_sample_reminder').maybeSingle()
+  if (!cfg || !cfg.is_active) return { skipped: true }
+  const leadDays = Number(cfg.rule?.lead_days ?? 1)
+  const nowMs = Date.now()
+  const leadIso = new Date(nowMs + leadDays * 86400000).toISOString()
+
+  const { data: rows } = await supabase.from('psy_dna_test_process')
+    .select('id, patient_id, sample_appointment_id, psy_patients(full_name, phone)')
+    .eq('current_step', 1).is('sample_reminder_sent_at', null).not('sample_appointment_id', 'is', null).limit(500)
+  const res = { due: 0, sent: 0, errors: [] }
+  if (!rows?.length) return res
+  const apptIds = rows.map((r) => r.sample_appointment_id)
+  const { data: appts } = await supabase.from('psy_appointments').select('id, appointment_time').in('id', apptIds)
+  const apptMap = Object.fromEntries((appts || []).map((a) => [a.id, a]))
+
+  for (const r of rows) {
+    const appt = apptMap[r.sample_appointment_id]
+    if (!appt || !appt.appointment_time) continue
+    if (appt.appointment_time <= new Date(nowMs).toISOString() || appt.appointment_time > leadIso) continue
+    res.due++
+    const p = r.psy_patients || {}
+    const phone = toE164(p.phone)
+    if (!phone) { res.errors.push(`${r.id}: tiada telefon`); continue }
+    try {
+      const cid = await upsertContact(locationId, phone, p.full_name)
+      if (!cid) throw new Error('no contactId')
+      const msg = fillTemplate(cfg.message_template, {
+        nama: p.full_name || '', tarikh_sample: fmtSessDate(appt.appointment_time),
+        masa_sample: fmtSessTime(appt.appointment_time), nama_klinik: ISW_CLINIC.name,
+      })
+      await sendWA(cid, msg)
+      await supabase.from('psy_dna_test_process').update({ sample_reminder_sent_at: new Date().toISOString() }).eq('id', r.id)
+      res.sent++
+    } catch (e) { res.errors.push(`${r.id}: ${String(e?.message || e)}`) }
+  }
+  return res
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   try {
@@ -694,7 +737,8 @@ Deno.serve(async (req) => {
     const automations = await runScheduledAutomations(supabase, locationId)
     const sessionConfirm = await runSessionConfirm(supabase, locationId)
     const autoAbsence = await runAutoAbsence(supabase)
-    return new Response(JSON.stringify({ success: true, eventReminders, broadcasts, catatanHarian, kepatuhanAlerts, automations, sessionConfirm, autoAbsence }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    const dnaSampleReminder = await runDnaSampleReminder(supabase, locationId)
+    return new Response(JSON.stringify({ success: true, eventReminders, broadcasts, catatanHarian, kepatuhanAlerts, automations, sessionConfirm, autoAbsence, dnaSampleReminder }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
   } catch (err) {
     console.error('event-reminders error:', err)
     return new Response(JSON.stringify({ error: String(err?.message || err) }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })

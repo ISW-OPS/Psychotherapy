@@ -52,6 +52,7 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}))
     const items = Array.isArray(body.items) ? body.items : []
     const patientId: string | null = body.patientId || null
+    const promoCode: string | null = body.promoCode ? String(body.promoCode).trim() : null
     const method: string = 'gateway'
     const returnUrl: string = String(body.returnUrl || '')
     if (!items.length) return json({ error: 'Tiada item untuk dibayar' }, 400)
@@ -86,6 +87,39 @@ Deno.serve(async (req) => {
       }
     }
 
+    // 3c. Kod promo (psy_promo_codes) — ditaip manual pesakit di cart kedai.
+    //     Sah SEMULA server-side (client cuma preview) — elak race condition /
+    //     usikan client. Kod tak sah/luput/habis had diabaikan senyap supaya
+    //     checkout tak block (client dah validate dulu, kes ni patut jarang).
+    let promoId: string | null = null
+    let promoDiscount = 0
+    if (promoCode && patientId) {
+      const { data: promo } = await admin.from('psy_promo_codes')
+        .select('id, discount_type, discount_value, min_subtotal, max_uses, used_count, max_uses_per_patient, valid_from, valid_until, is_active')
+        .eq('code', promoCode.toUpperCase()).maybeSingle()
+      if (promo && promo.is_active) {
+        const today = new Date().toISOString().slice(0, 10)
+        const dateOk = (!promo.valid_from || promo.valid_from <= today) && (!promo.valid_until || promo.valid_until >= today)
+        const usesOk = promo.max_uses == null || promo.used_count < promo.max_uses
+        const minOk = total >= (Number(promo.min_subtotal) || 0)
+        let perPatientOk = true
+        if (dateOk && usesOk && minOk && promo.max_uses_per_patient != null) {
+          const { count } = await admin.from('psy_promo_redemptions')
+            .select('id', { count: 'exact', head: true })
+            .eq('promo_id', promo.id).eq('patient_id', patientId)
+          perPatientOk = (count || 0) < promo.max_uses_per_patient
+        }
+        if (dateOk && usesOk && minOk && perPatientOk) {
+          promoId = promo.id
+          promoDiscount = promo.discount_type === 'percent'
+            ? total * (Number(promo.discount_value) / 100)
+            : Number(promo.discount_value)
+          promoDiscount = Math.min(promoDiscount, total)
+          total = Math.max(1, total - promoDiscount)
+        }
+      }
+    }
+
     // 4. Cipta baris PENDING + simpan intent (untuk fulfillment oleh webhook)
     const receiptRef = 'RCP-' + Date.now().toString(36).toUpperCase() +
       '-' + Math.floor(performance.now()).toString(36).toUpperCase()
@@ -102,7 +136,7 @@ Deno.serve(async (req) => {
       status: 'pending',
       gateway_provider: provider,
       gateway_status: 'pending',
-      intent: { items, patientId, userId: user.id, method, voucherId, voucherDiscount },
+      intent: { items, patientId, userId: user.id, method, voucherId, voucherDiscount, promoCodeId: promoId, promoDiscount },
     })
     if (insErr) throw new Error('Gagal simpan bayaran pending: ' + insErr.message)
 
@@ -126,7 +160,7 @@ Deno.serve(async (req) => {
       .update({ gateway_ref: created.gatewayRef })
       .eq('receipt_ref', receiptRef)
 
-    return json({ ok: true, checkoutUrl: created.checkoutUrl, receiptRef, voucherDiscount })
+    return json({ ok: true, checkoutUrl: created.checkoutUrl, receiptRef, voucherDiscount, promoDiscount })
   } catch (err) {
     return json({ error: (err as Error).message || 'Ralat tidak diketahui' }, 500)
   }

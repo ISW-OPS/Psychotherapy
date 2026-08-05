@@ -63,19 +63,36 @@
                 <div class="text-[10px] text-ink/60 mt-0.5">+ RM 8.00</div>
               </label>
             </div>
+            <p id="shipping-policy-note" class="text-[10px] text-ink/50 mt-2 leading-relaxed"></p>
           </div>
 
-          <!-- Address (shown only for pos) -->
+          <!-- Address diisi di halaman bayaran (borang penuh & jelas — bukan dalam drawer sempit) -->
           <div id="address-field" class="hidden">
-            <div class="text-xs font-semibold text-ink/60 mb-1">Alamat Penghantaran</div>
-            <textarea id="delivery-address" rows="3" placeholder="No. rumah, jalan, poskod, negeri..."
-              class="w-full border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none focus:border-navy resize-none bg-white"></textarea>
+            <p class="text-xs text-ink/50 bg-cream/70 rounded-lg px-3 py-2.5">📍 Alamat penghantaran akan diisi di langkah seterusnya (halaman bayaran).</p>
+          </div>
+
+          <!-- Voucher Saya (quick-pick dari wallet) -->
+          <div id="my-vouchers-row" class="hidden">
+            <div class="text-xs font-semibold text-ink/60 mb-1">Voucher Saya</div>
+            <div id="my-vouchers-chips" class="flex gap-2 flex-wrap"></div>
+          </div>
+
+          <!-- Kod Diskaun -->
+          <div>
+            <div class="text-xs font-semibold text-ink/60 mb-1">Kod Diskaun</div>
+            <div class="flex gap-2">
+              <input id="promo-input" type="text" placeholder="Masukkan kod"
+                class="flex-1 border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none focus:border-navy bg-white uppercase">
+              <button onclick="applyPromoCode()" class="px-4 py-2 rounded-lg border border-navy text-navy text-sm font-semibold hover:bg-navy-light whitespace-nowrap">Guna</button>
+            </div>
+            <div id="promo-msg" class="text-xs mt-1"></div>
           </div>
 
           <!-- Totals -->
           <div class="space-y-1 text-sm">
             <div class="flex justify-between"><span class="text-ink/60">Subtotal</span><span id="cart-subtotal" class="font-medium">RM 0</span></div>
             <div id="delivery-fee-row" class="hidden justify-between"><span class="text-ink/60">Penghantaran</span><span class="font-medium">RM 8.00</span></div>
+            <div id="promo-discount-row" class="hidden justify-between text-green-dark"><span>Diskaun (<span id="promo-code-label"></span>)</span><span id="promo-discount-amt">-RM 0</span></div>
             <div class="flex justify-between font-bold pt-1 border-t border-ink/10"><span>Jumlah</span><span id="cart-total-final">RM 0</span></div>
           </div>
 
@@ -90,6 +107,7 @@
   <script src="../../shared/authGuard.js"></script>
   <script src="../../shared/logout.js"></script>
   <script src="../../shared/navbar.js"></script>
+  <script src="../../shared/settings.js"></script>
   <script src="_shared.js"></script>
   <script>
     let PRODUCTS = [];
@@ -224,7 +242,7 @@
 
     function setCategory(c) { activeCategory = c; loadShop(); }
 
-    function openCart() { document.getElementById('cart-drawer').classList.remove('hidden'); renderCart(); }
+    function openCart() { document.getElementById('cart-drawer').classList.remove('hidden'); renderCart(); loadMyVoucherChips(); }
     function closeCart() { document.getElementById('cart-drawer').classList.add('hidden'); }
 
     function toggleDelivery() {
@@ -236,16 +254,74 @@
       updateCartTotals();
     }
 
+    // ── Kod Diskaun ──
+    let appliedPromo = null; // { id, code, discount_type, discount_value, min_subtotal }
+
+    function computePromoDiscount(totalBeforeDiscount) {
+      if (!appliedPromo) return 0;
+      if (totalBeforeDiscount < (Number(appliedPromo.min_subtotal) || 0)) return 0;
+      const raw = appliedPromo.discount_type === 'percent'
+        ? totalBeforeDiscount * (Number(appliedPromo.discount_value) / 100)
+        : Number(appliedPromo.discount_value);
+      return Math.min(raw, totalBeforeDiscount);
+    }
+
+    async function applyPromoCode() {
+      const input = document.getElementById('promo-input');
+      const msg = document.getElementById('promo-msg');
+      const code = (input?.value || '').trim().toUpperCase();
+      if (!code) return;
+      msg.className = 'text-xs mt-1 text-ink/50';
+      msg.textContent = 'Menyemak kod…';
+      const today = new Date().toISOString().slice(0, 10);
+      const { data: promo } = await window.db.from('psy_promo_codes')
+        .select('id, discount_type, discount_value, min_subtotal, max_uses, used_count, valid_from, valid_until, is_active')
+        .eq('code', code).maybeSingle();
+      const dateOk = promo && (!promo.valid_from || promo.valid_from <= today) && (!promo.valid_until || promo.valid_until >= today);
+      const usesOk = promo && (promo.max_uses == null || promo.used_count < promo.max_uses);
+      if (!promo || !promo.is_active || !dateOk || !usesOk) {
+        appliedPromo = null;
+        msg.className = 'text-xs mt-1 text-terracotta';
+        msg.textContent = 'Kod tidak sah atau telah luput.';
+        updateCartTotals();
+        return;
+      }
+      appliedPromo = { id: promo.id, code, discount_type: promo.discount_type, discount_value: promo.discount_value, min_subtotal: promo.min_subtotal };
+      updateCartTotals(); // kira semula dulu supaya mesej min_subtotal (jika ada) tepat
+      const cartItems = getCart();
+      const isPos = document.querySelector('input[name="delivery"]:checked')?.value === 'pos';
+      const subtotal = cartItems.reduce((s, i) => s + i.qty * i.price, 0);
+      const beforeDiscount = subtotal + (isPos ? 8 : 0);
+      if (beforeDiscount < (Number(promo.min_subtotal) || 0)) {
+        msg.className = 'text-xs mt-1 text-terracotta';
+        msg.textContent = `Perlu belanja minimum RM${Number(promo.min_subtotal).toFixed(2)} untuk guna kod ni.`;
+      } else {
+        msg.className = 'text-xs mt-1 text-green-dark';
+        msg.textContent = '✓ Kod diguna pakai.';
+      }
+    }
+
     function updateCartTotals() {
       const cartItems = getCart();
       const isPos = document.querySelector('input[name="delivery"]:checked')?.value === 'pos';
       const subtotal = cartItems.reduce((s, i) => s + i.qty * i.price, 0);
       const deliveryFee = isPos ? 8 : 0;
-      const total = subtotal + deliveryFee;
+      const beforeDiscount = subtotal + deliveryFee;
+      const promoDiscount = computePromoDiscount(beforeDiscount);
+      const total = Math.max(0, beforeDiscount - promoDiscount);
       const sub = document.getElementById('cart-subtotal');
       const fin = document.getElementById('cart-total-final');
       if (sub) sub.textContent = 'RM ' + subtotal.toFixed(2);
       if (fin) fin.textContent = 'RM ' + total.toFixed(2);
+      const discRow = document.getElementById('promo-discount-row');
+      if (discRow) {
+        discRow.classList.toggle('hidden', promoDiscount <= 0);
+        discRow.style.display = promoDiscount > 0 ? 'flex' : 'none';
+        if (promoDiscount > 0) {
+          document.getElementById('promo-code-label').textContent = appliedPromo.code;
+          document.getElementById('promo-discount-amt').textContent = '-RM ' + promoDiscount.toFixed(2);
+        }
+      }
     }
 
     function renderCart() {
@@ -272,13 +348,15 @@
       const cartItems = getCart();
       if (cartItems.length === 0) { banner('Cart kosong', 'error'); return; }
 
+      // Alamat penuh dikumpul di payment.html (borang besar & jelas), bukan di sini —
+      // drawer cart cuma tentukan kaedah penghantaran.
       const deliveryMethod = document.querySelector('input[name="delivery"]:checked')?.value || 'pickup';
-      const address = document.getElementById('delivery-address')?.value.trim();
-      if (deliveryMethod === 'pos' && !address) { banner('Sila masukkan alamat penghantaran', 'error'); return; }
 
       const subtotal = cartItems.reduce((s, i) => s + i.qty * i.price, 0);
       const deliveryFee = deliveryMethod === 'pos' ? 8 : 0;
-      const total = subtotal + deliveryFee;
+      const beforeDiscount = subtotal + deliveryFee;
+      const promoDiscount = computePromoDiscount(beforeDiscount);
+      const total = Math.max(0, beforeDiscount - promoDiscount);
       const orderRef = 'ORD-' + Date.now().toString(36).toUpperCase()
         + '-' + Math.random().toString(36).slice(2, 6).toUpperCase();
 
@@ -294,7 +372,8 @@
         subtotal,
         deliveryFee,
         deliveryMethod,
-        deliveryAddress: address || null,
+        deliveryAddress: null, // diisi di payment.html
+        promoCode: (promoDiscount > 0 && appliedPromo) ? appliedPromo.code : null,
       }));
 
       closeCart();
@@ -302,11 +381,42 @@
     }
 
 
+    async function loadMyVoucherChips() {
+      if (!window.patientRecord?.id) return;
+      const { data } = await window.db.from('psy_promo_claims')
+        .select('code, discount_type, discount_value')
+        .eq('patient_id', window.patientRecord.id).eq('status', 'active')
+        .or('expires_at.is.null,expires_at.gte.' + new Date().toISOString());
+      const claims = data || [];
+      const row = document.getElementById('my-vouchers-row');
+      if (!claims.length) { row.classList.add('hidden'); return; }
+      row.classList.remove('hidden');
+      document.getElementById('my-vouchers-chips').innerHTML = claims.map(v => {
+        const label = v.discount_type === 'percent' ? `${v.code} (${Number(v.discount_value)}%)` : `${v.code} (RM${Number(v.discount_value).toFixed(0)})`;
+        return `<button onclick="useMyVoucher('${v.code}')" class="px-3 py-1.5 rounded-full border border-navy/30 bg-navy-light text-navy text-xs font-semibold hover:bg-navy hover:text-white transition-colors">🎟️ ${label}</button>`;
+      }).join('');
+    }
+
+    function useMyVoucher(code) {
+      document.getElementById('promo-input').value = code;
+      applyPromoCode();
+    }
+
+    async function loadShippingPolicyNote() {
+      await iswLoadSettings();
+      const note = iswGetSetting('shop_shipping_policy',
+        'Pickup di klinik percuma · Pos/Courier RM8 (Semenanjung 2-4 hari bekerja). Item boleh ditukar/pulang dalam 7 hari jika rosak — hubungi kami di WhatsApp.');
+      const el = document.getElementById('shipping-policy-note');
+      if (el) el.textContent = note;
+    }
+
     (async () => {
       const user = await initPatient('shop', 'À la carte · beli individu tanpa pakej');
       if (!user) return;
       await loadProductsFromDB();
       renderShop();
+      loadShippingPolicyNote();
+      loadMyVoucherChips();
     })();
   </script>
 </body>

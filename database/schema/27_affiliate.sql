@@ -62,7 +62,10 @@ CREATE TABLE IF NOT EXISTS psy_affiliate_payouts (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id    UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
   amount        NUMERIC(10,2) NOT NULL,
-  status        TEXT NOT NULL DEFAULT 'processing' CHECK (status IN ('pending','processing','paid','rejected')),
+  -- 'pending' sengaja tak dimasukkan: staff yang cetus bayaran (butang
+  -- "Mulakan Bayaran"), payout terus jadi 'processing' — tiada laluan
+  -- kelulusan pesakit-mohon dalam design semasa (Ags 2026).
+  status        TEXT NOT NULL DEFAULT 'processing' CHECK (status IN ('processing','paid','rejected')),
   method        TEXT NOT NULL DEFAULT 'bank_transfer' CHECK (method IN ('bank_transfer','hitpay')),
   bank_snapshot JSONB DEFAULT '{}'::jsonb, -- salinan bank_name/account_no/holder masa payout dicipta
   payout_ref    TEXT,                      -- rujukan transaksi (manual, atau HitPay txn id kelak)
@@ -71,6 +74,37 @@ CREATE TABLE IF NOT EXISTS psy_affiliate_payouts (
   processed_at  TIMESTAMPTZ,
   processed_by  UUID REFERENCES psy_profiles(id)
 );
+
+-- Sesuaikan constraint utk table sedia ada (idempotent).
+-- GOTCHA (sama corak psy_notifications type_check): jangan teka nama
+-- constraint (cth 'psy_affiliate_payouts_status_check') — kalau table
+-- ni pernah dicipta/diubah melalui laluan lain, nama sebenar mungkin
+-- tak sepadan dan DROP CONSTRAINT IF EXISTS senyap gagal (constraint
+-- lama kekal, ADD baru pun gagal/insert lama-lama tersekat). Cari &
+-- buang SEMUA check constraint pada kolum status secara dinamik.
+UPDATE psy_affiliate_payouts SET status = 'processing' WHERE status NOT IN ('processing','paid','rejected');
+DO $$
+DECLARE c RECORD;
+BEGIN
+  FOR c IN
+    SELECT con.conname FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    WHERE rel.relname = 'psy_affiliate_payouts' AND con.contype = 'c'
+      AND pg_get_constraintdef(con.oid) ILIKE '%status%'
+  LOOP
+    EXECUTE format('ALTER TABLE psy_affiliate_payouts DROP CONSTRAINT %I', c.conname);
+  END LOOP;
+END $$;
+ALTER TABLE psy_affiliate_payouts ADD CONSTRAINT psy_affiliate_payouts_status_check
+  CHECK (status IN ('processing','paid','rejected'));
+
+-- GOTCHA lanjutan: CREATE TABLE IF NOT EXISTS tak ubah DEFAULT pada
+-- jadual sedia ada — pada jadual yg dicipta sebelum ni, default kolum
+-- `status` didapati kekal 'pending' (drift dari versi awal migration)
+-- walaupun definisi CREATE TABLE atas kata 'processing'. Insert tanpa
+-- nyatakan status (cth startPayout() di affiliate.html) jadi gagal
+-- constraint. Paksa default betul secara eksplisit, idempotent.
+ALTER TABLE psy_affiliate_payouts ALTER COLUMN status SET DEFAULT 'processing';
 
 CREATE INDEX IF NOT EXISTS idx_psy_affiliate_payouts_patient ON psy_affiliate_payouts(patient_id, status);
 

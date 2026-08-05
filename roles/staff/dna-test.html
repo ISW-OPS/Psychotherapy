@@ -346,6 +346,30 @@ function renderStep1() {
     <h2 class="font-bold text-ink mb-1 flex items-center gap-2">🧪 Step 1: Sample Collection</h2>
     <p class="text-xs text-ink/45 mb-4">Kutip sampel DNA pesakit menggunakan DNA Test Kit. Tandakan setiap langkah selepas selesai.</p>
 
+    <div class="rounded-2xl border border-navy/15 bg-navy/5 p-4 mb-4">
+      <div class="dt-section-title text-sm mb-2">📅 Jadual Pengambilan Sampel</div>
+      <p class="text-[11px] text-ink/50 mb-2">Tetapkan tarikh pesakit datang ambil sampel. Sistem akan hantar peringatan WhatsApp sehari sebelum, lengkap dengan syarat persediaan.</p>
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div>
+          <label class="block text-[11px] font-semibold text-ink/60 mb-1">Tarikh</label>
+          <input id="dt-s1-appt-date" type="date" min="${new Date().toISOString().slice(0, 10)}" class="w-full border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white outline-none">
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-ink/60 mb-1">Masa</label>
+          <input id="dt-s1-appt-time" type="time" class="w-full border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white outline-none">
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-ink/60 mb-1">Dengan</label>
+          <select id="dt-s1-appt-with" class="w-full border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white outline-none">
+            ${COACHES.map(c => `<option value="${c.id}">${esc(c.full_name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="flex items-end">
+          <button onclick="saveSampleAppointment()" class="w-full text-sm font-semibold px-3 py-2 rounded-lg bg-navy text-white hover:bg-navy/90">💾 ${PROC.sample_appointment_id ? 'Simpan Perubahan' : 'Jadualkan'}</button>
+        </div>
+      </div>
+      <div id="dt-s1-appt-status" class="text-[11px] text-ink/45 mt-2"></div>
+    </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <!-- Kiri: Peringatan + Tujuan -->
@@ -408,6 +432,7 @@ function renderStep1() {
       <button id="dt-s1-next" onclick="saveStep1(true)" class="text-sm font-semibold px-6 py-2.5 rounded-lg bg-navy text-white hover:bg-navy/90">Sample Collection Completed →</button>
     </div>`;
   document.getElementById('dt-s1-notes').value = PROC.sample_notes || '';
+  loadSampleAppointmentIntoForm();
 }
 
 function readStep1Checklist() {
@@ -436,6 +461,61 @@ async function saveStep1(advance) {
   if (advance) { VIEW_STEP = 2; renderStepper(); renderStepContent(); }
 }
 window.saveStep1 = saveStep1;
+
+// ── Jadual Pengambilan Sampel (reuse psy_appointments, macam Step 5 Consultation) ──
+let CURRENT_SAMPLE_APPT = null;
+
+async function loadSampleAppointmentIntoForm() {
+  if (!PROC.sample_appointment_id) { CURRENT_SAMPLE_APPT = null; return; }
+  const { data: appt } = await window.db.from('psy_appointments').select('*').eq('id', PROC.sample_appointment_id).maybeSingle();
+  CURRENT_SAMPLE_APPT = appt || null;
+  const statusEl = document.getElementById('dt-s1-appt-status');
+  if (!appt) return;
+  const dt = new Date(appt.appointment_time);
+  const dateEl = document.getElementById('dt-s1-appt-date');
+  const timeEl = document.getElementById('dt-s1-appt-time');
+  const withEl = document.getElementById('dt-s1-appt-with');
+  if (!dateEl) return; // pengguna dah tukar step semasa fetch
+  dateEl.value = dt.toISOString().slice(0, 10);
+  timeEl.value = dt.toTimeString().slice(0, 5);
+  if (appt.staff_id) withEl.value = appt.staff_id;
+  if (statusEl) {
+    statusEl.textContent = `Status: ${APPT_STATUS_LABEL[appt.status] || appt.status} · Peringatan sehari sebelum: ${PROC.sample_reminder_sent_at ? 'sudah dihantar' : 'belum dihantar'}`;
+  }
+}
+window.loadSampleAppointmentIntoForm = loadSampleAppointmentIntoForm;
+
+async function saveSampleAppointment() {
+  const date = document.getElementById('dt-s1-appt-date').value;
+  const time = document.getElementById('dt-s1-appt-time').value;
+  const withId = document.getElementById('dt-s1-appt-with').value;
+  if (!date || !time) { banner('Sila isi tarikh & masa pengambilan sampel', 'error'); return; }
+  if (date < new Date().toISOString().slice(0, 10)) { banner('Tarikh tidak boleh tarikh yang telah lepas', 'error'); return; }
+
+  let appointmentId = PROC.sample_appointment_id;
+  const withStaff = COACHES.find(c => c.id === withId);
+  const newIso = new Date(`${date}T${time}:00`).toISOString();
+  const dateChanged = !CURRENT_SAMPLE_APPT || CURRENT_SAMPLE_APPT.appointment_time !== newIso;
+  const apptRow = {
+    patient_id: PATIENT_ID, staff_id: withId || null, patient_name: iswPatientName(PATIENT),
+    staff_name: withStaff?.full_name || null, service: 'DNA Test Sample Collection',
+    appointment_time: newIso, duration_min: 30, room: iswGetSetting('clinic_name', '') || null,
+  };
+  if (appointmentId) {
+    await window.db.from('psy_appointments').update(apptRow).eq('id', appointmentId);
+  } else {
+    const { data: created, error } = await window.db.from('psy_appointments').insert(apptRow).select('id').single();
+    if (error) { banner('Ralat menjadualkan: ' + error.message, 'error'); return; }
+    appointmentId = created.id;
+  }
+  const patch = { sample_appointment_id: appointmentId };
+  if (dateChanged) patch.sample_reminder_sent_at = null;   // tarikh baru → benarkan peringatan hantar semula
+  const ok = await saveProc(patch);
+  if (!ok) return;
+  banner('Jadual pengambilan sampel disimpan ✅');
+  renderStepContent();
+}
+window.saveSampleAppointment = saveSampleAppointment;
 
 // ── STEP 2: Barcode & Packaging ─────────────────────────────
 function renderStep2() {
@@ -809,9 +889,12 @@ const REPORT_SLOTS = [
   ['plant_based', 'ISW Wellness Plant-Based Report', 'Nutrition, Food Sensitivity, Wellbeing, Fitness, Skin Care, Traits', 'IB-LIFE'],
   ['health_risk', 'ISW Health Risk Report', 'System Risks, Diseases, Conditions', 'IB-HRCD'],
   ['carrier_drug', 'ISW Carrier Status & Drug Sensitivity Report', 'Carrier Status, Drug Sensitivity, Cancer Risk', 'IB-CANC'],
+  ['summary', 'Ringkasan 3 Laporan (Summary)', 'Ringkasan gabungan ketiga-tiga laporan DNA', 'SUMMARY'],
 ];
+// Kategori WAJIB sebelum boleh maju/emel — Summary tambahan pilihan (opsyenal), tak sekat progres.
+const REQUIRED_REPORT_KEYS = ['plant_based', 'health_risk', 'carrier_drug'];
 
-const REPORT_ICONS = { plant_based: '🌿', health_risk: '⚠️', carrier_drug: '🧫' };
+const REPORT_ICONS = { plant_based: '🌿', health_risk: '⚠️', carrier_drug: '🧫', summary: '📋' };
 
 function reportFilesFor(key) { return (PROC.report_files || {})[key] || []; }
 
@@ -856,7 +939,7 @@ function renderStep4() {
     <div class="dt-info-box mb-4">
       <div class="text-xs text-[#1e3a5f]">ℹ️ Pastikan semua data betul sebelum memuat turun laporan dari ATGC, kemudian muat naik salinan PDF di bawah.</div>
     </div>
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
       ${REPORT_SLOTS.map(([key, , , code]) => {
         const files = reportFilesFor(key);
         return `<div class="border rounded-2xl p-4 ${files.length ? 'border-green/30 bg-green-light/10' : 'border-ink/10'}">
@@ -901,7 +984,7 @@ function renderStep4() {
 }
 
 async function emailReportsToPatient() {
-  const allUploaded = REPORT_SLOTS.every(([key]) => reportFilesFor(key).length > 0);
+  const allUploaded = REQUIRED_REPORT_KEYS.every(key => reportFilesFor(key).length > 0);
   if (!allUploaded) { banner('Sila muat naik ketiga-tiga kategori laporan dahulu', 'error'); return; }
   if (!confirm('Hantar laporan DNA ke emel pesakit sekarang?')) return;
   const { data, error } = await window.db.functions.invoke('dna-test-email-report', { body: { process_id: PROC.id } });
@@ -920,7 +1003,7 @@ window.emailReportsToPatient = emailReportsToPatient;
 async function saveStep4(advance) {
   const notes = document.getElementById('dt-s4-notes').value.trim() || null;
   const labIssuedAt = document.getElementById('dt-s4-lab-issued').value || null;
-  const allUploaded = REPORT_SLOTS.every(([key]) => reportFilesFor(key).length > 0);
+  const allUploaded = REQUIRED_REPORT_KEYS.every(key => reportFilesFor(key).length > 0);
   if (advance && !allUploaded) { banner('Sila muat naik ketiga-tiga kategori laporan dahulu', 'error'); return; }
   const patch = { report_notes: notes, lab_report_issued_at: labIssuedAt };
   if (advance) {
