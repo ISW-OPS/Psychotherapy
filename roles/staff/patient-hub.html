@@ -128,6 +128,7 @@
                     <button id="ov-add-week-btn" data-rbac="patient.create" onclick="openAddWeekModal()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-navy text-navy hover:bg-navy hover:text-white transition whitespace-nowrap">➕ Tambah Minggu</button>
                     <button id="ov-sync-sessions-btn" data-rbac="patient.edit" onclick="syncPlanSessionsToPackage()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-indigo-400 text-indigo-600 hover:bg-indigo-500 hover:text-white transition whitespace-nowrap" title="Selaraskan bilangan sesi setiap minggu ikut pakej — buang 'Sesi 2 hantu', tambah sesi yang kurang. Kehadiran sebenar dikekalkan.">🔧 Selaraskan ikut Pakej</button>
                     <button id="ov-backfill-btn" data-rbac="patient.edit" onclick="backfillPastSessionsAttended()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-green-500 text-green-dark hover:bg-green-dark hover:text-white transition whitespace-nowrap" title="Tandakan sesi minggu LEPAS yang belum bertanda sebagai Hadir — untuk data lama sebelum sistem dibetulkan. Hanya minggu sebelum minggu semasa & yang satu sesinya sudah Hadir.">✅ Tandakan Sesi Lepas Hadir</button>
+                    <button id="ov-recompute-btn" data-rbac="patient.edit" onclick="promptRecomputeWeeksFrom()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-amber-400 text-amber-600 hover:bg-amber-500 hover:text-white transition whitespace-nowrap" title="Pilih satu minggu sbg anchor (guna tarikh sesi pertama minggu itu) — semua minggu SELEPASNYA dikira semula ikut kadensi pakej/slot rawatan. Minggu sebelum & minggu anchor sendiri tidak disentuh.">📆 Kira Semula Minggu Seterusnya</button>
                     <button id="ov-reset-sessions-btn" data-rbac="patient.delete" onclick="resetPlanSessions()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-red-300 text-red-500 hover:bg-red-50 transition whitespace-nowrap">🔄 Reset Sesi</button>
                     <button id="ov-hardreset-sessions-btn" data-rbac="patient.delete" onclick="hardResetPlanSessions()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-red-500 bg-red-500 text-white hover:bg-red-600 transition whitespace-nowrap" title="Padam SEMUA sesi termasuk yang 'Hadir' — untuk data demo/awal yang salah">⚠️ Hard Reset</button>
                   </div>
@@ -1950,6 +1951,7 @@ async function loadOverview() {
   document.getElementById('ov-add-week-btn')?.classList.toggle('hidden', !(canEdit && activePlan));
   document.getElementById('ov-sync-sessions-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
   document.getElementById('ov-backfill-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
+  document.getElementById('ov-recompute-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
   document.getElementById('ov-reset-sessions-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
   document.getElementById('ov-hardreset-sessions-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
   document.getElementById('ov-autoschedule-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
@@ -4656,6 +4658,87 @@ async function saveEditSessionDate(id) {
     }
     await auditLog('plan.session_date_edited', activePlan.id, { week: row?.week_number, session: row?.session_day || 1, session_date: iso });
     banner('Sesi dijadual semula ✅');
+    await reloadOverviewKeepPage();
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+  }
+}
+
+// ── Kira semula tarikh minggu SELEPAS satu minggu anchor (ikut kadensi slot rawatan) ──
+// Guna bila satu minggu tengah dibetulkan tarikhnya & minggu-minggu selepasnya patut
+// anjak ikut tarikh baru itu (bukan dikira dari Minggu 1). Minggu anchor & sebelumnya
+// TIDAK disentuh. Sama logik dgn ovComputeWhen (auto-jadual), cuma anchor = baseWeek.
+function ovComputeWhenFrom(baseWeek, firstDate, firstSlotStart, w, day) {
+  if (w === baseWeek && day === 1) return new Date(firstDate);
+  const target = new Date(firstDate); target.setHours(0, 0, 0, 0);
+  target.setDate(target.getDate() + (w - baseWeek) * 7 + (day === 2 ? 1 : 0));
+  const avail = ovNearestAvailable(target);
+  if (!avail) return null;
+  const slots = _rawatanSlotsByDay[avail.getDay()] || [];
+  if (!slots.length) return null;
+  const [h, m] = (firstSlotStart || slots[0].start).split(':').map(Number);
+  avail.setHours(h || 0, m || 0, 0, 0);
+  return avail;
+}
+
+async function promptRecomputeWeeksFrom() {
+  if (!activePlan) return;
+  if (window.currentUser?.staff_role !== 'super_admin') { banner('Hanya super admin boleh guna fungsi ini.', 'error'); return; }
+  const w = parseInt(prompt('Kira semula dari minggu berapa?\n\nTarikh sesi pertama minggu ini akan jadi anchor — semua minggu SELEPASNYA dikira semula ikut kadensi slot rawatan. Minggu ini & sebelumnya tidak disentuh.', ''), 10);
+  if (!w || w < 1) return;
+  await recomputeWeeksFrom(w);
+}
+
+async function recomputeWeeksFrom(baseWeek) {
+  if (!activePlan) return;
+  if (window.currentUser?.staff_role !== 'super_admin') { banner('Hanya super admin boleh guna fungsi ini.', 'error'); return; }
+  const baseRows = ovWeeklyRows.filter(r => Number(r.week_number) === baseWeek && r.session_date);
+  const anchorRow = baseRows.find(r => (r.session_day || 1) === 1) || baseRows[0];
+  if (!anchorRow) { banner(`Minggu ${baseWeek} belum ada tarikh sesi — tiada anchor untuk dikira.`, 'error'); return; }
+  await loadRawatanAvailability();
+  if (!_allowedRawatanDays.length) { banner('Tiada slot rawatan aktif. Sila set di menu Slot Rawatan dahulu.', 'error'); return; }
+
+  const anchorDate = new Date(anchorRow.session_date);
+  const firstSlotStart = `${String(anchorDate.getHours()).padStart(2, '0')}:${String(anchorDate.getMinutes()).padStart(2, '0')}`;
+  const maxWeek = Math.max(activePlan.duration_weeks || 12, ...ovWeeklyRows.map(r => r.week_number || 0));
+  if (baseWeek >= maxWeek) { banner('Tiada minggu seterusnya untuk dikira semula.', 'error'); return; }
+
+  const updates = [];
+  for (let w = baseWeek + 1; w <= maxWeek; w++) {
+    const nSes = ovSessionsForWeek(w);
+    for (let day = 1; day <= nSes; day++) {
+      const when = ovComputeWhenFrom(baseWeek, anchorDate, firstSlotStart, w, day);
+      if (!when) continue;
+      const row = ovWeeklyRows.find(r => Number(r.week_number) === w && (r.session_day || 1) === day);
+      updates.push({ row, w, day, when });
+    }
+  }
+  if (!updates.length) { banner('Tiada minggu seterusnya untuk dikira semula.', 'error'); return; }
+
+  if (!confirm(`Kira semula tarikh Minggu ${baseWeek + 1}–${maxWeek}, berdasarkan Minggu ${baseWeek} (${anchorDate.toLocaleDateString('ms-MY', { day: '2-digit', month: 'long', year: 'numeric' })})?\n\n${updates.length} sesi akan dikemaskini. Status & data lain (nota, kehadiran) kekal — hanya tarikh berubah.\n\nTeruskan?`)) return;
+
+  try {
+    for (const u of updates) {
+      const iso = u.when.toISOString();
+      if (u.row) {
+        await window.db.from('psy_plan_weekly_progress').update({
+          session_date:    iso,
+          updated_by:      window.currentUser.id,
+          updated_by_name: window.currentUser.full_name,
+          updated_at:      new Date().toISOString(),
+        }).eq('id', u.row.id);
+        if (u.row.appointment_id) {
+          await window.db.from('psy_appointments').update({ appointment_time: iso }).eq('id', u.row.appointment_id);
+        }
+      } else {
+        await window.db.from('psy_plan_weekly_progress').insert({
+          plan_id: activePlan.id, patient_id: patientId, week_number: u.w, session_day: u.day,
+          status: 'pending', session_date: iso,
+        });
+      }
+    }
+    await auditLog('plan.weeks_recomputed', activePlan.id, { anchor_week: baseWeek, from_week: baseWeek + 1, to_week: maxWeek, count: updates.length });
+    banner(`Tarikh Minggu ${baseWeek + 1}–${maxWeek} dikira semula ✅`);
     await reloadOverviewKeepPage();
   } catch (e) {
     banner('Ralat: ' + e.message, 'error');
