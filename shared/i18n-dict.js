@@ -5721,7 +5721,7 @@ window.ISW_I18N_EXTRA = {
   "Selamat Pagi": "Good Morning",
   "Selamat Petang": "Good Evening",
   "Selamat Tengah Hari": "Good Afternoon",
-  "Selaraskan bilangan sesi setiap minggu ikut pakej — buang 'Sesi 2 hantu', tambah sesi yang kurang. Kehadiran sebenar dikekalkan.": "Align the number of sessions each week to the package — remove 'phantom Session 2', add missing sessions. Actual attendance is preserved.",
+  "Selaraskan bilangan sesi setiap minggu ikut pakej — buang 'Sesi 2 hantu' (termasuk yang dah hadir jika tak diperlukan lagi), tambah sesi yang kurang.": "Align the number of sessions each week to the package — remove 'phantom Session 2' (including sessions already attended, if no longer needed), add missing sessions.",
   "Selasa": "Tuesday",
   "Selepas bayar, anda akan diminta sign agreement": "After payment, you will be asked to sign the agreement",
   "Selepas deadline lepas, bila coach dimaklumkan.": "After the deadline passes, when the coach is notified.",
