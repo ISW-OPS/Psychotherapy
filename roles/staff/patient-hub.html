@@ -128,6 +128,7 @@
                     <button id="ov-add-week-btn" data-rbac="patient.create" onclick="openAddWeekModal()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-navy text-navy hover:bg-navy hover:text-white transition whitespace-nowrap">➕ Tambah Minggu</button>
                     <button id="ov-sync-sessions-btn" data-rbac="patient.edit" onclick="syncPlanSessionsToPackage()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-indigo-400 text-indigo-600 hover:bg-indigo-500 hover:text-white transition whitespace-nowrap" title="Selaraskan bilangan sesi setiap minggu ikut pakej — buang 'Sesi 2 hantu' (termasuk yang dah hadir jika tak diperlukan lagi), tambah sesi yang kurang.">🔧 Selaraskan ikut Pakej</button>
                     <button id="ov-backfill-btn" data-rbac="patient.edit" onclick="backfillPastSessionsAttended()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-green-500 text-green-dark hover:bg-green-dark hover:text-white transition whitespace-nowrap" title="Tandakan sesi minggu LEPAS yang belum bertanda sebagai Hadir — untuk data lama sebelum sistem dibetulkan. Hanya minggu sebelum minggu semasa & yang satu sesinya sudah Hadir.">✅ Tandakan Sesi Lepas Hadir</button>
+                    <button id="ov-reset-attendance-btn" data-rbac="patient.edit" onclick="openResetAttendanceRangeModal()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-amber-400 text-amber-600 hover:bg-amber-500 hover:text-white transition whitespace-nowrap" title="Reset kehadiran (Hadir/Selesai → Ditempah) untuk satu julat minggu sekali gus — utk sesi yang tersalah tanda selesai walaupun pesakit belum datang lagi.">🔄 Reset Kehadiran (Julat)</button>
                     <button id="ov-reset-sessions-btn" data-rbac="patient.delete" onclick="resetPlanSessions()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-red-300 text-red-500 hover:bg-red-50 transition whitespace-nowrap">🔄 Reset Sesi</button>
                     <button id="ov-hardreset-sessions-btn" data-rbac="patient.delete" onclick="hardResetPlanSessions()" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-red-500 bg-red-500 text-white hover:bg-red-600 transition whitespace-nowrap" title="Padam SEMUA sesi termasuk yang 'Hadir' — untuk data demo/awal yang salah">⚠️ Hard Reset</button>
                   </div>
@@ -1950,6 +1951,7 @@ async function loadOverview() {
   document.getElementById('ov-add-week-btn')?.classList.toggle('hidden', !(canEdit && activePlan));
   document.getElementById('ov-sync-sessions-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
   document.getElementById('ov-backfill-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
+  document.getElementById('ov-reset-attendance-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
   document.getElementById('ov-reset-sessions-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
   document.getElementById('ov-hardreset-sessions-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
   document.getElementById('ov-autoschedule-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
@@ -5036,6 +5038,72 @@ async function backfillPastSessionsAttended() {
     }
     await auditLog('plan.backfill_past_attended', activePlan.id, { updated: updates.length, inserted: inserts.length, weeks: weeksTouched });
     banner(`${total} sesi lepas ditandakan Hadir ✅ (${updates.length} update, ${inserts.length} baru)`);
+    await loadOverview();
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+  }
+}
+
+// RESET KEHADIRAN (JULAT) — kebalikan backfillPastSessionsAttended: utk sesi yang
+// tersalah tanda "Hadir"/"Consultation Done" (cth akibat data lama/cascade tarikh
+// bermasalah) sedangkan pesakit sebenarnya belum datang lagi. Reset status kembali
+// ke 'booked' (Ditempah) untuk semua sesi dalam julat minggu yang dipilih — tarikh
+// sesi TIDAK disentuh, cuma status.
+function openResetAttendanceRangeModal() {
+  if (!activePlan) return;
+  if (window.currentUser?.staff_role !== 'super_admin') { banner('Hanya super admin boleh guna fungsi ini.', 'error'); return; }
+  const weeks = ovWeeklyRows.map(r => r.week_number || 0);
+  const minW = weeks.length ? Math.min(...weeks) : 1;
+  const maxW = weeks.length ? Math.max(...weeks) : (activePlan.duration_weeks || 12);
+  const m = document.createElement('div');
+  m.id = 'resetatt-modal';
+  m.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
+  m.innerHTML = `
+    <div class="absolute inset-0 bg-black/50" onclick="document.getElementById('resetatt-modal').remove()"></div>
+    <div class="relative bg-white rounded-2xl max-w-sm w-full p-6 space-y-4">
+      <h3 class="font-bold text-base">🔄 Reset Kehadiran (Julat Minggu)</h3>
+      <p class="text-sm text-ink/60">Sesi bertanda "Hadir"/"Consultation Done" dalam julat ini akan direset kembali ke "Ditempah". Tarikh sesi tidak berubah, cuma status kehadiran.</p>
+      <div class="flex items-center gap-2">
+        <div class="flex-1">
+          <label class="text-xs font-semibold text-ink/60 uppercase">Dari Minggu</label>
+          <input id="ra-from" type="number" min="1" value="${minW}" class="w-full mt-1.5 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-navy">
+        </div>
+        <div class="flex-1">
+          <label class="text-xs font-semibold text-ink/60 uppercase">Hingga Minggu</label>
+          <input id="ra-to" type="number" min="1" value="${maxW}" class="w-full mt-1.5 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-navy">
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 pt-1">
+        <button onclick="document.getElementById('resetatt-modal').remove()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm">Batal</button>
+        <button onclick="resetAttendanceRange()" class="bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-amber-600">Reset</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+}
+
+async function resetAttendanceRange() {
+  const fromWeek = parseInt(document.getElementById('ra-from')?.value, 10);
+  const toWeek = parseInt(document.getElementById('ra-to')?.value, 10);
+  if (!fromWeek || !toWeek || fromWeek < 1 || toWeek < fromWeek) { banner('Julat minggu tidak sah.', 'error'); return; }
+  const KEEP = new Set(['hadir', 'consultation_done']);
+  const targets = ovWeeklyRows.filter(r => {
+    const w = Number(r.week_number);
+    return w >= fromWeek && w <= toWeek && KEEP.has(r.status);
+  });
+  if (!targets.length) { banner(`Tiada sesi "Hadir"/Selesai dalam Minggu ${fromWeek}–${toWeek}.`); document.getElementById('resetatt-modal')?.remove(); return; }
+  if (!confirm(`Reset kehadiran ${targets.length} sesi (Minggu ${fromWeek}–${toWeek}) kembali ke "Ditempah"?\n\nTarikh sesi kekal, cuma status kehadiran direset. Rekod kehadiran sebenar akan HILANG untuk sesi ini.\n\nTeruskan?`)) return;
+  document.getElementById('resetatt-modal')?.remove();
+  try {
+    for (const r of targets) {
+      await window.db.from('psy_plan_weekly_progress').update({
+        status:          'booked',
+        updated_by:      window.currentUser.id,
+        updated_by_name: window.currentUser.full_name,
+        updated_at:      new Date().toISOString(),
+      }).eq('id', r.id);
+    }
+    await auditLog('plan.attendance_range_reset', activePlan.id, { from_week: fromWeek, to_week: toWeek, count: targets.length });
+    banner(`${targets.length} sesi direset ke Ditempah ✅`);
     await loadOverview();
   } catch (e) {
     banner('Ralat: ' + e.message, 'error');

@@ -7315,6 +7315,8 @@ window.ISW_I18N_EXTRA = {
   "Tukar Tarikh": "Change Date",
   "Hanya slot rawatan dibuka (elak penutupan). Sesi pasangan minggu ini & minggu-minggu selepas auto anjak sekali ikut corak baru.": "Only open treatment slots (avoiding closures). The paired session this week & following weeks auto-shift too, following the new pattern.",
   "Tukar tarikh sesi ini": "Change this session's date",
+  "Reset kehadiran (Hadir/Selesai → Ditempah) untuk satu julat minggu sekali gus — utk sesi yang tersalah tanda selesai walaupun pesakit belum datang lagi.": "Reset attendance (Attended/Done → Booked) for a whole week range at once — for sessions wrongly marked done when the patient hasn't actually come yet.",
+  "Sesi bertanda \"Hadir\"/\"Consultation Done\" dalam julat ini akan direset kembali ke \"Ditempah\". Tarikh sesi tidak berubah, cuma status kehadiran.": "Sessions marked \"Attended\"/\"Consultation Done\" in this range will be reset back to \"Booked\". The session date doesn't change, only the attendance status.",
   "Tukar thumbnail": "Change thumbnail",
   "Tulis \"Tajuk: cara penyediaan…\" pada baris sama, ATAU letak langkah sebagai bullet di bawah tajuk\n                  — ia disimpan dalam Panduan dan disertakan dalam mesej WhatsApp.": "Write \"Title: preparation method…\" on the same line, OR put the steps as bullets under the title — it's saved in the Guide and included in the WhatsApp message.",
   "Tulis balasan anda... (Ctrl+Enter untuk hantar)": "Write your reply... (Ctrl+Enter to send)",
