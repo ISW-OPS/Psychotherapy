@@ -1884,16 +1884,16 @@ async function setSessionDate() {
   await cascadeBookFutureWeeks(weekNumber, iso);
 }
 
-// Selepas tukar/tetapkan tarikh satu minggu, teruskan corak (+7 hari/minggu) untuk minggu
-// AKAN DATANG yang masih belum ditempah sahaja — minggu yang sudah ditempah/hadir/tidak
-// hadir/lanjutan TIDAK disentuh. Auto terus, tiada pengesahan berasingan.
+// Selepas tukar/tetapkan tarikh satu minggu, teruskan corak (+7 hari/minggu) untuk SEMUA
+// minggu AKAN DATANG — termasuk yang sudah ditempah/hadir/dibatalkan (tarikh sahaja
+// dianjak, status & data lain kekal; 'pending' tanpa tarikh jadi 'booked'). Minggu
+// lanjutan (is_extension) tidak disentuh — jadual sendiri. Auto terus, tiada pengesahan.
 async function cascadeBookFutureWeeks(fromWeek, anchorIso) {
   const maxWeek = planMaxWeek || activePlan.duration_weeks || fromWeek;
   if (fromWeek >= maxWeek) return;
   const { data: futureRows } = await window.db.from('psy_plan_weekly_progress')
-    .select('id, week_number, session_day, status, session_date, is_extension')
+    .select('id, week_number, session_day, status, session_date, is_extension, appointment_id')
     .eq('plan_id', activePlan.id).gt('week_number', fromWeek);
-  const SKIP = new Set(['hadir', 'consultation_done', 'booked', 'reschedule', 'cancel', 'extension_pending_payment', 'extension_paid']);
   const byWeekDay = {};
   (futureRows || []).forEach(r => { byWeekDay[`${r.week_number}_${r.session_day || 1}`] = r; });
 
@@ -1902,12 +1902,15 @@ async function cascadeBookFutureWeeks(fromWeek, anchorIso) {
   for (let w = fromWeek + 1; w <= maxWeek; w++) {
     for (const day of sessionDaysForWeekStaff(w)) {
       const row = byWeekDay[`${w}_${day}`];
-      if (row && (row.is_extension || row.session_date || SKIP.has(row.status))) continue;
+      if (row?.is_extension) continue;
       const d = computeChainedDate(w, day, fromWeek, anchorDate);
       d.setHours(anchorDate.getHours(), anchorDate.getMinutes(), 0, 0);
       const iso2 = d.toISOString();
-      if (row) toUpdate.push({ id: row.id, session_date: iso2 });
-      else toInsert.push({ plan_id: activePlan.id, patient_id: patientId, week_number: w, session_day: day, status: 'booked', session_date: iso2 });
+      if (row) {
+        toUpdate.push({ id: row.id, session_date: iso2, status: row.status === 'pending' ? 'booked' : row.status, appointment_id: row.appointment_id });
+      } else {
+        toInsert.push({ plan_id: activePlan.id, patient_id: patientId, week_number: w, session_day: day, status: 'booked', session_date: iso2 });
+      }
     }
   }
   const total = toInsert.length + toUpdate.length;
@@ -1915,7 +1918,10 @@ async function cascadeBookFutureWeeks(fromWeek, anchorIso) {
 
   try {
     for (const u of toUpdate) {
-      await window.db.from('psy_plan_weekly_progress').update({ status: 'booked', session_date: u.session_date }).eq('id', u.id);
+      await window.db.from('psy_plan_weekly_progress').update({ status: u.status, session_date: u.session_date }).eq('id', u.id);
+      if (u.appointment_id) {
+        await window.db.from('psy_appointments').update({ appointment_time: u.session_date }).eq('id', u.appointment_id);
+      }
     }
     if (toInsert.length) {
       const { error } = await window.db.from('psy_plan_weekly_progress').insert(toInsert);
