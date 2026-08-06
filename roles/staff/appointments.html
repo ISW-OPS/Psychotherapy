@@ -490,8 +490,12 @@ async function advancePlanWeek(planId, week) {
   }
 }
 
-async function joinMeet(sessionId, planId, week, link) {
+async function joinMeet(sessionId, planId, week, link, sessionDate) {
   window.open(link, '_blank');
+  if (sessionDate && new Date(sessionDate) > new Date()) {
+    banner('Sesi ini belum berlaku (tarikh akan datang) — tidak ditanda Hadir.', 'error');
+    return;
+  }
   await dbUpdate('psy_plan_weekly_progress', sessionId, {
     status: 'hadir', updated_by: window.currentUser.id,
     updated_by_name: window.currentUser.full_name, updated_at: new Date().toISOString(),
@@ -972,8 +976,8 @@ function openDayModal(dateStr) {
           <div class="flex gap-2 mt-2 flex-wrap">
             ${s.status === 'booked' || s.status === 'reschedule' ? `
               ${s.session_type === 'online' && s.meet_link
-                ? `<button data-rbac="schedule.edit" onclick="joinMeet('${s.id}','${s.plan_id}',${s.week_number},'${s.meet_link}')" class="bg-navy text-white text-xs px-3 py-1 rounded-lg">🔗 Join Meet</button>`
-                : `<button data-rbac="schedule.edit" onclick="markHadir('${s.id}','${s.plan_id}',${s.week_number})" class="bg-green text-white text-xs px-3 py-1 rounded-lg">✅ Hadir</button>`}
+                ? `<button data-rbac="schedule.edit" onclick="joinMeet('${s.id}','${s.plan_id}',${s.week_number},'${s.meet_link}','${s.session_date || ''}')" class="bg-navy text-white text-xs px-3 py-1 rounded-lg">🔗 Join Meet</button>`
+                : `<button data-rbac="schedule.edit" onclick="markHadir('${s.id}','${s.plan_id}',${s.week_number},'${s.session_date || ''}')" class="bg-green text-white text-xs px-3 py-1 rounded-lg">✅ Hadir</button>`}
               <button data-rbac="schedule.edit" onclick="openReschedule('${s.id}')" class="border border-gold text-gold-dark text-xs px-3 py-1 rounded-lg">🔄 Reschedule</button>
               <button data-rbac="schedule.edit" onclick="markCancel('${s.id}')" class="border border-terracotta text-terracotta text-xs px-3 py-1 rounded-lg">❌ Tidak Hadir</button>` : ''}
             <button data-rbac="schedule.edit" onclick="openApptCoachGanti('${s.id}','${s.substitute_coach_id||''}')" class="border border-ink/20 text-ink/50 text-xs px-3 py-1 rounded-lg hover:border-ink/40 hover:text-ink/80">👥 ${subCoachName ? `Ganti: ${escapeHtml(subCoachName)}` : 'Assign Ganti'}</button>
@@ -1094,8 +1098,8 @@ function renderList() {
           <td class="whitespace-nowrap print-hide">
             ${s.status === 'booked' || s.status === 'reschedule' ? `
               ${s.session_type === 'online' && s.meet_link
-                ? `<button data-rbac="schedule.edit" onclick="joinMeet('${s.id}','${s.plan_id}',${s.week_number},'${s.meet_link}')" class="bg-navy text-white text-xs px-3 py-1.5 rounded-lg">🔗 Join Meet</button>`
-                : `<button data-rbac="schedule.edit" onclick="markHadir('${s.id}','${s.plan_id}',${s.week_number})" class="bg-green text-white text-xs px-3 py-1.5 rounded-lg">✅ Hadir</button>`}
+                ? `<button data-rbac="schedule.edit" onclick="joinMeet('${s.id}','${s.plan_id}',${s.week_number},'${s.meet_link}','${s.session_date || ''}')" class="bg-navy text-white text-xs px-3 py-1.5 rounded-lg">🔗 Join Meet</button>`
+                : `<button data-rbac="schedule.edit" onclick="markHadir('${s.id}','${s.plan_id}',${s.week_number},'${s.session_date || ''}')" class="bg-green text-white text-xs px-3 py-1.5 rounded-lg">✅ Hadir</button>`}
               <button data-rbac="schedule.edit" onclick="openReschedule('${s.id}')" class="text-gold-dark text-xs ml-1 hover:underline">Reschedule</button>
               <button data-rbac="schedule.edit" onclick="markCancel('${s.id}')" class="text-terracotta text-xs ml-1 hover:underline">Tidak Hadir</button>` : ''}
           </td>
@@ -1105,7 +1109,11 @@ function renderList() {
 }
 
 // ── Actions ──────────────────────────────────────────
-async function markHadir(id, planId, week) {
+async function markHadir(id, planId, week, sessionDate) {
+  if (sessionDate && new Date(sessionDate) > new Date()) {
+    banner('Sesi ini belum berlaku (tarikh akan datang) — tidak boleh ditanda Hadir.', 'error');
+    return;
+  }
   try {
     await dbUpdate('psy_plan_weekly_progress', id, {
       status: 'hadir', updated_by: window.currentUser.id,
