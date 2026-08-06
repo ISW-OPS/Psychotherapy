@@ -1963,11 +1963,14 @@ async function loadOverview() {
       .select('*').eq('plan_id', activePlan.id).order('week_number', { ascending: true });
     ovWeeklyRows = prog || [];
 
-    const now = new Date();
-    const pastWeeks = ovWeeklyRows.filter(p => p.status !== 'cancel' && p.session_date && new Date(p.session_date) < now).map(p => p.week_number || 0);
-    const maxPastWeek = pastWeeks.length ? Math.max(...pastWeeks) : 0;
-    let cur = Math.max(activePlan.current_week || 1, maxPastWeek);
-    if (cur > (activePlan.current_week || 1)) {
+    // "Minggu Semasa" = minggu KEHADIRAN sebenar tertinggi (hadir/consultation_done) — bukan
+    // "mana-mana baris bertarikh lepas" (tarikh lepas TAK bermakna pesakit dah datang; boleh
+    // jadi cuma "Ditempah" yang belum berlaku, atau tarikh rosak akibat bug lama). Dikira semula
+    // penuh setiap kali (naik ATAU turun) supaya ia betul-betul ikut data terkini, bukan "terkunci"
+    // pada nilai lama yang mungkin tersilap dari sebelum ini.
+    const attendedWeeks = ovWeeklyRows.filter(p => ['hadir', 'consultation_done'].includes(p.status)).map(p => p.week_number || 0);
+    const cur = attendedWeeks.length ? Math.max(...attendedWeeks) : 1;
+    if (cur !== (activePlan.current_week || 1)) {
       activePlan.current_week = cur;
       await window.db.from('psy_treatment_plans').update({ current_week: cur }).eq('id', activePlan.id);
     }
