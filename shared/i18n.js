@@ -109,7 +109,7 @@
     'Pembayaran': 'Payment',
     'Pesanan & Penjejakan': 'Orders & Tracking',
     'Lapor Isu': 'Report Issue',
-    'Borang KYC': 'KYC Form',
+    'Borang Pendaftaran': 'Registration Form',
     'Jadual Harian': 'Daily Schedule',
     'Pakej Rawatan': 'Treatment Package',
     'Catatan Harian': 'Daily Log',

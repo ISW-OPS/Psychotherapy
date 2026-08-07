@@ -119,12 +119,14 @@ Deno.serve(async (req: Request) => {
       await svc.from('psy_patients').update({ kob_status: 'booked' }).eq('id', patientId)
     }
 
-    await svc.from('psy_audit_log').insert({
-      actor_name: 'GHL', actor_role: 'system',
-      action: 'ghl_booking.received',
-      target: patientId,
-      meta: { created_patient: created, kob_session_id: kobSessionId, scheduled_at: scheduledAt.toISOString(), mode },
-    }).catch(() => {})
+    try {
+      await svc.from('psy_audit_log').insert({
+        actor_name: 'GHL', actor_role: 'system',
+        action: 'ghl_booking.received',
+        target: patientId,
+        meta: { created_patient: created, kob_session_id: kobSessionId, scheduled_at: scheduledAt.toISOString(), mode },
+      })
+    } catch (_) { /* audit log gagal tak patut gagalkan webhook — fulfillment dah selesai */ }
 
     return json({ success: true, patient_id: patientId, patient_created: created, kob_session_id: kobSessionId })
   } catch (err) {

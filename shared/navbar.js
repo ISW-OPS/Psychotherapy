@@ -30,7 +30,7 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'issue', url: 'issue.html', icon: '⚠️', label: 'Lapor Isu' },
     { id: 'pulangan', url: 'pulangan.html', icon: '🍯', label: 'Pulangan Botol' },
     { id: 'surat', url: 'surat.html', icon: '📜', label: 'Surat Rasmi' },
-    { id: 'kyc', url: 'kyc.html', icon: '🆔', label: 'Borang KYC' },
+    { id: 'kyc', url: 'kyc.html', icon: '🆔', label: 'Borang Pendaftaran' },
   ],
   staff: [
     { id: 'dashboard', url: 'dashboard.html', icon: '🏥', label: 'Dashboard' },
