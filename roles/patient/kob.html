@@ -47,7 +47,7 @@
             <div class="text-xs text-ink/50 mb-3 font-semibold">PROGRES KOB</div>
             <div class="flex items-start overflow-x-auto pb-1">
               <div class="step-circ-wrap" data-step="kyc" onclick="navigateStage('kyc')">
-                <div class="step-circ">1</div><span class="step-circ-label">KYC</span>
+                <div class="step-circ">1</div><span class="step-circ-label">Pendaftaran</span>
               </div>
               <div class="step-circ-line" data-line="1"></div>
               <div class="step-circ-wrap" data-step="book" onclick="navigateStage('book')">
@@ -149,31 +149,31 @@
             </style>
           </div>
 
-          <!-- Stage: KYC -->
+          <!-- Stage: Pendaftaran (KYC) -->
           <div id="stage-kyc" class="hidden">
             <!-- Not yet submitted -->
             <div id="kyc-pending" class="hidden p-6 text-center">
               <div class="text-5xl mb-3">🆔</div>
-              <h2 class="text-xl font-bold text-navy">Lengkapkan KYC</h2>
-              <p class="text-sm text-ink/70 mt-2">Sila isi borang KYC dengan maklumat kesihatan anda sebelum tempah sesi
+              <h2 class="text-xl font-bold text-navy">Lengkapkan Pendaftaran</h2>
+              <p class="text-sm text-ink/70 mt-2">Sila isi borang pendaftaran dengan maklumat kesihatan anda sebelum tempah sesi
                 KOB.</p>
               <a href="kyc.html"
                 class="inline-block mt-5 bg-gold-dark text-white px-6 py-3 rounded-xl font-semibold hover:opacity-90">Isi
-                KYC →</a>
+                Pendaftaran →</a>
             </div>
 
             <!-- Submitted — show summary -->
             <div id="kyc-done" class="hidden space-y-4">
               <div class="text-center">
                 <div class="text-5xl mb-2">✅</div>
-                <h2 class="text-xl font-bold text-green-dark">KYC Selesai</h2>
+                <h2 class="text-xl font-bold text-green-dark">Pendaftaran Selesai</h2>
                 <p id="kyc-submitted-date" class="text-xs text-ink/50 mt-1">—</p>
               </div>
               <div class="flex items-center justify-between flex-wrap gap-2 border-b border-ink/10 pb-2">
-                <h3 class="font-bold text-navy text-base">Ringkasan Maklumat KYC</h3>
+                <h3 class="font-bold text-navy text-base">Ringkasan Maklumat Pendaftaran</h3>
                 <a href="kyc.html"
                   class="bg-cream border border-navy/30 text-navy text-xs px-3 py-1.5 rounded-lg hover:bg-navy hover:text-white font-semibold">✏️
-                  Edit KYC</a>
+                  Edit Pendaftaran</a>
               </div>
               <div id="kyc-summary" class="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-3 text-sm">—</div>
             </div>
@@ -1486,6 +1486,14 @@
         return lines;
       };
       const need = h => { if (y - h < MARGIN_BOT) { page = pdfDoc.addPage([PAGE_W, PAGE_H]); y = PAGE_H - MARGIN_TOP; } };
+      const sigPngBytes = await fetch(opts.signatureDataUrl).then(r => r.arrayBuffer());
+      const sigImg = await pdfDoc.embedPng(sigPngBytes);
+      // Setiap m/s perjanjian mesti ada tandatangan pesakit (bukan hanya m/s pengesahan akhir)
+      const stampFooter = pg => {
+        pg.drawImage(sigImg, { x: MARGIN_X, y: 12, width: 55, height: 20 });
+        pg.drawText(sanitize(`Ditandatangani: ${opts.patientName || '-'} | IC: ${opts.patientIc || '-'}`),
+          { x: MARGIN_X + 62, y: 18, size: 7, font, color: MUTED });
+      };
       const titleText = sanitize(opts.title || 'Kontrak Pelaburan Kesihatan');
       need(40);
       page.drawText(titleText, { x: (PAGE_W - fontBold.widthOfTextAtSize(titleText, 18)) / 2, y, size: 18, font: fontBold, color: COLOR });
@@ -1531,13 +1539,17 @@
       y -= 20;
       page.drawText('Tandatangan Pesakit:', { x: MARGIN_X, y, size: 10, font: fontBold, color: COLOR });
       y -= 8;
-      const sigPngBytes = await fetch(opts.signatureDataUrl).then(r => r.arrayBuffer());
-      const sigImg = await pdfDoc.embedPng(sigPngBytes);
       page.drawImage(sigImg, { x: MARGIN_X, y: y - 80, width: 220, height: 80 });
       y -= 85;
       page.drawLine({ start: { x: MARGIN_X, y }, end: { x: MARGIN_X + 220, y }, thickness: 0.5, color: BODY_COLOR });
       page.drawText(sanitize(opts.version || ''), { x: MARGIN_X, y: MARGIN_BOT - 20, size: 8, font, color: MUTED });
       page.drawText(`Dijana pada ${new Date().toLocaleString('en-GB')}`, { x: PAGE_W - MARGIN_X - 180, y: MARGIN_BOT - 20, size: 8, font, color: MUTED });
+      const allPages = pdfDoc.getPages();
+      allPages.forEach((pg, idx) => {
+        stampFooter(pg);
+        const pageLabel = `M/S ${idx + 1} / ${allPages.length}`;
+        pg.drawText(pageLabel, { x: PAGE_W - MARGIN_X - font.widthOfTextAtSize(pageLabel, 7), y: 18, size: 7, font, color: MUTED });
+      });
       return await pdfDoc.save();
     }
 

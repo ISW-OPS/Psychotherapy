@@ -1344,6 +1344,14 @@ async function generateSignedPdf(opts) {
     return lines;
   };
   const need = h => { if (y - h < MARGIN_BOT) { page = pdfDoc.addPage([PAGE_W, PAGE_H]); y = PAGE_H - MARGIN_TOP; } };
+  const sigPngBytes = await fetch(opts.signatureDataUrl).then(r => r.arrayBuffer());
+  const sigImg = await pdfDoc.embedPng(sigPngBytes);
+  // Setiap m/s perjanjian mesti ada tandatangan pesakit (bukan hanya m/s pengesahan akhir)
+  const stampFooter = pg => {
+    pg.drawImage(sigImg, { x: MARGIN_X, y: 12, width: 55, height: 20 });
+    pg.drawText(sanitize(`Ditandatangani: ${opts.patientName || '-'} | IC: ${opts.patientIc || '-'}`),
+      { x: MARGIN_X + 62, y: 18, size: 7, font, color: MUTED });
+  };
   const titleText = sanitize(opts.title || 'Kontrak Pelaburan Kesihatan');
   need(40);
   page.drawText(titleText, { x: (PAGE_W - fontBold.widthOfTextAtSize(titleText, 18)) / 2, y, size: 18, font: fontBold, color: COLOR });
@@ -1386,13 +1394,17 @@ async function generateSignedPdf(opts) {
   y -= 20;
   page.drawText('Tandatangan Pesakit:', { x: MARGIN_X, y, size: 10, font: fontBold, color: COLOR });
   y -= 8;
-  const sigPngBytes = await fetch(opts.signatureDataUrl).then(r => r.arrayBuffer());
-  const sigImg = await pdfDoc.embedPng(sigPngBytes);
   page.drawImage(sigImg, { x: MARGIN_X, y: y - 80, width: 220, height: 80 });
   y -= 85;
   page.drawLine({ start: { x: MARGIN_X, y }, end: { x: MARGIN_X + 220, y }, thickness: 0.5, color: BODY_COLOR });
   page.drawText(sanitize(opts.version || ''), { x: MARGIN_X, y: MARGIN_BOT - 20, size: 8, font, color: MUTED });
   page.drawText(`Dijana pada ${new Date().toLocaleString('en-GB')}`, { x: PAGE_W - MARGIN_X - 180, y: MARGIN_BOT - 20, size: 8, font, color: MUTED });
+  const allPages = pdfDoc.getPages();
+  allPages.forEach((pg, idx) => {
+    stampFooter(pg);
+    const pageLabel = `M/S ${idx + 1} / ${allPages.length}`;
+    pg.drawText(pageLabel, { x: PAGE_W - MARGIN_X - font.widthOfTextAtSize(pageLabel, 7), y: 18, size: 7, font, color: MUTED });
+  });
   return await pdfDoc.save();
 }
 
