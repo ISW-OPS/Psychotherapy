@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-08-05T02:02:34.375609Z
+-- Generated: 2026-08-07T07:48:10.187233Z
 -- Jumlah fail: 30
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -636,6 +636,7 @@ CREATE TABLE IF NOT EXISTS psy_patients (
   emergency_contact_ic            TEXT,
   emergency_contact_relationship  TEXT,
   emergency_contact_email         TEXT,
+  contact_preference              TEXT DEFAULT 'pesakit' CHECK (contact_preference IN ('pesakit','waris')),
   insurance_provider              TEXT,
   insurance_policy                TEXT,
   referral_source                 TEXT,
@@ -906,6 +907,9 @@ COMMENT ON COLUMN psy_patients.emergency_contact_email IS
 COMMENT ON COLUMN psy_patients.emergency_contact_relationship IS
   'Hubungan waris dengan pesakit (Suami, Isteri, Ibu, Bapa, Anak, dll).';
 
+COMMENT ON COLUMN psy_patients.contact_preference IS
+  'Siapa patut terima notifikasi/kemas kini (WhatsApp) pesakit ini: pesakit atau waris. Direkod sahaja setakat ini — belum digunakan oleh Edge Functions penghantaran WhatsApp.';
+
 COMMENT ON COLUMN psy_patients.updated_at IS
   'Masa kemaskini terakhir rekod pesakit (auto dari trigger).';
 
@@ -961,6 +965,7 @@ CREATE TABLE IF NOT EXISTS psy_kyc_submissions (
   consent_marketing               BOOLEAN DEFAULT false,
   referral_source                 TEXT,
   submitted_by_proxy              BOOLEAN NOT NULL DEFAULT false,
+  contact_preference              TEXT DEFAULT 'pesakit' CHECK (contact_preference IN ('pesakit','waris')),
   status                          TEXT DEFAULT 'pending'
                                   CHECK (status IN ('pending','approved','rejected','needs_docs')),
   reviewed_by                     UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
@@ -1034,6 +1039,9 @@ CREATE TRIGGER trg_sync_kyc_to_patient
 -- ──── komen psy_kyc_submissions ────
 COMMENT ON COLUMN psy_kyc_submissions.submitted_by_proxy IS
   'true = wakil/keluarga isi borang ini (info mesti tepat & boleh disahkan dengan pesakit sebenar)';
+
+COMMENT ON COLUMN psy_kyc_submissions.contact_preference IS
+  'Siapa patut terima notifikasi/kemas kini (WhatsApp) pesakit ini: pesakit atau waris.';
 
 -- ────────────────────────────────────────────────
 -- psy_patient_notes — catatan pesakit (staff)
@@ -1681,6 +1689,11 @@ CREATE TABLE IF NOT EXISTS psy_treatment_plans (
   created_at          TIMESTAMPTZ DEFAULT now()
 );
 
+-- Jaringan keselamatan: satu pesakit tak boleh ada 2 plan AKTIF utk pakej (template) yang
+-- sama serentak — cth webhook bayaran retry serentak (race condition) cuba insert berganda.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_treatment_plans_active_patient_template
+  ON psy_treatment_plans(patient_id, template) WHERE status = 'active';
+
 ALTER TABLE psy_treatment_plans ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Staff manage plans" ON psy_treatment_plans;
@@ -1917,17 +1930,27 @@ BEGIN
 
       -- Cipta pelan baru dari pakej sambungan (jika belum wujud). Baris mingguan dijana
       -- kemudian bila pesakit set jadual (sama seperti pakej baru biasa).
-      INSERT INTO psy_treatment_plans
-        (patient_id, name, template, duration_unit, duration_weeks, current_week, coaching_schedule, status)
-      SELECT v_patient_id, COALESCE(pk.name,'Pakej') || ' Treatment Plan', pk.package_id,
-             COALESCE(pk.duration_unit,'week'), COALESCE(pk.duration_weeks,12), 1,
-             COALESCE(pk.coaching_schedule, '[]'::jsonb), 'active'
-      FROM psy_packages pk
-      WHERE pk.package_id = v_next_pkg
-        AND NOT EXISTS (
-          SELECT 1 FROM psy_treatment_plans
-          WHERE patient_id = v_patient_id AND template = v_next_pkg AND status = 'active'
-        );
+      -- NOT EXISTS di bawah cuma "best-effort" — boleh race bila >1 baris psy_plan_weekly_progress
+      -- ditanda hadir hampir serentak (setiap satu cetus trigger ni secara berasingan).
+      -- uq_treatment_plans_active_patient_template (unique index) ialah jaringan keselamatan
+      -- SEBENAR; tangkap unique_violation di sini supaya UPDATE hadir yang mencetuskan trigger
+      -- ni tak gagal walaupun panggilan/trigger lain menang race dulu (punca duplicate plan
+      -- prod 7 Ogos — 3 baris "Overhaul Body Diamond Y1" dicipta dlm 44 saat utk 1 pesakit).
+      BEGIN
+        INSERT INTO psy_treatment_plans
+          (patient_id, name, template, duration_unit, duration_weeks, current_week, coaching_schedule, status)
+        SELECT v_patient_id, COALESCE(pk.name,'Pakej') || ' Treatment Plan', pk.package_id,
+               COALESCE(pk.duration_unit,'week'), COALESCE(pk.duration_weeks,12), 1,
+               COALESCE(pk.coaching_schedule, '[]'::jsonb), 'active'
+        FROM psy_packages pk
+        WHERE pk.package_id = v_next_pkg
+          AND NOT EXISTS (
+            SELECT 1 FROM psy_treatment_plans
+            WHERE patient_id = v_patient_id AND template = v_next_pkg AND status = 'active'
+          );
+      EXCEPTION WHEN unique_violation THEN
+        NULL; -- plan aktif utk pakej sambungan ni dah dicipta oleh panggilan serentak — abaikan.
+      END;
     ELSE
       -- ── Tiada sambungan → pesakit inactive + outcome completed ──
       UPDATE psy_patients

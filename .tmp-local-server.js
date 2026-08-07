@@ -18,7 +18,7 @@ const mimeTypes = {
 };
 
 function send(res, statusCode, body, contentType = "text/plain; charset=utf-8") {
-  res.writeHead(statusCode, { "Content-Type": contentType });
+  res.writeHead(statusCode, { "Content-Type": contentType, "Cache-Control": "no-store" });
   res.end(body);
 }
 

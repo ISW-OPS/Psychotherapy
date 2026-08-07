@@ -30,6 +30,11 @@ CREATE TABLE IF NOT EXISTS psy_treatment_plans (
   created_at          TIMESTAMPTZ DEFAULT now()
 );
 
+-- Jaringan keselamatan: satu pesakit tak boleh ada 2 plan AKTIF utk pakej (template) yang
+-- sama serentak — cth webhook bayaran retry serentak (race condition) cuba insert berganda.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_treatment_plans_active_patient_template
+  ON psy_treatment_plans(patient_id, template) WHERE status = 'active';
+
 ALTER TABLE psy_treatment_plans ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Staff manage plans" ON psy_treatment_plans;
@@ -266,17 +271,27 @@ BEGIN
 
       -- Cipta pelan baru dari pakej sambungan (jika belum wujud). Baris mingguan dijana
       -- kemudian bila pesakit set jadual (sama seperti pakej baru biasa).
-      INSERT INTO psy_treatment_plans
-        (patient_id, name, template, duration_unit, duration_weeks, current_week, coaching_schedule, status)
-      SELECT v_patient_id, COALESCE(pk.name,'Pakej') || ' Treatment Plan', pk.package_id,
-             COALESCE(pk.duration_unit,'week'), COALESCE(pk.duration_weeks,12), 1,
-             COALESCE(pk.coaching_schedule, '[]'::jsonb), 'active'
-      FROM psy_packages pk
-      WHERE pk.package_id = v_next_pkg
-        AND NOT EXISTS (
-          SELECT 1 FROM psy_treatment_plans
-          WHERE patient_id = v_patient_id AND template = v_next_pkg AND status = 'active'
-        );
+      -- NOT EXISTS di bawah cuma "best-effort" — boleh race bila >1 baris psy_plan_weekly_progress
+      -- ditanda hadir hampir serentak (setiap satu cetus trigger ni secara berasingan).
+      -- uq_treatment_plans_active_patient_template (unique index) ialah jaringan keselamatan
+      -- SEBENAR; tangkap unique_violation di sini supaya UPDATE hadir yang mencetuskan trigger
+      -- ni tak gagal walaupun panggilan/trigger lain menang race dulu (punca duplicate plan
+      -- prod 7 Ogos — 3 baris "Overhaul Body Diamond Y1" dicipta dlm 44 saat utk 1 pesakit).
+      BEGIN
+        INSERT INTO psy_treatment_plans
+          (patient_id, name, template, duration_unit, duration_weeks, current_week, coaching_schedule, status)
+        SELECT v_patient_id, COALESCE(pk.name,'Pakej') || ' Treatment Plan', pk.package_id,
+               COALESCE(pk.duration_unit,'week'), COALESCE(pk.duration_weeks,12), 1,
+               COALESCE(pk.coaching_schedule, '[]'::jsonb), 'active'
+        FROM psy_packages pk
+        WHERE pk.package_id = v_next_pkg
+          AND NOT EXISTS (
+            SELECT 1 FROM psy_treatment_plans
+            WHERE patient_id = v_patient_id AND template = v_next_pkg AND status = 'active'
+          );
+      EXCEPTION WHEN unique_violation THEN
+        NULL; -- plan aktif utk pakej sambungan ni dah dicipta oleh panggilan serentak — abaikan.
+      END;
     ELSE
       -- ── Tiada sambungan → pesakit inactive + outcome completed ──
       UPDATE psy_patients

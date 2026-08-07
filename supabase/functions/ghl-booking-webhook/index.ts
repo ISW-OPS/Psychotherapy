@@ -65,11 +65,11 @@ Deno.serve(async (req: Request) => {
 
     const svc = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
-    // ── 1. Padan pesakit sedia ada ikut 9 digit terakhir telefon ──
+    // ── 1. Padan pesakit sedia ada ikut 9 digit terakhir telefon (sendiri atau waris) ──
     const key = phoneKey(phone)
     const { data: candidates } = await svc.from('psy_patients')
-      .select('id, phone').or(`phone.ilike.%${key}`)
-    let patientId = (candidates || []).find((p: any) => phoneKey(p.phone) === key)?.id || null
+      .select('id, phone, emergency_contact_phone').or(`phone.ilike.%${key},emergency_contact_phone.ilike.%${key}`)
+    let patientId = (candidates || []).find((p: any) => phoneKey(p.phone) === key || phoneKey(p.emergency_contact_phone) === key)?.id || null
     let created = false
 
     // ── 2. Tiada padanan → cipta pesakit baru (belum ada di ISW) ──
@@ -95,6 +95,11 @@ Deno.serve(async (req: Request) => {
 
     let kobSessionId = dupe?.id || null
     if (!kobSessionId) {
+      // Reschedule dari GHL (tarikh baru) → buang tempahan 'booked'/'reschedule' lama supaya
+      // hanya satu KOB aktif sahaja (sama corak dgn bookSlot() dalam kob.html). Sesi
+      // 'hadir'/'completed' TIDAK disentuh.
+      await svc.from('psy_kob_sessions').delete()
+        .eq('patient_id', patientId).in('status', ['booked', 'reschedule'])
       const { data: session, error: sesErr } = await svc.from('psy_kob_sessions').insert({
         patient_id: patientId,
         scheduled_at: scheduledAt.toISOString(),
@@ -103,6 +108,15 @@ Deno.serve(async (req: Request) => {
       }).select('id').single()
       if (sesErr) throw sesErr
       kobSessionId = session.id
+    }
+
+    // ── 4. Segerak kob_status → 'booked' supaya kob.html papar tarikh GHL terus
+    //      (bukan kalendar tempah-sendiri ISW). Jangan turunkan kalau pesakit dah lebih
+    //      jauh (hadir/pakej/dsb — reschedule sesi lama tak patut reset progress). ──
+    const advancedStatuses = ['hadir', 'package_recommended', 'package_paid', 'completed']
+    const { data: ptRow } = await svc.from('psy_patients').select('kob_status').eq('id', patientId).single()
+    if (ptRow && !advancedStatuses.includes(ptRow.kob_status)) {
+      await svc.from('psy_patients').update({ kob_status: 'booked' }).eq('id', patientId)
     }
 
     await svc.from('psy_audit_log').insert({

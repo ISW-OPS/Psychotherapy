@@ -55,6 +55,15 @@ function toE164(raw: string | null | undefined): string | null {
   if (n.startsWith('0')) return '+60' + n.slice(1)
   return '+' + n
 }
+// Pilih nombor & nama destinasi mesej ikut contact_preference pesakit.
+// null bermaksud tiada keutamaan waris berkuat kuasa — caller kekalkan
+// fallback psy_profiles sedia ada dalam kes tu.
+function resolveContact(p: any): { phone: string | null; name: string } {
+  if (p?.contact_preference === 'waris' && p?.emergency_contact_phone) {
+    return { phone: p.emergency_contact_phone, name: p.emergency_contact_name || p.full_name || '' }
+  }
+  return { phone: p?.phone || null, name: p?.full_name || '' }
+}
 
 async function ghl(path: string, init: RequestInit = {}) {
   const token = Deno.env.get('GHL_ISW_TOKEN')!
@@ -79,19 +88,22 @@ async function ghl(path: string, init: RequestInit = {}) {
 
 // Hantar SATU baris advice ke WhatsApp + tanda sent. Throw jika gagal.
 async function sendOne(svc: any, locationId: string, adv: any, sentBy: string | null) {
-  // ── Dapatkan nombor telefon pesakit ──────────────────────
+  // ── Dapatkan nombor telefon destinasi (pesakit atau waris ikut contact_preference) ──
   const { data: patient } = await svc.from('psy_patients')
-    .select('id, user_id, full_name, phone').eq('id', adv.patient_id).single()
-  let phone = patient?.phone || null
+    .select('id, user_id, full_name, phone, emergency_contact_phone, emergency_contact_name, contact_preference').eq('id', adv.patient_id).single()
+  const resolved = resolveContact(patient)
+  let phone = resolved.phone
+  let name = resolved.name
   if (!phone && patient?.user_id) {
+    // Fallback profil pesakit sendiri — hanya bila tiada nombor pesakit/waris langsung
     const { data: prof2 } = await svc.from('psy_profiles').select('phone').eq('id', patient.user_id).single()
     phone = prof2?.phone || null
+    name = patient?.full_name || ''
   }
   const e164 = toE164(phone)
   if (!e164) throw new Error('pesakit tiada nombor telefon')
 
   // ── GHL: upsert contact → hantar mesej ───────────────────
-  const name = patient?.full_name || ''
   const parts = name.trim().split(/\s+/)
   const upsertBody: any = { locationId, phone: e164 }
   if (name) { upsertBody.firstName = parts[0]; upsertBody.lastName = parts.slice(1).join(' ') || undefined; upsertBody.name = name }

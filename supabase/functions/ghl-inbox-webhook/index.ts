@@ -121,8 +121,9 @@ Deno.serve(async (req: Request) => {
     if (key) {
       const { data: profs } = await svc.from('psy_profiles').select('id, phone').or(`phone.ilike.%${key}`)
       const uids = (profs || []).filter((p: any) => phoneKey(p.phone) === key).map((p: any) => p.id)
-      const { data: pat1 } = await svc.from('psy_patients').select('id, user_id, phone').or(`phone.ilike.%${key}`)
-      const hit = (pat1 || []).find((p: any) => phoneKey(p.phone) === key)
+      // Padan ikut nombor pesakit ATAU nombor waris (contact_preference='waris' hantar/balas guna nombor waris)
+      const { data: pat1 } = await svc.from('psy_patients').select('id, user_id, phone, emergency_contact_phone').or(`phone.ilike.%${key},emergency_contact_phone.ilike.%${key}`)
+      const hit = (pat1 || []).find((p: any) => phoneKey(p.phone) === key || phoneKey(p.emergency_contact_phone) === key)
       if (hit) patient_id = hit.id
       else if (uids.length) {
         const { data: pat2 } = await svc.from('psy_patients').select('id').in('user_id', uids).limit(1)

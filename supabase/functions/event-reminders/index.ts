@@ -44,6 +44,15 @@ function toE164(raw) {
   if (n.startsWith('0')) return '+60' + n.slice(1)
   return '+' + n
 }
+// Pilih nombor & nama destinasi mesej ikut contact_preference pesakit.
+// Templat mesej (cth {nama}) kekal guna nama PESAKIT — cuma nombor & nama
+// paparan kenalan GHL yang berubah bila waris jadi destinasi.
+function resolveContact(p) {
+  if (p.contact_preference === 'waris' && p.emergency_contact_phone) {
+    return { phone: p.emergency_contact_phone, contactName: p.emergency_contact_name || p.full_name }
+  }
+  return { phone: p.phone, contactName: p.full_name }
+}
 function fillTemplate(tpl, vars) {
   return Object.entries(vars).reduce((s, [k, v]) => s.split(`{${k}}`).join(v ?? ''), tpl).replace(/\n{3,}/g, '\n\n').trim()
 }
@@ -87,14 +96,14 @@ async function runEventReminders(supabase, locationId) {
   const { data: events } = await supabase.from('psy_events').select('id, title, start_at, mode, meet_link, location, maps_url').eq('status', 'published').gte('start_at', t1).lte('start_at', t2)
   if (!events?.length) return { due: 0, sent: 0 }
   const evMap = Object.fromEntries(events.map((e) => [e.id, e]))
-  const { data: regs } = await supabase.from('psy_event_registrations').select('id, event_id, psy_patients(phone, full_name)').in('event_id', events.map((e) => e.id)).is('reminder_sent_at', null).neq('status', 'batal')
+  const { data: regs } = await supabase.from('psy_event_registrations').select('id, event_id, psy_patients(phone, full_name, emergency_contact_phone, emergency_contact_name, contact_preference)').in('event_id', events.map((e) => e.id)).is('reminder_sent_at', null).neq('status', 'batal')
   let sent = 0, skipped = 0
   const errors = []
   for (const r of regs || []) {
-    const ev = evMap[r.event_id]; const p = r.psy_patients || {}; const phone = toE164(p.phone)
+    const ev = evMap[r.event_id]; const p = r.psy_patients || {}; const { phone: rawPhone, contactName } = resolveContact(p); const phone = toE164(rawPhone)
     if (!ev || !phone) { skipped++; continue }
     try {
-      const cid = await upsertContact(locationId, phone, p.full_name)
+      const cid = await upsertContact(locationId, phone, contactName)
       if (!cid) throw new Error('no contactId')
       const when = new Date(ev.start_at).toLocaleString('ms-MY', { dateStyle: 'medium', timeStyle: 'short' })
       const pautan = ev.mode === 'f2f' ? [ev.location, ev.maps_url].filter(Boolean).join('\n') : (ev.meet_link || '')
@@ -145,7 +154,7 @@ async function broadcastOne(supabase, locationId, m, sessionMin) {
   const pkgs = Array.isArray(m.package_ids) ? m.package_ids : []
   const render = (name) => fillTemplate(m.message_template, { nama: name || '', masa, lead, pautan: link })
 
-  const { data: pats } = await supabase.from('psy_patients').select('id, user_id, full_name, phone, active_package_id')
+  const { data: pats } = await supabase.from('psy_patients').select('id, user_id, full_name, phone, active_package_id, emergency_contact_phone, emergency_contact_name, contact_preference')
   let targets = pats || []
   if (pkgs.length) targets = targets.filter((p) => p.active_package_id && pkgs.includes(p.active_package_id))
 
@@ -167,12 +176,12 @@ async function broadcastOne(supabase, locationId, m, sessionMin) {
     } catch (e) { res.errors.push('announcement: ' + String(e?.message || e)) }
   }
   if (channels.includes('whatsapp')) {
-    const withPhone = targets.map((p) => ({ ...p, e164: toE164(p.phone) })).filter((p) => p.e164)
+    const withPhone = targets.map((p) => ({ ...p, ...resolveContact(p), e164: toE164(resolveContact(p).phone) })).filter((p) => p.e164)
     const BATCH = 15
     for (let i = 0; i < withPhone.length; i += BATCH) {
       const chunk = withPhone.slice(i, i + BATCH)
       await Promise.all(chunk.map(async (p) => {
-        try { const cid = await upsertContact(locationId, p.e164, p.full_name); if (cid) { await sendWA(cid, render(p.full_name)); res.whatsapp++ } }
+        try { const cid = await upsertContact(locationId, p.e164, p.contactName); if (cid) { await sendWA(cid, render(p.full_name)); res.whatsapp++ } }
         catch (e) { res.errors.push(`${p.id}: ${String(e?.message || e)}`) }
       }))
     }
@@ -203,7 +212,7 @@ async function runCatatanHarianReminder(supabase, locationId) {
   await supabase.from('psy_auto_messages').update({ last_broadcast_at: new Date().toISOString() }).eq('id', cfg.id)
   // Pesakit dalam rawatan aktif (ada pakej, belum tamat)
   const { data: pats } = await supabase.from('psy_patients')
-    .select('id, full_name, phone, active_package_id, package_expires_at, status')
+    .select('id, full_name, phone, active_package_id, package_expires_at, status, emergency_contact_phone, emergency_contact_name, contact_preference')
     .neq('status', 'deleted').neq('status', 'rejected')
   const nowIso = new Date().toISOString()
   let targets = (pats || []).filter((p) => p.active_package_id && (!p.package_expires_at || p.package_expires_at >= nowIso))
@@ -211,13 +220,13 @@ async function runCatatanHarianReminder(supabase, locationId) {
   const { data: filled } = await supabase.from('psy_kepatuhan_log').select('patient_id').eq('log_date', myDate)
   const done = new Set((filled || []).map((r) => r.patient_id))
   targets = targets.filter((p) => !done.has(p.id))
-  const withPhone = targets.map((p) => ({ ...p, e164: toE164(p.phone) })).filter((p) => p.e164)
+  const withPhone = targets.map((p) => ({ ...p, ...resolveContact(p), e164: toE164(resolveContact(p).phone) })).filter((p) => p.e164)
   const res = { targets: withPhone.length, sent: 0, errors: [] }
   const BATCH = 15
   for (let i = 0; i < withPhone.length; i += BATCH) {
     const chunk = withPhone.slice(i, i + BATCH)
     await Promise.all(chunk.map(async (p) => {
-      try { const cid = await upsertContact(locationId, p.e164, p.full_name); if (cid) { await sendWA(cid, fillTemplate(cfg.message_template, { nama: p.full_name || '' })); res.sent++ } }
+      try { const cid = await upsertContact(locationId, p.e164, p.contactName); if (cid) { await sendWA(cid, fillTemplate(cfg.message_template, { nama: p.full_name || '' })); res.sent++ } }
       catch (e) { res.errors.push(`${p.id}: ${String(e?.message || e)}`) }
     }))
   }
@@ -432,7 +441,7 @@ function applyConds(pats, conds) {
   for (const c of conds || []) {
     if (c.field === 'patient_status') t = t.filter((p) => (c.value === 'active') ? p.status === 'active' : p.status !== 'active')
     else if (c.field === 'gender') t = t.filter((p) => p.gender === c.value)
-    else if (c.field === 'has_whatsapp') t = t.filter((p) => (c.value === 'yes') ? !!p.phone : !p.phone)
+    else if (c.field === 'has_whatsapp') t = t.filter((p) => (c.value === 'yes') ? !!resolveContact(p).phone : !resolveContact(p).phone)
     else if (c.field === 'package') { const arr = Array.isArray(c.value) ? c.value : [c.value]; t = t.filter((p) => arr.includes(p.active_package_id)) }
     else if (c.field === 'state') { const arr = Array.isArray(c.value) ? c.value : [c.value]; t = t.filter((p) => arr.includes(p.state)) }
     else if (c.field === 'age') { const mn = c.value?.min, mx = c.value?.max; t = t.filter((p) => { if (!p.date_of_birth) return false; const age = Math.floor((Date.now() - new Date(p.date_of_birth).getTime()) / 31557600000); return (mn == null || age >= mn) && (mx == null || age <= mx) }) }
@@ -452,7 +461,7 @@ async function runAutomationOne(supabase, locationId, a) {
   const actions = Array.isArray(a.actions) ? a.actions : []
   const conds = (a.conditions_enabled && Array.isArray(a.conditions)) ? a.conditions : []
   const { data: pats } = await supabase.from('psy_patients')
-    .select('id, user_id, full_name, phone, email, gender, status, active_package_id, active_package_name, package_purchased_at, package_expires_at, mrn, ic_number, coach_id, state, date_of_birth, created_at').neq('status', 'deleted').neq('status', 'rejected')
+    .select('id, user_id, full_name, phone, email, gender, status, active_package_id, active_package_name, package_purchased_at, package_expires_at, mrn, ic_number, coach_id, state, date_of_birth, created_at, emergency_contact_phone, emergency_contact_name, contact_preference').neq('status', 'deleted').neq('status', 'rejected')
   const targets = applyConds(pats || [], conds)
   // Lookup untuk pembolehubah: coach, jumlah minggu pakej, minggu semasa, sesi akan datang
   const coachMap = {}, pkgWeeksMap = {}, planMap = {}, upcomingMap = {}
@@ -477,12 +486,12 @@ async function runAutomationOne(supabase, locationId, a) {
     }
   }
   if (actions.includes('whatsapp')) {
-    const withPhone = targets.map((p) => ({ ...p, e164: toE164(p.phone) })).filter((p) => p.e164)
+    const withPhone = targets.map((p) => ({ ...p, ...resolveContact(p), e164: toE164(resolveContact(p).phone) })).filter((p) => p.e164)
     const BATCH = 15
     for (let i = 0; i < withPhone.length; i += BATCH) {
       await Promise.all(withPhone.slice(i, i + BATCH).map(async (p) => {
         const msg = render(p)
-        try { const cid = await upsertContact(locationId, p.e164, p.full_name); if (cid) { await sendWA(cid, msg); res.whatsapp++; await logAuto(supabase, a, p, 'whatsapp', msg, 'sent', null) } }
+        try { const cid = await upsertContact(locationId, p.e164, p.contactName); if (cid) { await sendWA(cid, msg); res.whatsapp++; await logAuto(supabase, a, p, 'whatsapp', msg, 'sent', null) } }
         catch (e) { res.failed++; await logAuto(supabase, a, p, 'whatsapp', msg, 'failed', String(e?.message || e)) }
       }))
     }
@@ -565,7 +574,7 @@ async function runSessionConfirm(supabase, locationId) {
   }
   if (sendWindowOk) {
     const { data: rows } = await supabase.from('psy_plan_weekly_progress')
-      .select('id, week_number, session_day, session_date, patient_id, psy_patients(full_name, phone, user_id)')
+      .select('id, week_number, session_day, session_date, patient_id, psy_patients(full_name, phone, user_id, emergency_contact_phone, emergency_contact_name, contact_preference)')
       .eq('status', 'booked').is('patient_confirmed', null).is('confirm_reminder_sent_at', null)
       .gt('session_date', deadlineIso).lte('session_date', leadIso).limit(500)
     reminder.due = (rows || []).length
@@ -579,8 +588,9 @@ async function runSessionConfirm(supabase, locationId) {
       const msg = fillTemplate(cfg.message_template, vars)
       try {
         if (channels.includes('whatsapp')) {
-          const e164 = toE164(p.phone)
-          if (e164) { const cid = await upsertContact(locationId, e164, p.full_name); if (cid) { await sendWA(cid, msg); reminder.whatsapp++ } }
+          const { phone: rawPhone, contactName } = resolveContact(p)
+          const e164 = toE164(rawPhone)
+          if (e164) { const cid = await upsertContact(locationId, e164, contactName); if (cid) { await sendWA(cid, msg); reminder.whatsapp++ } }
         }
         if (channels.includes('inapp') && p.user_id) {
           await supabase.from('psy_notifications').insert({
@@ -691,7 +701,7 @@ async function runDnaSampleReminder(supabase, locationId) {
   const leadIso = new Date(nowMs + leadDays * 86400000).toISOString()
 
   const { data: rows } = await supabase.from('psy_dna_test_process')
-    .select('id, patient_id, sample_appointment_id, psy_patients(full_name, phone)')
+    .select('id, patient_id, sample_appointment_id, psy_patients(full_name, phone, emergency_contact_phone, emergency_contact_name, contact_preference)')
     .eq('current_step', 1).is('sample_reminder_sent_at', null).not('sample_appointment_id', 'is', null).limit(500)
   const res = { due: 0, sent: 0, errors: [] }
   if (!rows?.length) return res
@@ -705,10 +715,11 @@ async function runDnaSampleReminder(supabase, locationId) {
     if (appt.appointment_time <= new Date(nowMs).toISOString() || appt.appointment_time > leadIso) continue
     res.due++
     const p = r.psy_patients || {}
-    const phone = toE164(p.phone)
+    const { phone: rawPhone, contactName } = resolveContact(p)
+    const phone = toE164(rawPhone)
     if (!phone) { res.errors.push(`${r.id}: tiada telefon`); continue }
     try {
-      const cid = await upsertContact(locationId, phone, p.full_name)
+      const cid = await upsertContact(locationId, phone, contactName)
       if (!cid) throw new Error('no contactId')
       const msg = fillTemplate(cfg.message_template, {
         nama: p.full_name || '', tarikh_sample: fmtSessDate(appt.appointment_time),

@@ -33,10 +33,28 @@
 
       <div class="p-4 md:p-8 space-y-5">
 
+        <!-- Senarai Minggu — landing bila plan-week.html dibuka tanpa &week= (cth "Lihat sesi →") -->
+        <div id="week-list-view" class="hidden space-y-4">
+          <div class="flex items-center justify-between flex-wrap gap-3">
+            <div class="flex items-center gap-2 text-sm flex-wrap">
+              <a id="btn-back-list" href="#" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-ink/20 text-xs font-medium hover:bg-cream mr-1">← Kembali</a>
+              <span id="plan-name-crumb-list" class="font-semibold text-ink"></span>
+            </div>
+          </div>
+          <div class="bg-white rounded-xl p-5 border border-ink/10">
+            <h3 class="font-bold text-base mb-1">📅 Senarai Sesi &amp; Tarikh</h3>
+            <p class="text-xs text-ink/60 mb-4">Semua minggu untuk pakej ini. Klik satu minggu untuk lihat/edit butiran.</p>
+            <div id="week-list-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+          </div>
+        </div>
+
+        <div id="week-detail-view" class="hidden space-y-5">
+
         <!-- Breadcrumb + Week Navigation -->
         <div class="flex items-center justify-between flex-wrap gap-3">
           <div class="flex items-center gap-2 text-sm flex-wrap">
             <a id="btn-back" href="#" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-ink/20 text-xs font-medium hover:bg-cream mr-1">← Kembali</a>
+            <a id="btn-back-to-list" href="#" class="hidden inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-ink/20 text-xs font-medium hover:bg-cream mr-1">← Senarai Minggu</a>
             <span id="plan-name-crumb" class="text-ink/60"></span>
             <span class="text-ink/30">/</span>
             <span id="week-crumb" class="font-semibold text-ink"></span>
@@ -238,6 +256,8 @@
           <div id="admin-tools-msg" class="hidden mt-2 text-xs font-semibold"></div>
         </div>
 
+        </div><!-- /#week-detail-view -->
+
       </div>
     </main>
 
@@ -378,11 +398,29 @@ function escHtml(s) { const d = document.createElement('div'); d.textContent = S
   if (!user) return;
   setHeaderBack('plans.html', 'Kembali ke Treatment Plans');
 
+  try {
+    await bootPlanWeek();
+  } catch (e) {
+    console.error('[plan-week] boot error:', e);
+    banner('Ralat memuatkan halaman: ' + (e.message || e), 'error');
+  }
+})();
+
+async function bootPlanWeek() {
   const params = new URLSearchParams(location.search);
   const planId = params.get('plan_id');
+  const hasWeekParam = params.has('week');
   weekNumber   = parseInt(params.get('week') || '1');
   backTab      = params.get('from') || 'sessions';  // kembali ke tab asal (cth 'overview')
   _wantSession = parseInt(params.get('session') || '0');  // auto-pilih tab sesi ni (cth 2)
+
+  // Toggle serta-merta (sebelum sebarang query async) supaya tiada kelip paparan salah.
+  if (!hasWeekParam) {
+    document.getElementById('week-list-view').classList.remove('hidden');
+  } else {
+    document.getElementById('week-detail-view').classList.remove('hidden');
+    document.getElementById('btn-back-to-list').classList.remove('hidden');
+  }
 
   if (!planId) { location.href = 'plans.html'; return; }
 
@@ -391,6 +429,16 @@ function escHtml(s) { const d = document.createElement('div'); d.textContent = S
 
   activePlan    = plan;
   patientId     = plan.patient_id;
+
+  const backHref = patientId ? `patient-hub.html?patient_id=${patientId}&tab=${backTab}` : 'plans.html';
+  document.getElementById('btn-back-list').href = backHref;
+  document.getElementById('btn-back-to-list').href = `plan-week.html?plan_id=${planId}&from=${backTab}`;
+  document.getElementById('plan-name-crumb-list').textContent = plan.name || '';
+
+  if (!hasWeekParam) {
+    await renderWeekListView();
+    return;
+  }
 
   // Timeline bimbingan sentiasa dibaca LIVE dari pakej supaya edit pakej (tambah/buang bimbingan,
   // aktiviti, bekalan, mode) terus muncul untuk coach & pesakit. coaching_schedule tidak pernah
@@ -421,7 +469,63 @@ function escHtml(s) { const d = document.createElement('div'); d.textContent = S
   await loadKepatuhanItems();
   await loadPwAvailability();   // slot rawatan + penutupan klinik (utk tempahan sedar-slot)
   await loadWeek();
-})();
+}
+
+// ── Senarai Minggu (landing bila tiada &week=) ─────────
+async function renderWeekListView() {
+  const { data: rows } = await window.db.from('psy_plan_weekly_progress')
+    .select('week_number, session_day, session_date, status, is_extension')
+    .eq('plan_id', activePlan.id).order('week_number').order('session_day');
+  const weekRows = rows || [];
+
+  const maxRowWeek = Math.max(0, ...weekRows.map(r => r.week_number || 0));
+  const weeks = Math.max(activePlan.duration_weeks || 12, maxRowWeek);
+  const cw = activePlan.current_week || 1;
+
+  const sessionMap = {};
+  weekRows.forEach(r => { sessionMap[`${r.week_number}_${r.session_day || 1}`] = r; });
+
+  const statusMap = {
+    hadir:                     { border: 'border-green-dark bg-green/5',    chip: 'bg-green-dark text-white',  label: '✅ Selesai' },
+    consultation_done:         { border: 'border-green-dark bg-green/5',    chip: 'bg-green-dark text-white',  label: '✅ Selesai' },
+    extension_paid:            { border: 'border-green-dark bg-green/5',    chip: 'bg-green-dark text-white',  label: '✅ Tambahan Selesai' },
+    reschedule:                { border: 'border-gold bg-gold/5',           chip: 'bg-gold text-white',        label: '⚠️ Reschedule' },
+    cancel:                    { border: 'border-terracotta bg-terracotta/5', chip: 'bg-terracotta text-white', label: '❌ Tidak Hadir' },
+    booked:                    { border: 'border-navy bg-navy/5',           chip: 'bg-navy text-white',        label: '📅 Ditempah' },
+    extension_pending_payment: { border: 'border-terracotta bg-terracotta/5', chip: 'bg-terracotta text-white', label: '💳 Belum Bayar' },
+  };
+  const fallback = { border: 'border-dashed border-ink/25', chip: 'bg-cream text-ink/60', label: 'Belum Tempah' };
+
+  let html = '';
+  for (let w = 1; w <= weeks; w++) {
+    const rowsForWeek = weekRows.filter(r => r.week_number === w);
+    const s1 = sessionMap[`${w}_1`];
+    const s2 = sessionMap[`${w}_2`];
+    const isCurrent = w === cw;
+    const isExt = rowsForWeek.some(r => r.is_extension);
+
+    const dateLabel = r => r?.session_date
+      ? new Date(r.session_date).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' })
+      : (r ? new Date(computeWeekRange(activePlan, w).start).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' }) + ' (dijangka)' : '—');
+
+    const primary = s1 || s2 || rowsForWeek[0] || null;
+    const st = statusMap[primary?.status] || fallback;
+
+    const sessionLines = (s1 || s2)
+      ? [s1, s2].filter(Boolean).map((r, i) => `<div class="text-xs text-ink/70">${(s1 && s2) ? `Sesi ${r.session_day || (i+1)}: ` : ''}📅 ${dateLabel(r)}</div>`).join('')
+      : `<div class="text-xs text-ink/40 italic">${dateLabel(null)}</div>`;
+
+    html += `<a href="plan-week.html?plan_id=${activePlan.id}&week=${w}&from=${backTab}" class="block border ${st.border} ${isCurrent ? 'ring-2 ring-navy' : ''} rounded-xl p-3 hover:shadow-sm transition">
+      <div class="flex items-center justify-between gap-2 mb-1.5">
+        <div class="text-sm font-bold ${isCurrent ? 'text-navy' : 'text-ink/80'}">Minggu ${w}${isExt ? ' <span class="text-[10px] font-semibold text-purple-700">· Tambahan</span>' : ''}${isCurrent ? ' <span class="font-normal text-xs">· Semasa</span>' : ''}</div>
+        <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold whitespace-nowrap ${st.chip}">${st.label}</span>
+      </div>
+      ${sessionLines}
+    </a>`;
+  }
+
+  document.getElementById('week-list-grid').innerHTML = html || '<div class="col-span-3 text-sm text-ink/40 italic py-4 text-center">Tiada data</div>';
+}
 
 // ── Load week data ────────────────────────────────────
 async function loadWeek() {

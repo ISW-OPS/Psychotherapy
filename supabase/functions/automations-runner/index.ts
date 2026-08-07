@@ -28,6 +28,15 @@ function toE164(raw: string) {
   if (n.startsWith('0')) return '+60' + n.slice(1)
   return '+' + n
 }
+// Pilih nombor & nama destinasi mesej ikut contact_preference pesakit.
+// Templat mesej (cth {nama}) kekal guna nama PESAKIT — cuma nombor & nama
+// paparan kenalan GHL yang berubah bila waris jadi destinasi.
+function resolveContact(p: any) {
+  if (p.contact_preference === 'waris' && p.emergency_contact_phone) {
+    return { phone: p.emergency_contact_phone, contactName: p.emergency_contact_name || p.full_name }
+  }
+  return { phone: p.phone, contactName: p.full_name }
+}
 function fillTemplate(tpl: string, vars: Record<string, string>) {
   return Object.entries(vars).reduce((s, [k, v]) => s.split(`{{${k}}}`).join(v ?? '').split(`{${k}}`).join(v ?? ''), tpl || '').replace(/\n{3,}/g, '\n\n').trim()
 }
@@ -65,7 +74,7 @@ function applyConditions(pats: any[], conds: any[]) {
   for (const c of conds || []) {
     if (c.field === 'patient_status') t = t.filter((p) => (c.value === 'active') ? p.status === 'active' : p.status !== 'active')
     else if (c.field === 'gender') t = t.filter((p) => p.gender === c.value)
-    else if (c.field === 'has_whatsapp') t = t.filter((p) => (c.value === 'yes') ? !!p.phone : !p.phone)
+    else if (c.field === 'has_whatsapp') t = t.filter((p) => (c.value === 'yes') ? !!resolveContact(p).phone : !resolveContact(p).phone)
   }
   return t
 }
@@ -74,7 +83,7 @@ async function runOne(supabase: any, locationId: string, a: any) {
   const actions = Array.isArray(a.actions) ? a.actions : []
   const conds = (a.conditions_enabled && Array.isArray(a.conditions)) ? a.conditions : []
   const { data: pats } = await supabase.from('psy_patients')
-    .select('id, user_id, full_name, phone, gender, status, active_package_id')
+    .select('id, user_id, full_name, phone, gender, status, active_package_id, emergency_contact_phone, emergency_contact_name, contact_preference')
     .neq('status', 'deleted').neq('status', 'rejected')
   const targets = applyConditions(pats || [], conds)
   const render = (name: string) => fillTemplate(a.message_template || '', { nama: name || '' })
@@ -89,13 +98,13 @@ async function runOne(supabase: any, locationId: string, a: any) {
     }
   }
   if (actions.includes('whatsapp')) {
-    const withPhone = targets.map((p) => ({ ...p, e164: toE164(p.phone) })).filter((p) => p.e164)
+    const withPhone = targets.map((p) => ({ ...p, ...resolveContact(p), e164: toE164(resolveContact(p).phone) })).filter((p) => p.e164)
     const BATCH = 15
     for (let i = 0; i < withPhone.length; i += BATCH) {
       const chunk = withPhone.slice(i, i + BATCH)
       await Promise.all(chunk.map(async (p) => {
         const msg = render(p.full_name)
-        try { const cid = await upsertContact(locationId, p.e164, p.full_name); if (cid) { await sendWA(cid, msg); res.whatsapp++; await logSend(supabase, a, p, 'whatsapp', msg, 'sent', null) } }
+        try { const cid = await upsertContact(locationId, p.e164, p.contactName); if (cid) { await sendWA(cid, msg); res.whatsapp++; await logSend(supabase, a, p, 'whatsapp', msg, 'sent', null) } }
         catch (e) { res.failed++; await logSend(supabase, a, p, 'whatsapp', msg, 'failed', String((e as any)?.message || e)) }
       }))
     }

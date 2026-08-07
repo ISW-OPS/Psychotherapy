@@ -1689,7 +1689,7 @@ function renderOvWeekPage() {
     document.getElementById('ov-weekly-list').innerHTML = `
       <div class="col-span-3 text-center py-6">
         <div class="text-sm text-ink/40 italic mb-3">Tiada plan aktif${hasPkg ? ` — pesakit ada pakej (<span class="text-ink/60 font-semibold not-italic">${ovEsc(patient.active_package_name || patient.active_package_id)}</span>) tapi belum ada treatment plan` : ''}</div>
-        ${canMake ? `<button data-rbac="patient.create" onclick="createMissingPlan()" class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-navy text-white hover:bg-navy-dark transition">➕ Cipta Plan Rawatan</button>` : ''}
+        ${canMake ? `<button data-rbac="patient.create" onclick="createMissingPlan(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-navy text-white hover:bg-navy-dark transition">➕ Cipta Plan Rawatan</button>` : ''}
       </div>`;
     return;
   }
@@ -2042,7 +2042,7 @@ async function loadOverview() {
       end_date: endDate,
       total_sessions: sessionsTotal,
       sessions_used: sessionsUsed,
-      status: pl.status === 'active' ? 'active' : (pl.status === 'completed' ? 'completed' : 'pending'),
+      status: ['active','completed'].includes(pl.status) ? pl.status : 'pending',
       amount: pkg.price || 0,
       is_main: idx === 0,
     };
@@ -2131,9 +2131,9 @@ function renderPakejAktifTable(pkgs, declinedKob) {
       <td class="px-5 py-3">
         <div class="font-semibold text-sm text-ink">${escapeHtml(p.package_name || p.package_id || '—')}</div>
         <div class="flex items-center gap-1.5 mt-0.5">
-          ${p.is_main ? '<span class="inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700">Pakej Utama</span>' : '<span class="inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-50 text-purple-700">Tambahan</span>'}
-          ${p.id ? `<a href="plan-week.html?plan_id=${p.id}&week=1&from=history" class="text-[10px] font-semibold text-navy hover:underline">Lihat sesi →</a>` : ''}
+          ${p.id ? `<a href="plan-week.html?plan_id=${p.id}&from=history" class="text-[10px] font-semibold text-navy hover:underline">Lihat sesi →</a>` : ''}
         </div>
+        ${p.id ? `<div class="mt-1"><button data-rbac="patient.delete" onclick="cancelPlanPackage('${p.id}', this)" class="text-[10px] font-semibold text-red-500 hover:underline">🗑️ Padam</button></div>` : ''}
       </td>
       <td class="px-3 py-3 text-xs text-ink/65">${p.start_date ? new Date(p.start_date).toLocaleDateString('ms-MY',{day:'2-digit',month:'short',year:'numeric'}) : '—'}</td>
       <td class="px-3 py-3 text-xs text-ink/65">${p.end_date ? new Date(p.end_date).toLocaleDateString('ms-MY',{day:'2-digit',month:'short',year:'numeric'}) : '—'}</td>
@@ -3307,39 +3307,45 @@ function snCancelSesi() {
 }
 
 // ── PROFILE ───────────────────────────────────────────
-// ── CANCEL PACKAGE ────────────────────────────────────
-async function cancelPackage() {
-  const pkgName = patient.active_package_name || patient.active_package_id;
-  if (!confirm(`Batalkan pakej "${pkgName}" untuk pesakit ini?\n\nTindakan ini tidak boleh dibuat alik.`)) return;
+// ── DELETE PLAN (per-baris jadual Pakej & Sejarah) ─────
+// Padam TERUS (bukan tanda batal) — untuk buang plan salah/duplicate. Cascade DB akan
+// buang sekali jadual sesi (psy_plan_weekly_progress), override, check-in, vitals rujukan
+// plan ini, dsb (rujuk FK ON DELETE CASCADE di database/schema/07_treatment_plans.sql).
+async function cancelPlanPackage(planId, btn) {
+  const pkg = _pakejData.pkgs.find(p => p.id === planId);
+  const pkgName = pkg?.package_name || 'pakej ini';
+  const hadirCount = pkg?.sessions_used || 0;
+  const warn = hadirCount > 0 ? `\n\n⚠️ Plan ini ada ${hadirCount} sesi Hadir yang direkod — rekod tu turut dipadam.` : '';
+  if (!confirm(`Padam pakej "${pkgName}" untuk pesakit ini SECARA KEKAL?\n\nSemua data berkaitan (jadual sesi, nota, vitals rujukan plan ini) akan turut dipadam. Tindakan ini TIDAK BOLEH DIBUAT ALIK.${warn}`)) return;
 
-  const btn = document.querySelector('[onclick="cancelPackage()"]');
-  if (btn) { btn.disabled = true; btn.textContent = 'Membatalkan...'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Memadam...'; }
 
-  // Clear active package on patient record
-  const { error } = await window.db.from('psy_patients').update({
-    active_package_id:   null,
-    active_package_name: null,
-    package_expires_at:  null,
-  }).eq('id', patientId);
+  // Kosongkan rujukan pakej aktif pada rekod pesakit jika ini pakej aktif semasa
+  if (pkg?.package_id && patient.active_package_id === pkg.package_id) {
+    await window.db.from('psy_patients').update({
+      active_package_id:   null,
+      active_package_name: null,
+      package_expires_at:  null,
+    }).eq('id', patientId);
+  }
 
-  if (error) { banner('Gagal batalkan pakej: ' + error.message, 'error'); if (btn) { btn.disabled = false; btn.textContent = '✕ Batalkan Pakej'; } return; }
+  // Tandakan rekod pembelian berkaitan sebagai batal (jika ada) — kekal sebagai jejak kewangan
+  if (pkg?.package_id) {
+    await window.db.from('psy_package_purchases')
+      .update({ status: 'cancelled' })
+      .eq('patient_id', patientId)
+      .eq('package_id', pkg.package_id)
+      .in('status', ['active','pending_payment']);
+  }
 
-  // Mark latest purchase as cancelled
-  await window.db.from('psy_package_purchases')
-    .update({ status: 'cancelled' })
-    .eq('patient_id', patientId)
-    .eq('package_id', patient.active_package_id)
-    .in('status', ['active','pending_payment']);
+  const { error } = await window.db.from('psy_treatment_plans').delete().eq('id', planId);
 
-  await auditLog('package.cancelled', patientId, { package: pkgName, cancelled_by: window.currentUser.full_name });
+  if (error) { banner('Gagal padam pakej: ' + error.message, 'error'); if (btn) { btn.disabled = false; btn.textContent = '🗑️ Padam'; } return; }
 
-  patient.active_package_id   = null;
-  patient.active_package_name = null;
-  patient.package_expires_at  = null;
+  await auditLog('plan.deleted', patientId, { plan_id: planId, package: pkgName, sessions_used: hadirCount, deleted_by: window.currentUser.full_name });
 
-  loadedTabs.delete('overview');
-  if (typeof loadOverview === 'function') await loadOverview();
-  banner('Pakej berjaya dibatalkan');
+  banner('Pakej berjaya dipadam');
+  location.reload();
 }
 
 function renderProfile() {

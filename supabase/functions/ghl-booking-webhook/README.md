@@ -80,10 +80,20 @@ Di GHL Workflow → Webhook action:
    MRN auto-jana.
 3. Cipta `psy_kob_sessions` (`status='booked'`) pada `scheduled_at` yang
    dihantar. Kalau webhook sama tercetus dua kali (retry GHL), tak cipta
-   slot berganda — dikesan ikut `patient_id` + `scheduled_at`.
-4. Log ke `psy_audit_log` (`action='ghl_booking.received'`) untuk jejak.
-5. Pesakit lengkapkan KYC bila login kali pertama (`kyc.html`) — alur
-   sedia ada tak berubah.
+   slot berganda — dikesan ikut `patient_id` + `scheduled_at`. Kalau
+   tarikh **berbeza** dari sesi aktif sedia ada (reschedule di GHL), sesi
+   `booked`/`reschedule` lama dibuang dulu supaya cuma satu KOB aktif.
+4. **Segerak `psy_patients.kob_status` → `'booked'`** (kecuali pesakit dah
+   lebih jauh — `hadir`/`package_recommended`/`package_paid`/`completed`,
+   tak diturunkan). Ini penting: `kob.html` guna `kob_status` untuk tentukan
+   papar kalendar tempah-sendiri ISW **atau** skrin "Sesi KOB Disahkan"
+   (guna tarikh dari `psy_kob_sessions`). Tanpa langkah ni, pesakit akan
+   nampak kalendar ISW walaupun tarikh GHL dah wujud dalam DB.
+5. Log ke `psy_audit_log` (`action='ghl_booking.received'`) untuk jejak.
+6. Pesakit lengkapkan KYC bila login kali pertama (`kyc.html`) — alur
+   sedia ada tak berubah. `enforceKyc()` (GATE 1, `_shared.js`) pastikan
+   pesakit KYC dulu sebelum boleh masuk `kob.html` langsung, tak kira
+   `kob_status`.
 
 ## Nota & had
 

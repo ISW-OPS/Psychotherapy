@@ -84,14 +84,32 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: 'amaun tak padan' }, 409)
     }
 
-    // 5. FULFILL (aktif pakej/plan/KOB/order) — hanya sekali (dijaga oleh guard status di atas)
-    await fulfillOrder(admin, payment)
+    // 5. Tuntut baris ini SECARA ATOM sebelum fulfillment. HitPay boleh hantar webhook
+    // SAMA berkali-kali serentak (retry) — guard status di langkah 3 tak cukup sebab ia
+    // hanya ditulis balik SELEPAS fulfillOrder() siap, jadi panggilan serentak semua lepas
+    // pemeriksaan tu sebelum mana-mana sempat commit → psy_treatment_plans/psy_package_purchases
+    // dicipta BERGANDA (punca pakej "Overhaul Body Diamond Y1" x4 baris kes prod 7 Ogos).
+    // UPDATE...WHERE fulfilled_at IS NULL bergantung pada row-level lock Postgres — hanya
+    // SATU panggilan serentak akan "menang" (dapat baris balik); yang lain dapat 0 baris & keluar.
+    const { data: claimed } = await admin.from('psy_payments')
+      .update({ fulfilled_at: new Date().toISOString(), gateway_status: result.status })
+      .eq('id', payment.id).is('fulfilled_at', null).select('id')
+    if (!claimed?.length) {
+      return json({ ok: true, note: 'sedang/sudah diproses oleh panggilan lain' })
+    }
+
+    // FULFILL (aktif pakej/plan/KOB/order)
+    try {
+      await fulfillOrder(admin, payment)
+    } catch (fulfillErr) {
+      // Lepaskan claim supaya webhook retry akan datang boleh cuba semula.
+      await admin.from('psy_payments').update({ fulfilled_at: null }).eq('id', payment.id).catch(() => {})
+      throw fulfillErr
+    }
 
     await admin.from('psy_payments').update({
       status: 'completed',
-      gateway_status: result.status,
       paid_at: new Date().toISOString(),
-      fulfilled_at: new Date().toISOString(),
     }).eq('id', payment.id)
 
     // Notifikasi pesakit
@@ -276,19 +294,29 @@ async function fulfillOrder(admin: any, payment: any) {
 // PDF gagal jana/upload → fallback hantar teks ringkasan sahaja.
 async function sendReceiptWhatsApp(admin: any, payment: any) {
   // Butiran pesakit: psy_patients dulu, fallback psy_profiles + auth (email)
-  let phone: string | null = null, name: string | null = null
+  // `name` = nama PESAKIT (untuk PDF resit & ucapan dalam mesej — TAK berubah).
+  // `contactName` = nama untuk label kenalan GHL sahaja — jadi nama waris bila
+  // contact_preference='waris' (staff nampak siapa sebenarnya terima mesej ni).
+  let phone: string | null = null, name: string | null = null, contactName: string | null = null
   let nric: string | null = null, mrn: string | null = null, email: string | null = null
   let userId: string | null = payment.user_id || null
   const patientId = payment.patient_id || payment.intent?.patientId || null
 
   if (patientId) {
     const { data: pt } = await admin.from('psy_patients')
-      .select('full_name, phone, ic_number, mrn, user_id').eq('id', patientId).limit(1)
+      .select('full_name, phone, ic_number, mrn, user_id, emergency_contact_phone, emergency_contact_name, contact_preference').eq('id', patientId).limit(1)
     const p = pt?.[0]
     if (p) {
-      phone = p.phone || null; name = p.full_name || null
+      name = p.full_name || null
       nric = p.ic_number || null; mrn = p.mrn || null
       userId = userId || p.user_id || null
+      if (p.contact_preference === 'waris' && p.emergency_contact_phone) {
+        phone = p.emergency_contact_phone
+        contactName = p.emergency_contact_name || name
+      } else {
+        phone = p.phone || null
+        contactName = name
+      }
     }
   }
   if ((!phone || !name) && userId) {
@@ -296,6 +324,7 @@ async function sendReceiptWhatsApp(admin: any, payment: any) {
       .select('full_name, phone').eq('id', userId).limit(1)
     phone = phone || prof?.[0]?.phone || null
     name = name || prof?.[0]?.full_name || null
+    contactName = contactName || name
   }
   if (userId) {
     const { data: au } = await admin.auth.admin.getUserById(userId).catch(() => ({ data: null }))
@@ -369,7 +398,7 @@ async function sendReceiptWhatsApp(admin: any, payment: any) {
 
   await sendWhatsApp(admin, {
     phone,
-    name,
+    name: contactName,
     message,
     attachments: pdfUrl ? [pdfUrl] : [],
     sentByName: 'Auto — Resit Pembayaran',
