@@ -52,6 +52,8 @@ async function ghl(path: string, init: RequestInit = {}) {
   return body
 }
 const pickAtts = (arr: any) => (arr || []).map((a: any) => (typeof a === 'string' ? a : (a?.url || a?.link || a?.fileUrl || ''))).filter(Boolean)
+// GHL kadang pulangkan body literal teks "undefined"/"null" (bukan medan kosong sebenar)
+const cleanApiBody = (b: any) => (b == null || b === 'undefined' || b === 'null') ? '' : b
 const isMediaPlaceholder = (b: string) => /">?[A-Z]{3,}<"|>[A-Z]{3,}</.test(b || '')
 const stripPlaceholder = (b: string) => (b || '').replace(/>[A-Z]{3,}</g, '').trim()
 
@@ -86,7 +88,7 @@ Deno.serve(async (req: Request) => {
       ghl_message_id: m.id,
       ghl_conversation_id: conversationId,
       direction: m.direction === 'inbound' ? 'inbound' : 'outbound',
-      body: m.body || m.message || '',
+      body: cleanApiBody(m.body) || cleanApiBody(m.message) || '',
       msg_type: 'whatsapp',
       attachments: pickAtts(m.attachments),
       created_at: m.dateAdded ? new Date(m.dateAdded).toISOString() : new Date().toISOString(),

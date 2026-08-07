@@ -123,6 +123,7 @@ let currentMessages = [];
 let listCursor = null, listHasMore = false;   // pagination senarai perbualan
 let msgCursor = null, msgHasMore = false;      // pagination mesej lama
 let infoOpen = localStorage.getItem('isw_wa_info') === '1'; // default: tutup (jimat ruang)
+let pollBusy = false; // elak overlap kalau satu pusingan poll lambat
 
 // Lipat/buka panel info kanan
 function applyInfo() {
@@ -279,7 +280,10 @@ function openNewChat(contact) {
 // Buang anotasi sistem GHL (noise) supaya bubble ikut teks sebenar sahaja.
 // Hanya escape ASCII digunakan dalam regex (elak aksara khas literal).
 function cleanBody(t) {
-  return (t || '')
+  // GHL kadang pulangkan body literal teks "undefined"/"null" (bukan medan kosong sebenar)
+  // untuk mesej jenis aktiviti/tanpa kandungan — layan sama macam kosong.
+  if (t == null || t === 'undefined' || t === 'null') t = '';
+  return String(t)
     .replace(/\s*\[Received on[^\]]*\]/gi, '')
     .replace(/Sent from another device\s*\(\s*\+?\d[\d\s]*\)/gi, '')
     .replace(/[-�↔-↪⬅-⬇🔁🔂🔃🔄📱📲🔠🔡🔢🔣]/gu, '')   // ikon penanda GHL (info dah ada di label bawah)
@@ -402,9 +406,15 @@ async function hydrateAttachments() {
   }
 }
 
-async function invoke(action, extra = {}) {
+async function invoke(action, extra = {}, _retry = true) {
   const { data, error } = await window.db.functions.invoke('ghl-inbox', { body: { action, ...extra } });
   if (error) {
+    // "FunctionsFetchError" = fetch tak sampai server langsung (putus rangkaian / Supabase blip
+    // sekejap) — cuba sekali lagi senyap-senyap sebelum tunjuk ralat kat staff.
+    if (_retry && error.name === 'FunctionsFetchError') {
+      await new Promise(r => setTimeout(r, 800));
+      return invoke(action, extra, false);
+    }
     // cuba baca mesej ralat dari response
     let msg = error.message;
     try { const ctx = await error.context?.json(); if (ctx?.error) msg = ctx.error; } catch (_) {}
@@ -551,6 +561,45 @@ function subscribeRealtime() {
       updateWaBadge();
     })
     .subscribe();
+}
+
+// Polling — GHL webhook (push) tak boleh diharap 100% (bergantung workflow GHL luar),
+// jadi tarik data terkini secara berkala sebagai jaring keselamatan supaya inbox
+// kemas kini sendiri tanpa staff perlu tekan 🔄 / refresh page.
+async function pollInbox() {
+  if (pollBusy || document.hidden) return;
+  pollBusy = true;
+  try {
+    // senarai perbualan — gabung (bukan ganti) supaya "Muat Lagi" yang sedia ada tak hilang
+    const { conversations } = await invoke('list', {});
+    let changed = false;
+    for (const c of (conversations || [])) {
+      const i = allConvos.findIndex(x => x.ghl_conversation_id === c.ghl_conversation_id);
+      if (i >= 0) {
+        if (JSON.stringify(allConvos[i]) !== JSON.stringify({ ...allConvos[i], ...c })) changed = true;
+        allConvos[i] = { ...allConvos[i], ...c };
+      } else { allConvos.unshift(c); changed = true; }
+    }
+    if (changed) {
+      allConvos.sort((a, b) => new Date(b.last_message_at || 0) - new Date(a.last_message_at || 0));
+      renderList();
+      updateWaBadge();
+    }
+
+    // mesej dalam perbualan yang sedang dibuka
+    if (activeConv) {
+      const res = await invoke('messages', { conversationId: activeConv.ghl_conversation_id });
+      const known = new Set(currentMessages.map(m => m.ghl_message_id));
+      const fresh = (res.messages || []).filter(m => !known.has(m.ghl_message_id));
+      if (fresh.length) {
+        currentMessages.push(...fresh);
+        currentMessages.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        renderMessages(currentMessages);
+        markRead(activeConv.ghl_conversation_id);
+      }
+    }
+  } catch (_) { /* senyap — cuba lagi pusingan seterusnya */ }
+  finally { pollBusy = false; }
 }
 
 function renderMessages(msgs, keepScroll = false) {
@@ -757,6 +806,7 @@ async function sendMsg() {
   await loadList();
   updateWaBadge();
   subscribeRealtime();
+  setInterval(pollInbox, 15000); // jaring keselamatan — auto kemas kini tiap 15 saat
   // dari patient-hub / rujukan: buka terus perbualan pesakit (cipta contact kalau perlu)
   const params = new URLSearchParams(location.search);
   const wantPhone = params.get('phone');

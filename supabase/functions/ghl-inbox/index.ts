@@ -185,6 +185,8 @@ Deno.serve(async (req: Request) => {
       const moreAvail = !!data?.messages?.nextPage
       const pickAtts = (arr: any) => (arr || [])
         .map((a: any) => (typeof a === 'string' ? a : (a?.url || a?.link || a?.fileUrl || ''))).filter(Boolean)
+      // GHL kadang pulangkan body literal teks "undefined"/"null" (bukan medan kosong sebenar)
+      const cleanApiBody = (b: any) => (b == null || b === 'undefined' || b === 'null') ? '' : b
       // placeholder media GHL: body MENGANDUNGI token ">IMAGE<" / ">VIDEO<" / ">AUDIO<" / ">DOCUMENT<"
       // (kadang ada teks tambahan macam "[Received on ...]" selepasnya)
       const isMediaPlaceholder = (b: string) => /">?[A-Z]{3,}<"|>[A-Z]{3,}</.test(b || '')
@@ -202,7 +204,7 @@ Deno.serve(async (req: Request) => {
         ghl_message_id: m.id,
         ghl_conversation_id: conversationId,
         direction: m.direction === 'inbound' ? 'inbound' : 'outbound',
-        body: m.body || m.message || '',
+        body: cleanApiBody(m.body) || cleanApiBody(m.message) || '',
         msg_type: typeOf(m),
         attachments: pickAtts(m.attachments),
         created_at: m.dateAdded ? new Date(m.dateAdded).toISOString() : new Date().toISOString(),
