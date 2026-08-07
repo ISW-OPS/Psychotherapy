@@ -719,8 +719,9 @@ function setWaBadge(count) {
 async function loadWaBadge() {
   if (!window.db) return;
   try {
+    // Lead telesale (kod "Eob...") bukan pesakit — sembunyi dari Inbox, jadi jangan kira di badge pun.
     const { count } = await window.db.from('psy_wa_conversations')
-      .select('id', { count: 'exact', head: true }).gt('unread', 0);
+      .select('id', { count: 'exact', head: true }).gt('unread', 0).not('contact_name', 'ilike', 'eob%');
     setWaBadge(count || 0);
   } catch (_) { }
 }

@@ -424,6 +424,11 @@ async function invoke(action, extra = {}, _retry = true) {
   return data;
 }
 
+// Lead telesale (kod "Eob...") — bukan pesakit, inbox ni fokus pesakit sahaja.
+function isTelesale(c) {
+  return /^eob/i.test((c?.contact_name || '').trim());
+}
+
 function setTab(t) {
   activeTab = t;
   for (const [id, key] of [['tab-mine', 'mine'], ['tab-unread', 'unread'], ['tab-all', 'all']]) {
@@ -439,7 +444,7 @@ async function loadList(append = false) {
   try {
     const args = (append && listCursor) ? listCursor : {};
     const { conversations, cursor, hasMore } = await invoke('list', args);
-    const incoming = conversations || [];
+    const incoming = (conversations || []).filter(c => !isTelesale(c));
     if (append) {
       const seen = new Set(allConvos.map(c => c.ghl_conversation_id));
       allConvos.push(...incoming.filter(c => !seen.has(c.ghl_conversation_id)));
@@ -479,7 +484,7 @@ function renderList() {
           <span class="font-semibold text-[13px] truncate">${c.contact_name || '(tanpa nama)'}</span>
           ${c.patient_id ? '<span class="text-[9px] bg-green/15 text-green-dark px-1.5 py-0.5 rounded-full font-bold flex-shrink-0">PESAKIT</span>' : ''}
         </div>
-        <div class="text-xs text-ink/50 truncate">${c.last_message || '<i>Tiada mesej</i>'}</div>
+        <div class="text-xs text-ink/50 truncate">${(c.last_message && c.last_message !== 'undefined' && c.last_message !== 'null') ? c.last_message : '<i>Tiada mesej</i>'}</div>
       </div>
       <div class="flex flex-col items-end gap-1 flex-shrink-0">
         <span class="text-[10px] text-ink/40">${c.last_message_at ? timeAgo(c.last_message_at) : ''}</span>
@@ -552,7 +557,7 @@ function subscribeRealtime() {
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'psy_wa_conversations' }, (p) => {
       const c = p.new;
-      if (!c) return;
+      if (!c || isTelesale(c)) return;
       const i = allConvos.findIndex(x => x.ghl_conversation_id === c.ghl_conversation_id);
       if (i >= 0) allConvos[i] = { ...allConvos[i], ...c };
       else allConvos.unshift(c);
@@ -574,6 +579,7 @@ async function pollInbox() {
     const { conversations } = await invoke('list', {});
     let changed = false;
     for (const c of (conversations || [])) {
+      if (isTelesale(c)) continue;
       const i = allConvos.findIndex(x => x.ghl_conversation_id === c.ghl_conversation_id);
       if (i >= 0) {
         if (JSON.stringify(allConvos[i]) !== JSON.stringify({ ...allConvos[i], ...c })) changed = true;
