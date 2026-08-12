@@ -300,6 +300,13 @@ Deno.serve(async (req: Request) => {
         const data = await ghl(`/opportunities/pipelines?locationId=${locationId}`, { method: 'GET' })
         return json({ debug: true, action: 'list_pipelines', raw: data })
       }
+      if (body.action === 'count_ghl_patients') {
+        // Kiraan CEPAT (service role, langkau RLS) — sahkan angka sebenar
+        // psy_patients bersumber GHL selepas backfill sync_matching.
+        const { count, error } = await svc.from('psy_patients').select('id', { count: 'exact', head: true }).eq('referral_source', 'GHL')
+        if (error) return json({ debug: true, action: 'count_ghl_patients', error: error.message }, 500)
+        return json({ debug: true, action: 'count_ghl_patients', count })
+      }
       if (body.action === 'sync_one') {
         // Paksa sync SATU contact (ikut phone/contactId), abaikan filter
         // status — untuk diagnos kenapa contact tertentu tak masuk ISW.
