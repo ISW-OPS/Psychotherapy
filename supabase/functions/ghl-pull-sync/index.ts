@@ -168,13 +168,16 @@ async function getKobCalendarIds(locationId: string): Promise<Set<string>> {
 // — sumber tunggal dikongsi antara scan sistematik (loop utama) DAN
 // carian sasaran (action sync_matching). Elak drift dua salinan logik.
 //
-// `requirePayment` (default true): keputusan asal user (11-12 Ogos) — mesti
-// ada bayaran sah. TETAPI 12 Ogos user minta longgarkan SEMENTARA ("untuk
-// sekarang ni") khas utk backfill kontak SU/JS/OB yang dah book KOB tapi
-// belum sempat sync bayaran — appointment KOB TETAP wajib, bayaran jadi
-// pilihan. Loop scan sistematik (Deno.serve) kekal panggil dgn default
-// (true) — hanya sync_matching boleh set false secara eksplisit.
-async function processOneContact(svc: any, locationId: string, c: any, requirePayment = true): Promise<{
+// `requirePayment`/`requireAppointment` (default true/true): keputusan asal
+// user (11-12 Ogos) — mesti ada appointment KOB DAN bayaran sah. 12 Ogos
+// user minta longgarkan SEMENTARA ("untuk sekarang ni") khas utk backfill
+// kontak SU/JS/OB yang status dah relevan tapi belum sempat sync
+// appointment/bayaran — mula-mula bayaran dilonggarkan, kemudian
+// appointment turut dilonggarkan (baki ~247 kontak yang status relevan
+// tapi tiada appointment KOB langsung). Loop scan sistematik (Deno.serve)
+// kekal panggil dgn default (true/true) — hanya sync_matching boleh set
+// false secara eksplisit.
+async function processOneContact(svc: any, locationId: string, c: any, requirePayment = true, requireAppointment = true): Promise<{
   status: 'not_relevant' | 'skipped_gate' | 'synced'
   patientId?: string
   appointmentSynced?: boolean
@@ -200,7 +203,7 @@ async function processOneContact(svc: any, locationId: string, c: any, requirePa
       paidTransactions = await getKobPaidTransactions(locationId, c.id)
     } catch (e) { return { status: 'skipped_gate', error: `transaction-check: ${(e as Error).message}` } }
 
-    if (!latestKobAppt || (requirePayment && paidTransactions.length === 0)) return { status: 'skipped_gate' }
+    if ((requireAppointment && !latestKobAppt) || (requirePayment && paidTransactions.length === 0)) return { status: 'skipped_gate' }
 
     const fullName = [c.firstNameRaw, c.lastNameRaw].filter(Boolean).join(' ').trim() || c.contactName || null
     const { patientId } = await syncContactToPatient(svc, {
@@ -213,14 +216,16 @@ async function processOneContact(svc: any, locationId: string, c: any, requirePa
     })
 
     let appointmentSynced = false
-    try {
-      const iso = String(latestKobAppt.startTime).replace(' ', 'T') + '+08:00'
-      const scheduledAt = new Date(iso)
-      if (!Number.isNaN(scheduledAt.getTime())) {
-        await syncAppointmentToSession(svc, patientId, { scheduledAt, mode: 'f2f' })
-        appointmentSynced = true
-      }
-    } catch (e) { return { status: 'synced', patientId, error: `appt-sync: ${(e as Error).message}` } }
+    if (latestKobAppt) {
+      try {
+        const iso = String(latestKobAppt.startTime).replace(' ', 'T') + '+08:00'
+        const scheduledAt = new Date(iso)
+        if (!Number.isNaN(scheduledAt.getTime())) {
+          await syncAppointmentToSession(svc, patientId, { scheduledAt, mode: 'f2f' })
+          appointmentSynced = true
+        }
+      } catch (e) { return { status: 'synced', patientId, error: `appt-sync: ${(e as Error).message}` } }
+    }
 
     let paymentsSynced = 0
     try {
@@ -321,18 +326,20 @@ Deno.serve(async (req: Request) => {
         }
       }
       if (body.action === 'sync_matching') {
-        // { debug:true, action:'sync_matching', query:'SU' | 'JS' | ..., requirePayment?:false }
+        // { debug:true, action:'sync_matching', query:'SU' | 'JS' | ..., requirePayment?:false, requireAppointment?:false }
         // Carian TERUS (GHL text search, bukan scan cursor sistematik) —
         // utk utamakan kelompok pesakit tertentu (cth nama "SU"/"JS")
-        // TANPA tunggu giliran scan menyeluruh. Lalui syarat status+kalendar
-        // KOB SENTIASA (appointment KOB tetap wajib) via processOneContact().
-        // `requirePayment:false` (keputusan user 12 Ogos, SEMENTARA "untuk
-        // sekarang ni") longgarkan syarat bayaran khas utk carian sasaran
-        // ni — default masih true (loop scan sistematik TAK terjejas,
-        // sentiasa panggil processOneContact tanpa override = true).
+        // TANPA tunggu giliran scan menyeluruh. Lalui syarat status
+        // SENTIASA via processOneContact(). `requirePayment:false` /
+        // `requireAppointment:false` (keputusan user 12 Ogos, SEMENTARA
+        // "untuk sekarang ni") longgarkan syarat bayaran/appointment khas
+        // utk carian sasaran ni — default kedua-dua masih true (loop scan
+        // sistematik TAK terjejas, sentiasa panggil processOneContact
+        // tanpa override = true/true).
         const q = String(body.query || '')
         if (!q) return json({ debug: true, action: 'sync_matching', error: 'query wajib' }, 400)
         const requirePayment = body.requirePayment !== false
+        const requireAppointment = body.requireAppointment !== false
         let sAfterId: string | undefined = body.startAfterId
         let sAfter: number | undefined = body.startAfter
         const pages = Math.min(Number(body.pages) || 5, 10)
@@ -350,7 +357,7 @@ Deno.serve(async (req: Request) => {
             const iswStatus = getCustomFieldById(c.customFields, ISW_STATUS_FIELD_ID)
             if (!isKobRelevantStatus(iswStatus)) continue
             kobRel++
-            const r = await processOneContact(svc, locationId, c, requirePayment)
+            const r = await processOneContact(svc, locationId, c, requirePayment, requireAppointment)
             if (r.status === 'skipped_gate') { skippedGate++; continue }
             if (r.status === 'synced') {
               synced++
@@ -362,7 +369,7 @@ Deno.serve(async (req: Request) => {
           sAfterId = last?.id
           sAfter = last?.dateAdded ? new Date(last.dateAdded).getTime() : undefined
         }
-        return json({ debug: true, action: 'sync_matching', query: q, requirePayment, scanned, kobRelevant: kobRel, skippedNoBooking: skippedGate, patientsSynced: synced, results, nextCursor: sAfterId ? { startAfterId: sAfterId, startAfter: sAfter } : null })
+        return json({ debug: true, action: 'sync_matching', query: q, requirePayment, requireAppointment, scanned, kobRelevant: kobRel, skippedGate, patientsSynced: synced, results, nextCursor: sAfterId ? { startAfterId: sAfterId, startAfter: sAfter } : null })
       }
       if (body.action === 'list_calendars') {
         // Semak SEBELUM jalan penuh — sahkan nama kalendar KOB sebenar

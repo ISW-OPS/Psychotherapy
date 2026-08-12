@@ -93,17 +93,24 @@ STATUS relevan **sahaja TAK MEMADAI**. Contact mesti JUGA ada:
    ("KOB VIP"/"VIP 2/3/4") **dikecualikan** atas keputusan user. Padanan
    2 lapis dlm kod: `KOB_CALENDAR_NAME_MATCH = 'KONSULTASI OVERHAUL BODY'`
    DAN NOT `KOB_CALENDAR_NAME_EXCLUDE = 'VIP'`.
-2. Sekurang-kurangnya **1 GHL Transaction** berstatus paid/completed/
-   succeeded — guna `GET /payments/transactions` (**bukan** `/payments/
-   orders` sahaja). **Disahkan 12 Ogos 2026**: kebanyakan yuran KOB
-   akaun ni dibayar transfer manual, staff tandakan **Invoice** GHL
-   "paid" (Text2Pay dll) — ini objek **berasingan** dari Order/checkout,
-   TAK muncul dalam `/payments/orders` langsung (uji semula nisbah lulus
-   naik dari 1/9 → 5/9 sampel selepas fix). `/payments/transactions`
-   ialah **ledger bersepadu rasmi GHL** — tangkap Order+Invoice+Stripe+
-   Manual SEKALI GUS dalam status seragam (`succeeded`), jadi TAK PERLU
-   semak Order & Invoice berasingan lagi. Lihat `syncTransactionToPayment()`
-   (`_shared/ghl-sync.ts`).
+2. Sekurang-kurangnya **1 GHL Transaction untuk PRODUK KOB KHUSUS**
+   berstatus paid/completed/succeeded — guna `GET /payments/transactions`
+   (**bukan** `/payments/orders` sahaja). **Disahkan 12 Ogos 2026**:
+   kebanyakan yuran KOB akaun ni dibayar transfer manual, staff tandakan
+   **Invoice** GHL "paid" (Text2Pay dll) — ini objek **berasingan** dari
+   Order/checkout, TAK muncul dalam `/payments/orders` langsung.
+   `/payments/transactions` ialah **ledger bersepadu rasmi GHL** —
+   tangkap Order+Invoice+Stripe+Manual SEKALI GUS dalam status seragam
+   (`succeeded`).
+   **Tapisan KOB-sahaja (12 Ogos 2026):** mula-mula terima MANA-MANA
+   transaction (pakej/kontrak lain termasuk) — kemudian keputusan user
+   diketatkan kepada **yuran KOB sahaja**. `getKobPaidTransactions()`
+   (`index.ts`): transaction order-sourced tapis ikut `entitySourceName`
+   (cth "KOB GA WC1 260806"); transaction invoice-sourced (manual/
+   Text2Pay, `entitySourceName` generik cth "Text2Pay - EOB 260808.")
+   kena rujuk **invoice asal** (`name`/`invoiceItems[].name`, cth
+   "KONSULTASI OVERHAUL BODY"), padan ikut `entityId`. Lihat
+   `syncTransactionToPayment()` (`_shared/ghl-sync.ts`).
 
 Contact yang lulus filter status tapi belum ada appointment KOB +
 bayaran diskip sepenuhnya (`skippedNoPaymentOrBooking` dalam response)
