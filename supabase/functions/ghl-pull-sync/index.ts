@@ -89,7 +89,10 @@ const EXCLUDED_STATUS_EXACT = new Set(['KOB CANCEL', 'KOB NO SHOW'])
 function isKobRelevantStatus(status: string): boolean {
   const s = status.toUpperCase().trim()
   if (EXCLUDED_STATUS_EXACT.has(s) || s.includes('KIV')) return false
+  // SU JUMPSTART(+) = pakej "Jumpstart" (peringkat lepas KOB, sama
+  // kategori dgn SU OBDX1/OBDY1/OBD1 dll) — keputusan user 12 Ogos 2026.
   return s.startsWith('KOB') || s.startsWith('SU KOB') || s.startsWith('SU OB') || s.startsWith('OB ')
+    || s.startsWith('SU JUMPSTART') || s.startsWith('SU JS')
 }
 
 const PAID_STATUSES = ['paid', 'completed', 'succeeded', 'success']
