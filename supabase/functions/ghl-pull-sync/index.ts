@@ -72,24 +72,20 @@ function getCustomFieldById(customFields: any[], fieldId: string): string {
   return String(hit?.value ?? '')
 }
 
-// Relevan KOB kalau ISW STATUS bermula dgn KOB/SU KOB (peringkat konsultasi)
-// ATAU salah satu stage PIPELINE "OVERHAUL BODY" sebenar di GHL (peringkat
-// pakej, pesakit dah lepas KOB) — disahkan TEPAT via
-// `{debug:true,action:'list_pipelines'}` (12 Ogos 2026), pipeline ni ada
-// 6 stage: SU OBDY1, SU OBDX1, SU OBD1, SU NLC, SU EOL, SU JUMPSTART.
-// GUNA PREFIX senarai ni (bukan "contains SU OB" generik) — elak
-// terlepas stage lain (SU NLC/SU EOL tak bermula "SU OB") DAN elak
-// salah tangkap status produk lain yg kebetulan ada "OB" (cth "EOB").
-// "OB " (ruang, bukan bahagian pipeline ni) dikekalkan berasingan untuk
-// status macam "OB LOCK HARGA" yang disahkan wujud tapi bukan stage rasmi.
+// ISW STATUS di GHL ialah field DROPDOWN (single-select) dgn senarai
+// TETAP 42 pilihan (disahkan user 12 Ogos 2026, tengok terus di GHL
+// Custom Fields → ISW STATUS → edit). Peraturan mudah & pasti (keputusan
+// user): bermula "SU" = pesakit (semua varian pakej OB/NLC/EOL/JUMPSTART
+// serta KOB terkandung dalam "SU KOB..."/"SU OB..." dll — tak perlu
+// senarai prefix ad-hoc lagi). "KOB..." (tanpa "SU") turut relevan
+// (peringkat konsultasi terus). EOB* (lead telesale) TAK bermula
+// "SU"/"KOB", jadi betul dikecualikan secara semula jadi.
 const EXCLUDED_STATUS_EXACT = new Set(['KOB CANCEL', 'KOB NO SHOW'])
-const OVERHAUL_BODY_PACKAGE_STAGES = ['SU OBDY1', 'SU OBDX1', 'SU OBD1', 'SU NLC', 'SU EOL', 'SU JUMPSTART']
 
 function isKobRelevantStatus(status: string): boolean {
   const s = status.toUpperCase().trim()
   if (EXCLUDED_STATUS_EXACT.has(s) || s.includes('KIV')) return false
-  if (s.startsWith('KOB') || s.startsWith('SU KOB') || s.startsWith('OB ')) return true
-  return OVERHAUL_BODY_PACKAGE_STAGES.some((stage) => s.startsWith(stage))
+  return s.startsWith('KOB') || s.startsWith('SU') || s.startsWith('OB ')
 }
 
 const PAID_STATUSES = ['paid', 'completed', 'succeeded', 'success']
