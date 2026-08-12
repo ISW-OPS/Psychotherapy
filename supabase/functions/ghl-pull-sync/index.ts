@@ -127,6 +127,75 @@ async function getKobCalendarIds(locationId: string): Promise<Set<string>> {
   return kobCalendarIdsCache
 }
 
+// Proses SATU contact ikut syarat penuh (status + kalendar KOB + bayaran)
+// — sumber tunggal dikongsi antara scan sistematik (loop utama) DAN
+// carian sasaran (action sync_matching). Elak drift dua salinan logik.
+async function processOneContact(svc: any, locationId: string, c: any): Promise<{
+  status: 'not_relevant' | 'skipped_gate' | 'synced'
+  patientId?: string
+  appointmentSynced?: boolean
+  paymentsSynced?: number
+  error?: string
+}> {
+  try {
+    const iswStatus = getCustomFieldById(c.customFields, ISW_STATUS_FIELD_ID)
+    if (!isKobRelevantStatus(iswStatus)) return { status: 'not_relevant' }
+
+    let latestKobAppt: any = null
+    try {
+      const apptData = await ghl(`/contacts/${c.id}/appointments`, { method: 'GET' })
+      const kobCalIds = await getKobCalendarIds(locationId)
+      const events = (apptData?.events || apptData?.appointments || [])
+        .filter((a: any) => !a.deleted && kobCalIds.has(a.calendarId))
+      events.sort((a: any, b: any) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())
+      latestKobAppt = events[0] || null
+    } catch (e) { return { status: 'skipped_gate', error: `appt-check: ${(e as Error).message}` } }
+
+    let paidTransactions: any[] = []
+    try {
+      const txData = await ghl(`/payments/transactions?altId=${locationId}&altType=location&contactId=${c.id}&limit=20`, { method: 'GET' })
+      const txs = txData?.data || txData?.transactions || []
+      paidTransactions = txs.filter((t: any) => PAID_STATUSES.includes(String(t.status || '').toLowerCase()))
+    } catch (e) { return { status: 'skipped_gate', error: `transaction-check: ${(e as Error).message}` } }
+
+    if (!latestKobAppt || paidTransactions.length === 0) return { status: 'skipped_gate' }
+
+    const fullName = [c.firstNameRaw, c.lastNameRaw].filter(Boolean).join(' ').trim() || c.contactName || null
+    const { patientId } = await syncContactToPatient(svc, {
+      phone: c.phone,
+      fullName,
+      email: c.email,
+      icNumber: getCustomFieldById(c.customFields, IC_NUMBER_FIELD_ID) || null,
+      address: getCustomFieldById(c.customFields, HOME_ADDRESS_FIELD_ID) || c.address1 || null,
+      emergencyContactName: getCustomFieldById(c.customFields, WARIS_FIELD_ID) || null,
+    })
+
+    let appointmentSynced = false
+    try {
+      const iso = String(latestKobAppt.startTime).replace(' ', 'T') + '+08:00'
+      const scheduledAt = new Date(iso)
+      if (!Number.isNaN(scheduledAt.getTime())) {
+        await syncAppointmentToSession(svc, patientId, { scheduledAt, mode: 'f2f' })
+        appointmentSynced = true
+      }
+    } catch (e) { return { status: 'synced', patientId, error: `appt-sync: ${(e as Error).message}` } }
+
+    let paymentsSynced = 0
+    try {
+      for (const t of paidTransactions) {
+        const result = await syncTransactionToPayment(svc, patientId, {
+          transactionId: t._id || t.id, amount: t.amount, status: t.status,
+        })
+        if (!result.skipped) paymentsSynced++
+      }
+    } catch (e) { return { status: 'synced', patientId, appointmentSynced, error: `transaction-sync: ${(e as Error).message}` } }
+
+    return { status: 'synced', patientId, appointmentSynced, paymentsSynced }
+  } catch (e) {
+    return { status: 'skipped_gate', error: `contact: ${(e as Error).message}` }
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
@@ -208,6 +277,46 @@ Deno.serve(async (req: Request) => {
         } catch (e) {
           return json({ debug: true, action: 'sync_one', contact: { id: c.id, phone: c.phone }, error: String((e as Error).message) })
         }
+      }
+      if (body.action === 'sync_matching') {
+        // { debug:true, action:'sync_matching', query:'SU' | 'JS' | ... }
+        // Carian TERUS (GHL text search, bukan scan cursor sistematik) —
+        // utk utamakan kelompok pesakit tertentu (cth nama "SU"/"JS")
+        // TANPA tunggu giliran scan menyeluruh. TETAP lalui syarat penuh
+        // (status+kalendar+bayaran) via processOneContact() — TIDAK
+        // langkau gate macam sync_one.
+        const q = String(body.query || '')
+        if (!q) return json({ debug: true, action: 'sync_matching', error: 'query wajib' }, 400)
+        let sAfterId: string | undefined = body.startAfterId
+        let sAfter: number | undefined = body.startAfter
+        const pages = Math.min(Number(body.pages) || 5, 10)
+        let scanned = 0, kobRel = 0, skippedGate = 0, synced = 0
+        const results: any[] = []
+        for (let pg = 0; pg < pages; pg++) {
+          let path = `/contacts/?locationId=${locationId}&query=${encodeURIComponent(q)}&limit=${PAGE_LIMIT}`
+          if (sAfterId) path += `&startAfterId=${sAfterId}`
+          if (sAfter) path += `&startAfter=${sAfter}`
+          const d = await ghl(path, { method: 'GET' }).catch(() => null)
+          if (!d) break
+          const cs = d?.contacts || []
+          scanned += cs.length
+          for (const c of cs) {
+            const iswStatus = getCustomFieldById(c.customFields, ISW_STATUS_FIELD_ID)
+            if (!isKobRelevantStatus(iswStatus)) continue
+            kobRel++
+            const r = await processOneContact(svc, locationId, c)
+            if (r.status === 'skipped_gate') { skippedGate++; continue }
+            if (r.status === 'synced') {
+              synced++
+              results.push({ name: c.contactName, patientId: r.patientId, appointmentSynced: r.appointmentSynced, paymentsSynced: r.paymentsSynced })
+            }
+          }
+          if (cs.length < PAGE_LIMIT) { sAfterId = undefined; sAfter = undefined; break }
+          const last = cs[cs.length - 1]
+          sAfterId = last?.id
+          sAfter = last?.dateAdded ? new Date(last.dateAdded).getTime() : undefined
+        }
+        return json({ debug: true, action: 'sync_matching', query: q, scanned, kobRelevant: kobRel, skippedNoPaymentOrBooking: skippedGate, patientsSynced: synced, results, nextCursor: sAfterId ? { startAfterId: sAfterId, startAfter: sAfter } : null })
       }
       if (body.action === 'list_calendars') {
         // Semak SEBELUM jalan penuh — sahkan nama kalendar KOB sebenar
@@ -459,83 +568,22 @@ Deno.serve(async (req: Request) => {
       totalContacts += contacts.length
 
       for (const c of contacts) {
-        try {
-          const iswStatus = getCustomFieldById(c.customFields, ISW_STATUS_FIELD_ID)
-          if (!isKobRelevantStatus(iswStatus)) continue
-          kobRelevant++
+        const iswStatus = getCustomFieldById(c.customFields, ISW_STATUS_FIELD_ID)
+        if (!isKobRelevantStatus(iswStatus)) continue
+        kobRelevant++
 
-          // ── Syarat masuk (11-12 Ogos 2026): tarik appointment+transaction
-          // DULU, sebelum cipta/kemas kini psy_patients — kena ADA
-          // appointment kalendar KOB DAN sekurang-kurangnya 1 transaction
-          // succeeded/paid/completed. Status ISW STATUS relevan sahaja TAK
-          // MEMADAI (elak lead yang baru tukar status tapi belum benar-
-          // benar book+bayar). Guna /payments/transactions (ledger
-          // bersepadu GHL, tangkap Order+Invoice+Stripe+Manual SEKALI) —
-          // bukan /payments/orders sahaja (disahkan 12 Ogos: kebanyakan
-          // yuran KOB akaun ni dibayar transfer manual via Invoice, TAK
-          // muncul dalam Orders langsung).
-          let latestKobAppt: any = null
-          try {
-            const apptData = await ghl(`/contacts/${c.id}/appointments`, { method: 'GET' })
-            const kobCalIds = await getKobCalendarIds(locationId)
-            const events = (apptData?.events || apptData?.appointments || [])
-              .filter((a: any) => !a.deleted && kobCalIds.has(a.calendarId))
-            events.sort((a: any, b: any) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())
-            latestKobAppt = events[0] || null
-          } catch (e) { errors.push(`appt-check ${c.id}: ${(e as Error).message}`) }
-
-          let paidTransactions: any[] = []
-          try {
-            const txData = await ghl(`/payments/transactions?altId=${locationId}&altType=location&contactId=${c.id}&limit=20`, { method: 'GET' })
-            const txs = txData?.data || txData?.transactions || []
-            paidTransactions = txs.filter((t: any) => PAID_STATUSES.includes(String(t.status || '').toLowerCase()))
-          } catch (e) { errors.push(`transaction-check ${c.id}: ${(e as Error).message}`) }
-
-          if (!latestKobAppt || paidTransactions.length === 0) { skippedNoPaymentOrBooking++; continue }
-
-          // firstNameRaw/lastNameRaw kekal huruf besar/kecil asal (cth "Hjh
-          // Azah"); contactName/firstName/lastName sentiasa lowercase +
-          // ada prefix kod booking ("kob'26-00090. hjh azah") — elak guna.
-          // Nama ASAL dari GHL terus (termasuk prefix kod booking cth
-          // "OB'26-0751 Pn. ...") — staff boleh edit sendiri di ISW kalau
-          // perlu; jangan auto-bersihkan (keputusan user 10 Ogos 2026).
-          const fullName = [c.firstNameRaw, c.lastNameRaw].filter(Boolean).join(' ').trim() || c.contactName || null
-          const { patientId } = await syncContactToPatient(svc, {
-            phone: c.phone,
-            fullName,
-            email: c.email,
-            icNumber: getCustomFieldById(c.customFields, IC_NUMBER_FIELD_ID) || null,
-            address: getCustomFieldById(c.customFields, HOME_ADDRESS_FIELD_ID) || c.address1 || null,
-            // Field GHL ni gabungan bebas (nama+no.+emel waris dalam satu
-            // teks) — tak boleh dipisah bersih ke name/phone/email berasingan.
-            emergencyContactName: getCustomFieldById(c.customFields, WARIS_FIELD_ID) || null,
-          })
+        const r = await processOneContact(svc, locationId, c)
+        if (r.status === 'skipped_gate') {
+          skippedNoPaymentOrBooking++
+          if (r.error) errors.push(`${c.id}: ${r.error}`)
+          continue
+        }
+        if (r.status === 'synced') {
           patientsSynced++
-
-          // ── Appointment terkini (kalendar KOB, dah disahkan di atas) ──
-          try {
-            // startTime GHL: "2026-08-13 15:30:00" TANPA offset zon masa —
-            // ni waktu Malaysia (lokasi klinik). Server Edge Function jalan
-            // UTC, jadi anchor eksplisit +08:00 (elak salah anggap UTC →
-            // beza 8 jam).
-            const iso = String(latestKobAppt.startTime).replace(' ', 'T') + '+08:00'
-            const scheduledAt = new Date(iso)
-            if (!Number.isNaN(scheduledAt.getTime())) {
-              await syncAppointmentToSession(svc, patientId, { scheduledAt, mode: 'f2f' })
-              appointmentsSynced++
-            }
-          } catch (e) { errors.push(`appt-sync ${c.id}: ${(e as Error).message}`) }
-
-          // ── Bayaran (transaction succeeded, dah disahkan di atas) ──
-          try {
-            for (const t of paidTransactions) {
-              const result = await syncTransactionToPayment(svc, patientId, {
-                transactionId: t._id || t.id, amount: t.amount, status: t.status,
-              })
-              if (!result.skipped) paymentsSynced++
-            }
-          } catch (e) { errors.push(`transaction-sync ${c.id}: ${(e as Error).message}`) }
-        } catch (e) { errors.push(`contact ${c.id}: ${(e as Error).message}`) }
+          if (r.appointmentSynced) appointmentsSynced++
+          paymentsSynced += r.paymentsSynced || 0
+          if (r.error) errors.push(`${c.id}: ${r.error}`)
+        }
       }
 
       if (contacts.length < PAGE_LIMIT) { reachedEnd = true; break }  // habis semua muka surat — pusingan penuh selesai
