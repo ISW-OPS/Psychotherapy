@@ -1,8 +1,8 @@
 // ============================================================
-// _shared/ghl.ts — helper hantar WhatsApp via GoHighLevel
-// Corak sama seperti reaksi-advice-send / ghl-inbox:
-//   contacts/upsert → conversations/messages (type 'SMS' = WhatsApp
-//   untuk lokasi klinik ini) → cache psy_wa_messages.
+// _shared/ghl.ts — helper kongsi GHL API v2 (fetch wrapper, E.164,
+// padanan telefon) + hantar WhatsApp.
+// sendWhatsApp(): contacts/upsert → conversations/messages (type 'SMS' =
+//   WhatsApp untuk lokasi klinik ini) → cache psy_wa_messages.
 // Secrets diperlukan: GHL_ISW_TOKEN, GHL_ISW_LOCATION_ID
 // ============================================================
 
@@ -19,7 +19,31 @@ export function toE164(raw: string | null | undefined): string | null {
   return '+' + n
 }
 
-async function ghl(path: string, init: RequestInit = {}) {
+// Nama contact GHL kerap ada prefix kod booking dibakar terus dalam
+// firstName/lastName oleh automation GHL lain (cth "Su'25-00647a. Pn.
+// Nur Sakinah..." / "KOB'26-00090. Hjh Azah" / "[mak] Pn. ..."). Buang
+// prefix ni supaya nama pesakit di ISW bersih (avatar initials pun
+// terbitan dari nama, jadi ikut terus betul bila nama dah bersih).
+export function cleanGhlName(raw: string | null | undefined): string {
+  if (!raw) return ''
+  return String(raw)
+    // Corak kod booking: "KOB'26-00090. " (noktah) ATAU "OB'26-0751 " (ruang
+    // sahaja, tiada noktah) — dua-dua corak wujud ikut automation GHL lain.
+    .replace(/^[A-Za-z]+'?\d{2,4}-\d+[a-z]?[.\s]+/i, '')
+    .replace(/\[[^\]]*\]\s*/g, '')
+    .trim()
+}
+
+// Kunci padanan pesakit = 9 digit terakhir no. telefon (stabil merentas
+// +60 / 0 / sengkang). Sama corak dgn ghl-booking-webhook/ghl-inbox*.
+const digits = (s: any) => String(s || '').replace(/\D/g, '')
+export function phoneKey(s: any): string {
+  const d = digits(s)
+  return d.length >= 9 ? d.slice(-9) : ''
+}
+
+// Fetch wrapper generik ke GHL API v2. Guna GHL_ISW_TOKEN/GHL_ISW_LOCATION_ID.
+export async function ghl(path: string, init: RequestInit = {}) {
   const token = Deno.env.get('GHL_ISW_TOKEN')!
   const res = await fetch(`${GHL_BASE}${path}`, {
     ...init,

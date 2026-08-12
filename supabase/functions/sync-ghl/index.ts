@@ -44,12 +44,23 @@ const STAGE_MAP: Record<string, { label: string; stageId: string }> = {
 // Cipta dulu custom fields ni di GHL (Settings → Custom Fields),
 // guna key persis macam bawah (GHL prefix dgn "contact.").
 const CF = {
-  kobStage:    'kob_stage',
-  kobStatus:   'kob_status_raw',
-  package:     'kob_package',
-  packageEnds: 'kob_package_expires',
-  mrn:         'isw_mrn',
-  kobDate:     'kob_session_date',
+  kobStage:     'kob_stage',
+  kobStatus:    'kob_status_raw',
+  package:      'kob_package',
+  packageEnds:  'kob_package_expires',
+  mrn:          'isw_mrn',
+  kobDate:      'kob_session_date',
+  regStatus:    'isw_registration_status',
+  inSystem:     'pt_in_system',
+}
+
+// Status akaun pesakit (psy_patients.status) → binari mudah untuk
+// automation GHL filter. BEZA dari kob_status (peringkat funnel KOB) —
+// ni jawab "pesakit tu dah SIGNUP/daftar dalam ISW atau tak". Hanya
+// status='active' (dah hantar borang pendaftaran) dikira "Active";
+// semua status lain (pending_kyc/unregistered/inactive/dll) = "Not Active".
+function registrationLabel(status: string | null | undefined): string {
+  return status === 'active' ? 'Active' : 'Not Active'
 }
 
 // Tukar nombor MY → E.164 (+60). "0123456789" → "+60123456789"
@@ -143,15 +154,16 @@ Deno.serve(async (req: Request) => {
       return await handleKobSession(record, oldRecord)
     }
 
-    // ── 2. Hanya proses bila kob_status betul-betul berubah ──
+    // ── 2. Proses bila kob_status ATAU status pendaftaran berubah ──
     const status = record?.kob_status as string | undefined
     if (!status) {
       return new Response(JSON.stringify({ skipped: 'no kob_status' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
-    if (oldRecord && oldRecord.kob_status === status) {
-      return new Response(JSON.stringify({ skipped: 'kob_status unchanged' }), {
+    const regStatusChanged = !oldRecord || oldRecord.status !== record.status
+    if (oldRecord && oldRecord.kob_status === status && !regStatusChanged) {
+      return new Response(JSON.stringify({ skipped: 'kob_status & status unchanged' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
@@ -194,6 +206,11 @@ Deno.serve(async (req: Request) => {
         { key: CF.packageEnds, field_value: record.package_expires_at || '' },
         { key: CF.mrn,         field_value: record.mrn || '' },
         { key: CF.kobDate,     field_value: kobDate },
+        { key: CF.regStatus,   field_value: registrationLabel(record.status) },
+        // Sentiasa 'Yes' — fungsi ni cuma jalan bila rekod psy_patients
+        // MEMANG wujud (webhook dicetus oleh perubahan pada rekod tu).
+        // Field ni KOSONG di GHL = ISW tak pernah ada rekod pesakit tu.
+        { key: CF.inSystem,    field_value: 'Yes' },
       ],
       // 'patient' = penanda kekal utk automation GHL (cth. exclude dari
       // sales flow "EOB CREATED" guna filter Tag none-of: patient)
