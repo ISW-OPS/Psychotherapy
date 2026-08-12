@@ -23,15 +23,18 @@
 // OB/OB (kes tak sensitif huruf) — SYARAT MASUK (keputusan user 11-12
 // Ogos 2026, TAMBAHAN atas filter status): mesti JUGA ada (a) sekurang-
 // kurangnya 1 appointment pada kalendar KOB khusus DAN (b) sekurang-
-// kurangnya 1 GHL Transaction succeeded/paid/completed (`/payments/
-// transactions` — LEDGER BERSEPADU rasmi GHL, tangkap Order/checkout +
-// Invoice/manual-transfer + Stripe SEKALI GUS; disahkan 12 Ogos 2026
+// kurangnya 1 GHL Transaction succeeded/paid/completed **UNTUK PRODUK
+// KOB KHUSUS** (`/payments/transactions` — LEDGER BERSEPADU rasmi GHL,
+// tangkap Order/checkout + Invoice/manual-transfer + Stripe SEKALI GUS;
 // bukan /payments/orders sahaja SEBAB kebanyakan yuran KOB akaun ni
 // dibayar transfer manual via Invoice — tak muncul dalam Orders
-// langsung). Status sahaja TAK MEMADAI — contact yang belum book/bayar
-// diskip (skippedNoPaymentOrBooking), TAK dicipta dalam psy_patients.
-// Lihat getKobCalendarIds() (auto-resolve ikut nama kalendar "KONSULTASI
-// OVERHAUL BODY", bukan ID hardcode).
+// langsung). Transaction pakej/kontrak LAIN (bukan yuran KOB) TAK dikira
+// — lihat getKobPaidTransactions() (keputusan user 12 Ogos: mula-mula
+// terima MANA-MANA transaction "buat masa sekarang", kemudian diketatkan
+// kepada KOB sahaja). Status sahaja TAK MEMADAI — contact yang belum
+// book/bayar diskip (skippedNoPaymentOrBooking), TAK dicipta dalam
+// psy_patients. Lihat getKobCalendarIds() (auto-resolve ikut nama
+// kalendar "KONSULTASI OVERHAUL BODY", bukan ID hardcode).
 //
 // Guna semula SEPENUHNYA logik teras _shared/ghl-sync.ts — TIADA logik
 // sync baharu ditulis di sini, hanya orkestrasi pull+loop.
@@ -90,6 +93,40 @@ function isKobRelevantStatus(status: string): boolean {
 
 const PAID_STATUSES = ['paid', 'completed', 'succeeded', 'success']
 
+function isKobProductName(name: string): boolean {
+  const n = String(name || '').toUpperCase()
+  return n.includes('KOB') || n.includes('KONSULTASI')
+}
+
+// Tarik transaction succeeded/paid/completed untuk SATU contact, tapis
+// **KOB SAHAJA** (keputusan user 12 Ogos 2026 — sebelum ni terima MANA-MANA
+// transaction termasuk pakej/kontrak lain "buat masa sekarang", sekarang
+// ketatkan). Transaction order-sourced bawa nama produk TERUS
+// (`entitySourceName`, cth "KOB GA WC1 260806") — padan terus. Transaction
+// invoice-sourced (manual transfer/Text2Pay) TAK bawa nama produk dalam
+// transaction itu sendiri (cth "Text2Pay - EOB 260808." — generik) — kena
+// rujuk invoice ASAL (`name`/`invoiceItems[].name`, cth "KONSULTASI
+// OVERHAUL BODY"), padan ikut `entityId`. Dikongsi antara processOneContact
+// & diagnose_gate (satu sumber logik, elak drift).
+async function getKobPaidTransactions(locationId: string, contactId: string): Promise<any[]> {
+  const txData = await ghl(`/payments/transactions?altId=${locationId}&altType=location&contactId=${contactId}&limit=20`, { method: 'GET' })
+  const txs = txData?.data || txData?.transactions || []
+  const paid = txs.filter((t: any) => PAID_STATUSES.includes(String(t.status || '').toLowerCase()))
+
+  const hasInvoiceSourced = paid.some((t: any) => t.entityType === 'invoice')
+  let kobInvoiceIds = new Set<string>()
+  if (hasInvoiceSourced) {
+    const invoiceData = await ghl(`/invoices/?altId=${locationId}&altType=location&contactId=${contactId}&limit=20&offset=0`, { method: 'GET' })
+    const invoices = invoiceData?.invoices || []
+    kobInvoiceIds = new Set(
+      invoices
+        .filter((inv: any) => isKobProductName(inv.name) || (inv.invoiceItems || []).some((it: any) => isKobProductName(it.name)))
+        .map((inv: any) => inv._id),
+    )
+  }
+  return paid.filter((t: any) => t.entityType === 'invoice' ? kobInvoiceIds.has(t.entityId) : isKobProductName(t.entitySourceName))
+}
+
 // Syarat masuk ISW (keputusan user 11-12 Ogos 2026): status ISW STATUS
 // relevan SAHAJA TAK MEMADAI — mesti JUGA ada (a) sekurang-kurangnya 1
 // GHL Transaction succeeded/paid/completed DAN (b) appointment pada
@@ -130,7 +167,14 @@ async function getKobCalendarIds(locationId: string): Promise<Set<string>> {
 // Proses SATU contact ikut syarat penuh (status + kalendar KOB + bayaran)
 // — sumber tunggal dikongsi antara scan sistematik (loop utama) DAN
 // carian sasaran (action sync_matching). Elak drift dua salinan logik.
-async function processOneContact(svc: any, locationId: string, c: any): Promise<{
+//
+// `requirePayment` (default true): keputusan asal user (11-12 Ogos) — mesti
+// ada bayaran sah. TETAPI 12 Ogos user minta longgarkan SEMENTARA ("untuk
+// sekarang ni") khas utk backfill kontak SU/JS/OB yang dah book KOB tapi
+// belum sempat sync bayaran — appointment KOB TETAP wajib, bayaran jadi
+// pilihan. Loop scan sistematik (Deno.serve) kekal panggil dgn default
+// (true) — hanya sync_matching boleh set false secara eksplisit.
+async function processOneContact(svc: any, locationId: string, c: any, requirePayment = true): Promise<{
   status: 'not_relevant' | 'skipped_gate' | 'synced'
   patientId?: string
   appointmentSynced?: boolean
@@ -153,12 +197,10 @@ async function processOneContact(svc: any, locationId: string, c: any): Promise<
 
     let paidTransactions: any[] = []
     try {
-      const txData = await ghl(`/payments/transactions?altId=${locationId}&altType=location&contactId=${c.id}&limit=20`, { method: 'GET' })
-      const txs = txData?.data || txData?.transactions || []
-      paidTransactions = txs.filter((t: any) => PAID_STATUSES.includes(String(t.status || '').toLowerCase()))
+      paidTransactions = await getKobPaidTransactions(locationId, c.id)
     } catch (e) { return { status: 'skipped_gate', error: `transaction-check: ${(e as Error).message}` } }
 
-    if (!latestKobAppt || paidTransactions.length === 0) return { status: 'skipped_gate' }
+    if (!latestKobAppt || (requirePayment && paidTransactions.length === 0)) return { status: 'skipped_gate' }
 
     const fullName = [c.firstNameRaw, c.lastNameRaw].filter(Boolean).join(' ').trim() || c.contactName || null
     const { patientId } = await syncContactToPatient(svc, {
@@ -279,14 +321,18 @@ Deno.serve(async (req: Request) => {
         }
       }
       if (body.action === 'sync_matching') {
-        // { debug:true, action:'sync_matching', query:'SU' | 'JS' | ... }
+        // { debug:true, action:'sync_matching', query:'SU' | 'JS' | ..., requirePayment?:false }
         // Carian TERUS (GHL text search, bukan scan cursor sistematik) —
         // utk utamakan kelompok pesakit tertentu (cth nama "SU"/"JS")
-        // TANPA tunggu giliran scan menyeluruh. TETAP lalui syarat penuh
-        // (status+kalendar+bayaran) via processOneContact() — TIDAK
-        // langkau gate macam sync_one.
+        // TANPA tunggu giliran scan menyeluruh. Lalui syarat status+kalendar
+        // KOB SENTIASA (appointment KOB tetap wajib) via processOneContact().
+        // `requirePayment:false` (keputusan user 12 Ogos, SEMENTARA "untuk
+        // sekarang ni") longgarkan syarat bayaran khas utk carian sasaran
+        // ni — default masih true (loop scan sistematik TAK terjejas,
+        // sentiasa panggil processOneContact tanpa override = true).
         const q = String(body.query || '')
         if (!q) return json({ debug: true, action: 'sync_matching', error: 'query wajib' }, 400)
+        const requirePayment = body.requirePayment !== false
         let sAfterId: string | undefined = body.startAfterId
         let sAfter: number | undefined = body.startAfter
         const pages = Math.min(Number(body.pages) || 5, 10)
@@ -304,7 +350,7 @@ Deno.serve(async (req: Request) => {
             const iswStatus = getCustomFieldById(c.customFields, ISW_STATUS_FIELD_ID)
             if (!isKobRelevantStatus(iswStatus)) continue
             kobRel++
-            const r = await processOneContact(svc, locationId, c)
+            const r = await processOneContact(svc, locationId, c, requirePayment)
             if (r.status === 'skipped_gate') { skippedGate++; continue }
             if (r.status === 'synced') {
               synced++
@@ -316,7 +362,7 @@ Deno.serve(async (req: Request) => {
           sAfterId = last?.id
           sAfter = last?.dateAdded ? new Date(last.dateAdded).getTime() : undefined
         }
-        return json({ debug: true, action: 'sync_matching', query: q, scanned, kobRelevant: kobRel, skippedNoPaymentOrBooking: skippedGate, patientsSynced: synced, results, nextCursor: sAfterId ? { startAfterId: sAfterId, startAfter: sAfter } : null })
+        return json({ debug: true, action: 'sync_matching', query: q, requirePayment, scanned, kobRelevant: kobRel, skippedNoBooking: skippedGate, patientsSynced: synced, results, nextCursor: sAfterId ? { startAfterId: sAfterId, startAfter: sAfter } : null })
       }
       if (body.action === 'list_calendars') {
         // Semak SEBELUM jalan penuh — sahkan nama kalendar KOB sebenar
@@ -374,6 +420,7 @@ Deno.serve(async (req: Request) => {
             const txs = txData?.data || txData?.transactions || []
             const transactionStatuses = [...new Set(txs.map((t: any) => t.status))]
             const paidTransactionCount = txs.filter((t: any) => PAID_STATUSES.includes(String(t.status || '').toLowerCase())).length
+            const kobPaidTransactionCount = await getKobPaidTransactions(locationId, c.id).then(r => r.length).catch(() => 0)
 
             diagnostics.push({
               id: c.id, phone: c.phone, status,
@@ -388,7 +435,8 @@ Deno.serve(async (req: Request) => {
               totalTransactions: txs.length,
               transactionStatuses,
               paidTransactions: paidTransactionCount,
-              passed: kobEvents.length > 0 && paidTransactionCount > 0,
+              kobPaidTransactions: kobPaidTransactionCount,
+              passed: kobEvents.length > 0 && kobPaidTransactionCount > 0,
             })
           }
           if (cs.length < PAGE_LIMIT) break
