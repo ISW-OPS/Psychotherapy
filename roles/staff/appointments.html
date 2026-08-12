@@ -157,9 +157,20 @@
             <span class="flex items-center gap-1 text-xs"><span class="w-3 h-3 rounded bg-[#fef3c7] inline-block"></span>Reschedule</span>
             <span class="flex items-center gap-1 text-xs"><span class="w-3 h-3 rounded bg-[#fee2e2] inline-block"></span>Tidak Hadir</span>
             <span class="flex items-center gap-1 text-xs"><span class="w-3 h-3 rounded bg-[#f3e8ff] border border-purple-300 inline-block"></span>🏥 Peristiwa</span>
-            <label class="flex items-center gap-1.5 text-xs cursor-pointer ml-auto text-ink/70">
-              <input type="checkbox" id="toggle-events" onchange="toggleEventsLayer()" checked> Tunjuk peristiwa pesakit
-            </label>
+            <span class="flex items-center gap-1 text-xs"><span class="w-3 h-3 rounded bg-[#dbeafe] border border-navy/30 inline-block"></span>🩺 KOB</span>
+            <div class="relative ml-auto" id="view-filter-wrap">
+              <button type="button" onclick="toggleViewFilterPanel()"
+                class="flex items-center gap-1.5 text-xs border border-ink/20 rounded-lg px-2.5 py-1.5 bg-white hover:border-navy text-ink/70">
+                ☰ Papar
+              </button>
+              <div id="view-filter-panel" class="hidden absolute right-0 top-full mt-1 bg-white border border-ink/15 rounded-xl shadow-lg p-3 z-20 w-52 space-y-1.5">
+                <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" class="view-type-cb" value="session" onchange="onTypeFilterChange()" checked> Sesi Rawatan</label>
+                <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" class="view-type-cb" value="kob" onchange="onTypeFilterChange()" checked> 🩺 KOB</label>
+                <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" class="view-type-cb" value="event" onchange="onTypeFilterChange()" checked> 🏥 Peristiwa</label>
+                <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" class="view-type-cb" value="visit" onchange="onTypeFilterChange()" checked> 🚶 Lawatan</label>
+                <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" class="view-type-cb" value="closure" onchange="onTypeFilterChange()" checked> 🚫 Cuti</label>
+              </div>
+            </div>
           </div>
 
           <!-- Calendar grid -->
@@ -516,9 +527,8 @@ async function loadApptStaffMap() {
   (data || []).forEach(p => { apptStaffMap[p.id] = { name: p.full_name, role: p.staff_role }; });
 }
 
-// ── Lapisan Peristiwa Pesakit (digabung ke kalendar sesi) ──
-let calEvents = [], calVisits = [];
-let showEvents = localStorage.getItem('isw_cal_show_events') !== '0';
+// ── Lapisan Peristiwa Pesakit + KOB (digabung ke kalendar sesi) ──
+let calEvents = [], calVisits = [], calKob = [];
 
 async function loadPatientEvents() {
   try {
@@ -535,22 +545,83 @@ async function loadPatientEvents() {
   } catch (_) { calEvents = []; calVisits = []; }
 }
 
+// Jenis item calendar yang boleh ditapis — ganti toggle tunggal
+// 'isw_cal_show_events' lama (satu suis event+visit sahaja).
+const VIEW_TYPES = ['session', 'kob', 'event', 'visit', 'closure'];
+function loadVisibleTypes() {
+  try {
+    const raw = localStorage.getItem('isw_cal_visible_types');
+    if (raw) return new Set(JSON.parse(raw));
+  } catch (_) {}
+  // Migrate dari key lama — kalau pengguna dulu matikan "tunjuk peristiwa",
+  // kekalkan event+visit off, semua jenis lain default ON.
+  const oldShowEvents = localStorage.getItem('isw_cal_show_events') !== '0';
+  const init = new Set(VIEW_TYPES);
+  if (!oldShowEvents) { init.delete('event'); init.delete('visit'); }
+  return init;
+}
+let visibleTypes = loadVisibleTypes();
+function typeVisible(t) { return visibleTypes.has(t); }
+function saveVisibleTypes() { localStorage.setItem('isw_cal_visible_types', JSON.stringify([...visibleTypes])); }
+
+function toggleViewFilterPanel() { document.getElementById('view-filter-panel').classList.toggle('hidden'); }
+document.addEventListener('click', (e) => {
+  const wrap = document.getElementById('view-filter-wrap');
+  const panel = document.getElementById('view-filter-panel');
+  if (wrap && panel && !wrap.contains(e.target)) panel.classList.add('hidden');
+});
+function onTypeFilterChange() {
+  visibleTypes = new Set([...document.querySelectorAll('.view-type-cb:checked')].map(cb => cb.value));
+  saveVisibleTypes();
+  if (currentView === 'week') renderWeekView(); else renderCalendar();
+}
+
+// Semak coach terpilih padan pesakit (patientId) ATAU coach ganti
+// (extraCoachId — hanya relevan utk sesi rawatan, KOB tiada konsep ni).
+function passesCoachFilter(patientId, coachFilterVal, extraCoachId) {
+  if (!coachFilterVal) return true;
+  return patientMap[patientId]?.coach_id === coachFilterVal || extraCoachId === coachFilterVal;
+}
+
+async function loadKobSessions() {
+  try {
+    const { data } = await window.db.from('psy_kob_sessions')
+      .select('id, patient_id, scheduled_at, mode, status')
+      .order('scheduled_at', { ascending: true })
+      .limit(3000);
+    calKob = data || [];
+  } catch (_) { calKob = []; }
+}
+
+const KOB_STATUS_CLASS = { booked:'chip-booked', hadir:'chip-hadir', completed:'chip-consultation_done', reschedule:'chip-reschedule', cancelled:'chip-cancel' };
+const KOB_STATUS_LABEL = { booked:'Ditempah', hadir:'Hadir', completed:'Selesai', reschedule:'Reschedule', cancelled:'Tidak Hadir' };
+
+// Chip KOB untuk satu tarikh (dipakai dalam sel kalendar) — gabungan
+// sumber GHL (ghl-pull-sync) + booking ISW sendiri, dua-dua tulis ke
+// psy_kob_sessions yang sama jadi tiada logik tambahan diperlukan di sini.
+function kobChipsForDate(dateStr) {
+  if (!typeVisible('kob')) return '';
+  const coachFilterVal = document.getElementById('f-coach')?.value || '';
+  const items = calKob.filter(k => k.scheduled_at && localDateStr(k.scheduled_at) === dateStr
+    && passesCoachFilter(k.patient_id, coachFilterVal));
+  if (!items.length) return '';
+  const chips = items.slice(0, 2).map(k => {
+    const name = patientName(patientMap[k.patient_id]).split(' ')[0];
+    const cls = KOB_STATUS_CLASS[k.status] || 'chip-booked';
+    return `<span class="session-chip ${cls}" onclick="event.stopPropagation(); openDayModal('${dateStr}')">🩺 ${escapeHtml(name)}</span>`;
+  }).join('');
+  const extra = items.length - 2;
+  return chips + (extra > 0 ? `<span class="text-[9px] text-navy pl-1">+${extra} KOB</span>` : '');
+}
+
 function evName(o) { const pt = o?.psy_patients || {}; return pt.psy_profiles?.full_name || pt.full_name || pt.mrn || 'Pesakit'; }
 function evTypeIcon(t) { return (typeof PE_TYPES !== 'undefined' && PE_TYPES[t]?.icon) || '🏥'; }
 function evTypeLbl(t) { return (typeof PE_TYPES !== 'undefined' && PE_TYPES[t]?.lbl) || t; }
 
-function toggleEventsLayer() {
-  showEvents = document.getElementById('toggle-events').checked;
-  localStorage.setItem('isw_cal_show_events', showEvents ? '1' : '0');
-  renderCalendar();
-}
-window.toggleEventsLayer = toggleEventsLayer;
-
 // Chip peristiwa+lawatan untuk satu tarikh (dipakai dalam sel kalendar)
 function eventChipsForDate(dateStr) {
-  if (!showEvents) return '';
-  const evs = calEvents.filter(e => e.event_date === dateStr);
-  const vs  = calVisits.filter(v => v.visit_date === dateStr);
+  const evs = typeVisible('event') ? calEvents.filter(e => e.event_date === dateStr) : [];
+  const vs  = typeVisible('visit') ? calVisits.filter(v => v.visit_date === dateStr) : [];
   if (!evs.length && !vs.length) return '';
   const items = [];
   evs.slice(0, 2).forEach(e => items.push(
@@ -698,15 +769,18 @@ function renderWeekView() {
   // Day columns
   const closureMap = window._closureMap || {};
   const wkCoachFilter = document.getElementById('f-coach')?.value || '';
+  const wkShowClosures = typeVisible('closure');
   const dayCols = [];
   for (let i = 0; i < 7; i++) {
     const d = wkAddDays(currentWeekStart, i);
     const ymd = wkYmd(d);
-    const closure = closureMap[ymd];
-    const isOff = !closure && [1, 2].includes(d.getDay()); // Mon/Tue clinic-off (existing rule)
+    const closure = wkShowClosures ? closureMap[ymd] : null;
+    const isOff = wkShowClosures && !closure && [1, 2].includes(d.getDay()); // Mon/Tue clinic-off (existing rule)
 
-    const daySessions = allSessions.filter(s => s.session_date && wkSame(new Date(s.session_date), d)
-      && (!wkCoachFilter || patientMap[s.patient_id]?.coach_id === wkCoachFilter || s.substitute_coach_id === wkCoachFilter));
+    const daySessions = typeVisible('session') ? allSessions.filter(s => s.session_date && wkSame(new Date(s.session_date), d)
+      && passesCoachFilter(s.patient_id, wkCoachFilter, s.substitute_coach_id)) : [];
+    const dayKob = typeVisible('kob') ? calKob.filter(k => k.scheduled_at && wkSame(new Date(k.scheduled_at), d)
+      && passesCoachFilter(k.patient_id, wkCoachFilter)) : [];
 
     const hourRows = [];
     for (let h = 0; h < WK_HOURS; h++) hourRows.push(`<div class="wk-hour-row" style="height:${WK_ROW_PX}px"></div>`);
@@ -720,7 +794,7 @@ function renderWeekView() {
     } else if (isOff) {
       events = `<div class="wk-event" style="top:4px; bottom:4px; background:rgba(30,30,60,0.04); border:0; color:rgba(30,30,60,0.3); display:flex; align-items:center; justify-content:center; font-size:11px;">Konsultasi Tutup</div>`;
     } else {
-      events = daySessions.map(s => {
+      const sessionBlocks = daySessions.map(s => {
         const sd = new Date(s.session_date);
         const hf = sd.getHours() + sd.getMinutes()/60;
         if (hf < WK_HOUR_START || hf >= WK_HOUR_END) return '';
@@ -737,6 +811,21 @@ function renderWeekView() {
           <div class="truncate opacity-75 text-[10px]">${plan}</div>
         </div>`;
       }).join('');
+      const kobBlocks = dayKob.map(k => {
+        const kd = new Date(k.scheduled_at);
+        const hf = kd.getHours() + kd.getMinutes()/60;
+        if (hf < WK_HOUR_START || hf >= WK_HOUR_END) return '';
+        const top = (hf - WK_HOUR_START) * WK_ROW_PX;
+        const height = WK_ROW_PX - 4;
+        const time = kd.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+        const name = patientName(patientMap[k.patient_id]);
+        return `<div class="wk-event wk-type-konsultasi" style="top:${top+2}px; height:${height}px" onclick="openDayModal('${ymd}')">
+          <div class="font-bold">🩺 ${time}</div>
+          <div class="truncate">${name}</div>
+          <div class="truncate opacity-75 text-[10px]">KOB</div>
+        </div>`;
+      }).join('');
+      events = sessionBlocks + kobBlocks;
     }
 
     const todayCls = wkSame(d, today) ? 'bg-navy/[0.015]' : '';
@@ -847,16 +936,19 @@ function renderCalendar() {
   // Build session map: dateStr → [sessions]
   const coachFilter = document.getElementById('f-coach')?.value || '';
   const sessionMap = {};
-  allSessions.forEach(s => {
-    if (!s.session_date) return;
-    if (coachFilter && patientMap[s.patient_id]?.coach_id !== coachFilter && s.substitute_coach_id !== coachFilter) return;
-    const d = localDateStr(s.session_date);
-    if (!sessionMap[d]) sessionMap[d] = [];
-    sessionMap[d].push(s);
-  });
+  if (typeVisible('session')) {
+    allSessions.forEach(s => {
+      if (!s.session_date) return;
+      if (!passesCoachFilter(s.patient_id, coachFilter, s.substitute_coach_id)) return;
+      const d = localDateStr(s.session_date);
+      if (!sessionMap[d]) sessionMap[d] = [];
+      sessionMap[d].push(s);
+    });
+  }
 
   // Mon=1, Tue=2 are clinic off-days (JS getDay: 0=Sun,1=Mon,2=Tue)
   const CLOSED = new Set([1, 2]);
+  const showClosures = typeVisible('closure');
 
   let html = '';
   for (let i = 0; i < 42; i++) {
@@ -865,10 +957,12 @@ function renderCalendar() {
     const dateStr  = localDateStr(d);
     const isOther  = d.getMonth() !== calMonth;
     const isToday  = dateStr === todayStr;
-    const isClosed = CLOSED.has(d.getDay());
-    const closure = (window._closureMap || {})[dateStr];
+    const isClosed = showClosures && CLOSED.has(d.getDay());
+    const closure = showClosures ? (window._closureMap || {})[dateStr] : null;
     const daySessions = sessionMap[dateStr] || [];
     const evChips = eventChipsForDate(dateStr);
+    const kobChips = kobChipsForDate(dateStr);
+    const extraChips = evChips + kobChips;
 
     if (isClosed || closure) {
       const labelText = closure ? closure.label : 'Tutup';
@@ -876,9 +970,9 @@ function renderCalendar() {
       const bgCls = closure ? 'bg-terracotta/10' : 'bg-ink/[0.04]';
       const txtCls = closure ? 'text-terracotta/70' : 'text-ink/25';
       // Hari tutup pun boleh ada peristiwa pesakit (warded/kematian) — masih papar & boleh klik.
-      html += `<div class="cal-day border-b border-r border-ink/10 p-1.5 select-none ${bgCls} ${isOther ? 'other-month' : ''} ${evChips ? 'cursor-pointer' : 'cursor-not-allowed'}" title="${safeLabel}" ${evChips ? `onclick="openDayModal('${dateStr}')"` : ''}>
+      html += `<div class="cal-day border-b border-r border-ink/10 p-1.5 select-none ${bgCls} ${isOther ? 'other-month' : ''} ${extraChips ? 'cursor-pointer' : 'cursor-not-allowed'}" title="${safeLabel}" ${extraChips ? `onclick="openDayModal('${dateStr}')"` : ''}>
         <div class="text-xs font-semibold mb-1 ${txtCls}">${d.getDate()}</div>
-        ${evChips || `<div class="text-[9px] ${txtCls} font-medium mt-1 truncate">${closure ? '🎉 ' + safeLabel : 'Tutup'}</div>`}
+        ${extraChips || `<div class="text-[9px] ${txtCls} font-medium mt-1 truncate">${closure ? '🎉 ' + safeLabel : 'Tutup'}</div>`}
       </div>`;
       continue;
     }
@@ -896,7 +990,7 @@ function renderCalendar() {
     html += `<div class="cal-day border-b border-r border-ink/10 p-1.5 cursor-pointer hover:bg-navy-light/30 transition-colors ${isOther ? 'other-month' : ''} ${isToday ? 'today' : ''}"
       onclick="openDayModal('${dateStr}')">
       <div class="text-xs font-semibold mb-1 ${isToday ? 'text-navy' : 'text-ink/70'}">${d.getDate()}</div>
-      ${chips}${more}${evChips}
+      ${chips}${more}${extraChips}
     </div>`;
   }
   document.getElementById('cal-grid').innerHTML = html;
@@ -910,10 +1004,12 @@ function openDayModal(dateStr) {
     d.toLocaleDateString('ms-MY', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
 
   const dayCoachFilter = document.getElementById('f-coach')?.value || '';
-  const daySessions = allSessions.filter(s => s.session_date && localDateStr(s.session_date) === dateStr
-    && (!dayCoachFilter || patientMap[s.patient_id]?.coach_id === dayCoachFilter || s.substitute_coach_id === dayCoachFilter));
+  const daySessions = typeVisible('session') ? allSessions.filter(s => s.session_date && localDateStr(s.session_date) === dateStr
+    && passesCoachFilter(s.patient_id, dayCoachFilter, s.substitute_coach_id)) : [];
+  const dayKobList = typeVisible('kob') ? calKob.filter(k => k.scheduled_at && localDateStr(k.scheduled_at) === dateStr
+    && passesCoachFilter(k.patient_id, dayCoachFilter)) : [];
   // Banner cuti kalau tarikh ini ada cuti konsultasi
-  const closure = (window._closureMap || {})[dateStr];
+  const closure = typeVisible('closure') ? (window._closureMap || {})[dateStr] : null;
   const closureBanner = closure ? `<div class="bg-terracotta/10 border border-terracotta/30 rounded-xl p-3 flex items-start justify-between gap-2">
       <div class="min-w-0">
         <div class="text-sm font-bold text-terracotta">🚫 Cuti: ${escapeHtml(closure.label)}</div>
@@ -953,7 +1049,28 @@ function openDayModal(dateStr) {
     </div>`;
   }
 
-  document.getElementById('day-modal-body').innerHTML = closureBanner + eventsBlock + (daySessions.length
+  // Seksyen KOB pada tarikh ini (gabungan GHL + booking ISW sendiri)
+  let kobBlock = '';
+  if (dayKobList.length) {
+    kobBlock = `<div class="mb-3">
+      <div class="text-[11px] uppercase tracking-wide text-ink/40 font-bold mb-1.5">🩺 KOB</div>
+      <div class="space-y-1.5">
+        ${dayKobList.map(k => {
+          const kName = patientName(patientMap[k.patient_id]);
+          const kTime = new Date(k.scheduled_at).toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+          return `<a href="kob-detail.html?id=${k.id}" class="flex items-center justify-between gap-2 bg-navy-light/40 border border-navy/20 rounded-xl px-3 py-2 no-underline hover:bg-navy-light/70">
+            <div class="min-w-0">
+              <div class="text-sm font-semibold text-ink truncate">🩺 ${escapeHtml(kName)}</div>
+              <div class="text-[11px] text-ink/50">${kTime}${k.mode === 'online' ? ' · 💻 Online' : ' · 🏥 F2F'}</div>
+            </div>
+            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-ink/10 text-ink/60 flex-shrink-0">${KOB_STATUS_LABEL[k.status] || k.status}</span>
+          </a>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }
+
+  document.getElementById('day-modal-body').innerHTML = closureBanner + eventsBlock + kobBlock + (daySessions.length
     ? daySessions.map(s => {
         const dt      = new Date(s.session_date);
         const patient = patientMap[s.patient_id];
@@ -984,7 +1101,7 @@ function openDayModal(dateStr) {
           </div>
         </div>`;
       }).join('')
-    : (eventsBlock ? '' : '<p class="text-ink/40 text-sm text-center py-6">Tiada sesi pada tarikh ini.</p>'));
+    : ((eventsBlock || kobBlock) ? '' : '<p class="text-ink/40 text-sm text-center py-6">Tiada sesi pada tarikh ini.</p>'));
 
   document.getElementById('day-modal').classList.remove('hidden');
 }
@@ -1608,8 +1725,8 @@ async function loadAbsentAlert() {
   const now = new Date();
   calYear  = now.getFullYear();
   calMonth = now.getMonth();
-  await Promise.all([loadSessions(), loadApptStaffMap(), loadPatientEvents(), (typeof peLoadTypes === 'function' ? peLoadTypes() : Promise.resolve())]);
-  const tgl = document.getElementById('toggle-events'); if (tgl) tgl.checked = showEvents;
+  await Promise.all([loadSessions(), loadApptStaffMap(), loadPatientEvents(), loadKobSessions(), (typeof peLoadTypes === 'function' ? peLoadTypes() : Promise.resolve())]);
+  document.querySelectorAll('.view-type-cb').forEach(cb => { cb.checked = visibleTypes.has(cb.value); });
   renderCalendar();
   populateCoachFilter();
   loadAbsentAlert();

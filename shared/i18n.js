@@ -197,6 +197,11 @@
 
   var SKIP_TAGS = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEXTAREA: 1, CODE: 1, PRE: 1, SVG: 1 };
   var ATTRS = ['placeholder', 'title', 'aria-label'];
+  // Elements marked data-i18n-skip (or inside one) keep their as-authored text
+  // in both languages — used for labels that must never switch (e.g. a nav
+  // item deliberately fixed to "Dashboard" regardless of BM/EN).
+  var SKIP_ATTR = 'data-i18n-skip';
+  function isSkipped(el) { return !!(el && el.closest && el.closest('[' + SKIP_ATTR + ']')); }
 
   function translate(s) {
     if (s == null) return null;
@@ -232,12 +237,14 @@
     if (!node.nodeValue || !node.nodeValue.trim()) return;
     var p = node.parentNode;
     if (p && SKIP_TAGS[p.nodeName]) return;
+    if (isSkipped(p)) return;
     if (node.__iswOrig == null) node.__iswOrig = node.nodeValue;
     var next = resolve(node.__iswOrig, lang);
     if (node.nodeValue !== next) node.nodeValue = next;
   }
 
   function handleAttrs(el, lang) {
+    if (isSkipped(el)) return;
     for (var i = 0; i < ATTRS.length; i++) {
       var a = ATTRS[i];
       if (!el.hasAttribute || !el.hasAttribute(a)) continue;

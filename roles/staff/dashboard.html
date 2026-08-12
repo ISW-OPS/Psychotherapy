@@ -1737,7 +1737,7 @@ async function renderManagerDashboard(user, today) {
   const AGE_BUCKETS = ['<18','18–30','31–40','41–50','51–60','>60'];
   const ageBucket = a => a==null?null : a<18?'<18' : a<=30?'18–30' : a<=40?'31–40' : a<=50?'41–50' : a<=60?'51–60' : '>60';
   const statusLabel = p =>
-    p.status==='pending_kyc' ? 'Tunggu KYC' :
+    p.status==='pending_kyc' ? 'Tunggu Pendaftaran' :
     (p.status==='deceased' || p.outcome_status==='meninggal') ? 'Meninggal' :
     p.outcome_status==='completed' ? 'Tamat' :
     p.outcome_status==='berhenti' ? 'Berhenti' :
@@ -1886,7 +1886,7 @@ async function renderManagerDashboard(user, today) {
   fillSel('m-pa-bandar', [['','Semua']].concat(uniq(patients.map(p=>p.city)).map(v=>[v,v])));
   fillSel('m-pa-pakej', [['','Semua']].concat(uniq(patients.map(p=>p.active_package_name)).map(v=>[v,v])));
   fillSel('m-f-coach', [['','Semua']].concat(coaches.map(c=>[c.id, c.full_name])));
-  fillSel('m-f-status', [['','Semua'],['Aktif','Aktif'],['Tunggu KYC','Tunggu KYC'],['Tamat','Tamat'],['Berhenti','Berhenti'],['Meninggal','Meninggal']]);
+  fillSel('m-f-status', [['','Semua'],['Aktif','Aktif'],['Tunggu Pendaftaran','Tunggu Pendaftaran'],['Tamat','Tamat'],['Berhenti','Berhenti'],['Meninggal','Meninggal']]);
   fillSel('m-f-bayar', [['','Semua'],['paid','Sudah Bayar'],['unpaid','Belum Bayar']]);
   fillSel('m-f-fasa', [['','Semua'],['Awal','Awal'],['Pertengahan','Pertengahan'],['Akhir','Akhir']]);
 
@@ -1941,10 +1941,10 @@ async function renderManagerDashboard(user, today) {
     listBars(countBy(matched, p=>p.state), negeriHost, matched.length, 'Tiada data');
     listBars(countBy(matched, p=>p.active_package_name), pakejHost, matched.filter(p=>p.active_package_name).length, 'Tiada pakej');
 
-    const STAT_ORDER = ['Aktif','Tamat','Berhenti','Meninggal','Tunggu KYC','Tidak Aktif'];
+    const STAT_ORDER = ['Aktif','Tamat','Berhenti','Meninggal','Tunggu Pendaftaran','Tidak Aktif'];
     const byStat = countBy(matchedExStatus, statusLabel);
     const statLabels = STAT_ORDER.filter(s=>byStat[s]);
-    mChart('m-chart-status', donutCfg(statLabels, statLabels.map(s=>byStat[s]), {Aktif:'#22c55e',Tamat:'#6366f1',Berhenti:'#f59e0b',Meninggal:'#ef4444','Tunggu KYC':'#a855f7','Tidak Aktif':'#94a3b8'}));
+    mChart('m-chart-status', donutCfg(statLabels, statLabels.map(s=>byStat[s]), {Aktif:'#22c55e',Tamat:'#6366f1',Berhenti:'#f59e0b',Meninggal:'#ef4444','Tunggu Pendaftaran':'#a855f7','Tidak Aktif':'#94a3b8'}));
 
     document.getElementById('m-subtitle').textContent = `${matched.length} pesakit dipadankan · ${apprTotal} menunggu kelulusan`;
   };
@@ -1968,10 +1968,9 @@ async function renderAdminDashboard(user, today) {
 
   // ── Fetch ──
   const [
-    kycRes, ordersRes, todaySessRes, issueRepRes, issueClosedRes,
+    ordersRes, todaySessRes, issueRepRes, issueClosedRes,
     patientsRes, inventoryRes, stockLogRes,
   ] = await Promise.all([
-    window.db.from('psy_kyc_submissions').select('patient_name, patient_id, created_at, status').eq('status','pending').order('created_at',{ascending:false}),
     window.db.from('psy_orders').select('id, order_ref, patient_id, items, status, created_at').in('status',['pending','paid','packed']).order('created_at',{ascending:false}),
     window.db.from('psy_plan_weekly_progress').select('id, session_date, status, patient_id').gte('session_date', _dayLo.toISOString()).lt('session_date', _dayHi.toISOString()).order('session_date',{ascending:true}),
     window.db.from('psy_audit_log').select('id, actor_id, actor_name, created_at, meta').eq('action','issue.reported').order('created_at',{ascending:false}).limit(50),
@@ -1981,7 +1980,6 @@ async function renderAdminDashboard(user, today) {
     window.db.from('psy_audit_log').select('id, created_at, meta').eq('action','inventory.auto_deducted').order('created_at',{ascending:false}).limit(8),
   ]);
 
-  const kycList   = kycRes.data || [];
   const orders    = ordersRes.data || [];
   const todaySess = (todaySessRes.data || []).filter(s => { const x = new Date(s.session_date); return x.getFullYear()===_dayBase.getFullYear() && x.getMonth()===_dayBase.getMonth() && x.getDate()===_dayBase.getDate(); });
   const issuesRep = issueRepRes.data || [];
@@ -1999,9 +1997,9 @@ async function renderAdminDashboard(user, today) {
       : Number(item.min_qty)||0;
     return threshold > 0 && qty <= threshold;
   });
-  const kycCount = kycList.length, orderCount = orders.length, sessCount = todaySess.length, issueCount = openIssues.length;
+  const orderCount = orders.length, sessCount = todaySess.length, issueCount = openIssues.length;
 
-  // ═══ 5 STAT CARDS ═══
+  // ═══ STAT CARDS ═══
   const statCard = (emoji, ring, label, value, sub, subCls, href) => `
     <a href="${href}" class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4 hover:shadow-md transition-shadow flex flex-col">
       <div class="flex items-center justify-between mb-2">
@@ -2012,7 +2010,6 @@ async function renderAdminDashboard(user, today) {
       <div class="text-[11px] mt-0.5 ${subCls}">${sub}</div>
     </a>`;
   document.getElementById('a-stat-cards').innerHTML = [
-    statCard('🪪','bg-green-light','KYC Menunggu Semakan',  kycCount,         'Perlu disemak',    kycCount?'text-amber-600 font-medium':'text-ink/40', 'kyc-list.html'),
     statCard('📅','bg-blue-100',   'Sesi Rawatan Hari Ini', sessCount,        'Sesi dijadualkan', 'text-ink/40', 'appointments.html'),
     statCard('💬','bg-purple-100', 'Report Issue Baru',     issueCount,       'Perlu tindakan',   issueCount?'text-purple-600 font-medium':'text-ink/40', 'issue.html'),
     statCard('🛒','bg-teal/10',    'Order Tertunggak',      orderCount,       'Perlu diproses',   orderCount?'text-teal font-medium':'text-ink/40', 'orders.html'),
@@ -2551,9 +2548,8 @@ async function renderDoctorDashboard(user, today) {
 async function renderDefaultDashboard(user, today) {
   document.getElementById('default-view').classList.remove('hidden');
 
-  const [weeklyAll, kyc, patients] = await Promise.all([
+  const [weeklyAll, patients] = await Promise.all([
     window.db.from('psy_plan_weekly_progress').select('*').order('session_date',{ascending:true}).then(r=>r.data||[]),
-    window.db.from('psy_kyc_submissions').select('*').in('status',['pending','rejected']).order('created_at',{ascending:false}).then(r=>r.data||[]),
     window.db.from('psy_patients').select('*').eq('status','active').then(r=>r.data||[]),
   ]);
 
@@ -2563,7 +2559,6 @@ async function renderDefaultDashboard(user, today) {
   document.getElementById('kpi-grid').innerHTML = [
     kpiCard('Sesi Hari Ini', todaySessions.length, `${hadirCount} hadir`, 'navy', 'appointments.html'),
     kpiCard('Pesakit Aktif', patients.length, 'Dalam sistem', 'green', 'patients.html'),
-    kpiCard('KYC Pending', kyc.filter(k=>k.status==='pending').length, 'Perlu review', 'gold', 'kyc-list.html'),
   ].join('');
 
   document.getElementById('schedule-list').innerHTML = todaySessions.length

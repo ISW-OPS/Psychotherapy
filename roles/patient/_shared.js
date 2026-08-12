@@ -30,19 +30,17 @@ window.kycSubmitted = false;
 
 async function resolveKycStatus() {
   const p = window.patientRecord;
-  // Active patients (staff-created and claimed, or fully approved) skip KYC
+  // Active patients (staff-created and claimed, or fully registered) skip KYC
   if (p?.status === 'active') return { approved: true, submitted: true };
-  // Check latest KYC submission status (handles patient without patientRecord yet)
+  // Pendaftaran tiada lagi semakan/lulus staf — sebarang penyerahan sedia ada
+  // dikira lulus terus (handles patient without patientRecord yet).
   const subs = await dbQuery('psy_kyc_submissions', {
     eq: { user_id: window.currentUser.id },
     order: { col: 'created_at', ascending: false },
     limit: 1,
   }).catch(() => []);
-  const status = subs[0]?.status;
-  return {
-    approved: status === 'approved',
-    submitted: status === 'approved' || status === 'pending',
-  };
+  const submitted = subs.length > 0;
+  return { approved: submitted, submitted };
 }
 
 async function enforceKyc(currentPageId) {
@@ -52,7 +50,7 @@ async function enforceKyc(currentPageId) {
 
   // ── GATE 1: KYC mesti DIHANTAR dulu (tak perlu tunggu admin lulus) sebelum mula KOB ──
   // Pesakit belum hantar KYC langsung → terkunci, dihantar ke skrin KYC.
-  if (!window.kycSubmitted) { window.location.href = 'kyc.html'; return false; }
+  if (!window.kycSubmitted) { window.location.href = 'pendaftaran.html'; return false; }
 
   // (KYC sudah dihantar) — boleh teruskan onboarding KOB + browse pakej/bayar
   // walaupun admin belum lulus lagi — kelulusan disemak semasa doktor jalankan sesi KOB.

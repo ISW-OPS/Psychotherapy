@@ -68,11 +68,13 @@ function chip(text, color = 'navy') {
 
 const STATUS_LABELS = {
   active:       'Aktif',
-  pending_kyc:  'Pending KYC',
+  pending_kyc:  'Pending Pendaftaran',
   inactive:     'Tidak Aktif',
   rejected:     'Ditolak',
   deleted:      'Dipadam',
   unregistered: 'Belum Aktif',
+  archived:     'Diarkibkan',
+  deceased:     'Meninggal',
   pending:      'Pending',
   approved:     'Diluluskan',
   scheduled:    'Dijadualkan',
@@ -143,7 +145,7 @@ function statusChip(s) {
 function outcomeChip(o) {
   if (!o) return '';
   const map = {
-    otw:       { label: 'OTW',           cls: 'bg-navy-light text-navy' },
+    otw:       { label: 'Sedang Berjalan', cls: 'bg-navy-light text-navy' },
     completed: { label: 'Selesai',       cls: 'bg-green-light text-green-dark' },
     berhenti:  { label: 'Berhenti',      cls: 'bg-gold/30 text-gold-dark' },
     meninggal: { label: 'Meninggal',     cls: 'bg-ink/15 text-ink/70' },

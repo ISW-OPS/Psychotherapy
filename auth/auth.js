@@ -55,7 +55,7 @@ async function handleLogin(e) {
           .from('psy_kyc_submissions').select('id, status').eq('user_id', data.user.id)
           .order('created_at', { ascending: false }).limit(1);
         const kycOk = kyc?.length && kyc[0].status !== 'rejected';
-        dest = kycOk ? '../roles/patient/kob.html' : '../roles/patient/kyc.html';
+        dest = kycOk ? '../roles/patient/kob.html' : '../roles/patient/pendaftaran.html';
       } else if (['kyc_done', 'hadir', 'package_recommended', 'package_paid'].includes(ks)) {
         dest = '../roles/patient/kob.html';
       }

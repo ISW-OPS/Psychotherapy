@@ -182,7 +182,7 @@
                 <button class="ptab active" data-tab="all"        onclick="setPatientTab('all')">Semua</button>
                 <button class="ptab"        data-tab="unassigned" onclick="setPatientTab('unassigned')">Belum Ditugaskan <span id="tab-ct-unassigned" class="tab-ct"></span></button>
                 <button class="ptab"        data-tab="mine"       onclick="setPatientTab('mine')">Pesakit Saya <span id="tab-ct-mine" class="tab-ct"></span></button>
-                <button class="ptab"        data-tab="prekyc"     onclick="setPatientTab('prekyc')">Belum KYC <span id="tab-ct-prekyc" class="tab-ct"></span></button>
+                <button class="ptab"        data-tab="prekyc"     onclick="setPatientTab('prekyc')">Belum Pendaftaran <span id="tab-ct-prekyc" class="tab-ct"></span></button>
               </div>
               <div class="flex items-center gap-2 flex-wrap">
                 <button data-rbac="patient.export" onclick="exportCSV()" class="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold text-white hover:opacity-90" style="background-color:#1D6F42">📊 Excel</button>
@@ -210,10 +210,15 @@
                 <option value="">Semua Status</option>
                 <optgroup label="Status">
                   <option value="active">Aktif</option>
+                  <option value="pending_kyc">Pending Pendaftaran</option>
                   <option value="unregistered">Belum Aktif</option>
                   <option value="inactive">Tidak Aktif</option>
+                  <option value="archived">Diarkibkan</option>
+                  <option value="deceased">Meninggal</option>
+                  <option value="rejected">Ditolak</option>
                 </optgroup>
-                <optgroup label="Tamat Rawatan">
+                <optgroup label="Outcome">
+                  <option value="o:otw">Sedang Berjalan</option>
                   <option value="o:completed">Selesai</option>
                   <option value="o:berhenti">Berhenti</option>
                   <option value="o:meninggal">Meninggal</option>
@@ -222,6 +227,12 @@
               <select id="filter-pakej" onchange="filterPatients()"
                 class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
                 <option value="">Semua Pakej</option>
+              </select>
+              <select id="filter-source" onchange="filterPatients()"
+                class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
+                <option value="">Semua Sumber</option>
+                <option value="GHL">GHL</option>
+                <option value="ISW">ISW</option>
               </select>
               <button onclick="clearPatientFilters()" class="text-xs text-ink/50 hover:text-terracotta hover:underline">Reset</button>
               <span id="patient-count" class="text-xs text-ink/50 whitespace-nowrap"></span>
@@ -237,7 +248,9 @@
                     <th>Telefon</th>
                     <th>Pakej</th>
                     <th>Coach / Terapi</th>
+                    <th>Sumber</th>
                     <th>Status</th>
+                    <th>Outcome</th>
                     <th class="print-hide">Tindakan</th>
                   </tr>
                 </thead>
@@ -1716,6 +1729,24 @@
     }
 
     // ── Soft Delete + cleanup related data ───────────────────────────────────────
+    // Staff sahkan pesakit GHL secara manual — tukar Sumber ke ISW +
+    // keluarkan dari pra-KYC (kalau masih 'pending_kyc') supaya terus
+    // masuk senarai "All" (bukan tersorok bawah "Not Yet Registered").
+    async function confirmSourceIsw(id, name) {
+      const { data: p } = await window.db.from('psy_patients').select('status').eq('id', id).single();
+      if (p?.status !== 'pending_kyc') { banner('Pesakit ni dah aktif'); return; }
+      if (!confirm(`Aktifkan pesakit "${name}"?\n\nRekod akan keluar dari "Pending Pendaftaran" dan masuk senarai utama. Sumber (GHL) KEKAL tak berubah — ini rekod asal-usul, bukan status semasa.`)) return;
+      try {
+        const { error } = await window.db.from('psy_patients').update({ status: 'active' }).eq('id', id);
+        if (error) throw error;
+        await auditLog('patient.staff_activated', id, { name });
+        banner('Pesakit diaktifkan');
+        loadAll();
+      } catch (e) {
+        alert('Gagal aktifkan: ' + (e.message || e));
+      }
+    }
+
     async function deletePatient(id, name) {
       if (!confirm(`Arkib rekod pesakit "${name || id}"?\n\nRekod akan disembunyikan dari senarai dan semua data berkaitan (KOB, jadual, plan rawatan) akan dipadam.\nAdmin boleh pulihkan rekod pesakit tetapi data KOB & jadual tidak akan dipulihkan.`)) return;
       try {
@@ -1775,8 +1806,6 @@
 
       document.getElementById('patient-count').textContent = `Total Pesakit : ${total} orang`;
 
-      const avatarColors = ['bg-navy-light text-navy','bg-green-light text-green-dark','bg-gold/30 text-gold-dark','bg-teal/15 text-teal','bg-terracotta-light text-terracotta'];
-
       document.getElementById('patients-body').innerHTML = pageItems.length
         ? pageItems.map((p, i) => {
           const rawName = p.psy_profiles?.full_name || p.full_name || '—';
@@ -1787,11 +1816,6 @@
           const age = calcAge(p.date_of_birth);
           const genderText = p.gender === 'M' ? 'Lelaki' : (p.gender === 'F' ? 'Perempuan' : '');
           const ageGenderLine = [age != null ? `${age} thn` : '', genderText].filter(Boolean).join(' · ');
-          const initials = rawName.split(/\s+/).slice(0,2).map(w => w[0] || '').join('').toUpperCase() || '?';
-          const avatarCls = avatarColors[(rawName.charCodeAt(0) || 0) % avatarColors.length];
-          const avatar = p.psy_profiles?.avatar_url
-            ? `<img src="${p.psy_profiles.avatar_url}" class="w-9 h-9 rounded-full object-cover flex-shrink-0">`
-            : `<div class="w-9 h-9 rounded-full ${avatarCls} flex items-center justify-center text-xs font-bold flex-shrink-0">${initials}</div>`;
           const nameForJs = String(rawName).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
           const nameForAttr = escapeHtml(nameForJs);
           const canEdit = (isAdmin || (isCoachUser && p.coach_id === window.currentUser?.id)) && p.status !== 'deleted';
@@ -1801,14 +1825,9 @@
           <td class="text-xs text-ink/50 text-center">${start + i + 1}</td>
           <td class="text-xs"><a href="patient-hub.html?patient_id=${p.id}" class="font-mono font-semibold text-navy hover:underline">${escapeHtml(p.mrn)}</a></td>
           <td>
-            <div class="flex items-center gap-3">
-              ${avatar}
-              <div class="min-w-0">
-                <div class="font-semibold text-sm flex items-center gap-1.5">${name}
-                  ${(!p.user_id) ? '<span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">Belum Aktif</span>' : ''}
-                </div>
-                ${ageGenderLine ? `<div class="text-[11px] text-ink/50 mt-0.5">${ageGenderLine}</div>` : ''}
-              </div>
+            <div class="min-w-0">
+              <div class="font-semibold text-sm flex items-center gap-1.5">${name}</div>
+              ${ageGenderLine ? `<div class="text-[11px] text-ink/50 mt-0.5">${ageGenderLine}</div>` : ''}
             </div>
           </td>
           <td class="text-xs">
@@ -1819,11 +1838,13 @@
               ${phone}
             </span>
           </td>
-          <td class="text-xs">${p.active_package_name
-              ? `<span class="chip bg-navy-light text-navy">${pkgName}</span>`
-              : '<span class="text-ink/30">—</span>'}</td>
+          <td class="text-xs">${p.active_package_name ? pkgName : '<span class="text-ink/30">—</span>'}</td>
           <td class="text-xs">${coachCellHtml(p)}</td>
-          <td>${statusChip(p.status)} ${outcomeChip(p.outcome_status)}</td>
+          <td class="text-xs">${p.referral_source === 'GHL'
+              ? `<button onclick="confirmSourceIsw('${p.id}','${nameForAttr}')" class="chip bg-navy-light text-navy hover:bg-navy hover:text-white transition-colors cursor-pointer" title="Klik untuk sahkan pesakit ni & masukkan ke senarai utama">GHL</button>`
+              : '<span class="chip bg-ink/10 text-ink/60">ISW</span>'}</td>
+          <td>${statusChip(p.status)}</td>
+          <td>${outcomeChip(p.outcome_status) || '<span class="text-ink/30">—</span>'}</td>
           <td class="whitespace-nowrap print-hide">
             <div class="flex items-center gap-1.5">
               ${p.status !== 'deleted' ? `<a href="patient-hub.html?patient_id=${p.id}" class="inline-flex items-center px-3 py-1.5 border border-navy/30 text-navy text-xs font-semibold rounded-lg hover:bg-navy hover:text-white transition-colors">Details</a>` : ''}
@@ -1839,7 +1860,7 @@
           </td>
         </tr>`;
         }).join('')
-        : '<tr><td colspan="8" class="text-center text-ink/40 py-8">Tiada pesakit ditemui</td></tr>';
+        : '<tr><td colspan="10" class="text-center text-ink/40 py-8">Tiada pesakit ditemui</td></tr>';
 
       renderPagination(total, totalPages);
     }
@@ -1909,7 +1930,7 @@
     }
 
     function clearPatientFilters() {
-      ['search-patient','filter-status','filter-pakej'].forEach(id => {
+      ['search-patient','filter-status','filter-pakej','filter-source'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
       });
@@ -1920,6 +1941,7 @@
       const q = document.getElementById('search-patient').value.toLowerCase();
       const status = document.getElementById('filter-status').value;
       const pakej = document.getElementById('filter-pakej').value;
+      const source = document.getElementById('filter-source').value;
       const myId = window.currentUser?.id;
       const list = allPatients.filter(p => {
         // Lapisan tab (gabungan Assignments)
@@ -1938,7 +1960,9 @@
         const matchS = !status || (status.startsWith('o:') ? p.outcome_status === status.slice(2) : p.status === status);
         const matchP = !pakej
           || (pakej === '__none__' ? !p.active_package_name : p.active_package_name === pakej);
-        return matchQ && matchS && matchP;
+        // Sumber: sama logik macam paparan chip — referral_source='GHL' → GHL, selainnya ISW.
+        const matchSrc = !source || (source === 'GHL' ? p.referral_source === 'GHL' : p.referral_source !== 'GHL');
+        return matchQ && matchS && matchP && matchSrc;
       });
       renderPatients(list);
       updateTabCounts();
@@ -2279,8 +2303,14 @@
     }
 
     // ── Auto-link staff patients whose IC matches an existing KYC ────
-    async function autoLinkStaffPatients() {
-      const unlinked = allPatients.filter(p => p.created_by_staff && !p.user_id && p.ic_number);
+    async function autoLinkUnclaimedPatients() {
+      // Liputi DUA sumber stub tak berpaut: dicipta staff (created_by_staff) DAN
+      // dicipta GHL sync (referral_source='GHL', psy_patients.user_id masih NULL
+      // sebab pesakit belum daftar akaun ISW lagi, atau nombor telefon yang dia
+      // taip semasa KYC tak padan phone GHL — client-side match di pendaftaran.html
+      // gagal). IC dari psy_kyc_submissions jadi kunci sandaran kedua supaya stub
+      // ni tetap boleh digabung automatik bila staff buka page ni.
+      const unlinked = allPatients.filter(p => !p.user_id && p.ic_number);
       if (!unlinked.length) return false;
 
       const icList = [...new Set(unlinked.map(p => p.ic_number))];
@@ -2370,7 +2400,7 @@
       }
 
       if (!skipAutoLink) {
-        const linked = await autoLinkStaffPatients();
+        const linked = await autoLinkUnclaimedPatients();
         if (linked) { await loadAll(true); return; }
       }
 

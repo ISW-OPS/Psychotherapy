@@ -727,6 +727,91 @@ function validateAll() {
 function fv(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
 function sv(id, v) { const el = document.getElementById(id); if (el) el.value = v || ''; }
 
+// ── Cari rekod psy_patients sedia ada (belum linked) ikut phone/IC ─────
+// Padan phone dulu (last-9-digit, cover phone & emergency_contact_phone —
+// sama corak macam _shared/ghl-sync.ts syncContactToPatient), IC fallback.
+// Diguna oleh live-prefill (semasa isi borang) & claim-di-submit (submitKYC).
+async function findExistingUnlinkedPatient(phoneKeyVal, icVal, excludeId) {
+  let target = null;
+  if (phoneKeyVal) {
+    const { data } = await window.db.from('psy_patients')
+      .select('*').is('user_id', null).neq('id', excludeId)
+      .or(`phone.ilike.%${phoneKeyVal},emergency_contact_phone.ilike.%${phoneKeyVal}`)
+      .limit(1);
+    target = data?.[0] || null;
+  }
+  if (!target && icVal) {
+    const { data } = await window.db.from('psy_patients')
+      .select('*').is('user_id', null).neq('id', excludeId)
+      .eq('ic_number', icVal).limit(1);
+    target = data?.[0] || null;
+  }
+  return target;
+}
+
+// ── Live prefill — isi medan LAIN yang masih KOSONG sahaja bila rekod
+// sedia ada dijumpai (tak timpa apa yang pesakit dah taip sendiri) ────
+function prefillEmptyFields(rec) {
+  const map = {
+    'f-name': rec.full_name, 'f-dob': rec.date_of_birth, 'f-gender': rec.gender,
+    'f-address': rec.address, 'f-occupation': rec.occupation, 'f-company': rec.company,
+    'f-email': rec.email,
+    'f-emg-name': rec.emergency_contact_name, 'f-emg-phone': rec.emergency_contact_phone,
+    'f-emg-ic': rec.emergency_contact_ic, 'f-emg-email': rec.emergency_contact_email,
+  };
+  let filled = false;
+  Object.entries(map).forEach(([id, val]) => {
+    if (!val) return;
+    const el = document.getElementById(id);
+    if (el && !el.value.trim()) { el.value = val; filled = true; }
+  });
+  if (rec.marital_status && !fv('f-marital')) setMarital(rec.marital_status);
+  const relEl = document.getElementById('f-emg-rel');
+  if (rec.emergency_contact_relationship && relEl && !relEl.value.trim()) {
+    const rel = rec.emergency_contact_relationship.trim();
+    relEl.value = rel;
+    const presets = ['Ibu/Bapa','Adik-Beradik','Suami/Isteri','Anak'];
+    const match = presets.find(p => p.toLowerCase() === rel.toLowerCase());
+    if (match) {
+      const r = document.querySelector(`input[name="f-emg-rel-radio"][value="${match}"]`);
+      if (r) r.checked = true;
+    } else {
+      const other = document.querySelector('input[name="f-emg-rel-radio"][value="__other__"]');
+      const otherInput = document.getElementById('f-emg-rel-other');
+      if (other) other.checked = true;
+      if (otherInput) {
+        otherInput.disabled = false;
+        otherInput.style.opacity = '1';
+        otherInput.style.cursor = 'text';
+        otherInput.value = rel;
+        otherInput.oninput = () => { document.getElementById('f-emg-rel').value = otherInput.value.trim(); autoSaveDraft(); };
+      }
+    }
+    filled = true;
+  }
+  if (filled) {
+    computeKycProgress();
+    autoSaveDraft();
+    banner('Rekod sedia ada dijumpai — maklumat lain diisi automatik. Sila semak & lengkapkan. ℹ️');
+  }
+}
+
+// Dipanggil bila pesakit selesai taip No. IC/Telefon (blur) — cuba padan
+// sekali sahaja setiap sesi borang (elak query berulang/banner berulang).
+let _livePrefillDone = false;
+async function tryLivePrefill() {
+  if (_livePrefillDone) return;
+  const icVal = fv('f-ic').replace(/-/g, '');
+  const phoneDigits = fv('f-phone').replace(/\D/g, '');
+  const phoneKeyVal = phoneDigits.length >= 9 ? phoneDigits.slice(-9) : '';
+  if (!icVal && !phoneKeyVal) return;
+  const myPatientId = patientRecord?.id || '00000000-0000-0000-0000-000000000000';
+  try {
+    const found = await findExistingUnlinkedPatient(phoneKeyVal, icVal, myPatientId);
+    if (found) { _livePrefillDone = true; prefillEmptyFields(found); }
+  } catch (e) { console.warn('[tryLivePrefill] gagal:', e.message); }
+}
+
 // ── Referral code ──────────────────────────────────────
 function normRef(v) { return String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
 
@@ -907,7 +992,7 @@ function buildPayload() {
     consent_health_records:  document.getElementById('c-health').checked,
     referred_by_code:        normRef(fv('f-referral')) || null,
     contact_preference:      fv('f-contact-pref') || 'pesakit',
-    status: 'pending',
+    status: 'approved',
   };
 }
 
@@ -990,11 +1075,33 @@ async function submitKYC() {
   const btn = document.getElementById('btn-submit');
   btn.disabled = true; btn.textContent = 'Menghantar...';
   try {
-    // Block duplicate IC — semak sekali lagi sebelum submit
+    // Cari & claim rekod psy_patients sedia ada (staff-created ATAU GHL) ikut
+    // phone dulu, IC sebagai fallback — elak duplicate bila pesakit yang sama
+    // dah wujud dlm sistem (cth. lead GHL yang dah kob/bayar pakej sebelum signup).
     const icVal = (document.getElementById('f-ic')?.value || '').trim().replace(/-/g, '');
+    const phoneDigits = (document.getElementById('f-phone')?.value || '').replace(/\D/g, '');
+    const phoneKeyVal = phoneDigits.length >= 9 ? phoneDigits.slice(-9) : '';
     const myPatientId = patientRecord?.id || '00000000-0000-0000-0000-000000000000';
+
+    const claimTarget = await findExistingUnlinkedPatient(phoneKeyVal, icVal, myPatientId);
+    if (claimTarget) {
+      // user_id unik satu rekod sahaja — buang stub kosong saya dulu sebelum
+      // pindah user_id ke rekod sedia ada (bawa sekali progres kob_status/pakej).
+      if (patientRecord?.id && patientRecord.id !== claimTarget.id) {
+        await window.db.from('psy_patients').delete().eq('id', patientRecord.id);
+      }
+      const { data: claimed, error: claimErr } = await window.db.from('psy_patients')
+        .update({ user_id: currentUser.id, created_by_staff: false })
+        .eq('id', claimTarget.id).select().single();
+      if (claimErr) throw claimErr;
+      patientRecord = claimed;
+      window.patientRecord = claimed;
+    }
+
+    // Block duplicate IC — rekod lain (BUKAN saya) dah guna IC yang sama
+    const myId = patientRecord?.id || myPatientId;
     const { data: icDup } = await window.db.from('psy_patients')
-      .select('id, mrn, full_name').eq('ic_number', icVal).neq('id', myPatientId).limit(1);
+      .select('id, mrn, full_name').eq('ic_number', icVal).neq('id', myId).limit(1);
     if (icDup?.[0]) {
       const p = icDup[0];
       const footerErr = document.getElementById('footer-error');
@@ -1010,7 +1117,7 @@ async function submitKYC() {
       submitted_by_proxy: submitterType === 'proxy',
     };
 
-    if (existingKYC && ['rejected','pending'].includes(existingKYC.status)) {
+    if (existingKYC) {
       const { error } = await window.db.from('psy_kyc_submissions')
         .update({ ...payload, review_notes: null }).eq('id', existingKYC.id);
       if (error) throw error;
@@ -1019,66 +1126,86 @@ async function submitKYC() {
       if (error) throw error;
     }
 
+    // Pendaftaran terus diluluskan automatik — tiada lagi semakan/lulus staf.
     if (patientRecord) {
       await window.db.from('psy_patients').update({
-        ic_number:        payload.ic_number,
-        date_of_birth:    payload.date_of_birth,
-        gender:           payload.gender,
-        address:          payload.address,
+        status:                  'active',
+        full_name:               payload.patient_name,
+        phone:                   payload.phone,
+        ic_number:               payload.ic_number,
+        date_of_birth:           payload.date_of_birth,
+        gender:                  payload.gender,
+        address:                 payload.address,
+        occupation:              payload.occupation,
+        company:                 payload.company,
+        marital_status:          payload.marital_status,
         emergency_contact_name:  payload.emergency_contact_name,
         emergency_contact_phone: payload.emergency_contact_phone,
         emergency_contact_ic:    payload.emergency_contact_ic,
-        contact_preference: payload.contact_preference,
+        contact_preference:      payload.contact_preference,
       }).eq('id', patientRecord.id);
       await window.db.from('psy_profiles').update({
         full_name: payload.patient_name, phone: payload.phone,
       }).eq('id', currentUser.id);
+
+      // Referral: pautkan perujuk + cipta lejar (sekali sahaja)
+      if (payload.referred_by_code && !patientRecord.referred_by_patient_id) {
+        const referrer = await resolveReferrer(payload.referred_by_code);
+        if (referrer && referrer.id !== patientRecord.id) {
+          await window.db.from('psy_patients').update({
+            referred_by_code:       payload.referred_by_code,
+            referred_by_patient_id: referrer.id,
+          }).eq('id', patientRecord.id);
+          const { error: refErr } = await window.db.from('psy_referrals').insert({
+            referrer_patient_id: referrer.id,
+            referee_patient_id:  patientRecord.id,
+            code_used:           payload.referred_by_code,
+            status:              'pending',
+          });
+          if (refErr && !/duplicate|unique/i.test(refErr.message || '')) {
+            console.warn('[referral] insert error:', refErr.message);
+          }
+        }
+      }
     }
 
-    // Advance KOB lifecycle: paid → kyc_done (so patient sees "Book KOB" next)
-    if (patientRecord && patientRecord.kob_status === 'paid') {
+    // Advance KOB lifecycle. Pakej rawatan aktif sedia ada (cth. rekod GHL/staff
+    // yang baru diclaim di atas) → skip terus ke Plan, jangan paksa lalui KOB
+    // semula. Kalau belum ada pakej tapi kob_status dah lebih maju drpd 'paid'
+    // (cth. 'booked' — dah ada tarikh KOB), JANGAN turunkan balik ke kyc_done —
+    // syarat `=== 'paid'` di bawah sengaja strict utk elak downgrade tu.
+    const hasActivePackage = !!patientRecord?.active_package_id;
+    if (patientRecord && hasActivePackage) {
+      await window.db.from('psy_patients')
+        .update({ status: 'active', kob_status: 'completed' })
+        .eq('id', patientRecord.id);
+    } else if (patientRecord && patientRecord.kob_status === 'paid') {
       await window.db.from('psy_patients')
         .update({ kob_status: 'kyc_done' })
         .eq('id', patientRecord.id);
     }
+    const nextPage = hasActivePackage ? 'plan.html' : 'kob.html';
 
     await auditLog('kyc.submitted', currentUser.id, {
       name: payload.patient_name,
       submitter: submitterType, // 'self' or 'proxy'
     });
 
-    // Notify all admin/doctor/manager staff
-    const { data: staffList } = await window.db.from('psy_profiles')
-      .select('id')
-      .eq('role', 'staff')
-      .in('staff_role', ['admin', 'manager', 'doctor']);
-    if (staffList?.length) {
-      const isResubmit = existingKYC?.status === 'rejected';
-      await Promise.all(staffList.map(s =>
-        window.db.from('psy_notifications').insert({
-          user_id: s.id,
-          type:    'kyc',
-          title:   isResubmit ? 'KYC Dihantar Semula' : 'KYC Baru Diterima',
-          body:    `${payload.patient_name} telah ${isResubmit ? 'menghantar semula' : 'menghantar'} borang KYC untuk semakan.`,
-          link:    'kyc-list.html',
-        })
-      ));
-    }
-
-    // Notify patient (rekod kekal dalam loceng — bukan sekadar toast)
-    const patientResubmit = existingKYC?.status === 'rejected';
     await window.db.from('psy_notifications').insert({
       user_id: currentUser.id,
       type:    'kyc',
-      title:   patientResubmit ? 'Pendaftaran Dihantar Semula ⏳' : 'Pendaftaran Berjaya Dihantar ⏳',
-      body:    'Borang pendaftaran anda telah dihantar. Anda sudah boleh tempah slot KOB — admin akan semak butiran dalam 24 jam.',
-      link:    'kob.html',
+      title:   'Pendaftaran Diluluskan ✅',
+      body:    hasActivePackage
+        ? 'Akaun anda telah disahkan. Pakej rawatan anda sudah aktif — sila lihat Treatment Plan anda.'
+        : 'Akaun anda telah disahkan. Sila teruskan tempah slot KOB anda.',
+      link:    nextPage,
     });
 
     clearDraft();
-    // KYC dihantar — terus boleh tempah KOB (tak perlu tunggu kelulusan admin dulu).
-    banner('Pendaftaran berjaya dihantar! Sila teruskan tempah slot KOB anda. ✅');
-    setTimeout(() => { window.location.href = 'kob.html'; }, 1200);
+    banner(hasActivePackage
+      ? 'Pendaftaran berjaya! Pakej rawatan anda sudah aktif. ✅'
+      : 'Pendaftaran berjaya! Sila teruskan tempah slot KOB anda. ✅');
+    setTimeout(() => { window.location.href = nextPage; }, 1200);
   } catch (err) {
     document.getElementById('footer-error').textContent = 'Ralat: ' + err.message;
     document.getElementById('footer-error').classList.remove('hidden');
@@ -1105,36 +1232,14 @@ async function loadExistingKYC() {
   const banner2 = document.getElementById('status-banner');
   banner2.classList.remove('hidden');
 
-  if (k.status === 'approved') {
-    banner2.innerHTML = `<div class="bg-green-light border border-green rounded-xl p-4 flex items-center gap-4 mb-2">
-      <div class="text-3xl">✅</div>
-      <div class="flex-1"><div class="font-bold text-green-dark">Pendaftaran Diluluskan</div>
-      <p class="text-sm text-ink/70 mt-0.5">Akaun anda telah disahkan. Sila teruskan ke langkah seterusnya.</p></div>
-      <a href="dashboard.html" class="bg-green text-white px-4 py-2 rounded-lg text-sm font-semibold flex-shrink-0">Dashboard →</a>
-    </div>`;
-    showReadOnly(k);
-    return;
-  }
-
-  if (k.status === 'pending') {
-    banner2.innerHTML = `<div class="bg-gold-light border border-gold rounded-xl p-4 flex items-center gap-4 mb-2">
-      <div class="text-3xl">⏳</div>
-      <div class="flex-1"><div class="font-bold text-gold-dark">Pendaftaran Sedang Disemak</div>
-      <p class="text-sm text-ink/70 mt-0.5">Dihantar pada ${formatDate(k.created_at)} · Admin akan semak dalam 24 jam.</p></div>
-      <button onclick="allowEdit()" class="border border-gold-dark text-gold-dark px-4 py-2 rounded-lg text-sm font-semibold hover:bg-gold/10 flex-shrink-0">✏ Edit</button>
-    </div>`;
-    showReadOnly(k);
-    return;
-  }
-
-  if (k.status === 'rejected') {
-    banner2.innerHTML = `<div class="bg-terracotta-light border border-terracotta rounded-xl p-4 flex items-center gap-4 mb-2">
-      <div class="text-3xl">❌</div>
-      <div class="flex-1"><div class="font-bold text-terracotta">Pendaftaran Ditolak</div>
-      <p class="text-sm text-ink/70 mt-0.5">${k.review_notes || 'Sila kemaskini maklumat dan hantar semula.'}</p></div>
-    </div>`;
-    fillForm(k);
-  }
+  // Pendaftaran automatik diluluskan sebaik dihantar — tiada lagi status pending/ditolak.
+  banner2.innerHTML = `<div class="bg-green-light border border-green rounded-xl p-4 flex items-center gap-4 mb-2">
+    <div class="text-3xl">✅</div>
+    <div class="flex-1"><div class="font-bold text-green-dark">Pendaftaran Selesai</div>
+    <p class="text-sm text-ink/70 mt-0.5">Akaun anda telah disahkan. Sila teruskan ke langkah seterusnya.</p></div>
+    <a href="dashboard.html" class="bg-green text-white px-4 py-2 rounded-lg text-sm font-semibold flex-shrink-0">Dashboard →</a>
+  </div>`;
+  showReadOnly(k);
 }
 
 function showReadOnly(k) {
@@ -1178,15 +1283,6 @@ function showReadOnly(k) {
   setKycProgressComplete();
 }
 
-function allowEdit() {
-  document.getElementById('kyc-body').innerHTML = originalBody;
-  document.getElementById('form-footer').classList.remove('hidden');
-  document.getElementById('kyc-pdpa-card')?.classList.remove('hidden');
-  document.getElementById('kyc-contact-pref-card')?.classList.remove('hidden');
-  attachFormEvents();
-  fillForm(existingKYC);
-}
-
 // ── Draft listeners ────────────────────────────────────
 function attachFormEvents() {
   const ids = ['f-name','f-ic','f-phone','f-email','f-dob','f-gender','f-address',
@@ -1201,6 +1297,11 @@ function attachFormEvents() {
   });
   // Hubungan radio group
   document.querySelectorAll('input[name="f-emg-rel-radio"]').forEach(r => r.addEventListener('change', autoSaveDraft));
+  // Cuba padan rekod sedia ada (GHL/staff) bila pesakit habis taip IC/phone
+  ['f-ic', 'f-phone'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('blur', tryLivePrefill);
+  });
   // Consent checkboxes
   ['c-data','c-health'].forEach(id => {
     const el = document.getElementById(id);
@@ -1260,7 +1361,10 @@ const originalBody = document.getElementById('kyc-body').innerHTML;
   document.getElementById('kyc-body').addEventListener('change', computeKycProgress);
   // PDPA card lives outside #kyc-body (in aside) — listen separately
   document.getElementById('kyc-pdpa-card').addEventListener('change', computeKycProgress);
-  computeKycProgress();
+  // Skip when showReadOnly() already ran (sudah pernah hantar) — kyc-body has no
+  // input elements at that point, so recomputing here would wrongly zero the
+  // "100% Selesai Dihantar" progress back down to "0% Belum Bermula".
+  if (!existingKYC) computeKycProgress();
 })();
 </script>
 </body>

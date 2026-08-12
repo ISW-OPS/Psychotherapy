@@ -47,7 +47,6 @@ window.PAGE_MODULE = {
   psy_patients:     'patient',   patient_hub: 'patient',
   progres_pesakit:  'patient',   // Progres Pesakit (1 view) — ikut kebenaran modul pesakit
   psy_vitals:       'vitals',    vitals: 'vitals',
-  kyc_forms:        'kyc',
   psy_appointments: 'schedule',
   plan_week:        'plan_week',
   kob_list:         'kob',

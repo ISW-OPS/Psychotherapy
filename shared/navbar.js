@@ -5,7 +5,7 @@
 // ── Patient nav (flat list) ──────────────────────────────
 const NAV_ITEMS_BY_ROLE = {
   patient: [
-    { id: 'dashboard', url: 'dashboard.html', icon: '🏠', label: 'Papan Pemuka' },
+    { id: 'dashboard', url: 'dashboard.html', icon: '🏠', label: 'Dashboard', noTranslate: true },
     { id: 'kob', url: 'kob.html', icon: '🩺', label: 'KOB' },
     { id: 'announcements', url: 'announcements.html', icon: '📢', label: 'Pengumuman' },
     { id: 'events', url: 'events.html', icon: '📅', label: 'Acara & Kelas' },
@@ -16,7 +16,7 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'vitals', url: 'vitals.html', icon: '📉', label: 'Bacaan Saya' },
     { id: 'rekod-perubatan', url: 'rekod-perubatan.html', icon: '🩻', label: 'Rekod Perubatan' },
     {
-      id: 'library', url: 'library.html', icon: '📚', label: 'Pustaka Bantuan Diri', children: [
+      id: 'library', url: 'library.html', icon: '📚', label: 'Content', noTranslate: true, children: [
         { id: 'video', url: 'library.html?tab=video', icon: '📹', label: 'Video' },
         { id: 'artikel', url: 'library.html?tab=article', icon: '📝', label: 'Artikel' },
         { id: 'faq', url: 'faq.html', icon: '❓', label: 'FAQ' },
@@ -30,7 +30,7 @@ const NAV_ITEMS_BY_ROLE = {
     { id: 'issue', url: 'issue.html', icon: '⚠️', label: 'Lapor Isu' },
     { id: 'pulangan', url: 'pulangan.html', icon: '🍯', label: 'Pulangan Botol' },
     { id: 'surat', url: 'surat.html', icon: '📜', label: 'Surat Rasmi' },
-    { id: 'kyc', url: 'kyc.html', icon: '🆔', label: 'Borang Pendaftaran' },
+    { id: 'kyc', url: 'pendaftaran.html', icon: '🆔', label: 'Borang Pendaftaran' },
   ],
   staff: [
     { id: 'dashboard', url: 'dashboard.html', icon: '🏥', label: 'Dashboard' },
@@ -76,7 +76,6 @@ function patientNavIconHtml(id, fallbackEmoji, sizeClass = 'w-[18px] h-[18px]') 
 const STAFF_NAV_ICONS = {
   dashboard:        'dashboard-home.png',
   psy_patients:     'patient.png',
-  kyc_forms:        'kyc.png',
   psy_appointments: 'calendar.png',
   plan_week:        'treatment-plan.png',
   kob_list:         'KOB.png',
@@ -125,7 +124,6 @@ const STAFF_NAV_MASTER = [
     group: 'UTAMA', collapsible: false, items: [
       { id: 'dashboard', url: 'dashboard.html', icon: '🏠', label: 'Dashboard' },
       { id: 'psy_patients', url: 'patients.html', icon: '👥', label: 'Pesakit' },
-      { id: 'kyc_forms', url: 'kyc-list.html', icon: '🆔', label: 'KYC' },
       { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Kalendar & Jadual' },
       { id: 'plan_week', url: 'weekly-plan.html', icon: '📋', label: 'Weekly Plan' },
       { id: 'kob_list', url: 'kob-list.html', icon: '🩺', label: 'Sesi KOB' },
@@ -201,6 +199,23 @@ const STAFF_NAV_MASTER = [
     ]
   },
 ];
+
+// GHL-style: bila di dalam Tetapan Sistem (pageId 'settings'), sidebar utama bertukar
+// jadi senarai vertikal seksyen tetapan (dgn "Kembali") — bukan nav biasa. Klik item
+// panggil setTab(id) yang didefinisikan dalam tetapan.html sendiri.
+const SETTINGS_SUBNAV = [
+  { id: 'umum', icon: '⚙️', label: 'Umum' },
+  { id: 'rupa', icon: '🎨', label: 'Rupa' },
+  { id: 'klinik', icon: '🏥', label: 'Klinik' },
+  { id: 'peristiwa', icon: '📋', label: 'Peristiwa' },
+  { id: 'notifikasi', icon: '🔔', label: 'Notifikasi' },
+  { id: 'integrasi', icon: '🧩', label: 'Integrasi' },
+  { id: 'keselamatan', icon: '🛡️', label: 'Keselamatan' },
+  { id: 'affiliate', icon: '🤝', label: 'Affiliate' },
+];
+// Halaman lain yang tergolong dlm keluarga Tetapan (dibuka dari senarai Tetapan) —
+// bila dibuka terus (bukan dari tab), sidebar kekal dalam mod Tetapan jugak.
+const SETTINGS_SCREENS = new Set(['settings', 'peranan', 'staff_mgmt', 'audit', 'audit_kebenaran']);
 
 const NAV_GROUPS_BY_ROLE = {
   staff_admin: STAFF_NAV_MASTER,
@@ -350,6 +365,18 @@ function renderNavbar(role, user, navItems, activeScreen) {
     document.body.appendChild(ol);
   }
 
+  if (!document.getElementById('sidebar-toggle-fab')) {
+    const fab = document.createElement('button');
+    fab.id = 'sidebar-toggle-fab';
+    fab.className = 'sidebar-toggle-fab';
+    fab.title = 'Kecilkan/Besarkan';
+    fab.setAttribute('aria-label', 'Kecilkan/Besarkan menu');
+    fab.onclick = toggleSidebar;
+    fab.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>';
+    if (localStorage.getItem('isw_sidebar_collapsed') === '1') fab.classList.add('collapsed');
+    document.body.appendChild(fab);
+  }
+
   // Patient: persistent bottom nav bar
   if (role === 'patient' && !document.getElementById('pat-bottom-nav')) {
     const BOT_ITEMS = [
@@ -392,7 +419,35 @@ function renderNavbar(role, user, navItems, activeScreen) {
         ),
       }))
       .filter(g => g.items.length > 0);
-    const navHtml = groups.length
+    const settingsLinkActive = (id) => activeScreen === id ? ' active' : '';
+    const navHtml = SETTINGS_SCREENS.has(activeScreen)
+      ? `
+        <a href="dashboard.html" title="Kembali"
+          class="no-underline flex items-center gap-1.5 px-3 py-2 mb-1 rounded-lg text-xs font-semibold text-ink/45 hover:bg-ink/5 hover:text-ink transition-colors">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+          Kembali
+        </a>
+        <div class="px-3 pb-1.5 nav-label text-sm font-bold text-ink">Tetapan Sistem</div>
+        ${SETTINGS_SUBNAV.map(it => `
+          <div data-tab="${it.id}" onclick="if (typeof setTab === 'function') setTab('${it.id}')"
+            class="nav-item ${(activeScreen === 'settings' && it.id === 'umum') ? 'active' : ''} w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-ink/60 hover:bg-ink/5 transition-colors cursor-pointer">
+            <span class="flex-shrink-0 text-base">${it.icon}</span>
+            <span class="nav-label font-medium">${it.label}</span>
+          </div>`).join('')}
+        <div class="my-2 border-t border-ink/8"></div>
+        <a href="peranan.html" title="Peranan & Kebenaran" class="nav-item no-underline w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-ink/60 hover:bg-ink/5 transition-colors${settingsLinkActive('peranan')}">
+          <span class="flex-shrink-0 text-base">🔐</span><span class="nav-label font-medium">Peranan & Kebenaran</span>
+        </a>
+        <a href="staff_management.html" title="Pengguna" class="nav-item no-underline w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-ink/60 hover:bg-ink/5 transition-colors${settingsLinkActive('staff_mgmt')}">
+          <span class="flex-shrink-0 text-base">👥</span><span class="nav-label font-medium">Pengguna</span>
+        </a>
+        <a href="audit.html" title="Log Aktiviti" class="nav-item no-underline w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-ink/60 hover:bg-ink/5 transition-colors${settingsLinkActive('audit')}">
+          <span class="flex-shrink-0 text-base">📜</span><span class="nav-label font-medium">Log Aktiviti</span>
+        </a>
+        <a href="audit-kebenaran.html" title="Audit Kebenaran (RBAC)" class="nav-item no-underline w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-ink/60 hover:bg-ink/5 transition-colors${settingsLinkActive('audit_kebenaran')}">
+          <span class="flex-shrink-0 text-base">🛡️</span><span class="nav-label font-medium">Audit Kebenaran (RBAC)</span>
+        </a>`
+      : groups.length
       ? groups.map(g => renderNavGroup(g, roleKey, activeScreen)).join('')
       : navItems.map(item => `
           <a href="${item.url}" title="${item.label}"
@@ -428,15 +483,6 @@ function renderNavbar(role, user, navItems, activeScreen) {
       <nav class="flex-1 overflow-y-auto p-2 pt-3">
         ${navHtml}
       </nav>
-      <div class="hidden md:flex flex-shrink-0 border-t border-ink/8 p-2">
-        <button onclick="toggleSidebar()" title="Kecilkan/Besarkan"
-          class="sidebar-collapse-btn w-full flex items-center justify-center gap-2 py-2 rounded-lg text-ink/40 hover:bg-ink/5 hover:text-ink/70 transition-all text-sm">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <polyline points="15 18 9 12 15 6"/>
-          </svg>
-          <span class="nav-label text-xs font-medium">Kecilkan</span>
-        </button>
-      </div>
     `;
 
     if (localStorage.getItem('isw_sidebar_collapsed') === '1') {
@@ -469,7 +515,7 @@ function renderNavbar(role, user, navItems, activeScreen) {
         ${(() => {
         const badge = (id) => `<span id="nav-badge-${id}" class="hidden ml-auto min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold bg-terracotta text-white flex items-center justify-center"></span>`;
         const topLink = (it, extra = '') => `
-            <a href="${it.url}" title="${it.label}"
+            <a href="${it.url}" title="${it.label}" ${it.noTranslate ? 'data-i18n-skip' : ''}
               class="nav-item no-underline ${it.id === activeScreen ? 'active' : ''} ${extra} flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-white/80 hover:bg-white/10">
               ${patientNavIconHtml(it.id, it.icon)}<span class="nav-label">${it.label}</span>${badge(it.id)}
             </a>`;
@@ -497,15 +543,6 @@ function renderNavbar(role, user, navItems, activeScreen) {
         }).join('');
       })()}
       </nav>
-      <div class="hidden md:flex flex-shrink-0 border-t border-white/10 p-2">
-        <button onclick="toggleSidebar()" title="Kecilkan/Besarkan"
-          class="sidebar-collapse-btn w-full flex items-center justify-center gap-2 py-2 rounded-lg text-white/40 hover:bg-white/10 hover:text-white/70 transition-all text-sm">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <polyline points="15 18 9 12 15 6"/>
-          </svg>
-          <span class="nav-label text-xs">Kecilkan</span>
-        </button>
-      </div>
     `;
 
     if (localStorage.getItem('isw_sidebar_collapsed') === '1') {
@@ -553,9 +590,8 @@ async function loadNavBadges(role, _staffRole, userId) {
   if (!window.db || !userId) return;
   try {
     if (role === 'staff') {
-      const [ordersRes, kycRes, issuesRes, closedRes, invRes, kobRes, patientsRes, peRes] = await Promise.all([
+      const [ordersRes, issuesRes, closedRes, invRes, kobRes, patientsRes, peRes] = await Promise.all([
         window.db.from('psy_orders').select('id', { count: 'exact', head: true }).in('status', ['paid', 'packed']),
-        window.db.from('psy_kyc_submissions').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
         window.db.from('psy_audit_log').select('id').eq('action', 'issue.reported'),
         window.db.from('psy_audit_log').select('meta').eq('action', 'issue.closed'),
         window.db.from('psy_inventory_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending_approval'),
@@ -565,7 +601,6 @@ async function loadNavBadges(role, _staffRole, userId) {
       ]);
 
       setNavBadge('psy_orders', ordersRes.count || 0);
-      setNavBadge('kyc_forms', kycRes.count || 0);
       setNavBadge('inventory', invRes.count || 0);
       setNavBadge('kob_list', kobRes.count || 0);
       setNavBadge('psy_patients', patientsRes.count || 0);
@@ -625,8 +660,8 @@ function buildTopbar(user, cfg, role, staffRole) {
   if (!bar) { bar = document.createElement('header'); bar.id = 'global-topbar'; document.body.appendChild(bar); }
   bar.className = 'fixed top-0 left-0 right-0 h-14 bg-white border-b border-ink/10 z-30 flex items-stretch';
   bar.innerHTML = `
-    <div class="w-auto md:w-64 flex-shrink-0 flex items-center gap-2 px-3 md:px-4 md:border-r border-ink/8">
-      <button onclick="toggleMobileSidebar()" aria-label="Menu" class="md:hidden w-9 h-9 flex items-center justify-center rounded-lg hover:bg-ink/8 text-ink/60">
+    <div class="w-auto lg:w-64 flex-shrink-0 flex items-center gap-2 px-3 md:px-4 lg:border-r border-ink/8">
+      <button onclick="toggleMobileSidebar()" aria-label="Menu" class="lg:hidden w-9 h-9 flex items-center justify-center rounded-lg hover:bg-ink/8 text-ink/60">
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 4h14M2 9h14M2 14h14"/></svg>
       </button>
       <div class="w-9 h-9 bg-white rounded-lg border border-ink/10 flex items-center justify-center p-1 flex-shrink-0"><img src="${logoPath}" class="w-full h-full object-contain" onerror="this.outerHTML='⚕'"></div>
@@ -963,6 +998,7 @@ function toggleSidebar() {
   const sidebar = document.getElementById('sidebar');
   if (!sidebar) return;
   const collapsed = sidebar.classList.toggle('collapsed');
+  document.getElementById('sidebar-toggle-fab')?.classList.toggle('collapsed', collapsed);
   localStorage.setItem('isw_sidebar_collapsed', collapsed ? '1' : '0');
 }
 

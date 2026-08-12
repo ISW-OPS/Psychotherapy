@@ -294,13 +294,15 @@ const COLOR_CLS = {
 })();
 
 async function loadAll() {
-  const [rRes, mRes, aRes, maRes, uRes] = await Promise.all([
+  const [rRes, mRes, aRes, maRes, uRes, pRes] = await Promise.all([
     window.db.from('psy_roles').select('*').order('sort_order'),
     window.db.from('psy_modules').select('*').eq('is_active', true).order('sort_order'),
     window.db.from('psy_actions').select('*').order('sort_order'),
     window.db.from('psy_module_actions').select('*'),
     window.db.from('psy_profiles').select('id,full_name,email,is_active,staff_role')
       .eq('role','staff').not('staff_role','is',null).order('full_name'),
+    window.db.from('psy_patients').select('id', { count: 'exact', head: true })
+      .not('user_id', 'is', null).not('status', 'in', '("deleted","deceased")'),
   ]);
   roles   = rRes.data || [];
   modules = mRes.data || [];
@@ -311,6 +313,7 @@ async function loadAll() {
   allStaffUsers.forEach(p => {
     userCounts[p.staff_role] = (userCounts[p.staff_role] || 0) + 1;
   });
+  userCounts['patient'] = pRes.count || 0;
 
   if (!currentRoleCode && roles.length) currentRoleCode = roles[0].code;
   renderRoles();
@@ -332,9 +335,37 @@ async function loadGrants(roleCode) {
 // ── USERS IN CURRENT ROLE ──
 async function renderUsersInRole() {
   if (currentRoleCode === 'patient') {
-    document.getElementById('users-count').textContent = 'semua pesakit';
-    document.getElementById('users-in-role').innerHTML =
-      `<p class="p-5 text-xs text-ink/55 text-center">Tetapan ini digunakan untuk semua pesakit secara global. Tiada override individu untuk pesakit.</p>`;
+    const { data: patients } = await window.db.from('psy_patients')
+      .select('id, full_name, mrn, ic_number, status')
+      .not('user_id', 'is', null).not('status', 'in', '("deleted","deceased")')
+      .order('full_name');
+    const list = patients || [];
+    document.getElementById('users-count').textContent = list.length + ' pesakit';
+
+    const note = `<p class="p-3 text-[11px] text-ink/55 text-center border-b border-ink/10">Tetapan ini digunakan untuk semua pesakit secara global. Tiada override individu untuk pesakit.</p>`;
+    if (!list.length) {
+      document.getElementById('users-in-role').innerHTML =
+        note + `<p class="p-5 text-xs text-ink/40 text-center">Tiada pesakit dalam sistem.</p>`;
+      return;
+    }
+    const rows = list.map(p => {
+      const name = p.full_name || p.mrn || p.ic_number || '(Tanpa Nama)';
+      const init = name.split(' ').map(s => s[0]).join('').slice(0, 2).toUpperCase();
+      const statusBadge = p.status === 'active'
+        ? '<span class="chip bg-green-light text-green-dark text-[9px]">Aktif</span>'
+        : `<span class="chip bg-ink/10 text-ink/55 text-[9px]">${STATUS_LABELS[p.status] || p.status || '—'}</span>`;
+      return `<div class="p-3 flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-navy text-white flex items-center justify-center text-xs font-bold flex-shrink-0">${init}</div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <div class="font-semibold text-sm truncate">${name}</div>
+            ${statusBadge}
+          </div>
+          <div class="text-[10px] text-ink/55 truncate">${p.mrn || ''}</div>
+        </div>
+      </div>`;
+    }).join('');
+    document.getElementById('users-in-role').innerHTML = note + rows;
     return;
   }
   const users = allStaffUsers.filter(u => u.staff_role === currentRoleCode);
