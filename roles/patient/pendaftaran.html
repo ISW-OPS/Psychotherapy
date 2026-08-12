@@ -749,6 +749,22 @@ async function findExistingUnlinkedPatient(phoneKeyVal, icVal, excludeId) {
   return target;
 }
 
+// Nama rasmi (cth dah disync dari GHL / rekod sedia ada) mesti kekal — kunci
+// field supaya pesakit tak tersalah anggap taip nama lain di sini akan disimpan
+// (submitKYC() sentiasa preserve nama rekod sedia ada, bukan apa yang ditaip).
+function lockNameField(name) {
+  const nameEl = document.getElementById('f-name');
+  if (!nameEl || document.getElementById('hint-name')) return;
+  nameEl.value = name;
+  nameEl.readOnly = true;
+  nameEl.classList.add('bg-ink/5', 'cursor-not-allowed');
+  const hint = document.createElement('p');
+  hint.id = 'hint-name';
+  hint.className = 'text-[10px] text-ink/40 mt-1';
+  hint.textContent = 'Nama rasmi ikut rekod sistem — hubungi admin untuk pembetulan.';
+  nameEl.closest('div').after(hint);
+}
+
 // ── Live prefill — isi medan LAIN yang masih KOSONG sahaja bila rekod
 // sedia ada dijumpai (tak timpa apa yang pesakit dah taip sendiri) ────
 function prefillEmptyFields(rec) {
@@ -1128,9 +1144,12 @@ async function submitKYC() {
 
     // Pendaftaran terus diluluskan automatik — tiada lagi semakan/lulus staf.
     if (patientRecord) {
+      // Nama rasmi (cth dari GHL) jangan ditimpa oleh apa pesakit taip dalam
+      // borang — hanya isi full_name kalau rekod tiada nama langsung lagi.
+      const finalName = (patientRecord.full_name || '').trim() || payload.patient_name;
       await window.db.from('psy_patients').update({
         status:                  'active',
-        full_name:               payload.patient_name,
+        full_name:               finalName,
         phone:                   payload.phone,
         ic_number:               payload.ic_number,
         date_of_birth:           payload.date_of_birth,
@@ -1145,7 +1164,7 @@ async function submitKYC() {
         contact_preference:      payload.contact_preference,
       }).eq('id', patientRecord.id);
       await window.db.from('psy_profiles').update({
-        full_name: payload.patient_name, phone: payload.phone,
+        full_name: finalName, phone: payload.phone,
       }).eq('id', currentUser.id);
 
       // Referral: pautkan perujuk + cipta lejar (sekali sahaja)
@@ -1353,6 +1372,22 @@ const originalBody = document.getElementById('kyc-body').innerHTML;
     }
 
     fillForm(base);
+
+    // Nama rasmi (cth sudah disync dari GHL) mesti kekal — kunci field supaya
+    // pesakit tak tersalah anggap taip nama lain di sini akan disimpan.
+    if ((patientRecord?.full_name || '').trim()) {
+      const nameEl = document.getElementById('f-name');
+      if (nameEl && !document.getElementById('hint-name')) {
+        nameEl.value = patientRecord.full_name;
+        nameEl.readOnly = true;
+        nameEl.classList.add('bg-ink/5', 'cursor-not-allowed');
+        const hint = document.createElement('p');
+        hint.id = 'hint-name';
+        hint.className = 'text-[10px] text-ink/40 mt-1';
+        hint.textContent = 'Nama rasmi ikut rekod sistem — hubungi admin untuk pembetulan.';
+        nameEl.closest('div').after(hint);
+      }
+    }
   }
   attachFormEvents();
 
