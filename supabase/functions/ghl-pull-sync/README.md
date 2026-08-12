@@ -12,7 +12,7 @@ pg_cron (setiap 15 min)
    └─► ghl-pull-sync ──► GET /contacts/ (800/run, SAMBUNG dari cursor psy_settings)
               (x-cron-secret)   └─► untuk contact ISW STATUS bermula KOB/SU KOB/SU OB/OB:
                                        ├─► GET /contacts/:id/appointments (tapis kalendar KOB)
-                                       ├─► GET /payments/orders?contactId= (tapis paid/completed)
+                                       ├─► GET /payments/transactions?contactId= (tapis succeeded/paid/completed)
                                        └─► kalau DUA-DUA ada → psy_patients + psy_kob_sessions + psy_payments
                                            (kalau TAK → skip, tak dicipta)
 ```
@@ -93,7 +93,17 @@ STATUS relevan **sahaja TAK MEMADAI**. Contact mesti JUGA ada:
    ("KOB VIP"/"VIP 2/3/4") **dikecualikan** atas keputusan user. Padanan
    2 lapis dlm kod: `KOB_CALENDAR_NAME_MATCH = 'KONSULTASI OVERHAUL BODY'`
    DAN NOT `KOB_CALENDAR_NAME_EXCLUDE = 'VIP'`.
-2. Sekurang-kurangnya **1 order berstatus paid/completed**
+2. Sekurang-kurangnya **1 GHL Transaction** berstatus paid/completed/
+   succeeded — guna `GET /payments/transactions` (**bukan** `/payments/
+   orders` sahaja). **Disahkan 12 Ogos 2026**: kebanyakan yuran KOB
+   akaun ni dibayar transfer manual, staff tandakan **Invoice** GHL
+   "paid" (Text2Pay dll) — ini objek **berasingan** dari Order/checkout,
+   TAK muncul dalam `/payments/orders` langsung (uji semula nisbah lulus
+   naik dari 1/9 → 5/9 sampel selepas fix). `/payments/transactions`
+   ialah **ledger bersepadu rasmi GHL** — tangkap Order+Invoice+Stripe+
+   Manual SEKALI GUS dalam status seragam (`succeeded`), jadi TAK PERLU
+   semak Order & Invoice berasingan lagi. Lihat `syncTransactionToPayment()`
+   (`_shared/ghl-sync.ts`).
 
 Contact yang lulus filter status tapi belum ada appointment KOB +
 bayaran diskip sepenuhnya (`skippedNoPaymentOrBooking` dalam response)

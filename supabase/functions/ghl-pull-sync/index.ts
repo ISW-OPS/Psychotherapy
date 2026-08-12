@@ -20,16 +20,17 @@
 // akhirnya discan & disegerak secara berperingkat.
 //
 // Untuk contact yang custom field "ISW STATUS" bermula KOB/SU KOB/SU
-// OB/OB (kes tak sensitif huruf) — SYARAT MASUK (keputusan user 11 Ogos
-// 2026, TAMBAHAN atas filter status): mesti JUGA ada (a) sekurang-
+// OB/OB (kes tak sensitif huruf) — SYARAT MASUK (keputusan user 11-12
+// Ogos 2026, TAMBAHAN atas filter status): mesti JUGA ada (a) sekurang-
 // kurangnya 1 appointment pada kalendar KOB khusus DAN (b) sekurang-
-// kurangnya 1 bukti bayaran — Order paid/completed ATAU Invoice paid
-// (disahkan 12 Ogos 2026: kebanyakan yuran KOB akaun ni dibayar transfer
-// manual, staff tandakan invoice GHL "paid" — TIDAK muncul dalam Orders/
-// checkout API langsung, jadi DUA-DUA sumber wajib disemak). Status
-// sahaja TAK MEMADAI — contact yang belum book/bayar diskip
-// (skippedNoPaymentOrBooking), TAK dicipta dalam psy_patients. Lihat
-// getKobCalendarIds() (auto-resolve ikut nama kalendar "KONSULTASI
+// kurangnya 1 GHL Transaction succeeded/paid/completed (`/payments/
+// transactions` — LEDGER BERSEPADU rasmi GHL, tangkap Order/checkout +
+// Invoice/manual-transfer + Stripe SEKALI GUS; disahkan 12 Ogos 2026
+// bukan /payments/orders sahaja SEBAB kebanyakan yuran KOB akaun ni
+// dibayar transfer manual via Invoice — tak muncul dalam Orders
+// langsung). Status sahaja TAK MEMADAI — contact yang belum book/bayar
+// diskip (skippedNoPaymentOrBooking), TAK dicipta dalam psy_patients.
+// Lihat getKobCalendarIds() (auto-resolve ikut nama kalendar "KONSULTASI
 // OVERHAUL BODY", bukan ID hardcode).
 //
 // Guna semula SEPENUHNYA logik teras _shared/ghl-sync.ts — TIADA logik
@@ -46,7 +47,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
 import { ghl, cleanGhlName, phoneKey } from '../_shared/ghl.ts'
-import { syncContactToPatient, syncAppointmentToSession, syncOrderToPayment, syncInvoiceToPayment } from '../_shared/ghl-sync.ts'
+import { syncContactToPatient, syncAppointmentToSession, syncTransactionToPayment } from '../_shared/ghl-sync.ts'
 
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
@@ -93,11 +94,12 @@ function isKobRelevantStatus(status: string): boolean {
 
 const PAID_STATUSES = ['paid', 'completed', 'succeeded', 'success']
 
-// Syarat masuk ISW (keputusan user 11 Ogos 2026): status ISW STATUS relevan
-// SAHAJA TAK MEMADAI — mesti JUGA ada (a) sekurang-kurangnya 1 order
-// paid/completed DAN (b) appointment pada kalendar KOB khusus (bukan
-// mana-mana appointment). Elak lead yang baru tukar status GHL tapi belum
-// benar-benar book+bayar daripada tercipta sebagai psy_patients.
+// Syarat masuk ISW (keputusan user 11-12 Ogos 2026): status ISW STATUS
+// relevan SAHAJA TAK MEMADAI — mesti JUGA ada (a) sekurang-kurangnya 1
+// GHL Transaction succeeded/paid/completed DAN (b) appointment pada
+// kalendar KOB khusus (bukan mana-mana appointment). Elak lead yang baru
+// tukar status GHL tapi belum benar-benar book+bayar daripada tercipta
+// sebagai psy_patients.
 //
 // ID kalendar KOB di-auto-resolve ikut NAMA — bukan hardcode ID (kalendar
 // boleh disusun semula/ditambah di GHL dashboard). PENTING: nama kalendar
@@ -155,7 +157,10 @@ Deno.serve(async (req: Request) => {
         // via GHL Invoice (objek berasingan dari Orders/checkout) — /payments/orders
         // tak nampak invoice. Cuba endpoint invoices utk sahkan.
         const invoices = await ghl(`/invoices/?altId=${locationId}&altType=location&contactId=${body.contactId}&limit=20&offset=0`, { method: 'GET' }).catch((e) => ({ __error: String(e.message || e) }))
-        return json({ debug: true, appts, orders, invoices })
+        // Siasat 12 Ogos — dashboard GHL "Transactions" (Manual+Stripe, status
+        // "Succeeded") nampak lebih lengkap dari Orders/Invoices berasingan.
+        const transactions = await ghl(`/payments/transactions?altId=${locationId}&altType=location&contactId=${body.contactId}&limit=20`, { method: 'GET' }).catch((e) => ({ __error: String(e.message || e) }))
+        return json({ debug: true, appts, orders, invoices, transactions })
       }
       if (body.action === 'create_custom_field') {
         // { debug:true, action:'create_custom_field', name:'KOB Stage', dataType:'TEXT' }
@@ -222,9 +227,11 @@ Deno.serve(async (req: Request) => {
         // Dry-run — TIADA sync/write. Siasat KENAPA contact status-relevan
         // gagal syarat payment+booking (bukan sekadar kira, tapi tunjuk
         // punca sebenar per-contact: tiada appointment KOB langsung, ada
-        // appointment tapi kalendar lain, ada order tapi status bukan
+        // appointment tapi kalendar lain, ada bayaran tapi status bukan
         // paid/completed, dll). Guna lepas run penuh nampak nisbah rendah
         // (cth "1 daripada 219") — sahkan gate memang betul, bukan tersasar.
+        // `passed` guna Transactions (sama macam gate sebenar); orders/
+        // invoices raw turut dipapar sekadar konteks siasatan manusia.
         const maxDiag = Math.min(Number(body.limit) || 20, 50)
         const pages = Math.min(Number(body.pages) || 3, 10)
         const kobCalIds = await getKobCalendarIds(locationId)
@@ -257,7 +264,11 @@ Deno.serve(async (req: Request) => {
             const invoiceData = await ghl(`/invoices/?altId=${locationId}&altType=location&contactId=${c.id}&limit=20&offset=0`, { method: 'GET' }).catch((e) => ({ __error: String(e.message || e) }))
             const invoices = invoiceData?.invoices || []
             const invoiceStatuses = [...new Set(invoices.map((inv: any) => inv.status))]
-            const paidInvoiceCount = invoices.filter((inv: any) => PAID_STATUSES.includes(String(inv.status || '').toLowerCase())).length
+
+            const txData = await ghl(`/payments/transactions?altId=${locationId}&altType=location&contactId=${c.id}&limit=20`, { method: 'GET' }).catch((e) => ({ __error: String(e.message || e) }))
+            const txs = txData?.data || txData?.transactions || []
+            const transactionStatuses = [...new Set(txs.map((t: any) => t.status))]
+            const paidTransactionCount = txs.filter((t: any) => PAID_STATUSES.includes(String(t.status || '').toLowerCase())).length
 
             diagnostics.push({
               id: c.id, phone: c.phone, status,
@@ -269,8 +280,10 @@ Deno.serve(async (req: Request) => {
               paidOrders: paidOrderCount,
               totalInvoices: invoices.length,
               invoiceStatuses,
-              paidInvoices: paidInvoiceCount,
-              passed: kobEvents.length > 0 && (paidOrderCount > 0 || paidInvoiceCount > 0),
+              totalTransactions: txs.length,
+              transactionStatuses,
+              paidTransactions: paidTransactionCount,
+              passed: kobEvents.length > 0 && paidTransactionCount > 0,
             })
           }
           if (cs.length < PAGE_LIMIT) break
@@ -455,11 +468,16 @@ Deno.serve(async (req: Request) => {
           if (!isKobRelevantStatus(iswStatus)) continue
           kobRelevant++
 
-          // ── Syarat masuk (11 Ogos 2026): tarik appointment+order DULU,
-          // sebelum cipta/kemas kini psy_patients — kena ADA appointment
-          // kalendar KOB DAN sekurang-kurangnya 1 order paid/completed.
-          // Status ISW STATUS relevan sahaja TAK MEMADAI (elak lead yang
-          // baru tukar status tapi belum benar-benar book+bayar).
+          // ── Syarat masuk (11-12 Ogos 2026): tarik appointment+transaction
+          // DULU, sebelum cipta/kemas kini psy_patients — kena ADA
+          // appointment kalendar KOB DAN sekurang-kurangnya 1 transaction
+          // succeeded/paid/completed. Status ISW STATUS relevan sahaja TAK
+          // MEMADAI (elak lead yang baru tukar status tapi belum benar-
+          // benar book+bayar). Guna /payments/transactions (ledger
+          // bersepadu GHL, tangkap Order+Invoice+Stripe+Manual SEKALI) —
+          // bukan /payments/orders sahaja (disahkan 12 Ogos: kebanyakan
+          // yuran KOB akaun ni dibayar transfer manual via Invoice, TAK
+          // muncul dalam Orders langsung).
           let latestKobAppt: any = null
           try {
             const apptData = await ghl(`/contacts/${c.id}/appointments`, { method: 'GET' })
@@ -470,23 +488,14 @@ Deno.serve(async (req: Request) => {
             latestKobAppt = events[0] || null
           } catch (e) { errors.push(`appt-check ${c.id}: ${(e as Error).message}`) }
 
-          let paidOrders: any[] = []
+          let paidTransactions: any[] = []
           try {
-            const orderData = await ghl(`/payments/orders?altId=${locationId}&altType=location&contactId=${c.id}&limit=20`, { method: 'GET' })
-            const orders = orderData?.data || orderData?.orders || []
-            paidOrders = orders.filter((o: any) => PAID_STATUSES.includes(String(o.status || '').toLowerCase()))
-          } catch (e) { errors.push(`order-check ${c.id}: ${(e as Error).message}`) }
+            const txData = await ghl(`/payments/transactions?altId=${locationId}&altType=location&contactId=${c.id}&limit=20`, { method: 'GET' })
+            const txs = txData?.data || txData?.transactions || []
+            paidTransactions = txs.filter((t: any) => PAID_STATUSES.includes(String(t.status || '').toLowerCase()))
+          } catch (e) { errors.push(`transaction-check ${c.id}: ${(e as Error).message}`) }
 
-          // Invoice GHL (manual transfer + staff tandakan "paid") — objek
-          // BERASINGAN dari Orders, tak muncul dalam /payments/orders.
-          let paidInvoices: any[] = []
-          try {
-            const invoiceData = await ghl(`/invoices/?altId=${locationId}&altType=location&contactId=${c.id}&limit=20&offset=0`, { method: 'GET' })
-            const invoices = invoiceData?.invoices || []
-            paidInvoices = invoices.filter((inv: any) => PAID_STATUSES.includes(String(inv.status || '').toLowerCase()))
-          } catch (e) { errors.push(`invoice-check ${c.id}: ${(e as Error).message}`) }
-
-          if (!latestKobAppt || (paidOrders.length === 0 && paidInvoices.length === 0)) { skippedNoPaymentOrBooking++; continue }
+          if (!latestKobAppt || paidTransactions.length === 0) { skippedNoPaymentOrBooking++; continue }
 
           // firstNameRaw/lastNameRaw kekal huruf besar/kecil asal (cth "Hjh
           // Azah"); contactName/firstName/lastName sentiasa lowercase +
@@ -521,25 +530,15 @@ Deno.serve(async (req: Request) => {
             }
           } catch (e) { errors.push(`appt-sync ${c.id}: ${(e as Error).message}`) }
 
-          // ── Order/bayaran (paid/completed, dah disahkan di atas) ──
+          // ── Bayaran (transaction succeeded, dah disahkan di atas) ──
           try {
-            for (const o of paidOrders) {
-              const result = await syncOrderToPayment(svc, patientId, {
-                orderId: o._id || o.id, amount: o.amount ?? o.total, status: o.status,
+            for (const t of paidTransactions) {
+              const result = await syncTransactionToPayment(svc, patientId, {
+                transactionId: t._id || t.id, amount: t.amount, status: t.status,
               })
               if (!result.skipped) paymentsSynced++
             }
-          } catch (e) { errors.push(`order-sync ${c.id}: ${(e as Error).message}`) }
-
-          // ── Invoice/bayaran (paid, dah disahkan di atas) ──
-          try {
-            for (const inv of paidInvoices) {
-              const result = await syncInvoiceToPayment(svc, patientId, {
-                invoiceId: inv._id || inv.id, amount: inv.amountPaid ?? inv.invoiceTotal ?? inv.total, status: inv.status,
-              })
-              if (!result.skipped) paymentsSynced++
-            }
-          } catch (e) { errors.push(`invoice-sync ${c.id}: ${(e as Error).message}`) }
+          } catch (e) { errors.push(`transaction-sync ${c.id}: ${(e as Error).message}`) }
         } catch (e) { errors.push(`contact ${c.id}: ${(e as Error).message}`) }
       }
 

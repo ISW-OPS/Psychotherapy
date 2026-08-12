@@ -175,28 +175,29 @@ export async function syncOrderToPayment(svc: any, patientId: string, opts: {
   return { paymentId: inserted.id }
 }
 
-// ── 4. Sync bayaran via GHL Invoice (manual transfer + staff tandakan
-// "paid", cth Text2Pay) — objek BERASINGAN dari Orders/checkout, tak
-// muncul dalam /payments/orders. Disahkan 12 Ogos 2026 (contact "Hjh
-// Azah": appointment KOB wujud, order KOSONG, tapi invoice status='paid'
-// RM99 item "KONSULTASI OVERHAUL BODY"). ghl_transaction_id diberi
-// prefix 'inv_' — elak (walaupun amat kecil) perlanggaran dgn order _id.
-export async function syncInvoiceToPayment(svc: any, patientId: string, opts: {
-  invoiceId: string
+// ── 4. Sync bayaran via GHL Transaction (`/payments/transactions`) —
+// LEDGER BERSEPADU rasmi GHL, tangkap SEMUA kaedah bayaran (Order/
+// checkout, Invoice/manual-transfer, Stripe) dalam SATU objek konsisten
+// (`status:'succeeded'`, `entityType:'order'|'invoice'`). Disahkan 12
+// Ogos 2026 via 2 contact ujian: (a) "Hjh Azah" — appointment KOB wujud,
+// /payments/orders KOSONG, tapi transaction succeeded (entityType
+// 'invoice', bayaran manual/Text2Pay); (b) contact lain — 3 order
+// completed, SEMUA turut muncul sebagai transaction succeeded
+// (entityType 'order'). Jadi Transactions superset Order+Invoice —
+// GANTI dua semakan berasingan (syncOrderToPayment dipanggil di
+// ghl-booking-webhook/ghl-initial-sync sahaja sekarang, bukan sini).
+export async function syncTransactionToPayment(svc: any, patientId: string, opts: {
+  transactionId: string
   amount: number | string
   status: string
 }): Promise<{ paymentId: string | null; skipped?: string }> {
-  // Sama senarai status "dah bayar" dgn Order (invoice GHL guna 'paid' secara
-  // rasmi, tapi terima juga completed/succeeded/success — konsisten dgn
-  // PAID_LIKE, elak terlepas kalau GHL/integrasi lain hantar variasi lain).
   if (!PAID_LIKE.has(String(opts.status || '').toLowerCase())) {
     return { paymentId: null, skipped: `status ${opts.status}` }
   }
-  if (!opts.invoiceId) throw new Error('invoice_id wajib')
+  if (!opts.transactionId) throw new Error('transaction_id wajib')
 
-  const txId = 'inv_' + opts.invoiceId
   const { data: existing } = await svc.from('psy_payments')
-    .select('id').eq('ghl_transaction_id', txId).maybeSingle()
+    .select('id').eq('ghl_transaction_id', opts.transactionId).maybeSingle()
   if (existing) return { paymentId: existing.id, skipped: 'dupe' }
 
   const amount = Number(opts.amount) || 0
@@ -207,13 +208,13 @@ export async function syncInvoiceToPayment(svc: any, patientId: string, opts: {
     receipt_ref: receiptRef,
     patient_id: patientId,
     user_id: null,
-    items: [{ type: 'kob', title: 'Yuran KOB (GHL Invoice)', amount, reference_id: opts.invoiceId }],
+    items: [{ type: 'kob', title: 'Yuran KOB (GHL)', amount, reference_id: opts.transactionId }],
     subtotal: amount,
     service_charge: 0,
     sst: 0,
     total: amount,
     payment_method: 'ghl',
-    ghl_transaction_id: txId,
+    ghl_transaction_id: opts.transactionId,
     status: 'completed',
     paid_at: new Date().toISOString(),
   }).select('id').single()

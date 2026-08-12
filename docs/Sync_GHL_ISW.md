@@ -17,7 +17,7 @@ pg_cron (setiap 15 min, belum dijadualkan lagi — masih manual)
    └─► ghl-pull-sync ──► GET /contacts/ (checkpoint/cursor, psy_settings)
               (x-cron-secret)   └─► untuk contact ISW STATUS relevan:
                                        ├─► GET /contacts/:id/appointments (tapis kalendar KOB)
-                                       ├─► GET /payments/orders?contactId= (tapis paid/completed)
+                                       ├─► GET /payments/transactions?contactId= (tapis succeeded/paid/completed)
                                        └─► kalau DUA-DUA ada →
                                               psy_patients (padan/cipta ikut phone)
                                               + psy_kob_sessions + psy_payments
@@ -42,18 +42,29 @@ ISW STATUS (custom field GHL) mesti **bermula** dengan `KOB`, `SU KOB`,
 - `KOB NO SHOW` — tak hadir
 - Apa-apa mengandungi `KIV` (Kept In View) — belum pasti, bukan patient sebenar
 
-**Syarat masuk tambahan (11 Ogos 2026):** status relevan sahaja TAK
+**Syarat masuk tambahan (11-12 Ogos 2026):** status relevan sahaja TAK
 MEMADAI — contact mesti JUGA ada (a) sekurang-kurangnya 1 appointment
 pada salah satu **6 kalendar KOB tapak** (`KONSULTASI OVERHAUL BODY
-[WC1]` hingga `[WC5]` + `[EG]`) DAN (b) sekurang-kurangnya 1 **order
-paid/completed**. Akaun sebenarnya ada 10 kalendar mengandungi
-"KONSULTASI OVERHAUL BODY" (54 kalendar keseluruhan) — 4 daripadanya
-("KOB VIP"/"VIP 2/3/4") **sengaja dikecualikan** (keputusan user, bukan
-slot tapak biasa). Padanan kod: `isKobCalendarName()` — includes nama
-DAN NOT includes "VIP". Belum ada kedua-dua syarat → diskip, TAK
-dicipta dalam `psy_patients` lagi (cuba lagi run seterusnya). Lihat
-§Filter dalam `README.md` sebelah `ghl-pull-sync/index.ts` untuk cara
-sahkan nama kalendar (`{debug:true,action:'list_calendars'}`).
+[WC1]` hingga `[WC5]` + `[EG]`) DAN (b) sekurang-kurangnya 1 **GHL
+Transaction** succeeded/paid/completed. Akaun sebenarnya ada 10 kalendar
+mengandungi "KONSULTASI OVERHAUL BODY" (54 kalendar keseluruhan) — 4
+daripadanya ("KOB VIP"/"VIP 2/3/4") **sengaja dikecualikan** (keputusan
+user, bukan slot tapak biasa). Padanan kod: `isKobCalendarName()` —
+includes nama DAN NOT includes "VIP".
+
+**Kenapa Transaction, bukan Order:** disahkan 12 Ogos 2026 — kebanyakan
+yuran KOB akaun ni dibayar **transfer manual**, staff tandakan **Invoice**
+GHL "paid" (Text2Pay dll), objek **berasingan** dari Order/checkout, TAK
+muncul dalam `/payments/orders` langsung (nisbah lulus naik 1/9 → 5/9
+sampel selepas fix). `/payments/transactions` = **ledger bersepadu**
+rasmi GHL, tangkap Order+Invoice+Stripe+Manual SEKALI GUS status seragam
+— jadi cukup 1 semakan, tak perlu Order & Invoice berasingan.
+
+Belum ada kedua-dua syarat → diskip, TAK dicipta dalam `psy_patients`
+lagi (cuba lagi run seterusnya). Lihat §Filter dalam `README.md` sebelah
+`ghl-pull-sync/index.ts` untuk cara sahkan nama kalendar
+(`{debug:true,action:'list_calendars'}`) atau siasat contact tertentu
+(`{debug:true,action:'diagnose_gate'}`).
 
 ## Data yang ditarik
 
@@ -67,7 +78,7 @@ sahkan nama kalendar (`{debug:true,action:'list_calendars'}`).
 | ALAMAT RUMAH | `contact.alamat_rumah` | `address` |
 | NAMA PENUH, NO. WARIS & EMAIL WARIS/PESAKIT | `contact.nama_penuh_waris__pesakit` | `emergency_contact_name` (teks bebas gabungan — TAK dipisah ke name/phone/email berasingan) |
 | Appointment terkini | (`GET /contacts/:id/appointments`) | `psy_kob_sessions.scheduled_at` |
-| Order paid/completed | (`GET /payments/orders`) | `psy_payments.total` + `ghl_transaction_id` |
+| Transaction succeeded/paid/completed | (`GET /payments/transactions`) | `psy_payments.total` + `ghl_transaction_id` |
 
 **Tiada field tarikh lahir/gender** — GHL tak kumpul untuk akaun ni.
 
@@ -151,20 +162,22 @@ ni asalnya untuk Pelan Rawatan Mingguan sahaja). Panel filter "☰ Papar"
 (gaya GHL "Manage view") ditambah — checkbox Sesi Rawatan/Peristiwa/
 Lawatan/Cuti/KOB, + filter coach turut kesan KOB.
 
-## Status semasa (11 Ogos 2026)
+## Status semasa (12 Ogos 2026)
 
 **GHL → ISW (`ghl-pull-sync`):**
 - ✅ Fungsi dibina, dideploy ke **testing** (`ipmemyizigwgivccytcu`) sahaja
 - ✅ Diuji end-to-end (contact, appointment, payment, IC/alamat/waris)
 - ✅ Cleanup sekali sahaja: 698 pesakit (CANCEL/NO SHOW/KIV) di-soft-delete
 - ✅ 662 nama dipulihkan ke bentuk asal GHL (lepas keputusan "jangan bersih nama")
-- ⚠️ **BAHARU (11 Ogos, belum deploy/diuji):** syarat masuk ditambah —
-  mesti ada appointment pada salah satu 6 kalendar KOB (WC1-WC5+EG) +
-  order paid/completed, bukan status sahaja. Nama kalendar sebenar
-  **disahkan** oleh user (screenshot GHL) — `KONSULTASI OVERHAUL BODY
-  [WC1..5]`/`[EG]`, grup "KOB [WC]". **Seterusnya:** deploy semula +
-  jalankan `{debug:true,action:'list_calendars'}` (sahkan `matchedKob`
-  = 6) dulu sebelum uji manual penuh (lihat §Filter, `README.md`)
+- ✅ **Syarat masuk payment+booking (11-12 Ogos) DISAHKAN JALAN**: kalendar
+  KOB (`KONSULTASI OVERHAUL BODY [WC1..5]`/`[EG]`, 6 daripada 10 padan,
+  4 "VIP" dikecualikan) + Transaction succeeded/paid/completed (guna
+  `/payments/transactions`, ledger bersepadu — BUKAN `/payments/orders`
+  sahaja, sebab kebanyakan yuran dibayar manual via Invoice GHL yang tak
+  muncul dlm Orders). Diuji **pusingan PENUH akaun** (~7,925 contact,
+  beberapa kali ulang semasa dev) — `errorCount:0` konsisten setiap run,
+  `reachedEnd:true` tercapai. Debug action `diagnose_gate` + `list_calendars`
+  tersedia untuk troubleshoot lanjut.
 - ⏳ **Belum dijadualkan sebagai cron** — masih dipanggil manual (curl)
 
 **ISW → GHL (`sync-ghl`):**
