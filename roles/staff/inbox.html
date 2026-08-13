@@ -40,6 +40,14 @@
                 <button onclick="loadList()" title="Muat semula" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-ink/5 text-base">🔄</button>
               </div>
             </div>
+            <div class="px-3 py-2 border-b border-ink/10 flex-shrink-0">
+              <div class="relative">
+                <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink/30 text-xs">🔍</span>
+                <input id="conv-search" type="text" placeholder="Cari nama atau nombor..." oninput="onSearchInput(this.value)"
+                  class="w-full pl-8 pr-7 py-1.5 rounded-lg bg-ink/5 border border-transparent focus:border-navy/30 focus:bg-white outline-none text-[12px]">
+                <button id="conv-search-clear" onclick="clearSearch()" title="Kosongkan carian" class="hidden absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full hover:bg-ink/10 text-ink/40 text-xs">✕</button>
+              </div>
+            </div>
             <div id="conv-list" class="flex-1 overflow-y-auto divide-y divide-ink/5">
               <div class="p-6 text-center text-sm text-ink/40">Memuatkan perbualan...</div>
             </div>
@@ -118,6 +126,7 @@
 <script>
 let allConvos = [];
 let activeTab = 'mine'; // default: pesakit sahaja (lead EOB = telesale, bukan coach)
+let searchQuery = '';
 let activeConv = null;
 let currentMessages = [];
 let listCursor = null, listHasMore = false;   // pagination senarai perbualan
@@ -460,6 +469,20 @@ async function loadList(append = false) {
   }
 }
 
+function onSearchInput(v) {
+  searchQuery = (v || '').trim();
+  document.getElementById('conv-search-clear').classList.toggle('hidden', !searchQuery);
+  renderList();
+}
+
+function clearSearch() {
+  searchQuery = '';
+  const box = document.getElementById('conv-search');
+  if (box) box.value = '';
+  document.getElementById('conv-search-clear').classList.add('hidden');
+  renderList();
+}
+
 function renderList() {
   const box = document.getElementById('conv-list');
   // kemas kini kiraan pada tab "Belum Baca"
@@ -469,8 +492,18 @@ function renderList() {
   let list = allConvos;
   if (activeTab === 'mine') list = allConvos.filter(c => c.patient_id);
   else if (activeTab === 'unread') list = allConvos.filter(c => c.unread > 0);
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    const qDigits = searchQuery.replace(/\D/g, '');
+    list = list.filter(c => {
+      const name = (c.contact_name || '').toLowerCase();
+      const phoneDigits = (c.phone_e164 || '').replace(/\D/g, '');
+      return name.includes(q) || (qDigits && phoneDigits.includes(qDigits));
+    });
+  }
   if (!list.length) {
-    const msg = activeTab === 'mine' ? 'Tiada perbualan dengan pesakit berdaftar.'
+    const msg = searchQuery ? `Tiada perbualan sepadan dengan "${searchQuery}".`
+      : activeTab === 'mine' ? 'Tiada perbualan dengan pesakit berdaftar.'
       : activeTab === 'unread' ? 'Tiada mesej belum dibaca.' : 'Tiada perbualan.';
     box.innerHTML = `<div class="p-6 text-center text-sm text-ink/40">${msg}</div>`;
     return;
