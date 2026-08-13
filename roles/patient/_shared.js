@@ -75,6 +75,17 @@ function hasActivePackage() {
   return true;
 }
 
+// ==================== BOOKING BLOCK (ansuran tertunggak) ====================
+function isBookingBlocked() {
+  return !!window.patientRecord?.booking_blocked;
+}
+
+function bookingBlockedMessage() {
+  return window.patientRecord?.booking_blocked_reason === 'installment_overdue'
+    ? 'Ansuran pakej anda tertunggak. Sila selesaikan bayaran untuk tempah sesi baru.'
+    : 'Tempahan sesi baru disekat buat masa ini. Sila hubungi pusat rawatan.';
+}
+
 function showLockScreen(container) {
   if (!container) return;
   container.innerHTML = `

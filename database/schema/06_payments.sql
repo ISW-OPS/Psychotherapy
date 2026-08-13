@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS psy_payments (
   payment_method TEXT CHECK (payment_method IN ('fpx','card','transfer','ghl','manual','gateway')),
   status TEXT DEFAULT 'completed' CHECK (status IN ('pending','completed','refunded','failed')),
   ghl_transaction_id TEXT,
+  invoice_number TEXT,                        -- bayaran manual — no. invois ditaip staff/doktor
+  receipt_url TEXT,                           -- bayaran manual — resit yang di-upload
   notes TEXT,
   -- gateway bayaran (HitPay/Fiuu) — pending row dicipta sebelum redirect,
   -- webhook padankan gateway_ref & jalankan fulfillment ikut intent

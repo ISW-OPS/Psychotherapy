@@ -62,6 +62,7 @@
               <button data-pkgtab="bekalan" onclick="switchPkgTab('bekalan')" class="pkgtab-btn px-4 py-3.5 text-sm font-semibold whitespace-nowrap border-b-2 border-transparent text-ink/55 hover:text-ink transition-colors flex items-center gap-1.5">📦 Bekalan &amp; Inventori</button>
               <button data-pkgtab="rujukan" onclick="switchPkgTab('rujukan')" class="pkgtab-btn px-4 py-3.5 text-sm font-semibold whitespace-nowrap border-b-2 border-transparent text-ink/55 hover:text-ink transition-colors flex items-center gap-1.5">📖 Rujukan (FAQ &amp; Library)</button>
               <button data-pkgtab="kontrak" onclick="switchPkgTab('kontrak')" class="pkgtab-btn px-4 py-3.5 text-sm font-semibold whitespace-nowrap border-b-2 border-transparent text-ink/55 hover:text-ink transition-colors flex items-center gap-1.5">📄 Dokumen Kontrak</button>
+              <button data-pkgtab="bayaran" onclick="switchPkgTab('bayaran')" class="pkgtab-btn px-4 py-3.5 text-sm font-semibold whitespace-nowrap border-b-2 border-transparent text-ink/55 hover:text-ink transition-colors flex items-center gap-1.5">💳 Bayaran</button>
               <button data-pkgtab="log" onclick="switchPkgTab('log')" class="pkgtab-btn px-4 py-3.5 text-sm font-semibold whitespace-nowrap border-b-2 border-transparent text-ink/55 hover:text-ink transition-colors flex items-center gap-1.5">🕐 Log Aktiviti</button>
             </div>
           </div>
@@ -134,6 +135,32 @@
             <div id="contract-empty" class="hidden py-10 text-center text-sm text-ink/35">Tiada dokumen kontrak disetkan untuk pakej ini.</div>
           </div>
 
+          <!-- ── PANEL: Bayaran (Ansuran) ── -->
+          <div id="panel-bayaran" class="pkgtab-panel hidden p-5">
+            <div id="payment-config-card" class="border border-ink/10 rounded-xl p-4 mb-5"></div>
+            <div id="payment-schedule-preview" class="hidden mb-5">
+              <h4 class="text-xs font-bold text-ink/60 mb-2">📋 Pratonton Jadual Ansuran (harga & tempoh semasa)</h4>
+              <div id="payment-schedule-body" class="text-xs bg-ink/5 rounded-lg p-3 space-y-0.5"></div>
+            </div>
+            <div>
+              <h4 class="text-xs font-bold text-ink/60 mb-2">👥 Pesakit Dalam Pelan Ansuran</h4>
+              <div class="overflow-x-auto border border-ink/10 rounded-xl">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="border-b border-ink/5 bg-ink/[0.015]">
+                      <th class="text-left px-4 py-2.5 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Pesakit</th>
+                      <th class="text-left px-3 py-2.5 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Progres</th>
+                      <th class="text-left px-3 py-2.5 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Ansuran Seterusnya</th>
+                      <th class="text-left px-3 py-2.5 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="payment-patients-body" class="divide-y divide-ink/5"></tbody>
+                </table>
+              </div>
+              <div id="payment-patients-empty" class="hidden py-10 text-center text-sm text-ink/35">Tiada pesakit menggunakan pelan ansuran untuk pakej ini.</div>
+            </div>
+          </div>
+
           <!-- ── PANEL: Log Aktiviti ── -->
           <div id="panel-log" class="pkgtab-panel hidden p-5">
             <div id="activity-body" class="space-y-3"></div>
@@ -179,7 +206,7 @@ function timeAgo(d) {
 }
 
 // ── Tab switching ─────────────────────────────────────
-const PKG_TABS = ['coaching','jadual','bekalan','rujukan','kontrak','log'];
+const PKG_TABS = ['coaching','jadual','bekalan','rujukan','kontrak','bayaran','log'];
 function switchPkgTab(tab) {
   if (!PKG_TABS.includes(tab)) tab = 'coaching';
   document.querySelectorAll('.pkgtab-btn').forEach(b => {
@@ -852,6 +879,96 @@ async function duplicatePackage() {
   } catch(e) { banner('Ralat: ' + e.message, 'error'); }
 }
 
+// ── Bayaran (Ansuran) — konfigurasi pakej + pratonton jadual + senarai
+// pesakit yang sedang dalam pelan ansuran untuk pakej ini ──
+function computeInstallmentSchedule(price, count, durationWeeks, startDate) {
+  const intervalWeeks = Math.max(1, Math.floor((durationWeeks || 12) / count));
+  const per = Math.floor((price / count) * 100) / 100;
+  const rows = [];
+  let sum = 0;
+  for (let i = 1; i <= count; i++) {
+    const isLast = i === count;
+    const amount = isLast ? Math.round((price - sum) * 100) / 100 : per;
+    sum += amount;
+    const due = new Date(startDate);
+    due.setDate(due.getDate() + (i - 1) * intervalWeeks * 7);
+    rows.push({ seq: i, amount, due_date: due.toISOString().slice(0, 10) });
+  }
+  return rows;
+}
+
+async function renderPayment() {
+  const cfgEl = document.getElementById('payment-config-card');
+  const allowed = !!pkg.installment_allowed && !!pkg.installment_count;
+  cfgEl.innerHTML = allowed
+    ? `<div class="flex items-center justify-between flex-wrap gap-2">
+        <div class="text-sm"><span class="font-semibold text-green-dark">✅ Ansuran dibenarkan</span> — ${pkg.installment_count}x bayaran</div>
+        <a href="pakej-edit.html?id=${pkg.id}" class="text-xs font-semibold text-navy hover:underline">✏️ Tukar tetapan →</a>
+      </div>`
+    : `<div class="flex items-center justify-between flex-wrap gap-2">
+        <div class="text-sm text-ink/50">🚫 Ansuran tidak dibenarkan untuk pakej ini — pesakit mesti bayar penuh</div>
+        <a href="pakej-edit.html?id=${pkg.id}" class="text-xs font-semibold text-navy hover:underline">✏️ Benarkan ansuran →</a>
+      </div>`;
+
+  const previewEl = document.getElementById('payment-schedule-preview');
+  if (allowed) {
+    const schedule = computeInstallmentSchedule(Number(pkg.price || 0), pkg.installment_count, pkg.duration_weeks, new Date());
+    document.getElementById('payment-schedule-body').innerHTML = schedule.map(r => `
+      <div class="flex justify-between py-0.5">
+        <span>Ansuran ${r.seq}${r.seq === 1 ? ' (deposit)' : ''}</span>
+        <span class="font-semibold">${fmtRM(r.amount)} · +${(r.seq - 1) * Math.max(1, Math.floor((pkg.duration_weeks || 12) / pkg.installment_count))} minggu</span>
+      </div>`).join('');
+    previewEl.classList.remove('hidden');
+  } else {
+    previewEl.classList.add('hidden');
+  }
+
+  const { data: sessions } = await window.db.from('psy_kob_sessions')
+    .select('id, patient_id')
+    .eq('recommended_package_id', pkg.package_id).eq('package_payment_mode', 'installment');
+  const sessionIds = (sessions || []).map(s => s.id);
+  const body = document.getElementById('payment-patients-body');
+  const empty = document.getElementById('payment-patients-empty');
+  if (!sessionIds.length) {
+    body.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  const { data: installments } = await window.db.from('psy_kob_installments')
+    .select('kob_session_id, patient_id, seq, amount, due_date, status, psy_patients(full_name)')
+    .in('kob_session_id', sessionIds).order('seq');
+
+  const bySession = {};
+  (installments || []).forEach(r => {
+    (bySession[r.kob_session_id] ||= []).push(r);
+  });
+
+  const statusMap = {
+    pending: { lbl: 'Belum due', cls: 'bg-ink/8 text-ink/55' },
+    overdue: { lbl: '⚠️ Tertunggak', cls: 'bg-red-100 text-red-700' },
+    paid:    { lbl: '✅ Selesai', cls: 'bg-green-100 text-green-700' },
+  };
+
+  const rows = Object.values(bySession).map(rows => {
+    const total = rows.length;
+    const paidCount = rows.filter(r => r.status === 'paid').length;
+    const next = rows.find(r => r.status !== 'paid');
+    const patientName = rows[0]?.psy_patients?.full_name || '—';
+    const overallStatus = !next ? 'paid' : (rows.some(r => r.status === 'overdue') ? 'overdue' : 'pending');
+    const sm = statusMap[overallStatus];
+    return `
+      <tr>
+        <td class="px-4 py-3 font-medium">${escHtml(patientName)}</td>
+        <td class="px-3 py-3">${paidCount}/${total}</td>
+        <td class="px-3 py-3">${next ? `${fmtRM(next.amount)} · ${fmtDate(next.due_date)}` : '—'}</td>
+        <td class="px-3 py-3"><span class="inline-block px-2 py-0.5 rounded-full ${sm.cls} text-[11px] font-semibold">${sm.lbl}</span></td>
+      </tr>`;
+  }).join('');
+  body.innerHTML = rows;
+}
+
 async function init() {
   const user = await initStaff('pakej', 'Detail pakej rawatan');
   if (!user) return;
@@ -884,7 +1001,7 @@ async function init() {
   renderNota();
   switchPkgTab('coaching');
   // Tab data yang perlukan query berasingan
-  await Promise.all([renderLibrary(), renderActivity()]);
+  await Promise.all([renderLibrary(), renderActivity(), renderPayment()]);
 }
 
 init();

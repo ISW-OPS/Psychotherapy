@@ -10,6 +10,8 @@
 //   5) automations         — psy_automations (trigger 'schedule')
 //   6) session_confirm     — Pengesahan Sesi (dua-hala): peringatan sahkan
 //      kehadiran/tukar tarikh + escalation coach bila belum sahkan ≤ deadline
+//   9) installment_overdue — ansuran pakej (psy_kob_installments) lepas due_date
+//      → tandakan overdue, sekat tempahan sesi baru pesakit, WA sekali
 // Konfig semua dari psy_auto_messages (boleh ubah di UI).
 // Secrets: GHL_ISW_TOKEN, GHL_ISW_LOCATION_ID, CRON_SECRET
 // ============================================================
@@ -733,6 +735,50 @@ async function runDnaSampleReminder(supabase, locationId) {
   return res
 }
 
+// ───────── 9) Ansuran Pakej Tertunggak — tandakan overdue + sekat tempahan ─────────
+// psy_kob_installments status='pending' & due_date lepas hari ini (waktu MY) →
+// tandakan 'overdue', sekat tempahan sesi baru pesakit (psy_patients.booking_blocked)
+// & hantar WA sekali (baris hanya diproses SEKALI sebab status terus bertukar
+// daripada 'pending' — tiada keperluan dedup send_at_time/last_broadcast_at).
+async function runInstallmentOverdueCheck(supabase, locationId) {
+  const cfg = (await supabase.from('psy_auto_messages').select('*').eq('key', 'installment_overdue').maybeSingle()).data
+  const myToday = new Date(Date.now() + MY_OFFSET_MS).toISOString().slice(0, 10)
+  const { data: rows } = await supabase.from('psy_kob_installments')
+    .select('id, seq, amount, due_date, patient_id, psy_patients(full_name, phone, emergency_contact_phone, emergency_contact_name, contact_preference, booking_blocked)')
+    .eq('status', 'pending').lt('due_date', myToday).limit(500)
+  const res = { flagged: 0, blocked: 0, sent: 0, errors: [] }
+  if (!rows?.length) return res
+
+  for (const row of rows) {
+    await supabase.from('psy_kob_installments').update({ status: 'overdue' }).eq('id', row.id)
+    res.flagged++
+    const p = row.psy_patients || {}
+    if (!p.booking_blocked) {
+      await supabase.from('psy_patients').update({
+        booking_blocked: true,
+        booking_blocked_reason: 'installment_overdue',
+        booking_blocked_since: new Date().toISOString(),
+      }).eq('id', row.patient_id)
+      res.blocked++
+    }
+    if (!cfg?.is_active || !cfg.message_template) continue
+    const { phone: rawPhone, contactName } = resolveContact(p)
+    const phone = toE164(rawPhone)
+    if (!phone) { res.errors.push(`${row.id}: tiada telefon`); continue }
+    try {
+      const cid = await upsertContact(locationId, phone, contactName)
+      if (!cid) throw new Error('no contactId')
+      const msg = fillTemplate(cfg.message_template, {
+        nama: p.full_name || '', seq: String(row.seq), jumlah: Number(row.amount).toFixed(2),
+        tarikh_due: fmtSessDate(row.due_date), nama_klinik: ISW_CLINIC.name,
+      })
+      await sendWA(cid, msg)
+      res.sent++
+    } catch (e) { res.errors.push(`${row.id}: ${String(e?.message || e)}`) }
+  }
+  return res
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   try {
@@ -749,7 +795,8 @@ Deno.serve(async (req) => {
     const sessionConfirm = await runSessionConfirm(supabase, locationId)
     const autoAbsence = await runAutoAbsence(supabase)
     const dnaSampleReminder = await runDnaSampleReminder(supabase, locationId)
-    return new Response(JSON.stringify({ success: true, eventReminders, broadcasts, catatanHarian, kepatuhanAlerts, automations, sessionConfirm, autoAbsence, dnaSampleReminder }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    const installmentOverdue = await runInstallmentOverdueCheck(supabase, locationId)
+    return new Response(JSON.stringify({ success: true, eventReminders, broadcasts, catatanHarian, kepatuhanAlerts, automations, sessionConfirm, autoAbsence, dnaSampleReminder, installmentOverdue }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
   } catch (err) {
     console.error('event-reminders error:', err)
     return new Response(JSON.stringify({ error: String(err?.message || err) }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })

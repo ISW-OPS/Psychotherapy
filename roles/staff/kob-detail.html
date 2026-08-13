@@ -9,6 +9,29 @@
 <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="_styles.css" rel="stylesheet">
+<style>
+  /* Sama gaya borang macam roles/patient/pendaftaran.html — untuk seksyen
+     "Maklumat Pesakit" boleh-edit di kob-detail.html supaya konsisten. */
+  .lbl { font-size:12px; font-weight:600; color:#374151; margin-bottom:5px; display:block; }
+  .finput { width:100%; padding:9px 12px; border:1.5px solid #e5e7eb; border-radius:10px;
+    font-size:13.5px; outline:none; transition:border-color .15s; background:white; color:#111; }
+  .finput:focus { border-color:#1a3a5c; }
+  .fwrap { position:relative; }
+  select.finput { cursor:pointer; }
+  textarea.finput { resize:none; }
+  .section-card { background: transparent; border: none; box-shadow: none; padding: 0; }
+  .shead { display:flex; align-items:center; gap:12px; margin-bottom:18px; padding-bottom:14px;
+    border-bottom:1px solid rgba(0,0,0,.08); }
+  .sicon { width:40px; height:40px; border-radius:12px; display:flex; align-items:center;
+    justify-content:center; font-size:18px; flex-shrink:0; }
+  .consent-row {
+    border: 1.5px solid #e5e7eb; border-radius: 12px; padding: 14px 16px;
+    cursor: pointer; transition: all .15s; display: flex; align-items: flex-start; gap: 12px;
+  }
+  .consent-row:hover { border-color:#9ca3af; background:white; }
+  .consent-row.checked { border-color:#1a3a5c; background:#eef2f7; }
+  .consent-row input[type=checkbox] { margin-top:2px; flex-shrink:0; width:16px; height:16px; accent-color:#1a3a5c; cursor:pointer; }
+</style>
 </head>
 <body class="min-h-screen">
 
@@ -56,36 +79,6 @@
             </div>
             <div id="doctor-info" class="text-xs text-ink/60"></div>
 
-            <!-- Cadangan Pakej Rawatan (only visible when status=hadir) -->
-            <div id="package-rec-card" class="hidden border-t border-ink/10 pt-4 space-y-3 mt-4">
-              <div class="flex items-center justify-between flex-wrap gap-2">
-                <h4 class="font-bold text-sm text-navy">📦 Cadangan Pakej Rawatan</h4>
-                <button onclick="saveRecommendation()" id="btn-save-rec" data-rbac="kob.edit" class="bg-navy text-white px-6 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">Sahkan Cadangan</button>
-              </div>
-              <div class="space-y-2 text-xs">
-                <label class="flex items-center gap-2 cursor-pointer">
-                  <input type="radio" name="rec-mode" value="package" onchange="onRecModeChange()" class="accent-navy">
-                  <span>Cadangkan pakej</span>
-                </label>
-                <label class="flex items-center gap-2 cursor-pointer">
-                  <input type="radio" name="rec-mode" value="declined" onchange="onRecModeChange()" class="accent-navy">
-                  <span>Patient tidak teruskan pada masa ini <span class="text-ink/50">(simpan cadangan untuk rujukan)</span></span>
-                </label>
-                <label class="flex items-center gap-2 cursor-pointer">
-                  <input type="radio" name="rec-mode" value="skip" onchange="onRecModeChange()" class="accent-navy">
-                  <span>Tidak perlu pakej rawatan</span>
-                </label>
-              </div>
-              <div id="rec-package-picker" class="hidden">
-                <label class="text-xs font-semibold text-ink/70">Pilih Pakej</label>
-                <select id="rec-package-select" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
-                  <option value="">— Loading —</option>
-                </select>
-                <p id="rec-package-info" class="text-[11px] text-ink/50 mt-1.5"></p>
-              </div>
-              <div id="rec-saved-info" class="hidden bg-green-light/50 border border-green/30 rounded p-2 text-xs"></div>
-            </div>
-
             <!-- Agreement Signing Card -->
             <div id="agreement-card" class="hidden border-t border-ink/10 pt-4 space-y-3 mt-4">
               <div class="flex items-center justify-between flex-wrap gap-2">
@@ -110,10 +103,19 @@
             </div>
           </div>
 
+          <!-- Kod Rujukan — sentiasa nampak, tak perlu klik Edit -->
+          <div id="referral-card"></div>
+
           <!-- BELOW: Patient info -->
           <div class="min-w-0 space-y-3">
-            <h3 class="font-bold text-navy text-base border-b border-ink/10 pb-2">Maklumat Pesakit</h3>
+            <div class="flex items-center justify-between border-b border-ink/10 pb-2">
+              <h3 class="font-bold text-navy text-base">Maklumat Pesakit</h3>
+              <button type="button" onclick="toggleEditPatientDetails()" id="btn-edit-patient-details"
+                class="text-xs font-semibold text-navy hover:underline">✏️ Edit</button>
+            </div>
             <div id="patient-details" class="text-sm space-y-2 text-ink/80">—</div>
+            <!-- Persetujuan PDPA — sentiasa nampak, tak perlu klik Edit -->
+            <div id="pdpa-consent-card"></div>
             <!-- Kondisi / Laporan / Agreement — 3-col -->
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6 border-t border-ink/10 pt-4">
               <div>
@@ -322,7 +324,7 @@
                   <option value="">— Pilih —</option>
                   <option value="kurang">Kurang</option>
                   <option value="normal">Normal</option>
-                  <option value="lebat">Lebat</option>
+                  <option value="lebat">Banyak</option>
                   <option value="menopause">Menopause</option>
                   <option value="na">Tidak Berkenaan</option>
                 </select>
@@ -388,6 +390,38 @@
           </div>
 
           <p id="q-saved-info" class="text-xs text-ink/50 italic"></p>
+        </div>
+
+        <!-- Cadangan Pakej Rawatan + Bayaran — bawah sesi/soalan, sebab jadi
+             SELEPAS konsultasi, bukan sebelum -->
+        <div id="package-rec-card" class="hidden space-y-3 pt-5 border-t border-ink/10">
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <h3 class="font-bold text-navy text-base">📦 Cadangan Pakej Rawatan</h3>
+            <button onclick="saveRecommendation()" id="btn-save-rec" data-rbac="kob.edit" class="bg-navy text-white px-6 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">Sahkan Cadangan</button>
+          </div>
+          <div class="space-y-2 text-xs">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="radio" name="rec-mode" value="package" onchange="onRecModeChange()" class="accent-navy">
+              <span>Cadangkan pakej</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="radio" name="rec-mode" value="declined" onchange="onRecModeChange()" class="accent-navy">
+              <span>Patient tidak teruskan pada masa ini <span class="text-ink/50">(simpan cadangan untuk rujukan)</span></span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="radio" name="rec-mode" value="skip" onchange="onRecModeChange()" class="accent-navy">
+              <span>Tidak perlu pakej rawatan</span>
+            </label>
+          </div>
+          <div id="rec-package-picker" class="hidden">
+            <label class="text-xs font-semibold text-ink/70">Pilih Pakej</label>
+            <select id="rec-package-select" class="w-full md:w-96 mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
+              <option value="">— Loading —</option>
+            </select>
+            <p id="rec-package-info" class="text-[11px] text-ink/50 mt-1.5"></p>
+          </div>
+          <div id="rec-saved-info" class="hidden bg-green-light/50 border border-green/30 rounded p-2 text-xs"></div>
+          <div id="payment-method-card" class="hidden"></div>
         </div>
 
         <!-- Bottom row: Notes | Upload -->
@@ -477,6 +511,7 @@
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
 <script src="../../shared/utils.js"></script>
+<script src="../../shared/referral.js"></script>
 <script src="../../shared/defaultAgreement.js"></script>
 <script src="_shared.js"></script>
 <script>
@@ -534,26 +569,9 @@ async function render() {
   const st = STATUS_LABEL[kob.status] || STATUS_LABEL.booked;
   document.getElementById('status-chip').innerHTML = `<span class="chip ${st.cls}">${st.label}</span>`;
 
-  // Patient details — full-width layout (3-col on desktop)
-  const field = (label, val, fullCol) => `
-    <div class="min-w-0${fullCol ? ' md:col-span-3' : ''}">
-      <div class="text-[10px] font-semibold text-ink/50 uppercase tracking-wide">${label}</div>
-      <div class="text-sm text-ink mt-0.5 break-words">${escapeHtml(val || '—')}</div>
-    </div>`;
-  document.getElementById('patient-details').innerHTML = `
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-3">
-      ${field('No. IC', patient?.ic_number)}
-      ${field('Tarikh Lahir', patient?.date_of_birth)}
-      ${field('Jantina', patient?.gender === 'M' ? 'Lelaki' : patient?.gender === 'F' ? 'Perempuan' : null)}
-      ${field('Telefon', patient?.psy_profiles?.phone || patient?.phone)}
-      ${field('Email', patient?.psy_profiles?.email)}
-      ${field('Pekerjaan', patient?.occupation)}
-      ${field('Alamat', patient?.address, true)}
-      ${field('Syarikat', patient?.company)}
-      ${field('Kontak Waris', patient?.emergency_contact_name)}
-      ${field('Telefon Waris', patient?.emergency_contact_phone)}
-    </div>
-  `;
+  renderPatientDetails();
+  renderReferralCard();
+  renderConsentCard();
 
   document.getElementById('medical-info').textContent = [
     patient?.medical_condition && `Kondisi: ${patient.medical_condition}`,
@@ -588,7 +606,8 @@ async function render() {
   const agCard = document.getElementById('agreement-card');
   if (agCard) {
     const _recConfirmed = !!kob.recommended_package_id || kob.package_payment_status === 'skipped';
-    const _payDone = kob.package_payment_status === 'paid' || kob.package_payment_status === 'skipped' || kob.package_payment_status === 'declined';
+    const _payDone = kob.package_payment_status === 'paid' || kob.package_payment_status === 'skipped' || kob.package_payment_status === 'declined'
+      || (kob.package_payment_status === 'partial' && kob.package_payment_mode === 'installment');
     const _showAgreement = kob.status === 'hadir' && _recConfirmed && _payDone && kob.package_payment_status !== 'declined';
     if (_showAgreement) {
       agCard.classList.remove('hidden');
@@ -673,7 +692,8 @@ async function render() {
     // Check progress: package recommended? package paid/declined? agreement signed?
     const isDeclined = kob.package_payment_status === 'declined';
     const hasRec = !!kob.recommended_package_id || kob.package_payment_status === 'skipped';
-    const paid = kob.package_payment_status === 'paid' || kob.package_payment_status === 'skipped' || isDeclined;
+    const paid = kob.package_payment_status === 'paid' || kob.package_payment_status === 'skipped' || isDeclined
+      || (kob.package_payment_status === 'partial' && kob.package_payment_mode === 'installment');
     const needsAgreement = !agreement && !isDeclined;
     const canFinish = hasRec && paid && !needsAgreement;
 
@@ -689,6 +709,9 @@ async function render() {
     } else if (isDeclined) {
       const pkgName = escapeHtml(kob.recommended_package_name || '');
       warning = `<div class="text-xs text-gold-dark bg-gold/10 p-2 rounded mt-2">⚠️ Patient tidak teruskan. Pakej dicadangkan: <strong>${pkgName}</strong> — disimpan untuk rujukan.</div>`;
+    } else if (kob.package_payment_status === 'partial') {
+      const pkgName = escapeHtml(kob.recommended_package_name || '');
+      warning = `<div class="text-xs text-gold-dark bg-gold/15 p-2 rounded mt-2">💰 Bayaran sebahagian — <strong>${pkgName}</strong> belum lunas, lihat baki di bawah.</div>`;
     } else if (!paid) {
       const pkgName = escapeHtml(kob.recommended_package_name || '');
       warning = `<div class="text-xs text-gold-dark bg-gold/15 p-2 rounded mt-2">💰 Menunggu patient bayar pakej: <strong>${pkgName}</strong></div>`;
@@ -722,6 +745,348 @@ async function render() {
   // Package recommendation card
   renderPackageRecCard();
 
+}
+
+// ── Maklumat Pesakit — boleh edit terus oleh doktor/staff (field sama
+// dengan yang ditulis submitKYC() di pendaftaran.html, psy_patients) ────
+let editingPatientDetails = false;
+
+function renderPatientDetails() {
+  const btn = document.getElementById('btn-edit-patient-details');
+  if (btn) btn.classList.toggle('hidden', editingPatientDetails);
+  if (editingPatientDetails) renderPatientDetailsEdit();
+  else renderPatientDetailsView();
+}
+
+function toggleEditPatientDetails() {
+  editingPatientDetails = true;
+  renderPatientDetails();
+}
+
+function cancelEditPatientDetails() {
+  editingPatientDetails = false;
+  renderPatientDetails();
+}
+
+function renderPatientDetailsView() {
+  const field = (label, val, fullCol) => `
+    <div class="min-w-0${fullCol ? ' md:col-span-3' : ''}">
+      <div class="text-[10px] font-semibold text-ink/50 uppercase tracking-wide">${label}</div>
+      <div class="text-sm text-ink mt-0.5 break-words">${escapeHtml(val || '—')}</div>
+    </div>`;
+  const maritalLabels = { bujang: 'Bujang', berkahwin: 'Berkahwin', janda: 'Janda', duda: 'Duda' };
+  document.getElementById('patient-details').innerHTML = `
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-3">
+      ${field('Nama Penuh', patient?.psy_profiles?.full_name || patient?.full_name)}
+      ${field('No. IC', patient?.ic_number)}
+      ${field('Tarikh Lahir', patient?.date_of_birth)}
+      ${field('Jantina', patient?.gender === 'M' ? 'Lelaki' : patient?.gender === 'F' ? 'Perempuan' : null)}
+      ${field('Telefon', patient?.psy_profiles?.phone || patient?.phone)}
+      ${field('Email', patient?.psy_profiles?.email || patient?.email)}
+      ${field('Status Perkahwinan', maritalLabels[patient?.marital_status] || patient?.marital_status)}
+      ${field('Pekerjaan', patient?.occupation)}
+      ${field('Syarikat', patient?.company)}
+      ${field('Alamat', patient?.address, true)}
+      ${field('Poskod', patient?.postcode)}
+      ${field('Bandar', patient?.city)}
+      ${field('Negeri', patient?.state)}
+    </div>
+    <div class="mt-5 pt-4 border-t border-ink/10">
+      <div class="text-xs font-bold text-navy mb-3">👨‍👩‍👧 Maklumat Waris</div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-3">
+        ${field('Kontak Waris', patient?.emergency_contact_name)}
+        ${field('No. IC Waris', patient?.emergency_contact_ic)}
+        ${field('Telefon Waris', patient?.emergency_contact_phone)}
+        ${field('Email Waris', patient?.emergency_contact_email)}
+        ${field('Hubungan Waris', patient?.emergency_contact_relationship)}
+      </div>
+    </div>
+    <div class="mt-5 pt-4 border-t border-ink/10">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-3">
+        ${field('Kod Rujukan', patient?.referred_by_code)}
+      </div>
+    </div>
+    ${patient?.status === 'active'
+      ? '<div class="text-xs text-green-dark mt-3">✅ Pendaftaran lengkap (PDPA consent disahkan).</div>'
+      : '<div class="text-xs text-terracotta mt-3">⚠️ Pendaftaran belum lengkap — PDPA consent belum disahkan.</div>'}
+  `;
+}
+
+// Susunan & gaya field sengaja disamakan sebijik dengan roles/patient/pendaftaran.html
+// (card "Maklumat Pesakit" + "Maklumat Waris / Penjaga") — apa doktor isi di sini
+// dikira sama seperti pesakit isi sendiri di borang pendaftaran (psy_patients sama).
+function renderPatientDetailsEdit() {
+  const inp = (id, label, val, ph, type) => `
+    <div>
+      <label class="lbl">${label}</label>
+      <div class="fwrap">
+        <input id="${id}" class="finput" type="${type || 'text'}" placeholder="${ph || ''}" value="${escapeHtml(val || '')}">
+      </div>
+    </div>`;
+  const rel = patient?.emergency_contact_relationship || '';
+  const relPresets = ['Ibu/Bapa','Adik-Beradik','Suami/Isteri','Anak'];
+  const relIsOther = rel && !relPresets.includes(rel);
+  const relRadio = (val, label) => `
+    <label class="flex items-center gap-2 text-xs cursor-pointer">
+      <input type="radio" name="edit-pd-emg-rel-radio" value="${val}" class="rounded" ${rel === val ? 'checked' : ''}
+        onchange="document.getElementById('edit-pd-emg-rel-other').disabled = true; document.getElementById('edit-pd-emg-rel-other').value = '';"> ${label}
+    </label>`;
+  document.getElementById('patient-details').innerHTML = `
+    <div class="section-card">
+      <div class="shead">
+        <div class="sicon bg-navy/10">👤</div>
+        <div>
+          <div class="font-bold text-sm">Maklumat Pesakit</div>
+          <div class="text-xs text-ink/40">Maklumat peribadi mengikut IC</div>
+        </div>
+      </div>
+      <div class="space-y-4">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          ${inp('edit-pd-name', 'Nama Penuh', patient?.psy_profiles?.full_name || patient?.full_name, 'Sila masukkan nama penuh')}
+          ${inp('edit-pd-ic', 'No. IC / Pasport', patient?.ic_number, '900101145555')}
+          ${inp('edit-pd-phone', 'No. Telefon (H/P)', patient?.phone, '0123456789')}
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          ${inp('edit-pd-email', 'Emel', patient?.email, 'nama@domain.com', 'email')}
+          <div>
+            <label class="lbl">Tarikh Lahir</label>
+            <input id="edit-pd-dob" type="date" class="finput" value="${escapeHtml(patient?.date_of_birth || '')}">
+          </div>
+          <div>
+            <label class="lbl">Jantina</label>
+            <select id="edit-pd-gender" class="finput">
+              <option value="" ${!patient?.gender ? 'selected' : ''}>— Pilih —</option>
+              <option value="M" ${patient?.gender === 'M' ? 'selected' : ''}>Lelaki</option>
+              <option value="F" ${patient?.gender === 'F' ? 'selected' : ''}>Perempuan</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label class="lbl">Alamat</label>
+          <textarea id="edit-pd-address" rows="3" class="finput" placeholder="No. rumah, jalan, taman/kawasan">${escapeHtml(patient?.address || '')}</textarea>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          ${inp('edit-pd-postcode', 'Poskod', patient?.postcode, 'cth: 21000')}
+          ${inp('edit-pd-city', 'Bandar', patient?.city, 'cth: Kuala Terengganu')}
+          ${inp('edit-pd-state', 'Negeri', patient?.state, 'cth: Terengganu')}
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          ${inp('edit-pd-occupation', 'Pekerjaan', patient?.occupation, 'Pekerjaan semasa')}
+          ${inp('edit-pd-company', 'Syarikat', patient?.company, 'Nama syarikat')}
+          <div>
+            <label class="lbl">Status Perkahwinan</label>
+            <select id="edit-pd-marital" class="finput">
+              <option value="">— Pilih —</option>
+              <option value="bujang" ${patient?.marital_status === 'bujang' ? 'selected' : ''}>Bujang</option>
+              <option value="berkahwin" ${patient?.marital_status === 'berkahwin' ? 'selected' : ''}>Berkahwin</option>
+              <option value="janda" ${patient?.marital_status === 'janda' ? 'selected' : ''}>Janda</option>
+              <option value="duda" ${patient?.marital_status === 'duda' ? 'selected' : ''}>Duda</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-card mt-6">
+      <div class="shead">
+        <div class="sicon bg-terracotta/10">👨‍👩‍👧</div>
+        <div>
+          <div class="font-bold text-sm">Maklumat Waris / Penjaga</div>
+          <div class="text-xs text-ink/40">Kontak kecemasan / waris terdekat</div>
+        </div>
+      </div>
+      <div class="space-y-4">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          ${inp('edit-pd-emg-name', 'Nama Penuh Waris', patient?.emergency_contact_name, 'Nama penuh waris')}
+          ${inp('edit-pd-emg-ic', 'No. IC / Passport Waris', patient?.emergency_contact_ic, 'cth: 900101145555')}
+          ${inp('edit-pd-emg-phone', 'No. Telefon (H/P)', patient?.emergency_contact_phone, 'Cth: 0123456789')}
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          ${inp('edit-pd-emg-email', 'Emel Waris', patient?.emergency_contact_email, 'alamat@emel.com', 'email')}
+          <div>
+            <label class="lbl">Hubungan</label>
+            <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 mt-1">
+              ${relRadio('Ibu/Bapa', 'Ibu/Bapa')}
+              ${relRadio('Adik-Beradik', 'Adik-Beradik')}
+              ${relRadio('Suami/Isteri', 'Suami/Isteri')}
+              ${relRadio('Anak', 'Anak')}
+            </div>
+            <div class="flex items-center gap-2 mt-1.5">
+              <input type="radio" name="edit-pd-emg-rel-radio" value="__other__" class="rounded" ${relIsOther ? 'checked' : ''}
+                onchange="document.getElementById('edit-pd-emg-rel-other').disabled = false;">
+              <label class="text-xs font-semibold whitespace-nowrap">Lain-lain:</label>
+              <input id="edit-pd-emg-rel-other" placeholder="Nyatakan..." value="${relIsOther ? escapeHtml(rel) : ''}"
+                ${relIsOther ? '' : 'disabled'} class="flex-1 px-2 py-1 border border-ink/20 rounded text-xs"
+                style="${relIsOther ? '' : 'opacity:0.4;cursor:not-allowed'}">
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex gap-2 mt-3">
+      <button type="button" onclick="savePatientDetailsEdit()"
+        class="px-4 py-1.5 bg-navy text-white rounded-lg text-xs font-semibold hover:bg-navy-dark">💾 Save</button>
+      <button type="button" onclick="cancelEditPatientDetails()"
+        class="px-4 py-1.5 border border-ink/15 rounded-lg text-xs font-semibold hover:bg-ink/5">Batal</button>
+    </div>
+  `;
+}
+
+async function savePatientDetailsEdit() {
+  const v = id => document.getElementById(id)?.value.trim() || null;
+  const updates = {
+    full_name:                     v('edit-pd-name'),
+    ic_number:                     v('edit-pd-ic'),
+    date_of_birth:                 v('edit-pd-dob'),
+    gender:                        v('edit-pd-gender'),
+    phone:                         v('edit-pd-phone'),
+    email:                         v('edit-pd-email'),
+    marital_status:                v('edit-pd-marital'),
+    occupation:                    v('edit-pd-occupation'),
+    company:                       v('edit-pd-company'),
+    address:                       v('edit-pd-address'),
+    postcode:                      v('edit-pd-postcode'),
+    city:                          v('edit-pd-city'),
+    state:                         v('edit-pd-state'),
+    emergency_contact_name:        v('edit-pd-emg-name'),
+    emergency_contact_ic:          v('edit-pd-emg-ic'),
+    emergency_contact_phone:       v('edit-pd-emg-phone'),
+    emergency_contact_email:       v('edit-pd-emg-email'),
+    emergency_contact_relationship: (() => {
+      const checked = document.querySelector('input[name="edit-pd-emg-rel-radio"]:checked');
+      if (!checked) return null;
+      return checked.value === '__other__' ? v('edit-pd-emg-rel-other') : checked.value;
+    })(),
+  };
+  // Tak pernah "un-set" status active semula — kekal ikut apa yang dah
+  // disahkan lewat card Persetujuan PDPA (lihat saveConsentCheckbox()).
+  if (patient?.status === 'active') updates.status = 'active';
+
+  const { data, error } = await window.db.from('psy_patients')
+    .update(updates).eq('id', patient.id).select().single();
+  if (error) { alert('Gagal simpan: ' + error.message); return; }
+  patient = { ...patient, ...data };
+
+  document.getElementById('patient-name').textContent = patient?.psy_profiles?.full_name || patient?.full_name || '—';
+  document.getElementById('patient-meta').textContent = `MRN: ${patient?.mrn || '—'} · ${patient?.psy_profiles?.phone || patient?.phone || '—'}`;
+  editingPatientDetails = false;
+  renderPatientDetails();
+}
+
+// ── Kod Rujukan — sentiasa nampak (bukan dalam mod Edit), bawah Tindakan Sesi ──
+function renderReferralCard() {
+  const el = document.getElementById('referral-card');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="flex items-center justify-between flex-wrap gap-3">
+      <div class="flex items-center gap-3">
+        <div class="sicon bg-gold/10">🎁</div>
+        <div>
+          <div class="font-bold text-sm">Kod Rujukan <span class="text-ink/40 font-normal">(Optional)</span></div>
+          <div class="text-xs text-ink/40">Jika pesakit dirujuk, masukkan kod di sini.</div>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <input id="rc-referral" maxlength="16" value="${escapeHtml(patient?.referred_by_code || '')}"
+          oninput="this.value=this.value.toUpperCase()"
+          class="px-3 py-2 border border-ink/20 rounded-lg text-sm font-mono uppercase bg-white"
+          placeholder="cth: N7K23H5P" ${patient?.referred_by_patient_id ? 'disabled' : ''}>
+        ${patient?.referred_by_patient_id ? '' : `<button type="button" onclick="saveReferralCode()"
+          class="px-4 py-2 bg-navy text-white rounded-lg text-sm font-semibold hover:bg-navy-dark whitespace-nowrap">Simpan</button>`}
+      </div>
+    </div>
+    <p id="rc-referral-msg" class="text-xs mt-2 text-right ${patient?.referred_by_patient_id ? '' : 'hidden'}">${
+      patient?.referred_by_patient_id ? '<span class="text-green-dark font-semibold">✓ Sudah dipautkan ke perujuk</span>' : ''
+    }</p>
+  `;
+}
+
+// ── Persetujuan PDPA — sentiasa nampak, bawah Maklumat Waris ──
+function renderConsentCard() {
+  const el = document.getElementById('pdpa-consent-card');
+  if (!el) return;
+  const alreadyActive = patient?.status === 'active';
+  el.innerHTML = `
+    <div class="shead">
+      <div class="sicon bg-gold/10">📋</div>
+      <div>
+        <div class="font-bold text-sm">Persetujuan PDPA</div>
+        <div class="text-xs text-ink/40">Doktor sahkan consent lisan pesakit</div>
+      </div>
+    </div>
+    <div class="space-y-3">
+      <label class="consent-row${alreadyActive ? ' checked' : ''}" id="rc-cr-data">
+        <input type="checkbox" id="rc-consent-data" onchange="onConsentChange()" ${alreadyActive ? 'checked disabled' : ''}>
+        <div>
+          <div class="text-sm font-semibold">Pemprosesan Data Peribadi <span class="text-red-400">*</span></div>
+          <p class="text-[11px] text-ink/60 mt-0.5">Pesakit bersetuju ISW mengumpul & memproses data peribadi untuk tujuan rawatan (PDPA Act 709).</p>
+        </div>
+      </label>
+      <label class="consent-row${alreadyActive ? ' checked' : ''}" id="rc-cr-health">
+        <input type="checkbox" id="rc-consent-health" onchange="onConsentChange()" ${alreadyActive ? 'checked disabled' : ''}>
+        <div>
+          <div class="text-sm font-semibold">Rekod Kesihatan <span class="text-red-400">*</span></div>
+          <p class="text-[11px] text-ink/60 mt-0.5">Rekod perubatan disimpan & dikongsi secara sulit antara clinicians ISW sahaja.</p>
+        </div>
+      </label>
+      ${alreadyActive
+        ? '<p class="text-xs text-green-dark font-semibold">✓ Consent sudah disahkan — pendaftaran lengkap.</p>'
+        : '<p class="text-xs text-ink/50">Tanda KEDUA-DUA consent bila pesakit dah bersetuju secara lisan — terus disimpan.</p>'}
+    </div>
+  `;
+}
+
+// Checkbox PDPA — auto-simpan terus bila KEDUA-DUA ditanda (tiada butang Save
+// berasingan, supaya tak perlu masuk mod Edit langsung untuk sahkan consent).
+async function onConsentChange() {
+  const dataOk   = document.getElementById('rc-consent-data')?.checked;
+  const healthOk = document.getElementById('rc-consent-health')?.checked;
+  document.getElementById('rc-cr-data')?.classList.toggle('checked', dataOk);
+  document.getElementById('rc-cr-health')?.classList.toggle('checked', healthOk);
+  if (!(dataOk && healthOk)) return;
+  const { data, error } = await window.db.from('psy_patients')
+    .update({ status: 'active' }).eq('id', patient.id).select().single();
+  if (error) { alert('Gagal simpan consent: ' + error.message); return; }
+  patient = { ...patient, ...data };
+  patientKycApproved = true;
+  renderPatientDetails();
+  renderConsentCard();
+}
+
+async function saveReferralCode() {
+  const input = document.getElementById('rc-referral');
+  const msg = document.getElementById('rc-referral-msg');
+  const code = (input.value || '').trim().toUpperCase();
+  input.value = code;
+  if (!code) return;
+  msg.classList.remove('hidden');
+  msg.textContent = 'Menyemak...';
+  try {
+    const referrer = await resolveReferrer(code);
+    if (!referrer || referrer.id === patient.id) {
+      msg.className = 'text-xs mt-2 text-red-500 font-semibold';
+      msg.textContent = '✗ Kod tidak sah atau tidak dijumpai.';
+      return;
+    }
+    const { data, error } = await window.db.from('psy_patients').update({
+      referred_by_code: code, referred_by_patient_id: referrer.id,
+    }).eq('id', patient.id).select().single();
+    if (error) throw error;
+    patient = { ...patient, ...data };
+    const { error: refErr } = await window.db.from('psy_referrals').insert({
+      referrer_patient_id: referrer.id, referee_patient_id: patient.id,
+      code_used: code, status: 'pending',
+    });
+    if (refErr && !/duplicate|unique/i.test(refErr.message || '')) {
+      console.warn('[referral] insert error:', refErr.message);
+    }
+    renderReferralCard();
+  } catch (e) {
+    msg.className = 'text-xs mt-2 text-red-500 font-semibold';
+    msg.textContent = 'Ralat menyemak kod. Cuba lagi.';
+    console.warn('[saveReferralCode] gagal:', e.message);
+  }
 }
 
 function renderDocs() {
@@ -1193,14 +1558,16 @@ async function renderPackageRecCard() {
   // Load packages
   if (!allPackagesCache.length) {
     const { data } = await window.db.from('psy_packages')
-      .select('package_id, name, price, duration, is_active')
+      .select('package_id, name, price, duration, duration_weeks, installment_allowed, installment_count, is_active')
       .eq('is_active', true)
       .order('sort_order', { ascending: true });
     allPackagesCache = data || [];
   }
   const sel = document.getElementById('rec-package-select');
   sel.innerHTML = '<option value="">— Pilih pakej —</option>' +
-    allPackagesCache.map(p => `<option value="${p.package_id}" data-name="${escapeHtml(p.name)}" data-price="${p.price || 0}">${escapeHtml(p.name)} · RM ${Number(p.price || 0).toFixed(2)}</option>`).join('');
+    allPackagesCache.map(p => `<option value="${p.package_id}" data-name="${escapeHtml(p.name)}" data-price="${p.price || 0}"
+      data-duration-weeks="${p.duration_weeks || 12}" data-installment-allowed="${!!p.installment_allowed}"
+      data-installment-count="${p.installment_count || ''}">${escapeHtml(p.name)} · RM ${Number(p.price || 0).toFixed(2)}</option>`).join('');
   sel.onchange = () => {
     const opt = sel.options[sel.selectedIndex];
     const info = document.getElementById('rec-package-info');
@@ -1220,7 +1587,9 @@ async function renderPackageRecCard() {
       savedInfo.innerHTML = `⚠️ Dicadangkan: <strong>${escapeHtml(kob.recommended_package_name || '')}</strong> · Patient tidak teruskan pada masa ini`;
       savedInfo.className = 'bg-gold/10 border border-gold/30 rounded p-2 text-xs';
     } else {
-      savedInfo.innerHTML = `✓ Pakej dicadangkan: <strong>${escapeHtml(kob.recommended_package_name || '')}</strong>${kob.package_payment_status === 'paid' ? ' · 💰 Patient sudah bayar' : ' · ⏳ Menunggu bayaran patient'}`;
+      const payLabel = kob.package_payment_status === 'paid' ? ' · 💰 Sudah dibayar penuh'
+        : kob.package_payment_status === 'partial' ? ' · 💰 Bayaran sebahagian' : '';
+      savedInfo.innerHTML = `✓ Pakej dicadangkan: <strong>${escapeHtml(kob.recommended_package_name || '')}</strong>${payLabel}`;
     }
   } else if (kob.package_payment_status === 'skipped') {
     document.querySelector('input[name="rec-mode"][value="skip"]').checked = true;
@@ -1228,6 +1597,299 @@ async function renderPackageRecCard() {
     const savedInfo = document.getElementById('rec-saved-info');
     savedInfo.classList.remove('hidden');
     savedInfo.innerHTML = '✓ Doktor cadangkan tiada pakej rawatan';
+  }
+  renderPaymentMethodSection();
+}
+
+// ── Bayaran pakej — doktor pilih "Manual" (isi sendiri) atau "HitPay"
+// (tunggu pesakit bayar sendiri via gateway). Manual GANTIKAN keperluan
+// HitPay terus — sekali disahkan, package_payment_status terus 'paid'.
+// Bila pakej benarkan ansuran (psy_packages.installment_allowed), staff
+// pilih Bayaran Penuh / Ansuran dulu — bayaran PERTAMA (deposit) direkod
+// di sini sahaja; baki ansuran diuruskan di Pesakit Hub selepas KOB selesai.
+let paymentMethodChoice = null;   // 'manual' | 'hitpay' | null (belum pilih)
+let paymentPlanChoice = null;     // 'full' | 'installment' | null
+
+function choosePaymentMethod(method) {
+  paymentMethodChoice = method;
+  paymentPlanChoice = null;
+  renderPaymentMethodSection();
+}
+
+function choosePaymentPlan(plan) {
+  paymentPlanChoice = plan;
+  renderPaymentMethodSection();
+}
+
+// Bilangan ansuran ikut psy_packages.installment_count; interval = tempoh
+// pakej (minggu) ÷ bilangan (min 1 minggu). Ansuran TERAKHIR serap baki
+// bulat supaya jumlah keseluruhan tepat sama dengan harga pakej.
+function computeInstallmentSchedule(price, count, durationWeeks, startDate) {
+  const intervalWeeks = Math.max(1, Math.floor((durationWeeks || 12) / count));
+  const per = Math.floor((price / count) * 100) / 100;
+  const rows = [];
+  let sum = 0;
+  for (let i = 1; i <= count; i++) {
+    const isLast = i === count;
+    const amount = isLast ? Math.round((price - sum) * 100) / 100 : per;
+    sum += amount;
+    const due = new Date(startDate);
+    due.setDate(due.getDate() + (i - 1) * intervalWeeks * 7);
+    rows.push({ seq: i, amount, due_date: due.toISOString().slice(0, 10) });
+  }
+  return rows;
+}
+
+function paymentPlanChoiceHtml(pkgMeta, packagePrice) {
+  const schedule = computeInstallmentSchedule(packagePrice, pkgMeta.installment_count, pkgMeta.duration_weeks, new Date());
+  return `
+    <div class="mt-3 border-t border-ink/10 pt-3 space-y-3">
+      <p class="text-xs text-ink/60">Pakej ini membenarkan ansuran. Pilih cara bayaran:</p>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <button type="button" onclick="choosePaymentPlan('full')"
+          class="text-left p-3 border border-ink/15 rounded-lg hover:bg-ink/5">
+          <div class="font-semibold text-sm">Bayaran Penuh</div>
+          <div class="text-xs text-ink/50 mt-0.5">RM ${packagePrice.toFixed(2)} sekali bayar</div>
+        </button>
+        <button type="button" onclick="choosePaymentPlan('installment')"
+          class="text-left p-3 border border-ink/15 rounded-lg hover:bg-ink/5">
+          <div class="font-semibold text-sm">Ansuran (${pkgMeta.installment_count}x)</div>
+          <div class="text-xs text-ink/50 mt-0.5">Deposit RM ${schedule[0].amount.toFixed(2)} hari ini, baki ikut jadual</div>
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function installmentScheduleHtml(schedule) {
+  const rows = schedule.map(r => `
+    <div class="flex justify-between py-0.5">
+      <span>Ansuran ${r.seq}${r.seq === 1 ? ' (deposit, hari ini)' : ''}</span>
+      <span class="font-semibold">RM ${r.amount.toFixed(2)} · ${new Date(r.due_date).toLocaleDateString('ms-MY')}</span>
+    </div>`).join('');
+  return `<div class="text-xs bg-ink/5 rounded-lg p-3 space-y-0.5 mb-3">${rows}</div>`;
+}
+
+function manualPaymentFormHtml(amount, locked, label) {
+  return `
+    <div class="mt-3 space-y-3">
+      <div class="flex items-center justify-between">
+        <div class="text-sm font-bold text-navy">💳 Bayaran Manual${label ? ` — ${escapeHtml(label)}` : ''}</div>
+        ${!locked && kob.package_payment_status === 'pending'
+          ? `<button type="button" onclick="choosePaymentMethod(null)" class="text-xs text-ink/50 hover:underline">← Batal</button>` : ''}
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div>
+          <label class="text-xs font-semibold text-ink/60 block mb-1">No. Invois</label>
+          <input id="mp-invoice" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white" placeholder="cth: INV-2026-0090">
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-ink/60 block mb-1">Jumlah${locked ? ' (Tetap)' : ' (RM)'}</label>
+          <input id="mp-amount" type="number" step="0.01" min="0" value="${amount || ''}" ${locked ? 'readonly' : ''}
+            class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm ${locked ? 'bg-ink/5 text-ink/70' : 'bg-white'}">
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-ink/60 block mb-1">Upload Resit</label>
+          <input id="mp-receipt" type="file" accept="image/*,.pdf"
+            class="w-full text-xs text-ink/60 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-navy file:text-white">
+        </div>
+      </div>
+      <button type="button" onclick="saveManualPayment()" id="btn-save-manual-payment"
+        class="bg-navy text-white px-6 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">Sahkan Bayaran</button>
+    </div>
+  `;
+}
+
+function paymentHistoryHtml(payments, packagePrice, totalPaid) {
+  if (!payments.length) return '';
+  const rows = payments.map(p => `
+    <div class="flex items-center justify-between gap-2 text-xs py-1.5 border-b border-ink/5 last:border-0">
+      <div>
+        <span class="font-semibold">${escapeHtml(p.invoice_number || p.receipt_ref)}</span>
+        <span class="text-ink/40 ml-2">${new Date(p.paid_at || p.created_at).toLocaleDateString('ms-MY')}</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="font-semibold">RM ${Number(p.total).toFixed(2)}</span>
+        ${p.receipt_url ? `<a href="${escapeHtml(p.receipt_url)}" target="_blank" class="text-navy hover:underline">Resit</a>` : ''}
+      </div>
+    </div>`).join('');
+  return `
+    <div class="mt-3 pt-3 border-t border-ink/10">
+      <div class="text-xs font-semibold text-ink/60 mb-1">Sejarah Ansuran (${payments.length}) — Sudah dibayar RM ${totalPaid.toFixed(2)} / RM ${packagePrice.toFixed(2)}</div>
+      ${rows}
+    </div>
+  `;
+}
+
+async function renderPaymentMethodSection() {
+  const el = document.getElementById('payment-method-card');
+  if (!el) return;
+  const status = kob.package_payment_status;
+  const needsPayment = kob.recommended_package_id && (status === 'pending' || status === 'partial');
+  if (!needsPayment) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  el.classList.remove('hidden');
+
+  const packagePrice = Number(kob.recommended_package_price || 0);
+  const pkgMeta = allPackagesCache.find(p => p.package_id === kob.recommended_package_id);
+  const installmentAllowed = !!pkgMeta?.installment_allowed && !!pkgMeta?.installment_count;
+
+  // Status 'partial' — deposit ansuran 1 dah direkod. Kalau mod = ansuran,
+  // baki ansuran diuruskan di Pesakit Hub selepas KOB ditandakan selesai
+  // (bukan di sini — sesi KOB dah selesai perannya lepas deposit).
+  if (status === 'partial') {
+    const { data } = await window.db.from('psy_payments')
+      .select('invoice_number, receipt_ref, receipt_url, total, paid_at, created_at')
+      .eq('status', 'completed').eq('intent->>kob_session_id', kobId)
+      .order('created_at', { ascending: false });
+    const payments = data || [];
+    const totalPaid = payments.reduce((sum, p) => sum + Number(p.total || 0), 0);
+
+    if (kob.package_payment_mode === 'installment') {
+      el.innerHTML = `
+        <div class="mt-3 border-t border-ink/10 pt-3">
+          <div class="text-xs text-green-dark bg-green-light/50 p-2 rounded mb-2">✅ Deposit ansuran 1 diterima (RM ${totalPaid.toFixed(2)}). Baki ansuran diuruskan di Pesakit Hub selepas KOB ditandakan selesai.</div>
+          ${paymentHistoryHtml(payments, packagePrice, totalPaid)}
+        </div>`;
+      return;
+    }
+
+    // Laluan lama (mod bayaran penuh tapi baru bayar sebahagian) — jumlah bebas.
+    const remaining = Math.max(0, packagePrice - totalPaid);
+    el.innerHTML = `
+      <div class="mt-3 border-t border-ink/10 pt-3">
+        <div class="text-xs text-gold-dark bg-gold/15 p-2 rounded mb-2">⏳ Bayaran sebahagian — baki <strong>RM ${remaining.toFixed(2)}</strong> lagi.</div>
+        ${manualPaymentFormHtml(remaining, false)}
+        ${paymentHistoryHtml(payments, packagePrice, totalPaid)}
+      </div>
+    `;
+    return;
+  }
+
+  if (paymentMethodChoice === 'manual') {
+    if (installmentAllowed && !paymentPlanChoice) {
+      el.innerHTML = paymentPlanChoiceHtml(pkgMeta, packagePrice);
+    } else if (paymentPlanChoice === 'installment') {
+      const schedule = computeInstallmentSchedule(packagePrice, pkgMeta.installment_count, pkgMeta.duration_weeks, new Date());
+      el.innerHTML = `
+        <div class="mt-3 border-t border-ink/10 pt-3">
+          <button type="button" onclick="paymentPlanChoice=null;renderPaymentMethodSection()" class="text-[11px] text-navy hover:underline mb-2">← Tukar cara bayaran</button>
+          ${installmentScheduleHtml(schedule)}
+          ${manualPaymentFormHtml(schedule[0].amount, true, `Ansuran 1/${pkgMeta.installment_count} (deposit)`)}
+        </div>`;
+    } else {
+      const backBtn = installmentAllowed
+        ? `<button type="button" onclick="paymentPlanChoice=null;renderPaymentMethodSection()" class="text-[11px] text-navy hover:underline mb-2">← Tukar cara bayaran</button>`
+        : '';
+      el.innerHTML = `<div class="mt-3 border-t border-ink/10 pt-3">${backBtn}${manualPaymentFormHtml(packagePrice, false, installmentAllowed ? 'Bayaran Penuh' : null)}</div>`;
+    }
+  } else if (paymentMethodChoice === 'hitpay') {
+    el.innerHTML = `
+      <div class="mt-3 border-t border-ink/10 pt-3 flex items-center justify-between">
+        <p class="text-xs text-ink/60">⏳ Menunggu pesakit bayar sendiri melalui HitPay.</p>
+        <button type="button" onclick="choosePaymentMethod(null)" class="text-[11px] text-navy hover:underline">Tukar →</button>
+      </div>
+    `;
+  } else {
+    el.innerHTML = `
+      <div class="mt-3 border-t border-ink/10 pt-3">
+        <p class="text-xs text-ink/60 mb-2">Cara bayaran untuk pakej ni:</p>
+        <div class="flex gap-3 max-w-md">
+          <button type="button" onclick="choosePaymentMethod('manual')"
+            class="flex-1 px-4 py-2.5 border border-ink/15 rounded-lg text-sm font-semibold hover:bg-ink/5">💳 Bayaran Manual</button>
+          <button type="button" onclick="choosePaymentMethod('hitpay')"
+            class="flex-1 px-4 py-2.5 border border-ink/15 rounded-lg text-sm font-semibold hover:bg-ink/5">🔗 HitPay (Pesakit Bayar)</button>
+        </div>
+      </div>
+    `;
+  }
+}
+
+// Jumlah keseluruhan yang dah dibayar setakat ni untuk sesi KOB ni (jumlah
+// semua ansuran psy_payments completed, bukan hanya bayaran terkini).
+async function getKobPaymentsPaid() {
+  const { data, error } = await window.db.from('psy_payments')
+    .select('total').eq('status', 'completed').eq('intent->>kob_session_id', kobId);
+  if (error) { console.warn('[getKobPaymentsPaid] gagal:', error.message); return 0; }
+  return (data || []).reduce((sum, p) => sum + Number(p.total || 0), 0);
+}
+
+async function saveManualPayment() {
+  const invoiceNumber = document.getElementById('mp-invoice')?.value.trim();
+  const amount = parseFloat(document.getElementById('mp-amount')?.value);
+  const file = document.getElementById('mp-receipt')?.files?.[0];
+  if (!invoiceNumber) { banner('Sila isi No. Invois', 'error'); return; }
+  if (!amount || amount <= 0) { banner('Sila isi Jumlah yang sah', 'error'); return; }
+  if (!file) { banner('Sila upload resit', 'error'); return; }
+
+  const isInstallmentStart = paymentPlanChoice === 'installment' && kob.package_payment_status === 'pending';
+
+  const btn = document.getElementById('btn-save-manual-payment');
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
+  try {
+    const path = `${patient.id}/${kobId}/receipt_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g,'_')}`;
+    const { error: upErr } = await window.db.storage.from('kob-documents').upload(path, file);
+    if (upErr) throw upErr;
+    const { data: signed } = await window.db.storage.from('kob-documents').createSignedUrl(path, 3600 * 24 * 365);
+
+    const { data: payRow, error: payErr } = await window.db.from('psy_payments').insert({
+      receipt_ref: `KOB-${invoiceNumber}-${Date.now()}`,
+      patient_id: patient.id,
+      user_id: patient.user_id,
+      total: amount,
+      payment_method: 'manual',
+      status: 'completed',
+      invoice_number: invoiceNumber,
+      receipt_url: signed?.signedUrl || null,
+      notes: isInstallmentStart
+        ? `Ansuran 1 (deposit) pakej "${kob.recommended_package_name || ''}" — disahkan doktor semasa sesi KOB`
+        : `Bayaran pakej "${kob.recommended_package_name || ''}" — disahkan doktor semasa sesi KOB`,
+      intent: { type: 'kob_package', kob_session_id: kobId },
+    }).select('id').single();
+    if (payErr) throw payErr;
+
+    const kobUpdates = { package_receipt_ref: invoiceNumber, updated_at: new Date().toISOString() };
+    let bannerMsg;
+
+    if (isInstallmentStart) {
+      const pkgMeta = allPackagesCache.find(p => p.package_id === kob.recommended_package_id);
+      const packagePrice = Number(kob.recommended_package_price || 0);
+      const schedule = computeInstallmentSchedule(packagePrice, pkgMeta.installment_count, pkgMeta.duration_weeks, new Date());
+      const rows = schedule.map(r => ({
+        kob_session_id: kobId,
+        patient_id: patient.id,
+        seq: r.seq,
+        due_date: r.due_date,
+        amount: r.amount,
+        status: r.seq === 1 ? 'paid' : 'pending',
+        paid_payment_id: r.seq === 1 ? payRow.id : null,
+        paid_at: r.seq === 1 ? new Date().toISOString() : null,
+      }));
+      const { error: instErr } = await window.db.from('psy_kob_installments').insert(rows);
+      if (instErr) throw instErr;
+      kobUpdates.package_payment_mode = 'installment';
+      kobUpdates.package_payment_status = 'partial';
+      bannerMsg = 'Deposit ansuran 1 disahkan ✅ Baki ansuran diuruskan di Pesakit Hub.';
+    } else {
+      // Bayaran penuh ATAU laluan lama (jumlah bebas) — jumlah SEMUA bayaran
+      // (termasuk yang baru disimpan) dibanding harga pakej penuh.
+      const totalPaid = await getKobPaymentsPaid();
+      const packagePrice = Number(kob.recommended_package_price || 0);
+      const isFullyPaid = packagePrice > 0 && totalPaid >= packagePrice;
+      kobUpdates.package_payment_status = isFullyPaid ? 'paid' : 'partial';
+      kobUpdates.package_payment_mode = 'full';
+      if (isFullyPaid) kobUpdates.package_paid_at = new Date().toISOString();
+      bannerMsg = isFullyPaid ? 'Bayaran penuh disahkan ✅' : `Bayaran disimpan ✅ Baki: RM ${(packagePrice - totalPaid).toFixed(2)}`;
+    }
+
+    const { error: kobErr } = await window.db.from('psy_kob_sessions').update(kobUpdates).eq('id', kobId);
+    if (kobErr) throw kobErr;
+
+    await auditLog('kob.package_payment_manual', kobId, { invoice_number: invoiceNumber, amount, installment: isInstallmentStart, status: kobUpdates.package_payment_status });
+    banner(bannerMsg);
+    setTimeout(() => location.reload(), 1000);
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+    btn.disabled = false; btn.textContent = 'Sahkan Bayaran';
   }
 }
 

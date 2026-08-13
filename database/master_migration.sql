@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-08-07T07:48:10.187233Z
+-- Generated: 2026-08-13T01:54:35.385620Z
 -- Jumlah fail: 30
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -629,6 +629,7 @@ CREATE TABLE IF NOT EXISTS psy_patients (
   company                         TEXT,
   address                         TEXT,
   home_address                    TEXT,
+  postcode                        TEXT,
   city                            TEXT,
   state                           TEXT,
   emergency_contact_name          TEXT,
@@ -651,6 +652,9 @@ CREATE TABLE IF NOT EXISTS psy_patients (
   next_package_id                 TEXT,
   next_package_name               TEXT,
   daily_schedule                  JSONB,
+  booking_blocked                 BOOLEAN NOT NULL DEFAULT false,
+  booking_blocked_reason          TEXT,
+  booking_blocked_since           TIMESTAMPTZ,
   status                          TEXT DEFAULT 'active',
   kob_status                      TEXT NOT NULL DEFAULT 'paid',
   outcome_status                  TEXT,
@@ -891,6 +895,13 @@ COMMENT ON COLUMN psy_patients.outcome_status IS
 
 COMMENT ON COLUMN psy_patients.daily_schedule IS
   'Patient-customized daily schedule. NULL = inherit from active package template. Array = patient has overridden.';
+
+COMMENT ON COLUMN psy_patients.booking_blocked IS
+  'TRUE = pesakit disekat daripada menempah sesi baru. Sebab semasa: ansuran pakej tertunggak (lihat psy_kob_installments). Auto set/reset oleh installment-overdue-check.';
+COMMENT ON COLUMN psy_patients.booking_blocked_reason IS
+  'Kod sebab sekatan, cth "installment_overdue". NULL bila booking_blocked = false.';
+COMMENT ON COLUMN psy_patients.booking_blocked_since IS
+  'Bila sekatan bermula. Dipadam (NULL) bila booking_blocked ditukar semula ke false.';
 
 COMMENT ON COLUMN psy_patients.created_by_staff IS
   'TRUE = pesakit didaftarkan oleh staff (bukan self-signup). Akan bypass KOB flow (kob_status=na) dan tunggu auto-link bila pesakit signup sendiri guna IC sama.';
@@ -1205,6 +1216,9 @@ CREATE TABLE IF NOT EXISTS psy_packages (
   -- lain-lain
   extension_price_per_week NUMERIC(10,2) DEFAULT 50,
   meet_link TEXT,
+  -- bayaran ansuran (Pelan Pelaburan Ansuran)
+  installment_allowed BOOLEAN NOT NULL DEFAULT false,
+  installment_count INT CHECK (installment_count IS NULL OR installment_count BETWEEN 2 AND 12),
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -1542,6 +1556,8 @@ CREATE TABLE IF NOT EXISTS psy_payments (
   payment_method TEXT CHECK (payment_method IN ('fpx','card','transfer','ghl','manual','gateway')),
   status TEXT DEFAULT 'completed' CHECK (status IN ('pending','completed','refunded','failed')),
   ghl_transaction_id TEXT,
+  invoice_number TEXT,                        -- bayaran manual — no. invois ditaip staff/doktor
+  receipt_url TEXT,                           -- bayaran manual — resit yang di-upload
   notes TEXT,
   -- gateway bayaran (HitPay/Fiuu) — pending row dicipta sebelum redirect,
   -- webhook padankan gateway_ref & jalankan fulfillment ikut intent
@@ -2491,9 +2507,10 @@ CREATE TABLE IF NOT EXISTS psy_kob_sessions (
   recommended_by            UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
   recommended_by_name       TEXT,
   package_payment_status    TEXT DEFAULT 'pending'
-                            CHECK (package_payment_status IN ('pending','paid','skipped','na')),
+                            CHECK (package_payment_status IN ('pending','partial','paid','skipped','declined','na')),
   package_paid_at           TIMESTAMPTZ,
   package_receipt_ref       TEXT,
+  package_payment_mode      TEXT CHECK (package_payment_mode IN ('full','installment')),
 
   reschedule_count    INT NOT NULL DEFAULT 0,
   reschedule_reason   TEXT,
@@ -2529,6 +2546,48 @@ CREATE POLICY "Patient reschedule own KOB" ON psy_kob_sessions FOR UPDATE
 DROP POLICY IF EXISTS "Staff manage KOB sessions" ON psy_kob_sessions;
 CREATE POLICY "Staff manage KOB sessions" ON psy_kob_sessions FOR ALL
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ──── psy_kob_installments ────
+-- Jadual ansuran pakej (Pelan Pelaburan Ansuran) bila
+-- package_payment_mode = 'installment'. Dijana sekali semasa cadangan
+-- pakej disahkan (bilangan ikut psy_packages.installment_count, tarikh due
+-- ikut interval = duration_weeks / installment_count, ansuran terakhir
+-- serap baki bulat). Tiap ansuran dipadan ke satu rekod psy_payments bila
+-- staff sahkan bayaran manual di kob-detail.html.
+CREATE TABLE IF NOT EXISTS psy_kob_installments (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  kob_session_id   UUID NOT NULL REFERENCES psy_kob_sessions(id) ON DELETE CASCADE,
+  patient_id       UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  seq              INT NOT NULL,
+  due_date         DATE NOT NULL,
+  amount           NUMERIC(10,2) NOT NULL,
+  status           TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','paid','overdue')),
+  paid_payment_id  UUID REFERENCES psy_payments(id) ON DELETE SET NULL,
+  paid_at          TIMESTAMPTZ,
+  created_at       TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT psy_kob_installments_unique_seq UNIQUE (kob_session_id, seq)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kob_installments_session ON psy_kob_installments(kob_session_id);
+CREATE INDEX IF NOT EXISTS idx_kob_installments_patient ON psy_kob_installments(patient_id, status);
+CREATE INDEX IF NOT EXISTS idx_kob_installments_overdue ON psy_kob_installments(due_date) WHERE status = 'pending';
+
+ALTER TABLE psy_kob_installments ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patient read own installments" ON psy_kob_installments;
+CREATE POLICY "Patient read own installments" ON psy_kob_installments FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff manage installments" ON psy_kob_installments;
+CREATE POLICY "Staff manage installments" ON psy_kob_installments FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+COMMENT ON COLUMN psy_kob_installments.seq IS
+  '1 = ansuran pertama (deposit, dibayar semasa sesi KOB). Nombor menaik ikut tarikh due.';
+COMMENT ON COLUMN psy_kob_installments.amount IS
+  'Harga pakej ÷ installment_count, dibundarkan ke bawah — ansuran seq TERAKHIR serap baki supaya jumlah keseluruhan tepat sama dengan harga pakej.';
+COMMENT ON COLUMN psy_kob_installments.status IS
+  'overdue ditetapkan oleh installment-overdue-check (cron harian) bila due_date lepas & masih pending. Auto set false semula (booking_blocked pesakit) bila ansuran ini dibayar.';
 
 -- ──── psy_kob_agreements ────
 -- Rekod perjanjian yang ditandatangani pesakit.
@@ -5270,6 +5329,35 @@ on conflict (key) do update set
   placeholders     = excluded.placeholders,
   channels         = excluded.channels,
   rule             = excluded.rule,
+  category         = excluded.category,
+  language         = excluded.language,
+  updated_at       = now();
+
+-- Ansuran pakej tertunggak (installment_overdue) — bila psy_kob_installments
+-- lepas due_date & masih pending, tandakan overdue + sekat tempahan sesi
+-- baru pesakit, hantar WA sekali (dedup ikut status baris berubah, bukan
+-- send_at_time). Dijalankan setiap kali event-reminders cron cetus.
+insert into psy_auto_messages
+  (key, name, description, channel, trigger_type, message_template,
+   placeholders, channels, category, language, is_active)
+values
+  ('installment_overdue',
+   'Ansuran Pakej Tertunggak',
+   'Bila ansuran pakej pesakit lepas tarikh due & belum dibayar, hantar WA + sekat tempahan sesi baru sehingga bayaran diselesaikan.',
+   'whatsapp', 'installment_overdue',
+   E'Salam {nama} 👋\n\nAnsuran {seq} (RM {jumlah}) untuk pakej rawatan anda tertunggak sejak {tarikh_due}.\n\nTempahan sesi baru disekat buat sementara waktu sehingga bayaran diselesaikan. Sila hubungi pusat rawatan untuk bantuan.\n\n— {nama_klinik}',
+   '["{nama}","{seq}","{jumlah}","{tarikh_due}","{nama_klinik}"]'::jsonb,
+   '["whatsapp"]'::jsonb,
+   'pembayaran', 'ms',
+   false)
+on conflict (key) do update set
+  name             = excluded.name,
+  description      = excluded.description,
+  channel          = excluded.channel,
+  trigger_type     = excluded.trigger_type,
+  message_template = excluded.message_template,
+  placeholders     = excluded.placeholders,
+  channels         = excluded.channels,
   category         = excluded.category,
   language         = excluded.language,
   updated_at       = now();

@@ -726,6 +726,35 @@ on conflict (key) do update set
   language         = excluded.language,
   updated_at       = now();
 
+-- Ansuran pakej tertunggak (installment_overdue) — bila psy_kob_installments
+-- lepas due_date & masih pending, tandakan overdue + sekat tempahan sesi
+-- baru pesakit, hantar WA sekali (dedup ikut status baris berubah, bukan
+-- send_at_time). Dijalankan setiap kali event-reminders cron cetus.
+insert into psy_auto_messages
+  (key, name, description, channel, trigger_type, message_template,
+   placeholders, channels, category, language, is_active)
+values
+  ('installment_overdue',
+   'Ansuran Pakej Tertunggak',
+   'Bila ansuran pakej pesakit lepas tarikh due & belum dibayar, hantar WA + sekat tempahan sesi baru sehingga bayaran diselesaikan.',
+   'whatsapp', 'installment_overdue',
+   E'Salam {nama} 👋\n\nAnsuran {seq} (RM {jumlah}) untuk pakej rawatan anda tertunggak sejak {tarikh_due}.\n\nTempahan sesi baru disekat buat sementara waktu sehingga bayaran diselesaikan. Sila hubungi pusat rawatan untuk bantuan.\n\n— {nama_klinik}',
+   '["{nama}","{seq}","{jumlah}","{tarikh_due}","{nama_klinik}"]'::jsonb,
+   '["whatsapp"]'::jsonb,
+   'pembayaran', 'ms',
+   false)
+on conflict (key) do update set
+  name             = excluded.name,
+  description      = excluded.description,
+  channel          = excluded.channel,
+  trigger_type     = excluded.trigger_type,
+  message_template = excluded.message_template,
+  placeholders     = excluded.placeholders,
+  channels         = excluded.channels,
+  category         = excluded.category,
+  language         = excluded.language,
+  updated_at       = now();
+
 -- Template Reaksi Pemulihan (pesakit boleh baca — policy 'reaksi_%')
 -- reaksi_harian: mesej 1 (terus) — {{sections}} = blok per kategori,
 -- tindakan sama disebut SEKALI sahaja (dedup global oleh klien).

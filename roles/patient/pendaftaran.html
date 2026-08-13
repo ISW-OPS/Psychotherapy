@@ -243,9 +243,24 @@
                 </div>
                 <!-- Alamat -->
                 <div>
-                  <label class="lbl">Alamat Penuh <span class="text-red-400">*</span></label>
-                  <textarea id="f-address" rows="2" class="finput finput-plain"
-                    placeholder="No. rumah, jalan, bandar, poskod, negeri"></textarea>
+                  <label class="lbl">Alamat <span class="text-red-400">*</span></label>
+                  <textarea id="f-address" rows="3" class="finput finput-plain"
+                    placeholder="No. rumah, jalan, taman/kawasan"></textarea>
+                </div>
+                <!-- Poskod + Bandar + Negeri -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label class="lbl">Poskod <span class="text-red-400">*</span></label>
+                    <input id="f-postcode" class="finput finput-plain" inputmode="numeric" maxlength="5" placeholder="cth: 21000">
+                  </div>
+                  <div>
+                    <label class="lbl">Bandar</label>
+                    <input id="f-city" class="finput finput-plain" placeholder="cth: Kuala Terengganu">
+                  </div>
+                  <div>
+                    <label class="lbl">Negeri</label>
+                    <input id="f-state" class="finput finput-plain" placeholder="cth: Terengganu">
+                  </div>
                 </div>
                 <!-- Pekerjaan + Syarikat + Status -->
                 <div class="grid grid-cols-3 gap-3">
@@ -599,8 +614,18 @@ async function checkIcDuplicate(val) {
       .neq('id', myPatientId).limit(1);
     if (data?.[0]) {
       const p = data[0];
-      const claimed = p.user_id ? '· Akaun sudah didaftarkan' : '';
-      warn.innerHTML = `⚠️ IC ini sudah wujud dalam sistem — <strong>${(p.full_name || p.mrn || '').replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]))}</strong> (${p.mrn}) ${claimed}<br><span class="text-[10px] text-amber-600">Hubungi admin kalau ini adalah anda — akaun mungkin perlu di-link.</span>`;
+      const safeName = (p.full_name || p.mrn || '').replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
+      if (p.user_id) {
+        // Rekod DAH linked ke akaun lain — duplicate sebenar, tak boleh auto-claim
+        // (findExistingUnlinkedPatient hanya padan user_id IS NULL).
+        warn.className = 'mt-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2';
+        warn.innerHTML = `⚠️ IC ini sudah wujud dalam sistem — <strong>${safeName}</strong> (${p.mrn}) · Akaun sudah didaftarkan<br><span class="text-[10px] text-amber-600">Hubungi admin kalau ini adalah anda — akaun mungkin perlu di-link.</span>`;
+      } else {
+        // Rekod belum linked (cth. lead GHL/staff) — akan digabung automatik
+        // bila borang dihantar (lihat submitKYC → findExistingUnlinkedPatient).
+        warn.className = 'mt-1 text-xs text-navy bg-navy/5 border border-navy/15 rounded-lg px-3 py-2';
+        warn.innerHTML = `ℹ️ Kami jumpa rekod sedia ada atas nama <strong>${safeName}</strong> (${p.mrn}) — maklumat ini akan digabungkan automatik dengan akaun anda bila borang dihantar.`;
+      }
       warn.classList.remove('hidden');
     } else {
       warn.classList.add('hidden');
@@ -648,6 +673,7 @@ function validateAll() {
   const dob     = document.getElementById('f-dob').value;
   const gender  = document.getElementById('f-gender').value;
   const addr    = document.getElementById('f-address').value.trim();
+  const postcode = document.getElementById('f-postcode').value.trim();
   const occ     = document.getElementById('f-occupation').value.trim();
   const company = document.getElementById('f-company').value.trim();
   const marital = document.getElementById('f-marital').value;
@@ -683,7 +709,8 @@ function validateAll() {
   if (!email) missing.push('Emel');
   if (!dob) missing.push('Tarikh Lahir');
   if (!gender) missing.push('Jantina');
-  if (!addr) missing.push('Alamat Penuh');
+  if (!addr) missing.push('Alamat');
+  if (!postcode) missing.push('Poskod');
   if (!occ) missing.push('Pekerjaan');
   if (!company) missing.push('Syarikat');
   if (!marital) missing.push('Status Perkahwinan');
@@ -770,7 +797,8 @@ function lockNameField(name) {
 function prefillEmptyFields(rec) {
   const map = {
     'f-name': rec.full_name, 'f-dob': rec.date_of_birth, 'f-gender': rec.gender,
-    'f-address': rec.address, 'f-occupation': rec.occupation, 'f-company': rec.company,
+    'f-address': rec.address, 'f-postcode': rec.postcode, 'f-city': rec.city, 'f-state': rec.state,
+    'f-occupation': rec.occupation, 'f-company': rec.company,
     'f-email': rec.email,
     'f-emg-name': rec.emergency_contact_name, 'f-emg-phone': rec.emergency_contact_phone,
     'f-emg-ic': rec.emergency_contact_ic, 'f-emg-email': rec.emergency_contact_email,
@@ -779,7 +807,10 @@ function prefillEmptyFields(rec) {
   Object.entries(map).forEach(([id, val]) => {
     if (!val) return;
     const el = document.getElementById(id);
-    if (el && !el.value.trim()) { el.value = val; filled = true; }
+    if (el && !el.value.trim()) {
+      el.value = val; filled = true;
+      if (id === 'f-name') lockNameField(val);
+    }
   });
   if (rec.marital_status && !fv('f-marital')) setMarital(rec.marital_status);
   const relEl = document.getElementById('f-emg-rel');
@@ -880,6 +911,9 @@ function fillForm(k) {
   sv('f-phone',      k.phone);
   sv('f-email',      k.email);
   sv('f-address',    k.address);
+  sv('f-postcode',   k.postcode);
+  sv('f-city',       k.city);
+  sv('f-state',      k.state);
   sv('f-occupation', k.occupation);
   sv('f-company',    k.company);
   sv('f-emg-name',   k.emergency_contact_name);
@@ -921,7 +955,7 @@ function fillForm(k) {
 
 // ── KYC progress ring + checklist (aside kanan) ─────────
 const KYC_SECTIONS = [
-  { label: 'Maklumat Pesakit',   fields: ['f-name','f-ic','f-phone','f-email','f-dob','f-gender','f-address','f-occupation','f-company','f-marital'] },
+  { label: 'Maklumat Pesakit',   fields: ['f-name','f-ic','f-phone','f-email','f-dob','f-gender','f-address','f-postcode','f-occupation','f-company','f-marital'] },
   { label: 'Maklumat Waris',     fields: ['f-emg-name','f-emg-ic','f-emg-phone','f-emg-email','f-emg-rel'] },
   { label: 'Keutamaan Hubungan', fields: ['f-contact-pref'] },
   { label: 'Persetujuan PDPA',   fields: ['c-data','c-health'], checkbox: true },
@@ -1017,6 +1051,9 @@ let _draftTimer = null;
 function doSaveDraft(showBanner = false) {
   const d = buildPayload();
   d.marital_status = fv('f-marital');
+  d.postcode = fv('f-postcode');
+  d.city = fv('f-city');
+  d.state = fv('f-state');
   d.submitted_by_proxy = registrantRole === 'waris';
   localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
   setDraftIndicator('saved');
@@ -1062,7 +1099,7 @@ function clearDraftManual() {
   clearTimeout(_draftTimer);
   localStorage.removeItem(DRAFT_KEY);
   // Clear all form fields
-  ['f-name','f-ic','f-phone','f-email','f-dob','f-gender','f-address',
+  ['f-name','f-ic','f-phone','f-email','f-dob','f-gender','f-address','f-postcode','f-city','f-state',
    'f-occupation','f-company','f-marital',
    'f-emg-name','f-emg-rel','f-emg-phone','f-emg-email','f-emg-ic','f-emg-rel-other'].forEach(id => {
     const el = document.getElementById(id);
@@ -1155,6 +1192,9 @@ async function submitKYC() {
         date_of_birth:           payload.date_of_birth,
         gender:                  payload.gender,
         address:                 payload.address,
+        postcode:                fv('f-postcode') || null,
+        city:                    fv('f-city') || null,
+        state:                   fv('f-state') || null,
         occupation:              payload.occupation,
         company:                 payload.company,
         marital_status:          payload.marital_status,
@@ -1304,7 +1344,7 @@ function showReadOnly(k) {
 
 // ── Draft listeners ────────────────────────────────────
 function attachFormEvents() {
-  const ids = ['f-name','f-ic','f-phone','f-email','f-dob','f-gender','f-address',
+  const ids = ['f-name','f-ic','f-phone','f-email','f-dob','f-gender','f-address','f-postcode','f-city','f-state',
     'f-occupation','f-company','f-marital',
     'f-emg-name','f-emg-rel','f-emg-phone','f-emg-email','f-emg-ic','f-emg-rel-other'];
   ids.forEach(id => {
@@ -1349,6 +1389,9 @@ const originalBody = document.getElementById('kyc-body').innerHTML;
       phone: patientRecord.phone || user.phone,
       email: patientRecord.email || user.email,
       address: patientRecord.address,
+      postcode: patientRecord.postcode,
+      city: patientRecord.city,
+      state: patientRecord.state,
       occupation: patientRecord.occupation,
       company: patientRecord.company,
       marital_status: patientRecord.marital_status,
@@ -1375,19 +1418,7 @@ const originalBody = document.getElementById('kyc-body').innerHTML;
 
     // Nama rasmi (cth sudah disync dari GHL) mesti kekal — kunci field supaya
     // pesakit tak tersalah anggap taip nama lain di sini akan disimpan.
-    if ((patientRecord?.full_name || '').trim()) {
-      const nameEl = document.getElementById('f-name');
-      if (nameEl && !document.getElementById('hint-name')) {
-        nameEl.value = patientRecord.full_name;
-        nameEl.readOnly = true;
-        nameEl.classList.add('bg-ink/5', 'cursor-not-allowed');
-        const hint = document.createElement('p');
-        hint.id = 'hint-name';
-        hint.className = 'text-[10px] text-ink/40 mt-1';
-        hint.textContent = 'Nama rasmi ikut rekod sistem — hubungi admin untuk pembetulan.';
-        nameEl.closest('div').after(hint);
-      }
-    }
+    if ((patientRecord?.full_name || '').trim()) lockNameField(patientRecord.full_name);
   }
   attachFormEvents();
 

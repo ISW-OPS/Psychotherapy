@@ -48,6 +48,9 @@ CREATE TABLE IF NOT EXISTS psy_packages (
   -- lain-lain
   extension_price_per_week NUMERIC(10,2) DEFAULT 50,
   meet_link TEXT,
+  -- bayaran ansuran (Pelan Pelaburan Ansuran)
+  installment_allowed BOOLEAN NOT NULL DEFAULT false,
+  installment_count INT CHECK (installment_count IS NULL OR installment_count BETWEEN 2 AND 12),
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );

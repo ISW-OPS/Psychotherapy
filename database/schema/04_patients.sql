@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS psy_patients (
   company                         TEXT,
   address                         TEXT,
   home_address                    TEXT,
+  postcode                        TEXT,
   city                            TEXT,
   state                           TEXT,
   emergency_contact_name          TEXT,
@@ -49,6 +50,9 @@ CREATE TABLE IF NOT EXISTS psy_patients (
   next_package_id                 TEXT,
   next_package_name               TEXT,
   daily_schedule                  JSONB,
+  booking_blocked                 BOOLEAN NOT NULL DEFAULT false,
+  booking_blocked_reason          TEXT,
+  booking_blocked_since           TIMESTAMPTZ,
   status                          TEXT DEFAULT 'active',
   kob_status                      TEXT NOT NULL DEFAULT 'paid',
   outcome_status                  TEXT,
@@ -289,6 +293,13 @@ COMMENT ON COLUMN psy_patients.outcome_status IS
 
 COMMENT ON COLUMN psy_patients.daily_schedule IS
   'Patient-customized daily schedule. NULL = inherit from active package template. Array = patient has overridden.';
+
+COMMENT ON COLUMN psy_patients.booking_blocked IS
+  'TRUE = pesakit disekat daripada menempah sesi baru. Sebab semasa: ansuran pakej tertunggak (lihat psy_kob_installments). Auto set/reset oleh installment-overdue-check.';
+COMMENT ON COLUMN psy_patients.booking_blocked_reason IS
+  'Kod sebab sekatan, cth "installment_overdue". NULL bila booking_blocked = false.';
+COMMENT ON COLUMN psy_patients.booking_blocked_since IS
+  'Bila sekatan bermula. Dipadam (NULL) bila booking_blocked ditukar semula ke false.';
 
 COMMENT ON COLUMN psy_patients.created_by_staff IS
   'TRUE = pesakit didaftarkan oleh staff (bukan self-signup). Akan bypass KOB flow (kob_status=na) dan tunggu auto-link bila pesakit signup sendiri guna IC sama.';
