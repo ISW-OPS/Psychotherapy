@@ -68,11 +68,24 @@ const ISW_STATUS_FIELD_ID   = 'TujlPbLGNn82yJpdr4Ff'  // contact.status — "SU 
 const IC_NUMBER_FIELD_ID    = 'vXw0rgtYQEvfxoMY2AjV'  // contact.no_ic
 const HOME_ADDRESS_FIELD_ID = 'l2TcgLHVMKISHgf6R7ps'  // contact.alamat_rumah
 const WARIS_FIELD_ID        = 'f1zSoMogQ9zW7xPmKYg3'  // contact.nama_penuh_waris__pesakit (teks bebas gabungan)
+// Belum wujud di GHL (13 Ogos 2026) — cipta dulu (dropdown "F2F"/"Online"),
+// salin id dari hasil create_custom_field/list_custom_fields, isi di sini.
+// Selagi kosong, mode kekal default 'f2f' (lihat resolveKobMode()).
+const KOB_MODE_FIELD_ID      = ''  // contact — cth "Mod Sesi KOB"
 
 function getCustomFieldById(customFields: any[], fieldId: string): string {
   if (!Array.isArray(customFields)) return ''
   const hit = customFields.find((f: any) => f?.id === fieldId)
   return String(hit?.value ?? '')
+}
+
+// Padan "Online"/"ONLINE"/"online" → 'online'; apa-apa lain (kosong,
+// "F2F", nilai tak dikenali) → 'f2f' (selamat — F2F ialah default sedia
+// ada, staff boleh betulkan manual di kob-detail.html kalau tersasar).
+function resolveKobMode(customFields: any[]): 'f2f' | 'online' {
+  if (!KOB_MODE_FIELD_ID) return 'f2f'
+  const v = getCustomFieldById(customFields, KOB_MODE_FIELD_ID).trim().toLowerCase()
+  return v === 'online' ? 'online' : 'f2f'
 }
 
 // ISW STATUS di GHL ialah field DROPDOWN (single-select) dgn senarai
@@ -221,7 +234,7 @@ async function processOneContact(svc: any, locationId: string, c: any, requirePa
         const iso = String(latestKobAppt.startTime).replace(' ', 'T') + '+08:00'
         const scheduledAt = new Date(iso)
         if (!Number.isNaN(scheduledAt.getTime())) {
-          await syncAppointmentToSession(svc, patientId, { scheduledAt, mode: 'f2f' })
+          await syncAppointmentToSession(svc, patientId, { scheduledAt, mode: resolveKobMode(c.customFields) })
           appointmentSynced = true
         }
       } catch (e) { return { status: 'synced', patientId, error: `appt-sync: ${(e as Error).message}` } }
@@ -276,9 +289,12 @@ Deno.serve(async (req: Request) => {
       }
       if (body.action === 'create_custom_field') {
         // { debug:true, action:'create_custom_field', name:'KOB Stage', dataType:'TEXT' }
+        // Dropdown: tambah { dataType:'SINGLE_OPTIONS', options:['F2F','Online'] }
+        const payload: any = { name: body.name, dataType: body.dataType || 'TEXT', model: body.model || 'contact' }
+        if (Array.isArray(body.options)) payload.options = body.options
         const result = await ghl(`/locations/${locationId}/customFields`, {
           method: 'POST',
-          body: JSON.stringify({ name: body.name, dataType: body.dataType || 'TEXT', model: 'contact' }),
+          body: JSON.stringify(payload),
         })
         return json({ debug: true, action: 'create_custom_field', result })
       }

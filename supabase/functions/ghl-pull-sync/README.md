@@ -211,7 +211,27 @@ minit dengan header `x-cron-secret`.
   bayaran ikut `ghl_transaction_id`) guna semula `_shared/ghl-sync.ts`
   — sama logik dgn `ghl-booking-webhook`/`ghl-initial-sync`, tiada
   duplikasi/drift.
-- Appointment `mode` sentiasa default `f2f` (staff sahkan/betulkan
-  manual dalam `kob-detail.html` — sama seperti keputusan sebelum ni).
+- Appointment `mode` — kalau `KOB_MODE_FIELD_ID` (index.ts) kosong,
+  sentiasa default `f2f`. Bila field GHL dicipta & ID diisi,
+  `resolveKobMode()` baca custom field tu (nilai "Online" case-insensitive
+  → online, apa-apa lain → f2f). Staff tetap boleh betulkan manual di
+  butang "Tukar" dalam `kob-detail.html` kalau data GHL tersasar/kosong.
+
+### Setup field mod Online/F2F (belum dicipta, 13 Ogos 2026)
+
+Field custom GHL untuk mod belum wujud. Cipta sekali (dropdown, elak
+typo closer):
+
+```bash
+curl -s -X POST ".../functions/v1/ghl-pull-sync" \
+  -H "x-cron-secret: <GHL_PULL_CRON_SECRET>" -H "Content-Type: application/json" \
+  -d '{"debug":true,"action":"create_custom_field","name":"Mod Sesi KOB","dataType":"SINGLE_OPTIONS","options":["F2F","Online"],"model":"contact"}'
+```
+
+Salin `id` dari respons (atau panggil `list_custom_fields` semula),
+isi ke konstan `KOB_MODE_FIELD_ID` dalam `index.ts`, redeploy. Closer
+pilih "Online"/"F2F" pada contact semasa book KOB — run seterusnya
+`ghl-pull-sync` baca terus, tak perlu staff ISW toggle manual lagi
+(kecuali nak override).
 - Log ringkasan setiap run ke `psy_audit_log`
   (`action='ghl_pull_sync.run'`) — semak di situ untuk jejak/debug.
