@@ -74,6 +74,7 @@
               <div id="msg-list" class="flex-1 overflow-y-auto p-3 space-y-1.5 bg-cream/30"></div>
               <!-- composer -->
               <div class="border-t border-ink/10 flex-shrink-0">
+                <div id="reply-preview" class="hidden px-2.5 pt-2"></div>
                 <div id="attach-preview" class="hidden px-2.5 pt-2"></div>
                 <div class="p-2.5 flex items-end gap-2">
                   <input id="wa-file" type="file" class="hidden" accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx" onchange="onFilePick(this)">
@@ -133,6 +134,11 @@ let listCursor = null, listHasMore = false;   // pagination senarai perbualan
 let msgCursor = null, msgHasMore = false;      // pagination mesej lama
 let infoOpen = localStorage.getItem('isw_wa_info') === '1'; // default: tutup (jimat ruang)
 let pollBusy = false; // elak overlap kalau satu pusingan poll lambat
+
+// Balas-petik (macam WhatsApp) — GHL Conversations API tiada parameter "reply to",
+// jadi quote disertakan sebagai teks biasa di hujung mesej (bukan kad reply WhatsApp asli).
+const QUOTE_OPEN = '❝', QUOTE_CLOSE = '❞';
+let pendingReplyId = null;
 
 // Lipat/buka panel info kanan
 function applyInfo() {
@@ -641,6 +647,37 @@ async function pollInbox() {
   finally { pollBusy = false; }
 }
 
+// Ringkaskan teks mesej untuk dipetik (buang anotasi, kepras placeholder media, potong panjang)
+function quoteSnippet(m) {
+  const PH = { IMAGE: '🖼 Gambar', VIDEO: '🎬 Video', AUDIO: '🎙 Audio', VOICE: '🎙 Nota suara', DOCUMENT: '📄 Dokumen', FILE: '📎 Fail' };
+  let t = cleanBody(m.body).replace(/>([A-Z]{3,})</g, (_, w) => PH[w] || '📎 ' + w).replace(/\s+/g, ' ').trim();
+  if (!t && (m.attachments || []).length) t = '📎 Lampiran';
+  return t.length > 100 ? t.slice(0, 100) + '…' : t;
+}
+
+function startReply(msgId) {
+  if (!currentMessages.some(x => x.ghl_message_id === msgId)) return;
+  pendingReplyId = msgId;
+  renderReplyPreview();
+  document.getElementById('msg-input')?.focus();
+}
+function cancelReply() { pendingReplyId = null; renderReplyPreview(); }
+function renderReplyPreview() {
+  const el = document.getElementById('reply-preview');
+  if (!el) return;
+  const m = pendingReplyId ? currentMessages.find(x => x.ghl_message_id === pendingReplyId) : null;
+  if (!m) { el.classList.add('hidden'); el.innerHTML = ''; pendingReplyId = null; return; }
+  el.classList.remove('hidden');
+  const who = m.direction === 'outbound' ? 'Anda' : (activeConv?.contact_name || 'Pesakit');
+  el.innerHTML = `<div class="flex items-start gap-2 bg-ink/5 border-l-4 border-green rounded-lg px-2.5 py-1.5">
+      <div class="flex-1 min-w-0">
+        <div class="text-[11px] font-semibold text-green-dark">↩ Balas ${who.replace(/</g, '&lt;')}</div>
+        <div class="text-[12px] text-ink/60 truncate">${quoteSnippet(m).replace(/</g, '&lt;')}</div>
+      </div>
+      <button onclick="cancelReply()" title="Batal balas" class="text-ink/40 hover:text-terracotta text-lg leading-none flex-shrink-0">&times;</button>
+    </div>`;
+}
+
 function renderMessages(msgs, keepScroll = false) {
   const box = document.getElementById('msg-list');
   // tapis email — inbox ini untuk WhatsApp coach sahaja (email automatik biar di GHL)
@@ -663,17 +700,28 @@ function renderMessages(msgs, keepScroll = false) {
     const PH = { IMAGE: '🖼 Gambar', VIDEO: '🎬 Video', AUDIO: '🎙 Audio', VOICE: '🎙 Nota suara', DOCUMENT: '📄 Dokumen', FILE: '📎 Fail' };
     let raw = cleanBody(m.body).replace(/>([A-Z]{3,})</g, (_, w) =>
       media ? '' : ((PH[w] || '📎 ' + w) + ' (tidak dapat dipaparkan)')).trim();
+    // Kupas quote yang kita sendiri sertakan bila balas (❝...❞ di permulaan) → papar sebagai kotak petikan
+    let quoteHtml = '';
+    const qMatch = raw.match(new RegExp(`^${QUOTE_OPEN}([\\s\\S]*?)${QUOTE_CLOSE}\\n?`));
+    if (qMatch) {
+      raw = raw.slice(qMatch[0].length);
+      quoteHtml = `<div class="mb-1 pl-2 border-l-2 text-[11px] italic truncate max-w-[260px] ${out ? 'border-white/50 text-white/80' : 'border-navy/30 text-ink/50'}">${qMatch[1].replace(/</g, '&lt;')}</div>`;
+    }
     const text = raw.replace(/</g, '&lt;');
-    if (!text && !media) return ''; // mesej cuma anotasi sistem → langkau
+    if (!text && !media && !quoteHtml) return ''; // mesej cuma anotasi sistem → langkau
     const time = m.created_at ? formatTime(m.created_at) : '';
     const html = linkify(text);
     const isLong = text.length > 600; // mesej panjang (cth email) → lipat
+    const midEsc = String(m.ghl_message_id || '').replace(/'/g, "\\'");
     return `<div class="${out ? 'text-right' : 'text-left'}">
       <div class="inline-block text-left align-top max-w-[75%] px-2.5 py-1.5 rounded-xl text-[13px] leading-snug whitespace-pre-wrap break-words ${out ? 'bg-green text-white rounded-br-sm' : 'bg-white border border-ink/10 rounded-bl-sm'}">
-        ${media}${html ? `<span class="wa-text ${isLong ? 'block max-h-28 overflow-hidden' : ''}">${html}</span>` : ''}
+        ${quoteHtml}${media}${html ? `<span class="wa-text ${isLong ? 'block max-h-28 overflow-hidden' : ''}">${html}</span>` : ''}
         ${isLong ? `<button type="button" class="block text-[10px] underline mt-1 ${out ? 'text-white/80' : 'text-navy'}" onclick="const t=this.parentElement.querySelector('.wa-text'); const col=t.classList.toggle('max-h-28'); t.classList.toggle('overflow-hidden', col); this.textContent=col?'Lihat lagi':'Tutup';">Lihat lagi</button>` : ''}
       </div>
-      <div class="text-[9px] text-ink/40 mt-0.5 px-1">${time}${meta ? ' &middot; ' + meta : ''}</div>
+      <div class="text-[9px] text-ink/40 mt-0.5 px-1 flex items-center gap-2 ${out ? 'justify-end' : ''}">
+        <span>${time}${meta ? ' &middot; ' + meta : ''}</span>
+        ${midEsc ? `<button type="button" onclick="startReply('${midEsc}')" class="text-ink/40 hover:text-navy hover:underline">↩ Balas</button>` : ''}
+      </div>
     </div>`;
   }).join('');
   if (!keepScroll) {

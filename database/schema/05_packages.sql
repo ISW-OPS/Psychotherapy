@@ -48,9 +48,12 @@ CREATE TABLE IF NOT EXISTS psy_packages (
   -- lain-lain
   extension_price_per_week NUMERIC(10,2) DEFAULT 50,
   meet_link TEXT,
-  -- bayaran ansuran (Pelan Pelaburan Ansuran)
+  -- bayaran ansuran (Pelan Pelaburan Ansuran) — checkpoint kumulatif custom.
+  -- Pesakit bayar apa-apa amount bila-bila selepas deposit; wajib jumlah
+  -- TERKUMPUL cecah target tiap checkpoint (bukan slot ansuran bersaiz tetap).
   installment_allowed BOOLEAN NOT NULL DEFAULT false,
-  installment_count INT CHECK (installment_count IS NULL OR installment_count BETWEEN 2 AND 12),
+  installment_deposit_amount NUMERIC(10,2),
+  installment_checkpoints JSONB DEFAULT '[]',
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -113,6 +116,11 @@ COMMENT ON COLUMN psy_packages.session_days_options IS
 
 COMMENT ON COLUMN psy_packages.extension_price_per_week IS
   'Harga (RM) untuk tambah satu minggu rawatan bila patient miss sesi. Default RM 50.';
+
+COMMENT ON COLUMN psy_packages.installment_deposit_amount IS
+  'Jumlah deposit wajib dibayar semasa aktifkan pakej (ansuran). Bayaran ini terus mengaktifkan pakej.';
+COMMENT ON COLUMN psy_packages.installment_checkpoints IS
+  'Array of {month_offset:int, target_cumulative:numeric|null}. month_offset = bilangan bulan dari tarikh deposit. target_cumulative = jumlah TERKUMPUL (bukan tambahan) yang wajib dicecah menjelang tarikh tu. null = baki penuh (harga pakej) — biasanya checkpoint terakhir. Cth [{"month_offset":1,"target_cumulative":30000},{"month_offset":3,"target_cumulative":45000},{"month_offset":12,"target_cumulative":null}].';
 
 COMMENT ON COLUMN psy_packages.meet_link IS
   'Pautan Gmeet recurring untuk pakej. Dipaparkan kepada patient bila minggu semasa adalah online/both.';

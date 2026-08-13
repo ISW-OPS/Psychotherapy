@@ -1558,16 +1558,14 @@ async function renderPackageRecCard() {
   // Load packages
   if (!allPackagesCache.length) {
     const { data } = await window.db.from('psy_packages')
-      .select('package_id, name, price, duration, duration_weeks, installment_allowed, installment_count, is_active')
+      .select('package_id, name, price, duration, duration_weeks, installment_allowed, installment_deposit_amount, installment_checkpoints, is_active')
       .eq('is_active', true)
       .order('sort_order', { ascending: true });
     allPackagesCache = data || [];
   }
   const sel = document.getElementById('rec-package-select');
   sel.innerHTML = '<option value="">— Pilih pakej —</option>' +
-    allPackagesCache.map(p => `<option value="${p.package_id}" data-name="${escapeHtml(p.name)}" data-price="${p.price || 0}"
-      data-duration-weeks="${p.duration_weeks || 12}" data-installment-allowed="${!!p.installment_allowed}"
-      data-installment-count="${p.installment_count || ''}">${escapeHtml(p.name)} · RM ${Number(p.price || 0).toFixed(2)}</option>`).join('');
+    allPackagesCache.map(p => `<option value="${p.package_id}" data-name="${escapeHtml(p.name)}" data-price="${p.price || 0}">${escapeHtml(p.name)} · RM ${Number(p.price || 0).toFixed(2)}</option>`).join('');
   sel.onchange = () => {
     const opt = sel.options[sel.selectedIndex];
     const info = document.getElementById('rec-package-info');
@@ -1621,27 +1619,23 @@ function choosePaymentPlan(plan) {
   renderPaymentMethodSection();
 }
 
-// Bilangan ansuran ikut psy_packages.installment_count; interval = tempoh
-// pakej (minggu) ÷ bilangan (min 1 minggu). Ansuran TERAKHIR serap baki
-// bulat supaya jumlah keseluruhan tepat sama dengan harga pakej.
-function computeInstallmentSchedule(price, count, durationWeeks, startDate) {
-  const intervalWeeks = Math.max(1, Math.floor((durationWeeks || 12) / count));
-  const per = Math.floor((price / count) * 100) / 100;
-  const rows = [];
-  let sum = 0;
-  for (let i = 1; i <= count; i++) {
-    const isLast = i === count;
-    const amount = isLast ? Math.round((price - sum) * 100) / 100 : per;
-    sum += amount;
+// Checkpoint kumulatif ikut template psy_packages.installment_checkpoints
+// ({month_offset, target_cumulative|null}). null (checkpoint terakhir) =
+// baki penuh harga pakej. Tarikh due = tarikh deposit + month_offset bulan.
+function resolveInstallmentCheckpoints(checkpoints, price, startDate) {
+  return (checkpoints || []).map(cp => {
     const due = new Date(startDate);
-    due.setDate(due.getDate() + (i - 1) * intervalWeeks * 7);
-    rows.push({ seq: i, amount, due_date: due.toISOString().slice(0, 10) });
-  }
-  return rows;
+    due.setMonth(due.getMonth() + Number(cp.month_offset || 0));
+    return {
+      month_offset: cp.month_offset,
+      target_cumulative: cp.target_cumulative == null ? price : Number(cp.target_cumulative),
+      due_date: due.toISOString().slice(0, 10),
+    };
+  });
 }
 
 function paymentPlanChoiceHtml(pkgMeta, packagePrice) {
-  const schedule = computeInstallmentSchedule(packagePrice, pkgMeta.installment_count, pkgMeta.duration_weeks, new Date());
+  const deposit = Number(pkgMeta.installment_deposit_amount || 0);
   return `
     <div class="mt-3 border-t border-ink/10 pt-3 space-y-3">
       <p class="text-xs text-ink/60">Pakej ini membenarkan ansuran. Pilih cara bayaran:</p>
@@ -1653,20 +1647,26 @@ function paymentPlanChoiceHtml(pkgMeta, packagePrice) {
         </button>
         <button type="button" onclick="choosePaymentPlan('installment')"
           class="text-left p-3 border border-ink/15 rounded-lg hover:bg-ink/5">
-          <div class="font-semibold text-sm">Ansuran (${pkgMeta.installment_count}x)</div>
-          <div class="text-xs text-ink/50 mt-0.5">Deposit RM ${schedule[0].amount.toFixed(2)} hari ini, baki ikut jadual</div>
+          <div class="font-semibold text-sm">Ansuran</div>
+          <div class="text-xs text-ink/50 mt-0.5">Deposit RM ${deposit.toFixed(2)} hari ini, baki ikut checkpoint</div>
         </button>
       </div>
     </div>
   `;
 }
 
-function installmentScheduleHtml(schedule) {
-  const rows = schedule.map(r => `
+function installmentScheduleHtml(pkgMeta, packagePrice) {
+  const resolved = resolveInstallmentCheckpoints(pkgMeta.installment_checkpoints, packagePrice, new Date());
+  const rows = [`
     <div class="flex justify-between py-0.5">
-      <span>Ansuran ${r.seq}${r.seq === 1 ? ' (deposit, hari ini)' : ''}</span>
-      <span class="font-semibold">RM ${r.amount.toFixed(2)} · ${new Date(r.due_date).toLocaleDateString('ms-MY')}</span>
-    </div>`).join('');
+      <span>Deposit (hari ini)</span>
+      <span class="font-semibold">RM ${Number(pkgMeta.installment_deposit_amount || 0).toFixed(2)}</span>
+    </div>`,
+    ...resolved.map(r => `
+    <div class="flex justify-between py-0.5">
+      <span>Bulan ${r.month_offset} — jumlah terkumpul wajib</span>
+      <span class="font-semibold">RM ${r.target_cumulative.toFixed(2)} · ${new Date(r.due_date).toLocaleDateString('ms-MY')}</span>
+    </div>`)].join('');
   return `<div class="text-xs bg-ink/5 rounded-lg p-3 space-y-0.5 mb-3">${rows}</div>`;
 }
 
@@ -1731,9 +1731,10 @@ async function renderPaymentMethodSection() {
 
   const packagePrice = Number(kob.recommended_package_price || 0);
   const pkgMeta = allPackagesCache.find(p => p.package_id === kob.recommended_package_id);
-  const installmentAllowed = !!pkgMeta?.installment_allowed && !!pkgMeta?.installment_count;
+  const installmentAllowed = !!pkgMeta?.installment_allowed && !!pkgMeta?.installment_deposit_amount
+    && Array.isArray(pkgMeta?.installment_checkpoints) && pkgMeta.installment_checkpoints.length > 0;
 
-  // Status 'partial' — deposit ansuran 1 dah direkod. Kalau mod = ansuran,
+  // Status 'partial' — deposit dah direkod. Kalau mod = ansuran,
   // baki ansuran diuruskan di Pesakit Hub selepas KOB ditandakan selesai
   // (bukan di sini — sesi KOB dah selesai perannya lepas deposit).
   if (status === 'partial') {
@@ -1747,7 +1748,7 @@ async function renderPaymentMethodSection() {
     if (kob.package_payment_mode === 'installment') {
       el.innerHTML = `
         <div class="mt-3 border-t border-ink/10 pt-3">
-          <div class="text-xs text-green-dark bg-green-light/50 p-2 rounded mb-2">✅ Deposit ansuran 1 diterima (RM ${totalPaid.toFixed(2)}). Baki ansuran diuruskan di Pesakit Hub selepas KOB ditandakan selesai.</div>
+          <div class="text-xs text-green-dark bg-green-light/50 p-2 rounded mb-2">✅ Deposit diterima (RM ${totalPaid.toFixed(2)}). Baki ansuran diuruskan di Pesakit Hub selepas KOB ditandakan selesai.</div>
           ${paymentHistoryHtml(payments, packagePrice, totalPaid)}
         </div>`;
       return;
@@ -1769,12 +1770,11 @@ async function renderPaymentMethodSection() {
     if (installmentAllowed && !paymentPlanChoice) {
       el.innerHTML = paymentPlanChoiceHtml(pkgMeta, packagePrice);
     } else if (paymentPlanChoice === 'installment') {
-      const schedule = computeInstallmentSchedule(packagePrice, pkgMeta.installment_count, pkgMeta.duration_weeks, new Date());
       el.innerHTML = `
         <div class="mt-3 border-t border-ink/10 pt-3">
           <button type="button" onclick="paymentPlanChoice=null;renderPaymentMethodSection()" class="text-[11px] text-navy hover:underline mb-2">← Tukar cara bayaran</button>
-          ${installmentScheduleHtml(schedule)}
-          ${manualPaymentFormHtml(schedule[0].amount, true, `Ansuran 1/${pkgMeta.installment_count} (deposit)`)}
+          ${installmentScheduleHtml(pkgMeta, packagePrice)}
+          ${manualPaymentFormHtml(Number(pkgMeta.installment_deposit_amount || 0), true, 'Deposit')}
         </div>`;
     } else {
       const backBtn = installmentAllowed
@@ -1841,7 +1841,7 @@ async function saveManualPayment() {
       invoice_number: invoiceNumber,
       receipt_url: signed?.signedUrl || null,
       notes: isInstallmentStart
-        ? `Ansuran 1 (deposit) pakej "${kob.recommended_package_name || ''}" — disahkan doktor semasa sesi KOB`
+        ? `Deposit pakej "${kob.recommended_package_name || ''}" — disahkan doktor semasa sesi KOB`
         : `Bayaran pakej "${kob.recommended_package_name || ''}" — disahkan doktor semasa sesi KOB`,
       intent: { type: 'kob_package', kob_session_id: kobId },
     }).select('id').single();
@@ -1853,22 +1853,24 @@ async function saveManualPayment() {
     if (isInstallmentStart) {
       const pkgMeta = allPackagesCache.find(p => p.package_id === kob.recommended_package_id);
       const packagePrice = Number(kob.recommended_package_price || 0);
-      const schedule = computeInstallmentSchedule(packagePrice, pkgMeta.installment_count, pkgMeta.duration_weeks, new Date());
-      const rows = schedule.map(r => ({
-        kob_session_id: kobId,
-        patient_id: patient.id,
-        seq: r.seq,
-        due_date: r.due_date,
-        amount: r.amount,
-        status: r.seq === 1 ? 'paid' : 'pending',
-        paid_payment_id: r.seq === 1 ? payRow.id : null,
-        paid_at: r.seq === 1 ? new Date().toISOString() : null,
-      }));
-      const { error: instErr } = await window.db.from('psy_kob_installments').insert(rows);
+      const depositAmount = Number(pkgMeta.installment_deposit_amount || 0);
+      const resolved = resolveInstallmentCheckpoints(pkgMeta.installment_checkpoints, packagePrice, new Date());
+      const nowIso = new Date().toISOString();
+      const rows = [
+        { kob_session_id: kobId, patient_id: patient.id, seq: 0, month_offset: 0,
+          due_date: nowIso.slice(0, 10), target_cumulative: depositAmount, status: 'met', met_at: nowIso },
+        ...resolved.map((r, i) => ({
+          kob_session_id: kobId, patient_id: patient.id, seq: i + 1, month_offset: r.month_offset,
+          due_date: r.due_date, target_cumulative: r.target_cumulative,
+          status: depositAmount >= r.target_cumulative ? 'met' : 'pending',
+          met_at: depositAmount >= r.target_cumulative ? nowIso : null,
+        })),
+      ];
+      const { error: instErr } = await window.db.from('psy_kob_installment_checkpoints').insert(rows);
       if (instErr) throw instErr;
       kobUpdates.package_payment_mode = 'installment';
       kobUpdates.package_payment_status = 'partial';
-      bannerMsg = 'Deposit ansuran 1 disahkan ✅ Baki ansuran diuruskan di Pesakit Hub.';
+      bannerMsg = 'Deposit disahkan ✅ Baki ansuran diuruskan di Pesakit Hub.';
     } else {
       // Bayaran penuh ATAU laluan lama (jumlah bebas) — jumlah SEMUA bayaran
       // (termasuk yang baru disimpan) dibanding harga pakej penuh.

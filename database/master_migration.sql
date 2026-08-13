@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-08-13T01:54:35.385620Z
+-- Generated: 2026-08-13T03:05:04.261505Z
 -- Jumlah fail: 30
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -1216,9 +1216,12 @@ CREATE TABLE IF NOT EXISTS psy_packages (
   -- lain-lain
   extension_price_per_week NUMERIC(10,2) DEFAULT 50,
   meet_link TEXT,
-  -- bayaran ansuran (Pelan Pelaburan Ansuran)
+  -- bayaran ansuran (Pelan Pelaburan Ansuran) — checkpoint kumulatif custom.
+  -- Pesakit bayar apa-apa amount bila-bila selepas deposit; wajib jumlah
+  -- TERKUMPUL cecah target tiap checkpoint (bukan slot ansuran bersaiz tetap).
   installment_allowed BOOLEAN NOT NULL DEFAULT false,
-  installment_count INT CHECK (installment_count IS NULL OR installment_count BETWEEN 2 AND 12),
+  installment_deposit_amount NUMERIC(10,2),
+  installment_checkpoints JSONB DEFAULT '[]',
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -1281,6 +1284,11 @@ COMMENT ON COLUMN psy_packages.session_days_options IS
 
 COMMENT ON COLUMN psy_packages.extension_price_per_week IS
   'Harga (RM) untuk tambah satu minggu rawatan bila patient miss sesi. Default RM 50.';
+
+COMMENT ON COLUMN psy_packages.installment_deposit_amount IS
+  'Jumlah deposit wajib dibayar semasa aktifkan pakej (ansuran). Bayaran ini terus mengaktifkan pakej.';
+COMMENT ON COLUMN psy_packages.installment_checkpoints IS
+  'Array of {month_offset:int, target_cumulative:numeric|null}. month_offset = bilangan bulan dari tarikh deposit. target_cumulative = jumlah TERKUMPUL (bukan tambahan) yang wajib dicecah menjelang tarikh tu. null = baki penuh (harga pakej) — biasanya checkpoint terakhir. Cth [{"month_offset":1,"target_cumulative":30000},{"month_offset":3,"target_cumulative":45000},{"month_offset":12,"target_cumulative":null}].';
 
 COMMENT ON COLUMN psy_packages.meet_link IS
   'Pautan Gmeet recurring untuk pakej. Dipaparkan kepada patient bila minggu semasa adalah online/both.';
@@ -2547,47 +2555,47 @@ DROP POLICY IF EXISTS "Staff manage KOB sessions" ON psy_kob_sessions;
 CREATE POLICY "Staff manage KOB sessions" ON psy_kob_sessions FOR ALL
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
--- ──── psy_kob_installments ────
--- Jadual ansuran pakej (Pelan Pelaburan Ansuran) bila
--- package_payment_mode = 'installment'. Dijana sekali semasa cadangan
--- pakej disahkan (bilangan ikut psy_packages.installment_count, tarikh due
--- ikut interval = duration_weeks / installment_count, ansuran terakhir
--- serap baki bulat). Tiap ansuran dipadan ke satu rekod psy_payments bila
--- staff sahkan bayaran manual di kob-detail.html.
-CREATE TABLE IF NOT EXISTS psy_kob_installments (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  kob_session_id   UUID NOT NULL REFERENCES psy_kob_sessions(id) ON DELETE CASCADE,
-  patient_id       UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
-  seq              INT NOT NULL,
-  due_date         DATE NOT NULL,
-  amount           NUMERIC(10,2) NOT NULL,
-  status           TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','paid','overdue')),
-  paid_payment_id  UUID REFERENCES psy_payments(id) ON DELETE SET NULL,
-  paid_at          TIMESTAMPTZ,
-  created_at       TIMESTAMPTZ DEFAULT now(),
-  CONSTRAINT psy_kob_installments_unique_seq UNIQUE (kob_session_id, seq)
+-- ──── psy_kob_installment_checkpoints ────
+-- Checkpoint kumulatif pakej ansuran (Pelan Pelaburan Ansuran) bila
+-- package_payment_mode = 'installment'. Dijana sekali dari template
+-- psy_packages.installment_checkpoints semasa deposit disahkan (due_date
+-- = tarikh deposit + month_offset bulan). Pesakit bayar apa-apa amount
+-- bila-bila (rekod psy_payments biasa, tiada padanan 1:1) — checkpoint
+-- disemak dgn banding JUMLAH TERKUMPUL psy_payments vs target_cumulative.
+CREATE TABLE IF NOT EXISTS psy_kob_installment_checkpoints (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  kob_session_id    UUID NOT NULL REFERENCES psy_kob_sessions(id) ON DELETE CASCADE,
+  patient_id        UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  seq               INT NOT NULL,
+  month_offset      INT NOT NULL,
+  due_date          DATE NOT NULL,
+  target_cumulative NUMERIC(10,2) NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','met','overdue')),
+  met_at            TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT psy_kob_installment_checkpoints_unique_seq UNIQUE (kob_session_id, seq)
 );
 
-CREATE INDEX IF NOT EXISTS idx_kob_installments_session ON psy_kob_installments(kob_session_id);
-CREATE INDEX IF NOT EXISTS idx_kob_installments_patient ON psy_kob_installments(patient_id, status);
-CREATE INDEX IF NOT EXISTS idx_kob_installments_overdue ON psy_kob_installments(due_date) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_kob_checkpoints_session ON psy_kob_installment_checkpoints(kob_session_id);
+CREATE INDEX IF NOT EXISTS idx_kob_checkpoints_patient ON psy_kob_installment_checkpoints(patient_id, status);
+CREATE INDEX IF NOT EXISTS idx_kob_checkpoints_overdue ON psy_kob_installment_checkpoints(due_date) WHERE status = 'pending';
 
-ALTER TABLE psy_kob_installments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_kob_installment_checkpoints ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Patient read own installments" ON psy_kob_installments;
-CREATE POLICY "Patient read own installments" ON psy_kob_installments FOR SELECT
+DROP POLICY IF EXISTS "Patient read own checkpoints" ON psy_kob_installment_checkpoints;
+CREATE POLICY "Patient read own checkpoints" ON psy_kob_installment_checkpoints FOR SELECT
   USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
 
-DROP POLICY IF EXISTS "Staff manage installments" ON psy_kob_installments;
-CREATE POLICY "Staff manage installments" ON psy_kob_installments FOR ALL
+DROP POLICY IF EXISTS "Staff manage checkpoints" ON psy_kob_installment_checkpoints;
+CREATE POLICY "Staff manage checkpoints" ON psy_kob_installment_checkpoints FOR ALL
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
-COMMENT ON COLUMN psy_kob_installments.seq IS
-  '1 = ansuran pertama (deposit, dibayar semasa sesi KOB). Nombor menaik ikut tarikh due.';
-COMMENT ON COLUMN psy_kob_installments.amount IS
-  'Harga pakej ÷ installment_count, dibundarkan ke bawah — ansuran seq TERAKHIR serap baki supaya jumlah keseluruhan tepat sama dengan harga pakej.';
-COMMENT ON COLUMN psy_kob_installments.status IS
-  'overdue ditetapkan oleh installment-overdue-check (cron harian) bila due_date lepas & masih pending. Auto set false semula (booking_blocked pesakit) bila ansuran ini dibayar.';
+COMMENT ON COLUMN psy_kob_installment_checkpoints.seq IS
+  '0 = checkpoint deposit (dibayar semasa sesi KOB, terus met). 1,2,3... = checkpoint seterusnya ikut turutan month_offset.';
+COMMENT ON COLUMN psy_kob_installment_checkpoints.target_cumulative IS
+  'Jumlah TERKUMPUL (bukan tambahan) yang wajib dicecah menjelang due_date. Checkpoint terakhir = harga penuh pakej (baki).';
+COMMENT ON COLUMN psy_kob_installment_checkpoints.status IS
+  'met = jumlah terkumpul psy_payments dah cecah target (disemak automatik tiap kali bayaran baru direkod). overdue ditetapkan oleh installment-overdue-check (cron harian) bila due_date lepas & belum met.';
 
 -- ──── psy_kob_agreements ────
 -- Rekod perjanjian yang ditandatangani pesakit.
@@ -5333,20 +5341,20 @@ on conflict (key) do update set
   language         = excluded.language,
   updated_at       = now();
 
--- Ansuran pakej tertunggak (installment_overdue) — bila psy_kob_installments
--- lepas due_date & masih pending, tandakan overdue + sekat tempahan sesi
--- baru pesakit, hantar WA sekali (dedup ikut status baris berubah, bukan
--- send_at_time). Dijalankan setiap kali event-reminders cron cetus.
+-- Ansuran pakej tertunggak (installment_overdue) — bila jumlah TERKUMPUL
+-- pesakit (psy_payments) tak cecah target checkpoint (psy_kob_installment_
+-- checkpoints) menjelang due_date, tandakan overdue + sekat tempahan sesi
+-- baru pesakit, hantar WA sekali. Dijalankan setiap kali event-reminders cron cetus.
 insert into psy_auto_messages
   (key, name, description, channel, trigger_type, message_template,
    placeholders, channels, category, language, is_active)
 values
   ('installment_overdue',
    'Ansuran Pakej Tertunggak',
-   'Bila ansuran pakej pesakit lepas tarikh due & belum dibayar, hantar WA + sekat tempahan sesi baru sehingga bayaran diselesaikan.',
+   'Bila jumlah terkumpul pesakit tak cecah target checkpoint ansuran menjelang tarikh due, hantar WA + sekat tempahan sesi baru sehingga bayaran diselesaikan.',
    'whatsapp', 'installment_overdue',
-   E'Salam {nama} 👋\n\nAnsuran {seq} (RM {jumlah}) untuk pakej rawatan anda tertunggak sejak {tarikh_due}.\n\nTempahan sesi baru disekat buat sementara waktu sehingga bayaran diselesaikan. Sila hubungi pusat rawatan untuk bantuan.\n\n— {nama_klinik}',
-   '["{nama}","{seq}","{jumlah}","{tarikh_due}","{nama_klinik}"]'::jsonb,
+   E'Salam {nama} 👋\n\nAnsuran pakej rawatan anda (checkpoint Bulan {bulan}) tertunggak sejak {tarikh_due}. Jumlah wajib terkumpul: RM {jumlah} — baki RM {baki} lagi.\n\nTempahan sesi baru disekat buat sementara waktu sehingga bayaran diselesaikan. Sila hubungi pusat rawatan untuk bantuan.\n\n— {nama_klinik}',
+   '["{nama}","{bulan}","{jumlah}","{baki}","{tarikh_due}","{nama_klinik}"]'::jsonb,
    '["whatsapp"]'::jsonb,
    'pembayaran', 'ms',
    false)

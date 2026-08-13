@@ -176,7 +176,6 @@ const STAFF_NAV_MASTER = [
   },
   {
     group: 'LAPORAN', collapsible: true, items: [
-      { id: 'progres_pesakit', url: 'progres-pesakit.html', icon: '📈', label: 'Progres Pesakit' },
       { id: 'governance', url: 'governance.html', icon: '📈', label: 'Governance' },
       { id: 'staff_stats', url: 'staff-stats.html', icon: '📊', label: 'Statistik' },
       { id: 'kehadiran', url: 'kehadiran.html', icon: '📋', label: 'Laporan Kehadiran' },

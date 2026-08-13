@@ -80,47 +80,47 @@ DROP POLICY IF EXISTS "Staff manage KOB sessions" ON psy_kob_sessions;
 CREATE POLICY "Staff manage KOB sessions" ON psy_kob_sessions FOR ALL
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
--- ──── psy_kob_installments ────
--- Jadual ansuran pakej (Pelan Pelaburan Ansuran) bila
--- package_payment_mode = 'installment'. Dijana sekali semasa cadangan
--- pakej disahkan (bilangan ikut psy_packages.installment_count, tarikh due
--- ikut interval = duration_weeks / installment_count, ansuran terakhir
--- serap baki bulat). Tiap ansuran dipadan ke satu rekod psy_payments bila
--- staff sahkan bayaran manual di kob-detail.html.
-CREATE TABLE IF NOT EXISTS psy_kob_installments (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  kob_session_id   UUID NOT NULL REFERENCES psy_kob_sessions(id) ON DELETE CASCADE,
-  patient_id       UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
-  seq              INT NOT NULL,
-  due_date         DATE NOT NULL,
-  amount           NUMERIC(10,2) NOT NULL,
-  status           TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','paid','overdue')),
-  paid_payment_id  UUID REFERENCES psy_payments(id) ON DELETE SET NULL,
-  paid_at          TIMESTAMPTZ,
-  created_at       TIMESTAMPTZ DEFAULT now(),
-  CONSTRAINT psy_kob_installments_unique_seq UNIQUE (kob_session_id, seq)
+-- ──── psy_kob_installment_checkpoints ────
+-- Checkpoint kumulatif pakej ansuran (Pelan Pelaburan Ansuran) bila
+-- package_payment_mode = 'installment'. Dijana sekali dari template
+-- psy_packages.installment_checkpoints semasa deposit disahkan (due_date
+-- = tarikh deposit + month_offset bulan). Pesakit bayar apa-apa amount
+-- bila-bila (rekod psy_payments biasa, tiada padanan 1:1) — checkpoint
+-- disemak dgn banding JUMLAH TERKUMPUL psy_payments vs target_cumulative.
+CREATE TABLE IF NOT EXISTS psy_kob_installment_checkpoints (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  kob_session_id    UUID NOT NULL REFERENCES psy_kob_sessions(id) ON DELETE CASCADE,
+  patient_id        UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  seq               INT NOT NULL,
+  month_offset      INT NOT NULL,
+  due_date          DATE NOT NULL,
+  target_cumulative NUMERIC(10,2) NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','met','overdue')),
+  met_at            TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT psy_kob_installment_checkpoints_unique_seq UNIQUE (kob_session_id, seq)
 );
 
-CREATE INDEX IF NOT EXISTS idx_kob_installments_session ON psy_kob_installments(kob_session_id);
-CREATE INDEX IF NOT EXISTS idx_kob_installments_patient ON psy_kob_installments(patient_id, status);
-CREATE INDEX IF NOT EXISTS idx_kob_installments_overdue ON psy_kob_installments(due_date) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_kob_checkpoints_session ON psy_kob_installment_checkpoints(kob_session_id);
+CREATE INDEX IF NOT EXISTS idx_kob_checkpoints_patient ON psy_kob_installment_checkpoints(patient_id, status);
+CREATE INDEX IF NOT EXISTS idx_kob_checkpoints_overdue ON psy_kob_installment_checkpoints(due_date) WHERE status = 'pending';
 
-ALTER TABLE psy_kob_installments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_kob_installment_checkpoints ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Patient read own installments" ON psy_kob_installments;
-CREATE POLICY "Patient read own installments" ON psy_kob_installments FOR SELECT
+DROP POLICY IF EXISTS "Patient read own checkpoints" ON psy_kob_installment_checkpoints;
+CREATE POLICY "Patient read own checkpoints" ON psy_kob_installment_checkpoints FOR SELECT
   USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
 
-DROP POLICY IF EXISTS "Staff manage installments" ON psy_kob_installments;
-CREATE POLICY "Staff manage installments" ON psy_kob_installments FOR ALL
+DROP POLICY IF EXISTS "Staff manage checkpoints" ON psy_kob_installment_checkpoints;
+CREATE POLICY "Staff manage checkpoints" ON psy_kob_installment_checkpoints FOR ALL
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
-COMMENT ON COLUMN psy_kob_installments.seq IS
-  '1 = ansuran pertama (deposit, dibayar semasa sesi KOB). Nombor menaik ikut tarikh due.';
-COMMENT ON COLUMN psy_kob_installments.amount IS
-  'Harga pakej ÷ installment_count, dibundarkan ke bawah — ansuran seq TERAKHIR serap baki supaya jumlah keseluruhan tepat sama dengan harga pakej.';
-COMMENT ON COLUMN psy_kob_installments.status IS
-  'overdue ditetapkan oleh installment-overdue-check (cron harian) bila due_date lepas & masih pending. Auto set false semula (booking_blocked pesakit) bila ansuran ini dibayar.';
+COMMENT ON COLUMN psy_kob_installment_checkpoints.seq IS
+  '0 = checkpoint deposit (dibayar semasa sesi KOB, terus met). 1,2,3... = checkpoint seterusnya ikut turutan month_offset.';
+COMMENT ON COLUMN psy_kob_installment_checkpoints.target_cumulative IS
+  'Jumlah TERKUMPUL (bukan tambahan) yang wajib dicecah menjelang due_date. Checkpoint terakhir = harga penuh pakej (baki).';
+COMMENT ON COLUMN psy_kob_installment_checkpoints.status IS
+  'met = jumlah terkumpul psy_payments dah cecah target (disemak automatik tiap kali bayaran baru direkod). overdue ditetapkan oleh installment-overdue-check (cron harian) bila due_date lepas & belum met.';
 
 -- ──── psy_kob_agreements ────
 -- Rekod perjanjian yang ditandatangani pesakit.

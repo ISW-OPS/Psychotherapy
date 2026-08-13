@@ -26,6 +26,12 @@
   .mood-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
   .session-card { background:white; border-radius:10px; border:1px solid #e2e8f0; padding:14px 16px; }
   .avatar-lg { width:56px; height:56px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:22px; font-weight:700; flex-shrink:0; }
+  .toc-chip { font-size:11px; font-weight:600; padding:5px 12px; border-radius:999px; background:white; border:1px solid #e2e8f0; color:#3c4f5c99; white-space:nowrap; transition:all .15s; }
+  .toc-chip:hover { border-color:#1B4E9C; color:#1B4E9C; }
+  .prog-bar { height:8px; border-radius:4px; background:#e2e8f0; overflow:hidden; }
+  .prog-bar-fill { height:100%; border-radius:4px; transition:width .3s; }
+  .tbl th { text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.03em; color:#3c4f5c80; font-weight:600; padding:6px 10px 6px 0; }
+  .tbl td { font-size:12px; padding:8px 10px 8px 0; border-top:1px solid #f1f5f9; vertical-align:top; }
 </style>
 </head>
 <body class="min-h-screen">
@@ -78,6 +84,7 @@
           <button class="tab-btn" onclick="switchTab('supply')">📦 Bekalan</button>
           <button class="tab-btn" onclick="switchTab('dna')">🧬 Laporan</button>
           <button class="tab-btn" onclick="switchTab('peristiwa')">🏥 Peristiwa</button>
+          <button class="tab-btn" onclick="switchTab('progress')">📝 Nota</button>
           <button class="tab-btn" onclick="switchTab('profile')">👤 Profil</button>
         </div>
 
@@ -942,6 +949,20 @@
           </div>
         </div>
 
+        <!-- ═══════════════ TAB: NOTA / PROGRES PENUH ═══════════════ -->
+        <div id="tab-progress" class="tab-content space-y-4">
+          <div>
+            <h3 class="font-bold text-ink flex items-center gap-2">📝 Nota &amp; Progres Penuh</h3>
+            <p class="text-xs text-ink/45 mt-0.5">Semua rekod rawatan pesakit ini dalam satu paparan — sesi, kepatuhan, check-in, vitals, bayaran dan lain-lain.</p>
+          </div>
+          <div id="progress-loading" class="text-center text-ink/50 text-sm py-10">⏳ Memuatkan semua rekod rawatan...</div>
+          <div id="progress-content" class="hidden space-y-4">
+            <div id="progress-kpi-row" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3"></div>
+            <div id="progress-toc-bar" class="flex gap-2 overflow-x-auto pb-1"></div>
+            <div id="progress-report-body" class="grid lg:grid-cols-2 gap-4 items-start"></div>
+          </div>
+        </div>
+
         <!-- ═══════════════ TAB: PROFILE & DOKUMEN ═══════════════ -->
         <div id="tab-profile" class="tab-content space-y-5">
 
@@ -981,7 +1002,10 @@
                 <!-- Name + ID + contact -->
                 <div class="space-y-2">
                   <h2 id="profile-hero-name" class="font-bold text-2xl text-ink leading-tight">—</h2>
-                  <div><span id="profile-hero-id" class="inline-block text-[11px] font-semibold px-2.5 py-1 rounded-full bg-purple-100 text-purple-700">ID PESAKIT: —</span></div>
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span id="profile-hero-id" class="inline-block text-[11px] font-semibold px-2.5 py-1 rounded-full bg-purple-100 text-purple-700">ID PESAKIT: —</span>
+                    <span id="profile-hero-refcode" class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-700">KOD RUJUKAN: —</span>
+                  </div>
                   <div class="flex items-center gap-2 text-sm text-ink/70 mt-3">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-ink/40"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
                     <span id="profile-hero-email">—</span>
@@ -1396,7 +1420,7 @@ const patientId = params.get('patient_id');
 
   // Buka tab tertentu kalau ada ?tab= dalam URL
   const initialTab = params.get('tab');
-  if (initialTab && ['overview','checkin','vitals','sessions','supply','dna','profile'].includes(initialTab)) {
+  if (initialTab && ['overview','checkin','vitals','sessions','supply','dna','peristiwa','progress','profile'].includes(initialTab)) {
     await switchTab(initialTab);
   }
   subscribeHubRealtime();  // auto-update bila status pesakit / kehadiran berubah (tanpa refresh)
@@ -1549,7 +1573,7 @@ let loadedTabs = new Set(['overview']);
 
 async function switchTab(tab) {
   document.querySelectorAll('.tab-btn').forEach((b,i) => {
-    const tabs = ['overview','checkin','vitals','sessions','supply','dna','peristiwa','profile'];
+    const tabs = ['overview','checkin','vitals','sessions','supply','dna','peristiwa','progress','profile'];
     b.classList.toggle('active', tabs[i] === tab);
   });
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -1569,7 +1593,301 @@ async function loadTabData(tab) {
   if (tab === 'supply')    await loadSupply();
   if (tab === 'dna')       await loadDnaReports();
   if (tab === 'peristiwa') await loadPeristiwa();
+  if (tab === 'progress')  await loadProgress();
   if (tab === 'profile')   renderProfile();
+}
+
+// ── TAB: NOTA / PROGRES PENUH ──────────────────────────
+// Palet carta — disahkan lulus semakan CVD (validator dataviz):
+// navy #1B4E9C (mood), gold #B8860B (tenaga), teal #0D9488 (tidur)
+const PROGRESS_CHART_COLORS = { mood: '#1B4E9C', tenaga: '#B8860B', tidur: '#0D9488' };
+let progressChart = null;
+
+async function loadProgress() {
+  const g = q => q.then(r => (r.error ? [] : (r.data || [])), () => []);
+  const [kepWeekly, checkins, vitals, kobs, payments, reports, referrals, notes, reaksi, supply, offers] = await Promise.all([
+    g(window.db.from('psy_kepatuhan_weekly').select('*').eq('patient_id', patientId).order('minggu_mula', { ascending: false }).limit(12)),
+    g(window.db.from('psy_daily_checkins').select('checkin_date, mood_score, energy_score, sleep_quality, sleep_hours').eq('patient_id', patientId).order('checkin_date', { ascending: false }).limit(30)),
+    g(window.db.from('psy_vitals').select('*').eq('patient_id', patientId).order('created_at', { ascending: false }).limit(5)),
+    g(window.db.from('psy_kob_sessions').select('*').eq('patient_id', patientId).order('scheduled_at', { ascending: false }).limit(10)),
+    g(window.db.from('psy_payments').select('receipt_ref, total, status, payment_method, paid_at, created_at').eq('patient_id', patientId).order('created_at', { ascending: false }).limit(10)),
+    g(window.db.from('psy_medical_reports').select('id, title, file_name, file_url, report_type, status, review_status, created_at').eq('patient_id', patientId).order('created_at', { ascending: false }).limit(10)),
+    g(window.db.from('psy_clinical_referrals').select('*').eq('patient_id', patientId).order('created_at', { ascending: false }).limit(10)),
+    g(window.db.from('psy_patient_notes').select('*').eq('patient_id', patientId).in('visibility', ['staff', 'both']).order('is_pinned', { ascending: false }).order('created_at', { ascending: false }).limit(10)),
+    g(window.db.from('psy_reaksi_advice_log').select('log_date, symptoms, is_emergency, status, sent_at').eq('patient_id', patientId).order('log_date', { ascending: false }).limit(30)),
+    g(window.db.from('psy_supply_disbursements').select('item_name, qty, given_by_name, created_at').eq('patient_id', patientId).order('created_at', { ascending: false }).limit(10)),
+    g(window.db.from('psy_continuity_offers').select('package_name, price, status, created_at').eq('patient_id', patientId).order('created_at', { ascending: false }).limit(5)),
+  ]);
+
+  let weekly = [];
+  if (activePlan) {
+    weekly = await g(window.db.from('psy_plan_weekly_progress').select('*').eq('plan_id', activePlan.id).order('week_number').order('session_date'));
+  }
+
+  document.getElementById('progress-loading').classList.add('hidden');
+  document.getElementById('progress-content').classList.remove('hidden');
+
+  renderProgressKpis(weekly, kepWeekly, checkins, payments);
+  renderProgressSections({ weekly, kepWeekly, checkins, vitals, kobs, payments, reports, referrals, notes, reaksi, supply, offers });
+}
+
+function progressSection(id, icon, title, count, bodyHtml, href, span2) {
+  return `<div id="prog-sec-${id}" class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 space-y-3 ${span2 ? 'lg:col-span-2' : ''} scroll-mt-32">
+    <div class="flex items-center justify-between gap-2 flex-wrap">
+      <h3 class="font-bold text-sm text-ink flex items-center gap-2">${icon} ${title}
+        ${count != null ? `<span class="chip bg-ink/10 text-ink/60">${count}</span>` : ''}</h3>
+      ${href ? `<a href="${href}" class="text-xs font-semibold text-navy hover:underline">Buka →</a>` : ''}
+    </div>
+    ${bodyHtml}
+  </div>`;
+}
+const progressEmptyRow = msg => `<p class="text-xs text-ink/45 py-2">${msg || 'Tiada rekod.'}</p>`;
+const progressTbl = (heads, rows) => rows.length
+  ? `<div class="overflow-x-auto"><table class="tbl w-full"><thead><tr>${heads.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`
+  : progressEmptyRow();
+
+const PROGRESS_WEEK_STATUS = {
+  hadir: ['Hadir', 'bg-green-light text-green-dark'],
+  consultation_done: ['Konsultasi Selesai', 'bg-green-light text-green-dark'],
+  booked: ['Ditempah', 'bg-navy-light text-navy'],
+  pending: ['Pending', 'bg-gold/30 text-gold-dark'],
+  reschedule: ['Reschedule', 'bg-gold/30 text-gold-dark'],
+  cancel: ['Batal', 'bg-terracotta/20 text-terracotta'],
+  extension_pending_payment: ['Extension (Bayaran)', 'bg-gold/30 text-gold-dark'],
+};
+const progressWeekChip = s => {
+  const [lbl, cls] = PROGRESS_WEEK_STATUS[s] || [s || '—', 'bg-ink/10 text-ink/60'];
+  return `<span class="chip ${cls}">${escHtml(lbl)}</span>`;
+};
+
+function renderProgressKpis(weekly, kepWeekly, checkins, payments) {
+  const totalWeeks = activePlan?.duration_weeks || weekly.length || 0;
+  const curWeek    = activePlan?.current_week || 0;
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const past  = weekly.filter(w => w.session_date && new Date(w.session_date) <= today && w.status !== 'cancel');
+  const hadir = past.filter(w => ['hadir', 'consultation_done'].includes(w.status));
+  const pct   = past.length ? Math.round(hadir.length / past.length * 100) : null;
+
+  const kepLatest = kepWeekly[0] || null;
+  const kelas = kepLatest ? (kepLatest.override_kelas || kepLatest.kelas || '—') : '—';
+
+  const d7 = new Date(); d7.setDate(d7.getDate() - 6); d7.setHours(0, 0, 0, 0);
+  const ci7 = checkins.filter(c => new Date(c.checkin_date) >= d7).length;
+
+  const paid = payments.filter(p => p.status === 'completed');
+  const totalPaid = paid.reduce((s, p) => s + (Number(p.total) || 0), 0);
+
+  document.getElementById('progress-kpi-row').innerHTML = [
+    statCard('Minggu Semasa', curWeek ? `${curWeek}/${totalWeeks}` : '—', activePlan ? escHtml(activePlan.name || '') : 'Tiada plan aktif'),
+    statCard('Kehadiran Sesi', pct == null ? '—' : pct + '%', `${hadir.length}/${past.length} sesi hadir`),
+    statCard('Kepatuhan', kelas, kepLatest ? `Skor ${kepLatest.skor ?? '—'}% · ${kepLatest.bil_hari_isi ?? 0} hari diisi` : 'Tiada rekod'),
+    statCard('Check-in 7 Hari', `${ci7}/7`, checkins[0] ? 'Terakhir: ' + formatDate(checkins[0].checkin_date) : 'Tiada check-in'),
+    statCard('Jumlah Bayaran', 'RM ' + totalPaid.toFixed(2), `${paid.length} resit selesai`),
+  ].join('');
+}
+
+function renderProgressSections(d) {
+  const parts = [];
+
+  // 1) Sesi rawatan mingguan (penuh lebar)
+  const hadirN = d.weekly.filter(w => ['hadir', 'consultation_done'].includes(w.status)).length;
+  const sesiRows = d.weekly.map(w => `<tr>
+    <td class="font-semibold">M${w.week_number}${w.is_extension ? ' <span class="chip bg-gold/30 text-gold-dark">Ext</span>' : ''}</td>
+    <td>${w.session_date ? formatDate(w.session_date) : '—'}</td>
+    <td>${progressWeekChip(w.status)}</td>
+    <td>${w.score != null ? w.score + '/10' : '—'}</td>
+    <td class="text-ink/60 max-w-[380px]">${escHtml(w.notes || '')}</td>
+    <td class="text-ink/45">${escHtml(w.updated_by_name || '')}</td>
+  </tr>`);
+  const sesiBar = d.weekly.length ? `
+    <div class="flex items-center gap-3">
+      <div class="prog-bar flex-1"><div class="prog-bar-fill bg-green" style="width:${Math.round(hadirN / d.weekly.length * 100)}%"></div></div>
+      <span class="text-xs font-semibold text-ink/60">${hadirN}/${d.weekly.length} hadir</span>
+    </div>` : '';
+  parts.push(progressSection('sesi', '📅', 'Sesi Rawatan Mingguan', d.weekly.length,
+    sesiBar + progressTbl(['Minggu', 'Tarikh', 'Status', 'Skor', 'Nota', 'Oleh'], sesiRows), null, true));
+
+  // 2) Kepatuhan mingguan
+  const kelasChip = k => {
+    const m = { A: 'bg-green-light text-green-dark', B: 'bg-gold/30 text-gold-dark', C: 'bg-terracotta/20 text-terracotta' };
+    return `<span class="chip ${m[k] || 'bg-ink/10 text-ink/60'}">${escHtml(k || '—')}</span>`;
+  };
+  const kepRows = d.kepWeekly.map(k => `<tr>
+    <td>${formatDate(k.minggu_mula)}</td>
+    <td><div class="flex items-center gap-2"><div class="prog-bar w-20"><div class="prog-bar-fill bg-navy" style="width:${Math.min(100, k.skor || 0)}%"></div></div><span>${k.skor ?? '—'}%</span></div></td>
+    <td>${kelasChip(k.override_kelas || k.kelas)}</td>
+    <td>${k.bil_hari_isi ?? 0} hari</td>
+    <td class="text-ink/60">${escHtml(k.nota_coach || '')}</td>
+  </tr>`);
+  parts.push(progressSection('kepatuhan', '📊', 'Kepatuhan Mingguan', d.kepWeekly.length,
+    progressTbl(['Minggu Mula', 'Skor', 'Kelas', 'Diisi', 'Nota Coach'], kepRows), 'kepatuhan.html'));
+
+  // 3) Check-in harian (carta)
+  parts.push(progressSection('checkin', '✅', 'Check-in Harian (30 Terkini)', d.checkins.length,
+    d.checkins.length
+      ? '<div class="relative h-56"><canvas id="progress-checkin-chart"></canvas></div>'
+      : progressEmptyRow('Pesakit belum buat check-in harian.')));
+
+  // 4) Reaksi pemulihan
+  const reaksiMerged = [];
+  {
+    const byDate = {};
+    d.reaksi.forEach(r => {
+      const k = r.log_date;
+      if (!byDate[k]) { byDate[k] = { ...r }; reaksiMerged.push(byDate[k]); }
+      else {
+        if (r.is_emergency) byDate[k].is_emergency = true;
+        if (r.status === 'draft') byDate[k].status = 'draft';
+      }
+    });
+  }
+  const symLbl = s => Array.isArray(s) ? s.map(x => (x && (x.label || x.name)) || (typeof x === 'string' ? x : '')).filter(Boolean) : [];
+  const reaksiRows = reaksiMerged.map(r => {
+    const syms = symLbl(r.symptoms);
+    return `<tr>
+      <td>${formatDate(r.log_date)}${r.is_emergency ? ' <span class="chip bg-terracotta/20 text-terracotta">🚨 Kecemasan</span>' : ''}</td>
+      <td class="text-ink/70 max-w-[300px]">${escHtml(syms.slice(0, 4).join(', '))}${syms.length > 4 ? ` +${syms.length - 4}` : ''}</td>
+      <td>${statusChip(r.status)}</td>
+    </tr>`;
+  });
+  parts.push(progressSection('reaksi', '🩹', 'Reaksi Pemulihan', reaksiMerged.length,
+    progressTbl(['Tarikh', 'Simptom', 'Status'], reaksiRows), 'reaksi-laporan.html'));
+
+  // 5) Vitals terkini
+  const vitalRows = d.vitals.map(v => `<tr>
+    <td>${v.reading_date ? formatDate(v.reading_date) : formatDate(v.created_at)}</td>
+    <td>${v.bp_systolic && v.bp_diastolic ? `${v.bp_systolic}/${v.bp_diastolic}` : '—'}</td>
+    <td>${v.heart_rate ?? '—'}</td>
+    <td>${v.spo2 ?? '—'}</td>
+    <td>${v.weight ?? '—'}</td>
+    <td>${v.bmi ?? '—'}</td>
+    <td class="text-ink/45">${escHtml(v.recorded_by_name || '')}</td>
+  </tr>`);
+  parts.push(progressSection('vitals', '💓', 'Bacaan Vitals Terkini', d.vitals.length,
+    progressTbl(['Tarikh', 'BP', 'Nadi', 'SpO2', 'Berat', 'BMI', 'Oleh'], vitalRows)));
+
+  // 6) Sesi KOB
+  const kobRows = d.kobs.map(k => `<tr>
+    <td>${k.scheduled_at ? formatDateTime(k.scheduled_at) : '—'}</td>
+    <td>${escHtml(k.mode === 'f2f' ? 'Bersemuka' : (k.mode || '—'))}</td>
+    <td>${statusChip(k.status)}</td>
+    <td class="text-ink/60 max-w-[260px]">${escHtml(k.notes || '')}</td>
+  </tr>`);
+  parts.push(progressSection('kob', '🩺', 'Sesi KOB', d.kobs.length,
+    progressTbl(['Masa', 'Mod', 'Status', 'Nota'], kobRows), 'kob-list.html'));
+
+  // 7) Bayaran
+  const payRows = d.payments.map(p => `<tr>
+    <td class="font-mono text-[11px]">${escHtml(p.receipt_ref || '—')}</td>
+    <td>${formatDate(p.paid_at || p.created_at)}</td>
+    <td class="font-semibold">RM ${(Number(p.total) || 0).toFixed(2)}</td>
+    <td>${escHtml(p.payment_method || '—')}</td>
+    <td>${statusChip(p.status)}</td>
+  </tr>`);
+  parts.push(progressSection('bayaran', '💳', 'Bayaran & Resit', d.payments.length,
+    progressTbl(['Resit', 'Tarikh', 'Jumlah', 'Kaedah', 'Status'], payRows), 'payment-admin.html'));
+
+  // 8) Laporan perubatan
+  const repRows = d.reports.map(r => `<tr>
+    <td>${r.file_url ? `<a href="${escHtml(r.file_url)}" target="_blank" class="text-navy font-semibold hover:underline">${escHtml(r.title || r.file_name || 'Laporan')}</a>` : escHtml(r.title || r.file_name || 'Laporan')}</td>
+    <td class="uppercase text-[11px]">${escHtml(r.report_type || '—')}</td>
+    <td>${statusChip(r.review_status || r.status)}</td>
+    <td>${formatDate(r.created_at)}</td>
+  </tr>`);
+  parts.push(progressSection('laporan', '🧾', 'Laporan Perubatan', d.reports.length,
+    progressTbl(['Laporan', 'Jenis', 'Status', 'Tarikh'], repRows)));
+
+  // 9) Rujukan klinikal
+  const refRows = d.referrals.map(r => `<tr>
+    <td>${formatDate(r.created_at)}</td>
+    <td>${escHtml(r.referred_by_name || '—')} → <b>${escHtml(r.target_name || '—')}</b> <span class="text-ink/45">(${escHtml(r.target_role || '')})</span></td>
+    <td class="text-ink/60 max-w-[260px]">${escHtml(r.reason || '')}</td>
+    <td>${statusChip(r.status)}</td>
+  </tr>`);
+  parts.push(progressSection('rujukan', '🔀', 'Rujukan Klinikal', d.referrals.length,
+    progressTbl(['Tarikh', 'Rujukan', 'Sebab', 'Status'], refRows), 'rujukan.html'));
+
+  // 10) Pendaftaran + Pakej + Tawaran sambungan
+  const kycHtml = kyc ? `<div class="flex items-center gap-2 flex-wrap text-xs">
+      ${statusChip(kyc.status)} <span class="text-ink/60">Dihantar ${formatDate(kyc.created_at)}</span>
+      ${kyc.review_notes ? `<span class="text-ink/50">· ${escHtml(kyc.review_notes)}</span>` : ''}
+    </div>` : progressEmptyRow('Tiada penyerahan pendaftaran.');
+  const pkgHtml = patient.active_package_name ? `<div class="text-xs text-ink/70 space-y-1">
+      <div>📦 <b>${escHtml(patient.active_package_name)}</b></div>
+      ${patient.package_purchased_at ? `<div>Dibeli: ${formatDate(patient.package_purchased_at)}</div>` : ''}
+      ${patient.package_expires_at ? `<div>Tamat: ${formatDate(patient.package_expires_at)}</div>` : ''}
+    </div>` : progressEmptyRow('Tiada pakej aktif.');
+  const offerRows = d.offers.map(o => `<div class="flex items-center justify-between text-xs border-t border-ink/5 py-1.5">
+      <span>${escHtml(o.package_name || '—')} · RM ${(Number(o.price) || 0).toFixed(2)}</span>${statusChip(o.status)}
+    </div>`).join('');
+  parts.push(progressSection('kyc', '🆔', 'Pendaftaran · Pakej · Sambungan', null,
+    `<div class="space-y-3">
+       <div><div class="text-[10px] uppercase text-ink/50 font-semibold mb-1">Pendaftaran</div>${kycHtml}</div>
+       <div><div class="text-[10px] uppercase text-ink/50 font-semibold mb-1">Pakej Semasa</div>${pkgHtml}</div>
+       <div><div class="text-[10px] uppercase text-ink/50 font-semibold mb-1">Tawaran Sambungan</div>${offerRows || progressEmptyRow('Tiada tawaran.')}</div>
+     </div>`));
+
+  // 11) Nota pesakit
+  const noteRows = d.notes.map(n => `<div class="border-t border-ink/5 py-2 text-xs">
+      <div class="flex items-center gap-2 flex-wrap">
+        ${n.is_pinned ? '📌' : ''}<b class="text-ink/80">${escHtml(n.note_type || 'Nota')}</b>
+        <span class="text-ink/45">${formatDateTime(n.created_at)}${n.actor_name ? ' · ' + escHtml(n.actor_name) : ''}</span>
+      </div>
+      <p class="text-ink/70 mt-1 whitespace-pre-wrap">${escHtml(n.content || '')}</p>
+    </div>`).join('');
+  parts.push(progressSection('nota', '📝', 'Nota Pesakit', d.notes.length, noteRows || progressEmptyRow()));
+
+  // 12) Bekalan
+  const supRows = d.supply.map(s => `<tr>
+    <td>${formatDate(s.created_at)}</td>
+    <td>${escHtml(s.item_name || '—')}</td>
+    <td>${s.qty ?? '—'}</td>
+    <td class="text-ink/45">${escHtml(s.given_by_name || '')}</td>
+  </tr>`);
+  parts.push(progressSection('bekalan', '📦', 'Bekalan Diberi', d.supply.length,
+    progressTbl(['Tarikh', 'Item', 'Kuantiti', 'Oleh'], supRows)));
+
+  document.getElementById('progress-report-body').innerHTML = parts.join('');
+
+  const toc = [
+    ['sesi', '📅 Sesi'], ['kepatuhan', '📊 Kepatuhan'], ['checkin', '✅ Check-in'], ['reaksi', '🩹 Reaksi'],
+    ['vitals', '💓 Vitals'], ['kob', '🩺 KOB'], ['bayaran', '💳 Bayaran'], ['laporan', '🧾 Laporan'],
+    ['rujukan', '🔀 Rujukan'], ['kyc', '🆔 Pendaftaran'], ['nota', '📝 Nota'], ['bekalan', '📦 Bekalan'],
+  ];
+  document.getElementById('progress-toc-bar').innerHTML = toc.map(([id, lbl]) =>
+    `<a href="#prog-sec-${id}" class="toc-chip">${lbl}</a>`).join('');
+
+  renderProgressCheckinChart(d.checkins);
+}
+
+function renderProgressCheckinChart(checkins) {
+  const el = document.getElementById('progress-checkin-chart');
+  if (!el || !checkins.length) return;
+  if (progressChart) { progressChart.destroy(); progressChart = null; }
+  const rows = [...checkins].sort((a, b) => a.checkin_date < b.checkin_date ? -1 : 1);
+  const labels = rows.map(r => new Date(r.checkin_date).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short' }));
+  const mk = (label, key, color) => ({
+    label, data: rows.map(r => r[key] ?? null), borderColor: color, backgroundColor: color,
+    borderWidth: 2, pointRadius: 3, pointHoverRadius: 5, tension: .3, spanGaps: true,
+  });
+  progressChart = new Chart(el, {
+    type: 'line',
+    data: { labels, datasets: [
+      mk('Mood', 'mood_score', PROGRESS_CHART_COLORS.mood),
+      mk('Tenaga', 'energy_score', PROGRESS_CHART_COLORS.tenaga),
+      mk('Tidur', 'sleep_quality', PROGRESS_CHART_COLORS.tidur),
+    ]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } },
+      scales: {
+        y: { min: 0, max: 10, ticks: { stepSize: 2, font: { size: 10 }, color: '#3c4f5c80' }, grid: { color: '#f1f5f9' } },
+        x: { ticks: { font: { size: 9 }, color: '#3c4f5c80', maxTicksLimit: 12 }, grid: { display: false } },
+      },
+    },
+  });
 }
 
 // ── OVERVIEW ──────────────────────────────────────────
@@ -3363,6 +3681,15 @@ function renderProfile() {
   setText('profile-hero-name', name);
   const idEl = document.getElementById('profile-hero-id');
   if (idEl) idEl.textContent = `ID PESAKIT: ${patient.mrn || '—'}`;
+  const refEl = document.getElementById('profile-hero-refcode');
+  if (refEl) {
+    if (patient.referral_code) {
+      refEl.textContent = `KOD RUJUKAN: ${patient.referral_code}`;
+      refEl.classList.remove('hidden');
+    } else {
+      refEl.classList.add('hidden');
+    }
+  }
   setText('profile-hero-email', email);
   setText('profile-hero-phone', phone);
   setText('profile-hero-ic', patient.ic_number || kyc?.ic_number || '—');

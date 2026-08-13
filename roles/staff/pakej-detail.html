@@ -879,45 +879,48 @@ async function duplicatePackage() {
   } catch(e) { banner('Ralat: ' + e.message, 'error'); }
 }
 
-// ── Bayaran (Ansuran) — konfigurasi pakej + pratonton jadual + senarai
-// pesakit yang sedang dalam pelan ansuran untuk pakej ini ──
-function computeInstallmentSchedule(price, count, durationWeeks, startDate) {
-  const intervalWeeks = Math.max(1, Math.floor((durationWeeks || 12) / count));
-  const per = Math.floor((price / count) * 100) / 100;
-  const rows = [];
-  let sum = 0;
-  for (let i = 1; i <= count; i++) {
-    const isLast = i === count;
-    const amount = isLast ? Math.round((price - sum) * 100) / 100 : per;
-    sum += amount;
+// ── Bayaran (Ansuran) — konfigurasi pakej (deposit + checkpoint kumulatif)
+// + pratonton jadual + senarai pesakit yang sedang dalam pelan ansuran ──
+function resolveInstallmentCheckpoints(checkpoints, price, startDate) {
+  return (checkpoints || []).map(cp => {
     const due = new Date(startDate);
-    due.setDate(due.getDate() + (i - 1) * intervalWeeks * 7);
-    rows.push({ seq: i, amount, due_date: due.toISOString().slice(0, 10) });
-  }
-  return rows;
+    due.setMonth(due.getMonth() + Number(cp.month_offset || 0));
+    return {
+      month_offset: cp.month_offset,
+      target_cumulative: cp.target_cumulative == null ? price : Number(cp.target_cumulative),
+      due_date: due.toISOString().slice(0, 10),
+    };
+  });
 }
 
 async function renderPayment() {
   const cfgEl = document.getElementById('payment-config-card');
-  const allowed = !!pkg.installment_allowed && !!pkg.installment_count;
+  const checkpoints = Array.isArray(pkg.installment_checkpoints) ? pkg.installment_checkpoints : [];
+  const allowed = !!pkg.installment_allowed && !!pkg.installment_deposit_amount && checkpoints.length > 0;
   cfgEl.innerHTML = allowed
     ? `<div class="flex items-center justify-between flex-wrap gap-2">
-        <div class="text-sm"><span class="font-semibold text-green-dark">✅ Ansuran dibenarkan</span> — ${pkg.installment_count}x bayaran</div>
-        <a href="pakej-edit.html?id=${pkg.id}" class="text-xs font-semibold text-navy hover:underline">✏️ Tukar tetapan →</a>
+        <div class="text-sm"><span class="font-semibold text-green-dark">✅ Ansuran dibenarkan</span> — deposit ${fmtRM(pkg.installment_deposit_amount)}, ${checkpoints.length} checkpoint</div>
+        <a href="pakej-edit.html?id=${pkg.id}&tab=bayaran" class="text-xs font-semibold text-navy hover:underline">✏️ Tukar tetapan →</a>
       </div>`
     : `<div class="flex items-center justify-between flex-wrap gap-2">
         <div class="text-sm text-ink/50">🚫 Ansuran tidak dibenarkan untuk pakej ini — pesakit mesti bayar penuh</div>
-        <a href="pakej-edit.html?id=${pkg.id}" class="text-xs font-semibold text-navy hover:underline">✏️ Benarkan ansuran →</a>
+        <a href="pakej-edit.html?id=${pkg.id}&tab=bayaran" class="text-xs font-semibold text-navy hover:underline">✏️ Benarkan ansuran →</a>
       </div>`;
 
   const previewEl = document.getElementById('payment-schedule-preview');
   if (allowed) {
-    const schedule = computeInstallmentSchedule(Number(pkg.price || 0), pkg.installment_count, pkg.duration_weeks, new Date());
-    document.getElementById('payment-schedule-body').innerHTML = schedule.map(r => `
+    const resolved = resolveInstallmentCheckpoints(checkpoints, Number(pkg.price || 0), new Date());
+    const rows = [`
       <div class="flex justify-between py-0.5">
-        <span>Ansuran ${r.seq}${r.seq === 1 ? ' (deposit)' : ''}</span>
-        <span class="font-semibold">${fmtRM(r.amount)} · +${(r.seq - 1) * Math.max(1, Math.floor((pkg.duration_weeks || 12) / pkg.installment_count))} minggu</span>
-      </div>`).join('');
+        <span>Deposit (semasa aktifkan)</span>
+        <span class="font-semibold">${fmtRM(pkg.installment_deposit_amount)}</span>
+      </div>`,
+      ...resolved.map(r => `
+      <div class="flex justify-between py-0.5">
+        <span>Bulan ${r.month_offset} — jumlah terkumpul wajib</span>
+        <span class="font-semibold">${fmtRM(r.target_cumulative)}</span>
+      </div>`)];
+    document.getElementById('payment-schedule-body').innerHTML = rows.join('');
     previewEl.classList.remove('hidden');
   } else {
     previewEl.classList.add('hidden');
@@ -936,33 +939,42 @@ async function renderPayment() {
   }
   empty.classList.add('hidden');
 
-  const { data: installments } = await window.db.from('psy_kob_installments')
-    .select('kob_session_id, patient_id, seq, amount, due_date, status, psy_patients(full_name)')
-    .in('kob_session_id', sessionIds).order('seq');
+  const [{ data: cpRows }, { data: paymentRows }] = await Promise.all([
+    window.db.from('psy_kob_installment_checkpoints')
+      .select('kob_session_id, patient_id, seq, month_offset, target_cumulative, due_date, status, psy_patients(full_name)')
+      .in('kob_session_id', sessionIds).order('seq'),
+    window.db.from('psy_payments').select('total, intent')
+      .eq('status', 'completed').in('intent->>kob_session_id', sessionIds),
+  ]);
+
+  const paidBySession = {};
+  (paymentRows || []).forEach(p => {
+    const sid = p.intent?.kob_session_id;
+    if (sid) paidBySession[sid] = (paidBySession[sid] || 0) + Number(p.total || 0);
+  });
 
   const bySession = {};
-  (installments || []).forEach(r => {
-    (bySession[r.kob_session_id] ||= []).push(r);
-  });
+  (cpRows || []).forEach(r => { (bySession[r.kob_session_id] ||= []).push(r); });
 
   const statusMap = {
     pending: { lbl: 'Belum due', cls: 'bg-ink/8 text-ink/55' },
     overdue: { lbl: '⚠️ Tertunggak', cls: 'bg-red-100 text-red-700' },
-    paid:    { lbl: '✅ Selesai', cls: 'bg-green-100 text-green-700' },
+    met:     { lbl: '✅ Selesai', cls: 'bg-green-100 text-green-700' },
   };
 
-  const rows = Object.values(bySession).map(rows => {
+  const rows = Object.entries(bySession).map(([sessionId, rows]) => {
     const total = rows.length;
-    const paidCount = rows.filter(r => r.status === 'paid').length;
-    const next = rows.find(r => r.status !== 'paid');
+    const metCount = rows.filter(r => r.status === 'met').length;
+    const next = rows.find(r => r.status !== 'met');
     const patientName = rows[0]?.psy_patients?.full_name || '—';
-    const overallStatus = !next ? 'paid' : (rows.some(r => r.status === 'overdue') ? 'overdue' : 'pending');
+    const totalPaid = paidBySession[sessionId] || 0;
+    const overallStatus = !next ? 'met' : (rows.some(r => r.status === 'overdue') ? 'overdue' : 'pending');
     const sm = statusMap[overallStatus];
     return `
       <tr>
         <td class="px-4 py-3 font-medium">${escHtml(patientName)}</td>
-        <td class="px-3 py-3">${paidCount}/${total}</td>
-        <td class="px-3 py-3">${next ? `${fmtRM(next.amount)} · ${fmtDate(next.due_date)}` : '—'}</td>
+        <td class="px-3 py-3">${metCount}/${total} checkpoint · ${fmtRM(totalPaid)} terkumpul</td>
+        <td class="px-3 py-3">${next ? `${fmtRM(next.target_cumulative)} menjelang ${fmtDate(next.due_date)}` : '—'}</td>
         <td class="px-3 py-3"><span class="inline-block px-2 py-0.5 rounded-full ${sm.cls} text-[11px] font-semibold">${sm.lbl}</span></td>
       </tr>`;
   }).join('');

@@ -10,8 +10,9 @@
 //   5) automations         — psy_automations (trigger 'schedule')
 //   6) session_confirm     — Pengesahan Sesi (dua-hala): peringatan sahkan
 //      kehadiran/tukar tarikh + escalation coach bila belum sahkan ≤ deadline
-//   9) installment_overdue — ansuran pakej (psy_kob_installments) lepas due_date
-//      → tandakan overdue, sekat tempahan sesi baru pesakit, WA sekali
+//   9) installment_overdue — checkpoint ansuran (psy_kob_installment_checkpoints):
+//      jumlah terkumpul tak cecah target menjelang due_date → tandakan overdue,
+//      sekat tempahan sesi baru pesakit, WA sekali
 // Konfig semua dari psy_auto_messages (boleh ubah di UI).
 // Secrets: GHL_ISW_TOKEN, GHL_ISW_LOCATION_ID, CRON_SECRET
 // ============================================================
@@ -735,22 +736,40 @@ async function runDnaSampleReminder(supabase, locationId) {
   return res
 }
 
-// ───────── 9) Ansuran Pakej Tertunggak — tandakan overdue + sekat tempahan ─────────
-// psy_kob_installments status='pending' & due_date lepas hari ini (waktu MY) →
-// tandakan 'overdue', sekat tempahan sesi baru pesakit (psy_patients.booking_blocked)
-// & hantar WA sekali (baris hanya diproses SEKALI sebab status terus bertukar
-// daripada 'pending' — tiada keperluan dedup send_at_time/last_broadcast_at).
+// ───────── 9) Ansuran Pakej Tertunggak — semak kumulatif vs checkpoint ─────────
+// psy_kob_installment_checkpoints status='pending' & due_date lepas hari ini
+// (waktu MY) → banding jumlah TERKUMPUL psy_payments (kob_session_id) vs
+// target_cumulative. Cecah → 'met' (safety-net, sepatutnya dah met masa
+// bayaran direkod). Tak cecah → 'overdue', sekat tempahan sesi baru pesakit
+// (psy_patients.booking_blocked) & hantar WA sekali.
 async function runInstallmentOverdueCheck(supabase, locationId) {
   const cfg = (await supabase.from('psy_auto_messages').select('*').eq('key', 'installment_overdue').maybeSingle()).data
   const myToday = new Date(Date.now() + MY_OFFSET_MS).toISOString().slice(0, 10)
-  const { data: rows } = await supabase.from('psy_kob_installments')
-    .select('id, seq, amount, due_date, patient_id, psy_patients(full_name, phone, emergency_contact_phone, emergency_contact_name, contact_preference, booking_blocked)')
+  const { data: rows } = await supabase.from('psy_kob_installment_checkpoints')
+    .select('id, month_offset, target_cumulative, due_date, kob_session_id, patient_id, psy_patients(full_name, phone, emergency_contact_phone, emergency_contact_name, contact_preference, booking_blocked)')
     .eq('status', 'pending').lt('due_date', myToday).limit(500)
-  const res = { flagged: 0, blocked: 0, sent: 0, errors: [] }
+  const res = { checked: 0, met: 0, flagged: 0, blocked: 0, sent: 0, errors: [] }
   if (!rows?.length) return res
 
+  const cumCache = {}
+  async function cumulativePaid(kobSessionId) {
+    if (cumCache[kobSessionId] != null) return cumCache[kobSessionId]
+    const { data } = await supabase.from('psy_payments').select('total')
+      .eq('status', 'completed').eq('intent->>kob_session_id', kobSessionId)
+    const sum = (data || []).reduce((s, p) => s + Number(p.total || 0), 0)
+    cumCache[kobSessionId] = sum
+    return sum
+  }
+
   for (const row of rows) {
-    await supabase.from('psy_kob_installments').update({ status: 'overdue' }).eq('id', row.id)
+    res.checked++
+    const paid = await cumulativePaid(row.kob_session_id)
+    if (paid >= Number(row.target_cumulative)) {
+      await supabase.from('psy_kob_installment_checkpoints').update({ status: 'met', met_at: new Date().toISOString() }).eq('id', row.id)
+      res.met++
+      continue
+    }
+    await supabase.from('psy_kob_installment_checkpoints').update({ status: 'overdue' }).eq('id', row.id)
     res.flagged++
     const p = row.psy_patients || {}
     if (!p.booking_blocked) {
@@ -769,7 +788,8 @@ async function runInstallmentOverdueCheck(supabase, locationId) {
       const cid = await upsertContact(locationId, phone, contactName)
       if (!cid) throw new Error('no contactId')
       const msg = fillTemplate(cfg.message_template, {
-        nama: p.full_name || '', seq: String(row.seq), jumlah: Number(row.amount).toFixed(2),
+        nama: p.full_name || '', bulan: String(row.month_offset), jumlah: Number(row.target_cumulative).toFixed(2),
+        baki: Math.max(0, Number(row.target_cumulative) - paid).toFixed(2),
         tarikh_due: fmtSessDate(row.due_date), nama_klinik: ISW_CLINIC.name,
       })
       await sendWA(cid, msg)
