@@ -60,7 +60,10 @@
             <div class="text-right">
               <div class="text-xs text-ink/50">SLOT KOB</div>
               <div id="kob-datetime" class="font-bold mt-1">—</div>
-              <div id="kob-mode" class="text-xs text-ink/60">—</div>
+              <div class="flex items-center justify-end gap-2">
+                <div id="kob-mode" class="text-xs text-ink/60">—</div>
+                <button id="btn-toggle-mode" onclick="toggleKobMode()" data-rbac="kob.edit" class="hidden text-[11px] text-navy font-semibold hover:underline">Tukar</button>
+              </div>
             </div>
             <div>
               <div class="text-xs text-ink/50">STATUS</div>
@@ -566,6 +569,9 @@ async function render() {
   document.getElementById('kob-datetime').textContent =
     `${dt.toLocaleDateString('ms-MY', { weekday:'long', day:'2-digit', month:'short', year:'numeric' })} · ${dt.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}`;
   document.getElementById('kob-mode').textContent = kob.mode === 'online' ? '💻 Online' : '🏥 F2F';
+  const toggleBtn = document.getElementById('btn-toggle-mode');
+  if (kob.status === 'booked' || kob.status === 'reschedule') toggleBtn.classList.remove('hidden');
+  else toggleBtn.classList.add('hidden');
   const st = STATUS_LABEL[kob.status] || STATUS_LABEL.booked;
   document.getElementById('status-chip').innerHTML = `<span class="chip ${st.cls}">${st.label}</span>`;
 
@@ -1978,6 +1984,30 @@ async function saveRecommendation() {
     banner('Ralat: ' + e.message, 'error');
     btn.disabled = false; btn.textContent = 'Sahkan Cadangan';
   }
+}
+
+async function toggleKobMode() {
+  const newMode = kob.mode === 'online' ? 'f2f' : 'online';
+  const label = newMode === 'online' ? 'Online' : 'F2F';
+  if (!confirm(`Tukar mod sesi KOB kepada ${label}?`)) return;
+
+  const updates = { mode: newMode, updated_at: new Date().toISOString() };
+  if (newMode === 'online' && !kob.meet_link) {
+    updates.meet_link = `https://meet.jit.si/ISW-KOB-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+  }
+
+  const btn = document.getElementById('btn-toggle-mode');
+  btn.disabled = true;
+  try {
+    const { error } = await window.db.from('psy_kob_sessions').update(updates).eq('id', kobId);
+    if (error) throw error;
+    Object.assign(kob, updates);
+    await auditLog('kob.mode_changed', kobId, { mode: newMode });
+    banner(`Mod ditukar kepada ${label} ✅`);
+    render();
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+  } finally { btn.disabled = false; }
 }
 
 async function saveMeetLink() {

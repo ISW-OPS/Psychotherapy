@@ -287,6 +287,7 @@ function openNewChat(contact) {
   if (activeConv.patient_id) { link.href = `patient-hub.html?id=${activeConv.patient_id}`; link.classList.remove('hidden'); } else link.classList.add('hidden');
   currentMessages = []; msgCursor = null; msgHasMore = false;
   pendingAttachment = null; renderAttachPreview();
+  pendingReplyId = null; renderReplyPreview();
   document.getElementById('msg-list').innerHTML = '<div class="text-center text-xs text-ink/40 py-8">Perbualan baru — taip mesej untuk mula WhatsApp dengan pesakit ini.</div>';
   loadPatientPanel();
   document.getElementById('msg-input')?.focus();
@@ -537,6 +538,7 @@ async function openChat(convId) {
   activeConv = allConvos.find(c => c.ghl_conversation_id === convId);
   if (!activeConv) return;
   pendingAttachment = null; renderAttachPreview();
+  pendingReplyId = null; renderReplyPreview();
   renderList();
   document.getElementById('chat-empty').classList.add('hidden');
   document.getElementById('chat-active').classList.remove('hidden');
@@ -860,12 +862,15 @@ async function sendMsg() {
   const btn = document.getElementById('send-btn');
   btn.disabled = true;
   try {
+    const replyMsg = pendingReplyId ? currentMessages.find(x => x.ghl_message_id === pendingReplyId) : null;
+    const outText = replyMsg ? `${QUOTE_OPEN}${quoteSnippet(replyMsg)}${QUOTE_CLOSE}\n${text}` : text;
     const atts = pendingAttachment ? [pendingAttachment.url] : undefined;
     const existingId = (activeConv.ghl_conversation_id && activeConv.ghl_conversation_id !== '__new__') ? activeConv.ghl_conversation_id : undefined;
-    const res = await invoke('send', { contactId: activeConv.ghl_contact_id, conversationId: existingId, message: text, attachments: atts });
+    const res = await invoke('send', { contactId: activeConv.ghl_contact_id, conversationId: existingId, message: outText, attachments: atts });
     input.value = '';
     input.style.height = 'auto';
     pendingAttachment = null; renderAttachPreview();
+    pendingReplyId = null; renderReplyPreview();
     const cid = res?.conversationId || existingId || null;
     if (cid) {
       activeConv.ghl_conversation_id = cid;
