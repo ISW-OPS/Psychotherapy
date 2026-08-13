@@ -68,10 +68,7 @@ const ISW_STATUS_FIELD_ID   = 'TujlPbLGNn82yJpdr4Ff'  // contact.status — "SU 
 const IC_NUMBER_FIELD_ID    = 'vXw0rgtYQEvfxoMY2AjV'  // contact.no_ic
 const HOME_ADDRESS_FIELD_ID = 'l2TcgLHVMKISHgf6R7ps'  // contact.alamat_rumah
 const WARIS_FIELD_ID        = 'f1zSoMogQ9zW7xPmKYg3'  // contact.nama_penuh_waris__pesakit (teks bebas gabungan)
-// Belum wujud di GHL (13 Ogos 2026) — cipta dulu (dropdown "F2F"/"Online"),
-// salin id dari hasil create_custom_field/list_custom_fields, isi di sini.
-// Selagi kosong, mode kekal default 'f2f' (lihat resolveKobMode()).
-const KOB_MODE_FIELD_ID      = ''  // contact — cth "Mod Sesi KOB"
+const KOB_MODE_FIELD_ID      = 'n6SUABcfNkUXbmkAnrEW'  // contact.mod_sesi_kob — dropdown "F2F"/"Online" (dicipta 13 Ogos 2026)
 
 function getCustomFieldById(customFields: any[], fieldId: string): string {
   if (!Array.isArray(customFields)) return ''

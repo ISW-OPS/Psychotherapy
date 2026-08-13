@@ -63,6 +63,7 @@ Cari field berdasarkan `name`/`fieldKey`, salin `id`.)
 | `IC_NUMBER_FIELD_ID` | `vXw0rgtYQEvfxoMY2AjV` | `contact.no_ic` | NO IC | `ic_number` |
 | `HOME_ADDRESS_FIELD_ID` | `l2TcgLHVMKISHgf6R7ps` | `contact.alamat_rumah` | ALAMAT RUMAH | `address` (fallback `c.address1` kalau custom field kosong) |
 | `WARIS_FIELD_ID` | `f1zSoMogQ9zW7xPmKYg3` | `contact.nama_penuh_waris__pesakit` | NAMA PENUH, NO. WARIS & EMAIL WARIS / PESAKIT | `emergency_contact_name` (teks bebas gabungan — TAK dipisah ke name/phone/email berasingan) |
+| `KOB_MODE_FIELD_ID` | `n6SUABcfNkUXbmkAnrEW` | `contact.mod_sesi_kob` | Mod Sesi KOB (dropdown F2F/Online) | `psy_kob_sessions.mode` (default `f2f` kalau kosong — lihat §Nota) |
 | — (`GET /contacts/:id/appointments`) | — | — | (appointment terkini) | `psy_kob_sessions.scheduled_at` |
 | — (`GET /payments/orders`) | — | — | (order paid/completed) | `psy_payments.total`+`ghl_transaction_id` |
 
@@ -211,27 +212,15 @@ minit dengan header `x-cron-secret`.
   bayaran ikut `ghl_transaction_id`) guna semula `_shared/ghl-sync.ts`
   — sama logik dgn `ghl-booking-webhook`/`ghl-initial-sync`, tiada
   duplikasi/drift.
-- Appointment `mode` — kalau `KOB_MODE_FIELD_ID` (index.ts) kosong,
-  sentiasa default `f2f`. Bila field GHL dicipta & ID diisi,
-  `resolveKobMode()` baca custom field tu (nilai "Online" case-insensitive
-  → online, apa-apa lain → f2f). Staff tetap boleh betulkan manual di
-  butang "Tukar" dalam `kob-detail.html` kalau data GHL tersasar/kosong.
-
-### Setup field mod Online/F2F (belum dicipta, 13 Ogos 2026)
-
-Field custom GHL untuk mod belum wujud. Cipta sekali (dropdown, elak
-typo closer):
-
-```bash
-curl -s -X POST ".../functions/v1/ghl-pull-sync" \
-  -H "x-cron-secret: <GHL_PULL_CRON_SECRET>" -H "Content-Type: application/json" \
-  -d '{"debug":true,"action":"create_custom_field","name":"Mod Sesi KOB","dataType":"SINGLE_OPTIONS","options":["F2F","Online"],"model":"contact"}'
-```
-
-Salin `id` dari respons (atau panggil `list_custom_fields` semula),
-isi ke konstan `KOB_MODE_FIELD_ID` dalam `index.ts`, redeploy. Closer
-pilih "Online"/"F2F" pada contact semasa book KOB — run seterusnya
-`ghl-pull-sync` baca terus, tak perlu staff ISW toggle manual lagi
-(kecuali nak override).
+- Appointment `mode` — field custom GHL **"Mod Sesi KOB"**
+  (`contact.mod_sesi_kob`, id `n6SUABcfNkUXbmkAnrEW`, dropdown
+  "F2F"/"Online", dicipta 13 Ogos 2026) diisi ke `KOB_MODE_FIELD_ID`
+  (index.ts) & DAH DIDEPLOY testing. `resolveKobMode()` baca field ni
+  (nilai "Online" case-insensitive → online, apa-apa lain/kosong →
+  f2f). **Closer perlu pilih "Online"/"F2F" pada contact di GHL semasa
+  book KOB** — kalau field tu tak diisi, sync akan default f2f. Staff
+  ISW tetap boleh betulkan manual di radio F2F/Online dalam
+  `kob-detail.html` kalau data GHL tersasar/kosong (contact lama sebelum
+  field ni wujud, atau closer terlupa isi).
 - Log ringkasan setiap run ke `psy_audit_log`
   (`action='ghl_pull_sync.run'`) — semak di situ untuk jejak/debug.
