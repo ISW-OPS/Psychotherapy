@@ -141,6 +141,18 @@ CREATE TABLE IF NOT EXISTS psy_kob_agreements (
 
 CREATE INDEX IF NOT EXISTS idx_kob_agreements_patient ON psy_kob_agreements(patient_id);
 
+-- ──── psy_kob_agreements — Nama/IC tulisan tangan + Waris/Penjamin ────
+-- patient_name/patient_ic (teks, auto-resolve dari profil) KEKAL tak berubah —
+-- lajur ni cuma imej tulisan-tangan TAMBAHAN, dibenamkan dalam PDF sebagai bukti
+-- pesakit tulis sendiri (bukan ganti medan teks sedia ada). Waris/Penjamin
+-- (nama+IC+tandatangan) wajib diisi di UI (validasi client-side), tapi nullable
+-- di DB supaya rekod lama sedia-ada tak terjejas.
+ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS patient_name_image_url TEXT;
+ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS patient_ic_image_url TEXT;
+ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS guardian_name_image_url TEXT;
+ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS guardian_ic_image_url TEXT;
+ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS guardian_signature_url TEXT;
+
 ALTER TABLE psy_kob_agreements ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Patient read own agreement" ON psy_kob_agreements;
@@ -171,6 +183,10 @@ CREATE POLICY "Staff insert agreement on behalf of patient" ON psy_kob_agreement
 
 DROP POLICY IF EXISTS "Staff update agreement" ON psy_kob_agreements;
 CREATE POLICY "Staff update agreement" ON psy_kob_agreements FOR UPDATE
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff delete agreement" ON psy_kob_agreements;
+CREATE POLICY "Staff delete agreement" ON psy_kob_agreements FOR DELETE
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
 -- ──── psy_kob_slot_config ────

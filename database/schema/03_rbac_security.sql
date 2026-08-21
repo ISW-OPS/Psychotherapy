@@ -364,6 +364,7 @@ INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
   -- Portal pesakit
   ('pat_announcements','Pengumuman',           '📢', 'patient', 12),
   ('pat_events',       'Acara & Kelas',        '📅', 'patient', 15),
+  ('pat_payment',      'Pembayaran',           '💳', 'patient', 90),
   ('pat_sejarah',      'Sejarah Pembayaran',   '🧾', 'patient', 95)
 ON CONFLICT (code) DO UPDATE SET
   label = EXCLUDED.label,
@@ -477,5 +478,6 @@ ON CONFLICT DO NOTHING;
 INSERT INTO psy_role_module_actions (role_code, module_code, action_code) VALUES
   ('patient', 'pat_announcements', 'view'),
   ('patient', 'pat_events',        'view'),
+  ('patient', 'pat_payment',       'view'),
   ('patient', 'pat_sejarah',       'view')
 ON CONFLICT DO NOTHING;

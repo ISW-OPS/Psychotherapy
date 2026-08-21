@@ -35,6 +35,9 @@
         <!-- Onboarding banners (KOB / KYC / no package / extension) -->
         <div id="banner-zone" class="space-y-2 empty:hidden"></div>
 
+        <!-- Jadual Ansuran Saya (ringkas — jadual penuh di payment.html) -->
+        <div id="installment-zone" class="empty:hidden"></div>
+
         <!-- Greeting + date/time pills -->
         <div class="flex items-center justify-between gap-3 flex-wrap flex-shrink-0">
           <div>
@@ -616,7 +619,26 @@ async function loadBanners(user) {
       title:'Tahniah! Rawatan Anda Telah Tamat',
       body:'Sila kongsi maklum balas anda untuk membantu pesakit lain.',
       cta:'Bagi Feedback →', ctaUrl:'feedback.html', ctaColor:'text-green-dark' }));
-  } else if ((kobStatus === 'completed' || kobStatus === 'na') && window.kycApproved && !hasActivePkg) {
+  } else if (kobStatus === 'completed' && window.kycApproved && !hasActivePkg) {
+    // Pesakit ada cadangan pakej dari KOB yang di-declined masa tu — tawaran Harga
+    // Sekarang (Now) masih terbuka, arah ke kob.html (bukan katalog umum) supaya
+    // pesakit terus nampak pakej SPESIFIK yang dicadangkan + boleh pilih Full/Ansuran.
+    const kobRows = await dbQuery('psy_kob_sessions', {
+      eq: { patient_id: patientRecord.id }, order: { col: 'scheduled_at', ascending: false }, limit: 1,
+    }).catch(() => []);
+    const lastKob = kobRows?.[0];
+    if (lastKob?.package_payment_status === 'declined' && lastKob?.recommended_package_id) {
+      zone.insertAdjacentHTML('beforeend', bannerHtml({ id:'b-nopkg', grad:'from-terracotta to-terracotta/80', icon:'📦',
+        title:'Teruskan Pembelian Pakej',
+        body:`Pakej "${lastKob.recommended_package_name || ''}" pernah dicadangkan — sambung beli bila-bila masa.`,
+        cta:'Teruskan Pembelian →', ctaUrl:'kob.html', ctaColor:'text-terracotta' }));
+    } else {
+      zone.insertAdjacentHTML('beforeend', bannerHtml({ id:'b-nopkg', grad:'from-terracotta to-terracotta/80', icon:'📦',
+        title:'Pilih Pakej Rawatan',
+        body:'Aktifkan pakej untuk akses penuh ke Treatment Plan, Coaching, dan Library.',
+        cta:'Pilih Pakej →', ctaUrl:'pakej.html', ctaColor:'text-terracotta' }));
+    }
+  } else if (kobStatus === 'na' && window.kycApproved && !hasActivePkg) {
     zone.insertAdjacentHTML('beforeend', bannerHtml({ id:'b-nopkg', grad:'from-terracotta to-terracotta/80', icon:'📦',
       title:'Pilih Pakej Rawatan',
       body:'Aktifkan pakej untuk akses penuh ke Treatment Plan, Coaching, dan Library.',
@@ -659,6 +681,93 @@ async function loadBanners(user) {
         cta:'Jadual Semula →', ctaUrl:`plan.html?reschedule=${first.week_number}.${first.session_day || 1}`, ctaColor:'text-terracotta' }));
     }
   } catch (_) {}
+}
+
+// Kad ringkas "Jadual Ansuran Saya" — status komitmen + baki + checkpoint seterusnya.
+// Jadual PENUH (semua checkpoint) di payment.html — sini cuma ringkasan supaya tak
+// keluar dua kali data sama pada satu skrin.
+async function renderInstallmentZone() {
+  const zone = document.getElementById('installment-zone');
+  if (!zone || !patientRecord) return;
+  const { data: kobSessions } = await window.db.from('psy_kob_sessions')
+    .select('id, recommended_package_name, recommended_package_price')
+    .eq('patient_id', patientRecord.id).eq('package_payment_mode', 'installment')
+    .order('created_at', { ascending: false }).limit(1);
+  const kobSession = kobSessions?.[0];
+  if (!kobSession) { zone.innerHTML = ''; return; }
+
+  const [{ data: cps }, { data: paidRows }] = await Promise.all([
+    window.db.from('psy_kob_installment_checkpoints').select('seq, target_cumulative, due_date, status')
+      .eq('kob_session_id', kobSession.id).order('seq', { ascending: true }),
+    window.db.from('psy_payments').select('total')
+      .eq('status', 'completed').eq('intent->>kob_session_id', kobSession.id),
+  ]);
+  if (!cps?.length) { zone.innerHTML = ''; return; }
+
+  const totalPaid = (paidRows || []).reduce((s, p) => s + Number(p.total || 0), 0);
+  const commitment = Number(cps[cps.length - 1].target_cumulative);
+  const remaining = Math.max(0, commitment - totalPaid);
+  // Checkpoint seterusnya diagak dari jumlah terkumpul sebenar (bukan status='met',
+  // sbb boleh lag menunggu cron) — amaun dipapar = jumlah TETAP perlu dibayar utk
+  // checkpoint ni sahaja (bukan cumulative), sepadan dgn amaun yg dikuatkuasakan di
+  // payment.html/payments-initiate.
+  const nextCp = cps.find(c => Number(c.target_cumulative) > totalPaid + 0.005);
+  const nextDue = nextCp ? Math.max(0, Number(nextCp.target_cumulative) - totalPaid) : 0;
+  const hasOverdue = cps.some(c => c.status === 'overdue');
+  const paidCount = cps.filter(c => Number(c.target_cumulative) <= totalPaid + 0.005).length;
+  const totalCount = cps.length;
+  const money = n => 'RM ' + Number(n || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // Kad "Ansuran Seterusnya" cuma muncul 3 hari sebelum tarikh due (atau terus kalau
+  // dah tertunggak) — elak nag awal-awal sedangkan tarikh masih jauh.
+  if (nextCp && !hasOverdue) {
+    const daysUntilDue = Math.ceil((new Date(nextCp.due_date) - new Date(new Date().toDateString())) / 86400000);
+    if (daysUntilDue > 3) { zone.innerHTML = ''; return; }
+  }
+
+  // Titik progres — hijau penuh = dah dibayar, cincin navy = ansuran seterusnya, kosong = akan datang.
+  const dots = cps.map((c, i) => {
+    const paid = Number(c.target_cumulative) <= totalPaid + 0.005;
+    const isNext = !paid && c === nextCp;
+    return `<div class="flex-1 h-1.5 rounded-full ${paid ? 'bg-white' : isNext ? 'bg-white/60' : 'bg-white/20'}"></div>`;
+  }).join('');
+
+  if (!nextCp) {
+    zone.innerHTML = `
+      <div class="rounded-2xl bg-white border border-green/25 shadow-sm p-4 flex items-center justify-between flex-wrap gap-2">
+        <div class="flex items-center gap-2">
+          <span class="text-xl">✅</span>
+          <div>
+            <div class="font-bold text-sm text-ink">Ansuran Selesai Dibayar</div>
+            <div class="text-xs text-ink/50">${escapeHtml(kobSession.recommended_package_name || '')} · ${money(commitment)}</div>
+          </div>
+        </div>
+        <a href="sejarah-pembayaran.html" class="text-xs font-semibold text-navy hover:underline">Lihat Sejarah →</a>
+      </div>`;
+    return;
+  }
+
+  zone.innerHTML = `
+    <div class="rounded-2xl overflow-hidden shadow-lg ${hasOverdue ? 'shadow-terracotta/20 bg-gradient-to-r from-terracotta to-terracotta/80' : 'shadow-navy/20 bg-gradient-to-r from-navy to-navy-dark'} text-white p-4 md:p-5">
+      <div class="flex items-center justify-between gap-2 flex-wrap">
+        <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-white/70">
+          <span>${hasOverdue ? '⚠️' : '💳'}</span> ${hasOverdue ? 'Ansuran Tertunggak' : 'Ansuran Seterusnya'}
+        </div>
+        <span class="text-[10px] font-bold bg-white/20 px-2 py-0.5 rounded-full">${paidCount}/${totalCount} Dibayar</span>
+      </div>
+      <div class="text-xs text-white/70 mt-1">${escapeHtml(kobSession.recommended_package_name || '')}</div>
+      <div class="flex items-end justify-between flex-wrap gap-3 mt-2">
+        <div>
+          <div class="text-2xl md:text-3xl font-extrabold leading-tight">${money(nextDue)}</div>
+          <div class="text-xs text-white/70 mt-0.5">${nextCp.seq === 0 ? 'Deposit' : 'Ansuran ' + nextCp.seq} · Menjelang ${new Date(nextCp.due_date).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
+        </div>
+        <a href="payment.html" class="inline-flex items-center gap-2 bg-white ${hasOverdue ? 'text-terracotta' : 'text-navy'} font-bold text-xs px-4 py-2.5 rounded-xl shadow hover:bg-white/90 transition whitespace-nowrap">
+          Bayar Sekarang <span>→</span>
+        </a>
+      </div>
+      <div class="flex items-center gap-1 mt-3">${dots}</div>
+      ${hasOverdue ? `<div class="text-[11px] text-white/90 bg-white/10 rounded-lg px-3 py-1.5 mt-2.5">Tempahan sesi rawatan baharu disekat sehingga bayaran diselesaikan.</div>` : ''}
+    </div>`;
 }
 
 // ── Protokol Kecemasan (bawah dashboard): zon risiko, butang kecemasan, simptom serius ──
@@ -847,6 +956,7 @@ async function emgInit() {
     document.getElementById('topbar-time').textContent = nowPill.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
 
     await loadBanners(user);
+    renderInstallmentZone();
 
     const _d = new Date();
     const today = `${_d.getFullYear()}-${String(_d.getMonth()+1).padStart(2,'0')}-${String(_d.getDate()).padStart(2,'0')}`;

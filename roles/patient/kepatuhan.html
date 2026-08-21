@@ -1319,6 +1319,13 @@
     let healthData = emptyHealth();
     const healthCache = {}; // checkin_date -> row
 
+    // ── Vitals (bacaan hari ini) — dibenamkan dalam wizard Daily Log supaya
+    // pesakit isi sekali gus (bukan halaman berasingan vitals.html). Jadual DB
+    // (psy_vitals) & medan sama seperti vitals.html, tapi upsert ikut
+    // (patient_id, reading_date, source='patient_self') — bukan multi-row/hari.
+    function emptyVitals() { return { sys: '', dia: '', hr: '', temp: '', weight: '', _existingId: null }; }
+    let vitalsData = emptyVitals();
+
     // ── Definisi Daily Check-in (ADAPTIF) ──
     // Bahagian 1: pilih 1 mood utama → soalan susulan berubah ikut mood.
     const MOOD_PRIMARY = [
@@ -2103,6 +2110,31 @@
         const { error: ckErr } = await window.db.from('psy_daily_checkins')
           .upsert(ckPayload, { onConflict: 'patient_id,checkin_date' });
         if (ckErr) console.warn('Simpan check-in gagal:', ckErr.message);
+      }
+
+      // Vitals hari ini (pilihan) — dibenamkan dari wizard, bukan halaman berasingan.
+      // psy_vitals TIADA unique constraint (patient_id, reading_date), jadi upsert manual:
+      // ada rekod patient_self utk tarikh ni → UPDATE, kalau tiada → INSERT.
+      const vSys = parseInt(vitalsData.sys) || null, vDia = parseInt(vitalsData.dia) || null;
+      const vHr = parseInt(vitalsData.hr) || null, vWt = parseFloat(vitalsData.weight) || null;
+      if (vSys || vDia || vHr || vWt) {
+        const vPayload = { bp_systolic: vSys, bp_diastolic: vDia, heart_rate: vHr, weight: vWt };
+        if (vitalsData._existingId) {
+          const { error: vErr } = await window.db.from('psy_vitals').update(vPayload).eq('id', vitalsData._existingId);
+          if (vErr) console.warn('Kemaskini vitals gagal:', vErr.message);
+        } else {
+          let planId = null, weekNum = null;
+          const { data: plans } = await window.db.from('psy_treatment_plans')
+            .select('id, current_week').eq('patient_id', patientRecord.id).eq('status', 'active').limit(1);
+          if (plans?.[0]) { planId = plans[0].id; weekNum = plans[0].current_week; }
+          const { data: vIns, error: vErr } = await window.db.from('psy_vitals').insert({
+            ...vPayload, reading_date: selectedDate, patient_id: patientRecord.id,
+            plan_id: planId, week_number: weekNum, source: 'patient_self',
+            recorded_by: window.currentUser.id, recorded_by_name: window.currentUser.full_name,
+          }).select('id').single();
+          if (vErr) console.warn('Simpan vitals gagal:', vErr.message);
+          else if (vIns) vitalsData._existingId = vIns.id;
+        }
       }
 
       btns.forEach(b => b.disabled = false);
@@ -3090,6 +3122,7 @@
       if (amalanItems.length) amalanItems.forEach((it, i) => screens.push({ type: 'amalan-item', it, itemNo: i + 1, phase: 0 }));
       else screens.push({ type: 'amalan-empty', phase: 0 });
       screens.push({ type: 'mood', phase: 0 });
+      screens.push({ type: 'vitals', phase: 0 });
       // Fasa 2: Reaksi Pemulihan = satu skrin per kumpulan (sumber tunggal psy_reaksi_item)
       REAKSI_GROUPS.forEach(g => screens.push({ type: 'reaksi', g, phase: 1 }));
       screens.push({ type: 'review', phase: 2 });
@@ -3313,6 +3346,32 @@
             </div>
           </div>
           <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">${cards}</div>`;
+      }
+
+      if (step.type === 'vitals') {
+        const vInput = (key, ph, unit, wide) => `<div class="${wide ? 'col-span-2' : ''}">
+          <label class="block text-[12px] font-semibold text-ink/55 mb-1.5">${ph.label}</label>
+          <div class="flex items-center gap-2">
+            <input data-wiz-vitals="${key}" type="number" inputmode="decimal" step="${ph.step || '1'}" placeholder="${ph.placeholder}"
+              value="${escAttr(vitalsData[key] ?? '')}"
+              class="w-full rounded-xl border-2 border-[#e9ecf1] px-3.5 py-2.5 text-sm font-semibold text-ink focus:outline-none focus:border-green">
+            <span class="text-[11px] text-ink/40 w-10 shrink-0">${unit}</span>
+          </div>
+        </div>`;
+        return `<div class="flex items-center gap-3.5 mb-4">
+            <div class="w-14 h-14 md:w-[72px] md:h-[72px] rounded-2xl bg-green/10 flex items-center justify-center text-3xl md:text-4xl shrink-0">💓</div>
+            <div class="min-w-0">
+              <h3 class="text-lg md:text-2xl font-bold text-green-dark">${num}. Bacaan Vitals Hari Ini</h3>
+              <p class="text-[13px] md:text-[14px] text-ink/55 mt-1">Pilihan — isi jika anda ada alat sukat di rumah. Boleh langkau jika tiada.</p>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+            ${vInput('sys', { label: 'Tekanan Darah (Sistolik)' }, 'mmHg', false)}
+            ${vInput('dia', { label: 'Tekanan Darah (Diastolik)' }, 'mmHg', false)}
+            ${vInput('hr', { label: 'Denyutan Nadi' }, 'bpm', false)}
+            ${vInput('weight', { label: 'Berat Badan', step: '0.1' }, 'kg', false)}
+          </div>
+          ${wizTipStrip('Rekod vitals membantu coach memantau kemajuan kesihatan anda dengan lebih tepat. Bacaan penuh (termasuk suhu & trend) boleh dilihat di halaman Bacaan Vitals.')}`;
       }
 
       if (step.type === 'review') {
@@ -3607,8 +3666,22 @@
       wizIdx = wizSteps.length - 1; wizRender(); window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
+    // Muat bacaan vitals SEDIA ADA (patient_self) utk tarikh terpilih, kalau ada —
+    // supaya buka semula wizard hari yg sama tak hilangkan/pertindih bacaan asal.
+    async function loadVitalsForWiz(ds) {
+      vitalsData = emptyVitals();
+      const patientId = window.patientRecord?.id;
+      if (!patientId) return;
+      const { data } = await window.db.from('psy_vitals')
+        .select('id, bp_systolic, bp_diastolic, heart_rate, weight')
+        .eq('patient_id', patientId).eq('reading_date', ds).eq('source', 'patient_self')
+        .order('created_at', { ascending: false }).limit(1);
+      const v = data?.[0];
+      if (v) vitalsData = { sys: v.bp_systolic ?? '', dia: v.bp_diastolic ?? '', hr: v.heart_rate ?? '', temp: '', weight: v.weight ?? '', _existingId: v.id };
+    }
+
     // Override pelancar & penutup (function declaration terkemudian menang)
-    function kfLaunch() {
+    async function kfLaunch() {
       if (!isEditable(selectedDate)) { banner('Hanya hari dalam minggu semasa boleh diisi', 'error'); return; }
       if (!Array.isArray(healthData.reaksi)) healthData.reaksi = [];
       // Bersihkan data lama bercampur: buang "Tiada…" jika kumpulan sama ada simptom sebenar
@@ -3617,6 +3690,7 @@
         answers.reaksi_pemulihan.forEach(v => { const g = String(v).split('::')[0], l = String(v).split('::').pop(); if (!isNoneLabel(l)) hasSym[g] = true; });
         answers.reaksi_pemulihan = answers.reaksi_pemulihan.filter(v => !(isNoneLabel(String(v).split('::').pop()) && hasSym[String(v).split('::')[0]]));
       }
+      await loadVitalsForWiz(selectedDate);
       wizSteps = buildWizSteps(); wizIdx = 0;
       document.getElementById('daily-landing').classList.add('hidden');
       const ph = document.getElementById('page-header'); if (ph) ph.classList.add('hidden');
@@ -3688,7 +3762,9 @@
     });
     document.addEventListener('input', (e) => {
       const o = e.target.closest('[data-wiz-othertext]');
-      if (o) answersText[o.dataset.wizOthertext] = o.value;
+      if (o) { answersText[o.dataset.wizOthertext] = o.value; return; }
+      const v = e.target.closest('[data-wiz-vitals]');
+      if (v) vitalsData[v.dataset.wizVitals] = v.value;
     });
   </script>
 </body>

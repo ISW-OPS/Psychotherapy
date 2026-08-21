@@ -48,12 +48,30 @@ CREATE TABLE IF NOT EXISTS psy_packages (
   -- lain-lain
   extension_price_per_week NUMERIC(10,2) DEFAULT 50,
   meet_link TEXT,
-  -- bayaran ansuran (Pelan Pelaburan Ansuran) — checkpoint kumulatif custom.
-  -- Pesakit bayar apa-apa amount bila-bila selepas deposit; wajib jumlah
-  -- TERKUMPUL cecah target tiap checkpoint (bukan slot ansuran bersaiz tetap).
+  -- bayaran ansuran — Deposit (Bayaran Pertama) + Tempoh(bulan) + Bayaran
+  -- Bulanan RATA. Pesakit boleh top-up jumlah bebas bila-bila (payment.html),
+  -- tapi jadual checkpoint (psy_kob_installment_checkpoints) dijana dari
+  -- struktur rata ni — bukan checkpoint sewenang-wenang lagi.
   installment_allowed BOOLEAN NOT NULL DEFAULT false,
   installment_deposit_amount NUMERIC(10,2),
-  installment_checkpoints JSONB DEFAULT '[]',
+  installment_duration_months INT,
+  installment_monthly_amount NUMERIC(10,2),
+  -- harga 4-tier KOB: field di atas (price/installment_*) = tier "Now" (selepas
+  -- KOB). Field bawah = tier "Today" (eksklusif semasa sesi KOB langsung) —
+  -- kosong = fallback senyap ke tier Now di semua tempat (pakej belum diset tier Today).
+  nilai_program NUMERIC(10,2),
+  harga_asal NUMERIC(10,2),
+  today_price NUMERIC(10,2),
+  today_installment_deposit_amount NUMERIC(10,2),
+  today_installment_duration_months INT,
+  today_installment_monthly_amount NUMERIC(10,2),
+  -- status paparan, nota dalaman & flag automation/access (editor pakej-edit.html)
+  status TEXT DEFAULT 'active',
+  internal_notes TEXT,
+  automation_flags JSONB DEFAULT '{}',
+  access_flags JSONB DEFAULT '{}',
+  supplies JSONB DEFAULT '[]',
+  addons JSONB DEFAULT '[]',
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -87,6 +105,12 @@ COMMENT ON COLUMN psy_packages.online_lock_from_week IS
 COMMENT ON COLUMN psy_packages.weekly_supplies IS
   'Array of {week, items: [{product_id, qty, name}]} — bekalan auto-deduct per week';
 
+COMMENT ON COLUMN psy_packages.supplies IS
+  'Array of {name, qty, ...} — senarai bekalan rawatan keseluruhan pakej (tab Lain-lain, bukan per-minggu)';
+
+COMMENT ON COLUMN psy_packages.addons IS
+  'Array of {name, ...} — senarai addon pakej (tab Lain-lain)';
+
 COMMENT ON COLUMN psy_packages.weekly_content IS
   'Array of {week, content_ids: []} — library content unlock per week';
 
@@ -118,12 +142,27 @@ COMMENT ON COLUMN psy_packages.extension_price_per_week IS
   'Harga (RM) untuk tambah satu minggu rawatan bila patient miss sesi. Default RM 50.';
 
 COMMENT ON COLUMN psy_packages.installment_deposit_amount IS
-  'Jumlah deposit wajib dibayar semasa aktifkan pakej (ansuran). Bayaran ini terus mengaktifkan pakej.';
-COMMENT ON COLUMN psy_packages.installment_checkpoints IS
-  'Array of {month_offset:int, target_cumulative:numeric|null}. month_offset = bilangan bulan dari tarikh deposit. target_cumulative = jumlah TERKUMPUL (bukan tambahan) yang wajib dicecah menjelang tarikh tu. null = baki penuh (harga pakej) — biasanya checkpoint terakhir. Cth [{"month_offset":1,"target_cumulative":30000},{"month_offset":3,"target_cumulative":45000},{"month_offset":12,"target_cumulative":null}].';
+  'Jumlah deposit ("Bayaran Pertama") wajib dibayar semasa aktifkan pakej (ansuran). Bayaran ini terus mengaktifkan pakej.';
+COMMENT ON COLUMN psy_packages.installment_duration_months IS
+  'Jumlah bayaran ansuran keseluruhan TERMASUK Bayaran Pertama (cth 8 = 1 deposit + 7 bayaran bulanan).';
+COMMENT ON COLUMN psy_packages.installment_monthly_amount IS
+  'Amaun RATA setiap bulan (bulan ke-2 hingga installment_duration_months). Jumlah Komitmen = deposit + (duration-1) × amaun ni — TAK semestinya sama dengan price (boleh lebih tinggi, kos bayar ansuran).';
 
 COMMENT ON COLUMN psy_packages.meet_link IS
   'Pautan Gmeet recurring untuk pakej. Dipaparkan kepada patient bila minggu semasa adalah online/both.';
+
+COMMENT ON COLUMN psy_packages.nilai_program IS
+  'Jumlah Nilai Keseluruhan Program — angka marketing rujukan (display sahaja di kad harga), TIDAK dipakai dalam sebarang pengiraan bayaran.';
+COMMENT ON COLUMN psy_packages.harga_asal IS
+  'Harga Asal — asas kira % diskaun (display sahaja). % diskaun dikira LIVE = round((1 - tier_price/harga_asal)*100), bukan disimpan.';
+COMMENT ON COLUMN psy_packages.today_price IS
+  'Harga Bayaran Penuh — tier "Today" (eksklusif semasa pesakit masih dalam sesi KOB langsung, package_payment_status=pending). NULL = pakej ini tiada tier Today berasingan, fallback ke price (tier Now) di semua tempat.';
+COMMENT ON COLUMN psy_packages.today_installment_deposit_amount IS
+  'Deposit ("Bayaran Pertama") — tier Today ansuran. NULL = fallback ke installment_deposit_amount (tier Now).';
+COMMENT ON COLUMN psy_packages.today_installment_duration_months IS
+  'Sama makna dgn installment_duration_months tapi utk tier Today. NULL = fallback ke installment_duration_months (tier Now).';
+COMMENT ON COLUMN psy_packages.today_installment_monthly_amount IS
+  'Sama makna dgn installment_monthly_amount tapi utk tier Today. NULL = fallback ke installment_monthly_amount (tier Now).';
 
 -- ──────────────────────────────────────────────────────────────
 -- psy_package_purchases — pembelian pakej oleh pesakit

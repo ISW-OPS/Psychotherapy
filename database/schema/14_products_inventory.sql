@@ -18,14 +18,75 @@ CREATE TABLE IF NOT EXISTS psy_inventory_items (
   notes                TEXT,
   max_qty              NUMERIC(10,2),
   auto_reorder_qty     NUMERIC(10,2),
-  auto_reorder_enabled BOOLEAN DEFAULT false,
   last_auto_po_at      TIMESTAMPTZ,
   consumption_type     TEXT DEFAULT 'package'
                        CHECK (consumption_type IN ('package','service','general')),
   supplier_info        JSONB DEFAULT '{}'::jsonb,
+  source_type          TEXT NOT NULL DEFAULT 'am'
+                       CHECK (source_type IN ('farmasi_klinikal','am')),
+  batch_no             TEXT,
+  expiry_date          DATE,
+  item_code            TEXT UNIQUE,
+  is_active            BOOLEAN NOT NULL DEFAULT true,
+  reorder_threshold_pct NUMERIC(5,2),
+  manufacturer         TEXT,
+  registration_no      TEXT,
+  storage_location     TEXT,
+  storage_condition    TEXT,
   created_at           TIMESTAMPTZ DEFAULT now(),
   updated_at           TIMESTAMPTZ DEFAULT now()
 );
+
+-- Kolum ditambah selepas jadual asal wujud (patch untuk install sedia ada)
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'am'
+  CHECK (source_type IN ('farmasi_klinikal','am'));
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS batch_no TEXT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS expiry_date DATE;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS item_code TEXT UNIQUE;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS reorder_threshold_pct NUMERIC(5,2);
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS manufacturer TEXT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS registration_no TEXT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS storage_location TEXT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS storage_condition TEXT;
+
+-- auto_reorder_enabled dibuang — trigger auto-request tak pernah check flag ni,
+-- sistem auto-cipta permintaan beli utk semua item bila stok rendah tanpa syarat.
+ALTER TABLE psy_inventory_items DROP COLUMN IF EXISTS auto_reorder_enabled;
+
+CREATE INDEX IF NOT EXISTS idx_inventory_items_source_type ON psy_inventory_items(source_type);
+CREATE INDEX IF NOT EXISTS idx_inventory_items_is_active ON psy_inventory_items(is_active);
+
+-- ──── item_code auto-generate (ITM-00001, ITM-00002, ...) ────
+CREATE SEQUENCE IF NOT EXISTS psy_inventory_item_code_seq START 1;
+
+CREATE OR REPLACE FUNCTION psy_inventory_set_item_code()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.item_code IS NULL THEN
+    NEW.item_code := 'ITM-' || LPAD(nextval('psy_inventory_item_code_seq')::text, 5, '0');
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_psy_inventory_set_item_code ON psy_inventory_items;
+CREATE TRIGGER trg_psy_inventory_set_item_code
+BEFORE INSERT ON psy_inventory_items
+FOR EACH ROW EXECUTE FUNCTION psy_inventory_set_item_code();
+
+-- Backfill item_code utk baris sedia ada (install lama) — susun ikut created_at supaya kod konsisten.
+DO $$
+DECLARE r RECORD;
+BEGIN
+  FOR r IN SELECT id FROM psy_inventory_items WHERE item_code IS NULL ORDER BY created_at LOOP
+    UPDATE psy_inventory_items
+      SET item_code = 'ITM-' || LPAD(nextval('psy_inventory_item_code_seq')::text, 5, '0')
+      WHERE id = r.id;
+  END LOOP;
+END $$;
 
 -- RLS
 ALTER TABLE psy_inventory_items ENABLE ROW LEVEL SECURITY;
@@ -43,14 +104,32 @@ COMMENT ON COLUMN psy_inventory_items.max_qty IS
   'Saiz stok penuh / target. Trigger auto-PO bila qty_in_stock <= 30% dari max_qty.';
 COMMENT ON COLUMN psy_inventory_items.auto_reorder_qty IS
   'Kuantiti yang sistem cadang dalam auto-PO. Default: max_qty - qty_in_stock.';
-COMMENT ON COLUMN psy_inventory_items.auto_reorder_enabled IS
-  'true = auto-create purchase invoice bila stok rendah; false = manual sahaja.';
 COMMENT ON COLUMN psy_inventory_items.last_auto_po_at IS
   'Tarikh auto-PO terakhir dijana — elak duplikat dalam tempoh pendek.';
 COMMENT ON COLUMN psy_inventory_items.consumption_type IS
   'package = bekalan pakej (dynamic auto-calc); service = guna semasa service one-off; general = consumable umum (manual min sahaja).';
 COMMENT ON COLUMN psy_inventory_items.supplier_info IS
-  'Format: { name, cost_per_unit, lead_days, po_min, po_max }. Maklumat pembekal dan cadangan PO.';
+  'Format: { name, pic_name, phone, email, address, payment_terms, cost_per_unit }. Maklumat pembekal.';
+COMMENT ON COLUMN psy_inventory_items.item_code IS
+  'Kod item auto-generate (ITM-00001, ...) via trigger — tidak boleh diedit.';
+COMMENT ON COLUMN psy_inventory_items.is_active IS
+  'false = item tidak aktif — disorok dari senarai pilihan (dispens/kit/jadual pakej) & auto-request.';
+COMMENT ON COLUMN psy_inventory_items.reorder_threshold_pct IS
+  'Peratus keperluan bulanan (dynamic_monthly) yang trigger status "Stok Rendah" utk item source_type=package. NULL = guna default sistem 30%.';
+COMMENT ON COLUMN psy_inventory_items.manufacturer IS
+  'Pengilang produk. Relevan utk source_type=farmasi_klinikal.';
+COMMENT ON COLUMN psy_inventory_items.registration_no IS
+  'No. pendaftaran/produk (cth MAL number). Relevan utk source_type=farmasi_klinikal.';
+COMMENT ON COLUMN psy_inventory_items.storage_location IS
+  'Lokasi simpanan fizikal (cth: Bilik Farmasi Rak 2). Relevan utk source_type=farmasi_klinikal.';
+COMMENT ON COLUMN psy_inventory_items.storage_condition IS
+  'Syarat simpanan (cth: Sejuk 2-8°C, Elak Cahaya). Relevan utk source_type=farmasi_klinikal.';
+COMMENT ON COLUMN psy_inventory_items.source_type IS
+  'farmasi_klinikal = ubat/bekalan perubatan (perlu batch_no/expiry_date, dispensing direkod di psy_supply_disbursements); am = inventori am/coaching/marketing. Default am.';
+COMMENT ON COLUMN psy_inventory_items.batch_no IS
+  'No. batch pembekal. Relevan hanya untuk item source_type=farmasi_klinikal.';
+COMMENT ON COLUMN psy_inventory_items.expiry_date IS
+  'Tarikh luput batch semasa. Relevan hanya untuk item source_type=farmasi_klinikal.';
 
 -- ──── psy_inventory_requests ────
 CREATE TABLE IF NOT EXISTS psy_inventory_requests (
@@ -108,6 +187,11 @@ DECLARE
   v_status          TEXT;
   v_target          NUMERIC;
 BEGIN
+  -- Item tidak aktif — jangan auto-request
+  IF NOT COALESCE(NEW.is_active, true) THEN
+    RETURN NEW;
+  END IF;
+
   -- Hanya bertindak bila qty_in_stock benar-benar berubah & turun
   IF NEW.qty_in_stock IS NULL OR NEW.qty_in_stock = OLD.qty_in_stock THEN
     RETURN NEW;

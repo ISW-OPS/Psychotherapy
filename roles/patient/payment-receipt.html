@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Pengesahan Bayaran</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { animation: spin .9s linear infinite; }
+</style>
+</head>
+<body class="min-h-screen bg-cream flex items-center justify-center p-4">
+
+<div class="w-full max-w-md">
+  <div id="card" class="bg-white rounded-2xl shadow-sm border border-ink/10 p-6 md:p-8 text-center overflow-hidden">
+    <div id="v-loading">
+      <div class="w-10 h-10 border-4 border-navy/20 border-t-navy rounded-full mx-auto mb-4 spin"></div>
+      <p class="text-sm text-ink/60">Menyemak status bayaran…</p>
+    </div>
+
+    <div id="v-success" class="hidden text-left">
+      <!-- Header jenama — melimpah tepi-ke-tepi (negative margin batalkan padding #card) -->
+      <div class="-mx-6 md:-mx-8 -mt-6 md:-mt-8 mb-0 bg-navy px-6 py-5 flex items-center gap-3">
+        <div class="w-9 h-9 bg-white rounded-lg p-1 flex items-center justify-center flex-shrink-0">
+          <img src="../../image/Logo_ISW.png" alt="" class="w-full h-full object-contain" onerror="this.style.display='none'">
+        </div>
+        <div class="font-bold text-white text-base">Ibnu Sina Wellness</div>
+      </div>
+      <!-- Sub-bar: jenis transaksi + status -->
+      <div class="-mx-6 md:-mx-8 bg-cream/70 px-6 py-3 flex items-center justify-between gap-3 border-b border-ink/10">
+        <div class="font-semibold text-sm text-ink">Bayaran Diterima</div>
+        <span class="flex-shrink-0 text-[11px] font-bold uppercase tracking-wide bg-green-light text-green-dark px-2.5 py-1 rounded-full">✓ Berjaya</span>
+      </div>
+
+      <div class="-mx-6 md:-mx-8 px-6 divide-y divide-ink/10">
+        <div class="py-3.5 flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="text-xs text-ink/45 mb-0.5">No. Resit</div>
+            <div id="s-ref" class="font-bold text-ink text-sm font-mono truncate">—</div>
+          </div>
+          <div id="s-date" class="flex-shrink-0 text-xs text-ink/45 text-right pt-0.5">—</div>
+        </div>
+        <div class="py-3.5">
+          <div class="text-xs text-ink/45 mb-0.5">Nama Pesakit</div>
+          <div id="s-patient" class="font-bold text-ink text-sm">—</div>
+        </div>
+        <div class="py-3.5">
+          <div class="text-xs text-ink/45 mb-0.5">Perkara</div>
+          <div id="s-item" class="font-bold text-ink text-sm">—</div>
+        </div>
+        <div class="py-3.5">
+          <div class="text-xs text-ink/45 mb-0.5">Jumlah</div>
+          <div id="s-total" class="font-bold text-green-dark text-2xl">—</div>
+        </div>
+      </div>
+
+      <div class="flex gap-2 mt-4">
+        <a id="s-pdf-link" href="#" target="_blank" rel="noopener" class="hidden flex-1 inline-flex items-center justify-center gap-1.5 bg-navy text-white rounded-xl py-3 text-sm font-semibold hover:bg-navy-dark">📄 PDF</a>
+        <button type="button" onclick="shareReceipt(event)" class="flex-1 inline-flex items-center justify-center gap-1.5 border border-ink/15 text-ink rounded-xl py-3 text-sm font-semibold hover:bg-ink/5">📤 Kongsi</button>
+      </div>
+    </div>
+
+    <div id="v-pending" class="hidden">
+      <div class="w-10 h-10 border-4 border-gold/30 border-t-gold-dark rounded-full mx-auto mb-4 spin"></div>
+      <h1 class="text-lg font-bold text-ink mb-1">Masih Diproses…</h1>
+      <p class="text-sm text-ink/60 mb-4">Bayaran belum disahkan lagi. Sila tunggu sebentar — kami akan semak semula secara automatik.</p>
+      <button type="button" onclick="checkOnce()" class="text-xs text-navy font-semibold hover:underline">🔄 Semak Sekarang</button>
+    </div>
+
+    <div id="v-failed" class="hidden">
+      <div class="w-16 h-16 bg-terracotta/10 rounded-full flex items-center justify-center mx-auto mb-4">
+        <span class="text-3xl">✗</span>
+      </div>
+      <h1 class="text-lg font-bold text-ink mb-1">Bayaran Gagal / Dibatalkan</h1>
+      <p class="text-sm text-ink/60">Sila hubungi staf kami untuk bantuan atau cuba bayar semula melalui pautan yang sama.</p>
+    </div>
+
+    <div id="v-notfound" class="hidden">
+      <div class="w-16 h-16 bg-ink/5 rounded-full flex items-center justify-center mx-auto mb-4">
+        <span class="text-3xl">❓</span>
+      </div>
+      <h1 class="text-lg font-bold text-ink mb-1">Resit Tidak Dijumpai</h1>
+      <p class="text-sm text-ink/60">Pautan ini tidak sah atau telah tamat tempoh. Sila hubungi staf kami.</p>
+    </div>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script>
+function showView(id) {
+  ['v-loading', 'v-success', 'v-pending', 'v-failed', 'v-notfound'].forEach(v =>
+    document.getElementById(v).classList.toggle('hidden', v !== id));
+}
+
+function fmtRM(n) {
+  return 'RM ' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function renderSuccess(r) {
+  document.getElementById('s-ref').textContent = new URLSearchParams(location.search).get('ref') || '—';
+  document.getElementById('s-patient').textContent = r.patientName || '—';
+  document.getElementById('s-item').textContent = r.itemTitle || '—';
+  document.getElementById('s-total').textContent = fmtRM(r.total);
+  document.getElementById('s-date').textContent = r.paidAt ? new Date(r.paidAt).toLocaleString('ms-MY') : '—';
+  const pdfLink = document.getElementById('s-pdf-link');
+  if (r.pdfUrl) { pdfLink.href = r.pdfUrl; pdfLink.classList.remove('hidden'); }
+  else { pdfLink.classList.add('hidden'); }
+  showView('v-success');
+}
+
+// Kongsi FAIL PDF resit terus (bukan sekadar pautan halaman) — pesakit boleh
+// terus forward resit tu ke WhatsApp/lain. Fallback ke kongsi pautan/salin
+// kalau peranti tak sokong kongsi fail (cth desktop) atau PDF tiada.
+async function shareReceipt(e) {
+  const btn = e?.currentTarget;
+  const pdfLink = document.getElementById('s-pdf-link');
+  const pdfUrl = (pdfLink && !pdfLink.classList.contains('hidden')) ? pdfLink.href : null;
+  const ref = new URLSearchParams(location.search).get('ref') || 'ISW';
+
+  if (pdfUrl && navigator.canShare) {
+    try {
+      const resp = await fetch(pdfUrl);
+      const blob = await resp.blob();
+      const file = new File([blob], `Resit-${ref}.pdf`, { type: 'application/pdf' });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: 'Resit Bayaran — Ibnu Sina Wellness' });
+        return;
+      }
+    } catch (_) { /* fetch/kongsi fail gagal — jatuh ke fallback pautan di bawah */ }
+  }
+
+  const url = pdfUrl || location.href;
+  if (navigator.share) {
+    try { await navigator.share({ title: 'Resit Bayaran — Ibnu Sina Wellness', text: 'Berikut resit bayaran saya.', url }); } catch (_) { /* pengguna batal — abaikan */ }
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    if (btn) { const old = btn.textContent; btn.textContent = '✅ Pautan disalin'; setTimeout(() => { btn.textContent = old; }, 2000); }
+  } catch (_) {
+    prompt('Salin pautan ini:', url);
+  }
+}
+
+async function checkOnce() {
+  const ref = new URLSearchParams(location.search).get('ref');
+  if (!ref) { showView('v-notfound'); return false; }
+  showView('v-loading');
+  const { data, error } = await window.db.functions.invoke('payment-receipt-public', { body: { ref } });
+  if (error || !data?.found) { showView('v-notfound'); return false; }
+  if (data.status === 'completed') { renderSuccess(data); return true; }
+  if (data.status === 'failed') { showView('v-failed'); return true; }
+  showView('v-pending');
+  return false;
+}
+
+(async () => {
+  // Webhook mungkin ambil 1-2 saat untuk fulfill — cuba beberapa kali dulu
+  // sebelum tunjuk skrin "masih diproses" (sama corak payment.html pesakit berlogin).
+  for (let i = 0; i < 8; i++) {
+    const settled = await checkOnce();
+    if (settled) return;
+    await new Promise(r => setTimeout(r, 1500));
+  }
+})();
+</script>
+</body>
+</html>

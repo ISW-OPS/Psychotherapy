@@ -662,6 +662,24 @@ VALUES (
 )
 ON CONFLICT (key) DO NOTHING;
 
+-- Templat "Perjanjian KOB Ditandatangan" (butang manual "Hantar WhatsApp" di kob-detail.html,
+-- lepas agreement disign; PDF sah dilampirkan sebagai attachment, bukan placeholder —
+-- boleh edit ayat oleh staff; toggle off sembunyikan butang tu terus)
+INSERT INTO psy_auto_messages (key, name, description, channel, trigger_type, channels, audience, message_template, placeholders, is_active)
+VALUES (
+  'kob_agreement_signed',
+  'Perjanjian KOB Ditandatangan (WhatsApp)',
+  'Mesej + PDF salinan perjanjian yang dihantar bila staff tekan butang "Hantar WhatsApp" (kad Sign Agreement, kob-detail.html) selepas agreement ditandatangan. Toggle off untuk sembunyikan butang tu.',
+  'whatsapp',
+  'on_action',
+  '["whatsapp"]'::jsonb,
+  '["patient"]'::jsonb,
+  E'Assalamualaikum {nama}, berikut salinan Perjanjian Rawatan ISW yang telah anda tandatangani.',
+  '["{nama}"]'::jsonb,
+  true
+)
+ON CONFLICT (key) DO NOTHING;
+
 -- Pengesahan Sesi Rawatan (session_confirm) — UPSERT dgn DO UPDATE supaya
 -- run semula mengemaskini template/config; is_active TIDAK disentuh.
 --   rule.lead_days      : berapa hari sebelum sesi peringatan dihantar (default 3)

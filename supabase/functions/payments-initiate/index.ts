@@ -64,7 +64,7 @@ Deno.serve(async (req) => {
     //    Pakej & produk disemak semula dari DB; jenis lain guna amaun DB-derived.
     let total = 0
     for (const it of items) {
-      total += await verifiedAmount(admin, it)
+      total += await verifiedAmount(admin, it, patientId)
     }
     if (!(total > 0)) return json({ error: 'Jumlah bayaran tidak sah' }, 400)
 
@@ -125,6 +125,19 @@ Deno.serve(async (req) => {
       '-' + Math.floor(performance.now()).toString(36).toUpperCase()
     const provider = activeProviderName()
 
+    // kob_session_id di ROOT intent — wajib supaya sejarah/jumlah terkumpul ansuran
+    // (query .eq('intent->>kob_session_id', ...) di kob-detail.html/patient-hub.html)
+    // turut jumpa bayaran gateway ni, sama macam bayaran manual sedia ada.
+    const kobSessionIdItem = items.find((i: any) => i.kobSessionId)
+    // Gantikan percubaan pending LAMA utk sesi KOB yg sama (cth pesakit klik "Bayar"
+    // >1 kali) — elak baris 'pending' berterusan tinggal selama-lamanya dlm Sejarah
+    // Pembayaran, mengelirukan jumlah "Menunggu" walaupun bayaran lain dah berjaya.
+    if (kobSessionIdItem) {
+      await admin.from('psy_payments')
+        .update({ status: 'failed', gateway_status: 'superseded', notes: 'Digantikan oleh percubaan bayaran baharu' })
+        .eq('patient_id', patientId).eq('status', 'pending')
+        .eq('intent->>kob_session_id', kobSessionIdItem.kobSessionId)
+    }
     const { error: insErr } = await admin.from('psy_payments').insert({
       receipt_ref: receiptRef,
       patient_id: patientId,
@@ -136,7 +149,10 @@ Deno.serve(async (req) => {
       status: 'pending',
       gateway_provider: provider,
       gateway_status: 'pending',
-      intent: { items, patientId, userId: user.id, method, voucherId, voucherDiscount, promoCodeId: promoId, promoDiscount },
+      intent: {
+        items, patientId, userId: user.id, method, voucherId, voucherDiscount, promoCodeId: promoId, promoDiscount,
+        ...(kobSessionIdItem ? { kob_session_id: kobSessionIdItem.kobSessionId } : {}),
+      },
     })
     if (insErr) throw new Error('Gagal simpan bayaran pending: ' + insErr.message)
 
@@ -178,14 +194,111 @@ async function lookupPackage(admin: any, key: string) {
 }
 
 // Pulangkan amaun (RM) yang DIPERCAYAI untuk satu item — semak semula dari DB.
-async function verifiedAmount(admin: any, it: any): Promise<number> {
+async function verifiedAmount(admin: any, it: any, patientId: string | null): Promise<number> {
   const clientAmt = Number(it.amount) || 0
 
-  if (it.type === 'package' || it.type === 'kob_package') {
+  if (it.type === 'kob_installment_topup') {
+    // Ansuran KOB — amaun TETAP ikut checkpoint SETERUSNYA sahaja, bukan client-chosen
+    // & bukan jumlah baki keseluruhan digabung. clientAmt diabaikan sepenuhnya di sini —
+    // amaun diderive 100% server-side dari jadual checkpoint, sama prinsip macam
+    // payments-kob-initiate (amount tak pernah dipercayai dari client).
+    if (!it.kobSessionId || !patientId) return 0
+    const { data: rows } = await admin.from('psy_kob_sessions')
+      .select('patient_id, package_payment_mode, package_payment_status')
+      .eq('id', it.kobSessionId).limit(1)
+    const kob = rows?.[0]
+    if (!kob || kob.patient_id !== patientId) return 0
+    if (kob.package_payment_mode !== 'installment' || kob.package_payment_status !== 'partial') return 0
+    const { data: paidRows } = await admin.from('psy_payments').select('total')
+      .eq('status', 'completed').eq('intent->>kob_session_id', it.kobSessionId)
+    const totalPaid = (paidRows || []).reduce((s: number, p: any) => s + Number(p.total || 0), 0)
+    const { data: cps } = await admin.from('psy_kob_installment_checkpoints')
+      .select('target_cumulative').eq('kob_session_id', it.kobSessionId).order('seq', { ascending: true })
+    const nextCp = (cps || []).find((c: any) => Number(c.target_cumulative) > totalPaid + 0.005)
+    const trusted = nextCp ? Math.max(0, Number(nextCp.target_cumulative) - totalPaid) : 0
+    it.amount = trusted // sync — webhook fulfillment baca item.amount, bukan cuma `total`
+    return trusted
+  }
+
+  if (it.type === 'kob_deposit') {
+    // Pesakit self-checkout (bukan staff/payments-kob-initiate) — mulakan deposit
+    // ansuran ATAU bayaran penuh utk pakej dicadangkan sesi KOB. Amount & tier
+    // TIDAK PERNAH dari client — derive sepenuhnya server-side dari status sesi:
+    // 'pending' (masih dlm sesi KOB langsung) → tier Today; 'declined' (dah
+    // tinggalkan sesi, beli lewat) → tier Now. Status lain → tolak (return 0).
+    if (!it.kobSessionId || !patientId) return 0
+    const { data: rows } = await admin.from('psy_kob_sessions')
+      .select('patient_id, recommended_package_id, recommended_package_price, package_payment_status')
+      .eq('id', it.kobSessionId).limit(1)
+    const kob = rows?.[0]
+    if (!kob || kob.patient_id !== patientId) return 0
+    let tier: 'today' | 'now'
+    if (kob.package_payment_status === 'pending') tier = 'today'
+    else if (kob.package_payment_status === 'declined') tier = 'now'
+    else return 0
+    it.tier = tier // disimpan ke intent.items — dibaca semula oleh payments-webhook fulfillment
+
+    if (it.mode === 'installment') {
+      let pkgQ = admin.from('psy_packages')
+        .select('installment_allowed, installment_deposit_amount, installment_duration_months, installment_monthly_amount, today_installment_deposit_amount, today_installment_duration_months, today_installment_monthly_amount')
+      pkgQ = isUuid(String(kob.recommended_package_id))
+        ? pkgQ.or(`id.eq.${kob.recommended_package_id},package_id.eq.${kob.recommended_package_id}`)
+        : pkgQ.eq('package_id', kob.recommended_package_id)
+      const { data: pkgRows } = await pkgQ.limit(1)
+      const pkgMeta = pkgRows?.[0]
+      const depositAmount = tier === 'today'
+        ? (pkgMeta?.today_installment_deposit_amount ?? pkgMeta?.installment_deposit_amount)
+        : pkgMeta?.installment_deposit_amount
+      const durationMonths = tier === 'today'
+        ? (pkgMeta?.today_installment_duration_months ?? pkgMeta?.installment_duration_months)
+        : pkgMeta?.installment_duration_months
+      const monthlyAmount = tier === 'today'
+        ? (pkgMeta?.today_installment_monthly_amount ?? pkgMeta?.installment_monthly_amount)
+        : pkgMeta?.installment_monthly_amount
+      const installmentAllowed = !!pkgMeta?.installment_allowed && Number(depositAmount) > 0 && Number(durationMonths) > 1 && Number(monthlyAmount) > 0
+      if (!installmentAllowed) return 0
+      it.amount = Number(depositAmount)
+      return Number(depositAmount)
+    }
+
+    const amount = tier === 'today'
+      ? Number(kob.recommended_package_price || 0) // dibekukan sebagai Today-Full time cadangan (kob-detail.html)
+      : (await lookupPackage(admin, String(kob.recommended_package_id)))?.price
+    if (!(Number(amount) > 0)) return 0
+    it.amount = Number(amount)
+    return Number(amount)
+  }
+
+  if (it.type === 'kob_package') {
+    // Beli pakej dicadangkan KOB (payRecommendedPackage() di kob.html) — tier-aware:
+    // 'pending' (masih dlm sesi KOB langsung) → Today-Full; lain (declined/beli lewat) → Now-Full.
+    const key = it.packageId || it.raw?.package_id
+    if (!key) return clientAmt
+    let pkgQ = admin.from('psy_packages').select('price, today_price, is_active')
+    pkgQ = isUuid(String(key)) ? pkgQ.or(`id.eq.${key},package_id.eq.${key}`) : pkgQ.eq('package_id', key)
+    const { data: pkgRows } = await pkgQ.limit(1)
+    const pkg = pkgRows?.[0]
+    if (!pkg || pkg.is_active === false) return clientAmt
+    let isTodayTier = false
+    if (it.kobSessionId) {
+      const { data: kobRows } = await admin.from('psy_kob_sessions')
+        .select('package_payment_status').eq('id', it.kobSessionId).limit(1)
+      isTodayTier = kobRows?.[0]?.package_payment_status === 'pending'
+    }
+    const price = isTodayTier ? Number(pkg.today_price ?? pkg.price) : Number(pkg.price)
+    if (!Number.isFinite(price)) return clientAmt
+    it.amount = price
+    return price
+  }
+
+  if (it.type === 'package') {
     const key = it.packageId || it.raw?.package_id
     if (key) {
       const pkg = await lookupPackage(admin, String(key))
-      if (pkg && pkg.is_active !== false && Number.isFinite(Number(pkg.price))) return Number(pkg.price)
+      if (pkg && pkg.is_active !== false && Number.isFinite(Number(pkg.price))) {
+        it.amount = Number(pkg.price)
+        return Number(pkg.price)
+      }
     }
     return clientAmt
   }

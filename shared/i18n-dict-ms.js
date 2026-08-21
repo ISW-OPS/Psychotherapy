@@ -207,7 +207,6 @@ window.ISW_I18N_EXTRA_MS = {
   "Set password": "Tetapkan kata laluan",
   "Shop": "Kedai",
   "Signer": "Penandatangan",
-  "Spiritual": "Kerohanian",
   "Staff Role": "Peranan Staff",
   "Steps to Activate DNA Kit on ATGC": "Langkah Mengaktifkan Kit DNA di ATGC",
   "Stress Levels Reported": "Tahap Tekanan Dilaporkan",

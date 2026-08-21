@@ -190,7 +190,7 @@
                 <label id="archived-toggle-wrap" class="hidden items-center gap-2 px-3 py-2 border border-terracotta/40 rounded-xl text-sm text-terracotta cursor-pointer hover:bg-terracotta/5">
                   <input type="checkbox" id="toggle-archived" onchange="loadAll()" class="accent-terracotta"> Rekod Diarkibkan
                 </label>
-                <button id="btn-add-patient" data-rbac="patient.create" onclick="openCreatePatient()" class="hidden flex items-center gap-1.5 px-4 py-2 text-white rounded-xl text-sm hover:opacity-90 font-semibold" style="background-color:#7C3AED">+ Tambah Pesakit</button>
+                <button id="btn-add-patient" data-rbac="patient.create" onclick="window.open('patient-form.html', '_blank')" class="hidden flex items-center gap-1.5 px-4 py-2 text-white rounded-xl text-sm hover:opacity-90 font-semibold" style="background-color:#7C3AED">+ Tambah Pesakit</button>
               </div>
             </div>
             <div class="flex items-center gap-3 mb-3 flex-wrap print-hide">
@@ -396,7 +396,7 @@
                 placeholder="cth: Syarikat ABC">
             </div>
             <div>
-              <label class="text-xs font-semibold">Kod Rujukan <span
+              <label class="text-xs font-semibold">Kod Pesakit <span
                   class="text-ink/40 font-normal">(optional)</span></label>
               <input id="cp-ref-code" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"
                 placeholder="cth: OB'25-0710">
@@ -427,6 +427,21 @@
                 Cth: kalau pesakit dah minggu ke-3, masukkan "3". Sistem akan cipta plan + buka semua minggu 1 sehingga durasi pakej untuk staff isi nota backfill.
               </span>
             </div>
+          </div>
+
+          <!-- Row 2c-3: Soalan Sesi KOB (data rawatan) — hanya lepas pesakit disimpan (perlu patient_id) -->
+          <div id="cp-kob-questionnaire-row" class="hidden mt-3 p-3 bg-navy-light/30 rounded-xl border border-navy/20">
+            <label class="text-xs font-semibold flex items-center gap-1.5">
+              📋 Soalan Sesi KOB
+              <span class="text-ink/40 font-normal">(data rawatan pesakit yang dah dalam program)</span>
+            </label>
+            <p class="text-xs text-ink/55 mt-1">
+              Pesakit ni migrate terus tanpa lalu sesi KOB dalam sistem — tapi soal selidik klinikal (anak &amp; bersalin, tidur, gaya hidup, dll.) tetap boleh diisi/dikemaskini sebagai rekod rawatan.
+            </p>
+            <button type="button" id="cp-kob-q-btn" onclick="openKobQuestionnaireForEdit()"
+              class="mt-2 px-3 py-1.5 bg-navy text-white rounded-lg text-xs font-semibold hover:bg-navy-dark">
+              📋 Isi / Kemaskini Soalan Sesi KOB →
+            </button>
           </div>
 
           <!-- Row 2c-2: Keadaan rawatan (bila status = Tidak Aktif — mana-mana pesakit) -->
@@ -478,6 +493,25 @@
                 <option value="Janda">Janda</option>
                 <option value="Duda">Duda</option>
               </select>
+            </div>
+          </div>
+
+          <!-- Row 3b: Poskod | Bandar | Negeri -->
+          <div class="grid grid-cols-3 gap-3 mt-3">
+            <div>
+              <label class="text-xs font-semibold">Poskod <span class="text-ink/40 font-normal">(optional)</span></label>
+              <input id="cp-postcode" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"
+                placeholder="cth: 43000">
+            </div>
+            <div>
+              <label class="text-xs font-semibold">Bandar <span class="text-ink/40 font-normal">(optional)</span></label>
+              <input id="cp-city" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"
+                placeholder="cth: Kajang">
+            </div>
+            <div>
+              <label class="text-xs font-semibold">Negeri <span class="text-ink/40 font-normal">(optional)</span></label>
+              <input id="cp-state" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"
+                placeholder="cth: Selangor">
             </div>
           </div>
 
@@ -763,6 +797,11 @@
       const cwRow = document.getElementById('cp-current-week-row');
       if (cwRow) cwRow.classList.toggle('hidden', !(isActive || isInactive));
 
+      // Soalan Sesi KOB (data rawatan) — hanya lepas pesakit wujud (editingPatientId ada),
+      // sebab perlukan patient_id untuk cipta/rujuk psy_kob_sessions.
+      const kobQRow = document.getElementById('cp-kob-questionnaire-row');
+      if (kobQRow) kobQRow.classList.toggle('hidden', !((isActive || isInactive) && editingPatientId));
+
       // Keadaan rawatan (Selesai / Berhenti) — hanya untuk Pesakit Lama (inactive)
       const inactRow = document.getElementById('cp-inactive-state-row');
       if (inactRow) inactRow.classList.toggle('hidden', !isInactive);
@@ -954,9 +993,11 @@
       if (!fields) return;
       if (checked) {
         fields.classList.remove('hidden');
+        const pad = n => String(n).padStart(2,'0');
+        const now = new Date();
+        document.getElementById('cp-kob-date').min = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
         if (!document.getElementById('cp-kob-date').value) {
           const t = new Date(); t.setDate(t.getDate() + 1);
-          const pad = n => String(n).padStart(2,'0');
           document.getElementById('cp-kob-date').value = `${t.getFullYear()}-${pad(t.getMonth()+1)}-${pad(t.getDate())}`;
           loadCpKobSlots();
         }
@@ -1062,7 +1103,10 @@
         if (window.__cpPakejHintDefault == null) window.__cpPakejHintDefault = _ph.innerHTML;
         else _ph.innerHTML = window.__cpPakejHintDefault;
       }
-      ['cp-name', 'cp-ic', 'cp-phone', 'cp-email', 'cp-address', 'cp-ref-code', 'cp-company', 'cp-medical-notes',
+      const _kobBtn = document.getElementById('cp-kob-q-btn');
+      if (_kobBtn) { _kobBtn.disabled = false; _kobBtn.textContent = '📋 Isi / Kemaskini Soalan Sesi KOB →'; }
+      ['cp-name', 'cp-ic', 'cp-phone', 'cp-email', 'cp-address', 'cp-postcode', 'cp-city', 'cp-state',
+        'cp-ref-code', 'cp-company', 'cp-medical-notes',
         'cp-emg-name', 'cp-emg-ic', 'cp-emg-phone', 'cp-occupation', 'cp-emg-rel', 'cp-emg-email',
         'cp-referred-by', 'cp-own-code'].forEach(id => {
           const el = document.getElementById(id); if (el) el.value = '';
@@ -1163,6 +1207,9 @@
       document.getElementById('cp-phone').value = iswPatientPhone(p);
       document.getElementById('cp-email').value = iswPatientEmail(p);
       document.getElementById('cp-address').value = p.address || '';
+      document.getElementById('cp-postcode').value = p.postcode || '';
+      document.getElementById('cp-city').value = p.city || '';
+      document.getElementById('cp-state').value = p.state || '';
       document.getElementById('cp-occupation').value = p.occupation || '';
       document.getElementById('cp-dob').value = p.date_of_birth || '';
       document.getElementById('cp-ref-code').value = p.reference_code || '';
@@ -1271,6 +1318,39 @@
       document.getElementById('create-patient-modal').classList.remove('hidden');
     }
 
+    // Cari psy_kob_sessions sedia ada utk pesakit, atau cipta rekod backfill 'completed'
+    // (pesakit yang migrate terus tanpa lalu sesi KOB dalam sistem, tapi data klinikal tetap perlu direkod).
+    async function ensureBackfillKobSession(patientId) {
+      const { data: existing } = await window.db.from('psy_kob_sessions')
+        .select('id').eq('patient_id', patientId)
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (existing?.id) return existing.id;
+      const { data: created, error } = await window.db.from('psy_kob_sessions').insert({
+        patient_id: patientId,
+        scheduled_at: new Date().toISOString(),
+        mode: 'f2f',
+        status: 'completed',
+        doctor_selesai_id: window.currentUser?.id || null,
+        doctor_selesai_name: window.currentUser?.full_name || null,
+        selesai_at: new Date().toISOString(),
+      }).select('id').single();
+      if (error) { console.warn('[patients] gagal cipta backfill KOB session:', error.message); return null; }
+      return created?.id || null;
+    }
+
+    async function openKobQuestionnaireForEdit() {
+      if (!editingPatientId) return;
+      // Buka tab kosong SEKARANG (masih dalam gesture klik), isi location.href lepas tahu kobId —
+      // elak browser anggap window.open lepas await sebagai popup.
+      const tab = window.open('about:blank', '_blank');
+      const btn = document.getElementById('cp-kob-q-btn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Memuatkan...'; }
+      const kobId = await ensureBackfillKobSession(editingPatientId);
+      if (btn) { btn.disabled = false; btn.textContent = '📋 Isi / Kemaskini Soalan Sesi KOB →'; }
+      if (kobId && tab) tab.location.href = `kob-detail.html?id=${kobId}`;
+      else { tab?.close(); banner('Gagal buka soalan KOB — cuba lagi.', 'error'); }
+    }
+
     function closeCreatePatient() {
       document.getElementById('create-patient-modal').classList.add('hidden');
       // Embed mode: beritahu patient-hub (parent) modal ditutup — saved:true jika baru dikemaskini.
@@ -1300,6 +1380,9 @@
       const ic = document.getElementById('cp-ic').value.trim();
       const phone = document.getElementById('cp-phone').value.trim();
       const address = document.getElementById('cp-address').value.trim();
+      const postcode = document.getElementById('cp-postcode').value.trim();
+      const city = document.getElementById('cp-city').value.trim();
+      const state = document.getElementById('cp-state').value.trim();
       const emgName = document.getElementById('cp-emg-name').value.trim();
       const emgPhone = document.getElementById('cp-emg-phone').value.trim();
       const emgRel = document.getElementById('cp-emg-rel').value.trim();
@@ -1349,6 +1432,14 @@
         return;
       }
 
+      // Buka tab kosong SEKARANG (masih dalam gesture klik pengguna, sebelum sebarang await)
+      // supaya browser anggap ia navigasi tab biasa — bukan popup — dan tak disekat.
+      // location.href diisi kemudian sebaik URL Soalan KOB diketahui (lepas pesakit disimpan).
+      let kobTabHandle = null;
+      if (!editingPatientId) {
+        kobTabHandle = window.open('about:blank', '_blank');
+      }
+
       // Halangan keras: No. KP mesti unik (rekod yang sedang disunting dikecualikan)
       const { data: dupIc } = await window.db.from('psy_patients')
         .select('id, mrn, full_name, status')
@@ -1360,6 +1451,7 @@
         const d = dupIc[0];
         errEl.textContent = `🚫 No. KP ${ic} sudah wujud — ${d.full_name || d.mrn} (${d.mrn}). Sila guna rekod sedia ada, bukan cipta baru.`;
         errEl.classList.remove('hidden');
+        kobTabHandle?.close();
         return;
       }
 
@@ -1371,6 +1463,13 @@
       if (kobBook) {
         if (!kobDate) {
           errEl.textContent = 'Sila pilih tarikh slot KOB.';
+          errEl.classList.remove('hidden'); return;
+        }
+        const todayPad = n => String(n).padStart(2,'0');
+        const todayNow = new Date();
+        const todayStr = `${todayNow.getFullYear()}-${todayPad(todayNow.getMonth()+1)}-${todayPad(todayNow.getDate())}`;
+        if (kobDate < todayStr) {
+          errEl.textContent = '🚫 Tidak boleh tempah KOB pada tarikh yang telah lalu.';
           errEl.classList.remove('hidden'); return;
         }
         const day = new Date(kobDate + 'T00:00:00').getDay();
@@ -1386,6 +1485,7 @@
 
       const btn = document.getElementById('cp-save-btn');
       btn.disabled = true; btn.textContent = 'Menyimpan...';
+      let newKobId = null;
 
       // ── Referral: sahkan kod perujuk (jika ada) ──
       const referredByRaw = document.getElementById('cp-referred-by')?.value.trim() || '';
@@ -1396,11 +1496,11 @@
         const resetBtn = () => { btn.disabled = false; btn.textContent = editingPatientId ? 'Kemaskini' : 'Simpan'; };
         if (!referrer) {
           errEl.textContent = `Kod rujukan "${referredByCode}" tidak dijumpai. Sila semak semula.`;
-          errEl.classList.remove('hidden'); resetBtn(); return;
+          errEl.classList.remove('hidden'); resetBtn(); kobTabHandle?.close(); return;
         }
         if (editingPatientId && referrer.id === editingPatientId) {
           errEl.textContent = 'Pesakit tidak boleh merujuk diri sendiri.';
-          errEl.classList.remove('hidden'); resetBtn(); return;
+          errEl.classList.remove('hidden'); resetBtn(); kobTabHandle?.close(); return;
         }
         referredByPatientId = referrer.id;
       }
@@ -1427,6 +1527,9 @@
         date_of_birth: dob || null,
         marital_status: marital || null,
         address,
+        postcode: postcode || null,
+        city: city || null,
+        state: state || null,
         medical_condition: condition || null,
         emergency_contact_name: emgName,
         emergency_contact_phone: emgPhone,
@@ -1665,6 +1768,13 @@
               }
             }
 
+            // Sedang wujud sesi KOB (backfill 'completed') supaya staff boleh terus isi soal
+            // selidik klinikal — dibuka terus lepas simpan (bukan perlu buka semula Edit),
+            // sebab pesakit migrate ni tak lalu flow KOB penuh.
+            if (isActive || isInactive) {
+              newKobId = await ensureBackfillKobSession(inserted.id);
+            }
+
             // Pesakit Baru: auto-create approved KYC submission + optional KOB session
             if (isNew) {
               await window.db.from('psy_kyc_submissions').insert({
@@ -1700,26 +1810,39 @@
                 await window.db.from('psy_kob_sessions').delete()
                   .eq('patient_id', inserted.id)
                   .in('status', ['booked', 'reschedule']);
-                await window.db.from('psy_kob_sessions').insert({
+                const { data: newKob } = await window.db.from('psy_kob_sessions').insert({
                   patient_id: inserted.id,
                   scheduled_at: new Date(`${kobDate}T${kobSlotStart}`).toISOString(),
                   mode: kobMode,
                   meet_link: meetLink,
                   status: 'booked',
-                });
+                }).select('id').single();
+                newKobId = newKob?.id || null;
                 await auditLog('kob.staff_booked', inserted.id, { date: kobDate, slot: kobSlotStart, mode: kobMode });
+              } else {
+                // Tiada slot ditempah — cipta rekod KOB draf supaya "Soalan Sesi KOB" tetap
+                // boleh terus diisi lepas Simpan (patient boleh tempah slot sebenar later).
+                newKobId = await ensureBackfillKobSession(inserted.id);
               }
             }
           }
           await auditLog('patient.created_by_staff', inserted?.mrn || ic, {
             name, ic, jenis: selectedStatus, package: selectedPkgName || null, kob_booked: kobBook,
           });
-          banner(`Pesakit ${isNew ? 'baru' : isActive ? 'aktif' : 'inactive'} berjaya ditambah ✅`);
+          banner(`Pesakit ${isNew ? 'baru' : isActive ? 'aktif' : 'inactive'} berjaya ditambah ✅`
+            + (newKobId ? ' — buka tab Soalan Sesi KOB untuk isi data rawatan.' : ''));
         }
         window.__iswSaved = true;
         closeCreatePatient();
         loadAll();
+        // Pesakit baru disimpan (semua jenis) — tab kosong dah dibuka awal
+        // (sebelum await, elak disekat sbg popup); isi URL sebenar sekarang.
+        if (kobTabHandle) {
+          if (newKobId) kobTabHandle.location.href = `kob-detail.html?id=${newKobId}`;
+          else kobTabHandle.close();
+        }
       } catch (err) {
+        kobTabHandle?.close();
         errEl.textContent = 'Ralat: ' + err.message;
         errEl.classList.remove('hidden');
       } finally {
@@ -2282,7 +2405,7 @@
     function exportCSV() {
       if (typeof XLSX === 'undefined') { banner('XLSX belum siap, cuba lagi', 'error'); return; }
       const rows = [
-        ['No', 'Patient ID', 'Nama', 'Telefon', 'Status', 'Pakej', 'Kod Rujukan', 'Coach', 'Tarikh Daftar'],
+        ['No', 'Patient ID', 'Nama', 'Telefon', 'Status', 'Pakej', 'Kod Pesakit', 'Coach', 'Tarikh Daftar'],
         ...currentFiltered.map((p, i) => [
           i + 1,
           p.mrn || '—',
@@ -2512,6 +2635,11 @@
         errEl.classList.remove('hidden');
       }
     }
+
+    // Terima isyarat dari tab patient-form.html (Tambah/Edit Pesakit dalam tab baru) — refresh senarai.
+    window.addEventListener('message', (e) => {
+      if (e.data?.type === 'isw-patient-saved') loadAll();
+    });
 
     (async () => {
       const user = await initStaff('psy_patients', 'Senarai Pesakit');

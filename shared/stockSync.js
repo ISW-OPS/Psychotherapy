@@ -47,7 +47,6 @@ window.ensureInventoryCounterpart = async function(prod) {
       unit: prod.unit || 'unit',
       qty_in_stock: Number(prod.stock) || 0,
       min_qty: Number(prod.min_stock) || 5,
-      auto_reorder_enabled: false,
       requires_approval: false,
       notes: prod.description_short || null,
       updated_at: new Date().toISOString(),

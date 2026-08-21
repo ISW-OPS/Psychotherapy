@@ -146,6 +146,8 @@ const PAYMENT_ITEM_LABELS: Record<string, (item: any) => string> = {
   plan_extension: () => 'Sambungan Minggu Rawatan',
   kob: () => 'Yuran KYC/KOB',
   kob_package: () => 'Pakej KOB',
+  kob_deposit: (item) => item.mode === 'installment' ? 'Deposit Ansuran Pakej' : 'Bayaran Penuh Pakej (KOB)',
+  kob_installment_topup: () => 'Ansuran Pakej (Top-up)',
 }
 
 async function notifyStaffPaymentReceived(admin: any, patientId: string | null, labels: string[], total: number, receiptRef: string) {
@@ -258,8 +260,106 @@ async function fulfillOrder(admin: any, payment: any) {
       // ELAK race condition: kalau doktor dah tandakan KOB 'completed' (markSelesai
       // di kob-detail.html) SEBELUM webhook ni sempat jalan (cth webhook lambat/
       // pembayaran lewat disahkan), jangan turunkan balik status ke 'package_paid'.
+      const wasAlreadyCompleted = await isKobStatusCompleted(admin, patientId)
       await admin.from('psy_patients').update({ kob_status: 'package_paid' })
         .eq('id', patientId).neq('kob_status', 'completed')
+      // Pesakit beli LEWAT (kob_status dah 'completed' sebelum bayaran ni, cth self-checkout
+      // Now-tier lepas declined+Selesai) — markSelesai() takkan panggil lagi utk sesi ni,
+      // jadi aktifkan pakej terus di sini (bukan gantung tunggu staff).
+      if (wasAlreadyCompleted) await activatePackageForPatient(admin, patientId, item.packageId, item.packageName, Number(item.amount || 0))
+
+    } else if (item.type === 'kob_deposit') {
+      // Deposit ansuran ATAU bayaran penuh pakej KOB — staff (payments-kob-initiate,
+      // tier sentiasa 'today') ATAU pesakit sendiri (payments-initiate self-checkout,
+      // tier 'today' semasa pending / 'now' selepas declined — lihat verifiedAmount()).
+      const kobSessionId = item.kobSessionId
+      const wasAlreadyCompleted = await isKobStatusCompleted(admin, patientId)
+      const { data: kobRows } = await admin.from('psy_kob_sessions')
+        .select('recommended_package_id, recommended_package_name').eq('id', kobSessionId).limit(1)
+      const kobRow = kobRows?.[0]
+      const isToday = item.tier === 'today'
+
+      if (item.mode === 'installment') {
+        let pkgQ = admin.from('psy_packages')
+          .select('installment_deposit_amount, installment_duration_months, installment_monthly_amount, today_installment_deposit_amount, today_installment_duration_months, today_installment_monthly_amount')
+        pkgQ = isUuid(String(kobRow?.recommended_package_id))
+          ? pkgQ.or(`id.eq.${kobRow.recommended_package_id},package_id.eq.${kobRow.recommended_package_id}`)
+          : pkgQ.eq('package_id', kobRow?.recommended_package_id)
+        const { data: pkgRows } = await pkgQ.limit(1)
+        const pkgMeta = pkgRows?.[0]
+        // Tier 'today' fallback ke Now bila today_* kosong; tier 'now'/tiada = terus Now (kod asal, tiada ubah).
+        const tierDepositCol = isToday ? (pkgMeta?.today_installment_deposit_amount ?? pkgMeta?.installment_deposit_amount) : pkgMeta?.installment_deposit_amount
+        const tierDurationCol = isToday ? (pkgMeta?.today_installment_duration_months ?? pkgMeta?.installment_duration_months) : pkgMeta?.installment_duration_months
+        const tierMonthlyCol = isToday ? (pkgMeta?.today_installment_monthly_amount ?? pkgMeta?.installment_monthly_amount) : pkgMeta?.installment_monthly_amount
+        const depositAmount = Number(tierDepositCol || item.amount || 0)
+        const resolved = buildInstallmentSchedule(depositAmount, tierDurationCol, tierMonthlyCol, new Date())
+        const rows = [
+          { kob_session_id: kobSessionId, patient_id: patientId, seq: 0, month_offset: 0,
+            due_date: now.slice(0, 10), target_cumulative: depositAmount, status: 'met', met_at: now },
+          ...resolved.map((r, i) => ({
+            kob_session_id: kobSessionId, patient_id: patientId, seq: i + 1, month_offset: r.month_offset,
+            due_date: r.due_date, target_cumulative: r.target_cumulative,
+            status: depositAmount >= r.target_cumulative ? 'met' : 'pending',
+            met_at: depositAmount >= r.target_cumulative ? now : null,
+          })),
+        ]
+        await admin.from('psy_kob_installment_checkpoints').insert(rows)
+        await admin.from('psy_kob_sessions').update({
+          package_payment_mode: 'installment', package_payment_status: 'partial', package_receipt_ref: receiptRef,
+        }).eq('id', kobSessionId)
+      } else if (item.mode === 'manual_installment') {
+        // Jadual custom (deposit + tiap baris, amaun tak-rata staff isi sendiri) DAH
+        // disimpan sbg checkpoint 'pending' oleh ensureManualScheduleDraft() SEBELUM
+        // pautan HitPay dijana (payments-kob-initiate baca amount deposit dari situ,
+        // bukan dari formula pakej standard) — di sini cuma tandakan baris yg dah
+        // tercapai (biasanya cuma deposit seq=0) jadi 'met'.
+        const depositAmount = Number(item.amount || 0)
+        await admin.from('psy_kob_installment_checkpoints')
+          .update({ status: 'met', met_at: now })
+          .eq('kob_session_id', kobSessionId).eq('status', 'pending')
+          .lte('target_cumulative', depositAmount)
+        await admin.from('psy_kob_sessions').update({
+          package_payment_mode: 'installment', package_payment_status: 'partial', package_receipt_ref: receiptRef,
+        }).eq('id', kobSessionId)
+      } else {
+        await admin.from('psy_kob_sessions').update({
+          package_payment_mode: 'full', package_payment_status: 'paid',
+          package_paid_at: now, package_receipt_ref: receiptRef,
+        }).eq('id', kobSessionId)
+      }
+      // ELAK race condition — lihat nota sama di branch kob_package di atas.
+      await admin.from('psy_patients').update({ kob_status: 'package_paid' })
+        .eq('id', patientId).neq('kob_status', 'completed')
+      if (wasAlreadyCompleted) {
+        await activatePackageForPatient(admin, patientId, kobRow?.recommended_package_id, kobRow?.recommended_package_name, packagePrice)
+      }
+
+    } else if (item.type === 'kob_installment_topup') {
+      // Top-up ansuran bebas-amount, dimulakan PESAKIT sendiri (payment.html).
+      // Kira semula jumlah terkumpul & semak checkpoint mana dah cecah target —
+      // port logik sama patient-hub.html saveBayaranPayment().
+      const kobSessionId = item.kobSessionId
+      const { data: allPayments } = await admin.from('psy_payments').select('total')
+        .eq('status', 'completed').eq('intent->>kob_session_id', kobSessionId)
+      // Baris SEMASA belum ditanda 'completed' lagi pada ketika ni (berlaku
+      // selepas fulfillOrder() siap) — tambah amount item ni secara eksplisit.
+      const totalPaid = (allPayments || []).reduce((s: number, p: any) => s + Number(p.total || 0), 0) + Number(item.amount || 0)
+
+      const { data: openCheckpoints } = await admin.from('psy_kob_installment_checkpoints')
+        .select('id, target_cumulative').eq('kob_session_id', kobSessionId).neq('status', 'met')
+      for (const cp of (openCheckpoints || [])) {
+        if (totalPaid >= Number(cp.target_cumulative)) {
+          await admin.from('psy_kob_installment_checkpoints').update({ status: 'met', met_at: now }).eq('id', cp.id)
+        }
+      }
+
+      const { data: stillOverdue } = await admin.from('psy_kob_installment_checkpoints')
+        .select('id').eq('patient_id', patientId).eq('status', 'overdue').limit(1)
+      if (!stillOverdue?.length) {
+        await admin.from('psy_patients').update({
+          booking_blocked: false, booking_blocked_reason: null, booking_blocked_since: null,
+        }).eq('id', patientId)
+      }
 
     } else if (item.type === 'shop_order') {
       await admin.from('psy_orders').insert({
@@ -406,6 +506,60 @@ async function sendReceiptWhatsApp(admin: any, payment: any) {
 }
 
 const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)
+
+// Port dari roles/staff/kob-detail.html buildInstallmentSchedule() — jadual
+// ansuran RATA (deposit + tempoh bulan + amaun bulanan tetap), bukan checkpoint
+// sewenang-wenang. Jumlah komitmen TAK semestinya = harga pakej penuh.
+function buildInstallmentSchedule(depositAmount: number, durationMonths: number, monthlyAmount: number, startDate: Date) {
+  const rows: { month_offset: number; target_cumulative: number; due_date: string }[] = []
+  let cumulative = Number(depositAmount) || 0
+  const n = Number(durationMonths) || 0
+  for (let i = 1; i < n; i++) {
+    cumulative += Number(monthlyAmount) || 0
+    const due = new Date(startDate)
+    due.setMonth(due.getMonth() + i)
+    rows.push({ month_offset: i, target_cumulative: cumulative, due_date: due.toISOString().slice(0, 10) })
+  }
+  return rows
+}
+
+async function isKobStatusCompleted(admin: any, patientId: string | null): Promise<boolean> {
+  if (!patientId) return false
+  const { data } = await admin.from('psy_patients').select('kob_status').eq('id', patientId).limit(1)
+  return data?.[0]?.kob_status === 'completed'
+}
+
+// Pesakit beli pakej LEWAT (KOB dah ditandakan Selesai, cth declined semasa KOB →
+// self-checkout kemudian) — markSelesai() (staff, kob-detail.html) TAKKAN panggil lagi
+// utk sesi ni, jadi replikasi bahagian aktifkan-pakej dia di sini. Idempotent — skip
+// kalau pesakit dah ada pakej aktif (elak overwrite pakej semasa yang tak berkaitan).
+async function activatePackageForPatient(admin: any, patientId: string | null, packageId: string | null, packageName: string | null, price: number) {
+  if (!patientId || !packageId) return
+  const { data: ptRows } = await admin.from('psy_patients').select('active_package_id').eq('id', patientId).limit(1)
+  if (ptRows?.[0]?.active_package_id) return // dah ada pakej aktif — jangan overwrite
+
+  const now = new Date().toISOString()
+  const expires = new Date(); expires.setMonth(expires.getMonth() + 3)
+  await admin.from('psy_package_purchases').insert({
+    patient_id: patientId, package_id: packageId, package_name: packageName,
+    price, expires_at: expires.toISOString(), status: 'active', payment_method: 'gateway',
+  })
+  await admin.from('psy_patients').update({
+    active_package_id: packageId, active_package_name: packageName,
+    package_purchased_at: now, package_expires_at: expires.toISOString(),
+  }).eq('id', patientId)
+
+  const { data: existing } = await admin.from('psy_treatment_plans')
+    .select('id').eq('patient_id', patientId).eq('status', 'active').limit(1)
+  if (!existing?.length) {
+    const tpl = await getPlanTemplate(admin, packageId, packageName || '')
+    await admin.from('psy_treatment_plans').insert({
+      patient_id: patientId, doctor_id: null, name: tpl.name,
+      duration_unit: tpl.duration_unit, duration_weeks: tpl.duration_weeks,
+      current_week: 1, coaching_schedule: tpl.coaching_schedule, status: 'active',
+    })
+  }
+}
 
 async function getPlanTemplate(admin: any, packageId: string, packageName: string) {
   // GOTCHA: id.eq.<kod-bukan-uuid> error di Postgres — guard ikut format key.

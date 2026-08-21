@@ -198,6 +198,8 @@ window.PAGE_PATIENT_MODULE = {
   library:           'pat_library',
   shop:              'pat_shop',
   payment:           'pat_payment',
+  payment_overview:  'pat_payment',   // payment-overview.html = anak nav Pembayaran
+  payment_plan:      'pat_payment',   // payment-plan.html = anak nav Pembayaran
   sejarah_pembayaran:'pat_sejarah',   // sejarah-pembayaran.html + resit.html
   psy_orders:        'pat_orders',
   orders:            'pat_orders',    // orders.html hantar pageId 'orders'

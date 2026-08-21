@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Plan Rawatan</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">💳</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8">
+
+        <div class="mb-5">
+          <h1 class="text-2xl font-bold text-navy-dark">Plan Rawatan</h1>
+          <p class="text-sm text-ink/60 mt-1">Ringkasan semua pakej dan komitmen bayaran anda.</p>
+        </div>
+
+        <div id="ov-loading" class="bg-white rounded-xl border border-ink/10 p-10 text-center text-sm text-ink/50">Memuatkan pakej…</div>
+        <div id="ov-empty" class="hidden bg-white rounded-xl border border-ink/10 p-10 text-center">
+          <div class="text-4xl mb-2">📦</div>
+          <p class="font-semibold text-ink">Tiada pakej lagi</p>
+          <p class="text-sm text-ink/50 mt-1">Pakej yang anda beli akan dipaparkan di sini.</p>
+          <a href="pakej.html" class="inline-flex items-center gap-2 mt-5 border border-navy/30 text-navy rounded-lg px-4 py-2 text-sm font-semibold hover:bg-navy-light">🗂️ Pilih Pakej Rawatan</a>
+        </div>
+        <div id="ov-content" class="hidden">
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+            <div class="bg-white rounded-xl border border-ink/10 p-4"><div class="text-[11px] text-ink/45 uppercase tracking-wide">Baki Tertunggak</div><div id="ov-outstanding" class="text-lg font-extrabold text-ink">RM 0.00</div><div id="ov-upcoming-cnt" class="text-[11px] text-ink/45 mt-0.5"></div></div>
+            <div class="bg-white rounded-xl border border-ink/10 p-4"><div class="text-[11px] text-ink/45 uppercase tracking-wide">Jumlah Dibayar</div><div id="ov-paid" class="text-lg font-extrabold text-green-dark">RM 0.00</div><div id="ov-paid-cnt" class="text-[11px] text-ink/45 mt-0.5"></div></div>
+            <div class="bg-white rounded-xl border border-ink/10 p-4"><div class="text-[11px] text-ink/45 uppercase tracking-wide">Pakej Aktif</div><div id="ov-active" class="text-lg font-extrabold text-navy">0</div><div class="text-[11px] text-ink/45 mt-0.5">Bawah Pelan Ansuran</div></div>
+            <div class="bg-white rounded-xl border border-ink/10 p-4"><div class="text-[11px] text-ink/45 uppercase tracking-wide">Nilai Semua Pakej</div><div id="ov-value" class="text-lg font-extrabold text-ink">RM 0.00</div></div>
+          </div>
+
+          <div class="flex items-end justify-between mb-2">
+            <div>
+              <h2 class="font-bold text-navy-dark">Pakej Anda</h2>
+              <p class="text-xs text-ink/50">Klik pakej untuk lihat butiran & jadual bayaran.</p>
+            </div>
+          </div>
+          <div id="ov-cards" class="space-y-3"></div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="../../shared/utils.js"></script>
+<script src="_shared.js"></script>
+<script>
+const money = (n) => 'RM ' + Number(n || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+async function loadOverview() {
+  const { data: sessions } = await window.db.from('psy_kob_sessions')
+    .select('id, recommended_package_name, recommended_package_price, package_payment_mode, package_payment_status')
+    .eq('patient_id', patientRecord.id).in('package_payment_status', ['paid', 'partial'])
+    .order('created_at', { ascending: false });
+
+  document.getElementById('ov-loading').classList.add('hidden');
+  if (!sessions || !sessions.length) { document.getElementById('ov-empty').classList.remove('hidden'); return; }
+
+  const details = await Promise.all(sessions.map(async s => {
+    const isInstallment = s.package_payment_mode === 'installment';
+    const [{ data: cps }, { data: paidRows }] = await Promise.all([
+      isInstallment
+        ? window.db.from('psy_kob_installment_checkpoints').select('seq, target_cumulative, due_date, status')
+          .eq('kob_session_id', s.id).order('seq', { ascending: true })
+        : Promise.resolve({ data: [] }),
+      window.db.from('psy_payments').select('total, created_at')
+        .eq('status', 'completed').eq('intent->>kob_session_id', s.id).order('created_at', { ascending: false }),
+    ]);
+    const totalPaid = (paidRows || []).reduce((sum, p) => sum + Number(p.total || 0), 0);
+    const commitment = isInstallment && cps?.length ? Number(cps[cps.length - 1].target_cumulative) : Number(s.recommended_package_price || 0);
+    const paidCount = isInstallment ? (cps || []).filter(c => Number(c.target_cumulative) <= totalPaid + 0.005).length : 0;
+    const totalCount = isInstallment ? (cps || []).length : 0;
+    const nextCp = isInstallment ? (cps || []).find(c => Number(c.target_cumulative) > totalPaid + 0.005) : null;
+    return {
+      session: s, isInstallment, commitment, totalPaid, paidCount, totalCount, nextCp,
+      complete: isInstallment ? !nextCp : totalPaid >= commitment - 0.005,
+      paymentCount: (paidRows || []).length, lastPaidAt: paidRows?.[0]?.created_at || null,
+    };
+  }));
+
+  // Pakej yg belum selesai (masih ada baki/ansuran aktif) diutamakan atas — pakej yg
+  // dah lunas/selesai turun ke bawah senarai (kekal papar, cuma tak perlu perhatian).
+  details.sort((a, b) => Number(a.complete) - Number(b.complete));
+
+  const totalOutstanding = details.reduce((s, d) => s + Math.max(0, d.commitment - d.totalPaid), 0);
+  const totalPaidAll = details.reduce((s, d) => s + d.totalPaid, 0);
+  const activeCount = details.filter(d => d.isInstallment && !d.complete).length;
+  const totalValue = details.reduce((s, d) => s + d.commitment, 0);
+  const upcomingCount = details.filter(d => !d.complete).length;
+
+  document.getElementById('ov-outstanding').textContent = money(totalOutstanding);
+  document.getElementById('ov-upcoming-cnt').textContent = upcomingCount ? `${upcomingCount} Bayaran Akan Datang` : '';
+  document.getElementById('ov-paid').textContent = money(totalPaidAll);
+  document.getElementById('ov-paid-cnt').textContent = `${details.reduce((s, d) => s + d.paymentCount, 0)} Pembayaran`;
+  document.getElementById('ov-active').textContent = activeCount;
+  document.getElementById('ov-value').textContent = money(totalValue);
+
+  document.getElementById('ov-cards').innerHTML = details.map((d, idx) => {
+    const s = d.session;
+    const dots = d.isInstallment ? `<div class="flex items-center gap-1 mt-2 max-w-[220px]">${(d.totalCount ? Array.from({ length: d.totalCount }) : []).map((_, i) => {
+      const paid = i < d.paidCount;
+      return `<div class="flex-1 h-1.5 rounded-full ${paid ? 'bg-green' : 'bg-ink/10'}"></div>`;
+    }).join('')}</div>` : '';
+    const actionBtn = d.isInstallment && !d.complete
+      ? `<a href="payment-plan.html" class="inline-flex items-center justify-center gap-1.5 bg-navy text-white text-xs font-bold px-4 py-2.5 rounded-xl hover:bg-navy-dark whitespace-nowrap">Lihat Jadual Penuh →</a>`
+      : `<button type="button" onclick="document.getElementById('ov-detail-${idx}').classList.toggle('hidden')" class="inline-flex items-center justify-center gap-1.5 border border-navy/25 text-navy text-xs font-bold px-4 py-2.5 rounded-xl hover:bg-navy-light whitespace-nowrap">Lihat Butiran</button>`;
+
+    return `<div class="bg-white rounded-xl border border-ink/10 p-4 md:p-5">
+      <div class="flex flex-wrap items-center gap-4">
+        <div class="w-11 h-11 rounded-xl bg-green-light text-green-dark grid place-items-center text-lg flex-shrink-0">📦</div>
+        <div class="flex-1 min-w-[160px]">
+          <div class="font-bold text-navy-dark">${escapeHtml(s.recommended_package_name || '')}</div>
+          <span class="text-[10px] font-bold ${d.isInstallment ? 'bg-navy-light text-navy' : 'bg-gold/20 text-gold-dark'} px-2 py-0.5 rounded-full">${d.isInstallment ? 'Installment Plan' : 'Full Payment'}</span>
+        </div>
+        <div><div class="text-[11px] text-ink/45 uppercase tracking-wide">Jumlah Pakej</div><div class="font-bold text-ink">${money(d.commitment)}</div></div>
+        ${d.isInstallment ? `
+        <div class="min-w-[140px]">
+          <div class="text-[11px] text-ink/45 uppercase tracking-wide">Progres</div>
+          <div class="font-bold text-ink">${d.paidCount} / ${d.totalCount} <span class="text-[11px] font-medium text-ink/45">Ansuran</span></div>
+          ${dots}
+        </div>` : ''}
+        <div class="ml-auto flex items-center gap-3">
+          ${d.complete
+            ? `<div class="text-right"><span class="inline-flex items-center gap-1 text-xs font-bold text-green-dark bg-green-light px-2.5 py-1 rounded-full">✅ Selesai</span></div>`
+            : `<div class="text-right"><div class="text-[11px] text-ink/45 uppercase tracking-wide">Seterusnya</div><div class="font-bold text-ink">${money(Math.max(0, Number(d.nextCp?.target_cumulative || 0) - d.totalPaid))}</div></div>`}
+          ${actionBtn}
+        </div>
+      </div>
+      <div id="ov-detail-${idx}" class="hidden mt-3 pt-3 border-t border-ink/8 text-xs text-ink/60 space-y-1">
+        <div class="flex justify-between"><span>Jumlah Dibayar</span><span class="font-semibold text-ink">${money(d.totalPaid)}</span></div>
+        <div class="flex justify-between"><span>Bilangan Transaksi</span><span class="font-semibold text-ink">${d.paymentCount}</span></div>
+        ${d.lastPaidAt ? `<div class="flex justify-between"><span>Bayaran Terakhir</span><span class="font-semibold text-ink">${formatDate(d.lastPaidAt)}</span></div>` : ''}
+        <a href="sejarah-pembayaran.html" class="inline-block text-navy font-semibold hover:underline mt-1">Lihat Resit Penuh →</a>
+      </div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('ov-content').classList.remove('hidden');
+}
+
+(async () => {
+  const user = await initPatient('payment_overview', 'Ringkasan semua pakej & komitmen bayaran');
+  if (!user) return;
+  await loadOverview();
+})();
+</script>
+</body>
+</html>

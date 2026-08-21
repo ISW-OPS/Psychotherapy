@@ -116,7 +116,6 @@
               <div id="pay-items" class="divide-y divide-ink/10"></div>
               <div class="mt-3 pt-3 border-t border-ink/10 space-y-1.5 text-sm">
                 <div class="flex justify-between"><span class="text-ink/60">Subjumlah</span><span id="pay-subtotal">RM 0.00</span></div>
-                <div class="flex justify-between"><span class="text-ink/60">SST (0%)</span><span>RM 0.00</span></div>
                 <div class="flex justify-between items-center pt-2.5 mt-1 border-t border-ink/10">
                   <span class="font-bold text-ink">Jumlah Keseluruhan</span>
                   <span id="pay-total" class="text-2xl font-bold text-green-dark">RM 0.00</span>
@@ -195,7 +194,6 @@
               <h2 class="font-bold text-navy-dark mb-4">Ringkasan Pesanan</h2>
               <div id="side-items" class="text-sm space-y-1.5"></div>
               <div class="flex justify-between font-bold text-base border-t border-ink/10 pt-2.5 mt-2.5"><span>Jumlah</span><span id="side-total" class="text-green-dark">RM 0.00</span></div>
-              <div class="text-[11px] text-ink/50 mt-1 text-right">Termasuk 0% SST</div>
             </div>
 
             <!-- Pembayaran selamat -->
@@ -285,6 +283,7 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
+<script src="../../shared/utils.js"></script>
 <script src="_shared.js"></script>
 <script src="../../shared/receipt.js"></script>
 <script>
@@ -458,6 +457,50 @@ async function loadPayments() {
     });
   }
 
+  // Ansuran pakej KOB — amaun TETAP ikut checkpoint SETERUSNYA sahaja (bukan amount
+  // bebas, bukan gabung baki keseluruhan) — patient bayar satu ansuran pada satu masa,
+  // tepat ikut jadual yang doktor tetapkan; tak boleh ubah/gabung beberapa bulan sekali.
+  if (patientRecord) {
+    const { data: kobSessions } = await window.db.from('psy_kob_sessions')
+      .select('id, recommended_package_id, recommended_package_name, recommended_package_price')
+      .eq('patient_id', patientRecord.id).eq('package_payment_mode', 'installment')
+      .eq('package_payment_status', 'partial')
+      .order('created_at', { ascending: false }).limit(1);
+    const kobSession = kobSessions?.[0];
+    if (kobSession) {
+      const [{ data: paidRows }, { data: cps }] = await Promise.all([
+        window.db.from('psy_payments').select('total')
+          .eq('status', 'completed').eq('intent->>kob_session_id', kobSession.id),
+        window.db.from('psy_kob_installment_checkpoints').select('seq, target_cumulative, due_date, status')
+          .eq('kob_session_id', kobSession.id).order('seq', { ascending: true }),
+      ]);
+      const totalPaid = (paidRows || []).reduce((s, p) => s + Number(p.total || 0), 0);
+      // Checkpoint seterusnya = baris PERTAMA yang target_cumulative die belum cecah oleh
+      // jumlah terkumpul sebenar (bukan status='met', sbb status tu boleh lag sikit
+      // menunggu cron/webhook) — jumlah perlu dibayar SEKARANG = target checkpoint tu
+      // tolak apa yg dah terkumpul, TAK gabung dgn checkpoint lepas tu sekali.
+      const nextCp = (cps || []).find(c => Number(c.target_cumulative) > totalPaid + 0.005);
+      const dueNow = nextCp ? Math.max(0, Number(nextCp.target_cumulative) - totalPaid) : 0;
+      const commitment = (cps && cps.length) ? Number(cps[cps.length - 1].target_cumulative) : Number(kobSession.recommended_package_price || 0);
+      const totalRemaining = Math.max(0, commitment - totalPaid);
+      if (nextCp && dueNow > 0.01) {
+        const paidCount = (cps || []).filter(c => Number(c.target_cumulative) <= totalPaid + 0.005).length;
+        pendingItems.push({
+          type: 'kob_installment_topup',
+          id: `kob-topup-${kobSession.id}`,
+          title: `Ansuran Pakej: ${kobSession.recommended_package_name || ''}`,
+          amount: dueNow,
+          maxAmount: dueNow,
+          kobSessionId: kobSession.id,
+          totalRemaining,
+          nextCp,
+          installmentPos: paidCount + 1,
+          installmentTotal: (cps || []).length,
+        });
+      }
+    }
+  }
+
   await loadReceipts();   // populasi window._receipts dulu — dipakai bila tiada tertunggak (papar resit terakhir)
   renderReview();
 }
@@ -525,6 +568,24 @@ function setAgree(v) { checkPayReady(); }
 
 // Satu baris item dalam Semakan (generik — pelbagai jenis bayaran).
 function lineItemHtml(item) {
+  if (item.type === 'kob_installment_topup') {
+    // Amaun TETAP ikut checkpoint seterusnya sahaja — tiada input, tak boleh diubah
+    // atau digabung dgn checkpoint lain (ikut jadual yg doktor dah tetapkan). Jadual
+    // penuh + progres dah dipapar di kad "Payment Plan" atas sekali — sini kekal
+    // ringkas (baris checkout sebenar sahaja).
+    return `<div class="py-3 first:pt-0 last:pb-0">
+      <div class="flex items-center justify-between gap-2">
+        <div class="text-sm font-semibold">${item.title}</div>
+        <span class="text-[10px] font-bold bg-navy-light text-navy px-2 py-0.5 rounded-full whitespace-nowrap">Ansuran ${item.installmentPos} / ${item.installmentTotal}</span>
+      </div>
+      <div class="mt-2 bg-navy/5 border border-navy/15 rounded-xl px-3.5 py-3 space-y-1.5 text-sm">
+        <div class="flex justify-between"><span class="text-ink/50">Jumlah Perlu Dibayar</span><span class="font-bold text-navy">${money(item.amount)}</span></div>
+        <div class="flex justify-between"><span class="text-ink/50">Tarikh Due</span><span class="font-semibold">${formatDate(item.nextCp.due_date)}</span></div>
+        <div class="flex justify-between items-center"><span class="text-ink/50">Status</span><span class="text-[10px] font-bold bg-gold/20 text-gold-dark px-2 py-0.5 rounded-full">Pending</span></div>
+      </div>
+      <div class="text-[11px] text-ink/45 mt-1.5">Baki keseluruhan tertunggak: ${money(item.totalRemaining)}</div>
+    </div>`;
+  }
   let extra = '';
   if (item.type === 'shop_order') {
     extra = `<div class="text-xs text-ink/50 mt-0.5">${item.subtitle || ''}</div>` +

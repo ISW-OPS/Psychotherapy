@@ -54,7 +54,7 @@ async function enforceKyc(currentPageId) {
 
   // (KYC sudah dihantar) — boleh teruskan onboarding KOB + browse pakej/bayar
   // walaupun admin belum lulus lagi — kelulusan disemak semasa doktor jalankan sesi KOB.
-  if (['kob', 'pakej', 'payment', 'sejarah_pembayaran', 'routine', 'checkin', 'kepatuhan'].includes(currentPageId)) return true;
+  if (['kob', 'pakej', 'payment', 'payment_overview', 'payment_plan', 'sejarah_pembayaran', 'routine', 'checkin', 'kepatuhan'].includes(currentPageId)) return true;
 
   // ── GATE 2: features penuh (plan, vitals, library, dll) — mesti KYC LULUS admin + siap KOB ──
   const kobStatus = window.patientRecord?.kob_status || 'na';
@@ -200,11 +200,12 @@ async function initPatient(pageId, titleSub) {
   await loadPatientFeatures();
 
   // Feature gate — redirect if feature disabled by admin.
-  // 'payment' dikecualikan: ia plumbing wajib (bayar pakej KOB + checkout kedai)
-  // yang dicapai secara kontekstual, bukan ciri boleh-toggle. Ia kekal TERSEMBUNYI
-  // dari nav (canPatient masih false) tapi halamannya sentiasa boleh dibuka.
-  // Akses sebenar dikawal enforceKyc (mesti KYC lulus dulu).
-  const PAGE_GATE_EXEMPT = ['payment'];
+  // 'payment' + anak nav dia (Overview/Payment Plan) dikecualikan: plumbing wajib
+  // (bayar pakej KOB + checkout kedai) yang dicapai secara kontekstual, bukan ciri
+  // boleh-toggle. Kekal TERSEMBUNYI dari nav (canPatient masih false) tapi
+  // halamannya sentiasa boleh dibuka. Akses sebenar dikawal enforceKyc (mesti KYC
+  // lulus dulu).
+  const PAGE_GATE_EXEMPT = ['payment', 'payment_overview', 'payment_plan'];
   if (!PAGE_GATE_EXEMPT.includes(pageId) && !canPatient(pageId)) {
     window.location.href = 'dashboard.html';
     return null;
@@ -214,13 +215,23 @@ async function initPatient(pageId, titleSub) {
   document.getElementById('app-shell')?.classList.remove('hidden');
 
   // Hide nav items based on: RBAC feature toggle + KYC/KOB state
+  // Untuk item berkumpulan (children): kumpulan tetap papar kalau MODUL PARENT
+  // sendiri diizinkan ATAU sekurang-kurangnya SATU anak diizinkan (cth grup
+  // "Pembayaran" — modul pat_payment mungkin off tapi pat_sejarah masih on, jadi
+  // "Sejarah Pembayaran" tetap perlu kelihatan) — anak yg tak diizinkan ditapis
+  // keluar drpd senarai children sebelum dihantar ke renderer.
   const kobStatus = window.patientRecord?.kob_status || 'na';
-  const navItems = getNavItems('patient').filter(item => {
-    if (!canPatient(item.id)) return false;
-    if (item.id === 'kyc' && window.kycApproved) return false;
-    if (item.id === 'kob' && !window.kycSubmitted) return false;   // KOB hanya lepas KYC dihantar
-    return true;
-  });
+  const navItems = getNavItems('patient').map(item => {
+    if (item.children && item.children.length) {
+      const kids = item.children.filter(c => canPatient(c.id));
+      if (!canPatient(item.id) && !kids.length) return null;
+      return { ...item, children: kids };
+    }
+    if (!canPatient(item.id)) return null;
+    if (item.id === 'kyc' && window.kycApproved) return null;
+    if (item.id === 'kob' && !window.kycSubmitted) return null;   // KOB hanya lepas KYC dihantar
+    return item;
+  }).filter(Boolean);
   renderNavbar('patient', window.currentUser, navItems, pageId);
 
   const nav = getNavItems('patient').find(n => n.id === pageId);

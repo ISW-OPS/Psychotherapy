@@ -34,6 +34,7 @@
           <div class="flex gap-2 flex-wrap">
             <button onclick="setFilter('today')" id="f-today" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-navy text-white">Hari Ini <span id="badge-today" class="hidden ml-1 bg-terracotta text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full"></span></button>
             <button onclick="setFilter('upcoming')" id="f-upcoming" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-ink/15">Akan Datang <span id="badge-upcoming" class="hidden ml-1 bg-terracotta text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full"></span></button>
+            <button onclick="setFilter('missed')" id="f-missed" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-ink/15">Terlepas <span id="badge-missed" class="hidden ml-1 bg-terracotta text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full"></span></button>
             <button onclick="setFilter('hadir')" id="f-hadir" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-ink/15">Sedang Berlangsung</button>
             <button onclick="setFilter('completed')" id="f-completed" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-ink/15">Selesai</button>
             <button onclick="setFilter('all')" id="f-all" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-ink/15">Semua</button>
@@ -89,9 +90,13 @@ const STATUS_LABEL = {
   cancelled:  { label: 'Batal',    cls: 'bg-terracotta/15 text-terracotta' },
 };
 
+// "Terlepas" bukan status DB sebenar — ia keadaan terbitan: masih 'booked' tapi
+// tarikh/masa dah lepas & staff belum tandakan Hadir/Reschedule/Batal.
+const isMissed = k => k.status === 'booked' && k.scheduled_at < new Date().toISOString();
+
 function setFilter(mode) {
   filterMode = mode;
-  ['today','upcoming','hadir','completed','all'].forEach(m => {
+  ['today','upcoming','missed','hadir','completed','all'].forEach(m => {
     const b = document.getElementById('f-' + m);
     if (b) b.className = `px-3 py-1.5 rounded-lg text-xs font-semibold ${m === mode ? 'bg-navy text-white' : 'bg-white border border-ink/15'}`;
   });
@@ -108,6 +113,7 @@ async function loadAll() {
   const todayStr = localDateStr(new Date());
   const todayCount = allKob.filter(k => localDateStr(k.scheduled_at) === todayStr).length;
   const upcomingCount = allKob.filter(k => k.scheduled_at >= new Date().toISOString() && k.status === 'booked').length;
+  const missedCount = allKob.filter(isMissed).length;
   const badgeToday = document.getElementById('badge-today');
   if (badgeToday) {
     if (todayCount > 0) { badgeToday.textContent = todayCount; badgeToday.classList.remove('hidden'); }
@@ -117,6 +123,11 @@ async function loadAll() {
   if (badge) {
     if (upcomingCount > 0) { badge.textContent = upcomingCount; badge.classList.remove('hidden'); }
     else badge.classList.add('hidden');
+  }
+  const badgeMissed = document.getElementById('badge-missed');
+  if (badgeMissed) {
+    if (missedCount > 0) { badgeMissed.textContent = missedCount; badgeMissed.classList.remove('hidden'); }
+    else badgeMissed.classList.add('hidden');
   }
   render();
 }
@@ -159,6 +170,8 @@ function render() {
     list = list.filter(k => localDateStr(k.scheduled_at) === today);
   } else if (filterMode === 'upcoming') {
     list = list.filter(k => k.scheduled_at >= new Date().toISOString() && k.status === 'booked');
+  } else if (filterMode === 'missed') {
+    list = list.filter(isMissed);
   } else if (filterMode === 'hadir') {
     list = list.filter(k => k.status === 'hadir');
   } else if (filterMode === 'completed') {
@@ -180,12 +193,13 @@ function render() {
     const dt = new Date(k.scheduled_at);
     const dateStr = dt.toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric' });
     const timeStr = dt.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
-    const st = STATUS_LABEL[k.status] || STATUS_LABEL.booked;
+    const missed = isMissed(k);
+    const st = missed ? { label: 'Terlepas', cls: 'bg-terracotta/15 text-terracotta' } : (STATUS_LABEL[k.status] || STATUS_LABEL.booked);
     const doctorInfo = [
       k.doctor_hadir_name ? `H: ${k.doctor_hadir_name}` : null,
       k.doctor_selesai_name ? `S: ${k.doctor_selesai_name}` : null,
     ].filter(Boolean).join(' · ') || '—';
-    return `<tr>
+    return `<tr${missed ? ' class="bg-terracotta/5"' : ''}>
       <td class="whitespace-nowrap"><div class="font-semibold">${escapeHtml(dateStr)}</div><div class="text-xs text-ink/50">${escapeHtml(timeStr)}</div></td>
       <td>${escapeHtml(patName)}</td>
       <td class="text-xs font-mono">${escapeHtml(pat?.mrn || '—')}</td>

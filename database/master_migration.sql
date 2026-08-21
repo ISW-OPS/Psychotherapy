@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-08-13T03:05:04.261505Z
+-- Generated: 2026-08-20T06:07:11.420873Z
 -- Jumlah fail: 30
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -479,6 +479,7 @@ INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
   -- Portal pesakit
   ('pat_announcements','Pengumuman',           '📢', 'patient', 12),
   ('pat_events',       'Acara & Kelas',        '📅', 'patient', 15),
+  ('pat_payment',      'Pembayaran',           '💳', 'patient', 90),
   ('pat_sejarah',      'Sejarah Pembayaran',   '🧾', 'patient', 95)
 ON CONFLICT (code) DO UPDATE SET
   label = EXCLUDED.label,
@@ -592,6 +593,7 @@ ON CONFLICT DO NOTHING;
 INSERT INTO psy_role_module_actions (role_code, module_code, action_code) VALUES
   ('patient', 'pat_announcements', 'view'),
   ('patient', 'pat_events',        'view'),
+  ('patient', 'pat_payment',       'view'),
   ('patient', 'pat_sejarah',       'view')
 ON CONFLICT DO NOTHING;
 
@@ -1216,12 +1218,30 @@ CREATE TABLE IF NOT EXISTS psy_packages (
   -- lain-lain
   extension_price_per_week NUMERIC(10,2) DEFAULT 50,
   meet_link TEXT,
-  -- bayaran ansuran (Pelan Pelaburan Ansuran) — checkpoint kumulatif custom.
-  -- Pesakit bayar apa-apa amount bila-bila selepas deposit; wajib jumlah
-  -- TERKUMPUL cecah target tiap checkpoint (bukan slot ansuran bersaiz tetap).
+  -- bayaran ansuran — Deposit (Bayaran Pertama) + Tempoh(bulan) + Bayaran
+  -- Bulanan RATA. Pesakit boleh top-up jumlah bebas bila-bila (payment.html),
+  -- tapi jadual checkpoint (psy_kob_installment_checkpoints) dijana dari
+  -- struktur rata ni — bukan checkpoint sewenang-wenang lagi.
   installment_allowed BOOLEAN NOT NULL DEFAULT false,
   installment_deposit_amount NUMERIC(10,2),
-  installment_checkpoints JSONB DEFAULT '[]',
+  installment_duration_months INT,
+  installment_monthly_amount NUMERIC(10,2),
+  -- harga 4-tier KOB: field di atas (price/installment_*) = tier "Now" (selepas
+  -- KOB). Field bawah = tier "Today" (eksklusif semasa sesi KOB langsung) —
+  -- kosong = fallback senyap ke tier Now di semua tempat (pakej belum diset tier Today).
+  nilai_program NUMERIC(10,2),
+  harga_asal NUMERIC(10,2),
+  today_price NUMERIC(10,2),
+  today_installment_deposit_amount NUMERIC(10,2),
+  today_installment_duration_months INT,
+  today_installment_monthly_amount NUMERIC(10,2),
+  -- status paparan, nota dalaman & flag automation/access (editor pakej-edit.html)
+  status TEXT DEFAULT 'active',
+  internal_notes TEXT,
+  automation_flags JSONB DEFAULT '{}',
+  access_flags JSONB DEFAULT '{}',
+  supplies JSONB DEFAULT '[]',
+  addons JSONB DEFAULT '[]',
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -1255,6 +1275,12 @@ COMMENT ON COLUMN psy_packages.online_lock_from_week IS
 COMMENT ON COLUMN psy_packages.weekly_supplies IS
   'Array of {week, items: [{product_id, qty, name}]} — bekalan auto-deduct per week';
 
+COMMENT ON COLUMN psy_packages.supplies IS
+  'Array of {name, qty, ...} — senarai bekalan rawatan keseluruhan pakej (tab Lain-lain, bukan per-minggu)';
+
+COMMENT ON COLUMN psy_packages.addons IS
+  'Array of {name, ...} — senarai addon pakej (tab Lain-lain)';
+
 COMMENT ON COLUMN psy_packages.weekly_content IS
   'Array of {week, content_ids: []} — library content unlock per week';
 
@@ -1286,12 +1312,27 @@ COMMENT ON COLUMN psy_packages.extension_price_per_week IS
   'Harga (RM) untuk tambah satu minggu rawatan bila patient miss sesi. Default RM 50.';
 
 COMMENT ON COLUMN psy_packages.installment_deposit_amount IS
-  'Jumlah deposit wajib dibayar semasa aktifkan pakej (ansuran). Bayaran ini terus mengaktifkan pakej.';
-COMMENT ON COLUMN psy_packages.installment_checkpoints IS
-  'Array of {month_offset:int, target_cumulative:numeric|null}. month_offset = bilangan bulan dari tarikh deposit. target_cumulative = jumlah TERKUMPUL (bukan tambahan) yang wajib dicecah menjelang tarikh tu. null = baki penuh (harga pakej) — biasanya checkpoint terakhir. Cth [{"month_offset":1,"target_cumulative":30000},{"month_offset":3,"target_cumulative":45000},{"month_offset":12,"target_cumulative":null}].';
+  'Jumlah deposit ("Bayaran Pertama") wajib dibayar semasa aktifkan pakej (ansuran). Bayaran ini terus mengaktifkan pakej.';
+COMMENT ON COLUMN psy_packages.installment_duration_months IS
+  'Jumlah bayaran ansuran keseluruhan TERMASUK Bayaran Pertama (cth 8 = 1 deposit + 7 bayaran bulanan).';
+COMMENT ON COLUMN psy_packages.installment_monthly_amount IS
+  'Amaun RATA setiap bulan (bulan ke-2 hingga installment_duration_months). Jumlah Komitmen = deposit + (duration-1) × amaun ni — TAK semestinya sama dengan price (boleh lebih tinggi, kos bayar ansuran).';
 
 COMMENT ON COLUMN psy_packages.meet_link IS
   'Pautan Gmeet recurring untuk pakej. Dipaparkan kepada patient bila minggu semasa adalah online/both.';
+
+COMMENT ON COLUMN psy_packages.nilai_program IS
+  'Jumlah Nilai Keseluruhan Program — angka marketing rujukan (display sahaja di kad harga), TIDAK dipakai dalam sebarang pengiraan bayaran.';
+COMMENT ON COLUMN psy_packages.harga_asal IS
+  'Harga Asal — asas kira % diskaun (display sahaja). % diskaun dikira LIVE = round((1 - tier_price/harga_asal)*100), bukan disimpan.';
+COMMENT ON COLUMN psy_packages.today_price IS
+  'Harga Bayaran Penuh — tier "Today" (eksklusif semasa pesakit masih dalam sesi KOB langsung, package_payment_status=pending). NULL = pakej ini tiada tier Today berasingan, fallback ke price (tier Now) di semua tempat.';
+COMMENT ON COLUMN psy_packages.today_installment_deposit_amount IS
+  'Deposit ("Bayaran Pertama") — tier Today ansuran. NULL = fallback ke installment_deposit_amount (tier Now).';
+COMMENT ON COLUMN psy_packages.today_installment_duration_months IS
+  'Sama makna dgn installment_duration_months tapi utk tier Today. NULL = fallback ke installment_duration_months (tier Now).';
+COMMENT ON COLUMN psy_packages.today_installment_monthly_amount IS
+  'Sama makna dgn installment_monthly_amount tapi utk tier Today. NULL = fallback ke installment_monthly_amount (tier Now).';
 
 -- ──────────────────────────────────────────────────────────────
 -- psy_package_purchases — pembelian pakej oleh pesakit
@@ -2616,6 +2657,18 @@ CREATE TABLE IF NOT EXISTS psy_kob_agreements (
 
 CREATE INDEX IF NOT EXISTS idx_kob_agreements_patient ON psy_kob_agreements(patient_id);
 
+-- ──── psy_kob_agreements — Nama/IC tulisan tangan + Waris/Penjamin ────
+-- patient_name/patient_ic (teks, auto-resolve dari profil) KEKAL tak berubah —
+-- lajur ni cuma imej tulisan-tangan TAMBAHAN, dibenamkan dalam PDF sebagai bukti
+-- pesakit tulis sendiri (bukan ganti medan teks sedia ada). Waris/Penjamin
+-- (nama+IC+tandatangan) wajib diisi di UI (validasi client-side), tapi nullable
+-- di DB supaya rekod lama sedia-ada tak terjejas.
+ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS patient_name_image_url TEXT;
+ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS patient_ic_image_url TEXT;
+ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS guardian_name_image_url TEXT;
+ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS guardian_ic_image_url TEXT;
+ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS guardian_signature_url TEXT;
+
 ALTER TABLE psy_kob_agreements ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Patient read own agreement" ON psy_kob_agreements;
@@ -2646,6 +2699,10 @@ CREATE POLICY "Staff insert agreement on behalf of patient" ON psy_kob_agreement
 
 DROP POLICY IF EXISTS "Staff update agreement" ON psy_kob_agreements;
 CREATE POLICY "Staff update agreement" ON psy_kob_agreements FOR UPDATE
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff delete agreement" ON psy_kob_agreements;
+CREATE POLICY "Staff delete agreement" ON psy_kob_agreements FOR DELETE
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
 -- ──── psy_kob_slot_config ────
@@ -3706,14 +3763,75 @@ CREATE TABLE IF NOT EXISTS psy_inventory_items (
   notes                TEXT,
   max_qty              NUMERIC(10,2),
   auto_reorder_qty     NUMERIC(10,2),
-  auto_reorder_enabled BOOLEAN DEFAULT false,
   last_auto_po_at      TIMESTAMPTZ,
   consumption_type     TEXT DEFAULT 'package'
                        CHECK (consumption_type IN ('package','service','general')),
   supplier_info        JSONB DEFAULT '{}'::jsonb,
+  source_type          TEXT NOT NULL DEFAULT 'am'
+                       CHECK (source_type IN ('farmasi_klinikal','am')),
+  batch_no             TEXT,
+  expiry_date          DATE,
+  item_code            TEXT UNIQUE,
+  is_active            BOOLEAN NOT NULL DEFAULT true,
+  reorder_threshold_pct NUMERIC(5,2),
+  manufacturer         TEXT,
+  registration_no      TEXT,
+  storage_location     TEXT,
+  storage_condition    TEXT,
   created_at           TIMESTAMPTZ DEFAULT now(),
   updated_at           TIMESTAMPTZ DEFAULT now()
 );
+
+-- Kolum ditambah selepas jadual asal wujud (patch untuk install sedia ada)
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'am'
+  CHECK (source_type IN ('farmasi_klinikal','am'));
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS batch_no TEXT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS expiry_date DATE;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS item_code TEXT UNIQUE;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS reorder_threshold_pct NUMERIC(5,2);
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS manufacturer TEXT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS registration_no TEXT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS storage_location TEXT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS storage_condition TEXT;
+
+-- auto_reorder_enabled dibuang — trigger auto-request tak pernah check flag ni,
+-- sistem auto-cipta permintaan beli utk semua item bila stok rendah tanpa syarat.
+ALTER TABLE psy_inventory_items DROP COLUMN IF EXISTS auto_reorder_enabled;
+
+CREATE INDEX IF NOT EXISTS idx_inventory_items_source_type ON psy_inventory_items(source_type);
+CREATE INDEX IF NOT EXISTS idx_inventory_items_is_active ON psy_inventory_items(is_active);
+
+-- ──── item_code auto-generate (ITM-00001, ITM-00002, ...) ────
+CREATE SEQUENCE IF NOT EXISTS psy_inventory_item_code_seq START 1;
+
+CREATE OR REPLACE FUNCTION psy_inventory_set_item_code()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.item_code IS NULL THEN
+    NEW.item_code := 'ITM-' || LPAD(nextval('psy_inventory_item_code_seq')::text, 5, '0');
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_psy_inventory_set_item_code ON psy_inventory_items;
+CREATE TRIGGER trg_psy_inventory_set_item_code
+BEFORE INSERT ON psy_inventory_items
+FOR EACH ROW EXECUTE FUNCTION psy_inventory_set_item_code();
+
+-- Backfill item_code utk baris sedia ada (install lama) — susun ikut created_at supaya kod konsisten.
+DO $$
+DECLARE r RECORD;
+BEGIN
+  FOR r IN SELECT id FROM psy_inventory_items WHERE item_code IS NULL ORDER BY created_at LOOP
+    UPDATE psy_inventory_items
+      SET item_code = 'ITM-' || LPAD(nextval('psy_inventory_item_code_seq')::text, 5, '0')
+      WHERE id = r.id;
+  END LOOP;
+END $$;
 
 -- RLS
 ALTER TABLE psy_inventory_items ENABLE ROW LEVEL SECURITY;
@@ -3731,14 +3849,32 @@ COMMENT ON COLUMN psy_inventory_items.max_qty IS
   'Saiz stok penuh / target. Trigger auto-PO bila qty_in_stock <= 30% dari max_qty.';
 COMMENT ON COLUMN psy_inventory_items.auto_reorder_qty IS
   'Kuantiti yang sistem cadang dalam auto-PO. Default: max_qty - qty_in_stock.';
-COMMENT ON COLUMN psy_inventory_items.auto_reorder_enabled IS
-  'true = auto-create purchase invoice bila stok rendah; false = manual sahaja.';
 COMMENT ON COLUMN psy_inventory_items.last_auto_po_at IS
   'Tarikh auto-PO terakhir dijana — elak duplikat dalam tempoh pendek.';
 COMMENT ON COLUMN psy_inventory_items.consumption_type IS
   'package = bekalan pakej (dynamic auto-calc); service = guna semasa service one-off; general = consumable umum (manual min sahaja).';
 COMMENT ON COLUMN psy_inventory_items.supplier_info IS
-  'Format: { name, cost_per_unit, lead_days, po_min, po_max }. Maklumat pembekal dan cadangan PO.';
+  'Format: { name, pic_name, phone, email, address, payment_terms, cost_per_unit }. Maklumat pembekal.';
+COMMENT ON COLUMN psy_inventory_items.item_code IS
+  'Kod item auto-generate (ITM-00001, ...) via trigger — tidak boleh diedit.';
+COMMENT ON COLUMN psy_inventory_items.is_active IS
+  'false = item tidak aktif — disorok dari senarai pilihan (dispens/kit/jadual pakej) & auto-request.';
+COMMENT ON COLUMN psy_inventory_items.reorder_threshold_pct IS
+  'Peratus keperluan bulanan (dynamic_monthly) yang trigger status "Stok Rendah" utk item source_type=package. NULL = guna default sistem 30%.';
+COMMENT ON COLUMN psy_inventory_items.manufacturer IS
+  'Pengilang produk. Relevan utk source_type=farmasi_klinikal.';
+COMMENT ON COLUMN psy_inventory_items.registration_no IS
+  'No. pendaftaran/produk (cth MAL number). Relevan utk source_type=farmasi_klinikal.';
+COMMENT ON COLUMN psy_inventory_items.storage_location IS
+  'Lokasi simpanan fizikal (cth: Bilik Farmasi Rak 2). Relevan utk source_type=farmasi_klinikal.';
+COMMENT ON COLUMN psy_inventory_items.storage_condition IS
+  'Syarat simpanan (cth: Sejuk 2-8°C, Elak Cahaya). Relevan utk source_type=farmasi_klinikal.';
+COMMENT ON COLUMN psy_inventory_items.source_type IS
+  'farmasi_klinikal = ubat/bekalan perubatan (perlu batch_no/expiry_date, dispensing direkod di psy_supply_disbursements); am = inventori am/coaching/marketing. Default am.';
+COMMENT ON COLUMN psy_inventory_items.batch_no IS
+  'No. batch pembekal. Relevan hanya untuk item source_type=farmasi_klinikal.';
+COMMENT ON COLUMN psy_inventory_items.expiry_date IS
+  'Tarikh luput batch semasa. Relevan hanya untuk item source_type=farmasi_klinikal.';
 
 -- ──── psy_inventory_requests ────
 CREATE TABLE IF NOT EXISTS psy_inventory_requests (
@@ -3796,6 +3932,11 @@ DECLARE
   v_status          TEXT;
   v_target          NUMERIC;
 BEGIN
+  -- Item tidak aktif — jangan auto-request
+  IF NOT COALESCE(NEW.is_active, true) THEN
+    RETURN NEW;
+  END IF;
+
   -- Hanya bertindak bila qty_in_stock benar-benar berubah & turun
   IF NEW.qty_in_stock IS NULL OR NEW.qty_in_stock = OLD.qty_in_stock THEN
     RETURN NEW;
@@ -5277,6 +5418,24 @@ VALUES (
 )
 ON CONFLICT (key) DO NOTHING;
 
+-- Templat "Perjanjian KOB Ditandatangan" (butang manual "Hantar WhatsApp" di kob-detail.html,
+-- lepas agreement disign; PDF sah dilampirkan sebagai attachment, bukan placeholder —
+-- boleh edit ayat oleh staff; toggle off sembunyikan butang tu terus)
+INSERT INTO psy_auto_messages (key, name, description, channel, trigger_type, channels, audience, message_template, placeholders, is_active)
+VALUES (
+  'kob_agreement_signed',
+  'Perjanjian KOB Ditandatangan (WhatsApp)',
+  'Mesej + PDF salinan perjanjian yang dihantar bila staff tekan butang "Hantar WhatsApp" (kad Sign Agreement, kob-detail.html) selepas agreement ditandatangan. Toggle off untuk sembunyikan butang tu.',
+  'whatsapp',
+  'on_action',
+  '["whatsapp"]'::jsonb,
+  '["patient"]'::jsonb,
+  E'Assalamualaikum {nama}, berikut salinan Perjanjian Rawatan ISW yang telah anda tandatangani.',
+  '["{nama}"]'::jsonb,
+  true
+)
+ON CONFLICT (key) DO NOTHING;
+
 -- Pengesahan Sesi Rawatan (session_confirm) — UPSERT dgn DO UPDATE supaya
 -- run semula mengemaskini template/config; is_active TIDAK disentuh.
 --   rule.lead_days      : berapa hari sebelum sesi peringatan dihantar (default 3)
@@ -5741,10 +5900,13 @@ CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
   consultation      JSONB DEFAULT '{}'::jsonb,  -- borang konsultasi berstruktur
   attachments       JSONB DEFAULT '[]'::jsonb,  -- transkrip/dokumen: [{name,path,uploaded_at}]
   -- Sesi 1:1 auto-jana dari week plan (cth Hakeema 1:1 minggu 6/11) — plan_id+week_number
-  -- kekal NULL utk rujukan manual biasa. source='plan_1on1' + unique index elak duplicate.
+  -- kekal NULL utk rujukan manual biasa. source='plan_1on1' + session_type + unique index elak duplicate.
   plan_id           UUID REFERENCES psy_treatment_plans(id) ON DELETE SET NULL,
   week_number       INT,
   source            TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','plan_1on1')),
+  -- Jenis sesi 1:1 ad-hoc ditanda terus di plan-week.html (checkbox Hakeema/Hakeem/Dr
+  -- Session). NULL utk rujukan manual biasa (source='manual').
+  session_type      TEXT CHECK (session_type IN ('hakeema','hakeem','dr')),
   created_at        TIMESTAMPTZ DEFAULT now(),
   updated_at        TIMESTAMPTZ DEFAULT now(),
   resolved_at       TIMESTAMPTZ
@@ -5753,7 +5915,7 @@ CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
 CREATE INDEX IF NOT EXISTS idx_psy_clinical_referrals_target  ON psy_clinical_referrals(target_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_psy_clinical_referrals_patient ON psy_clinical_referrals(patient_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_psy_clinical_referrals_plan_1on1
-  ON psy_clinical_referrals(plan_id, week_number) WHERE source = 'plan_1on1';
+  ON psy_clinical_referrals(plan_id, week_number, session_type) WHERE source = 'plan_1on1';
 
 ALTER TABLE psy_clinical_referrals ENABLE ROW LEVEL SECURITY;
 

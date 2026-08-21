@@ -24,8 +24,14 @@ const NAV_ITEMS_BY_ROLE = {
     },
     { id: 'shop', url: 'shop.html', icon: '🛒', label: 'Produk' },
     { id: 'vouchers', url: 'vouchers.html', icon: '🎟️', label: 'Voucher Saya' },
-    { id: 'payment', url: 'payment.html', icon: '💳', label: 'Pembayaran' },
-    { id: 'sejarah_pembayaran', url: 'sejarah-pembayaran.html', icon: '🧾', label: 'Sejarah Pembayaran' },
+    {
+      id: 'payment', url: 'payment-overview.html', icon: '💳', label: 'Pembayaran', children: [
+        { id: 'payment_overview', url: 'payment-overview.html', icon: '📊', label: 'Plan Rawatan' },
+        { id: 'sejarah_pembayaran', url: 'sejarah-pembayaran.html', icon: '🧾', label: 'Sejarah Pembayaran' },
+      ]
+      // payment-plan.html sengaja TAK letak dalam nav — dicapai kontekstual sahaja
+      // (link "Lihat Jadual Penuh" dari Overview / kad dashboard), bukan destinasi nav.
+    },
     { id: 'psy_orders', url: 'orders.html', icon: '📦', label: 'Pesanan & Penjejakan' },
     { id: 'issue', url: 'issue.html', icon: '⚠️', label: 'Lapor Isu' },
     { id: 'pulangan', url: 'pulangan.html', icon: '🍯', label: 'Pulangan Botol' },
@@ -130,9 +136,8 @@ const STAFF_NAV_MASTER = [
       { id: 'kepatuhan', url: 'kepatuhan.html', icon: '📊', label: 'Poll' },
       { id: 'reaksi_advice', url: 'reaksi-item.html', icon: '🩹', label: 'Reaksi & Tindakan' },
       { id: 'psy_vitals', url: 'vitals.html', icon: '💓', label: 'Bacaan Vitals' },
-      { id: 'rujukan', url: 'rujukan.html', icon: '🔀', label: 'Rujukan' },
       { id: 'emergency', url: 'emergency.html', icon: '🚨', label: 'Red Emergency Protocol' },
-      { id: 'peristiwa', url: 'peristiwa.html', icon: '🏥', label: 'Peristiwa Pesakit' },
+      { id: 'peristiwa', url: 'peristiwa.html', icon: '🏥', label: 'Rekod Klinikal Pesakit' },
       { id: 'dna_test', url: 'dna-test-list.html', icon: '🧬', label: 'DNA Test' },
     ]
   },
@@ -206,7 +211,7 @@ const SETTINGS_SUBNAV = [
   { id: 'umum', icon: '⚙️', label: 'Umum' },
   { id: 'rupa', icon: '🎨', label: 'Rupa' },
   { id: 'klinik', icon: '🏥', label: 'Klinik' },
-  { id: 'peristiwa', icon: '📋', label: 'Peristiwa' },
+  { id: 'peristiwa', icon: '📋', label: 'Rekod Klinikal' },
   { id: 'notifikasi', icon: '🔔', label: 'Notifikasi' },
   { id: 'integrasi', icon: '🧩', label: 'Integrasi' },
   { id: 'keselamatan', icon: '🛡️', label: 'Keselamatan' },

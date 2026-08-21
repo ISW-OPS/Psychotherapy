@@ -233,9 +233,27 @@
                   <h3 class="font-bold text-ink">2. Pilih Tarikh &amp; Masa Mula</h3>
                   <p class="text-xs text-ink/55 mt-0.5 mb-3">Pilih bila anda mahu memulakan sesi pertama.</p>
                   <div class="grid sm:grid-cols-2 gap-3">
-                    <div>
+                    <div class="relative">
                       <label class="text-[10px] uppercase text-ink/45 font-semibold">Tarikh Mula</label>
-                      <input type="date" id="setup-start-date" onchange="updateSetupPreview()" class="w-full mt-1 px-3 py-2.5 border border-ink/15 rounded-xl text-sm">
+                      <button type="button" id="setup-start-date-btn" onclick="toggleSetupCal(event)"
+                        class="w-full mt-1 px-3 py-2.5 border border-ink/15 rounded-xl text-sm text-left bg-white flex items-center justify-between hover:border-navy/40 transition">
+                        <span id="setup-start-date-label" class="text-ink/40">Pilih tarikh</span>
+                        <span class="text-ink/30">📅</span>
+                      </button>
+                      <input type="hidden" id="setup-start-date">
+                      <div id="setup-start-cal" class="hidden absolute z-30 mt-1 bg-white border border-ink/15 rounded-xl shadow-lg p-3 w-full sm:w-72">
+                        <div class="flex items-center justify-between mb-2">
+                          <button type="button" onclick="swzCalShift(-1)"
+                            class="w-7 h-7 rounded-lg border border-ink/15 hover:bg-cream text-ink/60 font-bold text-xs">‹</button>
+                          <div id="swz-cal-label" class="font-bold text-xs text-navy">—</div>
+                          <button type="button" onclick="swzCalShift(1)"
+                            class="w-7 h-7 rounded-lg border border-ink/15 hover:bg-cream text-ink/60 font-bold text-xs">›</button>
+                        </div>
+                        <div class="grid grid-cols-7 gap-1 text-center text-[9px] font-semibold text-ink/40 mb-1">
+                          <div>Isn</div><div>Sel</div><div>Rab</div><div>Kha</div><div>Jum</div><div>Sab</div><div>Ahd</div>
+                        </div>
+                        <div id="swz-cal-grid" class="grid grid-cols-7 gap-1"></div>
+                      </div>
                     </div>
                     <div>
                       <label class="text-[10px] uppercase text-ink/45 font-semibold">Masa Pilihan</label>
@@ -549,6 +567,7 @@
         slotData = fb.data;
       }
       const sd = slotData || [];
+      window._rawatanSlotRows = sd;   // {day_of_week, slot_start} sebenar — sumber kebenaran gabungan hari+masa
       const rawatanDays = [...new Set(sd.map(s => s.day_of_week))];
       window._allowedRawatanDays = rawatanDays.length ? rawatanDays : [0, 5, 6];
       // Union masa slot rawatan → jadi pilihan masa wizard (padan slot klinik buka)
@@ -686,7 +705,7 @@
       // Pakej HARIAN: sentiasa 1 sesi/hari (D1..Dn) walaupun preferred_days panjang (= variant hari).
       const planN = isDailyPlan() ? 1 : ((activePlan.preferred_days?.length) || activePlan.sessions_per_week || (activePlan.preferred_pair ? 2 : 1));
       if (planN < 2) {
-        renderWeekPageLegacy(totalWeeks, activeWeek, 1, totalWeeks);
+        renderWeekPageLegacy(totalWeeks, 1, totalWeeks);
         return;
       }
 
@@ -805,10 +824,10 @@
     window.goWeekPage = goWeekPage;
 
     // Legacy renderer untuk plan lama (1 sesi seminggu, manual booking)
-    function renderWeekPageLegacy(weeks, cw, start, end) {
+    function renderWeekPageLegacy(weeks, start, end) {
       const progressMap = {};
       weeklyProgressRows.forEach(p => { progressMap[p.week_number] = p; });
-      const loc = 'Klinik Ibnu Sina Wellness, Kuala Lumpur';
+      const loc = 'Ibnu Sina Wellness';
       const doctor = activePlan?.doctor_name || '';
       const dLong = d => new Date(d).toLocaleDateString('ms-MY', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
       const t12 = d => new Date(d).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -818,7 +837,8 @@
       for (let w = start; w <= end; w++) {
         const entry = progressMap[w];
         const s = entry?.status;
-        const isCurrent = w === cw;
+        const sessDate = entry?.session_date ? new Date(entry.session_date) : null;
+        const isToday = !!sessDate && sessDate.toDateString() === new Date().toDateString();
         const dateStr = entry?.session_date ? dLong(entry.session_date) : 'Belum dijadualkan';
         const timeStr = entry?.session_date ? t12(entry.session_date) : '—';
 
@@ -831,10 +851,10 @@
           badge = 'PERLU JADUAL SEMULA'; badgeCls = 'bg-terracotta/15 text-terracotta'; leftBorder = 'border-l-4 border-terracotta'; iconBg = 'bg-terracotta text-white'; iconHtml = '!';
           msg = `<span class="text-xs text-terracotta whitespace-nowrap">⚠️ Sesi perlu dijadual semula</span>`;
           actions = `<button onclick="openBookModal(${w},1,true)" class="inline-flex items-center gap-1 bg-terracotta text-white rounded-lg px-3 py-1.5 text-xs font-semibold hover:opacity-90">📅 Jadual Semula</button>`;
-        } else if (s === 'booked' && isCurrent) {
+        } else if (s === 'booked' && isToday) {
           badge = 'HARI INI'; badgeCls = 'bg-gold/25 text-gold-dark'; leftBorder = 'border-l-4 border-gold'; iconBg = 'bg-gold text-white'; iconHtml = '★';
           msg = `<span class="text-xs text-gold-dark whitespace-nowrap">☀️ Anda ada sesi hari ini!</span>`;
-          actions = `${detailsBtn(w, 'border border-ink/15 text-ink hover:bg-cream/60')}<a href="https://www.google.com/maps/search/Ibnu+Sina+Wellness+Kajang" target="_blank" class="inline-flex items-center gap-1 bg-gold text-white rounded-lg px-3 py-1.5 text-xs font-semibold hover:opacity-90">📍 Arah</a>`;
+          actions = `${detailsBtn(w, 'border border-ink/15 text-ink hover:bg-cream/60')}<a href="https://www.google.com/maps/search/Ibnu+Sina+Wellness+Kajang" target="_blank" class="inline-flex items-center gap-1 bg-gold text-white rounded-lg px-3 py-1.5 text-xs font-semibold hover:opacity-90">📍 Lokasi</a>`;
         } else if (s === 'booked') {
           badge = 'AKAN DATANG'; badgeCls = 'bg-navy-light text-navy'; leftBorder = 'border-l-4 border-navy'; iconBg = 'bg-navy-light text-navy'; iconHtml = '📅';
           actions = `${detailsBtn(w, 'border border-ink/15 text-ink hover:bg-cream/60')}<button onclick="openBookModal(${w},1,true)" class="inline-flex items-center gap-1 bg-navy text-white rounded-lg px-3 py-1.5 text-xs font-semibold hover:bg-navy-dark">📅 Jadual Semula</button>`;
@@ -844,7 +864,7 @@
         }
 
         html += `
-        <div class="bg-white rounded-2xl border border-ink/10 ${leftBorder} ${isCurrent ? 'ring-1 ring-gold/40 bg-gold/5' : ''} p-4">
+        <div class="bg-white rounded-2xl border border-ink/10 ${leftBorder} ${isToday ? 'ring-1 ring-gold/40 bg-gold/5' : ''} p-4">
           <div class="flex items-center justify-between gap-4 flex-wrap">
             <div class="flex items-center gap-3 min-w-0">
               <span class="w-10 h-10 rounded-full grid place-items-center flex-shrink-0 ${iconBg}">${iconHtml}</span>
@@ -1057,6 +1077,14 @@
         if (c.is_recurring) return c.closure_date.slice(5) === mmdd;
         return c.closure_date === dateStr;
       });
+    }
+
+    // Padan gabungan hari+masa sebenar dari psy_kob_slot_config (slot_type='rawatan') — bukan
+    // sekadar hari terbuka secara umum, sbb tiap hari ada set masa berlainan (rujuk B. Slot Rawatan).
+    function rawatanSlotOpen(dow, hhmm) {
+      const rows = window._rawatanSlotRows;
+      if (!Array.isArray(rows) || !rows.length) return true;   // tiada data slot → jangan sekat (fallback selamat)
+      return rows.some(r => r.day_of_week === dow && (r.slot_start || '').slice(0, 5) === hhmm);
     }
 
     async function checkBookingDate() {
@@ -1446,6 +1474,129 @@
     let _wizardMode = 'weekly';   // 'weekly' | 'daily-variant' | 'daily-consecutive'
     let _cards = [];              // pilihan hari (array dows) — kosong utk daily-consecutive
 
+    // ──── Kalendar custom "Tarikh Mula" — kunci terus hari yang klinik tak buka rawatan
+    // langsung (window._allowedRawatanDays) atau cuti konsultasi, supaya tak boleh diklik pun. ────
+    function todayLocalStr() {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+
+    // Tarikh Mula mesti jatuh pada salah satu hari yang dipilih di Langkah 1 (cth: Sabtu sahaja) —
+    // bukan sekadar mana-mana hari yang klinik buka rawatan secara umum. Utk program harian
+    // berturutan (tiada kad hari), kekal ikut hari klinik buka rawatan (window._allowedRawatanDays).
+    function swzDateOpen(dateStr) {
+      if (dateStr < todayLocalStr()) return false;
+      const d = new Date(dateStr + 'T00:00:00');
+      if (isClinicClosed(d)) return false;
+      if (_wizardMode === 'weekly' || _wizardMode === 'daily-variant') {
+        const dows = getSelectedCard();
+        if (dows && dows.length) return dows.includes(d.getDay());
+      }
+      const allowed = window._allowedRawatanDays || [];
+      if (allowed.length && !allowed.includes(d.getDay())) return false;
+      return true;
+    }
+
+    function nearestValidStartDate() {
+      const d = new Date(); d.setHours(0, 0, 0, 0);
+      for (let i = 0; i < 60; i++) {
+        const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        if (swzDateOpen(ds)) return ds;
+        d.setDate(d.getDate() + 1);
+      }
+      return todayLocalStr();
+    }
+
+    let swzCalYear, swzCalMonth;
+
+    function swzSetDateLabel(dateStr) {
+      const label = document.getElementById('setup-start-date-label');
+      if (!dateStr) { label.textContent = 'Pilih tarikh'; label.classList.add('text-ink/40'); return; }
+      label.classList.remove('text-ink/40');
+      label.textContent = new Date(dateStr + 'T00:00:00').toLocaleDateString('ms-MY', { day: '2-digit', month: 'long', year: 'numeric' });
+    }
+
+    function toggleSetupCal(ev) {
+      ev?.stopPropagation();
+      const pop = document.getElementById('setup-start-cal');
+      const willOpen = pop.classList.contains('hidden');
+      pop.classList.toggle('hidden');
+      if (willOpen) {
+        const val = document.getElementById('setup-start-date').value;
+        const base = val ? new Date(val + 'T00:00:00') : new Date();
+        swzCalYear = base.getFullYear(); swzCalMonth = base.getMonth();
+        swzPaintCal();
+      }
+    }
+
+    function swzCalShift(delta) {
+      swzCalMonth += delta;
+      if (swzCalMonth < 0) { swzCalMonth = 11; swzCalYear--; }
+      if (swzCalMonth > 11) { swzCalMonth = 0; swzCalYear++; }
+      swzPaintCal();
+    }
+
+    function swzPaintCal() {
+      document.getElementById('swz-cal-label').textContent =
+        new Date(swzCalYear, swzCalMonth, 1).toLocaleDateString('ms-MY', { month: 'long', year: 'numeric' });
+      const grid = document.getElementById('swz-cal-grid');
+      const selected = document.getElementById('setup-start-date').value;
+      const firstOfMonth = new Date(swzCalYear, swzCalMonth, 1);
+      const leadingBlanks = (firstOfMonth.getDay() + 6) % 7;   // grid mula Isnin
+      const daysInMonth = new Date(swzCalYear, swzCalMonth + 1, 0).getDate();
+      const todayStr = todayLocalStr();
+      let html = '';
+      for (let i = 0; i < leadingBlanks; i++) html += `<div></div>`;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${swzCalYear}-${String(swzCalMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const clickable = swzDateOpen(dateStr);
+        const isSelected = selected === dateStr;
+        const base = 'flex items-center justify-center rounded-lg text-xs py-2 transition';
+        let cls, title = '';
+        if (isSelected) {
+          cls = `${base} bg-navy text-white font-bold cursor-pointer`;
+        } else if (clickable) {
+          cls = `${base} text-ink hover:bg-navy/10 cursor-pointer`;
+        } else {
+          cls = `${base} text-ink/25 cursor-not-allowed`;
+          title = dateStr < todayStr ? 'Tarikh lepas'
+            : isClinicClosed(new Date(dateStr + 'T00:00:00')) ? 'Klinik tutup (cuti konsultasi)'
+            : 'Klinik tidak buka rawatan pada hari ini';
+        }
+        html += `<div class="${cls}" ${clickable ? `onclick="swzSelectDate('${dateStr}')"` : ''} title="${title}">${d}</div>`;
+      }
+      grid.innerHTML = html;
+    }
+
+    function swzSelectDate(dateStr) {
+      document.getElementById('setup-start-date').value = dateStr;
+      swzSetDateLabel(dateStr);
+      document.getElementById('setup-start-cal').classList.add('hidden');
+      updateSetupPreview();
+    }
+
+    // Bila kad "Hari Pilihan" ditukar, hari sah utk Tarikh Mula turut berubah (cth: Fri+Sat → Sat+Sun)
+    // — semak semula tarikh dipilih & susun semula pilihan masa.
+    function swzHandleDayChange() {
+      refreshSetupTimeOptions();
+      const dateHidden = document.getElementById('setup-start-date');
+      if (!swzDateOpen(dateHidden.value)) {
+        dateHidden.value = nearestValidStartDate();
+        swzSetDateLabel(dateHidden.value);
+      }
+      const pop = document.getElementById('setup-start-cal');
+      if (pop && !pop.classList.contains('hidden')) swzPaintCal();
+      updateSetupPreview();
+    }
+
+    document.addEventListener('click', (e) => {
+      const pop = document.getElementById('setup-start-cal');
+      const btn = document.getElementById('setup-start-date-btn');
+      if (!pop || pop.classList.contains('hidden')) return;
+      if (pop.contains(e.target) || (btn && btn.contains(e.target))) return;
+      pop.classList.add('hidden');
+    });
+
     function totalSessionsCount() { return planPeriodCount() * (_wizardN || 1); }
 
     // Label kad hari: julat berturutan → "Isnin – Jumaat"; selainnya senarai.
@@ -1459,6 +1610,23 @@
       const idx = document.querySelector('input[name="setup-dayvar"]:checked')?.value;
       if (idx == null || idx === '') return null;
       return _cards[Number(idx)] || null;
+    }
+
+    // Susun semula pilihan "Masa Pilihan" ikut hari yang benar-benar dipilih — hanya tunjuk masa
+    // yang dibuka pada SEMUA hari terlibat (rujuk B. Slot Rawatan, sbb satu masa dipakai utk semua hari sesi).
+    function refreshSetupTimeOptions() {
+      const timeSel = document.getElementById('setup-daily-time');
+      if (!timeSel) return;
+      const preserve = timeSel.value;
+      const dows = (_wizardMode === 'weekly' || _wizardMode === 'daily-variant') ? getSelectedCard() : null;
+      let opts = _wizardSlots;
+      if (dows && dows.length) {
+        const filtered = _wizardSlots.filter(s => dows.every(d => rawatanSlotOpen(d, s.value)));
+        if (filtered.length) opts = filtered;
+      }
+      timeSel.innerHTML = opts.map(s => `<option value="${s.value}">${s.label}</option>`).join('');
+      if (opts.some(o => o.value === preserve)) timeSel.value = preserve;
+      else timeSel.value = opts.some(o => o.value === '10:00') ? '10:00' : (opts[0]?.value || '10:00');
     }
 
     function initSetupWizard() {
@@ -1492,7 +1660,7 @@
         cardBox.classList.remove('hidden');
         cardBox.innerHTML = _cards.map((dows, i) => `
           <label class="border border-ink/15 rounded-xl p-3 cursor-pointer flex items-start gap-2.5 hover:border-green-dark has-[:checked]:border-green-dark has-[:checked]:bg-green-light/40 transition">
-            <input type="radio" name="setup-dayvar" value="${i}" ${i === 0 ? 'checked' : ''} onchange="updateSetupPreview()" class="mt-0.5 accent-green-dark">
+            <input type="radio" name="setup-dayvar" value="${i}" ${i === 0 ? 'checked' : ''} onchange="swzHandleDayChange()" class="mt-0.5 accent-green-dark">
             <div class="min-w-0">
               <div class="text-sm font-bold text-ink">${variantLabel(dows)}</div>
               <div class="text-[11px] text-ink/50 mt-0.5">${dows.length} sesi ${isDailyPlan() ? '· hari terpilih' : 'seminggu'}</div>
@@ -1505,13 +1673,15 @@
         note.textContent = `Program ${planPeriodCount()} hari berturutan — pilih tarikh mula & masa sahaja.`;
       }
 
-      // Slot masa (satu) + tarikh mula
-      const timeSel = document.getElementById('setup-daily-time');
-      timeSel.innerHTML = _wizardSlots.map(s => `<option value="${s.value}">${s.label}</option>`).join('');
-      timeSel.value = _wizardSlots.some(s => s.value === '10:00') ? '10:00' : (_wizardSlots[0]?.value || '10:00');
-      const dateEl = document.getElementById('setup-start-date');
-      dateEl.min = new Date().toISOString().slice(0, 10);
-      if (!dateEl.value) dateEl.value = dateEl.min;
+      // Slot masa (satu) — hanya masa yang benar-benar dibuka pada hari terpilih (rujuk B. Slot Rawatan)
+      refreshSetupTimeOptions();
+
+      // Tarikh Mula: kalendar custom — hari yang klinik langsung tak buka rawatan (cth Isnin/Selasa)
+      // atau cuti konsultasi terkunci terus (tak boleh klik), bukan sekadar disable pasif lepas pilih.
+      const dateHidden = document.getElementById('setup-start-date');
+      if (!dateHidden.value || !swzDateOpen(dateHidden.value)) dateHidden.value = nearestValidStartDate();
+      swzSetDateLabel(dateHidden.value);
+      document.getElementById('setup-start-cal').classList.add('hidden');
 
       const subEl = document.getElementById('setup-confirm-sub');
       if (subEl) subEl.textContent = `Kami akan jana jadual ${planPeriodCount()} ${UNIT().toLowerCase()} penuh anda`;
@@ -1679,19 +1849,20 @@
       }).join('') + (sessions.length > shown.length
         ? `<tr><td colspan="5" class="px-3 py-2 text-center text-[11px] text-ink/40">+${sessions.length - shown.length} sesi lagi</td></tr>` : '');
 
-      const allowed = window._allowedRawatanDays || [];
-      const offDays = allowed.length ? sessions.filter(s => !allowed.includes(s.dateTime.getDay())).length : 0;
+      const hhmm = d => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      const offDays = sessions.filter(s => !rawatanSlotOpen(s.dateTime.getDay(), hhmm(s.dateTime))).length;
       const msgs = [];
       if (warnings.length) msgs.push(`${warnings.length} sesi jatuh pada cuti konsultasi`);
-      if (offDays) msgs.push(`${offDays} sesi pada hari klinik tak buka rawatan`);
-      if (msgs.length) {
+      if (offDays) msgs.push(`${offDays} sesi pada hari/masa klinik tak buka rawatan`);
+      const blocked = msgs.length > 0;
+      if (blocked) {
         warningEl.classList.remove('hidden');
-        warningEl.textContent = `⚠️ ${msgs.join(' · ')} — boleh reschedule kemudian.`;
+        warningEl.textContent = `⚠️ ${msgs.join(' · ')} — sila pilih tarikh mula lain.`;
       } else {
         warningEl.classList.add('hidden');
       }
 
-      btn.disabled = false;
+      btn.disabled = blocked;
     }
 
     function renderExtensionBanner() {
@@ -1776,6 +1947,13 @@
       const result = computeWizardSessions(startVal, time);
       if (!result || !result.sessions.length) { banner('Sila lengkapkan pilihan jadual', 'error'); return; }
       const sessions = result.sessions;
+
+      const hhmm = d => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      const hasOffSlot = sessions.some(s => !rawatanSlotOpen(s.dateTime.getDay(), hhmm(s.dateTime)));
+      if (result.warnings.length || hasOffSlot) {
+        banner('Tarikh/masa mula ini menghasilkan sesi pada cuti konsultasi atau slot klinik tak buka. Sila pilih tarikh atau masa lain.', 'error');
+        return;
+      }
 
       btn.disabled = true; btn.textContent = 'Memproses...';
       try {
