@@ -55,6 +55,7 @@ window.PAGE_MODULE = {
   reaksi_advice:    'reaksi',  reaksi_item: 'reaksi',
   reaksi_laporan:   'reaksi',  reaksi_preview: 'reaksi',
   rujukan:          'rujukan',
+  sesi_1on1:        'rujukan',
   kehadiran:        'kehadiran',
   peristiwa:          'patient_events',
   dna_test:           'dna_test',

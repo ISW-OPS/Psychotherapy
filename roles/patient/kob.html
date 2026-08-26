@@ -755,13 +755,15 @@
                   Dashboard</a>
               </div>
 
-              <!-- Pakej dicadangkan sebelum ni — pesakit declined semasa KOB, boleh sambung beli lewat -->
+              <!-- Pakej dicadangkan sebelum ni — pesakit tidak teruskan semasa KOB. Sambung
+                   beli TAK LAGI checkout sendiri — hubungi Pusat Rawatan, doktor yang proses. -->
               <div id="done-declined-offer" class="hidden bg-gold/10 border border-gold/30 rounded-xl p-4 flex items-center justify-between flex-wrap gap-3">
                 <div>
-                  <div class="text-sm font-bold text-ink">Pakej dicadangkan sebelum ni — teruskan?</div>
-                  <div id="done-declined-offer-detail" class="text-xs text-ink/60 mt-0.5">—</div>
+                  <div id="done-declined-offer-detail" class="text-sm font-bold text-ink">—</div>
+                  <div class="text-xs text-ink/60 mt-1">Sila hubungi Pusat Rawatan ISW untuk meneruskan pembelian pakej ini.</div>
                 </div>
-                <button type="button" onclick="navigateStage('package')" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark whitespace-nowrap">Lihat Pakej →</button>
+                <a id="done-declined-offer-wa" href="#" target="_blank" rel="noopener"
+                  class="bg-green hover:bg-green-dark text-white px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap flex items-center gap-1.5">💬 WhatsApp Kami</a>
               </div>
 
               <!-- 3-col summary cards -->
@@ -899,6 +901,8 @@
   <script>
     let selectedMode = 'f2f';
     let currentKob = null;
+    // Nombor WhatsApp Business rasmi klinik — sama macam kepatuhan.html.
+    const WA_KLINIK = '60389663702';
 
     function todayLocal() {
       const d = new Date();
@@ -1158,12 +1162,16 @@
         document.getElementById('done-pkg-expires').textContent = '';
       }
 
-      // Pakej dicadangkan tapi pesakit tak komited semasa KOB — tawaran Harga
-      // Sekarang (Now) masih terbuka, pesakit boleh sambung beli sendiri bila-bila.
+      // Pakej dicadangkan tapi pesakit tak komited semasa KOB — checkout sendiri
+      // DITUTUP (lihat renderRecommendedPackageDetail()); patient kena hubungi
+      // Pusat Rawatan, doktor yang buka balik & proses bayaran di kob-detail.html.
       const declinedOffer = document.getElementById('done-declined-offer');
       if (currentKob?.package_payment_status === 'declined' && currentKob?.recommended_package_id) {
         declinedOffer.classList.remove('hidden');
-        document.getElementById('done-declined-offer-detail').textContent = currentKob.recommended_package_name || '';
+        const pkgName = currentKob.recommended_package_name || 'ini';
+        document.getElementById('done-declined-offer-detail').textContent = `Pakej dicadangkan: ${pkgName}`;
+        const waMsg = `Assalamualaikum, saya nak teruskan pembelian pakej ${pkgName}.`;
+        document.getElementById('done-declined-offer-wa').href = `https://wa.me/${WA_KLINIK}?text=${encodeURIComponent(waMsg)}`;
       } else {
         declinedOffer.classList.add('hidden');
       }
@@ -1917,10 +1925,6 @@
       return await pdfDoc.save();
     }
 
-    // Pilihan Full/Ansuran pesakit sendiri — hanya relevan utk tier Now (beli lewat,
-    // lepas declined). Reset bila render fresh (pesakit tukar sesi/reload).
-    let kobPackagePlanChoice = null;
-
     // Jadual ansuran RATA — sama fungsi dgn kob-detail.html/pakej-edit.html/payments-webhook.
     function buildInstallmentSchedule(depositAmount, durationMonths, monthlyAmount, startDate) {
       const rows = [];
@@ -1950,6 +1954,13 @@
       // 'pending' = pesakit masih dlm sesi KOB langsung → tier Today (eksklusif).
       // 'declined' = pesakit tinggalkan tawaran masa tu, sambung beli sendiri lewat → tier Now.
       const isDeclined = currentKob?.package_payment_status === 'declined';
+      // Sesi KOB dah 'completed' — patient dah tinggalkan sesi tu (fizikal/panggilan
+      // tamat), tak kira status 'pending' ke 'declined' terakhir (doktor mungkin
+      // reopen & klik "Patient Teruskan" semula utk patient yang KEMBALI, bukan
+      // patient tengah live dlm sesi). Checkout sendiri MESTI ditutup jugak dlm kes
+      // ni — bayaran wajib diproses doktor di kob-detail.html (lihat CTA di bawah).
+      const kobFinished = currentKob?.status === 'completed';
+      const selfCheckoutBlocked = isDeclined || kobFinished;
       const tierPrice = isDeclined ? Number(pkg.price || 0) : Number(pkg.today_price ?? pkg.price ?? 0);
       const price = tierPrice === 0 ? 'PERCUMA' : `RM ${tierPrice.toFixed(2)}`;
       const tierBadge = document.getElementById('pkg-tier-badge');
@@ -2059,9 +2070,22 @@
           ? `Bayaran pada ${new Date(currentKob.package_paid_at).toLocaleString('ms-MY')}${currentKob.package_receipt_ref ? ' · Resit: ' + currentKob.package_receipt_ref : ''}`
           : 'Bayaran telah diterima.';
         ctaNote.classList.remove('hidden');
+      } else if (selfCheckoutBlocked) {
+        // Declined ATAU sesi KOB dah 'completed' (patient dah tinggalkan sesi,
+        // walaupun doktor reopen & set semula ke 'pending' utk patient yang
+        // KEMBALI) — checkout sendiri DITUTUP. Doktor proses bayaran terus di
+        // kob-detail.html bila patient hubungi Pusat Rawatan.
+        const waMsg = `Assalamualaikum, saya nak teruskan pembelian pakej ${pkg.name}.`;
+        const waHref = `https://wa.me/${WA_KLINIK}?text=${encodeURIComponent(waMsg)}`;
+        ctaAction.innerHTML = `
+      <a href="${waHref}" target="_blank" rel="noopener" class="w-full flex items-center justify-center gap-2 bg-green hover:bg-green-dark text-white py-3.5 rounded-xl font-semibold text-base">
+        💬 WhatsApp Kami
+      </a>`;
+        ctaNote.textContent = `Hubungi Pusat Rawatan ISW untuk meneruskan pakej ${pkg.name} — doktor akan uruskan bayaran untuk anda.`;
+        ctaNote.classList.remove('hidden');
       } else {
-        const canInstallment = isDeclined && !!pkg.installment_allowed && Number(pkg.installment_deposit_amount) > 0
-          && Number(pkg.installment_duration_months) > 1 && Number(pkg.installment_monthly_amount) > 0;
+        // Sesi KOB masih 'hadir' (live) DAN status 'pending' — pesakit betul-betul
+        // masih dlm sesi KOB langsung, bayaran penuh sahaja, tier Today.
         const termsHtml = (btnId, label, onclick) => `
       <label class="flex items-start justify-center gap-2 text-xs text-ink/60 mb-3 cursor-pointer">
         <input type="checkbox" class="w-4 h-4 accent-navy mt-0.5" onchange="document.getElementById('${btnId}').disabled = !this.checked">
@@ -2070,61 +2094,7 @@
       <button id="${btnId}" disabled onclick="${onclick}" class="w-full bg-navy text-white py-3.5 rounded-xl font-semibold text-base hover:bg-navy-dark disabled:opacity-40 disabled:cursor-not-allowed">
         🔒 ${label}
       </button>`;
-
-        if (!canInstallment) {
-          ctaAction.innerHTML = termsHtml('btn-pkg-pay', 'Bayar Sekarang →', 'payRecommendedPackage()');
-        } else if (!kobPackagePlanChoice) {
-          // Pesakit beli lewat (Now-tier) + pakej benarkan ansuran — bagi pilihan sendiri.
-          const deposit = Number(pkg.installment_deposit_amount);
-          const resolved = buildInstallmentSchedule(deposit, pkg.installment_duration_months, pkg.installment_monthly_amount, new Date());
-          const commitment = resolved.length ? resolved[resolved.length - 1].target_cumulative : deposit;
-          ctaAction.innerHTML = `
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-2">
-        <button type="button" onclick="kobPackagePlanChoice='full'; renderRecommendedPackageDetail()"
-          class="text-left p-3 border-2 border-ink/10 rounded-xl hover:bg-ink/5">
-          <div class="text-xs font-bold text-navy">💳 Bayaran Penuh (FPP)</div>
-          <div class="text-xl font-bold text-ink mt-1">${price}</div>
-          <div class="text-[11px] text-ink/45 mt-0.5">Bayar sekali sahaja</div>
-        </button>
-        <button type="button" onclick="kobPackagePlanChoice='installment'; renderRecommendedPackageDetail()"
-          class="text-left p-3 border-2 border-ink/10 rounded-xl hover:bg-ink/5">
-          <div class="text-xs font-bold text-navy">📅 Ansuran (IPP)</div>
-          <div class="text-xl font-bold text-ink mt-1">RM ${commitment.toFixed(2)}</div>
-          <div class="text-[11px] text-ink/45 mt-0.5">Bayaran secara bulanan</div>
-          <div class="text-[10px] font-semibold text-gold-dark mt-1">Jumlah komitmen lebih tinggi</div>
-        </button>
-      </div>`;
-        } else if (kobPackagePlanChoice === 'installment') {
-          const deposit = Number(pkg.installment_deposit_amount);
-          const duration = Number(pkg.installment_duration_months);
-          const monthly = Number(pkg.installment_monthly_amount);
-          const resolved = buildInstallmentSchedule(deposit, duration, monthly, new Date());
-          const commitment = resolved.length ? resolved[resolved.length - 1].target_cumulative : deposit;
-          const scheduleHtml = `
-      <div class="bg-cream/50 rounded-xl border border-ink/10 p-3 mb-3 text-left">
-        <div class="grid grid-cols-3 gap-3 text-sm mb-2">
-          <div><div class="text-[10px] text-ink/45 uppercase">Tempoh</div><div class="font-semibold">${duration} Bulan</div></div>
-          <div><div class="text-[10px] text-ink/45 uppercase">Bayaran Pertama</div><div class="font-semibold">RM ${deposit.toFixed(2)}</div></div>
-          <div><div class="text-[10px] text-ink/45 uppercase">Bulanan</div><div class="font-semibold">RM ${monthly.toFixed(2)}</div></div>
-        </div>
-        <table class="w-full text-xs">
-          <thead><tr class="text-ink/45 text-left border-b border-ink/10"><th class="py-1">Bil.</th><th>Tarikh</th><th class="text-right">Jumlah (RM)</th></tr></thead>
-          <tbody>
-            <tr class="border-b border-ink/5"><td class="py-1">1</td><td>Hari ini</td><td class="text-right font-semibold">${deposit.toFixed(2)}</td></tr>
-            ${resolved.map((r, i) => `<tr class="border-b border-ink/5"><td class="py-1">${i + 2}</td><td>${relativeMonthLabel(r.month_offset)}</td><td class="text-right font-semibold">${monthly.toFixed(2)}</td></tr>`).join('')}
-          </tbody>
-        </table>
-        <div class="flex justify-between pt-2 mt-1 border-t border-ink/10 font-bold text-navy text-sm"><span>Jumlah Komitmen</span><span>RM ${commitment.toFixed(2)}</span></div>
-      </div>`;
-          ctaAction.innerHTML = `
-      <button type="button" onclick="kobPackagePlanChoice=null; renderRecommendedPackageDetail()" class="text-[11px] text-navy hover:underline mb-2">← Tukar cara bayaran</button>
-      ${scheduleHtml}
-      ${termsHtml('btn-pkg-pay-installment', `Bayar Deposit RM ${deposit.toFixed(2)} →`, 'payRecommendedPackageInstallment()')}`;
-        } else {
-          ctaAction.innerHTML = `
-      <button type="button" onclick="kobPackagePlanChoice=null; renderRecommendedPackageDetail()" class="text-[11px] text-navy hover:underline mb-2">← Tukar cara bayaran</button>
-      ${termsHtml('btn-pkg-pay', 'Bayar Sekarang →', 'payRecommendedPackage()')}`;
-        }
+        ctaAction.innerHTML = termsHtml('btn-pkg-pay', 'Bayar Sekarang →', 'payRecommendedPackage()');
         ctaNote.textContent = '';
         ctaNote.classList.add('hidden');
       }
@@ -2176,38 +2146,6 @@
       } catch (err) {
         banner('Ralat: ' + err.message, 'error');
         if (btn) { btn.disabled = false; btn.textContent = '🔒 Bayar Sekarang →'; }
-      }
-    }
-
-    // Ansuran self-checkout (tier Now sahaja, lepas declined semasa KOB) — bayar
-    // deposit terus, checkpoint seterusnya diuruskan di payment.html (top-up bebas-amount).
-    // Amount/tier TAK dihantar dari client — payments-initiate derive sepenuhnya server-side
-    // (lihat verifiedAmount() case 'kob_deposit') supaya pesakit tak boleh usik harga.
-    async function payRecommendedPackageInstallment() {
-      if (!currentKob?.recommended_package_id) {
-        banner('Tiada pakej dicadangkan', 'error');
-        return;
-      }
-      const item = { type: 'kob_deposit', mode: 'installment', kobSessionId: currentKob.id };
-
-      const btn = document.getElementById('btn-pkg-pay-installment');
-      if (btn) { btn.disabled = true; btn.textContent = 'Memproses…'; }
-      try {
-        const returnUrl = new URL('kob.html', window.location.href).href;
-        const { data, error } = await window.db.functions.invoke('payments-initiate', {
-          body: { items: [item], patientId: patientRecord?.id || null, returnUrl },
-        });
-        if (error) {
-          let m = error.message;
-          try { const c = await error.context?.json(); if (c?.error) m = c.error; } catch (_) {}
-          throw new Error(m);
-        }
-        if (!data?.checkoutUrl) throw new Error(data?.error || 'Gagal memulakan bayaran.');
-        banner('Mengalihkan ke halaman bayaran…', 'info');
-        window.location.href = data.checkoutUrl;
-      } catch (err) {
-        banner('Ralat: ' + err.message, 'error');
-        if (btn) { btn.disabled = false; btn.textContent = 'Bayar Deposit →'; }
       }
     }
 

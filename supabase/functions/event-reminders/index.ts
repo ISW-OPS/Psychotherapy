@@ -10,13 +10,16 @@
 //   5) automations         — psy_automations (trigger 'schedule')
 //   6) session_confirm     — Pengesahan Sesi (dua-hala): peringatan sahkan
 //      kehadiran/tukar tarikh + escalation coach bila belum sahkan ≤ deadline
-//   9) installment_overdue — checkpoint ansuran (psy_kob_installment_checkpoints):
+//   9) installment_overdue  — checkpoint ansuran (psy_kob_installment_checkpoints):
 //      jumlah terkumpul tak cecah target menjelang due_date → tandakan overdue,
 //      sekat tempahan sesi baru pesakit, WA sekali
+//   10) installment_reminder — SEBELUM due_date (rule.lead_days, default 3),
+//      WA + pautan bayaran HitPay dijana on-the-fly; dedup installment_reminder_sent_at
 // Konfig semua dari psy_auto_messages (boleh ubah di UI).
-// Secrets: GHL_ISW_TOKEN, GHL_ISW_LOCATION_ID, CRON_SECRET
+// Secrets: GHL_ISW_TOKEN, GHL_ISW_LOCATION_ID, CRON_SECRET, PUBLIC_APP_URL
 // ============================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createKobInstallmentTopupLink } from '../_shared/kob_topup.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -799,6 +802,49 @@ async function runInstallmentOverdueCheck(supabase, locationId) {
   return res
 }
 
+// ───────── 10) Peringatan Ansuran Akan Tamat Tempoh (SEBELUM due_date) ─────────
+// psy_kob_installment_checkpoints status='pending', due_date dlm lingkungan
+// (esok, hari ini+lead_days] (waktu MY) → jana pautan HitPay on-the-fly
+// (createKobInstallmentTopupLink) + WA sekali. Window (bukan padanan hari
+// tepat) + dedup installment_reminder_sent_at supaya cron terhenti sehari
+// tak silap terlepas — sama corak runDnaSampleReminder.
+async function runInstallmentReminderCheck(supabase, locationId) {
+  const { data: cfg } = await supabase.from('psy_auto_messages').select('*').eq('key', 'installment_reminder').maybeSingle()
+  if (!cfg || !cfg.is_active) return { skipped: true }
+  const leadDays = Number(cfg.rule?.lead_days ?? 3)
+  const myToday = new Date(Date.now() + MY_OFFSET_MS).toISOString().slice(0, 10)
+  const leadDate = new Date(Date.now() + MY_OFFSET_MS + leadDays * 86400000).toISOString().slice(0, 10)
+
+  const { data: rows } = await supabase.from('psy_kob_installment_checkpoints')
+    .select('id, seq, due_date, target_cumulative, kob_session_id, patient_id, psy_patients(full_name, phone, emergency_contact_phone, emergency_contact_name, contact_preference)')
+    .eq('status', 'pending').is('installment_reminder_sent_at', null)
+    .gt('due_date', myToday).lte('due_date', leadDate).limit(500)
+  const res = { due: 0, sent: 0, errors: [] }
+  if (!rows?.length) return res
+
+  const origin = Deno.env.get('PUBLIC_APP_URL')
+  for (const row of rows) {
+    res.due++
+    const p = row.psy_patients || {}
+    const { phone: rawPhone, contactName } = resolveContact(p)
+    const phone = toE164(rawPhone)
+    if (!phone) { res.errors.push(`${row.id}: tiada telefon`); continue }
+    try {
+      const link = await createKobInstallmentTopupLink(supabase, row.kob_session_id, `${origin}/roles/patient/payment-receipt.html`)
+      const cid = await upsertContact(locationId, phone, contactName)
+      if (!cid) throw new Error('no contactId')
+      const msg = fillTemplate(cfg.message_template, {
+        nama: p.full_name || '', ansuran: link.checkpointLabel,
+        jumlah: link.amount.toFixed(2), tarikh_due: fmtSessDate(row.due_date), pautan: link.checkoutUrl,
+      })
+      await sendWA(cid, msg)
+      await supabase.from('psy_kob_installment_checkpoints').update({ installment_reminder_sent_at: new Date().toISOString() }).eq('id', row.id)
+      res.sent++
+    } catch (e) { res.errors.push(`${row.id}: ${String(e?.message || e)}`) }
+  }
+  return res
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   try {
@@ -816,7 +862,8 @@ Deno.serve(async (req) => {
     const autoAbsence = await runAutoAbsence(supabase)
     const dnaSampleReminder = await runDnaSampleReminder(supabase, locationId)
     const installmentOverdue = await runInstallmentOverdueCheck(supabase, locationId)
-    return new Response(JSON.stringify({ success: true, eventReminders, broadcasts, catatanHarian, kepatuhanAlerts, automations, sessionConfirm, autoAbsence, dnaSampleReminder, installmentOverdue }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    const installmentReminder = await runInstallmentReminderCheck(supabase, locationId)
+    return new Response(JSON.stringify({ success: true, eventReminders, broadcasts, catatanHarian, kepatuhanAlerts, automations, sessionConfirm, autoAbsence, dnaSampleReminder, installmentOverdue, installmentReminder }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
   } catch (err) {
     console.error('event-reminders error:', err)
     return new Response(JSON.stringify({ error: String(err?.message || err) }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })

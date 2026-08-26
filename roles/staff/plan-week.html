@@ -382,7 +382,8 @@ let patientName  = '';     // nama pesakit (prefill tandatangan)
 let weekStart    = null;
 let weekEnd      = null;
 let chainAnchor  = null;   // { week_number, session_date } bertarikh sebenar plg terkini <= minggu ini
-let backTab      = 'sessions';  // tab patient-hub untuk butang "Kembali" (ikut tempat asal)
+let backTab      = 'progress';  // tab patient-hub untuk butang "Kembali" (ikut tempat asal) —
+                                 // dulu 'sessions', tab tu dah lama ditukar nama jadi 'progress'
 let _wantSession = 0;           // auto-pilih tab sesi dari param &session= (0 = default)
 let coachingChecks = {};
 let weekOverride = null;   // psy_plan_week_overrides row utk minggu ini (atau null = ikut pakej)
@@ -390,13 +391,50 @@ let goDraft = { guidance: [], aktiviti: [] };   // draf editor bimbingan/aktivit
 let goCatalog = { guidance: [], aktiviti: [] }; // cache psy_coaching_catalog ikut jenis
 let _ieCatalogsLoaded = false;                  // katalog inline (coaching + inventori) sudah dimuat?
 
+// ── Coach bertugas (utama + ganti per-minggu) ──────────
+// primaryCoachId/Name = psy_patients.coach_id (coach tetap pesakit). coachList = senarai
+// coach utk dropdown pertukaran. weekEntry.substitute_coach_id (dah ada dlm skema sedia
+// ada, select('*') di loadWeek() dah bawa medan ni) = coach ganti utk MINGGU INI sahaja
+// (cth coach asal MC/tidak hadir) — pesakit KEKAL bawah coach utama, bukan tukar kekal.
+let primaryCoachId = null, primaryCoachName = '';
+let coachList = [];
+function coachNameById(id) { return coachList.find(c => c.id === id)?.full_name || ''; }
+function coachSwapHtml() {
+  if (!weekEntry?.id) return '';
+  const subId = weekEntry.substitute_coach_id || '';
+  const opts = coachList.map(c => `<option value="${c.id}" ${subId === c.id ? 'selected' : ''}>${escHtml(c.full_name)}</option>`).join('');
+  return `<div class="mt-3 pt-3 border-t border-ink/8 flex items-center gap-2 flex-wrap">
+    <span class="text-[10px] font-semibold text-ink/45 uppercase tracking-wide">🔁 Coach Ganti Minggu Ini</span>
+    <select data-rbac="plan_week.edit" onchange="setSubstituteCoach(this.value)" class="text-xs border border-ink/20 rounded-lg px-2 py-1 bg-white outline-none focus:border-navy">
+      <option value="">— Guna coach utama (${escHtml(primaryCoachName || 'belum ditetapkan')}) —</option>
+      ${opts}
+    </select>
+    <span class="text-[11px] text-ink/45 w-full">Untuk minggu ini sahaja (cth coach asal MC/tidak hadir) — pesakit kekal di bawah coach utama.</span>
+  </div>`;
+}
+async function setSubstituteCoach(coachId) {
+  if (!weekEntry?.id) { banner('Tiada sesi untuk minggu ini — tempah dahulu', 'error'); return; }
+  const { error } = await window.db.from('psy_plan_weekly_progress')
+    .update({ substitute_coach_id: coachId || null }).eq('id', weekEntry.id);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  weekEntry.substitute_coach_id = coachId || null;
+  const idx = weekSessions.findIndex(r => r.id === weekEntry.id);
+  if (idx >= 0) weekSessions[idx].substitute_coach_id = coachId || null;
+  banner(coachId ? `Coach ganti ditetapkan: ${coachNameById(coachId)} ✅` : 'Kembali ke coach utama ✅');
+  renderHero();
+}
+
 function escHtml(s) { const d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
 
 // ── Boot ──────────────────────────────────────────────
 (async () => {
   const user = await initStaff('plan_week', 'Detail Minggu Rawatan');
   if (!user) return;
-  setHeaderBack('plans.html', 'Kembali ke Treatment Plans');
+  // Hormat ?back= kalau sampai sini dari halaman lain (cth sesi-1on1.html "Semak →") —
+  // butang Kembali pulang ke page asal, bukan senarai Treatment Plans lalai.
+  const backParam = new URLSearchParams(location.search).get('back');
+  if (backParam) setHeaderBack(backParam, 'Kembali');
+  else setHeaderBack('plans.html', 'Kembali ke Treatment Plans');
 
   try {
     await bootPlanWeek();
@@ -411,7 +449,8 @@ async function bootPlanWeek() {
   const planId = params.get('plan_id');
   const hasWeekParam = params.has('week');
   weekNumber   = parseInt(params.get('week') || '1');
-  backTab      = params.get('from') || 'sessions';  // kembali ke tab asal (cth 'overview')
+  backTab      = params.get('from') || 'progress';  // kembali ke tab asal (cth 'overview')
+  const backOverride = params.get('back');  // ?back= — dari halaman lain (cth sesi-1on1.html "Semak →")
   _wantSession = parseInt(params.get('session') || '0');  // auto-pilih tab sesi ni (cth 2)
 
   // Toggle serta-merta (sebelum sebarang query async) supaya tiada kelip paparan salah.
@@ -430,7 +469,7 @@ async function bootPlanWeek() {
   activePlan    = plan;
   patientId     = plan.patient_id;
 
-  const backHref = patientId ? `patient-hub.html?patient_id=${patientId}&tab=${backTab}` : 'plans.html';
+  const backHref = backOverride || (patientId ? `patient-hub.html?patient_id=${patientId}&tab=${backTab}` : 'plans.html');
   document.getElementById('btn-back-list').href = backHref;
   document.getElementById('btn-back-to-list').href = `plan-week.html?plan_id=${planId}&from=${backTab}`;
   document.getElementById('plan-name-crumb-list').textContent = plan.name || '';
@@ -449,9 +488,21 @@ async function bootPlanWeek() {
     if (pkg?.coaching_schedule?.length) activePlan.coaching_schedule = pkg.coaching_schedule;
   }
 
-  const { data: pt } = await window.db.from('psy_patients').select('user_id, full_name').eq('id', patientId).single();
+  const { data: pt } = await window.db.from('psy_patients').select('user_id, full_name, coach_id').eq('id', patientId).single();
   patientUserId = pt?.user_id || null;
   patientName   = pt?.full_name || '';
+  primaryCoachId = pt?.coach_id || null;
+
+  // Senarai coach (dropdown ganti) + nama coach utama pesakit — satu round-trip.
+  const { data: coaches } = await window.db.from('psy_profiles')
+    .select('id, full_name').eq('staff_role', 'coach').order('full_name');
+  coachList = coaches || [];
+  primaryCoachName = primaryCoachId ? (coachNameById(primaryCoachId) || '') : '';
+  if (primaryCoachId && !primaryCoachName) {
+    // Coach utama mungkin staff_role lain (cth doctor merangkap) — fallback carian terus.
+    const { data: pc } = await window.db.from('psy_profiles').select('full_name').eq('id', primaryCoachId).maybeSingle();
+    primaryCoachName = pc?.full_name || '';
+  }
 
   // Minggu maksimum termasuk minggu tambahan (extension) — boleh lebih dari duration_weeks
   const { data: wkRows } = await window.db.from('psy_plan_weekly_progress')
@@ -1512,6 +1563,9 @@ function renderHero() {
           <span class="text-[11px] uppercase tracking-wider text-ink/50 font-semibold">${activePlan.name}</span>
           ${weekNumber === activePlan.current_week ? '<span class="bg-gold text-ink text-[10px] font-bold px-2 py-0.5 rounded-full">SEMASA</span>' : ''}
           <span class="${s.color} text-xs font-semibold">· ${s.icon} ${s.label}</span>
+          ${weekEntry?.substitute_coach_id
+            ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700" title="Coach ganti minggu ini">🔁 ${escHtml(coachNameById(weekEntry.substitute_coach_id) || 'Coach Ganti')}</span>`
+            : `<span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-navy-light text-navy" title="Coach utama pesakit">👤 ${escHtml(primaryCoachName || 'Coach belum ditetapkan')}</span>`}
         </div>
         <h2 class="text-2xl md:text-3xl font-bold text-ink">Minggu ${weekNumber}</h2>
         <div class="text-sm text-ink/70 mt-1">
@@ -1534,6 +1588,8 @@ function renderHero() {
           <span id="week-date-warn" class="hidden w-full text-[11px] text-terracotta"></span>
         </div>`; })()}
         ${weekEntry?.absence_reason ? `<div class="mt-2 bg-terracotta/10 border border-terracotta/25 rounded-lg px-3 py-2 text-xs text-terracotta-dark"><span class="font-semibold">📝 Sebab tidak hadir (oleh pesakit):</span> <span class="text-ink/75">${escHtml(weekEntry.absence_reason)}</span></div>` : ''}
+        ${weekEntry?.patient_absence_reason ? `<div class="mt-2 bg-gold/10 border border-gold/30 rounded-lg px-3 py-2 text-xs text-gold-dark"><span class="font-semibold">🔔 Sebab Tidak Dapat Hadir (pengesahan pesakit):</span> <span class="text-ink/75">${escHtml(weekEntry.patient_absence_reason)}</span></div>` : ''}
+        ${coachSwapHtml()}
       </div>
       ${weekEntry?.updated_by_name ? `<div class="text-xs text-ink/40 text-right">Dikemaskini oleh<br><span class="font-semibold text-ink/60">${weekEntry.updated_by_name}</span></div>` : ''}
     </div>
@@ -1671,8 +1727,8 @@ async function maybeAutoInactivePatient() {
 // Tanda kehadiran untuk sesi aktif
 async function markStatus(status) {
   if (!weekEntry?.id) { banner('Tiada sesi untuk minggu ini', 'error'); return; }
-  if (status === 'hadir' && weekEntry.session_date && new Date(weekEntry.session_date) > new Date()) {
-    banner('Sesi ini belum berlaku (tarikh akan datang) — tidak boleh ditanda Hadir.', 'error');
+  if (['hadir', 'cancel'].includes(status) && weekEntry.session_date && new Date(weekEntry.session_date) > new Date()) {
+    banner(`Sesi ini belum berlaku (tarikh akan datang) — tidak boleh ditanda ${status === 'hadir' ? 'Hadir' : 'Tidak Hadir'}.`, 'error');
     return;
   }
   try {

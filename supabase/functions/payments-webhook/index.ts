@@ -23,8 +23,8 @@
 // ============================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { getProvider } from '../_shared/payments/index.ts'
+import { sendPaymentReceiptWhatsApp } from '../_shared/receipt_pdf.ts'
 import { sendWhatsApp } from '../_shared/ghl.ts'
-import { buildReceiptPdf } from '../_shared/receipt_pdf.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -65,8 +65,16 @@ Deno.serve(async (req) => {
 
     // 4. Status dari gateway
     if (result.status === 'failed') {
+      const alreadyFailed = payment.status === 'failed'
       await admin.from('psy_payments').update({ status: 'failed', gateway_status: result.status })
         .eq('id', payment.id)
+      // Notifikasi (patient + staff) sekali sahaja — HitPay boleh hantar webhook
+      // 'failed' berkali-kali (retry), jangan spam. Best-effort — kegagalan
+      // notifikasi TIDAK gagalkan webhook (status dah ditanda failed di atas).
+      if (!alreadyFailed) {
+        try { await notifyPaymentFailed(admin, payment) }
+        catch (e) { console.warn('payments-webhook: notifyPaymentFailed gagal —', (e as Error).message) }
+      }
       return json({ ok: true, note: 'ditanda failed' })
     }
     if (result.status !== 'completed') {
@@ -126,7 +134,7 @@ Deno.serve(async (req) => {
     // Resit auto ke WhatsApp — best-effort; kegagalan TIDAK gagalkan webhook
     // (fulfillment dah selesai; gateway tak patut retry sebab WA gagal).
     try {
-      await sendReceiptWhatsApp(admin, payment)
+      await sendPaymentReceiptWhatsApp(admin, payment)
     } catch (waErr) {
       console.warn('payments-webhook: resit WhatsApp gagal —', (waErr as Error).message)
     }
@@ -166,6 +174,58 @@ async function notifyStaffPaymentReceived(admin: any, patientId: string | null, 
   for (const uid of targets) {
     await admin.from('psy_notifications').insert({
       user_id: uid, type: 'payment', title: 'Pembayaran Diterima 💳', body,
+      link: patientId ? `../staff/patient-hub.html?id=${patientId}` : 'payment-admin.html',
+    }).catch(() => {})
+  }
+}
+
+// ---- Bayaran gagal/dibatalkan gateway (HitPay) — beritahu patient (in-app +
+// WhatsApp) & staff (coach + admin/manager), supaya susulan berlaku terus tanpa
+// staff kena semak Sejarah Pembayaran secara manual. Best-effort sepenuhnya —
+// dipanggil dalam try/catch di caller, tidak pernah gagalkan webhook.
+async function notifyPaymentFailed(admin: any, payment: any) {
+  const patientId: string | null = payment.intent?.patientId || payment.patient_id || null
+  const items: any[] = Array.isArray(payment.items) ? payment.items : []
+  const labels = items.map(it => PAYMENT_ITEM_LABELS[it.type]?.(it)).filter(Boolean)
+  const itemDesc = labels.length ? labels.join(', ') : 'pembayaran';
+  const amount = Number(payment.total || 0).toFixed(2)
+
+  let patient: { phone?: string | null; full_name?: string | null; coach_id?: string | null } | null = null
+  if (patientId) {
+    const { data } = await admin.from('psy_patients')
+      .select('phone, full_name, coach_id').eq('id', patientId).limit(1)
+    patient = data?.[0] || null
+  }
+  const patientLabel = patient?.full_name || 'Pesakit'
+
+  // Notifikasi in-app pesakit
+  if (payment.user_id) {
+    await admin.from('psy_notifications').insert({
+      user_id: payment.user_id, type: 'system', title: 'Bayaran Tidak Berjaya ⚠️',
+      body: `Bayaran ${itemDesc} (RM ${amount}, resit ${payment.receipt_ref}) tidak berjaya/dibatalkan. Sila cuba lagi atau hubungi klinik.`,
+      link: 'payment.html',
+    }).catch(() => {})
+  }
+
+  // WhatsApp ke pesakit — best-effort, patient KOB selalunya belum ada akaun
+  // (tiada user_id) jadi notifikasi in-app di atas tak sampai; WA ni jalan utama.
+  if (patient?.phone) {
+    await sendWhatsApp(admin, {
+      phone: patient.phone, name: patient.full_name,
+      message: `Assalamualaikum ${patientLabel}, bayaran anda (${itemDesc}, RM ${amount}) tidak berjaya/dibatalkan. Sila cuba semula atau hubungi Pusat Rawatan ISW untuk bantuan.`,
+      sentByName: 'Auto — Bayaran Gagal',
+    }).catch((e: Error) => console.warn('notifyPaymentFailed: WA pesakit gagal —', e.message))
+  }
+
+  // Notifikasi staff (coach pesakit + admin/manager)
+  const targets = new Set<string>()
+  if (patient?.coach_id) targets.add(patient.coach_id)
+  const { data: staff } = await admin.from('psy_profiles').select('id').eq('role', 'staff').in('staff_role', ['admin', 'manager'])
+  ;(staff || []).forEach((s: any) => targets.add(s.id))
+  const staffBody = `${patientLabel} — bayaran ${itemDesc} (RM ${amount}, ${payment.receipt_ref}) tidak berjaya/dibatalkan.`
+  for (const uid of targets) {
+    await admin.from('psy_notifications').insert({
+      user_id: uid, type: 'payment', title: 'Bayaran Gagal ⚠️', body: staffBody,
       link: patientId ? `../staff/patient-hub.html?id=${patientId}` : 'payment-admin.html',
     }).catch(() => {})
   }
@@ -269,9 +329,11 @@ async function fulfillOrder(admin: any, payment: any) {
       if (wasAlreadyCompleted) await activatePackageForPatient(admin, patientId, item.packageId, item.packageName, Number(item.amount || 0))
 
     } else if (item.type === 'kob_deposit') {
-      // Deposit ansuran ATAU bayaran penuh pakej KOB — staff (payments-kob-initiate,
-      // tier sentiasa 'today') ATAU pesakit sendiri (payments-initiate self-checkout,
-      // tier 'today' semasa pending / 'now' selepas declined — lihat verifiedAmount()).
+      // Deposit ansuran ATAU bayaran penuh pakej KOB — SELALU staff-initiated
+      // (payments-kob-initiate). tier='today' ikut status 'pending' (Teruskan
+      // diklik terakhir); tier='now' ikut status 'declined' (Tidak Teruskan diklik
+      // terakhir, termasuk doktor reopen sesi yg dah 'completed'). Patient self-
+      // checkout pakej KOB guna item.type='kob_package' (kob.html), bukan ni.
       const kobSessionId = item.kobSessionId
       const wasAlreadyCompleted = await isKobStatusCompleted(admin, patientId)
       const { data: kobRows } = await admin.from('psy_kob_sessions')
@@ -331,7 +393,7 @@ async function fulfillOrder(admin: any, payment: any) {
       await admin.from('psy_patients').update({ kob_status: 'package_paid' })
         .eq('id', patientId).neq('kob_status', 'completed')
       if (wasAlreadyCompleted) {
-        await activatePackageForPatient(admin, patientId, kobRow?.recommended_package_id, kobRow?.recommended_package_name, packagePrice)
+        await activatePackageForPatient(admin, patientId, kobRow?.recommended_package_id, kobRow?.recommended_package_name, Number(item.amount || 0))
       }
 
     } else if (item.type === 'kob_installment_topup') {
@@ -388,121 +450,6 @@ async function fulfillOrder(admin: any, payment: any) {
   try {
     await notifyStaffPaymentReceived(admin, patientId, staffLabels, payment.total, receiptRef)
   } catch (_) { /* nota: notifikasi gagal tidak halang fulfillment */ }
-}
-
-// ---- Resit WhatsApp: PDF rasmi (attachment) + mesej ringkas ----
-// PDF gagal jana/upload → fallback hantar teks ringkasan sahaja.
-async function sendReceiptWhatsApp(admin: any, payment: any) {
-  // Butiran pesakit: psy_patients dulu, fallback psy_profiles + auth (email)
-  // `name` = nama PESAKIT (untuk PDF resit & ucapan dalam mesej — TAK berubah).
-  // `contactName` = nama untuk label kenalan GHL sahaja — jadi nama waris bila
-  // contact_preference='waris' (staff nampak siapa sebenarnya terima mesej ni).
-  let phone: string | null = null, name: string | null = null, contactName: string | null = null
-  let nric: string | null = null, mrn: string | null = null, email: string | null = null
-  let userId: string | null = payment.user_id || null
-  const patientId = payment.patient_id || payment.intent?.patientId || null
-
-  if (patientId) {
-    const { data: pt } = await admin.from('psy_patients')
-      .select('full_name, phone, ic_number, mrn, user_id, emergency_contact_phone, emergency_contact_name, contact_preference').eq('id', patientId).limit(1)
-    const p = pt?.[0]
-    if (p) {
-      name = p.full_name || null
-      nric = p.ic_number || null; mrn = p.mrn || null
-      userId = userId || p.user_id || null
-      if (p.contact_preference === 'waris' && p.emergency_contact_phone) {
-        phone = p.emergency_contact_phone
-        contactName = p.emergency_contact_name || name
-      } else {
-        phone = p.phone || null
-        contactName = name
-      }
-    }
-  }
-  if ((!phone || !name) && userId) {
-    const { data: prof } = await admin.from('psy_profiles')
-      .select('full_name, phone').eq('id', userId).limit(1)
-    phone = phone || prof?.[0]?.phone || null
-    name = name || prof?.[0]?.full_name || null
-    contactName = contactName || name
-  }
-  if (userId) {
-    const { data: au } = await admin.auth.admin.getUserById(userId).catch(() => ({ data: null }))
-    email = au?.user?.email || null
-  }
-  if (!phone) throw new Error('pesakit tiada nombor telefon')
-
-  const items: any[] = Array.isArray(payment.items) ? payment.items : []
-  const paidAt = payment.paid_at || new Date().toISOString()
-
-  // ── Jana PDF + upload ke Storage → signed URL ────────────
-  let pdfUrl: string | null = null
-  try {
-    const bytes = await buildReceiptPdf({
-      receiptRef: payment.receipt_ref, paidAt,
-      patientName: name, nric, mrn, email, phone,
-      items, total: Number(payment.total || 0),
-    })
-    const bucket = 'receipts'
-    // Cipta bucket kalau belum ada (idempotent — abaikan 'already exists')
-    await admin.storage.createBucket(bucket, { public: false }).catch(() => {})
-    const path = `${payment.receipt_ref}.pdf`
-    const { error: upErr } = await admin.storage.from(bucket)
-      .upload(path, bytes, { contentType: 'application/pdf', upsert: true })
-    if (upErr) throw upErr
-    const { data: signed, error: sgErr } = await admin.storage.from(bucket)
-      .createSignedUrl(path, 7 * 24 * 3600) // 7 hari — GHL muat turun serta-merta
-    if (sgErr || !signed?.signedUrl) throw (sgErr || new Error('signed URL kosong'))
-    pdfUrl = signed.signedUrl
-  } catch (pdfErr) {
-    console.warn('payments-webhook: PDF resit gagal, fallback teks —', (pdfErr as Error).message)
-  }
-
-  // ── Mesej WhatsApp ────────────────────────────────────────
-  const my = new Date(new Date(paidAt).getTime() + 8 * 3600 * 1000)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const tarikh = `${pad(my.getUTCDate())}/${pad(my.getUTCMonth() + 1)}/${my.getUTCFullYear()} ${pad(my.getUTCHours())}:${pad(my.getUTCMinutes())}`
-
-  let message: string
-  if (pdfUrl) {
-    // PDF dilampirkan — mesej ringkas sahaja
-    message = [
-      '🧾 *RESIT PEMBAYARAN — ISW*',
-      '',
-      `Terima kasih${name ? `, ${name}` : ''}! Pembayaran anda telah diterima. ✅`,
-      '',
-      `No. Resit: ${payment.receipt_ref}`,
-      `*Jumlah: RM ${Number(payment.total || 0).toFixed(2)}*`,
-      '',
-      'Resit rasmi dilampirkan (PDF). Salinan juga tersedia dalam aplikasi di menu *Sejarah Pembayaran & Resit*.',
-    ].join('\n')
-  } else {
-    // Fallback: ringkasan penuh dalam teks
-    const lines = items
-      .map((i) => `• ${i.title || i.type} — RM ${Number(i.amount || 0).toFixed(2)}`)
-      .join('\n')
-    message = [
-      '🧾 *RESIT PEMBAYARAN — ISW*',
-      '',
-      `Terima kasih${name ? `, ${name}` : ''}! Pembayaran anda telah diterima. ✅`,
-      '',
-      `No. Resit: ${payment.receipt_ref}`,
-      `Tarikh: ${tarikh}`,
-      ...(lines ? ['', lines] : []),
-      '',
-      `*Jumlah: RM ${Number(payment.total || 0).toFixed(2)}*`,
-      '',
-      'Resit rasmi (PDF) boleh dimuat turun dalam aplikasi di menu *Sejarah Pembayaran & Resit*.',
-    ].join('\n')
-  }
-
-  await sendWhatsApp(admin, {
-    phone,
-    name: contactName,
-    message,
-    attachments: pdfUrl ? [pdfUrl] : [],
-    sentByName: 'Auto — Resit Pembayaran',
-  })
 }
 
 const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)

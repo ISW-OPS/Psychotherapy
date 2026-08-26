@@ -193,9 +193,6 @@
               </div>
             </div>
 
-            <!-- Kod Rujukan — sentiasa nampak, tak perlu klik Edit -->
-            <div id="referral-card"></div>
-
             <!-- BELOW: Patient info -->
             <div class="min-w-0 space-y-3">
               <div class="flex items-center justify-between border-b border-ink/10 pb-2">
@@ -854,7 +851,6 @@
   <script src="../../shared/logout.js"></script>
   <script src="../../shared/navbar.js"></script>
   <script src="../../shared/utils.js"></script>
-  <script src="../../shared/referral.js"></script>
   <script src="../../shared/defaultAgreement.js"></script>
   <script src="_shared.js"></script>
   <script>
@@ -919,7 +915,6 @@
       document.getElementById('status-chip').innerHTML = `<span class="chip ${st.cls}">${st.label}</span>`;
 
       renderPatientDetails();
-      renderReferralCard();
 
       // Agreement
       const { data: agr } = await window.db.from('psy_kob_agreements')
@@ -1148,11 +1143,6 @@
         ${field('Hubungan Waris', patient?.emergency_contact_relationship)}
       </div>
     </div>
-    <div class="mt-5 pt-4 border-t border-ink/10">
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-3">
-        ${field('Kod Rujukan', patient?.referred_by_code)}
-      </div>
-    </div>
   `;
     }
 
@@ -1333,67 +1323,6 @@
       renderPatientDetails();
     }
 
-    // ── Kod Rujukan — sentiasa nampak (bukan dalam mod Edit), bawah Tindakan Sesi ──
-    function renderReferralCard() {
-      const el = document.getElementById('referral-card');
-      if (!el) return;
-      el.innerHTML = `
-    <div class="flex items-center justify-between flex-wrap gap-3">
-      <div class="flex items-center gap-3">
-        <div class="sicon bg-gold/10">🎁</div>
-        <div>
-          <div class="font-bold text-sm">Kod Rujukan <span class="text-ink/40 font-normal">(Optional)</span></div>
-          <div class="text-xs text-ink/40">Jika pesakit dirujuk, masukkan kod di sini.</div>
-        </div>
-      </div>
-      <div class="flex gap-2">
-        <input id="rc-referral" maxlength="16" value="${escapeHtml(patient?.referred_by_code || '')}"
-          oninput="this.value=this.value.toUpperCase()"
-          class="px-3 py-2 border border-ink/20 rounded-lg text-sm font-mono uppercase bg-white"
-          placeholder="cth: N7K23H5P" ${patient?.referred_by_patient_id ? 'disabled' : ''}>
-        ${patient?.referred_by_patient_id ? '' : `<button type="button" onclick="saveReferralCode()"
-          class="px-4 py-2 bg-navy text-white rounded-lg text-sm font-semibold hover:bg-navy-dark whitespace-nowrap">Simpan</button>`}
-      </div>
-    </div>
-    <p id="rc-referral-msg" class="text-xs mt-2 text-right ${patient?.referred_by_patient_id ? '' : 'hidden'}">${patient?.referred_by_patient_id ? '<span class="text-green-dark font-semibold">✓ Sudah dipautkan ke perujuk</span>' : ''
-        }</p>
-  `;
-    }
-
-    async function saveReferralCode() {
-      const input = document.getElementById('rc-referral');
-      const msg = document.getElementById('rc-referral-msg');
-      const code = (input.value || '').trim().toUpperCase();
-      input.value = code;
-      if (!code) return;
-      msg.classList.remove('hidden');
-      msg.textContent = 'Menyemak...';
-      try {
-        const referrer = await resolveReferrer(code);
-        if (!referrer || referrer.id === patient.id) {
-          msg.className = 'text-xs mt-2 text-red-500 font-semibold';
-          msg.textContent = '✗ Kod tidak sah atau tidak dijumpai.';
-          return;
-        }
-        const { data, error } = await window.db.from('psy_patients').update({
-          referred_by_code: code, referred_by_patient_id: referrer.id,
-        }).eq('id', patient.id).select().single();
-        if (error) throw error;
-        patient = { ...patient, ...data };
-        const { error: refErr } = await window.db.from('psy_referrals').insert({
-          referrer_patient_id: referrer.id, referee_patient_id: patient.id,
-          code_used: code, status: 'pending',
-        });
-        if (refErr && !/duplicate|unique/i.test(refErr.message || '')) {
-          console.warn('[referral] insert error:', refErr.message);
-        }
-        renderReferralCard();
-      } catch (e) {
-        msg.className = 'text-xs mt-2 text-red-500 font-semibold';
-        msg.textContent = 'Ralat menyemak kod. Cuba lagi.';
-        console.warn('[saveReferralCode] gagal:', e.message);
-      }
-    }
 
     function renderDocs() {
       const docs = kob.documents || [];
@@ -2149,8 +2078,9 @@
         // akaun/sesi log masuk (dicipta terus oleh doktor), jadi laluan pulang mesti
         // halaman awam tanpa login. Lihat payment-receipt-public (Edge Function).
         const returnUrl = `${location.origin}/roles/patient/payment-receipt.html`;
+        const tier = wizPayTier || (kob.package_payment_status === 'declined' ? 'now' : 'today');
         const { data, error } = await window.db.functions.invoke('payments-kob-initiate', {
-          body: { kobSessionId: kobId, mode, returnUrl },
+          body: { kobSessionId: kobId, mode, returnUrl, tier },
         });
         if (error) {
           let msg = error.message;
@@ -2190,8 +2120,9 @@
         // akaun/sesi log masuk (dicipta terus oleh doktor), jadi laluan pulang mesti
         // halaman awam tanpa login. Lihat payment-receipt-public (Edge Function).
         const returnUrl = `${location.origin}/roles/patient/payment-receipt.html`;
+        const tier = wizPayTier || (kob.package_payment_status === 'declined' ? 'now' : 'today');
         const { data, error } = await window.db.functions.invoke('payments-kob-initiate', {
-          body: { kobSessionId: kobId, mode, returnUrl },
+          body: { kobSessionId: kobId, mode, returnUrl, tier },
         });
         if (error) {
           let msg = error.message;
@@ -2325,7 +2256,7 @@
         container.classList.remove('hidden');
         container.innerHTML = [
           wizStep12Html(pkgMeta),
-          wizStep3Html(pkgMeta),
+          wizStep3Html(pkgMeta, 'recDecideTier'),
         ].filter(Boolean).join('<div class="border-t border-ink/10 my-2"></div>');
       }
       updateRecDecisionButtons(pkgId);
@@ -2450,6 +2381,10 @@
     // langsung) kekal 100% di server (payments-kob-initiate/payments-initiate).
     let wizPlan = null;      // 'full' | 'installment' | 'manual_installment' | null
     let wizMethod = null;    // 'manual' | 'hitpay' | null
+    // Harga yg doktor pilih utk bayaran ni — bebas klik Harga Sekarang/Hari Ini di
+    // Langkah 3, tak terikat pada status 'pending'/'declined'. null = ikut default
+    // (Today utk pending, Now utk declined) sehingga doktor klik kad utk override.
+    let wizPayTier = null;   // 'now' | 'today' | null
     // Ansuran Manual — jumlah TEMPOH kekal ikut tetapan pakej (installment_duration_months,
     // ditukar ke minggu ×4 kalau frekuensi mingguan dipilih — "3 bulan = 12 minggu"),
     // tapi kekerapan (minggu/bulan) DAN amaun SETIAP baris (deposit + tiap minggu/bulan
@@ -2476,10 +2411,10 @@
         wizManualPeriods = Array.from({ length: need }, (_, i) => wizManualPeriods[i] ?? null);
       }
     }
-    function wizSetManualFreq(freq, pkgMeta) {
+    function wizSetManualFreq(freq, pkgMeta, tier = 'today') {
       wizManualFreq = freq;
       wizManualPeriods = []; // tukar frekuensi = bina semula jadual dari kosong (bilangan baris berubah)
-      wizSyncManualPeriods(pkgMeta, 'today');
+      wizSyncManualPeriods(pkgMeta, tier);
       renderPaymentMethodSection();
     }
     function wizSetManualPeriodAmount(idx, value) {
@@ -2511,7 +2446,8 @@
     // klik "Semak Status" manual berulang kali. Berhenti automatik lepas status berubah
     // (paid/partial) atau staff tukar kaedah/pergi halaman lain.
     function syncHitpayPolling() {
-      const shouldPoll = kob?.package_payment_status === 'pending' && wizMethod === 'hitpay' && !!hitpayLinkSentAt;
+      const shouldPoll = (kob?.package_payment_status === 'pending' || kob?.package_payment_status === 'declined')
+        && wizMethod === 'hitpay' && !!hitpayLinkSentAt;
       if (shouldPoll && !hitpayPollInterval) {
         hitpayPollInterval = setInterval(() => { loadKob(); }, 10000);
       } else if (!shouldPoll && hitpayPollInterval) {
@@ -2523,6 +2459,14 @@
     function wizSelectPlan(plan) {
       wizPlan = plan; wizMethod = null;
       if (plan !== 'manual_installment') { wizManualDeposit = null; wizManualPeriods = []; }
+      renderPaymentMethodSection();
+    }
+    // Klik kad "Harga Sekarang"/"Harga Hari Ini" di Langkah 3 — doktor override
+    // harga utk bayaran ni terus, tak kira status 'pending'/'declined'. Reset
+    // plan/method (harga berubah, elak jadual lama tak padan tier baharu).
+    function wizSelectPayTier(tier) {
+      wizPayTier = tier; wizPlan = null; wizMethod = null;
+      wizManualDeposit = null; wizManualPeriods = [];
       renderPaymentMethodSection();
     }
     function wizSetManualDeposit(value) {
@@ -2637,13 +2581,16 @@
     }
 
     // ── Langkah 3: Harga Sekarang / Hari Ini ──
-    // Tanpa decisionHandler (wizard bayaran lepas disimpan): paparan sahaja, TAK boleh diklik.
-    // Dengan decisionHandler (preview SEBELUM disimpan, kob-detail.html): kad JADI butang —
-    // klik kad = keputusan patient teruskan (Today) atau tidak (Now), terus sahkan cadangan.
-    function wizStep3Html(pkgMeta, decisionHandler) {
+    // Tanpa decisionHandler (wizard bayaran lepas disimpan, tiada selectedTier): paparan
+    // sahaja, TAK boleh diklik. decisionHandler='recDecideTier' (preview SEBELUM sahkan
+    // cadangan): kad = keputusan patient teruskan/tidak. decisionHandler='wizSelectPayTier'
+    // + selectedTier diberi (renderPaymentMethodSection): kad = pilih harga utk bayaran
+    // ni terus — doktor boleh klik mana-mana, tak terikat status pending/declined.
+    function wizStep3Html(pkgMeta, decisionHandler, selectedTier) {
       const nowPrice = tierFullPrice(pkgMeta, 'now');
       const todayPrice = tierFullPrice(pkgMeta, 'today');
       const hasToday = !!pkgMeta.today_price;
+      const isSelectMode = selectedTier !== undefined;
       const tierCardHtml = (t, label, price, note, active) => decisionHandler ? `
     <button type="button" onclick="${decisionHandler}('${t}')" data-rbac="kob.edit"
       class="text-left p-4 border-2 rounded-xl cursor-pointer hover:shadow-md transition-shadow ${active ? 'border-green bg-green-light/30 hover:bg-green-light/50' : 'border-ink/10 hover:border-ink/25 hover:bg-ink/5'}">
@@ -2656,16 +2603,24 @@
       <div class="text-xl font-bold text-navy mt-1">${fmtRM(price)}</div>
       <div class="text-[11px] text-ink/45 mt-0.5">${note}</div>
     </div>`;
+      const nowNote = isSelectMode ? 'Klik utk guna harga ni bagi bayaran ini.'
+        : decisionHandler ? 'Klik kalau patient TIDAK teruskan hari ini.' : 'Terpakai KALAU patient tidak teruskan hari ini.';
+      const todayNote = isSelectMode ? 'Klik utk guna harga ni bagi bayaran ini.'
+        : decisionHandler ? 'Klik kalau patient TERUSKAN & bayar hari ini.' : 'Istimewa — sah & terpakai semasa sesi KOB hari ini.';
+      const nowActive = isSelectMode ? selectedTier === 'now' : !hasToday;
+      const todayActive = isSelectMode ? selectedTier === 'today' : true;
       return `
     <div>
       <div class="text-[11px] font-semibold text-ink/50 uppercase mb-2">3. Harga Sekarang / Hari Ini</div>
       <div class="grid sm:grid-cols-2 gap-3">
-        ${tierCardHtml('now', 'Harga Sekarang (Now)', nowPrice, decisionHandler ? 'Klik kalau patient TIDAK teruskan hari ini.' : 'Terpakai KALAU patient tidak teruskan hari ini.', !hasToday)}
-        ${hasToday ? tierCardHtml('today', 'Harga Hari Ini (Today)', todayPrice, decisionHandler ? 'Klik kalau patient TERUSKAN & bayar hari ini.' : 'Istimewa — sah & terpakai semasa sesi KOB hari ini.', true) : ''}
+        ${tierCardHtml('now', 'Harga Sekarang (Now)', nowPrice, nowNote, nowActive)}
+        ${hasToday ? tierCardHtml('today', 'Harga Hari Ini (Today)', todayPrice, todayNote, todayActive) : ''}
       </div>
-      <p class="text-[10px] text-ink/40 mt-1.5">ℹ️ ${decisionHandler
-          ? 'Tunjuk perbandingan ni kat pesakit dulu, lepas tu klik kad yang sepadan dengan keputusan dia.'
-          : `Plan pembayaran di bawah dikira guna ${hasToday ? 'Harga Hari Ini' : 'Harga Sekarang'} — perbandingan ni sekadar tunjuk kat pesakit, bukan pilihan.`}</p>
+      <p class="text-[10px] text-ink/40 mt-1.5">ℹ️ ${isSelectMode
+          ? 'Doktor pilih harga mana nak digunakan utk bayaran ini — plan pembayaran di Langkah 4 dikira ikut harga yang dipilih.'
+          : decisionHandler
+            ? 'Tunjuk perbandingan ni kat pesakit dulu, lepas tu klik kad yang sepadan dengan keputusan dia.'
+            : `Plan pembayaran di bawah dikira guna ${hasToday ? 'Harga Hari Ini' : 'Harga Sekarang'} — perbandingan ni sekadar tunjuk kat pesakit, bukan pilihan.`}</p>
     </div>`;
     }
 
@@ -2730,11 +2685,11 @@
         <span class="text-[10px] text-ink/45 uppercase">Kekerapan:</span>
         <label class="flex items-center gap-1.5 text-xs cursor-pointer">
           <input type="radio" name="wiz-manual-freq" value="week" ${wizManualFreq === 'week' ? 'checked' : ''}
-            onchange="wizSetManualFreq('week', allPackagesCache.find(p=>p.package_id==='${pkgMeta.package_id}'))"> Mingguan
+            onchange="wizSetManualFreq('week', allPackagesCache.find(p=>p.package_id==='${pkgMeta.package_id}'), '${tier}')"> Mingguan
         </label>
         <label class="flex items-center gap-1.5 text-xs cursor-pointer">
           <input type="radio" name="wiz-manual-freq" value="month" ${wizManualFreq === 'month' ? 'checked' : ''}
-            onchange="wizSetManualFreq('month', allPackagesCache.find(p=>p.package_id==='${pkgMeta.package_id}'))"> Bulanan
+            onchange="wizSetManualFreq('month', allPackagesCache.find(p=>p.package_id==='${pkgMeta.package_id}'), '${tier}')"> Bulanan
         </label>
         <span class="text-[11px] text-ink/40 ml-auto">Tempoh keseluruhan tetap: ${manualSlotCount} ${wizManualFreq === 'week' ? 'minggu' : 'bulan'} (ikut pakej)</span>
       </div>
@@ -2789,8 +2744,9 @@
     }
 
     // ── Langkah 5: Payment Method (Manual/HitPay) ──
-    function wizStep5Html(pkgMeta) {
-      const tier = 'today'; // bayaran sebenar sentiasa Today (lihat nota atas)
+    // tier: 'today' (package_payment_status==='pending') ATAU 'now' (status
+    // 'declined' — doktor terakhir klik "Patient Tidak Teruskan").
+    function wizStep5Html(pkgMeta, tier = 'today') {
       const fullPrice = tierFullPrice(pkgMeta, tier);
       const deposit = Number(tierDeposit(pkgMeta, tier) || 0);
       const isManual = wizPlan === 'manual_installment';
@@ -2823,7 +2779,7 @@
           <button type="button" onclick="wizSelectMethod('manual')" class="flex-1 px-4 py-2.5 border border-ink/15 rounded-lg text-sm font-semibold hover:bg-ink/5">💳 Bayaran Manual</button>
           <button type="button" onclick="wizSelectMethod('hitpay')" class="flex-1 px-4 py-2.5 border border-ink/15 rounded-lg text-sm font-semibold hover:bg-ink/5">🔗 HitPay (Pesakit Bayar)</button>
         </div>
-        ${isManual ? '<p class="text-[10px] text-ink/40 mt-1.5">ℹ️ Jadual Ansuran Manual di Langkah 4 disimpan dulu — HitPay jana pautan ikut jumlah deposit yg sama, auto-deduct terus dari pesakit.</p>' : ''}
+        ${isManual ? '<p class="text-[10px] text-ink/40 mt-1.5">ℹ️ Jadual Ansuran Manual di Langkah 4 disimpan dulu — HitPay jana pautan ikut jumlah deposit yg sama; pesakit tetap perlu klik pautan &amp; lengkapkan checkout sendiri (bukan auto-caj tanpa tindakan).</p>' : ''}
       </div>`;
       }
 
@@ -2928,7 +2884,7 @@
     <div class="mt-3 space-y-3">
       <div class="flex items-center justify-between">
         <div class="text-sm font-bold text-navy">💳 Bayaran Manual${label ? ` — ${escapeHtml(label)}` : ''}</div>
-        ${kob.package_payment_status === 'pending'
+        ${(kob.package_payment_status === 'pending' || kob.package_payment_status === 'declined')
           ? `<button type="button" onclick="wizSelectMethod(null)" class="text-xs text-ink/50 hover:underline">← Batal</button>` : ''}
       </div>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -2990,19 +2946,6 @@
       const wizSidebar = document.getElementById('wiz-sidebar');
       if (!wizMain || !wizSidebar) return;
 
-      // Patient tidak teruskan hari ini — bukan proses bayaran sekarang, cuma
-      // tunjuk anggaran FPP/IPP ikut Harga Sekarang (Now) utk rujukan staff/patient
-      // bila dia sambung beli sendiri lewat kat kob.html.
-      if (isDeclinedInfo) {
-        if (!pkgMeta) { wizMain.innerHTML = ''; wizSidebar.innerHTML = ''; return; }
-        wizMain.innerHTML = [
-          `<div class="text-xs text-gold-dark bg-gold/10 border border-gold/30 rounded p-2">⚠️ Patient tidak teruskan hari ini — anggaran di bawah ikut <strong>Harga Sekarang</strong> (bukan diproses sekarang, patient sambung beli sendiri lewat).</div>`,
-          wizStep4Html(pkgMeta, wizPlan, 'wizSelectPlan', 'now', false),
-        ].filter(Boolean).join('<div class="border-t border-ink/10 my-2"></div>');
-        wizSidebar.innerHTML = wizSidebarHtml(pkgMeta, 'now');
-        return;
-      }
-
       // Status 'partial' — deposit dah direkod. Kalau mod = ansuran,
       // baki ansuran diuruskan di Pesakit Hub selepas KOB ditandakan selesai
       // (bukan di sini — sesi KOB dah selesai perannya lepas deposit).
@@ -3040,6 +2983,13 @@
 
       if (!pkgMeta) { wizMain.innerHTML = ''; wizSidebar.innerHTML = ''; return; }
 
+      // tier utk bayaran ni: ikut pilihan doktor di Langkah 3 (wizPayTier, klik
+      // kad "Harga Sekarang"/"Harga Hari Ini" — bebas, tak terkunci pada status
+      // pending/declined), default ikut status ('now' utk declined, 'today' utk
+      // pending) sehingga doktor override.
+      const defaultTier = isDeclinedInfo ? 'now' : 'today';
+      const tier = wizPayTier || defaultTier;
+
       // Pulihkan status "pautan HitPay dah dijana" lepas refresh page — wizMethod/
       // hitpayLinkSentAt cuma pembolehubah JS (hilang bila reload). payments-kob-initiate
       // cipta baris psy_payments 'pending' (gateway) SETIAP kali pautan dijana (hantar
@@ -3062,12 +3012,14 @@
       }
 
       wizMain.innerHTML = [
+        isDeclinedInfo
+          ? `<div class="text-xs text-navy bg-navy-light/20 border border-navy/20 rounded p-2">📞 Patient kembali lepas tidak teruskan — pilih harga di bawah utk bayaran ini.</div>` : '',
         wizStep12Html(pkgMeta),
-        wizStep3Html(pkgMeta),
-        wizStep4Html(pkgMeta),
-        wizPlan ? wizStep5Html(pkgMeta) : '',
+        wizStep3Html(pkgMeta, 'wizSelectPayTier', tier),
+        wizStep4Html(pkgMeta, wizPlan, 'wizSelectPlan', tier, true),
+        wizPlan ? wizStep5Html(pkgMeta, tier) : '',
       ].filter(Boolean).join('<div class="border-t border-ink/10 my-2"></div>');
-      wizSidebar.innerHTML = wizSidebarHtml(pkgMeta);
+      wizSidebar.innerHTML = wizSidebarHtml(pkgMeta, tier);
     }
 
     // Jumlah keseluruhan yang dah dibayar setakat ni untuk sesi KOB ni (jumlah
@@ -3086,17 +3038,18 @@
     // terus dari checkpoint seq=0, bukan dari body request. Dipanggil sebelum setiap
     // percubaan HitPay (idempotent — padam+cipta semula, selamat selagi status kob 'pending').
     async function ensureManualScheduleDraft() {
-      if (kob.package_payment_status !== 'pending') {
-        throw new Error('Status bayaran sesi ini bukan lagi pending — muat semula halaman.');
+      if (kob.package_payment_status !== 'pending' && kob.package_payment_status !== 'declined') {
+        throw new Error('Status bayaran sesi ini bukan lagi pending/declined — muat semula halaman.');
       }
+      const payTier = wizPayTier || (kob.package_payment_status === 'declined' ? 'now' : 'today');
       if (!(Number(wizManualDeposit) > 0) || !wizManualPeriods.length || !wizManualPeriods.every(v => Number(v) > 0)) {
         throw new Error('Sila isi Deposit & kesemua baris jadual di Langkah 4 dahulu');
       }
       const pkgMetaCheck = allPackagesCache.find(p => p.package_id === kob.recommended_package_id);
-      const ipCanInstallment = tierInstallmentAllowed(pkgMetaCheck, 'today');
-      const ipDeposit = Number(tierDeposit(pkgMetaCheck, 'today') || 0);
+      const ipCanInstallment = tierInstallmentAllowed(pkgMetaCheck, payTier);
+      const ipDeposit = Number(tierDeposit(pkgMetaCheck, payTier) || 0);
       const ipResolved = ipCanInstallment
-        ? buildInstallmentSchedule(ipDeposit, tierDurationMonths(pkgMetaCheck, 'today'), tierMonthlyAmount(pkgMetaCheck, 'today'), new Date())
+        ? buildInstallmentSchedule(ipDeposit, tierDurationMonths(pkgMetaCheck, payTier), tierMonthlyAmount(pkgMetaCheck, payTier), new Date())
         : [];
       const targetCommitment = ipResolved.length ? ipResolved[ipResolved.length - 1].target_cumulative : ipDeposit;
       const allocated = Number(wizManualDeposit) + wizManualPeriods.reduce((s, v) => s + Number(v), 0);
@@ -3125,8 +3078,13 @@
       if (!amount || amount <= 0) { banner('Sila isi Jumlah yang sah', 'error'); return; }
       if (!file) { banner('Sila upload resit', 'error'); return; }
 
+      // Ikut pilihan doktor di Langkah 3 (wizPayTier); default 'today' utk pending,
+      // 'now' utk declined bila doktor belum override.
+      const payTier = wizPayTier || (kob.package_payment_status === 'declined' ? 'now' : 'today');
+
       const isManualInstallment = wizPlan === 'manual_installment';
-      const isInstallmentStart = (wizPlan === 'installment' || isManualInstallment) && kob.package_payment_status === 'pending';
+      const isInstallmentStart = (wizPlan === 'installment' || isManualInstallment)
+        && (kob.package_payment_status === 'pending' || kob.package_payment_status === 'declined');
       if (isManualInstallment) {
         if (!(Number(wizManualDeposit) > 0) || !wizManualPeriods.length || !wizManualPeriods.every(v => Number(v) > 0)) {
           banner('Sila isi Deposit & kesemua baris jadual di Langkah 4 dahulu', 'error'); return;
@@ -3134,10 +3092,10 @@
         // Jumlah kesemua baris MESTI padan sasaran IPP — sama pengiraan macam
         // wizStep4Html/wizStep5Html, elak jumlah komitmen tak sepadan diam-diam.
         const pkgMetaCheck = allPackagesCache.find(p => p.package_id === kob.recommended_package_id);
-        const ipCanInstallment = tierInstallmentAllowed(pkgMetaCheck, 'today');
-        const ipDeposit = Number(tierDeposit(pkgMetaCheck, 'today') || 0);
+        const ipCanInstallment = tierInstallmentAllowed(pkgMetaCheck, payTier);
+        const ipDeposit = Number(tierDeposit(pkgMetaCheck, payTier) || 0);
         const ipResolved = ipCanInstallment
-          ? buildInstallmentSchedule(ipDeposit, tierDurationMonths(pkgMetaCheck, 'today'), tierMonthlyAmount(pkgMetaCheck, 'today'), new Date())
+          ? buildInstallmentSchedule(ipDeposit, tierDurationMonths(pkgMetaCheck, payTier), tierMonthlyAmount(pkgMetaCheck, payTier), new Date())
           : [];
         const targetCommitment = ipResolved.length ? ipResolved[ipResolved.length - 1].target_cumulative : ipDeposit;
         const allocated = Number(wizManualDeposit) + wizManualPeriods.reduce((s, v) => s + Number(v), 0);
@@ -3178,10 +3136,10 @@
           const pkgMeta = allPackagesCache.find(p => p.package_id === kob.recommended_package_id);
           // Ansuran Manual: tempoh keseluruhan tetap ikut pakej (minggu/bulan), tiap
           // baris amaun BERASINGAN dari input staff (bukan kadar rata).
-          const depositAmount = isManualInstallment ? Number(wizManualDeposit) : Number(tierDeposit(pkgMeta, 'today') || 0);
+          const depositAmount = isManualInstallment ? Number(wizManualDeposit) : Number(tierDeposit(pkgMeta, payTier) || 0);
           const resolved = isManualInstallment
             ? buildCustomInstallmentSchedule(depositAmount, wizManualPeriods, wizManualFreq, new Date())
-            : buildInstallmentSchedule(depositAmount, tierDurationMonths(pkgMeta, 'today'), tierMonthlyAmount(pkgMeta, 'today'), new Date());
+            : buildInstallmentSchedule(depositAmount, tierDurationMonths(pkgMeta, payTier), tierMonthlyAmount(pkgMeta, payTier), new Date());
           const nowIso = new Date().toISOString();
           const rows = [
             {
@@ -3206,9 +3164,14 @@
           bannerMsg = 'Deposit disahkan ✅ Baki ansuran diuruskan di Pesakit Hub.';
         } else {
           // Bayaran penuh ATAU laluan lama (jumlah bebas) — jumlah SEMUA bayaran
-          // (termasuk yang baru disimpan) dibanding harga pakej penuh.
+          // (termasuk yang baru disimpan) dibanding harga pakej penuh. Tier 'today'
+          // = harga dibekukan masa cadangan asal (recommended_package_price); tier
+          // 'now' = harga SEMASA dari psy_packages (doktor pilih lepas declined).
           const totalPaid = await getKobPaymentsPaid();
-          const packagePrice = Number(kob.recommended_package_price || 0);
+          const pkgMetaPrice = allPackagesCache.find(p => p.package_id === kob.recommended_package_id);
+          const packagePrice = payTier === 'today'
+            ? Number(kob.recommended_package_price || 0)
+            : tierFullPrice(pkgMetaPrice, 'now');
           const isFullyPaid = packagePrice > 0 && totalPaid >= packagePrice;
           kobUpdates.package_payment_status = isFullyPaid ? 'paid' : 'partial';
           kobUpdates.package_payment_mode = 'full';
@@ -3218,6 +3181,36 @@
 
         const { error: kobErr } = await window.db.from('psy_kob_sessions').update(kobUpdates).eq('id', kobId);
         if (kobErr) throw kobErr;
+
+        // Sesi KOB ni dah 'completed' — markSelesai() dah jalan DENGAN isDeclined=true
+        // masa tu, jadi pakej TAK PERNAH diaktifkan (lihat markSelesai(), skip terus
+        // bila declined). Doktor proses bayaran SEKARANG (reopen) — aktifkan pakej di
+        // sini terus, webhook/markSelesai() takkan panggil lagi utk sesi ni.
+        if (kob.status === 'completed' && kob.package_payment_status === 'declined' && !patient.active_package_id) {
+          const { data: actPkgRows } = await window.db.from('psy_packages')
+            .select('*').eq('package_id', kob.recommended_package_id).limit(1);
+          const actPkg = actPkgRows?.[0];
+          const actWeeks = actPkg?.duration_weeks || 12;
+          const actExpires = new Date(); actExpires.setDate(actExpires.getDate() + actWeeks * 7);
+          await window.db.from('psy_package_purchases').insert({
+            patient_id: patient.id, package_id: kob.recommended_package_id,
+            package_name: kob.recommended_package_name, price: kob.recommended_package_price || actPkg?.price || 0,
+            expires_at: actExpires.toISOString(), status: 'active', payment_method: 'manual',
+          });
+          await window.db.from('psy_patients').update({
+            status: 'active', active_package_id: kob.recommended_package_id,
+            active_package_name: kob.recommended_package_name,
+            package_purchased_at: new Date().toISOString(), package_expires_at: actExpires.toISOString(),
+          }).eq('id', patient.id);
+          if (actPkg) {
+            await window.db.from('psy_treatment_plans').insert({
+              patient_id: patient.id, doctor_id: null, name: `${actPkg.name} Treatment Plan`,
+              template: actPkg.package_id, duration_unit: actPkg.duration_unit || 'week',
+              duration_weeks: actWeeks, current_week: 1, coaching_schedule: actPkg.coaching_schedule || [],
+              status: 'active',
+            });
+          }
+        }
 
         await auditLog('kob.package_payment_manual', kobId, { invoice_number: invoiceNumber, amount, installment: isInstallmentStart, status: kobUpdates.package_payment_status });
         banner(bannerMsg);

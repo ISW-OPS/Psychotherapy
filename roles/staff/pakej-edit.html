@@ -666,8 +666,9 @@ function onTodayInstallmentToggle() {
 }
 
 // Jadual ansuran RATA — Bayaran Pertama (deposit) + Tempoh(bulan) + Bayaran
-// Bulanan tetap. Jumlah Komitmen TAK semestinya = harga pakej penuh (boleh
-// lebih tinggi, kos bayar ansuran) — sama fungsi dgn buildInstallmentSchedule()
+// Bulanan tetap. Jumlah Komitmen MESTI = Harga pakej (Sekarang/Hari Ini)
+// masing-masing — ansuran cuma pecahkan cara bayar, bukan diskaun/caj
+// tambahan (enforced di savePackage()) — sama fungsi dgn buildInstallmentSchedule()
 // di kob-detail.html/payments-webhook, guna 'Bulan N' (bukan tarikh kalendar
 // sebenar) sebab ni template, bukan transaksi pesakit sebenar.
 function buildInstallmentSchedule(depositAmount, durationMonths, monthlyAmount) {
@@ -679,6 +680,16 @@ function buildInstallmentSchedule(depositAmount, durationMonths, monthlyAmount) 
     rows.push({ month_offset: i, target_cumulative: cumulative });
   }
   return rows;
+}
+
+// Jumlah Komitmen (Bayaran Pertama + baki bulanan) MESTI sama dgn Harga
+// (Sekarang/Hari Ini) — ansuran cuma pecahkan cara bayar, bukan diskaun/caj
+// tambahan. Tolerance kecil (1 sen) utk elak isu bulatan float.
+const INSTALLMENT_PRICE_TOLERANCE = 0.01;
+
+function getInstallmentTargetPrice(tier) {
+  const id = tier === 'today' ? 'f-today-price' : 'f-price';
+  return parseFloat(document.getElementById(id)?.value) || 0;
 }
 
 function renderInstallmentPreview(tier) {
@@ -696,7 +707,16 @@ function renderInstallmentPreview(tier) {
   const rows = [`<div class="flex justify-between py-0.5"><span>Bayaran Pertama (Hari Ini)</span><span class="font-semibold">RM ${deposit.toFixed(2)}</span></div>`,
     ...resolved.map(r => `<div class="flex justify-between py-0.5"><span>Bulan ${r.month_offset + 1}</span><span class="font-semibold">RM ${monthly.toFixed(2)}</span></div>`)]
     .join('');
-  wrap.innerHTML = `${rows}<div class="flex justify-between pt-2 mt-1 border-t border-ink/10 font-bold text-navy"><span>Jumlah Komitmen</span><span>RM ${total.toFixed(2)}</span></div>`;
+  const price = getInstallmentTargetPrice(tier);
+  const matches = price > 0 && Math.abs(total - price) <= INSTALLMENT_PRICE_TOLERANCE;
+  let matchLine = '';
+  if (price > 0) {
+    const diff = total - price;
+    matchLine = matches
+      ? `<div class="flex justify-between py-0.5 text-green-700"><span>✓ Sepadan dgn Harga ${tier === 'today' ? 'Hari Ini' : 'Sekarang'}</span><span>RM ${price.toFixed(2)}</span></div>`
+      : `<div class="flex justify-between py-0.5 text-terracotta font-semibold"><span>⚠ Tak sepadan dgn Harga ${tier === 'today' ? 'Hari Ini' : 'Sekarang'} (RM ${price.toFixed(2)}) — ${diff > 0 ? 'lebih' : 'kurang'} RM ${Math.abs(diff).toFixed(2)}</span></div>`;
+  }
+  wrap.innerHTML = `${rows}<div class="flex justify-between pt-2 mt-1 border-t border-ink/10 font-bold text-navy"><span>Jumlah Komitmen</span><span>RM ${total.toFixed(2)}</span></div>${matchLine}`;
 }
 
 // % diskaun LIVE (bukan disimpan) — dari Harga Asal berbanding harga Now/Today.
@@ -2031,6 +2051,15 @@ async function savePackage() {
     if (!(parseInt(document.getElementById('f-installment-duration-now').value) >= 2) || !parseFloat(document.getElementById('f-installment-monthly-now').value)) {
       banner('Sila isi Tempoh (min 2 bulan) & Bayaran Bulanan ansuran (Sekarang)', 'error'); switchETab('bayaran'); return;
     }
+    const depositNow = parseFloat(document.getElementById('f-installment-deposit-now').value) || 0;
+    const durationNow = parseInt(document.getElementById('f-installment-duration-now').value) || 0;
+    const monthlyNow = parseFloat(document.getElementById('f-installment-monthly-now').value) || 0;
+    const totalNow = depositNow + (durationNow - 1) * monthlyNow;
+    const priceNow = getInstallmentTargetPrice('now');
+    if (priceNow > 0 && Math.abs(totalNow - priceNow) > INSTALLMENT_PRICE_TOLERANCE) {
+      banner(`Jumlah Komitmen ansuran (Sekarang) = RM ${totalNow.toFixed(2)}, tak sepadan dgn Harga Sekarang RM ${priceNow.toFixed(2)}. Betulkan Bayaran Pertama/Tempoh/Bayaran Bulanan.`, 'error');
+      switchETab('bayaran'); return;
+    }
     const todayOverrideOn = document.getElementById('f-today-installment-toggle').checked;
     if (todayOverrideOn) {
       if (!parseFloat(document.getElementById('f-installment-deposit-today').value)) {
@@ -2038,6 +2067,15 @@ async function savePackage() {
       }
       if (!(parseInt(document.getElementById('f-installment-duration-today').value) >= 2) || !parseFloat(document.getElementById('f-installment-monthly-today').value)) {
         banner('Sila isi Tempoh (min 2 bulan) & Bayaran Bulanan ansuran (Hari Ini)', 'error'); switchETab('bayaran'); return;
+      }
+      const depositToday = parseFloat(document.getElementById('f-installment-deposit-today').value) || 0;
+      const durationToday = parseInt(document.getElementById('f-installment-duration-today').value) || 0;
+      const monthlyToday = parseFloat(document.getElementById('f-installment-monthly-today').value) || 0;
+      const totalToday = depositToday + (durationToday - 1) * monthlyToday;
+      const priceToday = getInstallmentTargetPrice('today');
+      if (priceToday > 0 && Math.abs(totalToday - priceToday) > INSTALLMENT_PRICE_TOLERANCE) {
+        banner(`Jumlah Komitmen ansuran (Hari Ini) = RM ${totalToday.toFixed(2)}, tak sepadan dgn Harga Hari Ini RM ${priceToday.toFixed(2)}. Betulkan Bayaran Pertama/Tempoh/Bayaran Bulanan.`, 'error');
+        switchETab('bayaran'); return;
       }
     }
   }

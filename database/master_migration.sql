@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-08-20T06:07:11.420873Z
+-- Generated: 2026-08-24T07:12:47.775897Z
 -- Jumlah fail: 30
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -2617,6 +2617,11 @@ CREATE TABLE IF NOT EXISTS psy_kob_installment_checkpoints (
   CONSTRAINT psy_kob_installment_checkpoints_unique_seq UNIQUE (kob_session_id, seq)
 );
 
+-- Dedup peringatan auto "N hari sebelum due date" (runInstallmentReminderCheck,
+-- event-reminders) — elak hantar berulang; lihat psy_auto_messages key='installment_reminder'.
+ALTER TABLE psy_kob_installment_checkpoints
+  ADD COLUMN IF NOT EXISTS installment_reminder_sent_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS idx_kob_checkpoints_session ON psy_kob_installment_checkpoints(kob_session_id);
 CREATE INDEX IF NOT EXISTS idx_kob_checkpoints_patient ON psy_kob_installment_checkpoints(patient_id, status);
 CREATE INDEX IF NOT EXISTS idx_kob_checkpoints_overdue ON psy_kob_installment_checkpoints(due_date) WHERE status = 'pending';
@@ -2710,7 +2715,9 @@ CREATE POLICY "Staff delete agreement" ON psy_kob_agreements FOR DELETE
 -- setiap slot; tiada kapasiti per-pesakit.
 CREATE TABLE IF NOT EXISTS psy_kob_slot_config (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  slot_type    TEXT NOT NULL DEFAULT 'kob' CHECK (slot_type IN ('kob','rawatan')),
+  -- 'sesi_1on1' = Sesi 1:1 (Hakeema/Hakeem/Dr), diurus kad "C. Slot Sesi 1:1" kob-slots.html —
+  -- guna baris-per-blok SAMA seperti KOB/Rawatan, reuse penuh (bukan jadual/model berasingan).
+  slot_type    TEXT NOT NULL DEFAULT 'kob' CHECK (slot_type IN ('kob','rawatan','sesi_1on1')),
   day_of_week  INT NOT NULL CHECK (day_of_week IN (0, 3, 4, 5, 6)),  -- 0=Ahad, 3=Rabu, 4=Khamis, 5=Jumaat, 6=Sabtu
   slot_start   TIME NOT NULL,
   slot_end     TIME NOT NULL,
@@ -2764,6 +2771,25 @@ FROM
     ('14:00', '16:00', '2-4 ptg',         3),
     ('14:30', '16:30', '2.30-4.30 ptg',   4),
     ('16:30', '18:30', '4.30-6.30 ptg',   5)
+  ) AS s(slot_start, slot_end, label, sort_order)
+ON CONFLICT ON CONSTRAINT psy_kob_slot_config_unique DO NOTHING;
+
+-- Seed lalai Slot Sesi 1:1 (Hakeema/Hakeem/Dr) — 2 blok (pagi/petang) x hari Rabu-Ahad,
+-- sama pattern macam KOB/Rawatan di atas (baris-per-blok, ON/OFF per hari di UI).
+INSERT INTO psy_kob_slot_config (slot_type, day_of_week, slot_start, slot_end, label, sort_order, is_active)
+SELECT
+  'sesi_1on1',
+  d.day_of_week,
+  s.slot_start::time,
+  s.slot_end::time,
+  s.label,
+  s.sort_order,
+  true
+FROM
+  (VALUES (3), (4), (5), (6), (0)) AS d(day_of_week),
+  (VALUES
+    ('09:00', '12:00', '9-12 pg',  1),
+    ('14:00', '17:00', '2-5 ptg',  2)
   ) AS s(slot_start, slot_end, label, sort_order)
 ON CONFLICT ON CONSTRAINT psy_kob_slot_config_unique DO NOTHING;
 
@@ -5525,6 +5551,40 @@ on conflict (key) do update set
   message_template = excluded.message_template,
   placeholders     = excluded.placeholders,
   channels         = excluded.channels,
+  category         = excluded.category,
+  language         = excluded.language,
+  updated_at       = now();
+
+-- Peringatan Ansuran Akan Tamat Tempoh (installment_reminder) — N hari sebelum
+-- checkpoint psy_kob_installment_checkpoints jatuh tempoh (status masih 'pending'),
+-- hantar WA + pautan bayaran HitPay dijana on-the-fly (runInstallmentReminderCheck,
+-- event-reminders → _shared/kob_topup.ts). Dedup via installment_reminder_sent_at.
+-- Beza dgn installment_overdue (lepas due date, sekat tempahan) — ni SEBELUM due date,
+-- galakan bayar awal. UPSERT dgn DO UPDATE macam session_confirm/dna_sample_reminder.
+--   rule.lead_days : berapa hari sebelum due_date peringatan dihantar (default 3)
+insert into psy_auto_messages
+  (key, name, description, channel, trigger_type, message_template,
+   placeholders, channels, rule, category, language, is_active)
+values
+  ('installment_reminder',
+   'Peringatan Ansuran Akan Tamat Tempoh',
+   'Sebelum checkpoint ansuran KOB jatuh tempoh (rule.lead_days hari, default 3), hantar WA kpd pesakit dengan pautan bayaran HitPay — dijana automatik.',
+   'whatsapp', 'installment_reminder',
+   E'Salam {nama} 👋\n\nPeringatan mesra: ansuran *{ansuran}* pakej rawatan anda (RM {jumlah}) akan tamat tempoh pada *{tarikh_due}*.\n\nSila selesaikan bayaran melalui pautan selamat:\n{pautan}\n\nTerima kasih — ISW',
+   '["{nama}","{ansuran}","{jumlah}","{tarikh_due}","{pautan}"]'::jsonb,
+   '["whatsapp"]'::jsonb,
+   '{"lead_days":3}'::jsonb,
+   'pembayaran', 'ms',
+   false)
+on conflict (key) do update set
+  name             = excluded.name,
+  description      = excluded.description,
+  channel          = excluded.channel,
+  trigger_type     = excluded.trigger_type,
+  message_template = excluded.message_template,
+  placeholders     = excluded.placeholders,
+  channels         = excluded.channels,
+  rule             = excluded.rule,
   category         = excluded.category,
   language         = excluded.language,
   updated_at       = now();

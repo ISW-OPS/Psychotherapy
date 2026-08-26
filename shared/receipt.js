@@ -18,9 +18,14 @@
     : (typeof v === 'string' ? v.split('\n').map(s => s.trim()).filter(Boolean) : []);
 
   // Bina kandungan resit (tanpa bekas modal/halaman). Async — tarik butiran pakej.
-  async function buildReceiptInner(r) {
-    const cu = window.currentUser || {};
-    const pr = window.patientRecord || {};
+  // `override` (pilihan) — bagi laluan STAFF (patient-hub.html) yang tiada
+  // window.currentUser/patientRecord (session staff, bukan pesakit): hantar
+  // {full_name, ic_number, mrn, email, phone} terus, elak bergantung pada
+  // globals sesi pesakit. Laluan pesakit (resit.html/payment.html) tak hantar
+  // override — kekal guna window.currentUser/patientRecord macam sedia ada.
+  async function buildReceiptInner(r, override) {
+    const cu = override ? { full_name: override.full_name, email: override.email } : (window.currentUser || {});
+    const pr = override ? { ic_number: override.ic_number, mrn: override.mrn, phone: override.phone } : (window.patientRecord || {});
 
     const total = Number(r.total || 0);
     const email = cu.email || '—';
@@ -94,10 +99,10 @@
   }
 
   // Modal fallback (jika mahu buka resit tanpa navigasi halaman)
-  async function viewReceiptPDF(id) {
+  async function viewReceiptPDF(id, override) {
     const r = (window._receipts || []).find(x => x.id === id);
     if (!r) return;
-    const inner = await buildReceiptInner(r);
+    const inner = await buildReceiptInner(r, override);
     const modal = document.createElement('div');
     modal.id = 'pdf-modal';
     modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';

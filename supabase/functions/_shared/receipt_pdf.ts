@@ -8,6 +8,7 @@
 
 import { PDFDocument, StandardFonts, rgb } from 'https://esm.sh/pdf-lib@1.17.1'
 import { LOGO_ISW_PNG_BASE64 } from './logo_isw.ts'
+import { sendWhatsApp } from './ghl.ts'
 
 const NAVY = rgb(0.106, 0.165, 0.29)      // ~#1B2A4A
 const GREEN = rgb(0.184, 0.42, 0.246)     // ~#2F6B3F
@@ -147,4 +148,122 @@ export async function buildReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
   center(disc2, 7)
 
   return await doc.save()
+}
+
+// ---- Resit WhatsApp: PDF rasmi (attachment) + mesej ringkas ----
+// PDF gagal jana/upload → fallback hantar teks ringkasan sahaja. Dipanggil oleh
+// payments-webhook (fulfillment gateway) DAN payments-send-receipt (staff rekod
+// bayaran manual di patient-hub.html) — satu-satunya sumber resit rasmi, supaya
+// kedua-dua laluan hantar PDF & mesej sama format.
+export async function sendPaymentReceiptWhatsApp(admin: any, payment: any) {
+  // Butiran pesakit: psy_patients dulu, fallback psy_profiles + auth (email)
+  // `name` = nama PESAKIT (untuk PDF resit & ucapan dalam mesej — TAK berubah).
+  // `contactName` = nama untuk label kenalan GHL sahaja — jadi nama waris bila
+  // contact_preference='waris' (staff nampak siapa sebenarnya terima mesej ni).
+  let phone: string | null = null, name: string | null = null, contactName: string | null = null
+  let nric: string | null = null, mrn: string | null = null, email: string | null = null
+  let userId: string | null = payment.user_id || null
+  const patientId = payment.patient_id || payment.intent?.patientId || null
+
+  if (patientId) {
+    const { data: pt } = await admin.from('psy_patients')
+      .select('full_name, phone, ic_number, mrn, user_id, emergency_contact_phone, emergency_contact_name, contact_preference').eq('id', patientId).limit(1)
+    const p = pt?.[0]
+    if (p) {
+      name = p.full_name || null
+      nric = p.ic_number || null; mrn = p.mrn || null
+      userId = userId || p.user_id || null
+      if (p.contact_preference === 'waris' && p.emergency_contact_phone) {
+        phone = p.emergency_contact_phone
+        contactName = p.emergency_contact_name || name
+      } else {
+        phone = p.phone || null
+        contactName = name
+      }
+    }
+  }
+  if ((!phone || !name) && userId) {
+    const { data: prof } = await admin.from('psy_profiles')
+      .select('full_name, phone').eq('id', userId).limit(1)
+    phone = phone || prof?.[0]?.phone || null
+    name = name || prof?.[0]?.full_name || null
+    contactName = contactName || name
+  }
+  if (userId) {
+    const { data: au } = await admin.auth.admin.getUserById(userId).catch(() => ({ data: null }))
+    email = au?.user?.email || null
+  }
+  if (!phone) throw new Error('pesakit tiada nombor telefon')
+
+  const items: any[] = Array.isArray(payment.items) ? payment.items : []
+  const paidAt = payment.paid_at || new Date().toISOString()
+
+  // ── Jana PDF + upload ke Storage → signed URL ────────────
+  let pdfUrl: string | null = null
+  try {
+    const bytes = await buildReceiptPdf({
+      receiptRef: payment.receipt_ref, paidAt,
+      patientName: name, nric, mrn, email, phone,
+      items, total: Number(payment.total || 0),
+    })
+    const bucket = 'receipts'
+    // Cipta bucket kalau belum ada (idempotent — abaikan 'already exists')
+    await admin.storage.createBucket(bucket, { public: false }).catch(() => {})
+    const path = `${payment.receipt_ref}.pdf`
+    const { error: upErr } = await admin.storage.from(bucket)
+      .upload(path, bytes, { contentType: 'application/pdf', upsert: true })
+    if (upErr) throw upErr
+    const { data: signed, error: sgErr } = await admin.storage.from(bucket)
+      .createSignedUrl(path, 7 * 24 * 3600) // 7 hari — GHL muat turun serta-merta
+    if (sgErr || !signed?.signedUrl) throw (sgErr || new Error('signed URL kosong'))
+    pdfUrl = signed.signedUrl
+  } catch (pdfErr) {
+    console.warn('receipt_pdf: PDF resit gagal, fallback teks —', (pdfErr as Error).message)
+  }
+
+  // ── Mesej WhatsApp ────────────────────────────────────────
+  const my = new Date(new Date(paidAt).getTime() + 8 * 3600 * 1000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const tarikh = `${pad(my.getUTCDate())}/${pad(my.getUTCMonth() + 1)}/${my.getUTCFullYear()} ${pad(my.getUTCHours())}:${pad(my.getUTCMinutes())}`
+
+  let message: string
+  if (pdfUrl) {
+    // PDF dilampirkan — mesej ringkas sahaja
+    message = [
+      '🧾 *RESIT PEMBAYARAN — ISW*',
+      '',
+      `Terima kasih${name ? `, ${name}` : ''}! Pembayaran anda telah diterima. ✅`,
+      '',
+      `No. Resit: ${payment.receipt_ref}`,
+      `*Jumlah: RM ${Number(payment.total || 0).toFixed(2)}*`,
+      '',
+      'Resit rasmi dilampirkan (PDF). Salinan juga tersedia dalam aplikasi di menu *Sejarah Pembayaran & Resit*.',
+    ].join('\n')
+  } else {
+    // Fallback: ringkasan penuh dalam teks
+    const lines = items
+      .map((i) => `• ${i.title || i.type} — RM ${Number(i.amount || 0).toFixed(2)}`)
+      .join('\n')
+    message = [
+      '🧾 *RESIT PEMBAYARAN — ISW*',
+      '',
+      `Terima kasih${name ? `, ${name}` : ''}! Pembayaran anda telah diterima. ✅`,
+      '',
+      `No. Resit: ${payment.receipt_ref}`,
+      `Tarikh: ${tarikh}`,
+      ...(lines ? ['', lines] : []),
+      '',
+      `*Jumlah: RM ${Number(payment.total || 0).toFixed(2)}*`,
+      '',
+      'Resit rasmi (PDF) boleh dimuat turun dalam aplikasi di menu *Sejarah Pembayaran & Resit*.',
+    ].join('\n')
+  }
+
+  await sendWhatsApp(admin, {
+    phone,
+    name: contactName,
+    message,
+    attachments: pdfUrl ? [pdfUrl] : [],
+    sentByName: 'Auto — Resit Pembayaran',
+  })
 }

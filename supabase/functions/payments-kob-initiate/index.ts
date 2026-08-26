@@ -28,6 +28,7 @@
 // ============================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { activeProviderName, getProvider } from '../_shared/payments/index.ts'
+import { createKobInstallmentTopupLink } from '../_shared/kob_topup.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -65,10 +66,23 @@ Deno.serve(async (req) => {
     const mode: string = String(body.mode || '')
     const returnUrl: string = String(body.returnUrl || '')
     if (!kobSessionId) return json({ error: 'kobSessionId diperlukan' }, 400)
-    if (mode !== 'full' && mode !== 'installment' && mode !== 'manual_installment') {
-      return json({ error: "mode mesti 'full', 'installment' atau 'manual_installment'" }, 400)
+    if (mode !== 'full' && mode !== 'installment' && mode !== 'manual_installment' && mode !== 'topup') {
+      return json({ error: "mode mesti 'full', 'installment', 'manual_installment' atau 'topup'" }, 400)
     }
     if (!returnUrl) return json({ error: 'returnUrl diperlukan' }, 400)
+
+    // Mod 'topup' — pelan ansuran SEDANG BERJALAN (bukan permulaan), staff jana
+    // pautan utk checkpoint SETERUSNYA belum met dari patient-hub.html (tab
+    // Bayaran). Amaun diderive sepenuhnya oleh helper — laluan berasingan drpd
+    // full/installment/manual_installment di bawah (yang untuk MULAKAN pelan).
+    if (mode === 'topup') {
+      try {
+        const link = await createKobInstallmentTopupLink(admin, kobSessionId, returnUrl)
+        return json({ ok: true, checkoutUrl: link.checkoutUrl, receiptRef: link.receiptRef, amount: link.amount })
+      } catch (err) {
+        return json({ error: (err as Error).message || 'Ralat tidak diketahui' }, 400)
+      }
+    }
 
     // 3. Sahkan sesi KOB — amount TIDAK diambil dari client
     const { data: kobRows } = await admin.from('psy_kob_sessions')
@@ -77,24 +91,43 @@ Deno.serve(async (req) => {
     const kob = kobRows?.[0]
     if (!kob) return json({ error: 'Sesi KOB tidak dijumpai' }, 404)
     if (!kob.recommended_package_id) return json({ error: 'Sesi KOB ini tiada pakej dicadangkan' }, 400)
-    if (kob.package_payment_status !== 'pending') return json({ error: 'Bayaran pakej sesi ini bukan lagi berstatus pending' }, 409)
+    if (kob.package_payment_status !== 'pending' && kob.package_payment_status !== 'declined') {
+      return json({ error: 'Bayaran pakej sesi ini bukan lagi berstatus pending/declined' }, 409)
+    }
 
-    const packagePrice = Number(kob.recommended_package_price || 0)
-    if (!(packagePrice > 0)) return json({ error: 'Harga pakej tidak sah' }, 400)
+    // Tier: doktor pilih terus di kob-detail.html (Langkah 3 — kad "Harga Sekarang"/
+    // "Harga Hari Ini", bebas klik mana-mana, tak terikat status pending/declined).
+    // Dipercayai sbb caller staff (bukan patient) — sahkan di atas (role==='staff').
+    // Default ikut status kalau body.tier tak dihantar/tak sah.
+    const requestedTier = body.tier === 'today' || body.tier === 'now' ? body.tier : null
+    const tier: 'today' | 'now' = requestedTier ?? (kob.package_payment_status === 'pending' ? 'today' : 'now')
 
-    // 4. Derive pkgMeta (installment_allowed/deposit/tempoh/bulanan, tier Today + fallback Now) dari psy_packages
+    // 4. Derive pkgMeta (harga penuh + installment_*, tier Today + fallback Now) dari psy_packages
     let pkgQ = admin.from('psy_packages')
-      .select('installment_allowed, installment_deposit_amount, installment_duration_months, installment_monthly_amount, today_installment_deposit_amount, today_installment_duration_months, today_installment_monthly_amount')
+      .select('price, today_price, installment_allowed, installment_deposit_amount, installment_duration_months, installment_monthly_amount, today_installment_deposit_amount, today_installment_duration_months, today_installment_monthly_amount')
     pkgQ = isUuid(kob.recommended_package_id)
       ? pkgQ.or(`id.eq.${kob.recommended_package_id},package_id.eq.${kob.recommended_package_id}`)
       : pkgQ.eq('package_id', kob.recommended_package_id)
     const { data: pkgRows } = await pkgQ.limit(1)
     const pkgMeta = pkgRows?.[0]
-    // Fungsi ni sentiasa tier TODAY (staff cuma boleh guna semasa package_payment_status==='pending',
-    // iaitu masih dalam sesi KOB langsung) — fallback ke field Now bila today_* kosong.
-    const tierDepositAmount = pkgMeta?.today_installment_deposit_amount ?? pkgMeta?.installment_deposit_amount
-    const tierDurationMonths = pkgMeta?.today_installment_duration_months ?? pkgMeta?.installment_duration_months
-    const tierMonthlyAmount = pkgMeta?.today_installment_monthly_amount ?? pkgMeta?.installment_monthly_amount
+
+    // Tier 'today' → dibekukan sbg recommended_package_price masa cadangan asal
+    // (saveRecommendation() di kob-detail.html); tier 'now' → harga SEMASA dari
+    // psy_packages (bukan "dibekukan time-limited" macam Today, boleh berubah).
+    const packagePrice = tier === 'today'
+      ? Number(kob.recommended_package_price || 0)
+      : Number(pkgMeta?.price || 0)
+    if (!(packagePrice > 0)) return json({ error: 'Harga pakej tidak sah' }, 400)
+
+    const tierDepositAmount = tier === 'today'
+      ? (pkgMeta?.today_installment_deposit_amount ?? pkgMeta?.installment_deposit_amount)
+      : pkgMeta?.installment_deposit_amount
+    const tierDurationMonths = tier === 'today'
+      ? (pkgMeta?.today_installment_duration_months ?? pkgMeta?.installment_duration_months)
+      : pkgMeta?.installment_duration_months
+    const tierMonthlyAmount = tier === 'today'
+      ? (pkgMeta?.today_installment_monthly_amount ?? pkgMeta?.installment_monthly_amount)
+      : pkgMeta?.installment_monthly_amount
 
     let amount: number
     if (mode === 'installment') {
@@ -148,7 +181,7 @@ Deno.serve(async (req) => {
       receipt_ref: receiptRef,
       patient_id: kob.patient_id,
       user_id: patient?.user_id || null,
-      items: [{ type: 'kob_deposit', title: itemTitle, amount, kobSessionId, mode, tier: 'today' }],
+      items: [{ type: 'kob_deposit', title: itemTitle, amount, kobSessionId, mode, tier }],
       subtotal: amount,
       total: amount,
       payment_method: 'gateway',
@@ -156,7 +189,7 @@ Deno.serve(async (req) => {
       gateway_provider: provider,
       gateway_status: 'pending',
       intent: {
-        items: [{ type: 'kob_deposit', title: itemTitle, amount, kobSessionId, mode, tier: 'today' }],
+        items: [{ type: 'kob_deposit', title: itemTitle, amount, kobSessionId, mode, tier }],
         patientId: kob.patient_id,
         userId: patient?.user_id || null,
         kob_session_id: kobSessionId,

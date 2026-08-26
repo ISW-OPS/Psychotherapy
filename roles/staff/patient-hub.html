@@ -11,6 +11,9 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link href="_styles.css" rel="stylesheet">
   <style>
+    .save-indicator { font-size: 11px; color: #10b981; opacity: 0; transition: opacity .3s; }
+    .save-indicator.show { opacity: 1; }
+
     .tab-bar {
       display: flex;
       gap: 2px;
@@ -276,6 +279,9 @@
                       <button id="ov-add-week-btn" data-rbac="patient.create" onclick="openAddWeekModal()"
                         class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-navy text-navy hover:bg-navy hover:text-white transition whitespace-nowrap">➕
                         Tambah Minggu</button>
+                      <button id="ov-add-session-btn" data-rbac="patient.create" onclick="openAddSessionModal()"
+                        class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-navy text-navy hover:bg-navy hover:text-white transition whitespace-nowrap">➕
+                        Tambah Sesi</button>
                       <button id="ov-sync-sessions-btn" data-rbac="patient.edit" onclick="syncPlanSessionsToPackage()"
                         class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-indigo-400 text-indigo-600 hover:bg-indigo-500 hover:text-white transition whitespace-nowrap"
                         title="Selaraskan bilangan sesi setiap minggu ikut pakej — buang 'Sesi 2 hantu' (termasuk yang dah hadir jika tak diperlukan lagi), tambah sesi yang kurang.">🔧
@@ -1495,6 +1501,7 @@
   <script src="../../shared/inventoryDeduct.js"></script>
   <script src="_shared.js"></script>
   <script src="../../shared/settings.js"></script>
+  <script src="../../shared/receipt.js"></script>
   <script src="_peristiwa.js"></script>
   <script>
     const escHtml = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -1510,6 +1517,10 @@
     let kepLogByDateFull = {};  // log_date -> {fasa, jawapan, skor_harian}
     let kepItemIndex = {};      // `${fasa}::${item_key}` -> {label, optMap}
     let kepCalYear = null, kepCalMonth = null, kepCalSelectedYmd = null;
+    // Sesi 1:1 (Hakeema/Hakeem/Dr) — rekod psy_clinical_referrals source='plan_1on1' utk
+    // pesakit ni (boleh >1 sejarah per jenis, tak macam plan-week.html yg cuma 1 aktif/minggu).
+    let hk1Rows = [];
+    let hk1SarananTpl = null;
     let canEdit = false; // true if user is admin/doctor/manager OR assigned coach
     let canEditVitals = true; // vitals: mana-mana staff boleh rekod/edit (halaman ini staff-only)
 
@@ -1521,9 +1532,12 @@
       const user = await initStaff('psy_patients', '');
       if (!user) return;
       if (!patientId) { location.href = 'patients.html'; return; }
-      // Back button — semua peranan kini guna patients.html (Assignments digabung ke sini)
-      const backUrl = user.staff_role === 'coach' ? 'patients.html?tab=mine' : 'patients.html';
-      setHeaderBack(backUrl, 'Kembali ke Senarai Pesakit');
+      // Back button — semua peranan kini guna patients.html (Assignments digabung ke sini),
+      // KECUALI kalau sampai sini dari halaman lain (cth sesi-1on1.html "Semak →") — hormat
+      // ?back= supaya butang Kembali pulang ke page asal, bukan senarai pesakit.
+      const backParam = params.get('back');
+      if (backParam) setHeaderBack(backParam, 'Kembali');
+      else setHeaderBack(user.staff_role === 'coach' ? 'patients.html?tab=mine' : 'patients.html', 'Kembali ke Senarai Pesakit');
 
       // Tambah butang "Edit Pesakit" untuk admin/manager — buka borang penuh dalam tab baru
       if (can('patient', 'edit')) {
@@ -1541,9 +1555,13 @@
 
       await loadPatient();
 
-      // Buka tab tertentu kalau ada ?tab= dalam URL
-      const initialTab = params.get('tab');
-      if (initialTab && ['overview', 'checkin', 'vitals', 'sessions', 'supply', 'dna', 'peristiwa', 'progress', 'profile'].includes(initialTab)) {
+      // Buka tab tertentu kalau ada ?tab= dalam URL. 'sessions' = nama lama tab ni sebelum
+      // ditukar jadi 'progress' — link lama (cth plan-week.html "← Kembali") mungkin masih
+      // hantar 'sessions', map terus ke 'progress' (bukan buang dari whitelist, elak pecah
+      // link sedia ada yg masih pakai nilai lama tu).
+      let initialTab = params.get('tab');
+      if (initialTab === 'sessions') initialTab = 'progress';
+      if (initialTab && ['overview', 'checkin', 'vitals', 'supply', 'dna', 'peristiwa', 'progress', 'bayaran', 'profile'].includes(initialTab)) {
         await switchTab(initialTab);
       }
       subscribeHubRealtime();  // auto-update bila status pesakit / kehadiran berubah (tanpa refresh)
@@ -1708,7 +1726,9 @@
         b.classList.toggle('active', tabs[i] === tab);
       });
       document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-      document.getElementById('tab-' + tab).classList.add('active');
+      // Jaga-jaga id tab tak wujud (cth link luar hantar nilai lapuk) — jangan crash boot
+      // sequence (halaman jadi kosong tak papar apa-apa langsung kalau throw di sini).
+      (document.getElementById('tab-' + tab) || document.getElementById('tab-overview'))?.classList.add('active');
 
       // Simpan tab semasa dlm URL (?tab=) — replaceState (bukan pushState) supaya tak
       // sepam butang "Back" browser dgn tiap klik tab, tapi refresh kekal di tab sama.
@@ -1791,6 +1811,340 @@
       return shown + restDiv + moreBtn(`pg-more-${id}`, rest.length);
     };
 
+    // ── Sesi 1:1 (Hakeema/Hakeem/Dr) — kad boleh-edit terus di patient-hub, keyed ikut
+    // rekod id (bukan jenis) sbb boleh ada >1 rekod sejarah per jenis di sini (tak macam
+    // plan-week.html yg cuma 1 rekod aktif/minggu). Guna field consultation JSONB SAMA
+    // dgn plan-week.html supaya data konsisten kalau rekod sama dibuka dari mana-mana. ──
+    const HK1_META_HP = {
+      hakeema: { emoji: '🧑‍💼', fallback: 'Hakeema' },
+      hakeem:  { emoji: '🧑',   fallback: 'Hakeem' },
+      dr:      { emoji: '🩺',   fallback: 'Dr' },
+    };
+    const HK1_STATUS_HP = {
+      pending:  { lbl: 'Belum konsultasi', cls: 'bg-amber-100 text-amber-700' },
+      accepted: { lbl: 'Dijadualkan',      cls: 'bg-blue-100 text-blue-700' },
+      resolved: { lbl: 'Selesai',          cls: 'bg-green-100 text-green-700' },
+      declined: { lbl: 'Ditolak',          cls: 'bg-ink/10 text-ink/50' },
+    };
+    const hphYmd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const hphToday = () => hphYmd(new Date());
+    const hphAddDays = (ymd, n) => { const d = new Date(ymd + 'T00:00:00'); d.setDate(d.getDate() + n); return hphYmd(d); };
+    const hphPretty = ymd => ymd ? new Date(ymd + 'T00:00:00').toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+
+    function hk1FindRow(id) { return hk1Rows.find(r => r.id === id); }
+
+    function hk1Block(r) {
+      const c = r.consultation || {};
+      // Boleh edit di sini HANYA rekod berdiri sendiri (plan_id NULL — tiada plan-week.html
+      // utk pergi). Rekod yg disambung ke plan_id/week_number kekal baca-sahaja di sini —
+      // edit MESTI di plan-week.html (satu-satunya tempat, elak 2 borang edit utk rekod sama).
+      const editable = !r.plan_id && r.status !== 'resolved' && r.status !== 'declined';
+      if (!editable) {
+        const canEditElsewhere = r.plan_id && r.status !== 'resolved' && r.status !== 'declined';
+        return `<div class="border-t border-ink/5 py-3 text-xs first:border-t-0 first:pt-0">
+      <div class="flex items-center gap-2 flex-wrap">
+        <b class="text-ink/80">${formatDate(r.created_at)}</b>
+        <span class="text-ink/45">→ ${escHtml(r.target_name || '—')}</span>
+        ${statusChip(r.status)}
+        ${canEditElsewhere ? `<a href="plan-week.html?plan_id=${r.plan_id}&week=${r.week_number}&back=${encodeURIComponent(`patient-hub.html?patient_id=${patientId}&tab=progress`)}" class="ml-auto text-navy font-semibold hover:underline whitespace-nowrap">✏️ Edit di Plan Rawatan →</a>` : ''}
+      </div>
+      ${r.reason ? `<p class="text-ink/60 mt-1">${escHtml(r.reason)}</p>` : ''}
+      ${c.examination ? `<p class="text-ink/70 mt-1.5"><b>📝 Nota:</b> ${escHtml(c.examination)}</p>` : ''}
+      ${c.saranan ? `<p class="text-ink/70 mt-1.5"><b>💊 Saranan:</b> ${escHtml(c.saranan)}${c.saranan_days ? ` <span class="text-ink/45">(${c.saranan_days} hari${c.saranan_start ? ' dari ' + formatDate(c.saranan_start) : ''})</span>` : ''}</p>
+        <p class="text-ink/45 mt-0.5">${c.saranan_sent_at ? '✅ Dihantar ke WhatsApp ' + formatDate(c.saranan_sent_at) : '⏳ Belum dihantar'}</p>` : ''}
+      ${c.follow_up_result ? `<p class="mt-1 font-semibold ${c.follow_up_result === 'ikut' ? 'text-green-dark' : 'text-terracotta'}">${c.follow_up_result === 'ikut' ? '✅ Pesakit ikut saranan' : '❌ Pesakit tidak ikut saranan'}${c.follow_up_note ? ' — ' + escHtml(c.follow_up_note) : ''}</p>` : ''}
+    </div>`;
+      }
+
+      const meta = HK1_META_HP[r.session_type] || { emoji: '', fallback: r.session_type };
+      const st = HK1_STATUS_HP[r.status] || HK1_STATUS_HP.pending;
+      const atts = Array.isArray(c.attachments) ? c.attachments : [];
+      return `<div class="border-t border-ink/5 py-3.5 text-xs first:border-t-0 first:pt-0" id="hk1-card-${r.id}">
+      <div class="flex items-center gap-2 flex-wrap mb-2">
+        <b class="text-ink/80">${meta.emoji} ${formatDate(r.meet_date || r.created_at)}</b>
+        <span class="text-ink/45">→ ${escHtml(r.target_name || meta.fallback)}</span>
+        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${st.cls}">${st.lbl}</span>
+        <span id="hk1-saved-${r.id}" class="save-indicator"></span>
+      </div>
+      ${r.reason ? `<p class="text-ink/55 mb-2">${escHtml(r.reason)}</p>` : ''}
+
+      <div class="mb-2.5">
+        <label class="block text-[10px] font-bold text-ink/60 mb-1">🕐 Masa dijangka jumpa ${escHtml(meta.fallback)} (pilihan)</label>
+        <input id="hk1-time-${r.id}" type="time" value="${c.scheduled_time || ''}" onchange="hphSaveTime('${r.id}')" class="w-36 px-2.5 py-2 border border-ink/15 rounded-lg text-xs outline-none focus:border-navy">
+      </div>
+
+      <label class="block text-[10px] font-bold text-ink/60 mb-1">Nota / Soal-Jawab</label>
+      <textarea id="hk1-notes-${r.id}" rows="2" onblur="hphSaveNotes('${r.id}')" placeholder="Ringkasan soal-jawab / konsultasi..." class="w-full px-2.5 py-2 border border-ink/15 rounded-lg text-xs outline-none focus:border-navy resize-y">${escHtml(c.examination || '')}</textarea>
+
+      <div class="mt-2.5">
+        <label class="block text-[10px] font-bold text-ink/60 mb-1">📎 Dokumen</label>
+        <label class="inline-flex items-center gap-1 text-[11px] font-semibold text-navy border border-navy/30 px-2.5 py-1 rounded-lg cursor-pointer hover:bg-navy hover:text-white transition-colors">⬆ Muat Naik<input type="file" multiple class="hidden" onchange="hphUploadDoc('${r.id}', this)"></label>
+        <div id="hk1-att-list-${r.id}" class="flex flex-wrap gap-1.5 mt-1.5">${atts.length ? atts.map((a, i) => `<span class="inline-flex items-center gap-1 px-2 py-1 bg-cream border border-ink/15 rounded text-[10px]"><button type="button" onclick="hphViewDoc('${escHtml(a.path)}')" class="text-navy hover:underline truncate max-w-[120px]">📄 ${escHtml(a.name)}</button><button type="button" onclick="hphRemoveDoc('${r.id}', ${i})" class="text-terracotta font-bold">×</button></span>`).join('') : '<p class="text-[10px] text-ink/35 italic">Tiada fail.</p>'}</div>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-3 mt-3 pt-3 border-t border-ink/8">
+        <div>
+          <label class="block text-[10px] font-bold text-ink/60 mb-1">Saranan ringkas</label>
+          <textarea id="hk1-saranan-${r.id}" rows="3" oninput="hphUpdPreview('${r.id}')" placeholder="Cth: Sila ambil ubat 2x sehari selepas makan..." class="w-full px-2.5 py-2 border border-green-300 bg-white rounded-lg text-xs outline-none focus:border-green resize-y">${escHtml(c.saranan || '')}</textarea>
+          <div class="grid grid-cols-2 gap-1.5 mt-1.5">
+            <input id="hk1-days-${r.id}" type="number" min="1" max="90" value="${c.saranan_days || ''}" oninput="hphUpdPreview('${r.id}')" placeholder="Tempoh (hari)" class="w-full px-2 py-1.5 border border-ink/15 rounded-lg text-[11px] outline-none focus:border-navy">
+            <input id="hk1-start-${r.id}" type="date" value="${c.saranan_start || hphToday()}" onchange="hphUpdPreview('${r.id}')" class="w-full px-2 py-1.5 border border-ink/15 rounded-lg text-[11px] outline-none focus:border-navy">
+          </div>
+          <button type="button" id="hk1-send-btn-${r.id}" onclick="hphSend('${r.id}')" class="mt-2 inline-flex items-center gap-1.5 bg-green text-white text-[11px] font-semibold px-3 py-2 rounded-lg hover:bg-green-dark disabled:opacity-60">📱 Hantar ke WhatsApp</button>
+          <span id="hk1-wa-sent-${r.id}" class="block text-[10px] text-ink/50 mt-1.5">${c.saranan_sent_at ? ('✅ Dihantar ' + formatDateTime(c.saranan_sent_at)) : ''}</span>
+        </div>
+        <div>
+          <label class="block text-[10px] font-semibold text-ink/40 mb-1">👁️ Pratonton mesej WhatsApp</label>
+          <div id="hk1-preview-${r.id}" class="rounded-lg border border-ink/10 p-2.5 text-[11px] text-ink/70 leading-relaxed whitespace-pre-wrap min-h-[70px]" style="background:#e5ddd5"></div>
+        </div>
+      </div>
+
+      ${hphFollowUpHtml(r)}
+
+      <div class="mt-3 pt-3 border-t border-ink/8 flex justify-end">
+        <button type="button" onclick="hphMarkResolved('${r.id}')" class="px-3 py-1.5 rounded-lg bg-navy text-white text-[11px] font-semibold hover:bg-navy-dark">✓ Tandakan Selesai</button>
+      </div>
+    </div>`;
+    }
+
+    function hphFollowUpHtml(r) {
+      const c = r.consultation || {};
+      if (!c.saranan_sent_at && !c.follow_up_date) return '';
+      const fu = c.follow_up_date;
+      const fuStr = fu ? hphPretty(fu) : '—';
+      const due = fu && fu <= hphToday();
+      const res = c.follow_up_result;
+      let body;
+      if (res) {
+        const ok = res === 'ikut';
+        body = `<div class="flex items-center gap-2 text-[11px] font-semibold ${ok ? 'text-green-700' : 'text-terracotta'}">${ok ? '✅ Pesakit ikut saranan' : '❌ Pesakit tidak ikut saranan'}</div>${c.follow_up_note ? `<div class="text-[11px] text-ink/60 mt-1">📝 ${escHtml(c.follow_up_note)}</div>` : ''}`;
+      } else {
+        body = `<div class="text-[11px] ${due ? 'text-gold-dark font-semibold' : 'text-ink/60'} mb-2">${due ? '⏰ Masa untuk follow-up — mesej pesakit & rekod jawapannya.' : 'Follow-up dijadualkan pada ' + fuStr}</div>
+      <div class="flex gap-1.5 flex-wrap">
+        <button onclick="hphWaFollowUp('${r.id}')" class="bg-green text-white text-[11px] font-semibold px-2.5 py-1.5 rounded-lg hover:bg-green-dark">📱 Mesej pesakit</button>
+        <button onclick="hphRecordFollowUp('${r.id}', 'ikut')" class="border border-green text-green-dark text-[11px] font-semibold px-2.5 py-1.5 rounded-lg hover:bg-green/5">✅ Ikut</button>
+        <button onclick="hphRecordFollowUp('${r.id}', 'tak_ikut')" class="border border-terracotta text-terracotta text-[11px] font-semibold px-2.5 py-1.5 rounded-lg hover:bg-terracotta/5">❌ Tak ikut</button>
+      </div>`;
+      }
+      return `<div class="mt-3 pt-3 border-t border-ink/8 ${due && !res ? 'ring-1 ring-inset ring-gold/40 rounded-lg p-2 -m-2 bg-gold/[0.04]' : ''}">
+      <div class="text-[10px] font-bold text-ink mb-1">🩺 Follow-up Saranan</div>
+      <div class="text-[10px] text-ink/55 mb-2">Dihantar: ${c.saranan_sent_at ? formatDateTime(c.saranan_sent_at) : '—'} · Follow-up: ${fuStr}${c.saranan_days ? ` (${c.saranan_days} hari)` : ''}</div>
+      ${body}
+    </div>`;
+    }
+
+    function hk1List(type) {
+      const rows = hk1Rows.filter(r => r.session_type === type);
+      return { rows, html: progressBlocksPaged(rows.map(hk1Block), `sesi-${type}`) };
+    }
+
+    // Ganti kandungan SATU kad (bukan seluruh tab progress) lepas edit — elak reset
+    // scroll/state kad lain (kalendar Kepatuhan dll).
+    function refreshHk1Card(type) {
+      const host = document.getElementById(`prog-sec-sesi-${type}`);
+      if (!host) return;
+      const info = hk1List(type);
+      const emoji = HK1_META_HP[type]?.emoji || '';
+      const title = type === 'hakeema' ? 'Sesi Hakeema' : type === 'hakeem' ? 'Sesi Hakeem' : 'Sesi Dr';
+      host.outerHTML = progressSection(`sesi-${type}`, emoji, title, info.rows.length, info.html);
+      info.rows.forEach(r => { if (r.status !== 'resolved' && r.status !== 'declined') hphUpdPreview(r.id); });
+    }
+
+    async function hphPersist(id, patch) {
+      const ref = hk1FindRow(id);
+      if (!ref) return false;
+      const c = Object.assign({}, ref.consultation || {}, patch);
+      const { error } = await window.db.from('psy_clinical_referrals')
+        .update({ consultation: c, updated_at: new Date().toISOString() }).eq('id', id);
+      if (error) { banner('Ralat simpan: ' + error.message, 'error'); return false; }
+      ref.consultation = c;
+      const ind = document.getElementById(`hk1-saved-${id}`);
+      if (ind) { ind.textContent = '✓ Tersimpan'; ind.classList.add('show'); setTimeout(() => ind.classList.remove('show'), 1500); }
+      return true;
+    }
+
+    async function hphSaveNotes(id) {
+      await hphPersist(id, { examination: document.getElementById(`hk1-notes-${id}`).value.trim() });
+    }
+    window.hphSaveNotes = hphSaveNotes;
+
+    async function hphSaveTime(id) {
+      await hphPersist(id, { scheduled_time: document.getElementById(`hk1-time-${id}`).value || null });
+    }
+    window.hphSaveTime = hphSaveTime;
+
+    async function hphUploadDoc(id, input) {
+      const files = [...input.files]; input.value = '';
+      const ref = hk1FindRow(id);
+      const atts = Array.isArray(ref?.consultation?.attachments) ? ref.consultation.attachments.slice() : [];
+      let ok = 0, errMsg = '';
+      for (const f of files) {
+        if (f.size > 10 * 1024 * 1024) { errMsg = `${f.name}: melebihi 10MB`; continue; }
+        const path = `${id}/consult_${Date.now()}_${f.name.replace(/[^\w.\-]/g, '_')}`;
+        const { error } = await window.db.storage.from('referral-docs').upload(path, f, { contentType: f.type || undefined });
+        if (error) { errMsg = error.message; continue; }
+        atts.push({ name: f.name, path, uploaded_at: new Date().toISOString() });
+        ok++;
+      }
+      if (ok) { await hphPersist(id, { attachments: atts }); banner(`${ok} fail dimuat naik ✅`); refreshHk1Card(ref.session_type); }
+      if (errMsg) banner('Gagal muat naik: ' + errMsg, 'error');
+    }
+    window.hphUploadDoc = hphUploadDoc;
+
+    async function hphRemoveDoc(id, i) {
+      const ref = hk1FindRow(id);
+      if (!ref) return;
+      const atts = (ref.consultation?.attachments || []).slice();
+      const [rm] = atts.splice(i, 1);
+      if (rm?.path) { try { await window.db.storage.from('referral-docs').remove([rm.path]); } catch (_) {} }
+      await hphPersist(id, { attachments: atts });
+      refreshHk1Card(ref.session_type);
+    }
+    window.hphRemoveDoc = hphRemoveDoc;
+
+    async function hphViewDoc(path) {
+      const { data, error } = await window.db.storage.from('referral-docs').createSignedUrl(path, 3600);
+      if (error || !data?.signedUrl) { banner('Gagal buka fail', 'error'); return; }
+      window.open(data.signedUrl, '_blank');
+    }
+    window.hphViewDoc = hphViewDoc;
+
+    function hphBuildWaMessage(id) {
+      const ref = hk1FindRow(id);
+      const nm = iswPatientName(patient, profile, kyc) || 'Pesakit';
+      const saranan = (document.getElementById(`hk1-saranan-${id}`)?.value || '').trim();
+      const days = parseInt(document.getElementById(`hk1-days-${id}`)?.value) || 0;
+      const start = document.getElementById(`hk1-start-${id}`)?.value || '';
+      const pengesyor = ref?.target_name || HK1_META_HP[ref?.session_type]?.fallback || 'Klinik';
+      const tarikh = start ? hphPretty(start) : '';
+
+      if (hk1SarananTpl) {
+        let t = hk1SarananTpl;
+        if (!days || !start) t = t.split('\n').filter(ln => !/\{tempoh\}|\{tarikh\}/.test(ln)).join('\n');
+        t = t.replace(/\{nama\}/g, nm).replace(/\{pengesyor\}/g, pengesyor).replace(/\{saranan\}/g, saranan)
+             .replace(/\{tempoh\}/g, String(days || '')).replace(/\{tarikh\}/g, tarikh);
+        return t.replace(/\n{3,}/g, '\n\n').trim();
+      }
+      const L = [];
+      L.push(`Salam ${nm}, 👋`);
+      L.push(`Berikut saranan daripada ${pengesyor} (Ibnu Sina Wellness):`);
+      L.push('');
+      if (saranan) { L.push(saranan); L.push(''); }
+      if (days && start) { L.push(`⏱️ Sila ikut selama *${days} hari* bermula ${tarikh}.`); L.push(''); }
+      L.push('Terima kasih & semoga cepat sihat. 🌿');
+      return L.join('\n');
+    }
+
+    function hphUpdPreview(id) {
+      const box = document.getElementById(`hk1-preview-${id}`);
+      if (!box) return;
+      const saranan = (document.getElementById(`hk1-saranan-${id}`)?.value || '').trim();
+      if (!saranan) { box.innerHTML = '<span class="italic text-ink/40">Isi saranan di atas untuk lihat pratonton mesej…</span>'; return; }
+      box.innerHTML = escHtml(hphBuildWaMessage(id)).replace(/\*(.+?)\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
+    }
+    window.hphUpdPreview = hphUpdPreview;
+
+    async function hphGhlInvoke(action, extra = {}) {
+      const { data, error } = await window.db.functions.invoke('ghl-inbox', { body: { action, ...extra } });
+      if (error) {
+        let msg = error.message;
+        try { const ctx = await error.context?.json(); if (ctx?.error) msg = ctx.error; } catch (_) {}
+        throw new Error(msg);
+      }
+      if (data?.error) throw new Error(data.error);
+      return data;
+    }
+
+    async function hphSend(id) {
+      if (hk1SarananTpl === null) {
+        const { data: tpl } = await window.db.from('psy_auto_messages')
+          .select('message_template, is_active').eq('key', 'referral_saranan').maybeSingle();
+        hk1SarananTpl = (tpl && tpl.is_active !== false && tpl.message_template) ? tpl.message_template : '';
+      }
+      const ref = hk1FindRow(id);
+      let phone = (patient?.phone || '').replace(/\D/g, '');
+      if (phone.startsWith('0')) phone = '60' + phone.slice(1); else if (phone && !phone.startsWith('60')) phone = '60' + phone;
+      if (!phone) { banner('Pesakit tiada nombor telefon — kemas kini di profil pesakit.', 'error'); return; }
+      const saranan = (document.getElementById(`hk1-saranan-${id}`)?.value || '').trim();
+      if (!saranan) { banner('Isi mesej saranan dahulu.', 'error'); return; }
+      const msg = hphBuildWaMessage(id);
+      if (!confirm('Hantar saranan ini ke WhatsApp pesakit sekarang?')) return;
+
+      const btn = document.getElementById(`hk1-send-btn-${id}`);
+      const btnTxt = btn?.textContent;
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Menghantar…'; }
+      try {
+        const nm = iswPatientName(patient, profile, kyc) || '';
+        const ec = await hphGhlInvoke('ensurecontact', { phone, name: nm });
+        const contactId = ec?.contact?.contactId;
+        if (!contactId) throw new Error('Tak dapat sediakan contact GHL untuk nombor ini.');
+        await hphGhlInvoke('send', { contactId, message: msg });
+      } catch (e) {
+        if (btn) { btn.disabled = false; btn.textContent = btnTxt || '📱 Hantar ke WhatsApp'; }
+        banner('Gagal auto-hantar: ' + (e.message || e), 'error');
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const ok = await hphPersist(id, {
+        saranan, saranan_days: parseInt(document.getElementById(`hk1-days-${id}`)?.value) || null,
+        saranan_start: document.getElementById(`hk1-start-${id}`)?.value || null,
+        follow_up_date: (() => { const days = parseInt(document.getElementById(`hk1-days-${id}`)?.value) || 0; const start = document.getElementById(`hk1-start-${id}`)?.value || ''; return (days && start) ? hphAddDays(start, days) : null; })(),
+        saranan_sent_at: now,
+      });
+      if (ok && patient?.user_id) {
+        try { await window.db.from('psy_notifications').insert({ user_id: patient.user_id, type: 'referral', title: `Saranan ${HK1_META_HP[ref?.session_type]?.fallback || ''}`, body: saranan || 'Anda ada saranan baru. Sila semak WhatsApp.', link: 'dashboard.html' }); } catch (_) {}
+      }
+      if (typeof auditLog === 'function') { try { await auditLog('referral.saranan_sent', patientId, { source: 'plan_1on1', session_type: ref?.session_type }); } catch (_) {} }
+      banner('Saranan dihantar ke WhatsApp pesakit ✅');
+      refreshHk1Card(ref?.session_type);
+    }
+    window.hphSend = hphSend;
+
+    async function hphWaFollowUp(id) {
+      const ref = hk1FindRow(id);
+      let phone = (patient?.phone || '').replace(/\D/g, '');
+      if (phone.startsWith('0')) phone = '60' + phone.slice(1); else if (phone && !phone.startsWith('60')) phone = '60' + phone;
+      if (!phone) { banner('Pesakit tiada nombor telefon.', 'error'); return; }
+      const c = ref?.consultation || {};
+      const nm = iswPatientName(patient, profile, kyc) || 'Pesakit';
+      const days = c.saranan_days ? `${c.saranan_days} hari` : 'tempoh yang disarankan';
+      const L = [
+        `Salam ${nm}, 👋`, `Follow-up daripada ${ref?.target_name || HK1_META_HP[ref?.session_type]?.fallback} (Ibnu Sina Wellness).`, ``,
+        `Adakah anda telah mengikut saranan yang diberi selama ${days}?`,
+        c.saranan ? `\nSaranan: ${c.saranan}` : '', ``,
+        `Mohon balas: *Ya, saya ikut* atau *Belum / Tidak ikut*. Terima kasih. 🌿`,
+      ].filter(x => x !== '');
+      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(L.join('\n'))}`, '_blank');
+    }
+    window.hphWaFollowUp = hphWaFollowUp;
+
+    async function hphRecordFollowUp(id, result) {
+      let note = '';
+      if (result === 'tak_ikut') note = prompt('Catatan (kenapa tak ikut / tindakan susulan):') || '';
+      const ref = hk1FindRow(id);
+      const ok = await hphPersist(id, { follow_up_result: result, follow_up_note: note.trim() || null, follow_up_done_at: new Date().toISOString() });
+      if (!ok) return;
+      if (typeof auditLog === 'function') { try { await auditLog('referral.followup_recorded', patientId, { result, source: 'plan_1on1', session_type: ref?.session_type }); } catch (_) {} }
+      banner('Follow-up direkod ✅');
+      refreshHk1Card(ref?.session_type);
+    }
+    window.hphRecordFollowUp = hphRecordFollowUp;
+
+    async function hphMarkResolved(id) {
+      if (!confirm('Tandakan sesi ini sebagai selesai?')) return;
+      const ref = hk1FindRow(id);
+      const { error } = await window.db.from('psy_clinical_referrals')
+        .update({ status: 'resolved', resolved_at: new Date().toISOString() }).eq('id', id);
+      if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+      ref.status = 'resolved';
+      ref.resolved_at = new Date().toISOString();
+      if (typeof auditLog === 'function') { try { await auditLog('referral.resolved', patientId, { source: 'plan_1on1', session_type: ref.session_type }); } catch (_) {} }
+      banner('Sesi ditandakan selesai ✅');
+      refreshHk1Card(ref.session_type);
+    }
+    window.hphMarkResolved = hphMarkResolved;
+
     function renderProgressSections(d) {
       const parts = [];
 
@@ -1856,27 +2210,11 @@
         progressTblPaged(['Laporan', 'Jenis', 'Status', 'Tarikh'], repRows, 'laporan')));
 
       // 9) Sesi 1:1 (Hakeema / Hakeem / Dr) — 3 kad berasingan; Hakeema sentiasa papar,
-      // Hakeem & Dr hanya keluar bila ada rekod utk pesakit ni. Papar Nota & Saranan
-      // penuh (consultation JSONB), bukan hanya status — bukan jadual ringkas sahaja.
-      const hk1Block = r => {
-        const c = r.consultation || {};
-        return `<div class="border-t border-ink/5 py-3 text-xs first:border-t-0 first:pt-0">
-      <div class="flex items-center gap-2 flex-wrap">
-        <b class="text-ink/80">${formatDate(r.created_at)}</b>
-        <span class="text-ink/45">→ ${escHtml(r.target_name || '—')}</span>
-        ${statusChip(r.status)}
-      </div>
-      ${r.reason ? `<p class="text-ink/60 mt-1">${escHtml(r.reason)}</p>` : ''}
-      ${c.examination ? `<p class="text-ink/70 mt-1.5"><b>📝 Nota:</b> ${escHtml(c.examination)}</p>` : ''}
-      ${c.saranan ? `<p class="text-ink/70 mt-1.5"><b>💊 Saranan:</b> ${escHtml(c.saranan)}${c.saranan_days ? ` <span class="text-ink/45">(${c.saranan_days} hari${c.saranan_start ? ' dari ' + formatDate(c.saranan_start) : ''})</span>` : ''}</p>
-        <p class="text-ink/45 mt-0.5">${c.saranan_sent_at ? '✅ Dihantar ke WhatsApp ' + formatDate(c.saranan_sent_at) : '⏳ Belum dihantar'}</p>` : ''}
-      ${c.follow_up_result ? `<p class="mt-1 font-semibold ${c.follow_up_result === 'ikut' ? 'text-green-dark' : 'text-terracotta'}">${c.follow_up_result === 'ikut' ? '✅ Pesakit ikut saranan' : '❌ Pesakit tidak ikut saranan'}${c.follow_up_note ? ' — ' + escHtml(c.follow_up_note) : ''}</p>` : ''}
-    </div>`;
-      };
-      const hk1List = type => {
-        const rows = (d.sesi1on1 || []).filter(r => r.session_type === type);
-        return { rows, html: progressBlocksPaged(rows.map(hk1Block), `sesi-${type}`) };
-      };
+      // Hakeem & Dr hanya keluar bila ada rekod utk pesakit ni. Rekod pending/accepted
+      // BOLEH DIEDIT terus di sini (Nota/Saranan/WA/follow-up/selesai) — bukan lagi
+      // read-only, sbb pesakit tanpa plan aktif tiada tempat lain isi konsultasi ni
+      // (plan-week.html perlukan plan_id). Rekod resolved/declined kekal ringkasan baca-sahaja.
+      hk1Rows = d.sesi1on1 || [];
       const hakeemaSesi = hk1List('hakeema'), hakeemSesi = hk1List('hakeem'), drSesi = hk1List('dr');
       parts.push(progressSection('sesi-hakeema', '🧑‍💼', 'Sesi Hakeema', hakeemaSesi.rows.length, hakeemaSesi.html));
       if (hakeemSesi.rows.length) parts.push(progressSection('sesi-hakeem', '🧑', 'Sesi Hakeem', hakeemSesi.rows.length, hakeemSesi.html));
@@ -1917,6 +2255,7 @@
 
       document.getElementById('progress-report-body').innerHTML = parts.join('');
       if (document.getElementById('kep-cal-grid')) kepRenderCalendar();
+      hk1Rows.forEach(r => { if (r.status !== 'resolved' && r.status !== 'declined') hphUpdPreview(r.id); });
     }
 
     const KEP_MONTH_NAMES = ['Januari', 'Februari', 'Mac', 'April', 'Mei', 'Jun', 'Julai', 'Ogos', 'September', 'Oktober', 'November', 'Disember'];
@@ -2105,6 +2444,22 @@
       return wk;
     }
 
+    // Bilangan sesi minggu w = ikut Timeline Rawatan pakej (coaching_schedule[w].session_days).
+    // Fallback: bilangan baris sesi sedia ada, akhir sekali toggle plan-level. Dikongsi antara
+    // renderOvWeekPage (papar kad) & modal Tambah Sesi (senarai minggu layak ditambah).
+    function ovSessionsForWeek(w) {
+      // Bilangan sesi = MAKS antara pakej (Timeline) & baris sebenar. Pakej 2-sesi sentiasa
+      // tunjuk 2 sesi; baris sebenar tak pernah disembunyi walau pakej diubah jadi 1.
+      const rows = ovWeeklyRows.filter(r => Number(r.week_number) === w);
+      const rowN = rows.length ? Math.max(...rows.map(r => r.session_day || 1)) : 0;
+      const sched = (activePlan?.coaching_schedule || [])
+        .find(it => (it.period || 'week') !== 'day' && Number(it.week) === w);
+      const pkgN = (sched && Array.isArray(sched.session_days) && sched.session_days.length)
+        ? sched.session_days.length
+        : (activePlan?.preferred_pair ? 2 : (activePlan?.sessions_per_week || 1));
+      return Math.max(rowN, pkgN);
+    }
+
     function renderOvWeekPage() {
       // Kawalan Tarikh Mula Program (staf boleh-edit sahaja)
       const psWrap = document.getElementById('ov-progstart-wrap');
@@ -2135,20 +2490,7 @@
       // Staff sentiasa boleh akses mana-mana minggu untuk masukkan/edit nota
       const cta = w => `<a href="plan-week.html?plan_id=${activePlan.id}&week=${w}&from=overview" class="text-[10px] text-navy font-semibold mt-2 block hover:underline">Lihat butiran →</a>`;
 
-      // Bilangan sesi setiap minggu = ikut Timeline Rawatan pakej (coaching_schedule[w].session_days).
-      // Fallback: bilangan baris sesi sedia ada, akhir sekali toggle plan-level.
-      const sessionsForWeek = w => {
-        // Bilangan sesi = MAKS antara pakej (Timeline) & baris sebenar. Pakej 2-sesi sentiasa
-        // tunjuk 2 sesi; baris sebenar tak pernah disembunyi walau pakej diubah jadi 1.
-        const rows = ovWeeklyRows.filter(r => Number(r.week_number) === w);
-        const rowN = rows.length ? Math.max(...rows.map(r => r.session_day || 1)) : 0;
-        const sched = (activePlan.coaching_schedule || [])
-          .find(it => (it.period || 'week') !== 'day' && Number(it.week) === w);
-        const pkgN = (sched && Array.isArray(sched.session_days) && sched.session_days.length)
-          ? sched.session_days.length
-          : (activePlan.preferred_pair ? 2 : (activePlan.sessions_per_week || 1));
-        return Math.max(rowN, pkgN);
-      };
+      const sessionsForWeek = ovSessionsForWeek;
 
       let html = '';
 
@@ -2189,9 +2531,11 @@
           chip = '<span class="bg-cream text-ink/60 text-[10px] px-2 py-0.5 rounded-full font-semibold">Belum Tempah</span>';
         }
 
-        // Minggu tambahan yang BELUM dibayar boleh dibuang oleh staf
+        // Minggu/sesi tambahan yang BELUM dibayar boleh dibuang oleh staf. Bezakan label:
+        // kedua-dua sesi extension (Tambah Minggu) vs cuma 1 sesi tunggal ditambah (Tambah Sesi).
+        const isWholeExtWeek = !!(s1?.is_extension && (s2?.is_extension || nSes === 1));
         const removeBtn = (extPending && canEdit)
-          ? `<button data-rbac="patient.delete" onclick="removeExtensionWeek(${w})" class="text-[10px] text-terracotta font-semibold mt-1 hover:underline">🗑 Buang minggu tambahan</button>`
+          ? `<button data-rbac="patient.delete" onclick="removeExtensionWeek(${w})" class="text-[10px] text-terracotta font-semibold mt-1 hover:underline block">🗑 Buang ${isWholeExtWeek ? 'minggu tambahan' : 'sesi tambahan'}</button>`
           : '';
 
         const sessionRows = nSes >= 2
@@ -2312,6 +2656,54 @@
       await addExtensionWeeks(count);
     }
 
+    // ── Tambah 1 Sesi Tambahan (berbayar) pada mana-mana minggu ──
+    // Berbeza dengan Tambah Minggu (buka minggu BARU di hujung plan): ini pilih terus
+    // MANA-MANA minggu sedia ada yang pakej baru tetapkan 1 sesi, & tambah Sesi 2 padanya.
+    function openAddSessionModal() {
+      if (!canEdit) { banner('Anda hanya boleh melihat rekod pesakit ini.', 'error'); return; }
+      if (!activePlan) { banner('Tiada plan rawatan aktif.', 'error'); return; }
+      const baseWeeks = activePlan.duration_weeks || 12;
+      const maxRowWeek = Math.max(0, ...ovWeeklyRows.map(r => r.week_number || 0));
+      const totalWeeks = Math.max(baseWeeks, maxRowWeek);
+      const eligible = [];
+      for (let w = 1; w <= totalWeeks; w++) {
+        if (ovSessionsForWeek(w) === 1) eligible.push(w);
+      }
+
+      const m = document.createElement('div');
+      m.id = 'addsession-modal';
+      m.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
+      m.innerHTML = `
+    <div class="absolute inset-0 bg-black/50" onclick="document.getElementById('addsession-modal').remove()"></div>
+    <div class="relative bg-white rounded-2xl max-w-sm w-full p-6 space-y-4">
+      <h3 class="font-bold text-base">➕ Tambah Sesi</h3>
+      <p class="text-sm text-ink/60">Tambah 1 sesi tambahan (Sesi 2) pada minggu sedia ada yang pakej cuma tetapkan 1 sesi. Pesakit perlu <span class="font-semibold">bayar</span> untuk mengaktifkan & menempah.</p>
+      ${eligible.length ? `
+      <div>
+        <label class="text-xs font-semibold text-ink/60 uppercase">Pilih minggu</label>
+        <select id="as-week" class="w-full mt-1.5 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:outline-none focus:border-navy">
+          ${eligible.map(w => `<option value="${w}">Minggu ${w}${w === (activePlan.current_week || 1) ? ' (semasa)' : ''}</option>`).join('')}
+        </select>
+      </div>
+      <div class="flex justify-end gap-2 pt-1">
+        <button onclick="document.getElementById('addsession-modal').remove()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm">Batal</button>
+        <button data-rbac="patient.create" onclick="confirmAddSession()" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">Tambah</button>
+      </div>` : `
+      <p class="text-sm text-ink/50 italic">Semua minggu dalam plan ini sudah ada 2 sesi — tiada minggu 1-sesi untuk ditambah.</p>
+      <div class="flex justify-end pt-1">
+        <button onclick="document.getElementById('addsession-modal').remove()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm">Tutup</button>
+      </div>`}
+    </div>`;
+      document.body.appendChild(m);
+    }
+
+    async function confirmAddSession() {
+      const w = parseInt(document.getElementById('as-week')?.value);
+      document.getElementById('addsession-modal')?.remove();
+      if (!w) return;
+      await addSingleSessionPayment(w);
+    }
+
     async function addExtensionWeeks(count) {
       try {
         // Harga extension dari pakej (default RM50)
@@ -2376,9 +2768,55 @@
       }
     }
 
+    // ── Tambah 1 Sesi Tambahan pada minggu SEDIA ADA (berbayar) ──
+    // Berbeza dengan Tambah Minggu (buka minggu BARU di hujung plan): ini letak
+    // Sesi 2 pada mana-mana minggu yang pakej hanya tetapkan 1 sesi. Harga = separuh
+    // extension_price_per_week pakej (1 minggu tambahan = 2 sesi pada harga penuh).
+    async function addSingleSessionPayment(w) {
+      if (!canEdit) { banner('Anda hanya boleh melihat rekod pesakit ini.', 'error'); return; }
+      if (!activePlan) { banner('Tiada plan rawatan aktif.', 'error'); return; }
+      try {
+        let extPrice = 50;
+        if (activePlan.template) {
+          const { data: pkg } = await window.db.from('psy_packages')
+            .select('extension_price_per_week').eq('package_id', activePlan.template).maybeSingle();
+          extPrice = Number(pkg?.extension_price_per_week) || 50;
+        }
+        const sesPrice = Math.round((extPrice / 2) * 100) / 100;
+        if (!confirm(`Tambah 1 sesi tambahan (Sesi 2) pada Minggu ${w}?\n\nPesakit perlu bayar RM ${sesPrice} untuk mengaktifkan & menempah sesi ini.`)) return;
+
+        const { data: existing } = await window.db.from('psy_plan_weekly_progress')
+          .select('id').eq('plan_id', activePlan.id).eq('week_number', w).eq('session_day', 2).maybeSingle();
+        if (existing) { banner('Sesi 2 minggu ini sudah wujud.', 'error'); return; }
+
+        const { error } = await window.db.from('psy_plan_weekly_progress').insert({
+          plan_id: activePlan.id, patient_id: patientId, week_number: w, session_day: 2,
+          status: 'extension_pending_payment', is_extension: true, extension_price: sesPrice,
+        });
+        if (error) throw error;
+
+        await auditLog('plan.session_added_manual', activePlan.id, { week: w, price: sesPrice });
+        if (patient?.user_id) {
+          try {
+            await window.db.from('psy_notifications').insert({
+              user_id: patient.user_id, type: 'plan',
+              title: `1 sesi tambahan dibuka — Minggu ${w}`,
+              body: `Coach membuka 1 sesi tambahan untuk Minggu ${w}. Bayar RM ${sesPrice} untuk mengaktifkan & menempah.`,
+              link: 'payment.html',
+            });
+          } catch (_) { /* notifikasi tak kritikal */ }
+        }
+        banner(`Sesi tambahan Minggu ${w} dibuka — pesakit perlu bayar RM ${sesPrice} ✅`);
+        await reloadOverviewKeepPage();
+      } catch (e) {
+        banner('Ralat: ' + e.message, 'error');
+      }
+    }
+
     async function loadOverview() {
       // Butang "Tambah Minggu" hanya untuk staf boleh-edit & ada plan aktif
       document.getElementById('ov-add-week-btn')?.classList.toggle('hidden', !(canEdit && activePlan));
+      document.getElementById('ov-add-session-btn')?.classList.toggle('hidden', !(canEdit && activePlan));
       document.getElementById('ov-sync-sessions-btn')?.classList.toggle('hidden', !(['super_admin', 'coach'].includes(window.currentUser?.staff_role) && activePlan));
       document.getElementById('ov-backfill-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
       document.getElementById('ov-reset-attendance-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
@@ -3684,9 +4122,14 @@
 
       const [{ data: checkpoints }, { data: payments }] = await Promise.all([
         window.db.from('psy_kob_installment_checkpoints').select('*').eq('kob_session_id', bayaranSession.id).order('seq'),
-        window.db.from('psy_payments').select('id, invoice_number, receipt_ref, receipt_url, total, created_at')
-          .eq('status', 'completed').eq('intent->>kob_session_id', bayaranSession.id).order('created_at', { ascending: false }),
+        // Ascending (bukan descending) — checkpoint ke-i (dah 'met') dipadan payment
+        // ke-i mengikut kedudukan, sama corak dgn payment-plan.html pesakit (lihat
+        // renderBayaran() cpHtml di bawah). window._receipts diperlukan oleh
+        // viewReceiptPDF() (shared/receipt.js) utk butang "Lihat Resit".
+        window.db.from('psy_payments').select('id, invoice_number, receipt_ref, receipt_url, total, items, paid_at, created_at')
+          .eq('status', 'completed').eq('intent->>kob_session_id', bayaranSession.id).order('created_at', { ascending: true }),
       ]);
+      window._receipts = payments || [];
       renderBayaran(checkpoints || [], payments || []);
     }
 
@@ -3723,11 +4166,15 @@
         overdue: { lbl: '⚠️ Tertunggak', cls: 'bg-terracotta/20 text-terracotta' },
         met:     { lbl: '✅ Selesai', cls: 'bg-green-light text-green-dark' },
       };
+      // Checkpoint SETERUSNYA belum met (pending/overdue) — satu-satunya baris
+      // yang dapat butang jana pautan (amaun sentiasa diderive dari checkpoint
+      // ni sahaja oleh payments-kob-initiate mode='topup', sama macam payment-plan.html pesakit).
+      const nextIdx = checkpoints.findIndex(c => c.status !== 'met');
       const cpHtml = isInstallment ? `
         <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
           <h4 class="font-bold text-sm text-ink mb-3">📅 Checkpoint Ansuran</h4>
           ${checkpoints.length ? `<div class="overflow-x-auto"><table class="tbl w-full" style="table-layout:fixed">
-          <colgroup><col style="width:8%"><col style="width:18%"><col style="width:18%"><col style="width:18%"><col style="width:18%"><col style="width:20%"></colgroup>
+          <colgroup><col style="width:6%"><col style="width:14%"><col style="width:14%"><col style="width:15%"><col style="width:15%"><col style="width:12%"><col style="width:24%"></colgroup>
           <thead><tr>
             <th>#</th>
             <th>Checkpoint</th>
@@ -3735,11 +4182,20 @@
             <th style="padding-right:24px">Perlu Dibayar</th>
             <th style="padding-right:24px">Terkumpul Wajib</th>
             <th>Status</th>
+            <th>Tindakan</th>
           </tr></thead><tbody>
             ${checkpoints.map((cp, i) => {
               const isPaid = cp.status === 'met';
               const prevCum = i === 0 ? 0 : Number(checkpoints[i - 1].target_cumulative);
               const installmentAmt = Number(cp.target_cumulative) - prevCum;
+              // payment ke-i (ansuran dibayar ikut turutan checkpoint) — sama corak
+              // padanan kedudukan dgn payment-plan.html pesakit (tiada FK 1:1 terus).
+              const payment = isPaid ? payments[i] : null;
+              const actionHtml = i === nextIdx ? `
+                <div class="flex gap-1.5">
+                  <button type="button" onclick="sendAnsuranLink(this)" class="ans-send-btn text-[11px] font-semibold bg-navy text-white px-2 py-1 rounded-md hover:bg-navy-dark whitespace-nowrap disabled:opacity-60">📤 Hantar WA</button>
+                  <button type="button" onclick="copyAnsuranLink(this)" class="ans-copy-btn text-[11px] font-semibold border border-ink/15 text-ink px-2 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap disabled:opacity-60">📋 Salin</button>
+                </div>` : (payment ? `<button type="button" onclick="viewAnsuranResit('${payment.id}')" class="text-[11px] font-semibold border border-ink/15 text-ink px-2 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap">🧾 Lihat Resit</button>` : '');
               return `<tr>
               <td><span class="inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold ${isPaid ? 'bg-green text-white' : 'bg-ink/10 text-ink/40'}">${isPaid ? '✓' : i + 1}</span></td>
               <td>${cp.seq === 0 ? 'Deposit' : 'Ansuran ' + cp.seq}</td>
@@ -3747,31 +4203,14 @@
               <td class="font-semibold text-ink" style="padding-right:24px">${bpMoney(installmentAmt)}</td>
               <td class="text-ink/50" style="padding-right:24px">${bpMoney(cp.target_cumulative)}</td>
               <td><span class="chip ${cpStatusMap[cp.status].cls}">${cpStatusMap[cp.status].lbl}</span></td>
+              <td>${actionHtml}</td>
             </tr>`;
             }).join('')}
           </tbody></table></div>` : '<p class="text-xs text-ink/45 py-2">Tiada checkpoint.</p>'}
         </div>` : '';
 
-      const historyHtml = `
-        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
-          <h4 class="font-bold text-sm text-ink mb-3">🧾 Sejarah Resit (${payments.length})</h4>
-          ${payments.length ? `<div class="overflow-x-auto"><table class="tbl w-full" style="table-layout:fixed">
-          <colgroup><col style="width:28%"><col style="width:24%"><col style="width:24%"><col style="width:24%"></colgroup>
-          <thead><tr>
-            <th>No. Invois</th>
-            <th>Tarikh</th>
-            <th style="text-align:right">Jumlah</th>
-            <th>Resit</th>
-          </tr></thead><tbody>
-            ${payments.map(p => `<tr>
-              <td>${escHtml(p.invoice_number || p.receipt_ref || '—')}</td>
-              <td>${formatDate(p.created_at)}</td>
-              <td class="text-right font-semibold text-ink" style="padding-right:12px">${bpMoney(p.total)}</td>
-              <td>${p.receipt_url ? `<a href="${escHtml(p.receipt_url)}" target="_blank" class="text-navy hover:underline">Lihat</a>` : '—'}</td>
-            </tr>`).join('')}
-          </tbody></table></div>` : '<p class="text-xs text-ink/45 py-2">Tiada resit lagi.</p>'}
-        </div>`;
-
+      // Resit dah dipaparkan terus dalam lajur Tindakan (butang "🧾 Lihat Resit"
+      // per checkpoint di atas) — tiada lagi senarai "Sejarah Resit" berasingan.
       const canRecord = owed - totalPaid > 0.01;
       const formHtml = canRecord ? `
         <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
@@ -3795,7 +4234,87 @@
             class="mt-3 bg-navy text-white px-6 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">Sahkan Bayaran</button>
         </div>` : '';
 
-      document.getElementById('bayaran-body').innerHTML = summaryHtml + cpHtml + formHtml + historyHtml;
+      document.getElementById('bayaran-body').innerHTML = summaryHtml + cpHtml + formHtml;
+    }
+
+    // Buka resit rasmi (modal, print/save PDF) utk checkpoint dah 'met' —
+    // guna shared/receipt.js buildReceiptInner() SAMA yang pesakit nampak,
+    // dgn override butiran pesakit sbb sesi ni staff (bukan window.currentUser).
+    function viewAnsuranResit(paymentId) {
+      viewReceiptPDF(paymentId, {
+        full_name: iswPatientName(patient, profile, kyc),
+        ic_number: patient?.ic_number || kyc?.ic_number || '',
+        mrn: patient?.mrn || '',
+        email: iswPatientEmail(patient, profile, kyc),
+        phone: iswPatientPhone(patient, profile, kyc),
+      });
+    }
+
+    async function ghlInvoke(action, extra = {}) {
+      const { data, error } = await window.db.functions.invoke('ghl-inbox', { body: { action, ...extra } });
+      if (error) {
+        let msg = error.message;
+        try { const ctx = await error.context?.json(); if (ctx?.error) msg = ctx.error; } catch (_) { }
+        throw new Error(msg);
+      }
+      if (data?.error) throw new Error(data.error);
+      return data;
+    }
+
+    // Jana pautan HitPay utk checkpoint ansuran SETERUSNYA (bayaranSession ini) —
+    // amaun diderive server-side (payments-kob-initiate mode='topup'), sama corak
+    // dgn kob-detail.html sendKobHitpayLink()/copyKobHitpayLink().
+    async function fetchAnsuranCheckoutUrl() {
+      const returnUrl = `${location.origin}/roles/patient/payment-receipt.html`;
+      const { data, error } = await window.db.functions.invoke('payments-kob-initiate', {
+        body: { kobSessionId: bayaranSession.id, mode: 'topup', returnUrl },
+      });
+      if (error) {
+        let msg = error.message;
+        try { const ctx = await error.context?.json(); if (ctx?.error) msg = ctx.error; } catch (_) { }
+        throw new Error(msg);
+      }
+      if (data?.error) throw new Error(data.error);
+      if (!data?.checkoutUrl) throw new Error('Pautan tidak diterima daripada server.');
+      return data.checkoutUrl;
+    }
+
+    async function sendAnsuranLink(btn) {
+      const original = btn.innerHTML;
+      btn.disabled = true; btn.innerHTML = 'Menghantar…';
+      try {
+        const checkoutUrl = await fetchAnsuranCheckoutUrl();
+        const patPhone = iswPatientPhone(patient, profile, kyc);
+        const patName = iswPatientName(patient, profile, kyc) || 'Pesakit';
+        const cleanPhone = (patPhone || '').replace(/\D/g, '').replace(/^0/, '60');
+        if (!cleanPhone) throw new Error('Pesakit tiada nombor telefon untuk hantar WhatsApp');
+        const ec = await ghlInvoke('ensurecontact', { phone: cleanPhone, name: patName });
+        const contactId = ec?.contact?.contactId;
+        if (!contactId) throw new Error('Tak dapat sediakan contact GHL untuk nombor ini.');
+        await ghlInvoke('send', {
+          contactId,
+          message: `Salam ${patName} 👋\n\nSila selesaikan bayaran ansuran pakej rawatan anda melalui pautan selamat di bawah:\n\n${checkoutUrl}\n\n— ISW`,
+        });
+        banner('Pautan ansuran dihantar ke WhatsApp pesakit ✅');
+      } catch (e) {
+        banner('Gagal jana/hantar pautan: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false; btn.innerHTML = original;
+      }
+    }
+
+    async function copyAnsuranLink(btn) {
+      const original = btn.innerHTML;
+      btn.disabled = true; btn.innerHTML = 'Menjana…';
+      try {
+        const checkoutUrl = await fetchAnsuranCheckoutUrl();
+        await navigator.clipboard.writeText(checkoutUrl);
+        banner('Pautan ansuran disalin ke clipboard ✅');
+      } catch (e) {
+        banner('Gagal jana/salin pautan: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false; btn.innerHTML = original;
+      }
     }
 
     async function saveBayaranPayment() {
@@ -3814,7 +4333,7 @@
         if (upErr) throw upErr;
         const { data: signed } = await window.db.storage.from('kob-documents').createSignedUrl(path, 3600 * 24 * 365);
 
-        const { error: payErr } = await window.db.from('psy_payments').insert({
+        const { data: payRow, error: payErr } = await window.db.from('psy_payments').insert({
           receipt_ref: `KOB-${invoiceNumber}-${Date.now()}`,
           patient_id: patientId,
           user_id: patient?.user_id || null,
@@ -3825,8 +4344,14 @@
           receipt_url: signed?.signedUrl || null,
           notes: `Ansuran pakej "${bayaranSession.recommended_package_name || ''}" — direkod di Pesakit Hub`,
           intent: { type: 'kob_package', kob_session_id: bayaranSession.id },
-        });
+        }).select('id').single();
         if (payErr) throw payErr;
+
+        // Resit rasmi PDF + WA auto — sama fungsi macam laluan gateway; kegagalan
+        // TAK boleh gagalkan pengesahan bayaran (nota "Bayaran disahkan" di bawah).
+        try {
+          await window.db.functions.invoke('payments-send-receipt', { body: { paymentId: payRow.id } });
+        } catch (_) { /* nota: notifikasi gagal tidak halang fulfillment */ }
 
         // Kira semula jumlah terkumpul & semak checkpoint mana dah cecah target.
         const { data: allPayments } = await window.db.from('psy_payments').select('total')

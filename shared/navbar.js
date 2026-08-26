@@ -133,6 +133,7 @@ const STAFF_NAV_MASTER = [
       { id: 'psy_appointments', url: 'appointments.html', icon: '📅', label: 'Kalendar & Jadual' },
       { id: 'plan_week', url: 'weekly-plan.html', icon: '📋', label: 'Weekly Plan' },
       { id: 'kob_list', url: 'kob-list.html', icon: '🩺', label: 'Sesi KOB' },
+      { id: 'sesi_1on1', url: 'sesi-1on1.html', icon: '🧑‍💼', label: 'Sesi 1:1' },
       { id: 'kepatuhan', url: 'kepatuhan.html', icon: '📊', label: 'Poll' },
       { id: 'reaksi_advice', url: 'reaksi-item.html', icon: '🩹', label: 'Reaksi & Tindakan' },
       { id: 'psy_vitals', url: 'vitals.html', icon: '💓', label: 'Bacaan Vitals' },

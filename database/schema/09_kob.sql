@@ -101,6 +101,11 @@ CREATE TABLE IF NOT EXISTS psy_kob_installment_checkpoints (
   CONSTRAINT psy_kob_installment_checkpoints_unique_seq UNIQUE (kob_session_id, seq)
 );
 
+-- Dedup peringatan auto "N hari sebelum due date" (runInstallmentReminderCheck,
+-- event-reminders) — elak hantar berulang; lihat psy_auto_messages key='installment_reminder'.
+ALTER TABLE psy_kob_installment_checkpoints
+  ADD COLUMN IF NOT EXISTS installment_reminder_sent_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS idx_kob_checkpoints_session ON psy_kob_installment_checkpoints(kob_session_id);
 CREATE INDEX IF NOT EXISTS idx_kob_checkpoints_patient ON psy_kob_installment_checkpoints(patient_id, status);
 CREATE INDEX IF NOT EXISTS idx_kob_checkpoints_overdue ON psy_kob_installment_checkpoints(due_date) WHERE status = 'pending';
@@ -194,7 +199,9 @@ CREATE POLICY "Staff delete agreement" ON psy_kob_agreements FOR DELETE
 -- setiap slot; tiada kapasiti per-pesakit.
 CREATE TABLE IF NOT EXISTS psy_kob_slot_config (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  slot_type    TEXT NOT NULL DEFAULT 'kob' CHECK (slot_type IN ('kob','rawatan')),
+  -- 'sesi_1on1' = Sesi 1:1 (Hakeema/Hakeem/Dr), diurus kad "C. Slot Sesi 1:1" kob-slots.html —
+  -- guna baris-per-blok SAMA seperti KOB/Rawatan, reuse penuh (bukan jadual/model berasingan).
+  slot_type    TEXT NOT NULL DEFAULT 'kob' CHECK (slot_type IN ('kob','rawatan','sesi_1on1')),
   day_of_week  INT NOT NULL CHECK (day_of_week IN (0, 3, 4, 5, 6)),  -- 0=Ahad, 3=Rabu, 4=Khamis, 5=Jumaat, 6=Sabtu
   slot_start   TIME NOT NULL,
   slot_end     TIME NOT NULL,
@@ -248,5 +255,24 @@ FROM
     ('14:00', '16:00', '2-4 ptg',         3),
     ('14:30', '16:30', '2.30-4.30 ptg',   4),
     ('16:30', '18:30', '4.30-6.30 ptg',   5)
+  ) AS s(slot_start, slot_end, label, sort_order)
+ON CONFLICT ON CONSTRAINT psy_kob_slot_config_unique DO NOTHING;
+
+-- Seed lalai Slot Sesi 1:1 (Hakeema/Hakeem/Dr) — 2 blok (pagi/petang) x hari Rabu-Ahad,
+-- sama pattern macam KOB/Rawatan di atas (baris-per-blok, ON/OFF per hari di UI).
+INSERT INTO psy_kob_slot_config (slot_type, day_of_week, slot_start, slot_end, label, sort_order, is_active)
+SELECT
+  'sesi_1on1',
+  d.day_of_week,
+  s.slot_start::time,
+  s.slot_end::time,
+  s.label,
+  s.sort_order,
+  true
+FROM
+  (VALUES (3), (4), (5), (6), (0)) AS d(day_of_week),
+  (VALUES
+    ('09:00', '12:00', '9-12 pg',  1),
+    ('14:00', '17:00', '2-5 ptg',  2)
   ) AS s(slot_start, slot_end, label, sort_order)
 ON CONFLICT ON CONSTRAINT psy_kob_slot_config_unique DO NOTHING;

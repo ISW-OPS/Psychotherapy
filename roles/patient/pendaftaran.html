@@ -372,26 +372,6 @@
             <div id="kyc-checklist" class="space-y-2.5 text-xs mt-4"></div>
           </div>
 
-          <!-- Referral code -->
-          <div class="bg-white rounded-xl border border-ink/10 p-5">
-            <div class="flex items-start gap-3">
-              <div class="text-2xl leading-none">🎁</div>
-              <div class="flex-1 min-w-0">
-                <div class="font-bold text-sm">Kod Rujukan <span class="text-ink/40 font-normal">(Optional)</span></div>
-                <p class="text-xs text-ink/60 mt-0.5">Jika anda mempunyai kod rujukan, masukkan di sini.</p>
-                <div class="flex gap-2 mt-3">
-                  <input id="f-referral" maxlength="16"
-                    oninput="this.value=this.value.toUpperCase();resetReferralCheck()"
-                    class="flex-1 min-w-0 px-3 py-2 border border-ink/20 rounded-lg text-sm font-mono uppercase bg-white"
-                    placeholder="cth: N7K23H5P">
-                  <button type="button" onclick="verifyReferralCode()" id="f-referral-btn"
-                    class="px-4 py-2 bg-navy text-white rounded-lg text-sm font-semibold hover:bg-navy-dark whitespace-nowrap">Semak</button>
-                </div>
-                <p id="f-referral-msg" class="text-xs mt-2 hidden"></p>
-              </div>
-            </div>
-          </div>
-
           <!-- Persetujuan PDPA -->
           <div id="kyc-pdpa-card" class="section-card bg-white rounded-xl border border-ink/10 p-5">
             <div class="shead">
@@ -493,7 +473,6 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
-<script src="../../shared/referral.js"></script>
 <script src="_shared.js"></script>
 <script>
 let existingKYC  = null;
@@ -859,44 +838,6 @@ async function tryLivePrefill() {
   } catch (e) { console.warn('[tryLivePrefill] gagal:', e.message); }
 }
 
-// ── Referral code ──────────────────────────────────────
-function normRef(v) { return String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
-
-function resetReferralCheck() {
-  const msg = document.getElementById('f-referral-msg');
-  if (msg) { msg.classList.add('hidden'); msg.textContent = ''; }
-}
-
-async function verifyReferralCode() {
-  const input = document.getElementById('f-referral');
-  const code = normRef(input.value);
-  input.value = code;
-  const msg = document.getElementById('f-referral-msg');
-  const btn = document.getElementById('f-referral-btn');
-  if (!code) { resetReferralCheck(); return; }
-  btn.disabled = true; btn.textContent = 'Menyemak...';
-  try {
-    const { data, error } = await window.db.rpc('check_referral_code', { p_code: code });
-    const row = Array.isArray(data) ? data[0] : data;
-    msg.classList.remove('hidden');
-    if (!error && row && row.valid) {
-      msg.className = 'text-xs mt-2 text-green-600 font-semibold';
-      msg.textContent = row.referrer_name
-        ? `✓ Kod sah — dirujuk oleh ${row.referrer_name}`
-        : '✓ Kod sah';
-    } else {
-      msg.className = 'text-xs mt-2 text-red-500 font-semibold';
-      msg.textContent = '✗ Kod tidak dijumpai. Sila semak semula.';
-    }
-  } catch (e) {
-    msg.classList.remove('hidden');
-    msg.className = 'text-xs mt-2 text-red-500';
-    msg.textContent = 'Ralat menyemak kod. Cuba lagi.';
-  } finally {
-    btn.disabled = false; btn.textContent = 'Semak';
-  }
-}
-
 function fillForm(k) {
   if (typeof k.submitted_by_proxy === 'boolean') {
     selectRegistrantRole(k.submitted_by_proxy ? 'waris' : 'pesakit');
@@ -942,7 +883,6 @@ function fillForm(k) {
   sv('f-emg-phone',  k.emergency_contact_phone);
   sv('f-emg-email',  k.emergency_contact_email);
   sv('f-emg-ic',     k.emergency_contact_ic);
-  sv('f-referral', k.referred_by_code);
   if (k.marital_status) setMarital(k.marital_status);
   document.getElementById('c-data').checked     = !!k.consent_data_processing;
   document.getElementById('c-health').checked   = !!k.consent_health_records;
@@ -1040,7 +980,6 @@ function buildPayload() {
     emergency_contact:              [fv('f-emg-name'), fv('f-emg-phone')].filter(Boolean).join(' - ') || null,
     consent_data_processing: document.getElementById('c-data').checked,
     consent_health_records:  document.getElementById('c-health').checked,
-    referred_by_code:        normRef(fv('f-referral')) || null,
     contact_preference:      fv('f-contact-pref') || 'pesakit',
     status: 'approved',
   };
@@ -1206,26 +1145,6 @@ async function submitKYC() {
       await window.db.from('psy_profiles').update({
         full_name: finalName, phone: payload.phone,
       }).eq('id', currentUser.id);
-
-      // Referral: pautkan perujuk + cipta lejar (sekali sahaja)
-      if (payload.referred_by_code && !patientRecord.referred_by_patient_id) {
-        const referrer = await resolveReferrer(payload.referred_by_code);
-        if (referrer && referrer.id !== patientRecord.id) {
-          await window.db.from('psy_patients').update({
-            referred_by_code:       payload.referred_by_code,
-            referred_by_patient_id: referrer.id,
-          }).eq('id', patientRecord.id);
-          const { error: refErr } = await window.db.from('psy_referrals').insert({
-            referrer_patient_id: referrer.id,
-            referee_patient_id:  patientRecord.id,
-            code_used:           payload.referred_by_code,
-            status:              'pending',
-          });
-          if (refErr && !/duplicate|unique/i.test(refErr.message || '')) {
-            console.warn('[referral] insert error:', refErr.message);
-          }
-        }
-      }
     }
 
     // Advance KOB lifecycle. Pakej rawatan aktif sedia ada (cth. rekod GHL/staff
@@ -1324,7 +1243,6 @@ function showReadOnly(k) {
         ${row('Hubungan', k.emergency_contact_relationship)}
         ${row('No. Telefon', k.emergency_contact_phone)}
         ${row('Emel Waris', k.emergency_contact_email)}
-        ${row('Kod Rujukan', k.referred_by_code)}
         ${row('Diisi Oleh', k.submitted_by_proxy ? 'Waris / Wakil' : 'Pesakit Sendiri')}
         ${row('Keutamaan Notifikasi', { pesakit: 'Pesakit', waris: 'Waris / Penjaga' }[k.contact_preference] || null)}
       </div>

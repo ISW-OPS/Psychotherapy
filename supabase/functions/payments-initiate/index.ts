@@ -220,73 +220,28 @@ async function verifiedAmount(admin: any, it: any, patientId: string | null): Pr
     return trusted
   }
 
-  if (it.type === 'kob_deposit') {
-    // Pesakit self-checkout (bukan staff/payments-kob-initiate) — mulakan deposit
-    // ansuran ATAU bayaran penuh utk pakej dicadangkan sesi KOB. Amount & tier
-    // TIDAK PERNAH dari client — derive sepenuhnya server-side dari status sesi:
-    // 'pending' (masih dlm sesi KOB langsung) → tier Today; 'declined' (dah
-    // tinggalkan sesi, beli lewat) → tier Now. Status lain → tolak (return 0).
-    if (!it.kobSessionId || !patientId) return 0
-    const { data: rows } = await admin.from('psy_kob_sessions')
-      .select('patient_id, recommended_package_id, recommended_package_price, package_payment_status')
-      .eq('id', it.kobSessionId).limit(1)
-    const kob = rows?.[0]
-    if (!kob || kob.patient_id !== patientId) return 0
-    let tier: 'today' | 'now'
-    if (kob.package_payment_status === 'pending') tier = 'today'
-    else if (kob.package_payment_status === 'declined') tier = 'now'
-    else return 0
-    it.tier = tier // disimpan ke intent.items — dibaca semula oleh payments-webhook fulfillment
-
-    if (it.mode === 'installment') {
-      let pkgQ = admin.from('psy_packages')
-        .select('installment_allowed, installment_deposit_amount, installment_duration_months, installment_monthly_amount, today_installment_deposit_amount, today_installment_duration_months, today_installment_monthly_amount')
-      pkgQ = isUuid(String(kob.recommended_package_id))
-        ? pkgQ.or(`id.eq.${kob.recommended_package_id},package_id.eq.${kob.recommended_package_id}`)
-        : pkgQ.eq('package_id', kob.recommended_package_id)
-      const { data: pkgRows } = await pkgQ.limit(1)
-      const pkgMeta = pkgRows?.[0]
-      const depositAmount = tier === 'today'
-        ? (pkgMeta?.today_installment_deposit_amount ?? pkgMeta?.installment_deposit_amount)
-        : pkgMeta?.installment_deposit_amount
-      const durationMonths = tier === 'today'
-        ? (pkgMeta?.today_installment_duration_months ?? pkgMeta?.installment_duration_months)
-        : pkgMeta?.installment_duration_months
-      const monthlyAmount = tier === 'today'
-        ? (pkgMeta?.today_installment_monthly_amount ?? pkgMeta?.installment_monthly_amount)
-        : pkgMeta?.installment_monthly_amount
-      const installmentAllowed = !!pkgMeta?.installment_allowed && Number(depositAmount) > 0 && Number(durationMonths) > 1 && Number(monthlyAmount) > 0
-      if (!installmentAllowed) return 0
-      it.amount = Number(depositAmount)
-      return Number(depositAmount)
-    }
-
-    const amount = tier === 'today'
-      ? Number(kob.recommended_package_price || 0) // dibekukan sebagai Today-Full time cadangan (kob-detail.html)
-      : (await lookupPackage(admin, String(kob.recommended_package_id)))?.price
-    if (!(Number(amount) > 0)) return 0
-    it.amount = Number(amount)
-    return Number(amount)
-  }
-
   if (it.type === 'kob_package') {
-    // Beli pakej dicadangkan KOB (payRecommendedPackage() di kob.html) — tier-aware:
-    // 'pending' (masih dlm sesi KOB langsung) → Today-Full; lain (declined/beli lewat) → Now-Full.
+    // Beli pakej dicadangkan KOB (payRecommendedPackage() di kob.html) — tier Today
+    // sahaja, DAN hanya bila sesi KOB betul-betul MASIH LIVE: package_payment_status
+    // ==='pending' DAN kob.status!=='completed'. Sebelum ni handler ni TIADA
+    // sekatan langsung — patient boleh checkout walaupun status 'declined' ATAU
+    // sesi dah 'completed' (cth doktor reopen sesi declined & klik "Patient
+    // Teruskan" semula utk patient yg KEMBALI — checkout sendiri MESTI tetap
+    // ditutup, doktor kena proses terus di kob-detail.html). Fix.
     const key = it.packageId || it.raw?.package_id
-    if (!key) return clientAmt
+    if (!key || !it.kobSessionId) return 0
+    const { data: kobRows } = await admin.from('psy_kob_sessions')
+      .select('patient_id, package_payment_status, status').eq('id', it.kobSessionId).limit(1)
+    const kob = kobRows?.[0]
+    if (!kob || kob.patient_id !== patientId) return 0
+    if (kob.package_payment_status !== 'pending' || kob.status === 'completed') return 0
     let pkgQ = admin.from('psy_packages').select('price, today_price, is_active')
     pkgQ = isUuid(String(key)) ? pkgQ.or(`id.eq.${key},package_id.eq.${key}`) : pkgQ.eq('package_id', key)
     const { data: pkgRows } = await pkgQ.limit(1)
     const pkg = pkgRows?.[0]
-    if (!pkg || pkg.is_active === false) return clientAmt
-    let isTodayTier = false
-    if (it.kobSessionId) {
-      const { data: kobRows } = await admin.from('psy_kob_sessions')
-        .select('package_payment_status').eq('id', it.kobSessionId).limit(1)
-      isTodayTier = kobRows?.[0]?.package_payment_status === 'pending'
-    }
-    const price = isTodayTier ? Number(pkg.today_price ?? pkg.price) : Number(pkg.price)
-    if (!Number.isFinite(price)) return clientAmt
+    if (!pkg || pkg.is_active === false) return 0
+    const price = Number(pkg.today_price ?? pkg.price)
+    if (!(price > 0)) return 0
     it.amount = price
     return price
   }

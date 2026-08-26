@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Sesi 1:1 Pesakit</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+.save-indicator { font-size: 11px; color: #10b981; opacity: 0; transition: opacity .3s; }
+.save-indicator.show { opacity: 1; }
+</style>
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🧑‍💼</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-5">
+
+        <div>
+          <a id="back-link" href="sesi-1on1.html" class="text-xs text-teal hover:underline">← Kembali</a>
+          <h1 class="text-xl font-bold text-ink flex items-center gap-2 mt-2">🧑‍💼 Sesi 1:1 Pesakit</h1>
+          <p class="text-sm text-ink/45 mt-0.5">Nota, Saranan &amp; WhatsApp — pesakit tanpa pelan rawatan aktif.</p>
+        </div>
+
+        <div id="patient-card" class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex items-center gap-3"></div>
+
+        <div id="hk1-cards" class="space-y-4"></div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="../../shared/utils.js"></script>
+<script src="_shared.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const patientId = params.get('patient_id');
+
+function escHtml(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+let patient = null;
+let hk1Rows = [];
+let hk1SarananTpl = null;
+
+const HK1_META_HP = {
+  hakeema: { emoji: '🧑‍💼', fallback: 'Hakeema' },
+  hakeem:  { emoji: '🧑',   fallback: 'Hakeem' },
+  dr:      { emoji: '🩺',   fallback: 'Dr' },
+};
+const HK1_STATUS_HP = {
+  pending:  { lbl: 'Belum konsultasi', cls: 'bg-amber-100 text-amber-700' },
+  accepted: { lbl: 'Dijadualkan',      cls: 'bg-blue-100 text-blue-700' },
+  resolved: { lbl: 'Selesai',          cls: 'bg-green-100 text-green-700' },
+  declined: { lbl: 'Ditolak',          cls: 'bg-ink/10 text-ink/50' },
+};
+const hphYmd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const hphToday = () => hphYmd(new Date());
+const hphAddDays = (ymd, n) => { const d = new Date(ymd + 'T00:00:00'); d.setDate(d.getDate() + n); return hphYmd(d); };
+const hphPretty = ymd => ymd ? new Date(ymd + 'T00:00:00').toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+const PROG_PAGE = 5;
+
+function hk1FindRow(id) { return hk1Rows.find(r => r.id === id); }
+
+const progressEmptyRow = msg => `<p class="text-xs text-ink/45 py-2">${msg || 'Tiada rekod.'}</p>`;
+const moreBtn = (id, restLen) => restLen
+  ? `<button type="button" onclick="document.getElementById('${id}').classList.remove('hidden'); this.remove();" class="mt-2 text-xs font-semibold text-navy hover:underline">Lihat ${restLen} rekod lagi ↓</button>`
+  : '';
+const progressBlocksPaged = (blocksHtml, id, pageSize = PROG_PAGE) => {
+  if (!blocksHtml.length) return progressEmptyRow();
+  const shown = blocksHtml.slice(0, pageSize).join(''), rest = blocksHtml.slice(pageSize);
+  const restDiv = rest.length ? `<div id="pg-more-${id}" class="hidden">${rest.join('')}</div>` : '';
+  return shown + restDiv + moreBtn(`pg-more-${id}`, rest.length);
+};
+
+function cardWrap(id, emoji, title, count, bodyHtml) {
+  return `<div id="hk1-sec-${id}" class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 space-y-3">
+    <h3 class="font-bold text-sm text-ink flex items-center gap-2">${emoji} ${title}
+      ${count != null ? `<span class="chip bg-ink/10 text-ink/60">${count}</span>` : ''}</h3>
+    ${bodyHtml}
+  </div>`;
+}
+
+function hk1Block(r) {
+  const c = r.consultation || {};
+  // Boleh edit di sini HANYA rekod berdiri sendiri (plan_id NULL) — rekod yg disambung ke
+  // plan_id/week_number kekal baca-sahaja, edit mesti di plan-week.html (satu tempat edit).
+  const editable = !r.plan_id && r.status !== 'resolved' && r.status !== 'declined';
+  if (!editable) {
+    const canEditElsewhere = r.plan_id && r.status !== 'resolved' && r.status !== 'declined';
+    return `<div class="border-t border-ink/5 py-3 text-xs first:border-t-0 first:pt-0">
+      <div class="flex items-center gap-2 flex-wrap">
+        <b class="text-ink/80">${formatDate(r.created_at)}</b>
+        <span class="text-ink/45">→ ${escHtml(r.target_name || '—')}</span>
+        ${statusChipHp(r.status)}
+        ${canEditElsewhere ? `<a href="plan-week.html?plan_id=${r.plan_id}&week=${r.week_number}&back=${encodeURIComponent(`sesi-1on1-detail.html?patient_id=${patientId}`)}" class="ml-auto text-navy font-semibold hover:underline whitespace-nowrap">✏️ Edit di Plan Rawatan →</a>` : ''}
+      </div>
+      ${r.reason ? `<p class="text-ink/60 mt-1">${escHtml(r.reason)}</p>` : ''}
+      ${c.examination ? `<p class="text-ink/70 mt-1.5"><b>📝 Nota:</b> ${escHtml(c.examination)}</p>` : ''}
+      ${c.saranan ? `<p class="text-ink/70 mt-1.5"><b>💊 Saranan:</b> ${escHtml(c.saranan)}${c.saranan_days ? ` <span class="text-ink/45">(${c.saranan_days} hari${c.saranan_start ? ' dari ' + formatDate(c.saranan_start) : ''})</span>` : ''}</p>
+        <p class="text-ink/45 mt-0.5">${c.saranan_sent_at ? '✅ Dihantar ke WhatsApp ' + formatDate(c.saranan_sent_at) : '⏳ Belum dihantar'}</p>` : ''}
+      ${c.follow_up_result ? `<p class="mt-1 font-semibold ${c.follow_up_result === 'ikut' ? 'text-green-dark' : 'text-terracotta'}">${c.follow_up_result === 'ikut' ? '✅ Pesakit ikut saranan' : '❌ Pesakit tidak ikut saranan'}${c.follow_up_note ? ' — ' + escHtml(c.follow_up_note) : ''}</p>` : ''}
+    </div>`;
+  }
+
+  const meta = HK1_META_HP[r.session_type] || { emoji: '', fallback: r.session_type };
+  const st = HK1_STATUS_HP[r.status] || HK1_STATUS_HP.pending;
+  const atts = Array.isArray(c.attachments) ? c.attachments : [];
+  return `<div class="border-t border-ink/5 py-3.5 text-xs first:border-t-0 first:pt-0" id="hk1-card-${r.id}">
+      <div class="flex items-center gap-2 flex-wrap mb-2">
+        <b class="text-ink/80">${meta.emoji} ${formatDate(r.meet_date || r.created_at)}</b>
+        <span class="text-ink/45">→ ${escHtml(r.target_name || meta.fallback)}</span>
+        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${st.cls}">${st.lbl}</span>
+        <span id="hk1-saved-${r.id}" class="save-indicator"></span>
+      </div>
+      ${r.reason ? `<p class="text-ink/55 mb-2">${escHtml(r.reason)}</p>` : ''}
+
+      <div class="mb-2.5">
+        <label class="block text-[10px] font-bold text-ink/60 mb-1">🕐 Masa dijangka jumpa ${escHtml(meta.fallback)} (pilihan)</label>
+        <input id="hk1-time-${r.id}" type="time" value="${c.scheduled_time || ''}" onchange="hphSaveTime('${r.id}')" class="w-36 px-2.5 py-2 border border-ink/15 rounded-lg text-xs outline-none focus:border-navy">
+      </div>
+
+      <label class="block text-[10px] font-bold text-ink/60 mb-1">Nota / Soal-Jawab</label>
+      <textarea id="hk1-notes-${r.id}" rows="2" onblur="hphSaveNotes('${r.id}')" placeholder="Ringkasan soal-jawab / konsultasi..." class="w-full px-2.5 py-2 border border-ink/15 rounded-lg text-xs outline-none focus:border-navy resize-y">${escHtml(c.examination || '')}</textarea>
+
+      <div class="mt-2.5">
+        <label class="block text-[10px] font-bold text-ink/60 mb-1">📎 Dokumen</label>
+        <label class="inline-flex items-center gap-1 text-[11px] font-semibold text-navy border border-navy/30 px-2.5 py-1 rounded-lg cursor-pointer hover:bg-navy hover:text-white transition-colors">⬆ Muat Naik<input type="file" multiple class="hidden" onchange="hphUploadDoc('${r.id}', this)"></label>
+        <div id="hk1-att-list-${r.id}" class="flex flex-wrap gap-1.5 mt-1.5">${atts.length ? atts.map((a, i) => `<span class="inline-flex items-center gap-1 px-2 py-1 bg-cream border border-ink/15 rounded text-[10px]"><button type="button" onclick="hphViewDoc('${escHtml(a.path)}')" class="text-navy hover:underline truncate max-w-[120px]">📄 ${escHtml(a.name)}</button><button type="button" onclick="hphRemoveDoc('${r.id}', ${i})" class="text-terracotta font-bold">×</button></span>`).join('') : '<p class="text-[10px] text-ink/35 italic">Tiada fail.</p>'}</div>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-3 mt-3 pt-3 border-t border-ink/8">
+        <div>
+          <label class="block text-[10px] font-bold text-ink/60 mb-1">Saranan ringkas</label>
+          <textarea id="hk1-saranan-${r.id}" rows="3" oninput="hphUpdPreview('${r.id}')" placeholder="Cth: Sila ambil ubat 2x sehari selepas makan..." class="w-full px-2.5 py-2 border border-green-300 bg-white rounded-lg text-xs outline-none focus:border-green resize-y">${escHtml(c.saranan || '')}</textarea>
+          <div class="grid grid-cols-2 gap-1.5 mt-1.5">
+            <input id="hk1-days-${r.id}" type="number" min="1" max="90" value="${c.saranan_days || ''}" oninput="hphUpdPreview('${r.id}')" placeholder="Tempoh (hari)" class="w-full px-2 py-1.5 border border-ink/15 rounded-lg text-[11px] outline-none focus:border-navy">
+            <input id="hk1-start-${r.id}" type="date" value="${c.saranan_start || hphToday()}" onchange="hphUpdPreview('${r.id}')" class="w-full px-2 py-1.5 border border-ink/15 rounded-lg text-[11px] outline-none focus:border-navy">
+          </div>
+          <button type="button" id="hk1-send-btn-${r.id}" onclick="hphSend('${r.id}')" class="mt-2 inline-flex items-center gap-1.5 bg-green text-white text-[11px] font-semibold px-3 py-2 rounded-lg hover:bg-green-dark disabled:opacity-60">📱 Hantar ke WhatsApp</button>
+          <span id="hk1-wa-sent-${r.id}" class="block text-[10px] text-ink/50 mt-1.5">${c.saranan_sent_at ? ('✅ Dihantar ' + formatDateTime(c.saranan_sent_at)) : ''}</span>
+        </div>
+        <div>
+          <label class="block text-[10px] font-semibold text-ink/40 mb-1">👁️ Pratonton mesej WhatsApp</label>
+          <div id="hk1-preview-${r.id}" class="rounded-lg border border-ink/10 p-2.5 text-[11px] text-ink/70 leading-relaxed whitespace-pre-wrap min-h-[70px]" style="background:#e5ddd5"></div>
+        </div>
+      </div>
+
+      ${hphFollowUpHtml(r)}
+
+      <div class="mt-3 pt-3 border-t border-ink/8 flex justify-end">
+        <button type="button" onclick="hphMarkResolved('${r.id}')" class="px-3 py-1.5 rounded-lg bg-navy text-white text-[11px] font-semibold hover:bg-navy-dark">✓ Tandakan Selesai</button>
+      </div>
+    </div>`;
+}
+
+function hphFollowUpHtml(r) {
+  const c = r.consultation || {};
+  if (!c.saranan_sent_at && !c.follow_up_date) return '';
+  const fu = c.follow_up_date;
+  const fuStr = fu ? hphPretty(fu) : '—';
+  const due = fu && fu <= hphToday();
+  const res = c.follow_up_result;
+  let body;
+  if (res) {
+    const ok = res === 'ikut';
+    body = `<div class="flex items-center gap-2 text-[11px] font-semibold ${ok ? 'text-green-700' : 'text-terracotta'}">${ok ? '✅ Pesakit ikut saranan' : '❌ Pesakit tidak ikut saranan'}</div>${c.follow_up_note ? `<div class="text-[11px] text-ink/60 mt-1">📝 ${escHtml(c.follow_up_note)}</div>` : ''}`;
+  } else {
+    body = `<div class="text-[11px] ${due ? 'text-gold-dark font-semibold' : 'text-ink/60'} mb-2">${due ? '⏰ Masa untuk follow-up — mesej pesakit & rekod jawapannya.' : 'Follow-up dijadualkan pada ' + fuStr}</div>
+      <div class="flex gap-1.5 flex-wrap">
+        <button onclick="hphWaFollowUp('${r.id}')" class="bg-green text-white text-[11px] font-semibold px-2.5 py-1.5 rounded-lg hover:bg-green-dark">📱 Mesej pesakit</button>
+        <button onclick="hphRecordFollowUp('${r.id}', 'ikut')" class="border border-green text-green-dark text-[11px] font-semibold px-2.5 py-1.5 rounded-lg hover:bg-green/5">✅ Ikut</button>
+        <button onclick="hphRecordFollowUp('${r.id}', 'tak_ikut')" class="border border-terracotta text-terracotta text-[11px] font-semibold px-2.5 py-1.5 rounded-lg hover:bg-terracotta/5">❌ Tak ikut</button>
+      </div>`;
+  }
+  return `<div class="mt-3 pt-3 border-t border-ink/8 ${due && !res ? 'ring-1 ring-inset ring-gold/40 rounded-lg p-2 -m-2 bg-gold/[0.04]' : ''}">
+      <div class="text-[10px] font-bold text-ink mb-1">🩺 Follow-up Saranan</div>
+      <div class="text-[10px] text-ink/55 mb-2">Dihantar: ${c.saranan_sent_at ? formatDateTime(c.saranan_sent_at) : '—'} · Follow-up: ${fuStr}${c.saranan_days ? ` (${c.saranan_days} hari)` : ''}</div>
+      ${body}
+    </div>`;
+}
+
+function hk1List(type) {
+  const rows = hk1Rows.filter(r => r.session_type === type);
+  return { rows, html: progressBlocksPaged(rows.map(hk1Block), `sesi-${type}`) };
+}
+
+function renderCards() {
+  // Halaman ni fokus semata-mata (bukan patient-hub.html) — papar HANYA jenis yg memang
+  // ditempah, tak kira Hakeema/Hakeem/Dr (beza dari patient-hub.html yg sengaja sentiasa
+  // papar kad Sesi Hakeema walau kosong).
+  const hakeemaSesi = hk1List('hakeema'), hakeemSesi = hk1List('hakeem'), drSesi = hk1List('dr');
+  const parts = [];
+  if (hakeemaSesi.rows.length) parts.push(cardWrap('hakeema', '🧑‍💼', 'Sesi Hakeema', hakeemaSesi.rows.length, hakeemaSesi.html));
+  if (hakeemSesi.rows.length) parts.push(cardWrap('hakeem', '🧑', 'Sesi Hakeem', hakeemSesi.rows.length, hakeemSesi.html));
+  if (drSesi.rows.length) parts.push(cardWrap('dr', '🩺', 'Sesi Dr', drSesi.rows.length, drSesi.html));
+  document.getElementById('hk1-cards').innerHTML = parts.length ? parts.join('') : '<div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-8 text-center text-sm text-ink/40">Tiada rekod Sesi 1:1 utk pesakit ini.</div>';
+  hk1Rows.forEach(r => { if (!r.plan_id && r.status !== 'resolved' && r.status !== 'declined') hphUpdPreview(r.id); });
+}
+
+// Ganti kandungan SATU kad lepas edit — elak reset scroll/state kad lain.
+function refreshHk1Card(type) {
+  const host = document.getElementById(`hk1-sec-${type}`);
+  if (!host) return;
+  const info = hk1List(type);
+  const emoji = HK1_META_HP[type]?.emoji || '';
+  const title = type === 'hakeema' ? 'Sesi Hakeema' : type === 'hakeem' ? 'Sesi Hakeem' : 'Sesi Dr';
+  host.outerHTML = cardWrap(type, emoji, title, info.rows.length, info.html);
+  info.rows.forEach(r => { if (!r.plan_id && r.status !== 'resolved' && r.status !== 'declined') hphUpdPreview(r.id); });
+}
+
+async function hphPersist(id, patch) {
+  const ref = hk1FindRow(id);
+  if (!ref) return false;
+  const c = Object.assign({}, ref.consultation || {}, patch);
+  const { error } = await window.db.from('psy_clinical_referrals')
+    .update({ consultation: c, updated_at: new Date().toISOString() }).eq('id', id);
+  if (error) { banner('Ralat simpan: ' + error.message, 'error'); return false; }
+  ref.consultation = c;
+  const ind = document.getElementById(`hk1-saved-${id}`);
+  if (ind) { ind.textContent = '✓ Tersimpan'; ind.classList.add('show'); setTimeout(() => ind.classList.remove('show'), 1500); }
+  return true;
+}
+
+async function hphSaveNotes(id) {
+  await hphPersist(id, { examination: document.getElementById(`hk1-notes-${id}`).value.trim() });
+}
+window.hphSaveNotes = hphSaveNotes;
+
+async function hphSaveTime(id) {
+  await hphPersist(id, { scheduled_time: document.getElementById(`hk1-time-${id}`).value || null });
+}
+window.hphSaveTime = hphSaveTime;
+
+async function hphUploadDoc(id, input) {
+  const files = [...input.files]; input.value = '';
+  const ref = hk1FindRow(id);
+  const atts = Array.isArray(ref?.consultation?.attachments) ? ref.consultation.attachments.slice() : [];
+  let ok = 0, errMsg = '';
+  for (const f of files) {
+    if (f.size > 10 * 1024 * 1024) { errMsg = `${f.name}: melebihi 10MB`; continue; }
+    const path = `${id}/consult_${Date.now()}_${f.name.replace(/[^\w.\-]/g, '_')}`;
+    const { error } = await window.db.storage.from('referral-docs').upload(path, f, { contentType: f.type || undefined });
+    if (error) { errMsg = error.message; continue; }
+    atts.push({ name: f.name, path, uploaded_at: new Date().toISOString() });
+    ok++;
+  }
+  if (ok) { await hphPersist(id, { attachments: atts }); banner(`${ok} fail dimuat naik ✅`); refreshHk1Card(ref.session_type); }
+  if (errMsg) banner('Gagal muat naik: ' + errMsg, 'error');
+}
+window.hphUploadDoc = hphUploadDoc;
+
+async function hphRemoveDoc(id, i) {
+  const ref = hk1FindRow(id);
+  if (!ref) return;
+  const atts = (ref.consultation?.attachments || []).slice();
+  const [rm] = atts.splice(i, 1);
+  if (rm?.path) { try { await window.db.storage.from('referral-docs').remove([rm.path]); } catch (_) {} }
+  await hphPersist(id, { attachments: atts });
+  refreshHk1Card(ref.session_type);
+}
+window.hphRemoveDoc = hphRemoveDoc;
+
+async function hphViewDoc(path) {
+  const { data, error } = await window.db.storage.from('referral-docs').createSignedUrl(path, 3600);
+  if (error || !data?.signedUrl) { banner('Gagal buka fail', 'error'); return; }
+  window.open(data.signedUrl, '_blank');
+}
+window.hphViewDoc = hphViewDoc;
+
+function patientName() { return patient?.psy_profiles?.full_name || patient?.mrn || 'Pesakit'; }
+
+function hphBuildWaMessage(id) {
+  const ref = hk1FindRow(id);
+  const nm = patientName();
+  const saranan = (document.getElementById(`hk1-saranan-${id}`)?.value || '').trim();
+  const days = parseInt(document.getElementById(`hk1-days-${id}`)?.value) || 0;
+  const start = document.getElementById(`hk1-start-${id}`)?.value || '';
+  const pengesyor = ref?.target_name || HK1_META_HP[ref?.session_type]?.fallback || 'Klinik';
+  const tarikh = start ? hphPretty(start) : '';
+
+  if (hk1SarananTpl) {
+    let t = hk1SarananTpl;
+    if (!days || !start) t = t.split('\n').filter(ln => !/\{tempoh\}|\{tarikh\}/.test(ln)).join('\n');
+    t = t.replace(/\{nama\}/g, nm).replace(/\{pengesyor\}/g, pengesyor).replace(/\{saranan\}/g, saranan)
+         .replace(/\{tempoh\}/g, String(days || '')).replace(/\{tarikh\}/g, tarikh);
+    return t.replace(/\n{3,}/g, '\n\n').trim();
+  }
+  const L = [];
+  L.push(`Salam ${nm}, 👋`);
+  L.push(`Berikut saranan daripada ${pengesyor} (Ibnu Sina Wellness):`);
+  L.push('');
+  if (saranan) { L.push(saranan); L.push(''); }
+  if (days && start) { L.push(`⏱️ Sila ikut selama *${days} hari* bermula ${tarikh}.`); L.push(''); }
+  L.push('Terima kasih & semoga cepat sihat. 🌿');
+  return L.join('\n');
+}
+
+function hphUpdPreview(id) {
+  const box = document.getElementById(`hk1-preview-${id}`);
+  if (!box) return;
+  const saranan = (document.getElementById(`hk1-saranan-${id}`)?.value || '').trim();
+  if (!saranan) { box.innerHTML = '<span class="italic text-ink/40">Isi saranan di atas untuk lihat pratonton mesej…</span>'; return; }
+  box.innerHTML = escHtml(hphBuildWaMessage(id)).replace(/\*(.+?)\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
+}
+window.hphUpdPreview = hphUpdPreview;
+
+async function hphGhlInvoke(action, extra = {}) {
+  const { data, error } = await window.db.functions.invoke('ghl-inbox', { body: { action, ...extra } });
+  if (error) {
+    let msg = error.message;
+    try { const ctx = await error.context?.json(); if (ctx?.error) msg = ctx.error; } catch (_) {}
+    throw new Error(msg);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+async function hphSend(id) {
+  if (hk1SarananTpl === null) {
+    const { data: tpl } = await window.db.from('psy_auto_messages')
+      .select('message_template, is_active').eq('key', 'referral_saranan').maybeSingle();
+    hk1SarananTpl = (tpl && tpl.is_active !== false && tpl.message_template) ? tpl.message_template : '';
+  }
+  const ref = hk1FindRow(id);
+  let phone = (patient?.phone || '').replace(/\D/g, '');
+  if (phone.startsWith('0')) phone = '60' + phone.slice(1); else if (phone && !phone.startsWith('60')) phone = '60' + phone;
+  if (!phone) { banner('Pesakit tiada nombor telefon — kemas kini di profil pesakit.', 'error'); return; }
+  const saranan = (document.getElementById(`hk1-saranan-${id}`)?.value || '').trim();
+  if (!saranan) { banner('Isi mesej saranan dahulu.', 'error'); return; }
+  const msg = hphBuildWaMessage(id);
+  if (!confirm('Hantar saranan ini ke WhatsApp pesakit sekarang?')) return;
+
+  const btn = document.getElementById(`hk1-send-btn-${id}`);
+  const btnTxt = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Menghantar…'; }
+  try {
+    const ec = await hphGhlInvoke('ensurecontact', { phone, name: patientName() });
+    const contactId = ec?.contact?.contactId;
+    if (!contactId) throw new Error('Tak dapat sediakan contact GHL untuk nombor ini.');
+    await hphGhlInvoke('send', { contactId, message: msg });
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = btnTxt || '📱 Hantar ke WhatsApp'; }
+    banner('Gagal auto-hantar: ' + (e.message || e), 'error');
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const ok = await hphPersist(id, {
+    saranan, saranan_days: parseInt(document.getElementById(`hk1-days-${id}`)?.value) || null,
+    saranan_start: document.getElementById(`hk1-start-${id}`)?.value || null,
+    follow_up_date: (() => { const days = parseInt(document.getElementById(`hk1-days-${id}`)?.value) || 0; const start = document.getElementById(`hk1-start-${id}`)?.value || ''; return (days && start) ? hphAddDays(start, days) : null; })(),
+    saranan_sent_at: now,
+  });
+  if (ok && patient?.user_id) {
+    try { await window.db.from('psy_notifications').insert({ user_id: patient.user_id, type: 'referral', title: `Saranan ${HK1_META_HP[ref?.session_type]?.fallback || ''}`, body: saranan || 'Anda ada saranan baru. Sila semak WhatsApp.', link: 'dashboard.html' }); } catch (_) {}
+  }
+  if (typeof auditLog === 'function') { try { await auditLog('referral.saranan_sent', patientId, { source: 'plan_1on1', session_type: ref?.session_type }); } catch (_) {} }
+  banner('Saranan dihantar ke WhatsApp pesakit ✅');
+  refreshHk1Card(ref?.session_type);
+}
+window.hphSend = hphSend;
+
+async function hphWaFollowUp(id) {
+  const ref = hk1FindRow(id);
+  let phone = (patient?.phone || '').replace(/\D/g, '');
+  if (phone.startsWith('0')) phone = '60' + phone.slice(1); else if (phone && !phone.startsWith('60')) phone = '60' + phone;
+  if (!phone) { banner('Pesakit tiada nombor telefon.', 'error'); return; }
+  const c = ref?.consultation || {};
+  const nm = patientName();
+  const days = c.saranan_days ? `${c.saranan_days} hari` : 'tempoh yang disarankan';
+  const L = [
+    `Salam ${nm}, 👋`, `Follow-up daripada ${ref?.target_name || HK1_META_HP[ref?.session_type]?.fallback} (Ibnu Sina Wellness).`, ``,
+    `Adakah anda telah mengikut saranan yang diberi selama ${days}?`,
+    c.saranan ? `\nSaranan: ${c.saranan}` : '', ``,
+    `Mohon balas: *Ya, saya ikut* atau *Belum / Tidak ikut*. Terima kasih. 🌿`,
+  ].filter(x => x !== '');
+  window.open(`https://wa.me/${phone}?text=${encodeURIComponent(L.join('\n'))}`, '_blank');
+}
+window.hphWaFollowUp = hphWaFollowUp;
+
+async function hphRecordFollowUp(id, result) {
+  let note = '';
+  if (result === 'tak_ikut') note = prompt('Catatan (kenapa tak ikut / tindakan susulan):') || '';
+  const ref = hk1FindRow(id);
+  const ok = await hphPersist(id, { follow_up_result: result, follow_up_note: note.trim() || null, follow_up_done_at: new Date().toISOString() });
+  if (!ok) return;
+  if (typeof auditLog === 'function') { try { await auditLog('referral.followup_recorded', patientId, { result, source: 'plan_1on1', session_type: ref?.session_type }); } catch (_) {} }
+  banner('Follow-up direkod ✅');
+  refreshHk1Card(ref?.session_type);
+}
+window.hphRecordFollowUp = hphRecordFollowUp;
+
+async function hphMarkResolved(id) {
+  if (!confirm('Tandakan sesi ini sebagai selesai?')) return;
+  const ref = hk1FindRow(id);
+  const { error } = await window.db.from('psy_clinical_referrals')
+    .update({ status: 'resolved', resolved_at: new Date().toISOString() }).eq('id', id);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  ref.status = 'resolved';
+  ref.resolved_at = new Date().toISOString();
+  if (typeof auditLog === 'function') { try { await auditLog('referral.resolved', patientId, { source: 'plan_1on1', session_type: ref.session_type }); } catch (_) {} }
+  banner('Sesi ditandakan selesai ✅');
+  refreshHk1Card(ref.session_type);
+}
+window.hphMarkResolved = hphMarkResolved;
+
+function statusChipHp(s) {
+  const m = { pending: 'bg-gold/30 text-gold-dark', resolved: 'bg-green-light text-green-dark' };
+  const lbl = { pending: 'Belum konsultasi', accepted: 'Dijadualkan', resolved: 'Selesai', declined: 'Ditolak' }[s] || s;
+  return `<span class="chip ${m[s] || 'bg-ink/10 text-ink/60'}">${lbl}</span>`;
+}
+
+function renderPatientCard() {
+  const el = document.getElementById('patient-card');
+  el.innerHTML = `
+    <div class="w-11 h-11 rounded-full bg-teal text-white flex items-center justify-center font-bold text-sm flex-shrink-0">${escHtml(patientName().charAt(0).toUpperCase())}</div>
+    <div class="min-w-0 flex-1">
+      <div class="text-sm font-semibold text-ink truncate">${escHtml(patientName())}</div>
+      <div class="text-[11px] text-ink/45 flex items-center gap-2 flex-wrap">
+        <span class="font-mono">${escHtml(patient?.mrn || '—')}</span><span>·</span><span>${escHtml(patient?.active_package_name || 'Tiada pakej aktif')}</span>
+      </div>
+    </div>
+    <div class="text-xs text-ink/55 flex-shrink-0">📞 ${escHtml(patient?.phone || '—')}</div>`;
+}
+
+(async () => {
+  const user = await initStaff('sesi_1on1', 'Sesi 1:1 Pesakit');
+  if (!user) return;
+  if (!patientId) { location.href = 'sesi-1on1.html'; return; }
+
+  const backParam = params.get('back');
+  if (backParam) document.getElementById('back-link').href = backParam;
+
+  const [{ data: p }, { data: rows }] = await Promise.all([
+    window.db.from('psy_patients').select('*, psy_profiles!psy_patients_user_id_fkey(full_name)').eq('id', patientId).maybeSingle().then(r => r, () => ({ data: null })),
+    window.db.from('psy_clinical_referrals').select('*').eq('patient_id', patientId).eq('source', 'plan_1on1').order('created_at', { ascending: false }).then(r => r, () => ({ data: [] })),
+  ]);
+  patient = p;
+  hk1Rows = rows || [];
+  renderPatientCard();
+  renderCards();
+})();
+</script>
+</body>
+</html>
