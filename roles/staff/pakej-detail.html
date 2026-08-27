@@ -137,10 +137,11 @@
 
           <!-- ── PANEL: Bayaran (Ansuran) ── -->
           <div id="panel-bayaran" class="pkgtab-panel hidden p-5">
+            <div id="price-summary-card" class="mb-5"></div>
             <div id="payment-config-card" class="border border-ink/10 rounded-xl p-4 mb-5"></div>
             <div id="payment-schedule-preview" class="hidden mb-5">
               <h4 class="text-xs font-bold text-ink/60 mb-2">📋 Pratonton Jadual Ansuran (harga & tempoh semasa)</h4>
-              <div id="payment-schedule-body" class="text-xs bg-ink/5 rounded-lg p-3 space-y-0.5"></div>
+              <div id="payment-schedule-cards" class="grid lg:grid-cols-2 gap-4"></div>
             </div>
             <div>
               <h4 class="text-xs font-bold text-ink/60 mb-2">👥 Pesakit Dalam Pelan Ansuran</h4>
@@ -895,14 +896,87 @@ function buildInstallmentSchedule(depositAmount, durationMonths, monthlyAmount) 
   return rows;
 }
 
+function relativeMonthLabel(i) {
+  if (i === 0) return 'Hari ini';
+  if (i === 1) return 'Bulan depan';
+  return `${i} bulan lagi`;
+}
+
+// Field ansuran ikut tier ('today' fallback ke Now bila today_installment_* kosong)
+// — SAMA logik dgn kob-detail.html supaya angka konsisten merentas staff flow.
+function tierDeposit(pkgMeta, tier) {
+  return tier === 'today' ? (pkgMeta.today_installment_deposit_amount ?? pkgMeta.installment_deposit_amount) : pkgMeta.installment_deposit_amount;
+}
+function tierDurationMonths(pkgMeta, tier) {
+  return tier === 'today' ? (pkgMeta.today_installment_duration_months ?? pkgMeta.installment_duration_months) : pkgMeta.installment_duration_months;
+}
+function tierMonthlyAmount(pkgMeta, tier) {
+  return tier === 'today' ? (pkgMeta.today_installment_monthly_amount ?? pkgMeta.installment_monthly_amount) : pkgMeta.installment_monthly_amount;
+}
+function tierInstallmentAllowed(pkgMeta, tier) {
+  return !!pkgMeta.installment_allowed && Number(tierDeposit(pkgMeta, tier)) > 0
+    && Number(tierDurationMonths(pkgMeta, tier)) > 1 && Number(tierMonthlyAmount(pkgMeta, tier)) > 0;
+}
+
+function installmentScheduleCardHtml(label, icon, deposit, durationMonths, monthly) {
+  const resolved = buildInstallmentSchedule(deposit, durationMonths, monthly);
+  const commitment = resolved.length ? resolved[resolved.length - 1].target_cumulative : deposit;
+  const rows = [`
+    <tr class="border-b border-ink/5"><td class="py-1">1</td><td>Bayaran Pertama (Hari Ini)</td><td>Hari ini</td><td class="text-right font-semibold">${fmtRM(deposit)}</td></tr>`,
+    ...resolved.map((r, i) => `
+    <tr class="border-b border-ink/5"><td class="py-1">${i + 2}</td><td>Bulan ${r.month_offset + 1}${i === resolved.length - 1 ? ' (Terakhir)' : ''}</td><td>${relativeMonthLabel(r.month_offset)}</td><td class="text-right font-semibold">${fmtRM(monthly)}</td></tr>`)].join('');
+  return `
+  <div class="bg-cream/50 rounded-xl border border-ink/10 p-4">
+    <div class="text-xs font-bold text-ink/70 mb-2">${icon} ${label}</div>
+    <div class="grid grid-cols-3 gap-3 text-sm mb-3">
+      <div><div class="text-[10px] text-ink/45 uppercase">Tempoh</div><div class="font-semibold">${durationMonths} Bulan</div></div>
+      <div><div class="text-[10px] text-ink/45 uppercase">Bayaran Pertama</div><div class="font-semibold">${fmtRM(deposit)}</div></div>
+      <div><div class="text-[10px] text-ink/45 uppercase">Bayaran Bulanan</div><div class="font-semibold">${fmtRM(monthly)}</div></div>
+    </div>
+    <div class="text-[11px] text-ink/45 mb-2">Bayaran pertama perlu dibayar hari ini. Baki dibayar secara bulanan.</div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs">
+        <thead><tr class="text-ink/45 text-left border-b border-ink/10"><th class="py-1">Bil.</th><th>Perkara</th><th>Tarikh</th><th class="text-right">Jumlah (RM)</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div class="flex justify-between pt-2 mt-1 border-t border-ink/10 font-bold text-navy text-sm"><span>Jumlah Komitmen</span><span>${fmtRM(commitment)}</span></div>
+  </div>`;
+}
+
+// % diskaun LIVE (sama formula dgn pakej-edit.html) — dari Harga Promo (harga_asal) berbanding harga Now/Today.
+function renderPriceSummary() {
+  const el = document.getElementById('price-summary-card');
+  if (!el) return;
+  const asal = Number(pkg.harga_asal || 0);
+  const pct = (base) => (asal > 0 && base > 0 && base < asal) ? Math.round((1 - base / asal) * 100) : null;
+  const tile = (label, icon, cls, value, sub) => `
+    <div class="${cls} rounded-xl border border-ink/10 p-4">
+      <div class="text-[10px] font-bold text-ink/50 uppercase mb-1">${icon} ${label}</div>
+      <div class="text-lg font-bold text-ink">${value}</div>
+      <div class="text-[11px] text-green-700 font-semibold mt-0.5 min-h-[14px]">${sub || ''}</div>
+    </div>`;
+  const tiles = [
+    tile('Harga Asal Program', '📋', 'bg-cream/50', fmtRM(pkg.nilai_program)),
+    tile('Harga Promo', '🏷️', 'bg-green-light/40', fmtRM(pkg.harga_asal)),
+    tile('Harga Sekarang (Now)', '💰', 'bg-ink/5', fmtRM(pkg.price), pct(Number(pkg.price || 0)) != null ? `-${pct(Number(pkg.price || 0))}% drp Harga Promo` : ''),
+  ];
+  if (pkg.today_price) tiles.push(tile('Harga Hari Ini (Today)', '⭐', 'bg-gold/10', fmtRM(pkg.today_price), pct(Number(pkg.today_price || 0)) != null ? `-${pct(Number(pkg.today_price || 0))}% drp Harga Promo` : ''));
+  el.innerHTML = `
+    <h4 class="text-xs font-bold text-ink/60 mb-2">💳 Harga Program</h4>
+    <div class="grid sm:grid-cols-2 xl:grid-cols-4 gap-3">${tiles.join('')}</div>`;
+}
+
 async function renderPayment() {
+  renderPriceSummary();
   const cfgEl = document.getElementById('payment-config-card');
-  const durationMonths = Number(pkg.installment_duration_months || 0);
-  const allowed = !!pkg.installment_allowed && !!pkg.installment_deposit_amount
-    && durationMonths >= 2 && !!pkg.installment_monthly_amount;
+  const hasToday = !!pkg.today_price;
+  const nowAllowed = tierInstallmentAllowed(pkg, 'now');
+  const todayAllowed = hasToday && tierInstallmentAllowed(pkg, 'today');
+  const allowed = nowAllowed || todayAllowed;
   cfgEl.innerHTML = allowed
     ? `<div class="flex items-center justify-between flex-wrap gap-2">
-        <div class="text-sm"><span class="font-semibold text-green-dark">✅ Ansuran dibenarkan</span> — deposit ${fmtRM(pkg.installment_deposit_amount)}, ${durationMonths} bulan</div>
+        <div class="text-sm"><span class="font-semibold text-green-dark">✅ Ansuran dibenarkan</span> — deposit ${fmtRM(tierDeposit(pkg, 'now'))}, ${tierDurationMonths(pkg, 'now')} bulan (Sekarang)${todayAllowed ? ` · ${fmtRM(tierDeposit(pkg, 'today'))}, ${tierDurationMonths(pkg, 'today')} bulan (Hari Ini)` : ''}</div>
         <a href="pakej-edit.html?id=${pkg.id}&tab=bayaran" class="text-xs font-semibold text-navy hover:underline">✏️ Tukar tetapan →</a>
       </div>`
     : `<div class="flex items-center justify-between flex-wrap gap-2">
@@ -911,19 +985,12 @@ async function renderPayment() {
       </div>`;
 
   const previewEl = document.getElementById('payment-schedule-preview');
-  if (allowed) {
-    const resolved = buildInstallmentSchedule(pkg.installment_deposit_amount, durationMonths, pkg.installment_monthly_amount);
-    const rows = [`
-      <div class="flex justify-between py-0.5">
-        <span>Bayaran Pertama (semasa aktifkan)</span>
-        <span class="font-semibold">${fmtRM(pkg.installment_deposit_amount)}</span>
-      </div>`,
-      ...resolved.map(r => `
-      <div class="flex justify-between py-0.5">
-        <span>Bulan ${r.month_offset + 1} — jumlah terkumpul wajib</span>
-        <span class="font-semibold">${fmtRM(r.target_cumulative)}</span>
-      </div>`)];
-    document.getElementById('payment-schedule-body').innerHTML = rows.join('');
+  const cardsEl = document.getElementById('payment-schedule-cards');
+  const cards = [];
+  if (nowAllowed) cards.push(installmentScheduleCardHtml('Ansuran — Harga Sekarang (Now)', '🏷️', Number(tierDeposit(pkg, 'now') || 0), Number(tierDurationMonths(pkg, 'now') || 0), Number(tierMonthlyAmount(pkg, 'now') || 0)));
+  if (todayAllowed) cards.push(installmentScheduleCardHtml('Ansuran — Harga Hari Ini (Today)', '⭐', Number(tierDeposit(pkg, 'today') || 0), Number(tierDurationMonths(pkg, 'today') || 0), Number(tierMonthlyAmount(pkg, 'today') || 0)));
+  if (cards.length) {
+    cardsEl.innerHTML = cards.join('');
     previewEl.classList.remove('hidden');
   } else {
     previewEl.classList.add('hidden');
