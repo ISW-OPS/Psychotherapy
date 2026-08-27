@@ -880,27 +880,29 @@ async function duplicatePackage() {
   } catch(e) { banner('Ralat: ' + e.message, 'error'); }
 }
 
-// ── Bayaran (Ansuran) — konfigurasi pakej (deposit + checkpoint kumulatif)
-// + pratonton jadual + senarai pesakit yang sedang dalam pelan ansuran ──
-function resolveInstallmentCheckpoints(checkpoints, price, startDate) {
-  return (checkpoints || []).map(cp => {
-    const due = new Date(startDate);
-    due.setMonth(due.getMonth() + Number(cp.month_offset || 0));
-    return {
-      month_offset: cp.month_offset,
-      target_cumulative: cp.target_cumulative == null ? price : Number(cp.target_cumulative),
-      due_date: due.toISOString().slice(0, 10),
-    };
-  });
+// ── Bayaran (Ansuran) — konfigurasi pakej (deposit + tempoh + bayaran bulanan
+// rata, medan sebenar di psy_packages; SAMA logik dgn buildInstallmentSchedule()
+// di pakej-edit.html/kob-detail.html) + pratonton jadual + senarai pesakit yang
+// sedang dalam pelan ansuran ──
+function buildInstallmentSchedule(depositAmount, durationMonths, monthlyAmount) {
+  const rows = [];
+  let cumulative = Number(depositAmount) || 0;
+  const n = Number(durationMonths) || 0;
+  for (let i = 1; i < n; i++) {
+    cumulative += Number(monthlyAmount) || 0;
+    rows.push({ month_offset: i, target_cumulative: cumulative });
+  }
+  return rows;
 }
 
 async function renderPayment() {
   const cfgEl = document.getElementById('payment-config-card');
-  const checkpoints = Array.isArray(pkg.installment_checkpoints) ? pkg.installment_checkpoints : [];
-  const allowed = !!pkg.installment_allowed && !!pkg.installment_deposit_amount && checkpoints.length > 0;
+  const durationMonths = Number(pkg.installment_duration_months || 0);
+  const allowed = !!pkg.installment_allowed && !!pkg.installment_deposit_amount
+    && durationMonths >= 2 && !!pkg.installment_monthly_amount;
   cfgEl.innerHTML = allowed
     ? `<div class="flex items-center justify-between flex-wrap gap-2">
-        <div class="text-sm"><span class="font-semibold text-green-dark">✅ Ansuran dibenarkan</span> — deposit ${fmtRM(pkg.installment_deposit_amount)}, ${checkpoints.length} checkpoint</div>
+        <div class="text-sm"><span class="font-semibold text-green-dark">✅ Ansuran dibenarkan</span> — deposit ${fmtRM(pkg.installment_deposit_amount)}, ${durationMonths} bulan</div>
         <a href="pakej-edit.html?id=${pkg.id}&tab=bayaran" class="text-xs font-semibold text-navy hover:underline">✏️ Tukar tetapan →</a>
       </div>`
     : `<div class="flex items-center justify-between flex-wrap gap-2">
@@ -910,15 +912,15 @@ async function renderPayment() {
 
   const previewEl = document.getElementById('payment-schedule-preview');
   if (allowed) {
-    const resolved = resolveInstallmentCheckpoints(checkpoints, Number(pkg.price || 0), new Date());
+    const resolved = buildInstallmentSchedule(pkg.installment_deposit_amount, durationMonths, pkg.installment_monthly_amount);
     const rows = [`
       <div class="flex justify-between py-0.5">
-        <span>Deposit (semasa aktifkan)</span>
+        <span>Bayaran Pertama (semasa aktifkan)</span>
         <span class="font-semibold">${fmtRM(pkg.installment_deposit_amount)}</span>
       </div>`,
       ...resolved.map(r => `
       <div class="flex justify-between py-0.5">
-        <span>Bulan ${r.month_offset} — jumlah terkumpul wajib</span>
+        <span>Bulan ${r.month_offset + 1} — jumlah terkumpul wajib</span>
         <span class="font-semibold">${fmtRM(r.target_cumulative)}</span>
       </div>`)];
     document.getElementById('payment-schedule-body').innerHTML = rows.join('');
