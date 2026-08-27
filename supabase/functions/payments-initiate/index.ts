@@ -160,12 +160,24 @@ Deno.serve(async (req) => {
     const webhookUrl = `${SUPABASE_URL}/functions/v1/payments-webhook`
     const redirectUrl = `${returnUrl}${returnUrl.includes('?') ? '&' : '?'}ref=${encodeURIComponent(receiptRef)}`
 
+    // Emel/nama untuk checkout HitPay = pesakit yang SEBENARNYA bayar, bukan semestinya
+    // pemanggil JWT — staff pun boleh cetus bayaran ni bagi pihak pesakit (cth coach
+    // tambah sesi & jana pautan HitPay terus utk dihantar WhatsApp), jadi jangan
+    // andaikan user.email ialah emel pesakit.
+    let billEmail = user.email || undefined
+    let billName = (user.user_metadata as any)?.full_name || undefined
+    if (patientId) {
+      const { data: pt } = await admin.from('psy_patients').select('email, full_name').eq('id', patientId).maybeSingle()
+      if (pt?.email) billEmail = pt.email
+      if (pt?.full_name) billName = pt.full_name
+    }
+
     const created = await getProvider(provider).createPayment({
       reference: receiptRef,
       amount: money(total),
       currency: 'MYR',
-      email: user.email || undefined,
-      name: (user.user_metadata as any)?.full_name || undefined,
+      email: billEmail,
+      name: billName,
       purpose: `ISW · ${items.length} item`,
       redirectUrl,
       webhookUrl,

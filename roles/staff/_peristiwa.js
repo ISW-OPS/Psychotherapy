@@ -1,3 +1,4 @@
+function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
 // ============================================================
 // PERISTIWA PESAKIT — pemalar & helper kongsi (semua halaman peristiwa*)
 // ============================================================
@@ -133,7 +134,7 @@ function peVisitStatusChip(s) {
 
 function peFmtDate(d) {
   if (!d) return '—';
-  return new Date(d + (String(d).length === 10 ? 'T00:00:00' : '')).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' });
+  return new Date(d + (String(d).length === 10 ? 'T00:00:00' : '')).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' });
 }
 function peFmtTime(t) {
   if (!t) return '';
@@ -143,7 +144,7 @@ function peFmtTime(t) {
 }
 function peFmtDT(ts) {
   if (!ts) return '—';
-  return new Date(ts).toLocaleString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return new Date(ts).toLocaleString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 // Nama pesakit dari row event dengan join psy_patients(+psy_profiles)

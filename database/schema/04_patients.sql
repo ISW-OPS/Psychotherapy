@@ -429,6 +429,8 @@ BEGIN
       address                 = COALESCE(NULLIF(address, ''), NEW.address),
       emergency_contact_name  = COALESCE(NULLIF(emergency_contact_name, ''), NEW.emergency_contact_name),
       emergency_contact_phone = COALESCE(NULLIF(emergency_contact_phone, ''), NEW.emergency_contact_phone),
+      emergency_contact_relationship = COALESCE(NULLIF(emergency_contact_relationship, ''), NEW.emergency_contact_relationship),
+      emergency_contact_email = COALESCE(NULLIF(emergency_contact_email, ''), NEW.emergency_contact_email),
       referral_source         = COALESCE(NULLIF(referral_source, ''), NEW.referral_source),
       medical_condition       = COALESCE(NULLIF(medical_condition, ''), NEW.medical_condition),
       condition_duration      = COALESCE(NULLIF(condition_duration, ''), NEW.condition_duration),

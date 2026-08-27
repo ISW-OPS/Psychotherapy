@@ -854,6 +854,8 @@
   <script src="../../shared/defaultAgreement.js"></script>
   <script src="_shared.js"></script>
   <script>
+    function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
+    initScrollPreserve();
     let kobId = null;
     let kob = null;
     let patient = null;
@@ -880,7 +882,7 @@
       kobAgreementSignedActive = tpl?.is_active !== false;
       kobAgreementSignedTemplate = tpl?.message_template || null;
 
-      render();
+      await render();
     }
 
     const STATUS_LABEL = {
@@ -898,7 +900,7 @@
       document.getElementById('patient-meta').textContent = `MRN: ${patient?.mrn || '—'} · ${patient?.psy_profiles?.phone || patient?.phone || '—'}`;
       const dt = new Date(kob.scheduled_at);
       document.getElementById('kob-datetime').textContent =
-        `${dt.toLocaleDateString('ms-MY', { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' })} · ${dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
+        `${dt.toLocaleDateString(LCALE(), { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' })} · ${dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
       const modeEl = document.getElementById('kob-mode');
       const modeGroup = document.getElementById('kob-mode-group');
       const canEditMode = (kob.status === 'booked' || kob.status === 'reschedule');
@@ -948,7 +950,7 @@
             if (agBody) agBody.innerHTML = `<div class="flex items-center gap-2 bg-green-light/60 border border-green/25 rounded-lg px-3 py-2.5">
           <span class="text-lg">✅</span>
           <div class="flex-1"><div class="font-semibold text-green-dark">Agreement telah ditandatangan</div>
-          <div class="text-ink/50 mt-0.5">${escapeHtml(new Date(agreement.signed_at).toLocaleString('ms-MY'))}</div></div>
+          <div class="text-ink/50 mt-0.5">${escapeHtml(new Date(agreement.signed_at).toLocaleString(LCALE()))}</div></div>
           ${canEditAgreement ? `<button onclick="resetAgreement('${agreement.id}')" data-rbac="kob.edit" class="shrink-0 border border-terracotta/40 text-terracotta px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-terracotta/10">🗑️ Buang</button>` : ''}
           </div>`;
           } else {
@@ -1878,7 +1880,7 @@
 
       if (q.updated_at) {
         document.getElementById('q-saved-info').textContent =
-          `Kemaskini terakhir: ${new Date(q.updated_at).toLocaleString('ms-MY')} oleh ${q.updated_by_name || '—'}`;
+          `Kemaskini terakhir: ${new Date(q.updated_at).toLocaleString(LCALE())} oleh ${q.updated_by_name || '—'}`;
       }
     }
 
@@ -2012,7 +2014,7 @@
         kob.questionnaire = payload;
         await auditLog('kob.questionnaire_saved', kobId);
         document.getElementById('q-saved-info').textContent =
-          `Kemaskini terakhir: ${new Date().toLocaleString('ms-MY')} oleh ${window.currentUser.full_name || '—'}`;
+          `Kemaskini terakhir: ${new Date().toLocaleString(LCALE())} oleh ${window.currentUser.full_name || '—'}`;
         banner('Soalan KOB disimpan ✅');
       } catch (e) {
         banner('Ralat: ' + e.message, 'error');
@@ -2323,10 +2325,14 @@
 
       // Load packages
       if (!allPackagesCache.length) {
-        const { data } = await window.db.from('psy_packages')
+        const { data, error } = await window.db.from('psy_packages')
           .select('package_id, name, price, duration, duration_weeks, installment_allowed, installment_deposit_amount, installment_duration_months, installment_monthly_amount, nilai_program, harga_asal, today_price, today_installment_deposit_amount, today_installment_duration_months, today_installment_monthly_amount, is_active')
           .eq('is_active', true)
           .order('sort_order', { ascending: true });
+        if (error) {
+          console.error('[renderPackageRecCard] gagal load psy_packages:', error.message);
+          banner('Gagal muatkan senarai pakej: ' + error.message, 'error');
+        }
         allPackagesCache = data || [];
       }
       const sel = document.getElementById('rec-package-select');
@@ -2418,7 +2424,7 @@
       renderPaymentMethodSection();
     }
     function wizSetManualPeriodAmount(idx, value) {
-      wizManualPeriods[idx] = Math.max(0, Number(value) || 0);
+      wizManualPeriods[idx] = Math.max(0, parseMoneyVal(value));
       renderPaymentMethodSection();
     }
     // Jadual ansuran custom — tiap baris amaun BERASINGAN (bukan kadar rata sama
@@ -2470,7 +2476,7 @@
       renderPaymentMethodSection();
     }
     function wizSetManualDeposit(value) {
-      wizManualDeposit = Math.max(0, Number(value) || 0);
+      wizManualDeposit = Math.max(0, parseMoneyVal(value));
       renderPaymentMethodSection();
     }
     function wizSelectMethod(method) {
@@ -2518,6 +2524,23 @@
     // "RM 192,000.00" — koma ribuan supaya senang dibaca dalam wizard Setup Price & Payment.
     function fmtRM(amount) {
       return 'RM ' + Number(amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    // Input duit BOLEH taip terus (type=text bukan number) supaya papar format
+    // "10,000.00" lepas blur — parseMoneyVal() KENA dipakai bila baca .value
+    // (bukan parseFloat/Number terus, sbb ada aksara koma).
+    function parseMoneyVal(v) {
+      return parseFloat(String(v ?? '').replace(/,/g, '')) || 0;
+    }
+    // "10,000.00" — sama macam fmtRM() tapi tanpa prefix "RM ", utk value="..." input duit.
+    function fmtMoneyPlain(amount) {
+      const num = parseMoneyVal(amount);
+      return num ? num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+    }
+    function formatMoneyInputEl(el) {
+      if (!el) return;
+      const num = parseMoneyVal(el.value);
+      el.value = num ? num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
     }
 
     // Jadual bayaran SEBENAR yg dah disimpan (checkpoints ansuran, atau bayaran penuh) —
@@ -2611,7 +2634,7 @@
       const todayActive = isSelectMode ? selectedTier === 'today' : true;
       return `
     <div>
-      <div class="text-[11px] font-semibold text-ink/50 uppercase mb-2">3. Harga Sekarang / Hari Ini</div>
+      <div class="text-[11px] font-semibold text-ink/50 uppercase mb-2">3. Harga Sekarang / Hari Ini <span class="text-ink/35 normal-case font-medium">(Full Payment)</span></div>
       <div class="grid sm:grid-cols-2 gap-3">
         ${tierCardHtml('now', 'Harga Sekarang (Now)', nowPrice, nowNote, nowActive)}
         ${hasToday ? tierCardHtml('today', 'Harga Hari Ini (Today)', todayPrice, todayNote, todayActive) : ''}
@@ -2699,16 +2722,16 @@
       </div>
       <div class="mb-1">
         <label class="text-[10px] text-ink/45 uppercase block mb-1">Bayaran Pertama / Deposit (RM) — hari ini</label>
-        <input type="number" min="0" step="0.01" value="${wizManualDeposit ?? ''}" placeholder="cth: 10000"
-          onchange="wizSetManualDeposit(this.value)"
+        <input type="text" inputmode="decimal" value="${fmtMoneyPlain(wizManualDeposit)}" placeholder="cth: 10,000.00"
+          onchange="wizSetManualDeposit(this.value)" onblur="formatMoneyInputEl(this)"
           class="w-full md:w-64 px-2.5 py-1.5 border border-ink/15 rounded-lg text-sm font-semibold bg-white">
       </div>
       <div class="grid sm:grid-cols-3 md:grid-cols-4 gap-2.5 mt-3">
         ${wizManualPeriods.map((v, i) => `
           <div>
             <label class="text-[10px] text-ink/45 uppercase block mb-1">${wizManualPeriodLabel(wizManualFreq, i + 1)} (RM)</label>
-            <input type="number" min="0" step="0.01" value="${v ?? ''}" placeholder="cth: 5000"
-              onchange="wizSetManualPeriodAmount(${i}, this.value)"
+            <input type="text" inputmode="decimal" value="${fmtMoneyPlain(v)}" placeholder="cth: 5,000.00"
+              onchange="wizSetManualPeriodAmount(${i}, this.value)" onblur="formatMoneyInputEl(this)"
               class="w-full px-2.5 py-1.5 border border-ink/15 rounded-lg text-sm font-semibold bg-white">
           </div>`).join('')}
       </div>
@@ -2722,7 +2745,7 @@
              <thead><tr class="text-ink/45 text-left border-b border-ink/10"><th class="py-1">Bil.</th><th>Perkara</th><th>Tarikh</th><th class="text-right">Jumlah (RM)</th></tr></thead>
              <tbody>
                <tr class="border-b border-ink/5"><td class="py-1">1</td><td>Bayaran Pertama (Hari Ini)</td><td>Hari ini</td><td class="text-right font-semibold">${fmtRM(mDeposit)}</td></tr>
-               ${mResolved.map((r, i) => `<tr class="border-b border-ink/5"><td class="py-1">${i + 2}</td><td>${wizManualPeriodLabel(wizManualFreq, i + 1)}${i === mResolved.length - 1 ? ' (Terakhir)' : ''}</td><td>${new Date(r.due_date).toLocaleDateString('ms-MY')}</td><td class="text-right font-semibold">${fmtRM(wizManualPeriods[i])}</td></tr>`).join('')}
+               ${mResolved.map((r, i) => `<tr class="border-b border-ink/5"><td class="py-1">${i + 2}</td><td>${wizManualPeriodLabel(wizManualFreq, i + 1)}${i === mResolved.length - 1 ? ' (Terakhir)' : ''}</td><td>${new Date(r.due_date).toLocaleDateString(LCALE())}</td><td class="text-right font-semibold">${fmtRM(wizManualPeriods[i])}</td></tr>`).join('')}
              </tbody>
            </table>
            <div class="flex justify-between pt-2 mt-1 border-t border-ink/10 font-bold text-navy text-sm"><span>Jumlah Komitmen</span><span>${fmtRM(mCommitment)}</span></div>`
@@ -2797,7 +2820,7 @@
       if (hitpayLinkSentAt) {
         return `
       <div class="flex items-center justify-between flex-wrap gap-2">
-        <p class="text-xs text-green-dark">✅ Pautan HitPay dihantar ke WhatsApp pesakit (${new Date(hitpayLinkSentAt).toLocaleTimeString('ms-MY')}) — menunggu bayaran <span class="text-ink/40">(auto-semak setiap 10 saat)</span>.</p>
+        <p class="text-xs text-green-dark">✅ Pautan HitPay dihantar ke WhatsApp pesakit (${new Date(hitpayLinkSentAt).toLocaleTimeString(LCALE())}) — menunggu bayaran <span class="text-ink/40">(auto-semak setiap 10 saat)</span>.</p>
         <div class="flex gap-2 items-center">
           <button type="button" ${hitpayCopying ? 'disabled' : ''} onclick="copyKobHitpayLink('${hitpayMode}')" class="text-[11px] text-navy hover:underline disabled:opacity-50">${hitpayCopying ? 'Menjana…' : '📋 Salin Pautan'}</button>
           <button type="button" onclick="recheckKobPaymentStatus()" class="text-[11px] text-navy hover:underline">🔄 Semak Sekarang</button>
@@ -2894,7 +2917,7 @@
         </div>
         <div>
           <label class="text-xs font-semibold text-ink/60 block mb-1">Jumlah${locked ? ' (Tetap)' : ' (RM)'}</label>
-          <input id="mp-amount" type="number" step="0.01" min="0" value="${amount || ''}" ${locked ? 'readonly' : ''}
+          <input id="mp-amount" type="text" inputmode="decimal" value="${fmtMoneyPlain(amount)}" onblur="formatMoneyInputEl(this)" ${locked ? 'readonly' : ''}
             class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm ${locked ? 'bg-ink/5 text-ink/70' : 'bg-white'}">
         </div>
         <div>
@@ -2915,7 +2938,7 @@
     <div class="flex items-center justify-between gap-2 text-xs py-1.5 border-b border-ink/5 last:border-0">
       <div>
         <span class="font-semibold">${escapeHtml(p.invoice_number || p.receipt_ref)}</span>
-        <span class="text-ink/40 ml-2">${new Date(p.paid_at || p.created_at).toLocaleDateString('ms-MY')}</span>
+        <span class="text-ink/40 ml-2">${new Date(p.paid_at || p.created_at).toLocaleDateString(LCALE())}</span>
       </div>
       <div class="flex items-center gap-2">
         <span class="font-semibold">${fmtRM(p.total)}</span>
@@ -3072,7 +3095,7 @@
 
     async function saveManualPayment() {
       const invoiceNumber = document.getElementById('mp-invoice')?.value.trim();
-      const amount = parseFloat(document.getElementById('mp-amount')?.value);
+      const amount = parseMoneyVal(document.getElementById('mp-amount')?.value);
       const file = document.getElementById('mp-receipt')?.files?.[0];
       if (!invoiceNumber) { banner('Sila isi No. Invois', 'error'); return; }
       if (!amount || amount <= 0) { banner('Sila isi Jumlah yang sah', 'error'); return; }
@@ -3932,6 +3955,7 @@
       const user = await initStaff('kob_list', 'KOB Detail');
       if (!user) return;
       await loadKob();
+      restoreScrollPreserve();
     })();
   </script>
 </body>

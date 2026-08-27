@@ -368,8 +368,11 @@
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
 <script src="../../shared/inventoryDeduct.js"></script>
+<script src="../../shared/utils.js"></script>
 <script src="_shared.js"></script>
 <script>
+    function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
+initScrollPreserve();
 let activePlan   = null;
 let weekNumber   = 1;
 let weekEntry    = null;   // psy_plan_weekly_progress row (sesi pertama)
@@ -406,7 +409,9 @@ function coachSwapHtml() {
   return `<div class="mt-3 pt-3 border-t border-ink/8 flex items-center gap-2 flex-wrap">
     <span class="text-[10px] font-semibold text-ink/45 uppercase tracking-wide">🔁 Coach Ganti Minggu Ini</span>
     <select data-rbac="plan_week.edit" onchange="setSubstituteCoach(this.value)" class="text-xs border border-ink/20 rounded-lg px-2 py-1 bg-white outline-none focus:border-navy">
-      <option value="">— Guna coach utama (${escHtml(primaryCoachName || 'belum ditetapkan')}) —</option>
+      <option value="">${typeof iswGetLang === 'function' && iswGetLang() === 'en'
+        ? `— Use primary coach (${escHtml(primaryCoachName || 'not assigned')}) —`
+        : `— Guna coach utama (${escHtml(primaryCoachName || 'belum ditetapkan')}) —`}</option>
       ${opts}
     </select>
     <span class="text-[11px] text-ink/45 w-full">Untuk minggu ini sahaja (cth coach asal MC/tidak hadir) — pesakit kekal di bawah coach utama.</span>
@@ -438,6 +443,7 @@ function escHtml(s) { const d = document.createElement('div'); d.textContent = S
 
   try {
     await bootPlanWeek();
+    restoreScrollPreserve();
   } catch (e) {
     console.error('[plan-week] boot error:', e);
     banner('Ralat memuatkan halaman: ' + (e.message || e), 'error');
@@ -556,8 +562,8 @@ async function renderWeekListView() {
     const isExt = rowsForWeek.some(r => r.is_extension);
 
     const dateLabel = r => r?.session_date
-      ? new Date(r.session_date).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' })
-      : (r ? new Date(computeWeekRange(activePlan, w).start).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' }) + ' (dijangka)' : '—');
+      ? new Date(r.session_date).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' })
+      : (r ? new Date(computeWeekRange(activePlan, w).start).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' }) + ' (dijangka)' : '—');
 
     const primary = s1 || s2 || rowsForWeek[0] || null;
     const st = statusMap[primary?.status] || fallback;
@@ -568,7 +574,7 @@ async function renderWeekListView() {
 
     html += `<a href="plan-week.html?plan_id=${activePlan.id}&week=${w}&from=${backTab}" class="block border ${st.border} ${isCurrent ? 'ring-2 ring-navy' : ''} rounded-xl p-3 hover:shadow-sm transition">
       <div class="flex items-center justify-between gap-2 mb-1.5">
-        <div class="text-sm font-bold ${isCurrent ? 'text-navy' : 'text-ink/80'}">Minggu ${w}${isExt ? ' <span class="text-[10px] font-semibold text-purple-700">· Tambahan</span>' : ''}${isCurrent ? ' <span class="font-normal text-xs">· Semasa</span>' : ''}</div>
+        <div class="text-sm font-bold ${isCurrent ? 'text-navy' : 'text-ink/80'}"><span>Minggu</span> ${w}${isExt ? ' <span class="text-[10px] font-semibold text-purple-700">· Tambahan</span>' : ''}${isCurrent ? ' <span class="font-normal text-xs">· Semasa</span>' : ''}</div>
         <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold whitespace-nowrap ${st.chip}">${st.label}</span>
       </div>
       ${sessionLines}
@@ -868,8 +874,8 @@ const STATUS_1ON1_MAP = {
 
 function hk1TodayYmd() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
 function hk1AddDaysYmd(ymd, n) { const d = new Date(ymd+'T00:00:00'); d.setDate(d.getDate()+n); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
-function hk1PrettyYmd(ymd) { return ymd ? new Date(ymd+'T00:00:00').toLocaleDateString('ms-MY',{weekday:'short',day:'2-digit',month:'short',year:'numeric'}) : ''; }
-function hk1FmtDT(d) { return d ? new Date(d).toLocaleString('ms-MY',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; }
+function hk1PrettyYmd(ymd) { return ymd ? new Date(ymd+'T00:00:00').toLocaleDateString(LCALE(),{weekday:'short',day:'2-digit',month:'short',year:'numeric'}) : ''; }
+function hk1FmtDT(d) { return d ? new Date(d).toLocaleString(LCALE(),{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; }
 
 // meet_date = HARI SEBENAR pesakit di klinik (dari sesi rawatan minggu ini), bukan
 // Isnin anchor minggu — dashboard "Sesi 1:1 Hari Ini" bergantung pada field ni.
@@ -1440,7 +1446,7 @@ function computeWeekRange(plan, w) {
 
 function updateBreadcrumb() {
   document.getElementById('plan-name-crumb').textContent = activePlan.name;
-  document.getElementById('week-crumb').textContent = `Minggu ${weekNumber}`;
+  document.getElementById('week-crumb').innerHTML = `<span>Minggu</span> ${weekNumber}`;
   const back = document.getElementById('btn-back');
   if (back && patientId) back.href = `patient-hub.html?patient_id=${patientId}&tab=${backTab}`;
   document.getElementById('btn-prev').disabled = weekNumber <= 1;
@@ -1470,13 +1476,13 @@ function renderHero() {
   // tidak ditulis ke DB (session_date kekal null).
   const expectedIso = chainedExpectedDate(weekEntry?.session_day || 1);
 
-  const dayName = r => r?.session_date ? new Date(r.session_date).toLocaleDateString('ms-MY', { weekday: 'short' }) : `Sesi ${r?.session_day || 1}`;
+  const dayName = r => r?.session_date ? new Date(r.session_date).toLocaleDateString(LCALE(), { weekday: 'short' }) : `Sesi ${r?.session_day || 1}`;
 
   // Tab sesi (Jum / Sab) — hanya jika >1 sesi
   const tabs = weekSessions.length > 1
     ? `<div class="flex gap-2 mb-3 flex-wrap">${weekSessions.map((r, i) => {
         const active = weekEntry?.id === r.id;
-        const dstr = r.session_date ? new Date(r.session_date).toLocaleDateString('ms-MY',{day:'2-digit',month:'short'}) : '';
+        const dstr = r.session_date ? new Date(r.session_date).toLocaleDateString(LCALE(),{day:'2-digit',month:'short'}) : '';
         return `<button onclick="selectSession(${i})" class="px-3 py-1.5 rounded-lg text-xs font-bold border transition ${active ? 'bg-navy text-white border-navy' : 'border-ink/20 text-ink/60 hover:bg-cream'}">${dayName(r)} <span class="font-normal opacity-75">${dstr}</span></button>`;
       }).join('')}</div>`
     : '';
@@ -1542,7 +1548,7 @@ function renderHero() {
     : '';
   const attendance = weekEntry?.id
     ? `<div class="mt-4 pt-4 border-t border-ink/8">
-         <div class="text-[11px] font-semibold text-ink/50 uppercase tracking-wide mb-2">Kehadiran ${weekSessions.length > 1 ? dayName(weekEntry) : ''}</div>
+         <div class="text-[11px] font-semibold text-ink/50 uppercase tracking-wide mb-2"><span>Kehadiran</span> ${weekSessions.length > 1 ? dayName(weekEntry) : ''}</div>
          <div class="flex gap-2 flex-wrap items-center">
            ${attBtn('hadir','✅ Hadir','bg-green text-white border-green')}
            ${attBtn('cancel','❌ Tidak Hadir','bg-terracotta text-white border-terracotta')}
@@ -1567,11 +1573,11 @@ function renderHero() {
             ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700" title="Coach ganti minggu ini">🔁 ${escHtml(coachNameById(weekEntry.substitute_coach_id) || 'Coach Ganti')}</span>`
             : `<span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-navy-light text-navy" title="Coach utama pesakit">👤 ${escHtml(primaryCoachName || 'Coach belum ditetapkan')}</span>`}
         </div>
-        <h2 class="text-2xl md:text-3xl font-bold text-ink">Minggu ${weekNumber}</h2>
+        <h2 class="text-2xl md:text-3xl font-bold text-ink"><span>Minggu</span> ${weekNumber}</h2>
         <div class="text-sm text-ink/70 mt-1">
           ${weekEntry?.session_date
-            ? `📅 ${new Date(weekEntry.session_date).toLocaleDateString('ms-MY', { weekday:'long', day:'2-digit', month:'long', year:'numeric' })} · 🕐 ${new Date(weekEntry.session_date).toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' })}`
-            : `<span class="text-ink/45">📅 ${new Date(expectedIso).toLocaleDateString('ms-MY', { weekday:'long', day:'2-digit', month:'long', year:'numeric' })} · <span class="italic">dijangka — belum ditempah</span></span>`}
+            ? `📅 ${new Date(weekEntry.session_date).toLocaleDateString(LCALE(), { weekday:'long', day:'2-digit', month:'long', year:'numeric' })} · 🕐 ${new Date(weekEntry.session_date).toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' })}`
+            : `<span class="text-ink/45">📅 ${new Date(expectedIso).toLocaleDateString(LCALE(), { weekday:'long', day:'2-digit', month:'long', year:'numeric' })} · <span class="italic">dijangka — belum ditempah</span></span>`}
           ${weekEntry?.meet_link ? `<br><a href="${weekEntry.meet_link}" target="_blank" class="inline-flex items-center gap-1 mt-1 text-xs font-semibold text-navy hover:underline bg-navy-light px-2 py-0.5 rounded-lg">🎥 Join Google Meet →</a>` : ''}
         </div>
         ${(() => {
@@ -1594,7 +1600,7 @@ function renderHero() {
       ${weekEntry?.updated_by_name ? `<div class="text-xs text-ink/40 text-right">Dikemaskini oleh<br><span class="font-semibold text-ink/60">${weekEntry.updated_by_name}</span></div>` : ''}
     </div>
     <div class="mt-4 flex items-center gap-3 text-[11px] text-ink/60">
-      <span>Minggu ${weekNumber}/${total}</span>
+      <span><span>Minggu</span> ${weekNumber}/${total}</span>
       <div class="flex-1 bg-ink/10 rounded-full h-1.5">
         <div class="bg-navy rounded-full h-1.5 transition-all" style="width:${pct}%"></div>
       </div>
@@ -1756,7 +1762,7 @@ async function markStatus(status) {
     await removePendingExtensionIfResolved(weekNumber);
   }
 
-  const dayLabel = weekEntry.session_date ? new Date(weekEntry.session_date).toLocaleDateString('ms-MY',{weekday:'long'}) : `Sesi ${weekEntry.session_day || 1}`;
+  const dayLabel = weekEntry.session_date ? new Date(weekEntry.session_date).toLocaleDateString(LCALE(),{weekday:'long'}) : `Sesi ${weekEntry.session_day || 1}`;
   const msgs = {
     hadir:      [`Kehadiran disahkan ✅`, `${dayLabel} Minggu ${weekNumber} — kehadiran anda disahkan oleh Coach ${window.currentUser.full_name}.`],
     reschedule: [`Sesi perlu dijadual semula`, `${dayLabel} Minggu ${weekNumber} perlu ditempah semula.`],
@@ -1773,7 +1779,7 @@ async function markStatus(status) {
 async function resetAttendance() {
   if (!weekEntry?.id) { banner('Tiada sesi untuk minggu ini', 'error'); return; }
   const curLbl = { hadir: 'Hadir', consultation_done: 'Selesai', cancel: 'Tidak Hadir' }[weekEntry.status] || weekEntry.status;
-  const dayLabel = weekEntry.session_date ? new Date(weekEntry.session_date).toLocaleDateString('ms-MY',{weekday:'long'}) : `Sesi ${weekEntry.session_day || 1}`;
+  const dayLabel = weekEntry.session_date ? new Date(weekEntry.session_date).toLocaleDateString(LCALE(),{weekday:'long'}) : `Sesi ${weekEntry.session_day || 1}`;
   if (!confirm(`Reset kehadiran ${dayLabel} Minggu ${weekNumber} (kini: ${curLbl})?\n\nHanya sesi ini yang direset ke 'Ditempah'. Sesi & minggu lain tidak terjejas.`)) return;
   try {
     await window.db.from('psy_plan_weekly_progress').update({
@@ -1831,7 +1837,7 @@ function renderSignoff() {
       <div class="rounded-lg bg-green/10 border border-green/25 px-4 py-3 flex items-start justify-between gap-3 flex-wrap">
         <div>
           <div class="text-sm font-bold text-green-dark flex items-center gap-2">✅ Sesi Selesai</div>
-          <div class="text-xs text-ink/60 mt-0.5">${weekEntry.patient_signed_at ? 'Ditandatangani ' + new Date(weekEntry.patient_signed_at).toLocaleString('ms-MY') : (online ? 'Sesi online — tanpa tandatangan.' : 'Selesai tanpa tandatangan.')}</div>
+          <div class="text-xs text-ink/60 mt-0.5">${weekEntry.patient_signed_at ? 'Ditandatangani ' + new Date(weekEntry.patient_signed_at).toLocaleString(LCALE()) : (online ? 'Sesi online — tanpa tandatangan.' : 'Selesai tanpa tandatangan.')}</div>
         </div>
         <button data-rbac="plan_week.edit" onclick="reopenSession()" class="text-xs font-semibold border border-ink/20 text-ink/60 px-3 py-1.5 rounded-lg hover:bg-cream whitespace-nowrap">↩️ Buka Semula</button>
       </div>
@@ -2180,7 +2186,7 @@ async function setProgramStart(newYmd) {
   }
 
   const shiftTxt = `${deltaDays > 0 ? '+' : ''}${deltaDays} hari`;
-  if (!confirm(`Tetapkan Tarikh Mula Program ke ${newAnchor.toLocaleDateString('ms-MY',{day:'2-digit',month:'long',year:'numeric'})}?\n\nSemua tarikh sesi akan dianjak ${shiftTxt}. Data (vitals, nota, kehadiran) kekal — hanya tarikh berubah.`)) return;
+  if (!confirm(`Tetapkan Tarikh Mula Program ke ${newAnchor.toLocaleDateString(LCALE(),{day:'2-digit',month:'long',year:'numeric'})}?\n\nSemua tarikh sesi akan dianjak ${shiftTxt}. Data (vitals, nota, kehadiran) kekal — hanya tarikh berubah.`)) return;
 
   try {
     await window.db.from('psy_treatment_plans').update({ start_date: newYmd }).eq('id', activePlan.id);
@@ -2207,7 +2213,7 @@ async function remindPatientReschedule() {
   if (!weekEntry?.id) { banner('Tiada sesi.', 'error'); return; }
   if (!patientUserId) { banner('Tiada akaun pesakit untuk dihubungi.', 'error'); return; }
   const dayLabel = weekEntry.session_date
-    ? new Date(weekEntry.session_date).toLocaleDateString('ms-MY', { weekday:'long', day:'2-digit', month:'long' })
+    ? new Date(weekEntry.session_date).toLocaleDateString(LCALE(), { weekday:'long', day:'2-digit', month:'long' })
     : `Sesi ${weekEntry.session_day || 1}`;
   await notify(patientUserId, 'plan',
     'Peringatan: Jadual Semula Sesi',
@@ -2250,7 +2256,7 @@ async function coachReschedule() {
       const d = new Date(sessionAt);
       await notify(patientUserId, 'appointment',
         `Sesi Minggu ${weekNumber} dijadual semula`,
-        `${d.toLocaleDateString('ms-MY',{weekday:'long',day:'2-digit',month:'long'})} · ${d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})} — dijadual semula oleh ${window.currentUser.full_name}.`,
+        `${d.toLocaleDateString(LCALE(),{weekday:'long',day:'2-digit',month:'long'})} · ${d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})} — dijadual semula oleh ${window.currentUser.full_name}.`,
         'plan.html');
     }
     renderHero();
@@ -3068,7 +3074,7 @@ function renderVitalsList(readings) {
   const rows = readings.map(v => {
     const dt = v.reading_date ? new Date(v.reading_date + 'T00:00:00') : new Date(v.created_at);
     const timeStr = v.reading_time ? String(v.reading_time).slice(0, 5) : new Date(v.created_at).toTimeString().slice(0, 5);
-    const dateStr = dt.toLocaleDateString('ms-MY', { day: '2-digit', month: 'short' });
+    const dateStr = dt.toLocaleDateString(LCALE(), { day: '2-digit', month: 'short' });
     const bp = v.bp_systolic ? `${v.bp_systolic}/${v.bp_diastolic || '—'}` : '—';
     const medNote = [v.medications, v.notes].filter(Boolean).map(escHtml).join(' · ');
     return `<tr class="border-t border-ink/8 hover:bg-cream/40"${v.recorded_by_name ? ` title="Direkod oleh ${escHtml(v.recorded_by_name)}"` : ''}>
@@ -3133,7 +3139,7 @@ async function loadFeedback() {
       <div class="flex items-center justify-between gap-2 text-sm"><span class="text-ink/70">📦 Bekalan</span><span>${starRow(fb.supply_rating || 0)} <span class="text-ink/50 text-xs">${fb.supply_rating || 0}/5</span></span></div>
     </div>
     ${fb.comment ? `<div class="bg-cream/50 rounded-lg p-3 text-sm italic text-ink/70">"${fb.comment}"</div>` : ''}
-    <p class="text-[10px] text-ink/40 mt-3 text-right">Dihantar: ${fb.created_at ? new Date(fb.created_at).toLocaleDateString('ms-MY') : '—'}</p>`;
+    <p class="text-[10px] text-ink/40 mt-3 text-right">Dihantar: ${fb.created_at ? new Date(fb.created_at).toLocaleDateString(LCALE()) : '—'}</p>`;
 }
 
 // ── Dokumen Minggu Ini ────────────────────────────────
@@ -3193,7 +3199,7 @@ async function renderWeekDocs(docs) {
           <span class="text-sm font-medium text-ink">${escHtml(fileName)}</span>
         </div>
       </td>
-      <td class="px-3 py-3 text-xs whitespace-nowrap">${dt.toLocaleDateString('ms-MY',{day:'2-digit',month:'short',year:'numeric'})}, ${dt.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}</td>
+      <td class="px-3 py-3 text-xs whitespace-nowrap">${dt.toLocaleDateString(LCALE(),{day:'2-digit',month:'short',year:'numeric'})}, ${dt.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}</td>
       <td class="px-3 py-3 text-xs">${wdocFmtSize(d.file_size)}</td>
       <td class="px-5 py-3 text-right whitespace-nowrap">
         <a href="${url}" target="_blank" class="inline-flex w-8 h-8 items-center justify-center rounded-lg border border-ink/10 hover:bg-ink/5 mr-1" title="Lihat">

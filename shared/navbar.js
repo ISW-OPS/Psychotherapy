@@ -919,7 +919,7 @@ async function loadNotifPanel() {
             ${!n.is_read ? '<span class="w-1.5 h-1.5 bg-navy rounded-full flex-shrink-0 mt-1.5"></span>' : ''}
           </div>
           ${n.body ? `<div class="text-xs text-ink/60 mt-0.5 leading-relaxed">${n.body}</div>` : ''}
-          <div class="text-[10px] text-ink/35 mt-1">${new Date(n.created_at).toLocaleString('ms-MY', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
+          <div class="text-[10px] text-ink/35 mt-1">${new Date(n.created_at).toLocaleString((window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
         </div>
         <button onclick="deleteNotif('${n.id}')" title="Padam"
           class="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-ink/25 hover:bg-terracotta/15 hover:text-terracotta transition-colors opacity-0 group-hover:opacity-100 text-xs leading-none mt-0.5">✕</button>

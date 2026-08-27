@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-08-24T07:12:47.775897Z
+-- Generated: 2026-08-27T04:29:59.948476Z
 -- Jumlah fail: 30
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -1033,6 +1033,8 @@ BEGIN
       address                 = COALESCE(NULLIF(address, ''), NEW.address),
       emergency_contact_name  = COALESCE(NULLIF(emergency_contact_name, ''), NEW.emergency_contact_name),
       emergency_contact_phone = COALESCE(NULLIF(emergency_contact_phone, ''), NEW.emergency_contact_phone),
+      emergency_contact_relationship = COALESCE(NULLIF(emergency_contact_relationship, ''), NEW.emergency_contact_relationship),
+      emergency_contact_email = COALESCE(NULLIF(emergency_contact_email, ''), NEW.emergency_contact_email),
       referral_source         = COALESCE(NULLIF(referral_source, ''), NEW.referral_source),
       medical_condition       = COALESCE(NULLIF(medical_condition, ''), NEW.medical_condition),
       condition_duration      = COALESCE(NULLIF(condition_duration, ''), NEW.condition_duration),
@@ -1217,12 +1219,14 @@ CREATE TABLE IF NOT EXISTS psy_packages (
   session_days_options JSONB DEFAULT '[]',
   -- lain-lain
   extension_price_per_week NUMERIC(10,2) DEFAULT 50,
+  extension_price_per_session NUMERIC(10,2) DEFAULT 25,
   meet_link TEXT,
   -- bayaran ansuran — Deposit (Bayaran Pertama) + Tempoh(bulan) + Bayaran
   -- Bulanan RATA. Pesakit boleh top-up jumlah bebas bila-bila (payment.html),
   -- tapi jadual checkpoint (psy_kob_installment_checkpoints) dijana dari
   -- struktur rata ni — bukan checkpoint sewenang-wenang lagi.
   installment_allowed BOOLEAN NOT NULL DEFAULT false,
+  installment_full_price NUMERIC(10,2),
   installment_deposit_amount NUMERIC(10,2),
   installment_duration_months INT,
   installment_monthly_amount NUMERIC(10,2),
@@ -1232,6 +1236,7 @@ CREATE TABLE IF NOT EXISTS psy_packages (
   nilai_program NUMERIC(10,2),
   harga_asal NUMERIC(10,2),
   today_price NUMERIC(10,2),
+  today_installment_full_price NUMERIC(10,2),
   today_installment_deposit_amount NUMERIC(10,2),
   today_installment_duration_months INT,
   today_installment_monthly_amount NUMERIC(10,2),
@@ -1311,12 +1316,17 @@ COMMENT ON COLUMN psy_packages.session_days_options IS
 COMMENT ON COLUMN psy_packages.extension_price_per_week IS
   'Harga (RM) untuk tambah satu minggu rawatan bila patient miss sesi. Default RM 50.';
 
+COMMENT ON COLUMN psy_packages.extension_price_per_session IS
+  'Harga (RM) untuk tambah SATU sesi tunggal (bukan minggu penuh) pada minggu sedia ada — cth butang "Tambah Sesi" di patient-hub.html. Default RM 25.';
+
+COMMENT ON COLUMN psy_packages.installment_full_price IS
+  'Harga "Penuh" rujukan utk pelan Ansuran tier Now — BUKAN sama dgn price (Harga Bayaran Penuh/Full Payment), biasanya LEBIH TINGGI (kos bayar ansuran). Jumlah Komitmen (deposit + baki bulanan) mesti sepadan dgn nilai ni, disahkan di editor pakej-edit.html.';
 COMMENT ON COLUMN psy_packages.installment_deposit_amount IS
   'Jumlah deposit ("Bayaran Pertama") wajib dibayar semasa aktifkan pakej (ansuran). Bayaran ini terus mengaktifkan pakej.';
 COMMENT ON COLUMN psy_packages.installment_duration_months IS
   'Jumlah bayaran ansuran keseluruhan TERMASUK Bayaran Pertama (cth 8 = 1 deposit + 7 bayaran bulanan).';
 COMMENT ON COLUMN psy_packages.installment_monthly_amount IS
-  'Amaun RATA setiap bulan (bulan ke-2 hingga installment_duration_months). Jumlah Komitmen = deposit + (duration-1) × amaun ni — TAK semestinya sama dengan price (boleh lebih tinggi, kos bayar ansuran).';
+  'Amaun RATA setiap bulan (bulan ke-2 hingga installment_duration_months). Jumlah Komitmen = deposit + (duration-1) × amaun ni — mesti sepadan dgn installment_full_price (BUKAN dgn price, boleh lebih tinggi, kos bayar ansuran).';
 
 COMMENT ON COLUMN psy_packages.meet_link IS
   'Pautan Gmeet recurring untuk pakej. Dipaparkan kepada patient bila minggu semasa adalah online/both.';
@@ -1327,6 +1337,8 @@ COMMENT ON COLUMN psy_packages.harga_asal IS
   'Harga Asal — asas kira % diskaun (display sahaja). % diskaun dikira LIVE = round((1 - tier_price/harga_asal)*100), bukan disimpan.';
 COMMENT ON COLUMN psy_packages.today_price IS
   'Harga Bayaran Penuh — tier "Today" (eksklusif semasa pesakit masih dalam sesi KOB langsung, package_payment_status=pending). NULL = pakej ini tiada tier Today berasingan, fallback ke price (tier Now) di semua tempat.';
+COMMENT ON COLUMN psy_packages.today_installment_full_price IS
+  'Sama makna dgn installment_full_price tapi utk tier Today. NULL = fallback ke installment_full_price (tier Now).';
 COMMENT ON COLUMN psy_packages.today_installment_deposit_amount IS
   'Deposit ("Bayaran Pertama") — tier Today ansuran. NULL = fallback ke installment_deposit_amount (tier Now).';
 COMMENT ON COLUMN psy_packages.today_installment_duration_months IS
