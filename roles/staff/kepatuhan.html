@@ -214,6 +214,55 @@ const STATUS5 = { st:'Aktif & Konsisten', t:'Aktif', sd:'Tidak Konsisten', r:'Pe
 const STATUS5_COLOR = { st:'text-green-700', t:'text-green-600', sd:'text-amber-600', r:'text-orange-600', sr:'text-red-600', none:'text-ink/40' };
 
 function escHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+const MOOD_EMOJI = { Gembira:'😊', Sedih:'😔', Cemas:'😟', Marah:'😠', Burnout:'😩', Biasa:'😐' };
+// Susun jawapan sehari kepada 2 kad (Catatan Harian + Reaksi Pemulihan) — sama gaya
+// dgn skrin "Semakan Jawapan" pesakit (roles/patient/kepatuhan.html) supaya staff
+// nampak persis apa yang pesakit isi.
+function dayReviewCards(l){
+  if(!l) return '<span class="text-[11px] text-ink/35">Tiada amalan diisi.</span>';
+  const jaw = l.jawapan || {};
+  const catatanLines = Object.entries(jaw)
+    .filter(([k])=>!k.endsWith('__text') && !k.includes('__lain__') && k!=='reaksi_pemulihan' && k!=='reaksi_pemulihan_teruk' && k!=='__mood')
+    .map(([k,v])=>{
+      const def = ITEM_INDEX[`${l.fasa}::${k}`]; if(!def) return null;
+      let valLbl = Array.isArray(v)?v.map(x=>def.optMap[x]||x).join(', '):(def.optMap[v]||v);
+      const txt = jaw[k+'__text']; if(txt) valLbl += ` (${escHtml(txt)})`;
+      return `<b>${escHtml(def.label)}:</b> ${escHtml(valLbl)}`;
+    }).filter(Boolean);
+  const mood = jaw.__mood && jaw.__mood.primary;
+  if(mood) catatanLines.push(`<b>Mood:</b> ${MOOD_EMOJI[mood]||''} ${escHtml(mood)}`);
+
+  const terukSet = new Set(Array.isArray(jaw.reaksi_pemulihan_teruk) ? jaw.reaksi_pemulihan_teruk : []);
+  const selArr = Array.isArray(jaw.reaksi_pemulihan) ? jaw.reaksi_pemulihan : [];
+  const groups = {}, order = [];
+  selArr.forEach(x=>{
+    const s = String(x);
+    const idx = s.indexOf('::');
+    // Format standard simpan "Kumpulan::Simptom"; rekod lama (pra-redesign checklist
+    // Reaksi Pemulihan) simpan slug mentah tanpa kumpulan — label berasingan drpd
+    // "Lain-lain" (medan teks bebas sebenar pesakit) supaya staff tak keliru.
+    const g = idx>=0 ? s.slice(0,idx) : 'Simptom (data lama)';
+    let lbl = idx>=0 ? s.slice(idx+2) : s.replace(/_/g,' ').replace(/^./,c=>c.toUpperCase());
+    if(terukSet.has(s)) lbl += ' (Teruk)';
+    if(!groups[g]){ groups[g]=[]; order.push(g); }
+    groups[g].push(escHtml(lbl));
+  });
+  Object.entries(jaw).forEach(([k,v])=>{
+    if(k.startsWith('reaksi_pemulihan__lain__') && v){
+      if(!groups['Lain-lain']){ groups['Lain-lain']=[]; order.push('Lain-lain'); }
+      groups['Lain-lain'].push(`Lain-lain: ${escHtml(v)}`);
+    }
+  });
+  const reaksiLines = order.map(g=>`<b>${escHtml(g)}:</b> ${groups[g].join(', ')}`);
+  if(!reaksiLines.length) reaksiLines.push('Tiada reaksi dicatat');
+
+  const card = (title, icon, lines) => `
+    <div class="rounded-xl border border-ink/10 p-3">
+      <div class="text-[12px] font-bold text-ink mb-1.5 flex items-center gap-1.5">${icon} ${title}</div>
+      <ul class="space-y-1">${lines.length ? lines.map(x=>`<li class="text-[11px] text-ink/65 flex gap-1.5"><span class="text-green-dark shrink-0">•</span><span>${x}</span></li>`).join('') : '<li class="text-[11px] text-ink/35">—</li>'}</ul>
+    </div>`;
+  return `<div class="grid sm:grid-cols-2 gap-3">${card('Catatan Harian','🍯',catatanLines)}${card('Reaksi Pemulihan','💜',reaksiLines)}</div>`;
+}
 function ymd(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
 function addDays(ds,n){ const d=new Date(ds+'T00:00:00'); d.setDate(d.getDate()+n); return ymd(d); }
 function mondayOf(ds){ const d=new Date(ds+'T00:00:00'); const off=(d.getDay()+6)%7; return addDays(ds,-off); }
@@ -544,22 +593,7 @@ async function openModal(id, week){
     const d = new Date(ds+'T00:00:00');
     const head = `${DAY_SHORT[d.getDay()]} ${d.getDate()}/${d.getMonth()+1}`;
     const st = dayStatus(l); dCount[st.key]++;
-    let itemsHtml = '<span class="text-[11px] text-ink/35">Tiada amalan diisi.</span>';
-    if (l){
-      itemsHtml = Object.entries(l.jawapan||{}).filter(([k])=>!k.endsWith('__text') && !k.includes('__lain__')).map(([k,v])=>{
-        const def = ITEM_INDEX[`${l.fasa}::${k}`]; if(!def) return '';
-        let valLbl;
-        if(k==='reaksi_pemulihan'){
-          const arr=Array.isArray(v)?v.map(x=>String(x).split('::').pop()):[];
-          const lains=Object.entries(l.jawapan||{}).filter(([kk])=>kk.startsWith('reaksi_pemulihan__lain__')).map(([,vv])=>vv).filter(Boolean);
-          valLbl=[...arr,...lains].join(', ');
-        } else {
-          valLbl = Array.isArray(v)?v.map(x=>def.optMap[x]||x).join(', '):(def.optMap[v]||v);
-          const txt = l.jawapan[k+'__text']; if(txt) valLbl += ` (${escHtml(txt)})`;
-        }
-        return `<div class="flex justify-between gap-3 text-[11px] py-0.5"><span class="text-ink/50">${escHtml(def.label)}</span><span class="text-ink font-medium text-right">${escHtml(valLbl)}</span></div>`;
-      }).join('') || '<span class="text-[11px] text-ink/35">Tiada amalan diisi.</span>';
-    }
+    const itemsHtml = dayReviewCards(l);
     const cell = (label,icon,cls,cnt) => `<td class="py-2.5 px-3"><div class="flex items-center gap-1.5"><span class="${cls}">${icon}</span><div><div class="text-[12px] font-semibold ${cls}">${label}</div><div class="text-[10px] text-ink/40">${cnt}</div></div></div></td>`;
     const actBtn = st.key==='lengkap'
       ? `<button onclick="document.getElementById('dd-${i}').classList.toggle('hidden')" class="text-[11px] font-semibold border border-ink/15 hover:border-navy text-ink/60 px-3 py-1.5 rounded-lg">Lihat Butiran</button>`
@@ -570,9 +604,9 @@ async function openModal(id, week){
       <td class="py-2.5 px-3 text-[11px] text-ink/30">—</td>
       <td class="py-2.5 px-3 text-[11px] text-ink/30">—</td>
       <td class="py-2.5 px-3 min-w-[90px]"><div class="text-[12px] font-bold text-ink">${st.prog}%</div><div class="h-1.5 rounded-full bg-ink/10 mt-1 overflow-hidden"><div class="h-full rounded-full ${st.prog>=85?'bg-green-500':st.prog>=50?'bg-amber-500':'bg-red-400'}" style="width:${st.prog}%"></div></div></td>
-      <td class="py-2.5 px-3 text-right whitespace-nowrap"><div class="inline-flex items-center gap-1.5">${actBtn}<button onclick="document.getElementById('dd-${i}').classList.toggle('hidden')" class="w-7 h-7 rounded-lg hover:bg-ink/5 text-ink/40">⌄</button></div></td>
+      <td class="py-2.5 px-3 text-right whitespace-nowrap">${actBtn}</td>
     </tr>
-    <tr id="dd-${i}" class="hidden bg-ink/[0.015]"><td colspan="6" class="px-4 py-2.5"><div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6">${itemsHtml}</div></td></tr>`;
+    <tr id="dd-${i}" class="hidden bg-ink/[0.015]"><td colspan="6" class="px-4 py-2.5">${itemsHtml}</td></tr>`;
   }
   // Ringkasan donut (Lengkap/Sebahagian/Belum)
   let dAcc=0; const dStops=[];
@@ -873,11 +907,15 @@ function exportExcel(filename, sheets){
 }
 
 // ════════════ (1) PER PESAKIT ════════════
+// Kunci meta/dalaman jawapan — bukan amalan, jangan jadi lajur berasingan dlm Excel/PDF
+const JAWAPAN_META_KEYS = new Set(['reaksi_pemulihan_teruk', '__reaksi', '__by']);
 function patientExportData(r){
   const fasa=r.logs[0]?.fasa;
   const keys=[];
-  r.logs.forEach(l=>Object.keys(l.jawapan||{}).forEach(k=>{ if(!k.endsWith('__text') && !k.includes('__lain__') && !keys.includes(k)) keys.push(k); }));
+  r.logs.forEach(l=>Object.keys(l.jawapan||{}).forEach(k=>{ if(!k.endsWith('__text') && !k.includes('__lain__') && !JAWAPAN_META_KEYS.has(k) && k!=='__mood' && !keys.includes(k)) keys.push(k); }));
+  const hasMood = r.logs.some(l => l.jawapan?.__mood?.primary);
   const labels=keys.map(k=>ITEM_INDEX[`${fasa}::${k}`]?.label||k);
+  if (hasMood) labels.push('Mood');
   const byDate={}; r.logs.forEach(l=>byDate[l.log_date]=l);
   const statusOf=(l)=>{ if(!l) return 'Belum isi'; const s=l.skor_harian!=null?l.skor_harian:0; return s>=85?'Lengkap':'Sebahagian'; };
   const body=[];
@@ -889,8 +927,14 @@ function patientExportData(r){
       const v=l.jawapan?.[k], def=ITEM_INDEX[`${fasa}::${k}`];
       let lbl;
       if(k==='reaksi_pemulihan'){
-        // value = array "Kumpulan::Simptom" → papar simptom; + Lain-lain per kumpulan
-        const arr=Array.isArray(v)?v.map(x=>String(x).split('::').pop()):[];
+        // value = array "Kumpulan::Simptom" → papar simptom (+ tanda Teruk); rekod lama simpan slug
+        // mentah tanpa kumpulan (cth "sakit_kepala") — sama logik dgn dayReviewCards().
+        const terukSet = new Set(Array.isArray(l.jawapan?.reaksi_pemulihan_teruk) ? l.jawapan.reaksi_pemulihan_teruk : []);
+        const arr=Array.isArray(v)?v.map(x=>{
+          const s=String(x);
+          const t = s.includes('::') ? s.split('::').pop() : s.replace(/_/g,' ').replace(/^./,c=>c.toUpperCase());
+          return terukSet.has(s) ? `${t} (Teruk)` : t;
+        }):[];
         const lains=Object.entries(l.jawapan||{}).filter(([kk])=>kk.startsWith('reaksi_pemulihan__lain__')).map(([,vv])=>vv).filter(Boolean);
         lbl=[...arr,...lains].join(', ');
       } else {
@@ -899,6 +943,7 @@ function patientExportData(r){
       }
       row.push(lbl);
     });
+    if (hasMood) row.push(l?.jawapan?.__mood?.primary || '');
     body.push(row);
   }
   // Baris % mingguan setiap amalan (Pilihan B: denominator = hari berlalu)
@@ -912,6 +957,7 @@ function patientExportData(r){
     pctRow.push(p!=null?p+'%':'—');
     pctList.push([def.label||k, p!=null?p+'%':'—', p!=null&&p<=50]);
   });
+  if (hasMood) pctRow.push('—');
   return { head:['Hari','Status','Skor',...labels], body, pctRow, pctList };
 }
 function exportPatientExcel(){

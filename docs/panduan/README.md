@@ -58,6 +58,15 @@ Tanda: **`*`** = field wajib. 🟢 = staf. 🔵 = pesakit.
 
 ---
 
+## 📸 Manual visual (screenshot, print-ready)
+
+- [Manual_Pengguna_Staf_UTAMA.html](Manual_Pengguna_Staf_UTAMA.html) — versi ringkas, 1 screenshot + 1 perenggan per modul, liputan kumpulan UTAMA penuh (12 modul).
+- [Manual_Pengguna_Staf_Detail.html](Manual_Pengguna_Staf_Detail.html) / [Manual_Pengguna_Staf_Detail.docx](Manual_Pengguna_Staf_Detail.docx) — versi **sangat terperinci, LENGKAP SEMUA MODUL STAF**: langkah bernombor, screenshot dianotasi (bulatan merah tunjuk butang), ikut alur sampai destinasi seterusnya. Merangkumi ketujuh-tujuh kumpulan nav (UTAMA, OPERASI, KOMUNIKASI, PENGETAHUAN, LAPORAN, PENTADBIRAN, SISTEM) — 32 bab, ~160 screenshot, semua flow dijalankan betul-betul dalam sistem testing (bukan simulasi). Versi .docx boleh terus diedit dalam Word.
+
+Buka dalam pelayar → Cetak (Ctrl+P) → Save as PDF.
+
+---
+
 ## Rujukan silang
 
 - Skema data & jadual: [`docs/sistem/02-pangkalan-data.md`](../sistem/02-pangkalan-data.md)

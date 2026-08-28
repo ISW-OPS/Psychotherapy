@@ -136,7 +136,6 @@ const STAFF_NAV_MASTER = [
       { id: 'sesi_1on1', url: 'sesi-1on1.html', icon: '🧑‍💼', label: 'Sesi 1:1' },
       { id: 'kepatuhan', url: 'kepatuhan.html', icon: '📊', label: 'Poll' },
       { id: 'reaksi_advice', url: 'reaksi-item.html', icon: '🩹', label: 'Reaksi & Tindakan' },
-      { id: 'psy_vitals', url: 'vitals.html', icon: '💓', label: 'Bacaan Vitals' },
       { id: 'emergency', url: 'emergency.html', icon: '🚨', label: 'Red Emergency Protocol' },
       { id: 'peristiwa', url: 'peristiwa.html', icon: '🏥', label: 'Rekod Klinikal Pesakit' },
       { id: 'dna_test', url: 'dna-test-list.html', icon: '🧬', label: 'DNA Test' },
