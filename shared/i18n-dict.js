@@ -7651,6 +7651,8 @@ window.ISW_I18N_EXTRA = {
   "📌 Tarikh Mula Program": "📌 Program Start Date",
   "👤 Coach belum ditetapkan": "👤 No coach assigned",
   "🔁 Coach Ganti": "🔁 Substitute Coach",
+  "🔁 Selaraskan Tarikh Akan Datang": "🔁 Resync Upcoming Dates",
+  "Betulkan tarikh sesi AKAN DATANG (Ditempah/belum hadir) yang masih tersekat pada jadual asal program — selaraskan supaya bersambung terus dari sesi Hadir yang terakhir. Sesi yang dah Hadir tidak disentuh.": "Fix UPCOMING session dates (Booked/not yet attended) still stuck on the plan's original schedule — resync them to continue directly from the last Attended session. Already-attended sessions are not touched.",
   "Coach ganti minggu ini": "Substitute coach this week",
   "Coach utama pesakit": "Patient's primary coach",
   "· ✅ Hadir": "· ✅ Attended",
