@@ -6638,12 +6638,13 @@
       }
     }
 
-    // SELARASKAN TARIKH AKAN DATANG — betulkan session_date sesi yang BELUM Hadir
-    // (booked/pending/reschedule) yang masih tersekat pada jadual asal program (dijana
-    // sekali sahaja masa plan dicipta), walaupun pesakit dah jauh melepasi tarikh itu
-    // ikut kehadiran sebenar. Selaraskan supaya bersambung +7 hari/minggu dari sesi
-    // HADIR yang terakhir — logik sama dgn ovExpectedDate() (paparan "dijangka"), tapi
-    // di sini ditulis terus ke DB. Sesi yang dah Hadir/Consultation Done TIDAK disentuh.
+    // SELARASKAN TARIKH AKAN DATANG — betulkan session_date sesi 'pending'/'booked' yang
+    // masih tersekat pada jadual asal program (dijana sekali sahaja masa plan dicipta),
+    // walaupun pesakit dah jauh melepasi tarikh itu ikut kehadiran sebenar. Selaraskan
+    // supaya bersambung +7 hari/minggu dari sesi HADIR yang terakhir — logik sama dgn
+    // ovExpectedDate() (paparan "dijangka"), tapi di sini ditulis terus ke DB, dan status
+    // turut ditanda 'booked' (Ditempah) supaya konsisten dgn tarikh baharu. Sesi yang dah
+    // Hadir/Consultation Done, atau Cancel/Jadual Semula, TIDAK disentuh.
     async function resyncFutureBookedDates() {
       if (!activePlan) return;
       if (!(canEdit || window.currentUser?.staff_role === 'super_admin')) { banner('Anda hanya boleh melihat rekod pesakit ini.', 'error'); return; }
@@ -6665,9 +6666,12 @@
         ? activePlan.preferred_days
         : PAIR[activePlan.preferred_pair];
 
+      // Hanya sesi 'pending' (Belum Tempah) & 'booked' (Ditempah) diselaraskan — status
+      // lain (cancel/reschedule) ada makna eksplisit sendiri, jangan diusik senyap-senyap.
+      const TOUCH = new Set(['pending', 'booked']);
       const updates = [];
       for (const r of ovWeeklyRows) {
-        if (KEEP.has(r.status)) continue;                 // jangan sentuh yang dah hadir
+        if (!TOUCH.has(r.status)) continue;
         if (r.week_number <= anchorWeek) continue;         // hanya minggu SELEPAS anchor
         if (r.is_extension) continue;                      // minggu tambahan ikut aliran bayaran sendiri
         const day = r.session_day || 1;
@@ -6680,18 +6684,19 @@
         } else if (day === 2) {
           d.setDate(d.getDate() + 1);
         }
-        if (r.session_date && new Date(r.session_date).getTime() === d.getTime()) continue; // tiada perubahan
+        const dateUnchanged = r.session_date && new Date(r.session_date).getTime() === d.getTime();
+        if (dateUnchanged && r.status === 'booked') continue; // tiada perubahan langsung
         updates.push({ id: r.id, session_date: d.toISOString(), week: r.week_number, day });
       }
 
       if (!updates.length) { banner('Semua tarikh sesi akan datang dah selaras — tiada perubahan.'); return; }
       const weeksTouched = [...new Set(updates.map(u => u.week))].sort((a, b) => a - b);
-      if (!confirm(`Selaraskan tarikh ${updates.length} sesi akan datang (Minggu: ${weeksTouched.join(', ')}) supaya bersambung dari sesi Hadir terakhir (Minggu ${anchorWeek})?\n\n• Hanya sesi yang BELUM Hadir disentuh\n• Tarikh sesi Hadir sedia ada TIDAK berubah\n\nTeruskan?`)) return;
+      if (!confirm(`Selaraskan tarikh ${updates.length} sesi akan datang (Minggu: ${weeksTouched.join(', ')}) supaya bersambung dari sesi Hadir terakhir (Minggu ${anchorWeek})?\n\n• Tarikh ditetapkan + status ditanda "Ditempah"\n• Hanya sesi Belum Tempah/Ditempah disentuh (bukan Cancel/Jadual Semula)\n• Tarikh sesi Hadir sedia ada TIDAK berubah\n\nTeruskan?`)) return;
 
       try {
         for (const u of updates) {
           const { error } = await window.db.from('psy_plan_weekly_progress')
-            .update({ session_date: u.session_date }).eq('id', u.id);
+            .update({ session_date: u.session_date, status: 'booked' }).eq('id', u.id);
           if (error) throw error;
         }
         await auditLog('plan.resync_future_dates', activePlan.id, { updated: updates.length, anchor_week: anchorWeek, weeks: weeksTouched });
