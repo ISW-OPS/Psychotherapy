@@ -249,12 +249,11 @@ function removeAnnImage() {
   document.getElementById('btn-remove-img').classList.add('hidden');
 }
 
-let items = [];          // merged announcements + events
+let items = [];
 let statusFilter = '';
 let page = 1;
 const PAGE_SIZE = 8;
 
-const TYPE_EMOJI = { kelas:'🧘', webinar:'🎥', komuniti:'🤝', challenge:'🏆', manzil:'🕌' };
 const STATUS_META = {
   aktif:       { l:'Aktif',        c:'bg-green/10 text-green-dark', dot:'bg-green' },
   dijadualkan: { l:'Dijadualkan',  c:'bg-navy/10 text-navy',        dot:'bg-navy' },
@@ -284,17 +283,10 @@ const ICON = {
 };
 
 function statusOf(it) {
-  if (it._kind === 'announcement') {
-    if (!it.raw.is_active) return 'draft';
-    if (it.raw.expires_at && new Date(it.raw.expires_at) < new Date()) return 'tamat';
-    return 'aktif';
-  }
-  const e = it.raw;
-  if (e.status === 'draft') return 'draft';
-  if (e.status === 'cancelled' || e.status === 'completed') return 'tamat';
-  const ref = e.end_at ? new Date(e.end_at) : new Date(e.start_at);
-  if (ref < new Date()) return 'tamat';
-  return new Date(e.start_at) > new Date() ? 'dijadualkan' : 'aktif';
+  if (!it.raw.is_active) return 'draft';
+  if (it.raw.expires_at && new Date(it.raw.expires_at) < new Date()) return 'tamat';
+  if (it.raw.starts_at && new Date(it.raw.starts_at) > new Date()) return 'dijadualkan';
+  return 'aktif';
 }
 function audLabel(aud) {
   if (!Array.isArray(aud) || !aud.length) return 'Semua Pengguna';
@@ -307,26 +299,16 @@ function fmtDate(d) { return d ? new Date(d).toLocaleDateString(LCALE(), { day:'
 function fmtTime(d) { return d ? new Date(d).toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' }) : ''; }
 function thumbHtml(it) {
   if (it.image) return `<img src="${it.image}" alt="" class="w-14 h-12 rounded-lg object-cover flex-shrink-0">`;
-  const emoji = it._kind === 'event' ? (TYPE_EMOJI[it.raw.type] || '📅') : '📢';
-  const grad = it._kind === 'event' ? 'from-teal to-navy' : 'from-navy to-green-dark';
-  return `<div class="w-14 h-12 rounded-lg bg-gradient-to-br ${grad} flex items-center justify-center text-white text-lg flex-shrink-0">${emoji}</div>`;
+  return `<div class="w-14 h-12 rounded-lg bg-gradient-to-br from-navy to-green-dark flex items-center justify-center text-white text-lg flex-shrink-0">📢</div>`;
 }
 
 async function loadAnn() {
-  const [annRes, evRes] = await Promise.all([
-    window.db.from('psy_announcements').select('*').order('created_at', { ascending: false }),
-    window.db.from('psy_events').select('*').order('start_at', { ascending: false }),
-  ]);
-  allAnn = annRes.data || [];                       // announcements (untuk modal edit cepat)
-  const anns = allAnn.map(a => ({
+  const { data } = await window.db.from('psy_announcements').select('*').order('created_at', { ascending: false });
+  allAnn = data || [];
+  items = allAnn.map(a => ({
     _kind:'announcement', id:a.id, title:a.title, body:a.body, image:a.image_url,
     category:a.category || a.tag, dateAt:a.created_at, audience:a.audience, updatedAt:a.created_at, raw:a,
-  }));
-  const evs = (evRes.data || []).map(e => ({
-    _kind:'event', id:e.id, title:e.title, body:e.description, image:e.cover_image,
-    category:e.tag || e.type, dateAt:e.start_at, audience:e.audience, updatedAt:e.updated_at || e.created_at, raw:e,
-  }));
-  items = [...anns, ...evs].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  })).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
   renderTabs();
   populateCatFilter();
   renderTable();
@@ -401,17 +383,20 @@ function renderTable() {
       <td class="px-3">${it.category ? `<span class="text-[12px] font-semibold ${catStyle(it.category)}">${it.category}</span>` : '<span class="text-ink/30">—</span>'}</td>
       <td class="px-3 whitespace-nowrap">
         <div class="text-[12px] text-ink/70">${fmtDate(it.dateAt)}</div>
-        ${it._kind === 'event' ? `<div class="text-[10px] text-ink/40 mt-0.5">${fmtTime(it.dateAt)}</div>` : ''}
       </td>
       <td class="px-3 text-[12px] text-ink/65 whitespace-nowrap">${audLabel(it.audience)}</td>
       <td class="px-3"><span class="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full ${sm.c}"><span class="w-1.5 h-1.5 rounded-full ${sm.dot}"></span>${sm.l}</span></td>
       <td class="px-3 text-[11px] text-ink/45 whitespace-nowrap">${fmtDate(it.updatedAt)}<br><span class="text-ink/30">${fmtTime(it.updatedAt)}</span></td>
       <td class="pl-3">
-        <div class="flex items-center justify-end gap-0.5">
-          <button onclick="viewItem('${it._kind}','${it.id}')" title="Lihat" class="w-8 h-8 rounded-lg hover:bg-ink/8 text-ink/45 flex items-center justify-center">${ICON.eye}</button>
-          ${canEdit ? `<button onclick="editItem('${it._kind}','${it.id}')" title="Edit" data-rbac="announcements.edit" class="w-8 h-8 rounded-lg hover:bg-navy/10 text-navy flex items-center justify-center">${ICON.edit}</button>` : ''}
-          ${canDel ? `<button onclick="delItem('${it._kind}','${it.id}')" title="Padam" data-rbac="announcements.delete" class="w-8 h-8 rounded-lg hover:bg-terracotta/10 text-terracotta flex items-center justify-center">${ICON.trash}</button>` : ''}
-          ${canEdit ? `<button onclick="toggleStatus('${it._kind}','${it.id}')" title="Aktif/Nyahaktif" data-rbac="announcements.edit" class="w-8 h-8 rounded-lg hover:bg-ink/8 text-ink/40 flex items-center justify-center">${ICON.kebab}</button>` : ''}
+        <div class="flex items-center justify-end">
+          <div class="relative inline-block">
+            <button onclick="toggleMenu(event,'${it._kind}_${it.id}')" title="Tindakan" class="w-8 h-8 rounded-lg hover:bg-ink/8 text-ink/45 flex items-center justify-center">${ICON.kebab}</button>
+            <div id="menu-${it._kind}_${it.id}" class="hidden absolute right-0 top-9 z-20 w-48 bg-white rounded-xl border border-ink/10 shadow-lg py-1.5">
+              <button onclick="viewItem('${it._kind}','${it.id}')" class="w-full text-left px-3.5 py-2 text-sm text-ink/70 hover:bg-cream/60 flex items-center gap-2.5">${ICON.eye} Lihat Detail</button>
+              ${canEdit ? `<button onclick="editItem('${it._kind}','${it.id}')" data-rbac="announcements.edit" class="w-full text-left px-3.5 py-2 text-sm text-ink/70 hover:bg-cream/60 flex items-center gap-2.5">${ICON.edit} Edit</button>` : ''}
+              ${canDel ? `<button onclick="delItem('${it._kind}','${it.id}')" data-rbac="announcements.delete" class="w-full text-left px-3.5 py-2 text-sm text-terracotta hover:bg-terracotta/10 flex items-center gap-2.5">${ICON.trash} Padam</button>` : ''}
+            </div>
+          </div>
         </div>
       </td>
     </tr>`;
@@ -431,33 +416,25 @@ function renderTable() {
 function goPage(p) { page = Math.max(1, p); renderTable(); }
 
 function viewItem(kind, id) {
-  location.href = kind === 'event' ? ('acara-detail.html?id=' + id) : ('announcement-detail.html?id=' + id);
+  location.href = 'announcement-detail.html?id=' + id;
 }
 function editItem(kind, id) {
-  location.href = 'pengumuman-edit.html?kind=' + kind + '&id=' + id;
+  location.href = 'pengumuman-edit.html?id=' + id;
 }
 async function delItem(kind, id) {
   if (!confirm('Padam item ini?')) return;
-  const table = kind === 'announcement' ? 'psy_announcements' : 'psy_events';
-  const { error } = await window.db.from(table).delete().eq('id', id);
+  const { error } = await window.db.from('psy_announcements').delete().eq('id', id);
   if (error) { banner('Ralat: ' + error.message, 'error'); return; }
   banner('Dipadam');
   await loadAnn();
 }
-async function toggleStatus(kind, id) {
-  const it = items.find(x => x._kind === kind && x.id === id);
-  if (!it) return;
-  if (kind === 'announcement') {
-    const nv = !it.raw.is_active;
-    await window.db.from('psy_announcements').update({ is_active: nv }).eq('id', id);
-    banner(nv ? 'Diaktifkan' : 'Dinyahaktif');
-  } else {
-    const nv = it.raw.status === 'published' ? 'draft' : 'published';
-    await window.db.from('psy_events').update({ status: nv }).eq('id', id);
-    banner(nv === 'published' ? 'Diterbitkan' : 'Dijadikan draf');
-  }
-  await loadAnn();
+function toggleMenu(ev, key) {
+  ev.stopPropagation();
+  const id = 'menu-' + key;
+  document.querySelectorAll('[id^="menu-"]').forEach(m => { if (m.id !== id) m.classList.add('hidden'); });
+  document.getElementById(id).classList.toggle('hidden');
 }
+document.addEventListener('click', () => document.querySelectorAll('[id^="menu-"]').forEach(m => m.classList.add('hidden')));
 
 function openModal(id) {
   document.getElementById('modal-title').textContent = id ? 'Edit Pengumuman' : 'Pengumuman Baru';

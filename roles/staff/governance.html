@@ -115,6 +115,7 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
+<script src="../../shared/inventoryForecast.js"></script>
 <script src="_shared.js"></script>
 <script>
     function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
@@ -152,7 +153,7 @@ async function init() {
       .gte('session_date', fromDate+'T00:00:00').lte('session_date', today+'T23:59:59')
       .in('status',['hadir','tidak_hadir','cancel']),
     window.db.from('psy_kyc_submissions').select('status'),
-    window.db.from('psy_inventory_items').select('id, name, qty_in_stock, min_qty, dynamic_monthly, consumption_type').eq('is_active', true),
+    window.db.from('psy_inventory_items').select('id, name, qty_in_stock, min_qty').eq('is_active', true),
     window.db.from('psy_packages').select('id, name'),
   ]);
 
@@ -161,6 +162,7 @@ async function init() {
   const kyc       = kycRes.data || [];
   const inventory = inventoryRes.data || [];
   const packages  = packagesRes.data || [];
+  await window.attachInventoryForecast(inventory);
 
   // ── KPI ──
   const totalActive  = patients.length;
@@ -171,9 +173,7 @@ async function init() {
   const kycPending   = kyc.filter(k => k.status === 'pending').length;
   const lowStockCount= inventory.filter(item => {
     const qty = Number(item.qty_in_stock)||0;
-    const min = item.consumption_type === 'package'
-      ? Math.ceil((Number(item.dynamic_monthly)||0) * 0.3)
-      : Number(item.min_qty)||0;
+    const min = window.getInventoryReorderThreshold(item);
     return min > 0 && qty <= min;
   }).length;
   const adherencePct = sessTotal > 0 ? Math.round(sessHadir/sessTotal*100) : 100;
@@ -277,9 +277,7 @@ async function init() {
   // ── Inventory Health ──
   const lowItems = inventory.filter(item => {
     const qty = Number(item.qty_in_stock)||0;
-    const min = item.consumption_type === 'package'
-      ? Math.ceil((Number(item.dynamic_monthly)||0)*0.3)
-      : Number(item.min_qty)||0;
+    const min = window.getInventoryReorderThreshold(item);
     return min > 0 && qty <= min;
   }).sort((a,b) => Number(a.qty_in_stock) - Number(b.qty_in_stock));
 
@@ -289,9 +287,7 @@ async function init() {
   } else {
     invEl.innerHTML = lowItems.map(item => {
       const qty = Number(item.qty_in_stock)||0;
-      const min = item.consumption_type === 'package'
-        ? Math.ceil((Number(item.dynamic_monthly)||0)*0.3)
-        : Number(item.min_qty)||0;
+      const min = window.getInventoryReorderThreshold(item);
       const danger = qty === 0;
       return `<div class="flex items-center gap-4 px-5 py-3.5 hover:bg-ink/[0.015] transition-colors">
         <div class="flex-1 min-w-0">

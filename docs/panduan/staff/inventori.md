@@ -67,8 +67,10 @@ Staf dengan kebenaran modul **`inventory`**:
 | Perlu Kelulusan Manager | Default OFF | ON = permohonan beli item ini perlu lulus manager dulu sebelum dibeli. |
 
 > **Jenis Penggunaan menentukan logik stok:**
-> - **Bekalan Perubatan / Pakej (`package`)** — sistem **auto-kira keperluan** = (patient aktif × qty/patient ikut jadual pakej). Auto-PO trigger bila stok **≤ 30%** keperluan. "Stok Minimum" jadi fallback sahaja.
+> - **Bekalan Perubatan / Pakej (`package`)** — sistem **auto-kira keperluan sebenar** dari sesi pesakit yang betul-betul dijadualkan (belum hadir) dalam **14 hari akan datang** (`shared/inventoryForecast.js` — `computeForecastForRange()`), bukan anggaran pukal sepanjang tempoh pakej. Auto-PO trigger bila stok **≤ keperluan 14 hari** tu. "Stok Minimum" jadi fallback sahaja (dipakai bila tiada sesi dijadualkan lagi dlm julat tu).
 > - **Bekalan Coaching / Umum (`general`)** — barang guna merentas semua aktiviti (sarung tangan, swab, tissue). Tiada auto-kira; Auto-PO trigger bila stok **≤ Stok Minimum**.
+>
+> Auto-PO dikendalikan **client-side sepenuhnya** (`checkAutoPO()` di `inventory.html`, jalan setiap kali page dibuka + turut dipanggil dari `dashboard.html`). Trigger DB lama (`psy_inventory_auto_request`) dibuang 29 Ogos 2026 — ia guna medan `max_qty` yang tak pernah diisi di mana-mana borang, jadi sentiasa fallback ke `min_qty` untuk semua item & tak selaras dgn logik ni.
 
 ### B. Modal Edit Item (di `inventory-detail.html`)
 Edit lanjut + maklumat supplier. Hanya **Nama** wajib. Field tambahan: Penerangan Produk, **Nama Supplier**, **Kos seunit (RM)**, **Lead time (hari)**, **Cadangan PO Min/Max**, checkbox **Perlu kelulusan**. (Disimpan dalam `supplier_info` JSON.)
@@ -96,7 +98,7 @@ Edit lanjut + maklumat supplier. Hanya **Nama** wajib. Field tambahan: Peneranga
 
 ### Tambah/Edit item
 1. Rekod ditulis ke **`psy_inventory_items`** (insert kalau baru, update kalau edit).
-2. Item muncul dalam senarai, kira-kira keperluan (`dynamic_monthly`) dikira semula ikut patient aktif × supplies pakej.
+2. Item muncul dalam senarai, keperluan (`forecast_required`) dikira semula ikut sesi pesakit sebenar dijadualkan dlm 14 hari akan datang.
 3. Kalau stok di bawah threshold, **Auto-PO** boleh jana permohonan ke `psy_inventory_requests` (notifikasi ke admin/manager).
 
 ### Laras stok
@@ -112,7 +114,8 @@ Edit lanjut + maklumat supplier. Hanya **Nama** wajib. Field tambahan: Peneranga
 2. Sistem baca `coaching_schedule[minggu].supplies` dari pelan rawatan pesakit.
 3. **Skip** kalau: sesi `is_extension`, mode `online`, item tiada `item_id`, qty 0, atau `auto_stock = false`.
 4. Untuk setiap bekalan sah → `qty_in_stock` ditolak (tak boleh bawah 0).
-5. Dicatat ke **`psy_audit_log`** (`action: inventory.auto_deducted`) + banner ringkasan; amaran kalau ada item jadi stok rendah.
+5. **Auto-sync ke produk:** kalau item sama juga dijual di Shop (nama sama, `psy_products`), stoknya turut dikemaskini (`syncStockToProducts()`) — elak stok Shop lapuk selepas sesi coaching guna bekalan.
+6. Dicatat ke **`psy_audit_log`** (`action: inventory.auto_deducted`) + banner ringkasan; amaran kalau ada item jadi stok rendah.
 
 (Lihat [`shared/inventoryDeduct.js`](../../../shared/inventoryDeduct.js).)
 
@@ -134,10 +137,11 @@ Edit lanjut + maklumat supplier. Hanya **Nama** wajib. Field tambahan: Peneranga
 
 ## 8. Rujukan teknikal
 - Pages:
-  - [`roles/staff/inventory.html`](../../../roles/staff/inventory.html) — senarai, stat, Auto-PO (`checkAutoPO()`), kira keperluan (`computeDynamicDemand()`)
+  - [`roles/staff/inventory.html`](../../../roles/staff/inventory.html) — senarai, stat, Auto-PO (`checkAutoPO()`), threshold (`getReorderThreshold()`)
   - [`roles/staff/inventory-detail.html`](../../../roles/staff/inventory-detail.html) — detail, edit+supplier, laras stok (`saveAdjust()`), pergerakan
   - [`roles/staff/kit-edit.html`](../../../roles/staff/kit-edit.html) · [`roles/staff/kit-prosedur.html`](../../../roles/staff/kit-prosedur.html) — bina/senarai kit
 - Auto-sync inventori ↔ produk (ikut nama): [`shared/stockSync.js`](../../../shared/stockSync.js) — `syncStockToProducts()`, `syncStockToInventory()`, `ensureInventoryCounterpart()`
-- Auto-tolak stok bila tanda Hadir: [`shared/inventoryDeduct.js`](../../../shared/inventoryDeduct.js) — `deductSessionSupplies()`; dipanggil dari `plan-week.html` (`markStatus('hadir')` / `upsertProgress`)
+- Auto-tolak stok bila tanda Hadir: [`shared/inventoryDeduct.js`](../../../shared/inventoryDeduct.js) — `deductSessionSupplies()`; dipanggil dari `plan-week.html` (`markStatus('hadir')` / `upsertProgress`); turut sync ke produk Shop selepas tolak
+- Forecast keperluan (14 hari akan datang, ikut sesi sebenar): [`shared/inventoryForecast.js`](../../../shared/inventoryForecast.js) — `attachInventoryForecast()`, `getInventoryReorderThreshold()`, `computeForecastForRange()`; dipakai `inventory.html`, `inventory-detail.html`, `dashboard.html`, `governance.html`, `item-form.html` (panel rujukan staff)
 - Jadual: `psy_inventory_items`, `psy_inventory_requests`, `psy_procedure_kits`, `psy_products` (lihat [02-pangkalan-data.md](../../sistem/02-pangkalan-data.md))
 - Berkaitan: [Tambah / Edit Pakej](tambah-pakej.md) (di mana bekalan & kit dipilih per minggu)

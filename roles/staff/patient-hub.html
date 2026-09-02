@@ -1464,6 +1464,8 @@
   <script src="../../shared/authGuard.js"></script>
   <script src="../../shared/logout.js"></script>
   <script src="../../shared/navbar.js"></script>
+  <script src="../../shared/stockSync.js"></script>
+  <script src="../../shared/inventoryStock.js"></script>
   <script src="../../shared/inventoryDeduct.js"></script>
   <script src="_shared.js"></script>
   <script src="../../shared/settings.js"></script>
@@ -5639,12 +5641,14 @@
         if (insErr) { console.error('[Supply] insert error:', insErr); throw insErr; }
         console.log('[Supply] insert OK', insData);
 
-        // Deduct from inventory
+        // Deduct from inventory — lalu addStockToLocation() (bukan update qty_in_stock terus)
+        // supaya stok per-lokasi & ledger psy_stock_movements turut betul (sama laluan
+        // macam auto-deduct sesi hadir, lihat shared/inventoryDeduct.js).
         console.log('[Supply] deducting stock…', { id: itemId, newQty: stock - qty });
-        const { error: updErr } = await window.db.from('psy_inventory_items')
-          .update({ qty_in_stock: stock - qty })
-          .eq('id', itemId);
-        if (updErr) { console.error('[Supply] stock update error:', updErr); throw updErr; }
+        await window.addStockToLocation(itemId, -qty, null, {
+          type: 'out', refType: 'patient_package', refId: patientId,
+          note: `Bagi Bekalan${notes ? ': ' + notes : ''}`, itemName,
+        });
         console.log('[Supply] stock update OK');
 
         // Update local state

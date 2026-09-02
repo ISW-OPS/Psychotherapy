@@ -28,11 +28,17 @@ CREATE TABLE IF NOT EXISTS psy_inventory_items (
   expiry_date          DATE,
   item_code            TEXT UNIQUE,
   is_active            BOOLEAN NOT NULL DEFAULT true,
+  status               TEXT NOT NULL DEFAULT 'active'
+                       CHECK (status IN ('active','inactive','discontinued')),
   reorder_threshold_pct NUMERIC(5,2),
   manufacturer         TEXT,
   registration_no      TEXT,
   storage_location     TEXT,
   storage_condition    TEXT,
+  barcode              TEXT,
+  shelf_life_days      INT,
+  image_url            TEXT,
+  internal_notes       TEXT,
   created_at           TIMESTAMPTZ DEFAULT now(),
   updated_at           TIMESTAMPTZ DEFAULT now()
 );
@@ -49,6 +55,20 @@ ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS manufacturer TEXT;
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS registration_no TEXT;
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS storage_location TEXT;
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS storage_condition TEXT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS barcode TEXT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS shelf_life_days INT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS internal_notes TEXT;
+
+-- status: peringkat lebih halus drpd is_active — 'discontinued' bermaksud dibuang
+-- kekal (bukan cuma nyahaktif sementara). is_active DIKEKALKAN (banyak tempat lain
+-- guna .eq('is_active', true) utk senarai produk boleh-pilih) — status='inactive'
+-- ATAU 'discontinued' kedua-duanya set is_active=false, cuma UI Products list boleh
+-- bezakan sebab & papar label yang betul.
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'
+  CHECK (status IN ('active','inactive','discontinued'));
+UPDATE psy_inventory_items SET status = CASE WHEN is_active = false THEN 'inactive' ELSE 'active' END
+  WHERE status = 'active' AND is_active = false;
 
 -- auto_reorder_enabled dibuang — trigger auto-request tak pernah check flag ni,
 -- sistem auto-cipta permintaan beli utk semua item bila stok rendah tanpa syarat.
@@ -132,16 +152,20 @@ COMMENT ON COLUMN psy_inventory_items.expiry_date IS
   'Tarikh luput batch semasa. Relevan hanya untuk item source_type=farmasi_klinikal.';
 
 -- ──── psy_inventory_requests ────
+-- Header sahaja (banyak produk setiap permohonan — lihat psy_inventory_request_items).
+-- Sebelum ni 1 request = 1 item (item_id/item_name/qty_requested/unit_price terus di
+-- header); ditukar jadi multi-item macam psy_purchase_orders supaya konsisten.
 CREATE TABLE IF NOT EXISTS psy_inventory_requests (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  item_id           UUID REFERENCES psy_inventory_items(id) ON DELETE SET NULL,
-  item_name         TEXT NOT NULL,
-  qty_requested     NUMERIC(10,2) NOT NULL,
-  unit_price        NUMERIC(10,2),
-  total_amount      NUMERIC(10,2),
+  request_no        TEXT UNIQUE,
   reason            TEXT,
+  priority          TEXT NOT NULL DEFAULT 'sederhana'
+                    CHECK (priority IN ('tinggi','sederhana','rendah')),
   status            TEXT NOT NULL DEFAULT 'pending_approval'
                     CHECK (status IN ('pending_approval','approved','rejected','purchased')),
+  subtotal          NUMERIC(12,2) NOT NULL DEFAULT 0,
+  tax_amount        NUMERIC(12,2) NOT NULL DEFAULT 0,
+  total_amount      NUMERIC(12,2) NOT NULL DEFAULT 0,
   requested_by      UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   requested_by_name TEXT NOT NULL DEFAULT '',
   approved_by       UUID REFERENCES auth.users(id) ON DELETE SET NULL,
@@ -152,6 +176,55 @@ CREATE TABLE IF NOT EXISTS psy_inventory_requests (
   created_at        TIMESTAMPTZ DEFAULT now(),
   updated_at        TIMESTAMPTZ DEFAULT now()
 );
+
+-- ──── Line items (satu permohonan boleh ada banyak produk) ────
+CREATE TABLE IF NOT EXISTS psy_inventory_request_items (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id     UUID NOT NULL REFERENCES psy_inventory_requests(id) ON DELETE CASCADE,
+  item_id        UUID REFERENCES psy_inventory_items(id) ON DELETE SET NULL,
+  item_name      TEXT NOT NULL,
+  qty_requested  NUMERIC(10,2) NOT NULL,
+  unit_price     NUMERIC(10,2) NOT NULL DEFAULT 0,
+  subtotal       NUMERIC(12,2) NOT NULL DEFAULT 0,
+  created_at     TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_inv_request_items_request ON psy_inventory_request_items(request_id);
+
+-- ──── request_no auto-generate (PR-00001, PR-00002, ...) ────
+CREATE SEQUENCE IF NOT EXISTS psy_inventory_request_no_seq START 1;
+
+CREATE OR REPLACE FUNCTION psy_inventory_set_request_no()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.request_no IS NULL THEN
+    NEW.request_no := 'PR-' || LPAD(nextval('psy_inventory_request_no_seq')::text, 5, '0');
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_psy_inventory_set_request_no ON psy_inventory_requests;
+CREATE TRIGGER trg_psy_inventory_set_request_no
+BEFORE INSERT ON psy_inventory_requests
+FOR EACH ROW EXECUTE FUNCTION psy_inventory_set_request_no();
+
+-- Backfill request_no utk baris sedia ada (install lama) — susun ikut created_at.
+DO $$
+DECLARE r RECORD;
+BEGIN
+  FOR r IN SELECT id FROM psy_inventory_requests WHERE request_no IS NULL ORDER BY created_at LOOP
+    UPDATE psy_inventory_requests
+      SET request_no = 'PR-' || LPAD(nextval('psy_inventory_request_no_seq')::text, 5, '0')
+      WHERE id = r.id;
+  END LOOP;
+END $$;
+
+COMMENT ON COLUMN psy_inventory_requests.request_no IS
+  'Nombor rujukan permohonan auto-generate (PR-00001, ...) via trigger — tidak boleh diedit.';
+COMMENT ON COLUMN psy_inventory_requests.priority IS
+  'Keutamaan pembelian: tinggi/sederhana/rendah. Default sederhana — staff boleh naikkan bila mendesak.';
 
 -- RLS
 ALTER TABLE psy_inventory_requests ENABLE ROW LEVEL SECURITY;
@@ -168,119 +241,20 @@ DROP POLICY IF EXISTS "Manager admin update requests" ON psy_inventory_requests;
 CREATE POLICY "Manager admin update requests" ON psy_inventory_requests
   FOR UPDATE USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('admin','manager')));
 
+ALTER TABLE psy_inventory_request_items ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage request items" ON psy_inventory_request_items;
+CREATE POLICY "Staff manage request items" ON psy_inventory_request_items FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
 COMMENT ON COLUMN psy_inventory_requests.is_auto_generated IS
-  'true = dijana automatik bila stok ≤ 30%, false = manual request oleh staff.';
+  'true = dijana automatik oleh checkAutoPO() (shared/inventoryForecast.js), false = manual request oleh staff.';
 
--- ──── Trigger: auto-request bila stok rendah ────
--- Threshold: 30% dari max_qty (fallback: min_qty). Hormat requires_approval,
--- duplicate guard (request pending/approved sedia ada) + cooldown 24 jam.
-CREATE OR REPLACE FUNCTION psy_inventory_auto_request()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_threshold       NUMERIC;
-  v_existing_count  INT;
-  v_reorder_qty     NUMERIC;
-  v_status          TEXT;
-  v_target          NUMERIC;
-BEGIN
-  -- Item tidak aktif — jangan auto-request
-  IF NOT COALESCE(NEW.is_active, true) THEN
-    RETURN NEW;
-  END IF;
-
-  -- Hanya bertindak bila qty_in_stock benar-benar berubah & turun
-  IF NEW.qty_in_stock IS NULL OR NEW.qty_in_stock = OLD.qty_in_stock THEN
-    RETURN NEW;
-  END IF;
-  IF NEW.qty_in_stock > OLD.qty_in_stock THEN
-    RETURN NEW;  -- stok naik (restock) — jangan trigger
-  END IF;
-
-  -- Kira threshold
-  IF NEW.max_qty IS NOT NULL AND NEW.max_qty > 0 THEN
-    v_threshold := NEW.max_qty * 0.30;
-  ELSE
-    v_threshold := COALESCE(NEW.min_qty, 0);
-  END IF;
-
-  IF v_threshold <= 0 THEN
-    RETURN NEW;
-  END IF;
-
-  IF NEW.qty_in_stock > v_threshold THEN
-    RETURN NEW;  -- masih di atas threshold
-  END IF;
-
-  -- Cooldown 24 jam
-  IF NEW.last_auto_po_at IS NOT NULL
-     AND NEW.last_auto_po_at > now() - INTERVAL '24 hours' THEN
-    RETURN NEW;
-  END IF;
-
-  -- Duplicate guard
-  SELECT COUNT(*) INTO v_existing_count
-  FROM psy_inventory_requests
-  WHERE item_id = NEW.id
-    AND status IN ('pending_approval', 'approved');
-
-  IF v_existing_count > 0 THEN
-    RETURN NEW;
-  END IF;
-
-  -- Kira reorder qty
-  IF NEW.max_qty IS NOT NULL AND NEW.max_qty > 0 THEN
-    v_target := NEW.max_qty;
-  ELSE
-    v_target := COALESCE(NEW.min_qty, 0) * 3;
-  END IF;
-
-  v_reorder_qty := COALESCE(NEW.auto_reorder_qty,
-                            GREATEST(1, v_target - NEW.qty_in_stock));
-
-  -- Tentukan status ikut requires_approval
-  v_status := CASE
-                WHEN COALESCE(NEW.requires_approval, false) THEN 'pending_approval'
-                ELSE 'approved'
-              END;
-
-  INSERT INTO psy_inventory_requests (
-    item_id, item_name, qty_requested, unit_price, total_amount,
-    reason, status, requested_by, requested_by_name, is_auto_generated
-  ) VALUES (
-    NEW.id,
-    NEW.name,
-    v_reorder_qty,
-    NULL,
-    NULL,
-    format('Auto-trigger: stok %s%s ≤ threshold %s%s. Sila beli %s%s.',
-           NEW.qty_in_stock, COALESCE(NEW.unit, ''),
-           ROUND(v_threshold, 2), COALESCE(NEW.unit, ''),
-           v_reorder_qty, COALESCE(NEW.unit, '')),
-    v_status,
-    NULL,
-    'Sistem (Auto)',
-    true
-  );
-
-  -- Tanda cooldown
-  NEW.last_auto_po_at := now();
-
-  RETURN NEW;
-END;
-$$;
-
-DROP TRIGGER IF EXISTS trg_psy_inventory_auto_request ON psy_inventory_items;
-CREATE TRIGGER trg_psy_inventory_auto_request
-BEFORE UPDATE OF qty_in_stock ON psy_inventory_items
-FOR EACH ROW
-EXECUTE FUNCTION psy_inventory_auto_request();
-
-COMMENT ON FUNCTION psy_inventory_auto_request() IS
-  'Auto-cipta inventory_request bila stok turun ≤ 30% max_qty (atau ≤ min_qty kalau max_qty tiada). Hormat requires_approval untuk status.';
+-- Auto-request bila stok rendah dikendalikan client-side (checkAutoPO() di inventory.html,
+-- guna shared/inventoryForecast.js) — BUKAN trigger DB. Trigger lama psy_inventory_auto_request()
+-- dibuang (lihat supabase/migrations/20260829_drop_inventory_auto_po_trigger.sql) sebab guna
+-- medan `max_qty` yang tak pernah diisi di mana-mana borang (sentiasa NULL), jadi ia sentiasa
+-- fallback ke min_qty untuk SEMUA item — tak selaras & duplicate logik dgn client-side.
 
 -- ──── psy_products ────
 CREATE TABLE IF NOT EXISTS psy_products (

@@ -25,9 +25,12 @@
       <div class="p-4 md:p-8 space-y-5">
 
         <!-- Title -->
-        <div>
-          <h1 class="text-2xl font-bold text-ink flex items-center gap-2">💓 Bacaan Vitals</h1>
-          <p class="text-sm text-ink/55 mt-0.5">Pantau bacaan kesihatan pesakit dari masa ke masa.</p>
+        <div class="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-2xl font-bold text-ink flex items-center gap-2">💓 Bacaan Vitals</h1>
+            <p class="text-sm text-ink/55 mt-0.5">Pantau bacaan kesihatan pesakit dari masa ke masa.</p>
+          </div>
+          <button id="btn-export-all" onclick="exportAllVitals()" class="px-4 py-2.5 rounded-xl border border-ink/15 text-sm font-semibold text-ink/70 hover:bg-ink/5 whitespace-nowrap">⬇️ Export Semua Vitals (Excel)</button>
         </div>
 
         <!-- Patient picker -->
@@ -155,6 +158,7 @@
 
 <script src="/shared/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
 <script src="../../config/supabase.js"></script>
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
@@ -398,6 +402,58 @@ async function saveReading() {
     errEl.textContent = 'Ralat: ' + e.message; errEl.classList.remove('hidden');
   } finally {
     btn.disabled = false; btn.textContent = '💾 Simpan Bacaan';
+  }
+}
+
+// ── Export semua bacaan vitals (semua pesakit) ke Excel ─
+async function exportAllVitals() {
+  if (typeof XLSX === 'undefined') { banner('XLSX belum siap, cuba lagi', 'error'); return; }
+  const btn = document.getElementById('btn-export-all');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Menyediakan...'; }
+  try {
+    const { data, error } = await window.db.from('psy_vitals')
+      .select('*, psy_patients(mrn, full_name, psy_profiles!psy_patients_user_id_fkey(full_name))')
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    const nameOf = v => v.psy_patients?.full_name || v.psy_patients?.psy_profiles?.full_name || '—';
+    const sorted = [...(data || [])].sort((a, b) => {
+      const n = nameOf(a).localeCompare(nameOf(b), 'ms');
+      if (n !== 0) return n;
+      return new Date(a.created_at || a.reading_date) - new Date(b.created_at || b.reading_date);
+    });
+    const rows = [
+      ['Nama Pesakit', 'ID Pesakit', 'Tarikh', 'Minggu', 'Tekanan Darah (mmHg)', 'Denyutan Nadi (bpm)', 'SpO2 (%)', 'Suhu Badan (°C)', 'Berat Badan (kg)', 'Tinggi (cm)', 'BMI', 'Lilitan Pinggang (cm)', 'Gula Darah/RBS', 'HbA1c (%)', 'Skor PHQ-2', 'Ubatan', 'Nota', 'Sumber'],
+      ...sorted.map(v => [
+        nameOf(v),
+        v.psy_patients?.mrn || '—',
+        v.reading_date || (v.created_at ? v.created_at.slice(0, 10) : '—'),
+        v.week_number ?? '—',
+        (v.bp_systolic && v.bp_diastolic) ? `${v.bp_systolic}/${v.bp_diastolic}` : '—',
+        v.heart_rate ?? '—',
+        v.spo2 ?? '—',
+        v.temperature ?? '—',
+        v.weight ?? '—',
+        v.height ?? '—',
+        v.bmi ?? '—',
+        v.waist_cm ?? '—',
+        v.rbs ?? '—',
+        v.hba1c ?? '—',
+        v.phq2_score ?? '—',
+        v.medications || '—',
+        v.notes || '—',
+        v.source === 'patient_self' ? 'Pesakit' : 'Staff',
+      ]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{ wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 16 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 8 }, { wch: 16 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 20 }, { wch: 30 }, { wch: 10 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Vitals');
+    XLSX.writeFile(wb, 'semua_vitals_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+    banner('Excel dimuat turun ✅');
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⬇️ Export Semua Vitals (Excel)'; }
   }
 }
 

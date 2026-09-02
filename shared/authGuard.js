@@ -65,7 +65,9 @@ window.PAGE_MODULE = {
   psy_products:     'products',
   promo_codes:      'products',
   point_rewards:    'products',
-  inventory:        'inventory', kit_prosedur: 'inventory',
+  inventory:        'inventory', kit_prosedur: 'inventory', suppliers: 'inventory',
+  purchase_requests: 'inventory', stock_in: 'inventory', stock_alerts: 'inventory',
+  inventory_overview: 'inventory', stock_movement: 'inventory',
   pulangan:         'pulangan',
   psy_orders:       'orders',
   payment_admin:    'payment',
@@ -94,6 +96,13 @@ window.PAGE_MODULE = {
 
   // PENTADBIRAN
   surat:            'surat',
+  surat_templates:  'surat',
+  // surat_request & surat_request_detail SENGAJA tidak didaftar — mohon surat peribadi
+  // (RELA/KWSP/dll) & lihat status permohonan sendiri mesti boleh diakses SEMUA staff, bukan
+  // setakat yang ada modul 'surat' (HR/admin proses surat pesakit). Tindakan reviewer (Lulus/
+  // Tolak/Semakan) dalam surat-request-detail.html masih digate berasingan via can('surat','edit')
+  // + RLS psy_letter_requests — page access sahaja yang dibuka. pageAllowed() auto-allow page
+  // yang tiada dalam map ni.
   closures:         'closures',
   kob_slots:        'kob_slots',
   staff_mgmt:       'staff',
@@ -149,6 +158,11 @@ window.applyRbacUI = function (root) {
     const code = el.getAttribute('data-rbac');
     if (!code) return;
     if (can(code)) {
+      // Buang DUA-DUA punca tersembunyi: class "hidden" statik dlm HTML (corak lazim
+      // <button class="hidden ..." data-rbac="...">) DAN style.display yg dipasang
+      // sebelum ni oleh cabang else di bawah. Sebelum ni fungsi ni cuma urus
+      // style.display — elemen yg mula hidden via class tak pernah didedahkan.
+      el.classList.remove('hidden');
       if (el.dataset.rbacHidden) { el.style.display = ''; delete el.dataset.rbacHidden; }
     } else {
       el.style.display = 'none';

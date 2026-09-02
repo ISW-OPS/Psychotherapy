@@ -23,7 +23,7 @@
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
       <div class="p-4 md:p-6">
-        <a href="announcements.html" class="inline-flex items-center gap-2 text-sm font-semibold text-ink/60 hover:text-navy mb-1">← Kembali</a>
+        <button onclick="history.back()" class="inline-flex items-center gap-2 text-sm font-semibold text-ink/60 hover:text-navy mb-1">← Kembali</button>
         <h1 class="text-2xl font-extrabold text-ink">Detail Pengumuman</h1>
         <p class="text-sm text-ink/55 mb-5">Maklumat lengkap pengumuman dan prestasi.</p>
 
@@ -43,13 +43,8 @@
 <script src="_shared.js"></script>
 <script>
     function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
-const EV_STYLE = {
-  kelas:{ grad:'from-navy to-teal', emoji:'🧘' }, webinar:{ grad:'from-[#2f7fc8] to-[#54b3cf]', emoji:'🎥' },
-  komuniti:{ grad:'from-green to-green-dark', emoji:'🤝' }, manzil:{ grad:'from-[#0e2a4a] to-[#16604a]', emoji:'🕌' },
-  challenge:{ grad:'from-gold to-gold-dark', emoji:'🏆' }, default:{ grad:'from-navy to-navy-dark', emoji:'📢' },
-};
+const ANN_STYLE = { grad:'from-navy to-navy-dark', emoji:'📢' };
 function fmtDateTime(d) { return d ? new Date(d).toLocaleString(LCALE(), { day:'2-digit', month:'short', year:'numeric', hour:'numeric', minute:'2-digit' }) : '—'; }
-function fmtDate(d) { return d ? new Date(d).toLocaleDateString(LCALE(), { weekday:'long', day:'2-digit', month:'long', year:'numeric' }) : '—'; }
 function audLabel(aud) {
   if (!Array.isArray(aud) || !aud.length) return 'Semua Pengguna';
   if (aud.includes('patient') && aud.length === 1) return 'Semua Pesakit';
@@ -63,19 +58,13 @@ const STATUS_BADGE = {
   tamat:'<span class="inline-flex items-center gap-1.5 text-[11px] font-bold text-terracotta"><span class="w-1.5 h-1.5 rounded-full bg-terracotta"></span> Tamat Tempoh</span>',
 };
 
-let KIND = 'announcement', IT = null, CREATOR = '';
+let IT = null, CREATOR = '';
 
 function statusKey() {
-  if (KIND === 'announcement') {
-    if (!IT.is_active) return 'draft';
-    if (IT.expires_at && new Date(IT.expires_at) < new Date()) return 'tamat';
-    return 'aktif';
-  }
-  if (IT.status === 'draft') return 'draft';
-  if (IT.status === 'cancelled' || IT.status === 'completed') return 'tamat';
-  const ref = IT.end_at ? new Date(IT.end_at) : new Date(IT.start_at);
-  if (ref < new Date()) return 'tamat';
-  return new Date(IT.start_at) > new Date() ? 'dijadualkan' : 'aktif';
+  if (!IT.is_active) return 'draft';
+  if (IT.expires_at && new Date(IT.expires_at) < new Date()) return 'tamat';
+  if (IT.starts_at && new Date(IT.starts_at) > new Date()) return 'dijadualkan';
+  return 'aktif';
 }
 
 function infoRow(icon, label, value) {
@@ -94,36 +83,19 @@ function statBox(icon, val, label, tone = 'text-ink') {
   </div>`;
 }
 
-function render(stats) {
-  const isEvent = KIND === 'event';
-  const type = isEvent ? IT.type : 'announcement';
-  const st = EV_STYLE[type] || EV_STYLE.default;
+function render() {
+  const st = ANN_STYLE;
   const title = IT.title;
-  const desc = isEvent ? IT.description : (IT.content || IT.body);
-  const tag = IT.tag || IT.category || (isEvent ? type : 'Makluman');
-  const img = isEvent ? IT.cover_image : IT.image_url;
+  const desc = IT.content || IT.body;
+  const tag = IT.tag || IT.category || 'Makluman';
+  const img = IT.image_url;
   const cover = img ? `style="background-image:url('${img}');background-size:cover;background-position:center;"` : '';
 
-  const dateStrip = isEvent ? `
-    <div class="grid grid-cols-3 gap-4 mt-5 pt-4 border-t border-white/20">
-      <div><div class="text-[10px] text-white/60 mb-0.5">📅 Tarikh</div><div class="text-sm font-bold text-white">${new Date(IT.start_at).toLocaleDateString(LCALE(),{day:'2-digit',month:'short',year:'numeric'})}</div></div>
-      <div class="border-l border-white/20 pl-4"><div class="text-[10px] text-white/60 mb-0.5">🕒 Masa</div><div class="text-sm font-bold text-white">${new Date(IT.start_at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}${IT.end_at?' – '+new Date(IT.end_at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):''}</div></div>
-      <div class="border-l border-white/20 pl-4"><div class="text-[10px] text-white/60 mb-0.5">${IT.mode==='f2f'?'📍 Lokasi':'💻 Platform'}</div><div class="text-sm font-bold text-white truncate">${IT.mode==='f2f'?(IT.location||'F2F'):'Google Meet'}</div></div>
-    </div>` : '';
+  const action = IT.cta_label && IT.cta_url
+    ? `<a href="${IT.cta_url}" class="w-full bg-navy hover:bg-navy-dark text-white font-bold py-3.5 rounded-xl flex items-center justify-center gap-2">${IT.cta_label}</a>`
+    : '';
 
-  const action = isEvent && IT.meet_link
-    ? `<a href="${IT.meet_link}" target="_blank" rel="noopener" class="w-full bg-green hover:bg-green-dark text-white font-bold py-3.5 rounded-xl flex items-center justify-center gap-2">🔗 Sertai Sekarang</a>
-       <p class="text-[11px] text-ink/45 text-center mt-2">ⓘ Pautan akan aktif 10 minit sebelum sesi bermula.</p>`
-    : (IT.cta_label && IT.cta_url
-      ? `<a href="${IT.cta_url}" class="w-full bg-navy hover:bg-navy-dark text-white font-bold py-3.5 rounded-xl flex items-center justify-center gap-2">${IT.cta_label}</a>`
-      : '');
-
-  const statsCards = isEvent
-    ? `${statBox('👥', stats.pendaftar, 'Jumlah Pendaftar', 'text-navy')}
-       ${statBox('✓', stats.hadir, 'Telah Hadir', 'text-green-dark')}
-       ${statBox('🎟️', IT.capacity || '∞', 'Kapasiti')}
-       ${statBox('🎯', audLabel(IT.audience), 'Sasaran', 'text-sm')}`
-    : `<div class="col-span-2 bg-cream/40 rounded-xl p-4 text-center">
+  const statsCards = `<div class="col-span-2 bg-cream/40 rounded-xl p-4 text-center">
         <div class="text-2xl mb-1">📊</div>
         <div class="text-[12px] text-ink/55">Penjejakan paparan & klik (views / CTA) belum diaktifkan untuk pengumuman.</div>
        </div>
@@ -139,7 +111,6 @@ function render(stats) {
             <span class="inline-block text-[11px] font-bold uppercase tracking-wide bg-white/20 px-3 py-1 rounded-full backdrop-blur-sm mb-3">${st.emoji} ${tag}</span>
             <h2 class="text-2xl md:text-3xl font-extrabold leading-tight drop-shadow">${title}</h2>
             ${desc ? `<p class="text-sm text-white/85 mt-2 max-w-xl line-clamp-2">${String(desc).replace(/<[^>]+>/g,'').slice(0,160)}</p>` : ''}
-            ${dateStrip}
           </div>
         </div>
 
@@ -147,14 +118,6 @@ function render(stats) {
           <span class="inline-block text-[10px] font-semibold px-2.5 py-1 rounded-full bg-navy/8 text-navy mb-2">${tag}</span>
           <h3 class="text-xl font-extrabold text-ink">${title}</h3>
           <div class="text-sm text-ink/70 leading-relaxed mt-2 space-y-2">${desc || '<span class="text-ink/40">Tiada penerangan.</span>'}</div>
-
-          ${isEvent ? `
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-5">
-            <div class="flex items-start gap-2.5"><span class="text-ink/40">📅</span><div><div class="text-[11px] text-ink/45">Tarikh</div><div class="text-sm font-semibold text-ink">${fmtDate(IT.start_at)}</div></div></div>
-            <div class="flex items-start gap-2.5"><span class="text-ink/40">🕒</span><div><div class="text-[11px] text-ink/45">Masa</div><div class="text-sm font-semibold text-ink">${new Date(IT.start_at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}${IT.end_at?' – '+new Date(IT.end_at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):''}</div></div></div>
-            <div class="flex items-start gap-2.5"><span class="text-ink/40">💻</span><div><div class="text-[11px] text-ink/45">Platform</div><div class="text-sm font-semibold text-ink">${IT.mode==='f2f'?'Bersemuka':'Google Meet'}</div></div></div>
-            ${IT.meet_link?`<div class="flex items-start gap-2.5"><span class="text-ink/40">🔗</span><div class="min-w-0"><div class="text-[11px] text-ink/45">Pautan Meeting</div><a href="${IT.meet_link}" target="_blank" class="text-sm font-semibold text-navy hover:underline truncate block">${IT.meet_link.replace(/^https?:\/\//,'')}</a></div></div>`:''}
-          </div>` : ''}
 
           ${action ? `<div class="mt-5">${action}</div>` : ''}
         </div>
@@ -165,7 +128,7 @@ function render(stats) {
         <div class="space-y-3">
           <div class="flex items-start gap-3">
             <span class="w-6 h-6 rounded-full bg-green/15 text-green-dark flex items-center justify-center text-xs flex-shrink-0">✓</span>
-            <div><div class="text-sm font-semibold text-ink">${KIND==='announcement'?(IT.is_active?'Pengumuman diterbitkan':'Pengumuman dicipta (draf)'):'Acara dicipta'}</div>
+            <div><div class="text-sm font-semibold text-ink">${IT.is_active?'Pengumuman diterbitkan':'Pengumuman dicipta (draf)'}</div>
               <div class="text-[11px] text-ink/45">${fmtDateTime(IT.created_at)}${CREATOR?' oleh '+CREATOR:''}</div></div>
           </div>
           ${IT.updated_at && IT.updated_at !== IT.created_at ? `<div class="flex items-start gap-3">
@@ -182,8 +145,9 @@ function render(stats) {
         <h3 class="font-bold text-ink mb-2">Maklumat Pengumuman</h3>
         ${infoRow('●', 'Status', STATUS_BADGE[statusKey()])}
         ${infoRow('🏷️', 'Kategori', `<span class="inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full bg-navy/8 text-navy">${tag}</span>`)}
-        ${isEvent ? infoRow('📅', 'Tarikh Mula', fmtDateTime(IT.start_at)) : infoRow('📅', 'Tarikh Dicipta', fmtDateTime(IT.created_at))}
-        ${isEvent ? infoRow('🕒', 'Tarikh Tamat', fmtDateTime(IT.end_at)) : infoRow('⏳', 'Tarikh Tamat Papar', fmtDateTime(IT.expires_at))}
+        ${infoRow('📅', 'Tarikh Dicipta', fmtDateTime(IT.created_at))}
+        ${IT.starts_at ? infoRow('🚀', 'Tarikh Mula Papar', fmtDateTime(IT.starts_at)) : ''}
+        ${infoRow('⏳', 'Tarikh Tamat Papar', fmtDateTime(IT.expires_at))}
         ${infoRow('👥', 'Sasaran Pengguna', audLabel(IT.audience))}
         ${infoRow('👤', 'Dicipta Oleh', CREATOR || '—')}
         ${infoRow('🕓', 'Terakhir Dikemaskini', fmtDateTime(IT.updated_at || IT.created_at))}
@@ -197,41 +161,24 @@ function render(stats) {
       <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
         <div class="flex items-center justify-between mb-3">
           <h3 class="font-bold text-ink">Statistik</h3>
-          <span class="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-green/12 text-green-dark">${isEvent?'Pendaftaran':'Maklumat'}</span>
+          <span class="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-green/12 text-green-dark">Maklumat</span>
         </div>
         <div class="grid grid-cols-2 gap-2.5">${statsCards}</div>
-        ${isEvent ? `<a href="events.html?regs=${IT.id}" class="mt-3 w-full bg-navy text-white text-sm font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 hover:bg-navy-dark">👥 Urus Pendaftar &amp; Kehadiran</a>` : ''}
       </div>
     </div>
   `;
 }
 
 function editItem() {
-  location.href = 'pengumuman-edit.html?kind=' + KIND + '&id=' + IT.id;
+  location.href = 'pengumuman-edit.html?id=' + IT.id;
 }
 async function toggleActive() {
   try {
-    if (KIND === 'announcement') {
-      const nv = !IT.is_active;
-      await window.db.from('psy_announcements').update({ is_active: nv }).eq('id', IT.id);
-      IT.is_active = nv; banner(nv ? 'Diaktifkan' : 'Dinyahaktif');
-    } else {
-      const nv = IT.status === 'published' ? 'draft' : 'published';
-      await window.db.from('psy_events').update({ status: nv }).eq('id', IT.id);
-      IT.status = nv; banner(nv === 'published' ? 'Diterbitkan' : 'Dijadikan draf');
-    }
-    await reloadStats();
+    const nv = !IT.is_active;
+    await window.db.from('psy_announcements').update({ is_active: nv }).eq('id', IT.id);
+    IT.is_active = nv; banner(nv ? 'Diaktifkan' : 'Dinyahaktif');
+    render();
   } catch (e) { banner('Ralat: ' + e.message, 'error'); }
-}
-
-async function reloadStats() {
-  let stats = { pendaftar: 0, hadir: 0 };
-  if (KIND === 'event') {
-    const { data } = await window.db.from('psy_event_registrations').select('status').eq('event_id', IT.id).neq('status', 'batal');
-    stats.pendaftar = (data || []).length;
-    stats.hadir = (data || []).filter(r => r.status === 'hadir').length;
-  }
-  render(stats);
 }
 
 (async () => {
@@ -239,26 +186,16 @@ async function reloadStats() {
   if (!user) return;
   const params = new URLSearchParams(location.search);
   const id = params.get('id');
-  KIND = params.get('kind') === 'event' ? 'event' : 'announcement';
   if (!id) { document.getElementById('detail-wrap').innerHTML = '<div class="lg:col-span-3 text-center py-16 text-ink/40">Tiada ID.</div>'; return; }
   try {
-    let item = null;
-    if (KIND === 'event') {
-      ({ data: item } = await window.db.from('psy_events').select('*').eq('id', id).maybeSingle());
-    } else {
-      ({ data: item } = await window.db.from('psy_announcements').select('*').eq('id', id).maybeSingle());
-      if (!item) {
-        ({ data: item } = await window.db.from('psy_events').select('*').eq('id', id).maybeSingle());
-        if (item) KIND = 'event';
-      }
-    }
+    const { data: item } = await window.db.from('psy_announcements').select('*').eq('id', id).maybeSingle();
     if (!item) { document.getElementById('detail-wrap').innerHTML = '<div class="lg:col-span-3 text-center py-16 text-ink/40">Tidak dijumpai.</div>'; return; }
     IT = item;
     if (IT.created_by) {
       const { data: prof } = await window.db.from('psy_profiles').select('full_name').eq('id', IT.created_by).maybeSingle();
       CREATOR = prof?.full_name || '';
     }
-    await reloadStats();
+    render();
   } catch (e) {
     document.getElementById('detail-wrap').innerHTML = `<div class="lg:col-span-3 bg-terracotta/10 text-terracotta rounded-xl p-4 text-sm">Ralat: ${e.message}</div>`;
   }

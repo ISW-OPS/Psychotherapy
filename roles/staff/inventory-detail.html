@@ -159,6 +159,38 @@
           </div>
         </div>
 
+        <!-- ── Stok Ikut Lokasi ─────────────────────────── -->
+        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden">
+          <div class="px-5 py-4 border-b border-ink/8 flex items-center gap-2">
+            <span class="text-lg">🏬</span>
+            <div>
+              <div class="text-sm font-semibold text-ink/70">Stok Ikut Lokasi</div>
+              <div class="text-[10px] text-ink/35">Pecahan stok merentasi semua gudang</div>
+            </div>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-b border-ink/8 bg-ink/[0.02]">
+                  <th class="px-5 py-2.5 text-left text-[10px] font-bold text-ink/40 uppercase tracking-widest">Lokasi</th>
+                  <th class="px-4 py-2.5 text-center text-[10px] font-bold text-ink/40 uppercase tracking-widest">Stok Semasa</th>
+                  <th class="px-4 py-2.5 text-center text-[10px] font-bold text-ink/40 uppercase tracking-widest">Status</th>
+                </tr>
+              </thead>
+              <tbody id="stock-by-location-tbody">
+                <tr><td colspan="3" class="text-center py-10 text-ink/30 text-sm">Memuatkan...</td></tr>
+              </tbody>
+              <tfoot>
+                <tr class="border-t border-ink/10 bg-ink/[0.02] font-semibold">
+                  <td class="px-5 py-2.5 text-sm">Jumlah</td>
+                  <td id="stock-by-location-total" class="px-4 py-2.5 text-center text-sm">—</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+
         <!-- ── Bottom 2 cards ────────────────────────────── -->
         <div class="grid md:grid-cols-[1fr_360px] gap-5">
 
@@ -213,9 +245,13 @@
                 <span class="text-xs text-ink/45 font-medium">Restock terakhir</span>
                 <span id="sup-last" class="text-xs font-semibold text-ink/70">—</span>
               </div>
-              <div id="sup-contact-row" class="hidden flex justify-between py-1.5">
+              <div id="sup-contact-row" class="hidden flex justify-between py-1.5 border-b border-ink/5">
                 <span class="text-xs text-ink/45 font-medium">Perhubungan</span>
                 <span id="sup-contact" class="text-xs font-semibold text-ink/70 text-right">—</span>
+              </div>
+              <div id="sup-bank-row" class="hidden flex justify-between py-1.5">
+                <span class="text-xs text-ink/45 font-medium">Bank</span>
+                <span id="sup-bank" class="text-xs font-semibold text-ink/70 text-right">—</span>
               </div>
             </div>
             <div id="edit-supplier-wrap" class="hidden px-5 py-3 border-t border-ink/8">
@@ -339,6 +375,8 @@
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
 <script src="../../shared/stockSync.js"></script>
+<script src="../../shared/inventoryForecast.js"></script>
+<script src="../../shared/inventoryStock.js"></script>
 <script src="_shared.js"></script>
 <script>
 let itemId   = null;
@@ -357,53 +395,20 @@ async function init() {
   itemId = params.get('id');
   if (!itemId) { history.back(); return; }
 
-  const [itemRes, reqsRes, kitsRes, patientsRes, pkgsRes] = await Promise.all([
+  const [itemRes, reqsRes, kitsRes, stockLocRes] = await Promise.all([
     window.db.from('psy_inventory_items').select('*').eq('id', itemId).single(),
-    window.db.from('psy_inventory_requests').select('*').eq('item_id', itemId).order('created_at', { ascending: false }).limit(8),
+    window.db.from('psy_inventory_request_items').select('*, psy_inventory_requests(status)').eq('item_id', itemId).order('created_at', { ascending: false }).limit(8),
     window.db.from('psy_procedure_kits').select('id, name, category, items'),
-    window.db.from('psy_patients').select('active_package_id').eq('status', 'active'),
-    window.db.from('psy_packages').select('package_id, name, duration_weeks, coaching_schedule'),
+    window.db.from('psy_inventory_stock_by_location').select('*, psy_inventory_locations(name)').eq('item_id', itemId),
   ]);
 
   if (!itemRes.data) { banner('Item tidak dijumpai', 'error'); return; }
   itemData = itemRes.data;
+  renderStockByLocation(stockLocRes.data || []);
 
-  // Compute dynamic_monthly + demand_breakdown (same logic as inventory.html)
-  if ((itemData.consumption_type || 'package') === 'package') {
-    const patientCount = {};
-    (patientsRes.data || []).forEach(p => {
-      if (p.active_package_id) patientCount[p.active_package_id] = (patientCount[p.active_package_id] || 0) + 1;
-    });
-    const kits = kitsRes.data || [];
-    let totalMonthly = 0;
-    const breakdown = [];
-    (pkgsRes.data || []).forEach(pkg => {
-      const patientsOnPkg = patientCount[pkg.package_id] || 0;
-      if (!patientsOnPkg) return;
-      const months = (pkg.duration_weeks || 12) / 4;
-      let qtyPerPatient = 0;
-      (Array.isArray(pkg.coaching_schedule) ? pkg.coaching_schedule : []).forEach(w => {
-        // Kira bekalan kedua-dua sesi (supplies = Sesi 1, supplies_2 = Sesi 2).
-        [...(w.supplies || []), ...(w.supplies_2 || [])].forEach(s => {
-          if (typeof s === 'object' && s !== null) {
-            if (s.kit_id) {
-              const kit = kits.find(k => k.id === s.kit_id);
-              if (kit) (kit.items || []).forEach(ki => { if (ki.item_id === itemData.id) qtyPerPatient += (Number(ki.qty) || 0) * (Number(s.qty) || 1); });
-              return;
-            }
-            if (s.item_id === itemData.id) qtyPerPatient += Number(s.qty) || 0;
-          }
-        });
-      });
-      if (qtyPerPatient > 0) {
-        const totalForPkg = qtyPerPatient * patientsOnPkg;
-        totalMonthly += totalForPkg;
-        breakdown.push({ pkg: pkg.name, patients: patientsOnPkg, qty_per_patient: qtyPerPatient, monthly: totalForPkg });
-      }
-    });
-    itemData.dynamic_monthly = Math.ceil(totalMonthly);
-    itemData.demand_breakdown = breakdown;
-  }
+  // Forecast (14 hari akan datang, ikut sesi sebenar) — shared/inventoryForecast.js,
+  // SAMA fungsi dipakai inventory.html/dashboard.html/governance.html.
+  await window.attachInventoryForecast([itemData]);
 
   renderDetail(itemData);
   renderMovements(reqsRes.data || []);
@@ -415,14 +420,11 @@ async function init() {
 
 function renderDetail(item) {
   const qty       = Number(item.qty_in_stock);
-  const type      = item.consumption_type || 'package';
-  const needed    = Number(item.dynamic_monthly) || 0;
+  const needed    = Number(item.forecast_required) || 0;  // keperluan INVENTORY_REORDER_LOOKAHEAD_DAYS hari akan datang
+  const isPkgLinked = needed > 0;  // auto-detect: ada sesi pesakit sebenar dijadualkan guna item ni
   const unit      = item.unit || '';
-  const thresholdPct = Number(item.reorder_threshold_pct) || 30;
-  const threshold = type === 'package'
-    ? (needed > 0 ? Math.ceil(needed * (thresholdPct / 100)) : Number(item.min_qty)||0)
-    : Number(item.min_qty)||0;
-  const weeklyUsage = needed > 0 ? +(needed / 12).toFixed(1) : 0;
+  const threshold = window.getInventoryReorderThreshold(item);
+  const weeklyUsage = needed > 0 ? +(needed / (INVENTORY_REORDER_LOOKAHEAD_DAYS / 7)).toFixed(1) : 0;
   const runway      = weeklyUsage > 0 ? +(qty / weeklyUsage).toFixed(1) : null;
 
   // Header
@@ -446,9 +448,7 @@ function renderDetail(item) {
     ? '<span class="text-xs font-semibold px-3 py-1 bg-teal/15 text-teal-dark rounded-full">💊 Farmasi Klinikal</span>'
     : '<span class="text-xs font-semibold px-3 py-1 bg-ink/10 text-ink/50 rounded-full">🧰 Inventori Am</span>');
   if (item.category) chips.push(`<span class="text-xs font-semibold px-3 py-1 bg-teal/10 text-teal rounded-full">${escHtml(item.category)}</span>`);
-  chips.push(type === 'package'
-    ? '<span class="text-xs font-semibold px-3 py-1 bg-gold/20 text-gold-dark rounded-full">🍯 Pakej</span>'
-    : '<span class="text-xs font-semibold px-3 py-1 bg-ink/10 text-ink/60 rounded-full">🧤 Umum</span>');
+  if (isPkgLinked) chips.push('<span class="text-xs font-semibold px-3 py-1 bg-gold/20 text-gold-dark rounded-full">🍯 Pakej</span>');
   chips.push(item.requires_approval
     ? '<span class="text-xs font-semibold px-3 py-1 bg-navy/10 text-navy rounded-full">🔒 Perlu kelulusan</span>'
     : '<span class="text-xs font-semibold px-3 py-1 bg-green-light text-green-dark rounded-full">✓ Tidak perlu kelulusan</span>');
@@ -457,7 +457,9 @@ function renderDetail(item) {
     if (days < 0)       chips.push(`<span class="text-xs font-semibold px-3 py-1 bg-terracotta/15 text-terracotta rounded-full">⚠ Luput ${item.expiry_date}</span>`);
     else if (days <= 30) chips.push(`<span class="text-xs font-semibold px-3 py-1 bg-amber-100 text-amber-700 rounded-full">⏳ Luput dalam ${days} hari</span>`);
   }
-  if (item.is_active === false) chips.push('<span class="text-xs font-semibold px-3 py-1 bg-ink/10 text-ink/50 rounded-full">⛔ Tidak Aktif</span>');
+  const itemStatus = item.status || (item.is_active === false ? 'inactive' : 'active');
+  if (itemStatus === 'discontinued') chips.push('<span class="text-xs font-semibold px-3 py-1 bg-terracotta/15 text-terracotta rounded-full">⛔ Discontinued</span>');
+  else if (itemStatus === 'inactive') chips.push('<span class="text-xs font-semibold px-3 py-1 bg-ink/10 text-ink/50 rounded-full">⛔ Tidak Aktif</span>');
   document.getElementById('d-chips').innerHTML = chips.join('');
 
   // Stock card
@@ -484,9 +486,9 @@ function renderDetail(item) {
     : '<span class="text-xs font-semibold px-2 py-0.5 bg-ink/10 text-ink/50 rounded-full">🧰 Inventori Am</span>';
   document.getElementById('mi-category').textContent = item.category || '—';
   document.getElementById('mi-unit').textContent     = unit || '—';
-  document.getElementById('mi-type').innerHTML       = type === 'package'
+  document.getElementById('mi-type').innerHTML       = isPkgLinked
     ? '<span class="text-xs font-semibold px-2 py-0.5 bg-gold/20 text-gold-dark rounded-full">Pakej</span>'
-    : '<span class="text-xs font-semibold px-2 py-0.5 bg-ink/10 text-ink/60 rounded-full">Umum</span>';
+    : '<span class="text-xs font-semibold px-2 py-0.5 bg-ink/10 text-ink/60 rounded-full">Umum (Stok Minimum)</span>';
   document.getElementById('mi-batch-row').classList.toggle('hidden', !isFarmasi || !item.batch_no);
   document.getElementById('mi-batch').textContent   = item.batch_no || '—';
   document.getElementById('mi-expiry-row').classList.toggle('hidden', !isFarmasi || !item.expiry_date);
@@ -495,28 +497,40 @@ function renderDetail(item) {
     ? '<span class="text-xs font-semibold text-navy">Ya</span>'
     : '<span class="text-xs text-green-dark font-semibold">Tidak diperlukan</span>';
 
-  // Demand breakdown
-  const bd = item.demand_breakdown || [];
-  if (!bd.length || type !== 'package') {
+  // Demand breakdown — sesi sebenar dijadualkan (belum hadir) dlm INVENTORY_REORDER_LOOKAHEAD_DAYS hari akan datang
+  const bd = [...(item.forecast_breakdown || [])].sort((a, b) => (a.session_date || '').localeCompare(b.session_date || ''));
+  if (!bd.length) {
     document.getElementById('demand-content').innerHTML = `
       <div class="flex flex-col items-center justify-center py-6 text-center">
-        <div class="text-5xl mb-3 opacity-20">📊</div>
-        <p class="text-sm font-medium text-ink/40">Item ini tidak dikira berdasarkan pakej</p>
-        <p class="text-[11px] text-ink/30 mt-1">Jenis: Umum — stok diurus secara manual</p>
+        <div class="text-5xl mb-3 opacity-20">📅</div>
+        <p class="text-sm font-medium text-ink/40">Tiada sesi pesakit dijadualkan guna item ini</p>
+        <p class="text-[11px] text-ink/30 mt-1">Dalam ${INVENTORY_REORDER_LOOKAHEAD_DAYS} hari akan datang — atau item belum dikaitkan pakej.</p>
       </div>`;
   } else {
+    const uniquePatients = new Set(bd.map(b => b.patient_name)).size;
+    const qtyValues = [...new Set(bd.map(b => Number(b.qty)))];
+    const uniformQty = qtyValues.length === 1 ? qtyValues[0] : null;
+    let summaryLine;
+    if (uniformQty !== null && bd.length === uniquePatients) {
+      summaryLine = `${uniquePatients} pesakit × ${uniformQty} ${escHtml(unit)} = ${needed} ${escHtml(unit)} diperlukan`;
+    } else if (uniformQty !== null) {
+      summaryLine = `${bd.length} sesi (${uniquePatients} pesakit) × ${uniformQty} ${escHtml(unit)} = ${needed} ${escHtml(unit)} diperlukan`;
+    } else {
+      summaryLine = `${bd.length} sesi dari ${uniquePatients} pesakit = ${needed} ${escHtml(unit)} diperlukan`;
+    }
+
     const rows = bd.map(b => `
       <div class="flex items-center justify-between py-2 border-b border-ink/5 text-sm">
-        <span class="text-ink/70 text-xs truncate flex-1 mr-2">${escHtml(b.pkg)}</span>
-        <span class="text-ink/40 text-xs">${b.patients}P × ${b.qty_per_patient}</span>
-        <span class="font-semibold text-ink ml-3 text-xs">${Math.ceil(b.monthly)} ${escHtml(unit)}</span>
+        <span class="text-ink/70 text-xs truncate flex-1 mr-2">${escHtml(b.patient_name)} · Mgu ${b.week_number}</span>
+        <span class="text-ink/40 text-xs">${escHtml(b.session_date || '—')}</span>
+        <span class="font-semibold text-ink ml-3 text-xs">${b.qty} ${escHtml(unit)}</span>
       </div>`).join('');
-    const total = needed;
     document.getElementById('demand-content').innerHTML = `
+      <div class="text-sm font-semibold text-navy mb-2">${summaryLine}</div>
       <div class="space-y-0">${rows}</div>
       <div class="flex items-center justify-between pt-2 mt-1 border-t-2 border-ink/15">
-        <span class="text-xs font-bold text-ink/50 uppercase tracking-wide">Jumlah</span>
-        <span class="font-bold text-navy text-sm">${total} ${escHtml(unit)}</span>
+        <span class="text-xs font-bold text-ink/50 uppercase tracking-wide">Jumlah (${INVENTORY_REORDER_LOOKAHEAD_DAYS}h)</span>
+        <span class="font-bold text-navy text-sm">${needed} ${escHtml(unit)}</span>
       </div>`;
   }
 
@@ -525,9 +539,12 @@ function renderDetail(item) {
   document.getElementById('sup-name').textContent = sup.name || '—';
   document.getElementById('sup-cost').textContent = sup.cost_per_unit ? `RM ${Number(sup.cost_per_unit).toFixed(2)} / ${unit}` : '—';
   document.getElementById('sup-last').textContent = item.last_auto_po_at ? formatDate(item.last_auto_po_at) : '—';
-  const supContactParts = [sup.pic_name, sup.phone, sup.email].filter(Boolean);
+  const supContactParts = [sup.contact_person, sup.phone, sup.email].filter(Boolean);
   document.getElementById('sup-contact-row').classList.toggle('hidden', !supContactParts.length);
   document.getElementById('sup-contact').textContent = supContactParts.join(' · ') || '—';
+  const supBankParts = [sup.bank_name, sup.bank_account].filter(Boolean);
+  document.getElementById('sup-bank-row').classList.toggle('hidden', !supBankParts.length);
+  document.getElementById('sup-bank').textContent = supBankParts.join(' · ') || '—';
 
   // Maklumat Farmasi
   const pharmaRows = [
@@ -546,6 +563,32 @@ function renderDetail(item) {
   });
 }
 
+function renderStockByLocation(rows) {
+  const tbody = document.getElementById('stock-by-location-tbody');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="3" class="text-center py-8 text-ink/30 text-sm">Tiada stok direkod di mana-mana lokasi.</td></tr>';
+    document.getElementById('stock-by-location-total').textContent = '0';
+    return;
+  }
+  const sorted = [...rows].sort((a, b) => (a.psy_inventory_locations?.name || '').localeCompare(b.psy_inventory_locations?.name || ''));
+  let total = 0;
+  tbody.innerHTML = sorted.map(r => {
+    const qty = Number(r.qty_in_stock);
+    total += qty;
+    const chip = qty === 0
+      ? '<span class="text-xs font-semibold text-terracotta bg-terracotta/10 px-2.5 py-1 rounded-full">Out of Stock</span>'
+      : r.min_qty && qty <= Number(r.min_qty)
+      ? '<span class="text-xs font-semibold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full">Low Stock</span>'
+      : '<span class="text-xs font-semibold text-green-dark bg-green-light px-2.5 py-1 rounded-full">Sufficient</span>';
+    return `<tr class="border-b border-ink/5 last:border-0 hover:bg-ink/[0.015]">
+      <td class="px-5 py-2.5 text-sm text-ink">${escHtml(r.psy_inventory_locations?.name || '—')}</td>
+      <td class="px-4 py-2.5 text-center text-sm font-semibold text-ink">${qty} ${escHtml(itemData?.unit || '')}</td>
+      <td class="px-4 py-2.5 text-center">${chip}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('stock-by-location-total').textContent = `${total} ${itemData?.unit || ''}`;
+}
+
 function renderMovements(reqs) {
   const tbody = document.getElementById('movements-tbody');
   if (!reqs.length) {
@@ -553,7 +596,8 @@ function renderMovements(reqs) {
     return;
   }
   tbody.innerHTML = reqs.map(r => {
-    const isPurchase = ['approved','purchased'].includes(r.status);
+    const status = r.psy_inventory_requests?.status;
+    const isPurchase = ['approved','purchased'].includes(status);
     const jenis = isPurchase
       ? '<span class="text-[10px] font-bold px-2 py-0.5 bg-green-light text-green-dark rounded-full">Masuk</span>'
       : '<span class="text-[10px] font-bold px-2 py-0.5 bg-navy/10 text-navy rounded-full">Permintaan</span>';
@@ -563,7 +607,7 @@ function renderMovements(reqs) {
       <td class="px-5 py-3 text-xs text-ink/50">${formatDateTime(r.created_at)}</td>
       <td class="px-4 py-3">${jenis}</td>
       <td class="px-4 py-3 text-sm ${qtyColor}">${qty} ${escHtml(itemData?.unit||'')}</td>
-      <td class="px-4 py-3 text-xs text-ink/50 max-w-[180px] truncate">${escHtml(r.notes || r.item_name || '—')}</td>
+      <td class="px-4 py-3 text-xs text-ink/50 max-w-[180px] truncate">${escHtml(r.item_name || '—')}</td>
     </tr>`;
   }).join('');
 }
@@ -589,17 +633,19 @@ async function saveAdjust() {
   if (!qty || qty <= 0) { banner('Masukkan kuantiti yang sah', 'error'); return; }
 
   const current = Number(itemData.qty_in_stock);
-  let newQty;
-  if (adjType === 'add')    newQty = current + qty;
-  else if (adjType === 'remove') newQty = Math.max(0, current - qty);
-  else                      newQty = qty;
+  let newQty, delta;
+  if (adjType === 'add')    { newQty = current + qty; delta = qty; }
+  else if (adjType === 'remove') { newQty = Math.max(0, current - qty); delta = newQty - current; }
+  else { newQty = qty; delta = newQty - current; }
 
   try {
-    const { data } = await window.db.from('psy_inventory_items')
-      .update({ qty_in_stock: newQty, updated_at: new Date().toISOString() })
-      .eq('id', itemId).select('*').maybeSingle();
+    await addStockToLocation(itemId, delta, null, { type: 'adjustment', refType: 'adjustment', note: note || (adjType === 'add' ? 'Tambah stok' : adjType === 'remove' ? 'Kurang stok' : 'Set stok'), itemName: itemData.name });
+    const { data } = await window.db.from('psy_inventory_items').select('*').eq('id', itemId).maybeSingle();
     if (data) itemData = { ...itemData, ...data };
+    newQty = Number(itemData.qty_in_stock);
     const productSynced = await (window.syncStockToProducts?.(itemData.name, newQty));
+    const { data: stockLocRows } = await window.db.from('psy_inventory_stock_by_location').select('*, psy_inventory_locations(name)').eq('item_id', itemId);
+    renderStockByLocation(stockLocRows || []);
     closeAdjust();
     document.getElementById('d-desc').classList.add('hidden');
     document.getElementById('d-no-desc').classList.add('hidden');
@@ -671,18 +717,25 @@ async function submitRequest() {
   const status    = needsApproval ? 'pending_approval' : 'approved';
 
   try {
-    const { error } = await window.db.from('psy_inventory_requests').insert({
-      item_id:           itemId,
-      item_name:         itemData?.name || '',
-      qty_requested:     qty,
-      unit_price:        unitPrice,
-      total_amount:      totalAmt,
+    const { data: reqRow, error } = await window.db.from('psy_inventory_requests').insert({
       reason,
       status,
+      subtotal: totalAmt || 0,
+      total_amount: totalAmt || 0,
       requested_by:      window.currentUser.id,
       requested_by_name: window.currentUser.full_name || '',
-    });
+    }).select('id').single();
     if (error) throw error;
+
+    const { error: itemErr } = await window.db.from('psy_inventory_request_items').insert({
+      request_id: reqRow.id,
+      item_id: itemId,
+      item_name: itemData?.name || '',
+      qty_requested: qty,
+      unit_price: unitPrice || 0,
+      subtotal: totalAmt || 0,
+    });
+    if (itemErr) throw itemErr;
 
     const { data: managers } = await window.db.from('psy_profiles')
       .select('id').eq('role', 'staff').eq('staff_role', 'manager');
@@ -696,7 +749,7 @@ async function submitRequest() {
         body:    needsApproval
           ? `${window.currentUser.full_name || 'Staff'} memohon kelulusan untuk beli ${qty} ${itemData?.unit || 'unit'} ${itemData?.name || ''}.`
           : `${window.currentUser.full_name || 'Staff'} akan membeli ${qty} ${itemData?.unit || 'unit'} ${itemData?.name || ''}.`,
-        link:    'inventory.html',
+        link:    'purchase-requests.html',
       });
     }
 
@@ -706,8 +759,8 @@ async function submitRequest() {
     closeRequestModal();
 
     // Refresh movements list
-    const reqsRes = await window.db.from('psy_inventory_requests')
-      .select('*').eq('item_id', itemId).order('created_at', { ascending: false }).limit(8);
+    const reqsRes = await window.db.from('psy_inventory_request_items')
+      .select('*, psy_inventory_requests(status)').eq('item_id', itemId).order('created_at', { ascending: false }).limit(8);
     if (reqsRes.data) renderMovements(reqsRes.data);
   } catch (e) {
     banner('Gagal hantar permohonan: ' + e.message, 'error');

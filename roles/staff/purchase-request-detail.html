@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Purchase Request Details</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📋</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-5">
+        <div class="text-xs text-ink/40">
+          <span>Purchasing</span> <span class="mx-1">›</span>
+          <a href="purchase-requests.html" class="hover:underline">Purchase Requests</a> <span class="mx-1">›</span>
+          <span id="pr-breadcrumb" class="text-ink/70 font-medium">—</span>
+        </div>
+
+        <div class="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h2 class="text-xl font-bold text-navy">Purchase Request Details</h2>
+            <p class="text-xs text-ink/50 mt-0.5">Review permohonan dan luluskan / tolak.</p>
+          </div>
+          <div id="pr-actions" class="flex items-center gap-2"></div>
+        </div>
+
+        <!-- Top info strip -->
+        <div class="flex flex-wrap items-start gap-x-10 gap-y-4 pb-5 border-b border-ink/10">
+          <div>
+            <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Request Number</div>
+            <div id="pr-request-no" class="text-base font-bold text-navy font-mono mt-1">—</div>
+          </div>
+          <div class="pl-10 border-l border-ink/8">
+            <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Status</div>
+            <div id="pr-status-chip" class="mt-1"></div>
+            <div id="pr-status-sub" class="text-[10px] text-ink/40 mt-1">—</div>
+          </div>
+          <div class="pl-10 border-l border-ink/8">
+            <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Requested By</div>
+            <div id="pr-requested-by" class="text-sm font-bold text-ink mt-1.5">—</div>
+          </div>
+          <div class="pl-10 border-l border-ink/8">
+            <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Request Date</div>
+            <div id="pr-request-date" class="text-sm font-bold text-ink mt-1.5">—</div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-5 items-start">
+          <div class="min-w-0">
+
+            <div>
+              <h3 class="font-bold text-sm text-ink mb-3">Requested Items</h3>
+              <div class="overflow-x-auto"><table class="w-full text-sm">
+                <thead><tr class="border-b border-ink/10 text-left text-[10px] uppercase tracking-wider text-ink/45">
+                  <th class="pb-2">Product</th>
+                  <th class="pb-2 text-right">Qty</th>
+                </tr></thead>
+                <tbody id="pr-items-tbody"></tbody>
+              </table></div>
+            </div>
+
+            <div class="pt-5 mt-5 border-t border-ink/8">
+              <h3 class="font-bold text-sm text-ink mb-3">Approval</h3>
+              <div id="pr-approval" class="grid grid-cols-2 gap-x-6 gap-y-3 text-sm"></div>
+            </div>
+
+          </div>
+
+          <!-- ═══ SIDEBAR ═══ -->
+          <div class="space-y-4">
+            <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+              <h3 class="font-bold text-sm text-ink mb-3">Activity Log</h3>
+              <div id="pr-activity" class="space-y-3 text-xs text-ink/40 italic">Tiada aktiviti.</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="../../shared/inventoryStock.js"></script>
+<script src="_shared.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const requestId = params.get('id');
+let prData = null;
+let prItems = [];
+
+const REQ_STATUS = {
+  pending_approval: { label: 'Pending Approval', cls: 'text-gold-dark bg-gold/20' },
+  approved:         { label: 'Approved',         cls: 'text-teal bg-teal/15' },
+  purchased:        { label: 'Purchased',        cls: 'text-green-dark bg-green-light' },
+  rejected:         { label: 'Rejected',         cls: 'text-terracotta bg-terracotta/15' },
+};
+
+function escHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function fmtDate(d) { return d ? new Date(d).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : '—'; }
+function fmtDateTime(d) { return d ? new Date(d).toLocaleString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'; }
+
+function isManagerOrAdmin() { return can('inventory', 'approve'); }
+
+async function loadRequest() {
+  if (!requestId) { banner('Permohonan tidak dijumpai', 'error'); setTimeout(() => location.href = 'purchase-requests.html', 1200); return; }
+  const [reqRes, itemsRes, actRes] = await Promise.all([
+    window.db.from('psy_inventory_requests').select('*').eq('id', requestId).single(),
+    window.db.from('psy_inventory_request_items').select('*').eq('request_id', requestId).order('created_at'),
+    window.db.from('psy_audit_log').select('*').eq('target', requestId).order('created_at', { ascending: false }).limit(20),
+  ]);
+  if (reqRes.error || !reqRes.data) { banner('Permohonan tidak dijumpai', 'error'); setTimeout(() => location.href = 'purchase-requests.html', 1200); return; }
+  prData = reqRes.data;
+  prItems = itemsRes.data || [];
+
+  renderHeaderInfo();
+  renderItems();
+  renderApproval();
+  renderActivity(actRes.data || []);
+  renderActions();
+}
+
+function renderHeaderInfo() {
+  document.getElementById('pr-breadcrumb').textContent = prData.request_no || '—';
+  document.getElementById('pr-request-no').textContent = prData.request_no || '—';
+  const st = REQ_STATUS[prData.status] || { label: prData.status, cls: 'text-ink/60 bg-ink/10' };
+  document.getElementById('pr-status-chip').innerHTML = `<span class="text-xs font-semibold px-2.5 py-1 rounded-full ${st.cls}">${st.label}</span>`;
+  const statusSub = prData.status === 'approved' || prData.status === 'purchased'
+    ? `by ${escHtml(prData.approved_by ? (window.currentUser?.id === prData.approved_by ? 'you' : 'manager') : '—')}`
+    : prData.status === 'rejected' ? 'Not approved' : 'Awaiting review';
+  document.getElementById('pr-status-sub').textContent = statusSub;
+  document.getElementById('pr-requested-by').textContent = prData.requested_by_name || '—';
+  document.getElementById('pr-request-date').textContent = fmtDate(prData.created_at);
+}
+
+function renderItems() {
+  document.getElementById('pr-items-tbody').innerHTML = prItems.map(r => `
+    <tr class="border-b border-ink/5 last:border-0">
+      <td class="py-2.5 font-medium text-sm">${escHtml(r.item_name)}</td>
+      <td class="py-2.5 text-right text-sm">${Number(r.qty_requested)}</td>
+    </tr>`).join('') || '<tr><td colspan="2" class="text-center text-ink/40 text-sm py-6 italic">Tiada item.</td></tr>';
+}
+
+function renderApproval() {
+  const rows = [
+    ['Requested By', escHtml(prData.requested_by_name || '—')],
+    ['Requested On', fmtDateTime(prData.created_at)],
+  ];
+  if (prData.status === 'approved' || prData.status === 'purchased') {
+    rows.push(['Approved On', fmtDateTime(prData.approved_at)]);
+  }
+  if (prData.status === 'rejected') {
+    rows.push(['Rejected Reason', escHtml(prData.rejected_reason || '—')]);
+  }
+  if (prData.status === 'purchased') {
+    rows.push(['Purchased On', fmtDateTime(prData.purchased_at)]);
+  }
+  document.getElementById('pr-approval').innerHTML = rows.map(([k,v]) => `<div><div class="text-ink/40 text-xs">${k}</div><div class="font-medium text-ink mt-0.5">${v}</div></div>`).join('');
+}
+
+function renderActivity(logs) {
+  const wrap = document.getElementById('pr-activity');
+  if (!logs.length) { wrap.innerHTML = '<div class="text-ink/40 text-sm italic">Tiada aktiviti.</div>'; return; }
+  wrap.className = 'space-y-3';
+  wrap.innerHTML = logs.map(l => `
+    <div class="flex items-start gap-2.5 text-xs">
+      <span class="w-2 h-2 rounded-full bg-navy/30 mt-1.5 flex-shrink-0"></span>
+      <div>
+        <div class="text-ink font-medium">${escHtml(l.action)}</div>
+        <div class="text-ink/50">${escHtml(l.actor_name || '—')} · ${fmtDateTime(l.created_at)}</div>
+      </div>
+    </div>`).join('');
+}
+
+function renderActions() {
+  const wrap = document.getElementById('pr-actions');
+  if (!isManagerOrAdmin()) { wrap.innerHTML = ''; return; }
+  let html = '';
+  if (prData.status === 'pending_approval') {
+    html += `<button onclick="approveRequest()" class="px-4 py-2.5 bg-teal/10 text-teal text-sm font-semibold rounded-xl hover:bg-teal/20">✓ Approve Request</button>
+      <button onclick="rejectRequest()" class="px-4 py-2.5 bg-terracotta/10 text-terracotta text-sm font-semibold rounded-xl hover:bg-terracotta/20">✕ Reject Request</button>`;
+  } else if (prData.status === 'approved') {
+    html += `<button onclick="location.href='stock-in.html?ref=${requestId}'" class="px-4 py-2.5 border border-ink/20 rounded-xl text-sm font-semibold bg-white hover:bg-ink/5">📥 Stock In (dgn batch/expiry)</button>
+      <button onclick="markPurchased()" class="px-4 py-2.5 bg-green-light text-green-dark text-sm font-semibold rounded-xl hover:bg-green-light/80">🛍️ Mark as Purchased (Cepat)</button>`;
+  }
+  wrap.innerHTML = html;
+}
+
+async function reqAudit(action, meta = {}) {
+  try {
+    await window.db.from('psy_audit_log').insert({
+      actor_id: window.currentUser.id, actor_name: window.currentUser.full_name,
+      actor_role: 'staff', action, target: requestId, meta,
+    });
+  } catch {}
+}
+
+async function notifyRequester(title, body) {
+  if (!prData.requested_by) return;
+  try {
+    await window.db.from('psy_notifications').insert({
+      user_id: prData.requested_by, type: 'system', title, body,
+      link: `purchase-request-detail.html?id=${requestId}`,
+    });
+  } catch {}
+}
+
+async function approveRequest() {
+  try {
+    const { error } = await window.db.from('psy_inventory_requests').update({
+      status: 'approved', approved_by: window.currentUser.id, approved_at: new Date().toISOString(),
+    }).eq('id', requestId);
+    if (error) throw error;
+    await reqAudit('inventory.approve');
+    await notifyRequester(
+      `Permohonan Diluluskan: ${prData.request_no}`,
+      `Permohonan anda ${prData.request_no} telah diluluskan oleh ${window.currentUser.full_name || 'manager'}.`,
+    );
+    banner('Permohonan diluluskan');
+    await loadRequest();
+  } catch (e) { banner('Gagal luluskan: ' + e.message, 'error'); }
+}
+window.approveRequest = approveRequest;
+
+async function rejectRequest() {
+  const reason = prompt('Sebab tolak:');
+  if (reason === null) return;
+  try {
+    const { error } = await window.db.from('psy_inventory_requests').update({
+      status: 'rejected', rejected_reason: reason, approved_by: window.currentUser.id,
+    }).eq('id', requestId);
+    if (error) throw error;
+    await reqAudit('inventory.reject', { reason });
+    await notifyRequester(
+      `Permohonan Ditolak: ${prData.request_no}`,
+      `Permohonan anda ${prData.request_no} telah ditolak oleh ${window.currentUser.full_name || 'manager'}. Sebab: ${reason}`,
+    );
+    banner('Permohonan ditolak');
+    await loadRequest();
+  } catch (e) { banner('Gagal tolak: ' + e.message, 'error'); }
+}
+window.rejectRequest = rejectRequest;
+
+async function markPurchased() {
+  try {
+    const { error: reqErr } = await window.db.from('psy_inventory_requests').update({
+      status: 'purchased', purchased_at: new Date().toISOString(),
+    }).eq('id', requestId);
+    if (reqErr) throw reqErr;
+
+    for (const line of prItems) {
+      if (!line.item_id) continue;
+      await addStockToLocation(line.item_id, Number(line.qty_requested), null, { type: 'in', refType: 'purchase_request', refId: requestId, refLabel: prData.request_no, itemName: line.item_name });
+      const { data: item } = await window.db.from('psy_inventory_items').select('qty_in_stock,name').eq('id', line.item_id).single();
+      if (item) await (window.syncStockToProducts?.(item.name, Number(item.qty_in_stock)));
+    }
+
+    const { data: managers } = await window.db.from('psy_profiles').select('id').eq('role', 'staff').eq('staff_role', 'manager');
+    for (const m of (managers || [])) {
+      await window.db.from('psy_notifications').insert({
+        user_id: m.id, type: 'system',
+        title: `Stok Dikemaskini: ${prData.request_no}`,
+        body: `${prItems.length} item dalam ${prData.request_no} telah dibeli dan stok dikemaskini.`,
+        link: 'purchase-requests.html',
+      });
+    }
+
+    await reqAudit('inventory.purchased', { item_count: prItems.length });
+    banner('Stok dikemaskini');
+    await loadRequest();
+  } catch (e) { banner('Gagal kemaskini: ' + e.message, 'error'); }
+}
+window.markPurchased = markPurchased;
+
+(async () => {
+  const user = await initStaff('purchase_requests', 'Purchase Request Details', 'inventory');
+  if (!user) return;
+  await loadRequest();
+})();
+</script>
+</body>
+</html>

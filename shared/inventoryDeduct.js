@@ -7,7 +7,10 @@
  * Deduct supplies for a session that was just marked as attended.
  * - Pulls plan.coaching_schedule[weekIndex].supplies
  * - Skips weeks with mode='online' (no physical supplies)
- * - Each supply needs item_id + qty + auto_stock !== false
+ * - Each supply needs item_id + qty + auto_stock !== false, DAN mesti ditick
+ *   staff dalam checklist "Bekalan" (plan-week.html) — coaching_checks[`M{week}_supplies_{idx}`]
+ *   mesti true. Item tak ditick (staff isi "Sebab belum selesai...") dilangkau — bukan
+ *   semua bekalan dijadualkan automatik ditolak semata sesi ditanda Hadir.
  * - Decrements psy_inventory_items.qty_in_stock
  * - Logs to audit
  *
@@ -20,7 +23,7 @@ window.deductSessionSupplies = async function (sessionId) {
     // Get session detail
     const { data: sess, error: sessErr } = await window.db
       .from('psy_plan_weekly_progress')
-      .select('id, plan_id, week_number, patient_id, is_extension')
+      .select('id, plan_id, week_number, patient_id, is_extension, coaching_checks')
       .eq('id', sessionId)
       .single();
     if (sessErr || !sess) { result.errors.push('Sesi tidak ditemui'); return result; }
@@ -44,15 +47,20 @@ window.deductSessionSupplies = async function (sessionId) {
     const supplies = Array.isArray(weekObj.supplies) ? weekObj.supplies : [];
     if (!supplies.length) { result.skipped.push('Tiada bekalan disetkan untuk minggu ini'); return result; }
 
+    const coachingChecks = sess.coaching_checks || {};
+
     // Process each supply
-    for (const s of supplies) {
+    for (let idx = 0; idx < supplies.length; idx++) {
+      const s = supplies[idx];
       const itemId = s?.item_id;
       const qty    = Number(s?.qty || s?.quantity || 0);
       const auto   = s?.auto_stock !== false; // default true
+      const ticked = coachingChecks[`M${sess.week_number}_supplies_${idx}`] === true;
 
       if (!itemId) { result.skipped.push(`Item tanpa ID: ${s?.item_name || s?.name || '(unknown)'}`); continue; }
       if (qty <= 0) { result.skipped.push(`Item qty=0: ${s?.item_name || itemId}`); continue; }
       if (!auto)   { result.skipped.push(`Auto-stock off: ${s?.item_name || itemId}`); continue; }
+      if (!ticked) { result.skipped.push(`Belum ditick di checklist Bekalan: ${s?.item_name || itemId}`); continue; }
 
       // Fetch current stock
       const { data: item } = await window.db
@@ -63,14 +71,21 @@ window.deductSessionSupplies = async function (sessionId) {
       if (!item) { result.errors.push(`Item ${itemId} tidak ditemui`); continue; }
 
       const currentQty = Number(item.qty_in_stock) || 0;
-      const newQty     = Math.max(0, currentQty - qty);
+      // Elak lebih tolak dari stok sedia ada (sama kelakuan Math.max(0,...) yang asal).
+      const actualDelta = -Math.min(qty, currentQty);
 
-      // Update stock
-      const { error: updErr } = await window.db
-        .from('psy_inventory_items')
-        .update({ qty_in_stock: newQty, updated_at: new Date().toISOString() })
-        .eq('id', itemId);
-      if (updErr) { result.errors.push(`Update ${item.name}: ${updErr.message}`); continue; }
+      // addStockToLocation() (bukan update qty_in_stock terus) — supaya stok per-lokasi
+      // (psy_inventory_stock_by_location) & ledger (psy_stock_movements) turut betul; update
+      // terus di sini sebelum ni bypass sistem lokasi & boleh ditimpa semula oleh trigger
+      // psy_sync_item_stock_total() pada Stock In/adjustment seterusnya.
+      try {
+        await window.addStockToLocation(itemId, actualDelta, null, {
+          type: 'out', refType: 'patient_package', refId: sess.patient_id,
+          note: `Sesi minggu ${sess.week_number}`, itemName: item.name,
+        });
+      } catch (e) { result.errors.push(`Update ${item.name}: ${e.message}`); continue; }
+
+      const newQty = Math.max(0, currentQty + actualDelta);
 
       result.deducted.push({
         item_id:   itemId,
@@ -81,6 +96,10 @@ window.deductSessionSupplies = async function (sessionId) {
         after:     newQty,
         low_stock: newQty < currentQty && newQty < 5,
       });
+
+      // Barang yang sama juga dijual berasingan di Shop (psy_products, dipadan ikut
+      // nama) — tanpa ni, stok Shop jadi lapuk selepas auto-tolak sesi coaching.
+      try { await window.syncStockToProducts?.(item.name, newQty); } catch (e) { console.warn('syncStockToProducts gagal:', e); }
     }
 
     // Audit log (one entry per session, listing all deductions)

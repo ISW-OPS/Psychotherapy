@@ -41,7 +41,7 @@
           <h2 id="page-title-text" class="text-2xl font-bold text-ink">Keluarkan Surat Baharu</h2>
           <p class="text-sm text-ink/55 mt-1">Pilih templat, isi maklumat, semak dan tandatangan surat.</p>
         </div>
-        <a href="surat.html" class="border border-ink/20 text-ink/70 px-4 py-2 rounded-xl text-sm font-semibold hover:bg-cream flex items-center gap-1.5">← Kembali ke Senarai</a>
+        <button onclick="history.back()" class="border border-ink/20 text-ink/70 px-4 py-2 rounded-xl text-sm font-semibold hover:bg-cream flex items-center gap-1.5">← Kembali ke Senarai</button>
       </div>
 
       <!-- Step indicator -->
@@ -201,12 +201,10 @@
 const LOGO_URL = '../../image/Logo_ISW.png';
 const params = new URLSearchParams(location.search);
 const preTplId = params.get('tpl');
-const reqId    = params.get('req');
 
 let allTemplates = [];
 let allPatients = [];
 let allIssuedCount = 0;
-let currentRequest = null;
 let currentStep = 1;
 const TOTAL_STEPS = 3;
 
@@ -260,29 +258,14 @@ function renderSummary() {
 
 // ─── Data load ──────────────────────────────────────────
 async function loadData() {
-  const [tplRes, patRes, issuedCountRes, reqRes] = await Promise.all([
+  const [tplRes, patRes, issuedCountRes] = await Promise.all([
     window.db.from('psy_letter_templates').select('*').eq('is_active', true).order('name'),
     window.db.from('psy_patients').select('id, full_name, ic_number, user_id, phone, active_package_name, profile:psy_profiles!user_id(full_name)').eq('status', 'active'),
     window.db.from('psy_letter_issued').select('id', { count: 'exact', head: true }),
-    reqId ? window.db.from('psy_letter_requests').select('*').eq('id', reqId).limit(1) : Promise.resolve({ data: [] }),
   ]);
   allTemplates = tplRes.data || [];
   allPatients  = (patRes.data || []).map(p => ({ ...p, full_name: p.full_name || p.profile?.full_name || null }));
   allIssuedCount = issuedCountRes.count || 0;
-  currentRequest = reqRes.data?.[0] || null;
-
-  if (currentRequest) {
-    document.getElementById('page-title-text').textContent = 'Keluarkan Surat untuk ' + currentRequest.patient_name;
-    // Approval gate
-    const sa = currentRequest.assigned_signer_id;
-    const me = window.currentUser?.id;
-    if (sa && sa !== me && !isSuperAdmin()) {
-      const { data: signerRow } = await window.db.from('psy_profiles').select('full_name').eq('id', sa).maybeSingle();
-      alert('Permohonan ini perlu kelulusan ' + (signerRow?.full_name || 'staff yang ditetapkan') + ' sahaja.');
-      window.location.href = 'surat.html';
-      return;
-    }
-  }
 
   populateTemplates();
 
@@ -290,22 +273,10 @@ async function loadData() {
   document.getElementById('gen-tarikh').value = new Date().toISOString().split('T')[0];
   document.getElementById('gen-ref').value    = `ISW/${new Date().getFullYear()}/${String(allIssuedCount + 1).padStart(4, '0')}`;
 
-  // Resolve templat dari permohonan: padan ikut id → jenis_surat → nama.
-  // (Permohonan lama/seed simpan kod spt "KWSP" dalam template_code, bukan UUID — sebab tu dulu terpaksa pilih balik.)
-  let initialTpl = preTplId || null;
-  if (!initialTpl && currentRequest) {
-    const code = currentRequest.template_code, nm = currentRequest.template_name;
-    const norm = v => String(v || '').trim().toLowerCase();
-    const match = allTemplates.find(t => t.id === code)
-      || (code ? allTemplates.find(t => t.jenis_surat && norm(t.jenis_surat) === norm(code)) : null)
-      || (nm   ? allTemplates.find(t => t.name && norm(t.name) === norm(nm)) : null);
-    if (match) initialTpl = match.id;
-  }
-  if (initialTpl) {
-    document.getElementById('gen-tpl').value = initialTpl;
+  if (preTplId) {
+    document.getElementById('gen-tpl').value = preTplId;
     onTplChange();
   }
-  if (currentRequest?.patient_id) selectPatient(currentRequest.patient_id);
 
   updatePreview();
 }
@@ -411,13 +382,27 @@ function onTplChange() {
     return;
   }
 
+  // Gate: template requires_specific_approver=true → HANYA assigned_signer/super_admin boleh
+  // guna template ni langsung (bukan setakat snapshot pada request — laluan ?tpl= terus ni
+  // sebelum ni tak disemak langsung, celah keselamatan).
+  if (tpl.requires_specific_approver && tpl.assigned_signer_id && tpl.assigned_signer_id !== window.currentUser?.id && !isSuperAdmin()) {
+    document.getElementById('gen-tpl').value = '';
+    metaDiv.classList.add('hidden');
+    patientWrap.classList.add('hidden');
+    fieldsCard.classList.add('hidden');
+    noFields.classList.add('hidden');
+    updatePreview();
+    window.db.from('psy_profiles').select('full_name').eq('id', tpl.assigned_signer_id).maybeSingle()
+      .then(({ data }) => banner(`Template ini perlu kelulusan ${data?.full_name || 'staff yang ditetapkan'} sahaja`, 'error'));
+    return;
+  }
+
   const isInternalTpl = tpl.category === 'internal';
   patientWrap.classList.toggle('hidden', isInternalTpl);
 
   metaDiv.classList.remove('hidden');
   let metaParts = [];
   if (tpl.description) metaParts.push(tpl.description);
-  if (tpl.jenis_surat) metaParts.push('<strong>Jenis:</strong> ' + tpl.jenis_surat);
   metaDiv.innerHTML = metaParts.join(' · ') || (isInternalTpl ? 'Kegunaan dalaman' : 'Surat untuk pesakit');
 
   if (isAdmin()) {
@@ -568,11 +553,11 @@ async function confirmSign() {
   const signedAt = document.getElementById('gen-tarikh').value
     ? new Date(document.getElementById('gen-tarikh').value).toISOString()
     : new Date().toISOString();
+  const requesterLabel = isInternal ? 'Internal Document' : patient.full_name;
   try {
     await window.db.from('psy_letter_issued').insert({
-      request_id:      reqId || null,
       patient_id:      isInternal ? null : patient.id,
-      patient_name:    isInternal ? 'Internal Document' : patient.full_name,
+      patient_name:    requesterLabel,
       template_code:   'simple',
       template_name:   tpl.name,
       field_values:    values,
@@ -583,11 +568,6 @@ async function confirmSign() {
       signature_url:   sigData,
       signed_at:       signedAt,
     });
-    if (reqId) {
-      await window.db.from('psy_letter_requests').update({
-        status: 'issued', updated_at: new Date().toISOString(),
-      }).eq('id', reqId);
-    }
     if (!isInternal && patient?.user_id) {
       try { await notify(patient.user_id, 'system', 'Surat Anda Sedia',
         `${tpl.name} (${refNumber}) telah dikeluarkan.`, 'surat.html'); } catch {}
@@ -599,7 +579,7 @@ async function confirmSign() {
         actor_role: 'staff',
         action: 'letter.issued',
         target: refNumber,
-        meta: { template: tpl.name, ref: refNumber, patient_id: isInternal ? null : patient.id, patient_name: isInternal ? 'Internal' : patient.full_name, from_request: reqId || null },
+        meta: { template: tpl.name, ref: refNumber, patient_id: isInternal ? null : patient.id, patient_name: requesterLabel },
       });
     } catch {}
     banner('Surat dikeluarkan ✓');

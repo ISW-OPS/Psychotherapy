@@ -51,11 +51,23 @@
               <label class="text-xs font-semibold text-ink/70 mb-1 block">Sebab / Tujuan Permohonan</label>
               <textarea id="req-reason" rows="4" placeholder="cth: untuk failkan claim KWSP bulan depan" class="w-full border border-ink/20 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-navy resize-none" oninput="updateBtn()"></textarea>
             </div>
-            <button id="btn-submit" onclick="submitRequest()" disabled class="bg-navy text-white px-5 py-2.5 rounded-lg font-semibold text-sm hover:bg-navy-dark disabled:opacity-40 disabled:cursor-not-allowed">Hantar Permohonan</button>
+            <div>
+              <label class="text-xs font-semibold text-ink/70 mb-1 block">Lampiran (Opsyenal)</label>
+              <input id="req-file-input" type="file" multiple class="hidden" onchange="onFilesSelected(event)">
+              <div onclick="document.getElementById('req-file-input').click()" class="border border-dashed border-ink/25 rounded-lg p-3 text-center cursor-pointer hover:bg-ink/[0.02]">
+                <p class="text-xs text-ink/50">📎 <span class="text-navy font-semibold">Klik untuk upload</span> — PDF/JPG/PNG</p>
+              </div>
+              <div id="req-files-list" class="space-y-1.5 mt-1.5"></div>
+            </div>
+            <div class="flex items-center gap-2">
+              <button id="btn-draft" onclick="saveDraft()" class="border border-ink/20 text-ink/70 px-5 py-2.5 rounded-lg font-semibold text-sm hover:bg-cream">Simpan Draf</button>
+              <button id="btn-submit" onclick="submitRequest()" disabled class="bg-navy text-white px-5 py-2.5 rounded-lg font-semibold text-sm hover:bg-navy-dark disabled:opacity-40 disabled:cursor-not-allowed">Hantar Permohonan</button>
+              <button id="btn-cancel-edit" onclick="resetForm()" class="hidden text-xs text-ink/50 hover:underline ml-1">Batal edit</button>
+            </div>
           </div>
         </div>
 
-        <!-- Pending/rejected requests -->
+        <!-- Draft / pending / rejected requests -->
         <div class="bg-white rounded-xl border border-ink/10 p-5">
           <h3 class="font-semibold text-sm mb-3">Permohonan Saya</h3>
           <div id="requests-list" class="space-y-2"></div>
@@ -83,6 +95,15 @@
 <script>
     function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
 const LOGO_URL = '../../image/Logo_ISW.png';
+
+async function logAudit(action, target, meta) {
+  try {
+    await window.db.from('psy_audit_log').insert({
+      actor_id: window.currentUser?.id, actor_name: window.currentUser?.full_name,
+      actor_role: 'patient', action, target, meta: meta || {},
+    });
+  } catch (_) {}
+}
 
 async function viewLetter(id) {
   const { data: rows } = await window.db.from('psy_letter_issued').select('*').eq('id', id).limit(1);
@@ -133,7 +154,7 @@ function updateBtn() {
 
 async function loadTemplates() {
   const { data } = await window.db.from('psy_letter_templates')
-    .select('id, name, description, category, is_active, assigned_signer_id, signer:psy_profiles!assigned_signer_id(full_name, staff_role)')
+    .select('id, name, description, category, is_active, assigned_signer_id, requires_specific_approver, signer:psy_profiles!assigned_signer_id(full_name, staff_role)')
     .eq('category', 'patient')
     .eq('is_active', true)
     .order('name');
@@ -144,46 +165,165 @@ async function loadTemplates() {
     '<option value="__custom__">Lain-lain (taip sendiri)</option>';
 }
 
-async function submitRequest() {
+let editingRequestId = null;
+let stagedFiles = [];
+
+function escHtml(str) { return (str || '').replace(/</g,'&lt;'); }
+
+function onFilesSelected(e) {
+  stagedFiles.push(...Array.from(e.target.files || []));
+  renderFilesList();
+  e.target.value = '';
+}
+window.onFilesSelected = onFilesSelected;
+
+function removeStagedFile(idx) {
+  stagedFiles.splice(idx, 1);
+  renderFilesList();
+}
+window.removeStagedFile = removeStagedFile;
+
+function renderFilesList() {
+  document.getElementById('req-files-list').innerHTML = stagedFiles.map((f, i) => `
+    <div class="flex items-center justify-between px-3 py-2 bg-cream/60 rounded-lg text-xs">
+      <span class="truncate">📄 ${escHtml(f.name)} <span class="text-ink/40">(${Math.round(f.size/1024)} KB)</span></span>
+      <button onclick="removeStagedFile(${i})" class="text-terracotta hover:text-terracotta/70 flex-shrink-0 ml-2">🗑</button>
+    </div>`).join('');
+}
+
+async function uploadStagedAttachments(requestId) {
+  for (const f of stagedFiles) {
+    const path = `${requestId}/${Date.now()}_${f.name}`;
+    const { error: upErr } = await window.db.storage.from('letter-attachments').upload(path, f);
+    if (!upErr) {
+      await window.db.from('psy_letter_request_attachments').insert({
+        request_id: requestId, file_name: f.name, file_path: path, file_size: f.size, file_type: f.type,
+        uploaded_by: window.currentUser?.id, uploaded_by_name: window.currentUser?.full_name || '',
+      });
+    }
+  }
+  stagedFiles = [];
+  renderFilesList();
+}
+
+function resetForm() {
+  editingRequestId = null;
+  document.getElementById('req-tpl').value = '';
+  document.getElementById('req-name') && (document.getElementById('req-name').value = '');
+  document.getElementById('req-reason').value = '';
+  document.getElementById('custom-name-wrap').classList.add('hidden');
+  document.getElementById('tpl-desc').classList.add('hidden');
+  document.getElementById('btn-cancel-edit').classList.add('hidden');
+  stagedFiles = [];
+  renderFilesList();
+  updateBtn();
+}
+window.resetForm = resetForm;
+
+function editRequest(id) {
+  const r = myRequests.find(x => x.id === id);
+  if (!r) return;
+  editingRequestId = id;
+  const matchTpl = availableTemplates.find(t => t.id === r.template_code);
+  document.getElementById('req-tpl').value = matchTpl ? matchTpl.id : '__custom__';
+  onTplChange();
+  if (!matchTpl) document.getElementById('req-name').value = r.template_name || '';
+  document.getElementById('req-reason').value = r.reason || '';
+  document.getElementById('btn-cancel-edit').classList.remove('hidden');
+  updateBtn();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+window.editRequest = editRequest;
+
+function collectFormValues() {
   const tplVal = document.getElementById('req-tpl').value;
   const reason = document.getElementById('req-reason').value.trim();
-  let template_code = 'custom';
-  let template_name = '';
-  let assigned_signer_id = null;
+  let template_code = 'custom', template_name = '', assigned_signer_id = null, tpl = null;
   if (tplVal === '__custom__') {
     template_name = document.getElementById('req-name').value.trim();
   } else if (tplVal) {
-    const tpl = availableTemplates.find(t => t.id === tplVal);
-    if (!tpl) { banner('Templat tidak sah', 'error'); return; }
+    tpl = availableTemplates.find(t => t.id === tplVal);
+    if (!tpl) { banner('Templat tidak sah', 'error'); return null; }
     template_code = tpl.id;
     template_name = tpl.name;
     assigned_signer_id = tpl.assigned_signer_id || null;
   }
-  if (!template_name || !reason) return;
+  if (!template_name || !reason) return null;
+  return { tpl, template_code, template_name, reason, assigned_signer_id };
+}
+
+async function saveDraft() {
+  const v = collectFormValues();
+  if (!v) { banner('Sila lengkapkan borang dulu', 'error'); return; }
+  const btn = document.getElementById('btn-draft');
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
+  try {
+    const payload = {
+      patient_id: patientRecord.id, patient_name: window.currentUser.full_name,
+      requester_type: 'patient',
+      template_code: v.template_code, template_name: v.template_name,
+      reason: v.reason, assigned_signer_id: v.assigned_signer_id,
+      status: 'draft', updated_at: new Date().toISOString(),
+    };
+    let draftId = editingRequestId;
+    if (editingRequestId) {
+      await window.db.from('psy_letter_requests').update(payload).eq('id', editingRequestId);
+    } else {
+      const { data } = await window.db.from('psy_letter_requests').insert(payload).select('id').single();
+      draftId = data?.id;
+    }
+    if (draftId && stagedFiles.length) await uploadStagedAttachments(draftId);
+    banner('Draf disimpan');
+    resetForm();
+    loadList();
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Simpan Draf';
+  }
+}
+window.saveDraft = saveDraft;
+
+async function submitRequest() {
+  const v = collectFormValues();
+  if (!v) return;
+  const needsApproval = v.tpl ? !!v.tpl.requires_specific_approver : true; // custom (bukan templat) → sentiasa lalu staff
   const btn = document.getElementById('btn-submit');
   btn.disabled = true; btn.textContent = 'Menghantar...';
   try {
-    const { error: reqErr } = await window.db.from('psy_letter_requests').insert({
-      patient_id: patientRecord.id,
-      patient_name: window.currentUser.full_name,
-      template_code,
-      template_name,
-      reason,
-      assigned_signer_id,
-      status: 'pending',
-    });
-    if (reqErr) throw reqErr;
-    // Notify assigned signer (kalau ada)
-    if (assigned_signer_id) {
-      try { await notify(assigned_signer_id, 'system', 'Permohonan Surat Baru',
-        `${window.currentUser.full_name} memohon: ${template_name}`, 'surat.html'); } catch {}
+    const payload = {
+      patient_id: patientRecord.id, patient_name: window.currentUser.full_name,
+      requester_type: 'patient',
+      template_code: v.template_code, template_name: v.template_name,
+      reason: v.reason, assigned_signer_id: v.assigned_signer_id,
+      status: needsApproval ? 'pending_approval' : 'submitted',
+      updated_at: new Date().toISOString(),
+    };
+    let reqRow;
+    if (editingRequestId) {
+      const { data, error } = await window.db.from('psy_letter_requests').update(payload).eq('id', editingRequestId).select().single();
+      if (error) throw error;
+      reqRow = data;
+      await logAudit('letter.request_submitted', reqRow.id, { template: v.template_name });
+    } else {
+      const { data, error } = await window.db.from('psy_letter_requests').insert(payload).select().single();
+      if (error) throw error;
+      reqRow = data;
+      await logAudit('letter.request_created', reqRow.id, { template: v.template_name });
     }
-    banner('Permohonan dihantar');
-    document.getElementById('req-tpl').value = '';
-    document.getElementById('req-name') && (document.getElementById('req-name').value = '');
-    document.getElementById('req-reason').value = '';
-    document.getElementById('custom-name-wrap').classList.add('hidden');
-    document.getElementById('tpl-desc').classList.add('hidden');
+    if (stagedFiles.length) await uploadStagedAttachments(reqRow.id);
+
+    if (needsApproval) {
+      if (v.assigned_signer_id) {
+        try { await notify(v.assigned_signer_id, 'system', 'Permohonan Surat Baru',
+          `${window.currentUser.full_name} memohon: ${v.template_name}`, 'surat.html'); } catch {}
+      }
+      banner('Permohonan dihantar');
+    } else {
+      const result = await window.autoIssueLetterIfNoApproval(reqRow, v.tpl);
+      banner(result.issued ? 'Surat anda sedia — lihat di "Surat Saya"' : ('Permohonan dihantar' + (result.error ? ` (auto-terbit gagal: ${result.error}, akan diproses staff)` : '')));
+    }
+    resetForm();
     loadList();
   } catch (e) {
     banner('Ralat: ' + e.message, 'error');
@@ -192,15 +332,30 @@ async function submitRequest() {
   }
 }
 
+async function cancelRequest(id) {
+  if (!confirm('Batalkan permohonan ini?')) return;
+  try {
+    await window.db.from('psy_letter_requests').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', id);
+    banner('Permohonan dibatalkan');
+    loadList();
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+}
+window.cancelRequest = cancelRequest;
+
+let myRequests = [];
+
 async function loadList() {
   if (!patientRecord) return;
   const [issuedRes, reqRes] = await Promise.all([
     window.db.from('psy_letter_issued').select('*').eq('patient_id', patientRecord.id).order('created_at', { ascending: false }),
-    window.db.from('psy_letter_requests').select('*').eq('patient_id', patientRecord.id).in('status', ['pending','rejected']).order('created_at', { ascending: false }),
+    window.db.from('psy_letter_requests').select('*').eq('patient_id', patientRecord.id)
+      .in('status', ['draft','submitted','pending_approval','revision_requested','rejected'])
+      .order('created_at', { ascending: false }),
   ]);
 
   const issued = issuedRes.data || [];
   const reqs = reqRes.data || [];
+  myRequests = reqs;
 
   const list = document.getElementById('issued-list');
   if (!issued.length) {
@@ -215,21 +370,36 @@ async function loadList() {
     </div>`).join('');
   }
 
+  const STATUS_CHIP = {
+    draft:              { label: 'Draf',                cls: 'bg-ink/10 text-ink/60' },
+    submitted:          { label: 'Menunggu',             cls: 'bg-gold/15 text-gold-dark' },
+    pending_approval:   { label: 'Menunggu Kelulusan',   cls: 'bg-gold/15 text-gold-dark' },
+    revision_requested: { label: 'Perlu Semakan Anda',   cls: 'bg-teal/15 text-teal' },
+    rejected:           { label: 'Ditolak',              cls: 'bg-terracotta/15 text-terracotta' },
+  };
+
   const reqList = document.getElementById('requests-list');
   if (!reqs.length) {
     reqList.innerHTML = '<div class="text-xs text-ink/40 text-center py-3">Tiada permohonan menunggu</div>';
   } else {
-    reqList.innerHTML = reqs.map(r => `
-      <div class="bg-cream/50 border border-ink/10 rounded-lg p-3 flex items-center gap-3">
+    reqList.innerHTML = reqs.map(r => {
+      const chip = STATUS_CHIP[r.status] || { label: r.status, cls: 'bg-ink/10 text-ink/60' };
+      const editable = r.status === 'draft' || r.status === 'revision_requested';
+      const cancellable = ['draft','submitted','pending_approval'].includes(r.status);
+      return `
+      <div class="bg-cream/50 border border-ink/10 rounded-lg p-3 flex items-center gap-3 flex-wrap">
         <div class="flex-1 min-w-0">
           <div class="font-semibold text-sm">${(r.template_name || '').replace(/</g,'&lt;')}</div>
           <div class="text-xs text-ink/60 truncate">${(r.reason || '').replace(/</g,'&lt;')}</div>
           ${r.status === 'rejected' && r.reject_reason ? `<div class="text-terracotta text-xs mt-1">Ditolak: ${(r.reject_reason || '').replace(/</g,'&lt;')}</div>` : ''}
+          ${r.status === 'revision_requested' && r.revision_note ? `<div class="text-teal text-xs mt-1">Perlu disemak: ${(r.revision_note || '').replace(/</g,'&lt;')}</div>` : ''}
         </div>
-        <span class="chip text-[10px] px-2 py-0.5 rounded-full ${r.status === 'pending' ? 'bg-gold/15 text-gold-dark' : 'bg-terracotta/15 text-terracotta'}">
-          ${r.status === 'pending' ? 'Menunggu' : 'Ditolak'}
-        </span>
-      </div>`).join('');
+        <span class="chip text-[10px] px-2 py-0.5 rounded-full ${chip.cls}">${chip.label}</span>
+        <a href="surat-detail.html?id=${r.id}" class="text-xs text-navy hover:underline">👁 Lihat</a>
+        ${editable ? `<button onclick="editRequest('${r.id}')" class="text-xs text-navy hover:underline">✏️ Edit</button>` : ''}
+        ${cancellable ? `<button onclick="cancelRequest('${r.id}')" class="text-xs text-terracotta hover:underline">Batal</button>` : ''}
+      </div>`;
+    }).join('');
   }
 }
 
@@ -237,7 +407,9 @@ async function loadList() {
   const user = await initPatient('surat', 'Permohonan & muat turun surat rasmi');
   if (!user) return;
   await loadTemplates();
-  loadList();
+  await loadList();
+  const editId = new URLSearchParams(location.search).get('edit');
+  if (editId) editRequest(editId);
 })();
 </script>
 </body>

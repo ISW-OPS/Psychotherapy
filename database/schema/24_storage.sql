@@ -53,6 +53,22 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO storage.buckets (id, name, public) VALUES ('dna-test', 'dna-test', false)
 ON CONFLICT (id) DO NOTHING;
 
+-- Supplier documents (SSM cert, agreement, dll.) — staff sahaja
+INSERT INTO storage.buckets (id, name, public) VALUES ('supplier-docs', 'supplier-docs', false)
+ON CONFLICT (id) DO NOTHING;
+
+-- Gambar produk inventori — public (dipaparkan terus di senarai/detail produk)
+INSERT INTO storage.buckets (id, name, public) VALUES ('inventory-images', 'inventory-images', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- Dokumen Stock In (delivery note, invois, dll.) — staff sahaja
+INSERT INTO storage.buckets (id, name, public) VALUES ('stock-in-docs', 'stock-in-docs', false)
+ON CONFLICT (id) DO NOTHING;
+
+-- Lampiran permohonan Surat Rasmi (salinan IC, surat tawaran, dll.) — requester + staff
+INSERT INTO storage.buckets (id, name, public) VALUES ('letter-attachments', 'letter-attachments', false)
+ON CONFLICT (id) DO NOTHING;
+
 
 -- ---- Polisi storage.objects ----
 
@@ -273,6 +289,56 @@ CREATE POLICY "dna_test_patient_read_own" ON storage.objects
       bucket_id = 'dna-test'
       AND (storage.foldername(name))[1] IN (
         SELECT id::text FROM psy_patients WHERE user_id = auth.uid()
+      )
+    );
+
+DROP POLICY IF EXISTS "supplier_docs_staff_all" ON storage.objects;
+CREATE POLICY "supplier_docs_staff_all" ON storage.objects
+    FOR ALL TO authenticated
+    USING (bucket_id = 'supplier-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (bucket_id = 'supplier-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "inventory_images_public_read" ON storage.objects;
+CREATE POLICY "inventory_images_public_read" ON storage.objects
+    FOR SELECT USING (bucket_id = 'inventory-images');
+
+DROP POLICY IF EXISTS "inventory_images_staff_write" ON storage.objects;
+CREATE POLICY "inventory_images_staff_write" ON storage.objects
+    FOR ALL TO authenticated
+    USING (bucket_id = 'inventory-images' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (bucket_id = 'inventory-images' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "stock_in_docs_staff_all" ON storage.objects;
+CREATE POLICY "stock_in_docs_staff_all" ON storage.objects
+    FOR ALL TO authenticated
+    USING (bucket_id = 'stock-in-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (bucket_id = 'stock-in-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- Lampiran permohonan surat: staff (proses) + requester sendiri (laluan {request_id}/... —
+-- (storage.foldername(name))[1] mesti request_id kepunyaan pesakit/staff yang login).
+DROP POLICY IF EXISTS "letter_attachments_staff_all" ON storage.objects;
+CREATE POLICY "letter_attachments_staff_all" ON storage.objects
+    FOR ALL TO authenticated
+    USING (bucket_id = 'letter-attachments' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (bucket_id = 'letter-attachments' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "letter_attachments_self_all" ON storage.objects;
+CREATE POLICY "letter_attachments_self_all" ON storage.objects
+    FOR ALL TO authenticated
+    USING (
+      bucket_id = 'letter-attachments'
+      AND (storage.foldername(name))[1] IN (
+        SELECT id::text FROM psy_letter_requests
+        WHERE (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
+           OR (requested_by_staff_id = auth.uid())
+      )
+    )
+    WITH CHECK (
+      bucket_id = 'letter-attachments'
+      AND (storage.foldername(name))[1] IN (
+        SELECT id::text FROM psy_letter_requests
+        WHERE (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
+           OR (requested_by_staff_id = auth.uid())
       )
     );
 

@@ -37,9 +37,19 @@ function substitutePlain(text, values) {
   return out;
 }
 
-// Replace [PLACEHOLDER] dalam body + format paragraf
+// Replace [PLACEHOLDER] dalam body + format paragraf.
+// Auto-detect: body dari editor WYSIWYG (surat-edit.html baharu) dah jadi HTML sedia — jangan
+// escape/wrap dua kali. Templat lama (plain text + \n\n) masih guna laluan escape+wrap asal.
 function fillBody(bodyText, values) {
   let out = bodyText || '';
+  const isHtml = /<[a-z][\s\S]*>/i.test(out);
+  if (isHtml) {
+    Object.entries(values).forEach(([k, v]) => {
+      const safe = (v === null || v === undefined) ? '' : String(v).replace(/</g, '&lt;');
+      out = out.replace(new RegExp(`\\[${k}\\]`, 'g'), `<strong>${safe}</strong>`);
+    });
+    return out;
+  }
   Object.entries(values).forEach(([k, v]) => {
     const safe = (v === null || v === undefined) ? '' : String(v).replace(/</g, '&lt;');
     out = out.replace(new RegExp(`\\[${k}\\]`, 'g'), `<strong>${safe}</strong>`);
@@ -147,6 +157,70 @@ function formatValue(val, format) {
   return String(val);
 }
 
+// Auto-issue: untuk template requires_specific_approver=false, terbit surat SEBAIK SAHAJA
+// request disubmit — tiada staff perlu klik apa-apa. Guna signature_url TERSIMPAN
+// assigned_signer (psy_profiles.signature_url), bukan lukis baharu. Dipanggil dari
+// roles/patient/surat.html & roles/staff/surat-request.html sejurus lepas insert
+// psy_letter_requests, jalan dalam sesi REQUESTER sendiri (RLS: issued_self_auto_insert).
+//
+// @param {object} request - row psy_letter_requests yg BARU diinsert (perlukan .id, .patient_id,
+//   .patient_name, .requested_by_staff_name, .field_values)
+// @param {object} template - row psy_letter_templates berkaitan
+// @returns {Promise<{issued:boolean, refNumber?:string, error?:string}>}
+async function autoIssueLetterIfNoApproval(request, template) {
+  if (template.requires_specific_approver) return { issued: false };
+  if (!template.assigned_signer_id) return { issued: false, error: 'Template tiada penandatangan ditetapkan' };
+
+  try {
+    const { data: signer, error: signerErr } = await window.db.from('psy_profiles')
+      .select('id, full_name, staff_role, signature_url, registration_no, specialization')
+      .eq('id', template.assigned_signer_id).single();
+    if (signerErr || !signer) return { issued: false, error: 'Penandatangan tidak ditemui' };
+
+    let patient = null;
+    if (request.patient_id) {
+      const { data: p } = await window.db.from('psy_patients').select('*').eq('id', request.patient_id).maybeSingle();
+      patient = p;
+    }
+
+    const { count } = await window.db.from('psy_letter_issued').select('id', { count: 'exact', head: true });
+    const refNumber = `ISW/${new Date().getFullYear()}/${String((count || 0) + 1).padStart(4, '0')}`;
+    const values = buildLetterValues(patient, request.field_values || {}, { staff: signer, refNumber });
+
+    const { error: insErr } = await window.db.from('psy_letter_issued').insert({
+      request_id:     request.id,
+      patient_id:     request.patient_id || null,
+      patient_name:   request.patient_id ? (request.patient_name || patient?.full_name || '') : (request.requested_by_staff_name || 'Internal Document'),
+      template_code:  template.id,
+      template_name:  template.name,
+      field_values:   values,
+      ref_number:     refNumber,
+      signed_by:      signer.id,
+      signed_by_name: signer.full_name,
+      signed_by_role: signer.staff_role || '',
+      signature_url:  signer.signature_url || null,
+      signed_at:      new Date().toISOString(),
+    });
+    if (insErr) return { issued: false, error: insErr.message };
+
+    await window.db.from('psy_letter_requests').update({
+      status: 'issued', approved_by: signer.id, approved_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    }).eq('id', request.id);
+
+    try {
+      await window.db.from('psy_audit_log').insert({
+        actor_id: window.currentUser?.id || null, actor_name: window.currentUser?.full_name || 'System', actor_role: 'system',
+        action: 'letter.auto_issued', target: refNumber,
+        meta: { template: template.name, ref: refNumber, request_id: request.id },
+      });
+    } catch (_) {}
+
+    return { issued: true, refNumber };
+  } catch (e) {
+    return { issued: false, error: e.message || String(e) };
+  }
+}
+
 // Load semua auto-fields dari DB
 async function loadCustomAutoFields() {
   if (!window.db) return;
@@ -190,4 +264,5 @@ if (typeof window !== 'undefined') {
   window.renderLetterFull = renderLetterFull;
   window.openLetterTab = openLetterTab;
   window.loadCustomAutoFields = loadCustomAutoFields;
+  window.autoIssueLetterIfNoApproval = autoIssueLetterIfNoApproval;
 }

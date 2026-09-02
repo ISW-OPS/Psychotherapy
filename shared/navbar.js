@@ -97,6 +97,7 @@ const STAFF_NAV_ICONS = {
   issue:            'report-issue.png',
   surat:            'surat-rasmi.png',
   inventory:        'inventory.png',
+  inventory_group:  'inventory.png',
   announcements:    'announce.png',
   events_admin:     'event-class.png',
   auto_messages:    'chatbot.png',
@@ -150,7 +151,15 @@ const STAFF_NAV_MASTER = [
         { id: 'point_rewards', url: 'point-rewards.html', icon: '🏆', label: 'Ganjaran Mata' },
         { id: 'affiliate',     url: 'affiliate.html',     icon: '🤝', label: 'Affiliate' },
       ] },
-      { id: 'inventory', url: 'inventory.html', icon: '🏭', label: 'Inventori' },
+      { id: 'inventory_group', url: 'inventory-overview.html', icon: '🏭', label: 'Inventori', children: [
+        { id: 'inventory_overview', url: 'inventory-overview.html', label: 'Overview' },
+        { id: 'inventory',          url: 'inventory.html',          label: 'Products' },
+        { id: 'stock_movement',     url: 'stock-movement.html',     label: 'Stock Movement' },
+        { id: 'stock_alerts',       url: 'stock-alerts.html',       label: 'Stock Alerts' },
+        { id: 'stock_in',           url: 'stock-in.html',           label: 'Stock In / Receive' },
+        { id: 'suppliers',          url: 'suppliers.html',          label: 'Suppliers' },
+        { id: 'purchase_requests',  url: 'purchase-requests.html',  label: 'Purchase Requests' },
+      ] },
       { id: 'psy_orders', url: 'orders.html', icon: '📦', label: 'Orders & Tracking' },
       { id: 'pulangan', url: 'pulangan.html', icon: '🍯', label: 'Pulangan Botol' },
       { id: 'payment_admin', url: 'payment-admin.html', icon: '💳', label: 'Pembayaran' },
@@ -190,7 +199,11 @@ const STAFF_NAV_MASTER = [
   },
   {
     group: 'PENTADBIRAN', collapsible: true, items: [
-      { id: 'surat', url: 'surat.html', icon: '📜', label: 'Surat Rasmi' },
+      { id: 'surat_group', url: 'surat.html', icon: '📜', label: 'Surat Rasmi', children: [
+        { id: 'surat',           url: 'surat.html',           label: 'Letter Request List' },
+        { id: 'surat_templates', url: 'surat-templates.html', label: 'Letter Templates' },
+        { id: 'surat_request',   url: 'surat-request.html',   label: 'My Letters' },
+      ] },
       { id: 'kob_slots', url: 'kob-slots.html', icon: '⏰', label: 'Slot Konsultasi' },
       { id: 'staff_mgmt', url: 'staff_management.html', icon: '👨‍⚕️', label: 'Manage Staff' },
     ]
@@ -605,7 +618,7 @@ async function loadNavBadges(role, _staffRole, userId) {
       ]);
 
       setNavBadge('psy_orders', ordersRes.count || 0);
-      setNavBadge('inventory', invRes.count || 0);
+      setNavBadge('purchase_requests', invRes.count || 0);
       setNavBadge('kob_list', kobRes.count || 0);
       setNavBadge('psy_patients', patientsRes.count || 0);
       setNavBadge('peristiwa', peRes?.count || 0); // peristiwa pesakit terbuka
@@ -640,9 +653,10 @@ function setHeaderBack(url, label) {
   if (!rightDiv) return;
   const existing = document.getElementById('header-back-btn');
   if (existing) existing.remove();
-  const a = document.createElement('a');
+  const a = document.createElement('button');
   a.id = 'header-back-btn';
-  a.href = url;
+  a.type = 'button';
+  a.onclick = () => history.back();
   a.className = 'flex items-center gap-1.5 text-xs font-medium text-ink/60 hover:text-navy border border-ink/20 hover:border-navy px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap';
   a.innerHTML = '← ' + (label || 'Kembali');
   rightDiv.prepend(a);
