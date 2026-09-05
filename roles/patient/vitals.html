@@ -163,6 +163,14 @@ let vpChart = null;
 
 function escHtml(s) { const d = document.createElement('div'); d.textContent = String(s||''); return d.innerHTML; }
 
+// Tarikh & masa SEBENAR bacaan diambil (reading_date/reading_time), bukan bila rekod disimpan
+// dalam DB — created_at hanya fallback untuk rekod lama yang tiada reading_date.
+function vDateTime(v) {
+  if (v.reading_date) return new Date(`${v.reading_date}T${(v.reading_time || '00:00:00').toString().slice(0, 8)}`);
+  return new Date(v.created_at);
+}
+function vHasTime(v) { return !!(v.reading_time || !v.reading_date); }
+
 // ── Julat klinikal standard ────────────────────────────
 function bpStatus(s, d) {
   if (!s && !d) return null;
@@ -204,8 +212,8 @@ function statusBadge(st) {
 }
 function renderCards() {
   const v = allVitals[0] || {};
-  document.getElementById('vp-latest-date').textContent = v.created_at
-    ? new Date(v.created_at).toLocaleString(LCALE(), { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' })
+  document.getElementById('vp-latest-date').textContent = (v.reading_date || v.created_at)
+    ? vDateTime(v).toLocaleString(LCALE(), { day:'2-digit', month:'short', year:'numeric', ...(vHasTime(v) ? { hour:'2-digit', minute:'2-digit' } : {}) })
     : '';
   const bp = (v.bp_systolic && v.bp_diastolic) ? `${v.bp_systolic}/${v.bp_diastolic}` : (v.bp_systolic || '—');
   const card = (icon, bg, label, value, unit, st) => `
@@ -237,7 +245,7 @@ function renderChart() {
     return;
   }
   empty.classList.add('hidden'); canvas.style.display = '';
-  const labels = rows.map(v => new Date(v.created_at || v.reading_date).toLocaleDateString(LCALE(), { day:'2-digit', month:'short' }));
+  const labels = rows.map(v => vDateTime(v).toLocaleDateString(LCALE(), { day:'2-digit', month:'short' }));
   const ds = (label, key, color) => ({
     label, data: rows.map(v => v[key] ?? null), borderColor: color, backgroundColor: color,
     tension: 0.3, spanGaps: true, pointRadius: 3, borderWidth: 2,
@@ -273,9 +281,9 @@ function renderTable() {
   empty.classList.add('hidden');
   const todayStr = new Date().toISOString().slice(0, 10);
   body.innerHTML = allVitals.map(v => {
-    const dt = new Date(v.created_at || v.reading_date);
+    const dt = vDateTime(v);
     const dateStr = dt.toLocaleDateString(LCALE(), { day:'2-digit', month:'short', year:'numeric' });
-    const timeStr = v.created_at ? dt.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' }) : '';
+    const timeStr = vHasTime(v) ? dt.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' }) : '';
     const bp = (v.bp_systolic && v.bp_diastolic) ? `${v.bp_systolic}/${v.bp_diastolic} mmHg` : '—';
     const canEdit = v.source === 'patient_self' && (v.reading_date || '').slice(0, 10) === todayStr;
     return `<tr class="hover:bg-cream/30">
@@ -315,9 +323,9 @@ function editReading(id) {
   const v = allVitals.find(x => String(x.id) === String(id));
   if (!v) return;
   editingId = v.id;
-  const dt = new Date(v.created_at || (v.reading_date + 'T00:00'));
+  const dt = vDateTime(v);
   document.getElementById('f-date').value = (v.reading_date || dt.toISOString().slice(0,10)).slice(0,10);
-  document.getElementById('f-time').value = `${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
+  document.getElementById('f-time').value = vHasTime(v) ? `${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}` : '';
   document.getElementById('f-sys').value = v.bp_systolic ?? '';
   document.getElementById('f-dia').value = v.bp_diastolic ?? '';
   document.getElementById('f-hr').value = v.heart_rate ?? '';
@@ -352,7 +360,7 @@ async function saveReading() {
     if (!patientId) throw new Error('Rekod pesakit tidak ditemui');
     const createdAt = new Date(`${date}T${time}:00`).toISOString();
     const payload = {
-      reading_date: date,
+      reading_date: date, reading_time: time,
       bp_systolic: sys, bp_diastolic: dia, heart_rate: hr,
       temperature: temp, weight: wt, notes,
     };
@@ -387,6 +395,8 @@ async function loadVitals() {
   if (!patientId) { allVitals = []; renderCards(); renderChart(); renderTable(); return; }
   const { data } = await window.db.from('psy_vitals')
     .select('*').eq('patient_id', patientId)
+    .order('reading_date', { ascending: false, nullsFirst: false })
+    .order('reading_time', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false });
   allVitals = data || [];
   renderCards();

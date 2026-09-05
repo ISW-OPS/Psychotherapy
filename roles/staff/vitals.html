@@ -173,6 +173,14 @@ const patientMap = {};
 
 function escHtml(s) { const d = document.createElement('div'); d.textContent = String(s||''); return d.innerHTML; }
 
+// Tarikh & masa SEBENAR bacaan diambil (reading_date/reading_time), bukan bila rekod disimpan
+// dalam DB — created_at hanya fallback untuk rekod lama yang tiada reading_date.
+function vDateTime(v) {
+  if (v.reading_date) return new Date(`${v.reading_date}T${(v.reading_time || '00:00:00').toString().slice(0, 8)}`);
+  return new Date(v.created_at);
+}
+function vHasTime(v) { return !!(v.reading_time || !v.reading_date); }
+
 // ── Julat klinikal standard ────────────────────────────
 function bpStatus(s, d) {
   if (!s && !d) return null;
@@ -212,8 +220,8 @@ function statusBadge(st) {
 }
 function renderCards() {
   const v = allVitals[0] || {};
-  document.getElementById('vp-latest-date').textContent = v.created_at
-    ? new Date(v.created_at).toLocaleString(LCALE(), { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' })
+  document.getElementById('vp-latest-date').textContent = (v.reading_date || v.created_at)
+    ? vDateTime(v).toLocaleString(LCALE(), { day:'2-digit', month:'short', year:'numeric', ...(vHasTime(v) ? { hour:'2-digit', minute:'2-digit' } : {}) })
     : '';
   const bp = (v.bp_systolic && v.bp_diastolic) ? `${v.bp_systolic}/${v.bp_diastolic}` : (v.bp_systolic || '—');
   const card = (icon, bg, label, value, unit, st) => `
@@ -242,7 +250,7 @@ function renderChart() {
     return;
   }
   empty.classList.add('hidden'); canvas.style.display = '';
-  const labels = rows.map(v => new Date(v.created_at || v.reading_date).toLocaleDateString(LCALE(), { day:'2-digit', month:'short' }));
+  const labels = rows.map(v => vDateTime(v).toLocaleDateString(LCALE(), { day:'2-digit', month:'short' }));
   const ds = (label, key, color) => ({
     label, data: rows.map(v => v[key] ?? null), borderColor: color, backgroundColor: color,
     tension: 0.3, spanGaps: true, pointRadius: 3, borderWidth: 2,
@@ -271,9 +279,9 @@ function renderTable() {
   if (!allVitals.length) { body.innerHTML = ''; empty.classList.remove('hidden'); return; }
   empty.classList.add('hidden');
   body.innerHTML = allVitals.map(v => {
-    const dt = new Date(v.created_at || v.reading_date);
+    const dt = vDateTime(v);
     const dateStr = dt.toLocaleDateString(LCALE(), { day:'2-digit', month:'short', year:'numeric' });
-    const timeStr = v.created_at ? dt.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' }) : '';
+    const timeStr = vHasTime(v) ? dt.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' }) : '';
     const bp = (v.bp_systolic && v.bp_diastolic) ? `${v.bp_systolic}/${v.bp_diastolic} mmHg` : '—';
     return `<tr class="hover:bg-cream/30">
       <td class="py-3 px-5 text-xs font-semibold text-ink whitespace-nowrap">${dateStr}${timeStr ? `, ${timeStr}` : ''}</td>
@@ -296,12 +304,12 @@ function editReading(id) {
   if (!v) return;
   editingId = id;
   const p = n => String(n).padStart(2, '0');
-  const dt = new Date(v.created_at || (v.reading_date + 'T00:00:00'));
+  const dt = vDateTime(v);
   const now = new Date();
   const de = document.getElementById('f-date');
   de.value = v.reading_date || `${dt.getFullYear()}-${p(dt.getMonth()+1)}-${p(dt.getDate())}`;
   de.max = `${now.getFullYear()}-${p(now.getMonth()+1)}-${p(now.getDate())}`;
-  document.getElementById('f-time').value = v.created_at ? `${p(dt.getHours())}:${p(dt.getMinutes())}` : '';
+  document.getElementById('f-time').value = vHasTime(v) ? `${p(dt.getHours())}:${p(dt.getMinutes())}` : '';
   document.getElementById('f-sys').value = v.bp_systolic ?? '';
   document.getElementById('f-dia').value = v.bp_diastolic ?? '';
   document.getElementById('f-hr').value = v.heart_rate ?? '';
@@ -373,7 +381,7 @@ async function saveReading() {
   btn.disabled = true; btn.textContent = 'Menyimpan...';
   try {
     const createdAt = new Date(`${date}T${time}:00`).toISOString();
-    const payload = { reading_date: date, bp_systolic: sys, bp_diastolic: dia, heart_rate: hr, temperature: temp, weight: wt, notes };
+    const payload = { reading_date: date, reading_time: time, bp_systolic: sys, bp_diastolic: dia, heart_rate: hr, temperature: temp, weight: wt, notes };
     if (editingId) {
       // Re-tag minggu ikut tarikh baru (kalau ada plan aktif)
       const upd = { ...payload, created_at: createdAt };
@@ -406,46 +414,79 @@ async function saveReading() {
 }
 
 // ── Export semua bacaan vitals (semua pesakit) ke Excel ─
+// 1 baris per SESI rawatan berjadual (psy_plan_weekly_progress) supaya tarikh rawatan yang
+// tiada bacaan pun kelihatan (gap kosong utk staff isi); kalau 1 tarikh ada >1 bacaan vitals,
+// baris tambahan diselit terus di bawah. Susunan: ID Pesakit → Minggu → Sesi → tarikh/masa.
 async function exportAllVitals() {
   if (typeof XLSX === 'undefined') { banner('XLSX belum siap, cuba lagi', 'error'); return; }
   const btn = document.getElementById('btn-export-all');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Menyediakan...'; }
   try {
-    const { data, error } = await window.db.from('psy_vitals')
-      .select('*, psy_patients(mrn, full_name, psy_profiles!psy_patients_user_id_fkey(full_name))')
-      .order('created_at', { ascending: true });
-    if (error) throw error;
-    const nameOf = v => v.psy_patients?.full_name || v.psy_patients?.psy_profiles?.full_name || '—';
-    const sorted = [...(data || [])].sort((a, b) => {
-      const n = nameOf(a).localeCompare(nameOf(b), 'ms');
-      if (n !== 0) return n;
-      return new Date(a.created_at || a.reading_date) - new Date(b.created_at || b.reading_date);
+    const patientEmbed = 'psy_patients(mrn, full_name, psy_profiles!psy_patients_user_id_fkey(full_name))';
+    const [vitalsRes, scheduleRes] = await Promise.all([
+      window.db.from('psy_vitals').select(`*, ${patientEmbed}`),
+      window.db.from('psy_plan_weekly_progress').select(`patient_id, week_number, session_day, status, session_date, ${patientEmbed}`),
+    ]);
+    if (vitalsRes.error) throw vitalsRes.error;
+    if (scheduleRes.error) throw scheduleRes.error;
+    const nameOf = p => p?.full_name || p?.psy_profiles?.full_name || '—';
+    const dateOf = v => v.reading_date || (v.created_at ? v.created_at.slice(0, 10) : null);
+
+    // Kumpul vitals ikut pesakit+tarikh — 1 tarikh boleh ada >1 bacaan.
+    const vitalsByKey = {};
+    (vitalsRes.data || []).forEach(v => {
+      const d = dateOf(v);
+      if (!d) return;
+      (vitalsByKey[`${v.patient_id}|${d}`] ??= []).push(v);
     });
-    const rows = [
-      ['Nama Pesakit', 'ID Pesakit', 'Tarikh', 'Minggu', 'Tekanan Darah (mmHg)', 'Denyutan Nadi (bpm)', 'SpO2 (%)', 'Suhu Badan (°C)', 'Berat Badan (kg)', 'Tinggi (cm)', 'BMI', 'Lilitan Pinggang (cm)', 'Gula Darah/RBS', 'HbA1c (%)', 'Skor PHQ-2', 'Ubatan', 'Nota', 'Sumber'],
-      ...sorted.map(v => [
-        nameOf(v),
-        v.psy_patients?.mrn || '—',
-        v.reading_date || (v.created_at ? v.created_at.slice(0, 10) : '—'),
-        v.week_number ?? '—',
-        (v.bp_systolic && v.bp_diastolic) ? `${v.bp_systolic}/${v.bp_diastolic}` : '—',
-        v.heart_rate ?? '—',
-        v.spo2 ?? '—',
-        v.temperature ?? '—',
-        v.weight ?? '—',
-        v.height ?? '—',
-        v.bmi ?? '—',
-        v.waist_cm ?? '—',
-        v.rbs ?? '—',
-        v.hba1c ?? '—',
-        v.phq2_score ?? '—',
-        v.medications || '—',
-        v.notes || '—',
-        v.source === 'patient_self' ? 'Pesakit' : 'Staff',
+    const usedIds = new Set();
+
+    // 1 baris per sesi berjadual, digabung dgn bacaan vitals yg sepadan tarikh (kalau ada).
+    const rows = [];
+    (scheduleRes.data || []).forEach(s => {
+      const dateStr = s.session_date ? s.session_date.slice(0, 10) : null;
+      const matches = dateStr ? (vitalsByKey[`${s.patient_id}|${dateStr}`] || []) : [];
+      const base = {
+        name: nameOf(s.psy_patients), mrn: s.psy_patients?.mrn || '—', patientId: s.patient_id,
+        week: s.week_number, session: s.session_day,
+        done: ['hadir', 'consultation_done'].includes(s.status) ? 'Ya' : '',
+        date: dateStr,
+      };
+      if (!matches.length) { rows.push({ ...base, v: null }); return; }
+      matches.forEach(v => { usedIds.add(v.id); rows.push({ ...base, v }); });
+    });
+
+    // Bacaan vitals yg tak sepadan mana-mana sesi berjadual (cth bacaan luar jadual) — kekal
+    // masuk, minggu ikut psy_vitals.week_number, sesi/status kosong.
+    (vitalsRes.data || []).forEach(v => {
+      if (usedIds.has(v.id)) return;
+      rows.push({
+        name: nameOf(v.psy_patients), mrn: v.psy_patients?.mrn || '—', patientId: v.patient_id,
+        week: v.week_number, session: null, done: '', date: dateOf(v), v,
+      });
+    });
+
+    rows.sort((a, b) => {
+      const n = (a.mrn || '').localeCompare(b.mrn || '', 'ms', { numeric: true });
+      if (n !== 0) return n;
+      if ((a.week ?? 0) !== (b.week ?? 0)) return (a.week ?? 0) - (b.week ?? 0);
+      if ((a.session ?? 0) !== (b.session ?? 0)) return (a.session ?? 0) - (b.session ?? 0);
+      return vDateTime(a.v || { reading_date: a.date }) - vDateTime(b.v || { reading_date: b.date });
+    });
+
+    const sheetRows = [
+      ['Nama Pesakit', 'ID Pesakit', 'Minggu', 'Sesi', 'Done', 'Tarikh Rawatan', 'Sistolik', 'Diastolik', 'Pulse (bpm)', 'SpO2 (%)', 'Suhu Badan (°C)', 'Berat Badan (kg)', 'Tinggi (cm)', 'BMI', 'Lilitan Pinggang (cm)', 'Gula Darah/RBS', 'HbA1c (%)', 'Skor PHQ-2', 'Ubatan', 'Nota', 'Sumber'],
+      ...rows.map(r => [
+        r.name, r.mrn, r.week ?? '—', r.session ?? '—', r.done, r.date || '—',
+        r.v?.bp_systolic ?? '', r.v?.bp_diastolic ?? '', r.v?.heart_rate ?? '',
+        r.v?.spo2 ?? '', r.v?.temperature ?? '', r.v?.weight ?? '',
+        r.v?.height ?? '', r.v?.bmi ?? '', r.v?.waist_cm ?? '', r.v?.rbs ?? '',
+        r.v?.hba1c ?? '', r.v?.phq2_score ?? '', r.v?.medications || '', r.v?.notes || '',
+        r.v ? (r.v.source === 'patient_self' ? 'Pesakit' : 'Staff') : '',
       ]),
     ];
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [{ wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 16 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 8 }, { wch: 16 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 20 }, { wch: 30 }, { wch: 10 }];
+    const ws = XLSX.utils.aoa_to_sheet(sheetRows);
+    ws['!cols'] = [{ wch: 24 }, { wch: 12 }, { wch: 8 }, { wch: 6 }, { wch: 6 }, { wch: 12 }, { wch: 9 }, { wch: 9 }, { wch: 10 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 20 }, { wch: 30 }, { wch: 8 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Vitals');
     XLSX.writeFile(wb, 'semua_vitals_' + new Date().toISOString().slice(0, 10) + '.xlsx');
@@ -461,6 +502,8 @@ async function loadVitals() {
   if (!selectedPatient) { allVitals = []; return; }
   const { data } = await window.db.from('psy_vitals')
     .select('*').eq('patient_id', selectedPatient.id)
+    .order('reading_date', { ascending: false, nullsFirst: false })
+    .order('reading_time', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false });
   allVitals = data || [];
   renderCards();
