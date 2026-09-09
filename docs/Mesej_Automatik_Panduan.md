@@ -41,9 +41,8 @@ Staff (UI)  ◄──papar Dashboard/Log/Detail────┘
 | 1 | **Dashboard** | `automation-dashboard.html` | Gambaran harian: KPI, trend, queue, status automasi |
 | 2 | **Senarai Automasi** | `automations.html` | Semua automasi (termasuk broadcast) — jadual, filter, on/off, padam |
 | 3 | **Cipta / Edit Automasi** | `automation-builder.html` | Borang 5-langkah bina automasi |
-| 4 | **Template Mesej** | `auto-mesej.html` | Galeri template mesej boleh guna semula |
-| 5 | **Template Builder** | `automation-template-builder.html` | Editor template penuh (markdown + pembolehubah) |
-| 6 | **Variables Library** | `variables-library.html` | Senarai pembolehubah + pratonton data sebenar |
+| 4 | **Template Mesej** | `auto-mesej.html` | Urus mesej sistem sedia ada (broadcast, peringatan) |
+| 5 | **Variables Library** | `variables-library.html` | Senarai pembolehubah + pratonton data sebenar |
 | 7 | **Audience** | `automation-audience.html` | Cipta set sasaran + anggaran hidup |
 | 8 | **Queue / Scheduled** | `automation-queue.html` | Automasi berjadual akan datang |
 | 9 | **Log Penghantaran** | `automation-logs.html` | Rekod hantaran + Export CSV |

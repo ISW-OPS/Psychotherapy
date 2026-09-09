@@ -1,8 +1,8 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-08-27T04:29:59.948476Z
--- Jumlah fail: 30
+-- Generated: 2026-09-09T01:07:02.150165Z
+-- Jumlah fail: 35
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
 
@@ -2846,10 +2846,27 @@ CREATE TABLE IF NOT EXISTS psy_vitals (
   created_at       TIMESTAMPTZ DEFAULT now()
 );
 
+-- Medan tambahan (dashboard Vitals — resp rate, pain score, penanda tidak normal)
+ALTER TABLE psy_vitals ADD COLUMN IF NOT EXISTS respiratory_rate INT;
+ALTER TABLE psy_vitals ADD COLUMN IF NOT EXISTS pain_score INT CHECK (pain_score BETWEEN 0 AND 10);
+ALTER TABLE psy_vitals ADD COLUMN IF NOT EXISTS is_abnormal BOOLEAN NOT NULL DEFAULT false;
+
 -- Indeks
 CREATE INDEX IF NOT EXISTS idx_psy_vitals_patient ON psy_vitals(patient_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_vitals_plan_week
   ON psy_vitals(plan_id, week_number) WHERE plan_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_psy_vitals_abnormal ON psy_vitals(is_abnormal) WHERE is_abnormal = true;
+CREATE INDEX IF NOT EXISTS idx_psy_vitals_reading_date ON psy_vitals(reading_date DESC);
+
+-- Backfill sekali sahaja: tandakan rekod sedia ada yang sudah melepasi ambang klinikal
+-- biasa sebagai tidak normal, supaya statistik dashboard tak bermula 0 selepas migrate.
+UPDATE psy_vitals SET is_abnormal = true WHERE is_abnormal = false AND (
+  (bp_systolic IS NOT NULL AND (bp_systolic < 90 OR bp_systolic >= 130)) OR
+  (bp_diastolic IS NOT NULL AND (bp_diastolic < 60 OR bp_diastolic >= 85)) OR
+  (heart_rate IS NOT NULL AND (heart_rate < 60 OR heart_rate > 100)) OR
+  (temperature IS NOT NULL AND (temperature < 36.1 OR temperature > 37.2)) OR
+  (spo2 IS NOT NULL AND spo2 < 95)
+);
 
 -- RLS
 ALTER TABLE psy_vitals ENABLE ROW LEVEL SECURITY;
@@ -2891,6 +2908,11 @@ COMMENT ON COLUMN psy_vitals.week_number IS
   'Minggu rawatan ke berapa bila vitals direkod. NULL kalau tiada plan aktif.';
 COMMENT ON COLUMN psy_vitals.reading_time IS
   'Masa bacaan (HH:MM). Staff boleh rekod beberapa bacaan sehari — masa bezakan setiap satu.';
+COMMENT ON COLUMN psy_vitals.respiratory_rate IS 'Kadar pernafasan (nafas/minit).';
+COMMENT ON COLUMN psy_vitals.pain_score IS 'Skor kesakitan pesakit, 0 (tiada) hingga 10 (teruk). Pilihan, boleh NULL.';
+COMMENT ON COLUMN psy_vitals.is_abnormal IS
+  'Dikira semasa simpan (ambang klinikal BP/HR/suhu/SpO2/resp rate) ATAU ditanda manual oleh staff. '
+  'Disimpan (bukan dikira semula tiap kali) supaya statistik dashboard Vitals murah untuk query.';
 
 
 -- ════════════════════════════════════════════════════════════════
@@ -3811,11 +3833,17 @@ CREATE TABLE IF NOT EXISTS psy_inventory_items (
   expiry_date          DATE,
   item_code            TEXT UNIQUE,
   is_active            BOOLEAN NOT NULL DEFAULT true,
+  status               TEXT NOT NULL DEFAULT 'active'
+                       CHECK (status IN ('active','inactive','discontinued')),
   reorder_threshold_pct NUMERIC(5,2),
   manufacturer         TEXT,
   registration_no      TEXT,
   storage_location     TEXT,
   storage_condition    TEXT,
+  barcode              TEXT,
+  shelf_life_days      INT,
+  image_url            TEXT,
+  internal_notes       TEXT,
   created_at           TIMESTAMPTZ DEFAULT now(),
   updated_at           TIMESTAMPTZ DEFAULT now()
 );
@@ -3832,6 +3860,20 @@ ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS manufacturer TEXT;
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS registration_no TEXT;
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS storage_location TEXT;
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS storage_condition TEXT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS barcode TEXT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS shelf_life_days INT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS internal_notes TEXT;
+
+-- status: peringkat lebih halus drpd is_active — 'discontinued' bermaksud dibuang
+-- kekal (bukan cuma nyahaktif sementara). is_active DIKEKALKAN (banyak tempat lain
+-- guna .eq('is_active', true) utk senarai produk boleh-pilih) — status='inactive'
+-- ATAU 'discontinued' kedua-duanya set is_active=false, cuma UI Products list boleh
+-- bezakan sebab & papar label yang betul.
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'
+  CHECK (status IN ('active','inactive','discontinued'));
+UPDATE psy_inventory_items SET status = CASE WHEN is_active = false THEN 'inactive' ELSE 'active' END
+  WHERE status = 'active' AND is_active = false;
 
 -- auto_reorder_enabled dibuang — trigger auto-request tak pernah check flag ni,
 -- sistem auto-cipta permintaan beli utk semua item bila stok rendah tanpa syarat.
@@ -3915,16 +3957,20 @@ COMMENT ON COLUMN psy_inventory_items.expiry_date IS
   'Tarikh luput batch semasa. Relevan hanya untuk item source_type=farmasi_klinikal.';
 
 -- ──── psy_inventory_requests ────
+-- Header sahaja (banyak produk setiap permohonan — lihat psy_inventory_request_items).
+-- Sebelum ni 1 request = 1 item (item_id/item_name/qty_requested/unit_price terus di
+-- header); ditukar jadi multi-item macam psy_purchase_orders supaya konsisten.
 CREATE TABLE IF NOT EXISTS psy_inventory_requests (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  item_id           UUID REFERENCES psy_inventory_items(id) ON DELETE SET NULL,
-  item_name         TEXT NOT NULL,
-  qty_requested     NUMERIC(10,2) NOT NULL,
-  unit_price        NUMERIC(10,2),
-  total_amount      NUMERIC(10,2),
+  request_no        TEXT UNIQUE,
   reason            TEXT,
+  priority          TEXT NOT NULL DEFAULT 'sederhana'
+                    CHECK (priority IN ('tinggi','sederhana','rendah')),
   status            TEXT NOT NULL DEFAULT 'pending_approval'
                     CHECK (status IN ('pending_approval','approved','rejected','purchased')),
+  subtotal          NUMERIC(12,2) NOT NULL DEFAULT 0,
+  tax_amount        NUMERIC(12,2) NOT NULL DEFAULT 0,
+  total_amount      NUMERIC(12,2) NOT NULL DEFAULT 0,
   requested_by      UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   requested_by_name TEXT NOT NULL DEFAULT '',
   approved_by       UUID REFERENCES auth.users(id) ON DELETE SET NULL,
@@ -3935,6 +3981,55 @@ CREATE TABLE IF NOT EXISTS psy_inventory_requests (
   created_at        TIMESTAMPTZ DEFAULT now(),
   updated_at        TIMESTAMPTZ DEFAULT now()
 );
+
+-- ──── Line items (satu permohonan boleh ada banyak produk) ────
+CREATE TABLE IF NOT EXISTS psy_inventory_request_items (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id     UUID NOT NULL REFERENCES psy_inventory_requests(id) ON DELETE CASCADE,
+  item_id        UUID REFERENCES psy_inventory_items(id) ON DELETE SET NULL,
+  item_name      TEXT NOT NULL,
+  qty_requested  NUMERIC(10,2) NOT NULL,
+  unit_price     NUMERIC(10,2) NOT NULL DEFAULT 0,
+  subtotal       NUMERIC(12,2) NOT NULL DEFAULT 0,
+  created_at     TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_inv_request_items_request ON psy_inventory_request_items(request_id);
+
+-- ──── request_no auto-generate (PR-00001, PR-00002, ...) ────
+CREATE SEQUENCE IF NOT EXISTS psy_inventory_request_no_seq START 1;
+
+CREATE OR REPLACE FUNCTION psy_inventory_set_request_no()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.request_no IS NULL THEN
+    NEW.request_no := 'PR-' || LPAD(nextval('psy_inventory_request_no_seq')::text, 5, '0');
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_psy_inventory_set_request_no ON psy_inventory_requests;
+CREATE TRIGGER trg_psy_inventory_set_request_no
+BEFORE INSERT ON psy_inventory_requests
+FOR EACH ROW EXECUTE FUNCTION psy_inventory_set_request_no();
+
+-- Backfill request_no utk baris sedia ada (install lama) — susun ikut created_at.
+DO $$
+DECLARE r RECORD;
+BEGIN
+  FOR r IN SELECT id FROM psy_inventory_requests WHERE request_no IS NULL ORDER BY created_at LOOP
+    UPDATE psy_inventory_requests
+      SET request_no = 'PR-' || LPAD(nextval('psy_inventory_request_no_seq')::text, 5, '0')
+      WHERE id = r.id;
+  END LOOP;
+END $$;
+
+COMMENT ON COLUMN psy_inventory_requests.request_no IS
+  'Nombor rujukan permohonan auto-generate (PR-00001, ...) via trigger — tidak boleh diedit.';
+COMMENT ON COLUMN psy_inventory_requests.priority IS
+  'Keutamaan pembelian: tinggi/sederhana/rendah. Default sederhana — staff boleh naikkan bila mendesak.';
 
 -- RLS
 ALTER TABLE psy_inventory_requests ENABLE ROW LEVEL SECURITY;
@@ -3951,119 +4046,20 @@ DROP POLICY IF EXISTS "Manager admin update requests" ON psy_inventory_requests;
 CREATE POLICY "Manager admin update requests" ON psy_inventory_requests
   FOR UPDATE USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('admin','manager')));
 
+ALTER TABLE psy_inventory_request_items ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage request items" ON psy_inventory_request_items;
+CREATE POLICY "Staff manage request items" ON psy_inventory_request_items FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
 COMMENT ON COLUMN psy_inventory_requests.is_auto_generated IS
-  'true = dijana automatik bila stok ≤ 30%, false = manual request oleh staff.';
+  'true = dijana automatik oleh checkAutoPO() (shared/inventoryForecast.js), false = manual request oleh staff.';
 
--- ──── Trigger: auto-request bila stok rendah ────
--- Threshold: 30% dari max_qty (fallback: min_qty). Hormat requires_approval,
--- duplicate guard (request pending/approved sedia ada) + cooldown 24 jam.
-CREATE OR REPLACE FUNCTION psy_inventory_auto_request()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_threshold       NUMERIC;
-  v_existing_count  INT;
-  v_reorder_qty     NUMERIC;
-  v_status          TEXT;
-  v_target          NUMERIC;
-BEGIN
-  -- Item tidak aktif — jangan auto-request
-  IF NOT COALESCE(NEW.is_active, true) THEN
-    RETURN NEW;
-  END IF;
-
-  -- Hanya bertindak bila qty_in_stock benar-benar berubah & turun
-  IF NEW.qty_in_stock IS NULL OR NEW.qty_in_stock = OLD.qty_in_stock THEN
-    RETURN NEW;
-  END IF;
-  IF NEW.qty_in_stock > OLD.qty_in_stock THEN
-    RETURN NEW;  -- stok naik (restock) — jangan trigger
-  END IF;
-
-  -- Kira threshold
-  IF NEW.max_qty IS NOT NULL AND NEW.max_qty > 0 THEN
-    v_threshold := NEW.max_qty * 0.30;
-  ELSE
-    v_threshold := COALESCE(NEW.min_qty, 0);
-  END IF;
-
-  IF v_threshold <= 0 THEN
-    RETURN NEW;
-  END IF;
-
-  IF NEW.qty_in_stock > v_threshold THEN
-    RETURN NEW;  -- masih di atas threshold
-  END IF;
-
-  -- Cooldown 24 jam
-  IF NEW.last_auto_po_at IS NOT NULL
-     AND NEW.last_auto_po_at > now() - INTERVAL '24 hours' THEN
-    RETURN NEW;
-  END IF;
-
-  -- Duplicate guard
-  SELECT COUNT(*) INTO v_existing_count
-  FROM psy_inventory_requests
-  WHERE item_id = NEW.id
-    AND status IN ('pending_approval', 'approved');
-
-  IF v_existing_count > 0 THEN
-    RETURN NEW;
-  END IF;
-
-  -- Kira reorder qty
-  IF NEW.max_qty IS NOT NULL AND NEW.max_qty > 0 THEN
-    v_target := NEW.max_qty;
-  ELSE
-    v_target := COALESCE(NEW.min_qty, 0) * 3;
-  END IF;
-
-  v_reorder_qty := COALESCE(NEW.auto_reorder_qty,
-                            GREATEST(1, v_target - NEW.qty_in_stock));
-
-  -- Tentukan status ikut requires_approval
-  v_status := CASE
-                WHEN COALESCE(NEW.requires_approval, false) THEN 'pending_approval'
-                ELSE 'approved'
-              END;
-
-  INSERT INTO psy_inventory_requests (
-    item_id, item_name, qty_requested, unit_price, total_amount,
-    reason, status, requested_by, requested_by_name, is_auto_generated
-  ) VALUES (
-    NEW.id,
-    NEW.name,
-    v_reorder_qty,
-    NULL,
-    NULL,
-    format('Auto-trigger: stok %s%s ≤ threshold %s%s. Sila beli %s%s.',
-           NEW.qty_in_stock, COALESCE(NEW.unit, ''),
-           ROUND(v_threshold, 2), COALESCE(NEW.unit, ''),
-           v_reorder_qty, COALESCE(NEW.unit, '')),
-    v_status,
-    NULL,
-    'Sistem (Auto)',
-    true
-  );
-
-  -- Tanda cooldown
-  NEW.last_auto_po_at := now();
-
-  RETURN NEW;
-END;
-$$;
-
-DROP TRIGGER IF EXISTS trg_psy_inventory_auto_request ON psy_inventory_items;
-CREATE TRIGGER trg_psy_inventory_auto_request
-BEFORE UPDATE OF qty_in_stock ON psy_inventory_items
-FOR EACH ROW
-EXECUTE FUNCTION psy_inventory_auto_request();
-
-COMMENT ON FUNCTION psy_inventory_auto_request() IS
-  'Auto-cipta inventory_request bila stok turun ≤ 30% max_qty (atau ≤ min_qty kalau max_qty tiada). Hormat requires_approval untuk status.';
+-- Auto-request bila stok rendah dikendalikan client-side (checkAutoPO() di inventory.html,
+-- guna shared/inventoryForecast.js) — BUKAN trigger DB. Trigger lama psy_inventory_auto_request()
+-- dibuang (lihat supabase/migrations/20260829_drop_inventory_auto_po_trigger.sql) sebab guna
+-- medan `max_qty` yang tak pernah diisi di mana-mana borang (sentiasa NULL), jadi ia sentiasa
+-- fallback ke min_qty untuk SEMUA item — tak selaras & duplicate logik dgn client-side.
 
 -- ──── psy_products ────
 CREATE TABLE IF NOT EXISTS psy_products (
@@ -4375,11 +4371,12 @@ CREATE TABLE IF NOT EXISTS psy_letter_templates (
   description                TEXT,
   category                   TEXT NOT NULL DEFAULT 'patient'
                              CHECK (category IN ('patient','internal')),
-  jenis_surat                TEXT,
+  jenis_surat                TEXT,                 -- "Letter Type" (cth: Employment Confirmation)
+  department                 TEXT,                 -- "Department / Category" (cth: Human Resources) — label sahaja, TAK drive routing
   language                   TEXT DEFAULT 'ms',
   recipient                  TEXT,                 -- "Pengurus Besar, KWSP, ..."
   title                      TEXT,                 -- "PERMOHONAN PENGELUARAN AHLI KWSP"
-  body                       TEXT NOT NULL,        -- plain text + [PLACEHOLDER]
+  body                       TEXT NOT NULL,        -- HTML (editor WYSIWYG) + [PLACEHOLDER]; templat lama = plain text, fillBody() auto-detect
   fields                     JSONB NOT NULL DEFAULT '[]',  -- [{key,label,type,autofill}]
   assigned_signer_id         UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
   requires_specific_approver BOOLEAN DEFAULT false,
@@ -4389,6 +4386,9 @@ CREATE TABLE IF NOT EXISTS psy_letter_templates (
   created_at                 TIMESTAMPTZ DEFAULT now(),
   updated_at                 TIMESTAMPTZ DEFAULT now()
 );
+
+-- Patch existing install
+ALTER TABLE psy_letter_templates ADD COLUMN IF NOT EXISTS department TEXT;
 
 -- Indeks
 CREATE INDEX IF NOT EXISTS idx_letter_tpl_active ON psy_letter_templates(category, is_active);
@@ -4432,30 +4432,70 @@ COMMENT ON COLUMN psy_letter_templates.is_active IS
 COMMENT ON COLUMN psy_letter_templates.assigned_signer_id IS
   'Staff yang ditetapkan untuk sign template ini. NULL = mana-mana staff dengan permission boleh sign.';
 COMMENT ON COLUMN psy_letter_templates.requires_specific_approver IS
-  'true = HANYA assigned_signer (atau super_admin) boleh approve/sign. false = pilihan default sahaja.';
+  'Togol KELULUSAN kanonik ("Perlukan Kelulusan Management"). true = request mesti lalu pending_approval, HANYA
+  assigned_signer (atau super_admin) boleh approve/sign — disemak di surat-issue.html DAN laluan ?tpl= terus
+  (bukan setakat snapshot pada request). false = "No Approval Required": submitted → issued OTOMATIK, guna
+  signature_url assigned_signer yg tersimpan (psy_profiles.signature_url), tiada staff perlu klik apa-apa.
+  assigned_signer_id WAJIB diisi (ditegaskan di surat-edit.html) — dua-dua cabang perlukan signer ditetapkan.';
 
 -- ──── psy_letter_requests ────
--- Permintaan surat dari patient.
+-- Permintaan surat dari patient ATAU staff (requester_type). Alur kelulusan:
+-- draft (belum submit, boleh sambung) → submitted → pending_approval (kalau template
+-- requires_specific_approver) → issued, ATAU rejected / revision_requested (kembali
+-- submitted selepas requester edit). Template TANPA kelulusan: submitted → issued terus
+-- (auto, tiada manusia sentuh — lihat surat-issue.html requiresApproval helper).
 CREATE TABLE IF NOT EXISTS psy_letter_requests (
-  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id         UUID REFERENCES psy_patients(id) ON DELETE CASCADE NOT NULL,
-  patient_name       TEXT NOT NULL,
-  template_code      TEXT NOT NULL,
-  template_name      TEXT NOT NULL,
-  reason             TEXT,
-  field_values       JSONB DEFAULT '{}',
-  status             TEXT NOT NULL DEFAULT 'pending'
-                     CHECK (status IN ('pending','issued','rejected','cancelled')),
-  reject_reason      TEXT,
-  assigned_signer_id UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
-  approved_by        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
-  approved_at        TIMESTAMPTZ,
-  created_at         TIMESTAMPTZ DEFAULT now(),
-  updated_at         TIMESTAMPTZ DEFAULT now()
+  id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id             UUID REFERENCES psy_patients(id) ON DELETE CASCADE,
+  patient_name           TEXT,
+  requester_type         TEXT NOT NULL DEFAULT 'patient'
+                         CHECK (requester_type IN ('patient','staff')),
+  requested_by_staff_id  UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  requested_by_staff_name TEXT,
+  template_code          TEXT NOT NULL,
+  template_name          TEXT NOT NULL,
+  reason                 TEXT,
+  recipient              TEXT,          -- "Kepada / Alamat" — override recipient default templat, khusus utk request ni
+  field_values           JSONB DEFAULT '{}',
+  status                 TEXT NOT NULL DEFAULT 'draft'
+                         CHECK (status IN ('draft','submitted','pending_approval','revision_requested','rejected','issued','cancelled')),
+  reject_reason          TEXT,
+  revision_note          TEXT,
+  assigned_signer_id     UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  approved_by            UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  approved_at            TIMESTAMPTZ,
+  created_at             TIMESTAMPTZ DEFAULT now(),
+  updated_at             TIMESTAMPTZ DEFAULT now()
 );
+
+-- ──── Patch existing install ────
+ALTER TABLE psy_letter_requests ALTER COLUMN patient_id DROP NOT NULL;
+ALTER TABLE psy_letter_requests ALTER COLUMN patient_name DROP NOT NULL;
+ALTER TABLE psy_letter_requests ADD COLUMN IF NOT EXISTS requester_type TEXT NOT NULL DEFAULT 'patient';
+ALTER TABLE psy_letter_requests ADD COLUMN IF NOT EXISTS requested_by_staff_id UUID REFERENCES psy_profiles(id) ON DELETE SET NULL;
+ALTER TABLE psy_letter_requests ADD COLUMN IF NOT EXISTS requested_by_staff_name TEXT;
+ALTER TABLE psy_letter_requests ADD COLUMN IF NOT EXISTS revision_note TEXT;
+ALTER TABLE psy_letter_requests ADD COLUMN IF NOT EXISTS recipient TEXT;
+ALTER TABLE psy_letter_requests DROP CONSTRAINT IF EXISTS psy_letter_requests_requester_type_check;
+ALTER TABLE psy_letter_requests ADD CONSTRAINT psy_letter_requests_requester_type_check
+  CHECK (requester_type IN ('patient','staff'));
+-- PENTING: constraint LAMA (kalau install lama) mungkin cuma benarkan set nilai lebih kecil —
+-- kena DROP constraint lama DULU sebelum UPDATE data guna vokab status baru, barulah ADD constraint
+-- baru selepas data dah bersih.
+ALTER TABLE psy_letter_requests DROP CONSTRAINT IF EXISTS psy_letter_requests_status_check;
+-- Rekod lama guna status 'pending' — sepadankan ke 'pending_approval' (dah lalu proses kelulusan dulu).
+UPDATE psy_letter_requests SET status = 'pending_approval' WHERE status = 'pending';
+-- Jaring keselamatan: mana-mana rekod lama/seed guna status lain yang tak dikenali langsung —
+-- sepadankan ke 'pending_approval' supaya staff boleh semak & proses manual, bukan hilang senyap.
+UPDATE psy_letter_requests SET status = 'pending_approval'
+  WHERE status NOT IN ('draft','submitted','pending_approval','revision_requested','rejected','issued','cancelled');
+ALTER TABLE psy_letter_requests ADD CONSTRAINT psy_letter_requests_status_check
+  CHECK (status IN ('draft','submitted','pending_approval','revision_requested','rejected','issued','cancelled'));
+ALTER TABLE psy_letter_requests ALTER COLUMN status SET DEFAULT 'draft';
 
 -- Indeks
 CREATE INDEX IF NOT EXISTS idx_letter_req_patient ON psy_letter_requests(patient_id);
+CREATE INDEX IF NOT EXISTS idx_letter_req_staff    ON psy_letter_requests(requested_by_staff_id);
 CREATE INDEX IF NOT EXISTS idx_letter_req_status  ON psy_letter_requests(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_letter_req_signer  ON psy_letter_requests(assigned_signer_id, status);
 
@@ -4466,6 +4506,11 @@ DROP POLICY IF EXISTS "Patient manage own letter requests" ON psy_letter_request
 CREATE POLICY "Patient manage own letter requests" ON psy_letter_requests
   FOR ALL USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
   WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff manage own letter requests" ON psy_letter_requests;
+CREATE POLICY "Staff manage own letter requests" ON psy_letter_requests
+  FOR ALL USING (requested_by_staff_id = auth.uid())
+  WITH CHECK (requested_by_staff_id = auth.uid());
 
 DROP POLICY IF EXISTS "req_staff_read" ON psy_letter_requests;
 CREATE POLICY "req_staff_read" ON psy_letter_requests FOR SELECT
@@ -4483,6 +4528,10 @@ CREATE POLICY "req_staff_delete" ON psy_letter_requests FOR DELETE
 -- Komen
 COMMENT ON COLUMN psy_letter_requests.assigned_signer_id IS
   'Snapshot signer ID dari template masa request dicipta. Tak berubah walau template di-edit kemudian.';
+COMMENT ON COLUMN psy_letter_requests.requester_type IS
+  '''patient'' = pesakit mohon utk diri sendiri (category=patient templates). ''staff'' = staff mohon utk diri sendiri (category=internal templates, cth surat pengesahan kerja utk RELA/KWSP).';
+COMMENT ON COLUMN psy_letter_requests.status IS
+  'draft=belum submit (boleh sambung) · submitted=baru hantar, sistem tentukan approval · pending_approval=menunggu signer · revision_requested=kena edit & hantar semula · rejected/issued/cancelled=status akhir.';
 
 -- ──── psy_letter_issued ────
 -- Surat yang telah dikeluarkan & disign.
@@ -4526,9 +4575,30 @@ DROP POLICY IF EXISTS "issued_staff_read" ON psy_letter_issued;
 CREATE POLICY "issued_staff_read" ON psy_letter_issued FOR SELECT
   USING (user_has_perm('communication','view'));
 
+-- Staff boleh baca surat DIA SENDIRI (surat-request.html) walau tiada permission 'communication'
+-- (cth coach mohon surat pengesahan kerja utk diri sendiri, bukan proses surat pesakit).
+DROP POLICY IF EXISTS "issued_self_read" ON psy_letter_issued;
+CREATE POLICY "issued_self_read" ON psy_letter_issued FOR SELECT
+  USING (
+    request_id IN (SELECT id FROM psy_letter_requests WHERE requested_by_staff_id = auth.uid())
+  );
+
 DROP POLICY IF EXISTS "issued_staff_insert" ON psy_letter_issued;
 CREATE POLICY "issued_staff_insert" ON psy_letter_issued FOR INSERT
   WITH CHECK (user_has_perm('communication','create'));
+
+-- Auto-issue (template requires_specific_approver=false): requester punya sesi SENDIRI
+-- (pesakit atau staff) yang insert psy_letter_issued terus, tanpa staff processing terlibat —
+-- dibenarkan HANYA untuk request kepunyaan mereka sendiri.
+DROP POLICY IF EXISTS "issued_self_auto_insert" ON psy_letter_issued;
+CREATE POLICY "issued_self_auto_insert" ON psy_letter_issued FOR INSERT
+  WITH CHECK (
+    request_id IN (
+      SELECT id FROM psy_letter_requests
+      WHERE (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
+         OR (requested_by_staff_id = auth.uid())
+    )
+  );
 
 DROP POLICY IF EXISTS "issued_staff_update" ON psy_letter_issued;
 CREATE POLICY "issued_staff_update" ON psy_letter_issued FOR UPDATE
@@ -4542,6 +4612,47 @@ CREATE POLICY "issued_staff_delete" ON psy_letter_issued FOR DELETE
 -- Komen
 COMMENT ON COLUMN psy_letter_issued.file_url IS
   'URL PDF/Word file lengkap yang dah disign (upload oleh staff).';
+
+-- ──── psy_letter_request_attachments ────
+-- Lampiran (PDF/gambar) yang requester upload masa mohon surat — cth salinan IC, surat tawaran
+-- kerja, dll. Sama corak dgn psy_stock_in_documents (database/schema/35_stock_in.sql).
+CREATE TABLE IF NOT EXISTS psy_letter_request_attachments (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id       UUID NOT NULL REFERENCES psy_letter_requests(id) ON DELETE CASCADE,
+  file_name        TEXT NOT NULL,
+  file_path        TEXT NOT NULL,   -- laluan storan: {request_id}/{timestamp}_{filename}
+  file_size        INT,
+  file_type        TEXT,
+  uploaded_by      UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  uploaded_by_name TEXT,
+  created_at       TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_letter_attach_request ON psy_letter_request_attachments(request_id);
+
+ALTER TABLE psy_letter_request_attachments ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "attach_staff_all" ON psy_letter_request_attachments;
+CREATE POLICY "attach_staff_all" ON psy_letter_request_attachments FOR ALL
+  USING (user_has_perm('communication','view'))
+  WITH CHECK (user_has_perm('communication','create'));
+
+-- Requester (pesakit/staff) urus lampiran request DIA SENDIRI — walau tiada permission 'communication'.
+DROP POLICY IF EXISTS "attach_self_all" ON psy_letter_request_attachments;
+CREATE POLICY "attach_self_all" ON psy_letter_request_attachments FOR ALL
+  USING (
+    request_id IN (
+      SELECT id FROM psy_letter_requests
+      WHERE (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
+         OR (requested_by_staff_id = auth.uid())
+    )
+  )
+  WITH CHECK (
+    request_id IN (
+      SELECT id FROM psy_letter_requests
+      WHERE (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
+         OR (requested_by_staff_id = auth.uid())
+    )
+  );
 
 -- ──── psy_letter_auto_fields ────
 -- Auto-field tambahan (cth [BMI], [PEKERJAAN]) — sistem ambil dari kolum DB.
@@ -5601,6 +5712,37 @@ on conflict (key) do update set
   language         = excluded.language,
   updated_at       = now();
 
+-- Bayaran Gagal/Dibatalkan (payment_failed) — WA dihantar automatik oleh
+-- payments-webhook bila HitPay report status 'failed' (kali pertama sahaja,
+-- lihat notifyPaymentFailed). {pautan} diisi kod: sentence lengkap dgn
+-- pautan HitPay BAHARU (auto-jana, kob_deposit sahaja) ATAU sentence fallback
+-- "cuba semula/hubungi klinik" kalau tiada pautan (package/self-checkout,
+-- atau sesi KOB dah tak eligible). UPSERT dgn DO UPDATE macam installment_*.
+insert into psy_auto_messages
+  (key, name, description, channel, trigger_type, message_template,
+   placeholders, channels, category, language, is_active)
+values
+  ('payment_failed',
+   'Bayaran Gagal / Dibatalkan',
+   'Dihantar automatik bila bayaran (HitPay) gagal/dibatalkan (kali pertama sahaja per resit). {pautan} = ayat lengkap dgn pautan bayar-semula (auto-jana, kob_deposit sahaja) atau ayat "cuba semula/hubungi klinik" jika tiada pautan.',
+   'whatsapp', 'on_action',
+   E'Assalamualaikum {nama} 👋\n\nBayaran anda ({item}, RM {jumlah}) tidak berjaya/dibatalkan. {pautan}\n\n— Ibnu Sina Wellness',
+   '["{nama}","{item}","{jumlah}","{pautan}"]'::jsonb,
+   '["whatsapp"]'::jsonb,
+   'pembayaran', 'ms',
+   true)
+on conflict (key) do update set
+  name             = excluded.name,
+  description      = excluded.description,
+  channel          = excluded.channel,
+  trigger_type     = excluded.trigger_type,
+  message_template = excluded.message_template,
+  placeholders     = excluded.placeholders,
+  channels         = excluded.channels,
+  category         = excluded.category,
+  language         = excluded.language,
+  updated_at       = now();
+
 -- Template Reaksi Pemulihan (pesakit boleh baca — policy 'reaksi_%')
 -- reaksi_harian: mesej 1 (terus) — {{sections}} = blok per kategori,
 -- tindakan sama disebut SEKALI sahaja (dedup global oleh klien).
@@ -6483,6 +6625,26 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO storage.buckets (id, name, public) VALUES ('dna-test', 'dna-test', false)
 ON CONFLICT (id) DO NOTHING;
 
+-- Supplier documents (SSM cert, agreement, dll.) — staff sahaja
+INSERT INTO storage.buckets (id, name, public) VALUES ('supplier-docs', 'supplier-docs', false)
+ON CONFLICT (id) DO NOTHING;
+
+-- Gambar produk inventori — public (dipaparkan terus di senarai/detail produk)
+INSERT INTO storage.buckets (id, name, public) VALUES ('inventory-images', 'inventory-images', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- Dokumen Stock In (delivery note, invois, dll.) — staff sahaja
+INSERT INTO storage.buckets (id, name, public) VALUES ('stock-in-docs', 'stock-in-docs', false)
+ON CONFLICT (id) DO NOTHING;
+
+-- Lampiran permohonan Surat Rasmi (salinan IC, surat tawaran, dll.) — requester + staff
+INSERT INTO storage.buckets (id, name, public) VALUES ('letter-attachments', 'letter-attachments', false)
+ON CONFLICT (id) DO NOTHING;
+
+-- Media mesej automasi (imej/video dilampirkan pada mesej sequence) — public (GHL fetch terus URL)
+INSERT INTO storage.buckets (id, name, public) VALUES ('automation-media', 'automation-media', true)
+ON CONFLICT (id) DO NOTHING;
+
 
 -- ---- Polisi storage.objects ----
 
@@ -6703,6 +6865,66 @@ CREATE POLICY "dna_test_patient_read_own" ON storage.objects
       bucket_id = 'dna-test'
       AND (storage.foldername(name))[1] IN (
         SELECT id::text FROM psy_patients WHERE user_id = auth.uid()
+      )
+    );
+
+DROP POLICY IF EXISTS "supplier_docs_staff_all" ON storage.objects;
+CREATE POLICY "supplier_docs_staff_all" ON storage.objects
+    FOR ALL TO authenticated
+    USING (bucket_id = 'supplier-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (bucket_id = 'supplier-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "inventory_images_public_read" ON storage.objects;
+CREATE POLICY "inventory_images_public_read" ON storage.objects
+    FOR SELECT USING (bucket_id = 'inventory-images');
+
+DROP POLICY IF EXISTS "inventory_images_staff_write" ON storage.objects;
+CREATE POLICY "inventory_images_staff_write" ON storage.objects
+    FOR ALL TO authenticated
+    USING (bucket_id = 'inventory-images' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (bucket_id = 'inventory-images' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "automation_media_public_read" ON storage.objects;
+CREATE POLICY "automation_media_public_read" ON storage.objects
+    FOR SELECT USING (bucket_id = 'automation-media');
+
+DROP POLICY IF EXISTS "automation_media_staff_write" ON storage.objects;
+CREATE POLICY "automation_media_staff_write" ON storage.objects
+    FOR ALL TO authenticated
+    USING (bucket_id = 'automation-media' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (bucket_id = 'automation-media' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "stock_in_docs_staff_all" ON storage.objects;
+CREATE POLICY "stock_in_docs_staff_all" ON storage.objects
+    FOR ALL TO authenticated
+    USING (bucket_id = 'stock-in-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (bucket_id = 'stock-in-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- Lampiran permohonan surat: staff (proses) + requester sendiri (laluan {request_id}/... —
+-- (storage.foldername(name))[1] mesti request_id kepunyaan pesakit/staff yang login).
+DROP POLICY IF EXISTS "letter_attachments_staff_all" ON storage.objects;
+CREATE POLICY "letter_attachments_staff_all" ON storage.objects
+    FOR ALL TO authenticated
+    USING (bucket_id = 'letter-attachments' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (bucket_id = 'letter-attachments' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "letter_attachments_self_all" ON storage.objects;
+CREATE POLICY "letter_attachments_self_all" ON storage.objects
+    FOR ALL TO authenticated
+    USING (
+      bucket_id = 'letter-attachments'
+      AND (storage.foldername(name))[1] IN (
+        SELECT id::text FROM psy_letter_requests
+        WHERE (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
+           OR (requested_by_staff_id = auth.uid())
+      )
+    )
+    WITH CHECK (
+      bucket_id = 'letter-attachments'
+      AND (storage.foldername(name))[1] IN (
+        SELECT id::text FROM psy_letter_requests
+        WHERE (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()))
+           OR (requested_by_staff_id = auth.uid())
       )
     );
 
@@ -7906,3 +8128,441 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION redeem_point_reward(UUID) TO authenticated;
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/32_suppliers.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 32 — SUPPLIERS
+-- Supplier sebagai ENTITI SENDIRI — sebelum ni cuma teks bebas dalam
+-- psy_inventory_items.supplier_info (JSON), tak boleh dikongsi/rujuk
+-- silang. Ni asas untuk Purchase Orders (P15-17), supplier performance,
+-- dan filter Supplier yang konsisten di Products/Purchase Requests.
+-- psy_inventory_items.supplier_id ditambah (nullable) supaya borang
+-- item boleh pilih supplier sebenar kemudian — belum wired di UI lagi.
+-- ═══════════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS psy_suppliers (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  supplier_code       TEXT UNIQUE,
+  supplier_type       TEXT NOT NULL DEFAULT 'supplier'
+                      CHECK (supplier_type IN ('supplier','manufacturer','distributor','service_provider')),
+  name                TEXT NOT NULL,
+  registration_no     TEXT,   -- No. SSM
+  gst_no              TEXT,
+  tax_type            TEXT,   -- 'registered' | 'not_registered'
+  currency            TEXT NOT NULL DEFAULT 'MYR',
+  category            TEXT,
+  is_preferred        BOOLEAN NOT NULL DEFAULT false,
+  status              TEXT NOT NULL DEFAULT 'active'
+                      CHECK (status IN ('active','inactive','blacklisted')),
+
+  -- Contact & Address
+  phone               TEXT,
+  mobile              TEXT,
+  email               TEXT,
+  fax                 TEXT,
+  website             TEXT,
+  address             TEXT,
+  city                TEXT,
+  state               TEXT,
+  postcode            TEXT,
+  country             TEXT DEFAULT 'Malaysia',
+
+  -- Business & Payment
+  business_nature     TEXT,
+  payment_terms       TEXT,          -- cth '30 Hari'
+  credit_limit        NUMERIC(12,2),
+  min_order_amount    NUMERIC(12,2),
+  lead_time_days      INT,
+  bank_name           TEXT,
+  bank_account_no     TEXT,
+  bank_account_name   TEXT,
+
+  notes               TEXT,
+
+  created_by          UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_by_name     TEXT,
+  updated_by          UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  updated_by_name     TEXT,
+  created_at          TIMESTAMPTZ DEFAULT now(),
+  updated_at          TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_suppliers_status ON psy_suppliers(status);
+CREATE INDEX IF NOT EXISTS idx_suppliers_name   ON psy_suppliers(name);
+
+-- ──── supplier_code auto-generate (SUP-0001, SUP-0002, ...) ────
+CREATE SEQUENCE IF NOT EXISTS psy_supplier_code_seq START 1;
+
+CREATE OR REPLACE FUNCTION psy_set_supplier_code()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.supplier_code IS NULL THEN
+    NEW.supplier_code := 'SUP-' || LPAD(nextval('psy_supplier_code_seq')::text, 4, '0');
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_psy_set_supplier_code ON psy_suppliers;
+CREATE TRIGGER trg_psy_set_supplier_code
+BEFORE INSERT ON psy_suppliers
+FOR EACH ROW EXECUTE FUNCTION psy_set_supplier_code();
+
+-- ──── Contact Persons (satu supplier boleh ada banyak) ────
+CREATE TABLE IF NOT EXISTS psy_supplier_contacts (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  supplier_id   UUID NOT NULL REFERENCES psy_suppliers(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  position      TEXT,
+  phone         TEXT,
+  email         TEXT,
+  created_at    TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_supplier_contacts_supplier ON psy_supplier_contacts(supplier_id);
+
+-- ──── Documents/Attachments (metadata; fail sebenar di bucket 'supplier-docs') ────
+CREATE TABLE IF NOT EXISTS psy_supplier_documents (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  supplier_id       UUID NOT NULL REFERENCES psy_suppliers(id) ON DELETE CASCADE,
+  file_name         TEXT NOT NULL,
+  file_path         TEXT NOT NULL,   -- path dlm bucket supplier-docs
+  file_size         INT,
+  uploaded_by_name  TEXT,
+  created_at        TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_supplier_documents_supplier ON psy_supplier_documents(supplier_id);
+
+-- Rujukan supplier sebenar dari item (nullable — borang item belum wired,
+-- kekal guna supplier_info JSON buat masa ni; kolum ni sedia utk kemudian).
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS supplier_id UUID REFERENCES psy_suppliers(id) ON DELETE SET NULL;
+
+-- ──── RLS ────
+ALTER TABLE psy_suppliers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_supplier_contacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_supplier_documents ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage suppliers" ON psy_suppliers;
+CREATE POLICY "Staff manage suppliers" ON psy_suppliers FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff manage supplier contacts" ON psy_supplier_contacts;
+CREATE POLICY "Staff manage supplier contacts" ON psy_supplier_contacts FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff manage supplier documents" ON psy_supplier_documents;
+CREATE POLICY "Staff manage supplier documents" ON psy_supplier_documents FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+COMMENT ON TABLE psy_suppliers IS
+  'Supplier sebagai entiti sendiri (P18-20). Asas utk Purchase Orders (P15-17) & filter supplier konsisten merentasi Products/Purchase Requests.';
+COMMENT ON COLUMN psy_suppliers.supplier_code IS
+  'Kod auto-generate (SUP-0001, ...) via trigger — tidak boleh diedit.';
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/34_inventory_locations.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 34 — INVENTORY LOCATIONS (multi-warehouse stock)
+-- Sebelum ni psy_inventory_items.qty_in_stock ialah SATU angka keseluruhan
+-- (tiada pecahan ikut gudang). Kini setiap item boleh ada stok berasingan
+-- di banyak lokasi (psy_inventory_stock_by_location); qty_in_stock pada
+-- psy_inventory_items menjadi AGGREGATE (jumlah semua lokasi), dikekalkan
+-- automatik oleh trigger psy_sync_item_stock_total — JANGAN update
+-- qty_in_stock terus dari kod aplikasi, sentiasa upsert ke
+-- psy_inventory_stock_by_location dan biar trigger kira semula jumlah.
+-- ═══════════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS psy_inventory_locations (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        TEXT NOT NULL UNIQUE,
+  code        TEXT UNIQUE,
+  is_default  BOOLEAN NOT NULL DEFAULT false,
+  is_active   BOOLEAN NOT NULL DEFAULT true,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS psy_inventory_stock_by_location (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  item_id       UUID NOT NULL REFERENCES psy_inventory_items(id) ON DELETE CASCADE,
+  location_id   UUID NOT NULL REFERENCES psy_inventory_locations(id) ON DELETE RESTRICT,
+  qty_in_stock  NUMERIC(10,2) NOT NULL DEFAULT 0,
+  min_qty       NUMERIC(10,2),
+  updated_at    TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (item_id, location_id)
+);
+CREATE INDEX IF NOT EXISTS idx_stock_by_location_item ON psy_inventory_stock_by_location(item_id);
+
+-- ──── Trigger: kekalkan psy_inventory_items.qty_in_stock = SUM semua lokasi ────
+CREATE OR REPLACE FUNCTION psy_sync_item_stock_total()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE target_item UUID := COALESCE(NEW.item_id, OLD.item_id);
+BEGIN
+  UPDATE psy_inventory_items
+  SET qty_in_stock = (SELECT COALESCE(SUM(qty_in_stock), 0) FROM psy_inventory_stock_by_location WHERE item_id = target_item)
+  WHERE id = target_item;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_sync_item_stock_total ON psy_inventory_stock_by_location;
+CREATE TRIGGER trg_sync_item_stock_total
+AFTER INSERT OR UPDATE OR DELETE ON psy_inventory_stock_by_location
+FOR EACH ROW EXECUTE FUNCTION psy_sync_item_stock_total();
+
+-- ──── Seed 5 lokasi standard ────
+INSERT INTO psy_inventory_locations (name, code, is_default) VALUES
+  ('General Inventory',   'GEN',  true),
+  ('Clinical Pharmacy',   'PHARM', false),
+  ('Shop Warehouse',      'SHOP', false),
+  ('Raw Material Store',  'RAW',  false),
+  ('Equipment Store',     'EQUIP', false)
+ON CONFLICT (name) DO NOTHING;
+
+-- ──── Backfill: pindah qty_in_stock sedia ada ke SATU lokasi (ikut source_type) ────
+INSERT INTO psy_inventory_stock_by_location (item_id, location_id, qty_in_stock)
+SELECT i.id,
+       (SELECT id FROM psy_inventory_locations WHERE name = CASE WHEN i.source_type = 'farmasi_klinikal' THEN 'Clinical Pharmacy' ELSE 'General Inventory' END),
+       COALESCE(i.qty_in_stock, 0)
+FROM psy_inventory_items i
+WHERE NOT EXISTS (SELECT 1 FROM psy_inventory_stock_by_location WHERE item_id = i.id);
+
+-- ──── RLS ────
+ALTER TABLE psy_inventory_locations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_inventory_stock_by_location ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff read locations" ON psy_inventory_locations;
+CREATE POLICY "Staff read locations" ON psy_inventory_locations FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff manage stock by location" ON psy_inventory_stock_by_location;
+CREATE POLICY "Staff manage stock by location" ON psy_inventory_stock_by_location FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+COMMENT ON TABLE psy_inventory_stock_by_location IS
+  'Stok sebenar per (item, lokasi). psy_inventory_items.qty_in_stock ialah jumlah automatik (trigger) — jangan tulis terus, upsert sini.';
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/35_stock_in.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 35 — STOCK IN / RECEIVE
+-- Rekod penerimaan stok sebenar (bukan lagi 1 butang "Tandakan Dibeli"
+-- je) — setiap penerimaan simpan batch no + expiry date PER PRODUK
+-- (psy_stock_in_items), sebab 1 produk boleh ada banyak batch dengan
+-- expiry berlainan (stok lama vs baru). "Expiring Soon" di Stock Alerts
+-- dikira dari sini, BUKAN dari psy_inventory_items.expiry_date (medan
+-- lama, single-value, dikekalkan tapi tak lagi sumber utama).
+--
+-- Reference: rujuk Purchase Request yang diluluskan (reference_type=
+-- 'purchase_request'), ATAU 'manual' (restock terus tanpa PR). BUKAN
+-- Purchase Order — modul PO dah dibuang (lihat 32_suppliers.sql nota).
+-- Stock In yang dipautkan ke PR & di-post akan auto tanda PR tu
+-- 'purchased' (sama kesan macam "Tandakan Dibeli" di PR, tapi dengan
+-- rekod batch/expiry/kos sebenar).
+-- ═══════════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS psy_stock_in_records (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  receive_no         TEXT UNIQUE,
+  receive_date       DATE DEFAULT CURRENT_DATE,
+  reference_type     TEXT NOT NULL DEFAULT 'manual'
+                     CHECK (reference_type IN ('purchase_request','manual')),
+  reference_id       UUID REFERENCES psy_inventory_requests(id) ON DELETE SET NULL,
+  location_id        UUID NOT NULL REFERENCES psy_inventory_locations(id) ON DELETE RESTRICT,
+  status             TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','posted')),
+  delivery_note_no   TEXT,
+  invoice_no         TEXT,
+  transporter        TEXT,
+  received_condition TEXT,
+  remarks            TEXT,
+  subtotal           NUMERIC(12,2) NOT NULL DEFAULT 0,
+  tax_amount         NUMERIC(12,2) NOT NULL DEFAULT 0,
+  total_cost         NUMERIC(12,2) NOT NULL DEFAULT 0,
+  received_by        UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  received_by_name   TEXT,
+  posted_at          TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ DEFAULT now(),
+  updated_at         TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_stock_in_reference ON psy_stock_in_records(reference_id);
+
+-- ──── receive_no auto-generate (RCV-0001, ...) ────
+CREATE SEQUENCE IF NOT EXISTS psy_stock_in_no_seq START 1;
+
+CREATE OR REPLACE FUNCTION psy_set_stock_in_no()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.receive_no IS NULL THEN
+    NEW.receive_no := 'RCV-' || LPAD(nextval('psy_stock_in_no_seq')::text, 4, '0');
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_psy_set_stock_in_no ON psy_stock_in_records;
+CREATE TRIGGER trg_psy_set_stock_in_no
+BEFORE INSERT ON psy_stock_in_records
+FOR EACH ROW EXECUTE FUNCTION psy_set_stock_in_no();
+
+-- ──── Line items (batch/expiry per produk per penerimaan) ────
+CREATE TABLE IF NOT EXISTS psy_stock_in_items (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  stock_in_id    UUID NOT NULL REFERENCES psy_stock_in_records(id) ON DELETE CASCADE,
+  item_id        UUID REFERENCES psy_inventory_items(id) ON DELETE SET NULL,
+  item_name      TEXT NOT NULL,
+  batch_no       TEXT,
+  expiry_date    DATE,
+  qty_received   NUMERIC(10,2) NOT NULL,
+  unit_cost      NUMERIC(10,2) NOT NULL DEFAULT 0,
+  subtotal       NUMERIC(12,2) NOT NULL DEFAULT 0,
+  created_at     TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_stock_in_items_record ON psy_stock_in_items(stock_in_id);
+CREATE INDEX IF NOT EXISTS idx_stock_in_items_item ON psy_stock_in_items(item_id);
+CREATE INDEX IF NOT EXISTS idx_stock_in_items_expiry ON psy_stock_in_items(expiry_date) WHERE expiry_date IS NOT NULL;
+
+-- ──── Attachments (delivery note, invoice, dll.) ────
+CREATE TABLE IF NOT EXISTS psy_stock_in_documents (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  stock_in_id       UUID NOT NULL REFERENCES psy_stock_in_records(id) ON DELETE CASCADE,
+  file_name         TEXT NOT NULL,
+  file_path         TEXT NOT NULL,
+  file_size         INT,
+  uploaded_by_name  TEXT,
+  created_at        TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_stock_in_documents_record ON psy_stock_in_documents(stock_in_id);
+
+-- ──── RLS ────
+ALTER TABLE psy_stock_in_records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_stock_in_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_stock_in_documents ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage stock in records" ON psy_stock_in_records;
+CREATE POLICY "Staff manage stock in records" ON psy_stock_in_records FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff manage stock in items" ON psy_stock_in_items;
+CREATE POLICY "Staff manage stock in items" ON psy_stock_in_items FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff manage stock in documents" ON psy_stock_in_documents;
+CREATE POLICY "Staff manage stock in documents" ON psy_stock_in_documents FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+COMMENT ON TABLE psy_stock_in_records IS
+  'Rekod penerimaan stok sebenar — post akan tambah stok ke psy_inventory_stock_by_location & tanda PR (jika ada rujukan) sebagai purchased.';
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/36_stock_movements.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 36 — STOCK MOVEMENTS (ledger)
+-- Rekod SETIAP perubahan stok (IN/OUT/ADJUSTMENT) merentasi semua punca:
+-- Stock In (posted), Quick "Tandakan Dibeli", Stock Adjustment (manual),
+-- Opening Stock (produk baharu), auto-deduct sesi pesakit. Ditulis SECARA
+-- BERPUSAT dalam shared/inventoryStock.js addStockToLocation() — jangan
+-- insert terus dari page, sentiasa lalu fungsi tu supaya ledger konsisten
+-- dgn psy_inventory_stock_by_location (sumber kebenaran qty_in_stock).
+--
+-- Dipakai oleh roles/staff/inventory-overview.html ("Recent Stock
+-- Movements") — kalau kod baharu ubah stok tanpa lalu addStockToLocation(),
+-- ia TIDAK akan muncul di sini (dan qty_in_stock aggregate boleh out-of-sync,
+-- lihat nota 34_inventory_locations.sql).
+-- ═══════════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS psy_stock_movements (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  item_id          UUID REFERENCES psy_inventory_items(id) ON DELETE SET NULL,
+  item_name        TEXT,
+  location_id      UUID REFERENCES psy_inventory_locations(id) ON DELETE SET NULL,
+  movement_type    TEXT NOT NULL CHECK (movement_type IN ('in','out','adjustment')),
+  qty              NUMERIC(10,2) NOT NULL,  -- delta bertanda: +masuk, -keluar
+  balance_after    NUMERIC(10,2),  -- baki stok di lokasi tu SELEPAS movement ni (utk kolum "Balance After")
+  reference_type   TEXT,   -- 'stock_in' | 'purchase_request' | 'adjustment' | 'opening_stock' | 'patient_package' | 'transfer'
+  reference_id     UUID,
+  reference_label  TEXT,   -- KOD rujukan sahaja bila ada, cth: 'RCV-0001', 'PR-0004' (bukan free text)
+  notes            TEXT,   -- penerangan bebas, cth: sebab adjustment, 'Sesi minggu 3', 'Pindah → Shop Warehouse'
+  actor_id         UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  actor_name       TEXT,
+  created_at       TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_item ON psy_stock_movements(item_id);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON psy_stock_movements(created_at DESC);
+
+ALTER TABLE psy_stock_movements ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage stock movements" ON psy_stock_movements;
+CREATE POLICY "Staff manage stock movements" ON psy_stock_movements FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+COMMENT ON TABLE psy_stock_movements IS
+  'Ledger setiap perubahan stok — ditulis berpusat dalam addStockToLocation() (shared/inventoryStock.js). Sumber "Recent Stock Movements" di Inventory Overview.';
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/37_automation_sequences.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 37 — AUTOMATION SEQUENCES (psy_automation_messages)
+-- Sokongan "sequence" berbilang mesej bagi SATU automasi (perjalanan
+-- pesakit hari-demi-hari, cth Minggu 1 Hari 1/2/3...). Trigger
+-- 'schedule' (Broadcast Berjadual) KEKAL guna psy_automations.message_template
+-- sedia ada — jadual ini untuk trigger lain (cth patient_enrolled).
+-- ═══════════════════════════════════════════════════════════════════
+
+create table if not exists psy_automation_messages (
+  id uuid primary key default gen_random_uuid(),
+  automation_id uuid not null references psy_automations(id) on delete cascade,
+  position int not null,
+  -- BILA hantar (relatif ke anchor automasi, cth psy_treatment_plans.start_date)
+  send_mode text not null default 'specific_time',   -- immediate | after_delay | specific_time
+  day_offset int not null default 0,                 -- Hari ke-N sejak anchor (0 = hari sama)
+  delay_value int,                                    -- utk send_mode='after_delay'
+  delay_unit text,                                    -- minute | hour | day
+  send_time time,                                     -- utk send_mode='specific_time' (jam:minit)
+  -- APA hantar
+  content_type text not null default 'text',          -- text | image | video | link
+  message_text text not null default '',
+  media_url text,                                     -- imej/video (attachment WhatsApp)
+  link_url text,                                       -- pautan (dihantar sbg teks, BUKAN butang — GHL tiada sokongan butang)
+  link_label text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists idx_psy_auto_msgs_automation on psy_automation_messages(automation_id, position);
+
+alter table psy_automation_messages enable row level security;
+
+drop policy if exists "auto_msgs staff read" on psy_automation_messages;
+create policy "auto_msgs staff read" on psy_automation_messages for select
+  using (auth.uid() in (select id from psy_profiles where role = 'staff'));
+
+drop policy if exists "auto_msgs mgr manage" on psy_automation_messages;
+create policy "auto_msgs mgr manage" on psy_automation_messages for all
+  using (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager')))
+  with check (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager')));
+
+-- Kaitkan log hantaran dengan mesej tertentu dalam sequence (dedup + statistik per-mesej).
+-- NULL utk log lama/broadcast tunggal (message_template).
+alter table psy_notification_logs add column if not exists message_id uuid references psy_automation_messages(id) on delete set null;
+
+create index if not exists idx_psy_notif_logs_message on psy_notification_logs(message_id);

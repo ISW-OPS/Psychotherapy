@@ -39,7 +39,8 @@
     function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function fmtDT(d){ return d ? new Date(d).toLocaleString(LCALE(),{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; }
-const CAT_LABEL = { schedule:'Broadcast', appointment:'Sesi', package:'Pakej', checkin:'Catatan Harian', payment:'Bayaran', vitals:'Vitals', patient:'Pesakit', clinical:'Aliran Klinikal' };
+const CAT_LABEL = { schedule:'Broadcast', treatment:'Rawatan', appointment:'Sesi', package:'Pakej', checkin:'Catatan Harian', payment:'Bayaran', vitals:'Vitals', patient:'Pesakit', clinical:'Aliran Klinikal' };
+const MSG_UNIT_LBL = { minute:'minit', hour:'jam', day:'hari' };
 const DOWN = {0:'Ahd',1:'Isn',2:'Sel',3:'Rab',4:'Kha',5:'Jum',6:'Sab'};
 const CH_LABEL = { whatsapp:'📲 WhatsApp', inapp:'🔔 In-App', email:'✉️ Email' };
 const CH_ICON = { whatsapp:'📲', inapp:'🔔', email:'✉️' };
@@ -91,13 +92,16 @@ async function load(){
   const since=new Date(Date.now()-30*86400000).toISOString();
   const [aRes,lRes,pRes]=await Promise.all([
     window.db.from('psy_automations').select('*').eq('id',id).maybeSingle(),
-    window.db.from('psy_notification_logs').select('status,channel,created_at,patient_name').eq('automation_id',id).gte('created_at',since).order('created_at',{ascending:false}),
+    window.db.from('psy_notification_logs').select('status,channel,created_at,patient_name,message_id').eq('automation_id',id).gte('created_at',since).order('created_at',{ascending:false}),
     window.db.from('psy_patients').select('id,status,gender,phone,active_package_id,state,date_of_birth,created_at').neq('status','deleted').neq('status','rejected'),
   ]);
   const a=aRes.data; A=a;
   if(!a){ document.getElementById('content').innerHTML='<div class="text-center py-16 text-ink/40">Automasi tidak ditemui.</div>'; return; }
   document.getElementById('crumb').textContent=a.name;
   const logs=lRes.data||[]; LOGS=logs; const pats=pRes.data||[];
+  const isSeq = a.trigger_category !== 'schedule';
+  let seqMessages = [];
+  if(isSeq){ const { data: msgs } = await window.db.from('psy_automation_messages').select('*').eq('automation_id',id).order('position'); seqMessages = msgs||[]; }
   let creator='—';
   const pmIds=[a.created_by,a.updated_by].filter(Boolean);
   if(pmIds.length){ const {data:pf}=await window.db.from('psy_profiles').select('id,full_name').in('id',pmIds); const map={}; (pf||[]).forEach(x=>map[x.id]=x.full_name); creator=map[a.created_by]||map[a.updated_by]||'—'; }
@@ -112,6 +116,17 @@ async function load(){
     : '<div class="text-[13px] text-ink/50">✓ Semua pesakit layak (tiada syarat).</div>';
   const acts=Array.isArray(a.actions)?a.actions:[];
   const msgPrev=esc(a.message_template||'').replace(/\{\{(.+?)\}\}/g,(m,k)=>`<span class="text-green-dark font-semibold">${esc(PREV[k.trim()]||('{{'+k+'}}'))}</span>`).replace(/\*(.+?)\*/g,'<b>$1</b>').replace(/_(.+?)_/g,'<i>$1</i>').replace(/\n/g,'<br>');
+  let msgPrevBody;
+  if(isSeq){
+    msgPrevBody = !seqMessages.length ? '<div class="text-[13px] text-ink/45">Tiada mesej dalam sequence ini.</div>' : seqMessages.map((m,i)=>{
+      const when = m.send_mode==='immediate' ? 'Serta-merta' : m.send_mode==='after_delay' ? `${m.delay_value} ${MSG_UNIT_LBL[m.delay_unit]||''} selepas daftar` : `Hari ${m.day_offset} · ${(m.send_time||'').slice(0,5)||'—'}`;
+      const sentCount = logs.filter(l=>l.message_id===m.id && l.status==='sent').length;
+      const prevTxt = esc(m.message_text||'').replace(/\{\{(.+?)\}\}/g,(mm,k)=>`<span class="text-green-dark font-semibold">${esc(PREV[k.trim()]||('{{'+k+'}}'))}</span>`).replace(/\*(.+?)\*/g,'<b>$1</b>').replace(/_(.+?)_/g,'<i>$1</i>').replace(/\n/g,'<br>');
+      return `<div class="mb-3 pb-3 border-b border-ink/8 last:border-0 last:pb-0 last:mb-0"><div class="flex items-center justify-between mb-1"><span class="text-[11px] font-bold text-navy">Mesej ${i+1} · ${esc(when)}</span><span class="text-[11px] text-ink/45">${sentCount} dihantar</span></div><div class="rounded-xl p-2.5" style="background:#e5ddd5"><div class="bg-[#dcf8c6] rounded-lg rounded-tl-none px-3 py-2 text-[12px] text-ink/85 leading-relaxed shadow-sm whitespace-pre-wrap">${prevTxt||'—'}</div></div></div>`;
+    }).join('');
+  } else {
+    msgPrevBody = `<div class="rounded-xl p-3 flex-1" style="background:#e5ddd5"><div class="bg-[#dcf8c6] rounded-lg rounded-tl-none px-3 py-2 text-[12px] text-ink/85 leading-relaxed shadow-sm whitespace-pre-wrap">${msgPrev||'—'}</div></div>`;
+  }
   const nr=nextRun(a.trigger_timing); const t=a.trigger_timing||{}; const isSched=t.when==='schedule';
   const primaryCh=a.message_channel||acts[0]||'whatsapp';
   const ch={whatsapp:0,inapp:0,email:0}; logs.filter(l=>l.status==='sent').forEach(l=>{if(ch[l.channel]!=null)ch[l.channel]++;});
@@ -174,7 +189,7 @@ async function load(){
 
     <!-- Preview + status + channel -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      ${card('Pratonton Mesej','💬',`<div class="rounded-xl p-3 flex-1" style="background:#e5ddd5"><div class="bg-[#dcf8c6] rounded-lg rounded-tl-none px-3 py-2 text-[12px] text-ink/85 leading-relaxed shadow-sm whitespace-pre-wrap">${msgPrev||'—'}</div></div>`)}
+      ${card('Pratonton Mesej'+(isSeq?` (${seqMessages.length})`:''),'💬', msgPrevBody)}
       ${card('Status Penghantaran','📊', tot?`${stBar('✅ Berjaya',sent,'#2e9e6b')}${stBar('⊗ Gagal',failed,'#d9534f')}${pending?stBar('🕒 Menunggu',pending,'#c9a13b'):''}<div class="text-[11px] text-ink/40 mt-2">Jumlah diproses: ${tot.toLocaleString()}</div>`:'<div class="text-[13px] text-ink/45">Belum ada penghantaran direkod.</div>')}
       ${card('Mengikut Saluran','📨', chTot?`<div class="flex items-center gap-4"><div class="flex-shrink-0">${donut([{v:ch.whatsapp,c:'#2e9e6b'},{v:ch.inapp,c:'#1a3a5c'},{v:ch.email,c:'#c9a13b'}])}</div><div class="flex-1 space-y-2 text-[12px]">${[['whatsapp','#2e9e6b'],['inapp','#1a3a5c'],['email','#c9a13b']].map(([k,c])=>{const n=ch[k],pct=chTot?Math.round(n/chTot*100):0;return `<div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full" style="background:${c}"></span><span class="flex-1 text-ink/65">${CH_LABEL[k]}</span><span class="text-ink/50">${n} (${pct}%)</span></div>`;}).join('')}</div></div>`:'<div class="text-[13px] text-ink/45">Tiada penghantaran berjaya lagi.</div>')}
     </div>

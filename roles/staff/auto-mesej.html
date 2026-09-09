@@ -34,14 +34,13 @@
         <div class="flex items-start justify-between gap-3 flex-wrap">
           <div>
             <h1 class="text-[26px] font-extrabold text-ink tracking-tight">Template Mesej</h1>
-            <p class="text-sm text-ink/50 mt-1">Guna template sedia ada &amp; mesej sistem untuk cipta automasi dengan lebih pantas.</p>
+            <p class="text-sm text-ink/50 mt-1">Urus kandungan &amp; jadual mesej sistem sedia ada (broadcast, peringatan).</p>
           </div>
           <div class="flex items-center gap-2.5 flex-shrink-0">
             <div class="relative">
               <span class="absolute left-3 top-1/2 -translate-y-1/2 text-ink/35 text-sm">🔍</span>
               <input id="t-search" oninput="render()" placeholder="Cari template…" class="pl-9 pr-3 py-2.5 border border-ink/15 rounded-xl text-sm outline-none focus:border-navy bg-white w-[220px]">
             </div>
-            <a href="automation-template-builder.html" data-rbac="auto_messages.create" class="bg-navy hover:bg-navy-dark text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm whitespace-nowrap flex items-center gap-1.5"><span class="text-base leading-none">+</span> Tambah Template</a>
           </div>
         </div>
 
@@ -70,18 +69,6 @@
     </div>
     <div class="p-5 space-y-4 overflow-y-auto">
       <input id="m-id" type="hidden">
-
-      <!-- Medan cipta (broadcast baru sahaja) -->
-      <div id="create-fields" class="hidden space-y-3 border-b border-ink/8 pb-4">
-        <div>
-          <label class="lbl">Nama template <span class="text-ink/40 font-normal">(rujukan staff sahaja)</span></label>
-          <input id="m-name-input" class="fld" placeholder="cth: Peringatan Sesi Rawatan">
-        </div>
-        <div>
-          <label class="lbl">Penerangan ringkas <span class="text-ink/40 font-normal">(pilihan)</span></label>
-          <input id="m-desc-input" class="fld" placeholder="cth: Ingatkan pesakit tentang sesi esok">
-        </div>
-      </div>
 
       <!-- Timing -->
       <div id="timing-before" class="hidden">
@@ -261,8 +248,7 @@ function render(){
         <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${t.c}">${t.l}</span>${chs}
       </div>
       <div class="flex items-center gap-2 mt-auto">
-        <a href="automation-builder.html?tpl=${m.id}" class="flex-1 text-center text-[12px] font-bold text-navy border border-navy/25 py-2 rounded-lg hover:bg-navy hover:text-white">Guna Template</a>
-        ${m.trigger_type==='template' ? `<a href="automation-template-builder.html?id=${m.id}" title="Edit" data-rbac="auto_messages.edit" class="text-[12px] font-bold text-ink/60 border border-ink/15 px-3 py-2 rounded-lg hover:bg-ink/5">Edit</a>` : `<button onclick="openEdit('${m.id}')" title="Edit" data-rbac="auto_messages.edit" class="text-[12px] font-bold text-ink/60 border border-ink/15 px-3 py-2 rounded-lg hover:bg-ink/5">Edit</button>`}
+        <button onclick="openEdit('${m.id}')" title="Edit" data-rbac="auto_messages.edit" class="flex-1 text-center text-[12px] font-bold text-ink/60 border border-ink/15 py-2 rounded-lg hover:bg-ink/5">Edit</button>
         ${isBroadcast?`<button onclick="deleteMsg('${m.id}')" title="Padam" data-rbac="auto_messages.delete" class="text-[12px] font-bold text-terracotta border border-terracotta/25 px-2.5 py-2 rounded-lg hover:bg-terracotta hover:text-white">🗑</button>`:''}
       </div>
     </div>`;
@@ -272,7 +258,6 @@ function render(){
 function openEdit(id){
   const m = MSGS.find(x=>x.id===id); if(!m) return;
   editing = m;
-  document.getElementById('create-fields').classList.add('hidden');
   document.getElementById('save-btn').textContent = '💾 Simpan';
   document.getElementById('m-id').value = m.id;
   document.getElementById('m-name').textContent = m.name;
@@ -310,27 +295,6 @@ function openEdit(id){
   renderPreview();
   document.getElementById('edit-modal').classList.remove('hidden');
 }
-
-// Cipta broadcast baru (recurring_broadcast) — mesra staff, tiada kod.
-function openCreate(){
-  editing = { trigger_type: 'template' };  // tiada id → cipta TEMPLATE boleh guna semula
-  document.getElementById('m-id').value = '';
-  document.getElementById('m-name').textContent = 'Template Baru';
-  document.getElementById('m-desc').textContent = 'Teks mesej boleh guna semula dalam automasi (Guna Template)';
-  document.getElementById('create-fields').classList.remove('hidden');
-  document.getElementById('m-name-input').value = '';
-  document.getElementById('m-desc-input').value = '';
-  document.getElementById('m-tpl').value = 'Hi {{nama}}, ';
-  document.getElementById('m-active').checked = true;
-  document.getElementById('m-err').classList.add('hidden');
-  document.getElementById('save-btn').textContent = '➕ Cipta Template';
-  // Template: tiada masa/jadual/audience — cuma nama + teks mesej
-  ['timing-before','timing-daily','timing-none','broadcast-extra'].forEach(id => document.getElementById(id).classList.add('hidden'));
-  renderPhChips(['{{nama}}','{{mrn}}','{{telefon}}','{{emel}}','{{pakej}}','{{tarikh_mula}}','{{tarikh_tamat}}','{{minggu}}','{{coach}}','{{masa}}','{{tarikh}}','{{amaun}}']);
-  renderPreview();
-  document.getElementById('edit-modal').classList.remove('hidden');
-}
-window.openCreate = openCreate;
 
 function closeEdit(){ document.getElementById('edit-modal').classList.add('hidden'); editing=null; }
 
@@ -434,35 +398,15 @@ async function saveMsg(){
   }
   try { payload.updated_by = window.currentUser.id; } catch(_){}
 
-  const isCreate = !editing.id;
-  let createName = '';
-  if (isCreate){
-    createName = document.getElementById('m-name-input').value.trim();
-    if (!createName){ err.textContent='Sila isi nama template.'; err.classList.remove('hidden'); return; }
-  }
-
   const btn = document.getElementById('save-btn'); btn.disabled=true; btn.textContent='Menyimpan...';
   try {
-    if (isCreate){
-      // Cipta TEMPLATE boleh guna semula (bukan broadcast — broadcast dicipta di Cipta Automasi)
-      payload.name = createName;
-      payload.description = document.getElementById('m-desc-input').value.trim() || null;
-      payload.channel = 'whatsapp';
-      payload.trigger_type = 'template';
-      payload.placeholders = ['{{nama}}','{{masa}}','{{tarikh}}','{{pakej}}'];
-      payload.key = 'tpl_' + (createName.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,24) || 'template') + '_' + Date.now().toString(36);
-      const { error } = await window.db.from('psy_auto_messages').insert(payload);
-      if (error) throw error;
-      banner('Template baru dicipta ✅');
-    } else {
-      const { error } = await window.db.from('psy_auto_messages').update(payload).eq('id', editing.id);
-      if (error) throw error;
-      banner('Mesej automatik dikemaskini ✅');
-    }
+    const { error } = await window.db.from('psy_auto_messages').update(payload).eq('id', editing.id);
+    if (error) throw error;
+    banner('Mesej automatik dikemaskini ✅');
     closeEdit();
     await load();
   } catch(e){ err.textContent='Ralat: '+e.message; err.classList.remove('hidden'); }
-  finally { btn.disabled=false; btn.textContent = isCreate ? '➕ Cipta Broadcast' : '💾 Simpan'; }
+  finally { btn.disabled=false; btn.textContent='💾 Simpan'; }
 }
 
 async function load(){
@@ -479,7 +423,7 @@ async function load(){
   await load();
   // Deep-link: ?edit=<id> buka terus editor (cth dari halaman konsultasi rujukan)
   const editId = new URLSearchParams(location.search).get('edit');
-  if (editId) { const row = (MSGS||[]).find(m=>m.id===editId); if (row && row.trigger_type==='template') { location.href='automation-template-builder.html?id='+editId; } else if (row) { openEdit(editId); } else { openEdit(editId); } }
+  if (editId) openEdit(editId);
 })();
 </script>
 </body>

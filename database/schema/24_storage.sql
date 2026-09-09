@@ -69,6 +69,10 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO storage.buckets (id, name, public) VALUES ('letter-attachments', 'letter-attachments', false)
 ON CONFLICT (id) DO NOTHING;
 
+-- Media mesej automasi (imej/video dilampirkan pada mesej sequence) — public (GHL fetch terus URL)
+INSERT INTO storage.buckets (id, name, public) VALUES ('automation-media', 'automation-media', true)
+ON CONFLICT (id) DO NOTHING;
+
 
 -- ---- Polisi storage.objects ----
 
@@ -307,6 +311,16 @@ CREATE POLICY "inventory_images_staff_write" ON storage.objects
     FOR ALL TO authenticated
     USING (bucket_id = 'inventory-images' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
     WITH CHECK (bucket_id = 'inventory-images' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "automation_media_public_read" ON storage.objects;
+CREATE POLICY "automation_media_public_read" ON storage.objects
+    FOR SELECT USING (bucket_id = 'automation-media');
+
+DROP POLICY IF EXISTS "automation_media_staff_write" ON storage.objects;
+CREATE POLICY "automation_media_staff_write" ON storage.objects
+    FOR ALL TO authenticated
+    USING (bucket_id = 'automation-media' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (bucket_id = 'automation-media' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
 DROP POLICY IF EXISTS "stock_in_docs_staff_all" ON storage.objects;
 CREATE POLICY "stock_in_docs_staff_all" ON storage.objects
