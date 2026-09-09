@@ -34,10 +34,27 @@ CREATE TABLE IF NOT EXISTS psy_vitals (
   created_at       TIMESTAMPTZ DEFAULT now()
 );
 
+-- Medan tambahan (dashboard Vitals — resp rate, pain score, penanda tidak normal)
+ALTER TABLE psy_vitals ADD COLUMN IF NOT EXISTS respiratory_rate INT;
+ALTER TABLE psy_vitals ADD COLUMN IF NOT EXISTS pain_score INT CHECK (pain_score BETWEEN 0 AND 10);
+ALTER TABLE psy_vitals ADD COLUMN IF NOT EXISTS is_abnormal BOOLEAN NOT NULL DEFAULT false;
+
 -- Indeks
 CREATE INDEX IF NOT EXISTS idx_psy_vitals_patient ON psy_vitals(patient_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_vitals_plan_week
   ON psy_vitals(plan_id, week_number) WHERE plan_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_psy_vitals_abnormal ON psy_vitals(is_abnormal) WHERE is_abnormal = true;
+CREATE INDEX IF NOT EXISTS idx_psy_vitals_reading_date ON psy_vitals(reading_date DESC);
+
+-- Backfill sekali sahaja: tandakan rekod sedia ada yang sudah melepasi ambang klinikal
+-- biasa sebagai tidak normal, supaya statistik dashboard tak bermula 0 selepas migrate.
+UPDATE psy_vitals SET is_abnormal = true WHERE is_abnormal = false AND (
+  (bp_systolic IS NOT NULL AND (bp_systolic < 90 OR bp_systolic >= 130)) OR
+  (bp_diastolic IS NOT NULL AND (bp_diastolic < 60 OR bp_diastolic >= 85)) OR
+  (heart_rate IS NOT NULL AND (heart_rate < 60 OR heart_rate > 100)) OR
+  (temperature IS NOT NULL AND (temperature < 36.1 OR temperature > 37.2)) OR
+  (spo2 IS NOT NULL AND spo2 < 95)
+);
 
 -- RLS
 ALTER TABLE psy_vitals ENABLE ROW LEVEL SECURITY;
@@ -79,3 +96,8 @@ COMMENT ON COLUMN psy_vitals.week_number IS
   'Minggu rawatan ke berapa bila vitals direkod. NULL kalau tiada plan aktif.';
 COMMENT ON COLUMN psy_vitals.reading_time IS
   'Masa bacaan (HH:MM). Staff boleh rekod beberapa bacaan sehari — masa bezakan setiap satu.';
+COMMENT ON COLUMN psy_vitals.respiratory_rate IS 'Kadar pernafasan (nafas/minit).';
+COMMENT ON COLUMN psy_vitals.pain_score IS 'Skor kesakitan pesakit, 0 (tiada) hingga 10 (teruk). Pilihan, boleh NULL.';
+COMMENT ON COLUMN psy_vitals.is_abnormal IS
+  'Dikira semasa simpan (ambang klinikal BP/HR/suhu/SpO2/resp rate) ATAU ditanda manual oleh staff. '
+  'Disimpan (bukan dikira semula tiap kali) supaya statistik dashboard Vitals murah untuk query.';

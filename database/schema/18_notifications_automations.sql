@@ -807,6 +807,37 @@ on conflict (key) do update set
   language         = excluded.language,
   updated_at       = now();
 
+-- Bayaran Gagal/Dibatalkan (payment_failed) — WA dihantar automatik oleh
+-- payments-webhook bila HitPay report status 'failed' (kali pertama sahaja,
+-- lihat notifyPaymentFailed). {pautan} diisi kod: sentence lengkap dgn
+-- pautan HitPay BAHARU (auto-jana, kob_deposit sahaja) ATAU sentence fallback
+-- "cuba semula/hubungi klinik" kalau tiada pautan (package/self-checkout,
+-- atau sesi KOB dah tak eligible). UPSERT dgn DO UPDATE macam installment_*.
+insert into psy_auto_messages
+  (key, name, description, channel, trigger_type, message_template,
+   placeholders, channels, category, language, is_active)
+values
+  ('payment_failed',
+   'Bayaran Gagal / Dibatalkan',
+   'Dihantar automatik bila bayaran (HitPay) gagal/dibatalkan (kali pertama sahaja per resit). {pautan} = ayat lengkap dgn pautan bayar-semula (auto-jana, kob_deposit sahaja) atau ayat "cuba semula/hubungi klinik" jika tiada pautan.',
+   'whatsapp', 'on_action',
+   E'Assalamualaikum {nama} 👋\n\nBayaran anda ({item}, RM {jumlah}) tidak berjaya/dibatalkan. {pautan}\n\n— Ibnu Sina Wellness',
+   '["{nama}","{item}","{jumlah}","{pautan}"]'::jsonb,
+   '["whatsapp"]'::jsonb,
+   'pembayaran', 'ms',
+   true)
+on conflict (key) do update set
+  name             = excluded.name,
+  description      = excluded.description,
+  channel          = excluded.channel,
+  trigger_type     = excluded.trigger_type,
+  message_template = excluded.message_template,
+  placeholders     = excluded.placeholders,
+  channels         = excluded.channels,
+  category         = excluded.category,
+  language         = excluded.language,
+  updated_at       = now();
+
 -- Template Reaksi Pemulihan (pesakit boleh baca — policy 'reaksi_%')
 -- reaksi_harian: mesej 1 (terus) — {{sections}} = blok per kategori,
 -- tindakan sama disebut SEKALI sahaja (dedup global oleh klien).

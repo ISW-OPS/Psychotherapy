@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Sejarah Bacaan Vitals</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📊</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-5">
+
+        <div class="text-xs text-ink/40">
+          <a href="dashboard.html" class="hover:text-navy hover:underline">Papan Pemuka</a> <span class="mx-1">›</span>
+          <a href="vitals.html" class="hover:text-navy hover:underline">Vitals</a> <span class="mx-1">›</span>
+          <span class="text-ink/70 font-medium">Sejarah Bacaan</span>
+        </div>
+
+        <div class="flex items-start justify-between flex-wrap gap-3">
+          <div>
+            <h1 id="vh-title" class="text-2xl font-bold text-ink">Sejarah Bacaan Vitals</h1>
+            <p class="text-sm text-ink/55 mt-0.5">Lihat dan urus semua rekod bacaan vitals pesakit.</p>
+          </div>
+          <div class="relative inline-block">
+            <button onclick="toggleExportMenu()" class="px-4 py-2.5 rounded-xl border border-ink/15 text-sm font-semibold text-ink/70 hover:bg-ink/5 whitespace-nowrap">⬇️ Export ▾</button>
+            <div id="vh-export-menu" class="hidden absolute right-0 top-11 z-20 bg-white border border-ink/10 rounded-lg shadow-lg py-1 min-w-[240px] text-left">
+              <button onclick="exportScheduleExcel()" class="block w-full text-left px-3 py-2 text-xs text-ink hover:bg-cream/50">📅 Export Excel (ikut Jadual Rawatan)</button>
+              <button onclick="exportFilteredCsv()" class="block w-full text-left px-3 py-2 text-xs text-ink hover:bg-cream/50">📄 Export CSV (rekod tertapis)</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="bg-white rounded-2xl border border-ink/10 p-4 space-y-3">
+          <div class="flex flex-wrap items-end gap-3">
+            <div id="vh-search-wrap" class="relative flex-1 min-w-[220px]">
+              <label class="text-[10px] font-bold text-ink/40 uppercase tracking-wide">Cari Pesakit</label>
+              <input id="vh-search" type="text" oninput="applyFilters()" placeholder="Cari nama pesakit, ID, atau nombor telefon..." class="w-full mt-1 px-3 py-2.5 border border-ink/20 rounded-xl text-sm focus:border-navy outline-none bg-white">
+            </div>
+            <div>
+              <label class="text-[10px] font-bold text-ink/40 uppercase tracking-wide">Tarikh Dari</label>
+              <input id="vh-from" type="date" onchange="loadVitals()" class="block mt-1 px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
+            </div>
+            <div>
+              <label class="text-[10px] font-bold text-ink/40 uppercase tracking-wide">Tarikh Hingga</label>
+              <input id="vh-to" type="date" onchange="loadVitals()" class="block mt-1 px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
+            </div>
+            <div>
+              <label class="text-[10px] font-bold text-ink/40 uppercase tracking-wide">Status Bacaan</label>
+              <select id="vh-status" onchange="loadVitals()" class="block mt-1 px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
+                <option value="">Semua Status</option>
+                <option value="normal">Normal</option>
+                <option value="abnormal">Tidak Normal</option>
+              </select>
+            </div>
+            <button onclick="resetFilters()" class="px-3 py-2.5 border border-ink/15 rounded-lg text-sm bg-white hover:bg-ink/5">↻ Reset</button>
+          </div>
+          <div class="flex flex-wrap gap-1.5">
+            <button class="vh-chip" onclick="applyChip('all')">Semua Rekod</button>
+            <button class="vh-chip" onclick="applyChip('normal')">Bacaan Normal</button>
+            <button class="vh-chip" onclick="applyChip('abnormal')">Bacaan Tidak Normal</button>
+            <button class="vh-chip" onclick="applyChip('today')">Hari Ini</button>
+            <button class="vh-chip" onclick="applyChip('7d')">7 Hari Terakhir</button>
+            <button class="vh-chip" onclick="applyChip('30d')">30 Hari Terakhir</button>
+          </div>
+        </div>
+
+        <!-- Bulk bar -->
+        <div id="vh-bulkbar" class="hidden items-center gap-3 px-5 py-2.5 bg-navy/5 border border-navy/10 rounded-xl text-sm">
+          <span id="vh-bulk-count" class="font-semibold text-navy"></span>
+          <button data-rbac="vitals.delete" onclick="deleteSelected()" class="text-xs font-semibold px-3 py-1.5 rounded-lg border border-terracotta/40 text-terracotta hover:bg-terracotta/5">🗑️ Padam Terpilih</button>
+          <button onclick="clearSelection()" class="text-xs text-ink/50 hover:text-ink">Batal pilihan</button>
+        </div>
+
+        <!-- Table -->
+        <div class="bg-white rounded-2xl border border-ink/10 overflow-hidden">
+          <div class="px-5 py-4 border-b border-ink/8 flex items-center justify-between">
+            <h3 class="font-bold text-base text-ink">Senarai Rekod Vitals</h3>
+            <span id="vh-total-label" class="text-xs text-ink/45"></span>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-cream/40 text-[10px] uppercase tracking-wide text-ink/50">
+                <tr>
+                  <th class="pl-5 pr-2 py-3 w-8"><input id="vh-select-all" type="checkbox" onchange="toggleSelectAll(this)" class="rounded border-ink/30"></th>
+                  <th class="text-left py-3 px-3 cursor-pointer select-none" onclick="toggleSort('date')">Tarikh & Masa <span id="vh-sort-date"></span></th>
+                  <th id="vh-th-patient" class="text-left py-3 px-3 cursor-pointer select-none" onclick="toggleSort('name')">Pesakit <span id="vh-sort-name"></span></th>
+                  <th id="vh-th-mrn" class="text-left py-3 px-3">ID Pesakit</th>
+                  <th class="text-left py-3 px-3">Tekanan Darah<br>mmHg</th>
+                  <th class="text-left py-3 px-3">Denyutan Nadi<br>bpm</th>
+                  <th class="text-left py-3 px-3">Suhu Badan<br>°C</th>
+                  <th class="text-left py-3 px-3">SpO2<br>%</th>
+                  <th class="text-left py-3 px-3">Resp. Rate<br>/min</th>
+                  <th class="text-left py-3 px-3">Berat Badan<br>kg</th>
+                  <th class="text-left py-3 px-3">Tinggi<br>cm</th>
+                  <th class="text-left py-3 px-3">BMI<br>kg/m²</th>
+                  <th class="text-left py-3 px-3">Status</th>
+                  <th class="text-left py-3 px-3">Direkod Oleh</th>
+                  <th class="text-right py-3 px-5">Tindakan</th>
+                </tr>
+              </thead>
+              <tbody id="vh-tbody" class="divide-y divide-ink/5"></tbody>
+            </table>
+          </div>
+          <div id="vh-empty" class="hidden px-5 py-10 text-center text-sm text-ink/35">Tiada rekod dijumpai.</div>
+          <div id="vh-footer" class="px-5 py-3 border-t border-ink/8 flex items-center justify-between gap-3 flex-wrap">
+            <div id="vh-page-info" class="text-xs text-ink/55"></div>
+            <div class="flex items-center gap-2">
+              <select id="vh-per-page" onchange="setPage(1)" class="text-xs border border-ink/15 rounded-lg px-2 py-1.5 bg-white">
+                <option value="10">10 rekod setiap halaman</option>
+                <option value="25">25 rekod setiap halaman</option>
+                <option value="50">50 rekod setiap halaman</option>
+              </select>
+              <button onclick="setPage(1)" class="w-8 h-8 border border-ink/15 rounded-lg text-sm hover:bg-ink/5">«</button>
+              <button onclick="setPage(currentPage-1)" class="w-8 h-8 border border-ink/15 rounded-lg text-sm hover:bg-ink/5">‹</button>
+              <span id="vh-page-num" class="text-xs font-semibold px-2 text-navy bg-navy-light rounded">1</span>
+              <button onclick="setPage(currentPage+1)" class="w-8 h-8 border border-ink/15 rounded-lg text-sm hover:bg-ink/5">›</button>
+              <button onclick="setPage(maxPage())" class="w-8 h-8 border border-ink/15 rounded-lg text-sm hover:bg-ink/5">»</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<style>
+.vh-chip { font-size:11px; font-weight:600; padding:6px 12px; border-radius:8px; border:1px solid rgba(30,30,40,.12); background:#fff; color:rgba(30,30,40,.6); }
+.vh-chip:hover { border-color: #1B4E9C; color: #1B4E9C; }
+</style>
+
+<script src="/shared/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
+function escHtml(s) { const d = document.createElement('div'); d.textContent = String(s||''); return d.innerHTML; }
+
+function vDateTime(v) {
+  if (v.reading_date) return new Date(`${v.reading_date}T${(v.reading_time || '00:00:00').toString().slice(0, 8)}`);
+  return new Date(v.created_at);
+}
+function vHasTime(v) { return !!(v.reading_time || !v.reading_date); }
+function nameOf(p) { return p?.full_name || p?.psy_profiles?.full_name || '—'; }
+
+let scopedPatientId = null;
+let allRows = [];       // hasil fetch server (date range + status + patient_id ditapis di server)
+let filteredRows = [];  // + carian nama/mrn (client-side)
+let SELECTED = new Set();
+let sortField = 'date', sortDir = 'desc';
+let currentPage = 1;
+
+function ymd(d) { const x = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return x.toISOString().slice(0, 10); }
+
+function setPreset(days) {
+  if (days == null) { document.getElementById('vh-from').value = ''; document.getElementById('vh-to').value = ''; }
+  else { document.getElementById('vh-from').value = ymd(new Date(Date.now() - (days - 1) * 86400000)); document.getElementById('vh-to').value = ymd(new Date()); }
+}
+function applyChip(kind) {
+  document.getElementById('vh-status').value = '';
+  if (kind === 'all') setPreset(null);
+  else if (kind === 'normal') document.getElementById('vh-status').value = 'normal';
+  else if (kind === 'abnormal') document.getElementById('vh-status').value = 'abnormal';
+  else if (kind === 'today') setPreset(1);
+  else if (kind === '7d') setPreset(7);
+  else if (kind === '30d') setPreset(30);
+  loadVitals();
+}
+function resetFilters() {
+  document.getElementById('vh-search').value = '';
+  document.getElementById('vh-from').value = '';
+  document.getElementById('vh-to').value = '';
+  document.getElementById('vh-status').value = '';
+  loadVitals();
+}
+
+function toggleExportMenu() { document.getElementById('vh-export-menu').classList.toggle('hidden'); }
+document.addEventListener('click', (e) => {
+  const menu = document.getElementById('vh-export-menu');
+  if (menu && !menu.classList.contains('hidden') && !e.target.closest('.relative.inline-block')) menu.classList.add('hidden');
+});
+
+// ── Sort / paginate (client-side, atas set yg dah ditapis server+carian) ─
+function toggleSort(field) {
+  if (sortField === field) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+  else { sortField = field; sortDir = 'asc'; }
+  document.getElementById('vh-sort-date').textContent = sortField === 'date' ? (sortDir === 'asc' ? '↑' : '↓') : '↕';
+  document.getElementById('vh-sort-name').textContent = sortField === 'name' ? (sortDir === 'asc' ? '↑' : '↓') : '↕';
+  applyFilters();
+}
+function maxPage() { return Math.max(1, Math.ceil(filteredRows.length / perPage())); }
+function perPage() { return parseInt(document.getElementById('vh-per-page').value) || 10; }
+function setPage(p) { currentPage = Math.min(Math.max(1, p), maxPage()); renderTable(); }
+
+function applyFilters() {
+  const q = document.getElementById('vh-search').value.trim().toLowerCase();
+  filteredRows = !q ? allRows.slice() : allRows.filter(v => {
+    const n = nameOf(v.psy_patients).toLowerCase();
+    const mrn = (v.psy_patients?.mrn || '').toLowerCase();
+    const phone = (v.psy_patients?.phone || '').toLowerCase();
+    return n.includes(q) || mrn.includes(q) || phone.includes(q);
+  });
+  filteredRows.sort((a, b) => {
+    let cmp;
+    if (sortField === 'name') cmp = nameOf(a.psy_patients).localeCompare(nameOf(b.psy_patients), 'ms');
+    else cmp = vDateTime(a) - vDateTime(b);
+    return sortDir === 'asc' ? cmp : -cmp;
+  });
+  currentPage = 1;
+  renderTable();
+}
+
+function rowStatusBadge(v) {
+  if (!v.is_abnormal) return `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-light text-green-dark">Normal</span>`;
+  return `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-terracotta-light text-terracotta">Tidak Normal</span>`;
+}
+
+function renderTable() {
+  const body = document.getElementById('vh-tbody');
+  const empty = document.getElementById('vh-empty');
+  const start = (currentPage - 1) * perPage();
+  const page = filteredRows.slice(start, start + perPage());
+  document.getElementById('vh-total-label').textContent = `Jumlah: ${filteredRows.length} rekod`;
+
+  if (!page.length) { body.innerHTML = ''; empty.classList.remove('hidden'); }
+  else {
+    empty.classList.add('hidden');
+    body.innerHTML = page.map(v => {
+      const dt = vDateTime(v);
+      const dateStr = dt.toLocaleDateString(LCALE(), { day:'2-digit', month:'short', year:'numeric' });
+      const timeStr = vHasTime(v) ? dt.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' }) : '';
+      const bp = (v.bp_systolic && v.bp_diastolic) ? `${v.bp_systolic}/${v.bp_diastolic}` : '—';
+      const initials = nameOf(v.psy_patients).trim().split(/\s+/).slice(0,2).map(w => w[0]||'').join('').toUpperCase();
+      return `<tr class="hover:bg-cream/30">
+        <td class="pl-5 pr-2 py-3"><input type="checkbox" class="vh-row-check rounded border-ink/30" data-id="${v.id}" ${SELECTED.has(v.id) ? 'checked' : ''} onchange="toggleSelectRow('${v.id}', this.checked)"></td>
+        <td class="py-3 px-3 text-xs font-semibold text-ink whitespace-nowrap">${dateStr}${timeStr ? `, ${timeStr}` : ''}</td>
+        <td class="py-3 px-3 text-xs vh-patient-col"><a href="vitals-detail.html?patient_id=${v.patient_id}" class="flex items-center gap-2 hover:underline">
+          <span class="w-6 h-6 rounded-full bg-navy-light text-navy flex items-center justify-center text-[9px] font-bold flex-shrink-0">${initials}</span>
+          <span class="font-semibold text-ink">${escHtml(nameOf(v.psy_patients))}</span></a></td>
+        <td class="py-3 px-3 text-xs text-ink/60 vh-patient-col">${escHtml(v.psy_patients?.mrn || '—')}</td>
+        <td class="py-3 px-3 text-xs">${bp}</td>
+        <td class="py-3 px-3 text-xs">${v.heart_rate ?? '—'}</td>
+        <td class="py-3 px-3 text-xs">${v.temperature ?? '—'}</td>
+        <td class="py-3 px-3 text-xs">${v.spo2 ?? '—'}</td>
+        <td class="py-3 px-3 text-xs">${v.respiratory_rate ?? '—'}</td>
+        <td class="py-3 px-3 text-xs">${v.weight ?? '—'}</td>
+        <td class="py-3 px-3 text-xs">${v.height ?? '—'}</td>
+        <td class="py-3 px-3 text-xs">${v.bmi ?? '—'}</td>
+        <td class="py-3 px-3">${rowStatusBadge(v)}</td>
+        <td class="py-3 px-3 text-xs text-ink/60">${escHtml(v.recorded_by_name || '—')}</td>
+        <td class="py-3 px-5 text-right whitespace-nowrap">
+          <a href="vitals-detail.html?patient_id=${v.patient_id}" class="text-navy/50 hover:text-navy text-sm mr-2" title="Lihat">👁️</a>
+          <button data-rbac="vitals.edit" onclick="location.href='vitals-detail.html?patient_id=${v.patient_id}'" class="text-navy/50 hover:text-navy text-sm mr-2" title="Edit">✎</button>
+          <button data-rbac="vitals.delete" onclick="deleteOne('${v.id}')" class="text-ink/35 hover:text-red-500 text-sm" title="Padam">✕</button>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  if (scopedPatientId) document.querySelectorAll('.vh-patient-col').forEach(el => el.style.display = 'none');
+  document.getElementById('vh-th-patient').style.display = scopedPatientId ? 'none' : '';
+  document.getElementById('vh-th-mrn').style.display = scopedPatientId ? 'none' : '';
+
+  const total = filteredRows.length;
+  const end = Math.min(start + perPage(), total);
+  document.getElementById('vh-page-info').textContent = total
+    ? `Memaparkan ${start + 1}–${end} daripada ${total} rekod` : 'Memaparkan 0 rekod';
+  document.getElementById('vh-page-num').textContent = String(currentPage);
+  renderBulkBar(page);
+}
+
+function toggleSelectRow(id, checked) { if (checked) SELECTED.add(id); else SELECTED.delete(id); renderBulkBar(filteredRows.slice((currentPage-1)*perPage(), currentPage*perPage())); }
+function toggleSelectAll(cb) {
+  const idsOnPage = filteredRows.slice((currentPage-1)*perPage(), currentPage*perPage()).map(r => r.id);
+  idsOnPage.forEach(id => { if (cb.checked) SELECTED.add(id); else SELECTED.delete(id); });
+  renderTable();
+}
+function clearSelection() { SELECTED.clear(); renderTable(); }
+function renderBulkBar(pageRows) {
+  const selectAll = document.getElementById('vh-select-all');
+  const idsOnPage = pageRows.map(r => r.id);
+  const selectedOnPage = idsOnPage.filter(id => SELECTED.has(id));
+  selectAll.checked = idsOnPage.length > 0 && selectedOnPage.length === idsOnPage.length;
+  selectAll.indeterminate = selectedOnPage.length > 0 && selectedOnPage.length < idsOnPage.length;
+  const bar = document.getElementById('vh-bulkbar');
+  if (SELECTED.size) {
+    bar.classList.remove('hidden'); bar.classList.add('flex');
+    document.getElementById('vh-bulk-count').textContent = `${SELECTED.size} rekod dipilih`;
+  } else { bar.classList.add('hidden'); bar.classList.remove('flex'); }
+}
+async function deleteOne(id) {
+  if (!confirm('Padam bacaan vitals ini?')) return;
+  await window.db.from('psy_vitals').delete().eq('id', id);
+  banner('Bacaan dipadam');
+  await loadVitals();
+}
+async function deleteSelected() {
+  if (!SELECTED.size) return;
+  if (!confirm(`Padam ${SELECTED.size} rekod vitals terpilih?`)) return;
+  await window.db.from('psy_vitals').delete().in('id', Array.from(SELECTED));
+  SELECTED.clear();
+  banner('Rekod terpilih dipadam');
+  await loadVitals();
+}
+
+// ── Load (server-side date range + status + patient_id; carian client-side) ─
+async function loadVitals() {
+  const from = document.getElementById('vh-from').value;
+  const to = document.getElementById('vh-to').value;
+  const status = document.getElementById('vh-status').value;
+  let q = window.db.from('psy_vitals')
+    .select('*, psy_patients(mrn, full_name, phone, psy_profiles!psy_patients_user_id_fkey(full_name))');
+  if (scopedPatientId) q = q.eq('patient_id', scopedPatientId);
+  if (from) q = q.gte('reading_date', from);
+  if (to) q = q.lte('reading_date', to);
+  if (status === 'normal') q = q.eq('is_abnormal', false);
+  if (status === 'abnormal') q = q.eq('is_abnormal', true);
+  q = q.order('reading_date', { ascending: false, nullsFirst: false })
+       .order('reading_time', { ascending: false, nullsFirst: false })
+       .order('created_at', { ascending: false })
+       .limit(2000);
+  const { data, error } = await q;
+  if (error) { banner('Ralat memuatkan rekod: ' + error.message, 'error'); return; }
+  allRows = data || [];
+  applyFilters();
+}
+
+// ── Export ──────────────────────────────────────────────
+function exportFilteredCsv() {
+  toggleExportMenu();
+  const rows = [['Nama Pesakit','ID Pesakit','Tarikh & Masa','Tekanan Darah','Denyutan Nadi','Suhu Badan','SpO2','Resp Rate','Berat Badan','Tinggi','BMI','Status','Direkod Oleh']];
+  filteredRows.forEach(v => {
+    const dt = vDateTime(v);
+    rows.push([
+      nameOf(v.psy_patients), v.psy_patients?.mrn || '—',
+      dt.toLocaleDateString('en-GB') + (vHasTime(v) ? ' ' + dt.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'}) : ''),
+      (v.bp_systolic && v.bp_diastolic) ? `${v.bp_systolic}/${v.bp_diastolic}` : '', v.heart_rate ?? '', v.temperature ?? '',
+      v.spo2 ?? '', v.respiratory_rate ?? '', v.weight ?? '', v.height ?? '', v.bmi ?? '',
+      v.is_abnormal ? 'Tidak Normal' : 'Normal', v.recorded_by_name || '',
+    ]);
+  });
+  const csv = '﻿' + rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `vitals-tertapis-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
+// 1 baris per SESI rawatan berjadual (psy_plan_weekly_progress) supaya tarikh rawatan yang
+// tiada bacaan pun kelihatan. Susunan: ID Pesakit → Minggu → Sesi → tarikh/masa.
+async function exportScheduleExcel() {
+  toggleExportMenu();
+  if (typeof XLSX === 'undefined') { banner('XLSX belum siap, cuba lagi', 'error'); return; }
+  banner('Menyediakan Excel...');
+  try {
+    const patientEmbed = 'psy_patients(mrn, full_name, psy_profiles!psy_patients_user_id_fkey(full_name))';
+    let vq = window.db.from('psy_vitals').select(`*, ${patientEmbed}`);
+    let sq = window.db.from('psy_plan_weekly_progress').select(`patient_id, week_number, session_day, status, session_date, ${patientEmbed}`);
+    if (scopedPatientId) { vq = vq.eq('patient_id', scopedPatientId); sq = sq.eq('patient_id', scopedPatientId); }
+    const [vitalsRes, scheduleRes] = await Promise.all([vq, sq]);
+    if (vitalsRes.error) throw vitalsRes.error;
+    if (scheduleRes.error) throw scheduleRes.error;
+    const dateOf = v => v.reading_date || (v.created_at ? v.created_at.slice(0, 10) : null);
+
+    const vitalsByKey = {};
+    (vitalsRes.data || []).forEach(v => {
+      const d = dateOf(v);
+      if (!d) return;
+      (vitalsByKey[`${v.patient_id}|${d}`] ??= []).push(v);
+    });
+    const usedIds = new Set();
+    const rows = [];
+    (scheduleRes.data || []).forEach(s => {
+      const dateStr = s.session_date ? s.session_date.slice(0, 10) : null;
+      const matches = dateStr ? (vitalsByKey[`${s.patient_id}|${dateStr}`] || []) : [];
+      const base = {
+        name: nameOf(s.psy_patients), mrn: s.psy_patients?.mrn || '—', week: s.week_number, session: s.session_day,
+        done: ['hadir', 'consultation_done'].includes(s.status) ? 'Ya' : '', date: dateStr,
+      };
+      if (!matches.length) { rows.push({ ...base, v: null }); return; }
+      matches.forEach(v => { usedIds.add(v.id); rows.push({ ...base, v }); });
+    });
+    (vitalsRes.data || []).forEach(v => {
+      if (usedIds.has(v.id)) return;
+      rows.push({ name: nameOf(v.psy_patients), mrn: v.psy_patients?.mrn || '—', week: v.week_number, session: null, done: '', date: dateOf(v), v });
+    });
+    rows.sort((a, b) => {
+      const n = (a.mrn || '').localeCompare(b.mrn || '', 'ms', { numeric: true });
+      if (n !== 0) return n;
+      if ((a.week ?? 0) !== (b.week ?? 0)) return (a.week ?? 0) - (b.week ?? 0);
+      if ((a.session ?? 0) !== (b.session ?? 0)) return (a.session ?? 0) - (b.session ?? 0);
+      return vDateTime(a.v || { reading_date: a.date }) - vDateTime(b.v || { reading_date: b.date });
+    });
+    const sheetRows = [
+      ['Nama Pesakit','ID Pesakit','Minggu','Sesi','Done','Tarikh Rawatan','Sistolik','Diastolik','Pulse (bpm)','SpO2 (%)','Resp Rate','Suhu Badan (°C)','Berat Badan (kg)','Tinggi (cm)','BMI','Lilitan Pinggang (cm)','Gula Darah/RBS','HbA1c (%)','Skor PHQ-2','Pain Score','Ubatan','Nota','Status','Sumber'],
+      ...rows.map(r => [
+        r.name, r.mrn, r.week ?? '—', r.session ?? '—', r.done, r.date || '—',
+        r.v?.bp_systolic ?? '', r.v?.bp_diastolic ?? '', r.v?.heart_rate ?? '', r.v?.spo2 ?? '', r.v?.respiratory_rate ?? '',
+        r.v?.temperature ?? '', r.v?.weight ?? '', r.v?.height ?? '', r.v?.bmi ?? '', r.v?.waist_cm ?? '', r.v?.rbs ?? '',
+        r.v?.hba1c ?? '', r.v?.phq2_score ?? '', r.v?.pain_score ?? '', r.v?.medications || '', r.v?.notes || '',
+        r.v ? (r.v.is_abnormal ? 'Tidak Normal' : 'Normal') : '', r.v ? (r.v.source === 'patient_self' ? 'Pesakit' : 'Staff') : '',
+      ]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(sheetRows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Vitals');
+    XLSX.writeFile(wb, 'vitals-jadual-rawatan-' + new Date().toISOString().slice(0, 10) + '.xlsx');
+    banner('Excel dimuat turun ✅');
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+  }
+}
+
+(async () => {
+  const user = await initStaff('vitals_history', 'Senarai penuh rekod bacaan vitals');
+  if (!user) return;
+
+  const params = new URLSearchParams(location.search);
+  scopedPatientId = params.get('patient_id');
+  const statusParam = params.get('status');
+  if (statusParam === 'abnormal' || statusParam === 'normal') document.getElementById('vh-status').value = statusParam;
+
+  if (scopedPatientId) {
+    document.getElementById('vh-search-wrap').classList.add('hidden');
+    const { data: p } = await window.db.from('psy_patients')
+      .select('mrn, full_name, psy_profiles!psy_patients_user_id_fkey(full_name)').eq('id', scopedPatientId).maybeSingle();
+    if (p) document.getElementById('vh-title').textContent = `Sejarah Bacaan — ${nameOf(p)}`;
+  }
+
+  await loadVitals();
+})();
+</script>
+</body>
+</html>

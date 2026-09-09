@@ -20,11 +20,14 @@
 // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
 //          PAYMENT_PROVIDER, HITPAY_SALT,
 //          GHL_ISW_TOKEN, GHL_ISW_LOCATION_ID (resit WhatsApp)
+//          PUBLIC_APP_URL (returnUrl pautan auto-retry kob_deposit — sama secret
+//          dgn event-reminders, lihat notifyPaymentFailed)
 // ============================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { getProvider } from '../_shared/payments/index.ts'
 import { sendPaymentReceiptWhatsApp } from '../_shared/receipt_pdf.ts'
 import { sendWhatsApp } from '../_shared/ghl.ts'
+import { createKobDepositLink } from '../_shared/kob_retry_link.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -33,6 +36,11 @@ const corsHeaders = {
 }
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+
+// Sama pattern dgn event-reminders/index.ts — isi {placeholder} dari psy_auto_messages.message_template.
+function fillTemplate(tpl: string, vars: Record<string, string>) {
+  return Object.entries(vars).reduce((s, [k, v]) => s.split(`{${k}}`).join(v ?? ''), tpl).replace(/\n{3,}/g, '\n\n').trim()
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
@@ -207,14 +215,46 @@ async function notifyPaymentFailed(admin: any, payment: any) {
     }).catch(() => {})
   }
 
+  // Auto-jana pautan HitPay BAHARU untuk kob_deposit sahaja (staff-initiated —
+  // pesakit KOB selalunya TIADA akaun/log masuk utk retry sendiri dalam app,
+  // tak macam laluan payments-initiate/kob.html biasa yg pesakit boleh klik
+  // "Cuba Bayar Semula" sendiri). Kalau sesi KOB dah tak eligible (cth status
+  // berubah/staff dah proses lain) — gagal SENYAP, jatuh balik ke mesej teks
+  // biasa (elak hantar pautan basi utk pakej/harga yg dah tak relevan).
+  const kobItem = items.find((it: any) => it.type === 'kob_deposit' && it.kobSessionId)
+  let retryUrl: string | null = null
+  if (kobItem) {
+    try {
+      const returnUrl = `${Deno.env.get('PUBLIC_APP_URL')}/roles/patient/payment-receipt.html`
+      const link = await createKobDepositLink(admin, {
+        kobSessionId: kobItem.kobSessionId, mode: kobItem.mode || 'full', tier: kobItem.tier, returnUrl,
+      })
+      retryUrl = link.checkoutUrl
+    } catch (e) {
+      console.warn('notifyPaymentFailed: auto-jana pautan baharu gagal (jatuh balik ke teks biasa) —', (e as Error).message)
+    }
+  }
+
   // WhatsApp ke pesakit — best-effort, patient KOB selalunya belum ada akaun
   // (tiada user_id) jadi notifikasi in-app di atas tak sampai; WA ni jalan utama.
+  // Teks diambil dari psy_auto_messages (key='payment_failed') — boleh edit di UI
+  // Automatic Messages > Message Template tanpa re-deploy. is_active=false = SKIP
+  // terus (sama corak dgn semua template lain, cth installment_reminder) — bukan
+  // jatuh balik ke teks lain; staff yang matikan bermakna sengaja nak senyapkan WA ni.
   if (patient?.phone) {
-    await sendWhatsApp(admin, {
-      phone: patient.phone, name: patient.full_name,
-      message: `Assalamualaikum ${patientLabel}, bayaran anda (${itemDesc}, RM ${amount}) tidak berjaya/dibatalkan. Sila cuba semula atau hubungi Pusat Rawatan ISW untuk bantuan.`,
-      sentByName: 'Auto — Bayaran Gagal',
-    }).catch((e: Error) => console.warn('notifyPaymentFailed: WA pesakit gagal —', e.message))
+    const { data: tplRow } = await admin.from('psy_auto_messages')
+      .select('message_template, is_active').eq('key', 'payment_failed').maybeSingle()
+    if (tplRow?.is_active && tplRow.message_template) {
+      const pautan = retryUrl
+        ? `Sila lengkapkan bayaran melalui pautan selamat di bawah:\n\n${retryUrl}`
+        : 'Sila cuba semula atau hubungi Pusat Rawatan ISW untuk bantuan.'
+      const waMessage = fillTemplate(tplRow.message_template, { nama: patientLabel, item: itemDesc, jumlah: amount, pautan })
+      await sendWhatsApp(admin, {
+        phone: patient.phone, name: patient.full_name,
+        message: waMessage,
+        sentByName: 'Auto — Bayaran Gagal',
+      }).catch((e: Error) => console.warn('notifyPaymentFailed: WA pesakit gagal —', e.message))
+    }
   }
 
   // Notifikasi staff (coach pesakit + admin/manager)
@@ -222,7 +262,8 @@ async function notifyPaymentFailed(admin: any, payment: any) {
   if (patient?.coach_id) targets.add(patient.coach_id)
   const { data: staff } = await admin.from('psy_profiles').select('id').eq('role', 'staff').in('staff_role', ['admin', 'manager'])
   ;(staff || []).forEach((s: any) => targets.add(s.id))
-  const staffBody = `${patientLabel} — bayaran ${itemDesc} (RM ${amount}, ${payment.receipt_ref}) tidak berjaya/dibatalkan.`
+  const staffBody = `${patientLabel} — bayaran ${itemDesc} (RM ${amount}, ${payment.receipt_ref}) tidak berjaya/dibatalkan.` +
+    (retryUrl ? ' Pautan baharu telah auto-dihantar ke WhatsApp pesakit.' : '')
   for (const uid of targets) {
     await admin.from('psy_notifications').insert({
       user_id: uid, type: 'payment', title: 'Bayaran Gagal ⚠️', body: staffBody,
