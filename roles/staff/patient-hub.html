@@ -6377,6 +6377,17 @@
       }
     }
 
+    // Hari-sesi (1=sesi pertama, 2=sesi kedua) yang PAKEJ tetapkan minggu w. Kongsi logik dengan
+    // syncPlanSessionsToPackage supaya skeleton yang dicipta terus sepadan pakej (tak perlu
+    // "Selaraskan" lepas cipta). Minggu tiada entri weekly eksplisit → anggap [1].
+    function pkgSessionDaysForWeek(sched, w) {
+      const e = (Array.isArray(sched) ? sched : []).find(it => (it.period || 'week') !== 'day' && Number(it.week) === w);
+      if (e && Array.isArray(e.session_days) && e.session_days.length) {
+        return [...new Set(e.session_days.map(Number))].filter(d => d >= 1 && d <= 7).sort((a, b) => a - b);
+      }
+      return [1];
+    }
+
     // Cipta treatment plan dari pakej pesakit bila label pakej ada tapi tiada baris plan.
     // Cipta skeleton mingguan (bilangan sesi ikut pakej, pending). Tarikh ditempah kemudian
     // via "Jadualkan Semua Sesi". Inactive → plan 'completed' (rekod sejarah).
@@ -6404,14 +6415,12 @@
         }).select().single();
         if (error) throw error;
 
-        // Skeleton mingguan — bilangan sesi ikut Timeline pakej (2 sesi = 2 baris)
+        // Skeleton mingguan — hari-sesi ikut Timeline pakej sebenar (bukan sekadar kiraan generik)
         const sched = Array.isArray(pkg.coaching_schedule) ? pkg.coaching_schedule : [];
         const rows = [];
         for (let w = 1; w <= durationWeeks; w++) {
-          const wkCfg = sched.find(it => Number(it.week || it.day) === w);
-          const nSes = (Array.isArray(wkCfg?.session_days) && wkCfg.session_days.length >= 2) ? 2 : ((pkg.sessions_per_week || 1) >= 2 ? 2 : 1);
-          for (let day = 1; day <= nSes; day++) {
-            rows.push({ plan_id: newPlan.id, patient_id: patientId, week_number: w, session_day: day, status: 'pending', session_date: null });
+          for (const d of pkgSessionDaysForWeek(sched, w)) {
+            rows.push({ plan_id: newPlan.id, patient_id: patientId, week_number: w, session_day: d, status: 'pending', session_date: null });
           }
         }
         if (rows.length) await window.db.from('psy_plan_weekly_progress').insert(rows);
@@ -6505,15 +6514,8 @@
         await window.db.from('psy_treatment_plans').update({ coaching_schedule: liveSched }).eq('id', activePlan.id);
         activePlan.coaching_schedule = liveSched;
 
-        // Bilangan hari-sesi yang PAKEJ tetapkan untuk minggu w (mingguan sahaja; hari-sesi
-        // hilang → anggap [1] supaya tak jana Sesi 2 hantu balik).
-        const pkgDays = (w) => {
-          const e = liveSched.find(it => (it.period || 'week') !== 'day' && Number(it.week) === w);
-          if (e && Array.isArray(e.session_days) && e.session_days.length) {
-            return [...new Set(e.session_days.map(Number))].filter(d => d >= 1 && d <= 7).sort((a, b) => a - b);
-          }
-          return [1];
-        };
+        // Bilangan hari-sesi yang PAKEJ tetapkan untuk minggu w — logik dikongsi dgn createMissingPlan.
+        const pkgDays = (w) => pkgSessionDaysForWeek(liveSched, w);
 
         // 2) Selaraskan baris ikut pakej
         const durationWeeks = activePlan.duration_weeks || 12;

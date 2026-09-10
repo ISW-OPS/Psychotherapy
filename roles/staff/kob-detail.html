@@ -1391,6 +1391,30 @@
       }
     }
 
+    // Hari-sesi (1=sesi pertama, 2=sesi kedua) yang PAKEJ tetapkan minggu w. Minggu tiada
+    // entri weekly eksplisit → anggap [1]. Sama logik dgn "Selaraskan ikut Pakej" di patient-hub.
+    function pkgSessionDaysForWeek(sched, w) {
+      const e = (Array.isArray(sched) ? sched : []).find(it => (it.period || 'week') !== 'day' && Number(it.week) === w);
+      if (e && Array.isArray(e.session_days) && e.session_days.length) {
+        return [...new Set(e.session_days.map(Number))].filter(d => d >= 1 && d <= 7).sort((a, b) => a - b);
+      }
+      return [1];
+    }
+
+    // Skeleton mingguan (pending, tiada tarikh) ikut Timeline pakej — supaya plan yang baru
+    // dicipta terus sepadan pakej tanpa perlu tekan "Selaraskan ikut Pakej" lepas itu.
+    // Tarikh ditempah kemudian via "Jadualkan Semua Sesi".
+    async function seedPlanWeeklyProgress(planId, patientId, pkg, durationWeeks) {
+      const sched = Array.isArray(pkg?.coaching_schedule) ? pkg.coaching_schedule : [];
+      const rows = [];
+      for (let w = 1; w <= durationWeeks; w++) {
+        for (const d of pkgSessionDaysForWeek(sched, w)) {
+          rows.push({ plan_id: planId, patient_id: patientId, week_number: w, session_day: d, status: 'pending', session_date: null });
+        }
+      }
+      if (rows.length) await window.db.from('psy_plan_weekly_progress').insert(rows);
+    }
+
     async function markSelesai() {
       const hasPackage = !!kob.recommended_package_id;
       const isDeclined = kob.package_payment_status === 'declined';
@@ -1448,7 +1472,7 @@
 
           // Auto-create treatment plan
           if (pkg) {
-            await window.db.from('psy_treatment_plans').insert({
+            const { data: autoPlan } = await window.db.from('psy_treatment_plans').insert({
               patient_id: patient.id,
               doctor_id: null,
               name: `${pkg.name} Treatment Plan`,
@@ -1458,7 +1482,8 @@
               current_week: 1,
               coaching_schedule: pkg.coaching_schedule || [],
               status: 'active',
-            });
+            }).select('id').single();
+            if (autoPlan?.id) await seedPlanWeeklyProgress(autoPlan.id, patient.id, pkg, weeks);
           }
         }
 
@@ -3226,12 +3251,13 @@
             package_purchased_at: new Date().toISOString(), package_expires_at: actExpires.toISOString(),
           }).eq('id', patient.id);
           if (actPkg) {
-            await window.db.from('psy_treatment_plans').insert({
+            const { data: actPlan } = await window.db.from('psy_treatment_plans').insert({
               patient_id: patient.id, doctor_id: null, name: `${actPkg.name} Treatment Plan`,
               template: actPkg.package_id, duration_unit: actPkg.duration_unit || 'week',
               duration_weeks: actWeeks, current_week: 1, coaching_schedule: actPkg.coaching_schedule || [],
               status: 'active',
-            });
+            }).select('id').single();
+            if (actPlan?.id) await seedPlanWeeklyProgress(actPlan.id, patient.id, actPkg, actWeeks);
           }
         }
 

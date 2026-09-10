@@ -327,11 +327,12 @@ async function fulfillOrder(admin: any, payment: any) {
           .select('id').eq('patient_id', patientId).eq('status', 'active').limit(1)
         if (!existing?.length) {
           const tpl = await getPlanTemplate(admin, item.packageId, item.packageName)
-          await admin.from('psy_treatment_plans').insert({
+          const { data: newPlan } = await admin.from('psy_treatment_plans').insert({
             patient_id: patientId, doctor_id: null, name: tpl.name,
             duration_unit: tpl.duration_unit, duration_weeks: tpl.duration_weeks,
             current_week: 1, coaching_schedule: tpl.coaching_schedule, status: 'active',
-          })
+          }).select('id').single()
+          if (newPlan?.id) await seedPlanWeeklyProgress(admin, newPlan.id, patientId, tpl.coaching_schedule, tpl.duration_weeks)
         }
       }
 
@@ -541,12 +542,36 @@ async function activatePackageForPatient(admin: any, patientId: string | null, p
     .select('id').eq('patient_id', patientId).eq('status', 'active').limit(1)
   if (!existing?.length) {
     const tpl = await getPlanTemplate(admin, packageId, packageName || '')
-    await admin.from('psy_treatment_plans').insert({
+    const { data: newPlan } = await admin.from('psy_treatment_plans').insert({
       patient_id: patientId, doctor_id: null, name: tpl.name,
       duration_unit: tpl.duration_unit, duration_weeks: tpl.duration_weeks,
       current_week: 1, coaching_schedule: tpl.coaching_schedule, status: 'active',
-    })
+    }).select('id').single()
+    if (newPlan?.id) await seedPlanWeeklyProgress(admin, newPlan.id, patientId, tpl.coaching_schedule, tpl.duration_weeks)
   }
+}
+
+// Hari-sesi (1=sesi pertama, 2=sesi kedua) yang PAKEJ tetapkan minggu w. Minggu tiada entri
+// weekly eksplisit → anggap [1]. Sama logik dgn "Selaraskan ikut Pakej" (patient-hub.html) —
+// supaya plan yang auto-dicipta di sini terus sepadan pakej, tak perlu staff selaraskan manual.
+function pkgSessionDaysForWeek(sched: any[], w: number): number[] {
+  const e = (Array.isArray(sched) ? sched : []).find((it: any) => (it.period || 'week') !== 'day' && Number(it.week) === w)
+  if (e && Array.isArray(e.session_days) && e.session_days.length) {
+    return [...new Set(e.session_days.map(Number))].filter((d: number) => d >= 1 && d <= 7).sort((a: number, b: number) => a - b)
+  }
+  return [1]
+}
+
+// Skeleton mingguan (pending, tiada tarikh) ikut Timeline pakej. Tarikh ditempah kemudian bila
+// pesakit/staff buka plan ("Jadualkan Semua Sesi").
+async function seedPlanWeeklyProgress(admin: any, planId: string, patientId: string, coachingSchedule: any[], durationWeeks: number) {
+  const rows: any[] = []
+  for (let w = 1; w <= durationWeeks; w++) {
+    for (const d of pkgSessionDaysForWeek(coachingSchedule, w)) {
+      rows.push({ plan_id: planId, patient_id: patientId, week_number: w, session_day: d, status: 'pending', session_date: null })
+    }
+  }
+  if (rows.length) await admin.from('psy_plan_weekly_progress').insert(rows)
 }
 
 async function getPlanTemplate(admin: any, packageId: string, packageName: string) {
