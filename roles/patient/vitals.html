@@ -70,6 +70,7 @@
                       <th class="text-left py-3 px-3">Tekanan Darah</th>
                       <th class="text-left py-3 px-3">Denyutan Nadi (bpm)</th>
                       <th class="text-left py-3 px-3">Suhu Badan (°C)</th>
+                      <th class="text-left py-3 px-3">SpO2 (%)</th>
                       <th class="text-left py-3 px-3">Berat Badan (kg)</th>
                       <th class="text-left py-3 px-3">Nota</th>
                       <th class="text-right py-3 px-5"></th>
@@ -119,6 +120,14 @@
                 <div class="flex items-center gap-2">
                   <input id="f-temp" type="number" step="0.1" placeholder="36.6" class="flex-1 min-w-0 px-3 py-2.5 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy">
                   <span class="text-xs text-navy/60 w-12 flex-shrink-0">°C</span>
+                </div>
+              </div>
+              <!-- SpO2 -->
+              <div>
+                <label class="block text-sm font-semibold text-ink mb-1.5">SpO2 (%)</label>
+                <div class="flex items-center gap-2">
+                  <input id="f-spo2" type="number" step="0.1" placeholder="98" class="flex-1 min-w-0 px-3 py-2.5 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy">
+                  <span class="text-xs text-navy/60 w-12 flex-shrink-0">%</span>
                 </div>
               </div>
               <!-- Berat Badan -->
@@ -180,6 +189,7 @@ function bpStatus(s, d) {
 }
 function hrStatus(v)   { if (!v) return null; if (v < 60) return ['Rendah','low']; if (v > 100) return ['Tinggi','high']; return ['Normal','ok']; }
 function tempStatus(v) { if (!v) return null; if (v < 36.1) return ['Rendah','low']; if (v > 37.2) return ['Tinggi','high']; return ['Normal','ok']; }
+function spo2Status(v) { if (!v) return null; return v < 95 ? ['Rendah','low'] : ['Normal','ok']; }
 const STATUS_CLS = { ok: 'bg-green-light text-green-dark', low: 'bg-blue-100 text-blue-700', high: 'bg-terracotta-light text-terracotta' };
 
 // ── Header pesakit ─────────────────────────────────────
@@ -230,6 +240,7 @@ function renderCards() {
     card('❤️', 'bg-red-50',    'Tekanan Darah',        bp,                    'mmHg', bpStatus(v.bp_systolic, v.bp_diastolic)),
     card('💗', 'bg-pink-50',   'Denyutan Nadi (bpm)',  v.heart_rate || '—',   'bpm',  hrStatus(v.heart_rate)),
     card('🌡️', 'bg-amber-50',  'Suhu Badan (°C)',      v.temperature || '—',  '°C',   tempStatus(v.temperature)),
+    card('🫁', 'bg-teal-50',   'SpO2 (%)',             v.spo2 || '—',         '%',    spo2Status(v.spo2)),
     card('⚖️', 'bg-blue-50',   'Berat Badan (kg)',     v.weight || '—',       'kg',   null),
   ].join('');
 }
@@ -256,6 +267,7 @@ function renderChart() {
       ds('Tekanan Darah (Sistolik)', 'bp_systolic', '#ef4444'),
       ds('Denyutan Nadi (bpm)',      'heart_rate',  '#ec4899'),
       ds('Suhu Badan (°C)',          'temperature', '#f59e0b'),
+      ds('SpO2 (%)',                 'spo2',        '#14b8a6'),
       ds('Berat Badan (kg)',         'weight',      '#3b82f6'),
     ],
   };
@@ -291,6 +303,7 @@ function renderTable() {
       <td class="py-3 px-3 text-xs">${bp}</td>
       <td class="py-3 px-3 text-xs">${v.heart_rate ? v.heart_rate + ' bpm' : '—'}</td>
       <td class="py-3 px-3 text-xs">${v.temperature ? v.temperature + ' °C' : '—'}</td>
+      <td class="py-3 px-3 text-xs">${v.spo2 ? v.spo2 + ' %' : '—'}</td>
       <td class="py-3 px-3 text-xs">${v.weight ? v.weight + ' kg' : '—'}</td>
       <td class="py-3 px-3 text-xs text-ink/70 max-w-[200px] truncate" title="${escHtml(v.notes || '')}">${escHtml(v.notes || '—')}</td>
       <td class="py-3 px-5 text-right">${canEdit
@@ -314,7 +327,7 @@ function resetForm() {
   const now = new Date();
   document.getElementById('f-date').value = now.toISOString().slice(0, 10);
   document.getElementById('f-time').value = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-  ['f-sys','f-dia','f-hr','f-temp','f-weight','f-notes'].forEach(id => document.getElementById(id).value = '');
+  ['f-sys','f-dia','f-hr','f-temp','f-spo2','f-weight','f-notes'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('f-error').classList.add('hidden');
   document.getElementById('f-save').textContent = '💾 Simpan Bacaan';
   updateNoteCount();
@@ -330,6 +343,7 @@ function editReading(id) {
   document.getElementById('f-dia').value = v.bp_diastolic ?? '';
   document.getElementById('f-hr').value = v.heart_rate ?? '';
   document.getElementById('f-temp').value = v.temperature ?? '';
+  document.getElementById('f-spo2').value = v.spo2 ?? '';
   document.getElementById('f-weight').value = v.weight ?? '';
   document.getElementById('f-notes').value = v.notes ?? '';
   document.getElementById('f-save').textContent = '💾 Kemaskini';
@@ -345,12 +359,13 @@ async function saveReading() {
   const dia = parseInt(document.getElementById('f-dia').value) || null;
   const hr  = parseInt(document.getElementById('f-hr').value) || null;
   const temp = parseFloat(document.getElementById('f-temp').value) || null;
+  const spo2 = parseFloat(document.getElementById('f-spo2').value) || null;
   const wt  = parseFloat(document.getElementById('f-weight').value) || null;
   const notes = document.getElementById('f-notes').value.trim() || null;
   const date = document.getElementById('f-date').value || new Date().toISOString().slice(0, 10);
   const time = document.getElementById('f-time').value || '00:00';
 
-  if (!sys && !dia && !hr && !temp && !wt) {
+  if (!sys && !dia && !hr && !temp && !spo2 && !wt) {
     errEl.textContent = 'Sila isi sekurang-kurangnya satu bacaan.'; errEl.classList.remove('hidden'); return;
   }
   const btn = document.getElementById('f-save');
@@ -362,7 +377,7 @@ async function saveReading() {
     const payload = {
       reading_date: date, reading_time: time,
       bp_systolic: sys, bp_diastolic: dia, heart_rate: hr,
-      temperature: temp, weight: wt, notes,
+      temperature: temp, spo2, weight: wt, notes,
     };
     let error;
     if (editingId) {
