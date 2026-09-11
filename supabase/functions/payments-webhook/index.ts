@@ -37,9 +37,11 @@ const corsHeaders = {
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
 
-// Sama pattern dgn event-reminders/index.ts — isi {placeholder} dari psy_auto_messages.message_template.
+// Sama pattern dgn event-reminders/index.ts — isi {placeholder} (psy_auto_messages,
+// sistem lama) ATAU {{placeholder}} (psy_automation_messages, sistem baharu — Insert
+// Variable di automation-builder.html sisip gaya kurungan-dua).
 function fillTemplate(tpl: string, vars: Record<string, string>) {
-  return Object.entries(vars).reduce((s, [k, v]) => s.split(`{${k}}`).join(v ?? ''), tpl).replace(/\n{3,}/g, '\n\n').trim()
+  return Object.entries(vars).reduce((s, [k, v]) => s.split(`{{${k}}}`).join(v ?? '').split(`{${k}}`).join(v ?? ''), tpl || '').replace(/\n{3,}/g, '\n\n').trim()
 }
 
 Deno.serve(async (req) => {
@@ -254,6 +256,40 @@ async function notifyPaymentFailed(admin: any, payment: any) {
         message: waMessage,
         sentByName: 'Auto — Bayaran Gagal',
       }).catch((e: Error) => console.warn('notifyPaymentFailed: WA pesakit gagal —', e.message))
+    }
+  }
+
+  // Sistem BAHARU (Create Automation) — psy_automations trigger_category='payment'
+  // trigger_event='payment_failed'. Berjalan SERENTAK dgn blok psy_auto_messages di
+  // atas (dua-dua ada is_active sendiri, tiada koordinasi diperlukan) — staff cutover
+  // dgn matikan blok lama bila dah sahkan yang baharu jalan (lihat plan migration).
+  if (patient?.phone) {
+    const { data: autos } = await admin.from('psy_automations')
+      .select('id, psy_automation_messages(*)')
+      .eq('is_active', true).eq('trigger_category', 'payment').eq('trigger_event', 'payment_failed')
+    const pautan = retryUrl
+      ? `Sila lengkapkan bayaran melalui pautan selamat di bawah:\n\n${retryUrl}`
+      : 'Sila cuba semula atau hubungi Pusat Rawatan ISW untuk bantuan.'
+    for (const auto of autos || []) {
+      const msg = (auto.psy_automation_messages || []).sort((a: any, b: any) => a.position - b.position)[0]
+      if (!msg || !msg.message_text) continue
+      const waMessage = fillTemplate(msg.message_text, { nama: patientLabel, item: itemDesc, jumlah: amount, pautan })
+      const attachments = msg.media_url ? [msg.media_url] : []
+      try {
+        await sendWhatsApp(admin, { phone: patient.phone, name: patient.full_name, message: waMessage, attachments, sentByName: 'Auto — Bayaran Gagal' })
+        await admin.from('psy_notification_logs').insert({
+          automation_id: auto.id, patient_id: patientId, patient_name: patientLabel,
+          event: 'payment_failed', channel: 'whatsapp', status: 'sent', message: waMessage.slice(0, 2000),
+          message_id: msg.id, sent_at: new Date().toISOString(),
+        }).catch(() => {})
+      } catch (e) {
+        console.warn('notifyPaymentFailed: WA (automation baharu) gagal —', (e as Error).message)
+        await admin.from('psy_notification_logs').insert({
+          automation_id: auto.id, patient_id: patientId, patient_name: patientLabel,
+          event: 'payment_failed', channel: 'whatsapp', status: 'failed', message: waMessage.slice(0, 2000),
+          message_id: msg.id, error: String((e as Error)?.message || e),
+        }).catch(() => {})
+      }
     }
   }
 

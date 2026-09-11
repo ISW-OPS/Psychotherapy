@@ -180,7 +180,7 @@ const STAFF_NAV_MASTER = [
         { id: 'auto_logs',      url: 'automation-logs.html', label: 'Log Penghantaran' },
         { id: 'auto_test',      url: 'test-automation.html', label: 'Test Automation' },
       ] },
-      { id: 'library', url: 'library.html', icon: '📚', label: 'Library' },
+      { id: 'library', url: 'library.html', icon: '📚', label: 'Content' },
     ]
   },
   {
@@ -401,7 +401,7 @@ function renderNavbar(role, user, navItems, activeScreen) {
       { href: 'dashboard.html', icon: '🏠', label: 'Home', id: 'dashboard' },
       { href: 'plan.html', icon: '💊', label: 'Plan', id: 'plan' },
       { href: 'kepatuhan.html', icon: '📝', label: 'Catatan', id: 'kepatuhan' },
-      { href: 'library.html', icon: '📚', label: 'Library', id: 'library' },
+      { href: 'library.html', icon: '📚', label: 'Content', id: 'library' },
       { href: 'profile.html', icon: '👤', label: 'Profil', id: 'profile' },
     ];
     if (!document.getElementById('pat-bottom-nav-style')) {

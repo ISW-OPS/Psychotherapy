@@ -1,8 +1,8 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-09-09T01:07:02.150165Z
--- Jumlah fail: 35
+-- Generated: 2026-09-09T07:12:45.757930Z
+-- Jumlah fail: 36
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
 
@@ -8566,3 +8566,18 @@ create policy "auto_msgs mgr manage" on psy_automation_messages for all
 alter table psy_notification_logs add column if not exists message_id uuid references psy_automation_messages(id) on delete set null;
 
 create index if not exists idx_psy_notif_logs_message on psy_notification_logs(message_id);
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/38_automation_recipient.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 38 — AUTOMATION MESSAGE RECIPIENT (patient | coach)
+-- Bagi mesej sequence (psy_automation_messages) boleh ditujukan kepada
+-- coach pesakit (cth eskalasi Sesi Confirm) bukan pesakit itu sendiri.
+-- ═══════════════════════════════════════════════════════════════════
+
+alter table psy_automation_messages
+  add column if not exists recipient text not null default 'patient'
+  check (recipient in ('patient', 'coach'));

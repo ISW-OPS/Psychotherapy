@@ -3,12 +3,20 @@
 // Cetus tiap 15 min oleh cron. Proses automasi AKTIF:
 //   - schedule (Broadcast Berjadual): hari+masa → sasaran (conditions)
 //     → hantar (actions: whatsapp/inapp) → tulis psy_notification_logs
-//   - treatment/patient_enrolled (sequence perjalanan pesakit — psy_automation_messages):
-//     setiap mesej dalam sequence ada waktu sendiri (serta-merta/selepas
-//     tempoh/hari+waktu tertentu) relatif ke psy_treatment_plans.start_date
-//     → dedup ikut psy_notification_logs.message_id
-//   (trigger lain — session_reminder/package_expiring/checkin_missed —
-//    akan ditambah berperingkat.)
+//   - sequence (psy_automation_messages), 7 trigger disokong, kongsi logik sama
+//     (runSequenceAutomations) — beza cuma sumber & arah anchor (getAnchors):
+//       · treatment/patient_enrolled     → psy_treatment_plans.start_date, kira MAJU
+//       · package/package_expiring       → psy_patients.package_expires_at, kira MUNDUR
+//       · patient/birthday               → psy_patients.date_of_birth (tahun ini), kira MAJU, ulang tiap tahun
+//       · event/event_reminder           → psy_events.start_at via psy_event_registrations, kira MUNDUR
+//       · event/dna_sample_reminder      → psy_appointments.appointment_time via psy_dna_test_process, kira MUNDUR
+//       · installment/installment_reminder → psy_kob_installment_checkpoints.due_date, kira MUNDUR
+//       · installment/installment_overdue  → sama jadual, kira MAJU (mesej sahaja — status
+//         flip pending→overdue + booking_blocked KEKAL di event-reminders/runInstallmentOverdueCheck)
+//     dedup ikut psy_notification_logs.message_id + patient + HARI (bukan sekali
+//     selama-lamanya) — perlu utk trigger berulang macam hari jadi/renew pakej.
+//   (trigger lain — session_reminder/checkin_missed/payment/patient_inactive/
+//    kepatuhan_alert — mekanisme lain terus, sengaja tak dimigrate, lihat plan.)
 // Secrets: GHL_ISW_TOKEN, GHL_ISW_LOCATION_ID, CRON_SECRET,
 //          SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 // ============================================================
@@ -154,7 +162,7 @@ async function runScheduled(supabase: any, locationId: string) {
   return out
 }
 
-// ── Sequence perjalanan pesakit (treatment / patient_enrolled) ──
+// ── Sequence mesej (patient_enrolled / package_expiring / birthday) ──
 const CLINIC_VARS = { nama_klinik: 'Ibnu Sina Wellness', telefon_klinik: '03-8966 3702', alamat_klinik: 'Kajang, Selangor' }
 const HARI_MS = ['Ahad', 'Isnin', 'Selasa', 'Rabu', 'Khamis', 'Jumaat', 'Sabtu']
 const BULAN_MS = ['Januari', 'Februari', 'Mac', 'April', 'Mei', 'Jun', 'Julai', 'Ogos', 'September', 'Oktober', 'November', 'Disember']
@@ -179,11 +187,70 @@ function buildVars(p: any, plan: any, coachName: string) {
   }
 }
 
-async function runEnrollmentSequences(supabase: any, locationId: string) {
+// Anchor pesakit ikut trigger_event — setiap satu beza sumber tarikh & arah kiraan.
+// countdown=true bermaksud day_offset dikira "N hari SEBELUM anchor" (cth pakej tamat);
+// countdown=false bermaksud "N hari SELEPAS anchor" (cth pesakit daftar, hari jadi tahun ini).
+async function getAnchors(supabase: any, triggerEvent: string, myNow: Date) {
+  if (triggerEvent === 'patient_enrolled') {
+    const { data: plans } = await supabase.from('psy_treatment_plans')
+      .select('id, patient_id, start_date, created_at, current_week, duration_weeks').eq('status', 'active')
+    return (plans || []).map((pl: any) => ({
+      patientId: pl.patient_id, plan: pl, countdown: false,
+      anchor: pl.start_date ? new Date(pl.start_date + 'T00:00:00Z') : new Date(pl.created_at),
+    }))
+  }
+  if (triggerEvent === 'package_expiring') {
+    const { data: pats } = await supabase.from('psy_patients').select('id, package_expires_at').not('package_expires_at', 'is', null)
+    return (pats || []).map((p: any) => ({ patientId: p.id, plan: null, countdown: true, anchor: new Date(p.package_expires_at) }))
+  }
+  if (triggerEvent === 'birthday') {
+    const { data: pats } = await supabase.from('psy_patients').select('id, date_of_birth').not('date_of_birth', 'is', null)
+    return (pats || []).map((p: any) => {
+      const dob = new Date(p.date_of_birth + 'T00:00:00Z')
+      // Ulang tahunan — anchor = hari jadi TAHUN INI (dedup ikut hari, jadi ulang setiap tahun secara semula jadi).
+      return { patientId: p.id, plan: null, countdown: false, anchor: new Date(Date.UTC(myNow.getUTCFullYear(), dob.getUTCMonth(), dob.getUTCDate())) }
+    })
+  }
+  if (triggerEvent === 'event_reminder') {
+    const { data: regs } = await supabase.from('psy_event_registrations')
+      .select('patient_id, status, psy_events(start_at, status)').neq('status', 'batal')
+    return (regs || [])
+      .filter((r: any) => r.psy_events && r.psy_events.status === 'published' && r.psy_events.start_at)
+      .map((r: any) => ({ patientId: r.patient_id, plan: null, countdown: true, anchor: new Date(r.psy_events.start_at) }))
+  }
+  if (triggerEvent === 'dna_sample_reminder') {
+    const { data: procs } = await supabase.from('psy_dna_test_process')
+      .select('patient_id, status, sample_appointment_id, psy_appointments(appointment_time, status)')
+      .eq('status', 'in_progress').not('sample_appointment_id', 'is', null)
+    return (procs || [])
+      .filter((p: any) => p.psy_appointments && p.psy_appointments.appointment_time && p.psy_appointments.status !== 'cancelled')
+      .map((p: any) => ({ patientId: p.patient_id, plan: null, countdown: true, anchor: new Date(p.psy_appointments.appointment_time) }))
+  }
+  if (triggerEvent === 'installment_reminder' || triggerEvent === 'installment_overdue') {
+    const { data: cps } = await supabase.from('psy_kob_installment_checkpoints')
+      .select('patient_id, due_date, status').eq('status', 'pending')
+    return (cps || []).map((c: any) => ({
+      patientId: c.patient_id, plan: null, countdown: triggerEvent === 'installment_reminder',
+      anchor: new Date(c.due_date + 'T00:00:00Z'),
+    }))
+  }
+  if (triggerEvent === 'session_confirm') {
+    const { data: rows } = await supabase.from('psy_plan_weekly_progress')
+      .select('id, patient_id, session_date, patient_confirmed').eq('status', 'booked')
+      .is('patient_confirmed', null).not('session_date', 'is', null)
+    return (rows || []).map((r: any) => ({ patientId: r.patient_id, plan: null, countdown: true, anchor: new Date(r.session_date), progressId: r.id }))
+  }
+  return []
+}
+
+function midnightMY(d: Date) { const my = new Date(d.getTime() + MY_OFFSET_MS); return Date.UTC(my.getUTCFullYear(), my.getUTCMonth(), my.getUTCDate()) }
+
+async function runSequenceAutomations(supabase: any, locationId: string) {
   const { data: autos } = await supabase.from('psy_automations').select('*, psy_automation_messages(*)')
-    .eq('is_active', true).eq('trigger_category', 'treatment').eq('trigger_event', 'patient_enrolled')
+    .eq('is_active', true).in('trigger_event', ['patient_enrolled', 'package_expiring', 'birthday', 'event_reminder', 'dna_sample_reminder', 'installment_reminder', 'installment_overdue'])
   const out: any[] = []
   const myNow = new Date(Date.now() + MY_OFFSET_MS)
+  const myTodayKey = `${myNow.getUTCFullYear()}-${String(myNow.getUTCMonth() + 1).padStart(2, '0')}-${String(myNow.getUTCDate()).padStart(2, '0')}`
 
   for (const a of autos || []) {
     const messages = (a.psy_automation_messages || []).sort((x: any, y: any) => x.position - y.position)
@@ -191,10 +258,9 @@ async function runEnrollmentSequences(supabase: any, locationId: string) {
     const conds = (a.conditions_enabled && Array.isArray(a.conditions)) ? a.conditions : []
     const actions = Array.isArray(a.actions) ? a.actions : []
 
-    const { data: plans } = await supabase.from('psy_treatment_plans')
-      .select('id, patient_id, start_date, created_at, current_week, duration_weeks').eq('status', 'active')
-    if (!plans || !plans.length) continue
-    const patientIds = [...new Set(plans.map((pl: any) => pl.patient_id))]
+    const anchors = await getAnchors(supabase, a.trigger_event, myNow)
+    if (!anchors.length) continue
+    const patientIds = [...new Set(anchors.map((x: any) => x.patientId))]
     const { data: pats } = await supabase.from('psy_patients')
       .select('id, user_id, full_name, mrn, ic_number, phone, email, gender, state, date_of_birth, status, active_package_id, active_package_name, package_expires_at, coach_id, emergency_contact_phone, emergency_contact_name, contact_preference')
       .in('id', patientIds).neq('status', 'deleted').neq('status', 'rejected')
@@ -204,25 +270,35 @@ async function runEnrollmentSequences(supabase: any, locationId: string) {
 
     const coachIds = [...new Set(pats.map((p: any) => p.coach_id).filter(Boolean))]
     let coachNames: Record<string, string> = {}
+    let coachProfiles: Record<string, any> = {}
     if (coachIds.length) {
-      const { data: coaches } = await supabase.from('psy_profiles').select('id, full_name').in('id', coachIds)
+      const { data: coaches } = await supabase.from('psy_profiles').select('id, full_name, phone, email').in('id', coachIds)
       coachNames = Object.fromEntries((coaches || []).map((c: any) => [c.id, c.full_name]))
+      coachProfiles = Object.fromEntries((coaches || []).map((c: any) => [c.id, c]))
     }
 
+    // Dedup PER HARI (bukan sekali sahaja selama-lamanya) — perlu utk trigger berulang
+    // (hari jadi tiap tahun, pakej tamat tiap kitaran renew), tapi selamat jugak utk
+    // sequence sekali-sahaja (patient_enrolled) sebab tiap mesej cuma layak SATU hari je.
     const msgIds = messages.map((m: any) => m.id)
-    const { data: existingLogs } = await supabase.from('psy_notification_logs').select('message_id, patient_id').in('message_id', msgIds)
-    const sentSet = new Set((existingLogs || []).map((l: any) => `${l.message_id}:${l.patient_id}`))
+    const { data: existingLogs } = await supabase.from('psy_notification_logs').select('message_id, patient_id, sent_at, created_at').in('message_id', msgIds)
+    const sentSet = new Set((existingLogs || []).map((l: any) => {
+      const t = new Date(new Date(l.sent_at || l.created_at).getTime() + MY_OFFSET_MS)
+      const d = `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, '0')}-${String(t.getUTCDate()).padStart(2, '0')}`
+      return `${l.message_id}:${l.patient_id}:${d}`
+    }))
 
-    for (const plan of plans) {
-      const p = patById.get(plan.patient_id)
+    for (const anc of anchors) {
+      const p = patById.get(anc.patientId)
       if (!p || !targetIds.has(p.id)) continue
-      const anchor = plan.start_date ? new Date(plan.start_date + 'T00:00:00Z') : new Date(plan.created_at)
-      const anchorMY = new Date(anchor.getTime() + MY_OFFSET_MS)
-      const dayNum = Math.floor((Date.UTC(myNow.getUTCFullYear(), myNow.getUTCMonth(), myNow.getUTCDate()) - Date.UTC(anchorMY.getUTCFullYear(), anchorMY.getUTCMonth(), anchorMY.getUTCDate())) / 86400000)
+      const dayNum = anc.countdown
+        ? Math.floor((midnightMY(anc.anchor) - midnightMY(myNow)) / 86400000)   // hari BAKI sebelum anchor
+        : Math.floor((midnightMY(myNow) - midnightMY(anc.anchor)) / 86400000)  // hari SELEPAS anchor
       if (dayNum < 0) continue
 
       for (const m of messages) {
-        if (sentSet.has(`${m.id}:${p.id}`)) continue
+        const dedupKey = `${m.id}:${p.id}:${myTodayKey}`
+        if (sentSet.has(dedupKey)) continue
         let eligible = false
         if (m.send_mode === 'immediate') {
           eligible = dayNum === (m.day_offset || 0)
@@ -234,22 +310,39 @@ async function runEnrollmentSequences(supabase: any, locationId: string) {
           }
         } else if (m.send_mode === 'after_delay' && m.delay_value) {
           const unitMs = m.delay_unit === 'minute' ? 60000 : m.delay_unit === 'day' ? 86400000 : 3600000
-          const targetMs = anchor.getTime() + m.delay_value * unitMs
+          // Anchor MUNDUR (event akan datang) → "selepas tempoh" bermaksud SEBELUM anchor
+          // (cth "24 jam selepas pencetus" utk sesi = 24 jam sebelum sesi). Anchor MAJU
+          // (patient_enrolled/birthday) kekal tambah macam asal.
+          const targetMs = anc.countdown ? anc.anchor.getTime() - m.delay_value * unitMs : anc.anchor.getTime() + m.delay_value * unitMs
           eligible = Math.abs(Date.now() - targetMs) <= WINDOW_HALF_MIN * 60000
         }
         if (!eligible) continue
 
-        const vars = buildVars(p, plan, coachNames[p.coach_id] || '')
+        // Guard khusus session_confirm — semak SEMULA patient_confirmed masa hantar
+        // (bukan hanya masa query anchor) sebab pesakit mungkin dah sahkan dalam tempoh
+        // antara fetch & hantar (terutama Mesej 2 eskalasi yang jaraknya lagi jauh).
+        if (a.trigger_event === 'session_confirm' && anc.progressId) {
+          const { data: freshRow } = await supabase.from('psy_plan_weekly_progress').select('patient_confirmed').eq('id', anc.progressId).maybeSingle()
+          if (freshRow && freshRow.patient_confirmed !== null) continue
+        }
+
+        // Recipient — pesakit (lalai) atau coach pesakit (cth eskalasi Sesi Confirm).
+        const toCoach = m.recipient === 'coach'
+        const recipient = toCoach ? coachProfiles[p.coach_id] : null
+        if (toCoach && !recipient) continue   // tiada coach ditugaskan — tiada sesiapa nak dihantar
+
+        const vars = buildVars(p, anc.plan, coachNames[p.coach_id] || '')
         const text = fillTemplate(m.message_text || '', vars)
         const fullText = (m.content_type === 'link' && m.link_url) ? `${text}\n\n${m.link_label || m.link_url}\n${m.link_url}` : text
         const attachments = m.media_url ? [m.media_url] : []
 
-        if (actions.includes('inapp') && p.user_id) {
-          try { await supabase.from('psy_notifications').insert({ user_id: p.user_id, type: 'system', title: a.name, body: fullText.slice(0, 240) }) } catch (_) { /* */ }
+        const inappUserId = toCoach ? recipient.id : p.user_id
+        if (actions.includes('inapp') && inappUserId) {
+          try { await supabase.from('psy_notifications').insert({ user_id: inappUserId, type: 'system', title: a.name, body: fullText.slice(0, 240) }) } catch (_) { /* */ }
           await logSend(supabase, a, p, 'inapp', fullText, 'sent', null, m.id)
         }
         if (actions.includes('whatsapp')) {
-          const contact = resolveContact(p)
+          const contact = toCoach ? { phone: recipient.phone, contactName: recipient.full_name } : resolveContact(p)
           const e164 = toE164(contact.phone)
           if (e164) {
             try {
@@ -258,7 +351,7 @@ async function runEnrollmentSequences(supabase: any, locationId: string) {
             } catch (e) { await logSend(supabase, a, p, 'whatsapp', fullText, 'failed', String((e as any)?.message || e), m.id) }
           }
         }
-        sentSet.add(`${m.id}:${p.id}`)
+        sentSet.add(dedupKey)
         out.push({ automation: a.name, message: m.position, patient: p.full_name })
       }
     }
@@ -275,7 +368,7 @@ Deno.serve(async (req) => {
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
     const locationId = Deno.env.get('GHL_ISW_LOCATION_ID')!
     const scheduled = await runScheduled(supabase, locationId)
-    const sequences = await runEnrollmentSequences(supabase, locationId)
+    const sequences = await runSequenceAutomations(supabase, locationId)
     return new Response(JSON.stringify({ success: true, scheduled, sequences }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
   } catch (err) {
     console.error('automations-runner error:', err)

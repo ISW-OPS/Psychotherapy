@@ -702,6 +702,7 @@ window.ISW_I18N_EXTRA = {
   "💳 Bayar Pakej Sekarang →": "💳 Pay for Package Now →",
   "💳 Bayaran": "💳 Payment",
   "💳 Belum Bayar": "💳 Unpaid",
+  "💳 Harga": "💳 Price",
   "💾 Draf disimpan": "💾 Draft saved",
   "💾 Kemas Kini Bacaan": "💾 Update Reading",
   "💾 Kemas Kini Vitals": "💾 Update Vitals",
@@ -7747,5 +7748,28 @@ window.ISW_I18N_EXTRA = {
   "Acara ni dijalankan online atau bersemuka?": "Is this event held online or in person?",
   "Bersemuka (Fizikal)": "In Person",
   "Online (Google Meet)": "Online (Google Meet)",
-  "Maklumat Tarikh & Lokasi": "Date & Location Details"
+  "Maklumat Tarikh & Lokasi": "Date & Location Details",
+
+  // Automation sequence builder (patient journey) — added by hand, not yet
+  // through the extract/merge scripts.
+  "Pesakit Mendaftar Program": "Patient Enrolled in Program",
+  "Dicetus bila pesakit mula pakej/rawatan — hantar satu siri mesej perjalanan pesakit (Hari 1, Hari 2, ...) ikut hari & waktu yang ditetapkan setiap mesej.": "Triggered when a patient starts a package/treatment — sends a series of patient-journey messages (Day 1, Day 2, ...) at each message's own set day & time.",
+  "+ Tambah Mesej": "+ Add Message",
+  "🗑 Padam Mesej Ini": "🗑 Delete This Message",
+  "Waktu Hantar Mesej Ini": "Send Time for This Message",
+  "Selepas tempoh": "After a delay",
+  "Hari & waktu tertentu": "Specific day & time",
+  "selepas pesakit mendaftar": "after the patient enrolls",
+  "Hari ke-": "Day",
+  "(0 = hari mendaftar), pukul": "(0 = enrollment day), at",
+  "📝 Teks": "📝 Text",
+  "🖼️ Imej": "🖼️ Image",
+  "🔗 Pautan": "🔗 Link",
+  "Media (Imej / Video)": "Media (Image / Video)",
+  "☁️ Upload Imej / Video": "☁️ Upload Image / Video",
+  "Label Pautan": "Link Label",
+  "cth: Tonton Video Sekarang": "e.g.: Watch Video Now",
+  "URL Pautan": "Link URL",
+  "ℹ️ Pautan dihantar sebagai teks dalam mesej WhatsApp — bukan butang klik (WhatsApp/GHL tak sokong butang).": "ℹ️ The link is sent as plain text in the WhatsApp message — not a clickable button (WhatsApp/GHL doesn't support buttons).",
+  "Susun satu siri mesej — setiap satu ada waktu hantar & kandungan sendiri.": "Arrange a series of messages — each with its own send time & content."
 };
