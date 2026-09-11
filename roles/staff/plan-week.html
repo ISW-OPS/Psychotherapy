@@ -2123,14 +2123,23 @@ async function setSessionDate() {
   await auditLog('plan.session_date_edited', activePlan.id, { week: weekNumber, session: weekEntry.session_day || 1, session_date: iso });
   renderHero();
   banner('Tarikh sesi dikemaskini ✅');
-  await cascadeBookFutureWeeks(weekNumber, iso, weekEntry.session_day || 1);
+  // Cascade minggu akan datang HANYA bila tarikh baru ni sebenarnya tolak keluar dari julat
+  // minggu semasa (cth tunda sesi ke minggu depan) — bukan sekadar tukar hari dalam minggu yang
+  // sama (cth Sab→Ahd tapi masih minggu 4). Minggu akan datang dah ada tarikh sendiri; tak
+  // terjejas melainkan tarikh baru ni betul-betul melangkah ke julat minggu lain.
+  const { start: wkStart, end: wkEnd } = computeWeekRange(activePlan, weekNumber);
+  const staysInWeek = new Date(iso) >= wkStart && new Date(iso) < wkEnd;
+  if (!staysInWeek) {
+    await cascadeBookFutureWeeks(weekNumber, iso, weekEntry.session_day || 1);
+  }
 }
 
-// Selepas tukar/tetapkan tarikh satu sesi, teruskan corak (+7 hari/minggu) untuk sesi
-// PASANGAN dalam minggu yang sama (cth Sesi 2 bila Sesi 1 ditukar) dan SEMUA minggu
-// AKAN DATANG — termasuk yang sudah ditempah/hadir/dibatalkan (tarikh sahaja dianjak,
-// status & data lain kekal; 'pending' tanpa tarikh jadi 'booked'). Minggu lanjutan
-// (is_extension) tidak disentuh — jadual sendiri. Auto terus, tiada pengesahan.
+// Selepas tunda sesi KELUAR dari julat minggu semasa (cth tunda ke minggu depan), teruskan
+// corak (+7 hari/minggu) untuk SEMUA minggu AKAN DATANG — termasuk yang sudah
+// ditempah/hadir/dibatalkan (tarikh sahaja dianjak, status & data lain kekal; 'pending' tanpa
+// tarikh jadi 'booked'). Sesi PASANGAN dalam minggu fromWeek (minggu yang baru diedit) TIDAK
+// disentuh langsung — staf edit sendiri kalau perlu. Minggu lanjutan (is_extension) tidak
+// disentuh — jadual sendiri. Auto terus, tiada pengesahan.
 async function cascadeBookFutureWeeks(fromWeek, anchorIso, anchorDay = 1) {
   const maxWeek = planMaxWeek || activePlan.duration_weeks || fromWeek;
   const { data: futureRows } = await window.db.from('psy_plan_weekly_progress')
@@ -2141,9 +2150,8 @@ async function cascadeBookFutureWeeks(fromWeek, anchorIso, anchorDay = 1) {
 
   const anchorDate = new Date(anchorIso);
   const toInsert = [], toUpdate = [];
-  for (let w = fromWeek; w <= maxWeek; w++) {
+  for (let w = fromWeek + 1; w <= maxWeek; w++) {
     for (const day of sessionDaysForWeekStaff(w)) {
-      if (w === fromWeek && day === anchorDay) continue; // sesi ini baru sahaja disimpan — dia sendiri anchor
       const row = byWeekDay[`${w}_${day}`];
       if (row?.is_extension) continue;
       const d = computeChainedDate(w, day, fromWeek, anchorDate, anchorDay);
