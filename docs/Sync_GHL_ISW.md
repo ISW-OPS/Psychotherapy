@@ -202,6 +202,80 @@ Lawatan/Cuti/KOB, + filter coach turut kesan KOB.
   genuine berubah, ATAU (b) backfill sekali dijalankan (loop semua
   `psy_patients` berfoto, panggil `sync-ghl` untuk setiap satu).
 
+## Ledger Rekonsiliasi Kewangan — `ghl-transactions-sync` (17 Sept 2026)
+
+Berasingan dari `ghl-pull-sync` (yang isi `psy_payments` untuk gate KOB
+sahaja) — fungsi ni tarik **SEMUA** transaksi bayaran lokasi GHL (Stripe
++ manual/invoice sekali gus, endpoint `/payments/transactions`) ke
+jadual raw `psy_ghl_transactions`, untuk **reconciliation kewangan**
+(halaman staff **"Payment Management"**, `roles/staff/payment-ledger.html`
+— lihat juga `vw_payment_ledger`, VIEW gabungan `psy_payments`+
+`psy_ghl_transactions` yang halaman ni baca).
+
+**TIADA akses Stripe secret diperlukan** — GHL embed objek Stripe PENUH
+(payment_intent+charge) dalam `chargeSnapshot` untuk transaksi
+`paymentProviderType==='stripe'`, jadi `GHL_ISW_TOKEN` sahaja dah cukup.
+
+### Field yang ditarik → kolum `psy_ghl_transactions`
+
+| Kolum DB | Field GHL (`t.*`) | Nota |
+|---|---|---|
+| `ghl_transaction_id` | `_id` | Unique key, guna untuk upsert idempotent |
+| `contact_id` | `contactId` | |
+| `contact_name` | `contactName` | |
+| `contact_email` | `contactEmail` | |
+| `patient_id` | *(derived)* | Padan ke `psy_patients` ikut email sahaja, best-effort — NULL kalau tak jumpa (transaksi GHL tak bawa phone terus) |
+| `amount` | `amount` | RM (unit manusia — GHL top-level BUKAN sen, beza dari `chargeSnapshot` dalaman Stripe yang guna sen) |
+| `amount_refunded` | `amountRefunded` | |
+| `currency` | `currency` | |
+| `status` | `status` | Mentah GHL — **cuma `succeeded` yang disimpan** (lihat §Tapisan) |
+| `payment_provider_type` | `paymentProviderType` | `'stripe'` \| `'manual'` |
+| `entity_type` | `entityType` | `'order'` \| `'invoice'` |
+| `entity_source_type` | `entitySourceType` | cth `'payment_link'`, `'text2Pay'` |
+| `entity_source_name` | `entitySourceName` | Nama produk/invois |
+| `entity_id` | `entityId` | ID invois/order asal |
+| `charge_id` | `t.chargeId` / `chargeSnapshot.id` | Stripe `payment_intent` id (`pi_...`) — stripe sahaja, untuk lookup Stripe API terus di masa depan (Laluan B) kalau perlu fee/net/payout |
+| `payment_method_type` | `chargeSnapshot.charges.data[0].payment_method_details.type` (stripe) / `chargeSnapshot.mode` (manual) | cth `'fpx'`/`'card'`/`'bank_transfer'` |
+| `receipt_url` | `chargeSnapshot.charges.data[0].receipt_url` | Resit RASMI Stripe — stripe sahaja |
+| `invoice_number` | `entitySourceMeta.invoiceNumberPrefix`+`invoiceNumber` | cth "INV-000952" — entityType='invoice' sahaja |
+| `issue_date` | `GET /invoices/` (panggilan BERASINGAN, ikut `contactId`, padan `_id`==`entityId`) `.issueDate` | **BEZA** dari `ghl_created_at` (bila bayaran DIREKOD, bukan bila invois DIISUKAN) — disahkan boleh beza sehingga >1 minggu |
+| `live_mode` | `liveMode` | Lihat §Tapisan |
+| `ghl_created_at` | `createdAt` | |
+| `ghl_updated_at` | `updatedAt` | |
+| `fulfilled_at` | `fulfilledAt` | |
+| `raw` | *(objek `t` PENUH)* | Safety net — field yang terlepas senarai atas masih boleh diquery dari sini |
+
+### Tapisan (buang SEBELUM simpan — keputusan user 17 Sept 2026)
+
+Rekod dibuang (tak disimpan langsung) kalau PADAN MANA-MANA syarat ni:
+
+| Field | Syarat buang |
+|---|---|
+| `status` | Bukan `"succeeded"` tepat |
+| `liveMode` | Bukan `true` (test-mode Stripe — **48/190 (25%) rekod awal!**) |
+| `contactName` | Mengandungi "test" (case-insensitive) |
+| `contactEmail` | Mengandungi "test" (case-insensitive) |
+| `entitySourceName` | Mengandungi "test" (case-insensitive) |
+
+(Nota: exact-match "Najihah Megat Salim" pernah ditambah sekali-guna
+untuk 1 rekod test lama, **kemudian DIBUANG** (17 Sept 2026) sebab bukan
+peraturan kekal — elak sekat pesakit sebenar nama sama akan datang.)
+
+**Disahkan 17 Sept 2026** — hasil akhir (38 rekod) dibanding baris-demi-baris
+dengan senarai rujukan manual, **100% padan sempurna** (tiada tertinggal,
+tiada lebih).
+
+### Status (17 Sept 2026)
+
+- ✅ Dibina + diuji, **DIJADUALKAN pg_cron setiap 30 minit** (testing
+  sahaja, `ipmemyizigwgivccytcu`, jobid 8)
+- ✅ Halaman staff `payment-ledger.html` ("Payment Management") — gabung
+  `psy_payments`+`psy_ghl_transactions` via `vw_payment_ledger`, dedup
+  ikut `ghl_transaction_id` (elak double-count dgn rekod yang `ghl-pull-sync`
+  dah sync), pagination 10/muka surat, filter (sumber/status/tempoh/carian),
+  export CSV
+- ⏳ **Belum deploy ke production**
+
 ## Nota sejarah (kenapa bukan webhook)
 
 Cubaan awal guna 3 GHL Workflow (Appointment/Order/Contact → webhook

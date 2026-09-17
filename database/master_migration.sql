@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-09-09T07:12:45.757930Z
+-- Generated: 2026-09-17T04:01:50.176442Z
 -- Jumlah fail: 36
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -1625,6 +1625,7 @@ CREATE TABLE IF NOT EXISTS psy_payments (
   gateway_provider TEXT,                      -- 'hitpay' | 'fiuu' | NULL (manual)
   gateway_ref      TEXT,                      -- id rujukan dari gateway
   gateway_status   TEXT,                      -- status mentah dari gateway
+  checkout_url     TEXT,                      -- pautan checkout gateway (utk staff share/salin semula bila status pending)
   intent           JSONB DEFAULT '{}'::jsonb, -- niat bayaran utk fulfillment
   fulfilled_at     TIMESTAMPTZ,               -- bila fulfillment benar-benar jalan
   paid_at TIMESTAMPTZ DEFAULT now(),
@@ -1701,6 +1702,109 @@ CREATE POLICY "Staff manage orders" ON psy_orders FOR ALL
 -- Nota trigger pada psy_orders (diletak bersama fungsi masing-masing):
 --   trg_psy_order_deduct_inventory → 14_products_inventory.sql
 --   trg_notify_staff_new_order     → 18_notifications_automations.sql
+
+-- ──────────────────────────────────────────────────────────────
+-- psy_ghl_transactions — ledger RAW transaksi GHL (Laluan A, guna
+-- GHL_ISW_TOKEN sahaja, TIADA akses Stripe secret diperlukan).
+-- TUJUAN: reconciliation kewangan/accounting — BUKAN untuk paparan
+-- sejarah bayaran pesakit (itu kekal psy_payments, diisi ghl-pull-sync
+-- untuk yuran KOB sahaja). Jadual BERASINGAN sengaja — grain berbeza
+-- (SEMUA transaksi lokasi, bukan sekadar yang lulus gate KOB) & elak
+-- double-count rekod yang SAMA muncul di psy_payments (dari sudut
+-- pandang GHL Transaction) DAN di sini (dari sudut pandang ledger
+-- mentah) kalau digabung jadi satu jadual.
+-- Diisi oleh supabase/functions/ghl-transactions-sync/index.ts.
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_ghl_transactions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ghl_transaction_id TEXT UNIQUE NOT NULL,   -- GHL `_id`
+  contact_id TEXT,
+  contact_name TEXT,
+  contact_email TEXT,
+  patient_id UUID REFERENCES psy_patients(id),   -- padan ikut email bila boleh, NULL kalau tak jumpa
+  amount NUMERIC(10,2) NOT NULL DEFAULT 0,   -- RM (unit manusia, BUKAN sen — GHL amount top-level dah RM)
+  amount_refunded NUMERIC(10,2) DEFAULT 0,
+  currency TEXT DEFAULT 'MYR',
+  status TEXT,                               -- succeeded/failed/pending/dll (mentah GHL)
+  payment_provider_type TEXT,                -- 'stripe' | 'manual' | lain
+  entity_type TEXT,                          -- 'order' | 'invoice'
+  entity_source_type TEXT,                   -- 'payment_link' | 'text2Pay' | dll
+  entity_source_name TEXT,                   -- nama produk/invois
+  entity_id TEXT,
+  charge_id TEXT,                            -- Stripe payment_intent id (stripe sahaja, NULL kalau manual)
+  payment_method_type TEXT,                  -- 'fpx' | 'card' | 'bank_transfer' | dll (derived, lihat sync fn)
+  receipt_url TEXT,                          -- resit rasmi Stripe (stripe sahaja)
+  invoice_number TEXT,                       -- cth "INV-000952" (entityType='invoice' sahaja, dari entitySourceMeta)
+  issue_date TIMESTAMPTZ,                    -- tarikh invois DIISUKAN (BEZA dari ghl_created_at = bila transaksi/bayaran direkod; perlu panggilan /invoices/ berasingan, lihat sync fn)
+  live_mode BOOLEAN,
+  ghl_created_at TIMESTAMPTZ,                -- createdAt GHL (masa transaksi sebenar)
+  ghl_updated_at TIMESTAMPTZ,
+  fulfilled_at TIMESTAMPTZ,
+  raw JSONB DEFAULT '{}'::jsonb,              -- objek PENUH GHL — safety net field yang terlepas
+  synced_at TIMESTAMPTZ DEFAULT now(),
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ghl_tx_patient ON psy_ghl_transactions(patient_id);
+CREATE INDEX IF NOT EXISTS idx_ghl_tx_contact ON psy_ghl_transactions(contact_id);
+CREATE INDEX IF NOT EXISTS idx_ghl_tx_created ON psy_ghl_transactions(ghl_created_at);
+
+ALTER TABLE psy_ghl_transactions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage ghl transactions" ON psy_ghl_transactions;
+CREATE POLICY "Staff manage ghl transactions" ON psy_ghl_transactions FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ──────────────────────────────────────────────────────────────
+-- vw_payment_ledger — VIEW gabungan untuk accountant trace SEMUA
+-- bayaran dalam SATU senarai (roles/staff/payment-ledger.html).
+-- UNION psy_payments (sumber='ISW') + psy_ghl_transactions
+-- (sumber='GHL') — DEDUP eksplisit: baris GHL yang `ghl_transaction_id`
+-- dia DAH wujud dalam psy_payments (kes yuran KOB yang lulus gate
+-- ghl-pull-sync) DIKECUALIKAN dari sisi GHL supaya bayaran yang SAMA
+-- tak muncul dua kali. security_invoker=true — VIEW jalan ikut
+-- kebenaran PEMANGGIL (RLS "Staff manage..." pada 2 jadual asal
+-- terpakai terus), bukan pemilik view.
+-- ──────────────────────────────────────────────────────────────
+CREATE OR REPLACE VIEW vw_payment_ledger WITH (security_invoker = true) AS
+SELECT
+  p.id::text                       AS id,
+  'ISW'                             AS source,
+  COALESCE(p.paid_at, p.created_at) AS tx_date,
+  p.patient_id,
+  COALESCE(pt.full_name, 'Pesakit') AS contact_name,
+  p.total                          AS amount,
+  p.payment_method                 AS method,
+  COALESCE(p.gateway_provider, p.payment_method) AS provider,
+  p.status,
+  p.receipt_ref                    AS reference,
+  p.ghl_transaction_id,
+  p.invoice_number,
+  NULL::TIMESTAMPTZ                AS issue_date,
+  p.notes
+FROM psy_payments p
+LEFT JOIN psy_patients pt ON pt.id = p.patient_id
+
+UNION ALL
+
+SELECT
+  g.id::text                       AS id,
+  'GHL'                             AS source,
+  g.ghl_created_at                 AS tx_date,
+  g.patient_id,
+  g.contact_name,
+  g.amount,
+  g.payment_provider_type          AS method,
+  g.payment_provider_type          AS provider,
+  g.status,
+  COALESCE(g.invoice_number, g.ghl_transaction_id) AS reference,
+  g.ghl_transaction_id,
+  g.invoice_number,
+  g.issue_date,
+  g.entity_source_name             AS notes
+FROM psy_ghl_transactions g
+WHERE g.ghl_transaction_id IS NULL
+   OR g.ghl_transaction_id NOT IN (SELECT ghl_transaction_id FROM psy_payments WHERE ghl_transaction_id IS NOT NULL);
 
 -- ──── psy_notifications: benarkan type 'payment' ────
 -- GOTCHA (rujuk 27_affiliate.sql): jangan tulis semula senarai type inline
@@ -6633,6 +6737,10 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO storage.buckets (id, name, public) VALUES ('inventory-images', 'inventory-images', true)
 ON CONFLICT (id) DO NOTHING;
 
+-- Gambar produk shop (gallery multi-gambar) — public (dipaparkan di shop & senarai produk)
+INSERT INTO storage.buckets (id, name, public) VALUES ('product-images', 'product-images', true)
+ON CONFLICT (id) DO NOTHING;
+
 -- Dokumen Stock In (delivery note, invois, dll.) — staff sahaja
 INSERT INTO storage.buckets (id, name, public) VALUES ('stock-in-docs', 'stock-in-docs', false)
 ON CONFLICT (id) DO NOTHING;
@@ -6883,6 +6991,16 @@ CREATE POLICY "inventory_images_staff_write" ON storage.objects
     FOR ALL TO authenticated
     USING (bucket_id = 'inventory-images' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
     WITH CHECK (bucket_id = 'inventory-images' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "product_images_public_read" ON storage.objects;
+CREATE POLICY "product_images_public_read" ON storage.objects
+    FOR SELECT USING (bucket_id = 'product-images');
+
+DROP POLICY IF EXISTS "product_images_staff_write" ON storage.objects;
+CREATE POLICY "product_images_staff_write" ON storage.objects
+    FOR ALL TO authenticated
+    USING (bucket_id = 'product-images' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (bucket_id = 'product-images' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
 DROP POLICY IF EXISTS "automation_media_public_read" ON storage.objects;
 CREATE POLICY "automation_media_public_read" ON storage.objects

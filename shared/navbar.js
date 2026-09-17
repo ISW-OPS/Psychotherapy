@@ -163,7 +163,10 @@ const STAFF_NAV_MASTER = [
       ] },
       { id: 'psy_orders', url: 'orders.html', icon: '📦', label: 'Orders & Tracking' },
       { id: 'pulangan', url: 'pulangan.html', icon: '🍯', label: 'Pulangan Botol' },
-      { id: 'payment_admin', url: 'payment-admin.html', icon: '💳', label: 'Pembayaran' },
+      { id: 'payment_group', url: 'payment-admin.html', icon: '💳', label: 'Pembayaran', children: [
+        { id: 'payment_admin',  url: 'payment-admin.html',  label: 'Patient Payment' },
+        { id: 'payment_ledger', url: 'payment-ledger.html', label: 'Payment Management' },
+      ] },
     ]
   },
   {
@@ -191,11 +194,14 @@ const STAFF_NAV_MASTER = [
   },
   {
     group: 'LAPORAN', collapsible: true, items: [
-      { id: 'governance', url: 'governance.html', icon: '📈', label: 'Governance' },
-      { id: 'staff_stats', url: 'staff-stats.html', icon: '📊', label: 'Statistik' },
-      { id: 'kehadiran', url: 'kehadiran.html', icon: '📋', label: 'Laporan Kehadiran' },
-      { id: 'pakej_laporan', url: 'pakej-laporan.html', icon: '📦', label: 'Laporan Pakej' },
-      { id: 'issue', url: 'issue.html', icon: '⚠️', label: 'Report Issue' },
+      { id: 'laporan_group', url: 'governance.html', icon: '📈', label: 'Laporan', children: [
+        { id: 'governance',   url: 'governance.html',    label: 'Governance' },
+        { id: 'staff_stats',  url: 'staff-stats.html',   label: 'Statistik' },
+        { id: 'kehadiran',    url: 'kehadiran.html',     label: 'Laporan Kehadiran' },
+        { id: 'pakej_laporan',url: 'pakej-laporan.html', label: 'Laporan Pakej' },
+        { id: 'kob_report',   url: 'kob-report.html',    label: 'KOB Report' },
+        { id: 'issue',        url: 'issue.html',         label: 'Report Issue' },
+      ] },
     ]
   },
   {

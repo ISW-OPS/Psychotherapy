@@ -473,6 +473,31 @@ Deno.serve(async (req: Request) => {
         }
         return json({ debug: true, action: 'diagnose_gate', scanned, kobRelevantSeen, diagnostics })
       }
+      if (body.action === 'probe_location_transactions') {
+        // Siasat SEBELUM bina sync ledger umum (bukan KOB sahaja): adakah
+        // /payments/transactions boleh disenaraikan PERINGKAT LOKASI (tanpa
+        // contactId, banyak contact sekali gus) — semua panggilan SEDIA ADA
+        // dalam fail ni (getKobPaidTransactions/diagnose_gate) SENTIASA
+        // hantar contactId, jadi tingkah laku tanpa contactId TAK PERNAH
+        // disahkan. Kalau berjaya (pulang transaction merentas >1 contactId
+        // berbeza), sync ledger umum boleh guna 1 loop pagination transaksi
+        // (cekap). Kalau gagal/pulang kosong/error, terpaksa loop per-contact
+        // (lebih berat — ikut corak processOneContact sedia ada).
+        const limit = Math.min(Number(body.limit) || 20, 100)
+        let path = `/payments/transactions?altId=${locationId}&altType=location&limit=${limit}`
+        if (body.startAfterId) path += `&startAfterId=${body.startAfterId}`
+        if (body.startAfter) path += `&startAfter=${body.startAfter}`
+        if (body.offset != null) path += `&offset=${body.offset}`
+        if (body.page != null) path += `&page=${body.page}`
+        const data = await ghl(path, { method: 'GET' }).catch((e) => ({ __error: String(e.message || e) }))
+        const txs = data?.data || data?.transactions || []
+        const distinctContacts = new Set(txs.map((t: any) => t.contactId || t.contact_id).filter(Boolean))
+        return json({
+          debug: true, action: 'probe_location_transactions',
+          count: txs.length, distinctContactIds: distinctContacts.size,
+          sample: txs.slice(0, 3), meta: data?.meta || null, raw: data,
+        })
+      }
       if (body.action === 'list_custom_fields') {
         const data = await ghl(`/locations/${locationId}/customFields`, { method: 'GET' })
         return json({ debug: true, action: 'list_custom_fields', raw: data })

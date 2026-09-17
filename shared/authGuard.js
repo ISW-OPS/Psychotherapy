@@ -51,6 +51,7 @@ window.PAGE_MODULE = {
   psy_appointments: 'schedule',
   plan_week:        'plan_week',
   kob_list:         'kob',
+  kob_report:       'kob',
   kepatuhan:        'kepatuhan',
   emergency:        'emergency',
   reaksi_advice:    'reaksi',  reaksi_item: 'reaksi',
@@ -72,6 +73,7 @@ window.PAGE_MODULE = {
   pulangan:         'pulangan',
   psy_orders:       'orders',
   payment_admin:    'payment',
+  payment_ledger:   'payment',
   affiliate:        'affiliate',
 
   // KOMUNIKASI
