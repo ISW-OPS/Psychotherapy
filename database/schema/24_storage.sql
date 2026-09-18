@@ -61,6 +61,10 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO storage.buckets (id, name, public) VALUES ('inventory-images', 'inventory-images', true)
 ON CONFLICT (id) DO NOTHING;
 
+-- Gambar produk shop (gallery multi-gambar) — public (dipaparkan di shop & senarai produk)
+INSERT INTO storage.buckets (id, name, public) VALUES ('product-images', 'product-images', true)
+ON CONFLICT (id) DO NOTHING;
+
 -- Dokumen Stock In (delivery note, invois, dll.) — staff sahaja
 INSERT INTO storage.buckets (id, name, public) VALUES ('stock-in-docs', 'stock-in-docs', false)
 ON CONFLICT (id) DO NOTHING;
@@ -311,6 +315,16 @@ CREATE POLICY "inventory_images_staff_write" ON storage.objects
     FOR ALL TO authenticated
     USING (bucket_id = 'inventory-images' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
     WITH CHECK (bucket_id = 'inventory-images' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "product_images_public_read" ON storage.objects;
+CREATE POLICY "product_images_public_read" ON storage.objects
+    FOR SELECT USING (bucket_id = 'product-images');
+
+DROP POLICY IF EXISTS "product_images_staff_write" ON storage.objects;
+CREATE POLICY "product_images_staff_write" ON storage.objects
+    FOR ALL TO authenticated
+    USING (bucket_id = 'product-images' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (bucket_id = 'product-images' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
 DROP POLICY IF EXISTS "automation_media_public_read" ON storage.objects;
 CREATE POLICY "automation_media_public_read" ON storage.objects

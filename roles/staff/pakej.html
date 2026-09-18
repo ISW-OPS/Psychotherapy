@@ -86,10 +86,13 @@
                 <tr class="border-b border-ink/8 bg-ink/[0.02]">
                   <th class="text-left px-5 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Pakej</th>
                   <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Package ID</th>
+                  <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Version</th>
                   <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Tempoh</th>
                   <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Harga</th>
                   <th class="text-left px-3 py-3 text-[10px] py-3 font-bold text-ink/45 uppercase tracking-wider">Bekalan</th>
                   <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Status</th>
+                  <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Pesakit Aktif</th>
+                  <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Kemaskini Terakhir</th>
                   <th class="text-right px-5 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Tindakan</th>
                 </tr>
               </thead>
@@ -719,11 +722,51 @@ function statusChip(p) {
   return '<span class="inline-block px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[11px] font-semibold">Draft</span>';
 }
 
+// active_package_id tak konsisten (UUID di sesetengah rekod, kod pakej di rekod lain)
+// — kira ikut kedua-dua kunci supaya jumlah tepat tanpa kira pesakit berganda.
+let pkgActivePatientCounts = {};
+
+async function loadActivePatientCounts() {
+  try {
+    const { data, error } = await window.db.from('psy_patients')
+      .select('active_package_id')
+      .eq('status', 'active')
+      .not('active_package_id', 'is', null);
+    if (error) throw error;
+    const counts = {};
+    (data || []).forEach(p => {
+      const key = p.active_package_id;
+      if (!key) return;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    pkgActivePatientCounts = counts;
+  } catch (e) {
+    console.error('[pesakit aktif]', e);
+    pkgActivePatientCounts = {};
+  }
+}
+
+function activePatientChip(p) {
+  const n = (pkgActivePatientCounts[p.id] || 0) + (pkgActivePatientCounts[p.package_id] || 0);
+  if (!n) return '<span class="text-ink/30 text-xs">—</span>';
+  return `<span class="text-navy text-sm font-semibold">${n} Pesakit Aktif</span>`;
+}
+
+// Tiada medan status berasingan — version tertinggi bagi Nama Pakej yang sama
+// dianggap semasa (teal), version lebih rendah = lama (kelabu), ikut nombor sahaja.
+function versionCell(p) {
+  const n = Number(p.version_number) || 1;
+  const key = (p.name || '').trim().toLowerCase();
+  const maxV = Math.max(1, ...allPackages.filter(x => (x.name || '').trim().toLowerCase() === key).map(x => Number(x.version_number) || 1));
+  const isLatest = n >= maxV;
+  return `<span class="text-xs font-semibold ${isLatest ? 'text-teal' : 'text-ink/35'}">V${n}</span>`;
+}
+
 function renderPkgKpi() {
   const total = allPackages.length;
   const active = allPackages.filter(p => p.is_active).length;
   const needsReview = allPackages.filter(p => !p.is_active || !p.price || !p.duration).length;
-  const wk12 = allPackages.filter(p => (p.duration || '').includes('12')).length;
+  const draftInactive = allPackages.filter(p => !p.is_active).length;
 
   const card = (icon, iconBg, label, value, sub) => `
     <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex items-center gap-4">
@@ -741,7 +784,7 @@ function renderPkgKpi() {
     card('📦', 'bg-green-50',   'Jumlah Pakej',    total,       'Semua pakej berdaftar'),
     card('✅', 'bg-emerald-50', 'Pakej Aktif',     active,      'Pakej sedang aktif'),
     card('⚠️', 'bg-amber-50',   'Perlu Semakan',   needsReview, 'Perlu tindakan admin'),
-    card('📅', 'bg-indigo-50',  'Pakej 12 Minggu', wk12,        'Program tempoh 12 minggu'),
+    card('📥', 'bg-indigo-50',  'Draf / Tidak Aktif', draftInactive, 'Pakej belum siap atau tidak digunakan'),
   ].join('');
 }
 
@@ -811,10 +854,13 @@ function renderPkgTable() {
           </div>
         </td>
         <td class="px-3 py-3.5"><span class="font-mono text-xs text-ink/60">${escHtml(p.package_id || '—')}</span></td>
+        <td class="px-3 py-3.5">${versionCell(p)}</td>
         <td class="px-3 py-3.5 text-sm text-ink/75">${escHtml(p.duration || '—')}</td>
         <td class="px-3 py-3.5">${priceHtml}</td>
         <td class="px-3 py-3.5">${bekalanChip(p)}</td>
         <td class="px-3 py-3.5">${statusChip(p)}</td>
+        <td class="px-3 py-3.5">${activePatientChip(p)}</td>
+        <td class="px-3 py-3.5"><span class="text-xs text-ink/55" title="${p.updated_at ? formatDateTime(p.updated_at) : ''}">${p.updated_at ? timeAgo(p.updated_at) : '—'}</span></td>
         <td class="px-5 py-3.5 text-right">
           <div class="flex items-center justify-end gap-2">
             <button onclick="window.location.href='pakej-detail.html?id=${p.id}'" class="px-3 py-1.5 text-xs font-semibold border border-ink/15 rounded-lg hover:bg-ink/5 transition-colors">Detail</button>
@@ -852,6 +898,7 @@ document.addEventListener('click', () => {
 
 async function loadPackages() {
   allPackages = await dbQuery('psy_packages', { order: { col: 'sort_order', asc: true } });
+  await loadActivePatientCounts();
   renderPkgKpi();
   renderPkgTable();
 }

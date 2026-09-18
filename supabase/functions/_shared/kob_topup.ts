@@ -108,7 +108,9 @@ export async function createKobInstallmentTopupLink(
     webhookUrl,
   })
 
-  await admin.from('psy_payments').update({ gateway_ref: created.gatewayRef }).eq('receipt_ref', receiptRef)
+  await admin.from('psy_payments')
+    .update({ gateway_ref: created.gatewayRef, checkout_url: created.checkoutUrl })
+    .eq('receipt_ref', receiptRef)
 
   return {
     checkoutUrl: created.checkoutUrl, receiptRef, amount,

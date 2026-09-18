@@ -118,18 +118,6 @@
               </div>
             </div>
 
-            <!-- Row: Visibility (full) -->
-            <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
-              <h3 class="font-bold text-sm text-ink flex items-center gap-2 mb-4"><span class="section-num">5</span> Visibility / Publication</h3>
-              <div id="visibility-body" class="grid sm:grid-cols-3 gap-3"></div>
-            </div>
-
-            <!-- Row: Butiran (full, auto-hide if empty) -->
-            <div id="butiran-card" class="hidden bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
-              <h3 class="font-bold text-sm text-ink flex items-center gap-2 mb-4"><span class="section-num">6</span> Butiran Tambahan</h3>
-              <div id="butiran-body" class="space-y-3 text-sm"></div>
-            </div>
-
           </div>
 
           <!-- RIGHT SIDEBAR: Log Aktiviti (sticky) -->
@@ -148,6 +136,12 @@
       </div>
     </main>
   </div>
+</div>
+
+<!-- Lightbox gambar produk -->
+<div id="lightbox" class="hidden fixed inset-0 z-[60] bg-black/85 items-center justify-center p-4" onclick="closeLightbox()">
+  <button onclick="closeLightbox()" class="absolute top-4 right-5 text-white/80 hover:text-white text-4xl leading-none">&times;</button>
+  <img id="lightbox-img" src="" class="max-w-[92vw] max-h-[88vh] rounded-lg object-contain" onclick="event.stopPropagation()">
 </div>
 
 <script src="/shared/supabase.js"></script>
@@ -218,7 +212,6 @@ function renderRingkasan() {
     row('Nama Produk', escHtml(product.name || '—')),
     row('SKU', `<span class="font-mono">${escHtml(product.sku || product.product_id || '—')}</span>`),
     row('Kategori', escHtml(product.category || '—')),
-    row('Jenama', escHtml(product.brand || '—')),
     product.description_short || product.description ? row('Penerangan', escHtml(product.description_short || product.description)) : '',
   ].filter(Boolean).join('');
 }
@@ -237,55 +230,38 @@ function renderStok() {
   const ss = stockStatus(product.stock, product.min_stock);
   document.getElementById('stok-body').innerHTML = [
     row('Stok Semasa', `<span class="font-bold">${product.stock ?? 0} ${escHtml(product.unit || 'unit')}</span>`),
-    row('Minimum Stok', `${product.min_stock ?? 5} ${escHtml(product.unit || 'unit')}`),
     row('Status Stok', `<span class="inline-block px-2 py-0.5 rounded ${ss.cls} text-[11px] font-bold">${ss.lbl}</span>`),
-    row('Jejak Inventori', product.track_inventory !== false ? '<span class="inline-block px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[11px] font-bold">Diaktifkan</span>' : '<span class="text-ink/55 text-xs">Tidak</span>'),
-    row('Amaran Stok Rendah', product.low_stock_alert !== false ? `<span class="text-xs text-ink/70">Apabila ≤ ${product.min_stock ?? 5} ${product.unit || 'unit'}</span>` : '<span class="text-ink/55 text-xs">Tidak</span>'),
   ].join('');
 }
+
+let _mediaImgs = [];
 
 function renderMedia() {
   const imgs = [];
   if (product.image_url) imgs.push(product.image_url);
   if (Array.isArray(product.image_urls)) imgs.push(...product.image_urls.filter(u => u !== product.image_url));
+  _mediaImgs = imgs;
   const el = document.getElementById('media-body');
   if (!imgs.length) {
     el.innerHTML = '<div class="col-span-3 py-6 text-center text-sm text-ink/35">Tiada imej</div>';
     return;
   }
-  el.innerHTML = imgs.map(u => `<div class="aspect-square rounded-xl border-2 border-ink/10 overflow-hidden bg-cream"><img src="${escHtml(u)}" class="w-full h-full object-cover"></div>`).join('');
+  el.innerHTML = imgs.map((u, i) => `<div onclick="openLightbox(${i})" class="aspect-square rounded-xl border-2 border-ink/10 overflow-hidden bg-cream cursor-pointer hover:border-navy/40 transition-colors"><img src="${escHtml(u)}" class="w-full h-full object-cover"></div>`).join('');
 }
 
-function renderVisibility() {
-  const item = (lbl, on, sub) => `
-    <div class="p-3 border border-ink/10 rounded-xl">
-      <div class="flex items-center justify-between gap-2">
-        <span class="text-sm font-semibold text-ink">${lbl}</span>
-        <span class="text-xs font-bold ${on ? 'text-emerald-600' : 'text-ink/45'}">${on ? '✓ ON' : '○ OFF'}</span>
-      </div>
-      <div class="text-[11px] text-ink/45 mt-1">${sub}</div>
-    </div>`;
-  document.getElementById('visibility-body').innerHTML = [
-    item('Tunjuk di Shop', product.visible_in_shop !== false, 'Produk dipaparkan di senarai shop'),
-    item('Produk Pilihan (Featured)', !!product.featured, 'Ditandakan sebagai produk pilihan'),
-    item('Pembelian Online', product.online_purchase !== false, 'Pelanggan boleh membeli online'),
-  ].join('');
+function openLightbox(i) {
+  document.getElementById('lightbox-img').src = _mediaImgs[i];
+  const lb = document.getElementById('lightbox');
+  lb.classList.remove('hidden');
+  lb.classList.add('flex');
 }
-
-function renderButiran() {
-  const items = [];
-  if (product.weight_size) items.push(row('Berat / Saiz', escHtml(product.weight_size)));
-  if (product.supplier) items.push(row('Supplier', escHtml(product.supplier)));
-  if (Array.isArray(product.tags) && product.tags.length) {
-    const tagsHtml = product.tags.map(t => `<span class="inline-block px-2 py-0.5 rounded bg-purple-50 text-purple-700 text-[11px] font-semibold mr-1">${escHtml(t)}</span>`).join('');
-    items.push(row('Tag / Label', tagsHtml));
-  }
-  if (product.notes) items.push(row('Notes', `<div class="whitespace-pre-wrap text-xs text-ink/70">${escHtml(product.notes)}</div>`));
-
-  if (!items.length) return;
-  document.getElementById('butiran-card').classList.remove('hidden');
-  document.getElementById('butiran-body').innerHTML = items.join('');
+function closeLightbox() {
+  const lb = document.getElementById('lightbox');
+  lb.classList.add('hidden');
+  lb.classList.remove('flex');
+  document.getElementById('lightbox-img').src = '';
 }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
 
 async function renderLog() {
   const { data } = await window.db.from('psy_audit_log')
@@ -377,8 +353,6 @@ async function init() {
   renderHarga();
   renderStok();
   renderMedia();
-  renderVisibility();
-  renderButiran();
   await renderLog();
 }
 

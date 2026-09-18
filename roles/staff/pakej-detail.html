@@ -240,6 +240,7 @@ function renderHero() {
   meta.push(`<span class="flex items-center gap-1">💰 <span class="font-semibold text-ink/75">${fmtRM(pkg.price)}</span></span>`);
   if (weeks) meta.push(`<span class="flex items-center gap-1">🗓️ ${weeks} Minggu</span>`);
   if (sessions) meta.push(`<span class="flex items-center gap-1">👥 ${sessions} sesi</span>`);
+  if (pkg.updated_at) meta.push(`<span class="flex items-center gap-1" title="${fmtDate(pkg.updated_at)}">🕐 Dikemaskini ${timeAgo(pkg.updated_at)}</span>`);
   document.getElementById('hero-meta').innerHTML = meta.join('');
 
   const chips = [];
@@ -830,15 +831,25 @@ async function renderActivity() {
     'package.deleted':    'Pakej dipadam',
   };
 
-  body.innerHTML = list.map(log => `
+  const changeRow = c => c.changed
+    ? `<div class="flex items-center gap-1.5"><span class="text-ink/30">•</span><span>${escHtml(c.field)} dikemaskini</span></div>`
+    : `<div class="flex items-center gap-1.5 flex-wrap"><span class="text-ink/30">•</span><span class="font-medium">${escHtml(c.field)}:</span><span class="text-ink/50 line-through">${escHtml(c.from)}</span><span class="text-ink/30">→</span><span class="text-ink/85 font-semibold">${escHtml(c.to)}</span></div>`;
+
+  body.innerHTML = list.map(log => {
+    const changes = Array.isArray(log.meta?.changes) ? log.meta.changes : [];
+    return `
     <div class="flex items-start gap-3">
       <div class="w-2 h-2 rounded-full bg-green-500 mt-1.5 flex-shrink-0"></div>
       <div class="flex-1 min-w-0">
-        <div class="text-sm text-ink/85">${escHtml(labels[log.action] || log.action)}${log.actor_name ? ` <span class="text-ink/45">· ${escHtml(log.actor_name)}</span>` : ''}</div>
-        <div class="text-[11px] text-ink/45 mt-0.5">${timeAgo(log.created_at)}</div>
+        <div class="text-sm text-ink/85">
+          ${escHtml(labels[log.action] || log.action)}
+          ${log.actor_name ? ` <span class="text-ink/70 font-semibold">· ${escHtml(log.actor_name)}</span>` : ''}
+        </div>
+        <div class="text-[11px] text-ink/45 mt-0.5" title="${escHtml(formatDateTime(log.created_at))}">${timeAgo(log.created_at)} · ${escHtml(formatDateTime(log.created_at))}</div>
+        ${changes.length ? `<div class="mt-1.5 space-y-1 text-xs text-ink/70 bg-ink/[0.02] rounded-lg px-3 py-2">${changes.map(changeRow).join('')}</div>` : ''}
       </div>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 }
 
 async function toggleStatus() {
@@ -872,6 +883,7 @@ async function duplicatePackage() {
     clone.package_id = newPkgId;
     clone.name = pkg.name + ' (Salinan)';
     clone.is_active = false;
+    clone.version_number = 1;
 
     const { data: created, error } = await window.db.from('psy_packages').insert(clone).select().single();
     if (error) throw error;
@@ -885,21 +897,22 @@ async function duplicatePackage() {
 // rata, medan sebenar di psy_packages; SAMA logik dgn buildInstallmentSchedule()
 // di pakej-edit.html/kob-detail.html) + pratonton jadual + senarai pesakit yang
 // sedang dalam pelan ansuran ──
-function buildInstallmentSchedule(depositAmount, durationMonths, monthlyAmount) {
+function buildInstallmentSchedule(depositAmount, durationMonths, monthlyAmount, startDate = new Date()) {
   const rows = [];
   let cumulative = Number(depositAmount) || 0;
   const n = Number(durationMonths) || 0;
   for (let i = 1; i < n; i++) {
     cumulative += Number(monthlyAmount) || 0;
-    rows.push({ month_offset: i, target_cumulative: cumulative });
+    const due = new Date(startDate); due.setMonth(due.getMonth() + i);
+    rows.push({ month_offset: i, target_cumulative: cumulative, due_date: due.toISOString().slice(0, 10) });
   }
   return rows;
 }
 
-function relativeMonthLabel(i) {
-  if (i === 0) return 'Hari ini';
-  if (i === 1) return 'Bulan depan';
-  return `${i} bulan lagi`;
+// Tarikh sebenar (bukan label relatif "Bulan depan"/"2 bulan lagi") supaya staff
+// nampak dengan jelas bila setiap ansuran perlu dibayar (pratonton anggap mula hari ini).
+function fmtScheduleDate(d) {
+  return new Date(d).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 // Field ansuran ikut tier ('today' fallback ke Now bila today_installment_* kosong)
@@ -922,9 +935,9 @@ function installmentScheduleCardHtml(label, icon, deposit, durationMonths, month
   const resolved = buildInstallmentSchedule(deposit, durationMonths, monthly);
   const commitment = resolved.length ? resolved[resolved.length - 1].target_cumulative : deposit;
   const rows = [`
-    <tr class="border-b border-ink/5"><td class="py-1">1</td><td>Bayaran Pertama (Hari Ini)</td><td>Hari ini</td><td class="text-right font-semibold">${fmtRM(deposit)}</td></tr>`,
+    <tr class="border-b border-ink/5"><td class="py-1">1</td><td>Bayaran Pertama (Hari Ini)</td><td>${fmtScheduleDate(new Date())}</td><td class="text-right font-semibold">${fmtRM(deposit)}</td></tr>`,
     ...resolved.map((r, i) => `
-    <tr class="border-b border-ink/5"><td class="py-1">${i + 2}</td><td>Bulan ${r.month_offset + 1}${i === resolved.length - 1 ? ' (Terakhir)' : ''}</td><td>${relativeMonthLabel(r.month_offset)}</td><td class="text-right font-semibold">${fmtRM(monthly)}</td></tr>`)].join('');
+    <tr class="border-b border-ink/5"><td class="py-1">${i + 2}</td><td>Bulan ${r.month_offset + 1}${i === resolved.length - 1 ? ' (Terakhir)' : ''}</td><td>${fmtScheduleDate(r.due_date)}</td><td class="text-right font-semibold">${fmtRM(monthly)}</td></tr>`)].join('');
   return `
   <div class="bg-cream/50 rounded-xl border border-ink/10 p-4">
     <div class="text-xs font-bold text-ink/70 mb-2">${icon} ${label}</div>

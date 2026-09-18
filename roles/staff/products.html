@@ -40,7 +40,7 @@
             <h1 class="text-2xl font-bold text-ink">Produk</h1>
             <div class="text-sm text-ink/55 mt-0.5 flex items-center gap-1">🛍️ Produk Shop · Urus produk, harga dan stok</div>
           </div>
-          <a data-rbac="products.create" id="btn-prod-new" href="product-edit.html" class="hidden purple-btn px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 shadow-sm">+ Tambah Produk</a>
+          <a data-rbac="products.create" id="btn-prod-new" href="product-select-inventory.html" class="hidden purple-btn px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 shadow-sm">+ Tambah Produk</a>
         </div>
 
         <!-- KPI Row -->
@@ -119,13 +119,22 @@
           <button data-rbac="products.export" onclick="exportCsv()" class="px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white hover:bg-ink/5 transition-colors flex items-center gap-1.5 self-end">📥 Eksport</button>
         </div>
 
+        <!-- Bulk actions bar -->
+        <div id="bulk-bar" class="hidden bg-navy text-white rounded-2xl px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+          <div class="text-sm font-medium"><span id="bulk-count">0</span> produk dipilih</div>
+          <div class="flex items-center gap-2">
+            <button onclick="clearSelection()" class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-white/30 hover:bg-white/10 transition-colors">Batal Pilihan</button>
+            <button data-rbac="products.delete" onclick="bulkDeleteSelected()" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-600 hover:bg-red-700 transition-colors">🗑️ Padam Terpilih</button>
+          </div>
+        </div>
+
         <!-- Table -->
         <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden">
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-ink/8 bg-ink/[0.015]">
-                  <th class="px-5 py-3 w-10"><input type="checkbox" onclick="toggleAll(this)" class="accent-[#6366f1]"></th>
+                  <th class="px-5 py-3 w-10"><input type="checkbox" id="select-all" onclick="toggleAll(this)" class="accent-[#6366f1]"></th>
                   <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Produk</th>
                   <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Kategori</th>
                   <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Harga (RM)</th>
@@ -273,7 +282,7 @@ function renderTable() {
       const img = (p.image_urls && p.image_urls[0]) || p.image_url || null;
       const sku = p.sku || p.product_id || '—';
       return `<tr class="hover:bg-ink/[0.01]">
-        <td class="px-5 py-3"><input type="checkbox" class="row-check accent-[#6366f1]"></td>
+        <td class="px-5 py-3"><input type="checkbox" class="row-check accent-[#6366f1]" value="${p.id}" onchange="updateBulkBar()"></td>
         <td class="px-3 py-3">
           <div class="flex items-center gap-3 min-w-[200px]">
             <div class="w-12 h-12 rounded-xl ${p.bg_color || 'bg-cream'} flex items-center justify-center flex-shrink-0 overflow-hidden">
@@ -317,6 +326,9 @@ function renderTable() {
   document.getElementById('btn-prev').disabled = currentPage <= 1;
   document.getElementById('btn-next').disabled = currentPage >= maxPage;
   document.getElementById('btn-last').disabled = currentPage >= maxPage;
+
+  document.getElementById('select-all').checked = false;
+  updateBulkBar();
 }
 
 function resetFilters() {
@@ -328,7 +340,35 @@ function resetFilters() {
   renderTable();
 }
 
-function toggleAll(el) { document.querySelectorAll('.row-check').forEach(c => c.checked = el.checked); }
+function toggleAll(el) {
+  document.querySelectorAll('.row-check').forEach(c => c.checked = el.checked);
+  updateBulkBar();
+}
+
+function updateBulkBar() {
+  const checked = document.querySelectorAll('.row-check:checked');
+  document.getElementById('bulk-bar').classList.toggle('hidden', checked.length === 0);
+  document.getElementById('bulk-count').textContent = checked.length;
+}
+
+function clearSelection() {
+  document.querySelectorAll('.row-check').forEach(c => c.checked = false);
+  document.getElementById('select-all').checked = false;
+  updateBulkBar();
+}
+
+async function bulkDeleteSelected() {
+  const ids = [...document.querySelectorAll('.row-check:checked')].map(c => c.value);
+  if (!ids.length) return;
+  if (!confirm(`Pasti nak padam ${ids.length} produk terpilih? Tindakan ini tidak boleh diundur.`)) return;
+  try {
+    const { error: err } = await window.db.from('psy_products').delete().in('id', ids);
+    if (err) throw err;
+    allProducts = allProducts.filter(p => !ids.includes(p.id));
+    banner(`${ids.length} produk dipadam ⛔`);
+    renderKpi(); renderTable();
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+}
 
 function toggleMenu(id, e) {
   e?.stopPropagation();

@@ -358,10 +358,19 @@
         <div id="admin-view" class="hidden p-4 md:p-6 space-y-4">
 
           <!-- Page Header -->
-          <div>
-            <h1 class="text-2xl font-bold text-ink">Dashboard</h1>
-            <p class="text-sm text-ink/45 mt-0.5">Selamat datang, <span id="a-admin-name">Admin</span>! Berikut adalah
-              ringkasan operasi klinik hari ini.</p>
+          <div class="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <h1 class="text-2xl font-bold text-ink">Dashboard</h1>
+              <p class="text-sm text-ink/45 mt-0.5">Selamat datang, <span id="a-admin-name">Admin</span>! Berikut adalah
+                ringkasan operasi klinik hari ini.</p>
+            </div>
+            <div class="flex items-center gap-2 text-xs text-ink/45">
+              <span>Dikemaskini pada: <span id="a-last-updated" class="font-semibold text-ink/70">—</span></span>
+              <button id="a-refresh-btn" onclick="refreshDashboard()"
+                class="flex items-center gap-1.5 px-3 py-1.5 border border-ink/15 rounded-lg text-xs font-semibold text-ink/65 hover:bg-ink/5 transition-colors disabled:opacity-50">
+                🔄 Refresh
+              </button>
+            </div>
           </div>
 
           <!-- ── Stat cards + Ringkasan Pesakit (sebaris) ── -->
@@ -2101,19 +2110,24 @@
         aMonthCache[key] = data || [];
         return aMonthCache[key];
       }
-      const schedRow = s => {
+      const schedRow = (s, showCoach = true) => {
         const t = new Date(s.session_date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
         const name = s.psy_patients?.psy_profiles?.full_name || s.psy_patients?.mrn || 'Pesakit';
         const initial = (name.trim()[0] || '?').toUpperCase();
         const label = s.psy_treatment_plans?.name || (s.week_number ? `Sesi Susulan ${s.week_number}` : 'Sesi');
         const chipCls = SESS_CHIP[s.status] || 'bg-ink/10 text-ink/50';
         const chipTxt = SESS_LABEL[s.status] || s.status;
+        const coachName = coachCache[s.psy_patients?.coach_id]?.full_name || 'Tiada coach';
         return `<div class="flex items-center gap-3 px-5 py-3 hover:bg-cream/20">
       <div class="text-[11px] font-semibold text-ink/50 w-10 flex-shrink-0">${t}</div>
       <div class="flex items-center gap-2 w-36 sm:w-44 flex-shrink-0">
         <div class="w-8 h-8 rounded-full bg-navy-light text-navy flex items-center justify-center text-[11px] font-bold flex-shrink-0">${esc(initial)}</div>
         <div class="min-w-0"><div class="text-[13px] font-semibold text-ink truncate">${esc(name)}</div><div class="text-[10px] text-ink/45">Pesakit</div></div>
       </div>
+      ${showCoach ? `<div class="w-28 sm:w-36 flex-shrink-0 min-w-0">
+        <div class="text-[11px] text-teal font-semibold truncate">${esc(coachName)}</div>
+        <div class="text-[10px] text-ink/40">Coach</div>
+      </div>` : ''}
       <div class="flex-1 min-w-0 flex items-center gap-2">
         <span class="text-xs text-ink/70 truncate">${esc(label)}</span>
         <span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${chipCls} whitespace-nowrap">${esc(chipTxt)}</span>
@@ -2142,8 +2156,9 @@
           list.innerHTML = '<div class="h-full flex items-center justify-center text-sm text-ink/35 p-6">Tiada sesi pada tarikh ini.</div>';
           return;
         }
+        // Muat nama coach dulu (dipakai dalam schedRow() utk mod Kronologi & Ikut Coach)
+        await ensureCoaches([...new Set(sess.map(s => s.psy_patients?.coach_id).filter(Boolean))]);
         if (schedMode === 'coach') {
-          await ensureCoaches([...new Set(sess.map(s => s.psy_patients?.coach_id).filter(Boolean))]);
           const groups = {};
           sess.forEach(s => { const cid = s.psy_patients?.coach_id || 'none'; (groups[cid] ||= []).push(s); });
           list.innerHTML = Object.entries(groups).map(([cid, arr]) => {
@@ -2157,11 +2172,11 @@
             <div class="min-w-0"><div class="text-xs font-bold text-ink truncate">${esc(cName)}</div>${cSpec ? `<div class="text-[10px] text-teal">${esc(cSpec)}</div>` : ''}</div>
             <span class="ml-auto text-[10px] font-semibold text-ink/45 whitespace-nowrap">${arr.length} sesi</span>
           </div>
-          <div class="divide-y divide-ink/5">${arr.map(schedRow).join('')}</div>
+          <div class="divide-y divide-ink/5">${arr.map(s => schedRow(s, false)).join('')}</div>
         </div>`;
           }).join('');
         } else {
-          list.innerHTML = sess.map(schedRow).join('');
+          list.innerHTML = sess.map(s => schedRow(s)).join('');
         }
       }
 
@@ -2265,20 +2280,20 @@
         else pTidak++;
       });
       const psSeg = [
-        { label: 'Aktif', val: pAktif, numCls: 'text-green-dark', color: '#22c55e' },
-        { label: 'Tidak Aktif', val: pTidak, numCls: 'text-purple-600', color: '#8b5cf6' },
-        { label: 'Tamat', val: pTamat, numCls: 'text-ink', color: '#d1d5db' },
-        { label: 'Meninggal', val: pMati, numCls: 'text-ink', color: '#c4b5fd' },
+        { label: 'Aktif', val: pAktif, numCls: 'text-green-dark', color: '#22c55e', statusQ: 'active' },
+        { label: 'Tidak Aktif', val: pTidak, numCls: 'text-purple-600', color: '#8b5cf6', statusQ: 'inactive' },
+        { label: 'Tamat', val: pTamat, numCls: 'text-ink', color: '#d1d5db', statusQ: 'o:completed' },
+        { label: 'Meninggal', val: pMati, numCls: 'text-ink', color: '#c4b5fd', statusQ: 'o:meninggal' },
       ];
       const psTotal = pAktif + pTidak + pTamat + pMati;
       const psPct = v => psTotal ? Math.round(v / psTotal * 1000) / 10 : 0;
       document.getElementById('a-ps-total').textContent = psTotal.toLocaleString('en-US');
       document.getElementById('a-ps-legend').innerHTML = psSeg.map(s => `
-    <div class="flex items-center gap-1.5 min-w-0" title="${s.val} (${psPct(s.val)}%)">
+    <a href="patients.html?status=${encodeURIComponent(s.statusQ)}" class="flex items-center gap-1.5 min-w-0 hover:bg-ink/[0.03] rounded-lg -mx-1 px-1" title="${s.val} (${psPct(s.val)}%) — klik untuk lihat senarai">
       <span class="w-2 h-2 rounded-full flex-shrink-0" style="background:${s.color}"></span>
       <span class="text-[10px] text-ink/60 flex-1 min-w-0 truncate">${s.label}</span>
       <span class="text-xs font-bold ${s.numCls} flex-shrink-0">${s.val.toLocaleString('en-US')}</span>
-    </div>`).join('');
+    </a>`).join('');
 
       // ═══ ORDER TERTUNGGAK + PEMBERIAN STOK (jadual bawah) ═══
       const orderPids = [...new Set(orders.map(o => o.patient_id).filter(Boolean))];
@@ -2777,14 +2792,14 @@
     }
 
     // ── ENTRY POINT ───────────────────────────────────────────────────────────
-    (async () => {
-      const user = await initStaff('dashboard',
-        new Date().toLocaleDateString(LCALE(), { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' }));
-      if (!user) return;
+    let _dashUser = null;
 
-      const _now = new Date();
-      const today = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
+    function updateLastRefreshedStamp() {
+      const el = document.getElementById('a-last-updated');
+      if (el) el.textContent = new Date().toLocaleTimeString(LCALE(), { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
 
+    async function renderDashboardForRole(user, today) {
       if (user.staff_role === 'coach') {
         await renderCoachDashboard(user, today);
       } else if (user.staff_role === 'admin') {
@@ -2798,8 +2813,34 @@
       } else {
         await renderDefaultDashboard(user, today);
       }
-
       await renderDashAnnounce();
+      updateLastRefreshedStamp();
+    }
+
+    async function refreshDashboard() {
+      if (!_dashUser) return;
+      const btn = document.getElementById('a-refresh-btn');
+      if (btn) btn.disabled = true;
+      try {
+        const _now = new Date();
+        const today = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
+        await renderDashboardForRole(_dashUser, today);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+    window.refreshDashboard = refreshDashboard;
+
+    (async () => {
+      const user = await initStaff('dashboard',
+        new Date().toLocaleDateString(LCALE(), { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' }));
+      if (!user) return;
+      _dashUser = user;
+
+      const _now = new Date();
+      const today = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
+
+      await renderDashboardForRole(user, today);
       restoreScrollPreserve();
     })();
   </script>

@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — KOB Report</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🩺</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-6 space-y-5">
+
+        <!-- Page header -->
+        <div class="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-xl font-bold text-ink">KOB Report</h1>
+            <p class="text-sm text-ink/45 mt-0.5">Conversion pakej rawatan selepas KOB — siapa dah signup, siapa belum</p>
+          </div>
+        </div>
+
+        <!-- KPI strip -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex items-center gap-4">
+            <div class="w-11 h-11 rounded-xl bg-navy-light/40 flex items-center justify-center text-xl">🩺</div>
+            <div><div class="text-[11px] text-ink/45 font-medium">Jumlah KOB Selesai</div><div id="kpi-total" class="text-2xl font-bold text-ink mt-0.5">0</div></div>
+          </div>
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex items-center gap-4">
+            <div class="w-11 h-11 rounded-xl bg-green-50 flex items-center justify-center text-xl">✅</div>
+            <div><div class="text-[11px] text-ink/45 font-medium">Sudah Signup Pakej</div><div id="kpi-signed" class="text-2xl font-bold text-green-700 mt-0.5">0</div></div>
+          </div>
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex items-center gap-4">
+            <div class="w-11 h-11 rounded-xl bg-terracotta/10 flex items-center justify-center text-xl">⚠️</div>
+            <div><div class="text-[11px] text-ink/45 font-medium">Belum Signup</div><div id="kpi-notsigned" class="text-2xl font-bold text-terracotta mt-0.5">0</div></div>
+          </div>
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex items-center gap-4">
+            <div class="w-11 h-11 rounded-xl bg-purple-50 flex items-center justify-center text-xl">📊</div>
+            <div><div class="text-[11px] text-ink/45 font-medium">Kadar Conversion</div><div id="kpi-rate" class="text-2xl font-bold text-ink mt-0.5">0%</div></div>
+          </div>
+        </div>
+
+        <!-- Tabs + search -->
+        <div class="flex items-center gap-3 flex-wrap">
+          <div class="flex gap-2 flex-wrap">
+            <button onclick="setTab('signed')" id="t-signed" class="px-3 py-1.5 rounded-lg text-xs font-semibold">✅ Sudah Signup <span id="ct-signed" class="ml-1 opacity-70"></span></button>
+            <button onclick="setTab('notsigned')" id="t-notsigned" class="px-3 py-1.5 rounded-lg text-xs font-semibold">⚠️ Belum Signup <span id="ct-notsigned" class="ml-1 opacity-70"></span></button>
+          </div>
+          <input id="search-input" type="text" placeholder="Cari nama / MRN..." oninput="render()"
+            class="ml-auto min-w-[200px] px-3 py-2 border border-ink/15 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-navy/20 bg-white">
+        </div>
+
+        <!-- Table -->
+        <div class="bg-white rounded-xl border border-ink/10 overflow-x-auto">
+          <table class="data">
+            <thead>
+              <tr id="thead-row"></tr>
+            </thead>
+            <tbody id="report-body"></tbody>
+          </table>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="../../shared/utils.js"></script>
+<script src="_shared.js"></script>
+<script>
+function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
+initScrollPreserve();
+
+let allKob = [];
+let patientMap = {};
+let sessionsByPatient = {};
+let tab = 'signed';
+
+const PAY_LABEL = {
+  full:        { label: 'Full Payment', cls: 'text-green-dark' },
+  installment: { label: 'Ansuran',      cls: 'text-gold-dark' },
+};
+const PAY_NA = { label: '—', cls: 'text-ink/40' };
+function fmtDate(d) {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' });
+}
+function daysSince(d) {
+  if (!d) return '—';
+  const n = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
+  return n <= 0 ? 'Hari ini' : `${n} hari`;
+}
+function patName(pat) { return pat?.psy_profiles?.full_name || pat?.full_name || '—'; }
+
+// Sesi "rujukan" bagi pesakit — sesi completed paling terkini (untuk cadangan/tarikh selesai)
+function latestCompletedSession(patientId) {
+  const list = sessionsByPatient[patientId] || [];
+  return list.find(k => k.status === 'completed') || null;
+}
+
+async function loadAll() {
+  const [kobRes, patRes] = await Promise.all([
+    window.db.from('psy_kob_sessions').select('*').order('scheduled_at', { ascending: false }),
+    window.db.from('psy_patients').select('id, mrn, full_name, kob_status, active_package_id, active_package_name, psy_profiles!psy_patients_user_id_fkey(full_name, phone)'),
+  ]);
+  allKob = kobRes.data || [];
+  (patRes.data || []).forEach(p => { patientMap[p.id] = p; });
+
+  sessionsByPatient = {};
+  allKob.forEach(k => {
+    (sessionsByPatient[k.patient_id] = sessionsByPatient[k.patient_id] || []).push(k);
+  });
+
+  render();
+}
+
+function buildRows() {
+  const signed = [];
+  const notSigned = [];
+  Object.keys(sessionsByPatient).forEach(pid => {
+    const pat = patientMap[pid];
+    if (!pat || pat.kob_status !== 'completed') return; // KOB belum siap — bukan skop report ni
+    const session = latestCompletedSession(pid) || sessionsByPatient[pid][0];
+    const hasPkg = !!pat.active_package_id;
+    if (hasPkg) signed.push({ pat, session });
+    else notSigned.push({ pat, session });
+  });
+  return { signed, notSigned };
+}
+
+function setTab(t) {
+  tab = t;
+  ['signed', 'notsigned'].forEach(t2 => {
+    const b = document.getElementById('t-' + t2);
+    b.className = `px-3 py-1.5 rounded-lg text-xs font-semibold ${t2 === t ? 'bg-navy text-white' : 'bg-white border border-ink/15'}`;
+  });
+  render();
+}
+
+function render() {
+  const { signed, notSigned } = buildRows();
+  const search = (document.getElementById('search-input')?.value || '').toLowerCase().trim();
+  document.getElementById('ct-signed').textContent = `(${signed.length})`;
+  document.getElementById('ct-notsigned').textContent = `(${notSigned.length})`;
+  document.getElementById('kpi-total').textContent = signed.length + notSigned.length;
+  document.getElementById('kpi-signed').textContent = signed.length;
+  document.getElementById('kpi-notsigned').textContent = notSigned.length;
+  const total = signed.length + notSigned.length;
+  document.getElementById('kpi-rate').textContent = total ? Math.round(signed.length / total * 100) + '%' : '0%';
+
+  const thead = document.getElementById('thead-row');
+  const body = document.getElementById('report-body');
+  let rows = tab === 'signed' ? signed : notSigned;
+
+  if (search) {
+    rows = rows.filter(r => patName(r.pat).toLowerCase().includes(search) || (r.pat.mrn || '').toLowerCase().includes(search));
+  }
+
+  if (tab === 'signed') {
+    thead.innerHTML = '<th>Pesakit</th><th>MRN</th><th>Pakej Disignup</th><th>Mod Bayaran</th><th>Tarikh KOB Selesai</th><th class="text-right">Tindakan</th>';
+    if (!rows.length) { body.innerHTML = '<tr><td colspan="6" class="text-center text-ink/40 py-8">Tiada pesakit</td></tr>'; return; }
+    body.innerHTML = rows.map(r => {
+      const pay = PAY_LABEL[r.session?.package_payment_mode] || PAY_NA;
+      return `<tr>
+        <td>${escapeHtml(patName(r.pat))}</td>
+        <td class="text-xs font-mono">${escapeHtml(r.pat.mrn || '—')}</td>
+        <td class="text-sm font-medium">${escapeHtml(r.pat.active_package_name || '—')}</td>
+        <td><span class="text-sm font-semibold ${pay.cls}">${pay.label}</span></td>
+        <td class="text-xs">${fmtDate(r.session?.selesai_at || r.session?.scheduled_at)}</td>
+        <td class="text-right whitespace-nowrap"><a href="kob-detail.html?id=${r.session?.id}&autoprint=1" target="_blank" class="text-xs text-navy font-semibold hover:underline">📄 PDF</a>
+        <a href="kob-detail.html?id=${r.session?.id}" class="text-xs text-navy font-semibold hover:underline ml-3">Details</a></td>
+      </tr>`;
+    }).join('');
+  } else {
+    thead.innerHTML = '<th>Pesakit</th><th>MRN</th><th>Cadangan Pakej (Doktor)</th><th>Tarikh KOB Selesai</th><th>Hari Berlalu</th><th class="text-right">Tindakan</th>';
+    if (!rows.length) { body.innerHTML = '<tr><td colspan="6" class="text-center text-ink/40 py-8">Tiada pesakit</td></tr>'; return; }
+    body.innerHTML = rows.map(r => {
+      const suggestion = r.session?.recommended_package_name;
+      return `<tr>
+        <td>${escapeHtml(patName(r.pat))}</td>
+        <td class="text-xs font-mono">${escapeHtml(r.pat.mrn || '—')}</td>
+        <td class="text-sm">${suggestion ? `<span class="chip bg-gold/20 text-gold-dark">${escapeHtml(suggestion)}</span>` : '<span class="text-ink/35">Tiada cadangan</span>'}</td>
+        <td class="text-xs">${fmtDate(r.session?.selesai_at || r.session?.scheduled_at)}</td>
+        <td class="text-xs text-terracotta font-semibold">${daysSince(r.session?.selesai_at || r.session?.scheduled_at)}</td>
+        <td class="text-right whitespace-nowrap"><a href="kob-detail.html?id=${r.session?.id}&autoprint=1" target="_blank" class="text-xs text-navy font-semibold hover:underline">📄 PDF</a>
+        <a href="kob-detail.html?id=${r.session?.id}" class="text-xs text-navy font-semibold hover:underline ml-3">Details</a></td>
+      </tr>`;
+    }).join('');
+  }
+}
+
+(async () => {
+  const user = await initStaff('kob_report', 'KOB Report');
+  if (!user) return;
+  setTab('signed');
+  await loadAll();
+  restoreScrollPreserve();
+})();
+</script>
+</body>
+</html>

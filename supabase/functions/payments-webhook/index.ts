@@ -121,7 +121,7 @@ Deno.serve(async (req) => {
       await fulfillOrder(admin, payment)
     } catch (fulfillErr) {
       // Lepaskan claim supaya webhook retry akan datang boleh cuba semula.
-      await admin.from('psy_payments').update({ fulfilled_at: null }).eq('id', payment.id).catch(() => {})
+      try { await admin.from('psy_payments').update({ fulfilled_at: null }).eq('id', payment.id) } catch {}
       throw fulfillErr
     }
 
@@ -132,13 +132,15 @@ Deno.serve(async (req) => {
 
     // Notifikasi pesakit
     if (payment.user_id) {
-      await admin.from('psy_notifications').insert({
-        user_id: payment.user_id,
-        type: 'system',
-        title: 'Pembayaran Berjaya ✅',
-        body: `Resit ${payment.receipt_ref} — RM ${Number(payment.total).toFixed(2)} diterima.`,
-        link: 'payment.html',
-      }).catch(() => {})
+      try {
+        await admin.from('psy_notifications').insert({
+          user_id: payment.user_id,
+          type: 'system',
+          title: 'Pembayaran Berjaya ✅',
+          body: `Resit ${payment.receipt_ref} — RM ${Number(payment.total).toFixed(2)} diterima.`,
+          link: 'payment.html',
+        })
+      } catch {}
     }
 
     // Resit auto ke WhatsApp — best-effort; kegagalan TIDAK gagalkan webhook
@@ -182,10 +184,12 @@ async function notifyStaffPaymentReceived(admin: any, patientId: string | null, 
   ;(staff || []).forEach((s: any) => targets.add(s.id))
   const body = `${patientLabel} telah membayar: ${labels.join(', ')} — RM ${Number(total || 0).toFixed(2)} (${receiptRef})`
   for (const uid of targets) {
-    await admin.from('psy_notifications').insert({
-      user_id: uid, type: 'payment', title: 'Pembayaran Diterima 💳', body,
-      link: patientId ? `../staff/patient-hub.html?id=${patientId}` : 'payment-admin.html',
-    }).catch(() => {})
+    try {
+      await admin.from('psy_notifications').insert({
+        user_id: uid, type: 'payment', title: 'Pembayaran Diterima 💳', body,
+        link: patientId ? `../staff/patient-hub.html?id=${patientId}` : 'payment-admin.html',
+      })
+    } catch {}
   }
 }
 
@@ -210,11 +214,13 @@ async function notifyPaymentFailed(admin: any, payment: any) {
 
   // Notifikasi in-app pesakit
   if (payment.user_id) {
-    await admin.from('psy_notifications').insert({
-      user_id: payment.user_id, type: 'system', title: 'Bayaran Tidak Berjaya ⚠️',
-      body: `Bayaran ${itemDesc} (RM ${amount}, resit ${payment.receipt_ref}) tidak berjaya/dibatalkan. Sila cuba lagi atau hubungi klinik.`,
-      link: 'payment.html',
-    }).catch(() => {})
+    try {
+      await admin.from('psy_notifications').insert({
+        user_id: payment.user_id, type: 'system', title: 'Bayaran Tidak Berjaya ⚠️',
+        body: `Bayaran ${itemDesc} (RM ${amount}, resit ${payment.receipt_ref}) tidak berjaya/dibatalkan. Sila cuba lagi atau hubungi klinik.`,
+        link: 'payment.html',
+      })
+    } catch {}
   }
 
   // Auto-jana pautan HitPay BAHARU untuk kob_deposit sahaja (staff-initiated —
@@ -277,18 +283,22 @@ async function notifyPaymentFailed(admin: any, payment: any) {
       const attachments = msg.media_url ? [msg.media_url] : []
       try {
         await sendWhatsApp(admin, { phone: patient.phone, name: patient.full_name, message: waMessage, attachments, sentByName: 'Auto — Bayaran Gagal' })
-        await admin.from('psy_notification_logs').insert({
-          automation_id: auto.id, patient_id: patientId, patient_name: patientLabel,
-          event: 'payment_failed', channel: 'whatsapp', status: 'sent', message: waMessage.slice(0, 2000),
-          message_id: msg.id, sent_at: new Date().toISOString(),
-        }).catch(() => {})
+        try {
+          await admin.from('psy_notification_logs').insert({
+            automation_id: auto.id, patient_id: patientId, patient_name: patientLabel,
+            event: 'payment_failed', channel: 'whatsapp', status: 'sent', message: waMessage.slice(0, 2000),
+            message_id: msg.id, sent_at: new Date().toISOString(),
+          })
+        } catch {}
       } catch (e) {
         console.warn('notifyPaymentFailed: WA (automation baharu) gagal —', (e as Error).message)
-        await admin.from('psy_notification_logs').insert({
-          automation_id: auto.id, patient_id: patientId, patient_name: patientLabel,
-          event: 'payment_failed', channel: 'whatsapp', status: 'failed', message: waMessage.slice(0, 2000),
-          message_id: msg.id, error: String((e as Error)?.message || e),
-        }).catch(() => {})
+        try {
+          await admin.from('psy_notification_logs').insert({
+            automation_id: auto.id, patient_id: patientId, patient_name: patientLabel,
+            event: 'payment_failed', channel: 'whatsapp', status: 'failed', message: waMessage.slice(0, 2000),
+            message_id: msg.id, error: String((e as Error)?.message || e),
+          })
+        } catch {}
       }
     }
   }
@@ -301,10 +311,12 @@ async function notifyPaymentFailed(admin: any, payment: any) {
   const staffBody = `${patientLabel} — bayaran ${itemDesc} (RM ${amount}, ${payment.receipt_ref}) tidak berjaya/dibatalkan.` +
     (retryUrl ? ' Pautan baharu telah auto-dihantar ke WhatsApp pesakit.' : '')
   for (const uid of targets) {
-    await admin.from('psy_notifications').insert({
-      user_id: uid, type: 'payment', title: 'Bayaran Gagal ⚠️', body: staffBody,
-      link: patientId ? `../staff/patient-hub.html?id=${patientId}` : 'payment-admin.html',
-    }).catch(() => {})
+    try {
+      await admin.from('psy_notifications').insert({
+        user_id: uid, type: 'payment', title: 'Bayaran Gagal ⚠️', body: staffBody,
+        link: patientId ? `../staff/patient-hub.html?id=${patientId}` : 'payment-admin.html',
+      })
+    } catch {}
   }
 }
 

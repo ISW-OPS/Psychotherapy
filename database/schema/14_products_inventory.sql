@@ -11,7 +11,9 @@ CREATE TABLE IF NOT EXISTS psy_inventory_items (
   id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name                 TEXT NOT NULL,
   category             TEXT NOT NULL DEFAULT 'Bekalan Coaching',
-  unit                 TEXT NOT NULL DEFAULT 'unit',
+  unit                 TEXT NOT NULL DEFAULT 'Unit'
+                       CHECK (unit IN ('Biji (pcs)','Botol','Kotak','Pek','Paket','Tiub','Tablet',
+                                       'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas')),
   qty_in_stock         NUMERIC(10,2) NOT NULL DEFAULT 0,
   min_qty              NUMERIC(10,2) NOT NULL DEFAULT 5,
   requires_approval    BOOLEAN NOT NULL DEFAULT false,
@@ -271,7 +273,9 @@ CREATE TABLE IF NOT EXISTS psy_products (
   promo_until        DATE,
   stock              INT,
   min_stock          INT DEFAULT 5,
-  unit               TEXT DEFAULT 'unit',
+  unit               TEXT DEFAULT 'Unit'
+                     CHECK (unit IN ('Biji (pcs)','Botol','Kotak','Pek','Paket','Tiub','Tablet',
+                                     'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas')),
   track_inventory    BOOLEAN DEFAULT true,
   low_stock_alert    BOOLEAN DEFAULT true,
   inventory_item_id  UUID REFERENCES psy_inventory_items(id) ON DELETE SET NULL,
@@ -443,55 +447,55 @@ INSERT INTO psy_inventory_items (name, category, unit, qty_in_stock, min_qty, re
 VALUES
 
 -- ── MADU & PRODUK ─────────────────────────────────────────
-('Lebah Thoharah (LTH)',            'Madu & Produk', 'kg',     0, 5,  false, 'Program NLC / JS / JS+ / EOL'),
-('LTH Plus Green (LTHPG)',          'Madu & Produk', 'kg',     0, 5,  false, 'Program NLC / JS / JS+ / EOL'),
-('Ibu Bumi (IB)',                   'Madu & Produk', 'kg',     0, 5,  false, 'Program OBD / OBP'),
-('Young & Healthy Plus Green (YHPG)','Madu & Produk','kg',     0, 5,  false, 'Program OBD / OBP'),
-('Madu Kelulut',                    'Madu & Produk', 'botol',  0, 3,  false, NULL),
-('Minyak Zaitun Tulen',             'Madu & Produk', 'botol',  0, 3,  false, NULL),
+('Lebah Thoharah (LTH)',            'Madu & Produk', 'Kg',     0, 5,  false, 'Program NLC / JS / JS+ / EOL'),
+('LTH Plus Green (LTHPG)',          'Madu & Produk', 'Kg',     0, 5,  false, 'Program NLC / JS / JS+ / EOL'),
+('Ibu Bumi (IB)',                   'Madu & Produk', 'Kg',     0, 5,  false, 'Program OBD / OBP'),
+('Young & Healthy Plus Green (YHPG)','Madu & Produk','Kg',     0, 5,  false, 'Program OBD / OBP'),
+('Madu Kelulut',                    'Madu & Produk', 'Botol',  0, 3,  false, NULL),
+('Minyak Zaitun Tulen',             'Madu & Produk', 'Botol',  0, 3,  false, NULL),
 
 -- ── STARTER KIT ───────────────────────────────────────────
-('SDS OB',                          'Starter Kit',   'unit',   0, 5,  false, 'Starter kit OBD / OBP'),
-('GHF',                             'Starter Kit',   'unit',   0, 5,  false, 'Starter kit OBD / OBP'),
-('BNP',                             'Starter Kit',   'unit',   0, 5,  false, 'Bekalan pantang NLC / JS'),
-('NSS',                             'Starter Kit',   'unit',   0, 5,  false, 'Bekalan pantang NLC / JS'),
-('Voucher Konsultasi',              'Starter Kit',   'unit',   0, 10, false, 'Diedarkan semasa onboarding'),
+('SDS OB',                          'Starter Kit',   'Unit',   0, 5,  false, 'Starter kit OBD / OBP'),
+('GHF',                             'Starter Kit',   'Unit',   0, 5,  false, 'Starter kit OBD / OBP'),
+('BNP',                             'Starter Kit',   'Unit',   0, 5,  false, 'Bekalan pantang NLC / JS'),
+('NSS',                             'Starter Kit',   'Unit',   0, 5,  false, 'Bekalan pantang NLC / JS'),
+('Voucher Konsultasi',              'Starter Kit',   'Unit',   0, 10, false, 'Diedarkan semasa onboarding'),
 
 -- ── SUPLEMEN & RESEPI ─────────────────────────────────────
-('Resepi Superimun',                'Suplemen & Resepi', 'unit', 0, 5, false, 'Diberi semasa onboarding'),
-('Resepi Superenergi',              'Suplemen & Resepi', 'unit', 0, 5, false, 'Diberi semasa onboarding'),
-('Barley Organik',                  'Suplemen & Resepi', 'kg',   0, 5, false, NULL),
-('Spirulina',                       'Suplemen & Resepi', 'botol',0, 3, false, NULL),
-('Probiotik Advanced',              'Suplemen & Resepi', 'botol',0, 3, false, NULL),
-('Magnesium Glycinate',             'Suplemen & Resepi', 'botol',0, 3, false, NULL),
-('Vitamin D3',                      'Suplemen & Resepi', 'botol',0, 3, false, NULL),
-('Omega-3 Fish Oil',                'Suplemen & Resepi', 'botol',0, 3, false, NULL),
+('Resepi Superimun',                'Suplemen & Resepi', 'Unit', 0, 5, false, 'Diberi semasa onboarding'),
+('Resepi Superenergi',              'Suplemen & Resepi', 'Unit', 0, 5, false, 'Diberi semasa onboarding'),
+('Barley Organik',                  'Suplemen & Resepi', 'Kg',   0, 5, false, NULL),
+('Spirulina',                       'Suplemen & Resepi', 'Botol',0, 3, false, NULL),
+('Probiotik Advanced',              'Suplemen & Resepi', 'Botol',0, 3, false, NULL),
+('Magnesium Glycinate',             'Suplemen & Resepi', 'Botol',0, 3, false, NULL),
+('Vitamin D3',                      'Suplemen & Resepi', 'Botol',0, 3, false, NULL),
+('Omega-3 Fish Oil',                'Suplemen & Resepi', 'Botol',0, 3, false, NULL),
 
 -- ── BUKU & BAHAN CETAK ────────────────────────────────────
-('Buku P101',                       'Buku & Bahan Cetak', 'naskhah', 0, 10, false, '7 buku per set starter kit'),
-('List Pantang',                    'Buku & Bahan Cetak', 'naskhah', 0, 10, false, 'Diedarkan semasa onboarding'),
-('Peta OB',                         'Buku & Bahan Cetak', 'naskhah', 0, 10, false, 'Diedarkan semasa onboarding OBD / OBP'),
-('Workbook Refleksi Harian',        'Buku & Bahan Cetak', 'naskhah', 0, 10, false, NULL),
-('Jadual Terapi Mingguan',          'Buku & Bahan Cetak', 'naskhah', 0, 10, false, NULL),
-('Mood Tracker',                    'Buku & Bahan Cetak', 'naskhah', 0, 10, false, NULL),
-('Buku Gaya Hidup Fitrah',          'Buku & Bahan Cetak', 'naskhah', 0,  5, false, NULL),
-('Kitab Doa Syifa',                 'Buku & Bahan Cetak', 'naskhah', 0,  5, false, NULL),
+('Buku P101',                       'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, '7 buku per set starter kit'),
+('List Pantang',                    'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, 'Diedarkan semasa onboarding'),
+('Peta OB',                         'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, 'Diedarkan semasa onboarding OBD / OBP'),
+('Workbook Refleksi Harian',        'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, NULL),
+('Jadual Terapi Mingguan',          'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, NULL),
+('Mood Tracker',                    'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, NULL),
+('Buku Gaya Hidup Fitrah',          'Buku & Bahan Cetak', 'Naskhah', 0,  5, false, NULL),
+('Kitab Doa Syifa',                 'Buku & Bahan Cetak', 'Naskhah', 0,  5, false, NULL),
 
 -- ── BROSUR & MARKETING ────────────────────────────────────
-('Brochure Madu',                   'Brosur & Marketing', 'unit', 0, 20, false, NULL),
-('Brochure ISW',                    'Brosur & Marketing', 'unit', 0, 20, false, NULL),
-('Brochure OB',                     'Brosur & Marketing', 'unit', 0, 20, false, NULL),
+('Brochure Madu',                   'Brosur & Marketing', 'Unit', 0, 20, false, NULL),
+('Brochure ISW',                    'Brosur & Marketing', 'Unit', 0, 20, false, NULL),
+('Brochure OB',                     'Brosur & Marketing', 'Unit', 0, 20, false, NULL),
 
 -- ── BEKALAN COACHING ──────────────────────────────────────
-('Air Afiyah',                      'Bekalan Coaching', 'botol', 0, 10, false, '1 botol = 1.5L'),
-('Air Za''afaran',                  'Bekalan Coaching', 'botol', 0,  5, false, 'Untuk sesi Perubatan Rohani'),
-('Herba Kolon',                     'Bekalan Coaching', 'set',   0,  3, false, '1 set = 1 kursus rawatan'),
-('Kurma Ajwa',                      'Bekalan Coaching', 'biji',  0, 50, false, '49 biji per pesakit 777 VIP'),
+('Air Afiyah',                      'Bekalan Coaching', 'Botol', 0, 10, false, '1 botol = 1.5L'),
+('Air Za''afaran',                  'Bekalan Coaching', 'Botol', 0,  5, false, 'Untuk sesi Perubatan Rohani'),
+('Herba Kolon',                     'Bekalan Coaching', 'Set',   0,  3, false, '1 set = 1 kursus rawatan'),
+('Kurma Ajwa',                      'Bekalan Coaching', 'Biji (pcs)',  0, 50, false, '49 biji per pesakit 777 VIP'),
 
 -- ── PERALATAN KLINIK ──────────────────────────────────────
-('DNA Test Kit',                    'Peralatan Klinik', 'set',  0, 2, true,  'Perlu kelulusan · hantar ke lab luar'),
-('Enema Kit',                       'Peralatan Klinik', 'set',  0, 3, true,  'Perlu kelulusan'),
-('Mesin Ozon',                      'Peralatan Klinik', 'unit', 0, 1, true,  'Rekod nombor siri setiap unit')
+('DNA Test Kit',                    'Peralatan Klinik', 'Set',  0, 2, true,  'Perlu kelulusan · hantar ke lab luar'),
+('Enema Kit',                       'Peralatan Klinik', 'Set',  0, 3, true,  'Perlu kelulusan'),
+('Mesin Ozon',                      'Peralatan Klinik', 'Unit', 0, 1, true,  'Rekod nombor siri setiap unit')
 
 ;
 
@@ -502,13 +506,13 @@ INSERT INTO psy_procedure_kits (name, description, category, items) VALUES
   'Set lengkap untuk satu sesi IV Saline Drip',
   'IV Therapy',
   '[
-    {"item_id": null, "item_name": "IV Line",       "qty": 1, "unit": "unit"},
-    {"item_id": null, "item_name": "Gloves",         "qty": 2, "unit": "pasang"},
-    {"item_id": null, "item_name": "Alcohol Swab",   "qty": 3, "unit": "unit"},
-    {"item_id": null, "item_name": "Cotton Ball",    "qty": 2, "unit": "unit"},
-    {"item_id": null, "item_name": "Branula",        "qty": 1, "unit": "unit"},
-    {"item_id": null, "item_name": "Plaster",        "qty": 2, "unit": "unit"},
-    {"item_id": null, "item_name": "Scotch Tape",    "qty": 1, "unit": "unit"}
+    {"item_id": null, "item_name": "IV Line",       "qty": 1, "unit": "Unit"},
+    {"item_id": null, "item_name": "Gloves",         "qty": 2, "unit": "Pasang"},
+    {"item_id": null, "item_name": "Alcohol Swab",   "qty": 3, "unit": "Unit"},
+    {"item_id": null, "item_name": "Cotton Ball",    "qty": 2, "unit": "Unit"},
+    {"item_id": null, "item_name": "Branula",        "qty": 1, "unit": "Unit"},
+    {"item_id": null, "item_name": "Plaster",        "qty": 2, "unit": "Unit"},
+    {"item_id": null, "item_name": "Scotch Tape",    "qty": 1, "unit": "Unit"}
   ]'::jsonb
 ),
 (
@@ -516,12 +520,12 @@ INSERT INTO psy_procedure_kits (name, description, category, items) VALUES
   'Set lengkap untuk pengambilan darah',
   'Diagnostik',
   '[
-    {"item_id": null, "item_name": "Gloves",         "qty": 1, "unit": "pasang"},
-    {"item_id": null, "item_name": "Alcohol Swab",   "qty": 2, "unit": "unit"},
-    {"item_id": null, "item_name": "Cotton Ball",    "qty": 2, "unit": "unit"},
-    {"item_id": null, "item_name": "Needle/Vacutainer","qty": 1, "unit": "unit"},
-    {"item_id": null, "item_name": "Plaster",        "qty": 1, "unit": "unit"},
-    {"item_id": null, "item_name": "Blood Tube",     "qty": 3, "unit": "tube"}
+    {"item_id": null, "item_name": "Gloves",         "qty": 1, "unit": "Pasang"},
+    {"item_id": null, "item_name": "Alcohol Swab",   "qty": 2, "unit": "Unit"},
+    {"item_id": null, "item_name": "Cotton Ball",    "qty": 2, "unit": "Unit"},
+    {"item_id": null, "item_name": "Needle/Vacutainer","qty": 1, "unit": "Unit"},
+    {"item_id": null, "item_name": "Plaster",        "qty": 1, "unit": "Unit"},
+    {"item_id": null, "item_name": "Blood Tube",     "qty": 3, "unit": "Tiub"}
   ]'::jsonb
 ),
 (
@@ -529,10 +533,10 @@ INSERT INTO psy_procedure_kits (name, description, category, items) VALUES
   'Set untuk pengambilan sampel DNA (buccal swab)',
   'Diagnostik',
   '[
-    {"item_id": null, "item_name": "Gloves",         "qty": 1, "unit": "pasang"},
-    {"item_id": null, "item_name": "DNA Swab",       "qty": 2, "unit": "unit"},
-    {"item_id": null, "item_name": "DNA Collection Tube", "qty": 1, "unit": "unit"},
-    {"item_id": null, "item_name": "Ziplock Bag",    "qty": 1, "unit": "unit"}
+    {"item_id": null, "item_name": "Gloves",         "qty": 1, "unit": "Pasang"},
+    {"item_id": null, "item_name": "DNA Swab",       "qty": 2, "unit": "Unit"},
+    {"item_id": null, "item_name": "DNA Collection Tube", "qty": 1, "unit": "Unit"},
+    {"item_id": null, "item_name": "Ziplock Bag",    "qty": 1, "unit": "Unit"}
   ]'::jsonb
 )
 ON CONFLICT DO NOTHING;

@@ -146,17 +146,21 @@ CREATE TABLE IF NOT EXISTS psy_kob_agreements (
 
 CREATE INDEX IF NOT EXISTS idx_kob_agreements_patient ON psy_kob_agreements(patient_id);
 
--- ──── psy_kob_agreements — Nama/IC tulisan tangan + Waris/Penjamin ────
--- patient_name/patient_ic (teks, auto-resolve dari profil) KEKAL tak berubah —
--- lajur ni cuma imej tulisan-tangan TAMBAHAN, dibenamkan dalam PDF sebagai bukti
--- pesakit tulis sendiri (bukan ganti medan teks sedia ada). Waris/Penjamin
--- (nama+IC+tandatangan) wajib diisi di UI (validasi client-side), tapi nullable
--- di DB supaya rekod lama sedia-ada tak terjejas.
+-- ──── psy_kob_agreements — Nama/IC tulisan tangan (LEGACY) + Waris/Penjamin ────
+-- *_image_url di bawah adalah bukti tulisan-tangan LEGACY — sejak nama/IC ditukar
+-- ke medan TAIP (bukan lukisan tangan), lajur ni TAK DIISI LAGI utk rekod baharu,
+-- kekal hanya utk baca rekod lama. Waris/Penjamin (nama+IC+tandatangan) wajib
+-- diisi di UI (validasi client-side), tapi nullable di DB supaya rekod lama tak terjejas.
 ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS patient_name_image_url TEXT;
 ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS patient_ic_image_url TEXT;
 ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS guardian_name_image_url TEXT;
 ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS guardian_ic_image_url TEXT;
 ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS guardian_signature_url TEXT;
+-- Nama/IC Waris/Penjamin kini medan TAIP (dulu cuma wujud sbg imej tulisan tangan
+-- di atas, tiada lajur teks) — perlukan lajur teks baharu, sama konsep dgn
+-- patient_name/patient_ic sedia ada.
+ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS guardian_name TEXT;
+ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS guardian_ic TEXT;
 
 ALTER TABLE psy_kob_agreements ENABLE ROW LEVEL SECURITY;
 

@@ -75,6 +75,10 @@ CREATE TABLE IF NOT EXISTS psy_packages (
   access_flags JSONB DEFAULT '{}',
   supplies JSONB DEFAULT '[]',
   addons JSONB DEFAULT '[]',
+  -- version pakej: gantikan corak manual "(new)" dalam nama pakej — nombor sahaja,
+  -- version tertinggi bagi Nama Pakej yang sama = version semasa (implicit, tiada
+  -- medan status berasingan).
+  version_number INT NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -92,6 +96,9 @@ DROP POLICY IF EXISTS "Staff manage packages" ON psy_packages;
 CREATE POLICY "Staff manage packages" ON psy_packages FOR ALL
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
   WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+COMMENT ON COLUMN psy_packages.version_number IS
+  'Nombor version pakej (1, 2, 3, ...) — gantikan corak manual "(new)" dalam nama pakej. Version tertinggi bagi Nama Pakej yang sama = version semasa (implicit ikut nombor, tiada medan status berasingan).';
 
 COMMENT ON COLUMN psy_packages.madu_frequency_per_day IS
   'Frekuensi peminuman madu sehari. Examples: 10 (12-minggu), 8 (3-bulan), 4 (3-bulan-sekali). NULL = no madu schedule.';

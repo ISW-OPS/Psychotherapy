@@ -102,20 +102,23 @@ export async function sendWhatsApp(svc: any, opts: {
   const convId = sent?.conversationId || null
   if (convId) {
     const now = new Date().toISOString()
-    await svc.from('psy_wa_messages').insert({
-      ghl_message_id: sent?.messageId || null,
-      ghl_conversation_id: convId,
-      direction: 'outbound',
-      body: opts.message,
-      msg_type: 'whatsapp',
-      attachments: atts,
-      sent_by: opts.sentBy || null,
-      sent_by_name: opts.sentByName,
-    }).catch(() => {})
-    await svc.from('psy_wa_conversations')
-      .update({ last_message: opts.message, last_message_at: now })
-      .eq('ghl_conversation_id', convId)
-      .catch(() => {})
+    try {
+      await svc.from('psy_wa_messages').insert({
+        ghl_message_id: sent?.messageId || null,
+        ghl_conversation_id: convId,
+        direction: 'outbound',
+        body: opts.message,
+        msg_type: 'whatsapp',
+        attachments: atts,
+        sent_by: opts.sentBy || null,
+        sent_by_name: opts.sentByName,
+      })
+    } catch {}
+    try {
+      await svc.from('psy_wa_conversations')
+        .update({ last_message: opts.message, last_message_at: now })
+        .eq('ghl_conversation_id', convId)
+    } catch {}
   }
   return sent?.messageId || null
 }

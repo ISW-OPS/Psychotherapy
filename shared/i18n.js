@@ -203,9 +203,13 @@
   var SKIP_ATTR = 'data-i18n-skip';
   function isSkipped(el) { return !!(el && el.closest && el.closest('[' + SKIP_ATTR + ']')); }
 
+  // Normalize internal whitespace runs (incl. newlines from wrapped HTML source)
+  // to a single space, so dict keys don't need to replicate source indentation.
+  function normKey(s) { return s.replace(/\s+/g, ' ').trim(); }
+
   function translate(s) {
     if (s == null) return null;
-    var key = s.trim();
+    var key = normKey(s);
     if (!key) return null;
     var t = EN[key];
     if (t == null) return null;
@@ -216,7 +220,7 @@
 
   function translateToMs(s) {
     if (s == null) return null;
-    var key = s.trim();
+    var key = normKey(s);
     if (!key) return null;
     var t = MS[key];
     if (t == null) return null;

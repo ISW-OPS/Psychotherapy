@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════
--- SKEMA: KNOWLEDGE BASE (Knowledge Hub — Pusat Rujukan Dalaman Staff)
+-- SKEMA: KNOWLEDGE BASE (Pusat Rujukan Dalaman Staff)
 -- Jadual: psy_kb_categories, psy_kb_resources, psy_kb_versions,
 --         psy_kb_bookmarks, psy_kb_views, psy_kb_note_folders,
 --         psy_kb_notes, psy_kb_trainings, psy_kb_training_progress,

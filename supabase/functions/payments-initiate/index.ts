@@ -183,9 +183,10 @@ Deno.serve(async (req) => {
       webhookUrl,
     })
 
-    // 6. Simpan gateway_ref untuk padan webhook nanti
+    // 6. Simpan gateway_ref untuk padan webhook nanti + checkout_url (staff boleh
+    //    salin semula pautan ni dari Pembayaran kalau pesakit tak sempat bayar)
     await admin.from('psy_payments')
-      .update({ gateway_ref: created.gatewayRef })
+      .update({ gateway_ref: created.gatewayRef, checkout_url: created.checkoutUrl })
       .eq('receipt_ref', receiptRef)
 
     return json({ ok: true, checkoutUrl: created.checkoutUrl, receiptRef, voucherDiscount, promoDiscount })

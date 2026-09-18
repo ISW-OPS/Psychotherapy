@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-09-17T04:01:50.176442Z
+-- Generated: 2026-09-18T14:48:48.012430Z
 -- Jumlah fail: 36
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -1247,6 +1247,10 @@ CREATE TABLE IF NOT EXISTS psy_packages (
   access_flags JSONB DEFAULT '{}',
   supplies JSONB DEFAULT '[]',
   addons JSONB DEFAULT '[]',
+  -- version pakej: gantikan corak manual "(new)" dalam nama pakej — nombor sahaja,
+  -- version tertinggi bagi Nama Pakej yang sama = version semasa (implicit, tiada
+  -- medan status berasingan).
+  version_number INT NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -1264,6 +1268,9 @@ DROP POLICY IF EXISTS "Staff manage packages" ON psy_packages;
 CREATE POLICY "Staff manage packages" ON psy_packages FOR ALL
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
   WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+COMMENT ON COLUMN psy_packages.version_number IS
+  'Nombor version pakej (1, 2, 3, ...) — gantikan corak manual "(new)" dalam nama pakej. Version tertinggi bagi Nama Pakej yang sama = version semasa (implicit ikut nombor, tiada medan status berasingan).';
 
 COMMENT ON COLUMN psy_packages.madu_frequency_per_day IS
   'Frekuensi peminuman madu sehari. Examples: 10 (12-minggu), 8 (3-bulan), 4 (3-bulan-sekali). NULL = no madu schedule.';
@@ -2778,17 +2785,21 @@ CREATE TABLE IF NOT EXISTS psy_kob_agreements (
 
 CREATE INDEX IF NOT EXISTS idx_kob_agreements_patient ON psy_kob_agreements(patient_id);
 
--- ──── psy_kob_agreements — Nama/IC tulisan tangan + Waris/Penjamin ────
--- patient_name/patient_ic (teks, auto-resolve dari profil) KEKAL tak berubah —
--- lajur ni cuma imej tulisan-tangan TAMBAHAN, dibenamkan dalam PDF sebagai bukti
--- pesakit tulis sendiri (bukan ganti medan teks sedia ada). Waris/Penjamin
--- (nama+IC+tandatangan) wajib diisi di UI (validasi client-side), tapi nullable
--- di DB supaya rekod lama sedia-ada tak terjejas.
+-- ──── psy_kob_agreements — Nama/IC tulisan tangan (LEGACY) + Waris/Penjamin ────
+-- *_image_url di bawah adalah bukti tulisan-tangan LEGACY — sejak nama/IC ditukar
+-- ke medan TAIP (bukan lukisan tangan), lajur ni TAK DIISI LAGI utk rekod baharu,
+-- kekal hanya utk baca rekod lama. Waris/Penjamin (nama+IC+tandatangan) wajib
+-- diisi di UI (validasi client-side), tapi nullable di DB supaya rekod lama tak terjejas.
 ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS patient_name_image_url TEXT;
 ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS patient_ic_image_url TEXT;
 ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS guardian_name_image_url TEXT;
 ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS guardian_ic_image_url TEXT;
 ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS guardian_signature_url TEXT;
+-- Nama/IC Waris/Penjamin kini medan TAIP (dulu cuma wujud sbg imej tulisan tangan
+-- di atas, tiada lajur teks) — perlukan lajur teks baharu, sama konsep dgn
+-- patient_name/patient_ic sedia ada.
+ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS guardian_name TEXT;
+ALTER TABLE psy_kob_agreements ADD COLUMN IF NOT EXISTS guardian_ic TEXT;
 
 ALTER TABLE psy_kob_agreements ENABLE ROW LEVEL SECURITY;
 
@@ -3920,7 +3931,9 @@ CREATE TABLE IF NOT EXISTS psy_inventory_items (
   id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name                 TEXT NOT NULL,
   category             TEXT NOT NULL DEFAULT 'Bekalan Coaching',
-  unit                 TEXT NOT NULL DEFAULT 'unit',
+  unit                 TEXT NOT NULL DEFAULT 'Unit'
+                       CHECK (unit IN ('Biji (pcs)','Botol','Kotak','Pek','Paket','Tiub','Tablet',
+                                       'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas')),
   qty_in_stock         NUMERIC(10,2) NOT NULL DEFAULT 0,
   min_qty              NUMERIC(10,2) NOT NULL DEFAULT 5,
   requires_approval    BOOLEAN NOT NULL DEFAULT false,
@@ -4180,7 +4193,9 @@ CREATE TABLE IF NOT EXISTS psy_products (
   promo_until        DATE,
   stock              INT,
   min_stock          INT DEFAULT 5,
-  unit               TEXT DEFAULT 'unit',
+  unit               TEXT DEFAULT 'Unit'
+                     CHECK (unit IN ('Biji (pcs)','Botol','Kotak','Pek','Paket','Tiub','Tablet',
+                                     'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas')),
   track_inventory    BOOLEAN DEFAULT true,
   low_stock_alert    BOOLEAN DEFAULT true,
   inventory_item_id  UUID REFERENCES psy_inventory_items(id) ON DELETE SET NULL,
@@ -4352,55 +4367,55 @@ INSERT INTO psy_inventory_items (name, category, unit, qty_in_stock, min_qty, re
 VALUES
 
 -- ── MADU & PRODUK ─────────────────────────────────────────
-('Lebah Thoharah (LTH)',            'Madu & Produk', 'kg',     0, 5,  false, 'Program NLC / JS / JS+ / EOL'),
-('LTH Plus Green (LTHPG)',          'Madu & Produk', 'kg',     0, 5,  false, 'Program NLC / JS / JS+ / EOL'),
-('Ibu Bumi (IB)',                   'Madu & Produk', 'kg',     0, 5,  false, 'Program OBD / OBP'),
-('Young & Healthy Plus Green (YHPG)','Madu & Produk','kg',     0, 5,  false, 'Program OBD / OBP'),
-('Madu Kelulut',                    'Madu & Produk', 'botol',  0, 3,  false, NULL),
-('Minyak Zaitun Tulen',             'Madu & Produk', 'botol',  0, 3,  false, NULL),
+('Lebah Thoharah (LTH)',            'Madu & Produk', 'Kg',     0, 5,  false, 'Program NLC / JS / JS+ / EOL'),
+('LTH Plus Green (LTHPG)',          'Madu & Produk', 'Kg',     0, 5,  false, 'Program NLC / JS / JS+ / EOL'),
+('Ibu Bumi (IB)',                   'Madu & Produk', 'Kg',     0, 5,  false, 'Program OBD / OBP'),
+('Young & Healthy Plus Green (YHPG)','Madu & Produk','Kg',     0, 5,  false, 'Program OBD / OBP'),
+('Madu Kelulut',                    'Madu & Produk', 'Botol',  0, 3,  false, NULL),
+('Minyak Zaitun Tulen',             'Madu & Produk', 'Botol',  0, 3,  false, NULL),
 
 -- ── STARTER KIT ───────────────────────────────────────────
-('SDS OB',                          'Starter Kit',   'unit',   0, 5,  false, 'Starter kit OBD / OBP'),
-('GHF',                             'Starter Kit',   'unit',   0, 5,  false, 'Starter kit OBD / OBP'),
-('BNP',                             'Starter Kit',   'unit',   0, 5,  false, 'Bekalan pantang NLC / JS'),
-('NSS',                             'Starter Kit',   'unit',   0, 5,  false, 'Bekalan pantang NLC / JS'),
-('Voucher Konsultasi',              'Starter Kit',   'unit',   0, 10, false, 'Diedarkan semasa onboarding'),
+('SDS OB',                          'Starter Kit',   'Unit',   0, 5,  false, 'Starter kit OBD / OBP'),
+('GHF',                             'Starter Kit',   'Unit',   0, 5,  false, 'Starter kit OBD / OBP'),
+('BNP',                             'Starter Kit',   'Unit',   0, 5,  false, 'Bekalan pantang NLC / JS'),
+('NSS',                             'Starter Kit',   'Unit',   0, 5,  false, 'Bekalan pantang NLC / JS'),
+('Voucher Konsultasi',              'Starter Kit',   'Unit',   0, 10, false, 'Diedarkan semasa onboarding'),
 
 -- ── SUPLEMEN & RESEPI ─────────────────────────────────────
-('Resepi Superimun',                'Suplemen & Resepi', 'unit', 0, 5, false, 'Diberi semasa onboarding'),
-('Resepi Superenergi',              'Suplemen & Resepi', 'unit', 0, 5, false, 'Diberi semasa onboarding'),
-('Barley Organik',                  'Suplemen & Resepi', 'kg',   0, 5, false, NULL),
-('Spirulina',                       'Suplemen & Resepi', 'botol',0, 3, false, NULL),
-('Probiotik Advanced',              'Suplemen & Resepi', 'botol',0, 3, false, NULL),
-('Magnesium Glycinate',             'Suplemen & Resepi', 'botol',0, 3, false, NULL),
-('Vitamin D3',                      'Suplemen & Resepi', 'botol',0, 3, false, NULL),
-('Omega-3 Fish Oil',                'Suplemen & Resepi', 'botol',0, 3, false, NULL),
+('Resepi Superimun',                'Suplemen & Resepi', 'Unit', 0, 5, false, 'Diberi semasa onboarding'),
+('Resepi Superenergi',              'Suplemen & Resepi', 'Unit', 0, 5, false, 'Diberi semasa onboarding'),
+('Barley Organik',                  'Suplemen & Resepi', 'Kg',   0, 5, false, NULL),
+('Spirulina',                       'Suplemen & Resepi', 'Botol',0, 3, false, NULL),
+('Probiotik Advanced',              'Suplemen & Resepi', 'Botol',0, 3, false, NULL),
+('Magnesium Glycinate',             'Suplemen & Resepi', 'Botol',0, 3, false, NULL),
+('Vitamin D3',                      'Suplemen & Resepi', 'Botol',0, 3, false, NULL),
+('Omega-3 Fish Oil',                'Suplemen & Resepi', 'Botol',0, 3, false, NULL),
 
 -- ── BUKU & BAHAN CETAK ────────────────────────────────────
-('Buku P101',                       'Buku & Bahan Cetak', 'naskhah', 0, 10, false, '7 buku per set starter kit'),
-('List Pantang',                    'Buku & Bahan Cetak', 'naskhah', 0, 10, false, 'Diedarkan semasa onboarding'),
-('Peta OB',                         'Buku & Bahan Cetak', 'naskhah', 0, 10, false, 'Diedarkan semasa onboarding OBD / OBP'),
-('Workbook Refleksi Harian',        'Buku & Bahan Cetak', 'naskhah', 0, 10, false, NULL),
-('Jadual Terapi Mingguan',          'Buku & Bahan Cetak', 'naskhah', 0, 10, false, NULL),
-('Mood Tracker',                    'Buku & Bahan Cetak', 'naskhah', 0, 10, false, NULL),
-('Buku Gaya Hidup Fitrah',          'Buku & Bahan Cetak', 'naskhah', 0,  5, false, NULL),
-('Kitab Doa Syifa',                 'Buku & Bahan Cetak', 'naskhah', 0,  5, false, NULL),
+('Buku P101',                       'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, '7 buku per set starter kit'),
+('List Pantang',                    'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, 'Diedarkan semasa onboarding'),
+('Peta OB',                         'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, 'Diedarkan semasa onboarding OBD / OBP'),
+('Workbook Refleksi Harian',        'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, NULL),
+('Jadual Terapi Mingguan',          'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, NULL),
+('Mood Tracker',                    'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, NULL),
+('Buku Gaya Hidup Fitrah',          'Buku & Bahan Cetak', 'Naskhah', 0,  5, false, NULL),
+('Kitab Doa Syifa',                 'Buku & Bahan Cetak', 'Naskhah', 0,  5, false, NULL),
 
 -- ── BROSUR & MARKETING ────────────────────────────────────
-('Brochure Madu',                   'Brosur & Marketing', 'unit', 0, 20, false, NULL),
-('Brochure ISW',                    'Brosur & Marketing', 'unit', 0, 20, false, NULL),
-('Brochure OB',                     'Brosur & Marketing', 'unit', 0, 20, false, NULL),
+('Brochure Madu',                   'Brosur & Marketing', 'Unit', 0, 20, false, NULL),
+('Brochure ISW',                    'Brosur & Marketing', 'Unit', 0, 20, false, NULL),
+('Brochure OB',                     'Brosur & Marketing', 'Unit', 0, 20, false, NULL),
 
 -- ── BEKALAN COACHING ──────────────────────────────────────
-('Air Afiyah',                      'Bekalan Coaching', 'botol', 0, 10, false, '1 botol = 1.5L'),
-('Air Za''afaran',                  'Bekalan Coaching', 'botol', 0,  5, false, 'Untuk sesi Perubatan Rohani'),
-('Herba Kolon',                     'Bekalan Coaching', 'set',   0,  3, false, '1 set = 1 kursus rawatan'),
-('Kurma Ajwa',                      'Bekalan Coaching', 'biji',  0, 50, false, '49 biji per pesakit 777 VIP'),
+('Air Afiyah',                      'Bekalan Coaching', 'Botol', 0, 10, false, '1 botol = 1.5L'),
+('Air Za''afaran',                  'Bekalan Coaching', 'Botol', 0,  5, false, 'Untuk sesi Perubatan Rohani'),
+('Herba Kolon',                     'Bekalan Coaching', 'Set',   0,  3, false, '1 set = 1 kursus rawatan'),
+('Kurma Ajwa',                      'Bekalan Coaching', 'Biji (pcs)',  0, 50, false, '49 biji per pesakit 777 VIP'),
 
 -- ── PERALATAN KLINIK ──────────────────────────────────────
-('DNA Test Kit',                    'Peralatan Klinik', 'set',  0, 2, true,  'Perlu kelulusan · hantar ke lab luar'),
-('Enema Kit',                       'Peralatan Klinik', 'set',  0, 3, true,  'Perlu kelulusan'),
-('Mesin Ozon',                      'Peralatan Klinik', 'unit', 0, 1, true,  'Rekod nombor siri setiap unit')
+('DNA Test Kit',                    'Peralatan Klinik', 'Set',  0, 2, true,  'Perlu kelulusan · hantar ke lab luar'),
+('Enema Kit',                       'Peralatan Klinik', 'Set',  0, 3, true,  'Perlu kelulusan'),
+('Mesin Ozon',                      'Peralatan Klinik', 'Unit', 0, 1, true,  'Rekod nombor siri setiap unit')
 
 ;
 
@@ -4411,13 +4426,13 @@ INSERT INTO psy_procedure_kits (name, description, category, items) VALUES
   'Set lengkap untuk satu sesi IV Saline Drip',
   'IV Therapy',
   '[
-    {"item_id": null, "item_name": "IV Line",       "qty": 1, "unit": "unit"},
-    {"item_id": null, "item_name": "Gloves",         "qty": 2, "unit": "pasang"},
-    {"item_id": null, "item_name": "Alcohol Swab",   "qty": 3, "unit": "unit"},
-    {"item_id": null, "item_name": "Cotton Ball",    "qty": 2, "unit": "unit"},
-    {"item_id": null, "item_name": "Branula",        "qty": 1, "unit": "unit"},
-    {"item_id": null, "item_name": "Plaster",        "qty": 2, "unit": "unit"},
-    {"item_id": null, "item_name": "Scotch Tape",    "qty": 1, "unit": "unit"}
+    {"item_id": null, "item_name": "IV Line",       "qty": 1, "unit": "Unit"},
+    {"item_id": null, "item_name": "Gloves",         "qty": 2, "unit": "Pasang"},
+    {"item_id": null, "item_name": "Alcohol Swab",   "qty": 3, "unit": "Unit"},
+    {"item_id": null, "item_name": "Cotton Ball",    "qty": 2, "unit": "Unit"},
+    {"item_id": null, "item_name": "Branula",        "qty": 1, "unit": "Unit"},
+    {"item_id": null, "item_name": "Plaster",        "qty": 2, "unit": "Unit"},
+    {"item_id": null, "item_name": "Scotch Tape",    "qty": 1, "unit": "Unit"}
   ]'::jsonb
 ),
 (
@@ -4425,12 +4440,12 @@ INSERT INTO psy_procedure_kits (name, description, category, items) VALUES
   'Set lengkap untuk pengambilan darah',
   'Diagnostik',
   '[
-    {"item_id": null, "item_name": "Gloves",         "qty": 1, "unit": "pasang"},
-    {"item_id": null, "item_name": "Alcohol Swab",   "qty": 2, "unit": "unit"},
-    {"item_id": null, "item_name": "Cotton Ball",    "qty": 2, "unit": "unit"},
-    {"item_id": null, "item_name": "Needle/Vacutainer","qty": 1, "unit": "unit"},
-    {"item_id": null, "item_name": "Plaster",        "qty": 1, "unit": "unit"},
-    {"item_id": null, "item_name": "Blood Tube",     "qty": 3, "unit": "tube"}
+    {"item_id": null, "item_name": "Gloves",         "qty": 1, "unit": "Pasang"},
+    {"item_id": null, "item_name": "Alcohol Swab",   "qty": 2, "unit": "Unit"},
+    {"item_id": null, "item_name": "Cotton Ball",    "qty": 2, "unit": "Unit"},
+    {"item_id": null, "item_name": "Needle/Vacutainer","qty": 1, "unit": "Unit"},
+    {"item_id": null, "item_name": "Plaster",        "qty": 1, "unit": "Unit"},
+    {"item_id": null, "item_name": "Blood Tube",     "qty": 3, "unit": "Tiub"}
   ]'::jsonb
 ),
 (
@@ -4438,10 +4453,10 @@ INSERT INTO psy_procedure_kits (name, description, category, items) VALUES
   'Set untuk pengambilan sampel DNA (buccal swab)',
   'Diagnostik',
   '[
-    {"item_id": null, "item_name": "Gloves",         "qty": 1, "unit": "pasang"},
-    {"item_id": null, "item_name": "DNA Swab",       "qty": 2, "unit": "unit"},
-    {"item_id": null, "item_name": "DNA Collection Tube", "qty": 1, "unit": "unit"},
-    {"item_id": null, "item_name": "Ziplock Bag",    "qty": 1, "unit": "unit"}
+    {"item_id": null, "item_name": "Gloves",         "qty": 1, "unit": "Pasang"},
+    {"item_id": null, "item_name": "DNA Swab",       "qty": 2, "unit": "Unit"},
+    {"item_id": null, "item_name": "DNA Collection Tube", "qty": 1, "unit": "Unit"},
+    {"item_id": null, "item_name": "Ziplock Bag",    "qty": 1, "unit": "Unit"}
   ]'::jsonb
 )
 ON CONFLICT DO NOTHING;
@@ -6324,7 +6339,7 @@ CREATE POLICY "Staff read all weekly feedback" ON psy_weekly_feedback FOR SELECT
 -- ════════════════════════════════════════════════════════════════
 
 -- ═══════════════════════════════════════════════════════════════════
--- SKEMA: KNOWLEDGE BASE (Knowledge Hub — Pusat Rujukan Dalaman Staff)
+-- SKEMA: KNOWLEDGE BASE (Pusat Rujukan Dalaman Staff)
 -- Jadual: psy_kb_categories, psy_kb_resources, psy_kb_versions,
 --         psy_kb_bookmarks, psy_kb_views, psy_kb_note_folders,
 --         psy_kb_notes, psy_kb_trainings, psy_kb_training_progress,

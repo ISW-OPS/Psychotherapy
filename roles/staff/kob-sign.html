@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Tandatangan Perjanjian</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">✍️</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-5">
+
+        <div class="flex items-center justify-between gap-3">
+          <button onclick="history.back()" class="text-xs text-navy hover:underline">← Kembali ke KOB Detail</button>
+        </div>
+
+        <div class="pb-4 border-b border-ink/10">
+          <div class="flex items-center gap-2">
+            <span class="text-2xl">✍️</span>
+            <h1 class="text-xl font-bold text-ink">Tandatangan Perjanjian</h1>
+          </div>
+          <p id="sign-patient-sub" class="text-sm text-ink/50 mt-1">—</p>
+        </div>
+
+        <div id="sign-already" class="hidden bg-green-light/60 border border-green/25 rounded-xl p-4 text-sm text-green-dark">
+          Agreement untuk pesakit ini sudah ditandatangan. Mengarah semula ke KOB Detail...
+        </div>
+
+        <div id="sign-content" class="hidden space-y-4">
+          <p class="text-xs text-ink/50">Skrol baca keseluruhan dokumen. Nama &amp; No. IC ditaip <strong>terus dalam dokumen</strong> di bahagian "Pengesahan Tandatangan" di bawah, tekan kotak bergaris untuk tandatangan.</p>
+          <div class="rounded-xl overflow-hidden border border-ink/10 shadow-sm">
+            <!-- Toolbar PDF — zoom + navigasi m/s, macam pembaca PDF sebenar (Acrobat) -->
+            <div class="bg-[#323639] text-white px-2 sm:px-4 py-2 flex items-center justify-between gap-2 text-xs flex-wrap">
+              <div class="flex items-center gap-1 shrink-0">
+                <button type="button" onclick="pdfZoomOut()" class="w-7 h-7 shrink-0 rounded hover:bg-white/10 flex items-center justify-center text-base leading-none">−</button>
+                <span id="pdf-zoom-label" class="w-10 sm:w-12 text-center tabular-nums">100%</span>
+                <button type="button" onclick="pdfZoomIn()" class="w-7 h-7 shrink-0 rounded hover:bg-white/10 flex items-center justify-center text-base leading-none">+</button>
+              </div>
+              <div class="flex items-center gap-1 shrink-0">
+                <button type="button" onclick="pdfPrevPage()" class="w-7 h-7 shrink-0 rounded hover:bg-white/10 flex items-center justify-center">‹</button>
+                <span id="pdf-page-label" class="tabular-nums whitespace-nowrap">M/S 1 / 1</span>
+                <button type="button" onclick="pdfNextPage()" class="w-7 h-7 shrink-0 rounded hover:bg-white/10 flex items-center justify-center">›</button>
+              </div>
+            </div>
+            <div id="sign-pdf-pages" onscroll="onPdfScroll()" class="space-y-4 h-[70vh] sm:h-[85vh] overflow-auto p-2 sm:p-6" style="background:#525659">
+              <p class="text-sm text-white/70 italic">Menjana dokumen...</p>
+            </div>
+          </div>
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 space-y-3">
+            <label class="flex items-start gap-2.5 cursor-pointer">
+              <input type="checkbox" id="agree-chk" class="mt-0.5 accent-green-dark w-4 h-4 shrink-0">
+              <span class="text-[11px] text-ink/60">Saya telah baca, faham, dan bersetuju dengan semua syarat perjanjian
+                ini. Tandatangan ini akan dijadikan rekod rasmi dan sah dari segi undang-undang.</span>
+            </label>
+            <p id="sign-error" class="text-sm text-terracotta hidden"></p>
+            <div class="flex justify-end">
+              <button onclick="submitSign()" id="submit-sign-btn" data-rbac="kob.edit"
+                class="px-5 py-2.5 rounded-lg text-sm font-bold text-white bg-green-dark hover:bg-green transition">
+                Terima &amp; Tandatangan
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- Popup "Draw your signature" — dikongsi utk pesakit & waris/penjamin, kotak
+     tempat tandatangan dalam dokumen cuma paparkan hasil (tap utk buka ni). -->
+<div id="sig-modal" class="hidden fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl w-full max-w-md p-5 space-y-3">
+    <h3 class="text-lg font-bold text-ink">Lukis tandatangan anda</h3>
+    <div class="border border-ink/15 rounded-lg bg-cream/30 relative">
+      <canvas id="sig-modal-canvas" width="600" height="220" class="w-full block touch-none cursor-crosshair"></canvas>
+      <div id="sig-modal-hint" class="absolute inset-0 flex items-center justify-center text-ink/30 text-sm pointer-events-none select-none">Sila tandatangan di sini</div>
+    </div>
+    <div class="flex justify-end gap-2 pt-1">
+      <button type="button" onclick="closeSigModal()" class="px-4 py-2 rounded-lg text-sm font-semibold text-ink/60 hover:bg-ink/5">Batal</button>
+      <button type="button" onclick="clearSigModal()" class="px-4 py-2 rounded-lg text-sm font-semibold text-terracotta hover:bg-terracotta/10">Padam</button>
+      <button type="button" onclick="applySigModal()" class="px-4 py-2 rounded-lg text-sm font-bold text-white bg-green-dark hover:bg-green">✓ Guna</button>
+    </div>
+  </div>
+</div>
+
+<!-- Popup isi Nama/No. IC — kotak dalam dokumen cuma paparkan hasil (tap utk buka ni),
+     sama gaya interaksi dgn popup tandatangan (bukan taip terus atas dokumen). -->
+<div id="field-modal" class="hidden fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3">
+    <h3 id="field-modal-title" class="text-lg font-bold text-ink">Isi maklumat</h3>
+    <input id="field-modal-input" type="text" placeholder="Taip di sini"
+      class="w-full px-3 py-2.5 border border-ink/15 rounded-lg text-base bg-white focus:outline-none focus:ring-2 focus:ring-navy/20">
+    <div class="flex justify-end gap-2 pt-1">
+      <button type="button" onclick="closeFieldModal()" class="px-4 py-2 rounded-lg text-sm font-semibold text-ink/60 hover:bg-ink/5">Batal</button>
+      <button type="button" onclick="applyFieldModal()" class="px-4 py-2 rounded-lg text-sm font-bold text-white bg-green-dark hover:bg-green">✓ Guna</button>
+    </div>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="../../shared/utils.js"></script>
+<script src="../../shared/defaultAgreement.js"></script>
+<script src="_shared.js"></script>
+<script>
+  if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+
+  let kobId = null;
+  let kob = null;
+  let patient = null;
+  let agreementData = {};
+  // sigStore.patientSign/guardianSign = trimmed PNG dataURL lepas "Guna" diklik.
+  // sigStore.pageSigns = { [pageIndex]: dataURL } — tandatangan/"initial" pesakit
+  // per-m/s kandungan (wajib tiap m/s, paksa dia betul-betul skrol & tap satu-satu).
+  let sigStore = { pageSigns: {} };
+  let sigModalPad = null;
+  let sigModalTarget = null;
+  let sigModalOnApply = null;   // (dataUrl) => void — lukis terus ke kanvas overlay PDF lepas Apply
+  let lastSlots = null;         // slots terkini dari generateSignedPdf() — dipakai submitSign() sahkan semua m/s dah ditandatangan
+
+  function fmtRM(amount) {
+    return 'RM ' + Number(amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function slugifyFilename(s) {
+    return String(s || '')
+      .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'pesakit';
+  }
+
+  function buildAgreementFilename(pkgName, patName) {
+    return `Agreement_${slugifyFilename(pkgName)}_${slugifyFilename(patName)}.pdf`;
+  }
+
+  async function loadAgreementData() {
+    const def = window.DEFAULT_AGREEMENT || { title: 'Kontrak Pelaburan Kesihatan', version: '', clauses: [] };
+    const out = { title: def.title, version: def.version, clauses: def.clauses, pkg: null };
+    if (kob.recommended_package_id) {
+      const { data } = await window.db.from('psy_packages')
+        .select('name, price, agreement_title, agreement_version, agreement_clauses')
+        .eq('package_id', kob.recommended_package_id).limit(1);
+      const pkg = data?.[0];
+      if (pkg) {
+        out.pkg = pkg;
+        out.title = pkg.agreement_title || def.title;
+        out.version = pkg.agreement_version || def.version;
+        if (Array.isArray(pkg.agreement_clauses) && pkg.agreement_clauses.length) {
+          out.clauses = pkg.agreement_clauses;
+        }
+      }
+    }
+    return out;
+  }
+
+  // Sama logik dgn kob-detail.html — jadual sebenar yg disimpan (checkpoints
+  // ansuran, atau bayaran penuh), dibenamkan dalam PDF Lampiran "Jadual Bayaran & Pelaburan".
+  async function loadPaymentScheduleForAgreement(kobRow) {
+    if (kobRow.package_payment_status === 'declined' || kobRow.package_payment_status === 'skipped') {
+      return { rows: [], total: 0, modeLabel: '' };
+    }
+    if (kobRow.package_payment_mode === 'installment') {
+      const { data: cps } = await window.db.from('psy_kob_installment_checkpoints')
+        .select('seq, month_offset, due_date, target_cumulative')
+        .eq('kob_session_id', kobRow.id).order('seq', { ascending: true });
+      if (cps && cps.length) {
+        let freqLabel = 'Bulan';
+        if (cps.length >= 3) {
+          const diffDays = Math.round((new Date(cps[2].due_date) - new Date(cps[1].due_date)) / 86400000);
+          if (diffDays > 0 && diffDays <= 10) freqLabel = 'Minggu';
+        }
+        let prevCum = 0;
+        const rows = cps.map((r, i) => {
+          const amount = Number(r.target_cumulative) - prevCum;
+          prevCum = Number(r.target_cumulative);
+          return {
+            no: i + 1,
+            label: i === 0 ? 'Deposit (Bayaran Pertama)' : `${freqLabel} ${r.month_offset}${i === cps.length - 1 ? ' (Terakhir)' : ''}`,
+            dueDate: r.due_date, amount,
+          };
+        });
+        return { rows, total: prevCum, modeLabel: 'Ansuran (Pelan Pembayaran Berperingkat)' };
+      }
+    }
+    const amt = Number(kobRow.recommended_package_price || 0);
+    if (!(amt > 0)) return { rows: [], total: 0, modeLabel: '' };
+    return {
+      rows: [{ no: 1, label: 'Bayaran Penuh', dueDate: (kobRow.package_paid_at || new Date().toISOString()).slice(0, 10), amount: amt }],
+      total: amt, modeLabel: 'Bayaran Penuh',
+    };
+  }
+
+  // ── Popup "Draw your signature" ──────────────────────────
+  function makeSigPad(canvasId) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return null;
+    const ctx = canvas.getContext('2d');
+    const pad = { canvas, ctx, hasDrawn: false };
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = '#0f2942';
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    const getPos = e => {
+      const r = canvas.getBoundingClientRect();
+      const src = e.touches ? e.touches[0] : e;
+      return { x: (src.clientX - r.left) * (canvas.width / r.width), y: (src.clientY - r.top) * (canvas.height / r.height) };
+    };
+    let drawing = false;
+    canvas.onmousedown = e => { drawing = true; const p = getPos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); };
+    canvas.onmousemove = e => { if (!drawing) return; const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); pad.hasDrawn = true; };
+    canvas.onmouseup = canvas.onmouseleave = () => { drawing = false; };
+    canvas.ontouchstart = e => { e.preventDefault(); drawing = true; const p = getPos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); };
+    canvas.ontouchmove = e => { e.preventDefault(); if (!drawing) return; const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); pad.hasDrawn = true; };
+    canvas.ontouchend = () => { drawing = false; };
+
+    pad.clear = () => { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); pad.hasDrawn = false; };
+    return pad;
+  }
+
+  function trimSignatureCanvas(canvas) {
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
+    const data = ctx.getImageData(0, 0, w, h).data;
+    let minX = w, minY = h, maxX = -1, maxY = -1;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        if (data[i] < 250 || data[i + 1] < 250 || data[i + 2] < 250) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < 0) return canvas;
+    const pad = 12;
+    minX = Math.max(0, minX - pad); minY = Math.max(0, minY - pad);
+    maxX = Math.min(w - 1, maxX + pad); maxY = Math.min(h - 1, maxY + pad);
+    const cw = maxX - minX + 1, ch = maxY - minY + 1;
+    const out = document.createElement('canvas');
+    out.width = cw; out.height = ch;
+    const octx = out.getContext('2d');
+    octx.fillStyle = '#fff';
+    octx.fillRect(0, 0, cw, ch);
+    octx.drawImage(canvas, minX, minY, cw, ch, 0, 0, cw, ch);
+    return out;
+  }
+
+  // target: 'patientSign'|'guardianSign'. onApply (optional): (dataUrl) => void,
+  // dipanggil lepas "Guna" utk lukis terus ke kotak overlay PDF pada kedudukan sebenar.
+  function openSigModal(target, onApply) {
+    sigModalTarget = target;
+    sigModalOnApply = onApply || null;
+    document.getElementById('sig-modal').classList.remove('hidden');
+    sigModalPad = makeSigPad('sig-modal-canvas');
+    const hint = document.getElementById('sig-modal-hint');
+    if (hint) {
+      hint.style.display = '';
+      const hideHint = () => { hint.style.display = 'none'; };
+      sigModalPad.canvas.addEventListener('mousedown', hideHint, { once: true });
+      sigModalPad.canvas.addEventListener('touchstart', hideHint, { once: true });
+    }
+  }
+
+  function closeSigModal() {
+    document.getElementById('sig-modal').classList.add('hidden');
+    sigModalPad = null; sigModalTarget = null; sigModalOnApply = null;
+  }
+
+  function clearSigModal() {
+    sigModalPad?.clear();
+    const hint = document.getElementById('sig-modal-hint');
+    if (hint) hint.style.display = '';
+  }
+
+  function applySigModal() {
+    if (!sigModalPad?.hasDrawn) { banner('Sila lukis tandatangan dahulu', 'error'); return; }
+    const dataUrl = trimSignatureCanvas(sigModalPad.canvas).toDataURL('image/png');
+    // target 'page:N' = tandatangan per-m/s (simpan dlm sigStore.pageSigns[N]),
+    // selain tu ('patientSign'/'guardianSign') simpan terus di sigStore[target].
+    if (sigModalTarget.startsWith('page:')) sigStore.pageSigns[sigModalTarget.slice(5)] = dataUrl;
+    else sigStore[sigModalTarget] = dataUrl;
+    if (typeof sigModalOnApply === 'function') sigModalOnApply(dataUrl);
+    closeSigModal();
+  }
+
+  // ── Popup isi Nama/No. IC — sama gaya interaksi dgn popup tandatangan (tap kotak
+  // dalam dokumen → popup → taip → Guna), bukan taip terus atas overlay dokumen
+  // (lagi senang utk mobile — keyboard native, kotak besar, tak perlu tekan tepat). ──
+  let fieldModalKey = null;
+  let fieldModalOnApply = null;
+
+  function openFieldModal(key, currentValue, label, placeholder, onApply) {
+    fieldModalKey = key;
+    fieldModalOnApply = onApply || null;
+    document.getElementById('field-modal-title').textContent = label;
+    const inp = document.getElementById('field-modal-input');
+    inp.value = currentValue || '';
+    inp.placeholder = placeholder || 'Taip di sini';
+    document.getElementById('field-modal').classList.remove('hidden');
+    setTimeout(() => inp.focus(), 50);
+  }
+
+  function closeFieldModal() {
+    document.getElementById('field-modal').classList.add('hidden');
+    fieldModalKey = null; fieldModalOnApply = null;
+  }
+
+  function applyFieldModal() {
+    const value = document.getElementById('field-modal-input').value.trim();
+    if (!value) { banner('Sila isi maklumat dahulu', 'error'); return; }
+    if (typeof fieldModalOnApply === 'function') fieldModalOnApply(value);
+    closeFieldModal();
+  }
+
+  // Nama/IC pesakit & waris/penjamin ditaip TERUS dalam dokumen (kotak overlay di
+  // atas m/s "Pengesahan Tandatangan"), bukan borang berasingan sebelum dokumen
+  // dipaparkan. signFields = nilai semasa; sched dicache (tak berubah ikut nama/IC).
+  let signFields = { patName: '', patIc: '', guardianName: '', guardianIc: '' };
+  let cachedSched = null;
+  const PDF_PAGE_W_PT = 595;   // sama dgn PAGE_W dlm generateSignedPdf() — jangan tukar berasingan
+  let pdfZoomBase = 1.4;       // scale bersamaan "100%" dlm label toolbar — auto muat lebar skrin sekali (lihat computeFitScale)
+  let pdfZoomScale = 1.4;
+  let pdfZoomInited = false;
+  let pdfPageWraps = [];
+  let pdfCurrentPage = 1;
+
+  // Kira scale supaya lebar m/s PDF muat penuh lebar kawasan paparan semasa — elak
+  // dokumen melimpah keluar skrin kecik (mobile) yg buat seluruh halaman skrol mengufuk.
+  function computeFitScale() {
+    const container = document.getElementById('sign-pdf-pages');
+    if (!container) return 1.4;
+    const paddingPx = window.innerWidth < 640 ? 16 : 48;
+    const availW = Math.max(200, container.clientWidth - paddingPx);
+    return availW / PDF_PAGE_W_PT;
+  }
+
+  function updatePdfZoomLabel() {
+    const label = document.getElementById('pdf-zoom-label');
+    if (label) label.textContent = Math.round((pdfZoomScale / pdfZoomBase) * 100) + '%';
+  }
+
+  function pdfZoomIn() { pdfZoomScale = Math.min(pdfZoomBase * 2, pdfZoomScale + pdfZoomBase * 0.2); updatePdfZoomLabel(); renderReviewPdf(); }
+  function pdfZoomOut() { pdfZoomScale = Math.max(pdfZoomBase * 0.4, pdfZoomScale - pdfZoomBase * 0.2); updatePdfZoomLabel(); renderReviewPdf(); }
+
+  function scrollToPdfPage(n) {
+    const idx = Math.max(0, Math.min(pdfPageWraps.length - 1, n - 1));
+    pdfPageWraps[idx]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  function pdfPrevPage() { scrollToPdfPage(pdfCurrentPage - 1); }
+  function pdfNextPage() { scrollToPdfPage(pdfCurrentPage + 1); }
+
+  // Kemaskini label "M/S X / Y" ikut skrol semasa — m/s dikira sbg "semasa" bila
+  // bahagian atasnya dah lepas ~60px dari atas kawasan pandang (bukan tunggu genap penuh).
+  function onPdfScroll() {
+    const container = document.getElementById('sign-pdf-pages');
+    if (!container || !pdfPageWraps.length) return;
+    const containerTop = container.getBoundingClientRect().top;
+    let current = 1;
+    pdfPageWraps.forEach((el, i) => {
+      if (el.getBoundingClientRect().top - containerTop <= 60) current = i + 1;
+    });
+    pdfCurrentPage = current;
+    const label = document.getElementById('pdf-page-label');
+    if (label) label.textContent = `M/S ${current} / ${pdfPageWraps.length}`;
+  }
+
+  // Jana PDF (guna signFields + sigStore semasa) + render tiap m/s guna pdf.js ke
+  // dalam #sign-pdf-pages, tampal kotak klik "Ketik utk tandatangan" pada kedudukan
+  // sebenar tandatangan, DAN medan input Nama/No.IC terus di atas kedudukan sebenar
+  // dalam dokumen (m/s "Pengesahan Tandatangan") — dipanggil semula setiap kali
+  // nama/IC diedit (blur) atau tandatangan baru diguna, supaya dokumen sentiasa
+  // konsisten (satu sumber kebenaran: signFields + sigStore).
+  async function renderReviewPdf() {
+    const container = document.getElementById('sign-pdf-pages');
+    if (!pdfZoomInited) { pdfZoomBase = pdfZoomScale = computeFitScale(); pdfZoomInited = true; }
+    const prevScroll = container.scrollTop;
+    const pkgName = agreementData.pkg?.name || kob.recommended_package_name || '—';
+    const pkgPrice = agreementData.pkg?.price != null ? `RM ${Number(agreementData.pkg.price).toFixed(2)}` : '—';
+    if (!cachedSched) cachedSched = await loadPaymentScheduleForAgreement(kob);
+    const { bytes, slots } = await generateSignedPdf({
+      title: agreementData.title, version: agreementData.version, clauses: agreementData.clauses,
+      patientName: signFields.patName, patientIc: signFields.patIc,
+      guardianName: signFields.guardianName, guardianIc: signFields.guardianIc,
+      packageName: pkgName, price: pkgPrice,
+      signatureDataUrl: sigStore.patientSign || null, guardianSignatureImgDataUrl: sigStore.guardianSign || null,
+      pageSignatureDataUrls: sigStore.pageSigns,
+      paymentRows: cachedSched.rows, paymentTotal: cachedSched.total, paymentModeLabel: cachedSched.modeLabel,
+      interactive: true,
+    });
+    lastSlots = slots;
+    const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+    container.innerHTML = '';
+    pdfPageWraps = [];
+    const scale = pdfZoomScale;
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const pdfPage = await pdf.getPage(i);
+      const viewport = pdfPage.getViewport({ scale });
+      const wrap = document.createElement('div');
+      wrap.className = 'relative bg-white shadow-sm mx-auto';
+      wrap.style.width = viewport.width + 'px';
+      wrap.style.height = viewport.height + 'px';
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width; canvas.height = viewport.height;
+      wrap.appendChild(canvas);
+      container.appendChild(wrap);
+      pdfPageWraps.push(wrap);
+      const ctx = canvas.getContext('2d');
+      await pdfPage.render({ canvasContext: ctx, viewport }).promise;
+
+      const pageIndex = i - 1;
+      const toPx = slot => ({
+        left: slot.x * scale,
+        top: viewport.height - (slot.y + slot.height) * scale,
+        width: slot.width * scale,
+        height: slot.height * scale,
+      });
+
+      // Medan Nama/No. IC — kotak tap-utk-isi terbenam kedudukan sebenar dlm dokumen,
+      // sama gaya interaksi dgn kotak tandatangan (popup, bukan taip terus atas
+      // overlay — lagi senang di mobile: papan kekic native + kotak popup lebih besar).
+      [
+        ['patientNameField', 'patName', 'Nama Pesakit', 'Nama penuh'],
+        ['patientIcField', 'patIc', 'No. IC Pesakit', 'cth: 900101-01-1234'],
+        ['guardianNameField', 'guardianName', 'Nama Waris/Penjamin', 'Nama penuh'],
+        ['guardianIcField', 'guardianIc', 'No. IC Waris/Penjamin', 'cth: 900101-01-1234'],
+      ].forEach(([slotKey, fieldKey, label, placeholder]) => {
+        const slot = slots[slotKey];
+        if (!slot || slot.pageIndex !== pageIndex) return;
+        const px = toPx(slot);
+        const filled = !!signFields[fieldKey];
+        const box = document.createElement('div');
+        box.className = filled
+          ? 'absolute flex items-center px-1 rounded cursor-pointer hover:bg-navy/10 text-navy font-medium truncate'
+          : 'absolute flex items-center px-1 rounded border border-dashed border-navy/50 bg-navy/10 hover:bg-navy/20 cursor-pointer text-navy/70 font-semibold truncate';
+        box.style.left = px.left + 'px'; box.style.top = px.top + 'px';
+        box.style.width = Math.max(px.width, 90) + 'px'; box.style.height = px.height + 'px';
+        box.style.fontSize = (10 * scale * 0.9) + 'px';
+        box.textContent = filled ? signFields[fieldKey] : '✍️ Ketik untuk isi';
+        box.onclick = () => openFieldModal(fieldKey, signFields[fieldKey], label, placeholder, (value) => {
+          signFields[fieldKey] = value;
+          renderReviewPdf();
+        });
+        wrap.appendChild(box);
+      });
+
+      // Kotak Tandatangan — kekal kotak klik-utk-lukis, tapi kalau dah ada tandatangan
+      // (sigStore), PDF sendiri dah lukis imej sebenar (nampak di kanvas) — overlay
+      // kekal telus supaya boleh tekan semula utk sign ulang, tanpa sorok imej.
+      ['patientSign', 'guardianSign'].forEach(key => {
+        const slot = slots[key];
+        if (!slot || slot.pageIndex !== pageIndex) return;
+        const px = toPx(slot);
+        const signed = !!sigStore[key];
+        const box = document.createElement('div');
+        box.className = signed
+          ? 'absolute rounded-md cursor-pointer hover:bg-navy/10'
+          : 'absolute border-2 border-dashed border-navy/50 bg-navy/10 hover:bg-navy/20 rounded-md flex items-center justify-center cursor-pointer text-[11px] text-navy font-bold text-center px-1 leading-tight';
+        box.style.left = px.left + 'px'; box.style.top = px.top + 'px';
+        box.style.width = px.width + 'px'; box.style.height = px.height + 'px';
+        if (!signed) box.textContent = '✍️ Ketik untuk tandatangan';
+        else box.title = 'Ketik untuk tandatangan semula';
+        box.onclick = () => openSigModal(key, () => renderReviewPdf());
+        wrap.appendChild(box);
+      });
+
+      // Tandatangan Pesakit per-m/s — kotak kecil di setiap m/s kandungan (bukan
+      // m/s Jadual/Pengesahan sahaja) — wajib ditandatangan SATU-SATU, paksa pesakit
+      // betul-betul skrol & baca tiap m/s (bukan terus lompat ke tandatangan akhir).
+      const pageSlot = (slots.pageSigns || []).find(s => s.pageIndex === pageIndex);
+      if (pageSlot) {
+        const px = toPx(pageSlot);
+        const pageKey = String(pageSlot.pageIndex);
+        const signed = !!sigStore.pageSigns[pageKey];
+        const box = document.createElement('div');
+        box.className = signed
+          ? 'absolute rounded-md cursor-pointer hover:bg-navy/10'
+          : 'absolute border-2 border-dashed border-navy/50 bg-navy/10 hover:bg-navy/20 rounded-md flex items-center justify-center cursor-pointer text-[10px] text-navy font-bold text-center px-1 leading-tight';
+        box.style.left = px.left + 'px'; box.style.top = px.top + 'px';
+        box.style.width = px.width + 'px'; box.style.height = px.height + 'px';
+        if (!signed) box.textContent = '✍️ Ketik untuk tandatangan m/s ini';
+        else box.title = 'Ketik untuk tandatangan semula';
+        box.onclick = () => openSigModal('page:' + pageKey, () => renderReviewPdf());
+        wrap.appendChild(box);
+      }
+    }
+    container.scrollTop = prevScroll;
+    updatePdfZoomLabel();
+    onPdfScroll();
+  }
+
+  async function submitSign() {
+    const errEl = document.getElementById('sign-error');
+    errEl.classList.add('hidden');
+    if (!can('kob', 'edit')) { errEl.textContent = 'Anda tidak mempunyai kebenaran untuk tandatangan.'; errEl.classList.remove('hidden'); return; }
+    if (!document.getElementById('agree-chk').checked) {
+      errEl.textContent = 'Sila tick checkbox persetujuan dahulu.'; errEl.classList.remove('hidden'); return;
+    }
+    const patName = signFields.patName;
+    const patIc = signFields.patIc;
+    const guardianName = signFields.guardianName;
+    const guardianIc = signFields.guardianIc;
+    if (!patName || !patIc || !guardianName || !guardianIc) {
+      errEl.textContent = 'Sila isi Nama & No. IC — pesakit & waris/penjamin — terus dalam dokumen di atas.'; errEl.classList.remove('hidden'); return;
+    }
+    const incomplete = ['patientSign', 'guardianSign'].some(key => !sigStore[key]);
+    if (incomplete) {
+      errEl.textContent = 'Sila lengkapkan semua tandatangan — pesakit & waris/penjamin.'; errEl.classList.remove('hidden'); return;
+    }
+    const pageSignsNeeded = lastSlots?.pageSigns || [];
+    const pageSignsMissing = pageSignsNeeded.some(s => !sigStore.pageSigns[String(s.pageIndex)]);
+    if (pageSignsMissing) {
+      errEl.textContent = 'Sila tandatangan setiap muka surat dokumen (kotak bergaris di bawah tiap m/s) sebelum hantar.'; errEl.classList.remove('hidden'); return;
+    }
+
+    const btn = document.getElementById('submit-sign-btn');
+    btn.disabled = true; btn.textContent = 'Memproses…';
+
+    try {
+      const pkgName = agreementData.pkg?.name || kob.recommended_package_name || '—';
+      const pkgPrice = agreementData.pkg?.price != null ? `RM ${Number(agreementData.pkg.price).toFixed(2)}` : '—';
+      const sched = cachedSched || await loadPaymentScheduleForAgreement(kob);
+
+      // Tandatangan dah ditrim + jana dataURL masa "Guna" diklik dalam popup
+      // (lihat applySigModal()) — sigStore simpan terus, tak perlu ulang di sini.
+      const dataUrls = sigStore;
+      const uploadPad = async (key, filenamePrefix) => {
+        const blob = await (await fetch(dataUrls[key])).blob();
+        const path = `${patient.id}/${filenamePrefix}_${Date.now()}.png`;
+        const { error } = await window.db.storage.from('kob-documents').upload(path, blob, { contentType: 'image/png' });
+        if (error) throw new Error(`Upload ${filenamePrefix}: ` + error.message);
+        const { data } = await window.db.storage.from('kob-documents').createSignedUrl(path, 3600 * 24 * 365);
+        return data?.signedUrl || path;
+      };
+      const sigUrl = await uploadPad('patientSign', 'signature');
+      const guardianSignUrl = await uploadPad('guardianSign', 'guardian_signature');
+
+      const { bytes: signedPdfBytes } = await generateSignedPdf({
+        title: agreementData.title,
+        version: agreementData.version,
+        clauses: agreementData.clauses,
+        patientName: patName,
+        patientIc: patIc,
+        guardianName, guardianIc,
+        packageName: pkgName,
+        price: pkgPrice,
+        signatureDataUrl: dataUrls.patientSign,
+        guardianSignatureImgDataUrl: dataUrls.guardianSign,
+        pageSignatureDataUrls: dataUrls.pageSigns,
+        paymentRows: sched.rows, paymentTotal: sched.total, paymentModeLabel: sched.modeLabel,
+      });
+      const pdfBlob = new Blob([signedPdfBytes], { type: 'application/pdf' });
+      const pdfPath = `${patient.id}/${buildAgreementFilename(pkgName, patName)}`;
+      const { error: pdfErr } = await window.db.storage.from('kob-documents').upload(pdfPath, pdfBlob, { contentType: 'application/pdf', upsert: true });
+      if (pdfErr) throw new Error('PDF upload: ' + pdfErr.message);
+      const { data: pdfUrl } = await window.db.storage.from('kob-documents').createSignedUrl(pdfPath, 3600 * 24 * 365);
+
+      const { error } = await window.db.from('psy_kob_agreements').insert({
+        patient_id: patient.id,
+        kob_session_id: kobId,
+        patient_name: patName,
+        patient_ic: patIc,
+        guardian_name: guardianName,
+        guardian_ic: guardianIc,
+        signature_url: sigUrl,
+        guardian_signature_url: guardianSignUrl,
+        signed_pdf_url: pdfUrl?.signedUrl || pdfPath,
+        user_agent: navigator.userAgent,
+      });
+      if (error) throw error;
+
+      await auditLog('kob.agreement_signed_inline', kobId, { patient_id: patient?.id, by_staff: window.currentUser.full_name });
+
+      banner('Agreement berjaya ditandatangan ✅');
+      setTimeout(() => { location.href = 'kob-detail.html?id=' + kobId; }, 800);
+    } catch (e) {
+      errEl.textContent = 'Ralat: ' + e.message; errEl.classList.remove('hidden');
+      btn.disabled = false; btn.textContent = 'Terima & Tandatangan';
+    }
+  }
+
+  // ── generateSignedPdf() — sama fungsi dgn kob-detail.html (duplikasi disengajakan,
+  // 2 halaman berasingan tiada mekanisme kongsi kod). Pulangkan {bytes, slots}: slots
+  // bagi koordinat kotak tandatangan pada m/s "Pengesahan Tandatangan" utk overlay klik. ──
+  async function generateSignedPdf(opts) {
+    const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
+    const pdfDoc = await PDFDocument.create();
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const PAGE_W = 595, PAGE_H = 842;
+    const MARGIN_X = 50, MARGIN_TOP = 60, MARGIN_BOT = 100;
+    const LINE_H = 14;
+    const COLOR = rgb(0.06, 0.16, 0.31);
+    const BODY_COLOR = rgb(0.15, 0.15, 0.15);
+    const MUTED = rgb(0.4, 0.4, 0.4);
+    let page = pdfDoc.addPage([PAGE_W, PAGE_H]);
+    let y = PAGE_H - MARGIN_TOP;
+    const fill = s => String(s || '')
+      .replaceAll('{{patient_name}}', opts.patientName)
+      .replaceAll('{{patient_ic}}', opts.patientIc)
+      .replaceAll('{{package_name}}', opts.packageName)
+      .replaceAll('{{price}}', opts.price)
+      .replaceAll('{{today}}', new Date().toLocaleDateString('en-GB'));
+    const sanitize = s => String(s || '').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, '-').replace(/[^\x00-\x7F]/g, '');
+    const wrap = (text, maxW, fnt, sz) => {
+      const words = String(text || '').split(/\s+/);
+      const lines = []; let line = '';
+      for (const w of words) {
+        const t = line ? line + ' ' + w : w;
+        if (fnt.widthOfTextAtSize(t, sz) > maxW) { if (line) lines.push(line); line = w; }
+        else line = t;
+      }
+      if (line) lines.push(line);
+      return lines;
+    };
+    // Baris terakhir setiap perenggan dibiarkan rata-kiri sahaja (bukan justify) —
+    // konvensyen tipografi supaya hujung ayat tak "terentang" janggal.
+    const wrapParagraphs = (text, maxW, fnt, sz) => String(text || '').split(/\n+/).flatMap(p => {
+      const lines = wrap(p, maxW, fnt, sz);
+      return lines.map((l, i) => ({ text: l, last: i === lines.length - 1 }));
+    });
+    const drawJustified = (pg, text, x, yy, w, fnt, sz, color) => {
+      const words = text.split(' ').filter(Boolean);
+      if (words.length < 2) { pg.drawText(text, { x, y: yy, size: sz, font: fnt, color }); return; }
+      const wordsWidth = words.reduce((s, wd) => s + fnt.widthOfTextAtSize(wd, sz), 0);
+      const gap = Math.min((w - wordsWidth) / (words.length - 1), sz * 2);
+      let cx = x;
+      words.forEach((wd, i) => {
+        pg.drawText(wd, { x: cx, y: yy, size: sz, font: fnt, color });
+        cx += fnt.widthOfTextAtSize(wd, sz) + gap;
+      });
+    };
+    const need = h => { if (y - h < MARGIN_BOT) { page = pdfDoc.addPage([PAGE_W, PAGE_H]); y = PAGE_H - MARGIN_TOP; } };
+    const embedOpt = async dataUrl => {
+      if (!dataUrl) return null;
+      const bytes = await fetch(dataUrl).then(r => r.arrayBuffer());
+      return await pdfDoc.embedPng(bytes);
+    };
+    const sigImg = await embedOpt(opts.signatureDataUrl);
+    const guardianSigImg = await embedOpt(opts.guardianSignatureImgDataUrl);
+    // Lukis imej "contain" (kekal nisbah asal) di tengah-tengah kotak boxW×boxMaxH,
+    // rapat ke bawah (dekat garisan). Elak regang/herot tak kira bentuk tandatangan asal.
+    const drawImgContain = (pg, img, boxX, boxBottomY, boxW, boxMaxH) => {
+      if (!img) return;
+      const scale = Math.min(boxW / img.width, boxMaxH / img.height);
+      const w = img.width * scale, h = img.height * scale;
+      pg.drawImage(img, { x: boxX + (boxW - w) / 2, y: boxBottomY, width: w, height: h });
+    };
+    const drawSigContain = (pg, boxX, boxBottomY, boxW, boxMaxH) => drawImgContain(pg, sigImg, boxX, boxBottomY, boxW, boxMaxH);
+    // Setiap m/s perjanjian mesti ada tandatangan pesakit DAN waris/penjamin
+    // (bukan hanya m/s pengesahan akhir) — elak m/s ditukar selepas ditandatangan.
+    const stampFooter = pg => {
+      if (!sigImg) return;
+      const sigW = 120, sigMaxH = 44;
+      const lineY = 34;
+      const patBlockRight = PAGE_W - (MARGIN_X - 25);
+      const patBlockX = patBlockRight - sigW;
+      drawImgContain(pg, sigImg, patBlockX, lineY + 2, sigW, sigMaxH);
+      pg.drawLine({ start: { x: patBlockX, y: lineY }, end: { x: patBlockRight, y: lineY }, thickness: 0.6, color: MUTED });
+      const patLabel = sanitize(`${opts.patientName || '-'} | ${new Date().toLocaleDateString('en-GB')}`);
+      const patLabelW = font.widthOfTextAtSize(patLabel, 6.5);
+      pg.drawText(patLabel, { x: patBlockX + (sigW - patLabelW) / 2, y: lineY - 10, size: 6.5, font, color: MUTED });
+
+      if (guardianSigImg) {
+        const gBlockRight = patBlockX - 15;
+        const gBlockX = gBlockRight - sigW;
+        drawImgContain(pg, guardianSigImg, gBlockX, lineY + 2, sigW, sigMaxH);
+        pg.drawLine({ start: { x: gBlockX, y: lineY }, end: { x: gBlockRight, y: lineY }, thickness: 0.6, color: MUTED });
+        const gLabel = 'Waris/Penjamin';
+        const gLabelW = font.widthOfTextAtSize(gLabel, 6.5);
+        pg.drawText(gLabel, { x: gBlockX + (sigW - gLabelW) / 2, y: lineY - 10, size: 6.5, font, color: MUTED });
+      }
+    };
+    const titleText = sanitize(opts.title || 'Kontrak Pelaburan Kesihatan');
+    need(40);
+    page.drawText(titleText, { x: (PAGE_W - fontBold.widthOfTextAtSize(titleText, 18)) / 2, y, size: 18, font: fontBold, color: COLOR });
+    y -= 30;
+    page.drawText('Pesakit: ' + sanitize(opts.patientName || '-'), { x: MARGIN_X, y, size: 9, font, color: MUTED });
+    page.drawText('IC: ' + sanitize(opts.patientIc || '-'), { x: MARGIN_X + 180, y, size: 9, font, color: MUTED });
+    page.drawText('Pakej: ' + sanitize(opts.packageName || '-'), { x: MARGIN_X + 320, y, size: 9, font, color: MUTED });
+    y -= 20;
+    page.drawLine({ start: { x: MARGIN_X, y }, end: { x: PAGE_W - MARGIN_X, y }, thickness: 0.5, color: MUTED });
+    y -= 20;
+    const maxW = PAGE_W - MARGIN_X * 2;
+    const clausesToRender = (opts.clauses && opts.clauses.length) ? opts.clauses : (window.DEFAULT_AGREEMENT?.clauses || []);
+    // Klausa bernombor ≥23 (Pembayaran Ansuran, Kegagalan Ansuran, ... Bayaran Online
+    // Transfer) dikeluarkan drpd senarai am — dipapar berasingan di m/s "Perjanjian
+    // Bayaran" (bersama jadual & kotak akaun bank), ikut struktur borang kertas asal.
+    const clauseNum = c => { const m = /^\s*(\d+)\./.exec(c.title || ''); return m ? Number(m[1]) : null; };
+    const generalClauses = clausesToRender.filter(c => { const n = clauseNum(c); return n === null || n < 23; });
+    const paymentClauses = clausesToRender.filter(c => { const n = clauseNum(c); return n !== null && n >= 23; });
+    const bankClauseIdx = paymentClauses.findIndex(c => /bank|transfer/i.test(c.title || ''));
+    const bankClause = bankClauseIdx >= 0 ? paymentClauses.splice(bankClauseIdx, 1)[0] : null;
+    const drawClauseList = list => {
+      for (const c of list) {
+        const titleLines = wrap(sanitize(fill(c.title || '')), maxW, fontBold, 11);
+        const bodyLines = wrapParagraphs(sanitize(fill(c.body || '')), maxW, font, 10);
+        need(titleLines.length * 15 + bodyLines.length * LINE_H + 14);
+        titleLines.forEach(l => { page.drawText(l, { x: MARGIN_X, y, size: 11, font: fontBold, color: COLOR }); y -= 15; });
+        y -= 2;
+        bodyLines.forEach(l => {
+          if (l.last) page.drawText(l.text, { x: MARGIN_X, y, size: 10, font, color: BODY_COLOR });
+          else drawJustified(page, l.text, MARGIN_X, y, maxW, font, 10, BODY_COLOR);
+          y -= LINE_H;
+        });
+        y -= 8;
+      }
+    };
+    drawClauseList(generalClauses);
+
+    // ── M/s "Perjanjian Bayaran" berasingan — klausa ≥23 + kotak akaun bank
+    // disorot + tandatangan kedua-dua pihak (reka bentuk ikut borang kertas asal) ──
+    if (paymentClauses.length || bankClause) {
+      page = pdfDoc.addPage([PAGE_W, PAGE_H]); y = PAGE_H - MARGIN_TOP;
+      page.drawText('Perjanjian Bayaran', { x: MARGIN_X, y, size: 16, font: fontBold, color: COLOR });
+      y -= 26;
+      drawClauseList(paymentClauses);
+      if (bankClause) {
+        const bodyLines = wrapParagraphs(sanitize(fill(bankClause.body || '')), maxW - 24, font, 10);
+        need(bodyLines.length * LINE_H + 30);
+        const boxH = bodyLines.length * LINE_H + 20;
+        page.drawRectangle({ x: MARGIN_X, y: y - boxH + LINE_H, width: maxW, height: boxH, borderColor: COLOR, borderWidth: 1, color: rgb(0.96, 0.97, 0.99) });
+        y -= 6;
+        bodyLines.forEach(l => { page.drawText(l.text, { x: MARGIN_X + 12, y, size: 10, font: fontBold, color: COLOR }); y -= LINE_H; });
+        y -= 14;
+      }
+    }
+
+    // ── Lampiran: Jadual Bayaran & Pelaburan (deposit + tiap ansuran, dari jadual
+    // sebenar yg disimpan — bukan dikira semula, elak tersasar drpd rekod DB) —
+    // diletak PALING AKHIR, tepat sebelum m/s Pengesahan Tandatangan. ──
+    if (opts.paymentRows && opts.paymentRows.length) {
+      page = pdfDoc.addPage([PAGE_W, PAGE_H]); y = PAGE_H - MARGIN_TOP;
+      page.drawText('Jadual Bayaran & Pelaburan', { x: MARGIN_X, y, size: 16, font: fontBold, color: COLOR });
+      y -= 26;
+      const infoRows = [
+        ['Pakej', sanitize(opts.packageName || '-')],
+        ['Mod Bayaran', sanitize(opts.paymentModeLabel || '-')],
+        ['Jumlah Komitmen', `RM ${Number(opts.paymentTotal || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`],
+      ];
+      for (const [l, v] of infoRows) {
+        page.drawText(`${l}:`, { x: MARGIN_X, y, size: 10, font: fontBold, color: COLOR });
+        page.drawText(v, { x: MARGIN_X + 110, y, size: 10, font, color: BODY_COLOR });
+        y -= 16;
+      }
+      y -= 14;
+      const colX = { no: MARGIN_X, perkara: MARGIN_X + 35, tarikh: MARGIN_X + 300, amaun: MARGIN_X + 390 };
+      const drawTableHeader = () => {
+        page.drawRectangle({ x: MARGIN_X, y: y - 4, width: maxW, height: 18, color: rgb(0.92, 0.94, 0.97) });
+        page.drawText('No.', { x: colX.no + 4, y, size: 9, font: fontBold, color: COLOR });
+        page.drawText('Perkara', { x: colX.perkara, y, size: 9, font: fontBold, color: COLOR });
+        page.drawText('Tarikh', { x: colX.tarikh, y, size: 9, font: fontBold, color: COLOR });
+        page.drawText('Amaun (RM)', { x: colX.amaun, y, size: 9, font: fontBold, color: COLOR });
+        y -= 18;
+      };
+      drawTableHeader();
+      opts.paymentRows.forEach(r => {
+        need(18);
+        if (y > PAGE_H - MARGIN_TOP - 1) drawTableHeader();
+        page.drawText(String(r.no), { x: colX.no + 4, y, size: 9, font, color: BODY_COLOR });
+        wrap(sanitize(r.label), 255, font, 9).forEach((l, i) => {
+          page.drawText(l, { x: colX.perkara, y: y - i * 11, size: 9, font, color: BODY_COLOR });
+        });
+        page.drawText(new Date(r.dueDate).toLocaleDateString('en-GB'), { x: colX.tarikh, y, size: 9, font, color: BODY_COLOR });
+        page.drawText(fmtRM(r.amount), { x: colX.amaun, y, size: 9, font, color: BODY_COLOR });
+        y -= 18;
+        page.drawLine({ start: { x: MARGIN_X, y: y + 6 }, end: { x: PAGE_W - MARGIN_X, y: y + 6 }, thickness: 0.4, color: rgb(0.85, 0.85, 0.85) });
+      });
+      y -= 4;
+      page.drawLine({ start: { x: MARGIN_X, y: y + 8 }, end: { x: PAGE_W - MARGIN_X, y: y + 8 }, thickness: 0.8, color: COLOR });
+      y -= 10;
+      page.drawText('JUMLAH', { x: colX.perkara, y, size: 10, font: fontBold, color: COLOR });
+      page.drawText(fmtRM(opts.paymentTotal), { x: colX.amaun, y, size: 10, font: fontBold, color: COLOR });
+      y -= 20;
+    }
+
+    // ── Tandatangan Pesakit per-m/s — kotak kecil penjuru KANAN-bawah TIAP m/s
+    // kandungan SEBELUM m/s Pengesahan Tandatangan (yg ada tandatangan penuh
+    // berasingan) — paksa pesakit "initial" setiap m/s semasa langkah semakan
+    // interaktif (bukan sekadar auto-stamp lepas sign, tapi kena tap satu-satu).
+    // boxY=70 (bukan 36) — elak bertindih dgn cop tandatangan mini kanan-bawah
+    // (stampFooter, y:12-56) yg dilukis lepas ni bila dokumen dah sah ditandatangan.
+    const pageSignSlots = [];
+    const contentPageCount = pdfDoc.getPageCount();
+    for (let p = 0; p < contentPageCount; p++) {
+      const pg = pdfDoc.getPage(p);
+      const boxW = 150, boxH = 32, boxX = PAGE_W - MARGIN_X - boxW, boxY = 70;
+      const pageSigUrl = opts.pageSignatureDataUrls?.[p];
+      const pageSigImg = pageSigUrl ? await embedOpt(pageSigUrl) : null;
+      if (pageSigImg) drawImgContain(pg, pageSigImg, boxX, boxY, boxW, boxH);
+      else pg.drawRectangle({ x: boxX, y: boxY, width: boxW, height: boxH, borderColor: rgb(0.75, 0.75, 0.75), borderWidth: 1 });
+      pageSignSlots.push({ pageIndex: p, x: boxX, y: boxY, width: boxW, height: boxH });
+    }
+
+    // ── Pengesahan Tandatangan — SENTIASA lukis susun-atur penuh (kotak kosong
+    // bergaris kalau belum sign) supaya PDF pratonton ni boleh dipakai sebagai
+    // sasaran overlay klik-utk-sign interaktif (lihat renderReviewPdf()) — bukan
+    // cuma nota ringkas. `slots` rekod koordinat & indeks m/s kotak tandatangan
+    // supaya overlay boleh dilaraskan tepat.
+    const slots = { patientSign: null, guardianSign: null, patientNameField: null, patientIcField: null, guardianNameField: null, guardianIcField: null, pageSigns: pageSignSlots };
+    page = pdfDoc.addPage([PAGE_W, PAGE_H]); y = PAGE_H - MARGIN_TOP;
+    page.drawText('Pengesahan Tandatangan', { x: MARGIN_X, y, size: 16, font: fontBold, color: COLOR });
+    y -= 30;
+    if (!sigImg) {
+      const noteLines = wrap('Salinan ini dijana untuk tujuan semakan sahaja dan belum sah sebagai perjanjian sehingga ditandatangani.', maxW, font, 9);
+      noteLines.forEach(l => { page.drawText(l, { x: MARGIN_X, y, size: 9, font, color: MUTED }); y -= 12; });
+      y -= 8;
+    }
+    page.drawText('Saya dengan ini mengesahkan bahawa saya telah membaca, memahami, dan bersetuju', { x: MARGIN_X, y, size: 10, font, color: BODY_COLOR });
+    y -= 14;
+    page.drawText('dengan semua syarat dalam kontrak di atas.', { x: MARGIN_X, y, size: 10, font, color: BODY_COLOR });
+    y -= 40;
+    // Nama/No. IC medan TAIP terus dlm dokumen (lihat renderReviewPdf() — overlay
+    // input pada `slots.patientNameField`/`patientIcField`). Bila opts.interactive,
+    // nilai TAK dilukis di sini (overlay input yg papar, elak teks bertindih) —
+    // PDF akhir yg disimpan (interactive tak diberi) tetap cetak nilai sebenar.
+    const det = [
+      ['Pakej', sanitize(opts.packageName || '-'), null],
+      ['Tarikh', new Date().toLocaleDateString('en-GB'), null],
+      ['Nama', sanitize(opts.patientName || '-'), 'patientNameField'],
+      ['No. IC', sanitize(opts.patientIc || '-'), 'patientIcField'],
+    ];
+    for (const [l, v, slotKey] of det) {
+      page.drawText(`${l}:`, { x: MARGIN_X, y, size: 10, font: fontBold, color: COLOR });
+      if (!(opts.interactive && slotKey)) page.drawText(v, { x: MARGIN_X + 80, y, size: 10, font, color: BODY_COLOR });
+      if (slotKey) slots[slotKey] = { pageIndex: pdfDoc.getPageCount() - 1, x: MARGIN_X + 78, y: y - 3, width: 200, height: 14 };
+      y -= 18;
+    }
+    y -= 8;
+    page.drawText('Tandatangan Pesakit:', { x: MARGIN_X, y, size: 10, font: fontBold, color: COLOR });
+    y -= 8;
+    slots.patientSign = { pageIndex: pdfDoc.getPageCount() - 1, x: MARGIN_X, y: y - 78, width: 220, height: 78 };
+    if (sigImg) drawSigContain(page, MARGIN_X, y - 78, 220, 78);
+    else page.drawRectangle({ x: MARGIN_X, y: y - 78, width: 220, height: 78, borderColor: rgb(0.75, 0.75, 0.75), borderWidth: 1 });
+    y -= 85;
+    page.drawLine({ start: { x: MARGIN_X, y }, end: { x: MARGIN_X + 220, y }, thickness: 0.5, color: BODY_COLOR });
+
+    // ── Waris / Penjamin (wajib) ──
+    need(270);
+    y -= 30;
+    page.drawText('Tandatangan Waris / Penjamin', { x: MARGIN_X, y, size: 13, font: fontBold, color: COLOR });
+    y -= 24;
+    page.drawText('Nama:', { x: MARGIN_X, y, size: 9, font: fontBold, color: COLOR });
+    if (!opts.interactive) page.drawText(sanitize(opts.guardianName || '-'), { x: MARGIN_X + 90, y, size: 10, font, color: BODY_COLOR });
+    slots.guardianNameField = { pageIndex: pdfDoc.getPageCount() - 1, x: MARGIN_X + 88, y: y - 3, width: 200, height: 14 };
+    y -= 18;
+    page.drawText('No. IC:', { x: MARGIN_X, y, size: 9, font: fontBold, color: COLOR });
+    if (!opts.interactive) page.drawText(sanitize(opts.guardianIc || '-'), { x: MARGIN_X + 90, y, size: 10, font, color: BODY_COLOR });
+    slots.guardianIcField = { pageIndex: pdfDoc.getPageCount() - 1, x: MARGIN_X + 88, y: y - 3, width: 200, height: 14 };
+    y -= 18;
+    page.drawText('Tandatangan Waris/Penjamin:', { x: MARGIN_X, y, size: 10, font: fontBold, color: COLOR });
+    y -= 8;
+    slots.guardianSign = { pageIndex: pdfDoc.getPageCount() - 1, x: MARGIN_X, y: y - 78, width: 220, height: 78 };
+    if (guardianSigImg) drawImgContain(page, guardianSigImg, MARGIN_X, y - 78, 220, 78);
+    else page.drawRectangle({ x: MARGIN_X, y: y - 78, width: 220, height: 78, borderColor: rgb(0.75, 0.75, 0.75), borderWidth: 1 });
+    y -= 85;
+    page.drawLine({ start: { x: MARGIN_X, y }, end: { x: MARGIN_X + 220, y }, thickness: 0.5, color: BODY_COLOR });
+
+    page.drawText(sanitize(opts.version || ''), { x: MARGIN_X, y: MARGIN_BOT - 20, size: 8, font, color: MUTED });
+    page.drawText(`Dijana pada ${new Date().toLocaleString('en-GB')}`, { x: PAGE_W - MARGIN_X - 180, y: MARGIN_BOT - 20, size: 8, font, color: MUTED });
+    const allPages = pdfDoc.getPages();
+    allPages.forEach((pg, idx) => {
+      stampFooter(pg);
+      const pageLabel = `M/S ${idx + 1} / ${allPages.length}`;
+      pg.drawText(pageLabel, { x: MARGIN_X, y: 18, size: 7, font, color: MUTED });
+    });
+    return { bytes: await pdfDoc.save(), slots };
+  }
+
+  // Skrin ditukar saiz (putar telefon, tetingkap dilaraskan) — kira semula scale
+  // muat-lebar, kekalkan nisbah zoom semasa (kalau staff dah zoom in/out sendiri).
+  let pdfResizeTimer = null;
+  window.addEventListener('resize', () => {
+    if (!pdfZoomInited) return;
+    clearTimeout(pdfResizeTimer);
+    pdfResizeTimer = setTimeout(() => {
+      const ratio = pdfZoomScale / pdfZoomBase;
+      pdfZoomBase = computeFitScale();
+      pdfZoomScale = pdfZoomBase * ratio;
+      renderReviewPdf();
+    }, 300);
+  });
+
+  // ── Bootstrap ─────────────────────────────────────────
+  (async () => {
+    const user = await initStaff('kob_list', 'Tandatangan Perjanjian');
+    if (!user) return;
+
+    kobId = new URLSearchParams(location.search).get('id');
+    if (!kobId) { banner('KOB ID tiada', 'error'); return; }
+
+    const { data: kobData } = await window.db.from('psy_kob_sessions').select('*').eq('id', kobId).single().then(r => r, () => ({ data: null }));
+    if (!kobData) { banner('KOB tidak ditemui', 'error'); return; }
+    kob = kobData;
+
+    const { data: patData } = await window.db.from('psy_patients')
+      .select('*, psy_profiles!psy_patients_user_id_fkey(full_name, phone, email)')
+      .eq('id', kob.patient_id).single().then(r => r, () => ({ data: null }));
+    patient = patData;
+
+    const patName = patient?.psy_profiles?.full_name || patient?.full_name || 'Pesakit';
+    document.getElementById('sign-patient-sub').textContent = `${patName} — ${kob.recommended_package_name || 'Pakej'}`;
+
+    // Kalau agreement dah wujud, tak perlu sign lagi — kembali ke KOB Detail.
+    const { data: existing } = await window.db.from('psy_kob_agreements')
+      .select('id').eq('patient_id', patient.id).limit(1);
+    if (existing && existing.length) {
+      document.getElementById('sign-already').classList.remove('hidden');
+      setTimeout(() => { location.href = 'kob-detail.html?id=' + kobId; }, 1500);
+      return;
+    }
+
+    agreementData = await loadAgreementData();
+    // Nama/IC pesakit & waris/penjamin SENGAJA dibiar kosong (tak pra-isi dari rekod
+    // sedia ada) — pesakit sendiri kena taip terus dalam dokumen (tap-untuk-isi).
+    document.getElementById('sign-content').classList.remove('hidden');
+    await renderReviewPdf();
+  })();
+</script>
+</body>
+</html>

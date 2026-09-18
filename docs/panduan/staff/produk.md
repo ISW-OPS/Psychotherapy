@@ -95,12 +95,12 @@ Staf dengan kebenaran modul **`products`** — biasanya `super_admin`, `admin`, 
 ## 6. Apa jadi lepas Simpan
 1. Rekod ditulis ke jadual **`psy_products`** (insert kalau baru, update kalau edit).
 2. `is_active` diset ikut status (`active` = `true`).
-3. **Stok auto-sync ke Inventori** — `syncStockToInventory(nama, stok)` cari item `psy_inventory_items` dengan **nama sama** (case-insensitive) dan kemas kini `qty_in_stock`. (Lihat [`shared/stockSync.js`](../../../shared/stockSync.js).)
+3. Gambar baharu (kalau ada) dimuat naik ke storage bucket `product-images`, dan `image_url` / `image_urls` dikemaskini.
 4. Tindakan dicatat ke audit log: `product.created` / `product.updated` (`psy_audit_log`) — muncul di **Log Aktiviti** pada detail produk.
 5. Diarah ke **`product-detail.html`** untuk produk tersebut.
-6. Produk kini muncul untuk pesakit di `roles/patient/shop.html` (kalau status **Aktif** + **kelihatan di shop**).
+6. Produk kini muncul untuk pesakit di `roles/patient/shop.html` (kalau status **Aktif**).
 
-> **Arah sync 2-hala:** kalau stok diubah di **Inventori**, `syncStockToProducts()` akan kemas kini balik produk dengan nama sama. Di shop pesakit, stok dipapar ikut keutamaan: (1) FK `inventory_item_id`, (2) padanan nama Inventori, (3) lajur `stock` produk.
+> **Arah sync SATU HALA sahaja (Inventori → Produk):** stok & unit di borang Produk sentiasa read-only — nilai ikut Inventori (dikemaskini oleh `syncStockToProducts()` bila item Inventori disimpan). Borang Produk **tidak** menulis balik ke Inventori lagi (bug lama dibetulkan). Nak ubah stok sebenar, pergi ke **Inventori**. (Kekecualian: pesanan/order yang benar-benar consume stok — `orders.html` — turut kemas kini Inventori via `syncStockToInventory()`, sebab itu pergerakan stok sebenar.)
 
 ---
 
@@ -113,7 +113,8 @@ Staf dengan kebenaran modul **`products`** — biasanya `super_admin`, `admin`, 
 | "Harga tidak sah" | Harga kosong / negatif. Isi nombor ≥ 0. |
 | "Imej terlalu besar (max 2MB)" | Kecilkan imej sebelum muat naik. |
 | Picker Inventori kosong / item tak boleh dipilih | Item bertanda **✓ Dah jadi produk** (sudah ada produk nama sama) atau **⛔ Stok kosong** tidak boleh dipilih. Tiada item sesuai? **Tambah di Inventori dulu** (`inventory.html`). |
-| Nama / SKU / stok tak boleh diubah | Normal untuk produk baru — field dikunci supaya nama padan dengan Inventori. Untuk ubah stok, kemas kini di **Inventori** (auto-sync). |
+| Nama / SKU tak boleh diubah | Normal untuk produk baru — field dikunci supaya nama padan dengan Inventori. |
+| Stok / Unit tak boleh diubah | Normal, sentiasa dikunci — Inventori adalah source of truth. Untuk ubah stok, kemas kini di **Inventori**; `syncStockToProducts()` akan cerminkan balik ke produk. |
 | Produk tak muncul di shop pesakit | Pastikan status **Aktif** (`is_active`) DAN toggle **kelihatan di shop** ON. |
 | Stok di shop tunjuk 0 walau ada stok | Nama produk tak padan mana-mana item Inventori. Samakan nama, atau pastikan ada `inventory_item_id`. |
 
@@ -123,6 +124,6 @@ Staf dengan kebenaran modul **`products`** — biasanya `super_admin`, `admin`, 
 - Senarai: [`roles/staff/products.html`](../../../roles/staff/products.html)
 - Borang: [`roles/staff/product-edit.html`](../../../roles/staff/product-edit.html) · `saveProduct()` ~ baris 420
 - Detail: [`roles/staff/product-detail.html`](../../../roles/staff/product-detail.html)
-- Auto-sync stok ⇄ Inventori: [`shared/stockSync.js`](../../../shared/stockSync.js) (`syncStockToInventory`, `syncStockToProducts`, `ensureInventoryCounterpart`)
+- Auto-sync stok Inventori → Produk: [`shared/stockSync.js`](../../../shared/stockSync.js) (`syncStockToProducts`, `ensureInventoryCounterpart`); `syncStockToInventory` kini dipanggil hanya bila stok betul-betul consume (`orders.html`), bukan dari borang Produk.
 - Paparan pesakit: [`roles/patient/shop.html`](../../../roles/patient/shop.html) · `loadProductsFromDB()`
 - Jadual: `psy_products`, `psy_inventory_items` (lihat [02-pangkalan-data.md](../../sistem/02-pangkalan-data.md))

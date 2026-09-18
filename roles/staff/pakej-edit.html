@@ -57,7 +57,7 @@
           <div class="flex-1 min-w-[250px] grid sm:grid-cols-2 gap-3">
             <div>
               <label class="text-[10px] font-bold text-ink/45 uppercase tracking-wider">Nama Pakej <span class="text-terracotta">*</span></label>
-              <input id="f-name" oninput="syncHeader()" class="w-full mt-0.5 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-navy" placeholder="cth: OBP 1">
+              <input id="f-name" oninput="syncHeader()" onblur="checkVersionConflict()" class="w-full mt-0.5 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-navy" placeholder="cth: OBP 1">
             </div>
             <div>
               <label class="text-[10px] font-bold text-ink/45 uppercase tracking-wider">Package ID</label>
@@ -69,13 +69,17 @@
               <input id="f-desc" class="w-full mt-0.5 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-navy" placeholder="cth: 12 minggu program intensif">
             </div>
           </div>
+          <div class="flex flex-col items-end gap-2 min-w-[90px]">
+            <label class="text-[10px] font-bold text-ink/45 uppercase tracking-wider">Version</label>
+            <input id="f-version" type="number" min="1" value="1" oninput="checkVersionConflictDebounced()" class="w-14 px-2 py-2 border border-ink/20 rounded-lg text-sm text-center focus:outline-none focus:border-navy">
+            <span id="hdr-version-warn" class="hidden text-[10px] text-terracotta font-semibold text-right leading-snug"></span>
+          </div>
           <div class="flex flex-col items-end gap-2 min-w-[140px]">
             <label class="text-[10px] font-bold text-ink/45 uppercase tracking-wider">Status</label>
             <select id="f-status" onchange="syncHeader()" class="w-full px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:outline-none focus:border-navy">
               <option value="active">Aktif</option>
               <option value="inactive">Tidak Aktif</option>
             </select>
-            <span id="hdr-status-chip" class="inline-block px-2.5 py-0.5 rounded-full bg-green-100 text-green-700 text-[11px] font-semibold">Aktif</span>
           </div>
         </div>
 
@@ -1808,6 +1812,7 @@ function populateForm(pkg) {
   document.getElementById('edit-id').value = pkg?.id || '';
   document.getElementById('f-pkg-id').value = pkg?.package_id || '';
   document.getElementById('f-name').value = pkg?.name || '';
+  document.getElementById('f-version').value = pkg?.version_number || 1;
   document.getElementById('f-desc').value = pkg?.description || '';
   setMoneyVal('f-price', pkg?.price);
   document.getElementById('f-duration-unit').value = pkg?.duration_unit || (pkg?.duration?.toLowerCase?.().includes('hari') ? 'day' : 'week');
@@ -1988,8 +1993,6 @@ function updateNotaCounter() {
 
 function syncHeader() {
   const name = document.getElementById('f-name').value.trim() || 'Pakej Baru';
-  const desc = document.getElementById('f-desc').value.trim();
-  const status = document.getElementById('f-status').value;
   document.getElementById('bc-pkg-name').textContent = name;
   document.title = `Edit Pakej — ${name}`;
 
@@ -2000,16 +2003,57 @@ function syncHeader() {
   hdrIcon.textContent = icon;
   hdrIcon.className = `w-16 h-16 rounded-xl ${bg} flex items-center justify-center flex-shrink-0 text-3xl cursor-pointer hover:ring-2 hover:ring-navy/30`;
 
-  // Status chip
-  const chip = document.getElementById('hdr-status-chip');
-  const map = {
-    active:   { label: 'Aktif',       cls: 'bg-green-100 text-green-700' },
-    draft:    { label: 'Draft',       cls: 'bg-amber-100 text-amber-700' },
-    inactive: { label: 'Tidak Aktif', cls: 'bg-ink/10 text-ink/60' },
-  };
-  const m = map[status] || map.active;
-  chip.className = `inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${m.cls}`;
-  chip.textContent = m.label;
+  checkVersionConflictDebounced();
+}
+
+function checkVersionConflictDebounced() {
+  clearTimeout(window._versionCheckTimer);
+  window._versionCheckTimer = setTimeout(checkVersionConflict, 400);
+}
+
+// Elak dua pakej dengan Nama Pakej sama guna nombor Version yang sama — cadangkan
+// nombor seterusnya yang masih kosong untuk pakej (nama) tu.
+async function findVersionConflict(name, versionNum, excludeId) {
+  if (!name || !versionNum) return null;
+  const { data } = await window.db.from('psy_packages')
+    .select('id, package_id, version_number')
+    .ilike('name', name)
+    .eq('version_number', versionNum);
+  return (data || []).find(p => p.id !== excludeId) || null;
+}
+
+function escVersionWarnText(s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+async function checkVersionConflict() {
+  const name = document.getElementById('f-name').value.trim();
+  const n = parseInt(document.getElementById('f-version').value) || 1;
+  const editId = document.getElementById('edit-id').value;
+  const warn = document.getElementById('hdr-version-warn');
+  if (!name) { warn.classList.add('hidden'); return; }
+
+  try {
+    const conflict = await findVersionConflict(name, n, editId);
+    if (!conflict) { warn.classList.add('hidden'); return; }
+
+    const { data: siblings } = await window.db.from('psy_packages')
+      .select('version_number').ilike('name', name);
+    const maxV = Math.max(0, ...(siblings || []).map(s => Number(s.version_number) || 0));
+
+    if (!editId) {
+      // Pakej BAHARU (bukan edit sedia ada) — nama tu dah ada, auto-lompat ke
+      // version seterusnya yang masih kosong (tak perlu staff klik lagi).
+      document.getElementById('f-version').value = maxV + 1;
+      warn.innerHTML = `ℹ️ "${escVersionWarnText(name)}" sudah ada sehingga V${maxV} — diset automatik ke <strong>V${maxV + 1}</strong>.`;
+      warn.className = 'text-[10px] text-navy font-semibold text-right leading-snug';
+      warn.classList.remove('hidden');
+      return;
+    }
+
+    // Edit pakej sedia ada — jangan auto-ubah nombor yang staff dah taip, cuma amaran + cadangan.
+    warn.innerHTML = `⚠ V${n} untuk "${escVersionWarnText(name)}" dah wujud (${escVersionWarnText(conflict.package_id)}). Cuba <button type="button" onclick="document.getElementById('f-version').value=${maxV + 1};checkVersionConflict()" class="underline font-bold">V${maxV + 1}</button>?`;
+    warn.className = 'text-[10px] text-terracotta font-semibold text-right leading-snug';
+    warn.classList.remove('hidden');
+  } catch (e) { warn.classList.add('hidden'); }
 }
 
 const DEFAULT_AGREEMENT_URL = '/Agreement/agreement.pdf';
@@ -2085,10 +2129,64 @@ async function removeAgreement() {
   renderAgreementStatus();
 }
 
+// Label BM utk field penting supaya Log Aktiviti boleh papar "apa yang berubah"
+// dgn jelas. Field kompleks (JSONB besar) cuma dikesan berubah/tidak — papar
+// "X dikemaskini" tanpa dump raw JSON (tak berguna utk staff baca).
+const FIELD_LABELS = {
+  name: 'Nama Pakej', package_id: 'Package ID', description: 'Penerangan',
+  price: 'Harga', duration: 'Tempoh', duration_weeks: 'Tempoh (minggu)',
+  tier: 'Kategori', status: 'Status Paparan', is_active: 'Aktif',
+  version_number: 'Version', installment_allowed: 'Ansuran Dibenarkan',
+  installment_full_price: 'Harga Penuh Ansuran', internal_notes: 'Nota Dalaman',
+  agreement_title: 'Tajuk Kontrak', meet_link: 'Pautan Meet',
+};
+const COMPLEX_FIELD_LABELS = {
+  products: 'Produk', bimbingan: 'Bimbingan', inclusions: 'Kandungan Pakej',
+  coaching_schedule: 'Jadual Coaching Mingguan', daily_schedule: 'Jadual Harian',
+  weekly_supplies: 'Bekalan Mingguan', supplies: 'Bekalan', addons: 'Addon',
+  agreement_clauses: 'Klausa Kontrak', automation_flags: 'Automation',
+  access_flags: 'Akses Kandungan', session_days_options: 'Pilihan Hari Sesi',
+};
+
+function fmtChangeVal(v) {
+  if (v === null || v === undefined || v === '') return '—';
+  if (typeof v === 'boolean') return v ? 'Ya' : 'Tidak';
+  return String(v);
+}
+
+// Bandingkan pkg lama vs payload baharu, pulangkan senarai perubahan ringkas
+// utk disimpan dlm meta.changes (dipaparkan di tab Log Aktiviti).
+function buildChangeSummary(before, after) {
+  if (!before) return [];
+  const changes = [];
+  Object.entries(FIELD_LABELS).forEach(([key, label]) => {
+    if (!(key in after)) return;
+    const oldV = before[key], newV = after[key];
+    if (String(oldV ?? '') !== String(newV ?? '')) {
+      changes.push({ field: label, from: fmtChangeVal(oldV), to: fmtChangeVal(newV) });
+    }
+  });
+  Object.entries(COMPLEX_FIELD_LABELS).forEach(([key, label]) => {
+    if (!(key in after)) return;
+    if (JSON.stringify(before[key] ?? null) !== JSON.stringify(after[key] ?? null)) {
+      changes.push({ field: label, changed: true });
+    }
+  });
+  return changes;
+}
+
 async function savePackage() {
   let editId = document.getElementById('edit-id').value;
+  const wasNew = !editId;  // simpan status SEBELUM editId ditimpa oleh id baharu selepas insert
   const name = document.getElementById('f-name').value.trim();
   if (!name) { banner('Nama pakej wajib diisi', 'error'); return; }
+
+  const versionNum = parseInt(document.getElementById('f-version').value) || 1;
+  const versionConflict = await findVersionConflict(name, versionNum, editId);
+  if (versionConflict) {
+    banner(`Version ${versionNum} untuk pakej "${name}" dah wujud (Package ID: ${versionConflict.package_id}). Tukar nombor Version dulu.`, 'error');
+    return;
+  }
 
   if (document.getElementById('f-installment-allowed').checked) {
     if (!parseMoneyVal(document.getElementById('f-installment-full-price-now').value)) {
@@ -2223,11 +2321,14 @@ async function savePackage() {
       },
       status: document.getElementById('f-status').value || 'active',
       is_active: document.getElementById('f-status').value === 'active',
+      version_number: parseInt(document.getElementById('f-version').value) || 1,
       supplies: bekalanItems.filter(b => b.name && b.name.trim()),
       addons:   addonsItems.filter(a => a.name && a.name.trim()),
       internal_notes: document.getElementById('f-nota-dalaman').value.trim() || null,
       updated_at: new Date().toISOString(),
     };
+
+    const changes = wasNew ? [] : buildChangeSummary(window._originalPkg, data);
 
     // Cuba save, strip kolum yang missing daripada schema dan retry sampai berjaya
     // (atau gagal atas sebab lain). Maks 10 kali — pakej payload ada ~30 kolum.
@@ -2260,8 +2361,8 @@ async function savePackage() {
       }
     }
     if (!saved) throw lastErr || new Error('Gagal simpan pakej');
-    banner(editId ? 'Pakej dikemaskini' : 'Pakej baru ditambah');
-    await auditLog(editId ? 'package.updated' : 'package.created', editId || payload.package_id, { name });
+    banner(wasNew ? 'Pakej baru ditambah' : 'Pakej dikemaskini');
+    await auditLog(wasNew ? 'package.created' : 'package.updated', editId, { name, changes });
     clearDraft();
     setTimeout(() => { window.location.href = 'pakej-detail.html?id=' + editId; }, 800);
   } catch (err) {
@@ -2342,6 +2443,7 @@ window.switchETab = switchETab;
     setHeaderBack('pakej.html', 'Kembali ke Pakej');
     const { data: pkg } = await window.db.from('psy_packages').select('*').eq('id', editId).single();
     if (!pkg) { banner('Pakej tidak ditemui', 'error'); return; }
+    window._originalPkg = pkg;  // simpan utk diff "apa yang berubah" bila savePackage()
     populateForm(pkg);
     const deepLinkTab = params.get('tab');
     if (deepLinkTab) switchETab(deepLinkTab);

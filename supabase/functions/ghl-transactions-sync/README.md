@@ -91,9 +91,10 @@ $$);
 - **Bukan realtime** — pull berkala sahaja, sama falsafah dgn
   `ghl-pull-sync` (elak masalah GHL Workflow/webhook yang tak boleh
   dipercayai — lihat nota sejarah `ghl-pull-sync/README.md`).
-- **Tiada UI** buat masa ni — data backend sahaja untuk reconciliation/
-  accounting masa depan. Jangan tokok dalam `roles/staff/payment-admin.html`
-  (grain tak sepadan — lihat komen skema `06_payments.sql`).
-- **Belum deploy ke production** — testing sahaja (`ipmemyizigwgivccytcu`).
+- **UI**: `roles/staff/payment-ledger.html` ("Payment Management") — baca
+  via `vw_payment_ledger` (gabung `psy_payments`+`psy_ghl_transactions`,
+  dedup). BUKAN ditokok dalam `payment-admin.html` (grain tak sepadan —
+  lihat komen skema `06_payments.sql`).
+- **LIVE di production** (18 Sept 2026, `xmvqvqrifhwoehdfsoau`) — cron setiap 30 min, disahkan berfungsi (39/191 synced run pertama). Secrets GHL (`GHL_ISW_TOKEN`/`GHL_ISW_LOCATION_ID`/`GHL_PULL_CRON_SECRET`) rupanya DAH ADA di prod (pernah di-set lebih awal, tak disedari) — tiada secret baharu perlu diminta.
 - Log ringkasan setiap run ke `psy_audit_log`
   (`action='ghl_transactions_sync.run'`).

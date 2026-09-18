@@ -77,6 +77,13 @@
       display: none;
     }
 
+    /* Chip Status/Outcome dalam jadual: kekalkan warna teks, buang highlight latar belakang */
+    #patients-body .chip {
+      background: transparent !important;
+      border: none !important;
+      padding: 2px 2px !important;
+    }
+
     /* Tab penapis pesakit (gabungan Assignments) */
     .ptab { padding:7px 14px; border-radius:9999px; font-size:13px; font-weight:600;
             background:white; border:1px solid rgba(30,30,60,0.15); color:#475569; cursor:pointer;
@@ -94,6 +101,9 @@
     .coach-unassign { width:22px; height:22px; border-radius:6px; background:#fff0f0; color:#c0392b;
                       border:1px solid #f5c6c6; cursor:pointer; font-size:11px; line-height:1; }
     .coach-unassign:hover:not(:disabled) { background:#fde0e0; }
+    .coach-change { width:22px; height:22px; border-radius:6px; background:#eef2ff; color:#1e3a8a;
+                     border:1px solid #c7d2fe; cursor:pointer; font-size:11px; line-height:1; }
+    .coach-change:hover:not(:disabled) { background:#dbe4ff; }
   </style>
 </head>
 
@@ -249,8 +259,8 @@
                     <th>Pakej</th>
                     <th>Coach / Terapi</th>
                     <th>Sumber</th>
-                    <th>Status</th>
-                    <th>Outcome</th>
+                    <th>Status Pesakit</th>
+                    <th>Status Rawatan</th>
                     <th class="print-hide">Tindakan</th>
                   </tr>
                 </thead>
@@ -2066,20 +2076,82 @@
       set('tab-ct-prekyc',     live.filter(p => isPreKyc(p)).length);
     }
 
-    // ── Coach assign/unassign (gabungan dari Assignments) ──
+    // ── Coach assign/unassign/change (gabungan dari Assignments) ──
+    let allCoachProfiles = [];
+    async function loadCoachProfiles() {
+      const { data } = await window.db.from('psy_profiles')
+        .select('id, full_name')
+        .eq('role', 'staff').eq('staff_role', 'coach')
+        .order('full_name');
+      allCoachProfiles = data || [];
+    }
+
     function coachCellHtml(p) {
       const cn = escapeHtml(p.coach?.full_name || '');
       const myId = window.currentUser?.id;
       const deleted = p.status === 'deleted';
       if (p.coach_id) {
         const canUnassign = !deleted && (isAdmin || p.coach_id === myId);
-        return `<span class="text-navy font-medium">${cn || '—'}</span>`
-          + (canUnassign ? ` <button data-rbac="patient.edit" class="coach-unassign" title="Tarik balik penugasan" onclick="doUnassign('${p.id}',this)">✕</button>` : '');
+        const canChange = !deleted && isAdmin;
+        return `<span id="coach-cell-${p.id}" class="inline-flex items-center gap-1">`
+          + `<span class="text-navy font-medium">${cn || '—'}</span>`
+          + (canChange ? ` <button data-rbac="patient.edit" class="coach-change" title="Ganti Coach" onclick="openChangeCoach('${p.id}')">⇄</button>` : '')
+          + (canUnassign ? ` <button data-rbac="patient.edit" class="coach-unassign" title="Tarik balik penugasan" onclick="doUnassign('${p.id}',this)">✕</button>` : '')
+          + `</span>`;
       }
       if ((isAdmin || isCoachUser) && !deleted) {
         return `<button data-rbac="patient.edit" class="coach-assign" onclick="quickAssign('${p.id}',this)">Assign to me</button>`;
       }
       return '<span class="text-ink/30">—</span>';
+    }
+
+    async function openChangeCoach(pid) {
+      const patient = allPatients.find(x => x.id === pid);
+      if (!patient) return;
+      if (!allCoachProfiles.length) await loadCoachProfiles();
+      const options = allCoachProfiles.filter(c => c.id !== patient.coach_id);
+      if (!options.length) { banner('Tiada coach lain untuk dipilih', 'error'); return; }
+      const cell = document.getElementById(`coach-cell-${pid}`);
+      if (!cell) return;
+      cell.innerHTML = `
+        <select id="change-coach-sel-${pid}" class="text-xs border border-navy/20 rounded-lg px-1.5 py-1">
+          ${options.map(c => `<option value="${c.id}">${escapeHtml(c.full_name)}</option>`).join('')}
+        </select>
+        <button class="coach-assign" style="padding:4px 8px" onclick="confirmChangeCoach('${pid}')">✓</button>
+        <button class="coach-unassign" onclick="filterPatients()">✕</button>
+      `;
+    }
+
+    async function confirmChangeCoach(pid) {
+      const patient = allPatients.find(x => x.id === pid);
+      const sel = document.getElementById(`change-coach-sel-${pid}`);
+      if (!patient || !sel) return;
+      const newCoachId = sel.value;
+      const newCoach = allCoachProfiles.find(c => c.id === newCoachId);
+      if (!newCoach) return;
+      const fromCoachId = patient.coach_id;
+      const fromCoachName = patient.coach?.full_name || null;
+      if (!confirm(`Ganti coach pesakit ini kepada ${newCoach.full_name}?\n\nSejarah rawatan sedia ada (sesi, progress, dll) TIDAK akan berubah — hanya coach semasa yang ditukar.`)) return;
+
+      const uid = window.currentUser.id;
+      const { error } = await window.db.from('psy_patients')
+        .update({ coach_id: newCoachId, assigned_at: new Date().toISOString() })
+        .eq('id', pid);
+      if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+
+      await window.db.from('psy_audit_log').insert({
+        actor_id: uid, actor_name: window.currentUser.full_name,
+        actor_role: window.currentUser.role || 'staff',
+        action: 'patient.coach_changed', target: pid,
+        meta: { from_coach_id: fromCoachId, from_coach_name: fromCoachName, to_coach_id: newCoachId, to_coach_name: newCoach.full_name },
+      });
+
+      patient.coach_id = newCoachId;
+      patient.assigned_at = new Date().toISOString();
+      patient.coach = { full_name: newCoach.full_name };
+      renderPatientStats();
+      filterPatients();
+      banner(`Coach ditukar kepada ${newCoach.full_name} ✅`);
     }
 
     async function quickAssign(pid, btn) {
@@ -2607,6 +2679,7 @@
       if (isAdmin) {
         const tog = document.getElementById('archived-toggle-wrap');
         if (tog) tog.classList.replace('hidden', 'flex');
+        loadCoachProfiles();
       }
       await loadAll();
       subscribeListRealtime();  // auto-refresh senarai bila status pesakit berubah (tanpa refresh)
@@ -2622,6 +2695,15 @@
       const editId = qs.get('edit');
       if (editId) {
         setTimeout(() => openEditPatient(editId), 500);
+      }
+      // Auto-tapis ikut ?status=<value> (cth dari klik status di Ringkasan Dashboard)
+      const statusQ = qs.get('status');
+      if (statusQ) {
+        const statusEl = document.getElementById('filter-status');
+        if (statusEl && [...statusEl.options].some(o => o.value === statusQ)) {
+          statusEl.value = statusQ;
+          filterPatients();
+        }
       }
       restoreScrollPreserve();
     })();
