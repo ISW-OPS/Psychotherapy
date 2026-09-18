@@ -858,27 +858,18 @@
           ${canEditAgreement ? `<button onclick="resetAgreement('${agreement.id}')" data-rbac="kob.edit" class="shrink-0 border border-terracotta/40 text-terracotta px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-terracotta/10">🗑️ Buang</button>` : ''}
           </div>`;
           } else {
-            const phone = patient?.psy_profiles?.phone || patient?.phone || '';
-            const cleanPhone = phone.replace(/\D/g, '').replace(/^0/, '60');
-            const patName = patient?.psy_profiles?.full_name || patient?.full_name || 'Pesakit';
-
             if (agBtn) agBtn.innerHTML = '';
             if (agBody) agBody.innerHTML = `
           <div class="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
             <span class="text-lg">⚠️</span>
             <div><div class="font-semibold text-amber-800">Agreement belum ditandatangan</div>
-            <div class="text-amber-700 mt-0.5">Patient mesti sign sebelum KOB boleh ditandakan Selesai.</div></div>
+            <div class="text-amber-700 mt-0.5">Patient mesti sign sebelum KOB boleh ditandakan Selesai. Agreement hanya boleh dihantar kepada pesakit selepas ditandatangani.</div></div>
           </div>
           <div class="grid grid-cols-2 gap-3">
-            ${cleanPhone
-                ? `<button onclick="sendAgreementPreviewViaWhatsApp(this, '${cleanPhone}')" data-rbac="kob.edit"
-                  class="flex items-center justify-center gap-2 bg-[#25D366] text-white py-2.5 rounded-xl font-semibold text-sm disabled:opacity-60">
-                  📱 Hantar WhatsApp (PDF)
-                </button>`
-                : `<button onclick="copyAgreementLink()"
-                  class="flex items-center justify-center gap-2 border border-navy text-navy py-2.5 rounded-xl font-semibold text-sm">
-                  🔗 Salin Link
-                </button>`}
+            <button onclick="copyAgreementLink()"
+              class="flex items-center justify-center gap-2 border border-navy text-navy py-2.5 rounded-xl font-semibold text-sm">
+              🔗 Salin Link
+            </button>
             <a href="kob-sign.html?id=${kobId}" data-rbac="kob.edit"
               class="flex items-center justify-center gap-2 bg-navy hover:bg-navy-dark text-white py-2.5 rounded-xl font-bold text-sm">
               ✍️ Sign Agreement
@@ -2368,54 +2359,6 @@
       await loadKob();
     }
 
-    // Klausa/tajuk/versi perjanjian ikut pakej (agreement_title/agreement_version/
-    // agreement_clauses) — fallback ke DEFAULT_AGREEMENT global kalau pakej tiada
-    // clauses sendiri. Dipakai oleh generateUnsignedPreviewPdfUrl() (pratonton WhatsApp).
-    async function loadAgreementDataForKob() {
-      const def = window.DEFAULT_AGREEMENT || { title: 'Kontrak Pelaburan Kesihatan', version: '', clauses: [] };
-      const out = { title: def.title, version: def.version, clauses: def.clauses, pkg: null };
-      if (kob.recommended_package_id) {
-        const { data } = await window.db.from('psy_packages')
-          .select('name, price, agreement_title, agreement_version, agreement_clauses')
-          .eq('package_id', kob.recommended_package_id).limit(1);
-        const pkg = data?.[0];
-        if (pkg) {
-          out.pkg = pkg;
-          out.title = pkg.agreement_title || def.title;
-          out.version = pkg.agreement_version || def.version;
-          if (Array.isArray(pkg.agreement_clauses) && pkg.agreement_clauses.length) {
-            out.clauses = pkg.agreement_clauses;
-          }
-        }
-      }
-      return out;
-    }
-
-    async function generateUnsignedPreviewPdfUrl() {
-      const data = await loadAgreementDataForKob();
-      // patName sebenar (rekod pesakit) dipakai utk nama fail & mesej WhatsApp SAHAJA —
-      // dalam DOKUMEN sendiri, Nama/No. IC pesakit & waris SENGAJA dibiar kosong (sama
-      // macam kob-sign.html), pesakit/waris kena isi sendiri semasa sesi sign sebenar.
-      const patName = patient?.psy_profiles?.full_name || patient?.full_name || 'Pesakit';
-      const pkgName = data.pkg?.name || kob.recommended_package_name || '—';
-      const pkgPrice = data.pkg?.price != null ? `RM ${Number(data.pkg.price).toFixed(2)}` : '—';
-      const sched = await loadPaymentScheduleForAgreement(kob);
-
-      const { bytes: pdfBytes } = await generateSignedPdf({
-        title: data.title, version: data.version, clauses: data.clauses,
-        patientName: '', patientIc: '', guardianName: '', guardianIc: '',
-        packageName: pkgName, price: pkgPrice,
-        signatureDataUrl: null,
-        paymentRows: sched.rows, paymentTotal: sched.total, paymentModeLabel: sched.modeLabel,
-      });
-      const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
-      const pdfPath = `${patient.id}/${buildAgreementFilename(pkgName, patName)}`;
-      const { error: pdfErr } = await window.db.storage.from('kob-documents').upload(pdfPath, pdfBlob, { contentType: 'application/pdf', upsert: true });
-      if (pdfErr) throw new Error(pdfErr.message);
-      const { data: pdfUrl } = await window.db.storage.from('kob-documents').createSignedUrl(pdfPath, 3600 * 24 * 30);
-      return { url: pdfUrl?.signedUrl || '', patName };
-    }
-
     async function sendSignedAgreementViaWhatsApp(btn, cleanPhone, pdfUrl, patName) {
       const originalHtml = btn.innerHTML;
       btn.disabled = true; btn.innerHTML = 'Menghantar…';
@@ -2429,27 +2372,6 @@
           attachments: [pdfUrl],
         });
         banner('PDF dihantar ke WhatsApp patient ✅');
-      } catch (e) {
-        banner('Gagal hantar WhatsApp: ' + e.message, 'error');
-      } finally {
-        btn.disabled = false; btn.innerHTML = originalHtml;
-      }
-    }
-
-    async function sendAgreementPreviewViaWhatsApp(btn, cleanPhone) {
-      const originalHtml = btn.innerHTML;
-      btn.disabled = true; btn.innerHTML = 'Menghantar…';
-      try {
-        const { url: link, patName } = await generateUnsignedPreviewPdfUrl();
-        const ec = await ghlInvoke('ensurecontact', { phone: cleanPhone, name: patName });
-        const contactId = ec?.contact?.contactId;
-        if (!contactId) throw new Error('Tak dapat sediakan contact GHL untuk nombor ini.');
-        await ghlInvoke('send', {
-          contactId,
-          message: `Assalamualaikum ${patName}, ini salinan Perjanjian Rawatan ISW untuk semakan anda. Tandatangan rasmi akan dilakukan bersama staf/doktor semasa sesi KOB.`,
-          attachments: [link],
-        });
-        banner('PDF pratonton dihantar ke WhatsApp patient ✅');
       } catch (e) {
         banner('Gagal hantar WhatsApp: ' + e.message, 'error');
       } finally {
@@ -2786,45 +2708,6 @@
       if (!el) return;
       const num = parseMoneyVal(el.value);
       el.value = num ? num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
-    }
-
-    // Jadual bayaran SEBENAR yg dah disimpan (checkpoints ansuran, atau bayaran penuh) —
-    // dipakai utk Lampiran "Jadual Bayaran & Pelaburan" dalam PDF perjanjian. Label
-    // Minggu/Bulan diagak drpd jarak due_date sebab frekuensi Ansuran Manual tak
-    // disimpan berasingan dalam DB (psy_kob_installment_checkpoints tiada lajur freq).
-    async function loadPaymentScheduleForAgreement(kobRow) {
-      if (kobRow.package_payment_status === 'declined' || kobRow.package_payment_status === 'skipped') {
-        return { rows: [], total: 0, modeLabel: '' };
-      }
-      if (kobRow.package_payment_mode === 'installment') {
-        const { data: cps } = await window.db.from('psy_kob_installment_checkpoints')
-          .select('seq, month_offset, due_date, target_cumulative')
-          .eq('kob_session_id', kobRow.id).order('seq', { ascending: true });
-        if (cps && cps.length) {
-          let freqLabel = 'Bulan';
-          if (cps.length >= 3) {
-            const diffDays = Math.round((new Date(cps[2].due_date) - new Date(cps[1].due_date)) / 86400000);
-            if (diffDays > 0 && diffDays <= 10) freqLabel = 'Minggu';
-          }
-          let prevCum = 0;
-          const rows = cps.map((r, i) => {
-            const amount = Number(r.target_cumulative) - prevCum;
-            prevCum = Number(r.target_cumulative);
-            return {
-              no: i + 1,
-              label: i === 0 ? 'Deposit (Bayaran Pertama)' : `${freqLabel} ${r.month_offset}${i === cps.length - 1 ? ' (Terakhir)' : ''}`,
-              dueDate: r.due_date, amount,
-            };
-          });
-          return { rows, total: prevCum, modeLabel: 'Ansuran (Pelan Pembayaran Berperingkat)' };
-        }
-      }
-      const amt = Number(kobRow.recommended_package_price || 0);
-      if (!(amt > 0)) return { rows: [], total: 0, modeLabel: '' };
-      return {
-        rows: [{ no: 1, label: 'Bayaran Penuh', dueDate: (kobRow.package_paid_at || new Date().toISOString()).slice(0, 10), amount: amt }],
-        total: amt, modeLabel: 'Bayaran Penuh',
-      };
     }
 
     // ── Langkah 1-2: Harga Asal Program / Harga Promo (paparan sahaja) ──

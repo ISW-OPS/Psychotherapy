@@ -512,6 +512,43 @@
     onPdfScroll();
   }
 
+  // Panggil Edge Function GHL (sama pattern dgn kob-detail.html) — unwrap data & lempar ralat.
+  async function ghlInvoke(action, extra = {}) {
+    const { data, error } = await window.db.functions.invoke('ghl-inbox', { body: { action, ...extra } });
+    if (error) {
+      let msg = error.message;
+      try { const ctx = await error.context?.json(); if (ctx?.error) msg = ctx.error; } catch (_) { }
+      throw new Error(msg);
+    }
+    if (data?.error) throw new Error(data.error);
+    return data;
+  }
+
+  // Auto-hantar PDF agreement bertandatangan ke WhatsApp pesakit sejurus lepas sign
+  // berjaya — guna templat boleh-edit (Mesej Automatik, key='kob_agreement_signed'),
+  // toggle on/off dari auto-mesej.html. Kegagalan hantar TAK gagalkan proses sign
+  // (agreement dah tersimpan), cuma dipapar sbg amaran berasingan.
+  async function autoSendSignedAgreementWhatsApp(pdfUrl, patName) {
+    try {
+      const { data: tpl } = await window.db.from('psy_auto_messages')
+        .select('message_template, is_active').eq('key', 'kob_agreement_signed').maybeSingle();
+      if (tpl?.is_active === false) { banner('Agreement berjaya ditandatangan ✅'); return; }
+      const phone = patient?.psy_profiles?.phone || patient?.phone || '';
+      const cleanPhone = phone.replace(/\D/g, '').replace(/^0/, '60');
+      if (!cleanPhone) { banner('Agreement berjaya ditandatangan ✅ (tiada nombor telefon untuk auto-hantar)'); return; }
+      const message = tpl?.message_template
+        ? tpl.message_template.replace(/\{nama\}/g, patName)
+        : `Assalamualaikum ${patName}, berikut salinan Perjanjian Rawatan ISW yang telah anda tandatangani.`;
+      const ec = await ghlInvoke('ensurecontact', { phone: cleanPhone, name: patName });
+      const contactId = ec?.contact?.contactId;
+      if (!contactId) throw new Error('Tak dapat sediakan contact GHL untuk nombor ini.');
+      await ghlInvoke('send', { contactId, message, attachments: [pdfUrl] });
+      banner('Agreement berjaya ditandatangan & dihantar ke WhatsApp pesakit ✅');
+    } catch (e) {
+      banner('Agreement disimpan, tapi gagal auto-hantar WhatsApp: ' + e.message, 'error');
+    }
+  }
+
   async function submitSign() {
     const errEl = document.getElementById('sign-error');
     errEl.classList.add('hidden');
@@ -594,7 +631,7 @@
 
       await auditLog('kob.agreement_signed_inline', kobId, { patient_id: patient?.id, by_staff: window.currentUser.full_name });
 
-      banner('Agreement berjaya ditandatangan ✅');
+      await autoSendSignedAgreementWhatsApp(pdfUrl?.signedUrl || pdfPath, patName);
       setTimeout(() => { location.href = 'kob-detail.html?id=' + kobId; }, 800);
     } catch (e) {
       errEl.textContent = 'Ralat: ' + e.message; errEl.classList.remove('hidden');
