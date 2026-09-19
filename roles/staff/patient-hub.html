@@ -1548,6 +1548,12 @@
       restoreScrollPreserve();
     })();
 
+    // 'unregistered' = pesakit baru yang belum settle KOB (belum ada pakej/plan)
+    function hubStatusLabel(st) {
+      if (st === 'unregistered') return 'Belum Settle KOB';
+      return (typeof STATUS_LABELS !== 'undefined' && STATUS_LABELS[st]) || st || '—';
+    }
+
     // ── Realtime: pesakit ni / kehadiran plan dia berubah (dari mana-mana UI) → auto-update ──
     async function realtimeRefreshPatient() {
       const { data: p } = await window.db.from('psy_patients').select('*').eq('id', patientId).maybeSingle();
@@ -1556,7 +1562,7 @@
       const sc = document.getElementById('patient-status-chip');
       if (sc) {
         const cls = { active: 'bg-green-light text-green-dark', pending_kyc: 'bg-gold-light text-gold-dark', inactive: 'bg-ink/10 text-ink/50', unregistered: 'bg-amber-100 text-amber-800', rejected: 'bg-terracotta/15 text-terracotta' }[p.status] || 'bg-ink/10 text-ink/50';
-        sc.textContent = window.STATUS_LABELS?.[p.status] || p.status || '—';
+        sc.textContent = hubStatusLabel(p.status);
         sc.className = `chip text-xs ${cls}`;
       }
     }
@@ -1664,7 +1670,7 @@
         rejected: 'bg-terracotta/15 text-terracotta',
       };
       const sc = document.getElementById('patient-status-chip');
-      sc.textContent = window.STATUS_LABELS?.[patient.status] || patient.status || '—';
+      sc.textContent = hubStatusLabel(patient.status);
       sc.className = `chip text-xs ${statusChips[patient.status] || 'bg-ink/10 text-ink/50'}`;
 
       const kycChip = document.getElementById('patient-kyc-chip');
@@ -2467,7 +2473,8 @@
         const canMake = hasPkg && (canEdit || window.currentUser?.staff_role === 'super_admin');
         document.getElementById('ov-weekly-list').innerHTML = `
       <div class="col-span-3 text-center py-6">
-        <div class="text-sm text-ink/40 italic mb-3">Tiada plan aktif${hasPkg ? ` — pesakit ada pakej (<span class="text-ink/60 font-semibold not-italic">${ovEsc(patient.active_package_name || patient.active_package_id)}</span>) tapi belum ada treatment plan` : ''}</div>
+        ${hasPkg ? '' : kobUnsettledNoticeHtml()}
+        <div class="text-sm text-ink/40 italic mb-3 ${hasPkg ? '' : 'hidden'}">Tiada plan aktif${hasPkg ? ` — pesakit ada pakej (<span class="text-ink/60 font-semibold not-italic">${ovEsc(patient.active_package_name || patient.active_package_id)}</span>) tapi belum ada treatment plan` : ''}</div>
         ${canMake ? `<button data-rbac="patient.create" onclick="createMissingPlan(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-navy text-white hover:bg-navy-dark transition">➕ Cipta Plan Rawatan</button>` : ''}
       </div>`;
         return;
@@ -3025,7 +3032,7 @@
       document.getElementById('ov-checkin-pct').textContent = Math.round(ciCount / 7 * 100) + '%';
 
       // ─── KPI: Pakej Aktif Count + Total RM (derive from plans + packages) ───
-      const [{ data: plansData }, { data: pkgsData }, { data: declinedKobData }] = await Promise.all([
+      const [{ data: plansData }, { data: pkgsData }, { data: declinedKobData }, { data: latestKobData }] = await Promise.all([
         window.db.from('psy_treatment_plans')
           .select('id, name, template, duration_weeks, current_week, status, created_at, start_date')
           .eq('patient_id', patientId)
@@ -3038,10 +3045,18 @@
           .eq('status', 'completed')
           .order('selesai_at', { ascending: false })
           .limit(1),
+        window.db.from('psy_kob_sessions')
+          .select('id, status, recommended_package_name')
+          .eq('patient_id', patientId)
+          .neq('status', 'cancelled')
+          .order('created_at', { ascending: false })
+          .limit(1),
       ]);
       const pkgMap = {};
       (pkgsData || []).forEach(pk => { pkgMap[pk.package_id] = pk; });
       const declinedKob = declinedKobData?.[0] || null;
+      hubLatestKob = latestKobData?.[0] || null;
+      if (!activePlan) renderOvWeekPage();
 
       const allPkgs = (plansData || []).map((pl, idx) => {
         const pkg = pkgMap[pl.template] || {};
@@ -3079,6 +3094,19 @@
       await renderContinuityPanel();
     }
 
+    // Pesakit tanpa pakej/plan sebab KOB belum settle → mesej jelas + pautan terus ke KOB.
+    let hubLatestKob = null;
+    function kobUnsettledNoticeHtml() {
+      const k = hubLatestKob;
+      if (!k) return `<div class="text-xs text-ink/50">Belum ada sesi KOB untuk pesakit ini.</div>`;
+      const pkg = k.recommended_package_name ? ` Pakej dicadangkan: <b>${escapeHtml(k.recommended_package_name)}</b>.` : '';
+      return `<div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-left space-y-2 inline-block">
+        <div class="text-xs font-bold text-amber-700">⚠️ KOB belum settle</div>
+        <div class="text-xs text-ink/60">Pakej &amp; plan rawatan hanya aktif selepas KOB selesai (termasuk perjanjian ditandatangani).${pkg}</div>
+        <a href="kob-detail.html?id=${k.id}" class="inline-block text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 px-3 py-1.5 rounded-lg no-underline">Buka KOB →</a>
+      </div>`;
+    }
+
     let _pakejData = { pkgs: [], declinedKob: null, expanded: false };
     function renderPakejAktifTable(pkgs, declinedKob) {
       const body = document.getElementById('ov-pakej-body');
@@ -3099,7 +3127,7 @@
         <a href="kob-detail.html?id=${declinedKob.id}&focus=package" class="inline-block text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 px-3 py-1.5 rounded-lg no-underline">Teruskan Pakej Ini →</a>
       </div>`;
         } else {
-          empty.innerHTML = 'Tiada pakej aktif';
+          empty.innerHTML = kobUnsettledNoticeHtml();
         }
         empty.classList.remove('hidden');
         footer.classList.add('hidden');

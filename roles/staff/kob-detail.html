@@ -1305,6 +1305,14 @@
     }
 
     async function markSelesai() {
+      // Gate keras: KOB tak boleh selesai selagi agreement belum ditandatangani
+      // (butang dikunci di UI, ini pertahanan kedua).
+      const { data: signedAgr, error: agrErr } = await window.db.from('psy_kob_agreements')
+        .select('id').eq('patient_id', patient.id).not('signed_at', 'is', null).limit(1);
+      if (agrErr || !signedAgr?.length) {
+        banner(agrErr ? 'Gagal semak agreement: ' + agrErr.message : 'Agreement belum ditandatangani — KOB tak boleh ditandakan Selesai.', 'error');
+        return;
+      }
       const hasPackage = !!kob.recommended_package_id;
       const isDeclined = kob.package_payment_status === 'declined';
       let msg;
@@ -3101,7 +3109,8 @@
       const status = kob.package_payment_status;
       const needsPayment = kob.recommended_package_id && (status === 'pending' || status === 'partial');
       const isDeclinedInfo = kob.recommended_package_id && status === 'declined';
-      if (!needsPayment && !isDeclinedInfo) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+      const isPaidInfo = kob.recommended_package_id && status === 'paid';
+      if (!needsPayment && !isDeclinedInfo && !isPaidInfo) { el.classList.add('hidden'); el.innerHTML = ''; return; }
       el.classList.remove('hidden');
 
       const packagePrice = Number(kob.recommended_package_price || 0);
@@ -3142,6 +3151,21 @@
       ${manualPaymentFormHtml(remaining, false)}
       ${paymentHistoryHtml(payments, packagePrice, totalPaid)}
     `;
+        return;
+      }
+
+      // Sudah dibayar penuh — papar ringkasan + sejarah bayaran (bukan sembunyi kad).
+      if (isPaidInfo) {
+        wizSidebar.innerHTML = '';
+        const { data } = await window.db.from('psy_payments')
+          .select('invoice_number, receipt_ref, receipt_url, total, paid_at, created_at')
+          .eq('status', 'completed').eq('intent->>kob_session_id', kobId)
+          .order('created_at', { ascending: false });
+        const payments = data || [];
+        const totalPaid = payments.reduce((sum, p) => sum + Number(p.total || 0), 0);
+        wizMain.innerHTML = `
+      <div class="text-xs text-green-dark bg-green-light/50 p-2 rounded mb-2">✅ Bayaran penuh diterima (${fmtRM(totalPaid)}).</div>
+      ${paymentHistoryHtml(payments, packagePrice, totalPaid)}`;
         return;
       }
 
