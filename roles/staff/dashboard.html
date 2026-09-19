@@ -877,7 +877,7 @@
       const zonSince = new Date(today + 'T00:00:00'); zonSince.setDate(zonSince.getDate() - 2);   // 3 hari (hari ini + 2 lepas)
 
       const [allPatients, weekSessions, adherenceRows, checkinRows, complianceRows, zonRows, hk1Rows, emergencyRows] = await Promise.all([
-        window.db.from('psy_patients').select('id, mrn, coach_id, active_package_id, psy_profiles!psy_patients_user_id_fkey(full_name, avatar_url)').neq('status', 'deleted').then(r => r.data || []),
+        window.db.from('psy_patients').select('id, mrn, coach_id, status, active_package_id, psy_profiles!psy_patients_user_id_fkey(full_name, avatar_url)').neq('status', 'deleted').then(r => r.data || []),
         window.db.from('psy_plan_weekly_progress').select('id, session_date, status, week_number, plan_id, patient_id, psy_treatment_plans(name), psy_patients(id, mrn, coach_id, phone, psy_profiles!psy_patients_user_id_fkey(full_name))').gte('session_date', weekStart.toISOString()).lte('session_date', weekEnd.toISOString()).order('session_date', { ascending: true }).then(r => r.data || []),
         window.db.from('psy_adherence_alerts').select('id, patient_id, details').eq('notified_coach_id', user.id).is('acknowledged_at', null).then(r => r.data || []),
         window.db.from('psy_daily_checkins').select('patient_id, checkin_date').gte('checkin_date', weekStartISO).then(r => r.data || []).catch(() => []),
@@ -922,14 +922,19 @@
       // Progres rawatan (sesi 'hadir' / jumlah minggu pelan) untuk semua pesakit
       const planById = {};            // patient_id -> { duration_weeks, current_week, status }
       const completedByPatient = {};  // patient_id -> bilangan sesi 'hadir'
+      const lastHadirByPatient = {};  // patient_id -> tarikh sesi 'hadir' terkini
       const _allPatIds = allPatients.map(p => p.id);
       if (_allPatIds.length) {
         const [planRes, progRes] = await Promise.all([
           window.db.from('psy_treatment_plans').select('patient_id, duration_weeks, current_week, status').in('patient_id', _allPatIds).then(r => r, () => ({ data: [] })),
-          window.db.from('psy_plan_weekly_progress').select('patient_id, status').in('patient_id', _allPatIds).then(r => r, () => ({ data: [] })),
+          window.db.from('psy_plan_weekly_progress').select('patient_id, status, session_date').in('patient_id', _allPatIds).then(r => r, () => ({ data: [] })),
         ]);
         (planRes.data || []).forEach(pl => { const cur = planById[pl.patient_id]; if (!cur || pl.status === 'active') planById[pl.patient_id] = pl; });
-        (progRes.data || []).forEach(pr => { if (pr.status === 'hadir') completedByPatient[pr.patient_id] = (completedByPatient[pr.patient_id] || 0) + 1; });
+        (progRes.data || []).forEach(pr => {
+          if (pr.status !== 'hadir') return;
+          completedByPatient[pr.patient_id] = (completedByPatient[pr.patient_id] || 0) + 1;
+          if (pr.session_date && (!lastHadirByPatient[pr.patient_id] || pr.session_date > lastHadirByPatient[pr.patient_id])) lastHadirByPatient[pr.patient_id] = pr.session_date;
+        });
       }
 
       // Adherence per patient — kira untuk SEMUA pesakit (KPI coach guna subset myPatients)
@@ -1478,7 +1483,31 @@
               reasonTag('Kepatuhan · ' + kepGrade[p.id], (GRADE_PILL[kepGrade[p.id]] || GRADE_PILL.C)[1])));
           });
 
-        if (!window._naCollapsed) window._naCollapsed = { emg: false, zon: false, cancel: false, kep: false };
+        // (4) Tidak hadir > 7 hari — pesakit berpelan aktif, sesi 'hadir' terakhir >= 7 hari lepas (atau belum pernah).
+        // Semua pesakit klinik (bukan caseload sendiri sahaja), sama skop dgn Kepatuhan Rendah.
+        const absentRows = [];
+        const nowMs = Date.now();
+        allPatients
+          .filter(p => p.status === 'active' && planById[p.id]?.status === 'active')
+          .map(p => {
+            const last = lastHadirByPatient[p.id] || null;
+            return { p, last, days: last ? Math.floor((nowMs - new Date(last).getTime()) / 86400000) : null };
+          })
+          .filter(x => x.days === null || x.days >= 7)
+          .sort((a, b) => (b.days ?? 999) - (a.days ?? 999))
+          .forEach(({ p, last, days }) => {
+            const nm = p.psy_profiles?.full_name || p.mrn || 'Pesakit';
+            const isMine = p.coach_id === user.id;
+            const coachTag = isMine ? '' : ` · 👤 ${p.coach_id ? (coachNameById[p.coach_id] || 'Coach') : 'Tiada coach'}`;
+            const pl = planById[p.id];
+            const prog = pl?.duration_weeks ? ` · M${pl.current_week || 0}/${pl.duration_weeks}` : '';
+            const lastLbl = last ? `hadir terakhir ${new Date(last).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' })}` : 'belum pernah hadir';
+            absentRows.push(naRow(nm, `${lastLbl}${prog}${coachTag}`,
+              `patient-hub.html?patient_id=${p.id}`, 'Hub',
+              reasonTag(days === null ? 'Belum hadir' : `${days} hari`, days === null || days >= 14 ? 'bg-terracotta-light text-terracotta' : 'bg-amber-100/70 text-amber-700')));
+          });
+
+        if (!window._naCollapsed) window._naCollapsed = { emg: false, zon: false, cancel: false, kep: false, absent: false };
 
         function naSectionHdr(key, icon, label, count, cls) {
           const open = !window._naCollapsed[key];
@@ -1506,6 +1535,10 @@
           if (cancelRows.length) {
             html += naSectionHdr('cancel', '📅', 'Tak Reschedule', cancelRows.length, 'bg-gold/20 text-gold-dark');
             if (!window._naCollapsed.cancel) html += cancelRows.join('');
+          }
+          if (absentRows.length) {
+            html += naSectionHdr('absent', '🚨', 'Tidak Hadir > 7 Hari', absentRows.length, 'bg-terracotta/15 text-terracotta');
+            if (!window._naCollapsed.absent) html += absentRows.join('');
           }
           if (kepRows.length) {
             html += naSectionHdr('kep', '📊', 'Kepatuhan Rendah', kepRows.length, 'bg-red-100/70 text-red-600');

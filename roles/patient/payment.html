@@ -284,6 +284,7 @@
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
 <script src="../../shared/utils.js"></script>
+<script src="../../shared/inventoryLink.js"></script>
 <script src="_shared.js"></script>
 <script src="../../shared/receipt.js"></script>
 <script>
@@ -327,6 +328,12 @@ async function verifyShopOrderPrices(item) {
     .select('product_id, price, promo_price, promo_until, is_active')
     .in('product_id', ids);
   if (error || !products) return null;
+  // Produk yang item inventorinya Inactive/Discontinued tidak boleh dibeli (troli lama dalam localStorage)
+  const blockedProducts = await iswShopBlockedProducts();
+  verifyShopOrderPrices.blocked = null;
+  for (const id of ids) {
+    if (blockedProducts.has(id)) { verifyShopOrderPrices.blocked = blockedProducts.get(id); return null; }
+  }
   const priceMap = Object.fromEntries(products.map(p => [p.product_id, p]));
   const today = new Date().toISOString().slice(0, 10);
   let verifiedSubtotal = 0;
@@ -385,7 +392,9 @@ async function loadPayments() {
       const verified = await verifyShopOrderPrices(pendingItem);
       if (!verified) {
         localStorage.removeItem('isw_pending_payment');
-        banner('Harga produk tidak sah. Sila buat semula order anda.', 'error');
+        banner(verifyShopOrderPrices.blocked
+          ? `"${verifyShopOrderPrices.blocked}" tidak lagi tersedia. Sila buat semula order anda.`
+          : 'Harga produk tidak sah. Sila buat semula order anda.', 'error');
       } else {
         pendingItems.push(verified);
       }

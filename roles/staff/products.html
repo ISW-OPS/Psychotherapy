@@ -12,12 +12,13 @@
 <style>
 .purple-btn { background: #6366f1; color: white; transition: background .15s; }
 .purple-btn:hover { background: #4f46e5; }
-.cat-chip { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
-.cat-madu { background: #fef3c7; color: #92400e; }
-.cat-herba { background: #d1fae5; color: #065f46; }
-.cat-air { background: #dbeafe; color: #1e40af; }
-.cat-supplements { background: #ede9fe; color: #5b21b6; }
-.cat-default { background: #f3f4f6; color: #4b5563; }
+/* Kategori: teks berwarna sahaja (tanpa cip/latar) */
+.cat-chip { display: inline-block; font-size: 12px; font-weight: 600; }
+.cat-madu { color: #92400e; }
+.cat-herba { color: #065f46; }
+.cat-air { color: #1e40af; }
+.cat-supplements { color: #5b21b6; }
+.cat-default { color: #4b5563; }
 </style>
 </head>
 <body class="min-h-screen bg-cream">
@@ -185,8 +186,25 @@ let maxPage = 1;
 function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function fmtRM(n) { return 'RM ' + Number(n||0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
+// Stok sebenar ialah stok Inventori (bukan salinan lama lajur psy_products.stock) bila produk dipaut.
+// Pautan: inventory_item_id dahulu, kemudian nama sama (item aktif diutamakan).
+let invById = new Map(), invByName = new Map();
+function invStatus(i) { return i.status || (i.is_active === false ? 'inactive' : 'active'); }
+function linkedInv(p) {
+  return (p.inventory_item_id && invById.get(p.inventory_item_id)) || invByName.get((p.name || '').trim().toLowerCase()) || null;
+}
+function effStock(p) { const i = linkedInv(p); return i ? Number(i.qty_in_stock) || 0 : Number(p.stock || 0); }
+function effUnit(p)  { const i = linkedInv(p); return (i && i.unit) || p.unit || 'unit'; }
+// Amaran jualan: tiada di Inventori / item tidak aktif = pesakit tak nampak produk ini
+function sellNote(p) {
+  const i = linkedInv(p);
+  if (!i) return '⚠️ Tiada di Inventori — tidak dijual';
+  const st = invStatus(i);
+  return st === 'active' ? '' : `⚠️ Item Inventori ${st === 'discontinued' ? 'Discontinued' : 'Inactive'} — tidak dijual`;
+}
+
 function stockStatus(p) {
-  const qty = Number(p.stock || 0);
+  const qty = effStock(p);
   const min = Number(p.min_stock || 5);
   if (qty === 0) return { key: 'out', label: 'Habis', cls: 'text-red-600' };
   if (qty <= Math.ceil(min * 0.5)) return { key: 'critical', label: 'Sangat rendah', cls: 'text-red-500' };
@@ -280,10 +298,12 @@ function renderTable() {
     tbody.innerHTML = rows.map(p => {
       const ss = stockStatus(p);
       const img = (p.image_urls && p.image_urls[0]) || p.image_url || null;
-      const sku = p.sku || p.product_id || '—';
+      const sku = linkedInv(p)?.item_code || p.sku || p.product_id || '—';
+      // Produk tidak aktif dipudarkan (sama seperti senarai Inventori); kotak semak & tindakan kekal jelas
+      const isInactive = (p.status || (p.is_active ? 'active' : 'inactive')) !== 'active';
       return `<tr class="hover:bg-ink/[0.01]">
         <td class="px-5 py-3"><input type="checkbox" class="row-check accent-[#6366f1]" value="${p.id}" onchange="updateBulkBar()"></td>
-        <td class="px-3 py-3">
+        <td class="px-3 py-3 ${isInactive ? 'opacity-50' : ''}">
           <div class="flex items-center gap-3 min-w-[200px]">
             <div class="w-12 h-12 rounded-xl ${p.bg_color || 'bg-cream'} flex items-center justify-center flex-shrink-0 overflow-hidden">
               ${img ? `<img src="${escHtml(img)}" class="w-full h-full object-cover">` : `<span class="text-2xl">${p.icon || '📦'}</span>`}
@@ -294,13 +314,13 @@ function renderTable() {
             </div>
           </div>
         </td>
-        <td class="px-3 py-3">${catChip(p.category)}</td>
-        <td class="px-3 py-3 font-bold text-ink">${fmtRM(p.price)}</td>
-        <td class="px-3 py-3">
-          <div class="text-sm font-semibold ${ss.cls}">${p.stock ?? 0} ${escHtml(p.unit || 'unit')}</div>
+        <td class="px-3 py-3 ${isInactive ? 'opacity-50' : ''}">${catChip(p.category)}</td>
+        <td class="px-3 py-3 font-bold text-ink ${isInactive ? 'opacity-50' : ''}">${fmtRM(p.price)}</td>
+        <td class="px-3 py-3 ${isInactive ? 'opacity-50' : ''}">
+          <div class="text-sm font-semibold ${ss.cls}">${effStock(p)} ${escHtml(effUnit(p))}</div>
           <div class="text-[11px] ${ss.cls}/70 mt-0.5">${ss.label}</div>
         </td>
-        <td class="px-3 py-3">${statusBadge(p.status || (p.is_active ? 'active' : 'inactive'))}</td>
+        <td class="px-3 py-3">${statusBadge(p.status || (p.is_active ? 'active' : 'inactive'))}${sellNote(p) ? `<div class="text-[10px] text-terracotta font-semibold mt-1">${escHtml(sellNote(p))}</div>` : ''}</td>
         <td class="px-5 py-3 text-right">
           <div class="inline-flex items-center gap-1">
             <a href="product-detail.html?id=${p.id}" class="w-8 h-8 flex items-center justify-center border border-ink/15 rounded-lg hover:bg-ink/5" title="Lihat">👁️</a>
@@ -427,7 +447,7 @@ function exportCsv() {
   filtered().forEach(p => {
     rows.push([
       p.name || '', p.sku || p.product_id || '', p.category || '',
-      Number(p.price||0).toFixed(2), p.stock ?? 0, p.unit || 'unit',
+      Number(p.price||0).toFixed(2), effStock(p), effUnit(p),
       p.status || (p.is_active ? 'active' : 'inactive'),
     ]);
   });
@@ -440,8 +460,18 @@ function exportCsv() {
 }
 
 async function loadProducts() {
-  const { data, error } = await window.db.from('psy_products').select('*').order('sort_order', { ascending: true });
+  const [{ data, error }, { data: invRows }] = await Promise.all([
+    window.db.from('psy_products').select('*').order('sort_order', { ascending: true }),
+    window.db.from('psy_inventory_items').select('*'),
+  ]);
   if (error) { banner('Gagal load: ' + error.message, 'error'); return; }
+  invById = new Map(); invByName = new Map();
+  for (const i of (invRows || [])) {
+    invById.set(i.id, i);
+    const key = (i.name || '').trim().toLowerCase();
+    const cur = invByName.get(key);
+    if (key && (!cur || (invStatus(cur) !== 'active' && invStatus(i) === 'active'))) invByName.set(key, i);
+  }
   allProducts = data || [];
   renderKpi();
   renderTable();

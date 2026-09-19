@@ -138,22 +138,22 @@ window.addEventListener('message', (e) => {
 
 async function loadInvItems() {
   const { data } = await window.db.from('psy_inventory_items')
-    .select('id, name, category, unit, qty_in_stock, min_qty, notes, image_url').order('name');
+    .select('id, item_code, name, category, unit, qty_in_stock, min_qty, notes, image_url').order('name');
   _invItemsCache = data || [];
 
   // Tag item yang dah ada produk dengan nama sama (kecuali produk yang sedang ditukar item-nya)
-  let taken = new Set();
+  let taken = new Set(), takenIds = new Set();
   try {
-    let q = window.db.from('psy_products').select('id, name');
+    let q = window.db.from('psy_products').select('id, name, inventory_item_id');
     const { data: prods } = await q;
-    taken = new Set((prods || [])
-      .filter(p => !_pid || String(p.id) !== String(_pid))
-      .map(p => (p.name || '').trim().toLowerCase()));
+    const others = (prods || []).filter(p => !_pid || String(p.id) !== String(_pid));
+    taken = new Set(others.map(p => (p.name || '').trim().toLowerCase()));
+    takenIds = new Set(others.map(p => p.inventory_item_id).filter(Boolean));
   } catch {}
 
   window._invPickerAvailable = _invItemsCache.map(i => ({
     ...i,
-    _alreadyProduct: taken.has((i.name || '').trim().toLowerCase()),
+    _alreadyProduct: takenIds.has(i.id) || taken.has((i.name || '').trim().toLowerCase()),
   }));
   renderInvPickerCats();
   renderInvPicker();
@@ -171,6 +171,7 @@ function getFilteredItems() {
     if (!matchCat) return false;
     if (!_invPickerSearch) return true;
     return (i.name || '').toLowerCase().includes(_invPickerSearch)
+        || (i.item_code || '').toLowerCase().includes(_invPickerSearch)
         || (i.category || '').toLowerCase().includes(_invPickerSearch);
   });
 }
@@ -250,7 +251,10 @@ function renderInvPicker() {
       <td class="px-4 py-2.5">
         <div class="flex items-center gap-3 min-w-0">
           <div class="w-9 h-9 rounded-lg bg-cream flex items-center justify-center text-lg flex-shrink-0 overflow-hidden">${i.image_url ? `<img src="${escAttr(i.image_url)}" class="w-full h-full object-cover">` : categoryIcon(i.category)}</div>
-          <div class="font-semibold text-ink truncate">${escAttr(i.name || '')}</div>
+          <div class="min-w-0">
+            <div class="font-semibold text-ink truncate">${escAttr(i.name || '')}</div>
+            ${i.item_code ? `<div class="text-[11px] font-mono text-ink/45">${escAttr(i.item_code)}</div>` : ''}
+          </div>
         </div>
       </td>
       <td class="px-4 py-2.5 text-ink/60 whitespace-nowrap">${i.category ? escAttr(i.category) : '—'}</td>

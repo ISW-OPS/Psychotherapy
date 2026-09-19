@@ -60,6 +60,10 @@ Deno.serve(async (req) => {
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
 
+    // 2b. Produk Shop yang item inventorinya Inactive/Discontinued tidak boleh dibeli.
+    const blockedProduct = await findUnavailableShopProduct(admin, items)
+    if (blockedProduct) return json({ error: `"${blockedProduct}" tidak lagi tersedia. Sila buat semula order anda.` }, 400)
+
     // 3. SAHKAN HARGA server-side — jangan percaya amaun dari client.
     //    Pakej & produk disemak semula dari DB; jenis lain guna amaun DB-derived.
     let total = 0
@@ -204,6 +208,38 @@ async function lookupPackage(admin: any, key: string) {
   q = isUuid(key) ? q.or(`id.eq.${key},package_id.eq.${key}`) : q.eq('package_id', key)
   const { data } = await q.limit(1)
   return data?.[0]
+}
+
+// Item inventori tidak aktif jika status bukan 'active'; baris lama tanpa status jatuh balik ke is_active.
+const invInactive = (inv: any) => !!inv && (inv.status || (inv.is_active === false ? 'inactive' : 'active')) !== 'active'
+
+// Pulangkan nama produk pertama dalam mana-mana shop_order yang TIDAK boleh dijual: tiada item Inventori dipaut
+// (FK inventory_item_id atau nama sama — selaras psy_shop_product_inventory()) atau item itu tidak aktif.
+// null kalau semua boleh dijual.
+async function findUnavailableShopProduct(admin: any, items: any[]): Promise<string | null> {
+  const ids = items.filter((it) => it.type === 'shop_order' && Array.isArray(it.items))
+    .flatMap((it) => it.items.map((p: any) => p.id)).filter(Boolean)
+  if (!ids.length) return null
+  const [{ data: prods }, { data: inv }] = await Promise.all([
+    admin.from('psy_products').select('product_id, name, inventory_item_id').in('product_id', ids),
+    admin.from('psy_inventory_items').select('*'),
+  ])
+  const byId = new Map<string, any>()
+  const byName = new Map<string, any>()
+  for (const i of (inv || [])) {
+    byId.set(i.id, i)
+    const key = String(i.name || '').trim().toLowerCase()
+    if (!key) continue
+    const cur = byName.get(key)
+    if (!cur || (invInactive(cur) && !invInactive(i))) byName.set(key, i) // duplikat: utamakan yang aktif
+  }
+  for (const p of (prods || [])) {
+    const linked = (p.inventory_item_id && byId.get(p.inventory_item_id))
+      || byName.get(String(p.name || '').trim().toLowerCase()) || null
+    // Produk MESTI ada di Inventori (aktif) baru boleh dijual: tiada item dipaut ATAU item tidak aktif = tolak
+    if (!linked || invInactive(linked)) return p.name || p.product_id
+  }
+  return null
 }
 
 // Pulangkan amaun (RM) yang DIPERCAYAI untuk satu item — semak semula dari DB.

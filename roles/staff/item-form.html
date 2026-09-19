@@ -169,11 +169,13 @@
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
 <script src="../../shared/stockSync.js"></script>
+<script src="../../shared/inventoryLink.js"></script>
 <script src="../../shared/inventoryStock.js"></script>
 <script src="../../shared/inventoryUnits.js"></script>
 <script src="_shared.js"></script>
 <script>
 let editingItemId = null;
+let originalItemStatus = 'active'; // utk amaran produk Shop bila item ditukar keluar dari 'active'
 let itemData = null;
 let allSuppliers = [];
 let allLocations = [];
@@ -313,6 +315,7 @@ async function loadForEdit(id) {
   document.getElementById('item-notes').value      = data.notes || '';
   document.getElementById('item-notes-count').textContent = (data.notes || '').length + '/500';
   document.getElementById('item-status').value = data.status || (data.is_active === false ? 'inactive' : 'active');
+  originalItemStatus = document.getElementById('item-status').value;
   if (data.image_url) {
     const preview = document.getElementById('image-preview');
     preview.src = data.image_url;
@@ -379,6 +382,12 @@ async function saveItem() {
     updated_at: new Date().toISOString(),
   };
 
+  let linkedProducts = [];
+  if (editingItemId && originalItemStatus === 'active' && status !== 'active') {
+    linkedProducts = await iswConfirmShopImpact({ id: editingItemId, name }, status === 'discontinued' ? 'Discontinued' : 'Inactive');
+    if (linkedProducts === false) return;
+  }
+
   const btn = document.getElementById('if-save-btn');
   btn.disabled = true; btn.textContent = 'Menyimpan...';
 
@@ -387,6 +396,7 @@ async function saveItem() {
     if (editingItemId) {
       const { error } = await window.db.from('psy_inventory_items').update(payload).eq('id', editingItemId);
       if (error) throw error;
+      await iswDeactivateShopProducts(linkedProducts); // produk Shop berkaitan turut Inactive
     } else {
       const { data, error } = await window.db.from('psy_inventory_items').insert(payload).select('id').single();
       if (error) throw error;

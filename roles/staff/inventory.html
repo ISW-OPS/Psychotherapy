@@ -139,6 +139,17 @@
             </details>
           </div>
 
+          <!-- Bulk actions bar -->
+          <div id="inv-bulk-bar" class="hidden bg-navy text-white rounded-2xl px-4 py-3 flex items-center justify-between gap-3 flex-wrap mb-3">
+            <div class="text-sm font-medium"><span id="inv-bulk-count">0</span> item dipilih</div>
+            <div class="flex items-center gap-2 flex-wrap">
+              <button onclick="clearInvSelection()" class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-white/30 hover:bg-white/10 transition-colors">Batal Pilihan</button>
+              <button data-rbac="inventory.edit" onclick="bulkSetActive(true)" class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-white/30 hover:bg-white/10 transition-colors">♻️ Aktifkan</button>
+              <button data-rbac="inventory.edit" onclick="bulkSetActive(false)" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-terracotta hover:opacity-90 transition-colors">⛔ Nyahaktif</button>
+              <button data-rbac="inventory.delete" onclick="bulkDeleteItems()" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-600 hover:bg-red-700 transition-colors">🗑️ Padam</button>
+            </div>
+          </div>
+
           <!-- Table -->
           <div class="bg-white rounded-2xl border border-ink/10 overflow-hidden shadow-sm">
             <div class="overflow-x-auto">
@@ -228,6 +239,7 @@
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
 <script src="../../shared/stockSync.js"></script>
+<script src="../../shared/inventoryLink.js"></script>
 <script src="../../shared/inventoryForecast.js"></script>
 <script src="_shared.js"></script>
 <script>
@@ -589,13 +601,13 @@ function renderItems() {
           <button onclick="toggleActionMenu(this)" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-ink/8 text-ink/50 text-lg leading-none">⋮</button>
           <div class="hidden absolute right-0 top-full mt-1 bg-white border border-ink/10 rounded-xl shadow-lg py-1 z-20 w-40 action-menu">
             <button onclick="location.href='inventory-detail.html?id=${item.id}'" class="w-full text-left px-3 py-2 text-xs text-ink/70 hover:bg-ink/5 flex items-center gap-2">👁️ Lihat</button>
-            ${canManage ? `<button onclick="window.open('item-form.html?id=${item.id}', '_blank')" class="w-full text-left px-3 py-2 text-xs text-ink/70 hover:bg-ink/5 flex items-center gap-2">✏️ Edit</button>` : ''}
             ${canManage ? `<button onclick="toggleItemActive('${item.id}', ${itemStatus !== 'active'})" class="w-full text-left px-3 py-2 text-xs ${itemStatus !== 'active' ? 'text-teal hover:bg-teal/5' : 'text-terracotta hover:bg-terracotta/5'} flex items-center gap-2">${itemStatus !== 'active' ? '♻️ Aktifkan' : '⛔ Nyahaktif'}</button>` : ''}
           </div>
         </div>
       </td>
     </tr>`;
   }).join('');
+  onRowCheckChange(); // baris dibina semula — kosongkan bar pilihan
 
   // Pagination UI
   const pag = document.getElementById('inv-pagination');
@@ -626,26 +638,106 @@ function goPage(p) {
 
 function toggleSelectAll(checkbox) {
   document.querySelectorAll('.inv-row-check').forEach(cb => { cb.checked = checkbox.checked; });
+  onRowCheckChange();
 }
 window.toggleSelectAll = toggleSelectAll;
+
+function selectedInvIds() {
+  return [...document.querySelectorAll('.inv-row-check:checked')].map(cb => cb.value);
+}
 
 function onRowCheckChange() {
   const boxes = [...document.querySelectorAll('.inv-row-check')];
   const selectAll = document.getElementById('inv-select-all');
   selectAll.checked = boxes.length > 0 && boxes.every(cb => cb.checked);
   selectAll.indeterminate = boxes.some(cb => cb.checked) && !selectAll.checked;
+  const n = selectedInvIds().length;
+  document.getElementById('inv-bulk-bar').classList.toggle('hidden', n === 0);
+  document.getElementById('inv-bulk-count').textContent = n;
 }
 window.onRowCheckChange = onRowCheckChange;
+
+function clearInvSelection() {
+  document.querySelectorAll('.inv-row-check').forEach(cb => { cb.checked = false; });
+  onRowCheckChange();
+}
+window.clearInvSelection = clearInvSelection;
+
+// ── Tindakan pukal (Aktifkan / Nyahaktif / Padam) ──
+async function bulkSetActive(newActive) {
+  if (!can('inventory', 'edit')) { banner('Anda tiada kebenaran', 'error'); return; }
+  const ids = selectedInvIds();
+  const items = allItems.filter(x => ids.includes(x.id));
+  if (!items.length) return;
+  if (!confirm(`${newActive ? 'Aktifkan semula' : 'Nyahaktifkan'} ${items.length} item terpilih?`)) return;
+  let linkedProducts = [];
+  if (!newActive) {
+    linkedProducts = await iswConfirmShopImpact(items, 'Inactive');
+    if (linkedProducts === false) return;
+  }
+  const newStatus = newActive ? 'active' : 'inactive';
+  const { error } = await window.db.from('psy_inventory_items')
+    .update({ is_active: newActive, status: newStatus, updated_at: new Date().toISOString() }).in('id', ids);
+  if (error) { banner('Gagal kemaskini status: ' + error.message, 'error'); return; }
+  items.forEach(it => { it.is_active = newActive; it.status = newStatus; });
+  let msg = newActive ? `${items.length} item diaktifkan semula ✅` : `${items.length} item dinyahaktifkan`;
+  if (!newActive) {
+    const n = await iswDeactivateShopProducts(linkedProducts);
+    if (n) msg += ` · ${n} produk Shop turut dinyahaktifkan`;
+  } else {
+    const stillOff = (await iswShopProductsForItem(items, { includeInactive: true })).filter(p => p.is_active === false);
+    if (stillOff.length) msg += ` · ${stillOff.length} produk Shop berkaitan masih Inactive — aktifkan di halaman Produk jika perlu`;
+  }
+  banner(msg);
+  updateStats();
+  renderItems();
+}
+window.bulkSetActive = bulkSetActive;
+
+async function bulkDeleteItems() {
+  const role = window.currentUser?.staff_role;
+  if (role !== 'manager' && role !== 'admin' && role !== 'super_admin') {
+    banner('Hanya manager/admin boleh buang item', 'error'); return;
+  }
+  const ids = selectedInvIds();
+  const items = allItems.filter(x => ids.includes(x.id));
+  if (!items.length) return;
+  if (!confirm(`Buang ${items.length} item terpilih? Semua data stok akan hilang. Permohonan belian yang sedia ada tak akan terjejas.`)) return;
+  const linkedProducts = await iswConfirmShopImpact(items, 'dipadam');
+  if (linkedProducts === false) return;
+  try {
+    const { error } = await window.db.from('psy_inventory_items').delete().in('id', ids);
+    if (error) throw error;
+    const deactivated = await iswDeactivateShopProducts(linkedProducts);
+    for (const it of items) await invAudit('inventory.item_deleted', it.id, { name: it.name, bulk: true, shop_products_deactivated: deactivated });
+    banner(deactivated ? `${items.length} item dibuang · ${deactivated} produk Shop dinyahaktifkan` : `${items.length} item dibuang`);
+    refreshInventory();
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+}
+window.bulkDeleteItems = bulkDeleteItems;
 
 function toggleActionMenu(btn) {
   const menu = btn.nextElementSibling;
   document.querySelectorAll('.action-menu').forEach(m => { if (m !== menu) m.classList.add('hidden'); });
-  menu.classList.toggle('hidden');
+  if (!menu.classList.toggle('hidden')) {
+    // position:fixed keluar dari bekas overflow jadual supaya menu tak terpotong / perlu skrol
+    const r = btn.getBoundingClientRect();
+    menu.style.position = 'fixed';
+    menu.style.right = (window.innerWidth - r.right) + 'px';
+    menu.style.left = 'auto';
+    const h = menu.offsetHeight;
+    const below = window.innerHeight - r.bottom;
+    menu.style.top = (below >= h + 8 ? r.bottom + 4 : Math.max(8, r.top - h - 4)) + 'px';
+  }
 }
 window.toggleActionMenu = toggleActionMenu;
+function closeActionMenus() { document.querySelectorAll('.action-menu').forEach(m => m.classList.add('hidden')); }
 document.addEventListener('click', (e) => {
-  if (!e.target.closest('.relative')) document.querySelectorAll('.action-menu').forEach(m => m.classList.add('hidden'));
+  if (!e.target.closest('.relative')) closeActionMenus();
 });
+// Menu fixed tak ikut kedudukan butang bila skrol/resize — tutup sahaja
+window.addEventListener('scroll', closeActionMenus, true);
+window.addEventListener('resize', closeActionMenus);
 
 // ── Kit Prosedur ────────────────────────────────────────────
 let allKits = [];
@@ -710,12 +802,25 @@ async function toggleItemActive(id, currentlyInactive) {
   const item = allItems.find(x => x.id === id);
   if (!item) return;
   if (!confirm(`${newActive ? 'Aktifkan semula' : 'Nyahaktifkan'} "${item.name}"?`)) return;
+  let linkedProducts = [];
+  if (!newActive) {
+    linkedProducts = await iswConfirmShopImpact(item, 'Inactive');
+    if (linkedProducts === false) return;
+  }
   const newStatus = newActive ? 'active' : 'inactive';
   const { error } = await window.db.from('psy_inventory_items').update({ is_active: newActive, status: newStatus, updated_at: new Date().toISOString() }).eq('id', id);
   if (error) { banner('Gagal kemaskini status: ' + error.message, 'error'); return; }
   item.is_active = newActive;
   item.status = newStatus;
-  banner(newActive ? 'Produk diaktifkan semula ✅' : 'Produk dinyahaktifkan');
+  if (newActive) {
+    const stillOff = (await iswShopProductsForItem(item, { includeInactive: true })).filter(p => p.is_active === false);
+    banner(stillOff.length
+      ? `Produk diaktifkan semula ✅ · ${stillOff.length} produk Shop berkaitan masih Inactive — aktifkan di halaman Produk jika perlu`
+      : 'Produk diaktifkan semula ✅');
+  } else {
+    const deactivated = await iswDeactivateShopProducts(linkedProducts);
+    banner(deactivated ? `Produk dinyahaktifkan · ${deactivated} produk Shop turut dinyahaktifkan` : 'Produk dinyahaktifkan');
+  }
   updateStats();
   renderItems();
 }
@@ -777,11 +882,14 @@ async function deleteItem(id, name) {
     banner('Hanya manager/admin boleh buang item', 'error'); return;
   }
   if (!confirm(`Buang item "${name}"? Semua data stok akan hilang. Permohonan belian yang sedia ada tak akan terjejas.`)) return;
+  const linkedProducts = await iswConfirmShopImpact({ id, name }, 'dipadam');
+  if (linkedProducts === false) return;
   try {
     const { error } = await window.db.from('psy_inventory_items').delete().eq('id', id);
     if (error) throw error;
-    await invAudit('inventory.item_deleted', id, { name });
-    banner('Item dibuang');
+    const deactivated = await iswDeactivateShopProducts(linkedProducts);
+    await invAudit('inventory.item_deleted', id, { name, shop_products_deactivated: deactivated });
+    banner(deactivated ? `Item dibuang · ${deactivated} produk Shop dinyahaktifkan` : 'Item dibuang');
     refreshInventory();
   } catch (e) { banner('Ralat: ' + e.message, 'error'); }
 }

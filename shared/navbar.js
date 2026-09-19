@@ -614,7 +614,8 @@ async function loadNavBadges(role, _staffRole, userId) {
   if (!window.db || !userId) return;
   try {
     if (role === 'staff') {
-      const [ordersRes, issuesRes, closedRes, invRes, kobRes, patientsRes, peRes] = await Promise.all([
+      const absentSince = new Date(Date.now() - 7 * 86400000).toISOString();
+      const [ordersRes, issuesRes, closedRes, invRes, kobRes, patientsRes, peRes, plansRes, activePatRes, recentHadirRes] = await Promise.all([
         window.db.from('psy_orders').select('id', { count: 'exact', head: true }).in('status', ['paid', 'packed']),
         window.db.from('psy_audit_log').select('id').eq('action', 'issue.reported'),
         window.db.from('psy_audit_log').select('meta').eq('action', 'issue.closed'),
@@ -622,6 +623,10 @@ async function loadNavBadges(role, _staffRole, userId) {
         window.db.from('psy_kob_sessions').select('id', { count: 'exact', head: true }).eq('status', 'booked'),
         window.db.from('psy_patients').select('id', { count: 'exact', head: true }).eq('status', 'pending_kyc'),
         window.db.from('psy_patient_events').select('id', { count: 'exact', head: true }).eq('status', 'open'),
+        // Tidak hadir > 7 hari (badge Kalendar): pesakit aktif + pelan aktif tolak yang ada sesi 'hadir' dlm 7 hari lepas
+        window.db.from('psy_treatment_plans').select('patient_id').eq('status', 'active'),
+        window.db.from('psy_patients').select('id').eq('status', 'active'),
+        window.db.from('psy_plan_weekly_progress').select('patient_id').eq('status', 'hadir').gt('session_date', absentSince),
       ]);
 
       setNavBadge('psy_orders', ordersRes.count || 0);
@@ -629,6 +634,13 @@ async function loadNavBadges(role, _staffRole, userId) {
       setNavBadge('kob_list', kobRes.count || 0);
       setNavBadge('psy_patients', patientsRes.count || 0);
       setNavBadge('peristiwa', peRes?.count || 0); // peristiwa pesakit terbuka
+
+      // Sama definisi dgn senarai "Tidak Hadir Lebih 7 Hari" (appointments.html) & seksyen dashboard
+      const activePatientIds = new Set((activePatRes?.data || []).map(r => r.id));
+      const recentHadir = new Set((recentHadirRes?.data || []).map(r => r.patient_id));
+      const absentIds = new Set((plansRes?.data || []).map(r => r.patient_id)
+        .filter(id => activePatientIds.has(id) && !recentHadir.has(id)));
+      setNavBadge('psy_appointments', absentIds.size);
 
       const closedIds = new Set((closedRes.data || []).map(r => r.meta?.issue_id).filter(Boolean));
       const openCount = (issuesRes.data || []).filter(i => !closedIds.has(i.id)).length;

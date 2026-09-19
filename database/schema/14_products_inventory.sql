@@ -79,8 +79,13 @@ ALTER TABLE psy_inventory_items DROP COLUMN IF EXISTS auto_reorder_enabled;
 CREATE INDEX IF NOT EXISTS idx_inventory_items_source_type ON psy_inventory_items(source_type);
 CREATE INDEX IF NOT EXISTS idx_inventory_items_is_active ON psy_inventory_items(is_active);
 
--- ──── item_code auto-generate (ITM-00001, ITM-00002, ...) ────
+-- ──── item_code auto-generate (INV-01, INV-02, ... INV-99, INV-100) ────
 CREATE SEQUENCE IF NOT EXISTS psy_inventory_item_code_seq START 1;
+
+CREATE OR REPLACE FUNCTION psy_inventory_format_code(n BIGINT)
+RETURNS TEXT
+LANGUAGE sql IMMUTABLE
+AS $$ SELECT 'INV-' || CASE WHEN n < 10 THEN '0' || n::text ELSE n::text END $$;
 
 CREATE OR REPLACE FUNCTION psy_inventory_set_item_code()
 RETURNS TRIGGER
@@ -88,7 +93,7 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
   IF NEW.item_code IS NULL THEN
-    NEW.item_code := 'ITM-' || LPAD(nextval('psy_inventory_item_code_seq')::text, 5, '0');
+    NEW.item_code := psy_inventory_format_code(nextval('psy_inventory_item_code_seq'));
   END IF;
   RETURN NEW;
 END;
@@ -99,13 +104,18 @@ CREATE TRIGGER trg_psy_inventory_set_item_code
 BEFORE INSERT ON psy_inventory_items
 FOR EACH ROW EXECUTE FUNCTION psy_inventory_set_item_code();
 
--- Backfill item_code utk baris sedia ada (install lama) — susun ikut created_at supaya kod konsisten.
+-- Jujukan seterusnya bermula selepas nombor INV tertinggi sedia ada
+SELECT setval('psy_inventory_item_code_seq',
+  COALESCE((SELECT max(substring(item_code FROM 5)::bigint) FROM psy_inventory_items WHERE item_code ~ '^INV-[0-9]+$'), 0) + 1,
+  false);
+
+-- Beri kod kepada item yang belum ada, ikut tarikh dicipta
 DO $$
 DECLARE r RECORD;
 BEGIN
-  FOR r IN SELECT id FROM psy_inventory_items WHERE item_code IS NULL ORDER BY created_at LOOP
+  FOR r IN SELECT id FROM psy_inventory_items WHERE item_code IS NULL ORDER BY created_at, id LOOP
     UPDATE psy_inventory_items
-      SET item_code = 'ITM-' || LPAD(nextval('psy_inventory_item_code_seq')::text, 5, '0')
+      SET item_code = psy_inventory_format_code(nextval('psy_inventory_item_code_seq'))
       WHERE id = r.id;
   END LOOP;
 END $$;
@@ -133,7 +143,7 @@ COMMENT ON COLUMN psy_inventory_items.consumption_type IS
 COMMENT ON COLUMN psy_inventory_items.supplier_info IS
   'Format: { name, pic_name, phone, email, address, payment_terms, cost_per_unit }. Maklumat pembekal.';
 COMMENT ON COLUMN psy_inventory_items.item_code IS
-  'Kod item auto-generate (ITM-00001, ...) via trigger — tidak boleh diedit.';
+  'Kod item auto-generate (INV-01, ...) via trigger — tidak boleh diedit.';
 COMMENT ON COLUMN psy_inventory_items.is_active IS
   'false = item tidak aktif — disorok dari senarai pilihan (dispens/kit/jadual pakej) & auto-request.';
 COMMENT ON COLUMN psy_inventory_items.reorder_threshold_pct IS
@@ -547,3 +557,60 @@ ON CONFLICT DO NOTHING;
 ALTER TABLE psy_supply_disbursements DROP CONSTRAINT IF EXISTS psy_supply_disbursements_item_id_fkey;
 ALTER TABLE psy_supply_disbursements ADD CONSTRAINT psy_supply_disbursements_item_id_fkey
   FOREIGN KEY (item_id) REFERENCES psy_inventory_items(id) ON DELETE SET NULL;
+
+-- ──────────────────────────────────────────────────────────────
+-- Shop ↔ Inventori: produk MESTI wujud di Inventori (aktif) baru boleh dijual.
+-- Pesakit tak boleh SELECT psy_inventory_items — fungsi SECURITY DEFINER ini dedah status/stok sahaja.
+-- (Backfill pautan FK ikut nama: lihat database/add_shop_inventory_link.sql)
+-- ──────────────────────────────────────────────────────────────
+-- ── 2. Status inventori setiap produk ────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION psy_shop_product_inventory()
+RETURNS TABLE (
+  product_id    TEXT,
+  name          TEXT,
+  linked        BOOLEAN,
+  item_status   TEXT,
+  qty_in_stock  NUMERIC,
+  unit          TEXT,
+  sellable      BOOLEAN
+)
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT
+    p.product_id::text,
+    p.name,
+    (m.id IS NOT NULL) AS linked,
+    m.st AS item_status,
+    m.qty,
+    m.unit,
+    (m.id IS NOT NULL AND m.st = 'active') AS sellable
+  FROM psy_products p
+  LEFT JOIN LATERAL (
+    SELECT i.id,
+           COALESCE(to_jsonb(i)->>'status',
+                    CASE WHEN to_jsonb(i)->>'is_active' = 'false' THEN 'inactive' ELSE 'active' END) AS st,
+           i.qty_in_stock AS qty,
+           i.unit
+    FROM psy_inventory_items i
+    WHERE i.id = p.inventory_item_id
+       OR (p.inventory_item_id IS NULL AND lower(trim(i.name)) = lower(trim(p.name)))
+    ORDER BY (i.id = p.inventory_item_id) DESC NULLS LAST,
+             (COALESCE(to_jsonb(i)->>'status',
+                       CASE WHEN to_jsonb(i)->>'is_active' = 'false' THEN 'inactive' ELSE 'active' END) = 'active') DESC
+    LIMIT 1
+  ) m ON true;
+$$;
+
+GRANT EXECUTE ON FUNCTION psy_shop_product_inventory() TO authenticated, anon;
+
+-- ── 3. Fungsi lama (dipakai payment.html versi terdahulu): produk yang TIDAK boleh dijual ─
+CREATE OR REPLACE FUNCTION psy_shop_unavailable_products()
+RETURNS TABLE (product_id TEXT, name TEXT)
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT s.product_id, s.name FROM psy_shop_product_inventory() s WHERE NOT s.sellable;
+$$;
+
+GRANT EXECUTE ON FUNCTION psy_shop_unavailable_products() TO authenticated, anon;

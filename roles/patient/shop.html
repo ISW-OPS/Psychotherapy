@@ -108,18 +108,20 @@
   <script src="../../shared/logout.js"></script>
   <script src="../../shared/navbar.js"></script>
   <script src="../../shared/settings.js"></script>
+  <script src="../../shared/inventoryLink.js"></script>
   <script src="_shared.js"></script>
   <script>
     let PRODUCTS = [];
     let CATEGORIES = ['All'];
 
     async function loadProductsFromDB() {
-      const [{ data: rows }, { data: invRows }] = await Promise.all([
+      const [{ data: rows }, { data: invRows }, invMap] = await Promise.all([
         window.db.from('psy_products')
           .select('*, inv:inventory_item_id (id, qty_in_stock, unit)')
           .eq('is_active', true)
           .order('sort_order', { ascending: true }),
         window.db.from('psy_inventory_items').select('name, qty_in_stock, unit'),
+        iswShopInventoryMap(), // status + stok sebenar dari Inventori (pesakit tak boleh baca jadual terus)
       ]);
       // Index Inventori by lowercase trimmed name supaya boleh match nama produk
       const invByName = new Map();
@@ -127,10 +129,12 @@
         const key = (i.name || '').trim().toLowerCase();
         if (key) invByName.set(key, i);
       }
-      const arr = rows || [];
+      // Produk MESTI ada di Inventori (aktif) baru dijual — selain itu disorok
+      const arr = (rows || []).filter(r => invMap.get(r.product_id)?.sellable !== false);
       PRODUCTS = arr.map(r => {
         // Priority: (1) FK link inv, (2) nama-match Inventori, (3) legacy r.stock column
-        const fkInv = r.inv || null;
+        const liveInv = invMap.get(r.product_id);
+        const fkInv = (liveInv?.linked ? { qty_in_stock: liveInv.qty, unit: liveInv.unit } : null) || r.inv || null;
         const nameInv = invByName.get((r.name || '').trim().toLowerCase()) || null;
         let stock, stockUnit = '';
         if (fkInv) {

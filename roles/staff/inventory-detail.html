@@ -100,36 +100,40 @@
             </div>
             <div class="space-y-3">
               <div class="flex items-center justify-between py-1.5 border-b border-ink/5">
+                <span class="text-xs text-ink/45 font-medium">Inventory ID</span>
+                <button id="mi-code" type="button" onclick="copyText(this.textContent)" title="Klik untuk salin" class="text-sm text-ink text-right cursor-pointer"></button>
+              </div>
+              <div class="flex items-center justify-between py-1.5 border-b border-ink/5">
                 <span class="text-xs text-ink/45 font-medium">Nama</span>
-                <span id="mi-name" class="text-sm font-semibold text-ink text-right max-w-[55%] truncate"></span>
+                <span id="mi-name" class="text-sm text-ink text-right max-w-[55%] truncate"></span>
               </div>
               <div class="flex items-center justify-between py-1.5 border-b border-ink/5">
                 <span class="text-xs text-ink/45 font-medium">Sumber</span>
-                <span id="mi-source" class="text-sm text-ink/70"></span>
+                <span id="mi-source" class="text-sm text-ink"></span>
               </div>
               <div class="flex items-center justify-between py-1.5 border-b border-ink/5">
                 <span class="text-xs text-ink/45 font-medium">Kategori</span>
-                <span id="mi-category" class="text-sm text-ink/70"></span>
+                <span id="mi-category" class="text-sm text-ink"></span>
               </div>
               <div class="flex items-center justify-between py-1.5 border-b border-ink/5">
                 <span class="text-xs text-ink/45 font-medium">Unit</span>
-                <span id="mi-unit" class="text-sm text-ink/70"></span>
+                <span id="mi-unit" class="text-sm text-ink"></span>
               </div>
               <div class="flex items-center justify-between py-1.5 border-b border-ink/5">
                 <span class="text-xs text-ink/45 font-medium">Jenis</span>
-                <span id="mi-type"></span>
+                <span id="mi-type" class="text-sm text-ink"></span>
               </div>
               <div id="mi-batch-row" class="hidden flex items-center justify-between py-1.5 border-b border-ink/5">
                 <span class="text-xs text-ink/45 font-medium">No. Batch</span>
-                <span id="mi-batch" class="text-sm text-ink/70"></span>
+                <span id="mi-batch" class="text-sm text-ink"></span>
               </div>
               <div id="mi-expiry-row" class="hidden flex items-center justify-between py-1.5 border-b border-ink/5">
                 <span class="text-xs text-ink/45 font-medium">Tarikh Luput</span>
-                <span id="mi-expiry" class="text-sm text-ink/70"></span>
+                <span id="mi-expiry" class="text-sm text-ink"></span>
               </div>
               <div class="flex items-center justify-between py-1.5">
                 <span class="text-xs text-ink/45 font-medium">Perlu kelulusan</span>
-                <span id="mi-approval"></span>
+                <span id="mi-approval" class="text-sm text-ink"></span>
               </div>
             </div>
           </div>
@@ -155,6 +159,20 @@
             </div>
           </div>
           <div id="kits-content" class="px-5 py-4">
+            <p class="text-sm text-ink/30 italic">Memuatkan...</p>
+          </div>
+        </div>
+
+        <!-- ── Produk Shop Berkaitan ────────────────────── -->
+        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden">
+          <div class="px-5 py-4 border-b border-ink/8 flex items-center gap-2">
+            <span class="text-lg">🛍️</span>
+            <div>
+              <div class="text-sm font-semibold text-ink/70">Dijual sebagai Produk Shop</div>
+              <div class="text-[10px] text-ink/35">Produk yang dipaut ke item ini — tidak boleh dibeli bila item Inactive/Discontinued</div>
+            </div>
+          </div>
+          <div id="shop-products-content" class="px-5 py-4">
             <p class="text-sm text-ink/30 italic">Memuatkan...</p>
           </div>
         </div>
@@ -375,6 +393,7 @@
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
 <script src="../../shared/stockSync.js"></script>
+<script src="../../shared/inventoryLink.js"></script>
 <script src="../../shared/inventoryForecast.js"></script>
 <script src="../../shared/inventoryStock.js"></script>
 <script src="_shared.js"></script>
@@ -416,6 +435,45 @@ async function init() {
   const allKits = kitsRes.data || [];
   const usedInKits = allKits.filter(k => (k.items || []).some(i => i.item_name === itemData.name));
   renderKits(usedInKits);
+  renderShopProducts(await iswShopProductsForItem(itemData, { includeInactive: true }));
+}
+
+function copyText(v) {
+  if (!v) return;
+  navigator.clipboard?.writeText(v).then(() => banner('Disalin: ' + v), () => {});
+}
+
+function renderShopProducts(products) {
+  const el = document.getElementById('shop-products-content');
+  if (!products.length) {
+    el.innerHTML = `
+      <div class="flex items-center gap-3 py-2">
+        <span class="text-2xl opacity-20">🛍️</span>
+        <p class="text-sm text-ink/35">Item ini tidak dijual sebagai produk Shop</p>
+      </div>`;
+    return;
+  }
+  const blocked = iswInvItemInactive(itemData);
+  const note = blocked
+    ? `<p class="text-xs text-terracotta font-semibold mb-3">⚠️ Item ini ${escHtml(itemData.status || 'inactive')} — produk di bawah tidak boleh dibeli pesakit.</p>` : '';
+  const fmtRM = n => 'RM ' + Number(n || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  el.innerHTML = note + `<div class="overflow-x-auto"><table class="w-full text-sm">
+    <thead><tr class="text-left text-[10px] uppercase tracking-wide text-ink/40">
+      <th class="pb-2 pr-4 font-semibold">Produk</th><th class="pb-2 pr-4 font-semibold">Product ID / SKU</th>
+      <th class="pb-2 pr-4 font-semibold">Harga</th><th class="pb-2 pr-4 font-semibold">Stok dijual</th>
+      <th class="pb-2 pr-4 font-semibold">Status</th><th class="pb-2 font-semibold">Pautan</th>
+    </tr></thead><tbody>${products.map(p => {
+      const live = p.is_active !== false && !blocked;
+      const onPromo = Number(p.promo_price) > 0 && Number(p.promo_price) < Number(p.price);
+      return `<tr class="border-t border-ink/5">
+        <td class="py-2.5 pr-4"><a href="product-detail.html?id=${p.id}" class="font-semibold text-navy hover:underline">🛍️ ${escHtml(p.name)}</a></td>
+        <td class="py-2.5 pr-4 font-mono text-xs text-ink/60">${escHtml(p.product_id || p.sku || '—')}</td>
+        <td class="py-2.5 pr-4">${onPromo ? `<span class="font-semibold">${fmtRM(p.promo_price)}</span> <span class="text-xs text-ink/35 line-through">${fmtRM(p.price)}</span>` : `<span class="font-semibold">${fmtRM(p.price)}</span>`}</td>
+        <td class="py-2.5 pr-4 text-xs">${Number(itemData.qty_in_stock)} ${escHtml(itemData.unit || '')}<div class="text-[10px] text-ink/35">ikut Inventori</div></td>
+        <td class="py-2.5 pr-4"><span class="text-xs font-semibold ${live ? 'text-green-dark' : 'text-terracotta'}">${live ? '● Dijual' : '● Tidak dijual'}</span>${p.visible_in_shop === false ? '<div class="text-[10px] text-ink/40">Disorok di Shop</div>' : ''}</td>
+        <td class="py-2.5 text-xs text-ink/50">${p.inventory_item_id === itemData.id ? 'ID (tetap)' : 'Nama sama'}</td>
+      </tr>`;
+    }).join('')}</tbody></table></div>`;
 }
 
 function renderDetail(item) {
@@ -430,6 +488,7 @@ function renderDetail(item) {
   // Header
   document.getElementById('d-breadcrumb').textContent = item.name;
   document.getElementById('d-name').textContent        = item.name;
+  document.getElementById('mi-code').textContent       = item.item_code || '—';
   if (item.item_code) {
     document.getElementById('d-item-code').textContent = item.item_code;
     document.getElementById('d-item-code').classList.remove('hidden');
@@ -481,21 +540,15 @@ function renderDetail(item) {
 
   // Maklumat Item
   document.getElementById('mi-name').textContent     = item.name;
-  document.getElementById('mi-source').innerHTML     = isFarmasi
-    ? '<span class="text-xs font-semibold px-2 py-0.5 bg-teal/15 text-teal-dark rounded-full">💊 Farmasi Klinikal</span>'
-    : '<span class="text-xs font-semibold px-2 py-0.5 bg-ink/10 text-ink/50 rounded-full">🧰 Inventori Am</span>';
+  document.getElementById('mi-source').textContent   = isFarmasi ? 'Farmasi Klinikal' : 'Inventori Am';
   document.getElementById('mi-category').textContent = item.category || '—';
   document.getElementById('mi-unit').textContent     = unit || '—';
-  document.getElementById('mi-type').innerHTML       = isPkgLinked
-    ? '<span class="text-xs font-semibold px-2 py-0.5 bg-gold/20 text-gold-dark rounded-full">Pakej</span>'
-    : '<span class="text-xs font-semibold px-2 py-0.5 bg-ink/10 text-ink/60 rounded-full">Umum (Stok Minimum)</span>';
+  document.getElementById('mi-type').textContent     = isPkgLinked ? 'Pakej' : 'Umum (Stok Minimum)';
   document.getElementById('mi-batch-row').classList.toggle('hidden', !isFarmasi || !item.batch_no);
   document.getElementById('mi-batch').textContent   = item.batch_no || '—';
   document.getElementById('mi-expiry-row').classList.toggle('hidden', !isFarmasi || !item.expiry_date);
   document.getElementById('mi-expiry').textContent  = item.expiry_date || '—';
-  document.getElementById('mi-approval').innerHTML   = item.requires_approval
-    ? '<span class="text-xs font-semibold text-navy">Ya</span>'
-    : '<span class="text-xs text-green-dark font-semibold">Tidak diperlukan</span>';
+  document.getElementById('mi-approval').textContent = item.requires_approval ? 'Ya' : 'Tidak diperlukan';
 
   // Demand breakdown — sesi sebenar dijadualkan (belum hadir) dlm INVENTORY_REORDER_LOOKAHEAD_DAYS hari akan datang
   const bd = [...(item.forecast_breakdown || [])].sort((a, b) => (a.session_date || '').localeCompare(b.session_date || ''));
@@ -656,8 +709,12 @@ async function saveAdjust() {
 
 async function confirmDelete() {
   if (!confirm(`Padam "${itemData?.name}"? Tindakan ini tidak boleh dibatalkan.`)) return;
+  const linkedProducts = await iswConfirmShopImpact(itemData, 'dipadam');
+  if (linkedProducts === false) return;
   try {
-    await window.db.from('psy_inventory_items').delete().eq('id', itemId);
+    const { error } = await window.db.from('psy_inventory_items').delete().eq('id', itemId);
+    if (error) throw error;
+    await iswDeactivateShopProducts(linkedProducts);
     banner('Item dipadam');
     setTimeout(() => history.back(), 1000);
   } catch (e) { banner('Ralat: ' + e.message, 'error'); }

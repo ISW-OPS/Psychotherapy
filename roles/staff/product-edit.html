@@ -69,7 +69,7 @@
               </div>
               <div>
                 <label class="text-xs font-semibold text-ink/70">SKU / Product ID <span class="text-red-500">*</span></label>
-                <input id="f-sku" type="text" placeholder="Contoh: madu-yhh-500" class="w-full mt-1 px-3 py-2.5 bg-cream/70 border border-transparent rounded-lg text-sm text-ink font-mono focus:outline-none focus:bg-white focus:border-navy/30 transition-colors">
+                <input id="f-sku" type="text" readonly placeholder="Diwarisi dari kod Inventori" class="w-full mt-1 px-3 py-2.5 bg-cream/70 border border-transparent rounded-lg text-sm text-ink font-mono focus:outline-none focus:bg-white focus:border-navy/30 transition-colors">
               </div>
               <div class="col-span-2">
                 <label class="text-xs font-semibold text-ink/70">Kategori <span class="text-red-500">*</span></label>
@@ -93,9 +93,9 @@
               <h4 class="text-xs font-bold text-ink/60 uppercase tracking-wide mb-3">Stok &amp; Inventori</h4>
               <div class="grid grid-cols-2 gap-3">
                 <div>
-                  <label class="text-xs font-semibold text-ink/70">Stok semasa <span class="text-red-500">*</span></label>
+                  <label class="text-xs font-semibold text-ink/70">Stok semasa (live dari Inventori)</label>
                   <input id="f-stock" type="number" min="0" placeholder="0" readonly class="w-full mt-1 px-3 py-2.5 border border-transparent rounded-lg text-sm bg-ink/5 text-ink/60 cursor-not-allowed">
-                  <p class="text-[10px] text-ink/45 mt-1">Ikut stok di Inventori</p>
+                  <p class="text-[10px] text-ink/45 mt-1">Dipaparkan sahaja — stok diurus di Inventori, tidak disimpan pada produk</p>
                 </div>
                 <div>
                   <label class="text-xs font-semibold text-ink/70">Unit <span class="text-red-500">*</span></label>
@@ -238,12 +238,13 @@ function cancelEdit() {
   location.href = 'products.html';
 }
 
+let linkedInvId = null; // item Inventori yang dipaut (URL ?inv=, atau produk sedia ada)
+
 async function saveProduct() {
   const name = document.getElementById('f-name').value.trim();
   const sku = document.getElementById('f-sku').value.trim();
   const category = document.getElementById('f-category').value;
   const price = parseFloat(document.getElementById('f-price').value);
-  const stock = parseInt(document.getElementById('f-stock').value);
 
   if (!name) return banner('Nama produk diperlukan', 'error');
   if (!sku) return banner('SKU diperlukan', 'error');
@@ -251,18 +252,28 @@ async function saveProduct() {
   if (Number.isNaN(price) || price < 0) return banner('Harga tidak sah', 'error');
 
   const data = {
-    name, sku, product_id: sku, category,
+    name, category,
     description_short: document.getElementById('f-description').value.trim() || null,
     description: document.getElementById('f-description').value.trim() || null,
     price,
     promo_price: parseFloat(document.getElementById('f-promo-price').value) || null,
     promo_until: document.getElementById('f-promo-until').value || null,
-    stock: Number.isNaN(stock) ? 0 : stock,
     unit: document.getElementById('f-unit').value,
     updated_at: new Date().toISOString(),
   };
 
   const editId = document.getElementById('edit-id').value;
+
+  // Pautan ke Inventori: produk hanya boleh dijual bila wujud di Inventori (aktif).
+  // Simpan FK (kekal betul walaupun item Inventori dinamakan semula); produk lama tanpa FK dipadan ikut nama.
+  if (!linkedInvId) {
+    const { data: byName } = await window.db.from('psy_inventory_items').select('id').eq('name', name).limit(1);
+    if (byName?.[0]) linkedInvId = byName[0].id;
+  }
+  if (!linkedInvId && !editId) return banner('Produk mesti dipilih dari Inventori dahulu', 'error');
+  if (linkedInvId) data.inventory_item_id = linkedInvId;
+  else banner('⚠️ Produk ini tiada di Inventori — ia tidak akan dijual sehingga dipaut', 'error');
+
   try {
     let savedId = editId;
     if (editId) {
@@ -271,8 +282,10 @@ async function saveProduct() {
       banner('Produk dikemaskini ✅');
     } else {
       // Produk baru sentiasa Aktif terus — tukar status di senarai Produk kalau perlu nyahaktifkan.
+      // SKU / Product ID produk baharu = kod Inventori (INV-xx). Produk sedia ada kekal product_id asal
+      // (pesanan & troli merujuknya) — kod Inventori dipapar sebagai SKU di senarai/detail.
       const { data: inserted, error } = await window.db.from('psy_products')
-        .insert({ ...data, status: 'active', is_active: true }).select().single();
+        .insert({ ...data, sku, product_id: sku, status: 'active', is_active: true }).select().single();
       if (error) throw error;
       savedId = inserted.id;
       banner('Produk ditambah ✅');
@@ -307,6 +320,7 @@ async function loadProduct(id) {
   if (error || !data) { banner('Produk tidak ditemui', 'error'); setTimeout(() => location.href = 'products.html', 1500); return; }
 
   document.getElementById('edit-id').value = id;
+  if (data.inventory_item_id) linkedInvId = data.inventory_item_id;
   document.getElementById('page-title').textContent = 'Edit Produk';
   document.getElementById('page-sub').textContent = 'Kemaskini maklumat produk, harga dan stok';
   document.getElementById('bc-label').textContent = data.name + ' / Edit';
@@ -319,8 +333,14 @@ async function loadProduct(id) {
   document.getElementById('f-promo-price').value = data.promo_price || '';
   document.getElementById('f-promo-until').value = data.promo_until || '';
   if (data.price > 0 && data.promo_price > 0) onPromoPriceInput();
-  document.getElementById('f-stock').value = data.stock ?? '';
-  setUnitValue(data.unit);
+  // Stok & unit live dari Inventori (FK, kemudian nama sama); SKU dipapar = kod Inventori kalau ada
+  let invQ = window.db.from('psy_inventory_items').select('item_code, qty_in_stock, unit');
+  invQ = data.inventory_item_id ? invQ.eq('id', data.inventory_item_id) : invQ.eq('name', data.name);
+  const { data: invRows } = await invQ.limit(1);
+  const inv = invRows?.[0];
+  document.getElementById('f-stock').value = inv ? (Number(inv.qty_in_stock) || 0) : '';
+  setUnitValue(inv?.unit || data.unit);
+  if (inv?.item_code) document.getElementById('f-sku').value = inv.item_code;
 
   const urls = Array.isArray(data.image_urls) && data.image_urls.length
     ? data.image_urls
@@ -343,7 +363,8 @@ function pickInventoryItem(item) {
   const skuEl  = document.getElementById('f-sku');
   const stockEl = document.getElementById('f-stock');
   nameEl.value  = item.name || '';
-  skuEl.value   = (item.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50);
+  // SKU / Product Code diwarisi dari Inventori (INV-xx); jatuh balik ke slug nama hanya kalau item belum ada kod
+  skuEl.value   = item.item_code || (item.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50);
   setUnitValue(item.unit);
   stockEl.value = Number(item.qty_in_stock) || 0;
   if (item.notes) {
@@ -393,8 +414,9 @@ function setUnitValue(unit) {
   if (id) await loadProduct(id);
 
   if (invId) {
+    linkedInvId = invId;
     const { data: item } = await window.db.from('psy_inventory_items')
-      .select('id, name, category, unit, qty_in_stock, notes, image_url').eq('id', invId).maybeSingle();
+      .select('id, item_code, name, category, unit, qty_in_stock, notes, image_url').eq('id', invId).maybeSingle();
     if (item) {
       pickInventoryItem(item);
       banner(`✓ Item dipilih: ${item.name}`);

@@ -30,10 +30,11 @@
             <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
             <span class="relative inline-flex rounded-full h-3 w-3 bg-orange-500"></span>
           </span>
-          <div class="flex-1 min-w-0">
+          <button onclick="openNewOrdersFromBanner()" class="flex-1 min-w-0 text-left cursor-pointer">
             <span class="font-semibold text-sm text-orange-800" id="orders-alert-text">Pesanan baru diterima</span>
             <span class="text-xs text-orange-600 ml-2">Semak dan proses penghantaran</span>
-          </div>
+            <div class="text-xs text-orange-700 mt-0.5 truncate" id="orders-alert-names"></div>
+          </button>
           <button onclick="dismissOrdersAlert()" class="text-orange-400 hover:text-orange-700 text-xl leading-none px-1 flex-shrink-0">×</button>
         </div>
 
@@ -299,9 +300,10 @@ function renderTable(list) {
     const sm      = STATUS_META[o.status] || STATUS_META.pending;
     const patient = o.psy_profiles?.full_name || '—';
     const items   = Array.isArray(o.items) ? o.items : [];
-    const method  = o.delivery_method === 'pickup'
-      ? '<span class="chip bg-ink/10 text-ink/60 text-[10px]">Pickup</span>'
-      : '<span class="chip bg-navy-light text-navy text-[10px]">Pos</span>';
+    const method  = o.delivery_method === 'pickup' ? 'Pickup' : 'Pos';
+    const pending = isPendingOrder(o)
+      ? `${daysPending(o)} hari tertunggak`
+      : '<span class="text-ink/30">—</span>';
     const tracking = o.tracking_number
       ? `<span class="font-mono text-xs text-green-dark">${o.tracking_number}</span>`
       : '<span class="text-ink/30 text-xs">—</span>';
@@ -310,9 +312,10 @@ function renderTable(list) {
       <td class="text-xs font-mono text-ink/60 whitespace-nowrap">${o.order_ref}</td>
       <td><strong class="text-sm">${patient}</strong>
         <div class="text-[10px] text-ink/50">${formatDate(o.created_at)}</div></td>
-      <td>${method}</td>
+      <td class="text-xs text-ink/70">${method}</td>
       <td class="text-xs">${items.map(i => `${i.name} ×${i.qty}`).join(', ')}</td>
-      <td><span class="chip text-[10px] ${sm.chip}">${sm.icon} ${sm.label}</span></td>
+      <td class="text-xs text-ink/70">${sm.icon} ${sm.label}</td>
+      <td class="text-xs text-ink/70">${pending}</td>
       <td>${tracking}</td>
       <td class="font-semibold text-sm whitespace-nowrap">RM ${Number(o.total).toFixed(2)}</td>
       <td class="whitespace-nowrap">
@@ -328,7 +331,7 @@ function renderTable(list) {
     <table class="data text-sm">
       <thead><tr>
         <th>No. Order</th><th>Patient</th><th>Kaedah</th><th>Item</th>
-        <th>Status</th><th>Tracking</th><th>Jumlah</th><th></th>
+        <th>Status</th><th>Tertunggak</th><th>Tracking</th><th>Jumlah</th><th></th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
@@ -384,6 +387,7 @@ function orderCard(o) {
         <span class="font-bold text-sm font-mono">${o.order_ref}</span>
         <span class="chip text-xs ${sm.chip}">${sm.icon} ${sm.label}</span>
         ${isPickup ? '<span class="chip bg-ink/10 text-ink/60 text-xs">Pickup</span>' : '<span class="chip bg-navy-light text-navy text-xs">Pos</span>'}
+        ${pendingBadge(o)}
         <span class="text-xs text-ink/50 hidden sm:inline">· ${formatDateTime(o.created_at)}</span>
       </div>
       <div class="flex items-center gap-3 flex-shrink-0">
@@ -697,6 +701,22 @@ async function loadOrders() {
 function formatDate(d)     { return new Date(d).toLocaleDateString(LCALE(), { day:'2-digit', month:'short', year:'numeric' }); }
 function formatDateTime(d) { return new Date(d).toLocaleString(LCALE(), { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }); }
 
+// ── Berapa lama order tertunggak (sejak dibuat) — bantu staff kenal pasti
+// order yang perlu didahulukan, elak order lama terlepas pandang. Cuma relevan
+// utk order yang belum selesai (pending/paid/packed) — order dah shipped/
+// delivered/cancelled tak dikira "tertunggak" lagi.
+function isPendingOrder(o) { return ['pending', 'paid', 'packed'].includes(o.status); }
+function daysPending(o) {
+  return Math.max(0, Math.floor((Date.now() - new Date(o.created_at)) / 86400000));
+}
+function pendingBadge(o) {
+  if (!isPendingOrder(o)) return '';
+  const d = daysPending(o);
+  const label = d === 0 ? 'Hari ini' : d === 1 ? '1 hari' : `${d} hari`;
+  const cls = d >= 3 ? 'bg-terracotta/15 text-terracotta' : d >= 1 ? 'bg-gold/20 text-gold-dark' : 'bg-ink/10 text-ink/50';
+  return `<span class="chip text-[10px] font-semibold ${cls}">⏱ ${label} tertunggak</span>`;
+}
+
 async function checkNewOrderNotifs() {
   const { data: { user } } = await window.db.auth.getUser();
   if (!user) return;
@@ -706,7 +726,34 @@ async function checkNewOrderNotifs() {
   if (count > 0) {
     document.getElementById('orders-alert-text').textContent = `${count} pesanan baru diterima`;
     document.getElementById('orders-alert-banner').classList.remove('hidden');
+
+    // Papar nama pesakit — notifikasi sendiri tak simpan rujukan order/pesakit,
+    // jadi anggaran drpd order paling baru yang masih perlu diproses (pending/paid).
+    const namesEl = document.getElementById('orders-alert-names');
+    namesEl.textContent = '';
+    const { data: recent } = await window.db.from('psy_orders')
+      .select('patient_id').in('status', ['pending', 'paid'])
+      .order('created_at', { ascending: false }).limit(count);
+    const patientIds = (recent || []).map(o => o.patient_id).filter(Boolean);
+    if (patientIds.length) {
+      const { data: profiles } = await window.db.from('psy_profiles')
+        .select('id, full_name').in('id', [...new Set(patientIds)]);
+      const nameMap = {};
+      (profiles || []).forEach(p => { nameMap[p.id] = p.full_name; });
+      const names = patientIds.map(id => nameMap[id]).filter(Boolean);
+      if (names.length) {
+        const shown = names.slice(0, 3).join(', ');
+        const extra = names.length > 3 ? ` +${names.length - 3} lagi` : '';
+        namesEl.textContent = `${shown}${extra}`;
+      }
+    }
   }
+}
+
+function openNewOrdersFromBanner() {
+  setFilter('pending');
+  document.getElementById('orders-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  dismissOrdersAlert();
 }
 
 async function dismissOrdersAlert() {
