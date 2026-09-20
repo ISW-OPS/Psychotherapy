@@ -187,13 +187,13 @@ function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&
 function fmtRM(n) { return 'RM ' + Number(n||0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
 // Stok sebenar ialah stok Inventori (bukan salinan lama lajur psy_products.stock) bila produk dipaut.
-// Pautan: inventory_item_id dahulu, kemudian nama sama (item aktif diutamakan).
-let invById = new Map(), invByName = new Map();
+// Pautan: HANYA melalui inventory_item_id (ID Inventori) — bukan nama.
+let invById = new Map();
 function invStatus(i) { return i.status || (i.is_active === false ? 'inactive' : 'active'); }
 function linkedInv(p) {
-  return (p.inventory_item_id && invById.get(p.inventory_item_id)) || invByName.get((p.name || '').trim().toLowerCase()) || null;
+  return (p.inventory_item_id && invById.get(p.inventory_item_id)) || null;
 }
-function effStock(p) { const i = linkedInv(p); return i ? Number(i.qty_in_stock) || 0 : Number(p.stock || 0); }
+function effStock(p) { const i = linkedInv(p); return i ? Number(i.qty_in_stock) || 0 : 0; }
 function effUnit(p)  { const i = linkedInv(p); return (i && i.unit) || p.unit || 'unit'; }
 // Amaran jualan: tiada di Inventori / item tidak aktif = pesakit tak nampak produk ini
 function sellNote(p) {
@@ -465,13 +465,8 @@ async function loadProducts() {
     window.db.from('psy_inventory_items').select('*'),
   ]);
   if (error) { banner('Gagal load: ' + error.message, 'error'); return; }
-  invById = new Map(); invByName = new Map();
-  for (const i of (invRows || [])) {
-    invById.set(i.id, i);
-    const key = (i.name || '').trim().toLowerCase();
-    const cur = invByName.get(key);
-    if (key && (!cur || (invStatus(cur) !== 'active' && invStatus(i) === 'active'))) invByName.set(key, i);
-  }
+  invById = new Map();
+  for (const i of (invRows || [])) invById.set(i.id, i);
   allProducts = data || [];
   renderKpi();
   renderTable();

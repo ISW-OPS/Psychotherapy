@@ -214,30 +214,26 @@ async function lookupPackage(admin: any, key: string) {
 const invInactive = (inv: any) => !!inv && (inv.status || (inv.is_active === false ? 'inactive' : 'active')) !== 'active'
 
 // Pulangkan nama produk pertama dalam mana-mana shop_order yang TIDAK boleh dijual: tiada item Inventori dipaut
-// (FK inventory_item_id atau nama sama — selaras psy_shop_product_inventory()) atau item itu tidak aktif.
+// (HANYA FK inventory_item_id — selaras psy_shop_product_inventory()) atau item itu tidak aktif.
 // null kalau semua boleh dijual.
 async function findUnavailableShopProduct(admin: any, items: any[]): Promise<string | null> {
-  const ids = items.filter((it) => it.type === 'shop_order' && Array.isArray(it.items))
-    .flatMap((it) => it.items.map((p: any) => p.id)).filter(Boolean)
+  const lines = items.filter((it) => it.type === 'shop_order' && Array.isArray(it.items)).flatMap((it) => it.items)
+  const ids = lines.map((p: any) => p.id).filter(Boolean)
   if (!ids.length) return null
+  const qtyById = new Map<string, number>()
+  for (const l of lines) qtyById.set(l.id, (qtyById.get(l.id) || 0) + Math.max(1, parseInt(l.qty) || 1))
   const [{ data: prods }, { data: inv }] = await Promise.all([
     admin.from('psy_products').select('product_id, name, inventory_item_id').in('product_id', ids),
     admin.from('psy_inventory_items').select('*'),
   ])
   const byId = new Map<string, any>()
-  const byName = new Map<string, any>()
-  for (const i of (inv || [])) {
-    byId.set(i.id, i)
-    const key = String(i.name || '').trim().toLowerCase()
-    if (!key) continue
-    const cur = byName.get(key)
-    if (!cur || (invInactive(cur) && !invInactive(i))) byName.set(key, i) // duplikat: utamakan yang aktif
-  }
+  for (const i of (inv || [])) byId.set(i.id, i)
   for (const p of (prods || [])) {
-    const linked = (p.inventory_item_id && byId.get(p.inventory_item_id))
-      || byName.get(String(p.name || '').trim().toLowerCase()) || null
+    const linked = (p.inventory_item_id && byId.get(p.inventory_item_id)) || null
     // Produk MESTI ada di Inventori (aktif) baru boleh dijual: tiada item dipaut ATAU item tidak aktif = tolak
     if (!linked || invInactive(linked)) return p.name || p.product_id
+    // Stok tak cukup (cth. dibeli orang lain sejak troli dibuat) = tidak lagi tersedia
+    if (Number(linked.qty_in_stock ?? 0) < (qtyById.get(p.product_id) || 1)) return p.name || p.product_id
   }
   return null
 }

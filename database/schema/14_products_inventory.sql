@@ -580,26 +580,17 @@ AS $$
   SELECT
     p.product_id::text,
     p.name,
-    (m.id IS NOT NULL) AS linked,
-    m.st AS item_status,
-    m.qty,
-    m.unit,
-    (m.id IS NOT NULL AND m.st = 'active') AS sellable
+    (i.id IS NOT NULL) AS linked,
+    CASE WHEN i.id IS NULL THEN NULL
+         ELSE COALESCE(to_jsonb(i)->>'status',
+                       CASE WHEN to_jsonb(i)->>'is_active' = 'false' THEN 'inactive' ELSE 'active' END) END AS item_status,
+    i.qty_in_stock,
+    i.unit,
+    (i.id IS NOT NULL
+      AND COALESCE(to_jsonb(i)->>'status',
+                   CASE WHEN to_jsonb(i)->>'is_active' = 'false' THEN 'inactive' ELSE 'active' END) = 'active') AS sellable
   FROM psy_products p
-  LEFT JOIN LATERAL (
-    SELECT i.id,
-           COALESCE(to_jsonb(i)->>'status',
-                    CASE WHEN to_jsonb(i)->>'is_active' = 'false' THEN 'inactive' ELSE 'active' END) AS st,
-           i.qty_in_stock AS qty,
-           i.unit
-    FROM psy_inventory_items i
-    WHERE i.id = p.inventory_item_id
-       OR (p.inventory_item_id IS NULL AND lower(trim(i.name)) = lower(trim(p.name)))
-    ORDER BY (i.id = p.inventory_item_id) DESC NULLS LAST,
-             (COALESCE(to_jsonb(i)->>'status',
-                       CASE WHEN to_jsonb(i)->>'is_active' = 'false' THEN 'inactive' ELSE 'active' END) = 'active') DESC
-    LIMIT 1
-  ) m ON true;
+  LEFT JOIN psy_inventory_items i ON i.id = p.inventory_item_id;
 $$;
 
 GRANT EXECUTE ON FUNCTION psy_shop_product_inventory() TO authenticated, anon;

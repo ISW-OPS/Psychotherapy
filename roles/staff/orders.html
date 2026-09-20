@@ -167,7 +167,7 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
-<script src="../../shared/stockSync.js"></script>
+<script src="../../shared/inventoryStock.js"></script>
 <script src="_shared.js"></script>
 <script>
     function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
@@ -453,35 +453,33 @@ function buildActions(o) {
 }
 
 // ── Stock helpers ────────────────────────────────────
-async function decrementStockForOrder(order) {
-  if (!order || !Array.isArray(order.items)) return;
-  for (const it of order.items) {
-    if (!it.id || !it.qty) continue;
-    const { data: prod } = await window.db.from('psy_products')
-      .select('name, stock').eq('id', it.id).single().then(r => r, () => ({ data: null }));
-    if (prod && prod.stock != null) {
-      const newStock = Math.max(0, Number(prod.stock) - Number(it.qty));
-      await window.db.from('psy_products').update({ stock: newStock }).eq('id', it.id);
-      // Auto-sync: kurangkan juga di Inventori (nama sama)
-      await (window.syncStockToInventory?.(prod.name, newStock));
-    }
-  }
+// Sumber stok tunggal = Inventori (psy_inventory_items). Produk Shop dipaut melalui
+// inventory_item_id atau nama sama; TIADA lajur stok berasingan pada produk dikemas kini.
+async function resolveInventoryItemId(prod) {
+  return prod.inventory_item_id || null; // pautan HANYA melalui ID Inventori
 }
 
-async function restockForOrder(order) {
+async function adjustInventoryForOrder(order, sign) {
   if (!order || !Array.isArray(order.items)) return;
   for (const it of order.items) {
     if (!it.id || !it.qty) continue;
     const { data: prod } = await window.db.from('psy_products')
-      .select('name, stock').eq('id', it.id).single().then(r => r, () => ({ data: null }));
-    if (prod && prod.stock != null) {
-      const newStock = Number(prod.stock) + Number(it.qty);
-      await window.db.from('psy_products').update({ stock: newStock }).eq('id', it.id);
-      // Auto-sync: tambah balik di Inventori (nama sama)
-      await (window.syncStockToInventory?.(prod.name, newStock));
-    }
+      .select('name, inventory_item_id').eq('product_id', it.id).maybeSingle().then(r => r, () => ({ data: null }));
+    if (!prod) continue;
+    const itemId = await resolveInventoryItemId(prod);
+    if (!itemId) { console.warn('[orders] tiada item Inventori untuk produk', prod.name); continue; }
+    try {
+      await window.addStockToLocation(itemId, sign * Number(it.qty), null, {
+        type: sign < 0 ? 'out' : 'in', refType: 'shop_order', refId: order.id || null,
+        refLabel: order.order_ref || null,
+        note: sign < 0 ? 'Order Shop dibayar' : 'Order Shop dibatalkan (stok dipulangkan)',
+        itemName: prod.name,
+      });
+    } catch (e) { console.warn('[orders] gagal kemas kini stok Inventori:', e); }
   }
 }
+const decrementStockForOrder = (order) => adjustInventoryForOrder(order, -1);
+const restockForOrder = (order) => adjustInventoryForOrder(order, +1);
 
 // ── Status Update ────────────────────────────────────
 async function markStatus(orderId, status, extra = {}) {
@@ -500,12 +498,14 @@ async function markStatus(orderId, status, extra = {}) {
 
   if (error) { banner('Gagal: ' + (error.message || 'Ralat'), 'error'); return; }
 
-  // Decrement stock on first transition into 'packed' (committed to ship)
-  if (status === 'packed' && prevStatus !== 'packed' && prevStatus !== 'shipped' && prevStatus !== 'delivered') {
+  // Stok ditolak sebaik order DIBAYAR (bukan bila dibungkus) supaya orang lain tak boleh bayar
+  // untuk unit yang sama. Order yang dibayar melalui gateway ditolak di server (payments-webhook);
+  // di sini hanya untuk pengesahan bayaran manual (pending → paid).
+  if (status === 'paid' && prevStatus === 'pending') {
     await decrementStockForOrder(prevOrder);
   }
-  // Restock if order is cancelled after stock was decremented
-  if (status === 'cancelled' && (prevStatus === 'packed' || prevStatus === 'shipped')) {
+  // Pulangkan stok kalau order dibatalkan selepas dibayar (stok sudah ditolak)
+  if (status === 'cancelled' && ['paid', 'packed', 'shipped'].includes(prevStatus)) {
     await restockForOrder(prevOrder);
   }
 

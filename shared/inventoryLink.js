@@ -1,6 +1,6 @@
 // Kaitan Inventori ↔ Produk Shop.
-// Produk Shop (psy_products) dipaut ke item inventori melalui inventory_item_id (FK) ATAU nama sama
-// (case-insensitive, trim) — sama cara shop.html memadankan stok. Kalau item inventori tidak aktif,
+// Produk Shop (psy_products) dipaut ke item inventori HANYA melalui inventory_item_id (FK / ID Inventori) —
+// bukan nama. Kalau item inventori tidak aktif,
 // produk yang dipaut tidak boleh dijual (shop sorok + payment tolak + pelayan tolak) dan staf diberi amaran.
 
 // Item inventori dianggap tidak aktif jika status bukan 'active' (inactive/discontinued);
@@ -43,9 +43,7 @@ window.iswShopProductsForItem = async function (item, opts) {
       .select('id, name, product_id, sku, price, promo_price, is_active, status, visible_in_shop, inventory_item_id');
     if (error) return [];
     const ids = new Set(items.map(i => i.id));
-    const names = new Set(items.map(i => (i.name || '').trim().toLowerCase()));
-    return (data || []).filter(p => (opts?.includeInactive || p.is_active !== false)
-      && (ids.has(p.inventory_item_id) || names.has((p.name || '').trim().toLowerCase())));
+    return (data || []).filter(p => (opts?.includeInactive || p.is_active !== false) && ids.has(p.inventory_item_id));
   } catch (_) { return []; }
 };
 

@@ -96,7 +96,7 @@
             <div class="flex justify-between font-bold pt-1 border-t border-ink/10"><span>Jumlah</span><span id="cart-total-final">RM 0</span></div>
           </div>
 
-          <button onclick="checkout()" class="w-full bg-navy text-white py-3 rounded-xl font-semibold hover:bg-navy-dark">Teruskan ke Bayaran →</button>
+          <button id="btn-checkout" onclick="checkout()" class="w-full bg-navy text-white py-3 rounded-xl font-semibold hover:bg-navy-dark">Teruskan ke Bayaran →</button>
         </div>
       </div>
     </div>
@@ -115,38 +115,25 @@
     let CATEGORIES = ['All'];
 
     async function loadProductsFromDB() {
-      const [{ data: rows }, { data: invRows }, invMap] = await Promise.all([
+      const [{ data: rows }, invMap] = await Promise.all([
         window.db.from('psy_products')
           .select('*, inv:inventory_item_id (id, qty_in_stock, unit)')
           .eq('is_active', true)
           .order('sort_order', { ascending: true }),
-        window.db.from('psy_inventory_items').select('name, qty_in_stock, unit'),
         iswShopInventoryMap(), // status + stok sebenar dari Inventori (pesakit tak boleh baca jadual terus)
       ]);
-      // Index Inventori by lowercase trimmed name supaya boleh match nama produk
-      const invByName = new Map();
-      for (const i of (invRows || [])) {
-        const key = (i.name || '').trim().toLowerCase();
-        if (key) invByName.set(key, i);
-      }
       // Produk MESTI ada di Inventori (aktif) baru dijual — selain itu disorok
       const arr = (rows || []).filter(r => invMap.get(r.product_id)?.sellable !== false);
       PRODUCTS = arr.map(r => {
-        // Priority: (1) FK link inv, (2) nama-match Inventori, (3) legacy r.stock column
+        // Stok = Inventori sahaja, dipaut melalui inventory_item_id (ID) — bukan nama
         const liveInv = invMap.get(r.product_id);
         const fkInv = (liveInv?.linked ? { qty_in_stock: liveInv.qty, unit: liveInv.unit } : null) || r.inv || null;
-        const nameInv = invByName.get((r.name || '').trim().toLowerCase()) || null;
         let stock, stockUnit = '';
         if (fkInv) {
           stock = Number(fkInv.qty_in_stock);
           stockUnit = fkInv.unit || '';
-        } else if (nameInv) {
-          stock = Number(nameInv.qty_in_stock);
-          stockUnit = nameInv.unit || '';
-        } else if (r.stock != null) {
-          stock = Number(r.stock);
         } else {
-          stock = 0; // tiada source — default 0 (out of stock) supaya selamat
+          stock = 0; // tiada item Inventori — stok tunggal ialah Inventori, default 0 supaya selamat
         }
         // Promo aktif jika ada harga promo > 0 dan belum tamat (promo_until kosong = tiada had)
         const today = new Date().toISOString().slice(0, 10);
@@ -155,6 +142,7 @@
         const onPromo = promoPrice > 0 && promoPrice < origPrice && (!r.promo_until || r.promo_until >= today);
         return {
           id: r.product_id,
+          sku: r.sku || r.product_id || '',
           cat: r.category,
           name: r.name,
           desc: r.description || '',
@@ -167,7 +155,7 @@
           bg: r.bg_color,
           stock,
           stockUnit,
-          linked: !!(fkInv || nameInv),
+          linked: !!fkInv,
         };
       });
       // Derive unique categories from DB
@@ -233,6 +221,7 @@
       </div>
       <div class="p-4 flex-1 flex flex-col">
         <div class="font-semibold text-sm">${p.name}</div>
+        ${p.sku ? `<div class="text-[10px] text-ink/40 font-mono mt-0.5">SKU: ${p.sku}</div>` : ''}
         <div class="text-xs text-ink/60 mt-1 flex-1">${p.desc}</div>
         <div class="flex items-center justify-between mt-3 pt-3 border-t border-ink/5">
           ${priceHtml}
@@ -246,7 +235,12 @@
 
     function setCategory(c) { activeCategory = c; loadShop(); }
 
-    function openCart() { document.getElementById('cart-drawer').classList.remove('hidden'); renderCart(); loadMyVoucherChips(); }
+    async function openCart() {
+      document.getElementById('cart-drawer').classList.remove('hidden');
+      renderCart(); loadMyVoucherChips();
+      // Muat semula stok Inventori terkini — barang dalam cart mungkin sudah habis dibeli orang lain
+      try { await loadProductsFromDB(); loadShop(); renderCart(); } catch (e) { console.warn('[shop] gagal muat semula stok:', e); }
+    }
     function closeCart() { document.getElementById('cart-drawer').classList.add('hidden'); }
 
     function toggleDelivery() {
@@ -328,22 +322,45 @@
       }
     }
 
+    // Masalah stok bagi satu baris cart: null = ok, 'out' = habis/tidak dijual, 'low' = qty melebihi baki
+    function cartStockIssue(i) {
+      const p = (window.PRODUCTS || []).find(x => x.id === i.id);
+      if (!p || (p.stock != null && p.stock <= 0)) return { kind: 'out' };
+      if (p.stock != null && i.qty > p.stock) return { kind: 'low', left: p.stock };
+      return null;
+    }
+
     function renderCart() {
       const cartItems = getCart();
+      const hasIssue = cartItems.some(i => cartStockIssue(i));
+      const btn = document.getElementById('btn-checkout');
+      if (btn) {
+        btn.disabled = hasIssue;
+        btn.classList.toggle('opacity-50', hasIssue);
+        btn.classList.toggle('cursor-not-allowed', hasIssue);
+      }
       document.getElementById('cart-items').innerHTML = cartItems.length
-        ? cartItems.map(i => `
-      <div class="flex items-center gap-3 p-3 border border-ink/10 rounded-lg">
+        ? cartItems.map(i => {
+          const issue = cartStockIssue(i);
+          const issueHtml = !issue ? ''
+            : issue.kind === 'out'
+              ? `<div class="text-xs font-semibold text-terracotta mt-0.5">Habis Stok <button onclick="removeFromCart('${i.id}')" class="underline ml-1">Buang</button></div>`
+              : `<div class="text-xs font-semibold text-terracotta mt-0.5">Stok tinggal ${issue.left} — kurangkan kuantiti</div>`;
+          return `
+      <div class="flex items-center gap-3 p-3 border rounded-lg ${issue ? 'border-terracotta/40 bg-terracotta/5' : 'border-ink/10'}">
         <div class="w-12 h-12 ${i.bg} rounded-lg flex items-center justify-center text-2xl">${i.icon}</div>
         <div class="flex-1 min-w-0">
           <div class="text-sm font-semibold truncate">${i.name}</div>
           <div class="text-xs text-ink/60">RM ${i.price.toFixed(2)} × ${i.qty}</div>
+          ${issueHtml}
         </div>
         <div class="flex items-center gap-1">
           <button onclick="updateQty('${i.id}',-1)" class="w-7 h-7 rounded bg-cream">−</button>
           <span class="w-6 text-center text-sm">${i.qty}</span>
           <button onclick="updateQty('${i.id}',1)" class="w-7 h-7 rounded bg-cream">+</button>
         </div>
-      </div>`).join('')
+      </div>`;
+        }).join('')
         : '<p class="text-ink/40 text-center py-8 text-sm">Cart kosong</p>';
       updateCartTotals();
     }
@@ -351,6 +368,7 @@
     async function checkout() {
       const cartItems = getCart();
       if (cartItems.length === 0) { banner('Cart kosong', 'error'); return; }
+      if (cartItems.some(i => cartStockIssue(i))) { banner('Ada barang dalam cart yang habis stok — sila semak cart', 'error'); return; }
 
       // Alamat penuh dikumpul di payment.html (borang besar & jelas), bukan di sini —
       // drawer cart cuma tentukan kaedah penghantaran.

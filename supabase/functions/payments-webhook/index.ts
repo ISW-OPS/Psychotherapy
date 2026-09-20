@@ -514,14 +514,20 @@ async function fulfillOrder(admin: any, payment: any) {
       }
 
     } else if (item.type === 'shop_order') {
-      await admin.from('psy_orders').insert({
+      const { data: newOrder, error: orderErr } = await admin.from('psy_orders').insert({
         order_ref: item.orderRef, patient_id: intent.userId, items: item.items,
         total: item.amount, status: 'paid', paid_at: now,
         delivery_method: item.deliveryMethod,
         delivery_address: item.deliveryAddress || null,
         courier: item.deliveryMethod === 'pos' ? 'JNT' : null,
         notes: item.deliveryMethod === 'pickup' ? 'Pickup Konsultasi' : null,
-      })
+      }).select('id, order_ref').single()
+      // Stok Inventori ditolak sebaik order dibayar (hanya bila order baru berjaya dicipta,
+      // order_ref UNIQUE — webhook berulang tak tolak dua kali).
+      if (!orderErr && newOrder) {
+        try { await deductShopStock(admin, item.items, newOrder) }
+        catch (e) { console.warn('[payments-webhook] gagal tolak stok Inventori:', e) }
+      }
       // Notify admin & manager
       try {
         const { data: staff } = await admin.from('psy_profiles')
@@ -540,6 +546,40 @@ async function fulfillOrder(admin: any, payment: any) {
   try {
     await notifyStaffPaymentReceived(admin, patientId, staffLabels, payment.total, receiptRef)
   } catch (_) { /* nota: notifikasi gagal tidak halang fulfillment */ }
+}
+
+// Tolak stok Inventori bagi produk Shop dalam order yang baru dibayar. Cermin addStockToLocation()
+// (shared/inventoryStock.js): kurangkan lokasi dengan stok terbanyak + tulis ledger psy_stock_movements;
+// trigger psy_sync_item_stock_total mengemas kini jumlah qty_in_stock.
+async function deductShopStock(admin: any, lines: any[], order: { id: string; order_ref: string }) {
+  if (!Array.isArray(lines)) return
+  const { data: invs } = await admin.from('psy_inventory_items').select('id, name, source_type')
+  for (const line of lines) {
+    const qty = Math.max(1, parseInt(line?.qty) || 1)
+    if (!line?.id) continue
+    const { data: prod } = await admin.from('psy_products')
+      .select('name, inventory_item_id').eq('product_id', line.id).maybeSingle()
+    if (!prod) continue
+    // Pautan HANYA melalui inventory_item_id (ID Inventori) — bukan nama
+    const inv = (invs || []).find((i: any) => i.id === prod.inventory_item_id)
+    if (!inv) { console.warn('[payments-webhook] tiada item Inventori utk produk', prod.name); continue }
+
+    const { data: rows } = await admin.from('psy_inventory_stock_by_location')
+      .select('id, location_id, qty_in_stock').eq('item_id', inv.id)
+      .order('qty_in_stock', { ascending: false }).limit(1)
+    const row = rows?.[0]
+    if (!row) { console.warn('[payments-webhook] item Inventori tiada stok berlokasi:', inv.name); continue }
+
+    const balanceAfter = Math.max(0, Number(row.qty_in_stock) - qty)
+    await admin.from('psy_inventory_stock_by_location')
+      .update({ qty_in_stock: balanceAfter, updated_at: new Date().toISOString() }).eq('id', row.id)
+    await admin.from('psy_stock_movements').insert({
+      item_id: inv.id, item_name: inv.name, location_id: row.location_id,
+      movement_type: 'out', qty: -qty, balance_after: balanceAfter,
+      reference_type: 'shop_order', reference_id: order.id, reference_label: order.order_ref,
+      notes: 'Order Shop dibayar', actor_id: null, actor_name: 'Sistem (pembayaran)',
+    })
+  }
 }
 
 const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)

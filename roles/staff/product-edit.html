@@ -265,14 +265,9 @@ async function saveProduct() {
   const editId = document.getElementById('edit-id').value;
 
   // Pautan ke Inventori: produk hanya boleh dijual bila wujud di Inventori (aktif).
-  // Simpan FK (kekal betul walaupun item Inventori dinamakan semula); produk lama tanpa FK dipadan ikut nama.
-  if (!linkedInvId) {
-    const { data: byName } = await window.db.from('psy_inventory_items').select('id').eq('name', name).limit(1);
-    if (byName?.[0]) linkedInvId = byName[0].id;
-  }
-  if (!linkedInvId && !editId) return banner('Produk mesti dipilih dari Inventori dahulu', 'error');
-  if (linkedInvId) data.inventory_item_id = linkedInvId;
-  else banner('⚠️ Produk ini tiada di Inventori — ia tidak akan dijual sehingga dipaut', 'error');
+  // Pautan HANYA melalui ID Inventori (inventory_item_id) — bukan nama. Wajib ada sebelum simpan.
+  if (!linkedInvId) return banner('Produk mesti dipaut ke item Inventori (pilih dari Inventori) sebelum disimpan', 'error');
+  data.inventory_item_id = linkedInvId;
 
   try {
     let savedId = editId;
@@ -333,10 +328,10 @@ async function loadProduct(id) {
   document.getElementById('f-promo-price').value = data.promo_price || '';
   document.getElementById('f-promo-until').value = data.promo_until || '';
   if (data.price > 0 && data.promo_price > 0) onPromoPriceInput();
-  // Stok & unit live dari Inventori (FK, kemudian nama sama); SKU dipapar = kod Inventori kalau ada
-  let invQ = window.db.from('psy_inventory_items').select('item_code, qty_in_stock, unit');
-  invQ = data.inventory_item_id ? invQ.eq('id', data.inventory_item_id) : invQ.eq('name', data.name);
-  const { data: invRows } = await invQ.limit(1);
+  // Stok & unit live dari Inventori (melalui FK inventory_item_id); SKU dipapar = kod Inventori kalau ada
+  const { data: invRows } = data.inventory_item_id
+    ? await window.db.from('psy_inventory_items').select('item_code, qty_in_stock, unit').eq('id', data.inventory_item_id).limit(1)
+    : { data: [] };
   const inv = invRows?.[0];
   document.getElementById('f-stock').value = inv ? (Number(inv.qty_in_stock) || 0) : '';
   setUnitValue(inv?.unit || data.unit);
