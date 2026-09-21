@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS psy_payments (
   status TEXT DEFAULT 'completed' CHECK (status IN ('pending','completed','refunded','failed')),
   ghl_transaction_id TEXT,
   invoice_number TEXT,                        -- bayaran manual — no. invois ditaip staff/doktor
+  manual_method TEXT CHECK (manual_method IN ('transfer','cash','other')),  -- kaedah bayaran manual (payment_method='manual')
   receipt_no TEXT UNIQUE,                     -- no. resit paparan (REC10001..) — auto bila status jadi 'completed'; receipt_ref kekal kunci teknikal
   discount NUMERIC(10,2) NOT NULL DEFAULT 0,  -- diskaun pada bayaran ini (papar di resit; subtotal = total + discount)
   receipt_url TEXT,                           -- bayaran manual — resit yang di-upload

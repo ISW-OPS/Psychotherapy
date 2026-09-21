@@ -3066,10 +3066,18 @@
         ${(kob.package_payment_status === 'pending' || kob.package_payment_status === 'declined')
           ? `<button type="button" onclick="wizSelectMethod(null)" class="text-xs text-ink/50 hover:underline">← Batal</button>` : ''}
       </div>
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>
-          <label class="text-xs font-semibold text-ink/60 block mb-1">No. Invois</label>
-          <input id="mp-invoice" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white" placeholder="cth: INV-2026-0090">
+          <label class="text-xs font-semibold text-ink/60 block mb-1">Kaedah Bayaran</label>
+          <select id="mp-method" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
+            <option value="transfer">Bank Transfer</option>
+            <option value="cash">Tunai</option>
+            <option value="other">Lain-lain</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-ink/60 block mb-1">No. Rujukan (pilihan)</label>
+          <input id="mp-invoice" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white" placeholder="cth: no. rujukan transfer / invois luar">
         </div>
         <div>
           <label class="text-xs font-semibold text-ink/60 block mb-1">Jumlah${locked ? ' (Tetap)' : ' (RM)'}</label>
@@ -3077,7 +3085,7 @@
             class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm ${locked ? 'bg-ink/5 text-ink/70' : 'bg-white'}">
         </div>
         <div>
-          <label class="text-xs font-semibold text-ink/60 block mb-1">Upload Resit</label>
+          <label class="text-xs font-semibold text-ink/60 block mb-1">Upload Bukti Bayaran <span class="font-normal text-ink/40">(wajib kecuali tunai)</span></label>
           <input id="mp-receipt" type="file" accept="image/*,.pdf"
             class="w-full text-xs text-ink/60 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-navy file:text-white">
         </div>
@@ -3093,7 +3101,7 @@
       const rows = payments.map(p => `
     <div class="flex items-center justify-between gap-2 text-xs py-1.5 border-b border-ink/5 last:border-0">
       <div>
-        <span class="font-semibold">${escapeHtml(p.invoice_number || p.receipt_ref)}</span>
+        <span class="font-semibold">${escapeHtml(p.invoice_number || p.receipt_no || p.receipt_ref)}</span>
         <span class="text-ink/40 ml-2">${new Date(p.paid_at || p.created_at).toLocaleDateString(LCALE())}</span>
       </div>
       <div class="flex items-center gap-2">
@@ -3139,7 +3147,7 @@
       if (status === 'partial') {
         wizSidebar.innerHTML = '';
         const { data } = await window.db.from('psy_payments')
-          .select('id, invoice_number, receipt_ref, receipt_url, total, paid_at, created_at, payment_method, gateway_provider')
+          .select('id, invoice_number, receipt_no, receipt_ref, receipt_url, total, paid_at, created_at, payment_method, gateway_provider')
           .eq('status', 'completed').eq('intent->>kob_session_id', kobId)
           .order('created_at', { ascending: false });
         const payments = data || [];
@@ -3172,7 +3180,7 @@
       if (isPaidInfo) {
         wizSidebar.innerHTML = '';
         const { data } = await window.db.from('psy_payments')
-          .select('id, invoice_number, receipt_ref, receipt_url, total, paid_at, created_at, payment_method, gateway_provider')
+          .select('id, invoice_number, receipt_no, receipt_ref, receipt_url, total, paid_at, created_at, payment_method, gateway_provider')
           .eq('status', 'completed').eq('intent->>kob_session_id', kobId)
           .order('created_at', { ascending: false });
         const payments = data || [];
@@ -3307,13 +3315,13 @@
       if (!can('payment', 'edit')) { banner('Anda tidak mempunyai kebenaran edit bayaran.', 'error'); return; }
       try {
         const p = await loadManualKobPayment(paymentId);
-        const invRaw = prompt('No. Invois:', p.invoice_number || '');
+        const invRaw = prompt('No. Rujukan (boleh kosong):', p.invoice_number || '');
         if (invRaw === null) return;
         const amtRaw = prompt('Jumlah (RM):', Number(p.total).toFixed(2));
         if (amtRaw === null) return;
         const invoice = invRaw.trim();
         const amount = parseMoneyVal(amtRaw);
-        if (!invoice || !(amount > 0)) { banner('No. Invois & Jumlah yang sah diperlukan.', 'error'); return; }
+        if (!(amount > 0)) { banner('Jumlah yang sah diperlukan.', 'error'); return; }
         const { data: lastCp } = await window.db.from('psy_kob_installment_checkpoints')
           .select('target_cumulative').eq('kob_session_id', kobId).order('seq', { ascending: false }).limit(1);
         const cap = kob.package_payment_mode === 'installment' && lastCp?.[0]
@@ -3326,7 +3334,7 @@
         if (!reason) { banner('Sebab edit wajib diisi.', 'error'); return; }
         const stamp = `[Diedit oleh ${window.currentUser.full_name} ${new Date().toLocaleString('en-GB')}: ${reason} | asal ${p.invoice_number} RM ${Number(p.total).toFixed(2)}]`;
         const { data: upd, error } = await window.db.from('psy_payments')
-          .update({ invoice_number: invoice, total: amount, notes: [p.notes, stamp].filter(Boolean).join(' ') })
+          .update({ invoice_number: invoice || null, total: amount, notes: [p.notes, stamp].filter(Boolean).join(' ') })
           .eq('id', paymentId).select('id');
         if (error) throw error;
         if (!upd?.length) throw new Error('Tak dapat edit (disekat oleh kebenaran database).');
@@ -3359,12 +3367,12 @@
     }
 
     async function saveManualPayment() {
-      const invoiceNumber = document.getElementById('mp-invoice')?.value.trim();
+      const invoiceNumber = document.getElementById('mp-invoice')?.value.trim() || '';
+      const manualMethod = document.getElementById('mp-method')?.value || 'transfer';
       const amount = parseMoneyVal(document.getElementById('mp-amount')?.value);
       const file = document.getElementById('mp-receipt')?.files?.[0];
-      if (!invoiceNumber) { banner('Sila isi No. Invois', 'error'); return; }
       if (!amount || amount <= 0) { banner('Sila isi Jumlah yang sah', 'error'); return; }
-      if (!file) { banner('Sila upload resit', 'error'); return; }
+      if (!file && manualMethod !== 'cash') { banner('Sila upload bukti bayaran (wajib kecuali tunai)', 'error'); return; }
 
       // Ikut pilihan doktor di Langkah 3 (wizPayTier); default 'today' utk pending,
       // 'now' utk declined bila doktor belum override.
@@ -3414,19 +3422,23 @@
       const btn = document.getElementById('btn-save-manual-payment');
       btn.disabled = true; btn.textContent = 'Menyimpan...';
       try {
-        const path = `${patient.id}/${kobId}/receipt_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-        const { error: upErr } = await window.db.storage.from('kob-documents').upload(path, file);
-        if (upErr) throw upErr;
-        const { data: signed } = await window.db.storage.from('kob-documents').createSignedUrl(path, 3600 * 24 * 365);
+        let signed = null;
+        if (file) {
+          const path = `${patient.id}/${kobId}/receipt_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+          const { error: upErr } = await window.db.storage.from('kob-documents').upload(path, file);
+          if (upErr) throw upErr;
+          ({ data: signed } = await window.db.storage.from('kob-documents').createSignedUrl(path, 3600 * 24 * 365));
+        }
 
         const { data: payRow, error: payErr } = await window.db.from('psy_payments').insert({
-          receipt_ref: `KOB-${invoiceNumber}-${Date.now()}`,
+          receipt_ref: `KOB-${invoiceNumber || 'MNL'}-${Date.now()}`,
           patient_id: patient.id,
           user_id: patient.user_id,
           total: amount,
           payment_method: 'manual',
+          manual_method: manualMethod,
           status: 'completed',
-          invoice_number: invoiceNumber,
+          invoice_number: invoiceNumber || null,
           receipt_url: signed?.signedUrl || null,
           notes: isInstallmentStart
             ? `Deposit pakej "${kob.recommended_package_name || ''}" — disahkan doktor semasa sesi KOB`
@@ -3441,7 +3453,7 @@
           await window.db.functions.invoke('payments-send-receipt', { body: { paymentId: payRow.id } });
         } catch (_) { /* nota: notifikasi gagal tidak halang bayaran */ }
 
-        const kobUpdates = { package_receipt_ref: invoiceNumber, updated_at: new Date().toISOString() };
+        const kobUpdates = { package_receipt_ref: invoiceNumber || null, updated_at: new Date().toISOString() };
         let bannerMsg;
 
         if (isInstallmentStart) {

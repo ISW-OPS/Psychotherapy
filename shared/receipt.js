@@ -20,6 +20,8 @@
   // ── Elemen dokumen bersama (Resit + Invois) ─────────────────────────────────
   const DOC_TEAL = '#2b8aa0';
   const rMoney = (n) => 'RM' + rFmt(n);
+  const rMethod = (r) => ({ transfer: 'Bank Transfer', cash: 'Cash', other: 'Other' }[r.manual_method]
+    || (r.payment_method === 'manual' ? '' : RCPT_METHODS[r.payment_method] || ''));
   const rDateLong = (v) => v
     ? new Date(v).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Kuala_Lumpur' })
     : '—';
@@ -152,6 +154,7 @@
         <div class="space-y-3">
           <div><div class="font-semibold text-ink">Receipt No</div><div class="text-ink/60 text-xs mt-1">${rEsc(r.receipt_no || r.receipt_ref || '—')}</div></div>
           <div><div class="font-semibold text-ink">Date Paid</div><div class="text-ink/60 text-xs mt-1">${rDateLong(r.paid_at)}</div></div>
+          ${rMethod(r) ? `<div><div class="font-semibold text-ink">Payment Method</div><div class="text-ink/60 text-xs mt-1">${rEsc(rMethod(r))}</div></div>` : ''}
         </div>
       </div>
 

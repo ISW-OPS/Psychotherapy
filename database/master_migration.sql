@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-09-21T02:05:25.960120Z
+-- Generated: 2026-09-21T02:21:03.845872Z
 -- Jumlah fail: 36
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -1625,6 +1625,7 @@ CREATE TABLE IF NOT EXISTS psy_payments (
   status TEXT DEFAULT 'completed' CHECK (status IN ('pending','completed','refunded','failed')),
   ghl_transaction_id TEXT,
   invoice_number TEXT,                        -- bayaran manual — no. invois ditaip staff/doktor
+  manual_method TEXT CHECK (manual_method IN ('transfer','cash','other')),  -- kaedah bayaran manual (payment_method='manual')
   receipt_no TEXT UNIQUE,                     -- no. resit paparan (REC10001..) — auto bila status jadi 'completed'; receipt_ref kekal kunci teknikal
   discount NUMERIC(10,2) NOT NULL DEFAULT 0,  -- diskaun pada bayaran ini (papar di resit; subtotal = total + discount)
   receipt_url TEXT,                           -- bayaran manual — resit yang di-upload
