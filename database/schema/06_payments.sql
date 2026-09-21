@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS psy_payments (
   status TEXT DEFAULT 'completed' CHECK (status IN ('pending','completed','refunded','failed')),
   ghl_transaction_id TEXT,
   invoice_number TEXT,                        -- bayaran manual — no. invois ditaip staff/doktor
+  receipt_no TEXT UNIQUE,                     -- no. resit paparan (REC10001..) — auto bila status jadi 'completed'; receipt_ref kekal kunci teknikal
+  discount NUMERIC(10,2) NOT NULL DEFAULT 0,  -- diskaun pada bayaran ini (papar di resit; subtotal = total + discount)
   receipt_url TEXT,                           -- bayaran manual — resit yang di-upload
   notes TEXT,
   -- gateway bayaran (HitPay/Fiuu) — pending row dicipta sebelum redirect,
@@ -34,6 +36,21 @@ CREATE TABLE IF NOT EXISTS psy_payments (
   paid_at TIMESTAMPTZ DEFAULT now(),
   created_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- No. resit paparan berjujukan — diberi sekali bila bayaran 'completed' (bukan masa 'pending' gateway, elak nombor terbuang).
+CREATE SEQUENCE IF NOT EXISTS psy_receipt_no_seq START 10001;
+
+CREATE OR REPLACE FUNCTION psy_assign_receipt_no() RETURNS trigger AS $$
+BEGIN
+  IF NEW.status = 'completed' AND NEW.receipt_no IS NULL THEN
+    NEW.receipt_no := 'REC' || nextval('psy_receipt_no_seq');
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_psy_assign_receipt_no ON psy_payments;
+CREATE TRIGGER trg_psy_assign_receipt_no BEFORE INSERT OR UPDATE OF status ON psy_payments
+  FOR EACH ROW EXECUTE FUNCTION psy_assign_receipt_no();
 
 CREATE INDEX IF NOT EXISTS idx_psy_payments_patient ON psy_payments(patient_id);
 CREATE INDEX IF NOT EXISTS idx_psy_payments_receipt ON psy_payments(receipt_ref);

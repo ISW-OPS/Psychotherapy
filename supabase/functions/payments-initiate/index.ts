@@ -149,12 +149,13 @@ Deno.serve(async (req) => {
       items: items.map((i: any) => ({ type: i.type, title: i.title, amount: i.amount, reference_id: i.id || i.packageId })),
       subtotal: total,
       total,
+      discount: voucherDiscount + promoDiscount,
       payment_method: method,
       status: 'pending',
       gateway_provider: provider,
       gateway_status: 'pending',
       intent: {
-        items, patientId, userId: user.id, method, voucherId, voucherDiscount, promoCodeId: promoId, promoDiscount,
+        items, patientId, userId: user.id, method, voucherId, voucherDiscount, promoCodeId: promoId, promoCode: promoId && promoCode ? promoCode.toUpperCase() : null, promoDiscount,
         ...(kobSessionIdItem ? { kob_session_id: kobSessionIdItem.kobSessionId } : {}),
       },
     })

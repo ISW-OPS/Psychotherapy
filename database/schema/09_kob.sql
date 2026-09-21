@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS psy_kob_sessions (
                             CHECK (package_payment_status IN ('pending','partial','paid','skipped','declined','na')),
   package_paid_at           TIMESTAMPTZ,
   package_receipt_ref       TEXT,
+  package_discount          NUMERIC(12,2) NOT NULL DEFAULT 0,  -- diskaun (papar di invois; harga asal = recommended_package_price + package_discount)
+  invoice_no                TEXT UNIQUE,                       -- no. invois (INV-000001..) — auto bila pakej dicadangkan
   package_payment_mode      TEXT CHECK (package_payment_mode IN ('full','installment')),
 
   reschedule_count    INT NOT NULL DEFAULT 0,
@@ -57,6 +59,20 @@ COMMENT ON COLUMN psy_kob_sessions.questionnaire IS
 
 COMMENT ON COLUMN psy_kob_sessions.recommended_package_id IS
   'Package recommended by doctor during KOB. Patient must pay before agreement signing.';
+
+CREATE SEQUENCE IF NOT EXISTS psy_invoice_no_seq START 1;
+
+CREATE OR REPLACE FUNCTION psy_assign_invoice_no() RETURNS trigger AS $$
+BEGIN
+  IF NEW.recommended_package_id IS NOT NULL AND NEW.invoice_no IS NULL THEN
+    NEW.invoice_no := 'INV-' || lpad(nextval('psy_invoice_no_seq')::text, 6, '0');
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_psy_assign_invoice_no ON psy_kob_sessions;
+CREATE TRIGGER trg_psy_assign_invoice_no BEFORE INSERT OR UPDATE OF recommended_package_id ON psy_kob_sessions
+  FOR EACH ROW EXECUTE FUNCTION psy_assign_invoice_no();
 
 CREATE INDEX IF NOT EXISTS idx_kob_patient ON psy_kob_sessions(patient_id);
 CREATE INDEX IF NOT EXISTS idx_kob_scheduled ON psy_kob_sessions(scheduled_at);

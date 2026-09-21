@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-09-18T14:48:48.012430Z
+-- Generated: 2026-09-21T02:05:25.960120Z
 -- Jumlah fail: 36
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -1625,6 +1625,8 @@ CREATE TABLE IF NOT EXISTS psy_payments (
   status TEXT DEFAULT 'completed' CHECK (status IN ('pending','completed','refunded','failed')),
   ghl_transaction_id TEXT,
   invoice_number TEXT,                        -- bayaran manual — no. invois ditaip staff/doktor
+  receipt_no TEXT UNIQUE,                     -- no. resit paparan (REC10001..) — auto bila status jadi 'completed'; receipt_ref kekal kunci teknikal
+  discount NUMERIC(10,2) NOT NULL DEFAULT 0,  -- diskaun pada bayaran ini (papar di resit; subtotal = total + discount)
   receipt_url TEXT,                           -- bayaran manual — resit yang di-upload
   notes TEXT,
   -- gateway bayaran (HitPay/Fiuu) — pending row dicipta sebelum redirect,
@@ -1638,6 +1640,21 @@ CREATE TABLE IF NOT EXISTS psy_payments (
   paid_at TIMESTAMPTZ DEFAULT now(),
   created_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- No. resit paparan berjujukan — diberi sekali bila bayaran 'completed' (bukan masa 'pending' gateway, elak nombor terbuang).
+CREATE SEQUENCE IF NOT EXISTS psy_receipt_no_seq START 10001;
+
+CREATE OR REPLACE FUNCTION psy_assign_receipt_no() RETURNS trigger AS $$
+BEGIN
+  IF NEW.status = 'completed' AND NEW.receipt_no IS NULL THEN
+    NEW.receipt_no := 'REC' || nextval('psy_receipt_no_seq');
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_psy_assign_receipt_no ON psy_payments;
+CREATE TRIGGER trg_psy_assign_receipt_no BEFORE INSERT OR UPDATE OF status ON psy_payments
+  FOR EACH ROW EXECUTE FUNCTION psy_assign_receipt_no();
 
 CREATE INDEX IF NOT EXISTS idx_psy_payments_patient ON psy_payments(patient_id);
 CREATE INDEX IF NOT EXISTS idx_psy_payments_receipt ON psy_payments(receipt_ref);
@@ -2682,6 +2699,8 @@ CREATE TABLE IF NOT EXISTS psy_kob_sessions (
                             CHECK (package_payment_status IN ('pending','partial','paid','skipped','declined','na')),
   package_paid_at           TIMESTAMPTZ,
   package_receipt_ref       TEXT,
+  package_discount          NUMERIC(12,2) NOT NULL DEFAULT 0,  -- diskaun (papar di invois; harga asal = recommended_package_price + package_discount)
+  invoice_no                TEXT UNIQUE,                       -- no. invois (INV-000001..) — auto bila pakej dicadangkan
   package_payment_mode      TEXT CHECK (package_payment_mode IN ('full','installment')),
 
   reschedule_count    INT NOT NULL DEFAULT 0,
@@ -2696,6 +2715,20 @@ COMMENT ON COLUMN psy_kob_sessions.questionnaire IS
 
 COMMENT ON COLUMN psy_kob_sessions.recommended_package_id IS
   'Package recommended by doctor during KOB. Patient must pay before agreement signing.';
+
+CREATE SEQUENCE IF NOT EXISTS psy_invoice_no_seq START 1;
+
+CREATE OR REPLACE FUNCTION psy_assign_invoice_no() RETURNS trigger AS $$
+BEGIN
+  IF NEW.recommended_package_id IS NOT NULL AND NEW.invoice_no IS NULL THEN
+    NEW.invoice_no := 'INV-' || lpad(nextval('psy_invoice_no_seq')::text, 6, '0');
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_psy_assign_invoice_no ON psy_kob_sessions;
+CREATE TRIGGER trg_psy_assign_invoice_no BEFORE INSERT OR UPDATE OF recommended_package_id ON psy_kob_sessions
+  FOR EACH ROW EXECUTE FUNCTION psy_assign_invoice_no();
 
 CREATE INDEX IF NOT EXISTS idx_kob_patient ON psy_kob_sessions(patient_id);
 CREATE INDEX IF NOT EXISTS idx_kob_scheduled ON psy_kob_sessions(scheduled_at);
@@ -3999,8 +4032,13 @@ ALTER TABLE psy_inventory_items DROP COLUMN IF EXISTS auto_reorder_enabled;
 CREATE INDEX IF NOT EXISTS idx_inventory_items_source_type ON psy_inventory_items(source_type);
 CREATE INDEX IF NOT EXISTS idx_inventory_items_is_active ON psy_inventory_items(is_active);
 
--- ──── item_code auto-generate (ITM-00001, ITM-00002, ...) ────
+-- ──── item_code auto-generate (INV-01, INV-02, ... INV-99, INV-100) ────
 CREATE SEQUENCE IF NOT EXISTS psy_inventory_item_code_seq START 1;
+
+CREATE OR REPLACE FUNCTION psy_inventory_format_code(n BIGINT)
+RETURNS TEXT
+LANGUAGE sql IMMUTABLE
+AS $$ SELECT 'INV-' || CASE WHEN n < 10 THEN '0' || n::text ELSE n::text END $$;
 
 CREATE OR REPLACE FUNCTION psy_inventory_set_item_code()
 RETURNS TRIGGER
@@ -4008,7 +4046,7 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
   IF NEW.item_code IS NULL THEN
-    NEW.item_code := 'ITM-' || LPAD(nextval('psy_inventory_item_code_seq')::text, 5, '0');
+    NEW.item_code := psy_inventory_format_code(nextval('psy_inventory_item_code_seq'));
   END IF;
   RETURN NEW;
 END;
@@ -4019,13 +4057,18 @@ CREATE TRIGGER trg_psy_inventory_set_item_code
 BEFORE INSERT ON psy_inventory_items
 FOR EACH ROW EXECUTE FUNCTION psy_inventory_set_item_code();
 
--- Backfill item_code utk baris sedia ada (install lama) — susun ikut created_at supaya kod konsisten.
+-- Jujukan seterusnya bermula selepas nombor INV tertinggi sedia ada
+SELECT setval('psy_inventory_item_code_seq',
+  COALESCE((SELECT max(substring(item_code FROM 5)::bigint) FROM psy_inventory_items WHERE item_code ~ '^INV-[0-9]+$'), 0) + 1,
+  false);
+
+-- Beri kod kepada item yang belum ada, ikut tarikh dicipta
 DO $$
 DECLARE r RECORD;
 BEGIN
-  FOR r IN SELECT id FROM psy_inventory_items WHERE item_code IS NULL ORDER BY created_at LOOP
+  FOR r IN SELECT id FROM psy_inventory_items WHERE item_code IS NULL ORDER BY created_at, id LOOP
     UPDATE psy_inventory_items
-      SET item_code = 'ITM-' || LPAD(nextval('psy_inventory_item_code_seq')::text, 5, '0')
+      SET item_code = psy_inventory_format_code(nextval('psy_inventory_item_code_seq'))
       WHERE id = r.id;
   END LOOP;
 END $$;
@@ -4053,7 +4096,7 @@ COMMENT ON COLUMN psy_inventory_items.consumption_type IS
 COMMENT ON COLUMN psy_inventory_items.supplier_info IS
   'Format: { name, pic_name, phone, email, address, payment_terms, cost_per_unit }. Maklumat pembekal.';
 COMMENT ON COLUMN psy_inventory_items.item_code IS
-  'Kod item auto-generate (ITM-00001, ...) via trigger — tidak boleh diedit.';
+  'Kod item auto-generate (INV-01, ...) via trigger — tidak boleh diedit.';
 COMMENT ON COLUMN psy_inventory_items.is_active IS
   'false = item tidak aktif — disorok dari senarai pilihan (dispens/kit/jadual pakej) & auto-request.';
 COMMENT ON COLUMN psy_inventory_items.reorder_threshold_pct IS
@@ -4467,6 +4510,54 @@ ON CONFLICT DO NOTHING;
 ALTER TABLE psy_supply_disbursements DROP CONSTRAINT IF EXISTS psy_supply_disbursements_item_id_fkey;
 ALTER TABLE psy_supply_disbursements ADD CONSTRAINT psy_supply_disbursements_item_id_fkey
   FOREIGN KEY (item_id) REFERENCES psy_inventory_items(id) ON DELETE SET NULL;
+
+-- ──────────────────────────────────────────────────────────────
+-- Shop ↔ Inventori: produk MESTI wujud di Inventori (aktif) baru boleh dijual.
+-- Pesakit tak boleh SELECT psy_inventory_items — fungsi SECURITY DEFINER ini dedah status/stok sahaja.
+-- (Backfill pautan FK ikut nama: lihat database/add_shop_inventory_link.sql)
+-- ──────────────────────────────────────────────────────────────
+-- ── 2. Status inventori setiap produk ────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION psy_shop_product_inventory()
+RETURNS TABLE (
+  product_id    TEXT,
+  name          TEXT,
+  linked        BOOLEAN,
+  item_status   TEXT,
+  qty_in_stock  NUMERIC,
+  unit          TEXT,
+  sellable      BOOLEAN
+)
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT
+    p.product_id::text,
+    p.name,
+    (i.id IS NOT NULL) AS linked,
+    CASE WHEN i.id IS NULL THEN NULL
+         ELSE COALESCE(to_jsonb(i)->>'status',
+                       CASE WHEN to_jsonb(i)->>'is_active' = 'false' THEN 'inactive' ELSE 'active' END) END AS item_status,
+    i.qty_in_stock,
+    i.unit,
+    (i.id IS NOT NULL
+      AND COALESCE(to_jsonb(i)->>'status',
+                   CASE WHEN to_jsonb(i)->>'is_active' = 'false' THEN 'inactive' ELSE 'active' END) = 'active') AS sellable
+  FROM psy_products p
+  LEFT JOIN psy_inventory_items i ON i.id = p.inventory_item_id;
+$$;
+
+GRANT EXECUTE ON FUNCTION psy_shop_product_inventory() TO authenticated, anon;
+
+-- ── 3. Fungsi lama (dipakai payment.html versi terdahulu): produk yang TIDAK boleh dijual ─
+CREATE OR REPLACE FUNCTION psy_shop_unavailable_products()
+RETURNS TABLE (product_id TEXT, name TEXT)
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT s.product_id, s.name FROM psy_shop_product_inventory() s WHERE NOT s.sellable;
+$$;
+
+GRANT EXECUTE ON FUNCTION psy_shop_unavailable_products() TO authenticated, anon;
 
 
 -- ════════════════════════════════════════════════════════════════

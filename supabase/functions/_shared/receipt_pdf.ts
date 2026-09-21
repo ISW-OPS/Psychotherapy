@@ -1,20 +1,19 @@
 // ============================================================
 // _shared/receipt_pdf.ts — jana PDF Resit Pembayaran di server
-// Cermin susun atur shared/receipt.js (resit rasmi dalam app):
-//   header syarikat + PAYMENT RECEIPT · Patient Information ·
-//   Payment Summary (item/subtotal/discount/tax/total) · disclaimer.
+// Cermin susun atur shared/receipt.js (format rujukan GHL):
+//   tajuk RECEIPT + blok syarikat · Billed to / Receipt No / Date Paid ·
+//   jadual item · Subtotal/Discount(kod promo, baucar)/Amount Paid ·
+//   Payment Breakdown (bayaran pakej KOB: komitmen, terkumpul, baki) · disclaimer.
 // Guna pdf-lib (pure JS, jalan dalam Deno Edge Function).
 // ============================================================
 
 import { PDFDocument, StandardFonts, rgb } from 'https://esm.sh/pdf-lib@1.17.1'
-import { LOGO_ISW_PNG_BASE64 } from './logo_isw.ts'
 import { sendWhatsApp } from './ghl.ts'
 
-const NAVY = rgb(0.106, 0.165, 0.29)      // ~#1B2A4A
-const GREEN = rgb(0.184, 0.42, 0.246)     // ~#2F6B3F
-const INK = rgb(0.15, 0.15, 0.15)
-const GRAY = rgb(0.45, 0.45, 0.45)
-const LIGHT = rgb(0.85, 0.85, 0.85)
+const INK = rgb(0.12, 0.12, 0.12)
+const GRAY = rgb(0.42, 0.42, 0.42)
+const LIGHT = rgb(0.86, 0.86, 0.86)
+const TEAL = rgb(0.169, 0.541, 0.627)     // ~#2b8aa0
 
 // Font standard (WinAnsi) tak support emoji/huruf bukan-Latin — tukar
 // aksara tipografi biasa ke ASCII dulu, kemudian buang selebihnya.
@@ -29,17 +28,31 @@ const clean = (s: unknown) =>
 
 const fmt = (n: unknown) =>
   Number(n || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const rm = (n: unknown) => `RM${fmt(n)}`
+
+const dateLong = (v: string | Date) =>
+  new Date(v).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Kuala_Lumpur' })
+
+export interface KobBreakdown {
+  listPrice: number
+  pkgDiscount: number
+  owed: number
+  installmentCharge: number
+  thisLabel: string
+  paidToDate: number
+  outstanding: number
+  invoiceNo?: string
+}
 
 export interface ReceiptData {
-  receiptRef: string
+  receiptNo: string
   paidAt: string | Date          // ISO — dipapar waktu Malaysia
   patientName?: string | null
-  nric?: string | null
-  mrn?: string | null
-  email?: string | null
   phone?: string | null
-  items: Array<{ title?: string | null; amount?: number | null }>
+  items: Array<{ name: string; price: number }>
   total: number
+  discountLines: Array<{ label: string; amount: number }>
+  kob?: KobBreakdown | null
 }
 
 export async function buildReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
@@ -50,6 +63,7 @@ export async function buildReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
 
   const M = 50                    // margin
   const W = 595.28 - M * 2        // lebar kandungan
+  const R = M + W                 // tepi kanan
   let y = 841.89 - M
 
   const text = (s: string, x: number, size: number, opt: { font?: any; color?: any; right?: boolean } = {}) => {
@@ -58,86 +72,89 @@ export async function buildReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
     const xx = opt.right ? x - f.widthOfTextAtSize(str, size) : x
     page.drawText(str, { x: xx, y, size, font: f, color: opt.color || INK })
   }
-  const hr = (thick = 0.7, color = LIGHT) => {
-    page.drawLine({ start: { x: M, y }, end: { x: M + W, y }, thickness: thick, color })
+  const hr = (thick = 0.7, color = LIGHT, x1 = M, x2 = R) => {
+    page.drawLine({ start: { x: x1, y }, end: { x: x2, y }, thickness: thick, color })
   }
 
-  // ── Header kiri: logo + syarikat ───────────────────────────
-  const topY = y
-  try {
-    const logoBytes = Uint8Array.from(atob(LOGO_ISW_PNG_BASE64), (c) => c.charCodeAt(0))
-    const logo = await doc.embedPng(logoBytes)
-    const lh = 42                                  // ~h-14 resit app
-    const lw = (logo.width / logo.height) * lh
-    page.drawImage(logo, { x: M, y: y - lh + 8, width: lw, height: lh })
-    y -= lh + 4
-  } catch (_) { /* logo gagal — teruskan tanpa imej */ }
-  text('Natural - Purification - Wellness', M, 8, { color: GREEN, font: bold }); y -= 14
-  text('Ibnu Sina Wellness Sdn Bhd (1319021-P)', M, 10, { font: bold }); y -= 13
-  text('Lot 331, Lorong Senyum Matahari B,', M, 8, { color: GRAY }); y -= 10
-  text('Country Heights, 43000 Kajang, Selangor, Malaysia.', M, 8, { color: GRAY }); y -= 12
-  text('Tel: 03-8966 3702  ·  hello@ibnusinawellness.com', M, 8, { color: GRAY }); y -= 10
-  text('www.ibnusinawellness.com', M, 8, { color: GRAY })
-  const leftEndY = y
+  // ── Tajuk + garis ─────────────────────────────────────────
+  text('RECEIPT', R, 26, { right: true }); y -= 14
+  hr(1.4, INK); y -= 26
 
-  // ── Header kanan: tajuk + no/tarikh resit ─────────────────
-  y = topY - 4
-  text('PAYMENT RECEIPT', M + W, 20, { font: bold, color: NAVY, right: true }); y -= 15
-  text('RESIT PEMBAYARAN', M + W, 10, { font: bold, color: GREEN, right: true }); y -= 22
+  // ── Blok syarikat (rata kanan) ────────────────────────────
+  text('Ibnu Sina Wellness Sdn Bhd (1319021-P)', R, 12, { right: true }); y -= 14
+  for (const ln of ['03-8966 3702', 'Lot 331, Lorong Senyum Matahari B, Country Heights,', 'Kajang, Selangor 43000', 'Malaysia', 'www.ibnusinawellness.com']) {
+    text(ln, R, 8, { color: GRAY, right: true }); y -= 11
+  }
+  y -= 10
+  hr(); y -= 22
 
-  const paidDate = new Date(new Date(d.paidAt).getTime() + 8 * 3600 * 1000) // UTC+8
-  const p2 = (n: number) => String(n).padStart(2, '0')
-  const dateStr = `${p2(paidDate.getUTCDate())}/${p2(paidDate.getUTCMonth() + 1)}/${paidDate.getUTCFullYear()} ${p2(paidDate.getUTCHours())}:${p2(paidDate.getUTCMinutes())}`
-  text(`Receipt No. : ${d.receiptRef}`, M + W, 9, { font: bold, right: true }); y -= 12
-  text(`Receipt Date : ${dateStr}`, M + W, 9, { right: true })
+  // ── Billed to / Receipt No + Date Paid ────────────────────
+  const blockY = y
+  text('Billed to', M, 10, { font: bold }); y -= 15
+  for (const ln of [d.patientName || '-', d.phone || '-', 'Malaysia']) {
+    text(ln, M, 8.5, { color: GRAY }); y -= 12
+  }
+  const leftEnd = y
+  y = blockY
+  const colX = M + W / 2 + 20
+  text('Receipt No', colX, 10, { font: bold }); y -= 13
+  text(d.receiptNo, colX, 8.5, { color: GRAY }); y -= 20
+  text('Date Paid', colX, 10, { font: bold }); y -= 13
+  text(dateLong(d.paidAt), colX, 8.5, { color: GRAY })
+  y = Math.min(y, leftEnd) - 34
 
-  // ── Garis navy tebal ───────────────────────────────────────
-  y = Math.min(y, leftEndY) - 22
-  hr(2.5, NAVY); y -= 24
+  // ── Jadual item ───────────────────────────────────────────
+  const cPrice = R - 150, cQty = R - 85
+  text('ITEM NAME', M, 8, { font: bold, color: GRAY })
+  text('PRICE', cPrice, 8, { font: bold, color: GRAY, right: true })
+  text('QTY', cQty, 8, { font: bold, color: GRAY, right: true })
+  text('SUBTOTAL', R, 8, { font: bold, color: GRAY, right: true })
+  y -= 10
+  hr(1.6, TEAL); y -= 20
+  for (const it of d.items) {
+    text(String(it.name).toUpperCase(), M, 8.5, { color: GRAY })
+    text(rm(it.price), cPrice, 8.5, { color: GRAY, right: true })
+    text('1', cQty, 8.5, { color: GRAY, right: true })
+    text(rm(it.price), R, 8.5, { color: GRAY, right: true })
+    y -= 10
+    hr(0.5); y -= 18
+  }
+  y -= 4
 
-  // ── PATIENT INFORMATION ────────────────────────────────────
-  text('PATIENT INFORMATION', M, 10, { font: bold, color: NAVY }); y -= 6
-  hr(); y -= 14
-  const info: Array<[string, string]> = [
-    ['Patient Name', d.patientName || '-'],
-    ['NRIC', d.nric || '-'],
-    ['MRN', d.mrn || '-'],
-    ['Email', d.email || '-'],
-    ['Phone', d.phone || '-'],
-  ]
-  for (const [label, val] of info) {
-    text(label, M, 9, { color: GRAY })
-    text(':', M + 95, 9, { color: GRAY })
-    text(val, M + 105, 9, { font: bold })
+  // ── Jumlah: Subtotal / diskaun berlabel / Amount Paid ─────
+  const discTotal = d.discountLines.reduce((a, l) => a + l.amount, 0)
+  const tx = R - 190
+  const row = (label: string, val: string, boldRow = false) => {
+    text(label, tx, boldRow ? 10 : 9.5, { font: bold })
+    text(val, R, boldRow ? 10 : 8.5, { font: boldRow ? bold : reg, color: boldRow ? INK : GRAY, right: true })
+    y -= 16
+  }
+  row('Subtotal', rm(d.total + discTotal))
+  if (d.discountLines.length) for (const l of d.discountLines) row(l.label, `-${rm(l.amount)}`)
+  else row('Discount', `-${rm(0)}`)
+  y += 4
+  hr(0.8, LIGHT, tx, R); y -= 15
+  row('Amount Paid (MYR)', rm(d.total), true)
+
+  // ── Payment Breakdown (bayaran pakej KOB) ─────────────────
+  if (d.kob) {
+    const k = d.kob
     y -= 14
+    hr(); y -= 16
+    text('PAYMENT BREAKDOWN' + (k.invoiceNo ? `  -  Invoice ${k.invoiceNo}` : ''), M, 8, { font: bold, color: GRAY }); y -= 18
+    row('Package Price', rm(k.listPrice))
+    if (k.pkgDiscount > 0) row('Discount', `-${rm(k.pkgDiscount)}`)
+    if (k.installmentCharge > 0) row('Installment Charges', rm(k.installmentCharge))
+    row('Total Commitment', rm(k.owed), true)
+    row(`This Payment (${k.thisLabel})`, rm(d.total))
+    row('Total Paid to Date', rm(k.paidToDate))
+    y += 4
+    hr(0.8, LIGHT, tx, R); y -= 15
+    row('Outstanding Balance', rm(k.outstanding), true)
   }
-  y -= 12
-
-  // ── PAYMENT SUMMARY ────────────────────────────────────────
-  text('PAYMENT SUMMARY', M, 10, { font: bold, color: NAVY }); y -= 6
-  hr(); y -= 14
-  for (const it of (d.items || [])) {
-    const nm = String(it.title || 'Item').replace(/^Pakej:\s*/, '')
-    text(nm, M, 9, { font: bold })
-    text(fmt(it.amount), M + W, 9, { right: true })
-    y -= 14
-  }
-  y -= 2; hr(); y -= 14
-  const row = (label: string, val: string) => {
-    text(label, M, 9, { color: GRAY })
-    text(val, M + W, 9, { right: true })
-    y -= 14
-  }
-  row('Subtotal', `RM ${fmt(d.total)}`)
-  row('Discount', 'RM 0.00')
-  row('Tax (0%)', 'RM 0.00')
-  y -= 2; hr(); y -= 16
-  text('TOTAL AMOUNT PAID', M, 11, { font: bold, color: NAVY })
-  text(`RM ${fmt(d.total)}`, M + W, 11, { font: bold, color: GREEN, right: true })
 
   // ── Disclaimer bawah halaman ───────────────────────────────
   y = M + 18
-  hr(); y -= 14
   const disc = 'This is an official receipt and serves as proof of payment. Please keep this receipt for your reference.'
   const disc2 = 'No refund is applicable once the payment is made.'
   const center = (s: string, size: number) => {
@@ -148,6 +165,76 @@ export async function buildReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
   center(disc2, 7)
 
   return await doc.save()
+}
+
+// ---- Bina data resit dari baris psy_payments (nama item, baris diskaun, pecahan KOB) ----
+async function loadReceiptContext(admin: any, payment: any) {
+  // Muat semula baris — receipt_no ditetapkan trigger DB sebaik status jadi 'completed'
+  const { data: fresh } = await admin.from('psy_payments')
+    .select('receipt_no, receipt_ref, discount, notes, intent, items, total, paid_at, id')
+    .eq('id', payment.id).limit(1)
+  const r = { ...payment, ...(fresh?.[0] || {}) }
+  const intent = r.intent || {}
+
+  // Diskaun berlabel
+  const discountLines: Array<{ label: string; amount: number }> = []
+  const promoAmt = Number(intent.promoDiscount || 0)
+  if (promoAmt > 0) {
+    let code: string = intent.promoCode || ''
+    if (!code && intent.promoCodeId) {
+      const { data: pc } = await admin.from('psy_promo_codes').select('code').eq('id', intent.promoCodeId).limit(1)
+      code = pc?.[0]?.code || ''
+    }
+    discountLines.push({ label: code ? `Promo Code (${code})` : 'Promo Code', amount: promoAmt })
+  }
+  const voucherAmt = Number(intent.voucherDiscount || 0)
+  if (voucherAmt > 0) discountLines.push({ label: 'Reward Voucher', amount: voucherAmt })
+  const extra = Number(r.discount || 0) - discountLines.reduce((a, l) => a + l.amount, 0)
+  if (extra > 0.005) discountLines.push({ label: 'Discount', amount: extra })
+  const discTotal = discountLines.reduce((a, l) => a + l.amount, 0)
+
+  // Pecahan bayaran pakej KOB
+  let kob: KobBreakdown | null = null
+  let kobName = ''
+  const kobId = intent.kob_session_id
+  if (kobId) {
+    const [{ data: ks }, { data: cps }, { data: pays }] = await Promise.all([
+      admin.from('psy_kob_sessions')
+        .select('recommended_package_name, recommended_package_price, package_discount, package_payment_mode, invoice_no')
+        .eq('id', kobId).limit(1),
+      admin.from('psy_kob_installment_checkpoints').select('target_cumulative').eq('kob_session_id', kobId).order('seq', { ascending: false }).limit(1),
+      admin.from('psy_payments').select('id, total, paid_at, created_at').eq('status', 'completed').eq('intent->>kob_session_id', kobId),
+    ])
+    const k = ks?.[0]
+    if (k) {
+      kobName = k.recommended_package_name || ''
+      const price = Number(k.recommended_package_price || 0)
+      const pkgDiscount = Number(k.package_discount || 0)
+      const isInstallment = k.package_payment_mode === 'installment' && cps?.[0]
+      const owed = isInstallment ? Number(cps![0].target_cumulative) : price
+      const ts = (p: any) => new Date(p.paid_at || p.created_at).getTime()
+      const upTo = (pays || []).filter((p: any) => p.id === r.id || ts(p) < ts(r) || (ts(p) === ts(r) && p.id <= r.id))
+        .sort((a: any, b: any) => ts(a) - ts(b))
+      const idx = Math.max(0, upTo.findIndex((p: any) => p.id === r.id))
+      const paidToDate = upTo.reduce((a: number, p: any) => a + Number(p.total || 0), 0)
+      const thisLabel = isInstallment ? (idx === 0 ? 'Deposit' : `Installment ${idx}`)
+        : (paidToDate >= owed - 0.005 && idx === 0 ? 'Full Payment' : `Payment ${idx + 1}`)
+      kob = {
+        listPrice: price + pkgDiscount, pkgDiscount, owed,
+        installmentCharge: isInstallment ? Math.max(0, owed - price) : 0,
+        thisLabel, paidToDate, outstanding: Math.max(0, owed - paidToDate), invoiceNo: k.invoice_no || '',
+      }
+    }
+  }
+
+  // Nama item: items[] → nama pakej KOB → petikan dalam nota
+  const given = (Array.isArray(r.items) ? r.items : []).filter((i: any) => i && (i.title || i.name || i.packageName))
+  const total = Number(r.total || 0)
+  const items = given.length
+    ? given.map((i: any) => ({ name: String(i.title || i.name || i.packageName).replace(/^Pakej:\s*/, ''), price: Number(i.amount || 0) }))
+    : [{ name: kobName || (String(r.notes || '').match(/"([^"]+)"/) || [])[1] || 'Pembayaran', price: total + discTotal }]
+
+  return { r, items, discountLines, kob }
 }
 
 // ---- Resit WhatsApp: PDF rasmi (attachment) + mesej ringkas ----
@@ -200,11 +287,15 @@ export async function sendPaymentReceiptWhatsApp(admin: any, payment: any) {
 
   // ── Jana PDF + upload ke Storage → signed URL ────────────
   let pdfUrl: string | null = null
+  let receiptNo: string = payment.receipt_ref
   try {
+    const ctx = await loadReceiptContext(admin, payment)
+    receiptNo = ctx.r.receipt_no || payment.receipt_ref
     const bytes = await buildReceiptPdf({
-      receiptRef: payment.receipt_ref, paidAt,
-      patientName: name, nric, mrn, email, phone,
-      items, total: Number(payment.total || 0),
+      receiptNo, paidAt,
+      patientName: name, phone,
+      items: ctx.items, total: Number(payment.total || 0),
+      discountLines: ctx.discountLines, kob: ctx.kob,
     })
     const bucket = 'receipts'
     // Cipta bucket kalau belum ada (idempotent — abaikan 'already exists')
@@ -234,7 +325,7 @@ export async function sendPaymentReceiptWhatsApp(admin: any, payment: any) {
       '',
       `Terima kasih${name ? `, ${name}` : ''}! Pembayaran anda telah diterima. ✅`,
       '',
-      `No. Resit: ${payment.receipt_ref}`,
+      `No. Resit: ${receiptNo}`,
       `*Jumlah: RM ${Number(payment.total || 0).toFixed(2)}*`,
       '',
       'Resit rasmi dilampirkan (PDF). Salinan juga tersedia dalam aplikasi di menu *Sejarah Pembayaran & Resit*.',
@@ -249,7 +340,7 @@ export async function sendPaymentReceiptWhatsApp(admin: any, payment: any) {
       '',
       `Terima kasih${name ? `, ${name}` : ''}! Pembayaran anda telah diterima. ✅`,
       '',
-      `No. Resit: ${payment.receipt_ref}`,
+      `No. Resit: ${receiptNo}`,
       `Tarikh: ${tarikh}`,
       ...(lines ? ['', lines] : []),
       '',
