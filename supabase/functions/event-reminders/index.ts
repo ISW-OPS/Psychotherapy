@@ -658,19 +658,24 @@ async function runAutoAbsence(supabase) {
   const DEADLINE_HOURS = 24
   const cutoff = new Date(Date.now() - DEADLINE_HOURS * 3600000).toISOString()
   const { data: rows } = await supabase.from('psy_plan_weekly_progress')
-    .select('id, week_number, session_day, plan_id, patient_id, session_date, psy_patients(full_name, coach_id, user_id)')
-    .in('status', ['booked', 'pending']).lt('session_date', cutoff).limit(500)
+    .select('id, status, week_number, session_day, plan_id, patient_id, session_date, psy_patients(full_name, coach_id, user_id)')
+    .in('status', ['booked', 'pending', 'reschedule']).lt('session_date', cutoff).limit(500)
   const res = { due: (rows || []).length, marked: 0, notified: 0, bells: 0, errors: [] }
   for (const r of rows || []) {
     const p = r.psy_patients || {}
+    // Sesi lama (> 3 hari) ditanda senyap tanpa notifikasi — elak banjir mesej utk data lapuk.
+    const recent = Date.now() - new Date(r.session_date).getTime() < 3 * 86400000
     try {
       await supabase.from('psy_plan_weekly_progress').update({
-        status: 'cancel', absence_reason: 'Tiada rekod kehadiran — auto-tanda selepas 24 jam',
+        status: 'cancel',
+        absence_reason: r.status === 'reschedule'
+          ? 'Sesi dijadual semula tetapi tiada rekod kehadiran — auto-tanda selepas 24 jam'
+          : 'Tiada rekod kehadiran — auto-tanda selepas 24 jam',
         updated_by_name: 'Sistem (Auto-Kehadiran)', updated_at: new Date().toISOString(),
       }).eq('id', r.id)
       res.marked++
     } catch (e) { res.errors.push(`update ${r.id}: ${String(e?.message || e)}`); continue }
-    if (p.user_id) {
+    if (recent && p.user_id) {
       try {
         await supabase.from('psy_notifications').insert({
           user_id: p.user_id, type: 'plan', title: 'Sesi Ditanda Tidak Hadir',
@@ -680,7 +685,7 @@ async function runAutoAbsence(supabase) {
         res.notified++
       } catch (e) { res.errors.push(`notify-patient ${r.id}: ${String(e?.message || e)}`) }
     }
-    if (p.coach_id) {
+    if (recent && p.coach_id) {
       try {
         await supabase.from('psy_notifications').insert({
           user_id: p.coach_id, type: 'appointment',

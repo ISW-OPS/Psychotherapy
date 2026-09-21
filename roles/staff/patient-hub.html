@@ -2511,7 +2511,14 @@
         const isExt = relevant.some(s => s?.is_extension);
         const extPending = isExt && relevant.some(s => s?.status === 'extension_pending_payment');
         const allHadir = relevant.every(s => s && ['hadir', 'consultation_done'].includes(s.status));
-        const anyMiss = relevant.some(s => s && ['cancel', 'reschedule'].includes(s.status));
+        // Dibezakan: Tidak Hadir (cancel, ATAU 'reschedule' yg tarikhnya sudah lepas tanpa rekod) vs Jadual Semula
+        // (tarikh masih akan datang) vs Tidak Lengkap (sebahagian hadir, sebahagian terlepas).
+        const nowMs = Date.now();
+        const isMissed = s => s && (s.status === 'cancel' || (s.status === 'reschedule' && s.session_date && new Date(s.session_date).getTime() < nowMs));
+        const missedN = relevant.filter(isMissed).length;
+        const hadirN = relevant.filter(s => s && ['hadir', 'consultation_done'].includes(s.status)).length;
+        const futureResched = relevant.some(s => s && s.status === 'reschedule' && !isMissed(s));
+        const anyMiss = missedN > 0 || futureResched;
         // "Ditempah" hanya bila betul-betul ditempah (status booking / ada appointment).
         // Baris 'pending' (skeleton/seed, belum ditempah) → kekal "Belum Tempah".
         const anyBooked = relevant.some(s => s && (['booked', 'reschedule', 'hadir', 'consultation_done', 'extension_paid'].includes(s.status) || s.appointment_id));
@@ -2529,9 +2536,15 @@
         } else if (allHadir) {
           border = 'border-green-dark bg-green/5';
           chip = `<span class="bg-green-dark text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">✅ ${isExt ? 'Tambahan Selesai' : 'Selesai'}</span>`;
-        } else if (anyMiss) {
+        } else if (missedN > 0 && hadirN === 0) {
+          border = 'border-terracotta bg-terracotta/5';
+          chip = `<span class="bg-terracotta text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">❌ ${iswL('Tidak Hadir', 'Absent')}</span>`;
+        } else if (missedN > 0) {
           border = 'border-gold bg-gold/5';
-          chip = '<span class="bg-gold text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">⚠️ Tidak Lengkap</span>';
+          chip = `<span class="bg-gold text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">⚠️ ${iswL('Tidak Lengkap', 'Incomplete')}</span>`;
+        } else if (futureResched) {
+          border = 'border-gold bg-gold/5';
+          chip = `<span class="bg-gold text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">🔄 ${iswL('Jadual Semula', 'Rescheduled')}</span>`;
         } else if (anyBooked) {
           border = 'border-navy bg-navy/5';
           chip = `<span class="bg-navy text-white text-[10px] px-2 py-0.5 rounded-full font-semibold">${isExt ? '➕ Tambahan' : '📅 Ditempah'}</span>`;
