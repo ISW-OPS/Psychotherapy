@@ -275,6 +275,9 @@
                         class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-navy text-navy hover:bg-navy hover:text-white transition whitespace-nowrap">➕ Tambah Minggu</button>
                       <button id="ov-add-session-btn" data-rbac="patient.create" onclick="openAddSessionModal()"
                         class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-navy text-navy hover:bg-navy hover:text-white transition whitespace-nowrap">➕ Tambah Sesi</button>
+                      <button id="ov-change-days-btn" data-rbac="patient.edit" onclick="openChangeDaysModal()"
+                        class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-navy text-navy hover:bg-navy hover:text-white transition whitespace-nowrap"
+                        title="Pesakit nak tukar hari sesi (cth Jumaat/Ahad → Sabtu/Ahad) untuk seterusnya — tarikh sesi akan datang dijana semula ikut hari baru.">🗓️ Tukar Hari Sesi</button>
                       <button id="ov-sync-sessions-btn" data-rbac="patient.edit" onclick="syncPlanSessionsToPackage()"
                         class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-indigo-400 text-indigo-600 hover:bg-indigo-500 hover:text-white transition whitespace-nowrap"
                         title="Selaraskan bilangan sesi setiap minggu ikut pakej — buang 'Sesi 2 hantu' (termasuk yang dah hadir jika tak diperlukan lagi), tambah sesi yang kurang.">🔧 Selaraskan ikut Pakej</button>
@@ -2985,6 +2988,7 @@
       // Butang "Tambah Minggu" hanya untuk staf boleh-edit & ada plan aktif
       document.getElementById('ov-add-week-btn')?.classList.toggle('hidden', !(canEdit && activePlan));
       document.getElementById('ov-add-session-btn')?.classList.toggle('hidden', !(canEdit && activePlan));
+      document.getElementById('ov-change-days-btn')?.classList.toggle('hidden', !(ovCanSchedule() && activePlan?.duration_unit !== 'day'));
       document.getElementById('ov-sync-sessions-btn')?.classList.toggle('hidden', !(['super_admin', 'admin', 'coach'].includes(window.currentUser?.staff_role) && activePlan));
       document.getElementById('ov-backfill-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
       document.getElementById('ov-resync-future-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
@@ -6641,6 +6645,144 @@
       } catch (e) {
         banner('Ralat mengira semula minggu seterusnya: ' + e.message, 'error');
         return 0;
+      }
+    }
+
+    // ── Tukar Hari Sesi (kekal, untuk seterusnya) ──────────────────────────────────
+    // Pesakit mula Jum/Ahd, tengah pelan nak Sab/Ahd untuk seterusnya. Kemas kini preferred_days pelan
+    // + jana semula tarikh sesi AKAN DATANG (Belum/Ditempah) dari minggu yang dipilih, dalam minggu kalendar
+    // yang sama. Sesi Hadir/Tidak Hadir & tarikh lepas TIDAK disentuh. Reschedule sekali sahaja tetap bebas.
+    const CD_PAIR = { fri_sat: [5, 6], sat_sun: [6, 0] };
+    let _cd = { variants: [], cur: null, sel: -1, changes: [] };
+    const cdName = arr => arr.map(d => OV_DAY_NAMES[d]).join(' / ');
+    const cdSame = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => v === b[i]);
+
+    async function openChangeDaysModal() {
+      if (!ovCanSchedule()) { banner(iswL('Anda hanya boleh melihat rekod pesakit ini.', 'You can only view this patient record.'), 'error'); return; }
+      await loadRawatanAvailability();
+      const cur = (Array.isArray(activePlan.preferred_days) && activePlan.preferred_days.length) ? activePlan.preferred_days.map(Number) : (CD_PAIR[activePlan.preferred_pair] || null);
+      const N = cur?.length || Math.min(2, Math.max(1, parseInt(activePlan.sessions_per_week) || 2));
+      let variants = [];
+      if (activePlan.template) {
+        const { data: pkg } = await window.db.from('psy_packages').select('session_days_options').eq('package_id', activePlan.template).maybeSingle();
+        variants = (Array.isArray(pkg?.session_days_options) ? pkg.session_days_options : [])
+          .filter(v => Array.isArray(v) && v.length === N).map(v => v.map(d => Number(d) === 7 ? 0 : Number(d)));
+      }
+      if (!variants.length) variants = N === 2 ? [[5, 6], [6, 0]] : [];
+      if (cur && !variants.some(v => cdSame(v, cur))) variants.unshift(cur);
+      if (!variants.length) { banner(iswL('Tiada pilihan hari sesi untuk pakej ini.', 'No session-day options for this package.'), 'error'); return; }
+      _cd = { variants, cur, sel: -1, changes: [] };
+
+      // Minggu yang ada sesi akan datang (Belum/Ditempah, bertarikh)
+      const nowMs = Date.now();
+      const weeks = [...new Set(ovWeeklyRows.filter(r => !r.is_extension && ['pending', 'booked'].includes(r.status) && r.session_date && new Date(r.session_date).getTime() >= nowMs)
+        .map(r => Number(r.week_number)))].sort((a, b) => a - b);
+      if (!weeks.length) { banner(iswL('Tiada sesi akan datang untuk dijana semula.', 'No upcoming sessions to regenerate.'), 'error'); return; }
+
+      document.getElementById('changedays-modal')?.remove();
+      const m = document.createElement('div');
+      m.id = 'changedays-modal';
+      m.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
+      m.innerHTML = `
+    <div class="absolute inset-0 bg-black/50" onclick="document.getElementById('changedays-modal').remove()"></div>
+    <div class="relative bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+      <h3 class="font-bold text-base">🗓️ ${iswL('Tukar Hari Sesi', 'Change Session Days')}</h3>
+      <p class="text-sm text-ink/60">${iswL('Hari sesi semasa', 'Current session days')}: <b>${cur ? cdName(cur) : '—'}</b>. ${iswL('Tarikh sesi akan datang dijana semula ikut hari baru. Sesi yang sudah Hadir / Tidak Hadir tidak disentuh.', 'Upcoming session dates are regenerated on the new days. Sessions already Present / Absent are not touched.')}</p>
+      <div>
+        <label class="text-xs font-semibold text-ink/60 uppercase">${iswL('Hari baru', 'New days')}</label>
+        <div id="cd-variants" class="flex flex-wrap gap-2 mt-1.5">
+          ${variants.map((v, i) => `<label class="cursor-pointer"><input type="radio" name="cd-var" value="${i}" class="peer hidden" onchange="cdRecalc()">
+            <span class="inline-block px-3 py-1.5 rounded-lg border border-ink/20 text-sm peer-checked:bg-navy peer-checked:text-white peer-checked:border-navy">${cdName(v)}${cdSame(v, cur) ? ' <span class="text-[10px] opacity-70">(' + iswL('semasa', 'current') + ')</span>' : ''}</span></label>`).join('')}
+        </div>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-ink/60 uppercase">${iswL('Bermula minggu', 'Starting week')}</label>
+        <select id="cd-week" onchange="cdRecalc()" class="w-full mt-1.5 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:outline-none focus:border-navy">
+          ${weeks.map(w => `<option value="${w}">${iswL('Minggu', 'Week')} ${w}</option>`).join('')}
+        </select>
+      </div>
+      <div id="cd-preview" class="text-xs text-ink/60"></div>
+      <div class="flex justify-end gap-2 pt-1">
+        <button onclick="document.getElementById('changedays-modal').remove()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm">${iswL('Batal', 'Cancel')}</button>
+        <button id="cd-save" onclick="cdSave()" disabled class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark disabled:opacity-40">${iswL('Simpan', 'Save')}</button>
+      </div>
+    </div>`;
+      document.body.appendChild(m);
+      cdRecalc();
+    }
+
+    // Kira tarikh baru bagi setiap sesi akan datang; papar pratonton (boleh nyahtanda).
+    function cdRecalc() {
+      const prev = document.getElementById('cd-preview'), saveBtn = document.getElementById('cd-save');
+      const vi = document.querySelector('input[name="cd-var"]:checked')?.value;
+      _cd.changes = [];
+      saveBtn.disabled = true;
+      if (vi == null) { prev.innerHTML = iswL('Pilih hari baru untuk lihat pratonton.', 'Choose the new days to see a preview.'); return; }
+      const nd = _cd.variants[Number(vi)]; _cd.sel = Number(vi);
+      const startW = Number(document.getElementById('cd-week').value);
+      const nowMs = Date.now();
+      const fmt = d => d.toLocaleDateString(LCALE(), { weekday: 'short', day: '2-digit', month: 'short' }) + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      const rows = ovWeeklyRows.filter(r => !r.is_extension && Number(r.week_number) >= startW && ['pending', 'booked'].includes(r.status) && r.session_date && new Date(r.session_date).getTime() >= nowMs)
+        .sort((a, b) => (a.week_number - b.week_number) || ((a.session_day || 1) - (b.session_day || 1)));
+      const used = new Set();
+      rows.forEach(r => {
+        const old = new Date(r.session_date);
+        const day = r.session_day || 1;
+        const td = nd[day - 1] != null ? nd[day - 1] : nd[nd.length - 1];
+        const monday = new Date(old); monday.setHours(0, 0, 0, 0); monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+        let target = new Date(monday); target.setDate(target.getDate() + ((td + 6) % 7));
+        let note = '';
+        const err = ovValidateDate(phYmd(target));
+        if (err) { const av = ovNearestAvailable(target); if (!av) return; target = av; note = err.includes('tutup') ? iswL('klinik tutup — dianjak', 'clinic closed — moved') : iswL('bukan hari rawatan — dianjak', 'not a treatment day — moved'); }
+        const slots = _rawatanSlotsByDay[target.getDay()] || [];
+        const hhmm = `${String(old.getHours()).padStart(2, '0')}:${String(old.getMinutes()).padStart(2, '0')}`;
+        const slot = slots.some(x => x.start === hhmm) ? hhmm : slots[0]?.start;
+        if (!slot) return;
+        const [h, mn] = slot.split(':').map(Number); target.setHours(h, mn, 0, 0);
+        const key = target.getTime();
+        if (used.has(key)) return;       // elak dua sesi pada masa yang sama
+        used.add(key);
+        if (key === old.getTime()) return; // tiada perubahan
+        _cd.changes.push({ row: r, old, target, note });
+      });
+      if (!_cd.changes.length) { prev.innerHTML = iswL('Tiada tarikh yang perlu diubah.', 'No dates need changing.'); return; }
+      prev.innerHTML = `<div class="font-semibold text-ink/70 mb-1">${iswL('Pratonton', 'Preview')} (${_cd.changes.length})</div>
+        <div class="border border-ink/10 rounded-lg divide-y divide-ink/5 max-h-56 overflow-y-auto">
+        ${_cd.changes.map((x, i) => `<label class="flex items-center gap-2 px-3 py-1.5 cursor-pointer"><input type="checkbox" checked onchange="cdToggle(${i}, this.checked)">
+          <span class="flex-1">${iswL('Minggu', 'Week')} ${x.row.week_number} · ${iswL('Sesi', 'Session')} ${x.row.session_day || 1}: <span class="text-ink/45">${fmt(x.old)}</span> → <b class="text-navy">${fmt(x.target)}</b>${x.note ? ` <span class="text-terracotta">(${x.note})</span>` : ''}</span></label>`).join('')}
+        </div>`;
+      saveBtn.disabled = false;
+    }
+    function cdToggle(i, on) { _cd.changes[i].off = !on; document.getElementById('cd-save').disabled = !_cd.changes.some(x => !x.off); }
+
+    async function cdSave() {
+      const nd = _cd.variants[_cd.sel]; if (!nd) return;
+      const todo = _cd.changes.filter(x => !x.off);
+      const startW = Number(document.getElementById('cd-week').value);
+      const btn = document.getElementById('cd-save'); btn.disabled = true; btn.textContent = iswL('Menyimpan…', 'Saving…');
+      try {
+        const legacyPair = cdSame(nd, [5, 6]) ? 'fri_sat' : cdSame(nd, [6, 0]) ? 'sat_sun' : null;
+        const { error: pe } = await window.db.from('psy_treatment_plans').update({ preferred_days: nd, preferred_pair: legacyPair }).eq('id', activePlan.id);
+        if (pe) throw pe;
+        for (const x of todo) {
+          const iso = x.target.toISOString();
+          await window.db.from('psy_plan_weekly_progress').update({
+            session_date: iso, updated_by: window.currentUser.id, updated_by_name: window.currentUser.full_name, updated_at: new Date().toISOString(),
+          }).eq('id', x.row.id);
+          if (x.row.appointment_id) await window.db.from('psy_appointments').update({ appointment_time: iso }).eq('id', x.row.appointment_id);
+        }
+        await auditLog('plan.session_days_changed', activePlan.id, { from: _cd.cur, to: nd, from_week: startW, updated: todo.length });
+        activePlan.preferred_days = nd; activePlan.preferred_pair = legacyPair;
+        if (patient?.user_id) {
+          try { await notify(patient.user_id, 'appointment', iswL('Hari sesi anda dikemas kini', 'Your session days were updated'),
+            iswL(`Hari sesi rawatan kini ${cdName(nd)} bermula Minggu ${startW}. Sila semak jadual anda.`, `Your treatment session days are now ${cdName(nd)} starting Week ${startW}. Please check your schedule.`), 'plan.html'); } catch (_) { }
+        }
+        document.getElementById('changedays-modal')?.remove();
+        banner(iswL(`Hari sesi ditukar ke ${cdName(nd)} ✅ — ${todo.length} sesi dijadual semula`, `Session days changed to ${cdName(nd)} ✅ — ${todo.length} sessions rescheduled`));
+        await reloadOverviewKeepPage();
+      } catch (e) {
+        banner(iswL('Ralat: ', 'Error: ') + e.message, 'error');
+        btn.disabled = false; btn.textContent = iswL('Simpan', 'Save');
       }
     }
 
