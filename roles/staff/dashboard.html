@@ -22,6 +22,7 @@
     if (a) a.setAttribute('href', apptTodayUrl());
   });
 </script>
+<script src="../../shared/absenceAlert.js"></script>
 </head>
 
 <body class="min-h-screen bg-cream">
@@ -1705,7 +1706,7 @@
       try {
         // Ambil tarikh sesi lama + akaun pesakit (utk cascade & notifikasi)
         const { data: sess } = await window.db.from('psy_plan_weekly_progress')
-          .select('session_date, psy_patients(user_id)').eq('id', id).single();
+          .select('session_date, patient_id, psy_patients(user_id)').eq('id', id).single();
         const oldDate = sess?.session_date ? new Date(sess.session_date) : null;
         const patientUserId = sess?.psy_patients?.user_id || null;
         const coachNm = window.currentUser?.full_name || 'Coach';
@@ -1775,7 +1776,9 @@
           // Notifikasi pesakit — minta jadual semula
           await notifyPatient(patientUserId, 'plan', 'Sesi Ditanda Tidak Hadir',
             `Sesi Minggu ${week} anda ditanda tidak hadir oleh ${coachNm}. Sila hubungi coach atau jadual semula sesi.`, 'plan.html');
-          banner('Sesi ditanda Tidak Hadir');
+          // Rekod + amaran kalau pesakit sudah > 7 hari tidak hadir (selaras dgn appointments.html)
+          const _flag = (typeof iswFlagLongAbsence === 'function') ? await iswFlagLongAbsence({ patientId: sess?.patient_id, sessionId: id }) : { flagged: false };
+          banner(_flag.flagged ? `Sesi ditanda Tidak Hadir — pesakit ${_flag.days} hari tanpa kehadiran, amaran dihantar kepada coach ⚠️` : 'Sesi ditanda Tidak Hadir');
           schedRowDone(id, 'cancel');
         }
         closeAbsence();

@@ -473,6 +473,7 @@
 </div>
 
 <script src="/shared/supabase.js"></script>
+<script src="../../shared/absenceAlert.js"></script>
 <script src="../../config/supabase.js"></script>
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
@@ -1304,7 +1305,7 @@ function openDayModal(dateStr) {
                 ? `<button data-rbac="schedule.edit" onclick="event.stopPropagation(); joinMeet('${s.id}','${s.plan_id}',${s.week_number},'${s.meet_link}','${s.session_date || ''}')" class="bg-navy text-white text-xs px-3 py-1 rounded-lg">🔗 Join Meet</button>`
                 : `<button data-rbac="schedule.edit" onclick="event.stopPropagation(); markHadir('${s.id}','${s.plan_id}',${s.week_number},'${s.session_date || ''}')" class="bg-green text-white text-xs px-3 py-1 rounded-lg">✅ Hadir</button>`}
               <button data-rbac="schedule.edit" onclick="event.stopPropagation(); openReschedule('${s.id}')" class="border border-gold text-gold-dark text-xs px-3 py-1 rounded-lg">🔄 Reschedule</button>
-              <button data-rbac="schedule.edit" onclick="event.stopPropagation(); markCancel('${s.id}','${s.session_date || ''}')" class="border border-terracotta text-terracotta text-xs px-3 py-1 rounded-lg">❌ Tidak Hadir</button>` : ''}
+              <button data-rbac="schedule.edit" onclick="event.stopPropagation(); openAbsenceAppt('${s.id}')" class="border border-terracotta text-terracotta text-xs px-3 py-1 rounded-lg">❌ Tidak Hadir</button>` : ''}
           </div>
         </div>`;
       }).join('')
@@ -1425,7 +1426,7 @@ function renderList() {
                 ? `<button data-rbac="schedule.edit" onclick="joinMeet('${s.id}','${s.plan_id}',${s.week_number},'${s.meet_link}','${s.session_date || ''}')" class="bg-navy text-white text-xs px-3 py-1.5 rounded-lg">🔗 Join Meet</button>`
                 : `<button data-rbac="schedule.edit" onclick="markHadir('${s.id}','${s.plan_id}',${s.week_number},'${s.session_date || ''}')" class="bg-green text-white text-xs px-3 py-1.5 rounded-lg">✅ Hadir</button>`}
               <button data-rbac="schedule.edit" onclick="openReschedule('${s.id}')" class="text-gold-dark text-xs ml-1 hover:underline">Reschedule</button>
-              <button data-rbac="schedule.edit" onclick="markCancel('${s.id}','${s.session_date || ''}')" class="text-terracotta text-xs ml-1 hover:underline">Tidak Hadir</button>` : ''}
+              <button data-rbac="schedule.edit" onclick="openAbsenceAppt('${s.id}')" class="text-terracotta text-xs ml-1 hover:underline">Tidak Hadir</button>` : ''}
           </td>
         </tr>`;
       }).join('')
@@ -1458,22 +1459,150 @@ async function markHadir(id, planId, week, sessionDate) {
   } catch (err) { banner('Ralat: ' + err.message, 'error'); }
 }
 
-async function markCancel(id, sessionDate) {
-  if (sessionDate && new Date(sessionDate) > new Date()) {
-    banner('Sesi ini belum berlaku (tarikh akan datang) — tidak boleh ditanda Tidak Hadir.', 'error');
+// ── Tidak Hadir: sebab WAJIB + jadual semula pilihan (sama dgn dashboard) + amaran > 7 hari ──
+let _absenceSess = null;
+function openAbsenceAppt(id) {
+  const sess = allSessions.find(x => x.id === id);
+  if (!sess) return;
+  if (sess.session_date && new Date(sess.session_date) > new Date()) {
+    banner(iswL('Sesi ini belum berlaku (tarikh akan datang) — tidak boleh ditanda Tidak Hadir.', 'This session has not happened yet (future date) — it cannot be marked Absent.'), 'error');
     return;
   }
-  if (!confirm('Tandakan sesi sebagai tidak hadir?')) return;
+  _absenceSess = sess;
+  document.getElementById('ab-patient').textContent = `${patientName(patientMap[sess.patient_id])} · ${iswL('Minggu', 'Week')} ${sess.week_number || '?'}`;
+  document.getElementById('ab-reason').value = '';
+  document.getElementById('ab-resched-toggle').checked = false;
+  document.getElementById('ab-resched-fields').classList.add('hidden');
+  const dt = document.getElementById('ab-date');
+  dt.value = '';
+  const n = new Date();
+  dt.min = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+  document.getElementById('ab-date-warn').classList.add('hidden');
+  document.getElementById('ab-time').innerHTML = '<option value="">— Pilih tarikh dahulu —</option>';
+  document.getElementById('absence-modal').classList.remove('hidden');
+}
+function closeAbsence() {
+  _absenceSess = null;
+  document.getElementById('absence-modal').classList.add('hidden');
+}
+function toggleAbsenceResched() {
+  document.getElementById('ab-resched-fields').classList.toggle('hidden', !document.getElementById('ab-resched-toggle').checked);
+}
+function _absAllowedNames() {
+  const N = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'], O = [5, 6, 0, 1, 2, 3, 4];
+  return [...(window._allowedRawatanDays || [0, 5, 6])].sort((a, b) => O.indexOf(a) - O.indexOf(b)).map(d => N[d]).join(', ');
+}
+async function checkAbsenceDate(input) {
+  const warn = document.getElementById('ab-date-warn');
+  const sel = document.getElementById('ab-time');
+  if (!input.value) { warn.classList.add('hidden'); sel.innerHTML = '<option value="">— Pilih tarikh dahulu —</option>'; return false; }
+  const day = new Date(input.value + 'T00:00:00').getDay();
+  const allowed = window._allowedRawatanDays || [0, 5, 6];
+  const closure = window._closureMap?.[input.value];
+  if (closure) {
+    warn.textContent = `🚫 Klinik tutup pada tarikh ini${closure.label ? ` (${closure.label})` : ''}`;
+    warn.classList.remove('hidden'); sel.innerHTML = '<option value="">— Klinik tutup —</option>'; return false;
+  }
+  if (!allowed.includes(day)) {
+    warn.textContent = `🚫 Hari rawatan hanya: ${_absAllowedNames()}`;
+    warn.classList.remove('hidden'); sel.innerHTML = '<option value="">— Tiada slot —</option>'; return false;
+  }
+  warn.classList.add('hidden');
+  await loadAbsenceSlots(input.value);
+  return true;
+}
+async function loadAbsenceSlots(dateStr) {
+  const sel = document.getElementById('ab-time');
+  const prev = sel.value;
+  const day = new Date(dateStr + 'T00:00:00').getDay();
+  let { data: slots, error } = await window.db.from('psy_kob_slot_config')
+    .select('slot_start, slot_end, label').eq('day_of_week', day).eq('is_active', true).eq('slot_type', 'rawatan')
+    .order('sort_order', { ascending: true });
+  if (error && /slot_type/i.test(error.message || '')) {
+    const fb = await window.db.from('psy_kob_slot_config').select('slot_start, slot_end, label').eq('day_of_week', day).eq('is_active', true).order('sort_order', { ascending: true });
+    slots = fb.data;
+  }
+  if (!slots || !slots.length) { sel.innerHTML = '<option value="">— Tiada slot tersedia —</option>'; return; }
+  sel.innerHTML = '<option value="">— Pilih slot —</option>' +
+    slots.map(x => { const st = (x.slot_start || '').slice(0, 5); return `<option value="${st}">${x.label || st}</option>`; }).join('');
+  if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+}
+
+async function confirmAbsence() {
+  const sess = _absenceSess;
+  if (!sess) return;
+  const reason = document.getElementById('ab-reason').value.trim();
+  const resched = document.getElementById('ab-resched-toggle').checked;
+  if (!reason) { banner(iswL('Sila isi sebab tidak hadir.', 'Please enter the reason for absence.'), 'error'); return; }
+  const btn = document.getElementById('ab-confirm');
+  btn.disabled = true; btn.textContent = iswL('Menyimpan…', 'Saving…');
+  const reset = () => { btn.disabled = false; btn.textContent = iswL('Simpan', 'Save'); };
   try {
-    await dbUpdate('psy_plan_weekly_progress', id, {
-      status: 'cancel', updated_by: window.currentUser.id,
-      updated_by_name: window.currentUser.full_name, updated_at: new Date().toISOString(),
-    });
-    await auditLog('plan.week_cancel', id);
-    banner('Sesi dibatalkan');
+    const id = sess.id;
+    const oldDate = sess.session_date ? new Date(sess.session_date) : null;
+    const patUserProfileId = patientMap[sess.patient_id]?.psy_profiles?.id;
+    const who = window.currentUser?.full_name || 'Coach';
+
+    if (resched) {
+      const date = document.getElementById('ab-date').value;
+      const time = document.getElementById('ab-time').value;
+      if (!date || !time) { banner(iswL('Sila pilih tarikh & masa baru.', 'Please choose the new date & time.'), 'error'); reset(); return; }
+      if (window._closureMap?.[date]) { banner(iswL('🚫 Klinik tutup pada tarikh itu.', '🚫 The clinic is closed on that date.'), 'error'); reset(); return; }
+      const day = new Date(date + 'T00:00:00').getDay();
+      if (!(window._allowedRawatanDays || [0, 5, 6]).includes(day)) { banner(`🚫 Hari rawatan hanya: ${_absAllowedNames()}`, 'error'); reset(); return; }
+      const newDate = new Date(`${date}T${time}:00`);
+
+      await dbUpdate('psy_plan_weekly_progress', id, {
+        status: 'reschedule', session_date: newDate.toISOString(), absence_reason: reason, notes: reason,
+        updated_by: window.currentUser.id, updated_by_name: window.currentUser.full_name, updated_at: new Date().toISOString(),
+      });
+      await auditLog('plan.reschedule', id, { date, reason, from_absence: true });
+
+      let shifted = 0;
+      if (oldDate && sess.plan_id && sess.week_number) {
+        const diffMs = newDate.getTime() - oldDate.getTime();
+        const diffDays = Math.round(diffMs / 86400000);
+        if (Math.abs(diffDays) >= 1 && confirm(iswL(
+          `Sesi beralih ${diffDays > 0 ? '+' : ''}${diffDays} hari. Mahu shift sesi minggu seterusnya (W${sess.week_number + 1}+) sama jumlah?`,
+          `The session moved ${diffDays > 0 ? '+' : ''}${diffDays} days. Shift the following weeks (W${sess.week_number + 1}+) by the same amount?`))) {
+          const { data: subsequent } = await window.db.from('psy_plan_weekly_progress')
+            .select('id, session_date').eq('plan_id', sess.plan_id).gt('week_number', sess.week_number).in('status', ['booked', 'reschedule']);
+          for (const x of (subsequent || [])) {
+            if (!x.session_date) continue;
+            await window.db.from('psy_plan_weekly_progress')
+              .update({ session_date: new Date(new Date(x.session_date).getTime() + diffMs).toISOString(), updated_at: new Date().toISOString() }).eq('id', x.id);
+            shifted++;
+          }
+          await auditLog('plan.cascade_shift', sess.plan_id, { from_week: sess.week_number, shifted_count: shifted, diff_days: diffDays });
+        }
+      }
+      if (patUserProfileId) {
+        await notify(patUserProfileId, 'appointment', iswL(`Sesi Minggu ${sess.week_number} dijadual semula`, `Week ${sess.week_number} session rescheduled`),
+          `${newDate.toLocaleDateString(LCALE(), { weekday: 'long', day: '2-digit', month: 'long' })} · ${newDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} — ${who}.`, 'plan.html');
+      }
+      banner(shifted ? iswL(`Sesi dijadualkan semula + ${shifted} sesi seterusnya di-shift`, `Session rescheduled + ${shifted} following sessions shifted`) : iswL('Sesi dijadualkan semula', 'Session rescheduled'));
+    } else {
+      await dbUpdate('psy_plan_weekly_progress', id, {
+        status: 'cancel', absence_reason: reason,
+        updated_by: window.currentUser.id, updated_by_name: window.currentUser.full_name, updated_at: new Date().toISOString(),
+      });
+      await auditLog('plan.absence', id, { reason });
+      if (patUserProfileId) {
+        await notify(patUserProfileId, 'plan', iswL('Sesi Ditanda Tidak Hadir', 'Session marked Absent'),
+          iswL(`Sesi Minggu ${sess.week_number} anda ditanda tidak hadir oleh ${who}. Sila hubungi coach atau jadual semula sesi.`, `Your Week ${sess.week_number} session was marked absent by ${who}. Please contact your coach or reschedule.`), 'plan.html');
+      }
+      // Rekod + amaran kalau pesakit sudah > 7 hari tidak hadir
+      const flag = await iswFlagLongAbsence({ patientId: sess.patient_id, sessionId: id });
+      banner(flag.flagged
+        ? iswL(`Sesi ditanda Tidak Hadir — pesakit ${flag.days} hari tanpa kehadiran, amaran dihantar kepada coach ⚠️`, `Marked Absent — the patient has gone ${flag.days} days without attending; the coach has been alerted ⚠️`)
+        : iswL('Sesi ditanda Tidak Hadir', 'Session marked Absent'));
+    }
+    closeAbsence();
     document.getElementById('day-modal').classList.add('hidden');
     loadSessions();
-  } catch (err) { banner('Ralat: ' + err.message, 'error'); }
+  } catch (err) {
+    banner(iswL('Ralat: ', 'Error: ') + err.message, 'error');
+  } finally { reset(); }
 }
 
 // ── Coach Ganti ────────────────────────────────────────
@@ -2086,6 +2215,49 @@ async function loadAbsentAlert() {
   restoreScrollPreserve();
 })();
 </script>
+
+<!-- Modal Tidak Hadir (sebab wajib + jadual semula pilihan) -->
+<div id="absence-modal" class="hidden fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-ink/10">
+      <h3 class="font-bold text-ink">❌ Tandakan Tidak Hadir</h3>
+      <button onclick="closeAbsence()" class="text-ink/40 hover:text-ink text-xl leading-none">&times;</button>
+    </div>
+    <div class="p-6 space-y-4">
+      <p id="ab-patient" class="text-sm text-ink/60"></p>
+      <div>
+        <label class="block text-xs font-semibold text-ink/60 mb-1">Sebab tidak hadir <span class="text-terracotta">*</span></label>
+        <textarea id="ab-reason" rows="3" placeholder="Cth: Pesakit demam / tak dapat dihubungi…"
+          class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy resize-none"></textarea>
+      </div>
+      <div class="border-t border-ink/8 pt-4">
+        <label class="flex items-center gap-2 cursor-pointer select-none">
+          <input id="ab-resched-toggle" type="checkbox" onchange="toggleAbsenceResched()" class="w-4 h-4 rounded accent-gold">
+          <span class="text-sm font-semibold text-ink">🔄 Jadual semula sesi ini</span>
+        </label>
+        <div id="ab-resched-fields" class="hidden mt-3">
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-ink/60 mb-1">Tarikh baru</label>
+              <input id="ab-date" type="date" onchange="checkAbsenceDate(this)" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-ink/60 mb-1">Masa baru</label>
+              <select id="ab-time" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy bg-white">
+                <option value="">— Pilih tarikh dahulu —</option>
+              </select>
+            </div>
+          </div>
+          <p id="ab-date-warn" class="hidden text-[11px] text-terracotta mt-1.5"></p>
+        </div>
+      </div>
+    </div>
+    <div class="flex gap-2 px-6 py-4 border-t border-ink/10">
+      <button onclick="closeAbsence()" class="flex-1 px-4 py-2.5 rounded-xl border border-ink/15 text-sm font-semibold text-ink/60 hover:bg-ink/5">Batal</button>
+      <button id="ab-confirm" onclick="confirmAbsence()" data-rbac="schedule.edit" class="flex-1 px-4 py-2.5 rounded-xl bg-terracotta text-white text-sm font-semibold hover:bg-terracotta/90">Simpan</button>
+    </div>
+  </div>
+</div>
 
 <!-- Coach Ganti Modal -->
 <div id="appt-coach-ganti-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-ink/30 p-4"
