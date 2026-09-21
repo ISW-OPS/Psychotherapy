@@ -27,6 +27,9 @@
     // — Bayaran manual / invois / waris — added 21 Sept —
     "🧾 Sejarah Transaksi": "🧾 Transaction History",
     "📄 Lihat Invois": "📄 View Invoice",
+    "🧾 Resit": "🧾 Receipt",
+    "📎 Bukti": "📎 Proof",
+    "📋 Link Payment": "📋 Payment Link",
     "📄 Invois": "📄 Invoice",
     "Cari no. resit (REC) / no. invois (INV) / rujukan / nama pesakit...": "Search receipt no. (REC) / invoice no. (INV) / reference / patient name...",
     "📎 Lihat Bukti": "📎 View Proof",

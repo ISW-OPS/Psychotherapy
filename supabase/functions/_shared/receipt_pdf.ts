@@ -8,6 +8,7 @@
 // ============================================================
 
 import { PDFDocument, StandardFonts, rgb } from 'https://esm.sh/pdf-lib@1.17.1'
+import { LOGO_ISW_PNG_BASE64 } from './logo_isw.ts'
 import { sendWhatsApp } from './ghl.ts'
 
 const INK = rgb(0.12, 0.12, 0.12)
@@ -81,7 +82,15 @@ export async function buildReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
   text('RECEIPT', R, 26, { right: true }); y -= 14
   hr(1.4, INK); y -= 26
 
-  // ── Blok syarikat (rata kanan) ────────────────────────────
+  // ── Logo (kiri) + blok syarikat (rata kanan) ──────────────
+  const companyTop = y
+  try {
+    const logoBytes = Uint8Array.from(atob(LOGO_ISW_PNG_BASE64), (c) => c.charCodeAt(0))
+    const logo = await doc.embedPng(logoBytes)
+    const lh = 48
+    page.drawImage(logo, { x: M, y: y - lh, width: (logo.width / logo.height) * lh, height: lh })
+  } catch (_) { /* logo gagal — teruskan tanpa imej */ }
+  y = companyTop - 10
   text('Ibnu Sina Wellness Sdn Bhd (1319021-P)', R, 12, { right: true }); y -= 14
   for (const ln of ['03-8966 3702', 'Lot 331, Lorong Senyum Matahari B, Country Heights,', 'Kajang, Selangor 43000', 'Malaysia', 'www.ibnusinawellness.com']) {
     text(ln, R, 8, { color: GRAY, right: true }); y -= 11

@@ -2319,9 +2319,18 @@
         const contactId = ec?.contact?.contactId;
         if (!contactId) throw new Error('Tak dapat sediakan contact GHL untuk nombor ini.');
         const label = mode === 'full' ? 'Bayaran Penuh' : 'Deposit Ansuran';
+        // Invois (PDF, butang Pay boleh diklik) dilampirkan bersama pautan. Gagal jana TAK gagalkan hantar pautan.
+        let invoiceUrl = null;
+        try {
+          const { data: inv } = await window.db.functions.invoke('kob-invoice-pdf', {
+            body: { kobSessionId: kobId, seq: mode === 'full' ? null : 0, payUrl: data.checkoutUrl, amount: data.amount },
+          });
+          invoiceUrl = inv?.url || null;
+        } catch (_) { /* hantar pautan tanpa lampiran */ }
         await ghlInvoke('send', {
           contactId,
-          message: `Salam ${patName} 👋\n\nSila selesaikan bayaran (${label}) pakej rawatan anda melalui pautan selamat di bawah:\n\n${data.checkoutUrl}\n\n— ISW`,
+          message: `Salam ${patName} 👋\n\nSila selesaikan bayaran (${label}) pakej rawatan anda melalui pautan selamat di bawah:\n\n${data.checkoutUrl}${invoiceUrl ? '\n\nInvois dilampirkan.' : ''}\n\n— ISW`,
+          ...(invoiceUrl ? { attachments: [invoiceUrl] } : {}),
         });
 
         hitpayLinkSentAt = new Date().toISOString();
@@ -2977,7 +2986,7 @@
       <div class="flex items-center justify-between flex-wrap gap-2">
         <p class="text-xs text-green-dark">✅ Pautan HitPay dihantar ke WhatsApp pesakit (${new Date(hitpayLinkSentAt).toLocaleTimeString(LCALE())}) — menunggu bayaran <span class="text-ink/40">(auto-semak setiap 10 saat)</span>.</p>
         <div class="flex gap-2 items-center">
-          <button type="button" ${hitpayCopying ? 'disabled' : ''} onclick="copyKobHitpayLink('${hitpayMode}')" class="text-[11px] text-navy hover:underline disabled:opacity-50">${hitpayCopying ? 'Menjana…' : '📋 Salin Pautan'}</button>
+          <button type="button" ${hitpayCopying ? 'disabled' : ''} onclick="copyKobHitpayLink('${hitpayMode}')" class="text-[11px] text-navy hover:underline disabled:opacity-50">${hitpayCopying ? 'Menjana…' : '📋 Link Payment'}</button>
           <button type="button" onclick="recheckKobPaymentStatus()" class="text-[11px] text-navy hover:underline">🔄 Semak Sekarang</button>
           <button type="button" onclick="wizSelectMethod(null)" class="text-[11px] text-ink/50 hover:underline">Tukar →</button>
         </div>
@@ -2993,7 +3002,7 @@
         </button>
         <button type="button" ${(hitpaySending || hitpayCopying) ? 'disabled' : ''} onclick="copyKobHitpayLink('${hitpayMode}')"
           class="px-4 py-2.5 border border-ink/15 rounded-lg text-sm font-semibold hover:bg-ink/5 disabled:opacity-50">
-          ${hitpayCopying ? 'Menjana…' : '📋 Salin Pautan'}
+          ${hitpayCopying ? 'Menjana…' : '📋 Link Payment'}
         </button>
       </div>
     </div>`;
@@ -3116,7 +3125,7 @@
       <div class="flex items-center justify-between gap-2 mb-1">
         <div class="text-xs font-semibold text-ink/60">Sejarah Ansuran (${payments.length}) — Sudah dibayar ${fmtRM(totalPaid)} / ${fmtRM(packagePrice)}</div>
         <button type="button" onclick="viewInvoice(kobId, { full_name: patient?.psy_profiles?.full_name || patient?.full_name, phone: patient?.psy_profiles?.phone || patient?.phone })"
-          class="text-[11px] font-semibold border border-ink/15 text-ink px-2.5 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap">🧾 Lihat Invois</button>
+          class="text-[11px] font-semibold border border-ink/15 text-ink px-2.5 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap">📄 Invois</button>
       </div>
       ${rows}
     </div>

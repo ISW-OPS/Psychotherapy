@@ -4626,11 +4626,11 @@
               const cancelBtn = tx.status === 'pending' ? `<button type="button" onclick="cancelPendingPayment('${tx.id}', this)"
                 class="cancel-pay-btn text-[11px] font-semibold border border-terracotta/30 text-terracotta px-2.5 py-1 rounded-md hover:bg-terracotta/10 whitespace-nowrap disabled:opacity-60">🗑️ Batal</button>` : '';
               const receiptBtn = tx.status === 'completed' ? `<button type="button" onclick="viewTxReceipt('${tx.id}')"
-                class="text-[11px] font-semibold border border-ink/15 text-ink px-2.5 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap">🧾 Lihat Resit</button>` : '';
+                class="text-[11px] font-semibold border border-ink/15 text-ink px-2.5 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap">🧾 Resit</button>` : '';
               const proofBtn = tx.receipt_url ? `<a href="${escHtml(tx.receipt_url)}" target="_blank" rel="noopener"
-                class="text-[11px] font-semibold border border-ink/15 text-ink px-2.5 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap">📎 Lihat Bukti</a>` : '';
+                class="text-[11px] font-semibold border border-ink/15 text-ink px-2.5 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap">📎 Bukti</a>` : '';
               const invoiceBtn = tx.intent?.kob_session_id ? '' : `<button type="button" onclick="viewTxInvoice('${tx.id}')"
-                class="text-[11px] font-semibold border border-ink/15 text-ink px-2.5 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap">📄 Lihat Invois</button>`;
+                class="text-[11px] font-semibold border border-ink/15 text-ink px-2.5 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap">📄 Invois</button>`;
               return `<tr>
               <td>${formatDate(tx.created_at)}</td>
               <td class="text-ink/70"><div class="font-medium">${escHtml(tx.receipt_no || tx.receipt_ref || '—')}</div>${tx.invoice_no || tx.invoice_number ? `<div class="text-[10px] text-ink/40">${escHtml(tx.invoice_no || tx.invoice_number)}</div>` : ''}</td>
@@ -4806,8 +4806,8 @@
               const actionHtml = i === nextIdx ? `
                 <div class="flex gap-1.5 flex-wrap">
                   <button type="button" onclick="payCheckpointManual(${Math.max(0, installmentAmt).toFixed(2)})" class="text-[11px] font-semibold bg-green-dark text-white px-2 py-1 rounded-md hover:opacity-90 whitespace-nowrap">💵 Bayar Manual</button>
-                  <button type="button" onclick="sendAnsuranLink(this)" class="ans-send-btn text-[11px] font-semibold bg-navy text-white px-2 py-1 rounded-md hover:bg-navy-dark whitespace-nowrap disabled:opacity-60">📤 Hantar WA</button>
-                  <button type="button" onclick="copyAnsuranLink(this)" class="ans-copy-btn text-[11px] font-semibold border border-ink/15 text-ink px-2 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap disabled:opacity-60">📋 Salin</button>
+                  <button type="button" onclick="sendAnsuranLink(this, ${cp.seq})" class="ans-send-btn text-[11px] font-semibold bg-navy text-white px-2 py-1 rounded-md hover:bg-navy-dark whitespace-nowrap disabled:opacity-60">📤 Hantar WA</button>
+                  <button type="button" onclick="copyAnsuranLink(this)" class="ans-copy-btn text-[11px] font-semibold border border-ink/15 text-ink px-2 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap disabled:opacity-60">📋 Link Payment</button>
                   <button type="button" onclick="viewCpInvoice(${cp.seq}, 'installment')" class="text-[11px] font-semibold border border-ink/15 text-ink px-2 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap">📄 Invois Ansuran</button>
                   <button type="button" onclick="viewCpInvoice(${cp.seq}, 'plan')" class="text-[11px] font-semibold border border-ink/15 text-ink px-2 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap">📑 Invois Penuh</button>
                 </div>` : (payment ? `<div class="flex gap-1.5 flex-wrap">
@@ -4943,11 +4943,23 @@
       return data.checkoutUrl;
     }
 
-    async function sendAnsuranLink(btn) {
+    // Invois ansuran (PDF, butang Pay boleh diklik) dilampirkan bersama pautan HitPay.
+    // Gagal jana invois TAK gagalkan penghantaran pautan (dihantar tanpa lampiran).
+    async function fetchInstallmentInvoiceUrl(seq, payUrl) {
+      try {
+        const { data } = await window.db.functions.invoke('kob-invoice-pdf', {
+          body: { kobSessionId: bayaranSession.id, seq, payUrl },
+        });
+        return data?.url || null;
+      } catch (_) { return null; }
+    }
+
+    async function sendAnsuranLink(btn, seq) {
       const original = btn.innerHTML;
-      btn.disabled = true; btn.innerHTML = 'Menghantar…';
+      btn.disabled = true; btn.innerHTML = iswL('Menghantar…', 'Sending…');
       try {
         const checkoutUrl = await fetchAnsuranCheckoutUrl();
+        const invoiceUrl = await fetchInstallmentInvoiceUrl(seq, checkoutUrl);
         const patPhone = iswPatientPhone(patient, profile, kyc);
         const patName = iswPatientName(patient, profile, kyc) || 'Pesakit';
         const cleanPhone = (patPhone || '').replace(/\D/g, '').replace(/^0/, '60');
@@ -4957,7 +4969,8 @@
         if (!contactId) throw new Error('Tak dapat sediakan contact GHL untuk nombor ini.');
         await ghlInvoke('send', {
           contactId,
-          message: `Salam ${patName} 👋\n\nSila selesaikan bayaran ansuran pakej rawatan anda melalui pautan selamat di bawah:\n\n${checkoutUrl}\n\n— ISW`,
+          message: `Salam ${patName} 👋\n\nSila selesaikan bayaran ansuran pakej rawatan anda melalui pautan selamat di bawah:\n\n${checkoutUrl}${invoiceUrl ? '\n\nInvois ansuran dilampirkan.' : ''}\n\n— ISW`,
+          ...(invoiceUrl ? { attachments: [invoiceUrl] } : {}),
         });
         banner('Pautan ansuran dihantar ke WhatsApp pesakit ✅');
       } catch (e) {
