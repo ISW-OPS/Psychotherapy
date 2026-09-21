@@ -38,6 +38,8 @@
     const asOfCp = asOfSeq != null ? (cps || []).find(x => Number(x.seq) === Number(asOfSeq)) : null;
     const paid = asOfCp ? Math.min(paidTotal, Number(asOfCp.target_cumulative)) : paidTotal;
     const due = Math.max(0, owed - paid);
+    // Pakej ansuran ada Harga Installment (Full) sendiri (boleh > harga tunai) — itulah harga item di invois.
+    const listPrice = owed + pkgDiscount;
     const issue = kob.recommended_at || kob.created_at;
 
     // Jadual bayaran: satu baris per checkpoint (amaun = beza sasaran terkumpul), atau satu baris (bayaran penuh)
@@ -92,19 +94,18 @@
         <tbody>
           <tr class="border-b border-ink/10">
             <td class="py-4 px-3 text-xs text-ink/70 uppercase">${esc(kob.recommended_package_name || L('Pakej', 'Package'))}</td>
-            <td class="py-4 text-xs text-ink/70 text-right whitespace-nowrap">${money(price + pkgDiscount)}</td>
+            <td class="py-4 text-xs text-ink/70 text-right whitespace-nowrap">${money(listPrice)}</td>
             <td class="py-4 text-xs text-ink/70 text-right">1</td>
             <td class="py-4 text-xs text-ink/70 text-right">-</td>
-            <td class="py-4 px-3 text-xs text-ink/70 text-right whitespace-nowrap">${money(price + pkgDiscount)}</td>
+            <td class="py-4 px-3 text-xs text-ink/70 text-right whitespace-nowrap">${money(listPrice)}</td>
           </tr>
         </tbody>
       </table>
 
       <div class="flex justify-end mt-4">
         <div class="w-full max-w-sm text-sm">
-          <div class="flex justify-between py-1"><span class="font-semibold text-ink">${L('Jumlah Kecil', 'Subtotal')}</span><span class="text-ink/60 text-xs">${money(price + pkgDiscount)}</span></div>
+          <div class="flex justify-between py-1"><span class="font-semibold text-ink">${L('Jumlah Kecil', 'Subtotal')}</span><span class="text-ink/60 text-xs">${money(listPrice)}</span></div>
           <div class="flex justify-between py-1"><span class="font-semibold text-ink">${L('Diskaun', 'Discount')}</span><span class="text-ink/60 text-xs">-${money(pkgDiscount)}</span></div>
-          ${owed > price ? `<div class="flex justify-between py-1"><span class="font-semibold text-ink">${L('Caj Ansuran', 'Installment Charges')}</span><span class="text-ink/60 text-xs">${money(owed - price)}</span></div>` : ''}
           <div class="flex justify-between py-1.5 border-t border-ink/20 mt-1"><span class="font-semibold text-ink">${L('Jumlah (MYR)', 'Total (MYR)')}</span><span class="text-ink/60 text-xs">${money(owed)}</span></div>
           <div class="flex justify-between py-1"><span class="font-semibold text-ink">${L('Jumlah Dibayar (MYR)', 'Amount Paid (MYR)')}</span><span class="text-ink/60 text-xs">${money(paid)}</span></div>
           <div class="mt-2 border-t border-ink/20 pt-2 space-y-1.5">

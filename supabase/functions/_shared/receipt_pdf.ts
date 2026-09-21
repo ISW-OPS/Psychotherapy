@@ -222,8 +222,8 @@ async function loadReceiptContext(admin: any, payment: any) {
       const thisLabel = isInstallment ? (idx === 0 ? 'Deposit' : `Installment ${idx}`)
         : (paidToDate >= owed - 0.005 && idx === 0 ? 'Full Payment' : `Payment ${idx + 1}`)
       kob = {
-        listPrice: price + pkgDiscount, pkgDiscount, owed,
-        installmentCharge: isInstallment ? Math.max(0, owed - price) : 0,
+        listPrice: owed + pkgDiscount, pkgDiscount, owed,
+        installmentCharge: 0,
         thisLabel, paidToDate, outstanding: Math.max(0, owed - paidToDate), invoiceNo: k.invoice_no || '',
       }
     }

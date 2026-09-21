@@ -120,8 +120,8 @@
       const label = isInstallment ? (idx === 0 ? L('Deposit', 'Deposit') : `${L('Ansuran', 'Installment')} ${idx}`)
         : (paidToDate >= owed - 0.005 && idx === 0 ? L('Bayaran Penuh', 'Full Payment') : `${L('Bayaran', 'Payment')} ${idx + 1}`);
       return {
-        listPrice: price + pkgDiscount, pkgDiscount, price, owed,
-        installmentCharge: isInstallment ? Math.max(0, owed - price) : 0,
+        listPrice: owed + pkgDiscount, pkgDiscount, price, owed,
+        installmentCharge: 0,
         thisLabel: label, paidToDate, outstanding: Math.max(0, owed - paidToDate),
         invoiceNo: kob.invoice_no || '',
       };
