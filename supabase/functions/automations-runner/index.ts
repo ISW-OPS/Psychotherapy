@@ -1,5 +1,5 @@
 // ============================================================
-// automations-runner — ENJIN psy_automations (COPY-PASTE, cors inline).
+// automations-runner — ENJIN psy_automations (import dari ../_shared — utk dashboard guna bundle dashboard-paste).
 // Cetus tiap 15 min oleh cron. Proses automasi AKTIF:
 //   - schedule (Broadcast Berjadual): hari+masa → sasaran (conditions)
 //     → hantar (actions: whatsapp/inapp) → tulis psy_notification_logs
@@ -21,6 +21,8 @@
 //          SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 // ============================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createKobInstallmentTopupLink } from '../_shared/kob_topup.ts'
+import { generateKobInvoiceUrl } from '../_shared/kob_invoice.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -227,11 +229,12 @@ async function getAnchors(supabase: any, triggerEvent: string, myNow: Date) {
       .map((p: any) => ({ patientId: p.patient_id, plan: null, countdown: true, anchor: new Date(p.psy_appointments.appointment_time) }))
   }
   if (triggerEvent === 'installment_reminder' || triggerEvent === 'installment_overdue') {
+    const statuses = triggerEvent === 'installment_reminder' ? ['pending'] : ['pending', 'overdue']
     const { data: cps } = await supabase.from('psy_kob_installment_checkpoints')
-      .select('patient_id, due_date, status').eq('status', 'pending')
+      .select('id, patient_id, kob_session_id, seq, due_date, target_cumulative, status').in('status', statuses)
     return (cps || []).map((c: any) => ({
       patientId: c.patient_id, plan: null, countdown: triggerEvent === 'installment_reminder',
-      anchor: new Date(c.due_date + 'T00:00:00Z'),
+      anchor: new Date(c.due_date + 'T00:00:00Z'), cp: c,
     }))
   }
   if (triggerEvent === 'session_confirm') {
@@ -288,6 +291,26 @@ async function runSequenceAutomations(supabase: any, locationId: string) {
       return `${l.message_id}:${l.patient_id}:${d}`
     }))
 
+    // Ansuran: jumlah terkumpul & checkpoint per sesi KOB (cache) — semak sama ada sudah dibayar
+    // dan checkpoint mana sebenarnya "seterusnya" (pautan/invois hanya utk yang seterusnya).
+    const kobPaidCache = new Map<string, number>()
+    const kobCpsCache = new Map<string, any[]>()
+    const kobPaid = async (id: string) => {
+      if (!kobPaidCache.has(id)) {
+        const { data } = await supabase.from('psy_payments').select('total').eq('status', 'completed').eq('intent->>kob_session_id', id)
+        kobPaidCache.set(id, (data || []).reduce((s2: number, r: any) => s2 + Number(r.total || 0), 0))
+      }
+      return kobPaidCache.get(id)!
+    }
+    const kobCps = async (id: string) => {
+      if (!kobCpsCache.has(id)) {
+        const { data } = await supabase.from('psy_kob_installment_checkpoints').select('seq, target_cumulative').eq('kob_session_id', id).order('seq')
+        kobCpsCache.set(id, data || [])
+      }
+      return kobCpsCache.get(id)!
+    }
+    const appOrigin = Deno.env.get('PUBLIC_APP_URL') || ''
+
     for (const anc of anchors) {
       const p = patById.get(anc.patientId)
       if (!p || !targetIds.has(p.id)) continue
@@ -331,10 +354,44 @@ async function runSequenceAutomations(supabase: any, locationId: string) {
         const recipient = toCoach ? coachProfiles[p.coach_id] : null
         if (toCoach && !recipient) continue   // tiada coach ditugaskan — tiada sesiapa nak dihantar
 
-        const vars = buildVars(p, anc.plan, coachNames[p.coach_id] || '')
+        const vars: Record<string, string> = buildVars(p, anc.plan, coachNames[p.coach_id] || '')
+        const attachments: string[] = m.media_url ? [m.media_url] : []
+
+        // ── Ansuran: pembolehubah checkpoint + pautan HitPay + invois PDF ──
+        if (anc.cp) {
+          const cp = anc.cp
+          const paid = await kobPaid(cp.kob_session_id)
+          if (paid + 0.005 >= Number(cp.target_cumulative)) continue   // ansuran ini sudah dibayar — jangan ingatkan
+          const baki = Math.max(0, Number(cp.target_cumulative) - paid)
+          Object.assign(vars, {
+            ansuran: cp.seq === 0 ? 'Deposit' : `Ansuran ${cp.seq}`,
+            jumlah: baki.toFixed(2), baki: baki.toFixed(2),
+            tarikh_due: fmtDateMY(new Date(cp.due_date + 'T00:00:00Z')),
+          })
+          // Pautan + invois hanya bila templat guna {{pautan}} — dan hanya utk checkpoint SETERUSNYA
+          // yang belum dibayar (amaun pautan diderive server daripada checkpoint itu).
+          if (/\{\{?pautan\}?\}/.test(m.message_text || '')) {
+            const next = (await kobCps(cp.kob_session_id)).find((c2: any) => Number(c2.target_cumulative) > paid + 0.005)
+            if (!next || Number(next.seq) !== Number(cp.seq)) continue   // ada ansuran terdahulu belum dibayar
+            try {
+              const link = await createKobInstallmentTopupLink(supabase, cp.kob_session_id, `${appOrigin}/roles/patient/payment-receipt.html`)
+              vars.pautan = link.checkoutUrl
+            } catch (e) {
+              await logSend(supabase, a, p, 'whatsapp', m.message_text || '', 'failed', 'Ansuran (pautan): ' + String((e as any)?.message || e), m.id)
+              continue
+            }
+            // Invois PDF gagal TAK halang mesej — pautan dah dijana, hantar tanpa lampiran (elak jana pautan berulang tiap cron).
+            try {
+              const inv = await generateKobInvoiceUrl(supabase, { kobSessionId: cp.kob_session_id, seq: cp.seq, payUrl: vars.pautan })
+              attachments.push(inv.url)
+            } catch (e) {
+              console.warn('automations-runner: invois PDF gagal —', (e as any)?.message || e)
+            }
+          }
+        }
+
         const text = fillTemplate(m.message_text || '', vars)
         const fullText = (m.content_type === 'link' && m.link_url) ? `${text}\n\n${m.link_label || m.link_url}\n${m.link_url}` : text
-        const attachments = m.media_url ? [m.media_url] : []
 
         const inappUserId = toCoach ? recipient.id : p.user_id
         if (actions.includes('inapp') && inappUserId) {
