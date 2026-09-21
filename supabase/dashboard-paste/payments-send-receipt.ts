@@ -160,6 +160,12 @@ async function buildReceiptPdf(d) {
     y -= 13;
     text(d.method, colX, 8.5, { color: GRAY });
   }
+  if (d.bankRef) {
+    y -= 20;
+    text("Bank Reference", colX, 10, { font: bold });
+    y -= 13;
+    text(d.bankRef, colX, 8.5, { color: GRAY });
+  }
   y = Math.min(y, leftEnd) - 34;
   const cPrice = R - 150, cQty = R - 85;
   text("ITEM NAME", M, 8, { font: bold, color: GRAY });
@@ -225,7 +231,7 @@ async function buildReceiptPdf(d) {
   return await doc.save();
 }
 async function loadReceiptContext(admin, payment) {
-  const { data: fresh } = await admin.from("psy_payments").select("receipt_no, receipt_ref, discount, notes, intent, items, total, paid_at, id, manual_method, payment_method").eq("id", payment.id).limit(1);
+  const { data: fresh } = await admin.from("psy_payments").select("receipt_no, receipt_ref, discount, notes, intent, items, total, paid_at, id, manual_method, payment_method, bank_reference").eq("id", payment.id).limit(1);
   const r = { ...payment, ...fresh?.[0] || {} };
   const intent = r.intent || {};
   const discountLines = [];
@@ -281,7 +287,7 @@ async function loadReceiptContext(admin, payment) {
   const items = given.length ? given.map((i) => ({ name: String(i.title || i.name || i.packageName).replace(/^Pakej:\s*/, ""), price: Number(i.amount || 0) })) : [{ name: kobName || (String(r.notes || "").match(/"([^"]+)"/) || [])[1] || "Pembayaran", price: total + discTotal }];
   const methodMap = { transfer: "Bank Transfer", cash: "Cash", other: "Other", fpx: "FPX Online Banking", card: "Credit/Debit Card", gateway: "Online (FPX/Card)", ghl: "GHL Payment" };
   const method = methodMap[r.manual_method] || (r.payment_method === "manual" ? "" : methodMap[r.payment_method] || "");
-  return { r, items, discountLines, kob, method };
+  return { r, items, discountLines, kob, method, bankRef: r.bank_reference || null };
 }
 async function sendPaymentReceiptWhatsApp(admin, payment) {
   let phone = null, name = null, contactName = null;
@@ -329,6 +335,7 @@ async function sendPaymentReceiptWhatsApp(admin, payment) {
       patientName: name,
       phone,
       method: ctx.method,
+      bankRef: ctx.bankRef,
       items: ctx.items,
       total: Number(payment.total || 0),
       discountLines: ctx.discountLines,

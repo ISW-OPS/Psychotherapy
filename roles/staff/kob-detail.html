@@ -758,6 +758,7 @@
   <script src="../../shared/utils.js"></script>
   <script src="../../shared/receipt.js"></script>
   <script src="../../shared/invoice.js"></script>
+  <script src="../../shared/kobPayments.js"></script>
   <script src="../../shared/defaultAgreement.js"></script>
   <script src="_shared.js"></script>
   <script>
@@ -3089,8 +3090,12 @@
           </select>
         </div>
         <div>
-          <label class="text-xs font-semibold text-ink/60 block mb-1">No. Rujukan (pilihan)</label>
-          <input id="mp-invoice" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white" placeholder="cth: no. rujukan transfer / invois luar">
+          <label class="text-xs font-semibold text-ink/60 block mb-1">Bank Reference <span class="font-normal text-ink/40">(wajib untuk transfer)</span></label>
+          <input id="mp-invoice" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white" placeholder="cth: no. transaksi / rujukan bank">
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-ink/60 block mb-1">Tarikh &amp; Masa Bayaran</label>
+          <input id="mp-paidat" type="datetime-local" value="${iswNowLocalInput()}" max="${iswNowLocalInput()}" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
         </div>
         <div>
           <label class="text-xs font-semibold text-ink/60 block mb-1">Jumlah${locked ? ' (Tetap)' : ' (RM)'}</label>
@@ -3114,7 +3119,7 @@
       const rows = payments.map(p => `
     <div class="flex items-center justify-between gap-2 text-xs py-1.5 border-b border-ink/5 last:border-0">
       <div>
-        <span class="font-semibold">${escapeHtml(p.invoice_number || p.receipt_no || p.receipt_ref)}</span>
+        <span class="font-semibold">${escapeHtml(p.receipt_no || p.receipt_ref)}</span>${p.bank_reference ? ` <span class="text-ink/40 text-[10px]">Ref: ${escapeHtml(p.bank_reference)}</span>` : ''}
         <span class="text-ink/40 ml-2">${new Date(p.paid_at || p.created_at).toLocaleDateString(LCALE())}</span>
       </div>
       <div class="flex items-center gap-2">
@@ -3160,7 +3165,7 @@
       if (status === 'partial') {
         wizSidebar.innerHTML = '';
         const { data } = await window.db.from('psy_payments')
-          .select('id, invoice_number, receipt_no, receipt_ref, receipt_url, total, paid_at, created_at, payment_method, gateway_provider')
+          .select('id, invoice_number, receipt_no, receipt_ref, receipt_url, total, paid_at, created_at, payment_method, gateway_provider, bank_reference')
           .eq('status', 'completed').eq('intent->>kob_session_id', kobId)
           .order('created_at', { ascending: false });
         const payments = data || [];
@@ -3193,7 +3198,7 @@
       if (isPaidInfo) {
         wizSidebar.innerHTML = '';
         const { data } = await window.db.from('psy_payments')
-          .select('id, invoice_number, receipt_no, receipt_ref, receipt_url, total, paid_at, created_at, payment_method, gateway_provider')
+          .select('id, invoice_number, receipt_no, receipt_ref, receipt_url, total, paid_at, created_at, payment_method, gateway_provider, bank_reference')
           .eq('status', 'completed').eq('intent->>kob_session_id', kobId)
           .order('created_at', { ascending: false });
         const payments = data || [];
@@ -3380,12 +3385,16 @@
     }
 
     async function saveManualPayment() {
-      const invoiceNumber = document.getElementById('mp-invoice')?.value.trim() || '';
+      const invoiceNumber = document.getElementById('mp-invoice')?.value.trim() || '';   // = Bank Reference
+      const paidAtVal = document.getElementById('mp-paidat')?.value || '';
       const manualMethod = document.getElementById('mp-method')?.value || 'transfer';
       const amount = parseMoneyVal(document.getElementById('mp-amount')?.value);
       const file = document.getElementById('mp-receipt')?.files?.[0];
       if (!amount || amount <= 0) { banner(iswL('Sila isi Jumlah yang sah', 'Please enter a valid amount'), 'error'); return; }
       if (!file && manualMethod !== 'cash') { banner(iswL('Sila upload bukti bayaran (wajib kecuali tunai)', 'Please upload proof of payment (required unless cash)'), 'error'); return; }
+      if (manualMethod === 'transfer' && !invoiceNumber) { banner(iswL('Bank Reference wajib untuk Bank Transfer.', 'Bank Reference is required for Bank Transfer.'), 'error'); return; }
+      const dateProblem = iswPaidAtProblem(paidAtVal);
+      if (dateProblem) { banner(dateProblem, 'error'); return; }
 
       // Ikut pilihan doktor di Langkah 3 (wizPayTier); default 'today' utk pending,
       // 'now' utk declined bila doktor belum override.
@@ -3444,14 +3453,18 @@
         }
 
         const { data: payRow, error: payErr } = await window.db.from('psy_payments').insert({
-          receipt_ref: `KOB-${invoiceNumber || 'MNL'}-${Date.now()}`,
+          receipt_ref: `KOB-MNL-${Date.now()}`,
           patient_id: patient.id,
           user_id: patient.user_id,
           total: amount,
           payment_method: 'manual',
           manual_method: manualMethod,
           status: 'completed',
-          invoice_number: invoiceNumber || null,
+          bank_reference: invoiceNumber || null,
+          paid_at: iswLocalInputToIso(paidAtVal),
+          recorded_by: window.currentUser?.id || null,
+          paid_for_type: 'package',
+          paid_for_seq: isInstallmentStart ? 0 : null,
           receipt_url: signed?.signedUrl || null,
           notes: isInstallmentStart
             ? `Deposit pakej "${kob.recommended_package_name || ''}" — disahkan doktor semasa sesi KOB`

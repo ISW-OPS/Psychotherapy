@@ -23,6 +23,12 @@ CREATE TABLE IF NOT EXISTS psy_payments (
   invoice_number TEXT,                        -- bayaran manual — no. invois ditaip staff/doktor
   manual_method TEXT CHECK (manual_method IN ('transfer','cash','other')),  -- kaedah bayaran manual (payment_method='manual')
   invoice_no TEXT UNIQUE,                     -- no. invois (INV-…) utk bayaran BUKAN pakej KOB — auto bila 'pending'/'completed'; bayaran KOB guna psy_kob_sessions.invoice_no
+  bank_reference TEXT,                        -- no. rujukan transaksi bank / transfer (bayaran manual)
+  recorded_by UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,  -- staf yg merekod bayaran manual (paid_at = tarikh bayaran SEBENAR; created_at = masa direkod)
+  paid_for_type TEXT CHECK (paid_for_type IN ('package','installment','invoice','consultation','product','other')),  -- bayaran ni utk apa (bayaran manual)
+  paid_for_seq INT,                           -- checkpoint ansuran yg dilunaskan (paid_for_type='installment')
+  paid_for_ref TEXT,                          -- rujukan sasaran (cth invoice_no yg dilunaskan, paid_for_type='invoice')
+  is_partial BOOLEAN NOT NULL DEFAULT false,  -- bayaran separa (kurang drpd baki sasaran) — dibenderakan
   receipt_no TEXT UNIQUE,                     -- no. resit paparan (REC10001..) — auto bila status jadi 'completed'; receipt_ref kekal kunci teknikal
   discount NUMERIC(10,2) NOT NULL DEFAULT 0,  -- diskaun pada bayaran ini (papar di resit; subtotal = total + discount)
   receipt_url TEXT,                           -- bayaran manual — resit yang di-upload

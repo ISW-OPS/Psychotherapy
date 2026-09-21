@@ -51,6 +51,7 @@ export interface ReceiptData {
   patientName?: string | null
   phone?: string | null
   method?: string | null
+  bankRef?: string | null
   items: Array<{ name: string; price: number }>
   total: number
   discountLines: Array<{ label: string; amount: number }>
@@ -112,6 +113,7 @@ export async function buildReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
   text('Date Paid', colX, 10, { font: bold }); y -= 13
   text(dateLong(d.paidAt), colX, 8.5, { color: GRAY })
   if (d.method) { y -= 20; text('Payment Method', colX, 10, { font: bold }); y -= 13; text(d.method, colX, 8.5, { color: GRAY }) }
+  if (d.bankRef) { y -= 20; text('Bank Reference', colX, 10, { font: bold }); y -= 13; text(d.bankRef, colX, 8.5, { color: GRAY }) }
   y = Math.min(y, leftEnd) - 34
 
   // ── Jadual item ───────────────────────────────────────────
@@ -183,7 +185,7 @@ export async function buildReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
 async function loadReceiptContext(admin: any, payment: any) {
   // Muat semula baris — receipt_no ditetapkan trigger DB sebaik status jadi 'completed'
   const { data: fresh } = await admin.from('psy_payments')
-    .select('receipt_no, receipt_ref, discount, notes, intent, items, total, paid_at, id, manual_method, payment_method')
+    .select('receipt_no, receipt_ref, discount, notes, intent, items, total, paid_at, id, manual_method, payment_method, bank_reference')
     .eq('id', payment.id).limit(1)
   const r = { ...payment, ...(fresh?.[0] || {}) }
   const intent = r.intent || {}
@@ -249,7 +251,7 @@ async function loadReceiptContext(admin: any, payment: any) {
   const methodMap: Record<string, string> = { transfer: 'Bank Transfer', cash: 'Cash', other: 'Other', fpx: 'FPX Online Banking', card: 'Credit/Debit Card', gateway: 'Online (FPX/Card)', ghl: 'GHL Payment' }
   const method = methodMap[r.manual_method] || (r.payment_method === 'manual' ? '' : methodMap[r.payment_method] || '')
 
-  return { r, items, discountLines, kob, method }
+  return { r, items, discountLines, kob, method, bankRef: r.bank_reference || null }
 }
 
 // ---- Resit WhatsApp: PDF rasmi (attachment) + mesej ringkas ----
@@ -308,7 +310,7 @@ export async function sendPaymentReceiptWhatsApp(admin: any, payment: any) {
     receiptNo = ctx.r.receipt_no || payment.receipt_ref
     const bytes = await buildReceiptPdf({
       receiptNo, paidAt,
-      patientName: name, phone, method: ctx.method,
+      patientName: name, phone, method: ctx.method, bankRef: ctx.bankRef,
       items: ctx.items, total: Number(payment.total || 0),
       discountLines: ctx.discountLines, kob: ctx.kob,
     })

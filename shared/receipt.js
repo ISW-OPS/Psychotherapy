@@ -159,6 +159,7 @@
           <div><div class="font-semibold text-ink">${L('No. Resit', 'Receipt No')}</div><div class="text-ink/60 text-xs mt-1">${rEsc(r.receipt_no || r.receipt_ref || '—')}</div></div>
           <div><div class="font-semibold text-ink">${L('Tarikh Bayaran', 'Date Paid')}</div><div class="text-ink/60 text-xs mt-1">${rDateLong(r.paid_at)}</div></div>
           ${rMethod(r) ? `<div><div class="font-semibold text-ink">${L('Kaedah Bayaran', 'Payment Method')}</div><div class="text-ink/60 text-xs mt-1">${rEsc(rMethod(r))}</div></div>` : ''}
+          ${r.bank_reference ? `<div><div class="font-semibold text-ink">Bank Reference</div><div class="text-ink/60 text-xs mt-1">${rEsc(r.bank_reference)}</div></div>` : ''}
         </div>
       </div>
 

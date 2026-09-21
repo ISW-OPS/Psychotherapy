@@ -1480,6 +1480,7 @@
   <script src="../../shared/settings.js"></script>
   <script src="../../shared/receipt.js"></script>
   <script src="../../shared/invoice.js"></script>
+  <script src="../../shared/kobPayments.js"></script>
   <script src="../../shared/utils.js"></script>
   <script src="_peristiwa.js"></script>
   <script>
@@ -4463,7 +4464,7 @@
         // SEMUA bayaran pesakit ni (bukan sekadar 1 sesi KOB) — kedai/sambungan
         // minggu/temujanji/pakej lain turut sertakan, digrouping oleh buildBayaranGroups().
         window.db.from('psy_payments')
-          .select('id, invoice_number, invoice_no, receipt_no, receipt_ref, receipt_url, checkout_url, total, discount, items, intent, notes, status, payment_method, manual_method, gateway_provider, gateway_status, paid_at, created_at')
+          .select('id, invoice_number, invoice_no, receipt_no, receipt_ref, receipt_url, checkout_url, total, discount, items, intent, notes, status, payment_method, manual_method, bank_reference, is_partial, paid_for_type, paid_for_seq, gateway_provider, gateway_status, paid_at, created_at')
           .eq('patient_id', patientId).order('created_at', { ascending: false }),
       ]);
       bayaranAllPayments = allPayments || [];
@@ -4684,7 +4685,7 @@
               return `<tr>
               <td>${formatDate(tx.created_at)}</td>
               <td class="text-ink/80">${escHtml(txDescription(tx))}</td>
-              <td class="text-ink/70"><div class="font-medium">${escHtml(tx.receipt_no || tx.receipt_ref || '—')}</div>${tx.invoice_no || tx.invoice_number ? `<div class="text-[10px] text-ink/40">${escHtml(tx.invoice_no || tx.invoice_number)}</div>` : ''}</td>
+              <td class="text-ink/70"><div class="font-medium">${escHtml(tx.receipt_no || tx.receipt_ref || '—')}</div>${tx.invoice_no || tx.invoice_number ? `<div class="text-[10px] text-ink/40">${escHtml(tx.invoice_no || tx.invoice_number)}</div>` : ''}${tx.bank_reference ? `<div class="text-[10px] text-ink/40">Ref: ${escHtml(tx.bank_reference)}</div>` : ''}${tx.is_partial ? `<div class="text-[10px] font-semibold text-gold-dark">${iswL('Bayaran Separa', 'Partial Payment')}</div>` : ''}</td>
               <td class="text-ink/60">${escHtml(method)}</td>
               <td class="font-semibold text-ink" style="padding-right:24px">${bpMoney(tx.total)}</td>
               <td>${chipDot(st)}</td>
@@ -4859,7 +4860,7 @@
               const payment = isPaid ? payments[i] : null;
               const actionHtml = i === nextIdx ? `
                 <div class="flex gap-1.5 flex-wrap">
-                  <button type="button" onclick="payCheckpointManual(${Math.max(0, installmentAmt).toFixed(2)})" class="text-[11px] font-semibold bg-green-dark text-white px-2 py-1 rounded-md hover:opacity-90 whitespace-nowrap">💵 Bayar Manual</button>
+                  <button type="button" onclick="payCheckpointManual(${Math.max(0, installmentAmt).toFixed(2)}, ${cp.seq})" class="text-[11px] font-semibold bg-green-dark text-white px-2 py-1 rounded-md hover:opacity-90 whitespace-nowrap">💵 Bayar Manual</button>
                   <button type="button" onclick="sendAnsuranLink(this, ${cp.seq})" class="ans-send-btn text-[11px] font-semibold bg-navy text-white px-2 py-1 rounded-md hover:bg-navy-dark whitespace-nowrap disabled:opacity-60">📤 Hantar WA</button>
                   <button type="button" onclick="openCpMenu(this, ${cp.seq})" aria-label="More" title="More" class="text-[13px] leading-none font-bold border border-ink/15 text-ink px-2 py-1 rounded-md hover:bg-ink/5">⋯</button>
                 </div>` : (payment ? `<div class="flex gap-1.5 flex-wrap">
@@ -4891,10 +4892,11 @@
       // Pelan ansuran (ada checkpoint, amaun tetap): borang tersembunyi — dibuka oleh butang
       // "Bayar Manual" pada baris checkpoint. Tanpa checkpoint (bayaran penuh separa): sentiasa nampak.
       const formHidden = isInstallment && checkpoints.length > 0;
-      bpLockedAmount = null;
+      bpLockedAmount = null; bpLockedSeq = null;
       const formHtml = canRecord ? `
         <div id="bp-form-card" class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 ${formHidden ? 'hidden' : ''}">
-          <h4 class="font-bold text-sm text-ink mb-3">➕ Rekod Bayaran Baru</h4>
+          <h4 class="font-bold text-sm text-ink mb-1">➕ Rekod Bayaran Baru</h4>
+          <p id="bp-for" class="text-xs text-ink/55 mb-3">${iswL('Bayaran untuk', 'Payment for')}: <b>${escHtml(bayaranSession.recommended_package_name || '—')}</b> — ${iswL('baki pakej', 'package balance')}</p>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label class="text-xs font-semibold text-ink/60 block mb-1">Kaedah Bayaran</label>
@@ -4904,8 +4906,12 @@
               </select>
             </div>
             <div>
-              <label class="text-xs font-semibold text-ink/60 block mb-1">No. Rujukan (pilihan)</label>
-              <input id="bp-invoice" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white" placeholder="cth: no. rujukan transfer / invois luar">
+              <label class="text-xs font-semibold text-ink/60 block mb-1">Bank Reference <span class="font-normal text-ink/40">(wajib untuk transfer)</span></label>
+              <input id="bp-invoice" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white" placeholder="cth: no. transaksi / rujukan bank">
+            </div>
+            <div>
+              <label class="text-xs font-semibold text-ink/60 block mb-1">Tarikh &amp; Masa Bayaran</label>
+              <input id="bp-paidat" type="datetime-local" value="${iswNowLocalInput()}" max="${iswNowLocalInput()}" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
             </div>
             <div>
               <label class="text-xs font-semibold text-ink/60 block mb-1">Jumlah (RM)</label>
@@ -5089,10 +5095,17 @@
     // Jumlah checkpoint yang dikunci — sumber sebenar utk simpan (bukan nilai input DOM), jadi
     // tak boleh diubah walaupun input diusik. null = borang bebas (bayaran tanpa checkpoint).
     let bpLockedAmount = null;
-    function payCheckpointManual(amount) {
+    let bpLockedSeq = null;     // checkpoint ansuran yang dilunaskan (disimpan sbg paid_for_seq)
+    function payCheckpointManual(amount, seq) {
       const amt = document.getElementById('bp-amount');
       if (!amt) { banner(iswL('Tiada baki untuk direkod.', 'No balance to record.'), 'error'); return; }
       bpLockedAmount = Number(amount);
+      bpLockedSeq = seq == null ? null : Number(seq);
+      const forEl = document.getElementById('bp-for');
+      if (forEl) {
+        const cpLabel = seq === 0 ? 'Deposit' : `${iswL('Ansuran', 'Installment')} ${seq}`;
+        forEl.innerHTML = `${iswL('Bayaran untuk', 'Payment for')}: <b>${escHtml(bayaranSession.recommended_package_name || '—')}</b> — <b>${escHtml(cpLabel)}</b>`;
+      }
       const lbl = amt.previousElementSibling;
       if (lbl) lbl.textContent = iswL('Jumlah (Tetap)', 'Amount (Fixed)');
       amt.tabIndex = -1;
@@ -5109,12 +5122,16 @@
     }
 
     async function saveBayaranPayment() {
-      const invoiceNumber = document.getElementById('bp-invoice')?.value.trim() || '';
+      const bankRef = document.getElementById('bp-invoice')?.value.trim() || '';
+      const paidAtVal = document.getElementById('bp-paidat')?.value || '';
       const manualMethod = document.getElementById('bp-method')?.value || 'transfer';
       const amount = bpLockedAmount != null ? bpLockedAmount : parseFloat(document.getElementById('bp-amount')?.value);
       const file = document.getElementById('bp-receipt')?.files?.[0];
       if (!amount || amount <= 0) { banner(iswL('Sila isi jumlah yang sah', 'Please enter a valid amount'), 'error'); return; }
       if (!file && manualMethod !== 'cash') { banner(iswL('Sila upload bukti bayaran (wajib kecuali tunai)', 'Please upload proof of payment (required unless cash)'), 'error'); return; }
+      if (manualMethod === 'transfer' && !bankRef) { banner(iswL('Bank Reference wajib untuk Bank Transfer.', 'Bank Reference is required for Bank Transfer.'), 'error'); return; }
+      const dateProblem = iswPaidAtProblem(paidAtVal);
+      if (dateProblem) { banner(dateProblem, 'error'); return; }
 
       // Halang bayaran melebihi jumlah komitmen (checkpoint terakhir, atau harga pakej
       // kalau tiada jadual ansuran) — elak rekod berganda dgn kob-detail.html.
@@ -5146,14 +5163,18 @@
         }
 
         const { data: payRow, error: payErr } = await window.db.from('psy_payments').insert({
-          receipt_ref: `KOB-${invoiceNumber || 'MNL'}-${Date.now()}`,
+          receipt_ref: `KOB-MNL-${Date.now()}`,
           patient_id: patientId,
           user_id: patient?.user_id || null,
           total: amount,
           payment_method: 'manual',
           manual_method: manualMethod,
           status: 'completed',
-          invoice_number: invoiceNumber || null,
+          bank_reference: bankRef || null,
+          paid_at: iswLocalInputToIso(paidAtVal),
+          recorded_by: window.currentUser?.id || null,
+          paid_for_type: bpLockedSeq != null && bpLockedSeq > 0 ? 'installment' : 'package',
+          paid_for_seq: bpLockedSeq,
           receipt_url: signed?.signedUrl || null,
           notes: `Ansuran pakej "${bayaranSession.recommended_package_name || ''}" — direkod di Pesakit Hub`,
           intent: { type: 'kob_package', kob_session_id: bayaranSession.id },
@@ -5188,7 +5209,7 @@
           }).eq('id', patientId);
         }
 
-        await auditLog('kob.package_payment_manual', bayaranSession.id, { invoice_number: invoiceNumber, amount, total_paid: totalPaid, recorded_at: 'patient-hub' });
+        await auditLog('kob.package_payment_manual', bayaranSession.id, { bank_reference: bankRef, amount, total_paid: totalPaid, paid_at: iswLocalInputToIso(paidAtVal), recorded_at: 'patient-hub' });
         banner('Bayaran disahkan ✅');
         // Muat semula senarai (jumlah/status kumpulan berubah) TAPI terus balik
         // ke detail pakej ni juga (bukan senarai) — staff biasanya rekod >1 ansuran berturutan.

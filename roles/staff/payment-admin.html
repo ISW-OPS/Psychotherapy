@@ -180,45 +180,62 @@
   </div>
 </div>
 
-<!-- Manual Payment Modal -->
+<!-- Manual Payment Modal — bayaran MESTI dipautkan kepada sasaran sebenar (pakej/ansuran, invois, konsultasi, produk) -->
 <div id="manual-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
   <div class="absolute inset-0 bg-black/50" onclick="closeManualModal()"></div>
-  <div class="relative bg-white rounded-2xl max-w-md w-full overflow-hidden">
-    <div class="p-5 border-b border-ink/10 flex items-center justify-between">
+  <div class="relative bg-white rounded-2xl max-w-lg w-full max-h-[92vh] overflow-y-auto">
+    <div class="p-5 border-b border-ink/10 flex items-center justify-between sticky top-0 bg-white z-10">
       <h3 class="font-bold text-lg">Rekod Bayaran Manual</h3>
       <button onclick="closeManualModal()" class="text-ink/60 text-2xl leading-none hover:text-ink">×</button>
     </div>
     <div class="p-5 space-y-3">
       <div>
         <label class="text-xs font-semibold text-ink/65">Pesakit</label>
-        <select id="m-patient" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
+        <select id="m-patient" onchange="onManualPatientChange()" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
           <option value="">— Pilih pesakit —</option>
         </select>
       </div>
       <div>
-        <label class="text-xs font-semibold text-ink/65">Penerangan</label>
-        <input id="m-desc" type="text" placeholder="cth: Pakej Asas (1x)" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm">
+        <label class="text-xs font-semibold text-ink/65">Bayaran untuk</label>
+        <select id="m-target" onchange="onManualTargetChange()" disabled class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
+          <option value="">— Pilih pesakit dahulu —</option>
+        </select>
+        <p id="m-target-hint" class="text-[11px] text-ink/45 mt-1"></p>
+      </div>
+      <div id="m-item-wrap" class="hidden">
+        <label class="text-xs font-semibold text-ink/65">Nama Item / Konsultasi</label>
+        <input id="m-desc" type="text" placeholder="cth: Konsultasi Doktor / Madu 500g" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm">
       </div>
       <div class="grid grid-cols-2 gap-3">
         <div>
-          <label class="text-xs font-semibold text-ink/65">Jumlah (RM)</label>
+          <label class="text-xs font-semibold text-ink/65"><span id="m-total-label">Jumlah (RM)</span></label>
           <input id="m-total" type="number" step="0.01" min="0" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm">
         </div>
         <div>
-          <label class="text-xs font-semibold text-ink/65">Kaedah</label>
-          <select id="m-method" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
-            <option value="transfer">Transfer</option>
-            <option value="card">Kad</option>
-            <option value="fpx">FPX</option>
-            <option value="manual">Manual</option>
+          <label class="text-xs font-semibold text-ink/65">Kaedah Bayaran</label>
+          <select id="m-method" onchange="onManualMethodChange()" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
+            <option value="transfer">Bank Transfer</option>
+            <option value="cash">Tunai</option>
           </select>
         </div>
+        <div>
+          <label class="text-xs font-semibold text-ink/65">Tarikh &amp; Masa Bayaran</label>
+          <input id="m-paidat" type="datetime-local" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm">
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-ink/65">Bank Reference <span id="m-ref-req" class="font-normal text-ink/40">(wajib untuk transfer)</span></label>
+          <input id="m-bankref" type="text" placeholder="cth: no. transaksi / rujukan bank" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm">
+        </div>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-ink/65">Upload Bukti Bayaran <span id="m-proof-req" class="font-normal text-ink/40">(wajib kecuali tunai)</span></label>
+        <input id="m-proof" type="file" accept="image/*,.pdf" class="w-full mt-1 text-xs text-ink/60 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-navy file:text-white">
       </div>
       <div>
         <label class="text-xs font-semibold text-ink/65">Nota (opsyenal)</label>
         <textarea id="m-notes" rows="2" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm"></textarea>
       </div>
-      <button onclick="saveManual()" data-rbac="payment.create" class="w-full bg-navy text-white font-semibold py-2.5 rounded-lg hover:bg-navy-dark transition-colors">
+      <button onclick="saveManual()" id="btn-save-manual" data-rbac="payment.create" class="w-full bg-navy text-white font-semibold py-2.5 rounded-lg hover:bg-navy-dark transition-colors">
         Simpan Bayaran
       </button>
     </div>
@@ -226,6 +243,7 @@
 </div>
 
 <script src="/shared/supabase.js"></script>
+<script src="../../shared/kobPayments.js"></script>
 <script src="../../config/supabase.js"></script>
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
@@ -366,6 +384,8 @@ function openDetail(id) {
         <div class="text-sm font-mono font-bold text-ink">${escHtml(p.receipt_no || '—')}</div>
         ${p.invoice_no ? `<div class="text-xs text-ink/45 mt-1.5">${iswL('No. Invois', 'Invoice No.')}</div><div class="text-sm font-mono font-semibold text-ink">${escHtml(p.invoice_no)}</div>` : ''}
         ${p.invoice_number ? `<div class="text-xs text-ink/45 mt-1.5">${iswL('No. Rujukan', 'Reference No.')}</div><div class="text-xs font-mono text-ink/70">${escHtml(p.invoice_number)}</div>` : ''}
+        ${p.bank_reference ? `<div class="text-xs text-ink/45 mt-1.5">Bank Reference</div><div class="text-xs font-mono text-ink/70">${escHtml(p.bank_reference)}</div>` : ''}
+        ${p.paid_for_type ? `<div class="text-xs text-ink/45 mt-1.5">${iswL('Bayaran untuk', 'Payment for')}</div><div class="text-xs text-ink/70">${escHtml(p.paid_for_type)}${p.paid_for_seq != null ? ' #' + p.paid_for_seq : ''}${p.paid_for_ref ? ' · ' + escHtml(p.paid_for_ref) : ''}${p.is_partial ? ' · ' + iswL('Bayaran Separa', 'Partial Payment') : ''}</div>` : ''}
         <div class="text-[10px] text-ink/35 mt-1.5">${iswL('ID sistem', 'System ID')}: <span class="font-mono">${escHtml(p.receipt_ref || '—')}</span></div>
       </div>
       <span class="text-[10px] font-bold px-2 py-1 rounded-full ${info.cls}">${info.label}</span>
@@ -489,39 +509,172 @@ async function markComplete(id) {
   } catch(e) { banner('Ralat: ' + e.message, 'error'); }
 }
 
-function openManualModal() { document.getElementById('manual-modal').classList.remove('hidden'); }
+let manualTargets = {};   // value → {kind, ...} untuk pilihan "Bayaran untuk" semasa
+
+function openManualModal() {
+  document.getElementById('manual-modal').classList.remove('hidden');
+  document.getElementById('m-paidat').value = iswNowLocalInput();
+  document.getElementById('m-paidat').max = iswNowLocalInput();
+  onManualMethodChange();
+}
 function closeManualModal() { document.getElementById('manual-modal').classList.add('hidden'); }
+
+function onManualMethodChange() {
+  const cash = document.getElementById('m-method').value === 'cash';
+  document.getElementById('m-ref-req').textContent = cash ? iswL('(pilihan)', '(optional)') : iswL('(wajib untuk transfer)', '(required for transfer)');
+  document.getElementById('m-proof-req').textContent = cash ? iswL('(pilihan untuk tunai)', '(optional for cash)') : iswL('(wajib)', '(required)');
+}
+
+const fmtRMs = n => 'RM ' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// Muat sasaran bayaran untuk pesakit: pakej/ansuran KOB yang masih berbaki, invois bukan-pakej yang belum dibayar,
+// dan jenis lain (konsultasi/produk/lain-lain). Bayaran MESTI dipautkan kepada salah satu.
+async function onManualPatientChange() {
+  const pid = document.getElementById('m-patient').value;
+  const sel = document.getElementById('m-target');
+  manualTargets = {};
+  if (!pid) { sel.disabled = true; sel.innerHTML = '<option value="">— Pilih pesakit dahulu —</option>'; onManualTargetChange(); return; }
+  sel.disabled = true; sel.innerHTML = '<option value="">' + iswL('Memuatkan…', 'Loading…') + '</option>';
+
+  const [{ data: kobs }, { data: pend }] = await Promise.all([
+    window.db.from('psy_kob_sessions')
+      .select('id, recommended_package_name, recommended_package_price, package_payment_mode, package_payment_status')
+      .eq('patient_id', pid).eq('package_payment_status', 'partial'),
+    window.db.from('psy_payments').select('id, invoice_no, total, items, created_at')
+      .eq('patient_id', pid).eq('status', 'pending').is('intent->>kob_session_id', null),
+  ]);
+  const kobIds = (kobs || []).map(k => k.id);
+  const [{ data: cps }, { data: pays }] = kobIds.length ? await Promise.all([
+    window.db.from('psy_kob_installment_checkpoints').select('kob_session_id, seq, target_cumulative').in('kob_session_id', kobIds).order('seq'),
+    window.db.from('psy_payments').select('total, intent').eq('status', 'completed').in('intent->>kob_session_id', kobIds),
+  ]) : [{ data: [] }, { data: [] }];
+
+  const opts = [];
+  (kobs || []).forEach(k => {
+    const paid = (pays || []).filter(p => p.intent?.kob_session_id === k.id).reduce((s, p) => s + Number(p.total || 0), 0);
+    const mine = (cps || []).filter(c => c.kob_session_id === k.id);
+    if (k.package_payment_mode === 'installment' && mine.length) {
+      const next = mine.find(c => Number(c.target_cumulative) > paid + 0.005);
+      if (!next) return;
+      const remaining = Math.max(0, Number(next.target_cumulative) - paid);
+      const label = next.seq === 0 ? 'Deposit' : `${iswL('Ansuran', 'Installment')} ${next.seq}`;
+      const v = `kob|${k.id}|${next.seq}`;
+      manualTargets[v] = { kind: 'kob', kobId: k.id, seq: next.seq, amount: remaining, locked: true, title: `${label} — ${k.recommended_package_name || ''}`, forType: next.seq === 0 ? 'package' : 'installment' };
+      opts.push(`<option value="${v}">${escHtml(k.recommended_package_name || 'Pakej')} — ${escHtml(label)} (${iswL('baki', 'balance')} ${fmtRMs(remaining)})</option>`);
+    } else {
+      const remaining = Math.max(0, Number(k.recommended_package_price || 0) - paid);
+      if (!(remaining > 0)) return;
+      const v = `kob|${k.id}|full`;
+      manualTargets[v] = { kind: 'kob', kobId: k.id, seq: null, amount: remaining, locked: false, max: remaining, title: `${iswL('Bayaran', 'Payment')} — ${k.recommended_package_name || ''}`, forType: 'package' };
+      opts.push(`<option value="${v}">${escHtml(k.recommended_package_name || 'Pakej')} — ${iswL('Baki pakej', 'Package balance')} ${fmtRMs(remaining)}</option>`);
+    }
+  });
+  (pend || []).forEach(p => {
+    const item = (Array.isArray(p.items) ? p.items : [])[0] || {};
+    const v = `inv|${p.id}`;
+    manualTargets[v] = { kind: 'inv', paymentId: p.id, invoiceNo: p.invoice_no, amount: Number(p.total || 0), locked: true, title: item.title || item.name || iswL('Bayaran', 'Payment') };
+    opts.push(`<option value="${v}">${iswL('Invois', 'Invoice')} ${escHtml(p.invoice_no || '—')} — ${escHtml(item.title || item.name || '')} (${fmtRMs(p.total)})</option>`);
+  });
+  [['consultation', iswL('Konsultasi', 'Consultation')], ['product', iswL('Produk', 'Product')], ['other', iswL('Lain-lain', 'Other')]].forEach(([t, lbl]) => {
+    const v = `other|${t}`;
+    manualTargets[v] = { kind: 'other', forType: t, amount: 0, locked: false };
+    opts.push(`<option value="${v}">${escHtml(lbl)} (${iswL('taip nama item', 'type item name')})</option>`);
+  });
+  sel.innerHTML = '<option value="">' + iswL('— Pilih sasaran bayaran —', '— Select what this pays for —') + '</option>' + opts.join('');
+  sel.disabled = false;
+  onManualTargetChange();
+}
+
+function onManualTargetChange() {
+  const t = manualTargets[document.getElementById('m-target').value];
+  const total = document.getElementById('m-total');
+  const wrap = document.getElementById('m-item-wrap');
+  const hint = document.getElementById('m-target-hint');
+  wrap.classList.toggle('hidden', !(t && t.kind === 'other'));
+  total.readOnly = false; total.classList.remove('pointer-events-none', 'cursor-not-allowed'); total.style.backgroundColor = '';
+  document.getElementById('m-total-label').textContent = iswL('Jumlah (RM)', 'Amount (RM)');
+  hint.textContent = '';
+  if (!t) { total.value = ''; return; }
+  if (t.kind === 'other') { total.value = ''; return; }
+  total.value = Number(t.amount).toFixed(2);
+  if (t.locked) {
+    total.readOnly = true; total.classList.add('pointer-events-none', 'cursor-not-allowed'); total.style.backgroundColor = '#eef0f3';
+    document.getElementById('m-total-label').textContent = iswL('Jumlah (Tetap)', 'Amount (Fixed)');
+    hint.textContent = iswL('Jumlah dikunci mengikut baki sasaran yang dipilih.', 'The amount is locked to the balance of the selected target.');
+  } else {
+    hint.textContent = iswL(`Baki ${fmtRMs(t.max)}. Kurang daripada baki akan dibenderakan sebagai bayaran separa.`, `Balance ${fmtRMs(t.max)}. Anything less will be flagged as a partial payment.`);
+  }
+}
 
 async function saveManual() {
   const patientId = document.getElementById('m-patient').value;
-  const desc      = document.getElementById('m-desc').value.trim();
-  const total     = Number(document.getElementById('m-total').value);
-  const method    = document.getElementById('m-method').value;
-  const notes     = document.getElementById('m-notes').value.trim();
+  const t = manualTargets[document.getElementById('m-target').value];
+  const method = document.getElementById('m-method').value;
+  const bankRef = document.getElementById('m-bankref').value.trim();
+  const paidAtVal = document.getElementById('m-paidat').value;
+  const file = document.getElementById('m-proof').files?.[0];
+  const notes = document.getElementById('m-notes').value.trim();
+  const desc = document.getElementById('m-desc').value.trim();
+  let total = Number(document.getElementById('m-total').value);
 
-  if (!patientId) return banner('Pilih pesakit dahulu', 'error');
-  if (!total || total <= 0) return banner('Masukkan jumlah yang sah', 'error');
+  if (!patientId) return banner(iswL('Pilih pesakit dahulu', 'Select a patient first'), 'error');
+  if (!t) return banner(iswL('Pilih apa yang dibayar (pakej, ansuran, invois, konsultasi atau produk).', 'Select what is being paid (package, installment, invoice, consultation or product).'), 'error');
+  if (t.locked) total = Number(t.amount);
+  if (!total || total <= 0) return banner(iswL('Masukkan jumlah yang sah', 'Enter a valid amount'), 'error');
+  if (t.kind === 'other' && !desc) return banner(iswL('Nama item wajib diisi.', 'The item name is required.'), 'error');
+  if (t.max != null && total > t.max + 0.005) return banner(iswL(`Jumlah melebihi baki (${fmtRMs(t.max)}).`, `Amount exceeds the balance (${fmtRMs(t.max)}).`), 'error');
+  const dateProblem = iswPaidAtProblem(paidAtVal);
+  if (dateProblem) return banner(dateProblem, 'error');
+  if (method === 'transfer' && !bankRef) return banner(iswL('Bank Reference wajib untuk Bank Transfer.', 'Bank Reference is required for Bank Transfer.'), 'error');
+  if (method !== 'cash' && !file) return banner(iswL('Sila upload bukti bayaran.', 'Please upload proof of payment.'), 'error');
 
+  const isPartial = t.max != null && total < t.max - 0.005;
+  if (isPartial && !confirm(iswL(`Jumlah ${fmtRMs(total)} kurang daripada baki ${fmtRMs(t.max)}. Rekod sebagai BAYARAN SEPARA?`, `The amount ${fmtRMs(total)} is less than the balance ${fmtRMs(t.max)}. Record as a PARTIAL PAYMENT?`))) return;
+
+  const btn = document.getElementById('btn-save-manual');
+  btn.disabled = true;
   try {
-    const ref = 'RCP-' + Date.now().toString(36).toUpperCase();
-    await window.db.from('psy_payments').insert({
-      receipt_ref: ref,
-      patient_id: patientId,
-      items: desc ? [{ name: desc, price: total, qty: 1 }] : [],
-      subtotal: total,
-      total,
-      payment_method: method,
-      status: 'completed',
-      notes: notes || null,
-      paid_at: new Date().toISOString(),
-    });
-    banner('Bayaran manual direkod');
+    const proofUrl = await iswUploadPaymentProof(patientId, file);
+    const common = {
+      payment_method: 'manual', manual_method: method, status: 'completed', total, subtotal: total,
+      bank_reference: bankRef || null, paid_at: iswLocalInputToIso(paidAtVal), receipt_url: proofUrl,
+      recorded_by: window.currentUser?.id || null, is_partial: isPartial, notes: notes || null,
+    };
+    let paymentId;
+    if (t.kind === 'inv') {
+      // Lunaskan invois sedia ada (baris 'pending') — nombor invois & resit kekal satu rantaian
+      const { data: upd, error } = await window.db.from('psy_payments').update({
+        ...common, gateway_status: 'manual_settled', paid_for_type: 'invoice', paid_for_ref: t.invoiceNo || null,
+      }).eq('id', t.paymentId).eq('status', 'pending').select('id');
+      if (error) throw error;
+      if (!upd?.length) throw new Error(iswL('Invois ini sudah tidak menunggu bayaran.', 'This invoice is no longer awaiting payment.'));
+      paymentId = t.paymentId;
+    } else {
+      const isKob = t.kind === 'kob';
+      const item = isKob ? { type: 'kob_package', title: t.title, amount: total } : { type: t.forType, title: desc, amount: total };
+      const { data: row, error } = await window.db.from('psy_payments').insert({
+        ...common,
+        receipt_ref: (isKob ? 'KOB-MNL-' : 'MNL-') + Date.now(),
+        patient_id: patientId,
+        user_id: patientLookup[patientId]?.user_id || null,
+        items: [item],
+        intent: isKob ? { type: 'kob_package', kob_session_id: t.kobId } : { type: t.forType },
+        paid_for_type: t.forType, paid_for_seq: isKob ? t.seq : null,
+      }).select('id').single();
+      if (error) throw error;
+      paymentId = row.id;
+      if (isKob) await iswRecalcKobPayment(t.kobId);
+    }
+    Promise.resolve(window.db.functions.invoke('payments-send-receipt', { body: { paymentId } })).catch(() => {});
+    if (window.auditLog) window.auditLog('payment.manual_recorded', paymentId, { patient_id: patientId, target: t.kind, amount: total, method, bank_reference: bankRef || null, paid_at: common.paid_at, partial: isPartial });
+    banner(iswL('Bayaran manual direkod ✅', 'Manual payment recorded ✅'));
     closeManualModal();
-    document.getElementById('m-desc').value = '';
-    document.getElementById('m-total').value = '';
-    document.getElementById('m-notes').value = '';
+    ['m-desc', 'm-total', 'm-notes', 'm-bankref'].forEach(id => { document.getElementById(id).value = ''; });
+    document.getElementById('m-proof').value = '';
+    document.getElementById('m-target').value = '';
     await loadData();
-  } catch(e) { banner('Ralat: ' + e.message, 'error'); }
+  } catch (e) { banner(iswL('Ralat: ', 'Error: ') + e.message, 'error'); }
+  finally { btn.disabled = false; }
 }
 
 function exportCsv() {
@@ -580,13 +733,13 @@ async function loadData() {
     // Semua pesakit (bukan 'active' sahaja) supaya nama sentiasa boleh dipadankan pada resit/invois
     // psy_patients ada DUA FK ke psy_profiles (user_id + coach_id) — embed
     // psy_profiles(...) tanpa disambiguasi punca PostgREST error diam-diam.
-    window.db.from('psy_patients').select('id, mrn, status, full_name, psy_profiles!user_id(full_name)'),
+    window.db.from('psy_patients').select('id, mrn, status, full_name, user_id, psy_profiles!user_id(full_name)'),
   ]);
 
   allPayments = payRes.data || [];
   patientLookup = {};
   (patRes.data || []).forEach(p => {
-    patientLookup[p.id] = { name: p.psy_profiles?.full_name || p.full_name || p.mrn || 'Pesakit', mrn: p.mrn, status: p.status };
+    patientLookup[p.id] = { name: p.psy_profiles?.full_name || p.full_name || p.mrn || 'Pesakit', mrn: p.mrn, status: p.status, user_id: p.user_id };
   });
 
   // Populate manual modal patient select — pesakit aktif sahaja
