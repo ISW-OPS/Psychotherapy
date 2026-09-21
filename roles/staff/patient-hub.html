@@ -4799,7 +4799,7 @@
               const payment = isPaid ? payments[i] : null;
               const actionHtml = i === nextIdx ? `
                 <div class="flex gap-1.5 flex-wrap">
-                  <button type="button" onclick="payCheckpointManual(${Math.max(0, Number(cp.target_cumulative) - totalPaid).toFixed(2)})" class="text-[11px] font-semibold bg-green-dark text-white px-2 py-1 rounded-md hover:opacity-90 whitespace-nowrap">💵 Bayar Manual</button>
+                  <button type="button" onclick="payCheckpointManual(${Math.max(0, installmentAmt).toFixed(2)})" class="text-[11px] font-semibold bg-green-dark text-white px-2 py-1 rounded-md hover:opacity-90 whitespace-nowrap">💵 Bayar Manual</button>
                   <button type="button" onclick="sendAnsuranLink(this)" class="ans-send-btn text-[11px] font-semibold bg-navy text-white px-2 py-1 rounded-md hover:bg-navy-dark whitespace-nowrap disabled:opacity-60">📤 Hantar WA</button>
                   <button type="button" onclick="copyAnsuranLink(this)" class="ans-copy-btn text-[11px] font-semibold border border-ink/15 text-ink px-2 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap disabled:opacity-60">📋 Salin</button>
                 </div>` : (payment ? `<button type="button" onclick="viewAnsuranResit('${payment.id}')" class="text-[11px] font-semibold border border-ink/15 text-ink px-2 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap">🧾 Lihat Resit</button>` : '');
@@ -4826,8 +4826,11 @@
       // Resit dah dipaparkan terus dalam lajur Tindakan (butang "🧾 Lihat Resit"
       // per checkpoint di atas) — tiada lagi senarai "Sejarah Resit" berasingan.
       const canRecord = owed - totalPaid > 0.01;
+      // Pelan ansuran (ada checkpoint, amaun tetap): borang tersembunyi — dibuka oleh butang
+      // "Bayar Manual" pada baris checkpoint. Tanpa checkpoint (bayaran penuh separa): sentiasa nampak.
+      const formHidden = isInstallment && checkpoints.length > 0;
       const formHtml = canRecord ? `
-        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+        <div id="bp-form-card" class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 ${formHidden ? 'hidden' : ''}">
           <h4 class="font-bold text-sm text-ink mb-3">➕ Rekod Bayaran Baru</h4>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
@@ -4851,8 +4854,11 @@
                 class="w-full text-xs text-ink/60 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-navy file:text-white">
             </div>
           </div>
-          <button type="button" onclick="saveBayaranPayment()" id="btn-save-bayaran"
-            class="mt-3 bg-navy text-white px-6 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">Sahkan Bayaran</button>
+          <div class="mt-3 flex items-center gap-3">
+            <button type="button" onclick="saveBayaranPayment()" id="btn-save-bayaran"
+              class="bg-navy text-white px-6 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">Sahkan Bayaran</button>
+            ${formHidden ? `<button type="button" onclick="document.getElementById('bp-form-card').classList.add('hidden')" class="text-xs text-ink/50 hover:underline">Batal</button>` : ''}
+          </div>
         </div>` : '';
 
       document.getElementById('bayaran-body').innerHTML = bayaranBackBtnHtml + summaryHtml + cpHtml + txHtml + formHtml;
@@ -4943,10 +4949,12 @@
     function payCheckpointManual(amount) {
       const amt = document.getElementById('bp-amount');
       if (!amt) { banner('Tiada baki untuk direkod.', 'error'); return; }
+      const card = document.getElementById('bp-form-card');
+      card?.classList.remove('hidden');
       amt.value = Number(amount).toFixed(2);
       amt.readOnly = true;
       amt.classList.add('bg-ink/5', 'text-ink/70');
-      amt.closest('.bg-white')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      card?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       document.getElementById('bp-method')?.focus();
     }
 
