@@ -274,12 +274,17 @@
           <h3 class="font-bold">${L('Invois', 'Invoice')}</h3>
           <div class="flex gap-2">
             <button type="button" id="invoice-print-btn" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold">🖨 ${L('Cetak / Simpan PDF', 'Print / Save PDF')}</button>
-            <button type="button" onclick="this.closest('.fixed').remove()" class="text-ink/60 text-xl px-2">×</button>
+            <button type="button" id="invoice-close-btn" class="text-ink/60 text-xl px-2" aria-label="Close">×</button>
           </div>
         </div>
         <div id="invoice-print" class="flex-1 overflow-y-auto p-8 text-ink">${inner}</div>
       </div>`;
     document.body.appendChild(modal);
+    const closeModal = () => { modal.remove(); document.removeEventListener('keydown', onKey); };
+    const onKey = (e) => { if (e.key === 'Escape') closeModal(); };
+    document.addEventListener('keydown', onKey);
+    document.getElementById('invoice-close-btn').onclick = closeModal;
+    modal.firstElementChild.onclick = closeModal;
     document.getElementById('invoice-print-btn').onclick = () => window.iswDoc.printHtml(inner, 'Invoice');
   }
 

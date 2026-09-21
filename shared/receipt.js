@@ -226,10 +226,15 @@
   }
 
   // Modal fallback (jika mahu buka resit tanpa navigasi halaman)
+  let receiptOpening = false;   // elak dua modal bertindih bila butang ditekan berulang semasa data dimuat
   async function viewReceiptPDF(id, override) {
     const r = (window._receipts || []).find(x => x.id === id);
-    if (!r) return;
-    const inner = await buildReceiptInner(r, override);
+    if (!r || receiptOpening) return;
+    receiptOpening = true;
+    let inner;
+    try { inner = await buildReceiptInner(r, override); }
+    finally { receiptOpening = false; }
+    document.querySelectorAll('#pdf-modal').forEach(m => m.remove());
     const modal = document.createElement('div');
     modal.id = 'pdf-modal';
     modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
@@ -240,12 +245,17 @@
           <h3 class="font-bold">Resit Pembayaran</h3>
           <div class="flex gap-2">
             <button type="button" id="receipt-print-btn" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold">🖨 Print / Save PDF</button>
-            <button onclick="this.closest('.fixed').remove()" class="text-ink/60 text-xl px-2">×</button>
+            <button type="button" id="receipt-close-btn" class="text-ink/60 text-xl px-2" aria-label="Close">×</button>
           </div>
         </div>
         <div id="receipt-print" class="flex-1 overflow-y-auto p-8 text-ink">${inner}</div>
       </div>`;
     document.body.appendChild(modal);
+    const closeModal = () => { modal.remove(); document.removeEventListener('keydown', onKey); };
+    const onKey = (e) => { if (e.key === 'Escape') closeModal(); };
+    document.addEventListener('keydown', onKey);
+    document.getElementById('receipt-close-btn').onclick = closeModal;
+    modal.firstElementChild.onclick = closeModal;
     document.getElementById('receipt-print-btn').onclick = () => printHtml(inner, r.receipt_no || r.receipt_ref);
   }
 
