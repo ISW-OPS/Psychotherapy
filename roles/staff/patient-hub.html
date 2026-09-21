@@ -4972,13 +4972,21 @@
 
     // Invois ansuran (PDF, butang Pay boleh diklik) dilampirkan bersama pautan HitPay.
     // Gagal jana invois TAK gagalkan penghantaran pautan (dihantar tanpa lampiran).
+    let lastInvoiceError = '';
     async function fetchInstallmentInvoiceUrl(seq, payUrl) {
+      lastInvoiceError = '';
       try {
-        const { data } = await window.db.functions.invoke('kob-invoice-pdf', {
+        const { data, error } = await window.db.functions.invoke('kob-invoice-pdf', {
           body: { kobSessionId: bayaranSession.id, seq, payUrl },
         });
+        if (error) {
+          lastInvoiceError = error.message;
+          try { const ctx = await error.context?.json(); if (ctx?.error) lastInvoiceError = ctx.error; } catch (_) { }
+          return null;
+        }
+        if (data?.error) { lastInvoiceError = data.error; return null; }
         return data?.url || null;
-      } catch (_) { return null; }
+      } catch (e) { lastInvoiceError = e.message; return null; }
     }
 
     async function sendAnsuranLink(btn, seq) {
@@ -4999,7 +5007,8 @@
           message: `Salam ${patName} 👋\n\nSila selesaikan bayaran ansuran pakej rawatan anda melalui pautan selamat di bawah:\n\n${checkoutUrl}${invoiceUrl ? '\n\nInvois ansuran dilampirkan.' : ''}\n\n— ISW`,
           ...(invoiceUrl ? { attachments: [invoiceUrl] } : {}),
         });
-        banner('Pautan ansuran dihantar ke WhatsApp pesakit ✅');
+        if (invoiceUrl) banner(iswL('Pautan + invois ansuran dihantar ke WhatsApp pesakit ✅', 'Payment link + installment invoice sent to the patient on WhatsApp ✅'));
+        else banner(iswL('Pautan dihantar, TAPI invois PDF gagal dijana: ', 'Link sent, BUT the invoice PDF could not be generated: ') + lastInvoiceError, 'error');
       } catch (e) {
         banner('Gagal jana/hantar pautan: ' + e.message, 'error');
       } finally {

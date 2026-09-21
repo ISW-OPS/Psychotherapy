@@ -2320,13 +2320,17 @@
         if (!contactId) throw new Error('Tak dapat sediakan contact GHL untuk nombor ini.');
         const label = mode === 'full' ? 'Bayaran Penuh' : 'Deposit Ansuran';
         // Invois (PDF, butang Pay boleh diklik) dilampirkan bersama pautan. Gagal jana TAK gagalkan hantar pautan.
-        let invoiceUrl = null;
+        let invoiceUrl = null, invoiceErr = '';
         try {
-          const { data: inv } = await window.db.functions.invoke('kob-invoice-pdf', {
+          const { data: inv, error: invErr } = await window.db.functions.invoke('kob-invoice-pdf', {
             body: { kobSessionId: kobId, seq: mode === 'full' ? null : 0, payUrl: data.checkoutUrl, amount: data.amount },
           });
-          invoiceUrl = inv?.url || null;
-        } catch (_) { /* hantar pautan tanpa lampiran */ }
+          if (invErr) {
+            invoiceErr = invErr.message;
+            try { const ctx = await invErr.context?.json(); if (ctx?.error) invoiceErr = ctx.error; } catch (_) { }
+          } else if (inv?.error) invoiceErr = inv.error;
+          else invoiceUrl = inv?.url || null;
+        } catch (e) { invoiceErr = e.message; }
         await ghlInvoke('send', {
           contactId,
           message: `Salam ${patName} 👋\n\nSila selesaikan bayaran (${label}) pakej rawatan anda melalui pautan selamat di bawah:\n\n${data.checkoutUrl}${invoiceUrl ? '\n\nInvois dilampirkan.' : ''}\n\n— ISW`,
@@ -2334,7 +2338,8 @@
         });
 
         hitpayLinkSentAt = new Date().toISOString();
-        banner('Pautan HitPay dihantar ke WhatsApp pesakit ✅');
+        if (invoiceUrl) banner(iswL('Pautan HitPay + invois dihantar ke WhatsApp pesakit ✅', 'HitPay link + invoice sent to the patient on WhatsApp ✅'));
+        else banner(iswL('Pautan HitPay dihantar, TAPI invois PDF gagal dijana: ', 'HitPay link sent, BUT the invoice PDF could not be generated: ') + invoiceErr, 'error');
       } catch (e) {
         banner('Gagal jana/hantar pautan HitPay: ' + e.message, 'error');
       } finally {
