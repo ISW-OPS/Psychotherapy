@@ -2112,7 +2112,7 @@ async function loadAbsentAlert() {
       .eq('status', 'active')
       .then(r => r.data || []).catch(() => []),
     window.db.from('psy_treatment_plans')
-      .select('id, patient_id, current_week, duration_weeks')
+      .select('patient_id, current_week, duration_weeks')
       .eq('status', 'active')
       .then(r => r.data || []).catch(() => []),
     window.db.from('psy_plan_weekly_progress')
@@ -2137,18 +2137,6 @@ async function loadAbsentAlert() {
   const planMap2 = {};
   plansRes.forEach(pl => { planMap2[pl.patient_id] = pl; });
 
-  // Minggu yang PERLU TINDAKAN bagi setiap pelan: sesi terawal yang belum Hadir (cth Tidak Hadir / Jadual Semula
-  // / belum direkod) — supaya klik terus ke Minggu Rawatan itu (bukan hanya Pesakit Hub).
-  const planIds = plansRes.map(pl => pl.id).filter(Boolean);
-  const needActionByPlan = {};
-  if (planIds.length) {
-    const { data: openRows } = await window.db.from('psy_plan_weekly_progress')
-      .select('plan_id, week_number, status')
-      .in('plan_id', planIds).not('status', 'in', '(hadir,consultation_done)')
-      .order('week_number', { ascending: true }).limit(2000);
-    (openRows || []).forEach(r => { if (!(r.plan_id in needActionByPlan)) needActionByPlan[r.plan_id] = r.week_number; });
-  }
-
   const today = new Date();
   const absentList = patientsRes
     .filter(p => planMap2[p.id]) // only those with active plans
@@ -2166,8 +2154,6 @@ async function loadAbsentAlert() {
         last_hadir:    lastHadir,
         current_week:  planMap2[p.id]?.current_week || 0,
         duration_weeks: planMap2[p.id]?.duration_weeks || 0,
-        plan_id:       planMap2[p.id]?.id || null,
-        action_week:   planMap2[p.id] ? needActionByPlan[planMap2[p.id].id] : null,
       };
     })
     .filter(p => p.daysSince === null || p.daysSince >= 7)
@@ -2184,15 +2170,12 @@ async function loadAbsentAlert() {
     const lastDt  = p.last_hadir
       ? new Date(p.last_hadir).toLocaleDateString(LCALE(), { day:'2-digit', month:'short', year:'numeric' })
       : 'Belum pernah hadir';
-    // Baris boleh diklik → Minggu Rawatan minggu yang perlu tindakan (kalau ada), selain itu Pesakit Hub.
-    // Pautan kecil "Hub" sentiasa ke Pesakit Hub.
-    const target = (p.plan_id && p.action_week) ? `plan-week.html?plan_id=${p.plan_id}&week=${p.action_week}` : `patient-hub.html?patient_id=${p.id}`;
+    // Baris boleh diklik → Pesakit Hub (sama dgn senarai "Tidak Hadir > 7 Hari" di dashboard)
     return `<tr class="border-b border-terracotta/10 hover:bg-terracotta/10 cursor-pointer" tabindex="0" role="link"
-        title="${p.action_week ? iswL('Buka Minggu ' + p.action_week + ' (perlu tindakan)', 'Open Week ' + p.action_week + ' (needs action)') : iswL('Buka Pesakit Hub', 'Open Patient Hub')}"
-        onclick="location.href='${target}'"
-        onkeydown="if(event.key==='Enter')location.href='${target}'">
-      <td class="px-4 py-2.5 font-medium text-sm text-navy">${escapeHtml(p.name)} <span class="text-ink/30">→</span>
-        <a href="patient-hub.html?patient_id=${p.id}" onclick="event.stopPropagation()" class="ml-1 text-[10px] font-semibold border border-navy/30 text-navy px-1.5 py-0.5 rounded hover:bg-navy hover:text-white">Hub</a></td>
+        title="${iswL('Buka Pesakit Hub', 'Open Patient Hub')}"
+        onclick="location.href='patient-hub.html?patient_id=${p.id}'"
+        onkeydown="if(event.key==='Enter')location.href='patient-hub.html?patient_id=${p.id}'">
+      <td class="px-4 py-2.5 font-medium text-sm text-navy">${escapeHtml(p.name)} <span class="text-ink/30">→</span></td>
       <td class="px-4 py-2.5 text-xs text-ink/60">${p.mrn}</td>
       <td class="px-4 py-2.5 text-xs">${escapeHtml(p.coach_name)}</td>
       <td class="px-4 py-2.5 text-center"><span class="${daysCls}">${days} hari</span></td>
