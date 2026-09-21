@@ -936,7 +936,7 @@
       const planById = {};            // patient_id -> { duration_weeks, current_week, status }
       const completedByPatient = {};  // patient_id -> bilangan sesi 'hadir'
       const lastHadirByPatient = {};  // patient_id -> tarikh sesi 'hadir' terkini
-      const lastMissedByPatient = {}; // patient_id -> tarikh sesi TERLEPAS terkini (cancel / booked-pending-reschedule yg sudah lepas)
+      const missedByPatient = {};     // patient_id -> [tarikh sesi TERLEPAS] (cancel / booked-pending-reschedule yg sudah lepas)
       const _allPatIds = allPatients.map(p => p.id);
       if (_allPatIds.length) {
         const [planRes, progRes] = await Promise.all([
@@ -947,7 +947,7 @@
         const _nowIso = new Date().toISOString();
         (progRes.data || []).forEach(pr => {
           if (pr.session_date && (pr.status === 'cancel' || (['booked', 'pending', 'reschedule'].includes(pr.status) && pr.session_date < _nowIso))
-              && (!lastMissedByPatient[pr.patient_id] || pr.session_date > lastMissedByPatient[pr.patient_id])) lastMissedByPatient[pr.patient_id] = pr.session_date;
+              ) (missedByPatient[pr.patient_id] = missedByPatient[pr.patient_id] || []).push(pr.session_date);
           if (pr.status !== 'hadir') return;
           completedByPatient[pr.patient_id] = (completedByPatient[pr.patient_id] || 0) + 1;
           if (pr.session_date && (!lastHadirByPatient[pr.patient_id] || pr.session_date > lastHadirByPatient[pr.patient_id])) lastHadirByPatient[pr.patient_id] = pr.session_date;
@@ -1507,11 +1507,13 @@
         allPatients
           .filter(p => p.status === 'active' && planById[p.id]?.status === 'active')
           .map(p => {
-            const last = lastHadirByPatient[p.id] || null;
-            return { p, last, days: last ? Math.floor((nowMs - new Date(last).getTime()) / 86400000) : null };
+            // Tarikh SEPATUTNYA hadir = sesi terlepas paling awal selepas kehadiran terakhir
+            const lh = lastHadirByPatient[p.id] || null;
+            const exp = (missedByPatient[p.id] || []).filter(d => !lh || d > lh).sort()[0] || null;
+            return { p, last: exp, days: exp ? Math.floor((nowMs - new Date(exp).getTime()) / 86400000) : null };
           })
           // Hanya yang BENAR-BENAR terlepas sesi selepas kehadiran terakhir (bukan sekadar belum dijadualkan).
-          .filter(x => lastMissedByPatient[x.p.id] && (!x.last || lastMissedByPatient[x.p.id] > x.last))
+          .filter(x => x.last)
           .filter(x => x.days === null || x.days >= 7)
           .sort((a, b) => (b.days ?? 999) - (a.days ?? 999))
           .forEach(({ p, last, days }) => {
@@ -1520,7 +1522,7 @@
             const coachTag = isMine ? '' : ` · 👤 ${p.coach_id ? (coachNameById[p.coach_id] || 'Coach') : 'Tiada coach'}`;
             const pl = planById[p.id];
             const prog = pl?.duration_weeks ? ` · M${pl.current_week || 0}/${pl.duration_weeks}` : '';
-            const lastLbl = last ? `hadir terakhir ${new Date(last).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' })}` : 'belum pernah hadir';
+            const lastLbl = last ? `sepatutnya hadir ${new Date(last).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' })}` : 'belum pernah hadir';
             absentRows.push(naRow(nm, `${lastLbl}${prog}${coachTag}`,
               `patient-hub.html?patient_id=${p.id}`, 'Hub',
               reasonTag(days === null ? 'Belum hadir' : `${days} hari`, days === null || days >= 14 ? 'bg-terracotta-light text-terracotta' : 'bg-amber-100/70 text-amber-700')));

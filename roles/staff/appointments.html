@@ -132,8 +132,8 @@
                       <th class="px-4 py-2 text-[10px] font-semibold text-terracotta uppercase">Pesakit</th>
                       <th class="px-4 py-2 text-[10px] font-semibold text-terracotta uppercase">MRN</th>
                       <th class="px-4 py-2 text-[10px] font-semibold text-terracotta uppercase">Coach</th>
-                      <th class="px-4 py-2 text-[10px] font-semibold text-terracotta uppercase text-center">Hari Tanpa Kehadiran</th>
-                      <th class="px-4 py-2 text-[10px] font-semibold text-terracotta uppercase">Sesi Hadir Terakhir</th>
+                      <th class="px-4 py-2 text-[10px] font-semibold text-terracotta uppercase text-center">Hari Tidak Hadir</th>
+                      <th class="px-4 py-2 text-[10px] font-semibold text-terracotta uppercase">Sesi Sepatutnya Hadir</th>
                       <th class="px-4 py-2 text-[10px] font-semibold text-terracotta uppercase text-center">Minggu Semasa</th>
                     </tr>
                   </thead>
@@ -2131,14 +2131,20 @@ async function loadAbsentAlert() {
 
   // Last hadir per patient
   const lastHadirMap = {};
-  const lastMissedMap = {};   // sesi TERLEPAS terkini (cancel, atau booked/pending/reschedule yg tarikhnya sudah lepas)
+  const missedDates = {};   // semua sesi TERLEPAS (cancel, atau booked/pending/reschedule yg tarikhnya sudah lepas)
   const nowIso = new Date().toISOString();
   progressRes.forEach(s => {
     if (s.status === 'hadir') {
       if (!lastHadirMap[s.patient_id]) lastHadirMap[s.patient_id] = s.session_date;
     } else if (s.session_date && (s.status === 'cancel' || s.session_date < nowIso)) {
-      if (!lastMissedMap[s.patient_id]) lastMissedMap[s.patient_id] = s.session_date;
+      (missedDates[s.patient_id] = missedDates[s.patient_id] || []).push(s.session_date);
     }
+  });
+  // Tarikh SEPATUTNYA hadir = sesi terlepas yang PALING AWAL selepas kehadiran terakhir
+  const expectedMap = {};
+  Object.keys(missedDates).forEach(pid => {
+    const after = missedDates[pid].filter(d => !lastHadirMap[pid] || d > lastHadirMap[pid]).sort();
+    if (after.length) expectedMap[pid] = after[0];
   });
 
   const planMap2 = {};
@@ -2148,7 +2154,7 @@ async function loadAbsentAlert() {
   const absentList = patientsRes
     .filter(p => planMap2[p.id]) // only those with active plans
     .map(p => {
-      const lastHadir = lastHadirMap[p.id] || null;
+      const lastHadir = expectedMap[p.id] || null;   // tarikh sesi yang sepatutnya dihadiri
       const daysSince = lastHadir
         ? Math.floor((today - new Date(lastHadir)) / 86400000)
         : null;
@@ -2164,7 +2170,7 @@ async function loadAbsentAlert() {
       };
     })
     // Hanya yang benar-benar terlepas sesi selepas kehadiran terakhir (bukan sekadar belum dijadualkan)
-    .filter(p => lastMissedMap[p.id] && (!p.last_hadir || lastMissedMap[p.id] > p.last_hadir))
+    .filter(p => p.last_hadir)
     .filter(p => p.daysSince === null || p.daysSince >= 7)
     .sort((a, b) => (b.daysSince ?? 999) - (a.daysSince ?? 999));
 
@@ -2178,7 +2184,7 @@ async function loadAbsentAlert() {
     const daysCls = p.daysSince !== null && p.daysSince >= 14 ? 'text-terracotta font-bold' : 'text-amber-700 font-semibold';
     const lastDt  = p.last_hadir
       ? new Date(p.last_hadir).toLocaleDateString(LCALE(), { day:'2-digit', month:'short', year:'numeric' })
-      : 'Belum pernah hadir';
+      : '—';
     // Baris boleh diklik → Pesakit Hub (sama dgn senarai "Tidak Hadir > 7 Hari" di dashboard)
     return `<tr class="border-b border-terracotta/10 hover:bg-terracotta/10 cursor-pointer" tabindex="0" role="link"
         title="${iswL('Buka Pesakit Hub', 'Open Patient Hub')}"
