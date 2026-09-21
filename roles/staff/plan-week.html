@@ -1545,9 +1545,11 @@ function renderHero() {
     : '';
   const extControl = absenceExt + continuityExt;
   // Kawalan sesi tidak hadir (sesi aktif): ingatkan pesakit + coach reschedule terus
+  if (status === 'cancel' && weekEntry?.id && absFee.for !== weekEntry.id) ensureAbsenceFee();
   const missControl = (status === 'cancel')
     ? `<div class="mt-3 pt-3 border-t border-ink/8">
          <div class="text-[11px] font-semibold text-ink/50 uppercase tracking-wide mb-2">Sesi tidak hadir — tindakan</div>
+         ${absenceFeeHtml()}
          <div class="flex items-center gap-2 flex-wrap">
            <button data-rbac="plan_week.edit" onclick="remindPatientReschedule()" class="inline-flex items-center gap-1.5 text-xs font-semibold border border-navy/30 text-navy px-3 py-1.5 rounded-lg hover:bg-navy hover:text-white transition">🔔 Ingatkan Pesakit</button>
            <input id="resched-date" type="date" min="${pwTodayYmd()}" onchange="pwOnDateChange('resched-date','resched-slot','resched-warn')" class="text-xs border border-ink/20 rounded-lg px-2 py-1.5 outline-none focus:border-navy">
@@ -1767,6 +1769,71 @@ async function maybeAutoInactivePatient() {
       banner('✅ Rawatan tamat — pesakit ditanda Tidak Aktif (Selesai).');
     }
   } catch (e) { console.warn('[auto-inactive]', e.message); }
+}
+
+// ── Denda tidak hadir ─────────────────────────────────
+// Kenakan denda (jumlah = extension_price_per_session dalam Tetapan Pakej) ATAU tak kena denda. Reschedule tak disekat.
+// Denda = invois tertunggak (psy_payments status 'pending') pada akaun pesakit — dibayar bersama baki pakej.
+const absFee = { for: null, amount: 25, row: null, waived: false };
+async function ensureAbsenceFee() {
+  const sid = weekEntry?.id; if (!sid) return;
+  absFee.for = sid; absFee.row = null; absFee.waived = false;
+  try {
+    if (activePlan?.template) {
+      const { data: pkg } = await window.db.from('psy_packages').select('extension_price_per_session').eq('package_id', activePlan.template).maybeSingle();
+      absFee.amount = Number(pkg?.extension_price_per_session) || 25;
+    }
+    const [{ data: rows }, { data: aud }] = await Promise.all([
+      window.db.from('psy_payments').select('id, status, total, invoice_no').eq('patient_id', patientId)
+        .eq('paid_for_ref', sid).eq('paid_for_type', 'other').neq('status', 'failed').limit(1),
+      window.db.from('psy_audit_log').select('id').eq('action', 'plan.absence_fee_waived').eq('target', sid).limit(1),
+    ]);
+    absFee.row = rows?.[0] || null;
+    absFee.waived = !!aud?.length;
+  } catch (e) { console.warn('[absence-fee]', e.message); }
+  renderHero();
+}
+function absenceFeeHtml() {
+  if (absFee.for !== weekEntry?.id) return '';
+  const rm = n => 'RM ' + Number(n).toFixed(2);
+  if (absFee.row) {
+    const paid = absFee.row.status === 'completed';
+    return `<div class="mb-2 text-xs rounded-lg px-3 py-2 ${paid ? 'bg-green-50 text-green-dark' : 'bg-terracotta/10 text-terracotta-dark'}">💸 ${iswL('Denda tidak hadir', 'Absence fee')} ${rm(absFee.row.total)}${absFee.row.invoice_no ? ' · ' + escHtml(absFee.row.invoice_no) : ''} — <b>${paid ? iswL('sudah dibayar', 'paid') : iswL('belum dibayar (dibayar bersama baki pakej)', 'unpaid (paid together with the package balance)')}</b></div>`;
+  }
+  if (absFee.waived) return `<div class="mb-2 text-xs rounded-lg px-3 py-2 bg-cream text-ink/65">✅ ${iswL('Tiada denda dikenakan untuk sesi ini.', 'No fee was charged for this session.')}</div>`;
+  return `<div class="flex items-center gap-2 flex-wrap mb-2">
+    <button data-rbac="plan_week.edit" onclick="chargeAbsenceFee()" class="inline-flex items-center gap-1.5 text-xs font-semibold bg-terracotta text-white px-3 py-1.5 rounded-lg hover:opacity-90">💸 ${iswL('Kenakan Denda', 'Charge Fee')} (${rm(absFee.amount)})</button>
+    <button data-rbac="plan_week.edit" onclick="waiveAbsenceFee()" class="inline-flex items-center gap-1.5 text-xs font-semibold border border-ink/20 text-ink/70 px-3 py-1.5 rounded-lg hover:bg-cream">✅ ${iswL('Tak Kena Denda — terus jadual semula', 'No Fee — reschedule now')}</button>
+  </div>`;
+}
+async function chargeAbsenceFee() {
+  if (!weekEntry?.id || absFee.row) return;
+  const amt = absFee.amount;
+  if (!confirm(iswL(`Kenakan denda tidak hadir RM ${amt.toFixed(2)}? Ia jadi invois tertunggak pada akaun pesakit (dibayar bersama baki pakej).`, `Charge an absence fee of RM ${amt.toFixed(2)}? It becomes an unpaid invoice on the patient's account (paid together with the package balance).`))) return;
+  const title = iswL(`Denda tidak hadir — Minggu ${weekNumber}`, `Absence fee — Week ${weekNumber}`);
+  const { data: row, error } = await window.db.from('psy_payments').insert({
+    receipt_ref: 'FEE-' + Date.now(), patient_id: patientId, user_id: patientUserId || null,
+    items: [{ type: 'absence_fee', title, amount: amt }], subtotal: amt, total: amt, status: 'pending',
+    intent: { type: 'absence_fee', session_id: weekEntry.id, plan_id: activePlan.id, week_number: weekNumber },
+    paid_for_type: 'other', paid_for_ref: weekEntry.id, recorded_by: window.currentUser.id,
+  }).select('id, status, total, invoice_no').single();
+  if (error) { banner(iswL('Ralat: ', 'Error: ') + error.message, 'error'); return; }
+  absFee.row = row; absFee.waived = false;
+  try { await auditLog('plan.absence_fee', weekEntry.id, { amount: amt, payment_id: row.id }); } catch (_) { }
+  if (patientUserId) {
+    try { await notify(patientUserId, 'payment', iswL('Denda tidak hadir dikenakan', 'Absence fee charged'),
+      iswL(`Denda RM ${amt.toFixed(2)} untuk sesi Minggu ${weekNumber} yang tidak dihadiri. Sila jelaskan bersama baki pakej.`, `A fee of RM ${amt.toFixed(2)} for the missed Week ${weekNumber} session. Please settle it together with your package balance.`), 'payment.html'); } catch (_) { }
+  }
+  banner(iswL('Denda dikenakan ✅ — anda masih boleh jadual semula sesi ini.', 'Fee charged ✅ — you can still reschedule this session.'));
+  renderHero();
+}
+async function waiveAbsenceFee() {
+  if (!weekEntry?.id) return;
+  try { await auditLog('plan.absence_fee_waived', weekEntry.id, { week: weekNumber }); } catch (_) { }
+  absFee.waived = true;
+  renderHero();
+  const d = document.getElementById('resched-date');
+  if (d) { d.scrollIntoView({ behavior: 'smooth', block: 'center' }); setTimeout(() => d.focus(), 300); }
 }
 
 // Popup sebab tidak hadir (wajib). Resolve: teks sebab, atau null kalau dibatalkan.
