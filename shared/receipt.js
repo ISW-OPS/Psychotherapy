@@ -11,6 +11,8 @@
     fpx: 'FPX Online Banking', card: 'Kad Kredit/Debit', transfer: 'Bank Transfer',
     ghl: 'GHL Payment', manual: 'Manual', gateway: 'Online (FPX/Kad)',
   };
+  // Dwibahasa: L(BM, EN) — bahasa semasa (i18n.js). Default EN kalau i18n belum dimuat.
+  const L = (ms, en) => (window.iswL ? window.iswL(ms, en) : en);
   const rEsc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const rFmt = (n) => Number(n || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const rList = (v) => Array.isArray(v)
@@ -20,10 +22,10 @@
   // ── Elemen dokumen bersama (Resit + Invois) ─────────────────────────────────
   const DOC_TEAL = '#2b8aa0';
   const rMoney = (n) => 'RM' + rFmt(n);
-  const rMethod = (r) => ({ transfer: 'Bank Transfer', cash: 'Cash', other: 'Other' }[r.manual_method]
+  const rMethod = (r) => ({ transfer: L('Pindahan Bank', 'Bank Transfer'), cash: L('Tunai', 'Cash'), other: L('Lain-lain', 'Other') }[r.manual_method]
     || (r.payment_method === 'manual' ? '' : RCPT_METHODS[r.payment_method] || ''));
   const rDateLong = (v) => v
-    ? new Date(v).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Kuala_Lumpur' })
+    ? new Date(v).toLocaleDateString(L('ms-MY', 'en-US'), { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Kuala_Lumpur' })
     : '—';
 
   // Tajuk dokumen (kanan atas) + garis + blok syarikat rata-kanan.
@@ -64,7 +66,7 @@
         name = data?.recommended_package_name || '';
       } catch (_) { /* fallback di bawah */ }
     }
-    if (!name) name = (String(r.notes || '').match(/"([^"]+)"/) || [])[1] || 'Pembayaran';
+    if (!name) name = (String(r.notes || '').match(/"([^"]+)"/) || [])[1] || L('Pembayaran', 'Payment');
     return [{ name, price: total + disc }];
   }
 
@@ -82,13 +84,13 @@
           code = data?.code || '';
         } catch (_) { /* tanpa kod */ }
       }
-      lines.push({ label: code ? `Promo Code (${code})` : 'Promo Code', amount: promoAmt });
+      lines.push({ label: code ? `${L('Kod Promo', 'Promo Code')} (${code})` : L('Kod Promo', 'Promo Code'), amount: promoAmt });
     }
     const voucherAmt = Number(it.voucherDiscount || 0);
-    if (voucherAmt > 0) lines.push({ label: 'Reward Voucher', amount: voucherAmt });
+    if (voucherAmt > 0) lines.push({ label: L('Baucar Ganjaran', 'Reward Voucher'), amount: voucherAmt });
     const explained = lines.reduce((a, l) => a + l.amount, 0);
     const extra = Number(r.discount || 0) - explained;
-    if (extra > 0.005) lines.push({ label: 'Discount', amount: extra });
+    if (extra > 0.005) lines.push({ label: L('Diskaun', 'Discount'), amount: extra });
     return lines;
   }
 
@@ -115,8 +117,8 @@
         .sort((a, b) => ts(a) - ts(b));
       const idx = Math.max(0, upTo.findIndex(p => p.id === r.id));
       const paidToDate = upTo.reduce((a, p) => a + Number(p.total || 0), 0);
-      const label = isInstallment ? (idx === 0 ? 'Deposit' : `Installment ${idx}`)
-        : (paidToDate >= owed - 0.005 && idx === 0 ? 'Full Payment' : `Payment ${idx + 1}`);
+      const label = isInstallment ? (idx === 0 ? L('Deposit', 'Deposit') : `${L('Ansuran', 'Installment')} ${idx}`)
+        : (paidToDate >= owed - 0.005 && idx === 0 ? L('Bayaran Penuh', 'Full Payment') : `${L('Bayaran', 'Payment')} ${idx + 1}`);
       return {
         listPrice: price + pkgDiscount, pkgDiscount, price, owed,
         installmentCharge: isInstallment ? Math.max(0, owed - price) : 0,
@@ -142,29 +144,29 @@
     const th = 'text-[11px] font-medium uppercase tracking-wide text-ink/70 py-3';
 
     return `
-      ${docHeaderHtml('RECEIPT')}
+      ${docHeaderHtml(L('RESIT', 'RECEIPT'))}
 
       <div class="border-t border-ink/10 mt-6 pt-5 grid grid-cols-2 gap-6 text-sm">
         <div>
-          <div class="font-semibold text-ink">Billed to</div>
+          <div class="font-semibold text-ink">${L('Dibilkan kepada', 'Billed to')}</div>
           <div class="text-ink/60 text-xs mt-2 leading-relaxed">
             ${rEsc(cu.full_name || '—')}<br>${rEsc(pr.phone || '—')}<br>Malaysia
           </div>
         </div>
         <div class="space-y-3">
-          <div><div class="font-semibold text-ink">Receipt No</div><div class="text-ink/60 text-xs mt-1">${rEsc(r.receipt_no || r.receipt_ref || '—')}</div></div>
-          <div><div class="font-semibold text-ink">Date Paid</div><div class="text-ink/60 text-xs mt-1">${rDateLong(r.paid_at)}</div></div>
-          ${rMethod(r) ? `<div><div class="font-semibold text-ink">Payment Method</div><div class="text-ink/60 text-xs mt-1">${rEsc(rMethod(r))}</div></div>` : ''}
+          <div><div class="font-semibold text-ink">${L('No. Resit', 'Receipt No')}</div><div class="text-ink/60 text-xs mt-1">${rEsc(r.receipt_no || r.receipt_ref || '—')}</div></div>
+          <div><div class="font-semibold text-ink">${L('Tarikh Bayaran', 'Date Paid')}</div><div class="text-ink/60 text-xs mt-1">${rDateLong(r.paid_at)}</div></div>
+          ${rMethod(r) ? `<div><div class="font-semibold text-ink">${L('Kaedah Bayaran', 'Payment Method')}</div><div class="text-ink/60 text-xs mt-1">${rEsc(rMethod(r))}</div></div>` : ''}
         </div>
       </div>
 
       <table class="w-full mt-10 text-sm">
         <thead>
           <tr class="border-b-2" style="border-color:${DOC_TEAL}">
-            <th class="${th} text-left">Item Name</th>
-            <th class="${th} text-right">Price</th>
-            <th class="${th} text-right w-16">Qty</th>
-            <th class="${th} text-right">Subtotal</th>
+            <th class="${th} text-left">${L('Nama Item', 'Item Name')}</th>
+            <th class="${th} text-right">${L('Harga', 'Price')}</th>
+            <th class="${th} text-right w-16">${L('Kuantiti', 'Qty')}</th>
+            <th class="${th} text-right">${L('Jumlah Kecil', 'Subtotal')}</th>
           </tr>
         </thead>
         <tbody>
@@ -179,30 +181,30 @@
 
       <div class="flex justify-end mt-4">
         <div class="w-full max-w-xs text-sm">
-          <div class="flex justify-between py-1.5"><span class="font-semibold text-ink">Subtotal</span><span class="text-ink/60 text-xs">${rMoney(total + disc)}</span></div>
-          ${(discLines.length ? discLines : [{ label: 'Discount', amount: 0 }]).map(l =>
+          <div class="flex justify-between py-1.5"><span class="font-semibold text-ink">${L('Jumlah Kecil', 'Subtotal')}</span><span class="text-ink/60 text-xs">${rMoney(total + disc)}</span></div>
+          ${(discLines.length ? discLines : [{ label: L('Diskaun', 'Discount'), amount: 0 }]).map(l =>
             `<div class="flex justify-between py-1.5"><span class="font-semibold text-ink">${rEsc(l.label)}</span><span class="text-ink/60 text-xs">-${rMoney(l.amount)}</span></div>`).join('')}
-          <div class="flex justify-between py-2.5 mt-1 border-t border-ink/20"><span class="font-bold text-ink">Amount Paid (MYR)</span><span class="font-bold text-ink">${rMoney(total)}</span></div>
+          <div class="flex justify-between py-2.5 mt-1 border-t border-ink/20"><span class="font-bold text-ink">${L('Jumlah Dibayar (MYR)', 'Amount Paid (MYR)')}</span><span class="font-bold text-ink">${rMoney(total)}</span></div>
         </div>
       </div>
 
       ${kb ? `
       <div class="mt-8 border-t border-ink/10 pt-5">
-        <div class="text-[11px] font-medium uppercase tracking-wide text-ink/70 mb-2">Payment Breakdown${kb.invoiceNo ? ` <span class="normal-case text-ink/40">· Invoice ${rEsc(kb.invoiceNo)}</span>` : ''}</div>
+        <div class="text-[11px] font-medium uppercase tracking-wide text-ink/70 mb-2">${L('Pecahan Bayaran', 'Payment Breakdown')}${kb.invoiceNo ? ` <span class="normal-case text-ink/40">· ${L('Invois', 'Invoice')} ${rEsc(kb.invoiceNo)}</span>` : ''}</div>
         <div class="max-w-sm ml-auto text-sm">
-          <div class="flex justify-between py-1"><span class="text-ink/70">Package Price</span><span class="text-ink/60 text-xs">${rMoney(kb.listPrice)}</span></div>
-          ${kb.pkgDiscount > 0 ? `<div class="flex justify-between py-1"><span class="text-ink/70">Discount</span><span class="text-ink/60 text-xs">-${rMoney(kb.pkgDiscount)}</span></div>` : ''}
-          ${kb.installmentCharge > 0 ? `<div class="flex justify-between py-1"><span class="text-ink/70">Installment Charges</span><span class="text-ink/60 text-xs">${rMoney(kb.installmentCharge)}</span></div>` : ''}
-          <div class="flex justify-between py-1.5 border-t border-ink/10 mt-1"><span class="font-semibold text-ink">Total Commitment</span><span class="font-semibold text-ink">${rMoney(kb.owed)}</span></div>
-          <div class="flex justify-between py-1"><span class="text-ink/70">This Payment (${rEsc(kb.thisLabel)})</span><span class="text-ink/60 text-xs">${rMoney(total)}</span></div>
-          <div class="flex justify-between py-1"><span class="text-ink/70">Total Paid to Date</span><span class="text-ink/60 text-xs">${rMoney(kb.paidToDate)}</span></div>
-          <div class="flex justify-between py-2 border-t border-ink/20 mt-1"><span class="font-bold text-ink">Outstanding Balance</span><span class="font-bold text-ink">${rMoney(kb.outstanding)}</span></div>
+          <div class="flex justify-between py-1"><span class="text-ink/70">${L('Harga Pakej', 'Package Price')}</span><span class="text-ink/60 text-xs">${rMoney(kb.listPrice)}</span></div>
+          ${kb.pkgDiscount > 0 ? `<div class="flex justify-between py-1"><span class="text-ink/70">${L('Diskaun', 'Discount')}</span><span class="text-ink/60 text-xs">-${rMoney(kb.pkgDiscount)}</span></div>` : ''}
+          ${kb.installmentCharge > 0 ? `<div class="flex justify-between py-1"><span class="text-ink/70">${L('Caj Ansuran', 'Installment Charges')}</span><span class="text-ink/60 text-xs">${rMoney(kb.installmentCharge)}</span></div>` : ''}
+          <div class="flex justify-between py-1.5 border-t border-ink/10 mt-1"><span class="font-semibold text-ink">${L('Jumlah Komitmen', 'Total Commitment')}</span><span class="font-semibold text-ink">${rMoney(kb.owed)}</span></div>
+          <div class="flex justify-between py-1"><span class="text-ink/70">${L('Bayaran Ini', 'This Payment')} (${rEsc(kb.thisLabel)})</span><span class="text-ink/60 text-xs">${rMoney(total)}</span></div>
+          <div class="flex justify-between py-1"><span class="text-ink/70">${L('Jumlah Dibayar Setakat Ini', 'Total Paid to Date')}</span><span class="text-ink/60 text-xs">${rMoney(kb.paidToDate)}</span></div>
+          <div class="flex justify-between py-2 border-t border-ink/20 mt-1"><span class="font-bold text-ink">${L('Baki Tertunggak', 'Outstanding Balance')}</span><span class="font-bold text-ink">${rMoney(kb.outstanding)}</span></div>
         </div>
       </div>` : ''}
 
       <!-- Footer disclaimer (ditolak ke bawah sekali halaman) -->
       <div class="mt-auto pt-8 text-[11px] text-ink/50 text-center leading-relaxed">
-        This is an official receipt and serves as proof of payment. Please keep this receipt for your reference. No refund is applicable once the payment is made.
+        ${L('Ini ialah resit rasmi dan bukti pembayaran. Sila simpan resit ini untuk rujukan anda. Tiada bayaran balik selepas pembayaran dibuat.', 'This is an official receipt and serves as proof of payment. Please keep this receipt for your reference. No refund is applicable once the payment is made.')}
       </div>`;
   }
 
@@ -254,7 +256,7 @@
     window.print();
   }
 
-  window.iswDoc = { header: docHeaderHtml, money: rMoney, dateLong: rDateLong, esc: rEsc, TEAL: DOC_TEAL };
+  window.iswDoc = { header: docHeaderHtml, money: rMoney, dateLong: rDateLong, esc: rEsc, L, TEAL: DOC_TEAL };
   window.buildReceiptInner = buildReceiptInner;
   window.viewReceiptPDF = viewReceiptPDF;
   window.printReceipt = printReceipt;

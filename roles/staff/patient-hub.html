@@ -4829,6 +4829,7 @@
       // Pelan ansuran (ada checkpoint, amaun tetap): borang tersembunyi — dibuka oleh butang
       // "Bayar Manual" pada baris checkpoint. Tanpa checkpoint (bayaran penuh separa): sentiasa nampak.
       const formHidden = isInstallment && checkpoints.length > 0;
+      bpLockedAmount = null;
       const formHtml = canRecord ? `
         <div id="bp-form-card" class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 ${formHidden ? 'hidden' : ''}">
           <h4 class="font-bold text-sm text-ink mb-3">➕ Rekod Bayaran Baru</h4>
@@ -4946,9 +4947,17 @@
 
     // "Bayar Manual" pada baris checkpoint — isi borang Rekod Bayaran dgn amaun checkpoint
     // (dikunci, sama macam "Jumlah (Tetap)" di kob-detail) & tatal ke borang.
+    // Jumlah checkpoint yang dikunci — sumber sebenar utk simpan (bukan nilai input DOM), jadi
+    // tak boleh diubah walaupun input diusik. null = borang bebas (bayaran tanpa checkpoint).
+    let bpLockedAmount = null;
     function payCheckpointManual(amount) {
       const amt = document.getElementById('bp-amount');
-      if (!amt) { banner('Tiada baki untuk direkod.', 'error'); return; }
+      if (!amt) { banner(iswL('Tiada baki untuk direkod.', 'No balance to record.'), 'error'); return; }
+      bpLockedAmount = Number(amount);
+      const lbl = amt.previousElementSibling;
+      if (lbl) lbl.textContent = iswL('Jumlah (Tetap)', 'Amount (Fixed)');
+      amt.tabIndex = -1;
+      amt.classList.add('pointer-events-none');
       const card = document.getElementById('bp-form-card');
       card?.classList.remove('hidden');
       amt.value = Number(amount).toFixed(2);
@@ -4961,10 +4970,10 @@
     async function saveBayaranPayment() {
       const invoiceNumber = document.getElementById('bp-invoice')?.value.trim() || '';
       const manualMethod = document.getElementById('bp-method')?.value || 'transfer';
-      const amount = parseFloat(document.getElementById('bp-amount')?.value);
+      const amount = bpLockedAmount != null ? bpLockedAmount : parseFloat(document.getElementById('bp-amount')?.value);
       const file = document.getElementById('bp-receipt')?.files?.[0];
-      if (!amount || amount <= 0) { banner('Sila isi jumlah yang sah', 'error'); return; }
-      if (!file && manualMethod !== 'cash') { banner('Sila upload bukti bayaran (wajib kecuali tunai)', 'error'); return; }
+      if (!amount || amount <= 0) { banner(iswL('Sila isi jumlah yang sah', 'Please enter a valid amount'), 'error'); return; }
+      if (!file && manualMethod !== 'cash') { banner(iswL('Sila upload bukti bayaran (wajib kecuali tunai)', 'Please upload proof of payment (required unless cash)'), 'error'); return; }
 
       // Halang bayaran melebihi jumlah komitmen (checkpoint terakhir, atau harga pakej
       // kalau tiada jadual ansuran) — elak rekod berganda dgn kob-detail.html.
@@ -4977,7 +4986,9 @@
         const cap = lastCp?.[0] ? Number(lastCp[0].target_cumulative) : Number(bayaranSession.recommended_package_price || 0);
         if (cap > 0 && alreadyPaid + amount > cap + 0.005) {
           const fmt = n => 'RM ' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-          const msg = `Jumlah melebihi baki. Komitmen ${fmt(cap)}, sudah dibayar ${fmt(alreadyPaid)}, baki ${fmt(Math.max(0, cap - alreadyPaid))}.`;
+          const msg = iswL(
+            `Jumlah melebihi baki. Komitmen ${fmt(cap)}, sudah dibayar ${fmt(alreadyPaid)}, baki ${fmt(Math.max(0, cap - alreadyPaid))}.`,
+            `Amount exceeds the balance. Commitment ${fmt(cap)}, already paid ${fmt(alreadyPaid)}, balance ${fmt(Math.max(0, cap - alreadyPaid))}.`);
           banner(msg, 'error'); return;
         }
       }

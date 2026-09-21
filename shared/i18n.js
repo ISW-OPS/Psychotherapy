@@ -24,6 +24,31 @@
   // ── Glossary: Malay source (trimmed) → English ──────────────
   // Grows incrementally. Common UI terms translate everywhere once added.
   var EN = {
+    // — Bayaran manual / invois / waris — added 21 Sept —
+    "Tunai": "Cash",
+    "Kaedah Bayaran": "Payment Method",
+    "No. Rujukan (pilihan)": "Reference No. (optional)",
+    "Upload Bukti Bayaran": "Upload Proof of Payment",
+    "(wajib kecuali tunai)": "(required unless cash)",
+    "💵 Bayar Manual": "💵 Pay Manually",
+    "🧾 Lihat Invois": "🧾 View Invoice",
+    "Diskaun (RM, pilihan)": "Discount (RM, optional)",
+    "Dipaparkan di invois/resit. Harga pakej di atas sudah harga selepas diskaun.": "Shown on the invoice/receipt. The package price above is already the price after discount.",
+    "Bayaran di KOB direkod sekali sahaja. Baki direkod di": "Payment at KOB is recorded once only. The balance is recorded in",
+    "(tab Bayaran).": "(Payments tab).",
+    "Tiada waris / penjamin — pesakit hadir seorang diri (nama, IC & tandatangan waris tidak diperlukan).": "No guardian / surety — patient attends alone (guardian name, IC & signature not required).",
+    "Tiada waris / penjamin — saya hadir seorang diri.": "No guardian / surety — I am attending alone.",
+    "Anda tidak mempunyai kebenaran edit bayaran.": "You do not have permission to edit payments.",
+    "Anda tidak mempunyai kebenaran batalkan bayaran.": "You do not have permission to cancel payments.",
+    "Anda tidak mempunyai kebenaran untuk buang tandatangan.": "You do not have permission to remove the signature.",
+    "Bayaran dikemaskini ✅": "Payment updated ✅",
+    "Bayaran dibatalkan ✅": "Payment cancelled ✅",
+    "Diskaun tidak sah": "Invalid discount",
+    "Tiada baki untuk direkod.": "No balance to record.",
+    "Sila upload bukti bayaran (wajib kecuali tunai)": "Please upload proof of payment (required unless cash)",
+    "Jumlah yang sah diperlukan.": "A valid amount is required.",
+    "Sebab edit wajib diisi.": "An edit reason is required.",
+    "Sebab batal wajib diisi.": "A cancellation reason is required.",
     // — Auth: mobile intro —
     'Mari kita mula!': "Let's get started!",
     'Log masuk untuk kekal sihat & cergas.': 'Login to stay healthy and fit.',
@@ -299,6 +324,10 @@
   }
 
   window.iswGetLang = getLang;
+  // Teks dinamik / prompt() / confirm() — enjin padanan-tepat tak boleh terjemah rentetan
+  // berinterpolasi atau dialog asli. Guna iswL('Bahasa Melayu', 'English') dan bina KEDUA-DUA
+  // versi di tapak panggilan (bahasa semasa dipilih pada masa panggilan).
+  window.iswL = function (ms, en) { return getLang() === 'en' ? en : ms; };
   window.iswSetLang = setLang;
   window.iswApplyI18n = apply;
   window.iswToggleLang = function () { setLang(getLang() === 'en' ? 'ms' : 'en'); };

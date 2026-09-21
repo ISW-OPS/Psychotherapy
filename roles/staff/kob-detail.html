@@ -3302,65 +3302,65 @@
 
     async function loadManualKobPayment(paymentId) {
       const { data, error } = await window.db.from('psy_payments')
-        .select('id, invoice_number, total, payment_method, gateway_provider, status, notes')
+        .select('id, invoice_number, receipt_no, total, payment_method, gateway_provider, status, notes')
         .eq('id', paymentId).eq('intent->>kob_session_id', kobId).maybeSingle();
-      if (error || !data) throw new Error('Rekod bayaran tak dijumpai.');
-      if (data.payment_method !== 'manual' || data.gateway_provider) throw new Error('Hanya bayaran manual boleh diedit/dibatalkan. Bayaran gateway perlu refund melalui gateway.');
-      if (data.status !== 'completed') throw new Error('Bayaran ini sudah tidak aktif.');
+      if (error || !data) throw new Error(iswL('Rekod bayaran tak dijumpai.', 'Payment record not found.'));
+      if (data.payment_method !== 'manual' || data.gateway_provider) throw new Error(iswL('Hanya bayaran manual boleh diedit/dibatalkan. Bayaran gateway perlu refund melalui gateway.', 'Only manual payments can be edited/cancelled. Gateway payments must be refunded through the gateway.'));
+      if (data.status !== 'completed') throw new Error(iswL('Bayaran ini sudah tidak aktif.', 'This payment is no longer active.'));
       return data;
     }
 
     async function editKobPayment(paymentId) {
-      if (!can('payment', 'edit')) { banner('Anda tidak mempunyai kebenaran edit bayaran.', 'error'); return; }
+      if (!can('payment', 'edit')) { banner(iswL('Anda tidak mempunyai kebenaran edit bayaran.', 'You do not have permission to edit payments.'), 'error'); return; }
       try {
         const p = await loadManualKobPayment(paymentId);
-        const invRaw = prompt('No. Rujukan (boleh kosong):', p.invoice_number || '');
+        const invRaw = prompt(iswL('No. Rujukan (boleh kosong):', 'Reference No. (can be empty):'), p.invoice_number || '');
         if (invRaw === null) return;
-        const amtRaw = prompt('Jumlah (RM):', Number(p.total).toFixed(2));
+        const amtRaw = prompt(iswL('Jumlah (RM):', 'Amount (RM):'), Number(p.total).toFixed(2));
         if (amtRaw === null) return;
         const invoice = invRaw.trim();
         const amount = parseMoneyVal(amtRaw);
-        if (!(amount > 0)) { banner('Jumlah yang sah diperlukan.', 'error'); return; }
+        if (!(amount > 0)) { banner(iswL('Jumlah yang sah diperlukan.', 'A valid amount is required.'), 'error'); return; }
         const { data: lastCp } = await window.db.from('psy_kob_installment_checkpoints')
           .select('target_cumulative').eq('kob_session_id', kobId).order('seq', { ascending: false }).limit(1);
         const cap = kob.package_payment_mode === 'installment' && lastCp?.[0]
           ? Number(lastCp[0].target_cumulative) : Number(kob.recommended_package_price || 0);
         const othersPaid = (await getKobPaymentsPaid()) - Number(p.total);
         if (cap > 0 && othersPaid + amount > cap + 0.005) {
-          banner(`Jumlah melebihi baki. Maksimum untuk bayaran ini ${fmtRM(Math.max(0, cap - othersPaid))}.`, 'error'); return;
+          banner(iswL(`Jumlah melebihi baki. Maksimum untuk bayaran ini ${fmtRM(Math.max(0, cap - othersPaid))}.`, `Amount exceeds the balance. Maximum for this payment is ${fmtRM(Math.max(0, cap - othersPaid))}.`), 'error'); return;
         }
-        const reason = (prompt('Sebab edit (wajib):') || '').trim();
-        if (!reason) { banner('Sebab edit wajib diisi.', 'error'); return; }
+        const reason = (prompt(iswL('Sebab edit (wajib):', 'Reason for edit (required):')) || '').trim();
+        if (!reason) { banner(iswL('Sebab edit wajib diisi.', 'An edit reason is required.'), 'error'); return; }
         const stamp = `[Diedit oleh ${window.currentUser.full_name} ${new Date().toLocaleString('en-GB')}: ${reason} | asal ${p.invoice_number} RM ${Number(p.total).toFixed(2)}]`;
         const { data: upd, error } = await window.db.from('psy_payments')
           .update({ invoice_number: invoice || null, total: amount, notes: [p.notes, stamp].filter(Boolean).join(' ') })
           .eq('id', paymentId).select('id');
         if (error) throw error;
-        if (!upd?.length) throw new Error('Tak dapat edit (disekat oleh kebenaran database).');
+        if (!upd?.length) throw new Error(iswL('Tak dapat edit (disekat oleh kebenaran database).', 'Cannot edit (blocked by database permissions).'));
         await auditLog('kob.payment_edited', kobId, { payment_id: paymentId, from: { invoice: p.invoice_number, total: p.total }, to: { invoice, total: amount }, reason });
         await recalcKobPaymentStatus();
-        banner('Bayaran dikemaskini ✅');
+        banner(iswL('Bayaran dikemaskini ✅', 'Payment updated ✅'));
         setTimeout(() => location.reload(), 800);
-      } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+      } catch (e) { banner(iswL('Ralat: ', 'Error: ') + e.message, 'error'); }
     }
 
     // "Padam" = batalkan (status 'refunded'), bukan buang baris — jejak audit kewangan kekal.
     async function voidKobPayment(paymentId) {
-      if (!can('payment', 'delete')) { banner('Anda tidak mempunyai kebenaran batalkan bayaran.', 'error'); return; }
+      if (!can('payment', 'delete')) { banner(iswL('Anda tidak mempunyai kebenaran batalkan bayaran.', 'You do not have permission to cancel payments.'), 'error'); return; }
       try {
         const p = await loadManualKobPayment(paymentId);
-        if (!confirm(`Batalkan bayaran ${p.invoice_number || ''} (RM ${Number(p.total).toFixed(2)})? Status bayaran pakej akan dikira semula.`)) return;
-        const reason = (prompt('Sebab batal (wajib):') || '').trim();
-        if (!reason) { banner('Sebab batal wajib diisi.', 'error'); return; }
+        if (!confirm(iswL(`Batalkan bayaran ${p.invoice_number || p.receipt_no || ''} (RM ${Number(p.total).toFixed(2)})? Status bayaran pakej akan dikira semula.`, `Cancel payment ${p.invoice_number || p.receipt_no || ''} (RM ${Number(p.total).toFixed(2)})? The package payment status will be recalculated.`))) return;
+        const reason = (prompt(iswL('Sebab batal (wajib):', 'Reason for cancellation (required):')) || '').trim();
+        if (!reason) { banner(iswL('Sebab batal wajib diisi.', 'A cancellation reason is required.'), 'error'); return; }
         const stamp = `[DIBATALKAN oleh ${window.currentUser.full_name} ${new Date().toLocaleString('en-GB')}: ${reason}]`;
         const { data: upd, error } = await window.db.from('psy_payments')
           .update({ status: 'refunded', notes: [p.notes, stamp].filter(Boolean).join(' ') })
           .eq('id', paymentId).select('id');
         if (error) throw error;
-        if (!upd?.length) throw new Error('Tak dapat batalkan (disekat oleh kebenaran database).');
+        if (!upd?.length) throw new Error(iswL('Tak dapat batalkan (disekat oleh kebenaran database).', 'Cannot cancel (blocked by database permissions).'));
         await auditLog('kob.payment_voided', kobId, { payment_id: paymentId, invoice: p.invoice_number, total: p.total, reason });
         await recalcKobPaymentStatus();
-        banner('Bayaran dibatalkan ✅');
+        banner(iswL('Bayaran dibatalkan ✅', 'Payment cancelled ✅'));
         setTimeout(() => location.reload(), 800);
       } catch (e) { banner('Ralat: ' + e.message, 'error'); }
     }
@@ -3370,8 +3370,8 @@
       const manualMethod = document.getElementById('mp-method')?.value || 'transfer';
       const amount = parseMoneyVal(document.getElementById('mp-amount')?.value);
       const file = document.getElementById('mp-receipt')?.files?.[0];
-      if (!amount || amount <= 0) { banner('Sila isi Jumlah yang sah', 'error'); return; }
-      if (!file && manualMethod !== 'cash') { banner('Sila upload bukti bayaran (wajib kecuali tunai)', 'error'); return; }
+      if (!amount || amount <= 0) { banner(iswL('Sila isi Jumlah yang sah', 'Please enter a valid amount'), 'error'); return; }
+      if (!file && manualMethod !== 'cash') { banner(iswL('Sila upload bukti bayaran (wajib kecuali tunai)', 'Please upload proof of payment (required unless cash)'), 'error'); return; }
 
       // Ikut pilihan doktor di Langkah 3 (wizPayTier); default 'today' utk pending,
       // 'now' utk declined bila doktor belum override.
@@ -3406,14 +3406,14 @@
       // guna butang Edit/Batal pada senarai bayaran (RBAC payment.edit / payment.delete).
       const alreadyPaid = await getKobPaymentsPaid();
       if (alreadyPaid > 0) {
-        banner(`Bayaran KOB sudah direkod (${fmtRM(alreadyPaid)}). Baki/ansuran seterusnya direkod di Pesakit Hub. Kalau salah, edit atau batalkan bayaran sedia ada.`, 'error');
+        banner(iswL(`Bayaran KOB sudah direkod (${fmtRM(alreadyPaid)}). Baki/ansuran seterusnya direkod di Pesakit Hub. Kalau salah, edit atau batalkan bayaran sedia ada.`, `The KOB payment is already recorded (${fmtRM(alreadyPaid)}). The balance/further instalments are recorded in Patient Hub. If it was a mistake, edit or cancel the existing payment.`), 'error');
         return;
       }
       if (!isInstallmentStart) {
         const pkgMetaCap = allPackagesCache.find(p => p.package_id === kob.recommended_package_id);
         const capPrice = payTier === 'today' ? Number(kob.recommended_package_price || 0) : tierFullPrice(pkgMetaCap, 'now');
         if (capPrice > 0 && amount > capPrice + 0.005) {
-          const msg = `Jumlah melebihi harga pakej (${fmtRM(capPrice)}).`;
+          const msg = iswL(`Jumlah melebihi harga pakej (${fmtRM(capPrice)}).`, `Amount exceeds the package price (${fmtRM(capPrice)}).`);
           banner(msg, 'error'); return;
         }
       }
@@ -3560,7 +3560,7 @@
       if (!pkgMeta) { banner('Pakej tidak ditemui, sila pilih semula', 'error'); return; }
       const price = mode === 'declined' ? tierFullPrice(pkgMeta, 'now') : tierFullPrice(pkgMeta, 'today');
       const discount = parseMoneyVal(document.getElementById('rec-discount')?.value);
-      if (discount < 0) { banner('Diskaun tidak sah', 'error'); return; }
+      if (discount < 0) { banner(iswL('Diskaun tidak sah', 'Invalid discount'), 'error'); return; }
 
       const confirmMsg = mode === 'declined'
         ? `Sahkan: patient TIDAK TERUSKAN pakej "${pkgMeta.name}" hari ini?\n\nDisimpan untuk rujukan — Harga Sekarang ${fmtRM(price)} bila dia sambung beli sendiri lewat.`
@@ -3706,7 +3706,7 @@
         // .select() — RLS yg sekat DELETE pulang 0 baris tanpa ralat; mesti disemak eksplisit.
         const { data: deleted, error } = await window.db.from('psy_kob_agreements').delete().eq('id', agreementId).select('id');
         if (error) throw error;
-        if (!deleted?.length) throw new Error('Tandatangan tak dapat dibuang (disekat oleh kebenaran database). Hubungi admin sistem.');
+        if (!deleted?.length) throw new Error(iswL('Tandatangan tak dapat dibuang (disekat oleh kebenaran database). Hubungi admin sistem.', 'The signature could not be removed (blocked by database permissions). Contact the system admin.'));
         await auditLog('kob.agreement_removed', kobId, { patient_id: patient?.id, agreement_id: agreementId, by_staff: window.currentUser.full_name });
         banner('Tandatangan agreement dibuang ✅');
         setTimeout(() => location.reload(), 800);

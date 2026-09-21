@@ -9199,13 +9199,5 @@ window.ISW_I18N_EXTRA = {
   "Memuatkan profil...": "Loading profile...",
   "Mengalih ke dashboard...": "Redirecting to dashboard...",
   "Mengesahkan jemputan...": "Verifying invitation...",
-  "Mengalih ke halaman log masuk...": "Redirecting to login page...",
-  // — Bayaran manual / invois — added 21 Sept —
-  "Tunai": "Cash",
-  "Kaedah Bayaran": "Payment Method",
-  "No. Rujukan (pilihan)": "Reference No. (optional)",
-  "Upload Bukti Bayaran": "Upload Proof of Payment",
-  "(wajib kecuali tunai)": "(required unless cash)",
-  "💵 Bayar Manual": "💵 Pay Manually",
-  "🧾 Lihat Invois": "🧾 View Invoice",
+  "Mengalih ke halaman log masuk...": "Redirecting to login page..."
 };
