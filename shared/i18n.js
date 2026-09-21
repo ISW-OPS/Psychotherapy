@@ -28,6 +28,8 @@
     "🧾 Sejarah Transaksi": "🧾 Transaction History",
     "📄 Lihat Invois": "📄 View Invoice",
     "📄 Invois": "📄 Invoice",
+    "📄 Invois Ansuran": "📄 Installment Invoice",
+    "📑 Invois Penuh": "📑 Full Plan Invoice",
     "Sejarah Transaksi": "Transaction History",
     "Tiada transaksi.": "No transactions.",
     "Tunai": "Cash",

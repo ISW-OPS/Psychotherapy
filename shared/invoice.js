@@ -10,7 +10,9 @@
 (function () {
   const D = () => window.iswDoc;
 
-  async function buildInvoiceInner(kobId, override, asOfSeq) {
+  // kind: 'plan' (lalai) = invois penuh — jadual semua bayaran (setakat asOfSeq kalau diberi);
+  //        'installment' = invois tuntutan bayaran untuk SATU checkpoint (asOfSeq) sahaja.
+  async function buildInvoiceInner(kobId, override, asOfSeq, kind) {
     const doc = D();
     if (!doc) throw new Error('shared/receipt.js belum dimuat / not loaded');
     const { esc, money, dateLong, header, TEAL, L } = doc;
@@ -55,12 +57,71 @@
       rows = [{ due: issue, amount: price, paid: paid >= price - 0.005 }];
     }
     const dueDate = rows[rows.length - 1].due || issue;
+    const payUrl = pending?.[0]?.checkout_url;
+
+    // ── Invois ANSURAN: tuntutan bayaran bulan/checkpoint itu sahaja ──
+    if (kind === 'installment' && isInstallment && asOfCp) {
+      const idx = cps.findIndex(x => Number(x.seq) === Number(asOfCp.seq));
+      const prevTarget = idx > 0 ? Number(cps[idx - 1].target_cumulative) : 0;
+      const amount = Number(asOfCp.target_cumulative) - prevTarget;
+      const paidThis = Math.min(amount, Math.max(0, paidTotal - prevTarget));
+      const dueThis = Math.max(0, amount - paidThis);
+      const label = Number(asOfCp.seq) === 0 ? L('Deposit', 'Deposit') : `${L('Ansuran', 'Installment')} ${asOfCp.seq}`;
+      const issueI = idx === 0 ? issue : cps[idx - 1].due_date;
+      const thTh = 'text-[11px] font-medium uppercase tracking-wide text-ink/70 py-3';
+      const payBtnI = dueThis > 0.005 && payUrl
+        ? `<a href="${esc(payUrl)}" target="_blank" class="no-print inline-block bg-green-dark text-white text-xs font-semibold px-6 py-2 rounded-md hover:opacity-90">${L('Bayar', 'Pay')} ${money(dueThis)}</a>`
+        : (dueThis <= 0.005 ? `<span class="inline-block text-xs font-semibold px-5 py-1.5 rounded-md border border-green text-green-dark bg-green-light/60">${L('Telah Dibayar', 'Paid')}</span>` : '');
+      return `
+        ${header(L('INVOIS', 'INVOICE'))}
+
+        <div class="border-t border-ink/10 mt-6 pt-5 grid grid-cols-2 md:grid-cols-4 gap-6 text-sm">
+          <div>
+            <div class="font-semibold text-ink">${L('Dibilkan kepada', 'Billed to')}</div>
+            <div class="text-ink/60 text-xs mt-2 leading-relaxed">${esc(cu.full_name || '—')}<br>${esc(pr.phone || '—')}<br>Malaysia</div>
+          </div>
+          <div><div class="font-semibold text-ink">${L('No. Invois', 'Invoice Number')}</div><div class="text-ink/60 text-xs mt-2">${esc(kob.invoice_no ? `${kob.invoice_no}-${idx + 1}` : '—')}</div></div>
+          <div class="space-y-3">
+            <div><div class="font-semibold text-ink">${L('Tarikh Dikeluarkan', 'Issue Date')}</div><div class="text-ink/60 text-xs mt-1">${dateLong(issueI)}</div></div>
+            <div><div class="font-semibold text-ink">${L('Tarikh Akhir Bayaran', 'Due Date')}</div><div class="text-ink/60 text-xs mt-1">${dateLong(asOfCp.due_date)}</div></div>
+          </div>
+          <div class="text-right">${payBtnI}</div>
+        </div>
+
+        <table class="w-full mt-10 text-sm">
+          <thead>
+            <tr style="border-bottom:2px solid ${TEAL}">
+              <th class="${thTh} text-left px-1">${L('Nama Item', 'Item Name')}</th>
+              <th class="${thTh} text-right">${L('Harga', 'Price')}</th>
+              <th class="${thTh} text-right w-16">${L('Kuantiti', 'Quantity')}</th>
+              <th class="${thTh} text-right w-16">${L('Cukai', 'Tax')}</th>
+              <th class="${thTh} text-right px-1">${L('Jumlah Kecil', 'Subtotal')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="border-b border-ink/10">
+              <td class="py-4 px-1 text-xs text-ink/70 uppercase">${esc(kob.recommended_package_name || L('Pakej', 'Package'))} — ${esc(label)} (${idx + 1} ${L('daripada', 'of')} ${cps.length})</td>
+              <td class="py-4 text-xs text-ink/70 text-right whitespace-nowrap">${money(amount)}</td>
+              <td class="py-4 text-xs text-ink/70 text-right">1</td>
+              <td class="py-4 text-xs text-ink/70 text-right">-</td>
+              <td class="py-4 px-1 text-xs text-ink/70 text-right whitespace-nowrap">${money(amount)}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="flex justify-end mt-4">
+          <div class="w-full max-w-xs text-sm">
+            <div class="flex justify-between py-1"><span class="font-semibold text-ink">${L('Jumlah Kecil', 'Subtotal')}</span><span class="text-ink/60 text-xs">${money(amount)}</span></div>
+            ${paidThis > 0.005 ? `<div class="flex justify-between py-1"><span class="font-semibold text-ink">${L('Jumlah Dibayar (MYR)', 'Amount Paid (MYR)')}</span><span class="text-ink/60 text-xs">${money(paidThis)}</span></div>` : ''}
+            <div class="flex justify-between py-2.5 mt-1 border-t border-ink/20"><span class="font-bold text-ink">${L('Baki Perlu Dibayar (MYR)', 'Amount Due (MYR)')}</span><span class="font-bold text-ink">${money(dueThis)}</span></div>
+          </div>
+        </div>`;
+    }
     const th = 'text-[11px] font-medium uppercase tracking-wide text-ink/70 py-3';
     const badge = (isPaid) => isPaid
       ? `<span class="inline-block text-[10px] font-semibold px-3 py-0.5 rounded-full border border-green text-green-dark bg-green-light/60 w-16 text-center">${L('Dibayar', 'Paid')}</span>`
       : `<span class="inline-block text-[10px] font-semibold px-3 py-0.5 rounded-full border border-gold text-gold-dark bg-gold/15 w-16 text-center">${L('Belum Dibayar', 'Pending')}</span>`;
 
-    const payUrl = pending?.[0]?.checkout_url;
     const payBtn = due > 0 && payUrl
       ? `<a href="${esc(payUrl)}" target="_blank" class="no-print inline-block bg-green-dark text-white text-xs font-semibold px-6 py-2 rounded-md hover:opacity-90">${L('Bayar', 'Pay')} ${money(due)}</a>`
       : '';
@@ -121,10 +182,10 @@
       </div>`;
   }
 
-  async function viewInvoice(kobId, override, asOfSeq) {
+  async function viewInvoice(kobId, override, asOfSeq, kind) {
     const L = (window.iswDoc && window.iswDoc.L) || ((ms, en) => en);
     let inner;
-    try { inner = await buildInvoiceInner(kobId, override, asOfSeq); }
+    try { inner = await buildInvoiceInner(kobId, override, asOfSeq, kind); }
     catch (e) { alert(L('Gagal muat invois: ', 'Failed to load invoice: ') + e.message); return; }
     document.getElementById('invoice-modal')?.remove();
     const modal = document.createElement('div');

@@ -35,13 +35,16 @@
         <div class="text-[28px] md:text-[32px] font-medium tracking-tight text-ink leading-none">${rEsc(title)}</div>
       </div>
       <div class="border-t-2 border-ink/70 mt-2 mb-5"></div>
-      <div class="text-right">
-        <div class="text-lg text-ink">Ibnu Sina Wellness Sdn Bhd (1319021-P)</div>
-        <div class="text-xs text-ink/60 mt-1 leading-relaxed">
-          03-8966 3702<br>
-          Lot 331, Lorong Senyum Matahari B, Country Heights,<br>
-          Kajang, Selangor 43000<br>Malaysia<br>
-          www.ibnusinawellness.com
+      <div class="flex items-start justify-between gap-6">
+        <img src="${location.origin}/image/Logo_ISW.png" alt="Ibnu Sina Wellness" class="h-14 object-contain" onerror="this.style.display='none'">
+        <div class="text-right">
+          <div class="text-lg text-ink">Ibnu Sina Wellness Sdn Bhd (1319021-P)</div>
+          <div class="text-xs text-ink/60 mt-1 leading-relaxed">
+            03-8966 3702<br>
+            Lot 331, Lorong Senyum Matahari B, Country Heights,<br>
+            Kajang, Selangor 43000<br>Malaysia<br>
+            www.ibnusinawellness.com
+          </div>
         </div>
       </div>`;
   }
