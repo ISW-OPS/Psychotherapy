@@ -968,9 +968,18 @@
         if (kob.package_payment_status === 'declined' && kob.recommended_package_name) {
           document.getElementById('doctor-info').insertAdjacentHTML('beforeend',
             `<div class="bg-gold/10 border border-gold/30 text-xs p-2 rounded mt-2">⚠️ Patient tidak teruskan pada masa KOB. Pakej dicadangkan: <strong>${escapeHtml(kob.recommended_package_name)}</strong> · RM ${Number(kob.recommended_package_price || 0).toFixed(2)} — disimpan untuk rujukan jika patient kembali.</div>`);
-        } else if (kob.recommended_package_name) {
+        } else if (kob.recommended_package_name && patient?.active_package_id) {
           document.getElementById('doctor-info').insertAdjacentHTML('beforeend',
             `<div class="bg-green-light text-green-dark text-xs p-2 rounded mt-2">Pakej rawatan <strong>${escapeHtml(kob.recommended_package_name)}</strong> telah dibuka untuk patient.</div>`);
+        } else if (kob.recommended_package_name) {
+          // KOB dah selesai tapi pakej BELUM aktif. Butang aktif hanya bila ada bayaran diterima (penuh / deposit ansuran).
+          const payOk = kob.package_payment_status === 'paid' || kob.package_payment_status === 'skipped'
+            || (kob.package_payment_status === 'partial' && kob.package_payment_mode === 'installment');
+          document.getElementById('doctor-info').insertAdjacentHTML('beforeend',
+            `<div class="bg-gold/10 border border-gold/30 text-xs p-2.5 rounded mt-2 flex items-center justify-between gap-3 flex-wrap">
+              <span>⚠️ ${iswL('KOB sudah selesai, tetapi pakej', 'The KOB is completed, but the package')} <strong>${escapeHtml(kob.recommended_package_name)}</strong> ${iswL('belum diaktifkan untuk pesakit.', 'has not been activated for the patient yet.')}${payOk ? '' : ' ' + iswL('Menunggu bayaran.', 'Awaiting payment.')}</span>
+              ${payOk ? `<button type="button" id="btn-activate-pkg" onclick="activateKobPackageNow()" data-rbac="kob.edit" class="bg-green text-white px-4 py-2 rounded-lg text-xs font-semibold hover:bg-green-dark whitespace-nowrap">${iswL('🎯 Aktifkan Pakej', '🎯 Activate Package')}</button>` : ''}
+            </div>`);
         } else {
           document.getElementById('doctor-info').insertAdjacentHTML('beforeend',
             '<div class="bg-green-light text-green-dark text-xs p-2 rounded mt-2">KOB selesai — tiada pakej dicadangkan.</div>');
@@ -1310,6 +1319,62 @@
         }
       }
       if (rows.length) await window.db.from('psy_plan_weekly_progress').insert(rows);
+    }
+
+    // Aktifkan pakej yang dicadangkan untuk pesakit (belian + pelan rawatan + tetapan pesakit).
+    // Dipakai bila KOB sudah 'completed' TETAPI pakej belum diaktifkan — cth pesakit tak teruskan masa KOB,
+    // kemudian sambung & bayar (deposit/penuh) selepas itu. Pulang true kalau diaktifkan, false kalau
+    // sudah aktif / tiada pakej dicadangkan.
+    async function activateKobPackage(paymentMethod = 'manual') {
+      if (!kob.recommended_package_id || patient?.active_package_id) return false;
+      const { data: pkgRows } = await window.db.from('psy_packages')
+        .select('*').eq('package_id', kob.recommended_package_id).limit(1);
+      const pkg = pkgRows?.[0];
+      const weeks = pkg?.duration_weeks || 12;
+      const expiresAt = new Date(); expiresAt.setDate(expiresAt.getDate() + weeks * 7);
+      const { error: buyErr } = await window.db.from('psy_package_purchases').insert({
+        patient_id: patient.id, package_id: kob.recommended_package_id,
+        package_name: kob.recommended_package_name, price: kob.recommended_package_price || pkg?.price || 0,
+        expires_at: expiresAt.toISOString(), status: 'active', payment_method: paymentMethod,
+      });
+      if (buyErr) throw buyErr;
+      const { error: patErr } = await window.db.from('psy_patients').update({
+        status: 'active', active_package_id: kob.recommended_package_id,
+        active_package_name: kob.recommended_package_name,
+        package_purchased_at: kob.package_paid_at || new Date().toISOString(), package_expires_at: expiresAt.toISOString(),
+      }).eq('id', patient.id);
+      if (patErr) throw patErr;
+      if (pkg) {
+        const { data: plan } = await window.db.from('psy_treatment_plans').insert({
+          patient_id: patient.id, doctor_id: null, name: `${pkg.name} Treatment Plan`,
+          template: pkg.package_id, duration_unit: pkg.duration_unit || 'week',
+          duration_weeks: weeks, current_week: 1, coaching_schedule: pkg.coaching_schedule || [],
+          status: 'active',
+        }).select('id').single();
+        if (plan?.id) await seedPlanWeeklyProgress(plan.id, patient.id, pkg, weeks);
+      }
+      patient.active_package_id = kob.recommended_package_id;
+      return true;
+    }
+
+    // Butang pemulihan: KOB dah selesai tetapi pakej belum aktif.
+    async function activateKobPackageNow() {
+      if (!can('kob', 'edit')) { banner(iswL('Anda tidak mempunyai kebenaran untuk tindakan ini.', 'You do not have permission for this action.'), 'error'); return; }
+      if (!confirm(iswL(
+        `Aktifkan pakej "${kob.recommended_package_name}" untuk pesakit ini sekarang? Pelan rawatan akan dicipta.`,
+        `Activate the package "${kob.recommended_package_name}" for this patient now? A treatment plan will be created.`))) return;
+      const btn = document.getElementById('btn-activate-pkg');
+      if (btn) { btn.disabled = true; btn.textContent = iswL('Memproses…', 'Processing…'); }
+      try {
+        const done = await activateKobPackage('manual');
+        if (!done) throw new Error(iswL('Pakej sudah aktif atau tiada pakej dicadangkan.', 'The package is already active or none was recommended.'));
+        await auditLog('kob.package_activated_after_completed', kobId, { patient_id: patient.id, package: kob.recommended_package_name });
+        banner(iswL('Pakej diaktifkan ✅', 'Package activated ✅'));
+        setTimeout(() => location.reload(), 1200);
+      } catch (e) {
+        banner(iswL('Ralat: ', 'Error: ') + e.message, 'error');
+        if (btn) { btn.disabled = false; btn.textContent = iswL('🎯 Aktifkan Pakej', '🎯 Activate Package'); }
+      }
     }
 
     async function markSelesai() {
@@ -3531,35 +3596,12 @@
         const { error: kobErr } = await window.db.from('psy_kob_sessions').update(kobUpdates).eq('id', kobId);
         if (kobErr) throw kobErr;
 
-        // Sesi KOB ni dah 'completed' — markSelesai() dah jalan DENGAN isDeclined=true
-        // masa tu, jadi pakej TAK PERNAH diaktifkan (lihat markSelesai(), skip terus
-        // bila declined). Doktor proses bayaran SEKARANG (reopen) — aktifkan pakej di
-        // sini terus, webhook/markSelesai() takkan panggil lagi utk sesi ni.
-        if (kob.status === 'completed' && kob.package_payment_status === 'declined' && !patient.active_package_id) {
-          const { data: actPkgRows } = await window.db.from('psy_packages')
-            .select('*').eq('package_id', kob.recommended_package_id).limit(1);
-          const actPkg = actPkgRows?.[0];
-          const actWeeks = actPkg?.duration_weeks || 12;
-          const actExpires = new Date(); actExpires.setDate(actExpires.getDate() + actWeeks * 7);
-          await window.db.from('psy_package_purchases').insert({
-            patient_id: patient.id, package_id: kob.recommended_package_id,
-            package_name: kob.recommended_package_name, price: kob.recommended_package_price || actPkg?.price || 0,
-            expires_at: actExpires.toISOString(), status: 'active', payment_method: 'manual',
-          });
-          await window.db.from('psy_patients').update({
-            status: 'active', active_package_id: kob.recommended_package_id,
-            active_package_name: kob.recommended_package_name,
-            package_purchased_at: new Date().toISOString(), package_expires_at: actExpires.toISOString(),
-          }).eq('id', patient.id);
-          if (actPkg) {
-            const { data: actPlan } = await window.db.from('psy_treatment_plans').insert({
-              patient_id: patient.id, doctor_id: null, name: `${actPkg.name} Treatment Plan`,
-              template: actPkg.package_id, duration_unit: actPkg.duration_unit || 'week',
-              duration_weeks: actWeeks, current_week: 1, coaching_schedule: actPkg.coaching_schedule || [],
-              status: 'active',
-            }).select('id').single();
-            if (actPlan?.id) await seedPlanWeeklyProgress(actPlan.id, patient.id, actPkg, actWeeks);
-          }
+        // Sesi KOB dah 'completed' TETAPI pakej belum aktif (cth markSelesai() jalan masa pesakit tak teruskan,
+        // atau pesakit sambung & bayar kemudian). Aktifkan sekarang — webhook/markSelesai() takkan panggil lagi.
+        // Dulu syarat ni mengikat kepada status 'declined' sahaja, tapi "Patient Proceeds" set status 'pending'
+        // sebelum bayaran — jadi pakej tak pernah diaktifkan.
+        if (kob.status === 'completed' && !patient.active_package_id && kob.recommended_package_id) {
+          await activateKobPackage('manual');
         }
 
         await auditLog('kob.package_payment_manual', kobId, { invoice_number: invoiceNumber, amount, installment: isInstallmentStart, status: kobUpdates.package_payment_status });
