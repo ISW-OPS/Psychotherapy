@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS psy_payments (
   ghl_transaction_id TEXT,
   invoice_number TEXT,                        -- bayaran manual — no. invois ditaip staff/doktor
   manual_method TEXT CHECK (manual_method IN ('transfer','cash','other')),  -- kaedah bayaran manual (payment_method='manual')
+  invoice_no TEXT UNIQUE,                     -- no. invois (INV-…) utk bayaran BUKAN pakej KOB — auto bila 'pending'/'completed'; bayaran KOB guna psy_kob_sessions.invoice_no
   receipt_no TEXT UNIQUE,                     -- no. resit paparan (REC10001..) — auto bila status jadi 'completed'; receipt_ref kekal kunci teknikal
   discount NUMERIC(10,2) NOT NULL DEFAULT 0,  -- diskaun pada bayaran ini (papar di resit; subtotal = total + discount)
   receipt_url TEXT,                           -- bayaran manual — resit yang di-upload
@@ -48,6 +49,22 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$ LANGUAGE plpgsql;
+
+-- Invois utk bayaran bukan-KOB (kedai, sambungan minggu, dll): jujukan dikongsi dgn invois pakej KOB.
+CREATE SEQUENCE IF NOT EXISTS psy_invoice_no_seq START 1;
+
+CREATE OR REPLACE FUNCTION psy_assign_payment_invoice_no() RETURNS trigger AS $$
+BEGIN
+  IF NEW.invoice_no IS NULL AND NEW.status IN ('pending','completed')
+     AND (NEW.intent ->> 'kob_session_id') IS NULL THEN
+    NEW.invoice_no := 'INV-' || lpad(nextval('psy_invoice_no_seq')::text, 6, '0');
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_psy_assign_payment_invoice_no ON psy_payments;
+CREATE TRIGGER trg_psy_assign_payment_invoice_no BEFORE INSERT OR UPDATE OF status ON psy_payments
+  FOR EACH ROW EXECUTE FUNCTION psy_assign_payment_invoice_no();
 
 DROP TRIGGER IF EXISTS trg_psy_assign_receipt_no ON psy_payments;
 CREATE TRIGGER trg_psy_assign_receipt_no BEFORE INSERT OR UPDATE OF status ON psy_payments

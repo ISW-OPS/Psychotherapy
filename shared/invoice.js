@@ -185,11 +185,84 @@
       </div>`;
   }
 
-  async function viewInvoice(kobId, override, asOfSeq, kind) {
+  // Invois untuk satu bayaran BUKAN pakej KOB (kedai, sambungan minggu, dll) — dibina dari baris
+  // psy_payments: item, diskaun (kod promo / baucar), jumlah; Paid bila 'completed', Pay bila 'pending'.
+  async function buildPaymentInvoiceInner(pay, override) {
+    const doc = D();
+    if (!doc) throw new Error('shared/receipt.js belum dimuat / not loaded');
+    const { esc, money, dateLong, header, TEAL, L } = doc;
+    const cu = override ? { full_name: override.full_name } : (window.currentUser || {});
+    const pr = override ? { phone: override.phone } : (window.patientRecord || {});
+    const total = Number(pay.total || 0);
+    const [items, discLines] = await Promise.all([doc.resolveItems(pay), doc.resolveDiscounts(pay)]);
+    const disc = Math.max(Number(pay.discount || 0), discLines.reduce((a, l) => a + l.amount, 0));
+    const isPaid = pay.status === 'completed';
+    const th = 'text-[11px] font-medium uppercase tracking-wide text-ink/70 py-3';
+    const dueAmt = pay.status === 'pending' ? total : 0;
+    const pill = (cls, txt) => `<span class="inline-block text-xs font-semibold px-5 py-1.5 rounded-md border ${cls}">${txt}</span>`;
+    const action = pay.status === 'pending' && pay.checkout_url
+      ? `<a href="${esc(pay.checkout_url)}" target="_blank" class="no-print inline-block bg-green-dark text-white text-xs font-semibold px-6 py-2 rounded-md hover:opacity-90">${L('Bayar', 'Pay')} ${money(total)}</a>`
+      : (isPaid ? pill('border-green text-green-dark bg-green-light/60', L('Telah Dibayar', 'Paid'))
+        : pay.status === 'refunded' ? pill('border-gold text-gold-dark bg-gold/15', L('Dipulangkan', 'Refunded'))
+        : pay.status === 'failed' ? pill('border-terracotta text-terracotta bg-terracotta/10', L('Gagal', 'Failed')) : '');
+    const issue = pay.created_at || pay.paid_at;
+    return `
+      ${header(L('INVOIS', 'INVOICE'))}
+
+      <div class="border-t border-ink/10 mt-6 pt-5 grid grid-cols-2 md:grid-cols-4 gap-6 text-sm">
+        <div>
+          <div class="font-semibold text-ink">${L('Dibilkan kepada', 'Billed to')}</div>
+          <div class="text-ink/60 text-xs mt-2 leading-relaxed">${esc(cu.full_name || '—')}<br>${esc(pr.phone || '—')}<br>Malaysia</div>
+        </div>
+        <div><div class="font-semibold text-ink">${L('No. Invois', 'Invoice Number')}</div><div class="text-ink/60 text-xs mt-2">${esc(pay.invoice_no || pay.invoice_number || pay.receipt_ref || '—')}</div></div>
+        <div class="space-y-3">
+          <div><div class="font-semibold text-ink">${L('Tarikh Dikeluarkan', 'Issue Date')}</div><div class="text-ink/60 text-xs mt-1">${dateLong(issue)}</div></div>
+          <div><div class="font-semibold text-ink">${L('Tarikh Akhir Bayaran', 'Due Date')}</div><div class="text-ink/60 text-xs mt-1">${dateLong(issue)}</div></div>
+        </div>
+        <div class="text-right">${action}</div>
+      </div>
+
+      <table class="w-full mt-10 text-sm">
+        <thead>
+          <tr style="border-bottom:2px solid ${TEAL}">
+            <th class="${th} text-left px-1">${L('Nama Item', 'Item Name')}</th>
+            <th class="${th} text-right">${L('Harga', 'Price')}</th>
+            <th class="${th} text-right w-16">${L('Kuantiti', 'Quantity')}</th>
+            <th class="${th} text-right w-16">${L('Cukai', 'Tax')}</th>
+            <th class="${th} text-right px-1">${L('Jumlah Kecil', 'Subtotal')}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${items.map(it => `<tr class="border-b border-ink/10">
+            <td class="py-4 px-1 text-xs text-ink/70 uppercase">${esc(it.name)}</td>
+            <td class="py-4 text-xs text-ink/70 text-right whitespace-nowrap">${money(it.price)}</td>
+            <td class="py-4 text-xs text-ink/70 text-right">1</td>
+            <td class="py-4 text-xs text-ink/70 text-right">-</td>
+            <td class="py-4 px-1 text-xs text-ink/70 text-right whitespace-nowrap">${money(it.price)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+
+      <div class="flex justify-end mt-4">
+        <div class="w-full max-w-xs text-sm">
+          <div class="flex justify-between py-1"><span class="font-semibold text-ink">${L('Jumlah Kecil', 'Subtotal')}</span><span class="text-ink/60 text-xs">${money(total + disc)}</span></div>
+          ${(discLines.length ? discLines : [{ label: L('Diskaun', 'Discount'), amount: 0 }]).map(l =>
+            `<div class="flex justify-between py-1"><span class="font-semibold text-ink">${esc(l.label)}</span><span class="text-ink/60 text-xs">-${money(l.amount)}</span></div>`).join('')}
+          <div class="flex justify-between py-2.5 mt-1 border-t border-ink/20"><span class="font-bold text-ink">${L('Baki Perlu Dibayar (MYR)', 'Amount Due (MYR)')}</span><span class="font-bold text-ink">${money(dueAmt)}</span></div>
+        </div>
+      </div>`;
+  }
+
+  async function viewPaymentInvoice(pay, override) {
     const L = (window.iswDoc && window.iswDoc.L) || ((ms, en) => en);
     let inner;
-    try { inner = await buildInvoiceInner(kobId, override, asOfSeq, kind); }
+    try { inner = await buildPaymentInvoiceInner(pay, override); }
     catch (e) { alert(L('Gagal muat invois: ', 'Failed to load invoice: ') + e.message); return; }
+    showInvoiceModal(inner);
+  }
+
+  function showInvoiceModal(inner) {
+    const L = (window.iswDoc && window.iswDoc.L) || ((ms, en) => en);
     document.getElementById('invoice-modal')?.remove();
     const modal = document.createElement('div');
     modal.id = 'invoice-modal';
@@ -210,6 +283,16 @@
     document.getElementById('invoice-print-btn').onclick = () => window.iswDoc.printHtml(inner, 'Invoice');
   }
 
+  async function viewInvoice(kobId, override, asOfSeq, kind) {
+    const L = (window.iswDoc && window.iswDoc.L) || ((ms, en) => en);
+    let inner;
+    try { inner = await buildInvoiceInner(kobId, override, asOfSeq, kind); }
+    catch (e) { alert(L('Gagal muat invois: ', 'Failed to load invoice: ') + e.message); return; }
+    showInvoiceModal(inner);
+  }
+
   window.buildInvoiceInner = buildInvoiceInner;
   window.viewInvoice = viewInvoice;
+  window.buildPaymentInvoiceInner = buildPaymentInvoiceInner;
+  window.viewPaymentInvoice = viewPaymentInvoice;
 })();

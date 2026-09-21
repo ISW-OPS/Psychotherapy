@@ -4463,7 +4463,7 @@
         // SEMUA bayaran pesakit ni (bukan sekadar 1 sesi KOB) — kedai/sambungan
         // minggu/temujanji/pakej lain turut sertakan, digrouping oleh buildBayaranGroups().
         window.db.from('psy_payments')
-          .select('id, invoice_number, receipt_no, receipt_ref, receipt_url, total, discount, items, intent, notes, status, payment_method, manual_method, gateway_provider, gateway_status, paid_at, created_at')
+          .select('id, invoice_number, invoice_no, receipt_no, receipt_ref, receipt_url, checkout_url, total, discount, items, intent, notes, status, payment_method, manual_method, gateway_provider, gateway_status, paid_at, created_at')
           .eq('patient_id', patientId).order('created_at', { ascending: false }),
       ]);
       bayaranAllPayments = allPayments || [];
@@ -4627,13 +4627,17 @@
                 class="cancel-pay-btn text-[11px] font-semibold border border-terracotta/30 text-terracotta px-2.5 py-1 rounded-md hover:bg-terracotta/10 whitespace-nowrap disabled:opacity-60">🗑️ Batal</button>` : '';
               const receiptBtn = tx.status === 'completed' ? `<button type="button" onclick="viewTxReceipt('${tx.id}')"
                 class="text-[11px] font-semibold border border-ink/15 text-ink px-2.5 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap">🧾 Lihat Resit</button>` : '';
+              const proofBtn = tx.receipt_url ? `<a href="${escHtml(tx.receipt_url)}" target="_blank" rel="noopener"
+                class="text-[11px] font-semibold border border-ink/15 text-ink px-2.5 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap">📎 Lihat Bukti</a>` : '';
+              const invoiceBtn = tx.intent?.kob_session_id ? '' : `<button type="button" onclick="viewTxInvoice('${tx.id}')"
+                class="text-[11px] font-semibold border border-ink/15 text-ink px-2.5 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap">📄 Lihat Invois</button>`;
               return `<tr>
               <td>${formatDate(tx.created_at)}</td>
               <td class="text-ink/70">${escHtml(tx.invoice_number || tx.receipt_no || tx.receipt_ref || '—')}</td>
               <td class="text-ink/60">${escHtml(method)}</td>
               <td class="font-semibold text-ink" style="padding-right:24px">${bpMoney(tx.total)}</td>
               <td>${chipDot(st)}</td>
-              <td><div class="flex gap-1.5 flex-wrap">${receiptBtn}${payBtn}${cancelBtn}</div></td>
+              <td><div class="flex gap-1.5 flex-wrap">${invoiceBtn}${receiptBtn}${proofBtn}${payBtn}${cancelBtn}</div></td>
             </tr>`;
             }).join('')}
           </tbody></table></div>` : '<p class="text-xs text-ink/45 py-2">Tiada transaksi.</p>'}
@@ -4883,6 +4887,16 @@
     }
 
     // Resit satu transaksi dari Sejarah Transaksi (data penuh dari bayaranAllPayments).
+    // Invois satu transaksi bukan-KOB (kedai, sambungan minggu, dll) — bayaran KOB guna butang per checkpoint.
+    function viewTxInvoice(paymentId) {
+      const tx = bayaranAllPayments.find(p => p.id === paymentId);
+      if (!tx) return;
+      viewPaymentInvoice(tx, {
+        full_name: iswPatientName(patient, profile, kyc),
+        phone: iswPatientPhone(patient, profile, kyc),
+      });
+    }
+
     function viewTxReceipt(paymentId) {
       const tx = bayaranAllPayments.find(p => p.id === paymentId);
       if (!tx) return;
@@ -5045,9 +5059,8 @@
 
         // Resit rasmi PDF + WA auto — sama fungsi macam laluan gateway; kegagalan
         // TAK boleh gagalkan pengesahan bayaran (nota "Bayaran disahkan" di bawah).
-        try {
-          await window.db.functions.invoke('payments-send-receipt', { body: { paymentId: payRow.id } });
-        } catch (_) { /* nota: notifikasi gagal tidak halang fulfillment */ }
+        // Tak di-await — jana PDF + hantar WhatsApp mengambil masa; jangan tahan borang pada "Menyimpan...".
+        Promise.resolve(window.db.functions.invoke('payments-send-receipt', { body: { paymentId: payRow.id } })).catch(() => { /* notifikasi gagal tidak halang bayaran */ });
 
         // Kira semula jumlah terkumpul & semak checkpoint mana dah cecah target.
         const { data: allPayments } = await window.db.from('psy_payments').select('total')

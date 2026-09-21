@@ -256,7 +256,7 @@
     printHtml(await buildReceiptInner(r), r.receipt_no || r.receipt_ref);
   }
 
-  window.iswDoc = { header: docHeaderHtml, money: rMoney, dateLong: rDateLong, esc: rEsc, L, printHtml, TEAL: DOC_TEAL };
+  window.iswDoc = { header: docHeaderHtml, money: rMoney, dateLong: rDateLong, esc: rEsc, L, printHtml, TEAL: DOC_TEAL, resolveItems: resolveReceiptItems, resolveDiscounts: resolveDiscountLines };
   window.buildReceiptInner = buildReceiptInner;
   window.viewReceiptPDF = viewReceiptPDF;
   window.printReceipt = printReceipt;
