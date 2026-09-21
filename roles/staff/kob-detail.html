@@ -3303,6 +3303,14 @@
         const invoice = invRaw.trim();
         const amount = parseMoneyVal(amtRaw);
         if (!invoice || !(amount > 0)) { banner('No. Invois & Jumlah yang sah diperlukan.', 'error'); return; }
+        const { data: lastCp } = await window.db.from('psy_kob_installment_checkpoints')
+          .select('target_cumulative').eq('kob_session_id', kobId).order('seq', { ascending: false }).limit(1);
+        const cap = kob.package_payment_mode === 'installment' && lastCp?.[0]
+          ? Number(lastCp[0].target_cumulative) : Number(kob.recommended_package_price || 0);
+        const othersPaid = (await getKobPaymentsPaid()) - Number(p.total);
+        if (cap > 0 && othersPaid + amount > cap + 0.005) {
+          banner(`Jumlah melebihi baki. Maksimum untuk bayaran ini ${fmtRM(Math.max(0, cap - othersPaid))}.`, 'error'); return;
+        }
         const reason = (prompt('Sebab edit (wajib):') || '').trim();
         if (!reason) { banner('Sebab edit wajib diisi.', 'error'); return; }
         const stamp = `[Diedit oleh ${window.currentUser.full_name} ${new Date().toLocaleString('en-GB')}: ${reason} | asal ${p.invoice_number} RM ${Number(p.total).toFixed(2)}]`;
@@ -3388,8 +3396,7 @@
         const capPrice = payTier === 'today' ? Number(kob.recommended_package_price || 0) : tierFullPrice(pkgMetaCap, 'now');
         if (capPrice > 0 && amount > capPrice + 0.005) {
           const msg = `Jumlah melebihi harga pakej (${fmtRM(capPrice)}).`;
-          if (!can('payment', 'edit')) { banner(msg, 'error'); return; }
-          if (!confirm(msg + ' Teruskan juga (lebih bayar)?')) return;
+          banner(msg, 'error'); return;
         }
       }
 
