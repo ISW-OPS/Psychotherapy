@@ -4604,6 +4604,33 @@
     // Kad "🧾 Sejarah Transaksi" — dikongsi antara detail pakej KOB & detail
     // ringkas (kedai/sambungan minggu/dll), papar SEMUA percubaan bayaran
     // (pending/completed/failed/refunded), bukan sekadar yang 'completed'.
+    // "Untuk apa" bayaran ini: pakej + Deposit/Ansuran n/Bayaran Penuh (bayaran KOB), atau item
+    // (kedai, sambungan minggu, dll), atau petikan nota (bayaran manual).
+    function txDescription(tx) {
+      const it = tx.intent || {};
+      const kobId = it.kob_session_id;
+      if (kobId) {
+        const k = bayaranGroups.find(x => x.groupType === 'kob' && x.kobSession?.id === kobId)?.kobSession;
+        const isInst = k?.package_payment_mode === 'installment';
+        let label;
+        if (tx.status === 'completed') {
+          const done = bayaranAllPayments
+            .filter(p => p.status === 'completed' && p.intent?.kob_session_id === kobId)
+            .sort((a, b) => new Date(a.paid_at || a.created_at) - new Date(b.paid_at || b.created_at));
+          const idx = Math.max(0, done.findIndex(p => p.id === tx.id));
+          label = isInst ? (idx === 0 ? 'Deposit' : `${iswL('Ansuran', 'Installment')} ${idx}`) : iswL('Bayaran Penuh', 'Full Payment');
+        } else {
+          const type = (it.items || [])[0]?.type;
+          label = type === 'kob_installment_topup' ? iswL('Ansuran', 'Installment') : (isInst ? 'Deposit' : iswL('Bayaran Penuh', 'Full Payment'));
+        }
+        return k?.recommended_package_name ? `${k.recommended_package_name} — ${label}` : label;
+      }
+      const titles = (Array.isArray(tx.items) ? tx.items : []).map(i => i.title || i.name).filter(Boolean);
+      if (titles.length) return titles.join(', ').replace(/Pakej:\s*/g, '');
+      const quoted = (String(tx.notes || '').match(/"([^"]+)"/) || [])[1];
+      return quoted || (tx.notes ? String(tx.notes).slice(0, 60) : '—');
+    }
+
     function buildTxTableHtml(allTx) {
       return `
         <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
@@ -4611,6 +4638,7 @@
           ${allTx.length ? `<div class="overflow-x-auto"><table class="tbl w-full">
           <thead><tr>
             <th>Tarikh</th>
+            <th>Butiran</th>
             <th>Rujukan</th>
             <th>Kaedah</th>
             <th style="padding-right:24px">Jumlah</th>
@@ -4633,6 +4661,7 @@
                 class="text-[11px] font-semibold border border-ink/15 text-ink px-2.5 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap">📄 Invois</button>`;
               return `<tr>
               <td>${formatDate(tx.created_at)}</td>
+              <td class="text-ink/80">${escHtml(txDescription(tx))}</td>
               <td class="text-ink/70"><div class="font-medium">${escHtml(tx.receipt_no || tx.receipt_ref || '—')}</div>${tx.invoice_no || tx.invoice_number ? `<div class="text-[10px] text-ink/40">${escHtml(tx.invoice_no || tx.invoice_number)}</div>` : ''}</td>
               <td class="text-ink/60">${escHtml(method)}</td>
               <td class="font-semibold text-ink" style="padding-right:24px">${bpMoney(tx.total)}</td>
