@@ -936,6 +936,7 @@
       const planById = {};            // patient_id -> { duration_weeks, current_week, status }
       const completedByPatient = {};  // patient_id -> bilangan sesi 'hadir'
       const lastHadirByPatient = {};  // patient_id -> tarikh sesi 'hadir' terkini
+      const lastMissedByPatient = {}; // patient_id -> tarikh sesi TERLEPAS terkini (cancel / booked-pending-reschedule yg sudah lepas)
       const _allPatIds = allPatients.map(p => p.id);
       if (_allPatIds.length) {
         const [planRes, progRes] = await Promise.all([
@@ -943,7 +944,10 @@
           window.db.from('psy_plan_weekly_progress').select('patient_id, status, session_date').in('patient_id', _allPatIds).then(r => r, () => ({ data: [] })),
         ]);
         (planRes.data || []).forEach(pl => { const cur = planById[pl.patient_id]; if (!cur || pl.status === 'active') planById[pl.patient_id] = pl; });
+        const _nowIso = new Date().toISOString();
         (progRes.data || []).forEach(pr => {
+          if (pr.session_date && (pr.status === 'cancel' || (['booked', 'pending', 'reschedule'].includes(pr.status) && pr.session_date < _nowIso))
+              && (!lastMissedByPatient[pr.patient_id] || pr.session_date > lastMissedByPatient[pr.patient_id])) lastMissedByPatient[pr.patient_id] = pr.session_date;
           if (pr.status !== 'hadir') return;
           completedByPatient[pr.patient_id] = (completedByPatient[pr.patient_id] || 0) + 1;
           if (pr.session_date && (!lastHadirByPatient[pr.patient_id] || pr.session_date > lastHadirByPatient[pr.patient_id])) lastHadirByPatient[pr.patient_id] = pr.session_date;
@@ -1506,6 +1510,8 @@
             const last = lastHadirByPatient[p.id] || null;
             return { p, last, days: last ? Math.floor((nowMs - new Date(last).getTime()) / 86400000) : null };
           })
+          // Hanya yang BENAR-BENAR terlepas sesi selepas kehadiran terakhir (bukan sekadar belum dijadualkan).
+          .filter(x => lastMissedByPatient[x.p.id] && (!x.last || lastMissedByPatient[x.p.id] > x.last))
           .filter(x => x.days === null || x.days >= 7)
           .sort((a, b) => (b.days ?? 999) - (a.days ?? 999))
           .forEach(({ p, last, days }) => {

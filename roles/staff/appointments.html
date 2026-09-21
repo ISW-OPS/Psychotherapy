@@ -2117,8 +2117,9 @@ async function loadAbsentAlert() {
       .then(r => r.data || []).catch(() => []),
     window.db.from('psy_plan_weekly_progress')
       .select('patient_id, session_date, status')
-      .eq('status', 'hadir')
+      .in('status', ['hadir', 'cancel', 'booked', 'pending', 'reschedule'])
       .order('session_date', { ascending: false })
+      .limit(5000)
       .then(r => r.data || []).catch(() => []),
     window.db.from('psy_profiles')
       .select('id, full_name')
@@ -2130,8 +2131,14 @@ async function loadAbsentAlert() {
 
   // Last hadir per patient
   const lastHadirMap = {};
+  const lastMissedMap = {};   // sesi TERLEPAS terkini (cancel, atau booked/pending/reschedule yg tarikhnya sudah lepas)
+  const nowIso = new Date().toISOString();
   progressRes.forEach(s => {
-    if (!lastHadirMap[s.patient_id]) lastHadirMap[s.patient_id] = s.session_date;
+    if (s.status === 'hadir') {
+      if (!lastHadirMap[s.patient_id]) lastHadirMap[s.patient_id] = s.session_date;
+    } else if (s.session_date && (s.status === 'cancel' || s.session_date < nowIso)) {
+      if (!lastMissedMap[s.patient_id]) lastMissedMap[s.patient_id] = s.session_date;
+    }
   });
 
   const planMap2 = {};
@@ -2156,6 +2163,8 @@ async function loadAbsentAlert() {
         duration_weeks: planMap2[p.id]?.duration_weeks || 0,
       };
     })
+    // Hanya yang benar-benar terlepas sesi selepas kehadiran terakhir (bukan sekadar belum dijadualkan)
+    .filter(p => lastMissedMap[p.id] && (!p.last_hadir || lastMissedMap[p.id] > p.last_hadir))
     .filter(p => p.daysSince === null || p.daysSince >= 7)
     .sort((a, b) => (b.daysSince ?? 999) - (a.daysSince ?? 999));
 
