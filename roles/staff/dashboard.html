@@ -936,6 +936,7 @@
       const planById = {};            // patient_id -> { duration_weeks, current_week, status }
       const completedByPatient = {};  // patient_id -> bilangan sesi 'hadir'
       const lastHadirByPatient = {};  // patient_id -> tarikh sesi 'hadir' terkini
+      const futureByPatient = {};     // patient_id -> ada sesi akan datang yg sudah ditempah
       const missedByPatient = {};     // patient_id -> [tarikh sesi TERLEPAS] (cancel / booked-pending-reschedule yg sudah lepas)
       const _allPatIds = allPatients.map(p => p.id);
       if (_allPatIds.length) {
@@ -948,6 +949,7 @@
         (progRes.data || []).forEach(pr => {
           if (pr.session_date && (pr.status === 'cancel' || (['booked', 'pending', 'reschedule'].includes(pr.status) && pr.session_date < _nowIso))
               ) (missedByPatient[pr.patient_id] = missedByPatient[pr.patient_id] || []).push(pr.session_date);
+          else if (pr.session_date && pr.session_date >= _nowIso && ['booked', 'pending', 'reschedule'].includes(pr.status)) futureByPatient[pr.patient_id] = true;
           if (pr.status !== 'hadir') return;
           completedByPatient[pr.patient_id] = (completedByPatient[pr.patient_id] || 0) + 1;
           if (pr.session_date && (!lastHadirByPatient[pr.patient_id] || pr.session_date > lastHadirByPatient[pr.patient_id])) lastHadirByPatient[pr.patient_id] = pr.session_date;
@@ -1509,20 +1511,26 @@
           .map(p => {
             // Tarikh SEPATUTNYA hadir = sesi terlepas paling awal selepas kehadiran terakhir
             const lh = lastHadirByPatient[p.id] || null;
-            const exp = (missedByPatient[p.id] || []).filter(d => !lh || d > lh).sort()[0] || null;
-            return { p, last: exp, days: exp ? Math.floor((nowMs - new Date(exp).getTime()) / 86400000) : null };
+            let exp = (missedByPatient[p.id] || []).filter(d => !lh || d > lh).sort()[0] || null;
+            // Belum tempah sesi seterusnya (tiada terlepas, tiada akan datang, pelan belum tamat) → hadir terakhir + 7 hari
+            const pl0 = planById[p.id];
+            let notBooked = false;
+            if (!exp && lh && !futureByPatient[p.id] && pl0?.duration_weeks && (pl0.current_week || 0) < pl0.duration_weeks) {
+              exp = new Date(new Date(lh).getTime() + 7 * 86400000).toISOString(); notBooked = true;
+            }
+            return { p, notBooked, last: exp, days: exp ? Math.floor((nowMs - new Date(exp).getTime()) / 86400000) : null };
           })
           // Hanya yang BENAR-BENAR terlepas sesi selepas kehadiran terakhir (bukan sekadar belum dijadualkan).
           .filter(x => x.last)
           .filter(x => x.days === null || x.days >= 7)
           .sort((a, b) => (b.days ?? 999) - (a.days ?? 999))
-          .forEach(({ p, last, days }) => {
+          .forEach(({ p, last, days, notBooked }) => {
             const nm = p.psy_profiles?.full_name || p.mrn || 'Pesakit';
             const isMine = p.coach_id === user.id;
             const coachTag = isMine ? '' : ` · 👤 ${p.coach_id ? (coachNameById[p.coach_id] || 'Coach') : 'Tiada coach'}`;
             const pl = planById[p.id];
             const prog = pl?.duration_weeks ? ` · M${pl.current_week || 0}/${pl.duration_weeks}` : '';
-            const lastLbl = last ? `sepatutnya hadir ${new Date(last).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' })}` : 'belum pernah hadir';
+            const lastLbl = last ? `${notBooked ? 'belum tempah · ' : ''}sepatutnya hadir ${new Date(last).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' })}` : 'belum pernah hadir';
             absentRows.push(naRow(nm, `${lastLbl}${prog}${coachTag}`,
               `patient-hub.html?patient_id=${p.id}`, 'Hub',
               reasonTag(days === null ? 'Belum hadir' : `${days} hari`, days === null || days >= 14 ? 'bg-terracotta-light text-terracotta' : 'bg-amber-100/70 text-amber-700')));

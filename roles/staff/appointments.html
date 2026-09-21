@@ -2131,6 +2131,7 @@ async function loadAbsentAlert() {
 
   // Last hadir per patient
   const lastHadirMap = {};
+  const hasFuture = {};
   const missedDates = {};   // semua sesi TERLEPAS (cancel, atau booked/pending/reschedule yg tarikhnya sudah lepas)
   const nowIso = new Date().toISOString();
   progressRes.forEach(s => {
@@ -2138,6 +2139,8 @@ async function loadAbsentAlert() {
       if (!lastHadirMap[s.patient_id]) lastHadirMap[s.patient_id] = s.session_date;
     } else if (s.session_date && (s.status === 'cancel' || s.session_date < nowIso)) {
       (missedDates[s.patient_id] = missedDates[s.patient_id] || []).push(s.session_date);
+    } else if (s.session_date && s.session_date >= nowIso) {
+      hasFuture[s.patient_id] = true;   // ada sesi akan datang yang sudah ditempah
     }
   });
   // Tarikh SEPATUTNYA hadir = sesi terlepas yang PALING AWAL selepas kehadiran terakhir
@@ -2145,6 +2148,16 @@ async function loadAbsentAlert() {
   Object.keys(missedDates).forEach(pid => {
     const after = missedDates[pid].filter(d => !lastHadirMap[pid] || d > lastHadirMap[pid]).sort();
     if (after.length) expectedMap[pid] = after[0];
+  });
+  // Belum tempah sesi seterusnya: tiada sesi terlepas & tiada sesi akan datang, pelan belum tamat
+  // → tarikh sepatutnya = sesi hadir terakhir + 7 hari (sesi mingguan berikutnya).
+  const notBookedSet = new Set();
+  plansRes.forEach(pl => {
+    const pid = pl.patient_id, lh = lastHadirMap[pid];
+    if (!lh || expectedMap[pid] || hasFuture[pid]) return;
+    if (!(pl.duration_weeks && pl.current_week < pl.duration_weeks)) return;
+    expectedMap[pid] = new Date(new Date(lh).getTime() + 7 * 86400000).toISOString();
+    notBookedSet.add(pid);
   });
 
   const planMap2 = {};
@@ -2167,6 +2180,7 @@ async function loadAbsentAlert() {
         last_hadir:    lastHadir,
         current_week:  planMap2[p.id]?.current_week || 0,
         duration_weeks: planMap2[p.id]?.duration_weeks || 0,
+        not_booked:    notBookedSet.has(p.id),
       };
     })
     // Hanya yang benar-benar terlepas sesi selepas kehadiran terakhir (bukan sekadar belum dijadualkan)
@@ -2194,7 +2208,7 @@ async function loadAbsentAlert() {
       <td class="px-4 py-2.5 text-xs text-ink/60">${p.mrn}</td>
       <td class="px-4 py-2.5 text-xs">${escapeHtml(p.coach_name)}</td>
       <td class="px-4 py-2.5 text-center"><span class="${daysCls}">${days} hari</span></td>
-      <td class="px-4 py-2.5 text-xs">${lastDt}</td>
+      <td class="px-4 py-2.5 text-xs">${lastDt}${p.not_booked ? `<div class="text-[10px] text-amber-700 font-semibold">${iswL('Belum ditempah', 'Not booked')}</div>` : ''}</td>
       <td class="px-4 py-2.5 text-center text-xs font-semibold text-navy">
         ${p.duration_weeks ? `M${p.current_week}/${p.duration_weeks}` : '—'}
       </td>
