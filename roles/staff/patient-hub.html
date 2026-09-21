@@ -4933,6 +4933,24 @@
       if (!amount || amount <= 0) { banner('Sila isi jumlah yang sah', 'error'); return; }
       if (!file) { banner('Sila upload resit', 'error'); return; }
 
+      // Halang bayaran melebihi jumlah komitmen (checkpoint terakhir, atau harga pakej
+      // kalau tiada jadual ansuran) — elak rekod berganda dgn kob-detail.html.
+      // Hanya yg ada payment.edit boleh override.
+      {
+        const [{ data: prior }, { data: lastCp }] = await Promise.all([
+          window.db.from('psy_payments').select('total').eq('status', 'completed').eq('intent->>kob_session_id', bayaranSession.id),
+          window.db.from('psy_kob_installment_checkpoints').select('target_cumulative').eq('kob_session_id', bayaranSession.id).order('seq', { ascending: false }).limit(1),
+        ]);
+        const alreadyPaid = (prior || []).reduce((s, p) => s + Number(p.total || 0), 0);
+        const cap = lastCp?.[0] ? Number(lastCp[0].target_cumulative) : Number(bayaranSession.recommended_package_price || 0);
+        if (cap > 0 && alreadyPaid + amount > cap + 0.005) {
+          const fmt = n => 'RM ' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const msg = `Jumlah melebihi baki. Komitmen ${fmt(cap)}, sudah dibayar ${fmt(alreadyPaid)}, baki ${fmt(Math.max(0, cap - alreadyPaid))}.`;
+          if (!can('payment', 'edit')) { banner(msg, 'error'); return; }
+          if (!confirm(msg + ' Teruskan juga (lebih bayar)?')) return;
+        }
+      }
+
       const btn = document.getElementById('btn-save-bayaran');
       btn.disabled = true; btn.textContent = 'Menyimpan...';
       try {

@@ -3092,6 +3092,9 @@
       <div class="flex items-center gap-2">
         <span class="font-semibold">${fmtRM(p.total)}</span>
         ${p.receipt_url ? `<a href="${escapeHtml(p.receipt_url)}" target="_blank" class="text-navy hover:underline">Resit</a>` : ''}
+        ${p.payment_method === 'manual' && !p.gateway_provider ? `
+          <button type="button" data-rbac="payment.edit" onclick="editKobPayment('${p.id}')" class="text-ink/50 hover:text-navy" title="Edit bayaran">✏️</button>
+          <button type="button" data-rbac="payment.delete" onclick="voidKobPayment('${p.id}')" class="text-ink/50 hover:text-terracotta" title="Batalkan bayaran">🗑️</button>` : ''}
       </div>
     </div>`).join('');
       return `
@@ -3125,7 +3128,7 @@
       if (status === 'partial') {
         wizSidebar.innerHTML = '';
         const { data } = await window.db.from('psy_payments')
-          .select('invoice_number, receipt_ref, receipt_url, total, paid_at, created_at')
+          .select('id, invoice_number, receipt_ref, receipt_url, total, paid_at, created_at, payment_method, gateway_provider')
           .eq('status', 'completed').eq('intent->>kob_session_id', kobId)
           .order('created_at', { ascending: false });
         const payments = data || [];
@@ -3148,7 +3151,7 @@
         const remaining = Math.max(0, packagePrice - totalPaid);
         wizMain.innerHTML = `
       <div class="text-xs text-gold-dark bg-gold/15 p-2 rounded mb-2">⏳ Bayaran sebahagian — baki <strong>${fmtRM(remaining)}</strong> lagi.</div>
-      ${manualPaymentFormHtml(remaining, false)}
+      <div class="text-xs text-ink/60 mb-2">Bayaran di KOB direkod sekali sahaja. Baki direkod di <strong>Pesakit Hub</strong> (tab Bayaran).</div>
       ${paymentHistoryHtml(payments, packagePrice, totalPaid)}
     `;
         return;
@@ -3158,7 +3161,7 @@
       if (isPaidInfo) {
         wizSidebar.innerHTML = '';
         const { data } = await window.db.from('psy_payments')
-          .select('invoice_number, receipt_ref, receipt_url, total, paid_at, created_at')
+          .select('id, invoice_number, receipt_ref, receipt_url, total, paid_at, created_at, payment_method, gateway_provider')
           .eq('status', 'completed').eq('intent->>kob_session_id', kobId)
           .order('created_at', { ascending: false });
         const payments = data || [];
@@ -3259,6 +3262,83 @@
       if (error) throw new Error('Gagal simpan jadual Ansuran Manual: ' + error.message);
     }
 
+    // Kira semula status bayaran KOB + checkpoint ansuran selepas bayaran diedit/dibatalkan.
+    async function recalcKobPaymentStatus() {
+      const totalPaid = await getKobPaymentsPaid();
+      const { data: cps } = await window.db.from('psy_kob_installment_checkpoints')
+        .select('id, seq, target_cumulative').eq('kob_session_id', kobId).order('seq');
+      const isInstallment = kob.package_payment_mode === 'installment' && cps?.length;
+      const target = isInstallment ? Number(cps[cps.length - 1].target_cumulative) : Number(kob.recommended_package_price || 0);
+      const status = totalPaid <= 0 ? 'pending' : (target > 0 && totalPaid >= target ? 'paid' : 'partial');
+      const updates = { package_payment_status: status, updated_at: new Date().toISOString() };
+      if (status !== 'paid') updates.package_paid_at = null;
+      const { error } = await window.db.from('psy_kob_sessions').update(updates).eq('id', kobId);
+      if (error) throw error;
+      for (const cp of (cps || [])) {
+        const met = totalPaid >= Number(cp.target_cumulative);
+        await window.db.from('psy_kob_installment_checkpoints')
+          .update({ status: met ? 'met' : 'pending', met_at: met ? new Date().toISOString() : null }).eq('id', cp.id);
+      }
+      return { totalPaid, status };
+    }
+
+    async function loadManualKobPayment(paymentId) {
+      const { data, error } = await window.db.from('psy_payments')
+        .select('id, invoice_number, total, payment_method, gateway_provider, status, notes')
+        .eq('id', paymentId).eq('intent->>kob_session_id', kobId).maybeSingle();
+      if (error || !data) throw new Error('Rekod bayaran tak dijumpai.');
+      if (data.payment_method !== 'manual' || data.gateway_provider) throw new Error('Hanya bayaran manual boleh diedit/dibatalkan. Bayaran gateway perlu refund melalui gateway.');
+      if (data.status !== 'completed') throw new Error('Bayaran ini sudah tidak aktif.');
+      return data;
+    }
+
+    async function editKobPayment(paymentId) {
+      if (!can('payment', 'edit')) { banner('Anda tidak mempunyai kebenaran edit bayaran.', 'error'); return; }
+      try {
+        const p = await loadManualKobPayment(paymentId);
+        const invRaw = prompt('No. Invois:', p.invoice_number || '');
+        if (invRaw === null) return;
+        const amtRaw = prompt('Jumlah (RM):', Number(p.total).toFixed(2));
+        if (amtRaw === null) return;
+        const invoice = invRaw.trim();
+        const amount = parseMoneyVal(amtRaw);
+        if (!invoice || !(amount > 0)) { banner('No. Invois & Jumlah yang sah diperlukan.', 'error'); return; }
+        const reason = (prompt('Sebab edit (wajib):') || '').trim();
+        if (!reason) { banner('Sebab edit wajib diisi.', 'error'); return; }
+        const stamp = `[Diedit oleh ${window.currentUser.full_name} ${new Date().toLocaleString('en-GB')}: ${reason} | asal ${p.invoice_number} RM ${Number(p.total).toFixed(2)}]`;
+        const { data: upd, error } = await window.db.from('psy_payments')
+          .update({ invoice_number: invoice, total: amount, notes: [p.notes, stamp].filter(Boolean).join(' ') })
+          .eq('id', paymentId).select('id');
+        if (error) throw error;
+        if (!upd?.length) throw new Error('Tak dapat edit (disekat oleh kebenaran database).');
+        await auditLog('kob.payment_edited', kobId, { payment_id: paymentId, from: { invoice: p.invoice_number, total: p.total }, to: { invoice, total: amount }, reason });
+        await recalcKobPaymentStatus();
+        banner('Bayaran dikemaskini ✅');
+        setTimeout(() => location.reload(), 800);
+      } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+    }
+
+    // "Padam" = batalkan (status 'refunded'), bukan buang baris — jejak audit kewangan kekal.
+    async function voidKobPayment(paymentId) {
+      if (!can('payment', 'delete')) { banner('Anda tidak mempunyai kebenaran batalkan bayaran.', 'error'); return; }
+      try {
+        const p = await loadManualKobPayment(paymentId);
+        if (!confirm(`Batalkan bayaran ${p.invoice_number || ''} (RM ${Number(p.total).toFixed(2)})? Status bayaran pakej akan dikira semula.`)) return;
+        const reason = (prompt('Sebab batal (wajib):') || '').trim();
+        if (!reason) { banner('Sebab batal wajib diisi.', 'error'); return; }
+        const stamp = `[DIBATALKAN oleh ${window.currentUser.full_name} ${new Date().toLocaleString('en-GB')}: ${reason}]`;
+        const { data: upd, error } = await window.db.from('psy_payments')
+          .update({ status: 'refunded', notes: [p.notes, stamp].filter(Boolean).join(' ') })
+          .eq('id', paymentId).select('id');
+        if (error) throw error;
+        if (!upd?.length) throw new Error('Tak dapat batalkan (disekat oleh kebenaran database).');
+        await auditLog('kob.payment_voided', kobId, { payment_id: paymentId, invoice: p.invoice_number, total: p.total, reason });
+        await recalcKobPaymentStatus();
+        banner('Bayaran dibatalkan ✅');
+        setTimeout(() => location.reload(), 800);
+      } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+    }
+
     async function saveManualPayment() {
       const invoiceNumber = document.getElementById('mp-invoice')?.value.trim();
       const amount = parseMoneyVal(document.getElementById('mp-amount')?.value);
@@ -3292,6 +3372,24 @@
         if (Math.abs(targetCommitment - allocated) >= 0.01) {
           banner(`Jumlah kesemua baris (${fmtRM(allocated)}) tak padan sasaran Installment Plan (${fmtRM(targetCommitment)}). Sila laraskan di Langkah 4.`, 'error');
           return;
+        }
+      }
+
+      // Bayaran di KOB direkod SEKALI sahaja (bayaran penuh ATAU deposit). Baki/ansuran
+      // seterusnya direkod di Pesakit Hub — elak rekod berganda. Kalau salah masuk,
+      // guna butang Edit/Batal pada senarai bayaran (RBAC payment.edit / payment.delete).
+      const alreadyPaid = await getKobPaymentsPaid();
+      if (alreadyPaid > 0) {
+        banner(`Bayaran KOB sudah direkod (${fmtRM(alreadyPaid)}). Baki/ansuran seterusnya direkod di Pesakit Hub. Kalau salah, edit atau batalkan bayaran sedia ada.`, 'error');
+        return;
+      }
+      if (!isInstallmentStart) {
+        const pkgMetaCap = allPackagesCache.find(p => p.package_id === kob.recommended_package_id);
+        const capPrice = payTier === 'today' ? Number(kob.recommended_package_price || 0) : tierFullPrice(pkgMetaCap, 'now');
+        if (capPrice > 0 && amount > capPrice + 0.005) {
+          const msg = `Jumlah melebihi harga pakej (${fmtRM(capPrice)}).`;
+          if (!can('payment', 'edit')) { banner(msg, 'error'); return; }
+          if (!confirm(msg + ' Teruskan juga (lebih bayar)?')) return;
         }
       }
 
