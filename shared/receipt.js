@@ -208,6 +208,22 @@
       </div>`;
   }
 
+  // Cetak dokumen dalam tetingkap BERSIH (hanya dokumen, satu muka surat A4) — elak
+  // window.print() pada halaman induk yg cetak tajuk halaman + kandungan modal terpotong.
+  function printHtml(inner, title) {
+    const w = window.open('', '_blank');
+    if (!w) { alert(L('Benarkan pop-up untuk mencetak.', 'Allow pop-ups to print.')); return; }
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${rEsc(title || '')}</title>
+      <script src="https://cdn.tailwindcss.com"><\/script>
+      <script src="${location.origin}/shared/theme.js"><\/script>
+      <script>tailwind.config = window.ISW_TAILWIND_CONFIG || {};<\/script>
+      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+      <style>@page { size: A4; margin: 12mm; } body { font-family: Inter, system-ui, sans-serif; margin: 0; } .no-print { display: none !important; }</style>
+      </head><body class="bg-white text-ink"><div class="flex flex-col p-2" style="min-height:96vh">${inner}</div>
+      <script>window.onload = function () { setTimeout(function () { window.print(); }, 700); };<\/script></body></html>`);
+    w.document.close();
+  }
+
   // Modal fallback (jika mahu buka resit tanpa navigasi halaman)
   async function viewReceiptPDF(id, override) {
     const r = (window._receipts || []).find(x => x.id === id);
@@ -222,41 +238,24 @@
         <div class="no-print p-4 border-b border-ink/10 flex items-center justify-between">
           <h3 class="font-bold">Resit Pembayaran</h3>
           <div class="flex gap-2">
-            <button onclick="window.print()" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold">🖨 Print / Save PDF</button>
+            <button type="button" id="receipt-print-btn" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold">🖨 Print / Save PDF</button>
             <button onclick="this.closest('.fixed').remove()" class="text-ink/60 text-xl px-2">×</button>
           </div>
         </div>
         <div id="receipt-print" class="flex-1 overflow-y-auto p-8 text-ink">${inner}</div>
       </div>`;
     document.body.appendChild(modal);
+    document.getElementById('receipt-print-btn').onclick = () => printHtml(inner, r.receipt_no || r.receipt_ref);
   }
 
-  // Terus ke print/save PDF — render resit ke bekas tersembunyi & panggil window.print().
-  // Print CSS (@media print) papar #receipt-print sahaja.
+  // Terus ke print/save PDF — tetingkap bersih (lihat printHtml).
   async function printReceipt(id) {
     const r = (window._receipts || []).find(x => x.id === id);
     if (!r) return;
-    const inner = await buildReceiptInner(r);
-    // Cipta semula holder setiap kali (elak kandungan basi pada tekan berikutnya)
-    const old = document.getElementById('print-holder');
-    if (old) old.remove();
-    const holder = document.createElement('div');
-    holder.id = 'print-holder';
-    holder.style.cssText = 'position:fixed;left:-9999px;top:0;width:800px;';
-    holder.innerHTML = `<div id="receipt-print" class="p-8 text-ink bg-white">${inner}</div>`;
-    document.body.appendChild(holder);
-    document.body.classList.add('printing-receipt');
-    const cleanup = () => {
-      document.body.classList.remove('printing-receipt');
-      const h = document.getElementById('print-holder');
-      if (h) h.remove();
-      window.removeEventListener('afterprint', cleanup);
-    };
-    window.addEventListener('afterprint', cleanup);
-    window.print();
+    printHtml(await buildReceiptInner(r), r.receipt_no || r.receipt_ref);
   }
 
-  window.iswDoc = { header: docHeaderHtml, money: rMoney, dateLong: rDateLong, esc: rEsc, L, TEAL: DOC_TEAL };
+  window.iswDoc = { header: docHeaderHtml, money: rMoney, dateLong: rDateLong, esc: rEsc, L, printHtml, TEAL: DOC_TEAL };
   window.buildReceiptInner = buildReceiptInner;
   window.viewReceiptPDF = viewReceiptPDF;
   window.printReceipt = printReceipt;

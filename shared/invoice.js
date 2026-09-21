@@ -138,18 +138,7 @@
         <div id="invoice-print" class="flex-1 overflow-y-auto p-8 text-ink">${inner}</div>
       </div>`;
     document.body.appendChild(modal);
-    document.getElementById('invoice-print-btn').onclick = () => {
-      // Tetingkap berasingan — elak bergantung pada CSS cetak halaman induk.
-      const w = window.open('', '_blank');
-      if (!w) { alert(L('Benarkan pop-up untuk cetak invois.', 'Allow pop-ups to print the invoice.')); return; }
-      w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invoice</title>
-        <script src="https://cdn.tailwindcss.com"><\/script>
-        <script>tailwind.config = { theme: { extend: { colors: { ink: '#1a1a1a', navy: '#1B2A4A', green: { DEFAULT: '#2F6B3F', dark: '#245532', light: '#E6F1E9' }, gold: { DEFAULT: '#C9A227', dark: '#8A6D12' } } } } }<\/script>
-        </head><body class="p-10 text-ink bg-white">${document.getElementById('invoice-print').innerHTML}
-        <style>.no-print{display:none!important}</style>
-        <script>window.onload = () => setTimeout(() => window.print(), 600)<\/script></body></html>`);
-      w.document.close();
-    };
+    document.getElementById('invoice-print-btn').onclick = () => window.iswDoc.printHtml(inner, 'Invoice');
   }
 
   window.buildInvoiceInner = buildInvoiceInner;
