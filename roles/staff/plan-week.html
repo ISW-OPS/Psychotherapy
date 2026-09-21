@@ -371,6 +371,7 @@
 <script src="../../shared/inventoryStock.js"></script>
 <script src="../../shared/inventoryDeduct.js"></script>
 <script src="../../shared/utils.js"></script>
+<script src="../../shared/absenceAlert.js"></script>
 <script src="_shared.js"></script>
 <script>
     function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
@@ -1626,7 +1627,7 @@ function renderHero() {
           <button data-rbac="plan_week.edit" onclick="setSessionDate()" class="text-xs font-semibold border border-navy/30 text-navy px-3 py-1 rounded-lg hover:bg-navy hover:text-white transition">💾 Simpan</button>
           <span id="week-date-warn" class="hidden w-full text-[11px] text-terracotta"></span>
         </div>`; })()}
-        ${weekEntry?.absence_reason ? `<div class="mt-2 bg-terracotta/10 border border-terracotta/25 rounded-lg px-3 py-2 text-xs text-terracotta-dark"><span class="font-semibold">📝 Sebab tidak hadir (oleh pesakit):</span> <span class="text-ink/75">${escHtml(weekEntry.absence_reason)}</span></div>` : ''}
+        ${weekEntry?.absence_reason ? `<div class="mt-2 bg-terracotta/10 border border-terracotta/25 rounded-lg px-3 py-2 text-xs text-terracotta-dark"><span class="font-semibold">📝 Sebab tidak hadir:</span> <span class="text-ink/75">${escHtml(weekEntry.absence_reason)}</span></div>` : ''}
         ${weekEntry?.patient_absence_reason ? `<div class="mt-2 bg-gold/10 border border-gold/30 rounded-lg px-3 py-2 text-xs text-gold-dark"><span class="font-semibold">🔔 Sebab Tidak Dapat Hadir (pengesahan pesakit):</span> <span class="text-ink/75">${escHtml(weekEntry.patient_absence_reason)}</span></div>` : ''}
         ${coachSwapHtml()}
       </div>
@@ -1768,6 +1769,32 @@ async function maybeAutoInactivePatient() {
   } catch (e) { console.warn('[auto-inactive]', e.message); }
 }
 
+// Popup sebab tidak hadir (wajib). Resolve: teks sebab, atau null kalau dibatalkan.
+function askAbsenceReason() {
+  return new Promise(resolve => {
+    const wrap = document.createElement('div');
+    wrap.className = 'fixed inset-0 bg-black/40 z-[80] flex items-center justify-center p-4';
+    wrap.innerHTML = `<div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-5">
+      <h3 class="font-bold text-navy text-base mb-1">❌ ${iswL('Tandakan Tidak Hadir', 'Mark as Absent')}</h3>
+      <p class="text-xs text-ink/55 mb-3">${iswL('Sebab tidak hadir wajib diisi. Selepas ini anda boleh jadual semula sesi di bahagian "Sesi Tidak Hadir — Tindakan".', 'The reason for absence is required. Afterwards you can reschedule under "Absent Session — Actions".')}</p>
+      <textarea id="abr-text" rows="3" class="w-full border border-ink/20 rounded-lg px-3 py-2 text-sm outline-none focus:border-navy" placeholder="${iswL('Sebab tidak hadir…', 'Reason for absence…')}"></textarea>
+      <div id="abr-err" class="text-xs text-terracotta mt-1 hidden">${iswL('Sila isi sebab tidak hadir.', 'Please enter the reason for absence.')}</div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button id="abr-cancel" class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-ink/15 text-ink/60 hover:bg-cream">${iswL('Batal', 'Cancel')}</button>
+        <button id="abr-ok" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-terracotta text-white hover:opacity-90">${iswL('Simpan', 'Save')}</button>
+      </div></div>`;
+    document.body.appendChild(wrap);
+    const done = v => { wrap.remove(); resolve(v); };
+    const ta = wrap.querySelector('#abr-text'); ta.focus();
+    wrap.querySelector('#abr-cancel').onclick = () => done(null);
+    wrap.querySelector('#abr-ok').onclick = () => {
+      const v = ta.value.trim();
+      if (!v) { wrap.querySelector('#abr-err').classList.remove('hidden'); return; }
+      done(v);
+    };
+  });
+}
+
 // Tanda kehadiran untuk sesi aktif
 async function markStatus(status) {
   if (!weekEntry?.id) { banner('Tiada sesi untuk minggu ini', 'error'); return; }
@@ -1775,9 +1802,15 @@ async function markStatus(status) {
     banner(`Sesi ini belum berlaku (tarikh akan datang) — tidak boleh ditanda ${status === 'hadir' ? 'Hadir' : 'Tidak Hadir'}.`, 'error');
     return;
   }
+  let absenceReason = null;
+  if (status === 'cancel') {
+    absenceReason = await askAbsenceReason();
+    if (!absenceReason) return;   // dibatalkan
+  }
   try {
     await window.db.from('psy_plan_weekly_progress').update({
       status,
+      ...(absenceReason ? { absence_reason: absenceReason } : {}),
       updated_by:      window.currentUser.id,
       updated_by_name: window.currentUser.full_name,
       updated_at:      new Date().toISOString(),
@@ -1785,6 +1818,10 @@ async function markStatus(status) {
   } catch (e) { banner('Ralat: ' + e.message, 'error'); return; }
 
   weekEntry.status = status;
+  if (absenceReason) {
+    weekEntry.absence_reason = absenceReason;
+    try { await auditLog('plan.absence', weekEntry.id, { reason: absenceReason }); } catch (_) { }
+  }
   const idx = weekSessions.findIndex(r => r.id === weekEntry.id);
   if (idx >= 0) weekSessions[idx].status = status;
   if (status === 'hadir') {
@@ -1808,6 +1845,14 @@ async function markStatus(status) {
   };
   if (patientUserId && msgs[status]) {
     await notify(patientUserId, 'plan', msgs[status][0], msgs[status][1], 'plan-week.html');
+  }
+  // Rekod + amaran kalau pesakit sudah > 7 hari tidak hadir
+  if (status === 'cancel' && window.iswFlagLongAbsence) {
+    const flag = await iswFlagLongAbsence({ patientId: weekEntry.patient_id || patientId, sessionId: weekEntry.id });
+    if (flag.flagged) {
+      banner(iswL(`Tidak Hadir — pesakit ${flag.days} hari tanpa kehadiran, amaran dihantar kepada coach ⚠️`, `Absent — the patient has gone ${flag.days} days without attending; the coach has been alerted ⚠️`));
+      return;
+    }
   }
   banner(`${dayLabel}: ${status === 'hadir' ? 'Hadir' : status === 'cancel' ? 'Tidak Hadir' : 'Reschedule'}`);
 }
