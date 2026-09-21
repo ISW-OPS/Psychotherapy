@@ -931,7 +931,7 @@
         const hasRec = !!kob.recommended_package_id || kob.package_payment_status === 'skipped';
         const paid = kob.package_payment_status === 'paid' || kob.package_payment_status === 'skipped' || isDeclined
           || (kob.package_payment_status === 'partial' && kob.package_payment_mode === 'installment');
-        const needsAgreement = !agreement && !isDeclined;
+        const needsAgreement = !agreement;   // wajib — selaras dgn gate keras markSelesai()
         const canFinish = hasRec && paid && !needsAgreement;
 
         // Dah Hadir — "Tandakan Selesai" duduk BAWAH (lepas Attended-by/amaran),
@@ -960,6 +960,17 @@
         if (warning) {
           document.getElementById('doctor-info').insertAdjacentHTML('beforeend', warning);
         }
+        // Senarai semak syarat "Tandakan Selesai" — jelas apa yang belum cukup
+        const chk = (ok, label) => `<li class="flex items-center gap-2 ${ok ? 'text-green-dark' : 'text-terracotta'}"><span>${ok ? '✅' : '⬜'}</span><span>${label}</span></li>`;
+        document.getElementById('doctor-info').insertAdjacentHTML('beforeend', `
+          <div class="mt-2 text-xs bg-cream/60 border border-ink/10 rounded-lg p-2.5">
+            <div class="font-semibold text-ink/70 mb-1">${iswL('Syarat sebelum boleh ditandakan Selesai', 'Requirements before marking Completed')}</div>
+            <ul class="space-y-1">
+              ${chk(hasRec, iswL('Pakej dicadangkan', 'Package recommended'))}
+              ${chk(paid, iswL('Bayaran diselesaikan (deposit ansuran / bayaran penuh)', 'Payment settled (installment deposit / full payment)'))}
+              ${chk(!needsAgreement, iswL('Perjanjian ditandatangani', 'Agreement signed'))}
+            </ul>
+          </div>`);
       } else if (kob.status === 'completed') {
         const hubBtn = patient?.active_package_id
           ? `<a href="patient-hub.html?patient_id=${patient.id}" class="bg-navy text-white px-4 py-2 rounded-lg text-xs font-semibold hover:bg-navy-dark ml-2">🗂️ Buka Patient Hub →</a>`
@@ -1423,6 +1434,21 @@
         .select('id').eq('patient_id', patient.id).not('signed_at', 'is', null).limit(1);
       if (agrErr || !signedAgr?.length) {
         banner(agrErr ? 'Gagal semak agreement: ' + agrErr.message : 'Agreement belum ditandatangani — KOB tak boleh ditandakan Selesai.', 'error');
+        return;
+      }
+      // Bayaran mesti diselesaikan — semak data TERKINI dari DB (bukan bergantung pada keadaan butang UI).
+      const { data: freshKob } = await window.db.from('psy_kob_sessions')
+        .select('recommended_package_id, package_payment_status, package_payment_mode').eq('id', kobId).maybeSingle();
+      if (freshKob) Object.assign(kob, freshKob);
+      const payStatus = kob.package_payment_status;
+      const paymentSettled = payStatus === 'paid' || payStatus === 'skipped' || payStatus === 'declined'
+        || (payStatus === 'partial' && kob.package_payment_mode === 'installment');
+      if (!kob.recommended_package_id && payStatus !== 'skipped') {
+        banner(iswL('Pakej belum dicadangkan — KOB tak boleh ditandakan Selesai.', 'No package recommended yet — the KOB cannot be marked Completed.'), 'error');
+        return;
+      }
+      if (!paymentSettled) {
+        banner(iswL('Bayaran belum diselesaikan — KOB tak boleh ditandakan Selesai.', 'Payment is not settled yet — the KOB cannot be marked Completed.'), 'error');
         return;
       }
       const hasPackage = !!kob.recommended_package_id;
