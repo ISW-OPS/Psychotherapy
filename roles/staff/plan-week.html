@@ -1530,20 +1530,21 @@ function renderHero() {
   // (a) Aliran absen sedia ada — tawar buka minggu ganti bila ada sesi tidak hadir.
   const absenceExt = weekHasMiss
     ? (extForThisWeek
-        ? `<div class="mt-3 text-xs text-ink/65 bg-cream rounded-lg px-3 py-2">🔁 Minggu tambahan sudah dibuka untuk minggu ini${extPaid ? ' <span class="text-green-dark font-semibold">(sudah dibayar)</span>' : ' — <span class="text-terracotta font-semibold">menunggu bayaran pesakit</span>'}.</div>`
-        : `<div class="mt-3">
+        ? `<div class="text-xs text-ink/65 bg-cream rounded-lg px-3 py-2 flex items-center gap-2 flex-wrap">🔁 <span>Minggu tambahan sudah dibuka untuk minggu ini${extPaid ? ' <span class="text-green-dark font-semibold">(sudah dibayar)</span>' : ' — <span class="text-terracotta font-semibold">menunggu bayaran pesakit</span>'}.</span>${extPaid ? '' : `<button data-rbac="plan_week.create" onclick="cancelPendingExtension()" class="ml-1 text-[11px] font-semibold border border-terracotta/40 text-terracotta px-2 py-0.5 rounded-lg hover:bg-terracotta hover:text-white transition">✖ ${iswL('Batal', 'Cancel')}</button>`}</div>`
+        : `<div>
              <button data-rbac="plan_week.create" onclick="openExtensionManually()" class="inline-flex items-center gap-1.5 text-xs font-semibold border border-terracotta/40 text-terracotta px-3 py-1.5 rounded-lg hover:bg-terracotta hover:text-white transition">➕ Buka Minggu Ganti (sesi tidak hadir)</button>
              <div class="text-[11px] text-ink/45 mt-1">Tidak hadir <b>tidak</b> auto-caj. Tekan ini hanya bila pesakit sah nak ganti sesi tertinggal.</div>
            </div>`)
     : '';
   // (b) Sambungan rawatan — coach tambah minggu bila-bila (tanpa perlu sesi tidak hadir), pesakit bayar.
   const continuityExt = !weekEntry?.is_extension
-    ? `<div class="mt-3 pt-3 border-t border-ink/8">
+    ? `<div>
          <button data-rbac="plan_week.create" onclick="openContinuityWeeksModal()" class="inline-flex items-center gap-1.5 text-xs font-semibold border border-navy/40 text-navy px-3 py-1.5 rounded-lg hover:bg-navy hover:text-white transition">➕ Tambah Minggu Sambungan (pesakit bayar)</button>
          <div class="text-[11px] text-ink/45 mt-1">Untuk pesakit yang perlu <b>sambung rawatan</b> beberapa minggu lagi dalam pakej ini. Minggu baru mula kosong — isi bimbingan/bekalan sendiri.</div>
        </div>`
     : '';
-  const extControl = absenceExt + continuityExt;
+  // Duduk sebelah-menyebelah (jimat ruang); turun baris bila skrin sempit
+  const extControl = `<div class="mt-3 pt-3 border-t border-ink/8 flex flex-wrap items-start gap-x-6 gap-y-3">${absenceExt}${continuityExt}</div>`;
   // Kawalan sesi tidak hadir (sesi aktif): ingatkan pesakit + coach reschedule terus
   if (status === 'cancel' && weekEntry?.id && absFee.for !== weekEntry.id) ensureAbsenceFee();
   const missControl = (status === 'cancel')
@@ -2573,6 +2574,19 @@ async function createExtensionForWeek(origWeek) {
       'payment.html');
   }
   banner(`Minggu tambahan M${extWeek} dibuka — pesakit perlu bayar RM ${extPrice}.`);
+}
+
+// Batal terus minggu tambahan yang BELUM dibayar (butang di kad minggu). Yang sudah dibayar tak disentuh.
+async function cancelPendingExtension() {
+  const ids = (extForThisWeek || []).filter(r => r.status === 'extension_pending_payment').map(r => r.id);
+  if (!ids.length) return;
+  if (!confirm(iswL('Batalkan minggu tambahan yang menunggu bayaran ini?', 'Cancel this extension week that is awaiting payment?'))) return;
+  const { error } = await window.db.from('psy_plan_weekly_progress').delete().in('id', ids);
+  if (error) { banner(iswL('Ralat: ', 'Error: ') + error.message, 'error'); return; }
+  try { await auditLog('plan.extension_voided', activePlan.id, { for_week: weekNumber, manual: true }); } catch (_) { }
+  extForThisWeek = null;
+  banner(iswL('Minggu tambahan dibatalkan.', 'Extension week cancelled.'));
+  renderHero();
 }
 
 // Batalkan minggu tambahan yang BELUM dibayar jika kehadiran minggu ini dah pulih
