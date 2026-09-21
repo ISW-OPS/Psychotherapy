@@ -4463,7 +4463,7 @@
         // SEMUA bayaran pesakit ni (bukan sekadar 1 sesi KOB) — kedai/sambungan
         // minggu/temujanji/pakej lain turut sertakan, digrouping oleh buildBayaranGroups().
         window.db.from('psy_payments')
-          .select('id, invoice_number, receipt_ref, receipt_url, total, items, intent, status, payment_method, gateway_provider, gateway_status, paid_at, created_at')
+          .select('id, invoice_number, receipt_no, receipt_ref, receipt_url, total, items, intent, status, payment_method, gateway_provider, gateway_status, paid_at, created_at')
           .eq('patient_id', patientId).order('created_at', { ascending: false }),
       ]);
       bayaranAllPayments = allPayments || [];
@@ -4591,7 +4591,7 @@
           // ke-i mengikut kedudukan, sama corak dgn payment-plan.html pesakit (lihat
           // renderBayaranKobDetail() cpHtml di bawah). window._receipts diperlukan
           // oleh viewReceiptPDF() (shared/receipt.js) utk butang "Lihat Resit".
-          window.db.from('psy_payments').select('id, invoice_number, receipt_ref, receipt_url, total, items, paid_at, created_at')
+          window.db.from('psy_payments').select('id, invoice_number, receipt_no, receipt_ref, receipt_url, total, discount, items, intent, notes, payment_method, manual_method, gateway_provider, paid_at, created_at')
             .eq('status', 'completed').eq('intent->>kob_session_id', bayaranSession.id).order('created_at', { ascending: true }),
         ]);
         window._receipts = payments || [];
@@ -4627,7 +4627,7 @@
                 class="cancel-pay-btn text-[11px] font-semibold border border-terracotta/30 text-terracotta px-2.5 py-1 rounded-md hover:bg-terracotta/10 whitespace-nowrap disabled:opacity-60">🗑️ Batal</button>` : '';
               return `<tr>
               <td>${formatDate(tx.created_at)}</td>
-              <td class="text-ink/70">${escHtml(tx.invoice_number || tx.receipt_ref || '—')}</td>
+              <td class="text-ink/70">${escHtml(tx.invoice_number || tx.receipt_no || tx.receipt_ref || '—')}</td>
               <td class="text-ink/60">${escHtml(method)}</td>
               <td class="font-semibold text-ink" style="padding-right:24px">${bpMoney(tx.total)}</td>
               <td>${chipDot(st)}</td>
@@ -4770,7 +4770,7 @@
       // Checkpoint SETERUSNYA belum met (pending/overdue) — satu-satunya baris
       // yang dapat butang jana pautan (amaun sentiasa diderive dari checkpoint
       // ni sahaja oleh payments-kob-initiate mode='topup', sama macam payment-plan.html pesakit).
-      const nextIdx = checkpoints.findIndex(c => c.status !== 'met');
+      const nextIdx = checkpoints.findIndex(c => totalPaid + 0.005 < Number(c.target_cumulative));
       const cpHtml = isInstallment ? `
         <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
           <h4 class="font-bold text-sm text-ink mb-3">📅 Checkpoint Ansuran</h4>
@@ -4786,7 +4786,9 @@
             <th>Tindakan</th>
           </tr></thead><tbody>
             ${checkpoints.map((cp, i) => {
-              const isPaid = cp.status === 'met';
+              // Selesai HANYA kalau bayaran sebenar (psy_payments) cukup — bukan sekadar bendera 'met'
+              // dalam DB (boleh tak sepadan kalau bayaran dibatal/tiada rekod).
+              const isPaid = totalPaid + 0.005 >= Number(cp.target_cumulative);
               const prevCum = i === 0 ? 0 : Number(checkpoints[i - 1].target_cumulative);
               const installmentAmt = Number(cp.target_cumulative) - prevCum;
               // Terkumpul Wajib SEPATUTNYA sentiasa menaik (ansuran sebelum + baris ni) —
@@ -4811,7 +4813,7 @@
                 ? '<span class="text-terracotta text-xs font-bold" title="Terkumpul Wajib baris ni lebih rendah drpd baris sebelum — jadual tak konsisten, jana semula di kob-detail.html">⚠️ Data tak konsisten</span>'
                 : `<span class="text-ink">${bpMoney(installmentAmt)}</span>`}</td>
               <td class="text-ink/50" style="padding-right:24px">${bpMoney(cp.target_cumulative)}</td>
-              <td>${chipDot(cpStatusMap[cp.status])}</td>
+              <td>${chipDot(cpStatusMap[isPaid ? 'met' : (cp.status === 'met' ? 'pending' : cp.status)])}</td>
               <td>${actionHtml}</td>
             </tr>`;
             }).join('')}

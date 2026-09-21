@@ -25,6 +25,9 @@
   // Grows incrementally. Common UI terms translate everywhere once added.
   var EN = {
     // — Bayaran manual / invois / waris — added 21 Sept —
+    "🧾 Sejarah Transaksi": "🧾 Transaction History",
+    "Sejarah Transaksi": "Transaction History",
+    "Tiada transaksi.": "No transactions.",
     "Tunai": "Cash",
     "Kaedah Bayaran": "Payment Method",
     "No. Rujukan (pilihan)": "Reference No. (optional)",
