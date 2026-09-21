@@ -121,7 +121,6 @@
         : (paidToDate >= owed - 0.005 && idx === 0 ? L('Bayaran Penuh', 'Full Payment') : `${L('Bayaran', 'Payment')} ${idx + 1}`);
       return {
         listPrice: owed + pkgDiscount, pkgDiscount, price, owed,
-        installmentCharge: 0,
         thisLabel: label, paidToDate, outstanding: Math.max(0, owed - paidToDate),
         invoiceNo: kob.invoice_no || '',
       };
@@ -192,13 +191,12 @@
       <div class="mt-8 border-t border-ink/10 pt-5">
         <div class="text-[11px] font-medium uppercase tracking-wide text-ink/70 mb-2">${L('Pecahan Bayaran', 'Payment Breakdown')}${kb.invoiceNo ? ` <span class="normal-case text-ink/40">· ${L('Invois', 'Invoice')} ${rEsc(kb.invoiceNo)}</span>` : ''}</div>
         <div class="max-w-sm ml-auto text-sm">
-          <div class="flex justify-between py-1"><span class="text-ink/70">${L('Harga Pakej', 'Package Price')}</span><span class="text-ink/60 text-xs">${rMoney(kb.listPrice)}</span></div>
-          ${kb.pkgDiscount > 0 ? `<div class="flex justify-between py-1"><span class="text-ink/70">${L('Diskaun', 'Discount')}</span><span class="text-ink/60 text-xs">-${rMoney(kb.pkgDiscount)}</span></div>` : ''}
-          ${kb.installmentCharge > 0 ? `<div class="flex justify-between py-1"><span class="text-ink/70">${L('Caj Ansuran', 'Installment Charges')}</span><span class="text-ink/60 text-xs">${rMoney(kb.installmentCharge)}</span></div>` : ''}
-          <div class="flex justify-between py-1.5 border-t border-ink/10 mt-1"><span class="font-semibold text-ink">${L('Jumlah Komitmen', 'Total Commitment')}</span><span class="font-semibold text-ink">${rMoney(kb.owed)}</span></div>
-          <div class="flex justify-between py-1"><span class="text-ink/70">${L('Bayaran Ini', 'This Payment')} (${rEsc(kb.thisLabel)})</span><span class="text-ink/60 text-xs">${rMoney(total)}</span></div>
+          ${kb.pkgDiscount > 0 ? `<div class="flex justify-between py-1"><span class="text-ink/70">${L('Harga Pakej', 'Package Price')}</span><span class="text-ink/60 text-xs">${rMoney(kb.listPrice)}</span></div>
+          <div class="flex justify-between py-1"><span class="text-ink/70">${L('Diskaun', 'Discount')}</span><span class="text-ink/60 text-xs">-${rMoney(kb.pkgDiscount)}</span></div>` : ''}
+          <div class="flex justify-between py-1.5 border-t border-ink/10 mt-1"><span class="font-semibold text-ink">${L('Jumlah Pakej', 'Package Total')}</span><span class="font-semibold text-ink">${rMoney(kb.owed)}</span></div>
+          <div class="flex justify-between py-1"><span class="text-ink/70">${L('Dibayar pada resit ini', 'Paid on this receipt')} (${rEsc(kb.thisLabel)})</span><span class="text-ink/60 text-xs">${rMoney(total)}</span></div>
           <div class="flex justify-between py-1"><span class="text-ink/70">${L('Jumlah Dibayar Setakat Ini', 'Total Paid to Date')}</span><span class="text-ink/60 text-xs">${rMoney(kb.paidToDate)}</span></div>
-          <div class="flex justify-between py-2 border-t border-ink/20 mt-1"><span class="font-bold text-ink">${L('Baki Tertunggak', 'Outstanding Balance')}</span><span class="font-bold text-ink">${rMoney(kb.outstanding)}</span></div>
+          <div class="flex justify-between py-2 border-t border-ink/20 mt-1"><span class="font-bold text-ink">${L('Baki Perlu Dibayar', 'Balance Remaining')}</span><span class="font-bold text-ink">${rMoney(kb.outstanding)}</span></div>
         </div>
       </div>` : ''}
 

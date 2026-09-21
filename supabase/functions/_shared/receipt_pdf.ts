@@ -144,15 +144,16 @@ export async function buildReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
     y -= 14
     hr(); y -= 16
     text('PAYMENT BREAKDOWN' + (k.invoiceNo ? `  -  Invoice ${k.invoiceNo}` : ''), M, 8, { font: bold, color: GRAY }); y -= 18
-    row('Package Price', rm(k.listPrice))
-    if (k.pkgDiscount > 0) row('Discount', `-${rm(k.pkgDiscount)}`)
-    if (k.installmentCharge > 0) row('Installment Charges', rm(k.installmentCharge))
-    row('Total Commitment', rm(k.owed), true)
-    row(`This Payment (${k.thisLabel})`, rm(d.total))
+    if (k.pkgDiscount > 0) {
+      row('Package Price', rm(k.listPrice))
+      row('Discount', `-${rm(k.pkgDiscount)}`)
+    }
+    row('Package Total', rm(k.owed), true)
+    row(`Paid on this receipt (${k.thisLabel})`, rm(d.total))
     row('Total Paid to Date', rm(k.paidToDate))
     y += 4
     hr(0.8, LIGHT, tx, R); y -= 15
-    row('Outstanding Balance', rm(k.outstanding), true)
+    row('Balance Remaining', rm(k.outstanding), true)
   }
 
   // ── Disclaimer bawah halaman ───────────────────────────────
