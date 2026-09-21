@@ -618,6 +618,11 @@
                         <span class="text-navy">👪</span>
                         <h3 class="font-bold text-navy text-sm">Tandatangan Waris / Penjamin</h3>
                       </div>
+                      <label class="flex items-start gap-2 cursor-pointer">
+                        <input type="checkbox" id="chk-no-guardian" onchange="toggleNoGuardian(this.checked)" class="mt-0.5 accent-green-dark w-4 h-4 shrink-0">
+                        <span class="text-xs text-ink/60">Tiada waris / penjamin — saya hadir seorang diri.</span>
+                      </label>
+                      <div id="guardian-fields" class="space-y-4">
                       <p class="text-xs text-ink/50">Wajib diisi — waris/penjamin turut perlu isi nama, no. IC, dan tandatangan sendiri.</p>
                       <div>
                         <label class="text-xs font-semibold text-ink/60">Nama Waris/Penjamin</label>
@@ -635,6 +640,7 @@
                           <img id="box-guardian-sign-img" class="hidden max-h-full mx-auto" alt="tandatangan waris">
                         </div>
                         <button type="button" onclick="clearSigStore('guardianSign')" class="text-xs text-terracotta hover:underline font-semibold mt-1 inline-flex items-center gap-1">↺ Clear</button>
+                      </div>
                       </div>
                     </div>
 
@@ -1586,6 +1592,11 @@
       }
     }
 
+    function toggleNoGuardian(v) {
+      document.getElementById('guardian-fields').classList.toggle('hidden', !!v);
+    }
+    const isNoGuardian = () => !!document.getElementById('chk-no-guardian')?.checked;
+
     async function submitInlineSignature() {
       const errEl = document.getElementById('sa-error');
       errEl.classList.add('hidden');
@@ -1594,12 +1605,13 @@
       }
       const resolvedName = document.getElementById('inp-patient-name').value.trim();
       const resolvedIc = document.getElementById('inp-patient-ic').value.trim();
-      const guardianName = document.getElementById('inp-guardian-name').value.trim();
-      const guardianIc = document.getElementById('inp-guardian-ic').value.trim();
-      if (!resolvedName || !resolvedIc || !guardianName || !guardianIc) {
+      const noGuardian = isNoGuardian();
+      const guardianName = noGuardian ? '' : document.getElementById('inp-guardian-name').value.trim();
+      const guardianIc = noGuardian ? '' : document.getElementById('inp-guardian-ic').value.trim();
+      if (!resolvedName || !resolvedIc || (!noGuardian && (!guardianName || !guardianIc))) {
         errEl.textContent = 'Sila isi Nama & No. IC — pesakit & waris/penjamin.'; errEl.classList.remove('hidden'); return;
       }
-      const incomplete = Object.keys(SIG_BOX_IDS).some(key => !sigStore[key]);
+      const incomplete = Object.keys(SIG_BOX_IDS).filter(key => !(noGuardian && key === 'guardianSign')).some(key => !sigStore[key]);
       if (incomplete) {
         errEl.textContent = 'Sila lengkapkan semua tandatangan — pesakit & waris/penjamin.'; errEl.classList.remove('hidden'); return;
       }
@@ -1618,7 +1630,7 @@
           return data?.signedUrl || path;
         };
         const sigUrl = await uploadPad('patientSign', 'signature');
-        const guardianSignUrl = await uploadPad('guardianSign', 'guardian_signature');
+        const guardianSignUrl = noGuardian ? null : await uploadPad('guardianSign', 'guardian_signature');
 
         const sched = await loadPaymentScheduleForAgreement(currentKob);
         const signedPdfBytes = await generateSignedPdf({
@@ -1627,11 +1639,11 @@
           clauses: saAgreementData.clauses,
           patientName: resolvedName,
           patientIc: resolvedIc,
-          guardianName, guardianIc,
+          guardianName, guardianIc, noGuardian,
           packageName: saAgreementData.pkg?.name || '—',
           price: saAgreementData.pkg?.price != null ? `RM ${Number(saAgreementData.pkg.price).toFixed(2)}` : '—',
           signatureDataUrl: dataUrls.patientSign,
-          guardianSignatureImgDataUrl: dataUrls.guardianSign,
+          guardianSignatureImgDataUrl: noGuardian ? null : dataUrls.guardianSign,
           paymentRows: sched.rows, paymentTotal: sched.total, paymentModeLabel: sched.modeLabel,
         });
         const signedBlob = new Blob([signedPdfBytes], { type: 'application/pdf' });
@@ -1645,8 +1657,8 @@
           kob_session_id: currentKob?.id || null,
           patient_name: resolvedName,
           patient_ic: resolvedIc,
-          guardian_name: guardianName,
-          guardian_ic: guardianIc,
+          guardian_name: guardianName || null,
+          guardian_ic: guardianIc || null,
           signature_url: sigUrl,
           guardian_signature_url: guardianSignUrl,
           signed_pdf_url: pdfUrl?.signedUrl || pdfPath,
@@ -1924,7 +1936,7 @@
         };
         need(160);
         drawPartySig(MARGIN_X, 'Pesakit:', opts.patientName, opts.patientIc, sigImg);
-        drawPartySig(MARGIN_X + colW + 30, 'Penjamin/Waris/Penjaga Pesakit:', opts.guardianName, opts.guardianIc, guardianSigImg);
+        if (!opts.noGuardian) drawPartySig(MARGIN_X + colW + 30, 'Penjamin/Waris/Penjaga Pesakit:', opts.guardianName, opts.guardianIc, guardianSigImg);
         y -= 150;
       }
 
@@ -1955,22 +1967,27 @@
       y -= 85;
       page.drawLine({ start: { x: MARGIN_X, y }, end: { x: MARGIN_X + 220, y }, thickness: 0.5, color: BODY_COLOR });
 
-      // ── Waris / Penjamin (wajib) ──
-      need(270);
+      // ── Waris / Penjamin (wajib, kecuali "Tiada waris / penjamin") ──
+      need(opts.noGuardian ? 60 : 270);
       y -= 30;
       page.drawText('Tandatangan Waris / Penjamin', { x: MARGIN_X, y, size: 13, font: fontBold, color: COLOR });
       y -= 24;
-      page.drawText('Nama:', { x: MARGIN_X, y, size: 9, font: fontBold, color: COLOR });
-      page.drawText(sanitize(opts.guardianName || '-'), { x: MARGIN_X + 90, y, size: 10, font, color: BODY_COLOR });
-      y -= 18;
-      page.drawText('No. IC:', { x: MARGIN_X, y, size: 9, font: fontBold, color: COLOR });
-      page.drawText(sanitize(opts.guardianIc || '-'), { x: MARGIN_X + 90, y, size: 10, font, color: BODY_COLOR });
-      y -= 18;
-      page.drawText('Tandatangan Waris/Penjamin:', { x: MARGIN_X, y, size: 10, font: fontBold, color: COLOR });
-      y -= 8;
-      drawImgContain(page, guardianSigImg, MARGIN_X, y - 80, 220, 80);
-      y -= 85;
-      page.drawLine({ start: { x: MARGIN_X, y }, end: { x: MARGIN_X + 220, y }, thickness: 0.5, color: BODY_COLOR });
+      if (opts.noGuardian) {
+        page.drawText('Tiada waris / penjamin - pesakit hadir seorang diri.', { x: MARGIN_X, y, size: 10, font, color: BODY_COLOR });
+        y -= 20;
+      } else {
+        page.drawText('Nama:', { x: MARGIN_X, y, size: 9, font: fontBold, color: COLOR });
+        page.drawText(sanitize(opts.guardianName || '-'), { x: MARGIN_X + 90, y, size: 10, font, color: BODY_COLOR });
+        y -= 18;
+        page.drawText('No. IC:', { x: MARGIN_X, y, size: 9, font: fontBold, color: COLOR });
+        page.drawText(sanitize(opts.guardianIc || '-'), { x: MARGIN_X + 90, y, size: 10, font, color: BODY_COLOR });
+        y -= 18;
+        page.drawText('Tandatangan Waris/Penjamin:', { x: MARGIN_X, y, size: 10, font: fontBold, color: COLOR });
+        y -= 8;
+        drawImgContain(page, guardianSigImg, MARGIN_X, y - 80, 220, 80);
+        y -= 85;
+        page.drawLine({ start: { x: MARGIN_X, y }, end: { x: MARGIN_X + 220, y }, thickness: 0.5, color: BODY_COLOR });
+      }
 
       page.drawText(sanitize(opts.version || ''), { x: MARGIN_X, y: MARGIN_BOT - 20, size: 8, font, color: MUTED });
       page.drawText(`Dijana pada ${new Date().toLocaleString('en-GB')}`, { x: PAGE_W - MARGIN_X - 180, y: MARGIN_BOT - 20, size: 8, font, color: MUTED });
