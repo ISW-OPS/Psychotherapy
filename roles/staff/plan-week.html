@@ -420,26 +420,41 @@ function coachSwapHtml() {
   const subId = weekEntry.substitute_coach_id || '';
   ensureSubName(subId);
   const inList = coachList.some(c => c.id === subId);
+  // Terkunci selepas sesi Hadir / Tidak Hadir — coach ganti hanya relevan sebelum sesi berlaku.
+  const subLocked = ['hadir', 'consultation_done', 'cancel'].includes(weekEntry.status);
   const opts = coachList.map(c => `<option value="${c.id}" ${subId === c.id ? 'selected' : ''}>${escHtml(c.full_name)}</option>`).join('')
     + (subId && !inList ? `<option value="${subId}" selected>${escHtml(coachNameById(subId) || '…')} (${iswL('bukan coach', 'not a coach')})</option>` : '');
   return `<div class="mt-3 pt-3 border-t border-ink/8 flex items-center gap-2 flex-wrap">
     <span class="text-[10px] font-semibold text-ink/45 uppercase tracking-wide">🔁 Coach Ganti (sesi ini sahaja)</span>
-    <select data-rbac="plan_week.edit" onchange="setSubstituteCoach(this.value)" class="text-xs border border-ink/20 rounded-lg px-2 py-1 bg-white outline-none focus:border-navy">
+    <select data-rbac="plan_week.edit" onchange="setSubstituteCoach(this.value)" ${subLocked ? 'disabled title="' + iswL('Terkunci selepas sesi Hadir / Tidak Hadir', 'Locked after the session is marked Present / Absent') + '"' : ''} class="text-xs border border-ink/20 rounded-lg px-2 py-1 bg-white outline-none focus:border-navy ${subLocked ? 'opacity-60 cursor-not-allowed' : ''}">
       <option value="">${typeof iswGetLang === 'function' && iswGetLang() === 'en'
         ? `— Use primary coach (${escHtml(primaryCoachName || 'not assigned')}) —`
         : `— Guna coach utama (${escHtml(primaryCoachName || 'belum ditetapkan')}) —`}</option>
       ${opts}
     </select>
-    <span class="text-[11px] text-ink/45 w-full">Untuk sesi ini sahaja (cth coach asal MC/tidak hadir) — pesakit kekal di bawah coach utama.</span>
+    <span class="text-[11px] text-ink/45 w-full">Untuk sesi ini sahaja (cth coach asal MC/tidak hadir) — pesakit kekal di bawah coach utama.${subLocked ? ' <b>' + iswL('Terkunci selepas sesi Hadir / Tidak Hadir.', 'Locked after the session is marked Present / Absent.') + '</b>' : ''}</span>
   </div>`;
 }
 async function setSubstituteCoach(coachId) {
   if (!weekEntry?.id) { banner('Tiada sesi untuk minggu ini — tempah dahulu', 'error'); return; }
+  if (['hadir', 'consultation_done', 'cancel'].includes(weekEntry.status)) {
+    banner(iswL('Coach ganti tak boleh diubah selepas sesi Hadir / Tidak Hadir.', 'The substitute coach cannot be changed after the session is marked Present / Absent.'), 'error');
+    renderHero();
+    return;
+  }
   const prevSub = weekEntry.substitute_coach_id || null;
   const { error } = await window.db.from('psy_plan_weekly_progress')
     .update({ substitute_coach_id: coachId || null }).eq('id', weekEntry.id);
   if (error) { banner('Ralat: ' + error.message, 'error'); return; }
   try { await auditLog('plan.substitute_assigned', weekEntry.id, { from: prevSub, to: coachId || null, week: weekEntry.week_number, source: 'plan-week' }); } catch (_) { }
+  if (coachId && coachId !== prevSub) {
+    const d = weekEntry.session_date ? new Date(weekEntry.session_date) : null;
+    try {
+      await notify(coachId, 'appointment', iswL('Anda ditugaskan sebagai coach ganti', 'You have been assigned as substitute coach'),
+        `${patientName || ''} · ${iswL('Minggu', 'Week')} ${weekEntry.week_number || ''}${d ? ' · ' + d.toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'long' }) + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : ''}`,
+        'plan-week.html?plan_id=' + (weekEntry.plan_id || '') + '&week=' + (weekEntry.week_number || ''));
+    } catch (_) { }
+  }
   weekEntry.substitute_coach_id = coachId || null;
   const idx = weekSessions.findIndex(r => r.id === weekEntry.id);
   if (idx >= 0) weekSessions[idx].substitute_coach_id = coachId || null;
