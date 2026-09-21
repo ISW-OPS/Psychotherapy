@@ -28,6 +28,7 @@
     "🧾 Sejarah Transaksi": "🧾 Transaction History",
     "📄 Lihat Invois": "📄 View Invoice",
     "📄 Invois": "📄 Invoice",
+    "Cari no. resit (REC) / no. invois (INV) / rujukan / nama pesakit...": "Search receipt no. (REC) / invoice no. (INV) / reference / patient name...",
     "📎 Lihat Bukti": "📎 View Proof",
     "📄 Invois Ansuran": "📄 Installment Invoice",
     "📑 Invois Penuh": "📑 Full Plan Invoice",

@@ -49,7 +49,7 @@
 
         <!-- Filters -->
         <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4 flex flex-wrap items-center gap-3">
-          <input id="search-input" type="text" placeholder="Cari receipt / nama pesakit..." oninput="renderTable()"
+          <input id="search-input" type="text" placeholder="Cari no. resit (REC) / no. invois (INV) / rujukan / nama pesakit..." oninput="renderTable()"
             class="flex-1 min-w-[200px] px-3 py-2 border border-ink/15 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-navy/20">
           <select id="status-filter" onchange="renderTable()"
             class="px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-navy/20">
@@ -296,7 +296,8 @@ function renderTable() {
     if (methodF && p.payment_method !== methodF) return false;
     if (search) {
       const name = patientLookup[p.patient_id]?.name || '';
-      if (!p.receipt_ref?.toLowerCase().includes(search) && !name.toLowerCase().includes(search)) return false;
+      const hay = `${p.receipt_no || ''} ${p.invoice_no || ''} ${p.invoice_number || ''} ${p.receipt_ref || ''} ${name}`.toLowerCase();
+      if (!hay.includes(search)) return false;
     }
     return true;
   });
@@ -317,7 +318,10 @@ function renderTable() {
     const mrn  = pt?.mrn || '';
     const info = STATUS_META[p.status] || STATUS_META.completed;
     return `<div class="grid gap-3 items-center px-5 py-3 hover:bg-ink/[0.015] transition-colors" style="grid-template-columns:120px 1fr 100px 110px 100px 100px 90px">
-      <div class="text-xs font-mono text-ink/70 truncate">${escHtml(p.receipt_ref || '—')}</div>
+      <div class="min-w-0">
+        <div class="text-xs font-mono font-semibold text-ink/80 truncate">${escHtml(p.receipt_no || p.receipt_ref || '—')}</div>
+        ${p.invoice_no || p.invoice_number ? `<div class="text-[10px] font-mono text-ink/40 truncate">${escHtml(p.invoice_no || p.invoice_number)}</div>` : ''}
+      </div>
       <div class="min-w-0">
         <div class="text-sm font-semibold text-ink truncate">${escHtml(name)}</div>
         <div class="text-[10px] text-ink/40">${escHtml(mrn)}</div>
@@ -358,8 +362,11 @@ function openDetail(id) {
   document.getElementById('detail-body').innerHTML = `
     <div class="flex items-start justify-between gap-3">
       <div>
-        <div class="text-xs text-ink/45">Receipt</div>
-        <div class="text-sm font-mono font-bold text-ink">${escHtml(p.receipt_ref || '—')}</div>
+        <div class="text-xs text-ink/45">${iswL('No. Resit', 'Receipt No.')}</div>
+        <div class="text-sm font-mono font-bold text-ink">${escHtml(p.receipt_no || '—')}</div>
+        ${p.invoice_no ? `<div class="text-xs text-ink/45 mt-1.5">${iswL('No. Invois', 'Invoice No.')}</div><div class="text-sm font-mono font-semibold text-ink">${escHtml(p.invoice_no)}</div>` : ''}
+        ${p.invoice_number ? `<div class="text-xs text-ink/45 mt-1.5">${iswL('No. Rujukan', 'Reference No.')}</div><div class="text-xs font-mono text-ink/70">${escHtml(p.invoice_number)}</div>` : ''}
+        <div class="text-[10px] text-ink/35 mt-1.5">${iswL('ID sistem', 'System ID')}: <span class="font-mono">${escHtml(p.receipt_ref || '—')}</span></div>
       </div>
       <span class="text-[10px] font-bold px-2 py-1 rounded-full ${info.cls}">${info.label}</span>
     </div>
@@ -518,7 +525,7 @@ async function saveManual() {
 }
 
 function exportCsv() {
-  const rows = [['Receipt','Pesakit','MRN','Kaedah','Status','Subtotal','Total','Tarikh']];
+  const rows = [['No. Resit','No. Invois','No. Rujukan','ID Sistem','Pesakit','MRN','Kaedah','Status','Subtotal','Total','Tarikh']];
   const search   = (document.getElementById('search-input').value || '').toLowerCase().trim();
   const statusF  = document.getElementById('status-filter').value;
   const methodF  = document.getElementById('method-filter').value;
@@ -528,12 +535,16 @@ function exportCsv() {
     if (methodF && p.payment_method !== methodF) return false;
     if (search) {
       const name = patientLookup[p.patient_id]?.name || '';
-      if (!p.receipt_ref?.toLowerCase().includes(search) && !name.toLowerCase().includes(search)) return false;
+      const hay = `${p.receipt_no || ''} ${p.invoice_no || ''} ${p.invoice_number || ''} ${p.receipt_ref || ''} ${name}`.toLowerCase();
+      if (!hay.includes(search)) return false;
     }
     return true;
   }).forEach(p => {
     const pt = patientLookup[p.patient_id];
     rows.push([
+      p.receipt_no || '',
+      p.invoice_no || '',
+      p.invoice_number || '',
       p.receipt_ref || '',
       pt?.name || '',
       pt?.mrn || '',
