@@ -30,6 +30,7 @@
     "🧾 Resit": "🧾 Receipt",
     "📎 Bukti": "📎 Proof",
     "📋 Link Payment": "📋 Payment Link",
+    "🧾 Transaksi": "🧾 Transactions",
     "📄 Invois": "📄 Invoice",
     "Cari no. resit (REC) / no. invois (INV) / rujukan / nama pesakit...": "Search receipt no. (REC) / invoice no. (INV) / reference / patient name...",
     "📎 Lihat Bukti": "📎 View Proof",

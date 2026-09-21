@@ -4571,11 +4571,23 @@
         bySection.get(sec).push(g);
       });
       const sections = BAYARAN_SECTION_ORDER.filter(s => bySection.has(s));
-      document.getElementById('bayaran-body').innerHTML = sections.map(sec => `
+      // Bahagian yang semuanya bayaran tunggal (bukan pakej/pesanan) tak perlu dibuka satu-satu —
+      // terus papar sebagai jadual transaksi (Butiran, Rujukan, Invois/Resit/Bukti) di luar.
+      document.getElementById('bayaran-body').innerHTML = sections.map(sec => {
+        const groups = bySection.get(sec);
+        if (groups.every(g => g.groupType === 'single')) {
+          const txs = groups.flatMap(g => g.payments || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+          return `<div class="space-y-2 mb-5 last:mb-0">
+            <h5 class="text-[11px] font-bold text-ink/40 uppercase tracking-wider px-1">${escHtml(sec)}</h5>
+            ${buildTxTableHtml(txs, { title: '🧾 ' + iswL('Transaksi', 'Transactions') })}
+          </div>`;
+        }
+        return `
         <div class="space-y-2 mb-5 last:mb-0">
           <h5 class="text-[11px] font-bold text-ink/40 uppercase tracking-wider px-1">${escHtml(sec)}</h5>
-          <div class="space-y-2">${bySection.get(sec).map(bayaranRowHtml).join('')}</div>
-        </div>`).join('');
+          <div class="space-y-2">${groups.map(bayaranRowHtml).join('')}</div>
+        </div>`;
+      }).join('');
     }
 
     async function openBayaranGroup(key) {
@@ -4636,14 +4648,15 @@
     function toggleFailedTx() {
       showFailedTx = !showFailedTx;
       if (bayaranOpenGroupKey) openBayaranGroup(bayaranOpenGroupKey);
+      else renderBayaranList();
     }
 
-    function buildTxTableHtml(allTxAll) {
+    function buildTxTableHtml(allTxAll, opts = {}) {
       const failedCount = allTxAll.filter(t => t.status === 'failed').length;
       const allTx = showFailedTx ? allTxAll : allTxAll.filter(t => t.status !== 'failed');
       return `
         <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
-          <h4 class="font-bold text-sm text-ink mb-3">🧾 Sejarah Transaksi</h4>
+          <h4 class="font-bold text-sm text-ink mb-3">${opts.title ? escHtml(opts.title) : '🧾 Sejarah Transaksi'}</h4>
           ${allTx.length ? `<div class="overflow-x-auto"><table class="tbl w-full">
           <thead><tr>
             <th>Tarikh</th>
