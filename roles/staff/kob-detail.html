@@ -964,7 +964,8 @@
         const hubBtn = patient?.active_package_id
           ? `<a href="patient-hub.html?patient_id=${patient.id}" class="bg-navy text-white px-4 py-2 rounded-lg text-xs font-semibold hover:bg-navy-dark ml-2">🗂️ Buka Patient Hub →</a>`
           : '';
-        actEl.innerHTML = `<span class="chip bg-green-light text-green-dark text-xs">✅ KOB Selesai</span>${hubBtn}`;
+        const reopenBtn = `<button type="button" onclick="reopenKob()" data-rbac="kob.edit" class="border border-terracotta/40 text-terracotta px-3 py-2 rounded-lg text-xs font-semibold hover:bg-terracotta/10 ml-2">${iswL('↩️ Batalkan Selesai', '↩️ Cancel Completed')}</button>`;
+        actEl.innerHTML = `<span class="chip bg-green-light text-green-dark text-xs">✅ KOB Selesai</span>${hubBtn}${reopenBtn}`;
         if (kob.package_payment_status === 'declined' && kob.recommended_package_name) {
           document.getElementById('doctor-info').insertAdjacentHTML('beforeend',
             `<div class="bg-gold/10 border border-gold/30 text-xs p-2 rounded mt-2">⚠️ Patient tidak teruskan pada masa KOB. Pakej dicadangkan: <strong>${escapeHtml(kob.recommended_package_name)}</strong> · RM ${Number(kob.recommended_package_price || 0).toFixed(2)} — disimpan untuk rujukan jika patient kembali.</div>`);
@@ -1377,6 +1378,44 @@
       }
     }
 
+    // Batalkan status 'Selesai' (tersilap tekan) — KOB kembali ke 'Hadir' dan boleh ditandakan Selesai semula.
+    // Pakej yang sudah diaktifkan TIDAK disentuh melainkan staf pilih batalkan sekali (pembelian → cancelled,
+    // pelan rawatan → paused, pakej pesakit dikosongkan). Sebab wajib & direkod dalam audit log.
+    async function reopenKob() {
+      if (!can('kob', 'edit')) { banner(iswL('Anda tidak mempunyai kebenaran untuk tindakan ini.', 'You do not have permission for this action.'), 'error'); return; }
+      const reason = (prompt(iswL('Sebab batalkan status Selesai (wajib):', 'Reason for cancelling the Completed status (required):')) || '').trim();
+      if (!reason) { banner(iswL('Sebab wajib diisi.', 'A reason is required.'), 'error'); return; }
+      if (!confirm(iswL('Batalkan status Selesai? KOB kembali ke "Hadir" dan boleh ditandakan Selesai semula.', 'Cancel the Completed status? The KOB returns to "Attended" and can be marked Completed again.'))) return;
+      let undoPkg = false;
+      if (patient?.active_package_id && patient.active_package_id === kob.recommended_package_id) {
+        undoPkg = confirm(iswL(
+          `Pakej "${kob.recommended_package_name}" sudah diaktifkan untuk pesakit. Batalkan pengaktifan pakej juga? OK = batalkan pakej (pelan rawatan dijeda). Cancel = kekalkan pakej.`,
+          `The package "${kob.recommended_package_name}" is already active for the patient. Cancel the package activation too? OK = cancel the package (treatment plan paused). Cancel = keep the package.`));
+      }
+      try {
+        const { error } = await window.db.from('psy_kob_sessions').update({
+          status: 'hadir', doctor_selesai_id: null, doctor_selesai_name: null, selesai_at: null,
+          updated_at: new Date().toISOString(),
+        }).eq('id', kobId);
+        if (error) throw error;
+        const patientUpdates = { kob_status: 'hadir' };
+        if (undoPkg) {
+          await window.db.from('psy_package_purchases').update({ status: 'cancelled' })
+            .eq('patient_id', patient.id).eq('package_id', kob.recommended_package_id).eq('status', 'active');
+          await window.db.from('psy_treatment_plans').update({ status: 'paused' })
+            .eq('patient_id', patient.id).eq('template', kob.recommended_package_id).eq('status', 'active');
+          Object.assign(patientUpdates, { active_package_id: null, active_package_name: null, package_purchased_at: null, package_expires_at: null });
+        }
+        const { error: patErr } = await window.db.from('psy_patients').update(patientUpdates).eq('id', patient.id);
+        if (patErr) throw patErr;
+        await auditLog('kob.completed_cancelled', kobId, { patient_id: patient.id, reason, package_cancelled: undoPkg, package: kob.recommended_package_name });
+        banner(iswL('Status Selesai dibatalkan ✅', 'Completed status cancelled ✅'));
+        setTimeout(() => location.reload(), 1000);
+      } catch (e) {
+        banner(iswL('Ralat: ', 'Error: ') + e.message, 'error');
+      }
+    }
+
     async function markSelesai() {
       // Gate keras: KOB tak boleh selesai selagi agreement belum ditandatangani
       // (butang dikunci di UI, ini pertahanan kedua).
@@ -1412,7 +1451,7 @@
 
         // Activate recommended package (if any, and patient agreed).
         const patientUpdates = { kob_status: 'completed' };
-        if (hasPackage && !isDeclined) {
+        if (hasPackage && !isDeclined && !patient?.active_package_id) {
           // status pun sekali diset 'active' — cuma bila pakej BENAR-BENAR diaktifkan.
           // Tanpa ni, staff.patients.html (tab "Semua") terus sorok pesakit ni
           // selama-lamanya sebab status kekal 'pending_kyc', walaupun pakej dah aktif.
