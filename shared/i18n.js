@@ -26,6 +26,8 @@
   var EN = {
     // — Bayaran manual / invois / waris — added 21 Sept —
     "🧾 Sejarah Transaksi": "🧾 Transaction History",
+    "📄 Lihat Invois": "📄 View Invoice",
+    "📄 Invois": "📄 Invoice",
     "Sejarah Transaksi": "Transaction History",
     "Tiada transaksi.": "No transactions.",
     "Tunai": "Cash",

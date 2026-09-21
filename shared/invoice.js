@@ -10,7 +10,7 @@
 (function () {
   const D = () => window.iswDoc;
 
-  async function buildInvoiceInner(kobId, override) {
+  async function buildInvoiceInner(kobId, override, asOfSeq) {
     const doc = D();
     if (!doc) throw new Error('shared/receipt.js belum dimuat / not loaded');
     const { esc, money, dateLong, header, TEAL, L } = doc;
@@ -32,7 +32,11 @@
     const pkgDiscount = Number(kob.package_discount || 0);
     const isInstallment = kob.package_payment_mode === 'installment' && cps?.length;
     const owed = isInstallment ? Number(cps[cps.length - 1].target_cumulative) : price;
-    const paid = (pays || []).reduce((a, p) => a + Number(p.total || 0), 0);
+    const paidTotal = (pays || []).reduce((a, p) => a + Number(p.total || 0), 0);
+    // Invois berubah bila tiap bayaran dibuat — asOfSeq = paparan setakat checkpoint itu
+    // (bayaran selepasnya belum dikira); tanpa asOfSeq = keadaan semasa.
+    const asOfCp = asOfSeq != null ? (cps || []).find(x => Number(x.seq) === Number(asOfSeq)) : null;
+    const paid = asOfCp ? Math.min(paidTotal, Number(asOfCp.target_cumulative)) : paidTotal;
     const due = Math.max(0, owed - paid);
     const issue = kob.recommended_at || kob.created_at;
 
@@ -116,10 +120,10 @@
       </div>`;
   }
 
-  async function viewInvoice(kobId, override) {
+  async function viewInvoice(kobId, override, asOfSeq) {
     const L = (window.iswDoc && window.iswDoc.L) || ((ms, en) => en);
     let inner;
-    try { inner = await buildInvoiceInner(kobId, override); }
+    try { inner = await buildInvoiceInner(kobId, override, asOfSeq); }
     catch (e) { alert(L('Gagal muat invois: ', 'Failed to load invoice: ') + e.message); return; }
     document.getElementById('invoice-modal')?.remove();
     const modal = document.createElement('div');
