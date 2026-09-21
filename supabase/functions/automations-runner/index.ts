@@ -368,7 +368,7 @@ async function runSequenceAutomations(supabase: any, locationId: string) {
             jumlah: baki.toFixed(2), baki: baki.toFixed(2),
             tarikh_due: fmtDateMY(new Date(cp.due_date + 'T00:00:00Z')),
           })
-          // Pautan + invois hanya bila templat guna {{pautan}} — dan hanya utk checkpoint SETERUSNYA
+          // Pautan hanya bila templat guna {{pautan}} (invois PDF pula ikut tanda attach_invoice pada mesej) — dan hanya utk checkpoint SETERUSNYA
           // yang belum dibayar (amaun pautan diderive server daripada checkpoint itu).
           if (/\{\{?pautan\}?\}/.test(m.message_text || '')) {
             const next = (await kobCps(cp.kob_session_id)).find((c2: any) => Number(c2.target_cumulative) > paid + 0.005)
@@ -380,12 +380,15 @@ async function runSequenceAutomations(supabase: any, locationId: string) {
               await logSend(supabase, a, p, 'whatsapp', m.message_text || '', 'failed', 'Ansuran (pautan): ' + String((e as any)?.message || e), m.id)
               continue
             }
-            // Invois PDF gagal TAK halang mesej — pautan dah dijana, hantar tanpa lampiran (elak jana pautan berulang tiap cron).
-            try {
-              const inv = await generateKobInvoiceUrl(supabase, { kobSessionId: cp.kob_session_id, seq: cp.seq, payUrl: vars.pautan })
-              attachments.push(inv.url)
-            } catch (e) {
-              console.warn('automations-runner: invois PDF gagal —', (e as any)?.message || e)
+            // Invois PDF hanya bila mesej ditanda "Lampirkan invois PDF" (attach_invoice). Gagal jana TAK halang
+            // mesej — pautan dah dijana, hantar tanpa lampiran (elak jana pautan berulang tiap cron).
+            if (m.attach_invoice) {
+              try {
+                const inv = await generateKobInvoiceUrl(supabase, { kobSessionId: cp.kob_session_id, seq: cp.seq, payUrl: vars.pautan })
+                attachments.push(inv.url)
+              } catch (e) {
+                console.warn('automations-runner: invois PDF gagal —', (e as any)?.message || e)
+              }
             }
           }
         }

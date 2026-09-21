@@ -240,6 +240,15 @@
                 <div><label class="lbl">URL Pautan</label><input id="msg-link-url" class="fld" placeholder="https://..." oninput="renderPreview()"></div>
                 <p class="text-[11px] text-ink/40">ℹ️ Pautan dihantar sebagai teks dalam mesej WhatsApp — bukan butang klik (WhatsApp/GHL tak sokong butang).</p>
               </div>
+
+              <!-- Invois PDF (trigger ansuran sahaja) -->
+              <div id="msg-invoice-field" class="hidden mt-3 bg-navy/5 border border-navy/15 rounded-xl p-3">
+                <label class="flex items-start gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" id="msg-attach-invoice" class="mt-0.5 accent-navy w-4 h-4 shrink-0" onchange="renderPreview()">
+                  <span><b>📎 Lampirkan invois PDF</b>
+                    <span class="block text-[11px] text-ink/55 font-normal mt-0.5">Invois ansuran (Amount Due = ansuran itu sahaja, dengan butang Pay) dilampirkan bersama mesej ini. Teks mesej mesti ada {{pautan}}.</span></span>
+                </label>
+              </div>
             </div>
             <div class="lg:col-span-4 space-y-4">
               <div class="col">
@@ -347,7 +356,7 @@ let currentContentType = 'text';
 let currentMediaUrl = '';
 
 function isSequenceMode(){ return val('t-category') !== 'schedule' && val('t-category') !== ''; }
-function newMessage(){ return { send_mode:'immediate', day_offset:0, delay_value:1, delay_unit:'hour', send_time:'', recipient:'patient', content_type:'text', message_text:'', media_url:'', link_url:'', link_label:'' }; }
+function newMessage(){ return { send_mode:'immediate', day_offset:0, delay_value:1, delay_unit:'hour', send_time:'', recipient:'patient', content_type:'text', message_text:'', media_url:'', link_url:'', link_label:'', attach_invoice:false }; }
 
 function renderMessageList(){
   document.getElementById('msg-list').innerHTML = MESSAGES.map((m,i)=>`<button type="button" onclick="selectMessage(${i})" class="msg-pill ${i===activeMsgIdx?'msg-on':''}">Mesej ${i+1}</button>`).join('');
@@ -417,6 +426,7 @@ function saveActiveMessageFields(){
   m.media_url = currentMediaUrl;
   m.link_label = val('msg-link-label');
   m.link_url = val('msg-link-url');
+  m.attach_invoice = !!document.getElementById('msg-attach-invoice')?.checked;
 }
 function loadActiveMessageFields(){
   const m=MESSAGES[activeMsgIdx]; if(!m) return;
@@ -432,12 +442,21 @@ function loadActiveMessageFields(){
   document.getElementById('msg-link-url').value=m.link_url||'';
   setContentType(m.content_type||'text');
   document.getElementById('m-tpl').value=m.message_text||'';
+  const inv = document.getElementById('msg-attach-invoice'); if(inv) inv.checked = !!m.attach_invoice;
+  updateInvoiceFieldVisibility();
   renderMediaPreview();
   renderPreview();
+}
+// "Lampirkan invois PDF" hanya utk trigger ansuran (peringatan / tertunggak).
+function isInstallmentEvent(){ return ['installment_reminder','installment_overdue'].includes(val('t-event')); }
+function updateInvoiceFieldVisibility(){
+  const f = document.getElementById('msg-invoice-field'); if(!f) return;
+  f.classList.toggle('hidden', !(isSequenceMode() && isInstallmentEvent()));
 }
 
 function updateModeVisibility(){
   const seq = isSequenceMode();
+  updateInvoiceFieldVisibility();
   document.getElementById('t-timing-wrap').classList.toggle('hidden', seq);
   document.getElementById('msg-seq-rail').classList.toggle('hidden', !seq);
   document.getElementById('msg-timing-block').classList.toggle('hidden', !seq);
@@ -457,6 +476,7 @@ function currentEvent(){ const evs=CATALOG[val('t-category')]?.events||[]; retur
 function initCategory(){ document.getElementById('t-category').innerHTML = Object.entries(CATALOG).filter(([k,v])=>(v.events||[]).some(e=>e.wired)).map(([k,v])=>`<option value="${k}">${esc(v.label)}</option>`).join(''); onCategoryChange(); }
 function onCategoryChange(){ const evs=CATALOG[val('t-category')]?.events||[]; document.getElementById('t-event').innerHTML = evs.map(e=>`<option value="${e.key}">${esc(e.label)}${e.wired?'':' — (akan datang)'}</option>`).join(''); onEventChange(); updateModeVisibility(); }
 function onEventChange(){
+  try { updateInvoiceFieldVisibility(); } catch(_) {}
   const e=currentEvent(); if(!e)return;
   const opts=e.timing||['at'];
   document.getElementById('t-timing-opts').innerHTML = opts.map((t,i)=>`<label class="flex items-center gap-2 text-sm cursor-pointer"><input type="radio" name="t-when" value="${t}" ${i===0?'checked':''} onchange="onTimingChange()" class="accent-navy"> ${TIMING_LABEL[t]}</label>`).join('');
@@ -507,6 +527,7 @@ function renderPreview(){
   if(isSequenceMode()){
     if((currentContentType==='image'||currentContentType==='video') && currentMediaUrl) html = `<div class="mb-1.5 text-ink/50">${currentContentType==='image'?'🖼️':'🎬'} [media dilampirkan]</div>` + html;
     if(currentContentType==='link' && val('msg-link-url')) html += `<div class="mt-2 pt-2 border-t border-ink/10 text-teal-700 underline">🔗 ${esc(val('msg-link-label')||val('msg-link-url'))}</div>`;
+    if(isInstallmentEvent() && document.getElementById('msg-attach-invoice')?.checked) html += `<div class="mt-2 pt-2 border-t border-ink/10 text-ink/60">📎 ${iswL('Invois ansuran.pdf dilampirkan', 'Installment invoice.pdf attached')}</div>`;
   }
   document.getElementById('m-prev').innerHTML = html || '<span class="text-ink/40">Pratonton mesej…</span>';
 }
@@ -676,6 +697,7 @@ async function save(activate){
         media_url: m.media_url||null,
         link_url: m.content_type==='link' ? (m.link_url||null) : null,
         link_label: m.content_type==='link' ? (m.link_label||null) : null,
+        ...(m.attach_invoice ? { attach_invoice: true } : {}),
       }));
       const { error: msgErr } = await window.db.from('psy_automation_messages').insert(rows);
       if(msgErr) throw msgErr;
@@ -707,7 +729,7 @@ async function loadExisting(){
       delay_value: m.delay_value||1, delay_unit: m.delay_unit||'hour',
       send_time: (m.send_time||'').slice(0,5), recipient: m.recipient||'patient', content_type: m.content_type||'text',
       message_text: m.message_text||'', media_url: m.media_url||'',
-      link_url: m.link_url||'', link_label: m.link_label||'',
+      link_url: m.link_url||'', link_label: m.link_label||'', attach_invoice: !!m.attach_invoice,
     })) : [newMessage()];
     activeMsgIdx=0; renderMessageList(); loadActiveMessageFields();
   } else {

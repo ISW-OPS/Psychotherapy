@@ -36,6 +36,8 @@
     "Baki yang perlu dibayar (RM)": "Balance to pay (RM)",
     "Tarikh ansuran jatuh tempoh": "Installment due date",
     "Pautan bayaran HitPay (turut melampirkan invois PDF) — hanya automasi Ansuran": "HitPay payment link (also attaches the PDF invoice) — Installment automations only",
+    "📎 Lampirkan invois PDF": "📎 Attach invoice PDF",
+    "Invois ansuran (Amount Due = ansuran itu sahaja, dengan butang Pay) dilampirkan bersama mesej ini. Teks mesej mesti ada {{pautan}}.": "The installment invoice (Amount Due = that installment only, with a Pay button) is attached to this message. The message text must contain {{pautan}}.",
     "📄 Invois": "📄 Invoice",
     "Cari no. resit (REC) / no. invois (INV) / rujukan / nama pesakit...": "Search receipt no. (REC) / invoice no. (INV) / reference / patient name...",
     "📎 Lihat Bukti": "📎 View Proof",

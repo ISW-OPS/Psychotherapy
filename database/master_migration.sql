@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-09-21T03:18:12.224996Z
+-- Generated: 2026-09-21T04:24:11.585406Z
 -- Jumlah fail: 36
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -8786,6 +8786,7 @@ create table if not exists psy_automation_messages (
   media_url text,                                     -- imej/video (attachment WhatsApp)
   link_url text,                                       -- pautan (dihantar sbg teks, BUKAN butang — GHL tiada sokongan butang)
   link_label text,
+  attach_invoice boolean not null default false,       -- lampirkan PDF invois (hanya trigger ansuran — perlu {{pautan}} dlm teks)
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );

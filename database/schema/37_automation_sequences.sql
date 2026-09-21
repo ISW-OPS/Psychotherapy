@@ -22,6 +22,7 @@ create table if not exists psy_automation_messages (
   media_url text,                                     -- imej/video (attachment WhatsApp)
   link_url text,                                       -- pautan (dihantar sbg teks, BUKAN butang — GHL tiada sokongan butang)
   link_label text,
+  attach_invoice boolean not null default false,       -- lampirkan PDF invois (hanya trigger ansuran — perlu {{pautan}} dlm teks)
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
