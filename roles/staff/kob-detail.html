@@ -3567,8 +3567,10 @@
       if (!can('kob', 'edit')) { banner('Anda tidak mempunyai kebenaran untuk buang tandatangan.', 'error'); return; }
       if (!confirm('Buang tandatangan agreement ini? Pesakit perlu sign semula sebelum KOB boleh ditandakan Selesai.')) return;
       try {
-        const { error } = await window.db.from('psy_kob_agreements').delete().eq('id', agreementId);
+        // .select() — RLS yg sekat DELETE pulang 0 baris tanpa ralat; mesti disemak eksplisit.
+        const { data: deleted, error } = await window.db.from('psy_kob_agreements').delete().eq('id', agreementId).select('id');
         if (error) throw error;
+        if (!deleted?.length) throw new Error('Tandatangan tak dapat dibuang (disekat oleh kebenaran database). Hubungi admin sistem.');
         await auditLog('kob.agreement_removed', kobId, { patient_id: patient?.id, agreement_id: agreementId, by_staff: window.currentUser.full_name });
         banner('Tandatangan agreement dibuang ✅');
         setTimeout(() => location.reload(), 800);
@@ -3642,30 +3644,6 @@
         pg.drawImage(img, { x: boxX + (boxW - w) / 2, y: boxBottomY, width: w, height: h });
       };
       const drawSigContain = (pg, boxX, boxBottomY, boxW, boxMaxH) => drawImgContain(pg, sigImg, boxX, boxBottomY, boxW, boxMaxH);
-      // Setiap m/s perjanjian mesti ada tandatangan pesakit DAN waris/penjamin
-      // (bukan hanya m/s pengesahan akhir) — elak m/s ditukar selepas ditandatangan.
-      const stampFooter = pg => {
-        if (!sigImg) return;
-        const sigW = 120, sigMaxH = 44;
-        const lineY = 34;
-        const patBlockRight = PAGE_W - (MARGIN_X - 25);
-        const patBlockX = patBlockRight - sigW;
-        drawImgContain(pg, sigImg, patBlockX, lineY + 2, sigW, sigMaxH);
-        pg.drawLine({ start: { x: patBlockX, y: lineY }, end: { x: patBlockRight, y: lineY }, thickness: 0.6, color: MUTED });
-        const patLabel = sanitize(`${opts.patientName || '-'} | ${new Date().toLocaleDateString('en-GB')}`);
-        const patLabelW = font.widthOfTextAtSize(patLabel, 6.5);
-        pg.drawText(patLabel, { x: patBlockX + (sigW - patLabelW) / 2, y: lineY - 10, size: 6.5, font, color: MUTED });
-
-        if (guardianSigImg) {
-          const gBlockRight = patBlockX - 15;
-          const gBlockX = gBlockRight - sigW;
-          drawImgContain(pg, guardianSigImg, gBlockX, lineY + 2, sigW, sigMaxH);
-          pg.drawLine({ start: { x: gBlockX, y: lineY }, end: { x: gBlockRight, y: lineY }, thickness: 0.6, color: MUTED });
-          const gLabel = 'Waris/Penjamin';
-          const gLabelW = font.widthOfTextAtSize(gLabel, 6.5);
-          pg.drawText(gLabel, { x: gBlockX + (sigW - gLabelW) / 2, y: lineY - 10, size: 6.5, font, color: MUTED });
-        }
-      };
       const titleText = sanitize(opts.title || 'Kontrak Pelaburan Kesihatan');
       need(40);
       page.drawText(titleText, { x: (PAGE_W - fontBold.widthOfTextAtSize(titleText, 18)) / 2, y, size: 18, font: fontBold, color: COLOR });
@@ -3772,7 +3750,7 @@
       // ── Tandatangan Pesakit per-m/s — kotak kecil penjuru kanan-bawah tiap m/s
       // kandungan (sama macam kob-sign.html) — kekal kosong di sini sebab PDF ni
       // cuma pratonton statik (Hantar WhatsApp), tiada overlay interaktif utk isi
-      // kotak ni. boxY=70 elak bertindih dgn stampFooter (y:12-56).
+      // kotak ni. boxY=70.
       const pageSignSlots = [];
       const contentPageCount = pdfDoc.getPageCount();
       for (let p = 0; p < contentPageCount; p++) {
@@ -3848,7 +3826,6 @@
       page.drawText(`Dijana pada ${new Date().toLocaleString('en-GB')}`, { x: PAGE_W - MARGIN_X - 180, y: MARGIN_BOT - 20, size: 8, font, color: MUTED });
       const allPages = pdfDoc.getPages();
       allPages.forEach((pg, idx) => {
-        stampFooter(pg);
         const pageLabel = `M/S ${idx + 1} / ${allPages.length}`;
         pg.drawText(pageLabel, { x: MARGIN_X, y: 18, size: 7, font, color: MUTED });
       });
