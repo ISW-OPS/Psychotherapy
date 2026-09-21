@@ -403,27 +403,43 @@ let _ieCatalogsLoaded = false;                  // katalog inline (coaching + in
 // (cth coach asal MC/tidak hadir) — pesakit KEKAL bawah coach utama, bukan tukar kekal.
 let primaryCoachId = null, primaryCoachName = '';
 let coachList = [];
-function coachNameById(id) { return coachList.find(c => c.id === id)?.full_name || ''; }
+function coachNameById(id) { return coachList.find(c => c.id === id)?.full_name || subNameCache[id] || ''; }
+// Coach ganti boleh ditetapkan dari Appointments (dulu: semua staf) — kalau bukan staff_role 'coach' dia tiada dlm
+// coachList; tarik namanya supaya dropdown & lencana tetap betul (bukan jatuh ke "coach utama" senyap-senyap).
+const subNameCache = {};
+function ensureSubName(id) {
+  if (!id || coachList.some(c => c.id === id) || subNameCache[id]) return;
+  subNameCache[id] = '…';
+  window.db.from('psy_profiles').select('full_name').eq('id', id).maybeSingle().then(({ data }) => {
+    subNameCache[id] = data?.full_name || '';
+    renderHero();
+  });
+}
 function coachSwapHtml() {
   if (!weekEntry?.id) return '';
   const subId = weekEntry.substitute_coach_id || '';
-  const opts = coachList.map(c => `<option value="${c.id}" ${subId === c.id ? 'selected' : ''}>${escHtml(c.full_name)}</option>`).join('');
+  ensureSubName(subId);
+  const inList = coachList.some(c => c.id === subId);
+  const opts = coachList.map(c => `<option value="${c.id}" ${subId === c.id ? 'selected' : ''}>${escHtml(c.full_name)}</option>`).join('')
+    + (subId && !inList ? `<option value="${subId}" selected>${escHtml(coachNameById(subId) || '…')} (${iswL('bukan coach', 'not a coach')})</option>` : '');
   return `<div class="mt-3 pt-3 border-t border-ink/8 flex items-center gap-2 flex-wrap">
-    <span class="text-[10px] font-semibold text-ink/45 uppercase tracking-wide">🔁 Coach Ganti Minggu Ini</span>
+    <span class="text-[10px] font-semibold text-ink/45 uppercase tracking-wide">🔁 Coach Ganti (sesi ini sahaja)</span>
     <select data-rbac="plan_week.edit" onchange="setSubstituteCoach(this.value)" class="text-xs border border-ink/20 rounded-lg px-2 py-1 bg-white outline-none focus:border-navy">
       <option value="">${typeof iswGetLang === 'function' && iswGetLang() === 'en'
         ? `— Use primary coach (${escHtml(primaryCoachName || 'not assigned')}) —`
         : `— Guna coach utama (${escHtml(primaryCoachName || 'belum ditetapkan')}) —`}</option>
       ${opts}
     </select>
-    <span class="text-[11px] text-ink/45 w-full">Untuk minggu ini sahaja (cth coach asal MC/tidak hadir) — pesakit kekal di bawah coach utama.</span>
+    <span class="text-[11px] text-ink/45 w-full">Untuk sesi ini sahaja (cth coach asal MC/tidak hadir) — pesakit kekal di bawah coach utama.</span>
   </div>`;
 }
 async function setSubstituteCoach(coachId) {
   if (!weekEntry?.id) { banner('Tiada sesi untuk minggu ini — tempah dahulu', 'error'); return; }
+  const prevSub = weekEntry.substitute_coach_id || null;
   const { error } = await window.db.from('psy_plan_weekly_progress')
     .update({ substitute_coach_id: coachId || null }).eq('id', weekEntry.id);
   if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  try { await auditLog('plan.substitute_assigned', weekEntry.id, { from: prevSub, to: coachId || null, week: weekEntry.week_number, source: 'plan-week' }); } catch (_) { }
   weekEntry.substitute_coach_id = coachId || null;
   const idx = weekSessions.findIndex(r => r.id === weekEntry.id);
   if (idx >= 0) weekSessions[idx].substitute_coach_id = coachId || null;
@@ -1572,7 +1588,7 @@ function renderHero() {
           ${weekNumber === activePlan.current_week ? '<span class="bg-gold text-ink text-[10px] font-bold px-2 py-0.5 rounded-full">SEMASA</span>' : ''}
           <span class="${s.color} text-xs font-semibold">· ${s.icon} ${s.label}</span>
           ${weekEntry?.substitute_coach_id
-            ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700" title="Coach ganti minggu ini">🔁 ${escHtml(coachNameById(weekEntry.substitute_coach_id) || 'Coach Ganti')}</span>`
+            ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700" title="Coach ganti sesi ini">🔁 ${escHtml(coachNameById(weekEntry.substitute_coach_id) || 'Coach Ganti')}</span>`
             : `<span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-navy-light text-navy" title="Coach utama pesakit">👤 ${escHtml(primaryCoachName || 'Coach belum ditetapkan')}</span>`}
         </div>
         <h2 class="text-2xl md:text-3xl font-bold text-ink"><span>Minggu</span> ${weekNumber}</h2>

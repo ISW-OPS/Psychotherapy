@@ -1305,7 +1305,7 @@ function openDayModal(dateStr) {
                 : `<button data-rbac="schedule.edit" onclick="event.stopPropagation(); markHadir('${s.id}','${s.plan_id}',${s.week_number},'${s.session_date || ''}')" class="bg-green text-white text-xs px-3 py-1 rounded-lg">✅ Hadir</button>`}
               <button data-rbac="schedule.edit" onclick="event.stopPropagation(); openReschedule('${s.id}')" class="border border-gold text-gold-dark text-xs px-3 py-1 rounded-lg">🔄 Reschedule</button>
               <button data-rbac="schedule.edit" onclick="event.stopPropagation(); markCancel('${s.id}','${s.session_date || ''}')" class="border border-terracotta text-terracotta text-xs px-3 py-1 rounded-lg">❌ Tidak Hadir</button>` : ''}
-            <button data-rbac="schedule.edit" onclick="event.stopPropagation(); openApptCoachGanti('${s.id}','${s.substitute_coach_id||''}')" class="border border-ink/20 text-ink/50 text-xs px-3 py-1 rounded-lg hover:border-ink/40 hover:text-ink/80">👥 ${subCoachName ? `Ganti: ${escapeHtml(subCoachName)}` : 'Assign Ganti'}</button>
+            ${s.status === 'cancel' ? '' : `<button data-rbac="schedule.edit" onclick="event.stopPropagation(); openApptCoachGanti('${s.id}','${s.substitute_coach_id||''}')" class="border border-navy/40 text-navy text-xs px-3 py-1 rounded-lg font-semibold hover:bg-navy/5" title="${iswL('Coach ganti untuk sesi ini sahaja — pesakit kekal di bawah coach utama', 'Substitute coach for this session only — the patient stays with the primary coach')}">👥 ${subCoachName ? `${iswL('Ganti', 'Substitute')}: ${escapeHtml(subCoachName)}` : iswL('Assign Ganti', 'Assign Substitute')}</button>`}
           </div>
         </div>`;
       }).join('')
@@ -1481,13 +1481,17 @@ async function markCancel(id, sessionDate) {
 function openApptCoachGanti(sessionId, currentSubId) {
   const sel = document.getElementById('appt-ganti-select');
   sel.innerHTML = '<option value="">— Tiada (buang ganti) —</option>';
-  Object.entries(apptStaffMap).forEach(([id, info]) => {
-    const opt = document.createElement('option');
-    opt.value = id;
-    opt.textContent = info.name + (info.role ? ` (${info.role})` : '');
-    if (id === currentSubId) opt.selected = true;
-    sel.appendChild(opt);
-  });
+  // Hanya staf 'coach' boleh dipilih (selaras dgn halaman Minggu Rawatan). Kalau ganti semasa bukan coach
+  // (ditetapkan sebelum ini), tetap dipaparkan supaya tak hilang senyap.
+  Object.entries(apptStaffMap)
+    .filter(([id, info]) => info.role === 'coach' || id === currentSubId)
+    .forEach(([id, info]) => {
+      const opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = info.name + (info.role && info.role !== 'coach' ? ` (${info.role})` : '');
+      if (id === currentSubId) opt.selected = true;
+      sel.appendChild(opt);
+    });
   document.getElementById('appt-ganti-session-id').value = sessionId;
   document.getElementById('appt-coach-ganti-modal').classList.remove('hidden');
 }
@@ -1495,9 +1499,20 @@ function openApptCoachGanti(sessionId, currentSubId) {
 async function saveApptCoachGanti() {
   const sessionId = document.getElementById('appt-ganti-session-id').value;
   const coachId   = document.getElementById('appt-ganti-select').value || null;
+  const prevSess  = allSessions.find(x => x.id === sessionId);
+  const prevSub   = prevSess?.substitute_coach_id || null;
   const { error } = await window.db.from('psy_plan_weekly_progress')
     .update({ substitute_coach_id: coachId }).eq('id', sessionId);
   if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  try { await auditLog('plan.substitute_assigned', sessionId, { from: prevSub, to: coachId, week: prevSess?.week_number, source: 'appointments' }); } catch (_) { }
+  if (coachId && coachId !== prevSub) {
+    const d = prevSess?.session_date ? new Date(prevSess.session_date) : null;
+    try {
+      await notify(coachId, 'appointment', iswL('Anda ditugaskan sebagai coach ganti', 'You have been assigned as substitute coach'),
+        `${patientMap[prevSess?.patient_id]?.psy_profiles?.full_name || patientMap[prevSess?.patient_id]?.full_name || ''} · ${iswL('Minggu', 'Week')} ${prevSess?.week_number || ''}${d ? ' · ' + d.toLocaleDateString(LCALE(), { weekday: 'long', day: '2-digit', month: 'long' }) + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : ''}`,
+        'appointments.html');
+    } catch (_) { }
+  }
   const name = coachId ? (apptStaffMap[coachId]?.name || 'Coach') : null;
   banner(coachId ? `Coach ganti: ${name} ✅` : 'Coach ganti dibuang');
   document.getElementById('appt-coach-ganti-modal').classList.add('hidden');

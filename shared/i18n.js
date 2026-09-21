@@ -47,6 +47,8 @@
     "Nama Item / Konsultasi": "Item Name / Consultation",
     "cth: no. transaksi / rujukan bank": "e.g. transaction no. / bank reference",
     "cth: Konsultasi Doktor / Madu 500g": "e.g. Doctor Consultation / Honey 500g",
+    "🔁 Coach Ganti (sesi ini sahaja)": "🔁 Substitute Coach (this session only)",
+    "Untuk sesi ini sahaja (cth coach asal MC/tidak hadir) — pesakit kekal di bawah coach utama.": "For this session only (e.g. original coach is on leave/absent) — the patient stays with the primary coach.",
     "📄 Invois": "📄 Invoice",
     "Cari no. resit (REC) / no. invois (INV) / rujukan / nama pesakit...": "Search receipt no. (REC) / invoice no. (INV) / reference / patient name...",
     "📎 Lihat Bukti": "📎 View Proof",
