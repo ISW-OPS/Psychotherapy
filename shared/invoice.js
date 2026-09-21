@@ -100,20 +100,23 @@
           </thead>
           <tbody>
             <tr class="border-b border-ink/10">
-              <td class="py-4 px-1 text-xs text-ink/70 uppercase">${esc(kob.recommended_package_name || L('Pakej', 'Package'))} — ${esc(label)} (${idx + 1} ${L('daripada', 'of')} ${cps.length})</td>
-              <td class="py-4 text-xs text-ink/70 text-right whitespace-nowrap">${money(amount)}</td>
+              <td class="py-4 px-1 text-xs text-ink/70 uppercase">${esc(kob.recommended_package_name || L('Pakej', 'Package'))}</td>
+              <td class="py-4 text-xs text-ink/70 text-right whitespace-nowrap">${money(listPrice)}</td>
               <td class="py-4 text-xs text-ink/70 text-right">1</td>
               <td class="py-4 text-xs text-ink/70 text-right">-</td>
-              <td class="py-4 px-1 text-xs text-ink/70 text-right whitespace-nowrap">${money(amount)}</td>
+              <td class="py-4 px-1 text-xs text-ink/70 text-right whitespace-nowrap">${money(listPrice)}</td>
             </tr>
           </tbody>
         </table>
 
         <div class="flex justify-end mt-4">
           <div class="w-full max-w-xs text-sm">
-            <div class="flex justify-between py-1"><span class="font-semibold text-ink">${L('Jumlah Kecil', 'Subtotal')}</span><span class="text-ink/60 text-xs">${money(amount)}</span></div>
-            ${paidThis > 0.005 ? `<div class="flex justify-between py-1"><span class="font-semibold text-ink">${L('Jumlah Dibayar (MYR)', 'Amount Paid (MYR)')}</span><span class="text-ink/60 text-xs">${money(paidThis)}</span></div>` : ''}
-            <div class="flex justify-between py-2.5 mt-1 border-t border-ink/20"><span class="font-bold text-ink">${L('Baki Perlu Dibayar (MYR)', 'Amount Due (MYR)')}</span><span class="font-bold text-ink">${money(dueThis)}</span></div>
+            <div class="flex justify-between py-1"><span class="font-semibold text-ink">${L('Jumlah Kecil', 'Subtotal')}</span><span class="text-ink/60 text-xs">${money(listPrice)}</span></div>
+            <div class="flex justify-between py-1"><span class="font-semibold text-ink">${L('Diskaun', 'Discount')}</span><span class="text-ink/60 text-xs">-${money(pkgDiscount)}</span></div>
+            <div class="flex justify-between items-start py-2.5 mt-1 border-t border-ink/20">
+              <span class="font-bold text-ink">${L('Baki Perlu Dibayar (MYR)', 'Amount Due (MYR)')}<span class="block text-[10px] font-normal text-ink/50 mt-0.5">${esc(label)} · ${idx + 1} ${L('daripada', 'of')} ${cps.length}</span></span>
+              <span class="font-bold text-ink">${money(dueThis)}</span>
+            </div>
           </div>
         </div>`;
     }
