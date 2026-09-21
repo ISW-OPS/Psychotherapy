@@ -1786,10 +1786,10 @@ async function ensureAbsenceFee() {
     const [{ data: rows }, { data: aud }] = await Promise.all([
       window.db.from('psy_payments').select('id, status, total, invoice_no').eq('patient_id', patientId)
         .eq('paid_for_ref', sid).eq('paid_for_type', 'other').neq('status', 'failed').limit(1),
-      window.db.from('psy_audit_log').select('id').eq('action', 'plan.absence_fee_waived').eq('target', sid).limit(1),
+      window.db.from('psy_audit_log').select('action, created_at').in('action', ['plan.absence_fee_waived', 'plan.absence_fee_waive_undone']).eq('target', sid).order('created_at', { ascending: false }).limit(1),
     ]);
     absFee.row = rows?.[0] || null;
-    absFee.waived = !!aud?.length;
+    absFee.waived = aud?.[0]?.action === 'plan.absence_fee_waived';   // rekod terkini menentukan
   } catch (e) { console.warn('[absence-fee]', e.message); }
   renderHero();
 }
@@ -1798,9 +1798,9 @@ function absenceFeeHtml() {
   const rm = n => 'RM ' + Number(n).toFixed(2);
   if (absFee.row) {
     const paid = absFee.row.status === 'completed';
-    return `<div class="mb-2 text-xs rounded-lg px-3 py-2 ${paid ? 'bg-green-50 text-green-dark' : 'bg-terracotta/10 text-terracotta-dark'}">💸 ${iswL('Denda tidak hadir', 'Absence fee')} ${rm(absFee.row.total)}${absFee.row.invoice_no ? ' · ' + escHtml(absFee.row.invoice_no) : ''} — <b>${paid ? iswL('sudah dibayar', 'paid') : iswL('belum dibayar (dibayar bersama baki pakej)', 'unpaid (paid together with the package balance)')}</b></div>`;
+    return `<div class="mb-2 text-xs rounded-lg px-3 py-2 ${paid ? 'bg-green-50 text-green-dark' : 'bg-terracotta/10 text-terracotta-dark'}">💸 ${iswL('Denda tidak hadir', 'Absence fee')} ${rm(absFee.row.total)}${absFee.row.invoice_no ? ' · ' + escHtml(absFee.row.invoice_no) : ''} — <b>${paid ? iswL('sudah dibayar', 'paid') : iswL('belum dibayar (dibayar bersama baki pakej)', 'unpaid (paid together with the package balance)')}</b>${paid ? '' : ` <button data-rbac="plan_week.edit" onclick="voidAbsenceFee()" class="ml-2 underline font-semibold">${iswL('Batalkan denda', 'Cancel fee')}</button>`}</div>`;
   }
-  if (absFee.waived) return `<div class="mb-2 text-xs rounded-lg px-3 py-2 bg-cream text-ink/65">✅ ${iswL('Tiada denda dikenakan untuk sesi ini.', 'No fee was charged for this session.')}</div>`;
+  if (absFee.waived) return `<div class="mb-2 text-xs rounded-lg px-3 py-2 bg-cream text-ink/65">✅ ${iswL('Tiada denda dikenakan untuk sesi ini.', 'No fee was charged for this session.')} <button data-rbac="plan_week.edit" onclick="undoWaiveAbsenceFee()" class="ml-2 underline font-semibold text-terracotta">${iswL('Ubah — kenakan denda', 'Change — charge a fee')}</button></div>`;
   return `<div class="flex items-center gap-2 flex-wrap mb-2">
     <button data-rbac="plan_week.edit" onclick="chargeAbsenceFee()" class="inline-flex items-center gap-1.5 text-xs font-semibold bg-terracotta text-white px-3 py-1.5 rounded-lg hover:opacity-90">💸 ${iswL('Kenakan Denda', 'Charge Fee')} (${rm(absFee.amount)})</button>
     <button data-rbac="plan_week.edit" onclick="waiveAbsenceFee()" class="inline-flex items-center gap-1.5 text-xs font-semibold border border-ink/20 text-ink/70 px-3 py-1.5 rounded-lg hover:bg-cream">✅ ${iswL('Tak Kena Denda — terus jadual semula', 'No Fee — reschedule now')}</button>
@@ -1825,6 +1825,23 @@ async function chargeAbsenceFee() {
       iswL(`Denda RM ${amt.toFixed(2)} untuk sesi Minggu ${weekNumber} yang tidak dihadiri. Sila jelaskan bersama baki pakej.`, `A fee of RM ${amt.toFixed(2)} for the missed Week ${weekNumber} session. Please settle it together with your package balance.`), 'payment.html'); } catch (_) { }
   }
   banner(iswL('Denda dikenakan ✅ — anda masih boleh jadual semula sesi ini.', 'Fee charged ✅ — you can still reschedule this session.'));
+  renderHero();
+}
+async function undoWaiveAbsenceFee() {
+  if (!weekEntry?.id) return;
+  try { await auditLog('plan.absence_fee_waive_undone', weekEntry.id, { week: weekNumber }); } catch (_) { }
+  absFee.waived = false;
+  renderHero();
+}
+// Batal denda yang BELUM dibayar (yang sudah dibayar perlu diuruskan melalui Bayaran / refund).
+async function voidAbsenceFee() {
+  if (!absFee.row || absFee.row.status !== 'pending') return;
+  if (!confirm(iswL('Batalkan denda tidak hadir ini? Invois tertunggak akan dibatalkan.', 'Cancel this absence fee? The unpaid invoice will be voided.'))) return;
+  const { error } = await window.db.from('psy_payments').update({ status: 'failed' }).eq('id', absFee.row.id).eq('status', 'pending');
+  if (error) { banner(iswL('Ralat: ', 'Error: ') + error.message, 'error'); return; }
+  try { await auditLog('plan.absence_fee_voided', weekEntry.id, { payment_id: absFee.row.id }); } catch (_) { }
+  absFee.row = null; absFee.waived = false;
+  banner(iswL('Denda dibatalkan.', 'Fee cancelled.'));
   renderHero();
 }
 async function waiveAbsenceFee() {
