@@ -6807,7 +6807,7 @@
     // padan ketat dgn wizard pesakit, supaya hasil sama tak kira staff atau pesakit
     // sendiri yang buat setup. Pakej harian (duration_unit='day') TAK disokong di sini
     // — sama had macam Tukar Hari Sesi (weekly sahaja).
-    let _ssVariants = [], _ssSessions = [], _ssWarnings = [], _ssClosures = [];
+    let _ssVariants = [], _ssSessions = [], _ssWarnings = [], _ssClosures = [], _ssAutoFallback = false;
 
     async function openStaffScheduleSetupModal() {
       if (!ovCanSchedule()) { banner(iswL('Anda hanya boleh melihat rekod pesakit ini.', 'You can only view this patient record.'), 'error'); return; }
@@ -6823,12 +6823,17 @@
           .filter(v => Array.isArray(v) && v.length === N).map(v => v.map(d => Number(d) === 7 ? 0 : Number(d)));
       }
       // Fallback legasi (padan buildScheduleConfig() di plan.html) — pakej tiada
-      // session_days_options sepadan N langsung. Pakej 1x/minggu (N===1) dapat DUA
-      // pilihan 1-hari (Jumaat ATAU Sabtu, bukan satu je) — kalau slot klinik tak
-      // buka pada satu hari tu, staff ada pilihan lain, bukan jalan buntu. Reschedule
-      // individu kalau nak hari lain langsung. JANGAN paksa N=2 utk kes N===1 — tu
-      // akan tersilap tukar pakej 1x jadi nampak 2x seminggu.
-      if (!variants.length) variants = N === 1 ? [[5], [6]] : [[5, 6], [6, 0]];
+      // session_days_options sepadan N langsung. Pakej 1x/minggu (N===1): SATU
+      // variant auto [Jumaat, Sabtu] — bukan 1 sesi/minggu jadi 2 pilihan berasingan,
+      // tapi SATU sesi/minggu yang cuba Jumaat dulu, kalau tutup cuba Sabtu (minggu
+      // sama), kalau dua-dua tutup anjak SELURUH baki jadual ke minggu depan
+      // (cascading — lihat ssGenerateSingleDayCascade). JANGAN paksa N=2 utk kes
+      // N===1 — tu akan tersilap tukar pakej 1x jadi nampak 2x seminggu.
+      _ssAutoFallback = false;
+      if (!variants.length) {
+        if (N === 1) { variants = [[5, 6]]; _ssAutoFallback = true; }
+        else { variants = [[5, 6], [6, 0]]; }
+      }
       _ssVariants = variants; _ssSessions = []; _ssWarnings = [];
 
       document.getElementById('schedulesetup-modal')?.remove();
@@ -6844,7 +6849,7 @@
         <label class="text-xs font-semibold text-ink/60 uppercase">${iswL('Hari sesi', 'Session days')}</label>
         <div id="ss-variants" class="flex flex-wrap gap-2 mt-1.5">
           ${variants.map((v, i) => `<label class="cursor-pointer"><input type="radio" name="ss-var" value="${i}" class="peer hidden" onchange="ssRecalc()">
-            <span class="inline-block px-3 py-1.5 rounded-lg border border-ink/20 text-sm peer-checked:bg-navy peer-checked:text-white peer-checked:border-navy">${cdName(v)}</span></label>`).join('')}
+            <span class="inline-block px-3 py-1.5 rounded-lg border border-ink/20 text-sm peer-checked:bg-navy peer-checked:text-white peer-checked:border-navy">${_ssAutoFallback ? iswL(`${cdName(v)} (auto — 1 sesi/minggu, pilih hari terbuka)`, `${cdName(v)} (auto — 1 session/week, picks whichever day is open)`) : cdName(v)}</span></label>`).join('')}
         </div>
       </div>
       <div>
@@ -6940,6 +6945,42 @@
       return { sessions, warnings };
     }
 
+    // Mod fallback auto (pakej 1x/minggu, TIADA Pilihan Hari Sesi disetkan langsung) —
+    // 1 sesi/minggu, cuba dayA (Jumaat) dulu; kalau tutup (cuti/slot) cuba dayB (Sabtu)
+    // minggu SAMA; kalau dua-dua tutup, anjak minggu tu (cursor +7 hari) & cuba lagi —
+    // kesan tu BAWA ke semua minggu selepasnya (jadual keseluruhan jadi lebih panjang,
+    // bukan "hilang" 1 sesi). Diminta khas oleh pengguna utk kes fallback jarang ni sahaja
+    // — mod biasa (ssGenerateDates) kekal BLOCK, bukan anjak, ikut keputusan asal.
+    function ssGenerateSingleDayCascade(dayA, dayB, hhmm, startDate) {
+      const sessions = [];
+      const warnings = [];
+      const [hh, mm] = hhmm.split(':').map(Number);
+      const slotOkA = (_rawatanSlotsByDay[dayA] || []).some(s => s.start === hhmm);
+      const slotOkB = (_rawatanSlotsByDay[dayB] || []).some(s => s.start === hhmm);
+      if (!slotOkA && !slotOkB) {
+        warnings.push(iswL(`Slot ${hhmm} tak buka pada ${OV_DAY_NAMES[dayA]} mahupun ${OV_DAY_NAMES[dayB]}.`, `The ${hhmm} slot isn't open on ${OV_DAY_NAMES[dayA]} or ${OV_DAY_NAMES[dayB]}.`));
+        return { sessions, warnings };
+      }
+      let anchor = new Date(startDate); anchor.setHours(0, 0, 0, 0);
+      while (anchor.getDay() !== dayA) anchor.setDate(anchor.getDate() + 1);
+      const totalWeeks = activePlan.duration_weeks || 12;
+      let w = 1, guard = 0;
+      while (w <= totalWeeks && guard < (totalWeeks + 20)) {
+        guard++;
+        const days = pkgSessionDaysForWeek(activePlan.coaching_schedule, w);
+        if (!days.includes(1)) { anchor.setDate(anchor.getDate() + 7); w++; continue; }
+        const optA = new Date(anchor); optA.setHours(hh, mm, 0, 0);
+        const optB = new Date(anchor); optB.setDate(optB.getDate() + 1); optB.setHours(hh, mm, 0, 0);
+        const openA = slotOkA && !ssClosedOn(phYmd(optA));
+        const openB = slotOkB && !ssClosedOn(phYmd(optB));
+        if (openA) { sessions.push({ week: w, day: 1, dateTime: optA }); anchor.setDate(anchor.getDate() + 7); w++; }
+        else if (openB) { sessions.push({ week: w, day: 1, dateTime: optB }); anchor.setDate(anchor.getDate() + 7); w++; }
+        else { anchor.setDate(anchor.getDate() + 7); }   // dua-dua tutup minggu ni — anjak, cuba lagi minggu 'w' yg sama
+      }
+      if (w <= totalWeeks) warnings.push(iswL('Tidak cukup minggu terbuka utk jana jadual penuh — sila semak tetapan cuti klinik.', 'Not enough open weeks to generate the full schedule — please check clinic closure settings.'));
+      return { sessions, warnings };
+    }
+
     function ssRecalc() {
       const save = document.getElementById('ss-save');
       const prev = document.getElementById('ss-preview');
@@ -6952,7 +6993,9 @@
       if (!dows) { prev.innerHTML = iswL('Pilih hari sesi dahulu.', 'Choose session days first.'); return; }
       if (!startVal) { prev.innerHTML = iswL('Pilih tarikh mula.', 'Choose a start date.'); return; }
       if (!time) { prev.innerHTML = iswL('Pilih masa sesi.', 'Choose a session time.'); return; }
-      const result = ssGenerateDates(dows, time, new Date(startVal + 'T00:00:00'));
+      const result = (_ssAutoFallback && dows.length === 2)
+        ? ssGenerateSingleDayCascade(dows[0], dows[1], time, new Date(startVal + 'T00:00:00'))
+        : ssGenerateDates(dows, time, new Date(startVal + 'T00:00:00'));
       _ssSessions = result.sessions; _ssWarnings = result.warnings;
       const fmt = d => d.toLocaleDateString(LCALE(), { weekday: 'short', day: '2-digit', month: 'short' }) + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
       if (result.warnings.length) {
@@ -6976,13 +7019,20 @@
       const startVal = document.getElementById('ss-start')?.value;
       const time = document.getElementById('ss-time')?.value;
       if (!dows || !startVal || !time) return;
-      const spw = dows.length;
-      const legacyPair = cdSame(dows, [5, 6]) ? 'fri_sat' : cdSame(dows, [6, 0]) ? 'sat_sun' : null;
+      // Mod auto-fallback: dows = [Jumaat, Sabtu] cuma senarai CALON (1 sesi/minggu,
+      // pilih mana terbuka tiap minggu — lihat ssGenerateSingleDayCascade) — BUKAN 2
+      // sesi/minggu macam kes dows biasa. Simpan sessions_per_week=1 & preferred_days
+      // = hari pertama (Jumaat) sahaja supaya fitur lain (backfill/sync/auto-mark-
+      // missed) yang baca medan ni terus anggap 1 sesi/minggu, sepadan realiti.
+      const isAuto = _ssAutoFallback && dows.length === 2;
+      const spw = isAuto ? 1 : dows.length;
+      const preferredDays = isAuto ? [dows[0]] : dows;
+      const legacyPair = isAuto ? null : (cdSame(dows, [5, 6]) ? 'fri_sat' : cdSame(dows, [6, 0]) ? 'sat_sun' : null);
       const btn = document.getElementById('ss-save'); btn.disabled = true; btn.textContent = iswL('Menyimpan…', 'Saving…');
       try {
         const { error: pe } = await window.db.from('psy_treatment_plans').update({
           start_date: startVal,
-          preferred_days: dows,
+          preferred_days: preferredDays,
           preferred_pair: legacyPair,
           preferred_time_day1: time,
           preferred_time_day2: spw > 1 ? time : null,
@@ -7007,19 +7057,20 @@
         const { error } = await window.db.from('psy_plan_weekly_progress').insert(rows);
         if (error) throw error;
 
-        await auditLog('plan.schedule_setup', activePlan.id, { mode: 'weekly', days: dows, start_date: startVal, time, by: 'staff' });
+        await auditLog('plan.schedule_setup', activePlan.id, { mode: isAuto ? 'weekly-auto' : 'weekly', days: dows, start_date: startVal, time, by: 'staff' });
 
         Object.assign(activePlan, {
           schedule_setup_at: new Date().toISOString(),
-          start_date: startVal, preferred_days: dows, preferred_pair: legacyPair,
+          start_date: startVal, preferred_days: preferredDays, preferred_pair: legacyPair,
           preferred_time_day1: time, preferred_time_day2: spw > 1 ? time : null, sessions_per_week: spw,
         });
 
         if (patient?.user_id) {
+          const dayLabel = isAuto ? iswL(`${cdName(preferredDays)} (atau ${OV_DAY_NAMES[dows[1]]} kalau tutup)`, `${cdName(preferredDays)} (or ${OV_DAY_NAMES[dows[1]]} if closed)`) : cdName(dows);
           try {
             await notify(patient.user_id, 'plan',
               iswL('Jadual rawatan anda telah disediakan', 'Your treatment schedule has been set up'),
-              iswL(`Jadual rawatan anda (${cdName(dows)}) telah disediakan oleh klinik. Sila semak Treatment Plan anda.`, `Your treatment schedule (${cdName(dows)}) has been set up by the clinic. Please check your Treatment Plan.`),
+              iswL(`Jadual rawatan anda (${dayLabel}) telah disediakan oleh klinik. Sila semak Treatment Plan anda.`, `Your treatment schedule (${dayLabel}) has been set up by the clinic. Please check your Treatment Plan.`),
               'plan.html');
           } catch (_) { }
         }
