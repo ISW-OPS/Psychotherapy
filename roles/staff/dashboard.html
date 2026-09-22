@@ -407,6 +407,15 @@
             </div>
           </div>
 
+          <!-- Red Emergency Protocol — alert aktif (SENTIASA nampak, sama corak Manager/Doctor) -->
+          <div class="bg-white rounded-2xl border border-red-200 shadow-sm overflow-hidden">
+            <div class="px-5 py-4 border-b border-ink/8 flex items-center justify-between">
+              <h3 class="font-semibold text-sm text-ink flex items-center gap-2">🚨 Red Emergency Protocol</h3>
+              <a href="emergency.html" class="text-xs text-navy font-semibold hover:underline">Lihat Semua →</a>
+            </div>
+            <div id="a-emergency-list" class="overflow-x-auto"></div>
+          </div>
+
           <!-- ── Grid widget seragam: 2 kad sebaris, 50% lebar, tinggi sama ── -->
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
@@ -455,11 +464,19 @@
               <div id="a-stock-table" class="flex-1 overflow-y-auto"></div>
             </div>
 
-            <!-- Perlu Tindakan Segera -->
+            <!-- Stok Rendah (inventori sahaja — Farmasi + General) -->
             <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden flex flex-col h-[400px]">
               <div class="px-6 h-[60px] border-b border-ink/8 flex items-center justify-between flex-shrink-0">
-                <h3 class="font-semibold text-sm text-ink flex items-center gap-2"><span>⚠️</span> Perlu Tindakan Segera
-                </h3>
+                <h3 class="font-semibold text-sm text-ink flex items-center gap-2"><span>📦</span> Stok Rendah</h3>
+                <a href="stock-alerts.html" class="text-xs text-navy font-semibold hover:underline">Lihat semua →</a>
+              </div>
+              <div id="a-stok-rendah" class="divide-y divide-ink/5 flex-1 overflow-y-auto"></div>
+            </div>
+
+            <!-- Perlu Tindakan Segera (BUKAN inventori — kecemasan pesakit, report issue, PR staff pending) -->
+            <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden flex flex-col h-[400px]">
+              <div class="px-6 h-[60px] border-b border-ink/8 flex items-center justify-between flex-shrink-0">
+                <h3 class="font-semibold text-sm text-ink flex items-center gap-2"><span>⚠️</span> Perlu Tindakan Segera</h3>
               </div>
               <div id="a-urgent" class="divide-y divide-ink/5 flex-1 overflow-y-auto"></div>
             </div>
@@ -2107,15 +2124,19 @@
       // ── Fetch ──
       const [
         ordersRes, todaySessRes, issueRepRes, issueClosedRes,
-        patientsRes, inventoryRes, stockLogRes,
+        patientsRes, inventoryRes, stockLogRes, prPendingRes, emergencyRes,
       ] = await Promise.all([
         window.db.from('psy_orders').select('id, order_ref, patient_id, items, status, created_at').in('status', ['pending', 'paid', 'packed']).order('created_at', { ascending: false }),
         window.db.from('psy_plan_weekly_progress').select('id, session_date, status, patient_id').gte('session_date', _dayLo.toISOString()).lt('session_date', _dayHi.toISOString()).order('session_date', { ascending: true }),
         window.db.from('psy_audit_log').select('id, actor_id, actor_name, created_at, meta').eq('action', 'issue.reported').order('created_at', { ascending: false }).limit(50),
         window.db.from('psy_audit_log').select('meta').eq('action', 'issue.closed'),
         window.db.from('psy_patients').select('id, status, outcome_status, mrn, coach_id, psy_profiles!psy_patients_user_id_fkey(full_name)'),
-        window.db.from('psy_inventory_items').select('id, name, qty_in_stock, min_qty').eq('is_active', true),
+        window.db.from('psy_inventory_items').select('id, name, qty_in_stock, min_qty, source_type, consumption_type').eq('is_active', true),
         window.db.from('psy_audit_log').select('id, created_at, meta').eq('action', 'inventory.auto_deducted').order('created_at', { ascending: false }).limit(8),
+        window.db.from('psy_inventory_requests').select('id, request_no, requested_by_name, total_amount, priority, created_at').eq('status', 'pending_approval').order('created_at', { ascending: false }).then(r => r, () => ({ data: [] })),
+        // Red Emergency Protocol — SEMUA alert aktif klinik (sama corak Manager/Doctor); kad khas sendiri
+        // di bawah (renderEmergencyPanel), BUKAN dalam "Perlu Tindakan Segera".
+        window.db.from('psy_emergency_alerts').select('id, patient_id, zon, status, reported_at, psy_patients(mrn, phone, psy_profiles!psy_patients_user_id_fkey(full_name))').neq('status', 'resolved').order('reported_at', { ascending: true }).then(r => r, () => ({ data: [] })),
       ]);
 
       const orders = ordersRes.data || [];
@@ -2125,6 +2146,9 @@
       const patients = patientsRes.data || [];
       const inventory = inventoryRes.data || [];
       const stockLogs = stockLogRes.data || [];
+      const prPending = prPendingRes.data || [];
+      const emergencyAlerts = emergencyRes.data || [];
+      renderEmergencyPanel('a-emergency-list', emergencyAlerts);
 
       // ── Derived ──
       const openIssues = issuesRep.filter(i => !closedIds.has(i.id));
@@ -2301,38 +2325,72 @@
       document.getElementById('a-sched-mode-coach').onclick = () => setSchedMode('coach');
       setSchedMode('time');
 
-      // ═══ PERLU TINDAKAN SEGERA — senarai satu-satu (bukan kiraan agregat), WA terus kalau ada telefon ═══
+      // ═══ Baris generik dipakai oleh DUA widget di bawah ═══
+      const actionRow = (dot, href, title, desc, actionHtml) => `<div class="flex items-start gap-3 px-5 py-3 hover:bg-ink/[0.015] transition-colors">
+    <span class="w-2 h-2 rounded-full ${dot} mt-2 flex-shrink-0"></span>
+    <a href="${href}" class="flex-1 min-w-0">
+      <div class="text-xs font-semibold text-ink truncate flex items-center gap-1.5">${title}</div>
+      <div class="text-[11px] text-ink/55 leading-snug truncate">${desc}</div>
+    </a>
+    ${actionHtml || ''}
+  </div>`;
+
+      // ═══ STOK RENDAH — HANYA inventori (Farmasi + General), terus ke Purchase Request ═══
+      // Nama jujur dgn kandungan — benda BUKAN inventori (kecemasan/report issue/PR pending) letak
+      // di widget "Perlu Tindakan Segera" berasingan di bawah, bukan sini.
+      const stockBadges = (it) => {
+        const b = [];
+        if (['package', 'service'].includes(it.consumption_type)) b.push('<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 whitespace-nowrap">Pesakit</span>');
+        b.push(it.source_type === 'farmasi_klinikal'
+          ? '<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-navy/10 text-navy whitespace-nowrap">Farmasi</span>'
+          : '<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-ink/8 text-ink/50 whitespace-nowrap">Am</span>');
+        return b.join(' ');
+      };
+      const stockRow = (it) => actionRow('bg-amber-400', `inventory-detail.html?id=${it.id}`,
+        `${esc(it.name)} ${stockBadges(it)}`,
+        `Stok hampir habis — tinggal ${Number(it.qty_in_stock) || 0} unit`,
+        `<a href="purchase-request-form.html?item=${it.id}" data-rbac="inventory.create" title="Buat Purchase Request" class="text-[10px] border border-navy/30 text-navy px-2 py-1 rounded-lg font-semibold hover:bg-navy/5 whitespace-nowrap flex-shrink-0">🛒 Buat PR</a>`);
+
+      const stokHtml = lowStock.slice(0, 6).map(stockRow);
+      if (lowStock.length > 6) stokHtml.push(`<div class="px-5 py-2 text-[11px] text-ink/40 text-center"><a href="stock-alerts.html" class="hover:underline">+${lowStock.length - 6} item stok rendah lagi →</a></div>`);
+      document.getElementById('a-stok-rendah').innerHTML = stokHtml.length ? stokHtml.join('')
+        : '<div class="h-full flex items-center justify-center text-xs text-ink/30 p-6">Tiada stok rendah 🎉</div>';
+      if (typeof applyRbacUI === 'function') applyRbacUI(document.getElementById('a-stok-rendah'));
+
+      // ═══ PERLU TINDAKAN SEGERA — BUKAN inventori, BUKAN kecemasan (Red Emergency Protocol
+      // ada kad khas sendiri di atas, sama corak Manager/Doctor — sentiasa nampak, tak dikaburkan
+      // dalam senarai). Merentas modul, disusun ikut 2 flow: ═══
+      //   A (Pesakit): report issue — flow "hubungi/semak pesakit"
+      //   B (Staff):   Purchase Request staff pending approval — flow "semak & putuskan"
       const issueActorIds = [...new Set(openIssues.map(i => i.actor_id).filter(Boolean))];
       const issuePhoneByUser = {};
       if (issueActorIds.length) {
         const { data: ip } = await window.db.from('psy_patients').select('user_id, phone').in('user_id', issueActorIds).then(r => r, () => ({ data: [] }));
         (ip || []).forEach(p => { if (p.user_id) issuePhoneByUser[p.user_id] = p.phone; });
       }
-      const urgentRow = (dot, name, desc, href, waHref) => `<div class="flex items-start gap-3 px-5 py-3 hover:bg-ink/[0.015] transition-colors">
-    <span class="w-2 h-2 rounded-full ${dot} mt-2 flex-shrink-0"></span>
-    <a href="${href}" class="flex-1 min-w-0">
-      <div class="text-xs font-semibold text-ink truncate">${esc(name)}</div>
-      <div class="text-[11px] text-ink/55 leading-snug truncate">${esc(desc)}</div>
-    </a>
-    ${waHref ? `<a href="${waHref}" target="_blank" class="text-[10px] border border-green text-green-dark px-2 py-1 rounded-lg font-semibold hover:bg-green/5 whitespace-nowrap flex-shrink-0">💬 WA</a>` : ''}
-    <a href="${href}" class="text-ink/30 flex-shrink-0 self-center">›</a>
-  </div>`;
-
-      const urgentHtml = [];
-      lowStock.slice(0, 3).forEach(it => urgentHtml.push(urgentRow('bg-amber-400', it.name, `Stok hampir habis — tinggal ${Number(it.qty_in_stock) || 0} unit`, 'inventory.html')));
-      if (lowStock.length > 3) urgentHtml.push(`<div class="px-5 py-2 text-[11px] text-ink/40 text-center"><a href="inventory.html" class="hover:underline">+${lowStock.length - 3} item stok rendah lagi →</a></div>`);
-
-      openIssues.slice(0, 5).forEach(iss => {
-        const nm = iss.actor_name || 'Pesakit';
-        const desc = iss.meta?.description || iss.meta?.type || 'Report issue';
+      const issueRow = (iss) => {
         const phone = issuePhoneByUser[iss.actor_id] ? issuePhoneByUser[iss.actor_id].replace(/\D/g, '') : '';
         const waHref = phone ? `https://wa.me/${phone.startsWith('0') ? '6' + phone : phone}` : '';
-        urgentHtml.push(urgentRow('bg-terracotta', nm, desc, `issue-detail.html?id=${iss.id}`, waHref));
-      });
-      if (openIssues.length > 5) urgentHtml.push(`<div class="px-5 py-2 text-[11px] text-ink/40 text-center"><a href="issue.html" class="hover:underline">+${openIssues.length - 5} report issue lagi →</a></div>`);
+        return actionRow('bg-purple-400', `issue-detail.html?id=${iss.id}`,
+          `${esc(iss.actor_name || 'Pesakit')} <span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 whitespace-nowrap">Pesakit</span>`,
+          esc(iss.meta?.description || iss.meta?.type || 'Report issue'),
+          waHref ? `<a href="${waHref}" target="_blank" class="text-[10px] border border-green text-green-dark px-2 py-1 rounded-lg font-semibold hover:bg-green/5 whitespace-nowrap flex-shrink-0">💬 WA</a>` : '');
+      };
+      const prRow = (pr) => actionRow('bg-navy', `purchase-request-detail.html?id=${pr.id}`,
+        `${esc(pr.request_no || 'PR')} <span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-navy/10 text-navy whitespace-nowrap">Staff</span>`,
+        `${esc(pr.requested_by_name || 'Staff')} · RM ${Number(pr.total_amount || 0).toFixed(2)} · tunggu kelulusan`,
+        `<a href="purchase-request-detail.html?id=${pr.id}" data-rbac="inventory.create" title="Semak & Lulus" class="text-[10px] border border-navy/30 text-navy px-2 py-1 rounded-lg font-semibold hover:bg-navy/5 whitespace-nowrap flex-shrink-0">🔍 Semak</a>`);
+
+      const urgentHtml = [
+        ...openIssues.slice(0, 4).map(issueRow),
+        ...prPending.slice(0, 4).map(prRow),
+      ].slice(0, 8);
+      if (openIssues.length > 4) urgentHtml.push(`<div class="px-5 py-2 text-[11px] text-ink/40 text-center"><a href="issue.html" class="hover:underline">+${openIssues.length - 4} report issue lagi →</a></div>`);
+      if (prPending.length > 4) urgentHtml.push(`<div class="px-5 py-2 text-[11px] text-ink/40 text-center"><a href="purchase-requests.html" class="hover:underline">+${prPending.length - 4} PR menunggu kelulusan lagi →</a></div>`);
 
       document.getElementById('a-urgent').innerHTML = urgentHtml.length ? urgentHtml.join('')
         : '<div class="h-full flex items-center justify-center text-xs text-ink/30 p-6">Tiada tindakan segera 🎉</div>';
+      if (typeof applyRbacUI === 'function') applyRbacUI(document.getElementById('a-urgent'));
 
       // ═══ RINGKASAN PESAKIT (donut + legenda) ═══
       let pAktif = 0, pTidak = 0, pTamat = 0, pMati = 0;
