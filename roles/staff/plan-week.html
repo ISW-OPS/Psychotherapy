@@ -1682,6 +1682,35 @@ function computeChainedDate(w, day, anchorWeek, anchorDate, anchorDay = 1) {
   return d;
 }
 
+// Sama unjuran macam computeChainedDate() TAPI sedar-cuti/slot + sedar mod-auto
+// (activePlan.schedule_auto_alt_day) — khas dipakai oleh cascadeBookFutureWeeks() sebab
+// IA yang tulis tarikh session_date/appointment SEBENAR (chainedExpectedDate, paparan
+// "dijangka" sahaja, kekal guna computeChainedDate biasa — anggaran tanpa cek cuti pun tak
+// mengapa). Plan biasa (schedule_auto_alt_day NULL) → terus pulang tarikh naif tanpa ubah.
+// Plan mod-auto (cth Setup Jadual Rawatan pilihan "Jumaat/Sabtu (auto)") → cuba tarikh
+// naif (preferred_days[0], cth Jumaat) dulu; kalau tutup/tiada slot cuba hari alternatif
+// (schedule_auto_alt_day, cth Sabtu) minggu SAMA; kalau dua-dua tutup anjak +7 hari & cuba
+// lagi (cascading) — sama logik dgn ssGenerateSingleDayCascade() di patient-hub.html,
+// supaya cascade rebooking di sini elak book atas hari yang tutup utk plan jenis ni.
+// Nota kontrak: sama macam computeChainedDate(), pulangkan tarikh pada TENGAH MALAM
+// (00:00) — pemanggil (cascadeBookFutureWeeks) yang tanggungjawab tetapkan jam/minit
+// sebenar selepas ni, tak diubah di sini.
+function computeChainedDateSafe(w, day, anchorWeek, anchorDate, anchorDay = 1) {
+  const naive = computeChainedDate(w, day, anchorWeek, anchorDate, anchorDay);
+  const altDay = activePlan.schedule_auto_alt_day;
+  if (altDay == null) return naive;
+  let cursor = new Date(naive);
+  let guard = 0;
+  while (guard++ < 30) {
+    if (!pwValidateDate(pwYmd(cursor))) return cursor;
+    const alt = new Date(cursor);
+    alt.setDate(cursor.getDate() + ((altDay - cursor.getDay() + 7) % 7));
+    if (!pwValidateDate(pwYmd(alt))) return alt;
+    cursor.setDate(cursor.getDate() + 7);
+  }
+  return naive; // guard tercapai (cuti melampau) — jangan stuck, pulang naif & biar staff semak manual
+}
+
 // Tarikh DIJANGKA (paparan "dijangka" di hero) — unjur dari chainAnchor (sesi bertarikh sebenar
 // plg terkini <= minggu ini) supaya ikut lencongan sebenar; fallback ke weekStart (jadual ideal)
 // kalau tiada langsung sesi bertarikh lagi (cth minggu-minggu paling awal).
@@ -2308,7 +2337,7 @@ async function cascadeBookFutureWeeks(fromWeek, anchorIso, anchorDay = 1) {
     for (const day of sessionDaysForWeekStaff(w)) {
       const row = byWeekDay[`${w}_${day}`];
       if (row?.is_extension) continue;
-      const d = computeChainedDate(w, day, fromWeek, anchorDate, anchorDay);
+      const d = computeChainedDateSafe(w, day, fromWeek, anchorDate, anchorDay);
       d.setHours(anchorDate.getHours(), anchorDate.getMinutes(), 0, 0);
       const iso2 = d.toISOString();
       if (row) {

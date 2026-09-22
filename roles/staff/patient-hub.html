@@ -6978,6 +6978,10 @@
         else { anchor.setDate(anchor.getDate() + 7); }   // dua-dua tutup minggu ni — anjak, cuba lagi minggu 'w' yg sama
       }
       if (w <= totalWeeks) warnings.push(iswL('Tidak cukup minggu terbuka utk jana jadual penuh — sila semak tetapan cuti klinik.', 'Not enough open weeks to generate the full schedule — please check clinic closure settings.'));
+      // Pakej langsung tiada minggu perlukan sesi (cth coaching_schedule salah setup) —
+      // sessions kosong tapi tiada warning lain sempat ditolak (loop habis biasa). Beri
+      // amaran jelas (bukan senyap) supaya butang Simpan tak nampak "aktif" utk jadual kosong.
+      if (!sessions.length && !warnings.length) warnings.push(iswL('Slot rawatan tutup — tiada minggu ada slot terbuka.', 'Treatment slot closed — no open slots found for any week.'));
       return { sessions, warnings };
     }
 
@@ -7038,6 +7042,12 @@
           preferred_time_day2: spw > 1 ? time : null,
           sessions_per_week: spw,
           schedule_setup_at: new Date().toISOString(),
+          // Tanda EKSPLISIT plan ni guna mod auto (bukan sekadar preferred_days panjang
+          // 1) — computeChainedDateSafe() di plan-week.html baca ni supaya
+          // cascadeBookFutureWeeks() (bila staff edit 1 tarikh & ia cascade ke minggu
+          // akan datang) turut cuba hari alternatif + elak book atas hari tutup, bukan
+          // sentiasa snap balik ke preferred_days[0] macam plan biasa.
+          schedule_auto_alt_day: isAuto ? dows[1] : null,
         }).eq('id', activePlan.id);
         if (pe) throw pe;
 
@@ -7063,6 +7073,7 @@
           schedule_setup_at: new Date().toISOString(),
           start_date: startVal, preferred_days: preferredDays, preferred_pair: legacyPair,
           preferred_time_day1: time, preferred_time_day2: spw > 1 ? time : null, sessions_per_week: spw,
+          schedule_auto_alt_day: isAuto ? dows[1] : null,
         });
 
         if (patient?.user_id) {

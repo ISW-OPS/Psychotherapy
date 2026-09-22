@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-09-22T01:13:01.205148Z
+-- Generated: 2026-09-22T07:42:41.990343Z
 -- Jumlah fail: 36
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -2003,6 +2003,12 @@ CREATE TABLE IF NOT EXISTS psy_treatment_plans (
   preferred_time_day1 TIME,                     -- jam sesi hari pertama
   preferred_time_day2 TIME,                     -- jam sesi hari kedua
   preferred_days      JSONB DEFAULT NULL,       -- [dow JS 0-6] ikut turutan sesi
+  schedule_auto_alt_day INT,                    -- NULL = hari tetap biasa. Diisi (dow JS 0-6) bila
+                                                  -- setup guna mod auto fallback (cth preferred_days=[5]
+                                                  -- Jumaat, tapi cuba Sabtu(6) kalau Jumaat tutup, cascade
+                                                  -- +1 minggu kalau dua-dua tutup — lihat
+                                                  -- ssGenerateSingleDayCascade di patient-hub.html /
+                                                  -- computeChainedDateSafe di plan-week.html).
   sessions_per_week   INT   DEFAULT NULL,       -- disalin dari pakej masa setup
   schedule_setup_at   TIMESTAMPTZ,
   start_date          DATE,                     -- anchor sebenar Minggu 1
@@ -2060,6 +2066,13 @@ COMMENT ON COLUMN psy_treatment_plans.schedule_setup_at IS
 
 COMMENT ON COLUMN psy_treatment_plans.preferred_days IS
   'Hari sesi terpilih dalam nombor getDay() JS (0=Ahad..6=Sabtu), ikut turutan sesi. Cth [5,6]=Jum+Sab, [6]=Sab sahaja. Sumber kebenaran baharu; fallback ke preferred_pair utk plan lama.';
+
+COMMENT ON COLUMN psy_treatment_plans.schedule_auto_alt_day IS
+  'NULL = hari tetap biasa (preferred_days ikut betul-betul). Diisi (getDay() JS) bila plan disetup
+   guna mod "auto fallback" 1 sesi/minggu (staff punya "Setup Jadual Rawatan", pakej tiada Pilihan
+   Hari Sesi disetkan) — preferred_days[0] = hari UTAMA (cth Jumaat), lajur ni = hari ALTERNATIF
+   (cth Sabtu) yang dicuba kalau hari utama tutup. Dibaca oleh computeChainedDateSafe() di
+   plan-week.html supaya cascadeBookFutureWeeks() elak book atas hari yang tutup untuk plan jenis ni.';
 
 COMMENT ON COLUMN psy_treatment_plans.sessions_per_week IS
   'Bilangan sesi/minggu (1-2) disalin dari pakej masa setup jadual.';
