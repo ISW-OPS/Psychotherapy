@@ -269,6 +269,9 @@
                           class="text-[11px] border border-ink/20 rounded-lg px-2 py-1 outline-none focus:border-navy">
                       </div>
                       <span id="ov-plan-subtitle" class="text-xs text-ink/50"></span>
+                      <button id="ov-schedule-setup-btn" data-rbac="patient.edit" onclick="openStaffScheduleSetupModal()"
+                        class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-purple-400 text-purple-600 hover:bg-purple-500 hover:text-white transition whitespace-nowrap"
+                        title="Pesakit belum pernah log masuk/pilih hari rawatan lagi — staff boleh setup jadual (hari + tarikh mula) bagi pihak pesakit di sini, sama macam wizard pesakit di Treatment Plan.">📅 Setup Jadual Rawatan</button>
                       <button id="ov-autoschedule-btn" data-rbac="patient.edit" onclick="openAutoScheduleModal()"
                         class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-emerald-400 text-emerald-600 hover:bg-emerald-500 hover:text-white transition whitespace-nowrap">📅 Jadualkan Semua Sesi</button>
                       <button id="ov-add-week-btn" data-rbac="patient.create" onclick="openAddWeekModal()"
@@ -3003,6 +3006,14 @@
         const { data: prog } = await window.db.from('psy_plan_weekly_progress')
           .select('*').eq('plan_id', activePlan.id).order('week_number', { ascending: true });
         ovWeeklyRows = prog || [];
+        // "Setup Jadual Rawatan" — hanya bila pesakit/staff belum PERNAH setup jadual sebenar
+        // lagi (schedule_setup_at kosong, semua row psy_plan_weekly_progress sedia ada
+        // masih placeholder 'pending' — sama syarat dgn needsSetup di plan.html). Pakej harian
+        // tak disokong di sini (sama had macam Tukar Hari Sesi).
+        document.getElementById('ov-schedule-setup-btn')?.classList.toggle('hidden', !(
+          ovCanSchedule() && activePlan.duration_unit !== 'day' && !activePlan.schedule_setup_at
+          && !ovWeeklyRows.some(r => r.status !== 'pending')
+        ));
 
         // "Minggu Semasa" = minggu KEHADIRAN sebenar tertinggi (hadir/consultation_done) — bukan
         // "mana-mana baris bertarikh lepas" (tarikh lepas TAK bermakna pesakit dah datang; boleh
@@ -6783,6 +6794,230 @@
       } catch (e) {
         banner(iswL('Ralat: ', 'Error: ') + e.message, 'error');
         btn.disabled = false; btn.textContent = iswL('Simpan', 'Save');
+      }
+    }
+
+    // ── Setup Jadual Rawatan (staff buat setup PERTAMA KALI bagi pihak pesakit) ──────
+    // Ramai pesakit belum pernah log masuk sistem lagi — semuanya diurus staff. Ni
+    // REPLIKA TEPAT tingkah laku wizard pesakit (plan.html initSetupWizard/
+    // confirmScheduleSetup), BUKAN "Tukar Hari Sesi" (tu untuk UBAH jadual SEDIA ADA,
+    // perlukan sesi bertarikh dulu) atau "Jadualkan Semua Sesi" (tu tak simpan
+    // preferred_days/schedule_setup_at — pecahkan fitur pesakit yg bergantung padanya,
+    // cth auto-mark-missed/extension). Block (bukan anjak) pada cuti/slot tertutup —
+    // padan ketat dgn wizard pesakit, supaya hasil sama tak kira staff atau pesakit
+    // sendiri yang buat setup. Pakej harian (duration_unit='day') TAK disokong di sini
+    // — sama had macam Tukar Hari Sesi (weekly sahaja).
+    let _ssVariants = [], _ssSessions = [], _ssWarnings = [], _ssClosures = [];
+
+    async function openStaffScheduleSetupModal() {
+      if (!ovCanSchedule()) { banner(iswL('Anda hanya boleh melihat rekod pesakit ini.', 'You can only view this patient record.'), 'error'); return; }
+      await loadRawatanAvailability();
+      const { data: closureRows } = await window.db.from('psy_clinic_closures').select('closure_date, is_recurring, label');
+      _ssClosures = closureRows || [];
+
+      const N = Math.min(2, Math.max(1, parseInt(activePlan.sessions_per_week) || 0)) || 2;
+      let variants = [];
+      if (activePlan.template) {
+        const { data: pkg } = await window.db.from('psy_packages').select('session_days_options').eq('package_id', activePlan.template).maybeSingle();
+        variants = (Array.isArray(pkg?.session_days_options) ? pkg.session_days_options : [])
+          .filter(v => Array.isArray(v) && v.length === N).map(v => v.map(d => Number(d) === 7 ? 0 : Number(d)));
+      }
+      if (!variants.length) variants = N === 2 ? [[5, 6], [6, 0]] : [];
+      if (!variants.length) { banner(iswL('Tiada pilihan hari sesi untuk pakej ini.', 'No session-day options for this package.'), 'error'); return; }
+      _ssVariants = variants; _ssSessions = []; _ssWarnings = [];
+
+      document.getElementById('schedulesetup-modal')?.remove();
+      const m = document.createElement('div');
+      m.id = 'schedulesetup-modal';
+      m.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
+      m.innerHTML = `
+    <div class="absolute inset-0 bg-black/50" onclick="document.getElementById('schedulesetup-modal').remove()"></div>
+    <div class="relative bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+      <h3 class="font-bold text-base">📅 ${iswL('Setup Jadual Rawatan', 'Set Up Treatment Schedule')}</h3>
+      <p class="text-sm text-ink/60">${iswL('Sediakan jadual rawatan bagi pihak pesakit — sama macam pesakit buat sendiri di Treatment Plan.', "Set up the treatment schedule on the patient's behalf — same as the patient doing it themselves in Treatment Plan.")}</p>
+      <div>
+        <label class="text-xs font-semibold text-ink/60 uppercase">${iswL('Hari sesi', 'Session days')}</label>
+        <div id="ss-variants" class="flex flex-wrap gap-2 mt-1.5">
+          ${variants.map((v, i) => `<label class="cursor-pointer"><input type="radio" name="ss-var" value="${i}" class="peer hidden" onchange="ssRecalc()">
+            <span class="inline-block px-3 py-1.5 rounded-lg border border-ink/20 text-sm peer-checked:bg-navy peer-checked:text-white peer-checked:border-navy">${cdName(v)}</span></label>`).join('')}
+        </div>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-ink/60 uppercase">${iswL('Tarikh mula', 'Start date')}</label>
+        <input id="ss-start" type="date" min="${ovTodayYmd()}" onchange="ssRecalc()" class="w-full mt-1.5 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:outline-none focus:border-navy">
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-ink/60 uppercase">${iswL('Masa sesi', 'Session time')}</label>
+        <select id="ss-time" onchange="ssRecalc()" class="w-full mt-1.5 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:outline-none focus:border-navy">
+          <option value="">— ${iswL('Pilih hari dahulu', 'Choose days first')} —</option>
+        </select>
+      </div>
+      <div id="ss-preview" class="text-xs text-ink/60">${iswL('Pilih hari, tarikh mula & masa untuk lihat pratonton.', 'Choose days, start date & time to see a preview.')}</div>
+      <div class="flex justify-end gap-2 pt-1">
+        <button onclick="document.getElementById('schedulesetup-modal').remove()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm">${iswL('Batal', 'Cancel')}</button>
+        <button id="ss-save" onclick="staffConfirmScheduleSetup()" disabled class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark disabled:opacity-40">${iswL('Simpan Jadual', 'Save Schedule')}</button>
+      </div>
+    </div>`;
+      document.body.appendChild(m);
+    }
+
+    // Slot masa yang dibuka pada SEMUA hari yang dipilih (bukan cuma satu) — sama konsep
+    // dgn refreshSetupTimeOptions() di plan.html.
+    function ssPopulateTimeOptions(dows) {
+      const sel = document.getElementById('ss-time');
+      if (!sel) return;
+      if (!dows || !dows.length) { sel.innerHTML = `<option value="">— ${iswL('Pilih hari dahulu', 'Choose days first')} —</option>`; return; }
+      const perDay = dows.map(d => new Set((_rawatanSlotsByDay[d] || []).map(s => s.start)));
+      const common = perDay.length ? [...perDay[0]].filter(t => perDay.every(set => set.has(t))) : [];
+      const times = (common.length ? common : [...new Set(dows.flatMap(d => (_rawatanSlotsByDay[d] || []).map(s => s.start)))]).sort();
+      if (!times.length) { sel.innerHTML = `<option value="">— ${iswL('Tiada slot', 'No slots')} —</option>`; return; }
+      const prev = sel.value;
+      sel.innerHTML = `<option value="">— ${iswL('Pilih masa', 'Choose time')} —</option>` + times.map(t => `<option value="${t}">${t}</option>`).join('');
+      if (times.includes(prev)) sel.value = prev;
+    }
+
+    // Cuti klinik pada tarikh ni? Padan tarikh tepat, ATAU (kalau is_recurring) padan
+    // MM-DD sahaja (cuti tahunan berulang, cth cuti umum) — sama logik dgn isClinicClosed()
+    // di plan.html. _closureMap/ovValidateDate sedia ada TAK sokong is_recurring, jadi guna
+    // _ssClosures (fetch penuh termasuk is_recurring) di sini, bukan reuse terus.
+    function ssClosedOn(dateStr) {
+      const mmdd = dateStr.slice(5);
+      return _ssClosures.find(c => c.closure_date === dateStr || (c.is_recurring && (c.closure_date || '').slice(5) === mmdd)) || null;
+    }
+
+    // Jana tarikh N-sesi/minggu dari tarikh mula + pasangan hari — port TEPAT dari
+    // generateScheduleDates() di plan.html (anchor minggu-1 ikut hari pertama occurrence
+    // pada/lepas tarikh mula, hari kedua occurrence PERTAMA lepas hari pertama minggu tu;
+    // pengesahan sesi-2-lepas-sesi-1 tiap minggu; bilangan sesi/minggu ikut
+    // pkgSessionDaysForWeek() — sesetengah minggu pakej mungkin cuma 1 sesi).
+    function ssGenerateDates(dows, hhmm, startDate) {
+      const N = dows.length;
+      const warnings = [];
+      const sessions = [];
+      let cursor = new Date(startDate); cursor.setHours(0, 0, 0, 0);
+      while (cursor.getDay() !== dows[0]) cursor.setDate(cursor.getDate() + 1);
+      const m1 = [new Date(cursor)];
+      for (let i = 1; i < N; i++) {
+        let d = new Date(m1[i - 1]); d.setDate(d.getDate() + 1);
+        while (d.getDay() !== dows[i]) d.setDate(d.getDate() + 1);
+        m1.push(d);
+      }
+      const totalWeeks = activePlan.duration_weeks || 12;
+      const [hh, mm] = hhmm.split(':').map(Number);
+      const fmtShort = d => d.toLocaleDateString(LCALE(), { day: '2-digit', month: 'short' });
+      for (let w = 1; w <= totalWeeks; w++) {
+        const days = pkgSessionDaysForWeek(activePlan.coaching_schedule, w);
+        for (let i = 0; i < N; i++) {
+          const dayNum = i + 1;
+          if (!days.includes(dayNum)) continue;
+          let dt = new Date(m1[i]); dt.setDate(dt.getDate() + (w - 1) * 7);
+          dt.setHours(hh, mm, 0, 0);
+          if (i === 1) {
+            let s1 = new Date(m1[0]); s1.setDate(s1.getDate() + (w - 1) * 7);
+            if (dt.toDateString() === s1.toDateString() || dt < s1) {
+              let fix = new Date(s1); fix.setDate(fix.getDate() + 1);
+              while (fix.getDay() !== dows[1]) fix.setDate(fix.getDate() + 1);
+              dt = fix; dt.setHours(hh, mm, 0, 0);
+            }
+          }
+          const closure = ssClosedOn(phYmd(dt));
+          if (closure) warnings.push(`${iswL('Minggu', 'Week')} ${w} ${iswL('Sesi', 'Session')} ${dayNum} (${fmtShort(dt)}): ${closure.label || iswL('cuti klinik', 'clinic closed')}`);
+          sessions.push({ week: w, day: dayNum, dateTime: dt });
+        }
+      }
+      return { sessions, warnings };
+    }
+
+    function ssRecalc() {
+      const save = document.getElementById('ss-save');
+      const prev = document.getElementById('ss-preview');
+      save.disabled = true;
+      const vi = document.querySelector('input[name="ss-var"]:checked')?.value;
+      const dows = vi != null ? _ssVariants[Number(vi)] : null;
+      ssPopulateTimeOptions(dows);
+      const startVal = document.getElementById('ss-start')?.value;
+      const time = document.getElementById('ss-time')?.value;
+      if (!dows) { prev.innerHTML = iswL('Pilih hari sesi dahulu.', 'Choose session days first.'); return; }
+      if (!startVal) { prev.innerHTML = iswL('Pilih tarikh mula.', 'Choose a start date.'); return; }
+      if (!time) { prev.innerHTML = iswL('Pilih masa sesi.', 'Choose a session time.'); return; }
+      const result = ssGenerateDates(dows, time, new Date(startVal + 'T00:00:00'));
+      _ssSessions = result.sessions; _ssWarnings = result.warnings;
+      const fmt = d => d.toLocaleDateString(LCALE(), { weekday: 'short', day: '2-digit', month: 'short' }) + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      if (result.warnings.length) {
+        prev.innerHTML = `<div class="text-terracotta font-semibold mb-1">⚠️ ${iswL('Tarikh berikut jatuh pada cuti klinik — sila pilih tarikh/hari lain', 'The following dates fall on a clinic closure — please choose different dates/days')}:</div>
+      <div class="border border-terracotta/30 bg-terracotta/5 rounded-lg divide-y divide-ink/5 max-h-40 overflow-y-auto text-terracotta">
+      ${result.warnings.map(w => `<div class="px-3 py-1.5">${w}</div>`).join('')}</div>`;
+        return;
+      }
+      prev.innerHTML = `<div class="font-semibold text-ink/70 mb-1">${iswL('Pratonton', 'Preview')} (${_ssSessions.length} ${iswL('sesi', 'sessions')})</div>
+      <div class="border border-ink/10 rounded-lg divide-y divide-ink/5 max-h-56 overflow-y-auto">
+      ${_ssSessions.slice(0, 6).map(s => `<div class="px-3 py-1.5">${iswL('Minggu', 'Week')} ${s.week} · ${iswL('Sesi', 'Session')} ${s.day}: <b class="text-navy">${fmt(s.dateTime)}</b></div>`).join('')}
+      ${_ssSessions.length > 6 ? `<div class="px-3 py-1.5 text-ink/40">+${_ssSessions.length - 6} ${iswL('lagi', 'more')}</div>` : ''}
+      </div>`;
+      save.disabled = false;
+    }
+
+    async function staffConfirmScheduleSetup() {
+      if (!_ssSessions.length || _ssWarnings.length) return;
+      const vi = document.querySelector('input[name="ss-var"]:checked')?.value;
+      const dows = _ssVariants[Number(vi)];
+      const startVal = document.getElementById('ss-start')?.value;
+      const time = document.getElementById('ss-time')?.value;
+      if (!dows || !startVal || !time) return;
+      const spw = dows.length;
+      const legacyPair = cdSame(dows, [5, 6]) ? 'fri_sat' : cdSame(dows, [6, 0]) ? 'sat_sun' : null;
+      const btn = document.getElementById('ss-save'); btn.disabled = true; btn.textContent = iswL('Menyimpan…', 'Saving…');
+      try {
+        const { error: pe } = await window.db.from('psy_treatment_plans').update({
+          start_date: startVal,
+          preferred_days: dows,
+          preferred_pair: legacyPair,
+          preferred_time_day1: time,
+          preferred_time_day2: spw > 1 ? time : null,
+          sessions_per_week: spw,
+          schedule_setup_at: new Date().toISOString(),
+        }).eq('id', activePlan.id);
+        if (pe) throw pe;
+
+        // Buang placeholder 'pending' (dicipta oleh payments-webhook/createMissingPlan
+        // sejurus pakej diaktifkan) sebelum insert jadual sebenar — elak baris berganda.
+        // Selamat: butang ni cuma keluar bila SEMUA row sedia ada masih 'pending'
+        // (lihat toggle ov-schedule-setup-btn di loadOverview).
+        await window.db.from('psy_plan_weekly_progress').delete().eq('plan_id', activePlan.id);
+        const rows = _ssSessions.map(s => ({
+          plan_id: activePlan.id,
+          patient_id: patient.id,
+          week_number: s.week,
+          session_day: s.day,
+          session_date: s.dateTime.toISOString(),
+          status: 'booked',
+        }));
+        const { error } = await window.db.from('psy_plan_weekly_progress').insert(rows);
+        if (error) throw error;
+
+        await auditLog('plan.schedule_setup', activePlan.id, { mode: 'weekly', days: dows, start_date: startVal, time, by: 'staff' });
+
+        Object.assign(activePlan, {
+          schedule_setup_at: new Date().toISOString(),
+          start_date: startVal, preferred_days: dows, preferred_pair: legacyPair,
+          preferred_time_day1: time, preferred_time_day2: spw > 1 ? time : null, sessions_per_week: spw,
+        });
+
+        if (patient?.user_id) {
+          try {
+            await notify(patient.user_id, 'plan',
+              iswL('Jadual rawatan anda telah disediakan', 'Your treatment schedule has been set up'),
+              iswL(`Jadual rawatan anda (${cdName(dows)}) telah disediakan oleh klinik. Sila semak Treatment Plan anda.`, `Your treatment schedule (${cdName(dows)}) has been set up by the clinic. Please check your Treatment Plan.`),
+              'plan.html');
+          } catch (_) { }
+        }
+
+        document.getElementById('schedulesetup-modal')?.remove();
+        banner(iswL('Jadual rawatan disiapkan ✅', 'Treatment schedule set up ✅'));
+        await reloadOverviewKeepPage();
+      } catch (e) {
+        banner(iswL('Ralat: ', 'Error: ') + e.message, 'error');
+        btn.disabled = false; btn.textContent = iswL('Simpan Jadual', 'Save Schedule');
       }
     }
 
