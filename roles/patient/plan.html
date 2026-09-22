@@ -618,7 +618,13 @@
 
       // Plan baru (lepas migration) tapi belum setup jadual → tunjuk wizard.
       // Plan lama (existing) yang dah ada rows tanpa setup → fallback ke flow lama.
-      const hasProgressRows = weeklyProgressRows.length > 0;
+      // "dah ada rows" kena baris SEBENAR (status 'booked'/'reschedule', dicipta
+      // oleh wizard save di atas) — bukan placeholder kosong ('pending', tiada
+      // session_date) yang payments-webhook/seedPlanWeeklyProgress() pra-cipta
+      // sejurus pakej diaktifkan, SEBELUM pesakit pernah sampai plan.html langsung.
+      // Kalau tak, wizard tak pernah keluar untuk plan baru (rows placeholder tu
+      // dah "wujud" walaupun pesakit tak pernah pilih hari/tarikh mula).
+      const hasProgressRows = weeklyProgressRows.some(r => r.status !== 'pending');
       const needsSetup = !activePlan.schedule_setup_at && !hasProgressRows;
 
       document.getElementById('setup-wizard').classList.toggle('hidden', !needsSetup);
@@ -2009,6 +2015,12 @@
           session_date: s.closed ? null : s.dateTime.toISOString(),
           status: s.closed ? 'reschedule' : 'booked',
         }));
+        // Buang placeholder 'pending' (payments-webhook seedPlanWeeklyProgress() pra-cipta
+        // sejurus pakej diaktifkan, SEBELUM wizard ni jalan) sebelum insert jadual sebenar —
+        // elak baris berganda utk minggu yang sama. Selamat: wizard ni cuma keluar (needsSetup)
+        // bila SEMUA row sedia ada masih 'pending' (lihat loadWeeklyProgress), jadi tiada
+        // progress sebenar yang boleh terhapus di sini.
+        await window.db.from('psy_plan_weekly_progress').delete().eq('plan_id', activePlan.id);
         const { error } = await window.db.from('psy_plan_weekly_progress').insert(rows);
         if (error) throw error;
 
