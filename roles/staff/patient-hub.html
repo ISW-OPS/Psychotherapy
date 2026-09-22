@@ -6815,7 +6815,7 @@
       const { data: closureRows } = await window.db.from('psy_clinic_closures').select('closure_date, is_recurring, label');
       _ssClosures = closureRows || [];
 
-      let N = Math.min(2, Math.max(1, parseInt(activePlan.sessions_per_week) || 0)) || 2;
+      const N = Math.min(2, Math.max(1, parseInt(activePlan.sessions_per_week) || 0)) || 2;
       let variants = [];
       if (activePlan.template) {
         const { data: pkg } = await window.db.from('psy_packages').select('session_days_options').eq('package_id', activePlan.template).maybeSingle();
@@ -6823,13 +6823,12 @@
           .filter(v => Array.isArray(v) && v.length === N).map(v => v.map(d => Number(d) === 7 ? 0 : Number(d)));
       }
       // Fallback legasi (padan buildScheduleConfig() di plan.html) — pakej tiada
-      // session_days_options sepadan N langsung. Pakej 1x/minggu (N===1) kekal 1 hari
-      // (Jumaat lalai; boleh reschedule individu kalau nak hari lain) — JANGAN paksa
-      // N=2, tu akan tersilap tukar pakej 1x jadi nampak 2x seminggu.
-      if (!variants.length) {
-        if (N === 1) { variants = [[5]]; }
-        else { variants = [[5, 6], [6, 0]]; N = 2; }
-      }
+      // session_days_options sepadan N langsung. Pakej 1x/minggu (N===1) dapat DUA
+      // pilihan 1-hari (Jumaat ATAU Sabtu, bukan satu je) — kalau slot klinik tak
+      // buka pada satu hari tu, staff ada pilihan lain, bukan jalan buntu. Reschedule
+      // individu kalau nak hari lain langsung. JANGAN paksa N=2 utk kes N===1 — tu
+      // akan tersilap tukar pakej 1x jadi nampak 2x seminggu.
+      if (!variants.length) variants = N === 1 ? [[5], [6]] : [[5, 6], [6, 0]];
       _ssVariants = variants; _ssSessions = []; _ssWarnings = [];
 
       document.getElementById('schedulesetup-modal')?.remove();
@@ -6957,7 +6956,7 @@
       _ssSessions = result.sessions; _ssWarnings = result.warnings;
       const fmt = d => d.toLocaleDateString(LCALE(), { weekday: 'short', day: '2-digit', month: 'short' }) + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
       if (result.warnings.length) {
-        prev.innerHTML = `<div class="text-terracotta font-semibold mb-1">⚠️ ${iswL('Tarikh berikut jatuh pada cuti klinik — sila pilih tarikh/hari lain', 'The following dates fall on a clinic closure — please choose different dates/days')}:</div>
+        prev.innerHTML = `<div class="text-terracotta font-semibold mb-1">⚠️ ${iswL('Isu berikut perlu diselesaikan dulu — sila pilih hari/tarikh/masa lain', 'The following issues need to be resolved first — please choose different days/dates/time')}:</div>
       <div class="border border-terracotta/30 bg-terracotta/5 rounded-lg divide-y divide-ink/5 max-h-40 overflow-y-auto text-terracotta">
       ${result.warnings.map(w => `<div class="px-3 py-1.5">${w}</div>`).join('')}</div>`;
         return;
