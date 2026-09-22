@@ -3140,7 +3140,7 @@
         <div class="text-[11px] font-semibold text-ink/50 uppercase mb-2">5. Payment Method</div>
         <div class="flex gap-3 max-w-md">
           <button type="button" onclick="wizSelectMethod('manual')" class="flex-1 px-4 py-2.5 border border-ink/15 rounded-lg text-sm font-semibold hover:bg-ink/5">💳 Bayaran Manual</button>
-          <button type="button" onclick="wizSelectMethod('hitpay')" class="flex-1 px-4 py-2.5 border border-ink/15 rounded-lg text-sm font-semibold hover:bg-ink/5">🔗 HitPay (Pesakit Bayar)</button>
+          <button type="button" onclick="wizSelectMethod('hitpay')" class="flex-1 px-4 py-2.5 border border-ink/15 rounded-lg text-sm font-semibold hover:bg-ink/5">🔗 HitPay</button>
         </div>
         ${isManual ? '<p class="text-[10px] text-ink/40 mt-1.5">ℹ️ Jadual Ansuran Manual di Langkah 4 disimpan dulu — HitPay jana pautan ikut jumlah deposit yg sama; pesakit tetap perlu klik pautan &amp; lengkapkan checkout sendiri (bukan auto-caj tanpa tindakan).</p>' : ''}
       </div>`;
@@ -3162,7 +3162,7 @@
       <div class="flex items-center justify-between flex-wrap gap-2">
         <p class="text-xs text-green-dark">✅ Pautan HitPay dihantar ke WhatsApp pesakit (${new Date(hitpayLinkSentAt).toLocaleTimeString(LCALE())}) — menunggu bayaran <span class="text-ink/40">(auto-semak setiap 10 saat)</span>.</p>
         <div class="flex gap-2 items-center">
-          <button type="button" ${hitpayCopying ? 'disabled' : ''} onclick="copyKobHitpayLink('${hitpayMode}')" class="text-[11px] text-navy hover:underline disabled:opacity-50">${hitpayCopying ? 'Menjana…' : '📋 Link Payment'}</button>
+          <button type="button" ${hitpayCopying ? 'disabled' : ''} onclick="copyKobHitpayLink('${hitpayMode}')" class="text-[11px] text-navy hover:underline disabled:opacity-50">${hitpayCopying ? 'Menjana…' : '📋 Salin Pautan'}</button>
           <button type="button" onclick="recheckKobPaymentStatus()" class="text-[11px] text-navy hover:underline">🔄 Semak Sekarang</button>
           <button type="button" onclick="wizSelectMethod(null)" class="text-[11px] text-ink/50 hover:underline">Tukar →</button>
         </div>
@@ -3174,11 +3174,11 @@
       <div class="flex gap-2 flex-wrap">
         <button type="button" ${(hitpaySending || hitpayCopying) ? 'disabled' : ''} onclick="sendKobHitpayLink('${hitpayMode}')"
           class="px-4 py-2.5 border border-ink/15 rounded-lg text-sm font-semibold hover:bg-ink/5 disabled:opacity-50">
-          ${hitpaySending ? 'Menjana &amp; menghantar…' : `🔗 Jana &amp; Hantar Pautan (${fmtRM(amount)})`}
+          ${hitpaySending ? iswL('Menghantar…', 'Sending…') : `🔗 ${iswL('Hantar Pautan', 'Send Link')} (${fmtRM(amount)})`}
         </button>
         <button type="button" ${(hitpaySending || hitpayCopying) ? 'disabled' : ''} onclick="copyKobHitpayLink('${hitpayMode}')"
           class="px-4 py-2.5 border border-ink/15 rounded-lg text-sm font-semibold hover:bg-ink/5 disabled:opacity-50">
-          ${hitpayCopying ? 'Menjana…' : '📋 Link Payment'}
+          ${hitpayCopying ? 'Menjana…' : '📋 Salin Pautan'}
         </button>
       </div>
     </div>`;
@@ -3407,12 +3407,17 @@
       if (!hitpayStateChecked && !wizMethod) {
         hitpayStateChecked = true;
         const { data: pendingLink } = await window.db.from('psy_payments')
-          .select('items, created_at')
+          .select('items, created_at, intent')
           .eq('status', 'pending').eq('payment_method', 'gateway')
           .eq('intent->>kob_session_id', kobId)
           .order('created_at', { ascending: false }).limit(1);
         const lastLink = pendingLink?.[0];
-        if (lastLink) {
+        // Pending gateway payment ni boleh datang dari DUA punca sekarang: staff
+        // jana & hantar pautan WhatsApp (kob-detail.html), ATAU pesakit self-checkout
+        // sendiri dalam app dia (kob.html). Hanya pulihkan paparan "Pautan HitPay
+        // dihantar ke WhatsApp" bila memang staff yang cetus — rekod LAMA (sebelum
+        // field ni wujud) diandaikan staff (default) utk elak pecah paparan sedia ada.
+        if (lastLink && (lastLink.intent?.initiated_by || 'staff') === 'staff') {
           wizMethod = 'hitpay';
           wizPlan = lastLink.items?.[0]?.mode === 'installment' ? 'installment' : 'full';
           hitpayLinkSentAt = lastLink.created_at;

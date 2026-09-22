@@ -24,6 +24,8 @@
   // ── Glossary: Malay source (trimmed) → English ──────────────
   // Grows incrementally. Common UI terms translate everywhere once added.
   var EN = {
+    // — KOB staff wizard button labels (kob-detail.html) — added 22 Sept —
+    "📋 Salin Pautan": "📋 Copy Link",
     // — KOB self-checkout pending-confirmation screen (kob.html) — added 22 Sept —
     "Menyemak Bayaran…": "Checking Payment…",
     "Menyemak Status Bayaran": "Checking Payment Status",

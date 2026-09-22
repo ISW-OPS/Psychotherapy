@@ -29,9 +29,9 @@ export interface KobDepositLink {
 
 export async function createKobDepositLink(
   admin: any,
-  opts: { kobSessionId: string; mode: 'full' | 'installment' | 'manual_installment'; tier?: 'today' | 'now'; returnUrl: string },
+  opts: { kobSessionId: string; mode: 'full' | 'installment' | 'manual_installment'; tier?: 'today' | 'now'; returnUrl: string; initiatedBy?: 'staff' | 'patient' },
 ): Promise<KobDepositLink> {
-  const { kobSessionId, mode, returnUrl } = opts
+  const { kobSessionId, mode, returnUrl, initiatedBy = 'staff' } = opts
 
   const { data: kobRows } = await admin.from('psy_kob_sessions')
     .select('id, patient_id, recommended_package_id, recommended_package_name, recommended_package_price, package_payment_status')
@@ -125,6 +125,11 @@ export async function createKobDepositLink(
       patientId: kob.patient_id,
       userId: patient?.user_id || null,
       kob_session_id: kobSessionId,
+      // Pesakit sendiri boleh cetus laluan ni sekarang (self-checkout installment,
+      // payments-kob-initiate) — bukan staff sahaja macam asal. kob-detail.html
+      // baca field ni utk elak silap anggap SETIAP pending gateway payment
+      // bermaksud "staff dah hantar pautan WhatsApp" (lihat hitpayStateChecked).
+      initiated_by: initiatedBy,
     },
   })
   if (insErr) throw new Error('Gagal simpan bayaran pending: ' + insErr.message)

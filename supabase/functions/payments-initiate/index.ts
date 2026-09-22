@@ -156,7 +156,11 @@ Deno.serve(async (req) => {
       gateway_status: 'pending',
       intent: {
         items, patientId, userId: user.id, method, voucherId, voucherDiscount, promoCodeId: promoId, promoCode: promoId && promoCode ? promoCode.toUpperCase() : null, promoDiscount,
-        ...(kobSessionIdItem ? { kob_session_id: kobSessionIdItem.kobSessionId } : {}),
+        // kob_package/kob_installment_topup di sini SELALU pesakit sendiri (self-checkout
+        // kob.html/patient-hub.html) — staff guna payments-kob-initiate berasingan utk
+        // pautan WhatsApp. kob-detail.html baca field ni (hitpayStateChecked) supaya
+        // pending payment pesakit tak silap disangka "pautan WhatsApp dah dihantar staff".
+        ...(kobSessionIdItem ? { kob_session_id: kobSessionIdItem.kobSessionId, initiated_by: 'patient' } : {}),
       },
     })
     if (insErr) throw new Error('Gagal simpan bayaran pending: ' + insErr.message)

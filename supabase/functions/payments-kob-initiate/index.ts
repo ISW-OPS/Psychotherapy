@@ -114,7 +114,7 @@ Deno.serve(async (req) => {
     try {
       const link = await createKobDepositLink(admin, {
         kobSessionId, mode: mode as 'full' | 'installment' | 'manual_installment',
-        tier: requestedTier, returnUrl,
+        tier: requestedTier, returnUrl, initiatedBy: isStaff ? 'staff' : 'patient',
       })
       return json({ ok: true, checkoutUrl: link.checkoutUrl, receiptRef: link.receiptRef, amount: link.amount })
     } catch (err) {
