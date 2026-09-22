@@ -24,6 +24,13 @@
   // ── Glossary: Malay source (trimmed) → English ──────────────
   // Grows incrementally. Common UI terms translate everywhere once added.
   var EN = {
+    // — KOB self-checkout pending-confirmation screen (kob.html) — added 22 Sept —
+    "Menyemak Bayaran…": "Checking Payment…",
+    "Menyemak Status Bayaran": "Checking Payment Status",
+    "Sila selesaikan bayaran melalui invois di bawah.": "Please complete payment via the invoice below.",
+    "Bayaran Belum Disahkan": "Payment Not Yet Confirmed",
+    "Jika anda baru selesai bayar, sila tunggu seketika & muat semula halaman ini. Jika bayaran tidak dihabiskan, sila cuba bayar semula.": "If you just finished paying, please wait a moment and reload this page. If the payment wasn't completed, please try paying again.",
+    "Cuba Bayar Semula": "Try Paying Again",
     // — Bayaran manual / invois / waris — added 21 Sept —
     "🧾 Sejarah Transaksi": "🧾 Transaction History",
     "📄 Lihat Invois": "📄 View Invoice",

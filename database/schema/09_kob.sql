@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS psy_kob_sessions (
   package_discount          NUMERIC(12,2) NOT NULL DEFAULT 0,  -- diskaun (papar di invois; harga asal = recommended_package_price + package_discount)
   invoice_no                TEXT UNIQUE,                       -- no. invois (INV-000001..) — auto bila pakej dicadangkan
   package_payment_mode      TEXT CHECK (package_payment_mode IN ('full','installment')),
+  intended_payment_mode     TEXT CHECK (intended_payment_mode IN ('full','installment','manual_installment')),
 
   reschedule_count    INT NOT NULL DEFAULT 0,
   reschedule_reason   TEXT,
@@ -59,6 +60,14 @@ COMMENT ON COLUMN psy_kob_sessions.questionnaire IS
 
 COMMENT ON COLUMN psy_kob_sessions.recommended_package_id IS
   'Package recommended by doctor during KOB. Patient must pay before agreement signing.';
+
+COMMENT ON COLUMN psy_kob_sessions.intended_payment_mode IS
+  'Plan staff PILIH utk pesakit di wizard kob-detail.html (wizSelectPlan, Langkah 4) — SEBELUM
+   sebarang bayaran cuba dibuat. Beza dengan package_payment_mode (hanya diisi SELEPAS bayaran
+   berjaya). Dibaca oleh kob.html (roles/patient) utk papar butang self-checkout yang sepadan:
+   installment = "Bayar Deposit Ansuran" (payments-kob-initiate, deposit amount), full/NULL =
+   "Bayar Sekarang" (payments-initiate, harga penuh), manual_installment = kekal WhatsApp sahaja
+   (jadual staff-entered, tiada formula deposit utk self-checkout).';
 
 CREATE SEQUENCE IF NOT EXISTS psy_invoice_no_seq START 1;
 

@@ -733,25 +733,22 @@ function validateAll() {
 function fv(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
 function sv(id, v) { const el = document.getElementById(id); if (el) el.value = v || ''; }
 
-// ── Cari rekod psy_patients sedia ada (belum linked) ikut phone/IC ─────
+// ── Cari rekod psy_patients sedia ada (belum linked) ikut phone/IC/emel ──
+// RLS psy_patients sengaja block SELECT terus ke rekod pesakit lain (termasuk
+// stub belum-linked user_id NULL) — jadi padanan ni kena lalui RPC SECURITY
+// DEFINER find_unclaimed_patient() (04_patients.sql), bukan .select() terus.
 // Padan phone dulu (last-9-digit, cover phone & emergency_contact_phone —
-// sama corak macam _shared/ghl-sync.ts syncContactToPatient), IC fallback.
+// sama corak macam _shared/ghl-sync.ts syncContactToPatient), IC, emel.
 // Diguna oleh live-prefill (semasa isi borang) & claim-di-submit (submitKYC).
-async function findExistingUnlinkedPatient(phoneKeyVal, icVal, excludeId) {
-  let target = null;
-  if (phoneKeyVal) {
-    const { data } = await window.db.from('psy_patients')
-      .select('*').is('user_id', null).neq('id', excludeId)
-      .or(`phone.ilike.%${phoneKeyVal},emergency_contact_phone.ilike.%${phoneKeyVal}`)
-      .limit(1);
-    target = data?.[0] || null;
-  }
-  if (!target && icVal) {
-    const { data } = await window.db.from('psy_patients')
-      .select('*').is('user_id', null).neq('id', excludeId)
-      .eq('ic_number', icVal).limit(1);
-    target = data?.[0] || null;
-  }
+async function findExistingUnlinkedPatient(phoneKeyVal, icVal, excludeId, emailVal) {
+  const { data, error } = await window.db.rpc('find_unclaimed_patient', {
+    p_phone_key: phoneKeyVal || null,
+    p_ic: icVal || null,
+    p_email: emailVal || null,
+    p_exclude_id: excludeId || null,
+  });
+  if (error) { console.warn('[findExistingUnlinkedPatient] rpc gagal:', error.message); return null; }
+  const target = data?.[0] || null;
   return target;
 }
 
@@ -1077,23 +1074,26 @@ async function submitKYC() {
 
     const claimTarget = await findExistingUnlinkedPatient(phoneKeyVal, icVal, myPatientId);
     if (claimTarget) {
-      // user_id unik satu rekod sahaja — buang stub kosong saya dulu sebelum
-      // pindah user_id ke rekod sedia ada (bawa sekali progres kob_status/pakej).
-      if (patientRecord?.id && patientRecord.id !== claimTarget.id) {
-        await window.db.from('psy_patients').delete().eq('id', patientRecord.id);
-      }
-      const { data: claimed, error: claimErr } = await window.db.from('psy_patients')
-        .update({ user_id: currentUser.id, created_by_staff: false })
-        .eq('id', claimTarget.id).select().single();
+      // user_id unik satu rekod sahaja — RPC claim_unclaimed_patient() padam stub
+      // kosong saya (kalau ada) & pindah user_id ke rekod sedia ada dalam satu
+      // transaksi SECURITY DEFINER (RLS block UPDATE/DELETE rekod bukan-milik-
+      // sendiri terus dari client, termasuk stub user_id NULL — bukan "milik" sesiapa lagi).
+      const { data, error: claimErr } = await window.db.rpc('claim_unclaimed_patient', {
+        p_target_id: claimTarget.id,
+        p_stub_id: (patientRecord?.id && patientRecord.id !== claimTarget.id) ? patientRecord.id : null,
+      });
       if (claimErr) throw claimErr;
-      patientRecord = claimed;
-      window.patientRecord = claimed;
+      if (data?.[0]) {
+        patientRecord = data[0];
+        window.patientRecord = patientRecord;
+      }
     }
 
     // Block duplicate IC — rekod lain (BUKAN saya) dah guna IC yang sama
+    // (RPC SECURITY DEFINER — RLS block baca rekod pesakit lain terus dari client)
     const myId = patientRecord?.id || myPatientId;
-    const { data: icDup } = await window.db.from('psy_patients')
-      .select('id, mrn, full_name').eq('ic_number', icVal).neq('id', myId).limit(1);
+    const { data: icDupRows } = await window.db.rpc('find_duplicate_patient_by_ic', { p_ic: icVal, p_exclude_id: myId });
+    const icDup = icDupRows?.[0] ? [icDupRows[0]] : null;
     if (icDup?.[0]) {
       const p = icDup[0];
       const footerErr = document.getElementById('footer-error');
@@ -1300,27 +1300,48 @@ const originalBody = document.getElementById('kyc-body').innerHTML;
 
   await loadExistingKYC();
   if (!existingKYC) {
-    // Start from patientRecord (or auth user)
-    const base = patientRecord ? {
-      patient_name: patientRecord.full_name || user.full_name,
-      ic_number: patientRecord.ic_number,
-      date_of_birth: patientRecord.date_of_birth,
-      gender: patientRecord.gender,
-      phone: patientRecord.phone || user.phone,
-      email: patientRecord.email || user.email,
-      address: patientRecord.address,
-      postcode: patientRecord.postcode,
-      city: patientRecord.city,
-      state: patientRecord.state,
-      occupation: patientRecord.occupation,
-      company: patientRecord.company,
-      marital_status: patientRecord.marital_status,
-      emergency_contact_name: patientRecord.emergency_contact_name,
-      emergency_contact_relationship: patientRecord.emergency_contact_relationship,
-      emergency_contact_phone: patientRecord.emergency_contact_phone,
-      emergency_contact_email: patientRecord.emergency_contact_email,
-      emergency_contact_ic: patientRecord.emergency_contact_ic,
-      referral_source: patientRecord.referral_source,
+    // trg_new_patient_profile (04_patients.sql) auto-cipta stub psy_patients
+    // SERTA-MERTA bila akaun pesakit signup — user_id dah terisi tapi medan
+    // lain kosong. Stub tu bukan tanda "dah ada data": kalau ia masih kosong,
+    // cuba padan rekod staff/GHL sedia ada (unlinked, user_id masih NULL) ikut
+    // phone/emel akaun auth, sekadar utk PRAPAPAR borang. `patientRecord`
+    // (stub) sengaja TAK ditimpa di sini — proses claim/merge sebenar (padam
+    // stub, pindah user_id ikut IC/phone yang dihantar) tetap berlaku kemudian
+    // di submitKYC(), bukan di sini.
+    let prefillRecord = patientRecord;
+    const isEmptyStub = !patientRecord || (!patientRecord.ic_number && !patientRecord.phone && !patientRecord.address);
+    if (isEmptyStub && user.email) {
+      const excludeId = patientRecord?.id || '00000000-0000-0000-0000-000000000000';
+      try {
+        const found = await findExistingUnlinkedPatient(null, null, excludeId, user.email);
+        if (found) {
+          prefillRecord = found;
+          banner('Rekod sedia ada dijumpai — maklumat anda diisi automatik. Sila semak & lengkapkan. ℹ️');
+        }
+      } catch (e) { console.warn('[init] gagal cari rekod sedia ada:', e.message); }
+    }
+
+    // Start from prefillRecord (patientRecord's stub, a matched staff/GHL record, or auth user)
+    const base = prefillRecord ? {
+      patient_name: prefillRecord.full_name || user.full_name,
+      ic_number: prefillRecord.ic_number,
+      date_of_birth: prefillRecord.date_of_birth,
+      gender: prefillRecord.gender,
+      phone: prefillRecord.phone || user.phone,
+      email: prefillRecord.email || user.email,
+      address: prefillRecord.address,
+      postcode: prefillRecord.postcode,
+      city: prefillRecord.city,
+      state: prefillRecord.state,
+      occupation: prefillRecord.occupation,
+      company: prefillRecord.company,
+      marital_status: prefillRecord.marital_status,
+      emergency_contact_name: prefillRecord.emergency_contact_name,
+      emergency_contact_relationship: prefillRecord.emergency_contact_relationship,
+      emergency_contact_phone: prefillRecord.emergency_contact_phone,
+      emergency_contact_email: prefillRecord.emergency_contact_email,
+      emergency_contact_ic: prefillRecord.emergency_contact_ic,
+      referral_source: prefillRecord.referral_source,
     } : {};
 
     // Overlay draft values (so refresh keeps unsaved typing)
@@ -1338,7 +1359,7 @@ const originalBody = document.getElementById('kyc-body').innerHTML;
 
     // Nama rasmi (cth sudah disync dari GHL) mesti kekal — kunci field supaya
     // pesakit tak tersalah anggap taip nama lain di sini akan disimpan.
-    if ((patientRecord?.full_name || '').trim()) lockNameField(patientRecord.full_name);
+    if ((prefillRecord?.full_name || '').trim()) lockNameField(prefillRecord.full_name);
   }
   attachFormEvents();
 

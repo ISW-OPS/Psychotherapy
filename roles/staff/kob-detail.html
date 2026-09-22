@@ -713,12 +713,6 @@
                   <input id="rec-discount" type="text" inputmode="decimal" placeholder="0.00" onblur="formatMoneyInputEl(this)"
                     class="w-36 mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white" title="Dipaparkan di invois/resit. Harga pakej di atas sudah harga selepas diskaun.">
                 </div>
-                <div class="flex items-center gap-2" id="rec-decision-buttons">
-                  <button type="button" onclick="recDecideTier('today')" id="rec-btn-teruskan" data-rbac="kob.edit"
-                    class="px-4 py-2 rounded-lg text-sm font-semibold border-2">✅ Patient Teruskan</button>
-                  <button type="button" onclick="recDecideTier('now')" id="rec-btn-tidak" data-rbac="kob.edit"
-                    class="px-4 py-2 rounded-lg text-sm font-semibold border-2">Patient Tidak Teruskan</button>
-                </div>
               </div>
               <p id="rec-package-info" class="text-[11px] text-ink/50 mt-1.5"></p>
               <div id="rec-price-preview" class="hidden space-y-3 mt-4 pt-4 border-t border-ink/10"></div>
@@ -2551,7 +2545,7 @@
 
     // Papar perbandingan Harga Asal/Promo/Now/Today terus lepas pakej dipilih
     // dalam dropdown — supaya staff & pesakit boleh bezakan harga SEBELUM tekan
-    // butang keputusan (Teruskan/Tidak Teruskan, sebelah dropdown Pilih Pakej).
+    // butang keputusan (Teruskan/Tidak Teruskan, letak BAWAH preview ni).
     function renderRecPricePreview() {
       const container = document.getElementById('rec-price-preview');
       if (!container) return;
@@ -2574,8 +2568,8 @@
       updateRecDecisionButtons(pkgId);
     }
 
-    // Butang "Patient Teruskan" / "Patient Tidak Teruskan" sebelah dropdown Pilih
-    // Pakej — tiada pakej dipilih = kedua-dua kelabu/disabled; belum ada keputusan
+    // Butang "Patient Teruskan" / "Patient Tidak Teruskan" (bawah preview harga) —
+    // tiada pakej dipilih = kedua-dua kelabu/disabled; belum ada keputusan
     // = kedua-dua aktif; dah ada keputusan (pending/declined, BELUM bayar) =
     // pilihan ditonjolkan tapi DUA-DUA kekal boleh klik (staff boleh tukar fikiran
     // sebelum patient bayar); dah bayar (paid/partial, duit dah masuk) = kunci
@@ -2603,6 +2597,11 @@
         // Duit dah masuk — kunci, tak boleh tukar tier/keputusan lagi.
         btnGo.className = goChosen; btnNo.className = grey;
         btnGo.disabled = true; btnNo.disabled = true;
+      } else if (!recDecisionTouched) {
+        // Neutral dulu setiap kali halaman dimuat — walaupun DB dah ada keputusan
+        // lama (chosen), jangan auto papar biru; staff kena klik sedar utk sahkan.
+        btnGo.className = goActive; btnNo.className = noActive;
+        btnGo.disabled = false; btnNo.disabled = false;
       } else if (chosen === 'go') {
         btnGo.className = goChosen; btnNo.className = noActive;
         btnGo.disabled = false; btnNo.disabled = false;
@@ -2615,9 +2614,12 @@
       }
     }
 
-    // Klik butang "Patient Teruskan" / "Patient Tidak Teruskan" (sebelah dropdown
-    // Pilih Pakej) = keputusan patient terus disahkan & disimpan.
+    // Klik butang "Patient Teruskan" / "Patient Tidak Teruskan" (bawah preview
+    // harga) ATAU klik terus kad harga (Langkah 3 preview, sama fungsi) =
+    // keputusan patient terus disahkan & disimpan.
     function recDecideTier(tier) {
+      recDecisionTouched = true;
+      updateRecDecisionButtons(document.getElementById('rec-package-select')?.value || kob.recommended_package_id);
       saveRecommendation(tier === 'today' ? 'package' : 'declined');
     }
 
@@ -2697,6 +2699,16 @@
     // langsung) kekal 100% di server (payments-kob-initiate/payments-initiate).
     let wizPlan = null;      // 'full' | 'installment' | 'manual_installment' | null
     let wizMethod = null;    // 'manual' | 'hitpay' | null
+    // Butang Patient Teruskan/Tidak Teruskan start GREY/neutral setiap kali halaman
+    // dimuat (walaupun kob.package_payment_status dah ada keputusan lama tersimpan)
+    // — staff kena klik SEDAR utk sahkan, bukan auto papar biru ikut rekod lama.
+    // Reset ke false semula bila page reload lepas keputusan disimpan (saveRecommendation).
+    let recDecisionTouched = false;
+    // Sekali sahaja setiap load — pulihkan wizPlan dari intended_payment_mode (DB)
+    // lepas reload (cth. auto-reload selepas klik Patient Teruskan/Tidak Teruskan),
+    // supaya kad Langkah 4 yg staff dah pilih & Langkah 5 tak hilang. Lihat penuh
+    // logik pulih di renderPaymentMethodSection().
+    let wizPlanRestored = false;
     // Harga yg doktor pilih utk bayaran ni — bebas klik Harga Sekarang/Hari Ini di
     // Langkah 3, tak terikat pada status 'pending'/'declined'. null = ikut default
     // (Today utk pending, Now utk declined) sehingga doktor klik kad utk override.
@@ -2793,6 +2805,18 @@
       wizPlan = plan; wizMethod = null;
       if (plan !== 'manual_installment') { wizManualDeposit = null; wizManualPeriods = []; wizManualDates = []; }
       renderPaymentMethodSection();
+      // Simpan plan yang staff pilih SEBELUM sebarang bayaran cuba dibuat — supaya
+      // borang pesakit (kob.html renderRecommendedPackageDetail) boleh papar butang
+      // self-checkout yang sepadan (Bayar Sekarang / Bayar Deposit Ansuran) tanpa
+      // perlu tunggu pautan HitPay dihantar. installment sahaja yang self-checkout;
+      // manual_installment kekal WhatsApp (jadual staff-entered, tiada formula deposit).
+      // kob.intended_payment_mode dikemas kini sekali gus (bukan cuma DB) — elak
+      // baca nilai lapuk sebelum reload seterusnya (cth. saveRecommendation semak
+      // pkgId !== kob.recommended_package_id, tak sentuh field ni, tapi kod lain
+      // yg baca kob.intended_payment_mode terus patut nampak nilai terkini).
+      kob.intended_payment_mode = plan;
+      window.db.from('psy_kob_sessions').update({ intended_payment_mode: plan }).eq('id', kobId)
+        .then(({ error }) => { if (error) console.warn('[wizSelectPlan] gagal simpan intended_payment_mode:', error.message); });
     }
     // Klik kad "Harga Sekarang"/"Harga Hari Ini" di Langkah 3 — doktor override
     // harga utk bayaran ni terus, tak kira status 'pending'/'declined'. Reset
@@ -3062,6 +3086,22 @@
       </div>
       ${detailHtml}
       ${manualDetailHtml}
+    </div>`;
+    }
+
+    // Keputusan patient — sengaja letak SELEPAS Langkah 4 (Pilih Plan) & SEBELUM
+    // Langkah 5 (Kaedah Pembayaran): staff tunjuk dulu perbandingan harga & plan kat
+    // pesakit, sahkan keputusan, BARU pilih macam mana nak proses bayaran (Manual/
+    // HitPay/self-checkout). Dijana sekali lagi setiap renderPaymentMethodSection()
+    // (id sama macam asal) — updateRecDecisionButtons() dipanggil lepas ni utk warna
+    // btn ikut status (chosen/active/grey/locked).
+    function recDecisionButtonsHtml() {
+      return `
+    <div class="flex items-center gap-2" id="rec-decision-buttons">
+      <button type="button" onclick="recDecideTier('today')" id="rec-btn-teruskan" data-rbac="kob.edit"
+        class="px-4 py-2 rounded-lg text-sm font-semibold border-2">✅ Patient Teruskan</button>
+      <button type="button" onclick="recDecideTier('now')" id="rec-btn-tidak" data-rbac="kob.edit"
+        class="px-4 py-2 rounded-lg text-sm font-semibold border-2">Patient Tidak Teruskan</button>
     </div>`;
     }
 
@@ -3348,6 +3388,16 @@
       const defaultTier = isDeclinedInfo ? 'now' : 'today';
       const tier = wizPayTier || defaultTier;
 
+      // Pulihkan plan Langkah 4 (wizPlan) dari intended_payment_mode (DB) lepas
+      // reload — wizPlan cuma pembolehubah JS, hilang tiap reload (cth. auto-reload
+      // selepas klik Patient Teruskan/Tidak Teruskan, sejak butang tu letak lepas
+      // Langkah 4). Sekali sahaja setiap load (elak override balik lepas staff
+      // tukar tier di Langkah 3 sengaja set wizPlan=null semula).
+      if (!wizPlanRestored) {
+        wizPlanRestored = true;
+        if (wizPlan === null && kob.intended_payment_mode) wizPlan = kob.intended_payment_mode;
+      }
+
       // Pulihkan status "pautan HitPay dah dijana" lepas refresh page — wizMethod/
       // hitpayLinkSentAt cuma pembolehubah JS (hilang bila reload). payments-kob-initiate
       // cipta baris psy_payments 'pending' (gateway) SETIAP kali pautan dijana (hantar
@@ -3375,9 +3425,13 @@
         wizStep12Html(pkgMeta),
         wizStep3Html(pkgMeta, 'wizSelectPayTier', tier),
         wizStep4Html(pkgMeta, wizPlan, 'wizSelectPlan', tier, true),
+        recDecisionButtonsHtml(),
         wizPlan ? wizStep5Html(pkgMeta, tier) : '',
       ].filter(Boolean).join('<div class="border-t border-ink/10 my-2"></div>');
       wizSidebar.innerHTML = wizSidebarHtml(pkgMeta, tier);
+      // Warna btn Teruskan/Tidak Teruskan ikut status semasa (chosen/active/grey/
+      // locked) — elemen baru dijana setiap render, kena panggil semula tiap kali.
+      updateRecDecisionButtons(kob.recommended_package_id);
     }
 
     // Jumlah keseluruhan yang dah dibayar setakat ni untuk sesi KOB ni (jumlah
@@ -3702,6 +3756,12 @@
 
       savingRec = true;
       try {
+        // intended_payment_mode reset HANYA bila pakej cadangan TUKAR betul-betul
+        // (harga/plan lama dah tak sepadan pakej baharu) — bukan setiap kali
+        // saveRecommendation() jalan. Klik "Patient Teruskan" utk sahkan pakej YANG
+        // SAMA (cth. staff baru pilih plan di Langkah 4, terus klik Teruskan) mesti
+        // KEKALKAN plan yg baru dipilih tu, bukan padam balik ke null.
+        const isNewPackage = pkgId !== kob.recommended_package_id;
         const updates = {
           recommended_package_id: pkgId,
           recommended_package_name: pkgMeta.name,
@@ -3711,6 +3771,7 @@
           recommended_by: window.currentUser.id,
           recommended_by_name: window.currentUser.full_name,
           package_payment_status: mode === 'declined' ? 'declined' : 'pending',
+          ...(isNewPackage ? { intended_payment_mode: null } : {}),
           updated_at: new Date().toISOString(),
         };
         const { error } = await window.db.from('psy_kob_sessions').update(updates).eq('id', kobId);

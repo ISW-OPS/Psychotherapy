@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-09-21T04:32:53.740473Z
+-- Generated: 2026-09-22T01:13:01.205148Z
 -- Jumlah fail: 36
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -735,6 +735,97 @@ CREATE POLICY "Patients update own record" ON psy_patients FOR UPDATE
 DROP POLICY IF EXISTS "Patients insert own record" ON psy_patients;
 CREATE POLICY "Patients insert own record" ON psy_patients FOR INSERT
   WITH CHECK (user_id = auth.uid());
+
+-- ──── RPC: pesakit cari & claim rekod psy_patients belum-linked (staff/GHL) ────
+-- RLS di atas (user_id = auth.uid()) sengaja block pesakit baca/kemaskini
+-- rekod pesakit LAIN — termasuk stub kosong (user_id NULL) yang staff/GHL
+-- dah isi SEBELUM pesakit signup sendiri. Tanpa laluan ni, borang Pendaftaran
+-- pesakit (roles/patient/pendaftaran.html) tak boleh jumpa/padan rekod staff
+-- langsung (query terus kena tapis RLS, senyap-senyap pulang 0 baris), dan
+-- proses claim (pindah user_id) di submitKYC() turut gagal atas sebab sama.
+-- Dua RPC SECURITY DEFINER ni bagi laluan terkawal & sempit: cari SATU rekod
+-- belum-linked ikut phone/IC/emel (baca sahaja, utk prapapar borang), dan
+-- pindah user_id ke rekod tu + padam stub lama bila pesakit hantar borang.
+CREATE OR REPLACE FUNCTION find_unclaimed_patient(
+  p_phone_key  TEXT DEFAULT NULL,   -- 9 digit terakhir no. telefon
+  p_ic         TEXT DEFAULT NULL,
+  p_email      TEXT DEFAULT NULL,
+  p_exclude_id UUID DEFAULT NULL
+)
+RETURNS SETOF psy_patients
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_row psy_patients;
+BEGIN
+  IF p_phone_key IS NOT NULL AND p_phone_key <> '' THEN
+    SELECT * INTO v_row FROM psy_patients
+    WHERE user_id IS NULL AND (p_exclude_id IS NULL OR id <> p_exclude_id)
+      AND (phone ILIKE '%' || p_phone_key OR emergency_contact_phone ILIKE '%' || p_phone_key)
+    LIMIT 1;
+    IF FOUND THEN RETURN NEXT v_row; RETURN; END IF;
+  END IF;
+
+  IF p_ic IS NOT NULL AND p_ic <> '' THEN
+    SELECT * INTO v_row FROM psy_patients
+    WHERE user_id IS NULL AND (p_exclude_id IS NULL OR id <> p_exclude_id)
+      AND ic_number = p_ic
+    LIMIT 1;
+    IF FOUND THEN RETURN NEXT v_row; RETURN; END IF;
+  END IF;
+
+  IF p_email IS NOT NULL AND p_email <> '' THEN
+    SELECT * INTO v_row FROM psy_patients
+    WHERE user_id IS NULL AND (p_exclude_id IS NULL OR id <> p_exclude_id)
+      AND email ILIKE p_email
+    LIMIT 1;
+    IF FOUND THEN RETURN NEXT v_row; RETURN; END IF;
+  END IF;
+
+  RETURN;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION find_unclaimed_patient(TEXT, TEXT, TEXT, UUID) TO authenticated;
+
+CREATE OR REPLACE FUNCTION claim_unclaimed_patient(
+  p_target_id UUID,
+  p_stub_id   UUID DEFAULT NULL   -- stub kosong pesakit sendiri (auto-cipta masa signup) utk dipadam
+)
+RETURNS SETOF psy_patients
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+BEGIN
+  IF p_stub_id IS NOT NULL AND p_stub_id <> p_target_id THEN
+    DELETE FROM psy_patients WHERE id = p_stub_id AND user_id = auth.uid();
+  END IF;
+
+  RETURN QUERY
+  UPDATE psy_patients
+  SET user_id = auth.uid(), created_by_staff = false
+  WHERE id = p_target_id AND user_id IS NULL
+  RETURNING *;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION claim_unclaimed_patient(UUID, UUID) TO authenticated;
+
+-- ──── RPC: semak IC pesakit lain (dah linked ATAU belum) ikut IC ────
+-- Sama sebab RLS macam di atas — "IC ini sudah didaftarkan" block di
+-- pendaftaran.html (submitKYC/checkIcDuplicate) query rekod pesakit LAIN yang
+-- boleh jadi dah linked ke akaun sebenar (user_id bukan NULL), yang
+-- find_unclaimed_patient() sengaja tak cover (tu khas utk stub belum-linked
+-- sahaja). Pulangkan hanya medan paparan minimum (bukan seluruh baris).
+CREATE OR REPLACE FUNCTION find_duplicate_patient_by_ic(p_ic TEXT, p_exclude_id UUID DEFAULT NULL)
+RETURNS TABLE (id UUID, mrn TEXT, full_name TEXT, user_id UUID)
+LANGUAGE sql SECURITY DEFINER SET search_path = public
+AS $$
+  SELECT id, mrn, full_name, user_id FROM psy_patients
+  WHERE ic_number = p_ic AND (p_exclude_id IS NULL OR id <> p_exclude_id)
+  LIMIT 1;
+$$;
+
+GRANT EXECUTE ON FUNCTION find_duplicate_patient_by_ic(TEXT, UUID) TO authenticated;
 
 -- ──── trigger: auto-update updated_at ────
 CREATE OR REPLACE FUNCTION set_patients_updated_at()
@@ -2726,6 +2817,7 @@ CREATE TABLE IF NOT EXISTS psy_kob_sessions (
   package_discount          NUMERIC(12,2) NOT NULL DEFAULT 0,  -- diskaun (papar di invois; harga asal = recommended_package_price + package_discount)
   invoice_no                TEXT UNIQUE,                       -- no. invois (INV-000001..) — auto bila pakej dicadangkan
   package_payment_mode      TEXT CHECK (package_payment_mode IN ('full','installment')),
+  intended_payment_mode     TEXT CHECK (intended_payment_mode IN ('full','installment','manual_installment')),
 
   reschedule_count    INT NOT NULL DEFAULT 0,
   reschedule_reason   TEXT,
@@ -2739,6 +2831,14 @@ COMMENT ON COLUMN psy_kob_sessions.questionnaire IS
 
 COMMENT ON COLUMN psy_kob_sessions.recommended_package_id IS
   'Package recommended by doctor during KOB. Patient must pay before agreement signing.';
+
+COMMENT ON COLUMN psy_kob_sessions.intended_payment_mode IS
+  'Plan staff PILIH utk pesakit di wizard kob-detail.html (wizSelectPlan, Langkah 4) — SEBELUM
+   sebarang bayaran cuba dibuat. Beza dengan package_payment_mode (hanya diisi SELEPAS bayaran
+   berjaya). Dibaca oleh kob.html (roles/patient) utk papar butang self-checkout yang sepadan:
+   installment = "Bayar Deposit Ansuran" (payments-kob-initiate, deposit amount), full/NULL =
+   "Bayar Sekarang" (payments-initiate, harga penuh), manual_installment = kekal WhatsApp sahaja
+   (jadual staff-entered, tiada formula deposit utk self-checkout).';
 
 CREATE SEQUENCE IF NOT EXISTS psy_invoice_no_seq START 1;
 

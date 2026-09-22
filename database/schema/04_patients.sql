@@ -132,6 +132,97 @@ DROP POLICY IF EXISTS "Patients insert own record" ON psy_patients;
 CREATE POLICY "Patients insert own record" ON psy_patients FOR INSERT
   WITH CHECK (user_id = auth.uid());
 
+-- ──── RPC: pesakit cari & claim rekod psy_patients belum-linked (staff/GHL) ────
+-- RLS di atas (user_id = auth.uid()) sengaja block pesakit baca/kemaskini
+-- rekod pesakit LAIN — termasuk stub kosong (user_id NULL) yang staff/GHL
+-- dah isi SEBELUM pesakit signup sendiri. Tanpa laluan ni, borang Pendaftaran
+-- pesakit (roles/patient/pendaftaran.html) tak boleh jumpa/padan rekod staff
+-- langsung (query terus kena tapis RLS, senyap-senyap pulang 0 baris), dan
+-- proses claim (pindah user_id) di submitKYC() turut gagal atas sebab sama.
+-- Dua RPC SECURITY DEFINER ni bagi laluan terkawal & sempit: cari SATU rekod
+-- belum-linked ikut phone/IC/emel (baca sahaja, utk prapapar borang), dan
+-- pindah user_id ke rekod tu + padam stub lama bila pesakit hantar borang.
+CREATE OR REPLACE FUNCTION find_unclaimed_patient(
+  p_phone_key  TEXT DEFAULT NULL,   -- 9 digit terakhir no. telefon
+  p_ic         TEXT DEFAULT NULL,
+  p_email      TEXT DEFAULT NULL,
+  p_exclude_id UUID DEFAULT NULL
+)
+RETURNS SETOF psy_patients
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_row psy_patients;
+BEGIN
+  IF p_phone_key IS NOT NULL AND p_phone_key <> '' THEN
+    SELECT * INTO v_row FROM psy_patients
+    WHERE user_id IS NULL AND (p_exclude_id IS NULL OR id <> p_exclude_id)
+      AND (phone ILIKE '%' || p_phone_key OR emergency_contact_phone ILIKE '%' || p_phone_key)
+    LIMIT 1;
+    IF FOUND THEN RETURN NEXT v_row; RETURN; END IF;
+  END IF;
+
+  IF p_ic IS NOT NULL AND p_ic <> '' THEN
+    SELECT * INTO v_row FROM psy_patients
+    WHERE user_id IS NULL AND (p_exclude_id IS NULL OR id <> p_exclude_id)
+      AND ic_number = p_ic
+    LIMIT 1;
+    IF FOUND THEN RETURN NEXT v_row; RETURN; END IF;
+  END IF;
+
+  IF p_email IS NOT NULL AND p_email <> '' THEN
+    SELECT * INTO v_row FROM psy_patients
+    WHERE user_id IS NULL AND (p_exclude_id IS NULL OR id <> p_exclude_id)
+      AND email ILIKE p_email
+    LIMIT 1;
+    IF FOUND THEN RETURN NEXT v_row; RETURN; END IF;
+  END IF;
+
+  RETURN;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION find_unclaimed_patient(TEXT, TEXT, TEXT, UUID) TO authenticated;
+
+CREATE OR REPLACE FUNCTION claim_unclaimed_patient(
+  p_target_id UUID,
+  p_stub_id   UUID DEFAULT NULL   -- stub kosong pesakit sendiri (auto-cipta masa signup) utk dipadam
+)
+RETURNS SETOF psy_patients
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+BEGIN
+  IF p_stub_id IS NOT NULL AND p_stub_id <> p_target_id THEN
+    DELETE FROM psy_patients WHERE id = p_stub_id AND user_id = auth.uid();
+  END IF;
+
+  RETURN QUERY
+  UPDATE psy_patients
+  SET user_id = auth.uid(), created_by_staff = false
+  WHERE id = p_target_id AND user_id IS NULL
+  RETURNING *;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION claim_unclaimed_patient(UUID, UUID) TO authenticated;
+
+-- ──── RPC: semak IC pesakit lain (dah linked ATAU belum) ikut IC ────
+-- Sama sebab RLS macam di atas — "IC ini sudah didaftarkan" block di
+-- pendaftaran.html (submitKYC/checkIcDuplicate) query rekod pesakit LAIN yang
+-- boleh jadi dah linked ke akaun sebenar (user_id bukan NULL), yang
+-- find_unclaimed_patient() sengaja tak cover (tu khas utk stub belum-linked
+-- sahaja). Pulangkan hanya medan paparan minimum (bukan seluruh baris).
+CREATE OR REPLACE FUNCTION find_duplicate_patient_by_ic(p_ic TEXT, p_exclude_id UUID DEFAULT NULL)
+RETURNS TABLE (id UUID, mrn TEXT, full_name TEXT, user_id UUID)
+LANGUAGE sql SECURITY DEFINER SET search_path = public
+AS $$
+  SELECT id, mrn, full_name, user_id FROM psy_patients
+  WHERE ic_number = p_ic AND (p_exclude_id IS NULL OR id <> p_exclude_id)
+  LIMIT 1;
+$$;
+
+GRANT EXECUTE ON FUNCTION find_duplicate_patient_by_ic(TEXT, UUID) TO authenticated;
+
 -- ──── trigger: auto-update updated_at ────
 CREATE OR REPLACE FUNCTION set_patients_updated_at()
 RETURNS TRIGGER

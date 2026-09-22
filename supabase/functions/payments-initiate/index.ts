@@ -268,19 +268,18 @@ async function verifiedAmount(admin: any, it: any, patientId: string | null): Pr
 
   if (it.type === 'kob_package') {
     // Beli pakej dicadangkan KOB (payRecommendedPackage() di kob.html) — tier Today
-    // sahaja, DAN hanya bila sesi KOB betul-betul MASIH LIVE: package_payment_status
-    // ==='pending' DAN kob.status!=='completed'. Sebelum ni handler ni TIADA
-    // sekatan langsung — patient boleh checkout walaupun status 'declined' ATAU
-    // sesi dah 'completed' (cth doktor reopen sesi declined & klik "Patient
-    // Teruskan" semula utk patient yg KEMBALI — checkout sendiri MESTI tetap
-    // ditutup, doktor kena proses terus di kob-detail.html). Fix.
+    // sahaja, hanya bila package_payment_status==='pending'. kob.status ('hadir'
+    // vs 'completed' — sesi live vs dah tamat) SENGAJA tak lagi disekat di sini:
+    // pesakit boleh checkout bila-bila pun lepas sesi KOB tamat asalkan staff dah
+    // cadang pakej & belum tolak (declined kekal ditutup — staff kena proses
+    // semula di kob-detail.html, lihat selfCheckoutBlocked di kob.html).
     const key = it.packageId || it.raw?.package_id
     if (!key || !it.kobSessionId) return 0
     const { data: kobRows } = await admin.from('psy_kob_sessions')
-      .select('patient_id, package_payment_status, status').eq('id', it.kobSessionId).limit(1)
+      .select('patient_id, package_payment_status').eq('id', it.kobSessionId).limit(1)
     const kob = kobRows?.[0]
     if (!kob || kob.patient_id !== patientId) return 0
-    if (kob.package_payment_status !== 'pending' || kob.status === 'completed') return 0
+    if (kob.package_payment_status !== 'pending') return 0
     let pkgQ = admin.from('psy_packages').select('price, today_price, is_active')
     pkgQ = isUuid(String(key)) ? pkgQ.or(`id.eq.${key},package_id.eq.${key}`) : pkgQ.eq('package_id', key)
     const { data: pkgRows } = await pkgQ.limit(1)

@@ -505,20 +505,16 @@
                 </div>
               </div>
 
-              <!-- CTA: Payment button (changes based on payment status) -->
-              <div id="pkg-cta">
-                <div id="pkg-cta-action">
-                  <label class="flex items-start justify-center gap-2 text-xs text-ink/60 mb-3 cursor-pointer">
-                    <input type="checkbox" class="w-4 h-4 accent-navy mt-0.5" onchange="document.getElementById('btn-pkg-pay').disabled = !this.checked">
-                    <span>Saya bersetuju dengan <span class="text-navy font-semibold">Terma &amp; Syarat</span>. Bayaran tidak boleh dikembalikan.</span>
-                  </label>
-                  <button id="btn-pkg-pay" disabled onclick="payRecommendedPackage()"
-                    class="w-full bg-navy text-white py-3.5 rounded-xl font-semibold text-base hover:bg-navy-dark disabled:opacity-40 disabled:cursor-not-allowed">
-                    🔒 Bayar Sekarang →
-                  </button>
-                </div>
-                <p id="pkg-cta-note" class="hidden text-[11px] text-ink/40 text-center mt-2"></p>
-              </div>
+              <!-- Detail jadual ansuran (IPP) — info sahaja, sama isi dgn yg dipapar semula
+                   di Payment (langkah 4), lihat renderRecommendedPackageDetail(). -->
+              <div id="pkg-installment-detail" class="hidden"></div>
+
+              <!-- Package ni papar INFO sahaja — butang bayar sebenar dah pindah ke skrin
+                   Payment (langkah 4, #stage-paid > #paid-cta), lihat continueToPayment(). -->
+              <button type="button" onclick="continueToPayment()"
+                class="w-full bg-navy text-white py-3.5 rounded-xl font-semibold text-base hover:bg-navy-dark">
+                Teruskan ke Bayaran →
+              </button>
             </div>
 
             <!-- Stage: Payment Successful (selepas balik dari gateway) -->
@@ -530,6 +526,22 @@
 
               <!-- Kad kejayaan -->
               <div class="bg-white rounded-2xl border border-ink/10 p-6 md:p-8">
+                <!-- #paid-cta = butang bayar sebenar (pindah dari Package, lihat continueToPayment()
+                     & renderRecommendedPackageDetail()) — 3 sub-state (cta/spinner/content) tukar
+                     via showPaidSub(), saling eksklusif dlm kad yg sama. -->
+                <div id="paid-cta" class="hidden">
+                  <div id="pkg-cta-action">
+                    <label class="flex items-start justify-center gap-2 text-xs text-ink/60 mb-3 cursor-pointer">
+                      <input type="checkbox" class="w-4 h-4 accent-navy mt-0.5" onchange="document.getElementById('btn-pkg-pay').disabled = !this.checked">
+                      <span>Saya bersetuju dengan <span class="text-navy font-semibold">Terma &amp; Syarat</span>. Bayaran tidak boleh dikembalikan.</span>
+                    </label>
+                    <button id="btn-pkg-pay" disabled onclick="payRecommendedPackage()"
+                      class="w-full bg-navy text-white py-3.5 rounded-xl font-semibold text-base hover:bg-navy-dark disabled:opacity-40 disabled:cursor-not-allowed">
+                      🔒 Bayar Sekarang →
+                    </button>
+                  </div>
+                  <p id="pkg-cta-note" class="hidden text-[11px] text-ink/40 text-center mt-2"></p>
+                </div>
                 <div id="paid-spinner" class="text-center">
                   <div class="w-14 h-14 mx-auto rounded-full border-4 border-navy/20 border-t-navy spin mb-3"></div>
                   <p class="text-sm text-ink/60">Mengesahkan pembayaran…</p>
@@ -913,6 +925,7 @@
   <script src="../../shared/defaultAgreement.js"></script>
   <script src="_shared.js"></script>
   <script src="../../shared/receipt.js"></script>
+  <script src="../../shared/invoice.js"></script>
   <script>
     function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
     let selectedMode = 'f2f';
@@ -928,8 +941,14 @@
     let currentRealStage = null; // tracks where patient ACTUALLY is
 
     function setStepper(currentStep) {
-      if (!currentRealStage) currentRealStage = currentStep;
       const order = ['kyc', 'book', 'package', 'payment', 'sign', 'done'];
+      // Boleh MAJU (tak boleh undur) dlm sesi/page load yg sama — cth pesakit klik
+      // "Teruskan ke Bayaran" di Package (langkah 3) → genuinely maju ke Payment
+      // (langkah 4). Sebelum ni currentRealStage terkunci pada panggilan PERTAMA
+      // sahaja, jadi bulatan tak pernah maju walaupun pesakit betul-betul progress.
+      if (!currentRealStage || order.indexOf(currentStep) > order.indexOf(currentRealStage)) {
+        currentRealStage = currentStep;
+      }
       const realIdx = order.indexOf(currentRealStage);
       const viewIdx = order.indexOf(currentStep);
       document.querySelectorAll('.step-circ-wrap').forEach(box => {
@@ -975,12 +994,21 @@
         const rows = await dbQuery('psy_payments', { eq: { patient_id: patientRecord.id } }).catch(() => []);
         const p = (rows || []).filter(r => (r.status || 'completed') === 'completed')
           .sort((a, b) => new Date(b.paid_at || 0) - new Date(a.paid_at || 0))[0];
-        document.getElementById('paid-spinner').classList.add('hidden');
-        document.getElementById('paid-content').classList.remove('hidden');
-        document.getElementById('paid-continue').classList.remove('hidden');
-        if (p) renderPaidSuccess(p);
-        else document.getElementById('paid-body').innerHTML = '<div class="text-center text-ink/50">Tiada rekod bayaran.</div>';
         showStage('paid');
+        if (p) {
+          showPaidSub('content');
+          document.getElementById('paid-continue').classList.remove('hidden');
+          renderPaidSuccess(p);
+        } else if (currentKob?.package_payment_status === 'pending' && currentKob?.recommended_package_id) {
+          // Belum bayar lagi tapi pakej dah dicadangkan — papar semula CTA bayaran
+          // (bukan "Tiada rekod bayaran", sebab memang belum ada usaha bayar lagi).
+          await renderRecommendedPackageDetail();
+          showPaidSub('cta');
+        } else {
+          showPaidSub('content');
+          document.getElementById('paid-continue').classList.remove('hidden');
+          document.getElementById('paid-body').innerHTML = '<div class="text-center text-ink/50">Tiada rekod bayaran.</div>';
+        }
         setStepper('payment');
         return;
       }
@@ -1003,27 +1031,102 @@
       document.getElementById(`stage-${stage}`)?.classList.remove('hidden');
     }
 
+    // 3 sub-state saling eksklusif dalam kad #stage-paid (langkah 4 Payment):
+    // 'cta' = belum bayar, papar butang Bayar (pindah dari Package); 'spinner' =
+    // sedang semak/tunggu status (checking/pending invoice); 'content' = disahkan
+    // 'completed' (papar resit kejayaan). Guna ni (bukan toggle terus classList)
+    // supaya #paid-cta sentiasa disorok betul bila tukar ke spinner/content.
+    function showPaidSub(which) {
+      document.getElementById('paid-cta')?.classList.toggle('hidden', which !== 'cta');
+      document.getElementById('paid-spinner')?.classList.toggle('hidden', which !== 'spinner');
+      document.getElementById('paid-content')?.classList.toggle('hidden', which !== 'content');
+    }
+
+    // Klik "Teruskan ke Bayaran →" di Package (info sahaja) — pindah ke langkah
+    // Payment & papar CTA (checkbox Terma + butang Bayar) yg dah dikira oleh
+    // renderRecommendedPackageDetail() (dijalankan semula di sini supaya CTA
+    // terkini, elak papar nilai lapuk kalau harga/plan berubah sejak page load).
+    async function continueToPayment() {
+      await renderRecommendedPackageDetail();
+      setStepper('payment');
+      showStage('paid');
+      showPaidSub('cta');
+      // Tajuk kad #stage-paid dikongsi dgn "Menyemak Status Bayaran"/"Payment
+      // Successful!" (renderPendingPaymentInvoice/handleKobPaymentReturn) — reset
+      // ke neutral di sini, elak papar tajuk lapuk dari state sebelum ni.
+      document.querySelector('#stage-paid h2').textContent = 'Bayaran';
+      document.getElementById('paid-greeting').textContent = '';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
     // Balik dari gateway (bayaran pakej KOB) → sahkan status & papar "Payment Successful" dalam kob.html.
+    // Papar skrin Payment (invois pending + butang bayar) — dipanggil dari
+    // handleKobPaymentReturn() (lepas gateway redirect, ?ref= dlm URL) DAN dari
+    // init() (lawatan biasa tapi ada pending payment lama utk sesi KOB ni, cth
+    // pesakit tinggalkan HitPay separuh jalan) — SATU pengalaman konsisten tak
+    // kira macam mana pesakit sampai ke sini. pay = rekod psy_payments 'pending'
+    // (boleh null — fallback ke Cuba Bayar Semula).
+    async function renderPendingPaymentInvoice(pay) {
+      setStepper('payment');
+      showStage('paid');
+      showPaidSub('spinner');
+      document.querySelector('#stage-paid h2').textContent = 'Menyemak Status Bayaran';
+      document.getElementById('paid-greeting').textContent = '';
+      // Invois FORMAL sedia ada (shared/invoice.js, sama modul yg staff guna —
+      // butang "📄 Invois" di kob-detail.html) — bina terus dari rekod psy_payments
+      // 'pending' ni (resolveReceiptItems baca items[].title/amount terus). Embed
+      // TERUS dalam kad (buildPaymentInvoiceInner, bukan viewPaymentInvoice/modal)
+      // — kekal sebahagian page, bukan popup berlatar gelap.
+      let invoiceHtml = '';
+      if (pay && window.buildPaymentInvoiceInner) {
+        // checkout_url dibuang dari salinan yg dihantar ke invois — sorok butang
+        // "Bayar" terbina-dalam kat penjuru atas (reka bentuk asal shared/invoice.js,
+        // sama utk staff, jangan ubah terus di situ). Butang bayar sendiri diletak
+        // di bawah invois ni (tengah-tengah) guna checkout_url SEBENAR.
+        try { invoiceHtml = await window.buildPaymentInvoiceInner({ ...pay, checkout_url: null }); } catch (_) { invoiceHtml = ''; }
+      }
+      const payAmount = Number(pay?.total || 0);
+      const payUrl = pay?.checkout_url || null;
+      document.getElementById('paid-spinner').innerHTML = invoiceHtml ? `
+        <p class="text-sm text-ink/60 mb-4">Sila selesaikan bayaran melalui invois di bawah.</p>
+        <div class="text-left">${invoiceHtml}</div>
+        ${payUrl ? `<div class="text-center mt-6"><a href="${payUrl}" class="inline-block bg-green-dark text-white px-6 py-2.5 rounded-lg text-sm font-semibold hover:opacity-90">${(window.iswDoc?.L || ((ms, en) => ms))('Bayar', 'Pay')} ${fmtRM(payAmount)}</a></div>` : ''}` : `
+        <div class="w-16 h-16 mx-auto rounded-full bg-gold/20 text-gold-dark grid place-items-center text-3xl mb-3">⏳</div>
+        <h3 class="text-lg font-bold text-ink">Bayaran Belum Disahkan</h3>
+        <p class="text-sm text-ink/60 mt-2 max-w-sm mx-auto">Jika anda baru selesai bayar, sila tunggu seketika &amp; muat semula halaman ini. Jika bayaran tidak dihabiskan, sila cuba bayar semula.</p>
+        <div class="mt-4 flex items-center justify-center gap-3 flex-wrap">
+          <button onclick="retryKobPayment()" class="bg-navy text-white px-5 py-2.5 rounded-lg text-sm font-semibold hover:bg-navy-dark">Cuba Bayar Semula</button>
+          <button onclick="location.reload()" class="text-navy font-semibold text-xs underline">Muat Semula (dah bayar?)</button>
+        </div>`;
+    }
+
     async function handleKobPaymentReturn() {
       const ref = new URLSearchParams(location.search).get('ref');
       if (!ref) return false;
       try { history.replaceState(null, '', location.pathname); } catch (_) {}
       // JANGAN advance stepper ke 'sign' di sini — bayaran belum disahkan lagi.
-      // Kekal papar stage 'package' semasa semak, hanya advance bila status='completed'.
-      setStepper('package');
+      // Tapi ni memang dah masuk peringkat Payment (langkah 4) — pesakit balik dari
+      // gateway/sedang semak status bayaran — bukan Package (langkah 3, dah selesai).
+      setStepper('payment');
       showStage('paid');
-      document.getElementById('paid-spinner').classList.remove('hidden');
-      document.getElementById('paid-content').classList.add('hidden');
+      showPaidSub('spinner');
+      // Tajuk neutral SEMASA semak — "Payment Successful!" statik dalam HTML tak
+      // patut terpapar sebelum status betul-betul 'completed' (mengelirukan, macam
+      // dah berjaya walhal masih polling). Ditukar balik ke tajuk kejayaan sebenar
+      // hanya bila payment dijumpai 'completed' di bawah.
+      document.querySelector('#stage-paid h2').textContent = 'Menyemak Bayaran…';
+      document.getElementById('paid-greeting').textContent = '';
 
       let payment = null;
+      let lastSeenPayment = null; // rekod 'pending' terkini (kalau ada) — utk invois+link HitPay fallback
       for (let i = 0; i < 8; i++) {
         const rows = await dbQuery('psy_payments', { eq: { receipt_ref: ref } }).catch(() => []);
         const p = rows?.[0];
+        if (p) lastSeenPayment = p;
         if (p?.status === 'completed') { payment = p; break; }
         if (p?.status === 'failed') {
           banner('Pembayaran gagal atau dibatalkan. Sila cuba lagi.', 'error');
-          await renderRecommendedPackageDetail();
-          setStepper('package'); showStage('package');
+          await continueToPayment();
           return true;
         }
         await new Promise(r => setTimeout(r, 1500));
@@ -1034,24 +1137,15 @@
       if (!payment) {
         // Status masih belum 'completed' selepas menunggu — JANGAN tunjuk block kejayaan
         // (paid-content ada centang hijau statik) & JANGAN benarkan teruskan ke Agreement
-        // (elak pesakit sign kontrak untuk pakej yang belum dibayar). Guna balik slot
-        // spinner untuk papar status neutral, bukan "berjaya".
-        document.querySelector('#stage-paid h2').textContent = 'Menyemak Status Bayaran';
-        document.getElementById('paid-greeting').textContent = '';
-        document.getElementById('paid-spinner').innerHTML = `
-          <div class="w-16 h-16 mx-auto rounded-full bg-gold/20 text-gold-dark grid place-items-center text-3xl mb-3">⏳</div>
-          <h3 class="text-lg font-bold text-ink">Bayaran Belum Disahkan</h3>
-          <p class="text-sm text-ink/60 mt-2 max-w-sm mx-auto">Jika anda baru selesai bayar, sila tunggu seketika &amp; muat semula halaman ini. Jika bayaran tidak dihabiskan, sila cuba bayar semula.</p>
-          <div class="mt-4 space-x-3">
-            <button onclick="location.reload()" class="text-navy font-semibold underline">Muat Semula</button>
-            <span class="text-ink/40">·</span>
-            <button onclick="retryKobPayment()" class="text-navy font-semibold underline">Cuba Bayar Semula</button>
-          </div>`;
+        // (elak pesakit sign kontrak untuk pakej yang belum dibayar). Papar invois pending
+        // (fungsi dikongsi dgn init() — SATU pengalaman konsisten, lihat renderPendingPaymentInvoice()).
+        await renderPendingPaymentInvoice(lastSeenPayment);
         return true;
       }
 
-      document.getElementById('paid-spinner').classList.add('hidden');
-      document.getElementById('paid-content').classList.remove('hidden');
+      showPaidSub('content');
+      // Payment DISAHKAN 'completed' — baru tukar balik ke tajuk kejayaan.
+      document.querySelector('#stage-paid h2').textContent = 'Payment Successful!';
 
       // Segarkan status (webhook set package_paid) supaya Agreement render betul
       try {
@@ -1070,8 +1164,9 @@
     }
 
     async function retryKobPayment() {
-      await renderRecommendedPackageDetail();
-      setStepper('package'); showStage('package');
+      // Terus ke CTA bayaran (bukan skrin info Package) — niat "Cuba Bayar Semula"
+      // memang nak bayar, bukan nak baca semula info pakej.
+      await continueToPayment();
     }
     window.retryKobPayment = retryKobPayment;
 
@@ -1999,6 +2094,60 @@
       return await pdfDoc.save();
     }
 
+    // Invois "sebut harga" SEBELUM sebarang bayaran cuba dibuat (belum ada rekod
+    // psy_payments lagi, jadi buildPaymentInvoiceInner tak boleh dipakai) — guna
+    // primitif visual SAMA macam invois formal lain (window.iswDoc, shared/receipt.js)
+    // supaya rupa konsisten dgn invois lepas-bayaran. Amaun di sini sekadar PAPARAN;
+    // jumlah sebenar yang dicaj tetap diderive semula 100% server-side
+    // (payments-initiate/payments-kob-initiate) bila pesakit betul-betul klik bayar.
+    function buildPrePaymentInvoiceHtml(itemLabel, amount) {
+      const doc = window.iswDoc;
+      if (!doc) return '';
+      const { esc, money, dateLong, header, TEAL, L } = doc;
+      const cu = window.currentUser || {};
+      const pr = window.patientRecord || {};
+      const today = new Date();
+      return `
+    ${header(L('INVOIS', 'INVOICE'))}
+    <div class="border-t border-ink/10 mt-6 pt-5 grid grid-cols-1 sm:grid-cols-3 gap-6 text-sm">
+      <div>
+        <div class="font-semibold text-ink">${L('Dibilkan kepada', 'Billed to')}</div>
+        <div class="text-ink/60 text-xs mt-2 leading-relaxed">${esc(cu.full_name || '—')}<br>${esc(pr.phone || '—')}<br>Malaysia</div>
+      </div>
+      <div><div class="font-semibold text-ink">${L('No. Invois', 'Invoice Number')}</div><div class="text-ink/60 text-xs mt-2">${esc(currentKob?.invoice_no || '—')}</div></div>
+      <div class="space-y-3">
+        <div><div class="font-semibold text-ink">${L('Tarikh Dikeluarkan', 'Issue Date')}</div><div class="text-ink/60 text-xs mt-1">${dateLong(today)}</div></div>
+        <div><div class="font-semibold text-ink">${L('Tarikh Akhir Bayaran', 'Due Date')}</div><div class="text-ink/60 text-xs mt-1">${dateLong(today)}</div></div>
+      </div>
+    </div>
+    <table class="w-full mt-8 text-sm">
+      <thead>
+        <tr style="background:${TEAL}">
+          <th class="text-[11px] font-medium uppercase tracking-wide text-white py-3 text-left px-3">${L('Nama Item', 'Item Name')}</th>
+          <th class="text-[11px] font-medium uppercase tracking-wide text-white py-3 text-right">${L('Harga', 'Price')}</th>
+          <th class="text-[11px] font-medium uppercase tracking-wide text-white py-3 text-right w-16">${L('Kuantiti', 'Quantity')}</th>
+          <th class="text-[11px] font-medium uppercase tracking-wide text-white py-3 text-right w-16">${L('Cukai', 'Tax')}</th>
+          <th class="text-[11px] font-medium uppercase tracking-wide text-white py-3 text-right px-3">${L('Jumlah Kecil', 'Subtotal')}</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="border-b border-ink/10">
+          <td class="py-4 px-3 text-xs text-ink/70 uppercase">${esc(itemLabel)}</td>
+          <td class="py-4 text-xs text-ink/70 text-right whitespace-nowrap">${money(amount)}</td>
+          <td class="py-4 text-xs text-ink/70 text-right">1</td>
+          <td class="py-4 text-xs text-ink/70 text-right">-</td>
+          <td class="py-4 px-3 text-xs text-ink/70 text-right whitespace-nowrap">${money(amount)}</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="flex justify-end mt-4">
+      <div class="w-full max-w-sm text-sm">
+        <div class="flex justify-between py-1"><span class="font-semibold text-ink">${L('Jumlah Kecil', 'Subtotal')}</span><span class="text-ink/60 text-xs">${money(amount)}</span></div>
+        <div class="flex justify-between py-2.5 mt-1 border-t border-ink/20"><span class="font-bold text-ink">${L('Baki Perlu Dibayar (MYR)', 'Amount Due (MYR)')}</span><span class="font-bold text-ink">${money(amount)}</span></div>
+      </div>
+    </div>`;
+    }
+
     async function renderRecommendedPackageDetail() {
       const pkgId = currentKob?.recommended_package_id;
       if (!pkgId) return;
@@ -2010,13 +2159,19 @@
       // 'pending' = pesakit masih dlm sesi KOB langsung → tier Today (eksklusif).
       // 'declined' = pesakit tinggalkan tawaran masa tu, sambung beli sendiri lewat → tier Now.
       const isDeclined = currentKob?.package_payment_status === 'declined';
-      // Sesi KOB dah 'completed' — patient dah tinggalkan sesi tu (fizikal/panggilan
-      // tamat), tak kira status 'pending' ke 'declined' terakhir (doktor mungkin
-      // reopen & klik "Patient Teruskan" semula utk patient yang KEMBALI, bukan
-      // patient tengah live dlm sesi). Checkout sendiri MESTI ditutup jugak dlm kes
-      // ni — bayaran wajib diproses doktor di kob-detail.html (lihat CTA di bawah).
-      const kobFinished = currentKob?.status === 'completed';
-      const selfCheckoutBlocked = isDeclined || kobFinished;
+      // Plan yang staff PILIH utk pesakit di wizard kob-detail.html (Langkah 4,
+      // wizSelectPlan) SEBELUM sebarang bayaran cuba dibuat — lihat komen kolum
+      // intended_payment_mode (09_kob.sql). installment = self-checkout deposit
+      // (payInstallmentDeposit, jumlah diderive server-side). manual_installment =
+      // kekal WhatsApp (jadual staff-entered, tiada formula deposit utk self-checkout).
+      // full/NULL (staff belum pilih plan lagi) = self-checkout harga penuh (default,
+      // sama macam sedia ada).
+      const intendedMode = currentKob?.intended_payment_mode || 'full';
+      // Checkout sendiri (Full/Installment) DIBENARKAN walaupun sesi KOB dah
+      // 'completed' — pesakit boleh bayar/teruskan bila-bila lepas panggilan
+      // tamat, asalkan staff dah cadang pakej & belum tolak (declined). Ansuran
+      // Manual sengaja KEKAL WhatsApp-only (jadual custom staff-entered).
+      const selfCheckoutBlocked = isDeclined || intendedMode === 'manual_installment';
       const tierPrice = isDeclined ? Number(pkg.price || 0) : Number(pkg.today_price ?? pkg.price ?? 0);
       const price = tierPrice === 0 ? 'PERCUMA' : `RM ${tierPrice.toFixed(2)}`;
       const tierBadge = document.getElementById('pkg-tier-badge');
@@ -2117,6 +2272,10 @@
       const ctaAction = document.getElementById('pkg-cta-action');
       const ctaNote = document.getElementById('pkg-cta-note');
       const paid = currentKob?.package_payment_status === 'paid';
+      // Reset detail jadual ansuran (Package info) setiap render — hanya diisi
+      // semula di bawah kalau plan = installment & jadual sah.
+      const installmentDetailEl = document.getElementById('pkg-installment-detail');
+      if (installmentDetailEl) { installmentDetailEl.innerHTML = ''; installmentDetailEl.classList.add('hidden'); }
       if (paid) {
         ctaAction.innerHTML = `
       <div class="flex items-center justify-center gap-2">
@@ -2127,10 +2286,9 @@
           : 'Bayaran telah diterima.';
         ctaNote.classList.remove('hidden');
       } else if (selfCheckoutBlocked) {
-        // Declined ATAU sesi KOB dah 'completed' (patient dah tinggalkan sesi,
-        // walaupun doktor reopen & set semula ke 'pending' utk patient yang
-        // KEMBALI) — checkout sendiri DITUTUP. Doktor proses bayaran terus di
-        // kob-detail.html bila patient hubungi Pusat Rawatan.
+        // Declined ATAU plan = Ansuran Manual (jadual custom staff-entered, tiada
+        // formula deposit utk self-checkout) — checkout sendiri DITUTUP. Doktor
+        // proses bayaran terus di kob-detail.html bila patient hubungi Pusat Rawatan.
         const waMsg = `Assalamualaikum, saya nak teruskan pembelian pakej ${pkg.name}.`;
         const waHref = `https://wa.me/${WA_KLINIK}?text=${encodeURIComponent(waMsg)}`;
         ctaAction.innerHTML = `
@@ -2140,8 +2298,9 @@
         ctaNote.textContent = `Hubungi Pusat Rawatan ISW untuk meneruskan pakej ${pkg.name} — doktor akan uruskan bayaran untuk anda.`;
         ctaNote.classList.remove('hidden');
       } else {
-        // Sesi KOB masih 'hadir' (live) DAN status 'pending' — pesakit betul-betul
-        // masih dlm sesi KOB langsung, bayaran penuh sahaja, tier Today.
+        // package_payment_status 'pending' & plan bukan Manual — checkout sendiri
+        // DIBENARKAN sama ada sesi KOB masih live atau dah tamat. termsHtml() sama
+        // struktur utk dua CTA (Full/Installment), beza cuma label & onclick.
         const termsHtml = (btnId, label, onclick) => `
       <label class="flex items-start justify-center gap-2 text-xs text-ink/60 mb-3 cursor-pointer">
         <input type="checkbox" class="w-4 h-4 accent-navy mt-0.5" onchange="document.getElementById('${btnId}').disabled = !this.checked">
@@ -2150,7 +2309,70 @@
       <button id="${btnId}" disabled onclick="${onclick}" class="w-full bg-navy text-white py-3.5 rounded-xl font-semibold text-base hover:bg-navy-dark disabled:opacity-40 disabled:cursor-not-allowed">
         🔒 ${label}
       </button>`;
-        ctaAction.innerHTML = termsHtml('btn-pkg-pay', 'Bayar Sekarang →', 'payRecommendedPackage()');
+        if (intendedMode === 'installment') {
+          // Staff dah pilih plan Installment (IPP) utk pesakit ni — self-checkout
+          // bayar DEPOSIT sahaja (bukan harga penuh); amaun sebenar disahkan &
+          // diderive semula server-side oleh payments-kob-initiate (SATU sumber
+          // kebenaran harga, sama formula macam pautan WhatsApp staff) — jadual
+          // di sini sekadar utk paparan, dikira guna FORMULA SAMA macam
+          // buildInstallmentSchedule() di kob-detail.html (jadual rata: deposit +
+          // baki sama rata tiap bulan) supaya pesakit nampak berapa kali bayar &
+          // bila tarikh, macam yang staff nampak.
+          const depositAmt = Number(pkg.today_installment_deposit_amount ?? pkg.installment_deposit_amount ?? 0);
+          const durationMonths = Number(pkg.today_installment_duration_months ?? pkg.installment_duration_months ?? 0);
+          const monthlyAmt = Number(pkg.today_installment_monthly_amount ?? pkg.installment_monthly_amount ?? 0);
+          const installmentAllowed = depositAmt > 0 && durationMonths > 1 && monthlyAmt > 0;
+          const money = (n) => 'RM ' + Number(n || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const fmtDate = (d) => new Date(d).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' });
+          let scheduleHtml = '';
+          if (installmentAllowed) {
+            const rows = [];
+            let cumulative = depositAmt;
+            const start = new Date();
+            for (let i = 1; i < durationMonths; i++) {
+              cumulative += monthlyAmt;
+              const due = new Date(start); due.setMonth(due.getMonth() + i);
+              rows.push({ seq: i + 1, label: i === durationMonths - 1 ? `Bulan ${i + 1} (Terakhir)` : `Bulan ${i + 1}`, due, amount: monthlyAmt });
+            }
+            const commitment = rows.length ? cumulative : depositAmt;
+            scheduleHtml = `
+      <div class="bg-cream/50 rounded-xl border border-ink/10 p-4 mb-4">
+        <div class="text-xs font-bold text-ink/70 mb-2">DETAIL BAYARAN ANSURAN (IPP)</div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm mb-3">
+          <div><div class="text-[10px] text-ink/45 uppercase">Tempoh</div><div class="font-semibold">${durationMonths} Bulan</div></div>
+          <div><div class="text-[10px] text-ink/45 uppercase">Bayaran Pertama (Hari Ini)</div><div class="font-semibold">${money(depositAmt)}</div></div>
+          <div><div class="text-[10px] text-ink/45 uppercase">Bayaran Bulanan</div><div class="font-semibold">${money(monthlyAmt)}</div></div>
+        </div>
+        <table class="w-full text-xs">
+          <thead><tr class="text-ink/45 text-left border-b border-ink/10"><th class="py-1">Bil.</th><th>Perkara</th><th>Tarikh</th><th class="text-right">Jumlah (RM)</th></tr></thead>
+          <tbody>
+            <tr class="border-b border-ink/5"><td class="py-1">1</td><td>Bayaran Pertama (Hari Ini)</td><td>${fmtDate(start)}</td><td class="text-right font-semibold">${money(depositAmt)}</td></tr>
+            ${rows.map(r => `<tr class="border-b border-ink/5"><td class="py-1">${r.seq}</td><td>${r.label}</td><td>${fmtDate(r.due)}</td><td class="text-right font-semibold">${money(r.amount)}</td></tr>`).join('')}
+          </tbody>
+        </table>
+        <div class="flex justify-between pt-2 mt-1 border-t border-ink/10 font-bold text-navy text-sm"><span>Jumlah Komitmen</span><span>${money(commitment)}</span></div>
+        <p class="text-[10px] text-ink/40 mt-1.5">ℹ️ Tarikh anggaran jika bayaran pertama dibuat hari ini. Jika bayar lewat, tarikh sebenar bermula dari tarikh deposit diterima.</p>
+      </div>`;
+          }
+          // Papar jadual di Package (info) SEKALI LAGI — pesakit nampak komitmen
+          // penuh sebelum sampai ke langkah Payment.
+          if (installmentDetailEl && scheduleHtml) {
+            installmentDetailEl.innerHTML = scheduleHtml;
+            installmentDetailEl.classList.remove('hidden');
+          }
+          const depositLabel = depositAmt > 0 ? `Bayar Deposit ${money(depositAmt)} →` : 'Bayar Deposit Ansuran →';
+          const invHtml = buildPrePaymentInvoiceHtml(`Deposit Ansuran — ${pkg.name}`, depositAmt);
+          ctaAction.innerHTML = (invHtml ? `<div class="bg-white rounded-2xl border border-ink/10 p-6 md:p-8 mb-5">${invHtml}</div>` : '')
+            + termsHtml('btn-pkg-pay', depositLabel, 'payInstallmentDeposit()');
+          ctaNote.textContent = '';
+          ctaNote.classList.add('hidden');
+          return;
+        }
+        // Full payment — invois "sebut harga" (harga penuh) + terma + butang, sama
+        // corak macam cawangan installment di atas.
+        const invHtml = buildPrePaymentInvoiceHtml(pkg.name, tierPrice);
+        ctaAction.innerHTML = (invHtml ? `<div class="bg-white rounded-2xl border border-ink/10 p-6 md:p-8 mb-5">${invHtml}</div>` : '')
+          + termsHtml('btn-pkg-pay', 'Bayar Sekarang →', 'payRecommendedPackage()');
         ctaNote.textContent = '';
         ctaNote.classList.add('hidden');
       }
@@ -2202,6 +2424,39 @@
       } catch (err) {
         banner('Ralat: ' + err.message, 'error');
         if (btn) { btn.disabled = false; btn.textContent = '🔒 Bayar Sekarang →'; }
+      }
+    }
+
+    // Pesakit self-checkout DEPOSIT ansuran — staff dah pilih plan Installment
+    // utk pakej ni (intended_payment_mode='installment', lihat
+    // renderRecommendedPackageDetail). Guna payments-kob-initiate (BUKAN
+    // payments-initiate/kob_package) — amaun deposit diderive 100% server-side
+    // (createKobDepositLink, sama formula macam pautan WhatsApp staff) supaya
+    // SATU sumber kebenaran harga; edge function sahkan sendiri sesi ni memang
+    // milik pesakit & staff memang dah tetapkan plan installment.
+    async function payInstallmentDeposit() {
+      if (!currentKob?.recommended_package_id) {
+        banner('Tiada pakej dicadangkan', 'error');
+        return;
+      }
+      const btn = document.getElementById('btn-pkg-pay');
+      if (btn) { btn.disabled = true; btn.textContent = 'Memproses…'; }
+      try {
+        const returnUrl = new URL('kob.html', window.location.href).href;
+        const { data, error } = await window.db.functions.invoke('payments-kob-initiate', {
+          body: { kobSessionId: currentKob.id, mode: 'installment', returnUrl, tier: 'today' },
+        });
+        if (error) {
+          let m = error.message;
+          try { const c = await error.context?.json(); if (c?.error) m = c.error; } catch (_) {}
+          throw new Error(m);
+        }
+        if (!data?.checkoutUrl) throw new Error(data?.error || 'Gagal memulakan bayaran.');
+        banner('Mengalihkan ke halaman bayaran…', 'info');
+        window.location.href = data.checkoutUrl;   // → HitPay (pilih FPX/kad di sana)
+      } catch (err) {
+        banner('Ralat: ' + err.message, 'error');
+        if (btn) { btn.disabled = false; btn.textContent = '🔒 Bayar Deposit Ansuran →'; }
       }
     }
 
@@ -2708,6 +2963,20 @@
       }
 
       if (kobStatus === 'package_recommended') {
+        // Pending payment sedia ada utk sesi KOB ni (cth pesakit tinggalkan HitPay
+        // separuh jalan & kembali biasa — bukan lalui ?ref= redirect) — terus papar
+        // skrin Payment/invois yg SAMA (bukan Package Review + butang Bayar segar)
+        // supaya SATU pengalaman konsisten tak kira macam mana pesakit sampai ke
+        // sini. Package Review (dgn butang Bayar) hanya utk percubaan PERTAMA
+        // (tiada pending payment langsung) — lihat renderPendingPaymentInvoice().
+        const { data: pendingRows } = await window.db.from('psy_payments')
+          .select('*').eq('status', 'pending').eq('payment_method', 'gateway')
+          .eq('intent->>kob_session_id', currentKob.id)
+          .order('created_at', { ascending: false }).limit(1);
+        if (pendingRows?.[0]) {
+          await renderPendingPaymentInvoice(pendingRows[0]);
+          return;
+        }
         setStepper('package');
         await renderRecommendedPackageDetail();
         showStage('package');
