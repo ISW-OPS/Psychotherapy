@@ -36,6 +36,13 @@
           </select>
         </div>
 
+        <!-- Perlu Disemak (conflict-check #B2-2) — >1 reaksi serentak, belum hantar -->
+        <div id="lp-review-card" class="hidden bg-white rounded-2xl border border-terracotta/30 shadow-sm p-5">
+          <h3 class="text-[14px] font-bold text-terracotta flex items-center gap-1.5">⚠️ Perlu Disemak — Cadangan Bercanggah</h3>
+          <p class="text-[11.5px] text-ink/40 mb-3">Pesakit alami beberapa reaksi serentak; cadangan digenerate TAPI belum dihantar sehingga disemak.</p>
+          <div id="lp-review-list" class="space-y-3"></div>
+        </div>
+
         <!-- Stat cards -->
         <div id="lp-stats" class="grid grid-cols-2 lg:grid-cols-5 gap-3"></div>
 
@@ -97,17 +104,89 @@ function lpBar(label, count, max, color) {
   </div>`;
 }
 
+// ── Perlu Disemak (audit #B2-2 conflict-check) ──────────
+const MSG_JENIS_LBL = { tindakan: 'Tindakan', diet: 'Diet & Nutrisi', gaya_hidup: 'Gaya Hidup Fitrah' };
+let lpReviewRowsByKey = {};
+function lpRenderReview(rows) {
+  const card = document.getElementById('lp-review-card');
+  if (!rows.length) { card.classList.add('hidden'); lpReviewRowsByKey = {}; return; }
+  card.classList.remove('hidden');
+
+  const groups = {};
+  rows.forEach(r => {
+    const key = r.kepatuhan_log_id || `${r.patient_id}|${r.log_date}`;
+    (groups[key] ||= []).push(r);
+  });
+  lpReviewRowsByKey = {};
+  Object.entries(groups).forEach(([key, grp]) => { lpReviewRowsByKey[key] = grp.map(r => r.id); });
+
+  document.getElementById('lp-review-list').innerHTML = Object.entries(groups).map(([key, grp]) => {
+    const first = grp[0];
+    const name = first.psy_patients?.full_name || first.psy_patients?.mrn || 'Pesakit';
+    const syms = [...new Set((Array.isArray(first.symptoms) ? first.symptoms : []).map(s => String(s).split('::').pop()))];
+    const msgsHtml = grp.sort((a, b) => (a.msg_jenis || '').localeCompare(b.msg_jenis || '')).map(r => `
+      <div class="bg-cream/50 rounded-lg p-2.5 mt-1.5">
+        <div class="text-[10px] font-bold text-navy/70 uppercase">${MSG_JENIS_LBL[r.msg_jenis] || r.msg_jenis}</div>
+        <div class="text-[11.5px] text-ink/70 whitespace-pre-line mt-0.5 max-h-24 overflow-y-auto">${lpEsc(r.message_text)}</div>
+      </div>`).join('');
+    return `<div class="border border-ink/10 rounded-xl p-3.5" data-review-key="${lpEsc(key)}">
+      <div class="flex items-start justify-between gap-3 flex-wrap">
+        <div class="min-w-0">
+          <div class="text-[13px] font-bold text-ink">${lpEsc(name)}</div>
+          <div class="text-[11px] text-ink/50 mt-0.5">Reaksi serentak: ${lpEsc(syms.join(', '))}</div>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <button onclick="lpApprove('${key}')" class="text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-green text-white hover:bg-green-dark">✅ Lulus &amp; Hantar</button>
+          <button onclick="lpSkip('${key}')" class="text-[11px] font-semibold px-3 py-1.5 rounded-lg border border-ink/20 text-ink/60 hover:bg-ink/5">🚫 Skip</button>
+        </div>
+      </div>
+      ${msgsHtml}
+    </div>`;
+  }).join('');
+}
+
+async function lpApprove(key) {
+  const ids = lpReviewRowsByKey[key] || [];
+  if (!ids.length) return;
+  if (!confirm(`Lulus & hantar ${ids.length} mesej cadangan ni kepada pesakit?`)) return;
+  const { error } = await window.db.from('psy_reaksi_advice_log')
+    .update({ status: 'draft', reviewed_by: window.currentUser?.id, reviewed_at: new Date().toISOString() })
+    .in('id', ids);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  const firstId = ids[0];
+  window.db.functions.invoke('reaksi-advice-send', { body: { advice_id: firstId } }).catch(() => {});
+  if (typeof auditLog === 'function') { try { await auditLog('reaksi.advice_approved', firstId, { ids }); } catch (_) {} }
+  banner('Cadangan diluluskan & mesej pertama dihantar ✓');
+  await lpLoad();
+}
+window.lpApprove = lpApprove;
+
+async function lpSkip(key) {
+  const ids = lpReviewRowsByKey[key] || [];
+  if (!ids.length) return;
+  if (!confirm(`Skip ${ids.length} mesej cadangan ni? Pesakit TAK akan terima mesej ini.`)) return;
+  const { error } = await window.db.from('psy_reaksi_advice_log')
+    .update({ status: 'skipped', reviewed_by: window.currentUser?.id, reviewed_at: new Date().toISOString() })
+    .in('id', ids);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  if (typeof auditLog === 'function') { try { await auditLog('reaksi.advice_skipped', ids[0], { ids }); } catch (_) {} }
+  banner('Cadangan diskip — tiada mesej dihantar');
+  await lpLoad();
+}
+window.lpSkip = lpSkip;
+
 async function lpLoad() {
   const days = parseInt(document.getElementById('lp-range').value, 10) || 30;
   const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
 
   const [{ data: logs }, { data: items }] = await Promise.all([
     window.db.from('psy_reaksi_advice_log')
-      .select('id, patient_id, kepatuhan_log_id, log_date, symptoms, actions, is_emergency, status, psy_patients(full_name, mrn)')
+      .select('id, patient_id, kepatuhan_log_id, log_date, symptoms, actions, is_emergency, status, message_text, msg_jenis, created_at, psy_patients(full_name, mrn)')
       .gte('log_date', since).order('log_date', { ascending: false }).limit(2000),
     window.db.from('psy_reaksi_item').select('label, tahap_risiko'),
   ]);
   const rows = logs || [];
+  lpRenderReview(rows.filter(r => r.status === 'needs_review'));
   lpTahapByLabel = {};
   (items || []).forEach(it => { lpTahapByLabel[it.label] = it.tahap_risiko || 'rendah'; });
 

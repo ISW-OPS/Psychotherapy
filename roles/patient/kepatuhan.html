@@ -1442,7 +1442,7 @@
         let maps = null;
         {
           const res = await window.db.from('psy_reaksi_action_map')
-            .select('symptom_id, action_id, psy_reaksi_actions(id,title,priority,is_emergency,aktif,jenis,panduan)')
+            .select('symptom_id, action_id, psy_reaksi_actions(id,title,priority,is_emergency,aktif,jenis,panduan,contraindication_keywords)')
             .in('symptom_id', symptomIds);
           if (res.error) {
             const res2 = await window.db.from('psy_reaksi_action_map')
@@ -1455,13 +1455,29 @@
 
         // Dedup GLOBAL ikut id — tindakan sama (cth dipetakan ke banyak simptom)
         // hanya diambil SEKALI. actsBySym pula utk kumpulan per kategori (mesej 1).
-        const seen = new Set(), actions = [], actsBySym = {};
+        const seen = new Set(), actionsAll = [], actsBySymAll = {};
         maps.forEach(m => {
           const a = m.psy_reaksi_actions;
           if (!a || a.aktif === false) return;
-          (actsBySym[m.symptom_id] ||= []).push(a);
-          if (!seen.has(a.id)) { seen.add(a.id); actions.push(a); }
+          (actsBySymAll[m.symptom_id] ||= []).push(a);
+          if (!seen.has(a.id)) { seen.add(a.id); actionsAll.push(a); }
         });
+        if (!actionsAll.length) return;
+
+        // ── Contraindication (audit #B2-3): tindakan bertag contraindication_keywords
+        // yang dijumpai dalam psy_patients.medical_condition pesakit ni DISOROK drpd
+        // mesej auto — bukan hantar terus. Direkodkan dlm restrictedActions utk
+        // notifikasi coach (bukan senyap hilang terus tanpa jejak).
+        const medCond = (window.patientRecord?.medical_condition || '').toLowerCase();
+        const isRestricted = a => {
+          if (!medCond || !a.contraindication_keywords) return false;
+          return a.contraindication_keywords.split(',').map(k => k.trim().toLowerCase()).filter(Boolean)
+            .some(k => medCond.includes(k));
+        };
+        const restrictedActions = actionsAll.filter(isRestricted);
+        const actions = actionsAll.filter(a => !isRestricted(a));
+        const actsBySym = {};
+        Object.entries(actsBySymAll).forEach(([k, arr]) => { actsBySym[k] = arr.filter(a => !isRestricted(a)); });
         if (!actions.length) return;
         actions.sort((x, y) => (Number(y.is_emergency) - Number(x.is_emergency)) || (x.priority - y.priority));
 
@@ -1611,6 +1627,14 @@
         }
         if (!msgs.length) return;
 
+        // Conflict-check (audit #B2-2): >1 reaksi tercetus SERENTAK boleh hasilkan
+        // cadangan bercanggah (cth satu suruh tambah air, satu lagi suruh kurang).
+        // Kecemasan dikecualikan (zon merah sentiasa SATU mesej kritikal ringkas,
+        // bukan gabungan berbilang saranan). Bila conflict, baris digantung
+        // status='needs_review' (cron TAK proses ni — lihat comment schema) sehingga
+        // staf Lulus/Skip di reaksi-laporan.html.
+        const needsReview = !isEmergency && labels.length >= 2;
+
         // Mesej pertama terus; seterusnya berjarak 5 minit (cron reaksi-advice-send
         // proses baris send_after yang cukup masa tiap 5 min → jarak sebenar ~5-10 min)
         const nowMs = Date.now();
@@ -1625,6 +1649,7 @@
           msg_jenis: m.msg_jenis,
           send_after: new Date(nowMs + i * 5 * 60 * 1000).toISOString(),
           zon,
+          ...(needsReview ? { status: 'needs_review' } : {}),
         }));
 
         let inserted = null;
@@ -1655,8 +1680,11 @@
         // Auto-hantar mesej PERTAMA sahaja (termasuk kecemasan — mesej kritikal
         // suruh pesakit hubungi coach/hospital segera; coach turut dapat notifikasi 🚨).
         // Mesej ke-2/ke-3 dihantar oleh cron bila send_after cukup masa.
+        // needsReview: JANGAN auto-hantar — baris kekal 'needs_review' (bukan 'draft')
+        // sehingga staf Lulus/Skip di reaksi-laporan.html (trg_reaksi_advice_notify_review
+        // dah notify coach terus dari DB).
         const firstRow = (inserted || [])[0];
-        if (firstRow?.id) {
+        if (firstRow?.id && !needsReview) {
           window.db.functions.invoke('reaksi-advice-send', { body: { advice_id: firstRow.id } })
             .catch(e => console.warn('Auto-hantar saranan gagal (kekal draf dalam psy_reaksi_advice_log):', e?.message || e));
         }

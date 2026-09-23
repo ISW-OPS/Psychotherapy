@@ -354,6 +354,50 @@ CREATE TRIGGER trg_vitals_notify_emergency
   AFTER INSERT ON psy_vitals
   FOR EACH ROW EXECUTE FUNCTION trg_vitals_notify_emergency();
 
+-- ──── Fungsi trigger: saranan Reaksi tergantung 'needs_review' → notify coach ────
+-- Audit management #B2-2 (23 Sept 2026). Bila roles/patient/kepatuhan.html kesan
+-- >1 reaksi tercetus serentak dlm satu submission (conflict-check), baris
+-- psy_reaksi_advice_log dicipta dgn status='needs_review' (bukan 'draft') supaya
+-- cron reaksi-advice-send TAK auto-hantar. Patient client tak boleh INSERT terus
+-- ke psy_notifications (RLS staff-only), jadi trigger ni yang notify coach.
+-- Dedup: hanya baris PERTAMA (msg_jenis='tindakan', send_after≈created_at) bagi
+-- satu submission yang cetus notifikasi — elak 3 notifikasi berulang.
+CREATE OR REPLACE FUNCTION trg_reaksi_advice_notify_review()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_coach_id     UUID;
+  v_patient_name TEXT;
+BEGIN
+  IF NEW.status <> 'needs_review' THEN RETURN NEW; END IF;
+  IF NOT (NEW.send_after IS NULL OR NEW.send_after <= NEW.created_at + interval '2 minutes') THEN RETURN NEW; END IF;
+
+  SELECT pt.coach_id, COALESCE(pr.full_name, pt.full_name, 'Pesakit')
+    INTO v_coach_id, v_patient_name
+  FROM psy_patients pt
+  LEFT JOIN psy_profiles pr ON pr.id = pt.user_id
+  WHERE pt.id = NEW.patient_id;
+  IF v_coach_id IS NULL THEN RETURN NEW; END IF;
+
+  INSERT INTO psy_notifications (user_id, type, title, body, link)
+  VALUES (
+    v_coach_id, 'reaksi',
+    '⚠️ Cadangan Perlu Disemak: ' || v_patient_name,
+    v_patient_name || ' alami beberapa reaksi serentak — cadangan digenerate TAPI belum dihantar sehingga disemak. Sila semak di reaksi-laporan.html.',
+    'reaksi-laporan.html'
+  );
+
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_reaksi_advice_notify_review: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_reaksi_advice_notify_review ON psy_reaksi_advice_log;
+CREATE TRIGGER trg_reaksi_advice_notify_review
+  AFTER INSERT ON psy_reaksi_advice_log
+  FOR EACH ROW EXECUTE FUNCTION trg_reaksi_advice_notify_review();
+
 -- ──── Fungsi RPC: pesakit tekan butang kecemasan (seksyen Protokol Kecemasan, roles/patient/dashboard.html) ────
 -- Satu alert AKTIF per pesakit — dedup sama logic dgn trigger di atas. Taraf
 -- sentiasa naik ke 'merah' (pesakit tekan butang kecemasan = tahap tertinggi),

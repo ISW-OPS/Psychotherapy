@@ -88,6 +88,12 @@ CREATE TABLE IF NOT EXISTS psy_reaksi_actions (
   kategori     TEXT,
   jenis        TEXT NOT NULL DEFAULT 'am',
   panduan      TEXT,
+  -- Ditambah 23 Sept 2026 (audit management #B2-3, contraindication) — kata kunci
+  -- dipisah koma (cth "diabetes, kencing manis") yang, bila dijumpai dalam
+  -- psy_patients.medical_condition pesakit (carian teks, tak sensitif huruf besar),
+  -- akan sorok/gantung cadangan ni + papar amaran kat staf/coach dari terus hantar
+  -- kat pesakit. Pilihan (NULL/kosong = tiada sekatan diketahui).
+  contraindication_keywords TEXT,
   created_at   TIMESTAMPTZ DEFAULT now(),
   updated_at   TIMESTAMPTZ DEFAULT now(),
   CONSTRAINT chk_reaksi_actions_jenis CHECK (jenis IN ('am','pemakanan','gaya_hidup','terapi','pemerhatian','tindakan','kecemasan'))
@@ -142,7 +148,13 @@ CREATE TABLE IF NOT EXISTS psy_reaksi_advice_log (
   actions          JSONB NOT NULL DEFAULT '[]',   -- [{id,title,priority,is_emergency}] snapshot dijana
   message_text     TEXT NOT NULL,                 -- boleh diedit staff sebelum hantar
   is_emergency     BOOLEAN NOT NULL DEFAULT false,
-  status           TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','sent','skipped')),
+  -- 'needs_review' ditambah 23 Sept 2026 (audit management #B2-2, conflict-check) —
+  -- bila 1 submission Catatan Harian cetuskan >1 reaksi serentak, baris digantung
+  -- di status ni (cron reaksi-advice-send HANYA proses status='draft' — lihat
+  -- supabase/functions/reaksi-advice-send/index.ts, jadi 'needs_review' auto tak
+  -- terhantar) sehingga staff Lulus (→'draft') atau Skip (→'skipped') di
+  -- reaksi-laporan.html. Guna kolum reviewed_by/reviewed_at sedia ada.
+  status           TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','sent','skipped','needs_review')),
   msg_jenis        TEXT        NOT NULL DEFAULT 'tindakan',
   send_after       TIMESTAMPTZ NOT NULL DEFAULT now(),
   send_attempts    INT         NOT NULL DEFAULT 0,
