@@ -41,6 +41,12 @@ CREATE TABLE IF NOT EXISTS psy_patient_events (
   reported_by           UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
   closed_by             UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
   closed_at             TIMESTAMPTZ,
+  -- Ditambah 23 Sept 2026 (audit management #B1-40) — pautan balik ke kes Red
+  -- Emergency Protocol (psy_emergency_alerts) yang mencetuskan rekod klinikal ni,
+  -- cth staf tandakan pesakit Masuk Wad terus dari emergency.html. Bila rekod ni
+  -- ditutup (status → closed), trigger di bawah auto-kemaskini nota kes asal —
+  -- lihat trg_patient_event_notify_emergency.
+  source_emergency_alert_id UUID REFERENCES psy_emergency_alerts(id) ON DELETE SET NULL,
   created_at            TIMESTAMPTZ DEFAULT now(),
   updated_at            TIMESTAMPTZ DEFAULT now()
 );
@@ -49,6 +55,7 @@ CREATE INDEX IF NOT EXISTS idx_pe_patient  ON psy_patient_events(patient_id, cre
 CREATE INDEX IF NOT EXISTS idx_pe_status   ON psy_patient_events(status, event_date DESC);
 CREATE INDEX IF NOT EXISTS idx_pe_type     ON psy_patient_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_pe_assigned ON psy_patient_events(assigned_to) WHERE assigned_to IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_pe_source_alert ON psy_patient_events(source_emergency_alert_id) WHERE source_emergency_alert_id IS NOT NULL;
 
 ALTER TABLE psy_patient_events ENABLE ROW LEVEL SECURITY;
 
@@ -303,3 +310,39 @@ DROP TRIGGER IF EXISTS trg_patient_event_log_created ON psy_patient_events;
 CREATE TRIGGER trg_patient_event_log_created
   AFTER INSERT ON psy_patient_events
   FOR EACH ROW EXECUTE FUNCTION trg_patient_event_log_created();
+
+-- ──── Fungsi trigger: rekod klinikal (dicipta drpd kes Emergency) ditutup → kemaskini kes asal ────
+-- Audit management #B1-40 (23 Sept 2026). Bila peristiwa (warded/ICU/kecemasan dll)
+-- yang dipautkan ke satu kes Red Emergency Protocol (source_emergency_alert_id)
+-- ditutup, tambah nota di kes asal supaya staf yang urus emergency.html nampak
+-- perkembangan — TAK auto-resolve kes (staf tetap perlu semak & tutup sendiri
+-- di emergency.html, sebab kes emergency mungkin masih perlukan susulan lain).
+CREATE OR REPLACE FUNCTION trg_patient_event_notify_emergency()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_note TEXT;
+BEGIN
+  IF NEW.source_emergency_alert_id IS NULL THEN RETURN NEW; END IF;
+  IF NOT (NEW.status = 'closed' AND OLD.status <> 'closed') THEN RETURN NEW; END IF;
+
+  v_note := 'Rekod Klinikal Pesakit (' || NEW.event_type || ') ditutup pada ' ||
+            to_char(now(), 'DD Mon YYYY HH24:MI') ||
+            COALESCE(' — ' || NEW.notes, '') ||
+            '. Lihat peristiwa-detail.html?id=' || NEW.id::TEXT;
+
+  UPDATE psy_emergency_alerts
+  SET notes = CASE WHEN notes IS NULL OR notes = '' THEN v_note ELSE notes || E'\n' || v_note END,
+      updated_at = now()
+  WHERE id = NEW.source_emergency_alert_id;
+
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_patient_event_notify_emergency: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_patient_event_notify_emergency ON psy_patient_events;
+CREATE TRIGGER trg_patient_event_notify_emergency
+  AFTER UPDATE ON psy_patient_events
+  FOR EACH ROW EXECUTE FUNCTION trg_patient_event_notify_emergency();
