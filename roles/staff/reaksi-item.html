@@ -1291,13 +1291,28 @@
       imRows = RXitems.filter(it => it.kumpulan === cat).map(it => ({ id: it.id, label: it.label, solusi: '' }));
       imDrawRows();
     }
+    // Tahap risiko WAJIB dipilih (bukan silently default 'rendah') utk reaksi BAHARU —
+    // audit management #B2-43: reaksi berisiko tinggi tak boleh terlepas dgn default
+    // senyap, kena route ke Zon Merah/Emergency (tahap_risiko='tinggi' -> reaksi-preview.html
+    // guna tahapMax utk tentukan zon, sama macam is_emergency).
+    const IM_RISK_OPTS = [
+      { v: '', l: '— Pilih tahap risiko —' },
+      { v: 'rendah', l: '🟢 Rendah' },
+      { v: 'sederhana', l: '🟡 Sederhana' },
+      { v: 'tinggi', l: '🔴 Tinggi (Zon Merah/Emergency)' },
+    ];
     function imDrawRows() {
       document.getElementById('im-sym-list').innerHTML = imRows.map((r, i) => `
     <div class="grid sm:grid-cols-[220px_1fr] gap-2 items-start">
       ${r.id
           ? `<div class="text-[12.5px] font-bold text-ink pt-2.5 truncate" title="${esc2(r.label)}">${esc2(r.label)}</div>`
-          : `<input value="${esc2(r.label)}" placeholder="Nama reaksi baru…" oninput="imRows[${i}].label=this.value"
-          class="border border-navy/25 rounded-lg px-3 py-2 text-[12.5px] font-semibold focus:border-navy outline-none bg-white">`}
+          : `<div class="space-y-1.5">
+          <input value="${esc2(r.label)}" placeholder="Nama reaksi baru…" oninput="imRows[${i}].label=this.value"
+            class="w-full border border-navy/25 rounded-lg px-3 py-2 text-[12.5px] font-semibold focus:border-navy outline-none bg-white">
+          <select onchange="imRows[${i}].tahap_risiko=this.value" class="w-full border ${r.tahap_risiko ? 'border-ink/20' : 'border-terracotta/60'} rounded-lg px-2 py-1.5 text-[11px] font-semibold outline-none focus:border-navy bg-white">
+            ${IM_RISK_OPTS.map(o => `<option value="${o.v}" ${r.tahap_risiko === o.v ? 'selected' : ''}>${o.l}</option>`).join('')}
+          </select>
+        </div>`}
       <div>
         <textarea rows="3" placeholder="Satu solusi per baris — cth:&#10;1. Minum air suam&#10;2. Air jintan: Ambil 1 sudu kecil jintan manis, rebus bersama 100 ml air 'afiyah…&#10;3. Kurangkan makanan sukar dihadam" oninput="imRows[${i}].solusi=this.value;imSolCount(${i})"
           class="w-full border border-ink/20 rounded-lg px-3 py-2 text-[12.5px] focus:border-navy outline-none resize-y bg-white">${esc2(r.solusi)}</textarea>
@@ -1306,7 +1321,7 @@
     </div>`).join('') || '<p class="text-[12px] text-ink/40 italic">Tiada reaksi dalam kategori ini lagi — guna butang + Tambah Reaksi.</p>';
       imRows.forEach((_, i) => imSolCount(i));
     }
-    function imAddSymRow() { imRows.push({ id: null, label: '', solusi: '' }); imDrawRows(); }
+    function imAddSymRow() { imRows.push({ id: null, label: '', solusi: '', tahap_risiko: '' }); imDrawRows(); }
     function imSolCount(i) {
       const el = document.getElementById('im-sol-n-' + i); if (!el) return;
       const sols = imParseSolusi(imRows[i]?.solusi);
@@ -1358,6 +1373,11 @@
       const solRows = imRows.map(r => ({ ...r, label: r.label.trim(), sols: imParseSolusi(r.solusi) })).filter(r => r.label && r.sols.length);
       if (!dietGroups.length && !lifeLines.length && !solRows.length) return alert('Tiada data untuk diimport — isi sekurang-kurangnya satu bahagian.');
 
+      // Wajib pilih Tahap Risiko utk SETIAP reaksi baharu — jangan biar silently default
+      // 'rendah' (audit #B2-43). Reaksi sedia ada (r.id set) tahap risikonya diurus di tab Tindakan.
+      const missingRisk = solRows.filter(r => !r.id && !r.tahap_risiko);
+      if (missingRisk.length) return alert(`Sila pilih Tahap Risiko utk reaksi baharu: ${missingRisk.map(r => r.label).join(', ')}`);
+
       btn.disabled = true; stat.textContent = 'Mengimport…'; resBox.classList.add('hidden');
       try {
         const out = { katBaru: 0, symBaru: 0, actBaru: 0, actGuna: 0, mapBaru: 0 };
@@ -1379,7 +1399,7 @@
           if (r.id) { symByLabel[k] = r.id; continue; }
           if (symByLabel[k]) { r.id = symByLabel[k]; continue; }
           const res = await window.db.from('psy_reaksi_item')
-            .insert({ kumpulan: cat, ikon: '', label: r.label, aktif: true, urutan: urutanNext }).select('id').single();
+            .insert({ kumpulan: cat, ikon: '', label: r.label, aktif: true, urutan: urutanNext, tahap_risiko: r.tahap_risiko }).select('id').single();
           if (res.error) throw res.error;
           r.id = res.data.id; symByLabel[k] = r.id; urutanNext += 10; out.symBaru++;
         }
