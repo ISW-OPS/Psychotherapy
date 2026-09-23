@@ -11,7 +11,10 @@
 //   HITPAY_SALT      — rahsia untuk sahkan HMAC webhook
 //   HITPAY_MODE      — 'sandbox' (default) | 'live'
 // ============================================================
-import type { CreatedPayment, PaymentIntent, PaymentProvider, PaymentStatus, WebhookResult } from './types.ts'
+import type {
+  CardAuthIntent, CardAuthResult, ChargeResult, CreatedPayment, PaymentIntent,
+  PaymentProvider, PaymentStatus, RecurringWebhookResult, WebhookResult,
+} from './types.ts'
 
 const BASE = () =>
   (Deno.env.get('HITPAY_MODE') || 'sandbox') === 'live'
@@ -105,6 +108,116 @@ export const hitpay: PaymentProvider = {
       status: normalizeStatus(fields.status || ''),
       amount: fields.amount,
       raw: fields,
+    }
+  },
+
+  // Cipta sesi "lampir kad" (recurring-billing, save_payment_method=true) —
+  // pesakit isi kad SEKALI di hosted page HitPay, tiada cycle/subscription
+  // (kita caj ON-DEMAND kemudian ikut checkpoint, bukan HitPay punya jadual).
+  // amount BOLEH jumlah SEBENAR (cth deposit ansuran, guna dari kob_retry_link.ts
+  // bila HITPAY_INSTALLMENT_SAVE_CARD=true) — lampir kad berlaku SERENTAK dgn
+  // bayaran sebenar, bukan sesi RM1 berasingan. Untuk sesi lampir-kad BERDIRI
+  // SENDIRI (kob_autocharge.ts createKobCardAttachLink), amount='1.00' (had
+  // minimum API HitPay bila tiada bayaran sebenar utk "tumpang").
+  async createCardAuthorization(intent: CardAuthIntent): Promise<CardAuthResult> {
+    const apiKey = Deno.env.get('HITPAY_API_KEY')
+    if (!apiKey) throw new Error('HITPAY_API_KEY tidak diset')
+
+    const body = new URLSearchParams({
+      name: intent.purpose || 'Pengesahan Kad — Ansuran Automatik ISW',
+      amount: intent.amount,
+      currency: intent.currency || 'MYR',
+      reference: intent.reference,
+      redirect_url: intent.redirectUrl,
+      save_payment_method: 'true',
+      ...(intent.customerEmail ? { customer_email: intent.customerEmail } : {}),
+      ...(intent.customerName ? { customer_name: intent.customerName } : {}),
+    })
+    for (const m of (intent.paymentMethods?.length ? intent.paymentMethods : ['card'])) {
+      body.append('payment_methods[]', m)
+    }
+
+    const res = await fetch(`${BASE()}/recurring-billing`, {
+      method: 'POST',
+      headers: {
+        'X-BUSINESS-API-KEY': apiKey,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body,
+    })
+    const text = await res.text()
+    let data: any = null
+    try { data = text ? JSON.parse(text) : null } catch { data = text }
+    if (!res.ok) throw new Error(`HitPay recurring-billing ${res.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`)
+    if (!data?.url || !data?.id) throw new Error('HitPay: respons recurring-billing tiada url/id')
+
+    return { authRef: String(data.id), checkoutUrl: String(data.url), raw: data }
+  },
+
+  // Caj ON-DEMAND kad tersimpan (bukan cycle automatik HitPay) — respons
+  // SEGERA (bukan redirect+webhook macam createPayment), jadi pemanggil
+  // (cron event-reminders) boleh fulfill terus dari status respons ini.
+  async chargeSavedCard(authRef: string, amount: string, currency: string): Promise<ChargeResult> {
+    const apiKey = Deno.env.get('HITPAY_API_KEY')
+    if (!apiKey) throw new Error('HITPAY_API_KEY tidak diset')
+
+    const body = new URLSearchParams({ amount, currency: currency || 'MYR' })
+    const res = await fetch(`${BASE()}/charge/recurring-billing/${encodeURIComponent(authRef)}`, {
+      method: 'POST',
+      headers: {
+        'X-BUSINESS-API-KEY': apiKey,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body,
+    })
+    const text = await res.text()
+    let data: any = null
+    try { data = text ? JSON.parse(text) : null } catch { data = text }
+    if (!res.ok) {
+      return { ok: false, chargeRef: '', status: 'failed', raw: data ?? text }
+    }
+    const status = normalizeStatus(data?.status || '')
+    return { ok: status === 'completed', chargeRef: String(data?.payment_id || ''), status, raw: data }
+  },
+
+  // Sahkan webhook JSON "recurring billing" (Hitpay-Signature = HMAC-SHA256
+  // guna salt atas RAW body JSON) — bentuk BEZA drpd verifyWebhook() atas
+  // (form-encoded + medan `hmac`, khusus payment-requests biasa).
+  async verifyRecurringWebhook(req: Request): Promise<RecurringWebhookResult> {
+    const salt = Deno.env.get('HITPAY_SALT')
+    if (!salt) throw new Error('HITPAY_SALT tidak diset')
+
+    const raw = await req.text()
+    const providedSig = req.headers.get('Hitpay-Signature') || ''
+    const expected = await hmacHex(salt, raw)
+    const ok = safeEqual(expected, providedSig.toLowerCase())
+
+    let data: any = {}
+    try { data = raw ? JSON.parse(raw) : {} } catch { data = {} }
+
+    const eventTypeHeader = req.headers.get('Hitpay-Event-Type') || ''
+    const objectType = data?.object || data?.type || eventTypeHeader
+    let eventType: RecurringWebhookResult['eventType'] = 'unknown'
+    if (String(objectType).includes('method_attached')) eventType = 'method_attached'
+    else if (String(objectType).includes('method_detached')) eventType = 'method_detached'
+    else if (String(objectType).includes('subscription_updated')) eventType = 'subscription_updated'
+    else if (String(objectType).includes('charge')) eventType = 'charge_created'
+
+    const authRef = String(data?.recurring_billing_id || data?.id || data?.data?.id || '')
+    const reference = data?.reference || data?.data?.reference ? String(data.reference || data.data.reference) : undefined
+    const card = data?.payment_method?.card || data?.card || {}
+
+    return {
+      ok,
+      eventType,
+      authRef,
+      reference,
+      status: data?.status ? String(data.status) : undefined,
+      cardLast4: card?.last4 ? String(card.last4) : undefined,
+      cardBrand: card?.brand ? String(card.brand) : undefined,
+      raw: data,
     }
   },
 }

@@ -10,6 +10,9 @@
 //   5) automations         — psy_automations (trigger 'schedule')
 //   6) session_confirm     — Pengesahan Sesi (dua-hala): peringatan sahkan
 //      kehadiran/tukar tarikh + escalation coach bila belum sahkan ≤ deadline
+//   8b) installment_autocharge — checkpoint due & kad tersimpan (psy_kob_
+//      card_authorizations status='attached') → caj ON-DEMAND (HitPay
+//      charge/recurring-billing) SEBELUM installment_overdue sempat sekat booking
 //   9) installment_overdue  — checkpoint ansuran (psy_kob_installment_checkpoints):
 //      jumlah terkumpul tak cecah target menjelang due_date → tandakan overdue,
 //      sekat tempahan sesi baru pesakit, WA sekali
@@ -20,6 +23,8 @@
 // ============================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { createKobInstallmentTopupLink } from '../_shared/kob_topup.ts'
+import { applyInstallmentPayment } from '../_shared/kob_autocharge.ts'
+import { getProvider } from '../_shared/payments/index.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -744,6 +749,125 @@ async function runDnaSampleReminder(supabase, locationId) {
   return res
 }
 
+// ───────── 8b) Auto-Caj Ansuran (kad tersimpan) — SEBELUM installment_overdue ─────────
+// Checkpoint pending due_date lepas/sama hari ini (waktu MY) DAN sesi tu ada kad
+// dilampirkan (psy_kob_card_authorizations status='attached') → cuba caj ON-DEMAND
+// (chargeSavedCard) jumlah (target_cumulative - jumlah terkumpul). Respons SEGERA
+// (bukan redirect+webhook macam checkout-link biasa) → fulfill terus di sini guna
+// applyInstallmentPayment() (logik kumulatif KONGSI dgn topup webhook, lihat
+// _shared/kob_autocharge.ts). Gagal → fallback WA pautan bayaran manual (sama
+// pautan dgn installment_reminder) — installment_overdue (jalan LEPAS fungsi ni
+// dlm Deno.serve) tetap sekat booking kalau checkpoint MASIH belum met.
+// Dihadkan 1x/hari (autocharge_last_attempt_at) & max 3 percubaan — lepas tu
+// serah sepenuhnya ke aliran manual (elak spam caj kad yang dah jelas ditolak).
+async function runInstallmentAutoChargeCheck(supabase, locationId) {
+  const provider = getProvider()
+  if (!provider.chargeSavedCard) return { skipped: true, reason: 'provider tiada chargeSavedCard' }
+
+  const myToday = new Date(Date.now() + MY_OFFSET_MS).toISOString().slice(0, 10)
+  const { data: rows } = await supabase.from('psy_kob_installment_checkpoints')
+    .select('id, seq, due_date, target_cumulative, kob_session_id, patient_id, autocharge_attempts, autocharge_last_attempt_at, psy_patients(full_name, phone, emergency_contact_phone, emergency_contact_name, contact_preference)')
+    .eq('status', 'pending').lte('due_date', myToday).lt('autocharge_attempts', 3).limit(200)
+  const res = { checked: 0, charged: 0, failed: 0, skipped: 0, errors: [] }
+  if (!rows?.length) return res
+
+  const successCfg = (await supabase.from('psy_auto_messages').select('*').eq('key', 'installment_autocharge_success').maybeSingle()).data
+  const failedCfg = (await supabase.from('psy_auto_messages').select('*').eq('key', 'installment_autocharge_failed').maybeSingle()).data
+
+  for (const row of rows) {
+    res.checked++
+    // Sekali sahaja sehari — elak caj berulang tiap 15 min cron jalan.
+    if (row.autocharge_last_attempt_at && row.autocharge_last_attempt_at.slice(0, 10) === myToday) { res.skipped++; continue }
+
+    const { data: authRows } = await supabase.from('psy_kob_card_authorizations')
+      .select('gateway_auth_ref').eq('kob_session_id', row.kob_session_id).eq('status', 'attached').limit(1)
+    const auth = authRows?.[0]
+    if (!auth) { res.skipped++; continue }   // tiada kad dilampir — biar aliran manual (reminder/overdue) uruskan
+
+    const { data: paidRows } = await supabase.from('psy_payments').select('total')
+      .eq('status', 'completed').eq('intent->>kob_session_id', row.kob_session_id)
+    const totalPaid = (paidRows || []).reduce((s, p) => s + Number(p.total || 0), 0)
+    const amount = Math.max(0, Number(row.target_cumulative) - totalPaid)
+    if (!(amount > 0)) {
+      await supabase.from('psy_kob_installment_checkpoints').update({ status: 'met', met_at: new Date().toISOString() }).eq('id', row.id)
+      continue
+    }
+
+    const p = row.psy_patients || {}
+    const checkpointLabel = row.seq === 0 ? 'Deposit' : `Ansuran ${row.seq}`
+    const receiptRef = 'AUTO-' + Date.now().toString(36).toUpperCase() + '-' + Math.floor(performance.now()).toString(36).toUpperCase()
+    const itemTitle = `${checkpointLabel} (Auto-Caj)`
+
+    await supabase.from('psy_payments').insert({
+      receipt_ref: receiptRef, patient_id: row.patient_id,
+      items: [{ type: 'kob_installment_topup', title: itemTitle, amount, kobSessionId: row.kob_session_id, checkpointSeq: row.seq }],
+      subtotal: amount, total: amount, payment_method: 'gateway', status: 'pending',
+      gateway_provider: 'hitpay', gateway_status: 'pending',
+      intent: {
+        items: [{ type: 'kob_installment_topup', title: itemTitle, amount, kobSessionId: row.kob_session_id, checkpointSeq: row.seq }],
+        patientId: row.patient_id, kob_session_id: row.kob_session_id,
+      },
+    })
+
+    let chargeResult
+    try {
+      chargeResult = await provider.chargeSavedCard(auth.gateway_auth_ref, amount.toFixed(2), 'MYR')
+    } catch (e) {
+      chargeResult = { ok: false, chargeRef: '', status: 'failed', raw: String(e?.message || e) }
+    }
+
+    const attempts = Number(row.autocharge_attempts || 0) + 1
+    const nowIso = new Date().toISOString()
+    const { phone: rawPhone, contactName } = resolveContact(p)
+    const phone = toE164(rawPhone)
+
+    if (chargeResult.ok) {
+      await supabase.from('psy_payments').update({
+        status: 'completed', gateway_ref: chargeResult.chargeRef, gateway_status: 'completed', paid_at: nowIso,
+      }).eq('receipt_ref', receiptRef)
+      await applyInstallmentPayment(supabase, row.kob_session_id, row.patient_id, amount)
+      await supabase.from('psy_kob_installment_checkpoints').update({
+        autocharge_status: 'succeeded', autocharge_last_attempt_at: nowIso, autocharge_attempts: attempts,
+      }).eq('id', row.id)
+      res.charged++
+
+      if (successCfg?.is_active && successCfg.message_template && phone) {
+        try {
+          const cid = await upsertContact(locationId, phone, contactName)
+          if (cid) {
+            const msg = fillTemplate(successCfg.message_template, {
+              nama: p.full_name || '', ansuran: checkpointLabel, jumlah: amount.toFixed(2), nama_klinik: ISW_CLINIC.name,
+            })
+            await sendWA(cid, msg)
+          }
+        } catch (e) { res.errors.push(`${row.id}: WA berjaya gagal — ${String(e?.message || e)}`) }
+      }
+    } else {
+      await supabase.from('psy_payments').update({ status: 'failed', gateway_status: 'failed' }).eq('receipt_ref', receiptRef)
+      await supabase.from('psy_kob_installment_checkpoints').update({
+        autocharge_status: 'failed', autocharge_last_attempt_at: nowIso, autocharge_attempts: attempts,
+      }).eq('id', row.id)
+      res.failed++
+
+      if (failedCfg?.is_active && failedCfg.message_template && phone) {
+        try {
+          const origin = Deno.env.get('PUBLIC_APP_URL')
+          const link = await createKobInstallmentTopupLink(supabase, row.kob_session_id, `${origin}/roles/patient/payment-receipt.html`)
+          const cid = await upsertContact(locationId, phone, contactName)
+          if (cid) {
+            const msg = fillTemplate(failedCfg.message_template, {
+              nama: p.full_name || '', ansuran: checkpointLabel, jumlah: amount.toFixed(2),
+              pautan: link.checkoutUrl, nama_klinik: ISW_CLINIC.name,
+            })
+            await sendWA(cid, msg)
+          }
+        } catch (e) { res.errors.push(`${row.id}: WA gagal-caj gagal — ${String(e?.message || e)}`) }
+      }
+    }
+  }
+  return res
+}
+
 // ───────── 9) Ansuran Pakej Tertunggak — semak kumulatif vs checkpoint ─────────
 // psy_kob_installment_checkpoints status='pending' & due_date lepas hari ini
 // (waktu MY) → banding jumlah TERKUMPUL psy_payments (kob_session_id) vs
@@ -866,9 +990,10 @@ Deno.serve(async (req) => {
     const sessionConfirm = await runSessionConfirm(supabase, locationId)
     const autoAbsence = await runAutoAbsence(supabase)
     const dnaSampleReminder = await runDnaSampleReminder(supabase, locationId)
+    const installmentAutoCharge = await runInstallmentAutoChargeCheck(supabase, locationId)
     const installmentOverdue = await runInstallmentOverdueCheck(supabase, locationId)
     const installmentReminder = await runInstallmentReminderCheck(supabase, locationId)
-    return new Response(JSON.stringify({ success: true, eventReminders, broadcasts, catatanHarian, kepatuhanAlerts, automations, sessionConfirm, autoAbsence, dnaSampleReminder, installmentOverdue, installmentReminder }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    return new Response(JSON.stringify({ success: true, eventReminders, broadcasts, catatanHarian, kepatuhanAlerts, automations, sessionConfirm, autoAbsence, dnaSampleReminder, installmentAutoCharge, installmentOverdue, installmentReminder }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
   } catch (err) {
     console.error('event-reminders error:', err)
     return new Response(JSON.stringify({ error: String(err?.message || err) }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })

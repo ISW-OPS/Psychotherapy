@@ -807,6 +807,95 @@ on conflict (key) do update set
   language         = excluded.language,
   updated_at       = now();
 
+-- Jemputan Lampir Kad (card_attach_invite) — staff hantar pautan HitPay
+-- "lampir kad" (createKobCardAttachLink) supaya ansuran seterusnya boleh
+-- di-auto-caj tanpa pesakit klik pautan tiap bulan. Dihantar MANUAL oleh
+-- staff (butang kob-detail.html), bukan cron — is_active kawal sama ada
+-- placeholder ni dipakai/skip terus ke teks manual.
+insert into psy_auto_messages
+  (key, name, description, channel, trigger_type, message_template,
+   placeholders, channels, category, language, is_active)
+values
+  ('card_attach_invite',
+   'Jemputan Lampir Kad — Ansuran Automatik',
+   'Pautan HitPay "lampir kad" (RM1 pengesahan) supaya ansuran seterusnya dicaj automatik pada tarikh due, pesakit tak perlu klik pautan tiap bulan.',
+   'whatsapp', 'card_attach_invite',
+   E'Salam {nama} 👋\n\nUntuk memudahkan bayaran ansuran pakej rawatan anda, sila lampirkan kad debit/kredit anda (pengesahan RM1) melalui pautan selamat di bawah. Ansuran seterusnya akan ditolak SECARA AUTOMATIK pada tarikh due — anda tak perlu klik pautan bayaran setiap bulan lagi.\n\n{pautan}\n\n— {nama_klinik}',
+   '["{nama}","{pautan}","{nama_klinik}"]'::jsonb,
+   '["whatsapp"]'::jsonb,
+   'pembayaran', 'ms',
+   false)
+on conflict (key) do update set
+  name             = excluded.name,
+  description      = excluded.description,
+  channel          = excluded.channel,
+  trigger_type     = excluded.trigger_type,
+  message_template = excluded.message_template,
+  placeholders     = excluded.placeholders,
+  channels         = excluded.channels,
+  category         = excluded.category,
+  language         = excluded.language,
+  updated_at       = now();
+
+-- Auto-Caj Berjaya (installment_autocharge_success) — kad tersimpan berjaya
+-- dicaj on due_date (runInstallmentAutoChargeCheck, event-reminders →
+-- _shared/kob_autocharge.ts). Beza dgn resit HitPay biasa (payments-webhook
+-- sendPaymentReceiptWhatsApp) — mesej RINGKAS khusus konteks auto-caj.
+insert into psy_auto_messages
+  (key, name, description, channel, trigger_type, message_template,
+   placeholders, channels, category, language, is_active)
+values
+  ('installment_autocharge_success',
+   'Ansuran Auto-Caj Berjaya',
+   'Kad tersimpan pesakit berjaya dicaj automatik pada tarikh due checkpoint ansuran — hantar WA makluman ringkas.',
+   'whatsapp', 'installment_autocharge_success',
+   E'Salam {nama} 👋\n\nAnsuran *{ansuran}* pakej rawatan anda (RM {jumlah}) telah berjaya ditolak secara automatik daripada kad tersimpan anda pada hari ini.\n\nTerima kasih — {nama_klinik}',
+   '["{nama}","{ansuran}","{jumlah}","{nama_klinik}"]'::jsonb,
+   '["whatsapp"]'::jsonb,
+   'pembayaran', 'ms',
+   false)
+on conflict (key) do update set
+  name             = excluded.name,
+  description      = excluded.description,
+  channel          = excluded.channel,
+  trigger_type     = excluded.trigger_type,
+  message_template = excluded.message_template,
+  placeholders     = excluded.placeholders,
+  channels         = excluded.channels,
+  category         = excluded.category,
+  language         = excluded.language,
+  updated_at       = now();
+
+-- Auto-Caj Gagal (installment_autocharge_failed) — kad tersimpan DITOLAK
+-- (kad tamat tempoh/tiada baki dll) semasa cuba caj automatik pada due_date.
+-- Fallback ke pautan bayaran manual (createKobInstallmentTopupLink) — sama
+-- pautan dgn installment_reminder, cuma konteks mesej berbeza (bukan sekadar
+-- peringatan awal, tapi makluman kegagalan caj).
+insert into psy_auto_messages
+  (key, name, description, channel, trigger_type, message_template,
+   placeholders, channels, category, language, is_active)
+values
+  ('installment_autocharge_failed',
+   'Ansuran Auto-Caj Gagal',
+   'Kad tersimpan pesakit gagal dicaj (ditolak/tamat tempoh dll) semasa cuba caj automatik pada tarikh due — hantar WA + pautan bayaran manual fallback.',
+   'whatsapp', 'installment_autocharge_failed',
+   E'Salam {nama} 👋\n\nAnsuran *{ansuran}* pakej rawatan anda (RM {jumlah}) GAGAL ditolak secara automatik daripada kad tersimpan anda (kad mungkin ditolak/tamat tempoh).\n\nSila selesaikan bayaran melalui pautan selamat di bawah, atau hubungi klinik untuk kemas kini kad:\n{pautan}\n\n— {nama_klinik}',
+   '["{nama}","{ansuran}","{jumlah}","{pautan}","{nama_klinik}"]'::jsonb,
+   '["whatsapp"]'::jsonb,
+   'pembayaran', 'ms',
+   false)
+on conflict (key) do update set
+  name             = excluded.name,
+  description      = excluded.description,
+  channel          = excluded.channel,
+  trigger_type     = excluded.trigger_type,
+  message_template = excluded.message_template,
+  placeholders     = excluded.placeholders,
+  channels         = excluded.channels,
+  category         = excluded.category,
+  language         = excluded.language,
+  updated_at       = now();
+
 -- Bayaran Gagal/Dibatalkan (payment_failed) — WA dihantar automatik oleh
 -- payments-webhook bila HitPay report status 'failed' (kali pertama sahaja,
 -- lihat notifyPaymentFailed). {pautan} diisi kod: sentence lengkap dgn

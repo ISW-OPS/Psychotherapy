@@ -38,8 +38,61 @@ export interface WebhookResult {
 }
 
 // Setiap adapter gateway MESTI eksport dua fungsi ini.
+// createCardAuthorization/chargeSavedCard/verifyRecurringWebhook OPSYENAL —
+// hanya provider yang sokong caj kad tersimpan (recurring billing on-demand,
+// cth HitPay) perlu implement. Lihat _shared/kob_autocharge.ts (pemanggil).
 export interface PaymentProvider {
   name: string;
   createPayment(intent: PaymentIntent): Promise<CreatedPayment>;
   verifyWebhook(req: Request): Promise<WebhookResult>;
+  createCardAuthorization?(intent: CardAuthIntent): Promise<CardAuthResult>;
+  chargeSavedCard?(authRef: string, amount: string, currency: string): Promise<ChargeResult>;
+  verifyRecurringWebhook?(req: Request): Promise<RecurringWebhookResult>;
+}
+
+// ── Kad Tersimpan (Recurring Billing on-demand) — HitPay sahaja buat masa ini ──
+// Aliran: 1x "lampir kad" (hosted page, cth deposit RM1 pengesahan) → simpan
+// authRef → kemudian caj ON-DEMAND amaun BERBEZA setiap checkpoint ansuran
+// (bukan cycle/subscription tetap HitPay — checkpoint ISW amaunnya custom).
+export interface CardAuthIntent {
+  reference: string      // rujukan KITA (receipt_ref psy_payments)
+  amount: string         // amaun sesi (MYR string) — BOLEH jumlah SEBENAR (cth deposit
+                          // ansuran) supaya lampir-kad berlaku SEKALI GUS dgn bayaran
+                          // sebenar (bukan RM1 berasingan), ATAU '1.00' utk sesi
+                          // lampir-kad berdiri sendiri (createKobCardAttachLink)
+  purpose?: string       // nama/penerangan dipapar di hosted page HitPay
+  customerEmail?: string
+  customerName?: string
+  currency: string
+  redirectUrl: string
+  paymentMethods?: string[]   // default ['card'] di adapter jika tiada
+}
+export interface CardAuthResult {
+  authRef: string        // id 'recurring-billing' HitPay — simpan, guna semula utk caj
+  checkoutUrl: string    // redirect pesakit ke sini utk isi kad SEKALI sahaja
+  raw: unknown
+}
+
+// Hasil caj on-demand terus (respons SEGERA — bukan tunggu webhook, tak macam
+// createPayment/checkout link yang perlu redirect+webhook async).
+export interface ChargeResult {
+  ok: boolean
+  chargeRef: string      // payment_id HitPay bagi caj ni
+  status: PaymentStatus
+  raw: unknown
+}
+
+// Webhook JSON (Hitpay-Signature header) — BEZA bentuk drpd WebhookResult
+// (form-encoded + medan hmac) utk payment-requests biasa. Guna event ini
+// untuk tahu bila pesakit SIAP lampir kad (hosted page async, redirect).
+export type RecurringEventType = 'method_attached' | 'method_detached' | 'subscription_updated' | 'charge_created' | 'unknown'
+export interface RecurringWebhookResult {
+  ok: boolean
+  eventType: RecurringEventType
+  authRef: string         // recurring_billing id
+  reference?: string      // rujukan KITA (receipt_ref) — jika HitPay gema balik `reference`
+  status?: string          // status mentah (active/cancelled/paused/expired dll)
+  cardLast4?: string
+  cardBrand?: string
+  raw: unknown
 }

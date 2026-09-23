@@ -131,6 +131,17 @@ CREATE TABLE IF NOT EXISTS psy_kob_installment_checkpoints (
 ALTER TABLE psy_kob_installment_checkpoints
   ADD COLUMN IF NOT EXISTS installment_reminder_sent_at TIMESTAMPTZ;
 
+-- Auto-Caj (kad tersimpan HitPay) — runInstallmentAutoChargeCheck (event-reminders)
+-- cuba caj checkpoint ON due_date guna psy_kob_card_authorizations.gateway_auth_ref
+-- SEBELUM jatuh balik ke pautan manual/overdue. autocharge_attempts dihadkan (3x,
+-- 1x/hari) — lepas tu serah balik ke aliran manual sedia ada (installment_overdue).
+ALTER TABLE psy_kob_installment_checkpoints
+  ADD COLUMN IF NOT EXISTS autocharge_status TEXT NOT NULL DEFAULT 'not_attempted'
+    CHECK (autocharge_status IN ('not_attempted','succeeded','failed')),
+  ADD COLUMN IF NOT EXISTS autocharge_last_attempt_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS autocharge_attempts INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS autocharge_payment_id UUID REFERENCES psy_payments(id) ON DELETE SET NULL;
+
 CREATE INDEX IF NOT EXISTS idx_kob_checkpoints_session ON psy_kob_installment_checkpoints(kob_session_id);
 CREATE INDEX IF NOT EXISTS idx_kob_checkpoints_patient ON psy_kob_installment_checkpoints(patient_id, status);
 CREATE INDEX IF NOT EXISTS idx_kob_checkpoints_overdue ON psy_kob_installment_checkpoints(due_date) WHERE status = 'pending';
@@ -151,6 +162,42 @@ COMMENT ON COLUMN psy_kob_installment_checkpoints.target_cumulative IS
   'Jumlah TERKUMPUL (bukan tambahan) yang wajib dicecah menjelang due_date. Checkpoint terakhir = harga penuh pakej (baki).';
 COMMENT ON COLUMN psy_kob_installment_checkpoints.status IS
   'met = jumlah terkumpul psy_payments dah cecah target (disemak automatik tiap kali bayaran baru direkod). overdue ditetapkan oleh installment-overdue-check (cron harian) bila due_date lepas & belum met.';
+
+-- ──── psy_kob_card_authorizations ────
+-- Kad tersimpan HitPay (recurring-billing, save_payment_method=true) SATU
+-- rekod per sesi KOB ansuran — bukan per checkpoint. Pesakit lampir kad
+-- SEKALI (hosted page, dijana createKobCardAttachLink), kemudian tiap
+-- checkpoint dicaj ON-DEMAND guna gateway_auth_ref (jumlah BERBEZA setiap
+-- kali, ikut target_cumulative checkpoint semasa — bukan cycle/subscription
+-- tetap HitPay). status='attached' ditetapkan oleh webhook JSON berasingan
+-- (payments-webhook-recurring, event method_attached) — BEZA drpd webhook
+-- form-encoded payments-webhook biasa (payment-requests).
+CREATE TABLE IF NOT EXISTS psy_kob_card_authorizations (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  kob_session_id    UUID NOT NULL REFERENCES psy_kob_sessions(id) ON DELETE CASCADE,
+  patient_id        UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  gateway_provider  TEXT NOT NULL DEFAULT 'hitpay',
+  gateway_auth_ref  TEXT NOT NULL,   -- id 'recurring-billing' HitPay
+  status            TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','attached','detached','failed')),
+  card_last4        TEXT,
+  card_brand        TEXT,
+  attached_at       TIMESTAMPTZ,
+  detached_at       TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT psy_kob_card_authorizations_unique_session UNIQUE (kob_session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kob_card_auth_patient ON psy_kob_card_authorizations(patient_id);
+
+ALTER TABLE psy_kob_card_authorizations ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patient read own card auth" ON psy_kob_card_authorizations;
+CREATE POLICY "Patient read own card auth" ON psy_kob_card_authorizations FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff manage card auth" ON psy_kob_card_authorizations;
+CREATE POLICY "Staff manage card auth" ON psy_kob_card_authorizations FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
 -- ──── psy_kob_agreements ────
 -- Rekod perjanjian yang ditandatangani pesakit.

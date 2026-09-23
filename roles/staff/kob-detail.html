@@ -2430,8 +2430,9 @@
         // halaman awam tanpa login. Lihat payment-receipt-public (Edge Function).
         const returnUrl = `${location.origin}/roles/patient/payment-receipt.html`;
         const tier = wizPayTier || (kob.package_payment_status === 'declined' ? 'now' : 'today');
+        const saveCard = mode === 'installment' && wizSaveCard;
         const { data, error } = await window.db.functions.invoke('payments-kob-initiate', {
-          body: { kobSessionId: kobId, mode, returnUrl, tier },
+          body: { kobSessionId: kobId, mode, returnUrl, tier, saveCard },
         });
         if (error) {
           let msg = error.message;
@@ -2473,6 +2474,50 @@
       }
     }
 
+    // Staff jana pautan "lampir kad" (HitPay recurring-billing, save_payment_method)
+    // & hantar terus ke WhatsApp — pesakit isi kad SEKALI, lepas tu ansuran
+    // seterusnya di-auto-caj oleh cron event-reminders (runInstallmentAutoChargeCheck)
+    // tanpa perlu pesakit klik pautan bayaran tiap bulan. Pattern sama sendKobHitpayLink()
+    // tapi mode='attach_card' & mesej berbeza (bukan pautan bayaran, pautan lampir kad).
+    let cardAttachSending = false;
+    async function sendCardAttachLink() {
+      if (cardAttachSending) return;
+      cardAttachSending = true;
+      renderPaymentMethodSection();
+      try {
+        const phone = patient?.psy_profiles?.phone || patient?.phone || '';
+        const cleanPhone = phone.replace(/\D/g, '').replace(/^0/, '60');
+        if (!cleanPhone) throw new Error('Pesakit tiada nombor telefon untuk hantar WhatsApp');
+        const patName = patient?.psy_profiles?.full_name || patient?.full_name || 'Pesakit';
+
+        const returnUrl = `${location.origin}/roles/patient/payment-receipt.html`;
+        const { data, error } = await window.db.functions.invoke('payments-kob-initiate', {
+          body: { kobSessionId: kobId, mode: 'attach_card', returnUrl },
+        });
+        if (error) {
+          let msg = error.message;
+          try { const ctx = await error.context?.json(); if (ctx?.error) msg = ctx.error; } catch (_) { }
+          throw new Error(msg);
+        }
+        if (data?.error) throw new Error(data.error);
+
+        const ec = await ghlInvoke('ensurecontact', { phone: cleanPhone, name: patName });
+        const contactId = ec?.contact?.contactId;
+        if (!contactId) throw new Error('Tak dapat sediakan contact GHL untuk nombor ini.');
+        await ghlInvoke('send', {
+          contactId,
+          message: `Salam ${patName} 👋\n\nUntuk memudahkan bayaran ansuran pakej rawatan anda, sila lampirkan kad debit/kredit anda (pengesahan RM1) melalui pautan selamat di bawah. Ansuran seterusnya akan ditolak SECARA AUTOMATIK pada tarikh due — anda tak perlu klik pautan bayaran setiap bulan lagi.\n\n${data.checkoutUrl}\n\n— ISW`,
+        });
+
+        banner(iswL('Pautan lampir kad dihantar ke WhatsApp pesakit ✅', 'Card-attach link sent to the patient on WhatsApp ✅'));
+      } catch (e) {
+        banner('Gagal jana/hantar pautan lampir kad: ' + e.message, 'error');
+      } finally {
+        cardAttachSending = false;
+        renderPaymentMethodSection();
+      }
+    }
+
     // Jana pautan HitPay & salin ke clipboard sahaja (tiada hantar WhatsApp) —
     // utk staff kongsi manual (SMS/e-mel/lain) atau kalau nombor telefon tiada.
     async function copyKobHitpayLink(mode) {
@@ -2486,8 +2531,9 @@
         // halaman awam tanpa login. Lihat payment-receipt-public (Edge Function).
         const returnUrl = `${location.origin}/roles/patient/payment-receipt.html`;
         const tier = wizPayTier || (kob.package_payment_status === 'declined' ? 'now' : 'today');
+        const saveCard = mode === 'installment' && wizSaveCard;
         const { data, error } = await window.db.functions.invoke('payments-kob-initiate', {
-          body: { kobSessionId: kobId, mode, returnUrl, tier },
+          body: { kobSessionId: kobId, mode, returnUrl, tier, saveCard },
         });
         if (error) {
           let msg = error.message;
@@ -2699,6 +2745,12 @@
     // langsung) kekal 100% di server (payments-kob-initiate/payments-initiate).
     let wizPlan = null;      // 'full' | 'installment' | 'manual_installment' | null
     let wizMethod = null;    // 'manual' | 'hitpay' | null
+    // Simpan kad pesakit (deposit ansuran, mode='installment' SAHAJA) supaya ansuran
+    // seterusnya di-auto-caj. BILA DITANDA: halaman HitPay HANYA tawar bayaran KAD
+    // (FPX/e-wallet TIADA — had teknikal, tak boleh simpan kad drpd sesi FPX). Nyahtanda
+    // checkbox ni kalau pesakit nak bayar FPX/e-wallet (semua kaedah tersedia, tapi
+    // ansuran seterusnya kekal manual). Lihat kob_retry_link.ts.
+    let wizSaveCard = true;
     // Butang Patient Teruskan/Tidak Teruskan start GREY/neutral setiap kali halaman
     // dimuat (walaupun kob.package_payment_status dah ada keputusan lama tersimpan)
     // — staff kena klik SEDAR utk sahkan, bukan auto papar biru ikut rekod lama.
@@ -3168,9 +3220,15 @@
         </div>
       </div>`;
       }
+      const saveCardToggle = hitpayMode === 'installment' ? `
+      <label class="flex items-start gap-2 text-xs text-ink/70 mb-2 max-w-md cursor-pointer">
+        <input type="checkbox" ${wizSaveCard ? 'checked' : ''} onchange="wizSaveCard = this.checked; renderPaymentMethodSection();" class="mt-0.5">
+        <span>💳 Simpan kad pesakit utk auto-caj ansuran seterusnya <strong>(hanya kad ditawar — FPX/e-wallet tiada)</strong>. Nyahtanda kalau pesakit nak bayar FPX/e-wallet/lain (semua kaedah tersedia, ansuran seterusnya kekal manual).</span>
+      </label>` : '';
       return `
     <div>
       ${backBtn}
+      ${saveCardToggle}
       <div class="flex gap-2 flex-wrap">
         <button type="button" ${(hitpaySending || hitpayCopying) ? 'disabled' : ''} onclick="sendKobHitpayLink('${hitpayMode}')"
           class="px-4 py-2.5 border border-ink/15 rounded-lg text-sm font-semibold hover:bg-ink/5 disabled:opacity-50">
@@ -3348,8 +3406,22 @@
           const { data: cps } = await window.db.from('psy_kob_installment_checkpoints')
             .select('target_cumulative').eq('kob_session_id', kobId).order('seq', { ascending: false }).limit(1);
           const commitment = cps?.[0] ? Number(cps[0].target_cumulative) : packagePrice;
+
+          // Kad tersimpan (auto-caj) — 1 rekod per sesi KOB. Badge status + butang
+          // hantar/ulang pautan lampir kad kalau belum 'attached'.
+          const { data: authRows } = await window.db.from('psy_kob_card_authorizations')
+            .select('status, card_last4, card_brand').eq('kob_session_id', kobId).limit(1);
+          const auth = authRows?.[0];
+          const cardBadge = auth?.status === 'attached'
+            ? `<div class="text-xs text-green-dark bg-green-light/50 p-2 rounded mb-2">💳 Kad dilampirkan${auth.card_brand ? ` (${escapeHtml(auth.card_brand)} •••• ${escapeHtml(auth.card_last4 || '')})` : ''} — ansuran seterusnya akan di-auto-caj pada tarikh due.</div>`
+            : `<div class="text-xs text-ink/60 bg-ink/5 p-2 rounded mb-2 flex items-center justify-between gap-2 flex-wrap">
+                 <span>💳 ${auth?.status === 'pending' ? 'Pautan lampir kad telah dihantar, menunggu pesakit lengkapkan.' : 'Kad belum dilampirkan — ansuran seterusnya perlu bayar manual (pautan/reminder sedia ada).'}</span>
+                 <button type="button" onclick="sendCardAttachLink()" class="text-[11px] font-semibold border border-navy text-navy px-2.5 py-1 rounded-md hover:bg-navy/5 whitespace-nowrap">${auth?.status === 'pending' ? 'Hantar Semula' : 'Hantar Pautan Lampir Kad'}</button>
+               </div>`;
+
           wizMain.innerHTML = `
         <div class="text-xs text-green-dark bg-green-light/50 p-2 rounded mb-2">✅ Deposit diterima (${fmtRM(totalPaid)}). Baki ansuran diuruskan di Pesakit Hub selepas KOB ditandakan selesai.</div>
+        ${cardBadge}
         ${paymentHistoryHtml(payments, commitment, totalPaid)}`;
           return;
         }

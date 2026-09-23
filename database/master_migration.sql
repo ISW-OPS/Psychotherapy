@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-09-23T01:15:58.138983Z
+-- Generated: 2026-09-23T05:03:02.128498Z
 -- Jumlah fail: 36
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -2924,6 +2924,17 @@ CREATE TABLE IF NOT EXISTS psy_kob_installment_checkpoints (
 ALTER TABLE psy_kob_installment_checkpoints
   ADD COLUMN IF NOT EXISTS installment_reminder_sent_at TIMESTAMPTZ;
 
+-- Auto-Caj (kad tersimpan HitPay) — runInstallmentAutoChargeCheck (event-reminders)
+-- cuba caj checkpoint ON due_date guna psy_kob_card_authorizations.gateway_auth_ref
+-- SEBELUM jatuh balik ke pautan manual/overdue. autocharge_attempts dihadkan (3x,
+-- 1x/hari) — lepas tu serah balik ke aliran manual sedia ada (installment_overdue).
+ALTER TABLE psy_kob_installment_checkpoints
+  ADD COLUMN IF NOT EXISTS autocharge_status TEXT NOT NULL DEFAULT 'not_attempted'
+    CHECK (autocharge_status IN ('not_attempted','succeeded','failed')),
+  ADD COLUMN IF NOT EXISTS autocharge_last_attempt_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS autocharge_attempts INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS autocharge_payment_id UUID REFERENCES psy_payments(id) ON DELETE SET NULL;
+
 CREATE INDEX IF NOT EXISTS idx_kob_checkpoints_session ON psy_kob_installment_checkpoints(kob_session_id);
 CREATE INDEX IF NOT EXISTS idx_kob_checkpoints_patient ON psy_kob_installment_checkpoints(patient_id, status);
 CREATE INDEX IF NOT EXISTS idx_kob_checkpoints_overdue ON psy_kob_installment_checkpoints(due_date) WHERE status = 'pending';
@@ -2944,6 +2955,42 @@ COMMENT ON COLUMN psy_kob_installment_checkpoints.target_cumulative IS
   'Jumlah TERKUMPUL (bukan tambahan) yang wajib dicecah menjelang due_date. Checkpoint terakhir = harga penuh pakej (baki).';
 COMMENT ON COLUMN psy_kob_installment_checkpoints.status IS
   'met = jumlah terkumpul psy_payments dah cecah target (disemak automatik tiap kali bayaran baru direkod). overdue ditetapkan oleh installment-overdue-check (cron harian) bila due_date lepas & belum met.';
+
+-- ──── psy_kob_card_authorizations ────
+-- Kad tersimpan HitPay (recurring-billing, save_payment_method=true) SATU
+-- rekod per sesi KOB ansuran — bukan per checkpoint. Pesakit lampir kad
+-- SEKALI (hosted page, dijana createKobCardAttachLink), kemudian tiap
+-- checkpoint dicaj ON-DEMAND guna gateway_auth_ref (jumlah BERBEZA setiap
+-- kali, ikut target_cumulative checkpoint semasa — bukan cycle/subscription
+-- tetap HitPay). status='attached' ditetapkan oleh webhook JSON berasingan
+-- (payments-webhook-recurring, event method_attached) — BEZA drpd webhook
+-- form-encoded payments-webhook biasa (payment-requests).
+CREATE TABLE IF NOT EXISTS psy_kob_card_authorizations (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  kob_session_id    UUID NOT NULL REFERENCES psy_kob_sessions(id) ON DELETE CASCADE,
+  patient_id        UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  gateway_provider  TEXT NOT NULL DEFAULT 'hitpay',
+  gateway_auth_ref  TEXT NOT NULL,   -- id 'recurring-billing' HitPay
+  status            TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','attached','detached','failed')),
+  card_last4        TEXT,
+  card_brand        TEXT,
+  attached_at       TIMESTAMPTZ,
+  detached_at       TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT psy_kob_card_authorizations_unique_session UNIQUE (kob_session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kob_card_auth_patient ON psy_kob_card_authorizations(patient_id);
+
+ALTER TABLE psy_kob_card_authorizations ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patient read own card auth" ON psy_kob_card_authorizations;
+CREATE POLICY "Patient read own card auth" ON psy_kob_card_authorizations FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff manage card auth" ON psy_kob_card_authorizations;
+CREATE POLICY "Staff manage card auth" ON psy_kob_card_authorizations FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
 -- ──── psy_kob_agreements ────
 -- Rekod perjanjian yang ditandatangani pesakit.
@@ -6064,6 +6111,95 @@ on conflict (key) do update set
   placeholders     = excluded.placeholders,
   channels         = excluded.channels,
   rule             = excluded.rule,
+  category         = excluded.category,
+  language         = excluded.language,
+  updated_at       = now();
+
+-- Jemputan Lampir Kad (card_attach_invite) — staff hantar pautan HitPay
+-- "lampir kad" (createKobCardAttachLink) supaya ansuran seterusnya boleh
+-- di-auto-caj tanpa pesakit klik pautan tiap bulan. Dihantar MANUAL oleh
+-- staff (butang kob-detail.html), bukan cron — is_active kawal sama ada
+-- placeholder ni dipakai/skip terus ke teks manual.
+insert into psy_auto_messages
+  (key, name, description, channel, trigger_type, message_template,
+   placeholders, channels, category, language, is_active)
+values
+  ('card_attach_invite',
+   'Jemputan Lampir Kad — Ansuran Automatik',
+   'Pautan HitPay "lampir kad" (RM1 pengesahan) supaya ansuran seterusnya dicaj automatik pada tarikh due, pesakit tak perlu klik pautan tiap bulan.',
+   'whatsapp', 'card_attach_invite',
+   E'Salam {nama} 👋\n\nUntuk memudahkan bayaran ansuran pakej rawatan anda, sila lampirkan kad debit/kredit anda (pengesahan RM1) melalui pautan selamat di bawah. Ansuran seterusnya akan ditolak SECARA AUTOMATIK pada tarikh due — anda tak perlu klik pautan bayaran setiap bulan lagi.\n\n{pautan}\n\n— {nama_klinik}',
+   '["{nama}","{pautan}","{nama_klinik}"]'::jsonb,
+   '["whatsapp"]'::jsonb,
+   'pembayaran', 'ms',
+   false)
+on conflict (key) do update set
+  name             = excluded.name,
+  description      = excluded.description,
+  channel          = excluded.channel,
+  trigger_type     = excluded.trigger_type,
+  message_template = excluded.message_template,
+  placeholders     = excluded.placeholders,
+  channels         = excluded.channels,
+  category         = excluded.category,
+  language         = excluded.language,
+  updated_at       = now();
+
+-- Auto-Caj Berjaya (installment_autocharge_success) — kad tersimpan berjaya
+-- dicaj on due_date (runInstallmentAutoChargeCheck, event-reminders →
+-- _shared/kob_autocharge.ts). Beza dgn resit HitPay biasa (payments-webhook
+-- sendPaymentReceiptWhatsApp) — mesej RINGKAS khusus konteks auto-caj.
+insert into psy_auto_messages
+  (key, name, description, channel, trigger_type, message_template,
+   placeholders, channels, category, language, is_active)
+values
+  ('installment_autocharge_success',
+   'Ansuran Auto-Caj Berjaya',
+   'Kad tersimpan pesakit berjaya dicaj automatik pada tarikh due checkpoint ansuran — hantar WA makluman ringkas.',
+   'whatsapp', 'installment_autocharge_success',
+   E'Salam {nama} 👋\n\nAnsuran *{ansuran}* pakej rawatan anda (RM {jumlah}) telah berjaya ditolak secara automatik daripada kad tersimpan anda pada hari ini.\n\nTerima kasih — {nama_klinik}',
+   '["{nama}","{ansuran}","{jumlah}","{nama_klinik}"]'::jsonb,
+   '["whatsapp"]'::jsonb,
+   'pembayaran', 'ms',
+   false)
+on conflict (key) do update set
+  name             = excluded.name,
+  description      = excluded.description,
+  channel          = excluded.channel,
+  trigger_type     = excluded.trigger_type,
+  message_template = excluded.message_template,
+  placeholders     = excluded.placeholders,
+  channels         = excluded.channels,
+  category         = excluded.category,
+  language         = excluded.language,
+  updated_at       = now();
+
+-- Auto-Caj Gagal (installment_autocharge_failed) — kad tersimpan DITOLAK
+-- (kad tamat tempoh/tiada baki dll) semasa cuba caj automatik pada due_date.
+-- Fallback ke pautan bayaran manual (createKobInstallmentTopupLink) — sama
+-- pautan dgn installment_reminder, cuma konteks mesej berbeza (bukan sekadar
+-- peringatan awal, tapi makluman kegagalan caj).
+insert into psy_auto_messages
+  (key, name, description, channel, trigger_type, message_template,
+   placeholders, channels, category, language, is_active)
+values
+  ('installment_autocharge_failed',
+   'Ansuran Auto-Caj Gagal',
+   'Kad tersimpan pesakit gagal dicaj (ditolak/tamat tempoh dll) semasa cuba caj automatik pada tarikh due — hantar WA + pautan bayaran manual fallback.',
+   'whatsapp', 'installment_autocharge_failed',
+   E'Salam {nama} 👋\n\nAnsuran *{ansuran}* pakej rawatan anda (RM {jumlah}) GAGAL ditolak secara automatik daripada kad tersimpan anda (kad mungkin ditolak/tamat tempoh).\n\nSila selesaikan bayaran melalui pautan selamat di bawah, atau hubungi klinik untuk kemas kini kad:\n{pautan}\n\n— {nama_klinik}',
+   '["{nama}","{ansuran}","{jumlah}","{pautan}","{nama_klinik}"]'::jsonb,
+   '["whatsapp"]'::jsonb,
+   'pembayaran', 'ms',
+   false)
+on conflict (key) do update set
+  name             = excluded.name,
+  description      = excluded.description,
+  channel          = excluded.channel,
+  trigger_type     = excluded.trigger_type,
+  message_template = excluded.message_template,
+  placeholders     = excluded.placeholders,
+  channels         = excluded.channels,
   category         = excluded.category,
   language         = excluded.language,
   updated_at       = now();

@@ -39,6 +39,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { createKobInstallmentTopupLink } from '../_shared/kob_topup.ts'
 import { createKobDepositLink } from '../_shared/kob_retry_link.ts'
+import { createKobCardAttachLink } from '../_shared/kob_autocharge.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -73,8 +74,8 @@ Deno.serve(async (req) => {
     const mode: string = String(body.mode || '')
     const returnUrl: string = String(body.returnUrl || '')
     if (!kobSessionId) return json({ error: 'kobSessionId diperlukan' }, 400)
-    if (mode !== 'full' && mode !== 'installment' && mode !== 'manual_installment' && mode !== 'topup') {
-      return json({ error: "mode mesti 'full', 'installment', 'manual_installment' atau 'topup'" }, 400)
+    if (mode !== 'full' && mode !== 'installment' && mode !== 'manual_installment' && mode !== 'topup' && mode !== 'attach_card') {
+      return json({ error: "mode mesti 'full', 'installment', 'manual_installment', 'topup' atau 'attach_card'" }, 400)
     }
     if (!returnUrl) return json({ error: 'returnUrl diperlukan' }, 400)
 
@@ -104,6 +105,19 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Mod 'attach_card' — jemput pesakit lampir kad (recurring-billing HitPay,
+    // sekali sahaja) supaya checkpoint SETERUSNYA boleh di-auto-caj (lihat
+    // event-reminders runInstallmentAutoChargeCheck). Staff-only (sekat oleh
+    // semakan isStaff di atas — sama pattern 'topup').
+    if (mode === 'attach_card') {
+      try {
+        const link = await createKobCardAttachLink(admin, kobSessionId, returnUrl)
+        return json({ ok: true, checkoutUrl: link.checkoutUrl, receiptRef: link.receiptRef })
+      } catch (err) {
+        return json({ error: (err as Error).message || 'Ralat tidak diketahui' }, 400)
+      }
+    }
+
     // 3-7. Sahkan sesi + derive amount + cipta pending + jana checkoutUrl — logik
     // dikongsi dgn payments-webhook (auto-retry bila gagal), lihat kob_retry_link.ts.
     // Tier: staff pilih terus di kob-detail.html (Langkah 3) ATAU pesakit self-checkout
@@ -111,10 +125,14 @@ Deno.serve(async (req) => {
     // MAHAL drpd 'today' (tiada insentif tamper), jadi selamat diterima dari client
     // kedua-dua kes. Default ikut status kalau body.tier tak dihantar/tak sah.
     const requestedTier = body.tier === 'today' || body.tier === 'now' ? body.tier : undefined
+    // Pesakit pilih 'Kad' (bukan FPX/e-wallet/lain) semasa deposit ansuran →
+    // kad disimpan SERENTAK (lihat kob_retry_link.ts) supaya ansuran seterusnya
+    // boleh di-auto-caj. Hanya relevan mode='installment' — diabaikan senyap lain.
+    const saveCard = body.saveCard === true
     try {
       const link = await createKobDepositLink(admin, {
         kobSessionId, mode: mode as 'full' | 'installment' | 'manual_installment',
-        tier: requestedTier, returnUrl, initiatedBy: isStaff ? 'staff' : 'patient',
+        tier: requestedTier, returnUrl, initiatedBy: isStaff ? 'staff' : 'patient', saveCard,
       })
       return json({ ok: true, checkoutUrl: link.checkoutUrl, receiptRef: link.receiptRef, amount: link.amount })
     } catch (err) {
