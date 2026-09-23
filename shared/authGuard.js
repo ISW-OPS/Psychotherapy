@@ -69,7 +69,7 @@ window.PAGE_MODULE = {
   point_rewards:    'products',
   inventory:        'inventory', kit_prosedur: 'inventory', suppliers: 'inventory',
   purchase_requests: 'inventory', stock_in: 'inventory', stock_alerts: 'inventory',
-  inventory_overview: 'inventory', stock_movement: 'inventory',
+  inventory_overview: 'inventory', stock_movement: 'inventory', pemberian_stok: 'inventory',
   pulangan:         'pulangan',
   psy_orders:       'orders',
   payment_admin:    'payment',

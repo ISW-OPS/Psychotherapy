@@ -156,6 +156,7 @@ const STAFF_NAV_MASTER = [
         { id: 'inventory_overview', url: 'inventory-overview.html', label: 'Overview' },
         { id: 'inventory',          url: 'inventory.html',          label: 'Products' },
         { id: 'stock_movement',     url: 'stock-movement.html',     label: 'Stock Movement' },
+        { id: 'pemberian_stok',     url: 'pemberian-stok.html',     label: 'Pemberian Stok' },
         { id: 'stock_alerts',       url: 'stock-alerts.html',       label: 'Stock Alerts' },
         { id: 'stock_in',           url: 'stock-in.html',           label: 'Stock In / Receive' },
         { id: 'suppliers',          url: 'suppliers.html',          label: 'Suppliers' },

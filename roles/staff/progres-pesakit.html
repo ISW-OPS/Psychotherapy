@@ -247,7 +247,13 @@ window.selectPatient = async function (id) {
     g(window.db.from('psy_clinical_referrals').select('*').eq('patient_id', id).eq('source', 'plan_1on1').order('created_at', { ascending: false }).limit(30)),
     g(window.db.from('psy_patient_notes').select('*').eq('patient_id', id).in('visibility', ['staff', 'both']).order('is_pinned', { ascending: false }).order('created_at', { ascending: false }).limit(10)),
     g(window.db.from('psy_reaksi_advice_log').select('log_date, symptoms, is_emergency, status, sent_at').eq('patient_id', id).order('log_date', { ascending: false }).limit(30)),
-    g(window.db.from('psy_supply_disbursements').select('item_name, qty, given_by_name, created_at').eq('patient_id', id).order('created_at', { ascending: false }).limit(10)),
+    // psy_stock_movements (bukan psy_supply_disbursements) — sumber lengkap, termasuk
+    // auto-potong sesi Hadir (checklist Bekalan di plan-week.html), bukan setakat manual
+    // "+ Bagi Bekalan" di patient-hub. Lihat nota sama di patient-hub.html loadSupply().
+    g(window.db.from('psy_stock_movements').select('item_name, qty, actor_name, created_at')
+      .eq('reference_type', 'patient_package').eq('reference_id', id).eq('movement_type', 'out')
+      .order('created_at', { ascending: false }).limit(10))
+      .then(rows => rows.map(r => ({ item_name: r.item_name, qty: Math.abs(Number(r.qty)), given_by_name: r.actor_name, created_at: r.created_at }))),
     g(window.db.from('psy_continuity_offers').select('package_name, price, status, created_at').eq('patient_id', id).order('created_at', { ascending: false }).limit(5)),
   ]);
 

@@ -455,11 +455,11 @@
               <div id="a-order-table" class="flex-1 overflow-y-auto"></div>
             </div>
 
-            <!-- Pemberian Stok kepada Pesakit -->
+            <!-- Stok Perlu Diberi kepada Pesakit (bekalan dijadualkan minggu ini, belum ditick/ditolak) -->
             <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden flex flex-col h-[400px]">
               <div class="px-6 h-[60px] border-b border-ink/8 flex items-center justify-between flex-shrink-0">
-                <h3 class="font-semibold text-sm text-ink flex items-center gap-2"><span>📦</span> Pemberian Stok</h3>
-                <a href="inventory.html" class="text-xs text-navy font-semibold hover:underline">Lihat semua →</a>
+                <h3 class="font-semibold text-sm text-ink flex items-center gap-2"><span>📦</span> Stok Perlu Diberi</h3>
+                <a href="pemberian-stok.html" class="text-xs text-navy font-semibold hover:underline">Lihat semua →</a>
               </div>
               <div id="a-stock-table" class="flex-1 overflow-y-auto"></div>
             </div>
@@ -2121,10 +2121,15 @@
       const _dayLo = new Date(_dayBase); _dayLo.setDate(_dayLo.getDate() - 1);
       const _dayHi = new Date(_dayBase); _dayHi.setDate(_dayHi.getDate() + 2);
 
+      // Minggu ini (Isnin–Ahad) — utk widget "Stok Perlu Diberi"
+      const _dow = _dayBase.getDay(); // 0=Ahad..6=Sabtu
+      const _weekStart = new Date(_dayBase); _weekStart.setDate(_weekStart.getDate() + (_dow === 0 ? -6 : 1 - _dow));
+      const _weekEnd = new Date(_weekStart); _weekEnd.setDate(_weekEnd.getDate() + 7);
+
       // ── Fetch ──
       const [
         ordersRes, todaySessRes, issueRepRes, issueClosedRes,
-        patientsRes, inventoryRes, stockLogRes, prPendingRes, emergencyRes,
+        patientsRes, inventoryRes, pendingSessRes, prPendingRes, emergencyRes,
       ] = await Promise.all([
         window.db.from('psy_orders').select('id, order_ref, patient_id, items, status, created_at').in('status', ['pending', 'paid', 'packed']).order('created_at', { ascending: false }),
         window.db.from('psy_plan_weekly_progress').select('id, session_date, status, patient_id').gte('session_date', _dayLo.toISOString()).lt('session_date', _dayHi.toISOString()).order('session_date', { ascending: true }),
@@ -2132,7 +2137,12 @@
         window.db.from('psy_audit_log').select('meta').eq('action', 'issue.closed'),
         window.db.from('psy_patients').select('id, status, outcome_status, mrn, coach_id, psy_profiles!psy_patients_user_id_fkey(full_name)'),
         window.db.from('psy_inventory_items').select('id, name, qty_in_stock, min_qty, source_type, consumption_type').eq('is_active', true),
-        window.db.from('psy_audit_log').select('id, created_at, meta').eq('action', 'inventory.auto_deducted').order('created_at', { ascending: false }).limit(8),
+        // Sesi F2F minggu ini yg BELUM Hadir — sumber "Stok Perlu Diberi" (bekalan dijadualkan,
+        // belum ditick/ditolak lagi), gantikan log "dah diberi" (kini di Stock Movement/patient-hub).
+        window.db.from('psy_plan_weekly_progress').select('id, session_date, week_number, plan_id, patient_id')
+          .eq('session_type', 'f2f').in('status', ['booked', 'pending'])
+          .gte('session_date', _weekStart.toISOString()).lt('session_date', _weekEnd.toISOString())
+          .order('session_date', { ascending: true }),
         window.db.from('psy_inventory_requests').select('id, request_no, requested_by_name, total_amount, priority, created_at').eq('status', 'pending_approval').order('created_at', { ascending: false }).then(r => r, () => ({ data: [] })),
         // Red Emergency Protocol — SEMUA alert aktif klinik (sama corak Manager/Doctor); kad khas sendiri
         // di bawah (renderEmergencyPanel), BUKAN dalam "Perlu Tindakan Segera".
@@ -2145,7 +2155,7 @@
       const closedIds = new Set((issueClosedRes.data || []).map(r => r.meta?.issue_id).filter(Boolean));
       const patients = patientsRes.data || [];
       const inventory = inventoryRes.data || [];
-      const stockLogs = stockLogRes.data || [];
+      const pendingSessions = pendingSessRes.data || [];
       const prPending = prPendingRes.data || [];
       const emergencyAlerts = emergencyRes.data || [];
       renderEmergencyPanel('a-emergency-list', emergencyAlerts);
@@ -2417,15 +2427,45 @@
       <span class="text-xs font-bold ${s.numCls} flex-shrink-0">${s.val.toLocaleString('en-US')}</span>
     </a>`).join('');
 
-      // ═══ ORDER TERTUNGGAK + PEMBERIAN STOK (jadual bawah) ═══
+      // ═══ ORDER TERTUNGGAK + STOK PERLU DIBERI (jadual bawah) ═══
       const orderPids = [...new Set(orders.map(o => o.patient_id).filter(Boolean))];
-      const stockPids = [...new Set(stockLogs.map(l => l.meta?.patient_id).filter(Boolean))];
-      const [orderProfRes, stockPatRes] = await Promise.all([
+      const pendingPlanIds = [...new Set(pendingSessions.map(s => s.plan_id).filter(Boolean))];
+      const [orderProfRes, pendingPlansRes] = await Promise.all([
         orderPids.length ? window.db.from('psy_profiles').select('id, full_name').in('id', orderPids).then(r => r, () => ({ data: [] })) : Promise.resolve({ data: [] }),
-        stockPids.length ? window.db.from('psy_patients').select('id, mrn, psy_profiles!psy_patients_user_id_fkey(full_name)').in('id', stockPids).then(r => r, () => ({ data: [] })) : Promise.resolve({ data: [] }),
+        pendingPlanIds.length ? window.db.from('psy_treatment_plans').select('id, coaching_schedule').in('id', pendingPlanIds).then(r => r, () => ({ data: [] })) : Promise.resolve({ data: [] }),
       ]);
       const orderProf = {}; (orderProfRes.data || []).forEach(p => { orderProf[p.id] = p; });
-      const stockPat = {}; (stockPatRes.data || []).forEach(p => { stockPat[p.id] = p; });
+      const patientNameById = {}; patients.forEach(p => { patientNameById[p.id] = p.psy_profiles?.full_name || p.mrn || 'Pesakit'; });
+      const planScheduleById = {}; (pendingPlansRes.data || []).forEach(pl => { planScheduleById[pl.id] = Array.isArray(pl.coaching_schedule) ? pl.coaching_schedule : []; });
+
+      // Sesi → bekalan dijadualkan minggu ni (ikut coaching_schedule pakej), skip kalau tiada
+      // bekalan/auto_stock=false — sama logik dgn shared/inventoryDeduct.js.
+      const stockNeeded = pendingSessions.map(s => {
+        const schedule = planScheduleById[s.plan_id] || [];
+        const weekObj = schedule.find(w => w.week === s.week_number) || schedule[s.week_number - 1];
+        const supplies = weekObj && weekObj.mode !== 'online'
+          ? [...(weekObj.supplies || []), ...(weekObj.supplies_2 || [])].filter(sup => sup?.auto_stock !== false && Number(sup?.qty || sup?.quantity || 0) > 0)
+          : [];
+        return { patient_id: s.patient_id, session_date: s.session_date, supplies };
+      }).filter(r => r.supplies.length);
+
+      // Sesetengah pakej lama simpan item_id sahaja (tiada item_name terus dalam
+      // coaching_schedule) — resolve nama sebenar dari katalog Inventori, sama fallback
+      // dgn pakej-edit.html.
+      {
+        const missingIds = new Set();
+        stockNeeded.forEach(r => r.supplies.forEach(sup => { if (!(sup.item_name || sup.name) && sup.item_id) missingIds.add(sup.item_id); }));
+        if (missingIds.size) {
+          const { data: invItems } = await window.db.from('psy_inventory_items').select('id, name, unit').in('id', [...missingIds]);
+          const invById = {}; (invItems || []).forEach(it => { invById[it.id] = it; });
+          stockNeeded.forEach(r => r.supplies.forEach(sup => {
+            if (!(sup.item_name || sup.name) && invById[sup.item_id]) {
+              sup.item_name = invById[sup.item_id].name;
+              if (!(sup.item_unit || sup.unit)) sup.item_unit = invById[sup.item_id].unit || '';
+            }
+          }));
+        }
+      }
 
       const fmtDate = d => d ? new Date(d).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
@@ -2451,26 +2491,26 @@
       </tbody>
     </table>` : '<div class="h-full flex items-center justify-center text-xs text-ink/30 p-6">Tiada order tertunggak</div>';
 
-      document.getElementById('a-stock-table').innerHTML = stockLogs.length ? `
+      document.getElementById('a-stock-table').innerHTML = stockNeeded.length ? `
     <table class="w-full table-fixed text-sm">
-      <colgroup><col style="width:34%"><col style="width:44%"><col style="width:22%"></colgroup>
+      <colgroup><col style="width:16%"><col style="width:24%"><col style="width:44%"><col style="width:16%"></colgroup>
       <thead class="bg-cream/40 text-[9px] uppercase tracking-wide text-ink/45">
-        <tr><th class="text-left py-2 px-3 font-semibold">Pesakit</th><th class="text-left py-2 px-2 font-semibold">Item Diberi</th><th class="text-left py-2 px-2 font-semibold">Tarikh</th></tr>
+        <tr><th class="text-left py-2 px-3 font-semibold">Tarikh</th><th class="text-left py-2 px-2 font-semibold">Nama Pesakit</th><th class="text-left py-2 px-2 font-semibold">Nama Produk</th><th class="text-right py-2 px-2 font-semibold">Qty</th></tr>
       </thead>
       <tbody class="divide-y divide-ink/5">
-        ${stockLogs.slice(0, 5).map(l => {
-        const pid = l.meta?.patient_id;
-        const pName = stockPat[pid]?.psy_profiles?.full_name || stockPat[pid]?.mrn || 'Pesakit';
-        const items = Array.isArray(l.meta?.items) ? l.meta.items : [];
-        const itemTxt = items.length ? items.map(i => `${i.item_name} ×${i.qty}${i.unit || ''}`).join(', ') : '—';
-        return `<tr class="hover:bg-cream/20">
-            <td class="py-2 px-3 text-[11px] font-medium text-ink truncate">${esc(pName)}</td>
-            <td class="py-2 px-2 text-[10px] text-ink/60 truncate">${esc(itemTxt)}</td>
-            <td class="py-2 px-2 text-[10px] text-ink/55 whitespace-nowrap">${fmtDate(l.created_at)}</td>
+        ${stockNeeded.slice(0, 5).map(r => {
+        const pName = patientNameById[r.patient_id] || 'Pesakit';
+        const itemNames = r.supplies.map((s, i) => `<div class="${i > 0 ? 'mt-0.5' : ''}">${i + 1}. ${esc(s.item_name || s.name || '(item tak ditemui)')}</div>`).join('');
+        const itemQtys = r.supplies.map((s, i) => `<div class="${i > 0 ? 'mt-0.5' : ''} text-ink/60">${esc(String(s.qty ?? s.quantity ?? ''))}${esc(s.item_unit || s.unit || '')}</div>`).join('');
+        return `<tr class="hover:bg-cream/20 align-top">
+            <td class="py-2 px-3 text-[10px] text-ink/55 whitespace-nowrap">${fmtDate(r.session_date)}</td>
+            <td class="py-2 px-2 text-[11px] font-medium text-ink truncate">${esc(pName)}</td>
+            <td class="py-2 px-2 text-[10px] text-ink/70">${itemNames}</td>
+            <td class="py-2 px-2 text-[10px] text-right">${itemQtys}</td>
           </tr>`;
       }).join('')}
       </tbody>
-    </table>` : '<div class="h-full flex items-center justify-center text-xs text-ink/30 p-6">Tiada rekod pemberian stok</div>';
+    </table>` : '<div class="h-full flex items-center justify-center text-xs text-ink/30 p-6">Tiada bekalan tertunggak minggu ini</div>';
 
     }
 

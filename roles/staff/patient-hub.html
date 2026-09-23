@@ -5657,15 +5657,23 @@
     let supplyHistory = [];
 
     async function loadSupply() {
+      // Sejarah Bekalan baca dari psy_stock_movements (ledger berpusat, shared/inventoryStock.js)
+      // — bukan psy_supply_disbursements — supaya AUTO-potong sesi Hadir (staff tick
+      // checklist "Bekalan" di plan-week.html) turut muncul, bukan setakat "+ Bagi Bekalan"
+      // manual. Dua-dua laluan tulis ke psy_stock_movements dgn reference_type='patient_package'.
       const [itemsRes, histRes] = await Promise.all([
         window.db.from('psy_inventory_items').select('id,name,unit,qty_in_stock,category').eq('is_active', true).order('name'),
-        window.db.from('psy_supply_disbursements').select('*')
-          .eq('patient_id', patientId).order('created_at', { ascending: false }).limit(50),
+        window.db.from('psy_stock_movements').select('item_name, qty, notes, created_at, actor_name, psy_inventory_items(unit)')
+          .eq('reference_type', 'patient_package').eq('reference_id', patientId).eq('movement_type', 'out')
+          .order('created_at', { ascending: false }).limit(50),
       ]);
       if (itemsRes.error) console.error('[Supply] inventory load error:', itemsRes.error);
       if (histRes.error) console.error('[Supply] history load error:', histRes.error);
       inventoryItems = itemsRes.data || [];
-      supplyHistory = histRes.data || [];
+      supplyHistory = (histRes.data || []).map(r => ({
+        item_name: r.item_name, qty: Math.abs(Number(r.qty)), unit: r.psy_inventory_items?.unit,
+        notes: r.notes, created_at: r.created_at, given_by_name: r.actor_name,
+      }));
       renderSupplyHistory();
       renderSupplyKpiAndItems();
     }
@@ -5933,24 +5941,11 @@
       btn.disabled = true; btn.textContent = 'Merekod...';
 
       try {
-        // Insert disbursement record
-        console.log('[Supply] inserting disbursement…', { patient_id: patientId, item_id: itemId, qty });
-        const { data: insData, error: insErr } = await window.db.from('psy_supply_disbursements').insert({
-          patient_id: patientId,
-          item_id: itemId,
-          item_name: itemName,
-          unit,
-          qty,
-          notes,
-          given_by: window.currentUser.id,
-          given_by_name: window.currentUser.full_name || window.currentUser.email,
-        }).select();
-        if (insErr) { console.error('[Supply] insert error:', insErr); throw insErr; }
-        console.log('[Supply] insert OK', insData);
-
         // Deduct from inventory — lalu addStockToLocation() (bukan update qty_in_stock terus)
         // supaya stok per-lokasi & ledger psy_stock_movements turut betul (sama laluan
-        // macam auto-deduct sesi hadir, lihat shared/inventoryDeduct.js).
+        // macam auto-deduct sesi hadir, lihat shared/inventoryDeduct.js). Ledger ni jugak
+        // sumber TUNGGAL "Sejarah Bekalan" (loadSupply()) — tiada lagi psy_supply_disbursements
+        // berasingan, supaya bekalan manual & auto-deduct sentiasa muncul sama tempat.
         console.log('[Supply] deducting stock…', { id: itemId, newQty: stock - qty });
         await window.addStockToLocation(itemId, -qty, null, {
           type: 'out', refType: 'patient_package', refId: patientId,
