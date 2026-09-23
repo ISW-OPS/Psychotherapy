@@ -164,7 +164,9 @@ CREATE TABLE IF NOT EXISTS psy_emergency_alerts (
   -- source 'patient' ditambah 22 Jul 2026 via migration adaptif (20260722c) —
   -- pesakit lapor sendiri dari seksyen Protokol Kecemasan di roles/patient/dashboard.html
   -- (butang kecemasan; bukan lagi halaman berasingan — consolidated 22 Jul 2026).
-  source                   TEXT DEFAULT 'auto' CHECK (source IN ('auto','manual','patient')),
+  -- source 'vitals' ditambah 23 Sept 2026 — bacaan Vitals kritikal auto-cipta kes,
+  -- lihat trg_vitals_notify_emergency di bawah.
+  source                   TEXT DEFAULT 'auto' CHECK (source IN ('auto','manual','patient','vitals')),
   source_log_id            UUID REFERENCES psy_reaksi_advice_log(id) ON DELETE SET NULL,
   reported_at              TIMESTAMPTZ DEFAULT now(),
   response_target_minutes  INT NOT NULL,          -- 15 (merah) / 60 (kuning)
@@ -275,6 +277,82 @@ DROP TRIGGER IF EXISTS trg_reaksi_advice_notify_emergency ON psy_reaksi_advice_l
 CREATE TRIGGER trg_reaksi_advice_notify_emergency
   AFTER INSERT ON psy_reaksi_advice_log
   FOR EACH ROW EXECUTE FUNCTION trg_reaksi_advice_notify_emergency();
+
+-- ──── Fungsi trigger: bacaan Vitals KRITIKAL → auto-cipta/kemaskini kes Red Emergency ────
+-- Sama pola dgn trg_reaksi_advice_notify_emergency di atas (satu alert AKTIF per
+-- pesakit, taraf naik ke merah dibenarkan, taraf turun DISEKAT). is_critical
+-- dikira server-side di fn_vitals_compute_critical() (10_vitals.sql) — trigger ni
+-- cuma respons bila NEW.is_critical = true, tak kira laluan insert (patient-hub/
+-- plan-week/vitals-detail) atau staf sedar/tidak.
+CREATE OR REPLACE FUNCTION trg_vitals_notify_emergency()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_coach_id     UUID;
+  v_patient_name TEXT;
+  v_open_id      UUID;
+  v_reason       TEXT;
+BEGIN
+  IF NOT NEW.is_critical THEN RETURN NEW; END IF;
+
+  SELECT pt.coach_id, COALESCE(pr.full_name, pt.full_name, 'Pesakit')
+    INTO v_coach_id, v_patient_name
+  FROM psy_patients pt
+  LEFT JOIN psy_profiles pr ON pr.id = pt.user_id
+  WHERE pt.id = NEW.patient_id;
+  IF v_coach_id IS NULL THEN RETURN NEW; END IF;
+
+  v_reason := 'Bacaan Vitals kritikal: ' || COALESCE(NULLIF(concat_ws(', ',
+    CASE WHEN NEW.bp_systolic IS NOT NULL AND (NEW.bp_systolic < 80 OR NEW.bp_systolic >= 180)
+      THEN 'BP ' || NEW.bp_systolic || '/' || COALESCE(NEW.bp_diastolic::TEXT, '—') END,
+    CASE WHEN NEW.bp_diastolic IS NOT NULL AND NEW.bp_diastolic >= 120
+      THEN 'BP diastolik ' || NEW.bp_diastolic END,
+    CASE WHEN NEW.heart_rate IS NOT NULL AND (NEW.heart_rate < 40 OR NEW.heart_rate > 130)
+      THEN 'Nadi ' || NEW.heart_rate || ' bpm' END,
+    CASE WHEN NEW.temperature IS NOT NULL AND (NEW.temperature < 35.0 OR NEW.temperature >= 39.5)
+      THEN 'Suhu ' || NEW.temperature || '°C' END,
+    CASE WHEN NEW.spo2 IS NOT NULL AND NEW.spo2 < 90
+      THEN 'SpO2 ' || NEW.spo2 || '%' END,
+    CASE WHEN NEW.respiratory_rate IS NOT NULL AND (NEW.respiratory_rate < 8 OR NEW.respiratory_rate > 30)
+      THEN 'RR ' || NEW.respiratory_rate || '/min' END
+  ), ''), 'ambang kritikal');
+
+  INSERT INTO psy_notifications (user_id, type, title, body, link)
+  VALUES (
+    v_coach_id, 'vitals',
+    '🔴 BACAAN KRITIKAL: ' || v_patient_name,
+    v_reason || ' — sila susul SEGERA.',
+    'emergency.html?patient_id=' || NEW.patient_id::TEXT
+  );
+
+  -- Worklist: satu alert AKTIF per pesakit — kemaskini kalau dah ada (taraf terus
+  -- ke merah, tak pernah turun), cipta baharu kalau tiada.
+  SELECT id INTO v_open_id FROM psy_emergency_alerts
+  WHERE patient_id = NEW.patient_id AND status <> 'resolved'
+  ORDER BY created_at DESC LIMIT 1;
+
+  IF v_open_id IS NOT NULL THEN
+    UPDATE psy_emergency_alerts
+    SET zon = 'merah', reported_at = now(), response_target_minutes = 15, updated_at = now(),
+        notes = CASE WHEN notes IS NULL OR notes = '' THEN v_reason ELSE notes || E'\n' || v_reason END
+    WHERE id = v_open_id;
+  ELSE
+    INSERT INTO psy_emergency_alerts
+      (patient_id, zon, source, response_target_minutes, assigned_to, notes)
+    VALUES
+      (NEW.patient_id, 'merah', 'vitals', 15, v_coach_id, v_reason);
+  END IF;
+
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_vitals_notify_emergency: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_vitals_notify_emergency ON psy_vitals;
+CREATE TRIGGER trg_vitals_notify_emergency
+  AFTER INSERT ON psy_vitals
+  FOR EACH ROW EXECUTE FUNCTION trg_vitals_notify_emergency();
 
 -- ──── Fungsi RPC: pesakit tekan butang kecemasan (seksyen Protokol Kecemasan, roles/patient/dashboard.html) ────
 -- Satu alert AKTIF per pesakit — dedup sama logic dgn trigger di atas. Taraf

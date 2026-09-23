@@ -65,6 +65,7 @@
                 <option value="">Semua Status</option>
                 <option value="normal">Normal</option>
                 <option value="abnormal">Tidak Normal</option>
+                <option value="critical">Kritikal</option>
               </select>
             </div>
             <button onclick="resetFilters()" class="px-3 py-2.5 border border-ink/15 rounded-lg text-sm bg-white hover:bg-ink/5">↻ Reset</button>
@@ -73,6 +74,7 @@
             <button class="vh-chip" onclick="applyChip('all')">Semua Rekod</button>
             <button class="vh-chip" onclick="applyChip('normal')">Bacaan Normal</button>
             <button class="vh-chip" onclick="applyChip('abnormal')">Bacaan Tidak Normal</button>
+            <button class="vh-chip" onclick="applyChip('critical')">🔴 Bacaan Kritikal</button>
             <button class="vh-chip" onclick="applyChip('today')">Hari Ini</button>
             <button class="vh-chip" onclick="applyChip('7d')">7 Hari Terakhir</button>
             <button class="vh-chip" onclick="applyChip('30d')">30 Hari Terakhir</button>
@@ -180,6 +182,7 @@ function applyChip(kind) {
   if (kind === 'all') setPreset(null);
   else if (kind === 'normal') document.getElementById('vh-status').value = 'normal';
   else if (kind === 'abnormal') document.getElementById('vh-status').value = 'abnormal';
+  else if (kind === 'critical') document.getElementById('vh-status').value = 'critical';
   else if (kind === 'today') setPreset(1);
   else if (kind === '7d') setPreset(7);
   else if (kind === '30d') setPreset(30);
@@ -229,7 +232,9 @@ function applyFilters() {
   renderTable();
 }
 
+function vStatusText(v) { return v.is_critical ? 'Kritikal' : (v.is_abnormal ? 'Tidak Normal' : 'Normal'); }
 function rowStatusBadge(v) {
+  if (v.is_critical) return `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">🔴 Kritikal</span>`;
   if (!v.is_abnormal) return `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-light text-green-dark">Normal</span>`;
   return `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-terracotta-light text-terracotta">Tidak Normal</span>`;
 }
@@ -333,7 +338,8 @@ async function loadVitals() {
   if (from) q = q.gte('reading_date', from);
   if (to) q = q.lte('reading_date', to);
   if (status === 'normal') q = q.eq('is_abnormal', false);
-  if (status === 'abnormal') q = q.eq('is_abnormal', true);
+  if (status === 'abnormal') q = q.eq('is_abnormal', true).eq('is_critical', false);
+  if (status === 'critical') q = q.eq('is_critical', true);
   q = q.order('reading_date', { ascending: false, nullsFirst: false })
        .order('reading_time', { ascending: false, nullsFirst: false })
        .order('created_at', { ascending: false })
@@ -355,7 +361,7 @@ function exportFilteredCsv() {
       dt.toLocaleDateString('en-GB') + (vHasTime(v) ? ' ' + dt.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'}) : ''),
       (v.bp_systolic && v.bp_diastolic) ? `${v.bp_systolic}/${v.bp_diastolic}` : '', v.heart_rate ?? '', v.temperature ?? '',
       v.spo2 ?? '', v.respiratory_rate ?? '', v.weight ?? '', v.height ?? '', v.bmi ?? '',
-      v.is_abnormal ? 'Tidak Normal' : 'Normal', v.recorded_by_name || '',
+      vStatusText(v), v.recorded_by_name || '',
     ]);
   });
   const csv = '﻿' + rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
@@ -418,7 +424,7 @@ async function exportScheduleExcel() {
         r.v?.bp_systolic ?? '', r.v?.bp_diastolic ?? '', r.v?.heart_rate ?? '', r.v?.spo2 ?? '', r.v?.respiratory_rate ?? '',
         r.v?.temperature ?? '', r.v?.weight ?? '', r.v?.height ?? '', r.v?.bmi ?? '', r.v?.waist_cm ?? '', r.v?.rbs ?? '',
         r.v?.hba1c ?? '', r.v?.phq2_score ?? '', r.v?.pain_score ?? '', r.v?.medications || '', r.v?.notes || '',
-        r.v ? (r.v.is_abnormal ? 'Tidak Normal' : 'Normal') : '', r.v ? (r.v.source === 'patient_self' ? 'Pesakit' : 'Staff') : '',
+        r.v ? vStatusText(r.v) : '', r.v ? (r.v.source === 'patient_self' ? 'Pesakit' : 'Staff') : '',
       ]),
     ];
     const ws = XLSX.utils.aoa_to_sheet(sheetRows);

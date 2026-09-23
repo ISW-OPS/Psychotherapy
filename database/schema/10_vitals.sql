@@ -39,6 +39,15 @@ ALTER TABLE psy_vitals ADD COLUMN IF NOT EXISTS respiratory_rate INT;
 ALTER TABLE psy_vitals ADD COLUMN IF NOT EXISTS pain_score INT CHECK (pain_score BETWEEN 0 AND 10);
 ALTER TABLE psy_vitals ADD COLUMN IF NOT EXISTS is_abnormal BOOLEAN NOT NULL DEFAULT false;
 
+-- Kritikal (bahaya klinikal, perlu tindakan segera) — tahap lebih ketat drpd
+-- "Tidak Normal" (is_abnormal) di atas. Dikira SERVER-SIDE SAHAJA (trigger di bawah),
+-- tak boleh diubah/dipintas oleh client — supaya bacaan kritikal SENTIASA dikesan
+-- tanpa bergantung laluan insert (patient-hub.html/plan-week.html/vitals-detail.html)
+-- atau staf lupa tanda. Bila true, auto-cipta/kemaskini kes di Red Emergency
+-- Protocol (psy_emergency_alerts) — lihat trg_vitals_notify_emergency di
+-- 18_notifications_automations.sql.
+ALTER TABLE psy_vitals ADD COLUMN IF NOT EXISTS is_critical BOOLEAN NOT NULL DEFAULT false;
+
 -- Indeks
 CREATE INDEX IF NOT EXISTS idx_psy_vitals_patient ON psy_vitals(patient_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_vitals_plan_week
@@ -55,6 +64,40 @@ UPDATE psy_vitals SET is_abnormal = true WHERE is_abnormal = false AND (
   (temperature IS NOT NULL AND (temperature < 36.1 OR temperature > 37.2)) OR
   (spo2 IS NOT NULL AND spo2 < 95)
 );
+
+-- ──── Ambang KRITIKAL — dikira server-side, elak client pintas/lupa tanda ────
+-- NOTA: ambang default di bawah (BP/nadi/suhu/SpO2/RR) belum disahkan klinikal
+-- ISW — ni piawai am industri sahaja. TUKAR di fn_vitals_compute_critical() ni
+-- sahaja (satu tempat) selepas doktor/klinikal sahkan.
+CREATE OR REPLACE FUNCTION fn_vitals_compute_critical()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.is_critical := (
+    (NEW.bp_systolic IS NOT NULL AND (NEW.bp_systolic < 80 OR NEW.bp_systolic >= 180)) OR
+    (NEW.bp_diastolic IS NOT NULL AND NEW.bp_diastolic >= 120) OR
+    (NEW.heart_rate IS NOT NULL AND (NEW.heart_rate < 40 OR NEW.heart_rate > 130)) OR
+    (NEW.temperature IS NOT NULL AND (NEW.temperature < 35.0 OR NEW.temperature >= 39.5)) OR
+    (NEW.spo2 IS NOT NULL AND NEW.spo2 < 90) OR
+    (NEW.respiratory_rate IS NOT NULL AND (NEW.respiratory_rate < 8 OR NEW.respiratory_rate > 30))
+  );
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_vitals_compute_critical ON psy_vitals;
+CREATE TRIGGER trg_vitals_compute_critical
+  BEFORE INSERT OR UPDATE ON psy_vitals
+  FOR EACH ROW EXECUTE FUNCTION fn_vitals_compute_critical();
+
+-- Backfill sekali sahaja (sama sebab macam is_abnormal di atas)
+UPDATE psy_vitals SET is_critical = (
+  (bp_systolic IS NOT NULL AND (bp_systolic < 80 OR bp_systolic >= 180)) OR
+  (bp_diastolic IS NOT NULL AND bp_diastolic >= 120) OR
+  (heart_rate IS NOT NULL AND (heart_rate < 40 OR heart_rate > 130)) OR
+  (temperature IS NOT NULL AND (temperature < 35.0 OR temperature >= 39.5)) OR
+  (spo2 IS NOT NULL AND spo2 < 90) OR
+  (respiratory_rate IS NOT NULL AND (respiratory_rate < 8 OR respiratory_rate > 30))
+) WHERE is_critical = false;
 
 -- RLS
 ALTER TABLE psy_vitals ENABLE ROW LEVEL SECURITY;
@@ -101,3 +144,10 @@ COMMENT ON COLUMN psy_vitals.pain_score IS 'Skor kesakitan pesakit, 0 (tiada) hi
 COMMENT ON COLUMN psy_vitals.is_abnormal IS
   'Dikira semasa simpan (ambang klinikal BP/HR/suhu/SpO2/resp rate) ATAU ditanda manual oleh staff. '
   'Disimpan (bukan dikira semula tiap kali) supaya statistik dashboard Vitals murah untuk query.';
+
+COMMENT ON COLUMN psy_vitals.is_critical IS
+  'Bacaan kritikal (bahaya klinikal, perlu tindakan segera) — dikira SERVER-SIDE sahaja '
+  '(trg_vitals_compute_critical), staf TAK boleh override/uncheck macam is_abnormal. Bila true, '
+  'trg_vitals_notify_emergency (18_notifications_automations.sql) auto-cipta/kemaskini kes di '
+  'psy_emergency_alerts — Red Emergency Protocol. Ambang belum disahkan klinikal ISW, lihat nota '
+  'di fn_vitals_compute_critical().';
