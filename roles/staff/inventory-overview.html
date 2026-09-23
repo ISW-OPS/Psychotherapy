@@ -82,21 +82,14 @@
           </div>
         </div>
 
-        <!-- Donut + Stock by Location + Quick Actions -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 items-stretch">
-          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex flex-col">
-            <h3 class="font-bold text-sm text-ink mb-4">Stock Status Summary</h3>
-            <div class="flex items-center gap-5 flex-1">
-              <div id="ov-donut" class="relative w-32 h-32 rounded-full flex-shrink-0 flex items-center justify-center">
-                <div class="absolute inset-3 rounded-full bg-white flex flex-col items-center justify-center">
-                  <div id="ov-donut-total" class="text-xl font-bold text-ink">—</div>
-                  <div class="text-[10px] text-ink/40">Total Items</div>
-                </div>
-              </div>
-              <div id="ov-donut-legend" class="space-y-1.5 text-xs flex-1 min-w-0"></div>
-            </div>
-          </div>
-
+        <!-- Stock by Location + PR Menunggu Kelulusan — "Quick Actions" dibuang (semua
+             destinasi tu dah ada 1 klik di sub-menu sidebar "Inventori": Overview/Products/
+             Stock Movement/Stock Alerts/Stock In/Suppliers/Purchase Requests — panel lama
+             cuma nyalin sidebar). "Stock Status Summary" (donut) turut dibuang — 3 drpd 5
+             segmen (Stok Rendah/Kehabisan Stok/Tidak Mencukupi) angka SAMA PERSIS dgn 3 kad
+             KPI di atas, cuma bentuk lain; baki 2 segmen (Mencukupi/Tidak Aktif) tak cukup
+             nilai utk kekalkan kad berasingan. -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch">
           <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
             <div class="flex items-center justify-between mb-4">
               <h3 class="font-bold text-sm text-ink">Stock by Location</h3>
@@ -105,30 +98,12 @@
             <div id="ov-location-bars" class="space-y-3 text-xs"></div>
           </div>
 
-          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
-            <h3 class="font-bold text-sm text-ink mb-4">Quick Actions</h3>
-            <div class="grid grid-cols-3 gap-2">
-              <button data-rbac="inventory.create" onclick="location.href='item-form.html'" class="hidden flex flex-col items-center gap-1.5 px-2 py-3 rounded-xl border border-ink/10 hover:bg-ink/5 text-center">
-                <span class="w-9 h-9 rounded-xl bg-navy/10 flex items-center justify-center text-base">📦</span>
-                <span class="text-[11px] font-medium text-ink leading-tight">Add Product</span>
-              </button>
-              <button onclick="location.href='stock-in.html'" class="flex flex-col items-center gap-1.5 px-2 py-3 rounded-xl border border-ink/10 hover:bg-ink/5 text-center">
-                <span class="w-9 h-9 rounded-xl bg-green/10 flex items-center justify-center text-base">📥</span>
-                <span class="text-[11px] font-medium text-ink leading-tight">Stock In</span>
-              </button>
-              <button onclick="location.href='stock-movement.html'" class="flex flex-col items-center gap-1.5 px-2 py-3 rounded-xl border border-ink/10 hover:bg-ink/5 text-center">
-                <span class="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center text-base">✏️</span>
-                <span class="text-[11px] font-medium text-ink leading-tight">Stock Adjustment</span>
-              </button>
-              <button data-rbac="inventory.create" onclick="location.href='purchase-request-form.html'" class="hidden flex flex-col items-center gap-1.5 px-2 py-3 rounded-xl border border-ink/10 hover:bg-ink/5 text-center">
-                <span class="w-9 h-9 rounded-xl bg-navy/10 flex items-center justify-center text-base">📋</span>
-                <span class="text-[11px] font-medium text-ink leading-tight">New Request</span>
-              </button>
-              <button onclick="location.href='supplier-edit.html'" class="flex flex-col items-center gap-1.5 px-2 py-3 rounded-xl border border-ink/10 hover:bg-ink/5 text-center">
-                <span class="w-9 h-9 rounded-xl bg-gold/15 flex items-center justify-center text-base">🏢</span>
-                <span class="text-[11px] font-medium text-ink leading-tight">Add Supplier</span>
-              </button>
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex flex-col">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-bold text-sm text-ink">PR Menunggu Kelulusan</h3>
+              <a href="purchase-requests.html" class="text-xs text-navy hover:underline">Lihat semua →</a>
             </div>
+            <div id="ov-pr-pending" class="space-y-2 text-xs flex-1"></div>
           </div>
         </div>
 
@@ -231,7 +206,7 @@ async function loadOverview() {
     window.db.from('psy_inventory_items').select('*'),
     window.db.from('psy_inventory_locations').select('*').eq('is_active', true).order('name'),
     window.db.from('psy_inventory_stock_by_location').select('*, psy_inventory_locations(name)'),
-    window.db.from('psy_inventory_requests').select('id,status', { count: 'exact' }).eq('status', 'pending_approval'),
+    window.db.from('psy_inventory_requests').select('id, request_no, requested_by_name, total_amount, priority, created_at', { count: 'exact' }).eq('status', 'pending_approval').order('created_at', { ascending: false }),
   ]);
 
   allItems = itemsRes.data || [];
@@ -242,10 +217,29 @@ async function loadOverview() {
   await window.attachInventoryForecast(activeItems);
 
   renderStats(activeItems, reqRes.count || 0);
-  renderDonut(activeItems);
   renderLocationBars();
+  renderPendingRequests(reqRes.data || []);
   renderTopLowStock(activeItems);
   await loadMovements();
+}
+
+function renderPendingRequests(rows) {
+  const host = document.getElementById('ov-pr-pending');
+  if (!host) return;
+  if (!rows.length) { host.innerHTML = '<div class="h-full flex items-center justify-center text-ink/30 py-6">Tiada PR menunggu kelulusan 🎉</div>'; return; }
+  const locale = (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB';
+  const fmtDate = d => d ? new Date(d).toLocaleDateString(locale, { day: '2-digit', month: 'short' }) : '—';
+  host.innerHTML = rows.slice(0, 5).map(r => `
+    <a href="purchase-request-detail.html?id=${r.id}" class="flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-ink/8 hover:bg-cream/30 transition-colors">
+      <div class="min-w-0">
+        <div class="font-semibold text-ink truncate">${escHtml(r.request_no || 'PR')}</div>
+        <div class="text-[10px] text-ink/45 truncate">${escHtml(r.requested_by_name || 'Staff')} · ${fmtDate(r.created_at)}</div>
+      </div>
+      <div class="text-right flex-shrink-0">
+        <div class="font-bold text-navy">${fmtRM(r.total_amount)}</div>
+      </div>
+    </a>`).join('') +
+    (rows.length > 5 ? `<div class="text-center pt-1"><a href="purchase-requests.html" class="text-[10px] text-navy hover:underline">+${rows.length - 5} lagi →</a></div>` : '');
 }
 
 function renderStats(activeItems, pendingCount) {
@@ -259,36 +253,6 @@ function renderStats(activeItems, pendingCount) {
   document.getElementById('stat-empty').textContent = activeItems.filter(i => getStockStatus(i) === 'empty').length;
   document.getElementById('stat-insufficient').textContent = activeItems.filter(i => getStockStatus(i) === 'insufficient').length;
   document.getElementById('stat-pending').textContent = pendingCount;
-}
-
-function renderDonut(activeItems) {
-  const inactiveCount = allItems.length - activeItems.length;
-  const counts = { ok: 0, low: 0, insufficient: 0, empty: 0 };
-  activeItems.forEach(i => { counts[getStockStatus(i)]++; });
-  const total = allItems.length || 1;
-
-  const segs = [
-    { key: 'ok', label: 'Sufficient', count: counts.ok, color: '#16a34a' },
-    { key: 'low', label: 'Low Stock', count: counts.low, color: '#f59e0b' },
-    { key: 'insufficient', label: 'Insufficient', count: counts.insufficient, color: '#0d9488' },
-    { key: 'empty', label: 'Out of Stock', count: counts.empty, color: '#dc2626' },
-    { key: 'inactive', label: 'Inactive', count: inactiveCount, color: '#9ca3af' },
-  ];
-
-  let acc = 0;
-  const stops = segs.map(s => {
-    const pct = (s.count / total) * 100;
-    const from = acc; acc += pct;
-    return `${s.color} ${from}% ${acc}%`;
-  }).join(', ');
-  document.getElementById('ov-donut').style.background = total ? `conic-gradient(${stops})` : '#e5e7eb';
-  document.getElementById('ov-donut-total').textContent = allItems.length;
-
-  document.getElementById('ov-donut-legend').innerHTML = segs.map(s => `
-    <div class="flex items-center justify-between gap-2">
-      <div class="flex items-center gap-1.5 min-w-0"><span class="w-2 h-2 rounded-full flex-shrink-0" style="background:${s.color}"></span><span class="text-ink/60 truncate">${s.label}</span></div>
-      <span class="font-semibold text-ink flex-shrink-0">${s.count} <span class="text-ink/40 font-normal">(${Math.round((s.count/total)*100)}%)</span></span>
-    </div>`).join('');
 }
 
 function renderLocationBars() {

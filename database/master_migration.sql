@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-09-22T07:42:41.990343Z
+-- Generated: 2026-09-23T01:15:58.138983Z
 -- Jumlah fail: 36
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -1338,6 +1338,9 @@ CREATE TABLE IF NOT EXISTS psy_packages (
   access_flags JSONB DEFAULT '{}',
   supplies JSONB DEFAULT '[]',
   addons JSONB DEFAULT '[]',
+  -- value stack pemasaran (kad "Apa Yang Anda Terima" + bonus + jadual ringkasan nilai)
+  value_stack JSONB DEFAULT '[]',
+  value_bonuses JSONB DEFAULT '[]',
   -- version pakej: gantikan corak manual "(new)" dalam nama pakej — nombor sahaja,
   -- version tertinggi bagi Nama Pakej yang sama = version semasa (implicit, tiada
   -- medan status berasingan).
@@ -1383,6 +1386,12 @@ COMMENT ON COLUMN psy_packages.supplies IS
 
 COMMENT ON COLUMN psy_packages.addons IS
   'Array of {name, ...} — senarai addon pakej (tab Lain-lain)';
+
+COMMENT ON COLUMN psy_packages.value_stack IS
+  'Array of {category, title_bm, title_en, description, bullets:[text], value:number} — komponen "value stack" pemasaran pakej (kad Apa Yang Anda Terima + jadual ringkasan nilai), dipaparkan di pakej-detail.html (staff & patient).';
+
+COMMENT ON COLUMN psy_packages.value_bonuses IS
+  'Sama struktur dgn value_stack — bonus percuma pakej (dipaparkan berasingan sebagai jalur "Bonus Eksklusif").';
 
 COMMENT ON COLUMN psy_packages.weekly_content IS
   'Array of {week, content_ids: []} — library content unlock per week';
