@@ -52,6 +52,12 @@
           </div>
         </div>
 
+        <!-- Banner tapisan pesakit/item (dari pemberian-stok.html "Dah Bagi" → trace pemberian tertentu) -->
+        <div id="sm-context-banner" class="hidden bg-navy-light/60 border border-navy/20 rounded-xl px-4 py-2.5 flex items-center justify-between gap-2 text-sm">
+          <span id="sm-context-text" class="text-navy font-semibold"></span>
+          <a href="stock-movement.html" class="text-xs text-navy/70 hover:underline whitespace-nowrap">✕ Buang tapisan</a>
+        </div>
+
         <!-- Stat Cards -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
@@ -226,6 +232,9 @@ let stockByLocationRows = [];
 let smPage = 1;
 let smPageSize = 10;
 let smTotal = 0;
+let ctxPatientId = null;      // ?patient_id= — trace pemberian tertentu (dari pemberian-stok.html)
+let ctxPatientOrderIds = [];  // order_id milik ctxPatientId (utk reference_type='shop_order')
+let ctxItemId = null;         // ?item_id= — sekali dgn ctxPatientId, sempitkan ke satu produk
 
 const REF_TYPE_LABEL = {
   stock_in: 'Supplier Delivery', purchase_request: 'Purchase Request', opening_stock: 'Opening Stock',
@@ -301,6 +310,13 @@ function buildQuery(base) {
   if (dFrom) q = q.gte('created_at', dFrom + 'T00:00:00');
   if (dTo) q = q.lte('created_at', dTo + 'T23:59:59');
   if (search) q = q.or(`item_name.ilike.%${search}%,reference_label.ilike.%${search}%,notes.ilike.%${search}%`);
+  if (ctxItemId) q = q.eq('item_id', ctxItemId);
+  if (ctxPatientId) {
+    // reference_id ialah patient_id terus utk 'patient_package', tapi order_id utk 'shop_order' —
+    // kena OR dua bentuk supaya trace SEMUA pergerakan pesakit ni (bekalan + beli produk).
+    const orderList = ctxPatientOrderIds.length ? ctxPatientOrderIds.join(',') : '__none__';
+    q = q.or(`and(reference_type.eq.patient_package,reference_id.eq.${ctxPatientId}),and(reference_type.eq.shop_order,reference_id.in.(${orderList}))`);
+  }
   return q;
 }
 
@@ -348,11 +364,17 @@ async function resolvePatientNames(rows) {
   }
   const allPatientIds = [...new Set([...pkgPatientIds, ...Object.values(orderToPatient).filter(Boolean)])];
 
+  // psy_orders.patient_id SEPATUTNYA = auth user id (psy_profiles.id), tapi data demo/seed
+  // kadang tersimpan guna psy_patients.id sebaliknya (sama corak gotcha active_package_id) —
+  // cuba dua-dua supaya nama tetap resolve tak kira format id yang tersimpan.
   let patMap = {};
   if (allPatientIds.length) {
-    const { data: pats } = await window.db.from('psy_patients')
-      .select('id, mrn, psy_profiles!psy_patients_user_id_fkey(full_name)').in('id', allPatientIds);
+    const [{ data: pats }, { data: profs }] = await Promise.all([
+      window.db.from('psy_patients').select('id, mrn, psy_profiles!psy_patients_user_id_fkey(full_name)').in('id', allPatientIds).then(r => r, () => ({ data: [] })),
+      window.db.from('psy_profiles').select('id, full_name').in('id', allPatientIds).then(r => r, () => ({ data: [] })),
+    ]);
     (pats || []).forEach(p => { patMap[p.id] = p.psy_profiles?.full_name || p.mrn || null; });
+    (profs || []).forEach(p => { if (!patMap[p.id]) patMap[p.id] = p.full_name || null; });
   }
 
   rows.forEach(r => {
@@ -503,10 +525,37 @@ async function submitMovement() {
 }
 window.submitMovement = submitMovement;
 
+async function setupContextFilter() {
+  const params = new URLSearchParams(location.search);
+  ctxPatientId = params.get('patient_id');
+  ctxItemId = params.get('item_id');
+  if (!ctxPatientId && !ctxItemId) return;
+
+  let patientName = null;
+  if (ctxPatientId) {
+    const [{ data: pat }, { data: orders }] = await Promise.all([
+      window.db.from('psy_patients').select('id, mrn, psy_profiles!psy_patients_user_id_fkey(full_name)').eq('id', ctxPatientId).maybeSingle(),
+      window.db.from('psy_orders').select('id').eq('patient_id', ctxPatientId),
+    ]);
+    patientName = pat?.psy_profiles?.full_name || pat?.mrn || null;
+    ctxPatientOrderIds = (orders || []).map(o => o.id);
+  }
+  const itemName = ctxItemId ? allItems.find(i => i.id === ctxItemId)?.name : null;
+
+  const parts = [];
+  if (patientName) parts.push(`Pesakit: ${patientName}`);
+  if (itemName) parts.push(`Produk: ${itemName}`);
+  if (parts.length) {
+    document.getElementById('sm-context-text').textContent = '🔎 ' + parts.join(' · ');
+    document.getElementById('sm-context-banner').classList.remove('hidden');
+  }
+}
+
 (async () => {
   const user = await initStaff('stock_movement', 'Stock Movement', 'inventory');
   if (!user) return;
   await loadRefData();
+  await setupContextFilter();
   await loadStats();
   await loadMovements();
 })();

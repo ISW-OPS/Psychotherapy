@@ -31,7 +31,10 @@
 
         <div class="flex items-center justify-between flex-wrap gap-3">
           <div>
-            <h2 id="if-title" class="text-xl font-bold text-navy">Add / Edit Inventory Product</h2>
+            <div class="flex items-center gap-2 flex-wrap">
+              <h2 id="if-title" class="text-xl font-bold text-navy">Add / Edit Inventory Product</h2>
+              <span id="if-item-code" class="hidden text-[11px] font-mono font-semibold text-navy bg-navy/10 px-2 py-0.5 rounded-full">—</span>
+            </div>
             <p class="text-xs text-ink/50 mt-0.5">Create a new inventory product or update existing product information.</p>
           </div>
           <div class="flex items-center gap-2">
@@ -294,6 +297,11 @@ async function loadForEdit(id) {
   itemData = data;
   document.getElementById('if-title').textContent = 'Edit Product';
   document.getElementById('if-breadcrumb').textContent = 'Edit Product';
+  if (data.item_code) {
+    const codeEl = document.getElementById('if-item-code');
+    codeEl.textContent = data.item_code;
+    codeEl.classList.remove('hidden');
+  }
   document.getElementById('item-id').value        = data.id;
   document.getElementById('item-name').value      = data.name || '';
   document.getElementById('item-category').value  = data.category || '';
@@ -397,10 +405,21 @@ async function saveItem() {
       const { error } = await window.db.from('psy_inventory_items').update(payload).eq('id', editingItemId);
       if (error) throw error;
       await iswDeactivateShopProducts(linkedProducts); // produk Shop berkaitan turut Inactive
+      // Audit trail — siapa ubah apa (nama/kategori/unit/min_qty/supplier/kos/status), bila.
+      // Sebelum ni langsung tiada log utk edit produk (min_qty/supplier/harga senyap tak direkod).
+      const before = itemData || {};
+      const AUDIT_FIELDS = { name: 'Nama', category: 'Kategori', unit: 'Unit', min_qty: 'Stok Minimum', status: 'Status' };
+      const changes = {};
+      Object.keys(AUDIT_FIELDS).forEach(k => { if (String(before[k] ?? '') !== String(payload[k] ?? '')) changes[k] = { from: before[k] ?? null, to: payload[k] ?? null }; });
+      const beforeCost = before.supplier_info?.cost_per_unit ?? null;
+      if (String(before.supplier_id ?? '') !== String(payload.supplier_id ?? '')) changes.supplier_id = { from: before.supplier_id ?? null, to: payload.supplier_id ?? null };
+      if (String(beforeCost ?? '') !== String(supCost ?? '')) changes.cost_per_unit = { from: beforeCost, to: supCost };
+      if (Object.keys(changes).length) await auditLog('inventory.item_updated', editingItemId, { item_name: payload.name, changes });
     } else {
       const { data, error } = await window.db.from('psy_inventory_items').insert(payload).select('id').single();
       if (error) throw error;
       itemId = data.id;
+      await auditLog('inventory.item_created', itemId, { item_name: payload.name, category: payload.category, unit: payload.unit, min_qty: payload.min_qty, supplier_id: payload.supplier_id });
       const openingQty = Number(document.getElementById('item-qty').value) || 0;
       if (openingQty > 0) await addStockToLocation(itemId, openingQty, loc?.name, { type: 'in', refType: 'opening_stock', note: 'Opening Stock — produk baharu', itemName: payload.name });
     }
@@ -449,6 +468,9 @@ async function saveItem() {
       setTimeout(() => location.href = 'inventory.html', 1200);
       return;
     }
+    const codeEl = document.getElementById('if-item-code');
+    codeEl.textContent = 'Kod: dijana automatik lepas simpan';
+    codeEl.classList.remove('hidden');
     document.getElementById('item-category').value = 'Bekalan Coaching';
     document.getElementById('item-qty').value = 0;
     document.getElementById('item-min').value = 5;

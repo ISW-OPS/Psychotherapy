@@ -2526,7 +2526,12 @@ function findSupplyByKey(key) {
   return item?.supplies?.[idx] || null;
 }
 
-// Tolak (sign=-1) atau kembalikan (sign=+1) stok untuk senarai bekalan.
+// Tolak (sign=-1) atau kembalikan (sign=+1) stok untuk senarai bekalan — dipanggil bila
+// staff tick/untick checklist Bekalan LEPAS sesi ditanda Hadir (pembetulan/rekod sebenar;
+// deductSessionSupplies() di shared/inventoryDeduct.js cuma jalan SEKALI pada transisi ke
+// 'hadir', pada waktu tu checklist Bekalan belum ditick lagi — jadi ni laluan potong sebenar,
+// bukan duplicate). Lalu addStockToLocation() (bukan update qty_in_stock terus) supaya masuk
+// ledger psy_stock_movements & tak bertembung dgn trigger psy_sync_item_stock_total().
 async function applySupplyStock(supplies, sign) {
   try {
     const list = (supplies || []).filter(s => s && typeof s === 'object');
@@ -2559,16 +2564,16 @@ async function applySupplyStock(supplies, sign) {
     if (!entries.length) return;
 
     const { data: invItems } = await window.db.from('psy_inventory_items')
-      .select('id, name, qty_in_stock, unit').in('id', entries.map(([id]) => id));
+      .select('id, name, unit').in('id', entries.map(([id]) => id));
 
     const changed = [];
     for (const [itemId, qty] of entries) {
       const inv = (invItems || []).find(i => i.id === itemId);
       if (!inv) continue;
-      const newQty = Math.max(0, Number(inv.qty_in_stock) + sign * qty);
-      await window.db.from('psy_inventory_items').update({
-        qty_in_stock: newQty, updated_at: new Date().toISOString(),
-      }).eq('id', itemId);
+      await window.addStockToLocation(itemId, sign * qty, null, {
+        type: sign < 0 ? 'out' : 'in', refType: 'patient_package', refId: patientId,
+        note: `Bekalan sesi minggu ${weekNumber}`, itemName: inv.name,
+      });
       changed.push(`${inv.name} ${sign < 0 ? '−' : '+'}${qty}${inv.unit || ''}`);
     }
 

@@ -41,6 +41,31 @@
           </div>
         </div>
 
+        <!-- Ringkasan penerimaan — hari ini / menunggu / sejarah (invois) -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
+            <div class="flex items-center justify-between mb-2">
+              <h4 class="font-bold text-sm text-ink">📥 Diterima Hari Ini</h4>
+              <span id="rcv-today-count" class="text-xs font-bold text-green-dark bg-green-light px-2 py-0.5 rounded-full">0</span>
+            </div>
+            <div id="rcv-today-list" class="space-y-1.5 text-xs text-ink/60">—</div>
+          </div>
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
+            <div class="flex items-center justify-between mb-2">
+              <h4 class="font-bold text-sm text-ink">⏳ Menunggu Diterima</h4>
+              <span id="rcv-pending-count" class="text-xs font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">0</span>
+            </div>
+            <div id="rcv-pending-list" class="space-y-1.5 text-xs text-ink/60">—</div>
+          </div>
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
+            <div class="flex items-center justify-between mb-2">
+              <h4 class="font-bold text-sm text-ink">📜 Diterima Sebelum Ini</h4>
+              <a href="inventory-overview.html" class="text-[11px] text-navy hover:underline">Lihat semua →</a>
+            </div>
+            <div id="rcv-history-list" class="space-y-1.5 text-xs text-ink/60">—</div>
+          </div>
+        </div>
+
         <div class="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-5 items-start">
           <div class="space-y-5 min-w-0">
 
@@ -224,6 +249,36 @@ async function loadApprovedRequests() {
   sel.innerHTML = '<option value="">— Pilih Purchase Request (Approved) —</option>' +
     approvedRequests.map(r => `<option value="${r.id}">${escHtml(r.request_no)} — ${escHtml(r.requested_by_name || '')} (${r.items.length} item)</option>`).join('');
 }
+
+// Ringkasan invois/penerimaan: hari ini / menunggu (PR approved blm posted) / sejarah.
+// Sebaik posting stock-in dgn rujukan PR, PR tu terus jadi status 'purchased' (lihat
+// saveStockIn()) — jadi PR 'approved' MEMANG bermaksud "menunggu diterima" tanpa perlu
+// semak silang lagi.
+async function loadReceivingSummary() {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const { data: posted } = await window.db.from('psy_stock_in_records')
+    .select('id, receive_no, receive_date, invoice_no, delivery_note_no, total_cost, posted_at')
+    .eq('status', 'posted').order('receive_date', { ascending: false }).limit(30);
+  const rows = posted || [];
+  const todayRows = rows.filter(r => r.receive_date === todayStr);
+  const historyRows = rows.filter(r => r.receive_date !== todayStr);
+
+  document.getElementById('rcv-today-count').textContent = todayRows.length;
+  document.getElementById('rcv-today-list').innerHTML = todayRows.length
+    ? todayRows.map(r => `<div class="flex justify-between gap-2"><span class="truncate">${escHtml(r.receive_no)}${r.invoice_no ? ' · ' + escHtml(r.invoice_no) : ''}</span><span class="font-semibold text-ink/80 whitespace-nowrap">RM${Number(r.total_cost || 0).toFixed(2)}</span></div>`).join('')
+    : '<span class="italic text-ink/35">Tiada penerimaan hari ini</span>';
+
+  document.getElementById('rcv-pending-count').textContent = approvedRequests.length;
+  document.getElementById('rcv-pending-list').innerHTML = approvedRequests.length
+    ? approvedRequests.slice(0, 5).map(r => `<div class="flex justify-between gap-2"><a href="purchase-request-detail.html?id=${r.id}" class="truncate hover:underline text-navy">${escHtml(r.request_no)}</a><span class="text-ink/50 whitespace-nowrap">${r.items.length} item</span></div>`).join('')
+      + (approvedRequests.length > 5 ? `<div class="text-ink/40">+${approvedRequests.length - 5} lagi</div>` : '')
+    : '<span class="italic text-ink/35">Tiada PR menunggu diterima</span>';
+
+  document.getElementById('rcv-history-list').innerHTML = historyRows.length
+    ? historyRows.slice(0, 5).map(r => `<div class="flex justify-between gap-2"><span class="truncate">${escHtml(r.receive_no)}</span><span class="text-ink/50 whitespace-nowrap">${fmtDateShort(r.receive_date)}</span></div>`).join('')
+    : '<span class="italic text-ink/35">Tiada sejarah lagi</span>';
+}
+function fmtDateShort(d) { return d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '—'; }
 
 function onRefTypeChange() {
   const isPR = document.getElementById('si-ref-type').value === 'purchase_request';
@@ -430,6 +485,7 @@ window.saveStockIn = saveStockIn;
   document.getElementById('si-date').value = new Date().toISOString().slice(0, 10);
   document.getElementById('si-received-by').value = user.full_name || '';
   await Promise.all([loadItems(), loadLocations(), loadApprovedRequests()]);
+  await loadReceivingSummary();
 
   const qs = new URLSearchParams(location.search);
   const refId = qs.get('ref');

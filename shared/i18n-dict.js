@@ -5010,6 +5010,7 @@ window.ISW_I18N_EXTRA = {
   "Perlu tindakan admin": "Requires admin action",
   "Perlu tindakan segera": "Requires immediate action",
   "Perlu Tindakan Segera": "Needs Immediate Action",
+  "Permohonan & Aduan": "Requests & Complaints",
   "Perlu usaha": "Needs effort",
   "Perlukan bantuan?": "Need help?",
   "Perlukan Bantuan?": "Need Help?",

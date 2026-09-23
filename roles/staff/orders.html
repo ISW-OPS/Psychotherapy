@@ -680,16 +680,18 @@ async function loadOrders() {
     return;
   }
 
-  // Fetch profiles separately (no FK constraint on patient_id)
+  // Fetch profiles separately (no FK constraint on patient_id). patient_id SEPATUTNYA =
+  // auth user id (psy_profiles.id), tapi data demo/seed kadang tersimpan guna psy_patients.id
+  // sebaliknya (sama corak gotcha active_package_id) — cuba dua-dua supaya nama tetap resolve.
   const ids = [...new Set(orders.map(o => o.patient_id).filter(Boolean))];
   let profileMap = {};
   if (ids.length) {
-    const { data: profiles } = await window.db
-      .from('psy_profiles')
-      .select('id, full_name, phone')
-      .in('id', ids)
-      .then(r => r, () => ({ data: [] }));
+    const [{ data: profiles }, { data: pats }] = await Promise.all([
+      window.db.from('psy_profiles').select('id, full_name, phone').in('id', ids).then(r => r, () => ({ data: [] })),
+      window.db.from('psy_patients').select('id, mrn, phone, psy_profiles!psy_patients_user_id_fkey(full_name)').in('id', ids).then(r => r, () => ({ data: [] })),
+    ]);
     (profiles || []).forEach(p => { profileMap[p.id] = p; });
+    (pats || []).forEach(p => { if (!profileMap[p.id]) profileMap[p.id] = { full_name: p.psy_profiles?.full_name || p.mrn, phone: p.phone }; });
   }
 
   allOrders = orders.map(o => ({ ...o, psy_profiles: profileMap[o.patient_id] || null }));
@@ -736,10 +738,16 @@ async function checkNewOrderNotifs() {
       .order('created_at', { ascending: false }).limit(count);
     const patientIds = (recent || []).map(o => o.patient_id).filter(Boolean);
     if (patientIds.length) {
-      const { data: profiles } = await window.db.from('psy_profiles')
-        .select('id, full_name').in('id', [...new Set(patientIds)]);
+      const uniqIds = [...new Set(patientIds)];
+      // patient_id SEPATUTNYA = psy_profiles.id, tapi data demo/seed kadang guna psy_patients.id
+      // sebaliknya — cuba dua-dua supaya nama tetap resolve.
+      const [{ data: profiles }, { data: pats }] = await Promise.all([
+        window.db.from('psy_profiles').select('id, full_name').in('id', uniqIds).then(r => r, () => ({ data: [] })),
+        window.db.from('psy_patients').select('id, mrn, psy_profiles!psy_patients_user_id_fkey(full_name)').in('id', uniqIds).then(r => r, () => ({ data: [] })),
+      ]);
       const nameMap = {};
       (profiles || []).forEach(p => { nameMap[p.id] = p.full_name; });
+      (pats || []).forEach(p => { if (!nameMap[p.id]) nameMap[p.id] = p.psy_profiles?.full_name || p.mrn; });
       const names = patientIds.map(id => nameMap[id]).filter(Boolean);
       if (names.length) {
         const shown = names.slice(0, 3).join(', ');
@@ -786,9 +794,13 @@ function subscribeOrdersRealtime() {
     document.getElementById('stat-row').classList.add('hidden');
   }
   if (can('orders','edit')) document.getElementById('ship-btn').classList.remove('hidden');
-  loadOrders();
+  await loadOrders();
   checkNewOrderNotifs();
   subscribeOrdersRealtime();
+
+  // Datang dari widget "Order Tertunggak" (dashboard) — terus buka Detail order tu.
+  const highlightId = new URLSearchParams(location.search).get('id');
+  if (highlightId) openDetailModal(highlightId);
 })();
 </script>
 </body>

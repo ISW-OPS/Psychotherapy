@@ -473,12 +473,20 @@
               <div id="a-stok-rendah" class="divide-y divide-ink/5 flex-1 overflow-y-auto"></div>
             </div>
 
-            <!-- Perlu Tindakan Segera (BUKAN inventori — kecemasan pesakit, report issue, PR staff pending) -->
+            <!-- Permohonan & Aduan (BUKAN inventori/pesakit — report issue, PR staff pending kelulusan) -->
             <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden flex flex-col h-[400px]">
               <div class="px-6 h-[60px] border-b border-ink/8 flex items-center justify-between flex-shrink-0">
-                <h3 class="font-semibold text-sm text-ink flex items-center gap-2"><span>⚠️</span> Perlu Tindakan Segera</h3>
+                <h3 class="font-semibold text-sm text-ink flex items-center gap-2"><span>📋</span> Permohonan &amp; Aduan</h3>
               </div>
               <div id="a-urgent" class="divide-y divide-ink/5 flex-1 overflow-y-auto"></div>
+            </div>
+
+            <!-- Pesakit Perlu Tindakan Hari Ini — siapa nak ditindak, bukan setakat statistik -->
+            <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden flex flex-col h-[400px]">
+              <div class="px-6 h-[60px] border-b border-ink/8 flex items-center justify-between flex-shrink-0">
+                <h3 class="font-semibold text-sm text-ink flex items-center gap-2"><span>🧑‍⚕️</span> Pesakit Perlu Tindakan Hari Ini</h3>
+              </div>
+              <div id="a-patient-action" class="divide-y divide-ink/5 flex-1 overflow-y-auto"></div>
             </div>
 
           </div>
@@ -1854,7 +1862,7 @@
 
       const [patientsRes, todaySessRes, monthSessRes, paymentsRes, invItemsRes, invReqRes, letterReqRes, issueRepRes, coachesRes, plansRes, hk1Res, emergencyRes] = await Promise.all([
         window.db.from('psy_patients').select('id, status, outcome_status, created_at, gender, date_of_birth, state, city, medical_condition, active_package_name, coach_id, kob_status').neq('status', 'deleted'),
-        window.db.from('psy_plan_weekly_progress').select('status, session_date, updated_by_name, psy_patients(full_name, city, active_package_name)').gte('session_date', todayStart).lte('session_date', todayEnd).order('session_date', { ascending: true }).then(r => r, () => ({ data: [] })),
+        window.db.from('psy_plan_weekly_progress').select('patient_id, plan_id, week_number, status, session_date, updated_by_name, psy_patients(full_name, city, active_package_name)').gte('session_date', todayStart).lte('session_date', todayEnd).order('session_date', { ascending: true }).then(r => r, () => ({ data: [] })),
         window.db.from('psy_plan_weekly_progress').select('id', { count: 'exact', head: true }).gte('session_date', ymd(monthStart) + 'T00:00:00').then(r => r, () => ({ count: 0 })),
         window.db.from('psy_payments').select('total, paid_at').eq('status', 'completed').gte('paid_at', d30.toISOString()).then(r => r, () => ({ data: [] })),
         window.db.from('psy_inventory_items').select('id, name, qty_in_stock, min_qty, is_active').eq('is_active', true).then(r => r, () => ({ data: [] })),
@@ -1968,7 +1976,8 @@
         ${todaySess.slice(0, 8).map(s => {
         const t = new Date(s.session_date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
         const lbl = SESS[s.status] || [s.status, 'bg-ink/10 text-ink/50'];
-        return `<tr class="hover:bg-cream/20">
+        const sessGoto = s.plan_id ? `plan-week.html?plan_id=${s.plan_id}&week=${s.week_number}` : `patient-hub.html?patient_id=${s.patient_id}`;
+        return `<tr class="hover:bg-cream/20 cursor-pointer" onclick="location.href='${sessGoto}'">
             <td class="py-2 px-4 text-[11px] font-semibold text-ink/60 whitespace-nowrap">${t}</td>
             <td class="py-2 px-2 text-[11px] font-medium text-ink truncate">${esc(s.psy_patients?.full_name || 'Pesakit')}</td>
             <td class="py-2 px-2 text-[10px] text-ink/60 whitespace-nowrap">${esc(s.psy_patients?.active_package_name || '—')}</td>
@@ -2358,10 +2367,14 @@
           : '<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-ink/8 text-ink/50 whitespace-nowrap">Am</span>');
         return b.join(' ');
       };
-      const stockRow = (it) => actionRow('bg-amber-400', `inventory-detail.html?id=${it.id}`,
-        `${esc(it.name)} ${stockBadges(it)}`,
-        `Stok hampir habis — tinggal ${Number(it.qty_in_stock) || 0} unit`,
-        `<a href="purchase-request-form.html?item=${it.id}" data-rbac="inventory.create" title="Buat Purchase Request" class="text-[10px] border border-navy/30 text-navy px-2 py-1 rounded-lg font-semibold hover:bg-navy/5 whitespace-nowrap flex-shrink-0">🛒 Buat PR</a>`);
+      const stockRow = (it) => {
+        const qty = Number(it.qty_in_stock) || 0;
+        const threshold = window.getInventoryReorderThreshold(it);
+        const label = qty === 0 ? `⛔ Kritikal (kehabisan) — Baki ${qty} / Minimum ${threshold}` : `⚠️ Baki ${qty} / Minimum ${threshold}`;
+        return actionRow(qty === 0 ? 'bg-terracotta' : 'bg-amber-400', `inventory-detail.html?id=${it.id}`,
+          `${esc(it.name)} ${stockBadges(it)}`, label,
+          `<a href="purchase-request-form.html?item=${it.id}" data-rbac="inventory.create" title="Buat Purchase Request" class="text-[10px] border border-navy/30 text-navy px-2 py-1 rounded-lg font-semibold hover:bg-navy/5 whitespace-nowrap flex-shrink-0">🛒 Buat PR</a>`);
+      };
 
       const stokHtml = lowStock.slice(0, 6).map(stockRow);
       if (lowStock.length > 6) stokHtml.push(`<div class="px-5 py-2 text-[11px] text-ink/40 text-center"><a href="stock-alerts.html" class="hover:underline">+${lowStock.length - 6} item stok rendah lagi →</a></div>`);
@@ -2404,6 +2417,44 @@
         : '<div class="h-full flex items-center justify-center text-xs text-ink/30 p-6">Tiada tindakan segera 🎉</div>';
       if (typeof applyRbacUI === 'function') applyRbacUI(document.getElementById('a-urgent'));
 
+      // ═══ PESAKIT PERLU TINDAKAN HARI INI ═══ (item #6 audit) — siapa perlu ditindak,
+      // bukan setakat statistik. Bayaran overdue & Agreement belum sign KEDUA-DUA nya
+      // milik satu sesi KOB (psy_kob_sessions) — pautan terus ke kob-detail.html?id=<kobId>
+      // (bukan payment-admin.html/patient-hub.html generik) sebab situ tempat SEBENAR butang
+      // "Jana Pautan Bayaran" / "Sign Agreement" berada — staff terus boleh bertindak, bukan
+      // kena cari lagi. Julat "hari ini" guna _dayLo/_dayHi (dah dikira di atas utk todaySess).
+      const [overdueRes, pkgPaidKobRes, agreementRes, apptTodayRes, hadirRes] = await Promise.all([
+        window.db.from('psy_kob_installment_checkpoints').select('patient_id, kob_session_id, due_date, psy_patients(mrn, psy_profiles!psy_patients_user_id_fkey(full_name))').eq('status', 'overdue').order('due_date', { ascending: true }).then(r => r, () => ({ data: [] })),
+        window.db.from('psy_kob_sessions').select('id, patient_id, scheduled_at, psy_patients(mrn, psy_profiles!psy_patients_user_id_fkey(full_name))').eq('package_payment_status', 'paid').order('scheduled_at', { ascending: false }).then(r => r, () => ({ data: [] })),
+        window.db.from('psy_kob_agreements').select('patient_id').then(r => r, () => ({ data: [] })),
+        window.db.from('psy_plan_weekly_progress').select('id, patient_id, plan_id, week_number, psy_patients(mrn, psy_profiles!psy_patients_user_id_fkey(full_name))').in('status', ['pending', 'booked']).gte('session_date', _dayLo.toISOString()).lt('session_date', _dayHi.toISOString()).then(r => r, () => ({ data: [] })),
+        window.db.from('psy_plan_weekly_progress').select('patient_id, session_date').eq('status', 'hadir').order('session_date', { ascending: false }).then(r => r, () => ({ data: [] })),
+      ]);
+      // Satu baris per PESAKIT (bukan per checkpoint) — checkpoint paling awal (due_date terkecil) tu je.
+      const overdueByPatient = {};
+      (overdueRes.data || []).forEach(r => { if (!overdueByPatient[r.patient_id]) overdueByPatient[r.patient_id] = r; });
+      const signedPatientIds = new Set((agreementRes.data || []).map(r => r.patient_id));
+      const unsignedByPatient = {};
+      (pkgPaidKobRes.data || []).forEach(r => { if (!signedPatientIds.has(r.patient_id) && !unsignedByPatient[r.patient_id]) unsignedByPatient[r.patient_id] = r; });
+      const lastHadirByPid = {};
+      (hadirRes.data || []).forEach(r => { if (!lastHadirByPid[r.patient_id]) lastHadirByPid[r.patient_id] = r.session_date; });
+      const sevenDaysAgoMs = Date.now() - 7 * 86400000;
+      const absentOver7 = patients.filter(p => p.status === 'active' && lastHadirByPid[p.id] && new Date(lastHadirByPid[p.id]).getTime() < sevenDaysAgoMs);
+
+      const kpName = r => r.psy_patients?.psy_profiles?.full_name || r.psy_patients?.mrn || 'Pesakit';
+      const paName = p => p.psy_profiles?.full_name || p.mrn || 'Pesakit';
+      const paRow = (dot, href, name, desc, tagText, tagCls) => actionRow(dot, href,
+        `${esc(name)} <span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${tagCls} whitespace-nowrap">${esc(tagText)}</span>`, esc(desc), '');
+
+      const patientActionHtml = [
+        ...Object.values(overdueByPatient).slice(0, 3).map(r => paRow('bg-terracotta', `kob-detail.html?id=${r.kob_session_id}`, kpName(r), `Ansuran overdue sejak ${new Date(r.due_date).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short' })}`, 'Bayaran', 'bg-terracotta/15 text-terracotta')),
+        ...Object.values(unsignedByPatient).slice(0, 3).map(r => paRow('bg-amber-400', `kob-detail.html?id=${r.id}`, kpName(r), 'Pakej dibayar, agreement belum ditandatangan', 'Agreement', 'bg-amber-100 text-amber-700')),
+        ...(apptTodayRes.data || []).slice(0, 3).map(r => paRow('bg-navy', `plan-week.html?plan_id=${r.plan_id}&week=${r.week_number}`, r.psy_patients?.psy_profiles?.full_name || r.psy_patients?.mrn || 'Pesakit', 'Sesi hari ini belum disahkan/hadir', 'Sesi Hari Ini', 'bg-navy/10 text-navy')),
+        ...absentOver7.slice(0, 3).map(p => paRow('bg-gold', `patient-hub.html?patient_id=${p.id}`, paName(p), `Tiada sesi Hadir sejak ${new Date(lastHadirByPid[p.id]).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short' })}`, 'Tak Hadir >7 Hari', 'bg-gold/20 text-gold-dark')),
+      ].slice(0, 10);
+      document.getElementById('a-patient-action').innerHTML = patientActionHtml.length ? patientActionHtml.join('')
+        : '<div class="h-full flex items-center justify-center text-xs text-ink/30 p-6">Tiada pesakit perlu tindakan hari ini 🎉</div>';
+
       // ═══ RINGKASAN PESAKIT (donut + legenda) ═══
       let pAktif = 0, pTidak = 0, pTamat = 0, pMati = 0;
       patients.forEach(p => {
@@ -2432,11 +2483,18 @@
       // ═══ ORDER TERTUNGGAK + STOK PERLU DIBERI (jadual bawah) ═══
       const orderPids = [...new Set(orders.map(o => o.patient_id).filter(Boolean))];
       const pendingPlanIds = [...new Set(pendingSessions.map(s => s.plan_id).filter(Boolean))];
-      const [orderProfRes, pendingPlansRes] = await Promise.all([
+      // psy_orders.patient_id SEPATUTNYA = auth user id (psy_profiles.id — dikuatkuasa RLS
+      // "patient_id = auth.uid()" utk insert client), tapi data demo/seed kadang tersimpan
+      // guna psy_patients.id sebaliknya (sama corak gotcha active_package_id). Cuba dua-dua
+      // supaya nama tetap resolve tak kira format id yang tersimpan.
+      const [orderProfRes, orderPatRes, pendingPlansRes] = await Promise.all([
         orderPids.length ? window.db.from('psy_profiles').select('id, full_name').in('id', orderPids).then(r => r, () => ({ data: [] })) : Promise.resolve({ data: [] }),
+        orderPids.length ? window.db.from('psy_patients').select('id, mrn, psy_profiles!psy_patients_user_id_fkey(full_name)').in('id', orderPids).then(r => r, () => ({ data: [] })) : Promise.resolve({ data: [] }),
         pendingPlanIds.length ? window.db.from('psy_treatment_plans').select('id, coaching_schedule').in('id', pendingPlanIds).then(r => r, () => ({ data: [] })) : Promise.resolve({ data: [] }),
       ]);
-      const orderProf = {}; (orderProfRes.data || []).forEach(p => { orderProf[p.id] = p; });
+      const orderProf = {};
+      (orderProfRes.data || []).forEach(p => { orderProf[p.id] = p.full_name; });
+      (orderPatRes.data || []).forEach(p => { if (!orderProf[p.id]) orderProf[p.id] = p.psy_profiles?.full_name || p.mrn; });
       const patientNameById = {}; patients.forEach(p => { patientNameById[p.id] = p.psy_profiles?.full_name || p.mrn || 'Pesakit'; });
       const planScheduleById = {}; (pendingPlansRes.data || []).forEach(pl => { planScheduleById[pl.id] = Array.isArray(pl.coaching_schedule) ? pl.coaching_schedule : []; });
 
@@ -2484,8 +2542,8 @@
         const items = Array.isArray(o.items) ? o.items : [];
         const prod = items.length ? (items[0].name + (items.length > 1 ? ` +${items.length - 1}` : '')) : '—';
         const lbl = ORDER_LABEL[o.status] || [o.status, 'bg-ink/10 text-ink/50'];
-        return `<tr class="hover:bg-cream/20">
-            <td class="py-2 px-3 text-[11px] font-medium text-ink truncate">${esc(orderProf[o.patient_id]?.full_name || 'Pesakit')}</td>
+        return `<tr class="hover:bg-cream/20 cursor-pointer" onclick="location.href='orders.html?id=${o.id}'">
+            <td class="py-2 px-3 text-[11px] font-medium text-ink truncate">${esc(orderProf[o.patient_id] || 'Pesakit')}</td>
             <td class="py-2 px-1.5 text-[10px] text-ink/60 truncate">${esc(prod)}</td>
             <td class="py-2 px-1.5 text-[10px] text-ink/55 truncate">${fmtDate(o.created_at)}</td>
             <td class="py-2 px-1.5"><span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${lbl[1]} whitespace-nowrap">${esc(lbl[0])}</span></td>
