@@ -33,25 +33,33 @@
           <p class="text-xs text-ink/50 mt-0.5">Bekalan yang sudah diberi (auto-potong sesi Hadir + manual "Bagi Bekalan") dan yang masih tertunggak.</p>
         </div>
 
-        <!-- Stat Cards -->
-        <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+        <!-- Stat Cards — ikut tapisan semasa (bukan jumlah keseluruhan tanpa tapis) -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
-            <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Jumlah Rekod</div>
+            <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Jumlah Item</div>
             <div id="ps-stat-total" class="text-2xl font-bold text-ink">—</div>
+            <div id="ps-stat-total-sub" class="text-[10px] text-ink/40 mt-0.5">—</div>
           </div>
           <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
             <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">✅ Dah Bagi</div>
             <div id="ps-stat-given" class="text-2xl font-bold text-green-dark">—</div>
+            <div id="ps-stat-given-sub" class="text-[10px] text-ink/40 mt-0.5">—</div>
           </div>
           <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
             <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">⏳ Belum Bagi</div>
             <div id="ps-stat-pending" class="text-2xl font-bold text-amber-600">—</div>
+            <div id="ps-stat-pending-sub" class="text-[10px] text-ink/40 mt-0.5">—</div>
+          </div>
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
+            <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Pesakit Terlibat</div>
+            <div id="ps-stat-patients" class="text-2xl font-bold text-navy">—</div>
+            <div class="text-[10px] text-ink/40 mt-0.5">dalam tapisan semasa</div>
           </div>
         </div>
 
         <!-- Jumlah Stok Diperlukan (ikut tapisan tarikh/status semasa) -->
         <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
-          <h3 class="font-bold text-sm text-ink mb-3">📋 Jumlah Stok Diperlukan (⏳ Belum Bagi, ikut tapisan di bawah)</h3>
+          <h3 class="font-bold text-sm text-ink mb-3">📋 Jumlah Stok Diperlukan (⏳ Belum Bagi<span id="ps-summary-range"></span>)</h3>
           <div id="ps-summary" class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm"></div>
         </div>
 
@@ -214,12 +222,23 @@ async function loadAll() {
   const nameMap = await resolvePatientNames(combined);
   ALL_ROWS = combined.map(r => ({ ...r, patientName: nameMap[r.patientId] || 'Pesakit' }));
   ALL_ROWS.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-  document.getElementById('ps-stat-total').textContent = ALL_ROWS.length;
-  document.getElementById('ps-stat-given').textContent = ALL_ROWS.filter(r => r.status === 'given').length;
-  document.getElementById('ps-stat-pending').textContent = ALL_ROWS.filter(r => r.status === 'pending').length;
-
   render();
+}
+
+// Stat cards ikut TAPISAN SEMASA (bukan jumlah keseluruhan data dimuatkan) — supaya
+// nombor konsisten dgn apa yang staff nampak dalam jadual + ringkasan di bawah.
+function renderStats(filteredList) {
+  const given = filteredList.filter(r => r.status === 'given');
+  const pending = filteredList.filter(r => r.status === 'pending');
+  const patientIds = new Set(filteredList.map(r => r.patientId).filter(Boolean));
+
+  document.getElementById('ps-stat-total').textContent = filteredList.length;
+  document.getElementById('ps-stat-total-sub').textContent = `${given.length} dah bagi · ${pending.length} belum bagi`;
+  document.getElementById('ps-stat-given').textContent = given.length;
+  document.getElementById('ps-stat-given-sub').textContent = `${new Set(given.map(r => r.patientId)).size} pesakit`;
+  document.getElementById('ps-stat-pending').textContent = pending.length;
+  document.getElementById('ps-stat-pending-sub').textContent = `${new Set(pending.map(r => r.patientId)).size} pesakit`;
+  document.getElementById('ps-stat-patients').textContent = patientIds.size;
 }
 
 function getFiltered() {
@@ -274,6 +293,13 @@ function groupRows(list) {
 // Jumlah SEMUA stok "Belum Bagi" merentasi pesakit, dalam tapisan tarikh semasa —
 // senarai "beli/sediakan berapa" utk minggu/julat yang dipilih.
 function renderStockSummary(filteredList) {
+  const from = document.getElementById('ps-date-from').value;
+  const to = document.getElementById('ps-date-to').value;
+  const rangeTxt = from || to
+    ? `, ${from ? fmtDate(from) : 'Awal'} – ${to ? fmtDate(to) : 'Kini'}`
+    : ', semua tarikh';
+  document.getElementById('ps-summary-range').textContent = rangeTxt;
+
   const totals = {};
   filteredList.filter(r => r.status === 'pending').forEach(r => {
     const key = r.productName + '|' + r.unit;
@@ -290,6 +316,7 @@ function renderStockSummary(filteredList) {
 
 function render() {
   const filtered = getFiltered();
+  renderStats(filtered);
   renderStockSummary(filtered);
   const groups = groupRows(filtered);
   const pages = Math.max(1, Math.ceil(groups.length / PS_PAGE_SIZE));
