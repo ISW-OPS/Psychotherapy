@@ -136,7 +136,7 @@ const STAFF_NAV_MASTER = [
       { id: 'psy_vitals', url: 'vitals.html', icon: '💉', label: 'Vitals' },
       { id: 'kob_list', url: 'kob-list.html', icon: '🩺', label: 'Sesi KOB' },
       { id: 'sesi_1on1', url: 'sesi-1on1.html', icon: '🧑‍💼', label: 'Sesi 1:1' },
-      { id: 'kepatuhan', url: 'kepatuhan.html', icon: '📊', label: 'Poll' },
+      { id: 'kepatuhan', url: 'kepatuhan.html', icon: '📊', label: 'Kepatuhan Pesakit' },
       { id: 'reaksi_advice', url: 'reaksi-item.html', icon: '🩹', label: 'Reaksi & Tindakan' },
       { id: 'emergency', url: 'emergency.html', icon: '🚨', label: 'Red Emergency Protocol' },
       { id: 'peristiwa', url: 'peristiwa.html', icon: '🏥', label: 'Rekod Klinikal Pesakit' },

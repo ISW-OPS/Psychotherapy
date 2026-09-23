@@ -82,6 +82,7 @@
                   <th class="py-2.5 px-5 font-bold">Pesakit</th>
                   <th class="py-2.5 px-3 font-bold">Tarikh</th>
                   <th class="py-2.5 px-3 font-bold">Sesi Dengan</th>
+                  <th class="py-2.5 px-3 font-bold">Priority</th>
                   <th class="py-2.5 px-3 font-bold">Status</th>
                   <th class="py-2.5 px-5 font-bold text-right">Tindakan</th>
                 </tr>
@@ -117,6 +118,11 @@ const STATUS_1ON1 = {
   resolved: { lbl: 'Selesai',          cls: 'bg-green-100 text-green-700' },
   declined: { lbl: 'Ditolak',          cls: 'bg-ink/10 text-ink/50' },
 };
+const PRIORITY_1ON1 = {
+  rendah:     { lbl: 'Rendah',     cls: 'bg-ink/10 text-ink/50' },
+  sederhana:  { lbl: 'Sederhana',  cls: 'bg-amber-100 text-amber-700' },
+  tinggi:     { lbl: 'Tinggi',     cls: 'bg-terracotta/15 text-terracotta' },
+};
 
 function escHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 
@@ -128,7 +134,7 @@ let showAll = false;
 
 async function loadRows() {
   const { data } = await window.db.from('psy_clinical_referrals')
-    .select('id, patient_id, plan_id, week_number, session_type, consultation, status, meet_date, target_name, created_at, psy_patients(mrn, psy_profiles!psy_patients_user_id_fkey(full_name))')
+    .select('id, patient_id, plan_id, week_number, session_type, consultation, status, meet_date, target_name, reason, priority, created_at, psy_patients(mrn, psy_profiles!psy_patients_user_id_fkey(full_name))')
     .eq('source', 'plan_1on1')
     .order('created_at', { ascending: false })
     .limit(2000)
@@ -198,7 +204,8 @@ function renderTable() {
     const dateStr = r.meet_date ? new Date(r.meet_date + 'T00:00:00').toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
     const time = r.consultation?.scheduled_time ? ` · ${r.consultation.scheduled_time}` : '';
     const targetName = r.target_name && r.target_name !== meta.label ? `<div class="text-[10px] text-ink/40">${escHtml(r.target_name)}</div>` : '';
-    return `<tr class="border-b border-ink/5 hover:bg-ink/[0.015]">
+    const pm = PRIORITY_1ON1[r.priority] || PRIORITY_1ON1.sederhana;
+    return `<tr class="border-b border-ink/5 hover:bg-ink/[0.015]" title="${escHtml(r.reason || '')}">
       <td class="py-3 px-5">
         <div class="min-w-0">
           <div class="text-[13px] font-semibold text-ink truncate">${escHtml(nm)}</div>
@@ -207,6 +214,7 @@ function renderTable() {
       </td>
       <td class="py-3 px-3 text-[12px] text-ink/70 whitespace-nowrap">${dateStr}${time}</td>
       <td class="py-3 px-3 text-[12px] text-ink/70 whitespace-nowrap">${meta.emoji} ${escHtml(meta.label)}${targetName}</td>
+      <td class="py-3 px-3"><span class="inline-block px-2.5 py-1 rounded-full text-[10px] font-bold ${pm.cls}">${pm.lbl}</span></td>
       <td class="py-3 px-3"><span class="inline-block px-2.5 py-1 rounded-full text-[10px] font-bold ${sm.cls}">${sm.lbl}</span></td>
       <td class="py-3 px-5 text-right">
         ${r.plan_id

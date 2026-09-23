@@ -918,6 +918,13 @@ function hk1SessionYmd() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// Jenis 1:1 wajib minggu ini ikut config pakej (hk1_types, ditetapkan di pakej-edit.html).
+// Dibaca dari activePlan.coaching_schedule (live dari psy_packages — lihat loadPlan()).
+function hk1RequiredTypesThisWeek() {
+  const sched = (activePlan.coaching_schedule || []).find(it => Number(it.week || it.day) === weekNumber);
+  return (sched?.hk1_types || []).filter(t => HK1_TYPES[t]);
+}
+
 async function loadHk1() {
   hk1Refs = { hakeema: null, hakeem: null, dr: null };
   const { data } = await window.db.from('psy_clinical_referrals')
@@ -934,6 +941,22 @@ async function loadHk1() {
       if (updated) ref = updated;
     }
     hk1Refs[row.session_type] = ref;
+  }
+
+  // Auto-cipta rekod utk jenis wajib ikut pakej yang belum wujud minggu ini — staff tak
+  // perlu tick manual (checkbox di renderHk1Section() reflect kewujudan rekod, bukan cipta).
+  for (const type of hk1RequiredTypesThisWeek()) {
+    if (hk1Refs[type]) continue;
+    const cfg = HK1_TYPES[type];
+    const target = await hk1ResolveTarget(type);
+    const { data: created, error } = await window.db.from('psy_clinical_referrals').insert({
+      patient_id: patientId, plan_id: activePlan.id, week_number: weekNumber, source: 'plan_1on1', session_type: type,
+      referred_by: window.currentUser?.id, referred_by_name: window.currentUser?.full_name,
+      target_role: cfg.role, target_id: target.id, target_name: target.name,
+      reason: `Sesi 1:1 ${cfg.label} — Minggu ${weekNumber} (Wajib ikut Pakej)`, meet_date: sessYmd, priority: 'sederhana',
+    }).select('*').single();
+    if (!error) hk1Refs[type] = created;
+    else console.error('[hk1] auto-cipta gagal:', type, error);
   }
 
   if (hk1SarananTpl === null) {
@@ -989,12 +1012,14 @@ function renderHk1Section() {
   const host = document.getElementById('hk1-section');
   if (!host) return;
 
+  const requiredTypes = hk1RequiredTypesThisWeek();
   const toolbar = `<div class="bg-white rounded-xl px-5 py-4 border border-ink/10 flex flex-wrap items-center gap-x-5 gap-y-2">
     <span class="text-xs font-bold text-ink/60">Sesi 1:1 minggu ini:</span>
     ${Object.entries(HK1_TYPES).map(([type, cfg]) => `
       <label data-rbac="rujukan.edit" class="flex items-center gap-1.5 text-sm font-semibold cursor-pointer">
         <input type="checkbox" id="hk1-chk-${type}" ${hk1Refs[type] ? 'checked' : ''} onchange="hk1Toggle('${type}', this.checked)">
         ${cfg.emoji} ${cfg.label}
+        ${requiredTypes.includes(type) ? '<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-terracotta/15 text-terracotta">Wajib ikut Pakej</span>' : ''}
       </label>`).join('')}
   </div>`;
 
@@ -1024,6 +1049,21 @@ function renderHk1Card(type) {
       <span id="hk1-saved-${type}" class="save-indicator">✓ Tersimpan</span>
     </div>
     <p class="text-xs text-ink/60 mb-4">Rekod soal-jawab &amp; dokumen konsultasi Minggu ${weekNumber}. Saranan dihantar terus ke WhatsApp pesakit.</p>
+
+    <div class="grid sm:grid-cols-[1fr_160px] gap-3 mb-4">
+      <div>
+        <label class="block text-[11px] font-bold text-ink/70 mb-1.5">Sebab / Tujuan Rujukan</label>
+        <textarea id="hk1-reason-${type}" rows="2" ${dis} onblur="hk1SaveReason('${type}')" placeholder="Cth: Pesakit alami kemurungan berterusan, perlu sesi motivasi..." class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy resize-y">${escHtml(ref.reason || '')}</textarea>
+      </div>
+      <div>
+        <label class="block text-[11px] font-bold text-ink/70 mb-1.5">Priority</label>
+        <select id="hk1-priority-${type}" ${dis} onchange="hk1SavePriority('${type}')" class="w-full px-2.5 py-2 border border-ink/15 rounded-lg text-sm bg-white outline-none focus:border-navy">
+          <option value="rendah" ${ref.priority === 'rendah' ? 'selected' : ''}>Rendah</option>
+          <option value="sederhana" ${ref.priority === 'sederhana' ? 'selected' : ''}>Sederhana</option>
+          <option value="tinggi" ${ref.priority === 'tinggi' ? 'selected' : ''}>Tinggi</option>
+        </select>
+      </div>
+    </div>
 
     <div class="mb-4">
       <label class="block text-[11px] font-bold text-ink/70 mb-1.5">🕐 Masa dijangka jumpa ${cfg.fallback} (pilihan)</label>
@@ -1164,6 +1204,28 @@ async function hk1SaveTime(type) {
   await hk1Persist(type, { scheduled_time: document.getElementById(`hk1-time-${type}`).value || null });
 }
 window.hk1SaveTime = hk1SaveTime;
+
+// reason/priority ialah LAJUR TERUS pada psy_clinical_referrals (bukan dalam JSON
+// consultation) — update berasingan dari hk1Persist().
+async function hk1SaveReason(type) {
+  const ref = hk1Refs[type];
+  const reason = document.getElementById(`hk1-reason-${type}`).value.trim() || `Sesi 1:1 ${HK1_TYPES[type].label} — Minggu ${weekNumber}`;
+  const { error } = await window.db.from('psy_clinical_referrals').update({ reason, updated_at: new Date().toISOString() }).eq('id', ref.id);
+  if (error) { banner('Ralat simpan: ' + error.message, 'error'); return; }
+  ref.reason = reason;
+  flashSaved(`hk1-saved-${type}`);
+}
+window.hk1SaveReason = hk1SaveReason;
+
+async function hk1SavePriority(type) {
+  const ref = hk1Refs[type];
+  const priority = document.getElementById(`hk1-priority-${type}`).value;
+  const { error } = await window.db.from('psy_clinical_referrals').update({ priority, updated_at: new Date().toISOString() }).eq('id', ref.id);
+  if (error) { banner('Ralat simpan: ' + error.message, 'error'); return; }
+  ref.priority = priority;
+  flashSaved(`hk1-saved-${type}`);
+}
+window.hk1SavePriority = hk1SavePriority;
 
 function renderHk1AttList(type, editable) {
   const host = document.getElementById(`hk1-att-list-${type}`);

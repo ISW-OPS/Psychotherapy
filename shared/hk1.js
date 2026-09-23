@@ -82,7 +82,7 @@ window.hk1GetAllowedDays = hk1GetAllowedDays;
 // atau plan-week.html kalau pesakit ada plan aktif). plan_id/week_number NULL = tempahan
 // berdiri sendiri (bukan auto-jana dari minggu plan). scheduledTime/durationMinutes/purpose
 // disimpan dalam consultation JSONB (field sedia ada, tiada migration perlu).
-async function hk1CreateBooking(type, { patientId, meetDate, reason, referredBy, referredByName, planId = null, weekNumber = null, scheduledTime = null, durationMinutes = null, purpose = null, targetId = null, targetName = null }) {
+async function hk1CreateBooking(type, { patientId, meetDate, reason, priority = 'sederhana', referredBy, referredByName, planId = null, weekNumber = null, scheduledTime = null, durationMinutes = null, purpose = null, targetId = null, targetName = null }) {
   const cfg = HK1_TYPES_META[type];
   const target = (targetId !== null) ? { id: targetId, name: targetName } : await hk1ResolveTarget(type);
   const consultation = {};
@@ -93,7 +93,7 @@ async function hk1CreateBooking(type, { patientId, meetDate, reason, referredBy,
     patient_id: patientId, plan_id: planId, week_number: weekNumber, source: 'plan_1on1', session_type: type,
     referred_by: referredBy, referred_by_name: referredByName,
     target_role: cfg.role, target_id: target.id, target_name: target.name,
-    reason: reason || `Sesi 1:1 ${cfg.label}`, meet_date: meetDate, priority: 'sederhana',
+    reason: reason || `Sesi 1:1 ${cfg.label}`, meet_date: meetDate, priority: priority || 'sederhana',
     consultation,
   }).select('*').single();
 }

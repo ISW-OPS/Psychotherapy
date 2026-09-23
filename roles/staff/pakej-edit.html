@@ -923,6 +923,14 @@ function onSessionsPerWeekChange() {
   saveDraftDebounced?.();
 }
 
+// Sesi 1:1 wajib per-minggu — sama set jenis dgn HK1_TYPES_META (shared/hk1.js) &
+// HK1_TYPES (plan-week.html), diringkas di sini sbb cuma perlu label+emoji utk checkbox.
+const HK1_TYPES_CFG = {
+  hakeema: { label: 'Hakeema', emoji: '🧑‍💼' },
+  hakeem:  { label: 'Hakeem',  emoji: '🧑' },
+  dr:      { label: 'Dr',      emoji: '🩺' },
+};
+
 function normalizeCoachingSchedule(schedule, count, unit = getDurationUnit()) {
   const keyName = unit === 'day' ? 'day' : 'week';
   const existing = {};
@@ -944,6 +952,9 @@ function normalizeCoachingSchedule(schedule, count, unit = getDurationUnit()) {
       mode:       item.mode || 'both',
       // Hari sesi aktif minggu ini: [1,2]=dua sesi, [1]=sesi 1 saja, [2]=sesi 2 saja.
       session_days: Array.isArray(item.session_days) && item.session_days.length ? item.session_days : defaultSessionDays(),
+      // Sesi 1:1 wajib minggu ini (['hakeema','hakeem','dr']) — auto-cipta rekod rujukan
+      // di plan-week.html, staff tak perlu tick manual. Lihat HK1_TYPES_CFG.
+      hk1_types:  Array.isArray(item.hk1_types) ? item.hk1_types : [],
       rujukan_files: item.rujukan_files || [],
     };
   });
@@ -1337,6 +1348,15 @@ function renderCoachingScheduleEditor(forceRebuild = false) {
           </select>` : ''}
         </div>
       </div>
+      <div class="flex items-center gap-2 text-[11px] flex-wrap mb-2 pb-2 border-b border-ink/10">
+        <span class="text-ink/60 font-semibold">🧑‍💼 Sesi 1:1 Wajib:</span>
+        ${Object.entries(HK1_TYPES_CFG).map(([type, cfg]) => `
+          <label class="flex items-center gap-1">
+            <input type="checkbox" ${(item.hk1_types || []).includes(type) ? 'checked' : ''} onchange="updateHk1Type(${wk}, '${type}', this.checked)">
+            ${cfg.emoji} ${cfg.label}
+          </label>`).join('')}
+        <span class="text-ink/40">— auto-cipta rekod Sesi 1:1 ${prefix}${wk} ini, staff tak perlu tick manual</span>
+      </div>
       ${nSes >= 2 ? `
         <div class="rounded-md border border-navy/15 bg-navy/[0.02] p-2 mb-2">
           <div class="text-[11px] font-bold text-navy mb-2">🗓️ Sesi 1</div>
@@ -1451,6 +1471,15 @@ function updateSessions(wk, val) {
   // 2 sesi = [1,2]; 1 sesi = [1] (kekal Sesi 1, buang Sesi 2).
   if (item) item.session_days = Number(val) >= 2 ? [1, 2] : [1];
   renderCoachingScheduleEditor();  // re-render supaya kotak Bekalan Sesi 2 muncul/hilang
+  saveDraftDebounced?.();
+}
+
+function updateHk1Type(wk, type, checked) {
+  const item = getWeekItem(wk);
+  if (!item) return;
+  const set = new Set(item.hk1_types || []);
+  if (checked) set.add(type); else set.delete(type);
+  item.hk1_types = Array.from(set);
   saveDraftDebounced?.();
 }
 
@@ -1790,10 +1819,12 @@ function collectCoachingSchedule() {
     guidance_2: clean(item.guidance_2),
     aktiviti_2: clean(item.aktiviti_2),
     supplies_2: clean(item.supplies_2),
+    hk1_types: (item.hk1_types || []).filter(t => HK1_TYPES_CFG[t]),
   })).filter(item =>
     item.guidance.length || item.aktiviti.length || item.supplies.length ||
     item.guidance_2.length || item.aktiviti_2.length || item.supplies_2.length ||
     (item.rujukan_files && item.rujukan_files.length) || (item.mode && item.mode !== 'both') ||
+    (item.hk1_types && item.hk1_types.length) ||
     (Array.isArray(item.session_days) && item.session_days.join(',') !== defaultSessionDays().join(','))
   );
 }
