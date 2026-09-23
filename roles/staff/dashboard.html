@@ -2139,7 +2139,7 @@
         window.db.from('psy_inventory_items').select('id, name, qty_in_stock, min_qty, source_type, consumption_type').eq('is_active', true),
         // Sesi F2F minggu ini yg BELUM Hadir — sumber "Stok Perlu Diberi" (bekalan dijadualkan,
         // belum ditick/ditolak lagi), gantikan log "dah diberi" (kini di Stock Movement/patient-hub).
-        window.db.from('psy_plan_weekly_progress').select('id, session_date, week_number, plan_id, patient_id')
+        window.db.from('psy_plan_weekly_progress').select('id, session_date, week_number, plan_id, patient_id, is_extension')
           .eq('session_type', 'f2f').in('status', ['booked', 'pending'])
           .gte('session_date', _weekStart.toISOString()).lt('session_date', _weekEnd.toISOString())
           .order('session_date', { ascending: true }),
@@ -2155,7 +2155,7 @@
       const closedIds = new Set((issueClosedRes.data || []).map(r => r.meta?.issue_id).filter(Boolean));
       const patients = patientsRes.data || [];
       const inventory = inventoryRes.data || [];
-      const pendingSessions = pendingSessRes.data || [];
+      const pendingSessions = (pendingSessRes.data || []).filter(s => !s.is_extension); // sesi extension tiada bekalan
       const prPending = prPendingRes.data || [];
       const emergencyAlerts = emergencyRes.data || [];
       renderEmergencyPanel('a-emergency-list', emergencyAlerts);
@@ -2439,12 +2439,13 @@
       const planScheduleById = {}; (pendingPlansRes.data || []).forEach(pl => { planScheduleById[pl.id] = Array.isArray(pl.coaching_schedule) ? pl.coaching_schedule : []; });
 
       // Sesi → bekalan dijadualkan minggu ni (ikut coaching_schedule pakej), skip kalau tiada
-      // bekalan/auto_stock=false — sama logik dgn shared/inventoryDeduct.js.
+      // bekalan/auto_stock=false — sama logik dgn shared/inventoryDeduct.js. Cuma .supplies
+      // (BUKAN .supplies_2) — sepadan tepat dgn apa yg deductSessionSupplies() sebenar tolak.
       const stockNeeded = pendingSessions.map(s => {
         const schedule = planScheduleById[s.plan_id] || [];
         const weekObj = schedule.find(w => w.week === s.week_number) || schedule[s.week_number - 1];
         const supplies = weekObj && weekObj.mode !== 'online'
-          ? [...(weekObj.supplies || []), ...(weekObj.supplies_2 || [])].filter(sup => sup?.auto_stock !== false && Number(sup?.qty || sup?.quantity || 0) > 0)
+          ? (weekObj.supplies || []).filter(sup => sup?.auto_stock !== false && Number(sup?.qty || sup?.quantity || 0) > 0)
           : [];
         return { patient_id: s.patient_id, session_date: s.session_date, plan_id: s.plan_id, week_number: s.week_number, supplies };
       }).filter(r => r.supplies.length);

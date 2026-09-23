@@ -59,7 +59,10 @@
 
         <!-- Jumlah Stok Diperlukan (ikut tapisan tarikh/status semasa) -->
         <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
-          <h3 class="font-bold text-sm text-ink mb-3">📋 Jumlah Stok Diperlukan (⏳ Belum Bagi<span id="ps-summary-range"></span>)</h3>
+          <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
+            <h3 class="font-bold text-sm text-ink">📋 Jumlah Stok Diperlukan (⏳ Belum Bagi<span id="ps-summary-range"></span>)</h3>
+            <span id="ps-summary-shortfall" class="hidden text-[10px] font-semibold text-terracotta bg-terracotta/10 px-2 py-1 rounded-full whitespace-nowrap"></span>
+          </div>
           <div id="ps-summary" class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm"></div>
         </div>
 
@@ -133,6 +136,17 @@
 let ALL_ROWS = [];
 let psPage = 1;
 const PS_PAGE_SIZE = 20;
+let STOCK_BY_ID = {};
+let STOCK_BY_NAME = {};
+
+// Stok semasa Inventori — utk banding dgn "Jumlah Stok Diperlukan" (cukup/tak cukup).
+async function loadStockLevels() {
+  const { data } = await window.db.from('psy_inventory_items').select('id, name, qty_in_stock, unit').eq('is_active', true);
+  (data || []).forEach(it => {
+    STOCK_BY_ID[it.id] = it;
+    STOCK_BY_NAME[(it.name || '').trim().toLowerCase()] = it;
+  });
+}
 
 function escHtml(str) {
   if (!str) return '';
@@ -159,11 +173,11 @@ async function loadGivenRows() {
 // coaching_schedule pakej (sama logik shared/inventoryDeduct.js / dashboard.html). ──
 async function loadPendingRows() {
   const { data: sessions } = await window.db.from('psy_plan_weekly_progress')
-    .select('id, session_date, week_number, plan_id, patient_id')
+    .select('id, session_date, week_number, plan_id, patient_id, is_extension')
     .eq('session_type', 'f2f').in('status', ['booked', 'pending'])
     .not('session_date', 'is', null) // sesi belum dijadualkan (tiada tarikh) — tiada apa-apa nak diberi lagi
     .order('session_date', { ascending: true }).limit(500);
-  const rows = sessions || [];
+  const rows = (sessions || []).filter(s => !s.is_extension); // sesi extension tiada bekalan (shared/inventoryDeduct.js)
   const planIds = [...new Set(rows.map(s => s.plan_id).filter(Boolean))];
   let scheduleByPlan = {};
   if (planIds.length) {
@@ -176,7 +190,9 @@ async function loadPendingRows() {
     const schedule = scheduleByPlan[s.plan_id] || [];
     const weekObj = schedule.find(w => w.week === s.week_number) || schedule[s.week_number - 1];
     if (!weekObj || weekObj.mode === 'online') return;
-    const supplies = [...(weekObj.supplies || []), ...(weekObj.supplies_2 || [])]
+    // Cuma weekObj.supplies (BUKAN supplies_2) — sepadan tepat dgn apa yg deductSessionSupplies()
+    // sebenarnya tolak bila sesi ditanda Hadir (shared/inventoryDeduct.js baca .supplies sahaja).
+    const supplies = (weekObj.supplies || [])
       .filter(sup => sup?.auto_stock !== false && Number(sup?.qty || sup?.quantity || 0) > 0);
     supplies.forEach(sup => {
       const name = sup.item_name || sup.name || '';
@@ -217,7 +233,7 @@ async function resolvePatientNames(rows) {
 }
 
 async function loadAll() {
-  const [given, pending] = await Promise.all([loadGivenRows(), loadPendingRows()]);
+  const [given, pending] = await Promise.all([loadGivenRows(), loadPendingRows(), loadStockLevels()]);
   const combined = [...pending, ...given]; // belum bagi (akan datang) dulu, dah bagi (lepas) lepas tu
   const nameMap = await resolvePatientNames(combined);
   ALL_ROWS = combined.map(r => ({ ...r, patientName: nameMap[r.patientId] || 'Pesakit' }));
@@ -302,16 +318,41 @@ function renderStockSummary(filteredList) {
 
   const totals = {};
   filteredList.filter(r => r.status === 'pending').forEach(r => {
-    const key = r.productName + '|' + r.unit;
-    if (!totals[key]) totals[key] = { name: r.productName, unit: r.unit, qty: 0 };
+    const key = r.itemId || ('name:' + r.productName.toLowerCase());
+    if (!totals[key]) totals[key] = { name: r.productName, unit: r.unit, qty: 0, itemId: r.itemId };
     totals[key].qty += Number(r.qty) || 0;
   });
-  const rows = Object.values(totals).sort((a, b) => b.qty - a.qty);
-  document.getElementById('ps-summary').innerHTML = rows.length ? rows.map(r => `
-    <div class="flex items-center justify-between gap-2 bg-cream/60 rounded-lg px-3 py-2">
-      <span class="text-ink/70 truncate">${escHtml(r.name)}</span>
-      <span class="font-bold text-ink whitespace-nowrap">${escHtml(String(r.qty))}${escHtml(r.unit)}</span>
-    </div>`).join('') : '<div class="text-xs text-ink/40 italic col-span-full">Tiada bekalan tertunggak dalam tapisan ini</div>';
+  const rows = Object.values(totals).map(r => {
+    const stockItem = (r.itemId && STOCK_BY_ID[r.itemId]) || STOCK_BY_NAME[(r.name || '').trim().toLowerCase()] || null;
+    const available = stockItem ? Number(stockItem.qty_in_stock) || 0 : null;
+    const short = available !== null && available < r.qty;
+    return { ...r, available, short };
+  }).sort((a, b) => (b.short - a.short) || (b.qty - a.qty)); // tak cukup dulu, pastu ikut qty terbesar
+
+  const shortfallCount = rows.filter(r => r.short).length;
+  const badgeEl = document.getElementById('ps-summary-shortfall');
+  if (shortfallCount) {
+    badgeEl.textContent = `⚠ ${shortfallCount} item stok tak cukup`;
+    badgeEl.classList.remove('hidden');
+  } else {
+    badgeEl.classList.add('hidden');
+  }
+
+  document.getElementById('ps-summary').innerHTML = rows.length ? rows.map(r => {
+    const statusHtml = r.available === null
+      ? `<span class="text-[9px] text-ink/35 italic">stok tidak dijumpai</span>`
+      : r.short
+        ? `<span class="text-[9px] font-semibold text-terracotta">⚠ Kurang ${escHtml(String(r.qty - r.available))}${escHtml(r.unit)} (ada ${escHtml(String(r.available))})</span>`
+        : `<span class="text-[9px] font-semibold text-green-dark">✓ Cukup (ada ${escHtml(String(r.available))}${escHtml(r.unit)})</span>`;
+    return `
+    <div class="flex flex-col gap-1 rounded-lg px-3 py-2 ${r.short ? 'bg-terracotta/10 ring-1 ring-terracotta/30' : 'bg-cream/60'}">
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-ink/70 truncate">${escHtml(r.name)}</span>
+        <span class="font-bold text-ink whitespace-nowrap">${escHtml(String(r.qty))}${escHtml(r.unit)}</span>
+      </div>
+      ${statusHtml}
+    </div>`;
+  }).join('') : '<div class="text-xs text-ink/40 italic col-span-full">Tiada bekalan tertunggak dalam tapisan ini</div>';
 }
 
 function render() {
