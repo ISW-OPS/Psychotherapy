@@ -86,11 +86,11 @@
           </div>
           <div>
             <label class="block text-[10px] font-semibold text-ink/40 uppercase tracking-wide mb-1">Tarikh Dari</label>
-            <input id="ps-date-from" type="date" onchange="onFilterChange()" class="w-full px-3 py-2.5 border border-ink/20 rounded-xl text-sm focus:outline-none focus:border-navy">
+            <input id="ps-date-from" type="date" onchange="onDateFilterChange()" class="w-full px-3 py-2.5 border border-ink/20 rounded-xl text-sm focus:outline-none focus:border-navy">
           </div>
           <div>
             <label class="block text-[10px] font-semibold text-ink/40 uppercase tracking-wide mb-1">Tarikh Hingga</label>
-            <input id="ps-date-to" type="date" onchange="onFilterChange()" class="w-full px-3 py-2.5 border border-ink/20 rounded-xl text-sm focus:outline-none focus:border-navy">
+            <input id="ps-date-to" type="date" onchange="onDateFilterChange()" class="w-full px-3 py-2.5 border border-ink/20 rounded-xl text-sm focus:outline-none focus:border-navy">
           </div>
           <div class="md:col-span-5 flex justify-end">
             <button onclick="clearFilters()" class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm text-ink/50 hover:bg-ink/5 bg-white flex items-center gap-1.5">✕ Kosongkan Filter</button>
@@ -157,11 +157,15 @@ function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'm
 
 // ── "Dah Bagi" — dari ledger psy_stock_movements (auto-potong sesi Hadir + manual
 // "Bagi Bekalan" patient-hub, dua-dua tulis reference_type='patient_package'). ──
-async function loadGivenRows() {
-  const { data } = await window.db.from('psy_stock_movements')
+// from/to ('YYYY-MM-DD', pilihan) — terikat di SERVER supaya had limit() tak silap
+// buang rekod dalam julat yang staff sedang tengok.
+async function loadGivenRows(from, to) {
+  let q = window.db.from('psy_stock_movements')
     .select('item_name, qty, reference_id, created_at, psy_inventory_items(unit)')
-    .eq('reference_type', 'patient_package').eq('movement_type', 'out')
-    .order('created_at', { ascending: false }).limit(500);
+    .eq('reference_type', 'patient_package').eq('movement_type', 'out');
+  if (from) q = q.gte('created_at', from + 'T00:00:00');
+  if (to) q = q.lte('created_at', to + 'T23:59:59');
+  const { data } = await q.order('created_at', { ascending: false }).limit(1000);
   return (data || []).map(r => ({
     date: r.created_at, patientId: r.reference_id, productName: r.item_name,
     qty: Math.abs(Number(r.qty)), unit: r.psy_inventory_items?.unit || '', status: 'given',
@@ -171,12 +175,17 @@ async function loadGivenRows() {
 
 // ── "Belum Bagi" — sesi F2F yg belum ditandakan Hadir, bekalan dijadualkan ikut
 // coaching_schedule pakej (sama logik shared/inventoryDeduct.js / dashboard.html). ──
-async function loadPendingRows() {
-  const { data: sessions } = await window.db.from('psy_plan_weekly_progress')
+// Status: SEMUA kecuali 'hadir'/'cancel' — sepadan dgn shared/inventoryForecast.js
+// computeForecastForRange() (termasuk 'reschedule', bukan setakat booked/pending), supaya
+// jumlah "Belum Bagi" di sini konsisten dgn enjin forecast rasmi (Amaran Stok/dashboard).
+async function loadPendingRows(from, to) {
+  let q = window.db.from('psy_plan_weekly_progress')
     .select('id, session_date, week_number, plan_id, patient_id, is_extension')
-    .eq('session_type', 'f2f').in('status', ['booked', 'pending'])
-    .not('session_date', 'is', null) // sesi belum dijadualkan (tiada tarikh) — tiada apa-apa nak diberi lagi
-    .order('session_date', { ascending: true }).limit(500);
+    .eq('session_type', 'f2f').neq('status', 'hadir').neq('status', 'cancel')
+    .not('session_date', 'is', null); // sesi belum dijadualkan (tiada tarikh) — tiada apa-apa nak diberi lagi
+  if (from) q = q.gte('session_date', from + 'T00:00:00');
+  if (to) q = q.lte('session_date', to + 'T23:59:59');
+  const { data: sessions } = await q.order('session_date', { ascending: true }).limit(1000);
   const rows = (sessions || []).filter(s => !s.is_extension); // sesi extension tiada bekalan (shared/inventoryDeduct.js)
   const planIds = [...new Set(rows.map(s => s.plan_id).filter(Boolean))];
   let scheduleByPlan = {};
@@ -233,7 +242,9 @@ async function resolvePatientNames(rows) {
 }
 
 async function loadAll() {
-  const [given, pending] = await Promise.all([loadGivenRows(), loadPendingRows(), loadStockLevels()]);
+  const from = document.getElementById('ps-date-from').value;
+  const to = document.getElementById('ps-date-to').value;
+  const [given, pending] = await Promise.all([loadGivenRows(from, to), loadPendingRows(from, to), loadStockLevels()]);
   const combined = [...pending, ...given]; // belum bagi (akan datang) dulu, dah bagi (lepas) lepas tu
   const nameMap = await resolvePatientNames(combined);
   ALL_ROWS = combined.map(r => ({ ...r, patientName: nameMap[r.patientId] || 'Pesakit' }));
@@ -257,15 +268,13 @@ function renderStats(filteredList) {
   document.getElementById('ps-stat-patients').textContent = patientIds.size;
 }
 
+// Tarikh dah ditapis di SERVER (loadAll() hantar from/to terus ke query) — ALL_ROWS
+// sentiasa dalam julat yang dipilih, jadi di sini cuma tapis status + carian teks.
 function getFiltered() {
   const q = document.getElementById('ps-search').value.trim().toLowerCase();
   const status = document.getElementById('ps-status').value;
-  const from = document.getElementById('ps-date-from').value;
-  const to = document.getElementById('ps-date-to').value;
   return ALL_ROWS.filter(r => {
     if (status && r.status !== status) return false;
-    if (from && r.date < from + 'T00:00:00') return false;
-    if (to && r.date > to + 'T23:59:59') return false;
     if (q) {
       const hay = `${r.patientName} ${r.productName}`.toLowerCase();
       if (!hay.includes(q)) return false;
@@ -277,12 +286,17 @@ function getFiltered() {
 function onFilterChange() { psPage = 1; render(); }
 window.onFilterChange = onFilterChange;
 
+// Tarikh diubah — kena tarik semula dari server (bukan setakat render semula) sebab
+// ALL_ROWS terikat kepada julat tarikh lama.
+function onDateFilterChange() { psPage = 1; loadAll(); }
+window.onDateFilterChange = onDateFilterChange;
+
 function clearFilters() {
   document.getElementById('ps-search').value = '';
   document.getElementById('ps-status').value = '';
   document.getElementById('ps-date-from').value = '';
   document.getElementById('ps-date-to').value = '';
-  onFilterChange();
+  onDateFilterChange(); // tarikh berubah (dikosongkan) — reload dari server
 }
 window.clearFilters = clearFilters;
 

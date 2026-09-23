@@ -218,7 +218,12 @@
         <div id="adj-item-name" class="mt-1 px-3 py-2.5 bg-cream/60 rounded-xl text-sm font-semibold text-ink/70 border border-ink/10">—</div>
       </div>
       <div>
-        <label class="text-xs font-semibold">Stok Baru <span class="text-terracotta">*</span></label>
+        <label class="text-xs font-semibold">Lokasi <span class="text-terracotta">*</span></label>
+        <select id="adj-location" onchange="onAdjustLocationChange()" class="w-full mt-1 px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none"></select>
+        <div id="adj-location-current" class="text-[11px] text-ink/45 mt-1">—</div>
+      </div>
+      <div>
+        <label class="text-xs font-semibold">Stok Baru (di lokasi dipilih) <span class="text-terracotta">*</span></label>
         <input id="adj-qty" type="number" min="0" step="0.01"
           class="w-full mt-1 px-3 py-2.5 border border-ink/20 rounded-xl text-sm focus:border-navy outline-none" placeholder="0">
       </div>
@@ -932,14 +937,48 @@ async function invAudit(action, target, meta = {}) {
 }
 
 // ── Adjust Stock Modal ─────────────────────────────────────
-function openAdjustModal(itemId) {
+// Item boleh ada stok di BEBERAPA lokasi berasingan (psy_inventory_stock_by_location);
+// qty_in_stock pada item ialah AGREGAT semua lokasi (trigger psy_sync_item_stock_total).
+// "Stok Baru" di sini ialah utk SATU lokasi dipilih, bukan agregat — elak delta besar
+// tersasar ke lokasi salah bila item ada >1 lokasi (bug lama: addStockToLocation tanpa
+// nyatakan lokasi cuma kenakan delta ke lokasi paling banyak stok, boleh silap jumlah).
+let adjLocationStock = {}; // location_id -> {name, qty}
+
+async function openAdjustModal(itemId) {
   const item = allItems.find(i => i.id === itemId);
   document.getElementById('adj-item-id').value         = itemId;
   document.getElementById('adj-item-name').textContent = item?.name || '—';
-  document.getElementById('adj-qty').value             = item?.qty_in_stock ?? 0;
   document.getElementById('adj-notes').value           = '';
+
+  const [locsRes, stockRes] = await Promise.all([
+    window.db.from('psy_inventory_locations').select('id, name, is_default').eq('is_active', true).order('name'),
+    window.db.from('psy_inventory_stock_by_location').select('location_id, qty_in_stock').eq('item_id', itemId),
+  ]);
+  const locations = locsRes.data || [];
+  const stockByLoc = {}; (stockRes.data || []).forEach(r => { stockByLoc[r.location_id] = Number(r.qty_in_stock) || 0; });
+  adjLocationStock = {};
+  locations.forEach(l => { adjLocationStock[l.id] = { name: l.name, qty: stockByLoc[l.id] || 0 }; });
+
+  const sel = document.getElementById('adj-location');
+  sel.innerHTML = locations.map(l => `<option value="${l.id}">${escHtml(l.name)} (${stockByLoc[l.id] || 0} sedia ada)</option>`).join('');
+
+  // Default: lokasi dgn stok paling banyak (kekal kelakuan lama utk kes biasa satu-lokasi),
+  // fallback ke lokasi is_default kalau item tiada stok di mana-mana lagi.
+  const withStock = locations.filter(l => (stockByLoc[l.id] || 0) > 0).sort((a, b) => (stockByLoc[b.id] || 0) - (stockByLoc[a.id] || 0));
+  const defaultLoc = withStock[0] || locations.find(l => l.is_default) || locations[0];
+  if (defaultLoc) sel.value = defaultLoc.id;
+
+  onAdjustLocationChange();
   document.getElementById('adjust-modal').classList.remove('hidden');
 }
+
+function onAdjustLocationChange() {
+  const locId = document.getElementById('adj-location').value;
+  const info = adjLocationStock[locId];
+  document.getElementById('adj-location-current').textContent = info ? `Stok semasa di lokasi ni: ${info.qty}` : '—';
+  document.getElementById('adj-qty').value = info ? info.qty : 0;
+}
+window.onAdjustLocationChange = onAdjustLocationChange;
 
 function closeAdjustModal() {
   document.getElementById('adjust-modal').classList.add('hidden');
@@ -947,27 +986,28 @@ function closeAdjustModal() {
 
 async function saveAdjust() {
   const itemId = document.getElementById('adj-item-id').value;
+  const locId  = document.getElementById('adj-location').value;
   const qty    = document.getElementById('adj-qty').value;
   if (qty === '' || isNaN(Number(qty)) || Number(qty) < 0) {
     banner('Sila masukkan nilai stok yang sah', 'error'); return;
   }
+  if (!locId) { banner('Sila pilih lokasi', 'error'); return; }
 
   if (!isManagerOrAdmin()) { banner('Hanya manager/admin boleh adjust stok', 'error'); return; }
   const notes = document.getElementById('adj-notes')?.value?.trim() || null;
   const prevItem = allItems.find(i => i.id === itemId);
-  const prevQty = Number(prevItem?.qty_in_stock) || 0;
+  const locInfo = adjLocationStock[locId];
+  const prevQty = locInfo?.qty || 0;
   const targetQty = Number(qty);
   const delta = targetQty - prevQty;
   try {
-    // Lalu addStockToLocation (bukan update qty_in_stock terus) — supaya ditulis ke
-    // psy_stock_movements (ledger) & psy_inventory_stock_by_location, sama macam
-    // Adjust Stock di inventory-detail.html. Update terus sebelum ni bypass DUA-DUA,
-    // jadi adjustment tak muncul di Stock Movement & boleh ditimpa semula oleh
-    // trigger psy_sync_item_stock_total() bila ada movement lain kemudian.
+    // Lalu addStockToLocation (bukan update qty_in_stock terus) DENGAN nama lokasi
+    // dipilih — supaya delta kena tepat pada lokasi tu sahaja, ditulis ke
+    // psy_stock_movements (ledger) & psy_inventory_stock_by_location.
     if (delta !== 0) {
-      await addStockToLocation(itemId, delta, null, { type: 'adjustment', refType: 'adjustment', note: notes || 'Adjust stok', itemName: prevItem?.name });
+      await addStockToLocation(itemId, delta, locInfo?.name || null, { type: 'adjustment', refType: 'adjustment', note: notes || 'Adjust stok', itemName: prevItem?.name });
     }
-    await invAudit('inventory.adjust', itemId, { from: prevQty, to: targetQty, notes });
+    await invAudit('inventory.adjust', itemId, { from: prevQty, to: targetQty, location: locInfo?.name, notes });
     banner('Stok berjaya dikemaskini');
     closeAdjustModal();
     await refreshInventory();

@@ -731,7 +731,7 @@ async function ensureInlineCatalogs() {
   if (_ieCatalogsLoaded) return;
   const [cc, inv] = await Promise.all([
     window.db.from('psy_coaching_catalog').select('name, type, is_active').eq('is_active', true).order('name'),
-    window.db.from('psy_inventory_items').select('id, name, unit').eq('is_active', true).order('name'),
+    window.db.from('psy_inventory_items').select('id, name, unit, qty_in_stock').eq('is_active', true).order('name'),
   ]);
   goCatalog = { guidance: [], aktiviti: [] };
   (cc.data || []).forEach(r => { (r.type === 'aktiviti' ? goCatalog.aktiviti : goCatalog.guidance).push(r); });
@@ -1355,15 +1355,27 @@ function renderCoachingSchedule() {
       const key = `${prefix}_${type}_${idx}`;
       const checked = !!coachingChecks[key];
       const reason = coachingChecks[key + '_reason'] || '';
+
+      // Bekalan (supplies) — item stok habis (qty_in_stock<=0) TAK BOLEH ditick sebagai
+      // "diberi" — kena kemaskini Inventori dulu (elak claim diberi walhal fizikal takde).
+      // Item yang dah ditick sebelum ni (historical) tetap boleh untick semula utk pembetulan.
+      let outOfStock = false;
+      if (type === 'supplies' && value?.item_id) {
+        const inv = soCatalog.find(i => i.id === value.item_id);
+        outOfStock = inv && Number(inv.qty_in_stock) <= 0;
+      }
+      const blockTick = outOfStock && !checked;
+
       return `<div>
         <div class="flex items-start gap-1.5">
-          <label class="flex items-start gap-2 text-xs cursor-pointer select-none flex-1 min-w-0">
-            <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleCoachingCheck('${key}', this.checked)" class="mt-0.5 flex-shrink-0">
-            <span class="${checked ? 'line-through text-ink/40' : 'text-ink/80'}">${escHtml(text)}</span>
+          <label class="flex items-start gap-2 text-xs ${blockTick ? 'cursor-not-allowed' : 'cursor-pointer'} select-none flex-1 min-w-0">
+            <input type="checkbox" ${checked ? 'checked' : ''} ${blockTick ? 'disabled' : ''} onchange="toggleCoachingCheck('${key}', this.checked)" class="mt-0.5 flex-shrink-0">
+            <span class="${checked ? 'line-through text-ink/40' : blockTick ? 'text-ink/40' : 'text-ink/80'}">${escHtml(text)}</span>
           </label>
           <button type="button" data-rbac="plan_week.edit" onclick="inlineRemove('${slot}','${type}',${idx})" title="Buang item" class="flex-shrink-0 text-red-400 hover:text-red-600 font-bold leading-none px-1">×</button>
         </div>
-        ${!checked ? `<div class="mt-1.5 ml-5">
+        ${blockTick ? `<div class="mt-1 ml-5 text-[11px] text-terracotta font-medium">⚠️ Stok habis — <a href="inventory-detail.html?id=${value.item_id}" target="_blank" class="underline hover:text-terracotta/80">kemaskini Inventori dulu</a></div>` : ''}
+        ${!checked && !blockTick ? `<div class="mt-1.5 ml-5">
           <input type="text" placeholder="Alasan belum selesai..." value="${escHtml(reason)}"
             onblur="saveCoachingReason('${key}', this.value)"
             class="w-full px-2 py-1.5 border border-gold/40 rounded-md text-xs bg-gold/5 placeholder-ink/30 focus:outline-none focus:border-gold">

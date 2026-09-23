@@ -323,15 +323,20 @@
     <div class="p-6 space-y-4">
       <div>
         <label class="text-xs font-semibold text-ink/60">Jenis Pergerakan</label>
-        <select id="adj-type" class="w-full mt-1.5 px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:outline-none focus:border-navy">
+        <select id="adj-type" onchange="onAdjustTypeOrLocationChange()" class="w-full mt-1.5 px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:outline-none focus:border-navy">
           <option value="add">+ Masuk (terima stok)</option>
           <option value="remove">− Guna / Buang</option>
           <option value="set">= Set semula (stock count)</option>
         </select>
       </div>
       <div>
-        <label class="text-xs font-semibold text-ink/60">Kuantiti <span class="text-terracotta">*</span></label>
-        <input id="adj-qty" type="number" min="0.01" step="0.01" class="w-full mt-1.5 px-3 py-2.5 border border-ink/20 rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="0">
+        <label class="text-xs font-semibold text-ink/60">Lokasi <span class="text-terracotta">*</span></label>
+        <select id="adj-location" onchange="onAdjustTypeOrLocationChange()" class="w-full mt-1.5 px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:outline-none focus:border-navy"></select>
+        <div id="adj-location-current" class="text-[11px] text-ink/45 mt-1">—</div>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-ink/60" id="adj-qty-label">Kuantiti <span class="text-terracotta">*</span></label>
+        <input id="adj-qty" type="number" min="0" step="0.01" class="w-full mt-1.5 px-3 py-2.5 border border-ink/20 rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="0">
       </div>
       <div>
         <label class="text-xs font-semibold text-ink/60">Nota</label>
@@ -401,6 +406,8 @@
 let itemId   = null;
 let itemData = null;
 let canManage = false;
+let stockByLocationRows = [];
+let allActiveLocations = [];
 
 async function init() {
   const user = await initStaff('inventory', 'Detail Item');
@@ -414,16 +421,19 @@ async function init() {
   itemId = params.get('id');
   if (!itemId) { history.back(); return; }
 
-  const [itemRes, reqsRes, kitsRes, stockLocRes] = await Promise.all([
+  const [itemRes, reqsRes, kitsRes, stockLocRes, locsRes] = await Promise.all([
     window.db.from('psy_inventory_items').select('*').eq('id', itemId).single(),
     window.db.from('psy_inventory_request_items').select('*, psy_inventory_requests(status)').eq('item_id', itemId).order('created_at', { ascending: false }).limit(8),
     window.db.from('psy_procedure_kits').select('id, name, category, items'),
     window.db.from('psy_inventory_stock_by_location').select('*, psy_inventory_locations(name)').eq('item_id', itemId),
+    window.db.from('psy_inventory_locations').select('id, name, is_default').eq('is_active', true).order('name'),
   ]);
 
   if (!itemRes.data) { banner('Item tidak dijumpai', 'error'); return; }
   itemData = itemRes.data;
-  renderStockByLocation(stockLocRes.data || []);
+  stockByLocationRows = stockLocRes.data || [];
+  allActiveLocations = locsRes.data || [];
+  renderStockByLocation(stockByLocationRows);
 
   // Forecast (14 hari akan datang, ikut sesi sebenar) — shared/inventoryForecast.js,
   // SAMA fungsi dipakai inventory.html/dashboard.html/governance.html.
@@ -676,34 +686,74 @@ window.addEventListener('message', (e) => {
   if (e.data?.type === 'isw-item-saved' && e.data.id === itemId) location.reload();
 });
 
-function openAdjust() { document.getElementById('adjust-modal').classList.remove('hidden'); }
+// Item boleh ada stok di BEBERAPA lokasi berasingan; qty_in_stock pada item ialah
+// AGREGAT semua lokasi (trigger psy_sync_item_stock_total). Staff kena pilih lokasi
+// mana nak dilaraskan — elak delta besar tersasar ke lokasi salah (bug lama:
+// addStockToLocation tanpa nyatakan lokasi cuma kenakan delta ke lokasi paling
+// banyak stok, boleh silap jumlah bila item ada >1 lokasi).
+function stockAtLocation(locId) {
+  const row = stockByLocationRows.find(r => r.location_id === locId);
+  return row ? Number(row.qty_in_stock) || 0 : 0;
+}
+
+function openAdjust() {
+  const sel = document.getElementById('adj-location');
+  sel.innerHTML = allActiveLocations.map(l => `<option value="${l.id}">${escHtml(l.name)} (${stockAtLocation(l.id)} sedia ada)</option>`).join('');
+  const withStock = [...allActiveLocations].filter(l => stockAtLocation(l.id) > 0).sort((a, b) => stockAtLocation(b.id) - stockAtLocation(a.id));
+  const defaultLoc = withStock[0] || allActiveLocations.find(l => l.is_default) || allActiveLocations[0];
+  if (defaultLoc) sel.value = defaultLoc.id;
+  document.getElementById('adj-type').value = 'add';
+  document.getElementById('adj-qty').value = '';
+  document.getElementById('adj-note').value = '';
+  onAdjustTypeOrLocationChange();
+  document.getElementById('adjust-modal').classList.remove('hidden');
+}
 function closeAdjust() { document.getElementById('adjust-modal').classList.add('hidden'); }
+
+function onAdjustTypeOrLocationChange() {
+  const locId = document.getElementById('adj-location').value;
+  const qty = stockAtLocation(locId);
+  document.getElementById('adj-location-current').textContent = `Stok semasa di lokasi ni: ${qty} ${itemData?.unit || ''}`;
+  const adjType = document.getElementById('adj-type').value;
+  document.getElementById('adj-qty-label').innerHTML = adjType === 'set'
+    ? 'Kuantiti — jumlah BAHARU di lokasi ni <span class="text-terracotta">*</span>'
+    : 'Kuantiti <span class="text-terracotta">*</span>';
+  if (adjType === 'set') document.getElementById('adj-qty').value = qty; // pre-isi utk stock count, staff timpa dgn bacaan sebenar
+}
+window.onAdjustTypeOrLocationChange = onAdjustTypeOrLocationChange;
 
 async function saveAdjust() {
   const adjType = document.getElementById('adj-type').value;
+  const locId   = document.getElementById('adj-location').value;
   const qty     = parseFloat(document.getElementById('adj-qty').value);
   const note    = document.getElementById('adj-note').value.trim();
-  if (!qty || qty <= 0) { banner('Masukkan kuantiti yang sah', 'error'); return; }
+  const qtyValid = adjType === 'set' ? (!isNaN(qty) && qty >= 0) : (!isNaN(qty) && qty > 0);
+  if (!qtyValid) { banner('Masukkan kuantiti yang sah', 'error'); return; }
+  if (!locId) { banner('Sila pilih lokasi', 'error'); return; }
 
-  const current = Number(itemData.qty_in_stock);
+  const locName = allActiveLocations.find(l => l.id === locId)?.name;
+  const current = stockAtLocation(locId); // stok SEMASA DI LOKASI DIPILIH, bukan agregat keseluruhan
   let newQty, delta;
   if (adjType === 'add')    { newQty = current + qty; delta = qty; }
   else if (adjType === 'remove') { newQty = Math.max(0, current - qty); delta = newQty - current; }
   else { newQty = qty; delta = newQty - current; }
 
   try {
-    await addStockToLocation(itemId, delta, null, { type: 'adjustment', refType: 'adjustment', note: note || (adjType === 'add' ? 'Tambah stok' : adjType === 'remove' ? 'Kurang stok' : 'Set stok'), itemName: itemData.name });
-    const { data } = await window.db.from('psy_inventory_items').select('*').eq('id', itemId).maybeSingle();
+    await addStockToLocation(itemId, delta, locName, { type: 'adjustment', refType: 'adjustment', note: note || (adjType === 'add' ? 'Tambah stok' : adjType === 'remove' ? 'Kurang stok' : 'Set stok'), itemName: itemData.name });
+    const [{ data }, { data: stockLocRows }] = await Promise.all([
+      window.db.from('psy_inventory_items').select('*').eq('id', itemId).maybeSingle(),
+      window.db.from('psy_inventory_stock_by_location').select('*, psy_inventory_locations(name)').eq('item_id', itemId),
+    ]);
     if (data) itemData = { ...itemData, ...data };
-    newQty = Number(itemData.qty_in_stock);
-    const productSynced = await (window.syncStockToProducts?.(itemData.name, newQty));
-    const { data: stockLocRows } = await window.db.from('psy_inventory_stock_by_location').select('*, psy_inventory_locations(name)').eq('item_id', itemId);
-    renderStockByLocation(stockLocRows || []);
+    stockByLocationRows = stockLocRows || [];
+    const aggTotal = Number(itemData.qty_in_stock);
+    const productSynced = await (window.syncStockToProducts?.(itemData.name, aggTotal));
+    renderStockByLocation(stockByLocationRows);
     closeAdjust();
     document.getElementById('d-desc').classList.add('hidden');
     document.getElementById('d-no-desc').classList.add('hidden');
     renderDetail(itemData);
-    banner(`Stok dikemaskini: ${current} → ${newQty} ${itemData.unit||''}${productSynced ? ' · Produk juga di-sync' : ''}`);
+    banner(`${locName}: ${current} → ${newQty} ${itemData.unit||''} (jumlah keseluruhan: ${aggTotal})${productSynced ? ' · Produk juga di-sync' : ''}`);
   } catch (e) { banner('Ralat: ' + e.message, 'error'); }
 }
 
