@@ -49,6 +49,12 @@
           </div>
         </div>
 
+        <!-- Jumlah Stok Diperlukan (ikut tapisan tarikh/status semasa) -->
+        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
+          <h3 class="font-bold text-sm text-ink mb-3">📋 Jumlah Stok Diperlukan (⏳ Belum Bagi, ikut tapisan di bawah)</h3>
+          <div id="ps-summary" class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm"></div>
+        </div>
+
         <!-- Filters -->
         <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4 grid grid-cols-1 md:grid-cols-5 gap-3">
           <div class="md:col-span-2">
@@ -137,6 +143,7 @@ async function loadGivenRows() {
   return (data || []).map(r => ({
     date: r.created_at, patientId: r.reference_id, productName: r.item_name,
     qty: Math.abs(Number(r.qty)), unit: r.psy_inventory_items?.unit || '', status: 'given',
+    goto: `patient-hub.html?patient_id=${r.reference_id}&tab=supply`,
   }));
 }
 
@@ -170,6 +177,7 @@ async function loadPendingRows() {
         date: s.session_date, patientId: s.patient_id,
         productName: name, itemId: sup.item_id, qty: Number(sup.qty || sup.quantity || 0),
         unit: sup.item_unit || sup.unit || '', status: 'pending',
+        goto: `plan-week.html?plan_id=${s.plan_id}&week=${s.week_number}`,
       });
     });
   });
@@ -248,25 +256,62 @@ const STATUS_CHIP = {
   pending: '<span class="text-xs font-semibold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full whitespace-nowrap">⏳ Belum Bagi</span>',
 };
 
+// Gabung baris tarikh+pesakit+status sama jadi SATU baris (macam widget dashboard) —
+// senarai item bernombor dalam satu sel, bukan satu baris jadual per item.
+function groupRows(list) {
+  const groups = new Map();
+  list.forEach(r => {
+    const dateKey = r.date ? new Date(r.date).toISOString().slice(0, 10) : 'nodate';
+    const key = `${dateKey}|${r.patientId}|${r.status}`;
+    if (!groups.has(key)) {
+      groups.set(key, { date: r.date, patientName: r.patientName, status: r.status, goto: r.goto, items: [] });
+    }
+    groups.get(key).items.push({ productName: r.productName, qty: r.qty, unit: r.unit });
+  });
+  return [...groups.values()];
+}
+
+// Jumlah SEMUA stok "Belum Bagi" merentasi pesakit, dalam tapisan tarikh semasa —
+// senarai "beli/sediakan berapa" utk minggu/julat yang dipilih.
+function renderStockSummary(filteredList) {
+  const totals = {};
+  filteredList.filter(r => r.status === 'pending').forEach(r => {
+    const key = r.productName + '|' + r.unit;
+    if (!totals[key]) totals[key] = { name: r.productName, unit: r.unit, qty: 0 };
+    totals[key].qty += Number(r.qty) || 0;
+  });
+  const rows = Object.values(totals).sort((a, b) => b.qty - a.qty);
+  document.getElementById('ps-summary').innerHTML = rows.length ? rows.map(r => `
+    <div class="flex items-center justify-between gap-2 bg-cream/60 rounded-lg px-3 py-2">
+      <span class="text-ink/70 truncate">${escHtml(r.name)}</span>
+      <span class="font-bold text-ink whitespace-nowrap">${escHtml(String(r.qty))}${escHtml(r.unit)}</span>
+    </div>`).join('') : '<div class="text-xs text-ink/40 italic col-span-full">Tiada bekalan tertunggak dalam tapisan ini</div>';
+}
+
 function render() {
-  const list = getFiltered();
-  const pages = Math.max(1, Math.ceil(list.length / PS_PAGE_SIZE));
+  const filtered = getFiltered();
+  renderStockSummary(filtered);
+  const groups = groupRows(filtered);
+  const pages = Math.max(1, Math.ceil(groups.length / PS_PAGE_SIZE));
   if (psPage > pages) psPage = pages;
   const start = (psPage - 1) * PS_PAGE_SIZE;
-  const pageRows = list.slice(start, start + PS_PAGE_SIZE);
+  const pageGroups = groups.slice(start, start + PS_PAGE_SIZE);
 
   const tbody = document.getElementById('ps-tbody');
-  tbody.innerHTML = pageRows.length ? pageRows.map(r => `
-    <tr class="border-b border-ink/5 last:border-0 hover:bg-ink/[0.015]">
-      <td class="px-5 py-3 text-xs text-ink/55 whitespace-nowrap">${fmtDate(r.date)}</td>
-      <td class="px-4 py-3 text-sm font-medium text-ink">${escHtml(r.patientName)}</td>
-      <td class="px-4 py-3 text-sm text-ink/80">${escHtml(r.productName)}</td>
-      <td class="px-4 py-3 text-sm text-right font-semibold">${escHtml(String(r.qty))}${escHtml(r.unit)}</td>
-      <td class="px-4 py-3">${STATUS_CHIP[r.status] || r.status}</td>
-    </tr>`).join('') : '<tr><td colspan="5" class="text-center py-12 text-ink/40 text-sm">Tiada rekod sepadan</td></tr>';
+  tbody.innerHTML = pageGroups.length ? pageGroups.map(g => {
+    const itemNames = g.items.map((it, i) => `<div class="${i > 0 ? 'mt-0.5' : ''}">${i + 1}. ${escHtml(it.productName)}</div>`).join('');
+    const itemQtys = g.items.map((it, i) => `<div class="${i > 0 ? 'mt-0.5' : ''} text-ink/60">${escHtml(String(it.qty))}${escHtml(it.unit)}</div>`).join('');
+    return `<tr class="border-b border-ink/5 last:border-0 hover:bg-ink/[0.015] align-top ${g.goto ? 'cursor-pointer' : ''}" ${g.goto ? `onclick="location.href='${g.goto}'"` : ''}>
+      <td class="px-5 py-3 text-xs text-ink/55 whitespace-nowrap">${fmtDate(g.date)}</td>
+      <td class="px-4 py-3 text-sm font-medium text-ink">${escHtml(g.patientName)}</td>
+      <td class="px-4 py-3 text-sm text-ink/80">${itemNames}</td>
+      <td class="px-4 py-3 text-sm text-right font-semibold">${itemQtys}</td>
+      <td class="px-4 py-3">${STATUS_CHIP[g.status] || g.status}</td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="5" class="text-center py-12 text-ink/40 text-sm">Tiada rekod sepadan</td></tr>';
 
   const infoEl = document.getElementById('ps-page-info');
-  infoEl.textContent = list.length ? `Papar ${start + 1}–${Math.min(start + PS_PAGE_SIZE, list.length)} daripada ${list.length}` : '0 rekod';
+  infoEl.textContent = groups.length ? `Papar ${start + 1}–${Math.min(start + PS_PAGE_SIZE, groups.length)} daripada ${groups.length} rekod (${filtered.length} item)` : '0 rekod';
 
   let pg = '';
   for (let i = 1; i <= pages; i++) {
