@@ -134,8 +134,11 @@ BEGIN
   INSERT INTO psy_points_ledger (patient_id, source_type, source_ref, points, note)
   VALUES (v_patient_id, 'reward_redeem', v_reward.id, -v_reward.points_cost, 'Tukar: ' || v_reward.name);
 
-  INSERT INTO psy_vouchers (patient_id, source_type, source_ref, amount, note)
-  VALUES (v_patient_id, 'point_redeem', v_reward.id, v_reward.voucher_amount, 'Ditukar dari mata: ' || v_reward.name)
+  -- Audit #C-13 (Tier 5) — tempoh sah 90 hari dari tarikh tebus (dulu expires_at
+  -- sentiasa NULL = tiada luput langsung). payments-initiate.ts (checkout) & profile.html
+  -- (paparan pesakit) dua-dua dah semak expires_at, jadi terus berkesan.
+  INSERT INTO psy_vouchers (patient_id, source_type, source_ref, amount, note, expires_at)
+  VALUES (v_patient_id, 'point_redeem', v_reward.id, v_reward.voucher_amount, 'Ditukar dari mata: ' || v_reward.name, now() + interval '90 days')
   RETURNING * INTO v_voucher;
 
   RETURN v_voucher;
@@ -143,3 +146,37 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION redeem_point_reward(UUID) TO authenticated;
+
+-- ──── adjust_points_manual() ────
+-- Audit #C-13 (Tier 5) — dulu TIADA cara staf laras mata pesakit secara manual
+-- (cth pampasan kesilapan sistem, ganjaran ad-hoc) sbb psy_points_ledger langsung
+-- tiada INSERT policy (sengaja, elak forge). RPC ni SATU-SATUNYA laluan tulisan
+-- manual — sebab WAJIB, staf-sahaja (semak role dlm function, bukan harap RLS).
+CREATE OR REPLACE FUNCTION adjust_points_manual(p_patient_id UUID, p_points INT, p_reason TEXT)
+RETURNS psy_points_ledger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_is_staff BOOLEAN;
+  v_row      psy_points_ledger%ROWTYPE;
+BEGIN
+  SELECT EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff') INTO v_is_staff;
+  IF NOT v_is_staff THEN
+    RAISE EXCEPTION 'Hanya staf boleh laras mata pesakit.';
+  END IF;
+  IF p_points = 0 THEN
+    RAISE EXCEPTION 'Bilangan mata mesti bukan sifar.';
+  END IF;
+  IF p_reason IS NULL OR btrim(p_reason) = '' THEN
+    RAISE EXCEPTION 'Sebab pelarasan diperlukan.';
+  END IF;
+
+  INSERT INTO psy_points_ledger (patient_id, source_type, points, note)
+  VALUES (p_patient_id, 'manual_adjustment', p_points, btrim(p_reason))
+  RETURNING * INTO v_row;
+
+  RETURN v_row;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION adjust_points_manual(UUID, INT, TEXT) TO authenticated;

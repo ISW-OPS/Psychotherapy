@@ -142,7 +142,7 @@ Deno.serve(async (req) => {
     let voucherId = null;
     let voucherDiscount = 0;
     if (patientId) {
-      const { data: voucher } = await admin.from("psy_vouchers").select("id, amount").eq("patient_id", patientId).eq("status", "active").order("created_at", { ascending: true }).limit(1).maybeSingle();
+      const { data: voucher } = await admin.from("psy_vouchers").select("id, amount").eq("patient_id", patientId).eq("status", "active").or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`).order("created_at", { ascending: true }).limit(1).maybeSingle();
       if (voucher) {
         voucherId = voucher.id;
         voucherDiscount = Math.min(Number(voucher.amount) || 0, total);

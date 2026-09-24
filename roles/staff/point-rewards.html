@@ -37,6 +37,33 @@
           <button data-rbac="products.create" id="btn-reward-new" onclick="openRewardModal()" class="hidden purple-btn px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 shadow-sm">+ Tambah Ganjaran</button>
         </div>
 
+        <!-- Audit #C-13 (Tier 5) — dulu tiada cara staf semak baki + laras mata
+             pesakit secara manual (cth pampasan kesilapan sistem/ganjaran ad-hoc) -->
+        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+          <h3 class="font-bold text-sm text-ink mb-3">🔍 Semak & Laras Mata Pesakit</h3>
+          <div class="flex gap-2 flex-wrap items-end">
+            <div class="relative flex-1 min-w-[240px]">
+              <input id="pt-search" type="text" oninput="onPointsPatientSearch()" placeholder="Cari nama, ID, atau telefon pesakit..." class="w-full border border-ink/15 rounded-lg px-3 py-2 text-sm">
+              <div id="pt-search-results" class="hidden absolute z-10 top-full mt-1 w-full bg-white border border-ink/10 rounded-lg shadow-lg divide-y divide-ink/5 max-h-60 overflow-y-auto"></div>
+            </div>
+          </div>
+          <div id="pt-detail" class="hidden mt-4 border-t border-ink/8 pt-4">
+            <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
+              <div>
+                <div id="pt-name" class="font-semibold text-ink"></div>
+                <div class="text-xs text-ink/45">Baki semasa: <span id="pt-balance" class="font-bold text-navy">—</span> mata</div>
+              </div>
+              <div class="flex items-center gap-2">
+                <input id="pt-adj-points" type="number" placeholder="cth: 10 atau -10" class="w-28 border border-ink/15 rounded-lg px-2.5 py-2 text-sm">
+                <input id="pt-adj-reason" type="text" placeholder="Sebab (wajib)" class="w-56 border border-ink/15 rounded-lg px-2.5 py-2 text-sm">
+                <button data-rbac="products.edit" onclick="submitPointsAdjustment()" class="purple-btn px-4 py-2 rounded-lg text-xs font-semibold whitespace-nowrap">Laras Mata</button>
+              </div>
+            </div>
+            <div class="text-[10px] font-bold uppercase tracking-wider text-ink/35 mb-1.5">Sejarah Terkini</div>
+            <div id="pt-ledger" class="border border-ink/8 rounded-lg divide-y divide-ink/5 max-h-52 overflow-y-auto text-xs"></div>
+          </div>
+        </div>
+
         <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden">
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
@@ -215,6 +242,86 @@ async function toggleRewardActive(id) {
     renderRewardTable();
   } catch (e) { banner('Ralat: ' + e.message, 'error'); }
 }
+
+// ── Audit #C-13 (Tier 5): Semak & Laras Mata Pesakit ──────────
+let ptSearchTimer = null;
+let ptSelectedPatient = null;
+
+function onPointsPatientSearch() {
+  clearTimeout(ptSearchTimer);
+  const q = document.getElementById('pt-search').value.trim();
+  const results = document.getElementById('pt-search-results');
+  if (q.length < 2) { results.classList.add('hidden'); return; }
+  ptSearchTimer = setTimeout(async () => {
+    const { data } = await window.db.from('psy_patients')
+      .select('id, mrn, full_name, phone, psy_profiles!psy_patients_user_id_fkey(full_name)')
+      .neq('status', 'deleted')
+      .or(`full_name.ilike.%${q}%,mrn.ilike.%${q}%,phone.ilike.%${q}%`)
+      .limit(8);
+    const rows = data || [];
+    if (!rows.length) { results.innerHTML = '<div class="px-3 py-2.5 text-xs text-ink/40">Tiada pesakit dijumpai.</div>'; results.classList.remove('hidden'); return; }
+    results.innerHTML = rows.map(p => {
+      const name = p.psy_profiles?.full_name || p.full_name || p.mrn || '—';
+      return `<button type="button" onclick='selectPointsPatient(${JSON.stringify({ id: p.id, name, mrn: p.mrn }).replace(/'/g, "&#39;")})' class="w-full text-left px-3 py-2.5 hover:bg-ink/[0.03] text-xs">
+        <div class="font-semibold text-ink">${escHtml(name)}</div>
+        <div class="text-ink/40">${escHtml(p.mrn || '—')}</div>
+      </button>`;
+    }).join('');
+    results.classList.remove('hidden');
+  }, 300);
+}
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#pt-search') && !e.target.closest('#pt-search-results')) {
+    document.getElementById('pt-search-results')?.classList.add('hidden');
+  }
+});
+
+async function selectPointsPatient(p) {
+  ptSelectedPatient = p;
+  document.getElementById('pt-search').value = '';
+  document.getElementById('pt-search-results').classList.add('hidden');
+  document.getElementById('pt-name').textContent = `${p.name} · ${p.mrn || '—'}`;
+  document.getElementById('pt-detail').classList.remove('hidden');
+  await loadPointsPatientLedger();
+}
+window.selectPointsPatient = selectPointsPatient;
+
+async function loadPointsPatientLedger() {
+  if (!ptSelectedPatient) return;
+  const { data } = await window.db.from('psy_points_ledger')
+    .select('*').eq('patient_id', ptSelectedPatient.id).order('created_at', { ascending: false }).limit(20);
+  const rows = data || [];
+  const balance = rows.reduce((s, r) => s + r.points, 0); // 20 terkini cukup utk paparan biasa
+  const { data: balRow } = await window.db.from('psy_points_balance').select('balance').eq('patient_id', ptSelectedPatient.id).maybeSingle();
+  document.getElementById('pt-balance').textContent = balRow?.balance ?? balance;
+  const SOURCE_LBL = { daily_checkin: 'Catatan Harian', reward_redeem: 'Tukar Ganjaran', manual_adjustment: 'Pelarasan Manual' };
+  document.getElementById('pt-ledger').innerHTML = rows.length ? rows.map(r => `
+    <div class="flex items-center justify-between px-3 py-2">
+      <div class="min-w-0">
+        <div class="text-ink/80">${escHtml(SOURCE_LBL[r.source_type] || r.source_type)}</div>
+        <div class="text-ink/40 truncate">${escHtml(r.note || '')} · ${new Date(r.created_at).toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric' })}</div>
+      </div>
+      <div class="font-bold ${r.points > 0 ? 'text-green-dark' : 'text-terracotta'} flex-shrink-0">${r.points > 0 ? '+' : ''}${r.points}</div>
+    </div>`).join('') : '<div class="px-3 py-3 text-ink/35 italic">Tiada sejarah mata lagi.</div>';
+}
+
+async function submitPointsAdjustment() {
+  if (!ptSelectedPatient) return;
+  const points = parseInt(document.getElementById('pt-adj-points').value);
+  const reason = document.getElementById('pt-adj-reason').value.trim();
+  if (!points) { banner('Sila isi bilangan mata (positif/negatif).', 'error'); return; }
+  if (!reason) { banner('Sebab pelarasan diperlukan.', 'error'); return; }
+  try {
+    const { error } = await window.db.rpc('adjust_points_manual', { p_patient_id: ptSelectedPatient.id, p_points: points, p_reason: reason });
+    if (error) throw error;
+    if (typeof auditLog === 'function') { try { await auditLog('points.manual_adjustment', ptSelectedPatient.id, { points, reason }); } catch (_) {} }
+    banner(`Mata dilaraskan ${points > 0 ? '+' : ''}${points} ✅`);
+    document.getElementById('pt-adj-points').value = '';
+    document.getElementById('pt-adj-reason').value = '';
+    await loadPointsPatientLedger();
+  } catch (e) { banner('Ralat: ' + (e.message || e), 'error'); }
+}
+window.submitPointsAdjustment = submitPointsAdjustment;
 
 (async () => {
   const user = await initStaff('point_rewards', 'Tukar mata jadi baucar RM', 'psy_products');

@@ -308,12 +308,17 @@ async function loadRewardsSection() {
   empty.classList.add('hidden');
 
   list.innerHTML = vouchers.map(v => {
-    const st = REWARD_STATUS_MAP[v.status] || REWARD_STATUS_MAP.active;
+    // Audit #C-13 (Tier 5) — tempoh sah baucar. Tiada cron fizikal tukar status
+    // 'active'→'expired' (elak kerumitan tambahan) — semak lazy ikut expires_at
+    // di sini + payments-initiate.ts (sumber sebenar yg tolak baucar).
+    const isLazyExpired = v.status === 'active' && v.expires_at && new Date(v.expires_at) < new Date();
+    const st = REWARD_STATUS_MAP[isLazyExpired ? 'expired' : v.status] || REWARD_STATUS_MAP.active;
     const label = REWARD_SOURCE_LABELS[v.source_type] || '🎁 Baucar';
     return `<div class="flex items-center justify-between border border-ink/10 rounded-xl p-3.5">
       <div>
         <div class="text-sm font-semibold text-ink">${esc(label)}</div>
         <div class="text-[11px] text-ink/40 mt-0.5">${esc(v.note || '')}</div>
+        ${(v.status === 'active' && v.expires_at) ? `<div class="text-[10px] ${isLazyExpired ? 'text-terracotta' : 'text-ink/35'} mt-0.5">Sah sehingga ${new Date(v.expires_at).toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric' })}</div>` : ''}
       </div>
       <div class="text-right">
         <div class="font-bold text-navy">${fmtRMprofile(v.amount)}</div>

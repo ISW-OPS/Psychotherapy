@@ -81,8 +81,11 @@ Deno.serve(async (req) => {
     let voucherId: string | null = null
     let voucherDiscount = 0
     if (patientId) {
+      // Audit #C-13 (Tier 5) — elak baucar luput (expires_at lepas) terpakai;
+      // tiada cron fizikal tukar status ke 'expired', jadi semak terus di sini.
       const { data: voucher } = await admin.from('psy_vouchers')
         .select('id, amount').eq('patient_id', patientId).eq('status', 'active')
+        .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
         .order('created_at', { ascending: true }).limit(1).maybeSingle()
       if (voucher) {
         voucherId = voucher.id
