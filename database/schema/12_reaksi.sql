@@ -94,6 +94,13 @@ CREATE TABLE IF NOT EXISTS psy_reaksi_actions (
   -- akan sorok/gantung cadangan ni + papar amaran kat staf/coach dari terus hantar
   -- kat pesakit. Pilihan (NULL/kosong = tiada sekatan diketahui).
   contraindication_keywords TEXT,
+  -- Ditambah 23 Sept 2026 (audit management #B2-39/#B2-45) — status semakan.
+  -- DEFAULT DB ialah 'active' (kekalkan tingkah laku sedia ada utk rekod sedia
+  -- ada/laluan insert lain yg tak eksplisit set), TAPI kod baharu (import, tindakan
+  -- baharu di drawer) set 'draft' secara eksplisit supaya kandungan baharu tak terus
+  -- pengaruh cadangan pesakit sebelum staf semak. Cuma tindakan status='active' yang
+  -- digunakan utk jana cadangan — lihat filter di roles/patient/kepatuhan.html.
+  status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('draft','reviewed','approved','active')),
   created_at   TIMESTAMPTZ DEFAULT now(),
   updated_at   TIMESTAMPTZ DEFAULT now(),
   CONSTRAINT chk_reaksi_actions_jenis CHECK (jenis IN ('am','pemakanan','gaya_hidup','terapi','pemerhatian','tindakan','kecemasan'))

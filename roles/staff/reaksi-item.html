@@ -600,6 +600,16 @@
         <label class="flex items-center gap-2 text-[13px] text-terracotta cursor-pointer font-semibold"><input
             type="checkbox" id="td-ed-emergency" class="w-4 h-4 accent-red-500"> Tindakan Kecemasan</label>
         <div>
+          <label class="text-[12px] font-semibold text-ink/60">Status Semakan</label>
+          <select id="td-ed-status" class="w-full mt-1 border border-ink/20 rounded-lg px-3 py-2 text-[12.5px] focus:border-navy outline-none bg-white">
+            <option value="draft">📝 Draft</option>
+            <option value="reviewed">👁️ Reviewed</option>
+            <option value="approved">✅ Approved</option>
+            <option value="active">🟢 Active (digunakan utk cadangan pesakit)</option>
+          </select>
+          <p class="text-[10.5px] text-ink/40 mt-1">Cuma tindakan berstatus <b>Active</b> yang dicadangkan kpd pesakit sebenar. Draft/Reviewed/Approved boleh dipratonton di tab Preview Auto Cadangan, tapi TAK dihantar.</p>
+        </div>
+        <div>
           <label class="text-[12px] font-semibold text-ink/60">⚠️ Contraindication <span
               class="font-normal text-ink/40">(Pilihan — kata kunci dipisah koma)</span></label>
           <input id="td-ed-contra" placeholder="cth: diabetes, kencing manis, mengandung"
@@ -1057,6 +1067,14 @@
     // Saranan Diet & Nutrisi (jenis pemakanan) dan Gaya Hidup Fitrah (jenis
     // gaya_hidup) TIDAK disenaraikan di sini — ada tab khas masing-masing.
     const rxJenis = a => a.jenis || 'am';
+    // Badge status semakan (audit #B2-39) — senyap utk 'active' (default/normal),
+    // papar cuma bila BELUM active supaya staf nampak apa yang masih perlu disemak.
+    function rxStatusBadge(status) {
+      if (!status || status === 'active') return '';
+      const meta = { draft: ['📝 Draft', 'bg-ink/10 text-ink/50'], reviewed: ['👁️ Reviewed', 'bg-blue-100 text-blue-600'], approved: ['✅ Approved', 'bg-amber-100 text-amber-700'] }[status];
+      if (!meta) return '';
+      return ` <span class="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full ${meta[1]}">${meta[0]}</span>`;
+    }
     function tdRenderList() {
       const base = RXactions.filter(a => rxJenis(a) !== 'pemakanan' && rxJenis(a) !== 'gaya_hidup');
       document.getElementById('td-cat-head').innerHTML = `
@@ -1075,7 +1093,7 @@
       ${rxSelCellHtml('td', a.id)}
       <td class="px-2 py-2 text-[12px] text-ink/40">${start + i + 1}</td>
       <td class="px-2 py-2">
-        <div class="text-[13px] font-semibold text-ink">${esc2(a.title)}${a.is_emergency ? ' <span class="text-[10.5px] font-bold text-terracotta">(Kecemasan)</span>' : ''}</div>
+        <div class="text-[13px] font-semibold text-ink">${esc2(a.title)}${a.is_emergency ? ' <span class="text-[10.5px] font-bold text-terracotta">(Kecemasan)</span>' : ''}${rxStatusBadge(a.status)}</div>
       </td>
       <td class="px-2 py-2">${toggleHtml(a.aktif, `tdToggleAktif('${a.id}')`)}</td>
       <td class="px-2 py-2 text-right pr-3 whitespace-nowrap">
@@ -1101,6 +1119,7 @@
       document.getElementById('td-ed-aktif').checked = a ? !!a.aktif : true;
       document.getElementById('td-ed-panduan').value = (a && a.panduan) || '';
       document.getElementById('td-ed-emergency').checked = !!(a && a.is_emergency);
+      document.getElementById('td-ed-status').value = (a && a.status) || 'draft';
       document.getElementById('td-ed-contra').value = (a && a.contraindication_keywords) || '';
       document.getElementById('td-ed-symcari').value = '';
       tdSelSym = new Set(a ? [...(RXmapByAct[a.id] || [])] : []);
@@ -1129,6 +1148,7 @@
         priority: exAct?.priority ?? (Math.max(0, ...RXactions.map(x => x.priority || 0)) + 10),
         is_emergency: document.getElementById('td-ed-emergency').checked,
         aktif: document.getElementById('td-ed-aktif').checked,
+        status: document.getElementById('td-ed-status').value,
         contraindication_keywords: document.getElementById('td-ed-contra').value.trim() || null,
         updated_at: new Date().toISOString(),
       };
@@ -1194,7 +1214,7 @@
       ${rxSelCellHtml(key, a.id)}
       <td class="px-2 py-2 text-[12px] text-ink/40">${start + i + 1}</td>
       <td class="px-2 py-2">
-        <div class="text-[13px] font-semibold text-ink">${esc2(a.title)}</div>
+        <div class="text-[13px] font-semibold text-ink">${esc2(a.title)}${rxStatusBadge(a.status)}</div>
         ${panduanPreview(a)}
       </td>
       <td class="px-2 py-2">${toggleHtml(a.aktif, `tdToggleAktif('${a.id}')`)}</td>
@@ -1486,7 +1506,9 @@
             }
             return ex.id;
           }
-          const payload = { title: title.trim(), priority: prioNext, aktif: true, is_emergency: false, jenis, panduan: panduan || null };
+          // status='draft' eksplisit (audit #B2-45) — tindakan baharu dari import TAK
+          // terus jana cadangan pesakit sehingga staf semak & tukar ke Active di drawer.
+          const payload = { title: title.trim(), priority: prioNext, aktif: true, is_emergency: false, jenis, panduan: panduan || null, status: 'draft' };
           const res = await window.db.from('psy_reaksi_actions').insert(payload).select('id').single();
           if (res.error) throw res.error;
           prioNext += 10; out.actBaru++;

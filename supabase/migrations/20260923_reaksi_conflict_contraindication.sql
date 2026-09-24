@@ -11,6 +11,13 @@ ALTER TABLE psy_reaksi_advice_log ADD CONSTRAINT psy_reaksi_advice_log_status_ch
 -- #B2-3 — kata kunci contraindication (padan drpd psy_patients.medical_condition)
 ALTER TABLE psy_reaksi_actions ADD COLUMN IF NOT EXISTS contraindication_keywords TEXT;
 
+-- #B2-39/#B2-45 — status semakan (Draft/Reviewed/Approved/Active). DEFAULT 'active'
+-- supaya rekod sedia ada tak terjejas; kod baharu (import/drawer) set 'draft' eksplisit.
+ALTER TABLE psy_reaksi_actions ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE psy_reaksi_actions DROP CONSTRAINT IF EXISTS psy_reaksi_actions_status_check;
+ALTER TABLE psy_reaksi_actions ADD CONSTRAINT psy_reaksi_actions_status_check
+  CHECK (status IN ('draft','reviewed','approved','active'));
+
 -- #B2-2 — notify coach bila baris 'needs_review' dicipta (patient client tak boleh
 -- INSERT terus ke psy_notifications, RLS staff-only)
 CREATE OR REPLACE FUNCTION trg_reaksi_advice_notify_review()
