@@ -37,6 +37,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { getProvider } from '../_shared/payments/index.ts'
 import { fulfillKobDeposit } from '../_shared/kob_deposit_fulfill.ts'
+import { applyInstallmentPayment } from '../_shared/kob_autocharge.ts'
 import { sendPaymentReceiptWhatsApp } from '../_shared/receipt_pdf.ts'
 
 const corsHeaders = {
@@ -86,11 +87,12 @@ Deno.serve(async (req) => {
         }).eq('id', authRow.id)
       }
 
-      // Cari baris psy_payments (placeholder kob_card_attach RM1, ATAU deposit
-      // ansuran SEBENAR bila mode="lampir kad serentak dgn deposit" — lihat
-      // kob_retry_link.ts createKobDepositLink saveCard=true). reference dari
-      // webhook kalau ada, kalau tiada padan ikut kob_session_id + status pending
-      // (ambil baris TERKINI, dua jenis tak wujud serentak utk sesi yg sama).
+      // Cari baris psy_payments (placeholder kob_card_attach RM1, ATAU deposit/
+      // ansuran SEBENAR bila mode="simpan kad serentak dgn bayaran" — lihat
+      // kob_retry_link.ts createKobDepositLink & kob_topup.ts
+      // createKobInstallmentTopupLink saveCard=true). reference dari webhook
+      // kalau ada, kalau tiada padan ikut kob_session_id + status pending
+      // (ambil baris TERKINI, tiga jenis tak wujud serentak utk sesi yg sama).
       const ref = result.reference
       let paymentRow: any = null
       if (ref) {
@@ -101,23 +103,28 @@ Deno.serve(async (req) => {
         const { data } = await admin.from('psy_payments').select('*')
           .eq('status', 'pending').eq('intent->>kob_session_id', authRow.kob_session_id)
           .order('created_at', { ascending: false }).limit(5)
-        paymentRow = (data || []).find((r: any) => ['kob_card_attach', 'kob_deposit'].includes(r.items?.[0]?.type))
+        paymentRow = (data || []).find((r: any) => ['kob_card_attach', 'kob_deposit', 'kob_installment_topup'].includes(r.items?.[0]?.type))
       }
 
       if (paymentRow && paymentRow.status !== 'completed') {
         const itemType = paymentRow.items?.[0]?.type
-        if (itemType === 'kob_deposit') {
-          // Deposit SEBENAR (bukan placeholder RM1) — perlu fulfillment PENUH
-          // (cipta checkpoint ansuran, aktifkan pakej), sama logik dgn
-          // payments-webhook. Tuntut baris SECARA ATOM dulu (webhook boleh
-          // cetus berkali) — cegah fulfillment berganda, sama pattern
-          // payments-webhook (lihat notanya di situ, punca bug pakej x4 baris 7 Ogos).
+        if (itemType === 'kob_deposit' || itemType === 'kob_installment_topup') {
+          // Deposit/ansuran SEBENAR (bukan placeholder RM1) — perlu fulfillment
+          // PENUH (cipta checkpoint / tanda checkpoint met + aktifkan pakej),
+          // sama logik dgn payments-webhook. Tuntut baris SECARA ATOM dulu
+          // (webhook boleh cetus berkali) — cegah fulfillment berganda, sama
+          // pattern payments-webhook (lihat notanya, punca bug pakej x4 baris 7 Ogos).
           const { data: claimed } = await admin.from('psy_payments')
             .update({ fulfilled_at: new Date().toISOString(), status: 'completed', paid_at: new Date().toISOString() })
             .eq('id', paymentRow.id).is('fulfilled_at', null).select('id')
           if (claimed?.length) {
             try {
-              await fulfillKobDeposit(admin, paymentRow.items[0], authRow.patient_id, paymentRow.receipt_ref)
+              const item = paymentRow.items[0]
+              if (itemType === 'kob_deposit') {
+                await fulfillKobDeposit(admin, item, authRow.patient_id, paymentRow.receipt_ref)
+              } else {
+                await applyInstallmentPayment(admin, item.kobSessionId, authRow.patient_id, Number(item.amount || 0))
+              }
               try { await sendPaymentReceiptWhatsApp(admin, paymentRow) }
               catch (waErr) { console.warn('payments-webhook-recurring: resit WhatsApp gagal —', (waErr as Error).message) }
             } catch (fulfillErr) {

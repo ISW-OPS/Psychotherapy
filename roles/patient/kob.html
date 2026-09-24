@@ -930,6 +930,11 @@
     function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
     let selectedMode = 'f2f';
     let currentKob = null;
+    // Simpan kad pesakit (self-checkout deposit ansuran) supaya ansuran seterusnya
+    // di-auto-caj — checkbox di CTA deposit (renderRecommendedPackageDetail).
+    // Hanya berkesan mode='installment' (deposit); had sama macam staff: kad
+    // SAHAJA ditawar bila ditanda (lihat kob_retry_link.ts).
+    let selfSaveCard = true;
     // Nombor WhatsApp Business rasmi klinik — sama macam kepatuhan.html.
     const WA_KLINIK = '60389663702';
 
@@ -2362,7 +2367,18 @@
           }
           const depositLabel = depositAmt > 0 ? `Bayar Deposit ${money(depositAmt)} →` : 'Bayar Deposit Ansuran →';
           const invHtml = buildPrePaymentInvoiceHtml(`Deposit Ansuran — ${pkg.name}`, depositAmt);
+          // Simpan kad — pesakit pilih bayar guna kad supaya ansuran seterusnya
+          // ditolak automatik, tak perlu bayar manual tiap bulan. Ditanda lalai;
+          // nyahtanda kalau nak bayar FPX/e-wallet/lain (semua kaedah, ansuran
+          // seterusnya kekal cara manual). Sama had teknikal macam staff (kad
+          // sahaja ditawar bila ditanda) — lihat kob_retry_link.ts saveCard.
+          const saveCardToggle = `
+      <label class="flex items-start justify-center gap-2 text-xs text-ink/60 mb-3 cursor-pointer">
+        <input type="checkbox" checked class="w-4 h-4 accent-navy mt-0.5" onchange="selfSaveCard = this.checked;">
+        <span>💳 Simpan kad saya untuk ansuran seterusnya (tolak automatik setiap bulan, tak perlu bayar manual lagi). <strong>Hanya bayaran kad dibenarkan</strong> jika ditanda — nyahtanda untuk bayar FPX/e-wallet/lain.</span>
+      </label>`;
           ctaAction.innerHTML = (invHtml ? `<div class="bg-white rounded-2xl border border-ink/10 p-6 md:p-8 mb-5">${invHtml}</div>` : '')
+            + saveCardToggle
             + termsHtml('btn-pkg-pay', depositLabel, 'payInstallmentDeposit()');
           ctaNote.textContent = '';
           ctaNote.classList.add('hidden');
@@ -2444,7 +2460,7 @@
       try {
         const returnUrl = new URL('kob.html', window.location.href).href;
         const { data, error } = await window.db.functions.invoke('payments-kob-initiate', {
-          body: { kobSessionId: currentKob.id, mode: 'installment', returnUrl, tier: 'today' },
+          body: { kobSessionId: currentKob.id, mode: 'installment', returnUrl, tier: 'today', saveCard: selfSaveCard },
         });
         if (error) {
           let m = error.message;
@@ -2453,7 +2469,7 @@
         }
         if (!data?.checkoutUrl) throw new Error(data?.error || 'Gagal memulakan bayaran.');
         banner('Mengalihkan ke halaman bayaran…', 'info');
-        window.location.href = data.checkoutUrl;   // → HitPay (pilih FPX/kad di sana)
+        window.location.href = data.checkoutUrl;   // → HitPay (kad SAHAJA jika saveCard, atau FPX/kad/lain jika tidak)
       } catch (err) {
         banner('Ralat: ' + err.message, 'error');
         if (btn) { btn.disabled = false; btn.textContent = '🔒 Bayar Deposit Ansuran →'; }

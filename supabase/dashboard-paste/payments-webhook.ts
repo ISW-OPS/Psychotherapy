@@ -646,6 +646,9 @@ async function createKobDepositLink(admin, opts) {
     const { data: au } = await admin.auth.admin.getUserById(patient.user_id).catch(() => ({ data: null }));
     patientEmail = au?.user?.email || void 0;
   }
+  if (useSaveCard && !patientEmail) {
+    throw new Error('Pesakit ini tiada alamat emel dalam rekod \u2014 wajib untuk simpan kad (auto-caj ansuran). Kemaskini emel pesakit dulu (Pesakit \u2192 Kemaskini Pesakit), atau tanggalkan tanda "Simpan kad" dan hantar pautan biasa.');
+  }
   const receiptRef = "RCP-" + Date.now().toString(36).toUpperCase() + "-" + Math.floor(performance.now()).toString(36).toUpperCase();
   const provider = activeProviderName();
   const itemTitle = `${mode === "full" ? "Bayaran Penuh" : mode === "manual_installment" ? "Deposit Ansuran Manual" : "Deposit Ansuran"} \u2014 ${kob.recommended_package_name || ""}`.trim();
@@ -679,7 +682,6 @@ async function createKobDepositLink(admin, opts) {
   let gatewayRef, checkoutUrl;
   if (useSaveCard) {
     if (!providerImpl.createCardAuthorization) throw new Error(`Provider "${provider}" tidak sokong simpan kad`);
-    if (!patientEmail) throw new Error('Pesakit ini tiada alamat emel dalam rekod — wajib untuk simpan kad (auto-caj ansuran). Kemaskini emel pesakit dulu (Pesakit → Kemaskini Pesakit), atau tanggalkan tanda "Simpan kad" dan hantar pautan biasa.');
     const created = await providerImpl.createCardAuthorization({
       reference: receiptRef,
       amount: money(amount),

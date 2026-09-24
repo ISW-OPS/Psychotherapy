@@ -364,6 +364,27 @@ async function fulfillKobDeposit(admin, item, patientId, receiptRef) {
   }
 }
 
+// supabase/functions/_shared/kob_autocharge.ts
+async function applyInstallmentPayment(admin, kobSessionId, patientId, newAmount) {
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const { data: allPayments } = await admin.from("psy_payments").select("total").eq("status", "completed").eq("intent->>kob_session_id", kobSessionId);
+  const totalPaid = (allPayments || []).reduce((s, p) => s + Number(p.total || 0), 0) + newAmount;
+  const { data: openCheckpoints } = await admin.from("psy_kob_installment_checkpoints").select("id, target_cumulative").eq("kob_session_id", kobSessionId).neq("status", "met");
+  for (const cp of openCheckpoints || []) {
+    if (totalPaid >= Number(cp.target_cumulative)) {
+      await admin.from("psy_kob_installment_checkpoints").update({ status: "met", met_at: now }).eq("id", cp.id);
+    }
+  }
+  const { data: stillOverdue } = await admin.from("psy_kob_installment_checkpoints").select("id").eq("patient_id", patientId).eq("status", "overdue").limit(1);
+  if (!stillOverdue?.length) {
+    await admin.from("psy_patients").update({
+      booking_blocked: false,
+      booking_blocked_reason: null,
+      booking_blocked_since: null
+    }).eq("id", patientId);
+  }
+}
+
 // supabase/functions/_shared/receipt_pdf.ts
 import { PDFDocument, StandardFonts, rgb } from "https://esm.sh/pdf-lib@1.17.1";
 
@@ -800,15 +821,20 @@ Deno.serve(async (req) => {
       }
       if (!paymentRow) {
         const { data } = await admin.from("psy_payments").select("*").eq("status", "pending").eq("intent->>kob_session_id", authRow.kob_session_id).order("created_at", { ascending: false }).limit(5);
-        paymentRow = (data || []).find((r) => ["kob_card_attach", "kob_deposit"].includes(r.items?.[0]?.type));
+        paymentRow = (data || []).find((r) => ["kob_card_attach", "kob_deposit", "kob_installment_topup"].includes(r.items?.[0]?.type));
       }
       if (paymentRow && paymentRow.status !== "completed") {
         const itemType = paymentRow.items?.[0]?.type;
-        if (itemType === "kob_deposit") {
+        if (itemType === "kob_deposit" || itemType === "kob_installment_topup") {
           const { data: claimed } = await admin.from("psy_payments").update({ fulfilled_at: (/* @__PURE__ */ new Date()).toISOString(), status: "completed", paid_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", paymentRow.id).is("fulfilled_at", null).select("id");
           if (claimed?.length) {
             try {
-              await fulfillKobDeposit(admin, paymentRow.items[0], authRow.patient_id, paymentRow.receipt_ref);
+              const item = paymentRow.items[0];
+              if (itemType === "kob_deposit") {
+                await fulfillKobDeposit(admin, item, authRow.patient_id, paymentRow.receipt_ref);
+              } else {
+                await applyInstallmentPayment(admin, item.kobSessionId, authRow.patient_id, Number(item.amount || 0));
+              }
               try {
                 await sendPaymentReceiptWhatsApp(admin, paymentRow);
               } catch (waErr) {

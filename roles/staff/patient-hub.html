@@ -4329,6 +4329,12 @@
     let bayaranGroups = [];      // senarai kumpulan utk paparan list
     let bayaranAllPayments = []; // SEMUA baris psy_payments mentah (utk lookup pautan bayar)
     let bayaranOpenGroupKey = null; // key kumpulan detail yang sedang dibuka (null = paparan senarai)
+    let bayaranCardAuth = null;  // psy_kob_card_authorizations row (kad tersimpan) utk sesi KOB dibuka
+    // Simpan kad pesakit bila hantar pautan ansuran SETERUSNYA (checkbox di
+    // Checkpoint Ansuran) — tangkap pesakit yg terlepas peluang simpan kad masa
+    // deposit. Sama had teknikal macam kob-detail.html (kad SAHAJA ditawar bila
+    // ditanda). Lihat kob_topup.ts createKobInstallmentTopupLink saveCard.
+    let bpSaveCard = true;
 
     // Sama format & kemasan (koma ribuan, rata-kanan, hierarki berat font) macam
     // jadual "Payment Plan" pesakit (payment-plan.html) — supaya staff & pesakit
@@ -4626,7 +4632,7 @@
       if (group.groupType === 'kob') {
         bayaranSession = group.kobSession;
         document.getElementById('bayaran-body').innerHTML = '<div class="text-center text-ink/50 text-sm py-10">⏳ Memuatkan...</div>';
-        const [{ data: checkpoints }, { data: payments }] = await Promise.all([
+        const [{ data: checkpoints }, { data: payments }, { data: cardAuthRows }] = await Promise.all([
           window.db.from('psy_kob_installment_checkpoints').select('*').eq('kob_session_id', bayaranSession.id).order('seq'),
           // Ascending (bukan descending) — checkpoint ke-i (dah 'met') dipadan payment
           // ke-i mengikut kedudukan, sama corak dgn payment-plan.html pesakit (lihat
@@ -4634,8 +4640,11 @@
           // oleh viewReceiptPDF() (shared/receipt.js) utk butang "Lihat Resit".
           window.db.from('psy_payments').select('id, invoice_number, receipt_no, receipt_ref, receipt_url, total, discount, items, intent, notes, payment_method, manual_method, gateway_provider, paid_at, created_at')
             .eq('status', 'completed').eq('intent->>kob_session_id', bayaranSession.id).order('created_at', { ascending: true }),
+          // Kad tersimpan (auto-caj) — 1 rekod per sesi KOB, lihat kob_autocharge.ts.
+          window.db.from('psy_kob_card_authorizations').select('status, card_last4, card_brand').eq('kob_session_id', bayaranSession.id).limit(1),
         ]);
         window._receipts = payments || [];
+        bayaranCardAuth = cardAuthRows?.[0] || null;
         renderBayaranKobDetail(checkpoints || [], payments || [], group.payments);
       } else {
         renderBayaranSimpleDetail(group);
@@ -4858,9 +4867,26 @@
       // yang dapat butang jana pautan (amaun sentiasa diderive dari checkpoint
       // ni sahaja oleh payments-kob-initiate mode='topup', sama macam payment-plan.html pesakit).
       const nextIdx = checkpoints.findIndex(c => totalPaid + 0.005 < Number(c.target_cumulative));
+      // Kad tersimpan (auto-caj) — badge status + (kalau belum attached) checkbox
+      // "Simpan kad" utk pautan ansuran seterusnya + fallback lampir-kad berdiri
+      // sendiri. Lihat _shared/kob_autocharge.ts & kob_topup.ts saveCard.
+      const cardAuthHtml = bayaranCardAuth?.status === 'attached'
+        ? `<div class="text-xs text-green-dark bg-green-light/50 p-2 rounded mb-3">💳 Kad dilampirkan${bayaranCardAuth.card_brand ? ` (${escHtml(bayaranCardAuth.card_brand)} •••• ${escHtml(bayaranCardAuth.card_last4 || '')})` : ''} — ansuran seterusnya akan di-auto-caj pada tarikh due.</div>`
+        : `<div class="text-xs text-ink/60 bg-ink/5 p-2 rounded mb-3 flex items-center justify-between gap-2 flex-wrap">
+             <span>💳 ${bayaranCardAuth?.status === 'pending' ? 'Pautan lampir kad telah dihantar, menunggu pesakit lengkapkan.' : 'Kad belum dilampirkan.'} Boleh lampir kad terus (RM1) ATAU tanda "Simpan kad" bila hantar pautan ansuran seterusnya di bawah.</span>
+             <div class="flex gap-1.5">
+               <button type="button" onclick="sendCardAttachLinkPH()" class="text-[11px] font-semibold border border-navy text-navy px-2.5 py-1 rounded-md hover:bg-navy/5 whitespace-nowrap">📱 Hantar WhatsApp</button>
+               <button type="button" onclick="openCardAttachLinkPH()" class="text-[11px] font-semibold border border-ink/15 text-ink px-2.5 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap">🔗 Buka/Salin</button>
+             </div>
+           </div>
+           <label class="flex items-start gap-2 text-xs text-ink/70 mb-3 cursor-pointer">
+             <input type="checkbox" ${bpSaveCard ? 'checked' : ''} onchange="bpSaveCard = this.checked;" class="mt-0.5">
+             <span>Simpan kad pesakit bila hantar pautan ansuran seterusnya di bawah <strong>(hanya kad ditawar — FPX/e-wallet tiada)</strong>.</span>
+           </label>`;
       const cpHtml = isInstallment ? `
         <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
           <h4 class="font-bold text-sm text-ink mb-3">📅 Checkpoint Ansuran</h4>
+          ${cardAuthHtml}
           ${checkpoints.length ? `<div class="overflow-x-auto"><table class="tbl w-full" style="table-layout:fixed">
           <colgroup><col style="width:6%"><col style="width:14%"><col style="width:14%"><col style="width:15%"><col style="width:15%"><col style="width:12%"><col style="width:24%"></colgroup>
           <thead><tr>
@@ -5046,7 +5072,7 @@
     async function fetchAnsuranCheckoutUrl() {
       const returnUrl = `${location.origin}/roles/patient/payment-receipt.html`;
       const { data, error } = await window.db.functions.invoke('payments-kob-initiate', {
-        body: { kobSessionId: bayaranSession.id, mode: 'topup', returnUrl },
+        body: { kobSessionId: bayaranSession.id, mode: 'topup', returnUrl, saveCard: bpSaveCard },
       });
       if (error) {
         let msg = error.message;
@@ -5115,6 +5141,73 @@
         banner('Gagal jana/salin pautan: ' + e.message, 'error');
       } finally {
         btn.disabled = false; btn.innerHTML = original;
+      }
+    }
+
+    // Lampir-kad BERDIRI SENDIRI (RM1, fallback) — hantar WhatsApp ATAU buka/salin
+    // terus, tak perlu tunggu ansuran seterusnya. Pattern sama sendCardAttachLink()/
+    // openCardAttachLink() di kob-detail.html, disesuaikan konteks Pesakit Hub.
+    let phCardAttachBusy = false;
+    async function sendCardAttachLinkPH() {
+      if (phCardAttachBusy) return;
+      phCardAttachBusy = true;
+      try {
+        const phone = iswPatientPhone(patient, profile, kyc) || '';
+        const cleanPhone = phone.replace(/\D/g, '').replace(/^0/, '60');
+        if (!cleanPhone) throw new Error('Pesakit tiada nombor telefon untuk hantar WhatsApp');
+        const patName = iswPatientName(patient, profile, kyc) || 'Pesakit';
+
+        const returnUrl = `${location.origin}/roles/patient/payment-receipt.html`;
+        const { data, error } = await window.db.functions.invoke('payments-kob-initiate', {
+          body: { kobSessionId: bayaranSession.id, mode: 'attach_card', returnUrl },
+        });
+        if (error) {
+          let msg = error.message;
+          try { const ctx = await error.context?.json(); if (ctx?.error) msg = ctx.error; } catch (_) { }
+          throw new Error(msg);
+        }
+        if (data?.error) throw new Error(data.error);
+
+        const ec = await ghlInvoke('ensurecontact', { phone: cleanPhone, name: patName });
+        const contactId = ec?.contact?.contactId;
+        if (!contactId) throw new Error('Tak dapat sediakan contact GHL untuk nombor ini.');
+        await ghlInvoke('send', {
+          contactId,
+          message: `Salam ${patName} 👋\n\nUntuk memudahkan bayaran ansuran pakej rawatan anda, sila lampirkan kad debit/kredit anda (pengesahan RM1) melalui pautan selamat di bawah. Ansuran seterusnya akan ditolak SECARA AUTOMATIK pada tarikh due — anda tak perlu klik pautan bayaran setiap bulan lagi.\n\n${data.checkoutUrl}\n\n— ISW`,
+        });
+        banner(iswL('Pautan lampir kad dihantar ke WhatsApp pesakit ✅', 'Card-attach link sent to the patient on WhatsApp ✅'));
+      } catch (e) {
+        banner('Gagal jana/hantar pautan lampir kad: ' + e.message, 'error');
+      } finally {
+        phCardAttachBusy = false;
+        if (bayaranOpenGroupKey) openBayaranGroup(bayaranOpenGroupKey);
+      }
+    }
+
+    async function openCardAttachLinkPH() {
+      if (phCardAttachBusy) return;
+      phCardAttachBusy = true;
+      try {
+        const returnUrl = `${location.origin}/roles/patient/payment-receipt.html`;
+        const { data, error } = await window.db.functions.invoke('payments-kob-initiate', {
+          body: { kobSessionId: bayaranSession.id, mode: 'attach_card', returnUrl },
+        });
+        if (error) {
+          let msg = error.message;
+          try { const ctx = await error.context?.json(); if (ctx?.error) msg = ctx.error; } catch (_) { }
+          throw new Error(msg);
+        }
+        if (data?.error) throw new Error(data.error);
+        if (!data?.checkoutUrl) throw new Error('Pautan tidak diterima daripada server.');
+
+        window.open(data.checkoutUrl, '_blank', 'noopener');
+        try { await navigator.clipboard.writeText(data.checkoutUrl); } catch (_) { /* clipboard optional */ }
+        banner(iswL('Pautan lampir kad dibuka di tab baharu (& disalin) ✅', 'Card-attach link opened in a new tab (and copied) ✅'));
+      } catch (e) {
+        banner('Gagal jana pautan lampir kad: ' + e.message, 'error');
+      } finally {
+        phCardAttachBusy = false;
+        if (bayaranOpenGroupKey) openBayaranGroup(bayaranOpenGroupKey);
       }
     }
 

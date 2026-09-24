@@ -213,7 +213,7 @@ function getProvider(name) {
 
 // supabase/functions/_shared/kob_topup.ts
 var money = (n) => (Math.round(n * 100) / 100).toFixed(2);
-async function createKobInstallmentTopupLink(admin, kobSessionId, returnUrl) {
+async function createKobInstallmentTopupLink(admin, kobSessionId, returnUrl, saveCard = false) {
   const { data: kobRows } = await admin.from("psy_kob_sessions").select("id, patient_id, recommended_package_name, package_payment_mode, package_payment_status").eq("id", kobSessionId).limit(1);
   const kob = kobRows?.[0];
   if (!kob) throw new Error("Sesi KOB tidak dijumpai");
@@ -258,21 +258,50 @@ async function createKobInstallmentTopupLink(admin, kobSessionId, returnUrl) {
     }
   });
   if (insErr) throw new Error("Gagal simpan bayaran pending: " + insErr.message);
-  const webhookUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/payments-webhook`;
   const redirectUrl = `${returnUrl}${returnUrl.includes("?") ? "&" : "?"}ref=${encodeURIComponent(receiptRef)}`;
-  const created = await getProvider(provider).createPayment({
-    reference: receiptRef,
-    amount: money(amount),
-    currency: "MYR",
-    email: patientEmail,
-    name: patient?.full_name || void 0,
-    purpose: itemTitle,
-    redirectUrl,
-    webhookUrl
-  });
-  await admin.from("psy_payments").update({ gateway_ref: created.gatewayRef, checkout_url: created.checkoutUrl }).eq("receipt_ref", receiptRef);
+  const providerImpl = getProvider(provider);
+  let gatewayRef, checkoutUrl;
+  if (saveCard) {
+    if (!providerImpl.createCardAuthorization) throw new Error(`Provider "${provider}" tidak sokong simpan kad`);
+    if (!patientEmail) {
+      throw new Error('Pesakit ini tiada alamat emel dalam rekod \u2014 wajib untuk simpan kad (auto-caj ansuran). Kemaskini emel pesakit dulu, atau tanggalkan tanda "Simpan kad" dan hantar pautan biasa.');
+    }
+    const created = await providerImpl.createCardAuthorization({
+      reference: receiptRef,
+      amount: money(amount),
+      purpose: itemTitle,
+      currency: "MYR",
+      customerEmail: patientEmail,
+      customerName: patient?.full_name || void 0,
+      redirectUrl
+    });
+    gatewayRef = created.authRef;
+    checkoutUrl = created.checkoutUrl;
+    await admin.from("psy_kob_card_authorizations").upsert({
+      kob_session_id: kobSessionId,
+      patient_id: kob.patient_id,
+      gateway_provider: provider,
+      gateway_auth_ref: gatewayRef,
+      status: "pending"
+    }, { onConflict: "kob_session_id" });
+  } else {
+    const webhookUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/payments-webhook`;
+    const created = await providerImpl.createPayment({
+      reference: receiptRef,
+      amount: money(amount),
+      currency: "MYR",
+      email: patientEmail,
+      name: patient?.full_name || void 0,
+      purpose: itemTitle,
+      redirectUrl,
+      webhookUrl
+    });
+    gatewayRef = created.gatewayRef;
+    checkoutUrl = created.checkoutUrl;
+  }
+  await admin.from("psy_payments").update({ gateway_ref: gatewayRef, checkout_url: checkoutUrl }).eq("receipt_ref", receiptRef);
   return {
-    checkoutUrl: created.checkoutUrl,
+    checkoutUrl,
     receiptRef,
     amount,
     checkpointSeq: nextCp.seq,
@@ -324,6 +353,9 @@ async function createKobDepositLink(admin, opts) {
     const { data: au } = await admin.auth.admin.getUserById(patient.user_id).catch(() => ({ data: null }));
     patientEmail = au?.user?.email || void 0;
   }
+  if (useSaveCard && !patientEmail) {
+    throw new Error('Pesakit ini tiada alamat emel dalam rekod \u2014 wajib untuk simpan kad (auto-caj ansuran). Kemaskini emel pesakit dulu (Pesakit \u2192 Kemaskini Pesakit), atau tanggalkan tanda "Simpan kad" dan hantar pautan biasa.');
+  }
   const receiptRef = "RCP-" + Date.now().toString(36).toUpperCase() + "-" + Math.floor(performance.now()).toString(36).toUpperCase();
   const provider = activeProviderName();
   const itemTitle = `${mode === "full" ? "Bayaran Penuh" : mode === "manual_installment" ? "Deposit Ansuran Manual" : "Deposit Ansuran"} \u2014 ${kob.recommended_package_name || ""}`.trim();
@@ -357,7 +389,6 @@ async function createKobDepositLink(admin, opts) {
   let gatewayRef, checkoutUrl;
   if (useSaveCard) {
     if (!providerImpl.createCardAuthorization) throw new Error(`Provider "${provider}" tidak sokong simpan kad`);
-    if (!patientEmail) throw new Error('Pesakit ini tiada alamat emel dalam rekod — wajib untuk simpan kad (auto-caj ansuran). Kemaskini emel pesakit dulu (Pesakit → Kemaskini Pesakit), atau tanggalkan tanda "Simpan kad" dan hantar pautan biasa.');
     const created = await providerImpl.createCardAuthorization({
       reference: receiptRef,
       amount: money2(amount),
@@ -408,10 +439,12 @@ async function createKobCardAttachLink(admin, kobSessionId, returnUrl) {
     const { data: au } = await admin.auth.admin.getUserById(patient.user_id).catch(() => ({ data: null }));
     patientEmail = au?.user?.email || void 0;
   }
+  if (!patientEmail) {
+    throw new Error("Pesakit ini tiada alamat emel dalam rekod \u2014 wajib untuk lampir kad (auto-caj ansuran). Kemaskini emel pesakit dulu (Pesakit \u2192 Kemaskini Pesakit).");
+  }
   const providerName = activeProviderName();
   const provider = getProvider(providerName);
   if (!provider.createCardAuthorization) throw new Error(`Provider "${providerName}" tidak sokong lampiran kad`);
-  if (!patientEmail) throw new Error('Pesakit ini tiada alamat emel dalam rekod — wajib untuk lampir kad (auto-caj ansuran). Kemaskini emel pesakit dulu (Pesakit → Kemaskini Pesakit).');
   const receiptRef = "CARD-" + Date.now().toString(36).toUpperCase() + "-" + Math.floor(performance.now()).toString(36).toUpperCase();
   const itemTitle = `Pengesahan Kad \u2014 Ansuran Automatik (${kob.recommended_package_name || ""})`.trim();
   const { data: oldPending } = await admin.from("psy_payments").select("id, items").eq("patient_id", kob.patient_id).eq("status", "pending").eq("intent->>kob_session_id", kobSessionId);
@@ -502,7 +535,7 @@ Deno.serve(async (req) => {
     }
     if (mode === "topup") {
       try {
-        const link = await createKobInstallmentTopupLink(admin, kobSessionId, returnUrl);
+        const link = await createKobInstallmentTopupLink(admin, kobSessionId, returnUrl, body.saveCard === true);
         return json({ ok: true, checkoutUrl: link.checkoutUrl, receiptRef: link.receiptRef, amount: link.amount });
       } catch (err) {
         return json({ error: err.message || "Ralat tidak diketahui" }, 400);

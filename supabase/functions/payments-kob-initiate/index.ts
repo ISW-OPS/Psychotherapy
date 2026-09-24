@@ -98,7 +98,7 @@ Deno.serve(async (req) => {
     // full/installment/manual_installment di bawah (yang untuk MULAKAN pelan).
     if (mode === 'topup') {
       try {
-        const link = await createKobInstallmentTopupLink(admin, kobSessionId, returnUrl)
+        const link = await createKobInstallmentTopupLink(admin, kobSessionId, returnUrl, body.saveCard === true)
         return json({ ok: true, checkoutUrl: link.checkoutUrl, receiptRef: link.receiptRef, amount: link.amount })
       } catch (err) {
         return json({ error: (err as Error).message || 'Ralat tidak diketahui' }, 400)

@@ -29,6 +29,12 @@ export interface KobTopupLink {
 
 export async function createKobInstallmentTopupLink(
   admin: any, kobSessionId: string, returnUrl: string,
+  // Pesakit pilih 'Kad' semasa bayar ansuran ni (bukan FPX/e-wallet/lain) — kad
+  // DISIMPAN SERENTAK (kad SAHAJA ditawar, sama had teknikal macam deposit,
+  // lihat kob_retry_link.ts) supaya ansuran SETERUSNYA pula boleh di-auto-caj.
+  // Tangkap pesakit yang terlepas peluang simpan kad masa deposit — tak perlu
+  // sesi "lampir kad" RM1 berasingan (kob_autocharge.ts) lagi kalau guna ni.
+  saveCard = false,
 ): Promise<KobTopupLink> {
   const { data: kobRows } = await admin.from('psy_kob_sessions')
     .select('id, patient_id, recommended_package_name, package_payment_mode, package_payment_status')
@@ -95,26 +101,42 @@ export async function createKobInstallmentTopupLink(
   })
   if (insErr) throw new Error('Gagal simpan bayaran pending: ' + insErr.message)
 
-  const webhookUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/payments-webhook`
   const redirectUrl = `${returnUrl}${returnUrl.includes('?') ? '&' : '?'}ref=${encodeURIComponent(receiptRef)}`
+  const providerImpl = getProvider(provider)
 
-  const created = await getProvider(provider).createPayment({
-    reference: receiptRef,
-    amount: money(amount),
-    currency: 'MYR',
-    email: patientEmail,
-    name: patient?.full_name || undefined,
-    purpose: itemTitle,
-    redirectUrl,
-    webhookUrl,
-  })
+  let gatewayRef: string, checkoutUrl: string
+  if (saveCard) {
+    if (!providerImpl.createCardAuthorization) throw new Error(`Provider "${provider}" tidak sokong simpan kad`)
+    if (!patientEmail) {
+      throw new Error('Pesakit ini tiada alamat emel dalam rekod — wajib untuk simpan kad (auto-caj ansuran). Kemaskini emel pesakit dulu, atau tanggalkan tanda "Simpan kad" dan hantar pautan biasa.')
+    }
+    const created = await providerImpl.createCardAuthorization({
+      reference: receiptRef, amount: money(amount), purpose: itemTitle, currency: 'MYR',
+      customerEmail: patientEmail, customerName: patient?.full_name || undefined, redirectUrl,
+    })
+    gatewayRef = created.authRef
+    checkoutUrl = created.checkoutUrl
+    await admin.from('psy_kob_card_authorizations').upsert({
+      kob_session_id: kobSessionId, patient_id: kob.patient_id,
+      gateway_provider: provider, gateway_auth_ref: gatewayRef, status: 'pending',
+    }, { onConflict: 'kob_session_id' })
+  } else {
+    const webhookUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/payments-webhook`
+    const created = await providerImpl.createPayment({
+      reference: receiptRef, amount: money(amount), currency: 'MYR',
+      email: patientEmail, name: patient?.full_name || undefined,
+      purpose: itemTitle, redirectUrl, webhookUrl,
+    })
+    gatewayRef = created.gatewayRef
+    checkoutUrl = created.checkoutUrl
+  }
 
   await admin.from('psy_payments')
-    .update({ gateway_ref: created.gatewayRef, checkout_url: created.checkoutUrl })
+    .update({ gateway_ref: gatewayRef, checkout_url: checkoutUrl })
     .eq('receipt_ref', receiptRef)
 
   return {
-    checkoutUrl: created.checkoutUrl, receiptRef, amount,
+    checkoutUrl, receiptRef, amount,
     checkpointSeq: nextCp.seq, checkpointLabel, dueDate: nextCp.due_date,
   }
 }
