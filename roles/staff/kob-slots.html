@@ -382,6 +382,13 @@
               </div>
             </div>
 
+            <!-- Kapasiti (Rawatan sahaja) — audit #B2-47 Tier 4: papar "X/Y slot" di Kalendar & Jadual -->
+            <div id="slot-maxbook-wrap" class="hidden">
+              <label class="text-xs font-semibold text-ink/70">Kapasiti Maksimum (pilihan)</label>
+              <p class="text-[10px] text-ink/45 mt-0.5">Jumlah sesi rawatan dibenarkan pada blok masa ni. Kosongkan kalau tiada had.</p>
+              <input id="slot-max-bookings" type="number" min="1" placeholder="cth: 4" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-[#6366f1]">
+            </div>
+
             <!-- Label disembunyikan — auto-jana dari Masa Mula + Tamat -->
             <input id="slot-label" type="hidden">
 
@@ -713,6 +720,8 @@ function updateSlotTypeUI() {
     el.style.borderColor = radio.checked ? '#6366f1' : '#e5e7eb';
     el.style.background = radio.checked ? '#eef2ff' : 'white';
   });
+  const type = document.querySelector('input[name="slot-type"]:checked')?.value;
+  document.getElementById('slot-maxbook-wrap').classList.toggle('hidden', type !== 'rawatan');
 }
 
 function updateDayChips() {
@@ -804,6 +813,7 @@ function openAddSlot(type) {
   document.getElementById('slot-end').value = '';
   document.getElementById('slot-duration').value = '';
   document.getElementById('slot-note').value = '';
+  document.getElementById('slot-max-bookings').value = '';
   document.querySelectorAll('.slot-day').forEach(el => {
     const day = parseInt(el.dataset.day);
     el.checked = day >= 3 || day === 0; // Rabu-Ahad checked by default
@@ -827,6 +837,7 @@ function openEditSlot(type, sortOrder) {
   document.getElementById('slot-end').value = (sample.slot_end || '').slice(0, 5);
   document.getElementById('slot-duration').value = computeDuration((sample.slot_start || '').slice(0, 5), (sample.slot_end || '').slice(0, 5));
   document.getElementById('slot-note').value = sample.note || '';
+  document.getElementById('slot-max-bookings').value = sample.max_bookings ?? '';
   // Checkbox = hari AKTIF (ON), bukan sekadar wujud baris — supaya selari dgn toggle grid.
   const activeDays = new Set(rows.filter(r => r.is_active).map(r => r.day_of_week));
   document.querySelectorAll('.slot-day').forEach(el => el.checked = activeDays.has(parseInt(el.dataset.day)));
@@ -848,6 +859,8 @@ async function submitSlotModal() {
   const days = Array.from(document.querySelectorAll('.slot-day:checked')).map(el => parseInt(el.dataset.day));
   const isActive = document.querySelector('input[name="slot-default-status"]:checked').value === 'on';
   const note = document.getElementById('slot-note').value.trim();
+  const maxBookingsRaw = document.getElementById('slot-max-bookings').value;
+  const maxBookings = type === 'rawatan' && maxBookingsRaw ? parseInt(maxBookingsRaw) : null;
   const { editOrder } = _slotModalState;
 
   if (!start || !end) return banner('Masa mula & tamat diperlukan', 'error');
@@ -862,9 +875,9 @@ async function submitSlotModal() {
       // bukan padam) supaya selari dgn grid & tak hilang config. Padam penuh guna butang 🗑️.
       for (const day of days) {
         if (existingByDay[day]) {
-          await window.db.from('psy_kob_slot_config').update({ label, slot_start: start, slot_end: end, note: note || null, is_active: isActive, updated_at: new Date().toISOString() }).eq('id', existingByDay[day].id);
+          await window.db.from('psy_kob_slot_config').update({ label, slot_start: start, slot_end: end, note: note || null, max_bookings: maxBookings, is_active: isActive, updated_at: new Date().toISOString() }).eq('id', existingByDay[day].id);
         } else {
-          await window.db.from('psy_kob_slot_config').insert({ slot_type: type, day_of_week: day, slot_start: start, slot_end: end, label, note: note || null, sort_order: editOrder, is_active: isActive });
+          await window.db.from('psy_kob_slot_config').insert({ slot_type: type, day_of_week: day, slot_start: start, slot_end: end, label, note: note || null, max_bookings: maxBookings, sort_order: editOrder, is_active: isActive });
         }
       }
       for (const row of existing) {
@@ -877,7 +890,7 @@ async function submitSlotModal() {
     } else {
       const maxSort = allSlots.filter(s => (s.slot_type || 'kob') === type).reduce((m, s) => Math.max(m, s.sort_order || 0), 0);
       const newOrder = maxSort + 1;
-      const rows = days.map(day => ({ slot_type: type, day_of_week: day, slot_start: start, slot_end: end, label, note: note || null, sort_order: newOrder, is_active: isActive }));
+      const rows = days.map(day => ({ slot_type: type, day_of_week: day, slot_start: start, slot_end: end, label, note: note || null, max_bookings: maxBookings, sort_order: newOrder, is_active: isActive }));
       const { error } = await window.db.from('psy_kob_slot_config').insert(rows);
       if (error) throw error;
       await auditLog('clinic_slot.added', null, { type, label, days: days.length });

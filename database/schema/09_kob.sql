@@ -285,6 +285,7 @@ CREATE TABLE IF NOT EXISTS psy_kob_slot_config (
   label        TEXT NOT NULL,         -- paparan cth "7-9 pg"
   sort_order   INT NOT NULL DEFAULT 0,
   note         TEXT,                  -- nota peringatan untuk slot
+  max_bookings INT,                   -- audit #B2-47 (Tier 4): kapasiti maksimum blok ni (rawatan sahaja); NULL = tiada had/belum dikonfigur
   created_at   TIMESTAMPTZ DEFAULT now(),
   updated_at   TIMESTAMPTZ DEFAULT now(),
   CONSTRAINT psy_kob_slot_config_unique UNIQUE (slot_type, day_of_week, slot_start)

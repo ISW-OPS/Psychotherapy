@@ -566,6 +566,7 @@ async function joinMeet(sessionId, planId, week, link, sessionDate) {
     status: 'hadir', updated_by: window.currentUser.id,
     updated_by_name: window.currentUser.full_name, updated_at: new Date().toISOString(),
   });
+  await syncLinkedAppointment(allSessions.find(x => x.id === sessionId)?.appointment_id, null, 'hadir');
   if (planId && week) await advancePlanWeek(planId, week);
   await auditLog('plan.session_hadir', sessionId);
   await loadSessions();
@@ -581,6 +582,31 @@ async function loadApptStaffMap() {
   const { data } = await window.db.from('psy_profiles').select('id, full_name, staff_role').eq('role', 'staff').then(r => r, () => ({ data: [] }));
   (data || []).forEach(p => { apptStaffMap[p.id] = { name: p.full_name, role: p.staff_role }; });
 }
+
+// Audit #B2-17/27 (Tier 4) — psy_appointments guna vocab status tersendiri
+// (scheduled/completed/cancelled/no_show dll), lain drpd psy_plan_weekly_progress
+// (booked/hadir/reschedule/cancel/consultation_done). Dulu bila sesi diedit dari
+// appointments.html (reschedule/hadir/tidak hadir), baris psy_appointments yang
+// dipautkan (appointment_id) TAK dikemaskini — cuma plan-week.html buat macam tu.
+// Peta konsisten + helper sync ni dipanggil di SEMUA tempat sesi diedit di sini
+// supaya dua-dua jadual tak drift, tanpa ubah vocab psy_appointments sendiri
+// (jadual tu dikongsi DNA Test/booking umum — tukar vocabnya risiko besar).
+const PWP_TO_APPT_STATUS = {
+  pending: 'scheduled', booked: 'scheduled', reschedule: 'scheduled',
+  hadir: 'completed', consultation_done: 'completed',
+  cancel: 'cancelled',
+  extension_pending_payment: 'scheduled', extension_paid: 'scheduled',
+};
+async function syncLinkedAppointment(appointmentId, sessionIso, pwpStatus) {
+  if (!appointmentId) return;
+  const patch = {};
+  if (sessionIso) patch.appointment_time = sessionIso;
+  if (pwpStatus && PWP_TO_APPT_STATUS[pwpStatus]) patch.status = PWP_TO_APPT_STATUS[pwpStatus];
+  if (!Object.keys(patch).length) return;
+  try { await window.db.from('psy_appointments').update(patch).eq('id', appointmentId); }
+  catch (e) { console.error('[appt] syncLinkedAppointment gagal:', e); }
+}
+window.syncLinkedAppointment = syncLinkedAppointment;
 
 // ── Lapisan Peristiwa Pesakit + KOB (digabung ke kalendar sesi) ──
 let calEvents = [], calVisits = [], calKob = [];
@@ -797,10 +823,23 @@ async function loadSessions() {
 
   // Load allowed rawatan days from slot config (dynamic — ikut slot yang ON)
   const slotRes = await window.db.from('psy_kob_slot_config')
-    .select('day_of_week').eq('is_active', true).eq('slot_type', 'rawatan');
+    .select('day_of_week, max_bookings').eq('is_active', true).eq('slot_type', 'rawatan');
   const rawatanDays = [...new Set((slotRes.data || []).map(s => s.day_of_week))];
   // Fallback ke Jumaat/Sabtu/Ahad jika slot config kosong
   window._allowedRawatanDays = rawatanDays.length ? rawatanDays : [0, 5, 6];
+
+  // Audit #B2-47 (Tier 4) — kapasiti slot per hari (jumlah kapasiti semua blok
+  // rawatan hari itu, kalau staf isi "Kapasiti Maksimum" masa urus Slot). Kalau
+  // mana-mana blok tak diisi (max_bookings NULL), papar tak jadi — elak dakwa
+  // kapasiti yang tak lengkap/salah.
+  const capAgg = {};
+  (slotRes.data || []).forEach(s => {
+    if (!(s.day_of_week in capAgg)) capAgg[s.day_of_week] = { total: 0, allSet: true };
+    if (s.max_bookings == null) capAgg[s.day_of_week].allSet = false;
+    else capAgg[s.day_of_week].total += s.max_bookings;
+  });
+  window._rawatanCapacityByDay = {};
+  Object.keys(capAgg).forEach(d => { window._rawatanCapacityByDay[d] = capAgg[d].allSet ? capAgg[d].total : null; });
 
   // Sertakan pesakit bayang (tiada profil auth) juga — jangan tapis keluar.
   const patients = (patientsRes.data || []).filter(p => !p.psy_profiles || p.psy_profiles.role === 'patient');
@@ -1150,10 +1189,20 @@ function renderCalendar() {
     const more = daySessions.length > 3
       ? `<span class="text-[9px] text-ink/50 pl-1">+${daySessions.length - 3} lagi</span>` : '';
 
+    // #B2-47 — kapasiti slot rawatan hari ini (kalau dikonfigur di kob-slots.html)
+    let capBadge = '';
+    if (typeVisible('session')) {
+      const cap = (window._rawatanCapacityByDay || {})[d.getDay()];
+      if (cap != null) {
+        const used = daySessions.filter(s => s.status !== 'cancel').length;
+        capBadge = `<div class="text-[9px] font-semibold mt-1 ${used > cap ? 'text-terracotta' : 'text-ink/35'}">${used}/${cap} slot</div>`;
+      }
+    }
+
     html += `<div class="cal-day border-b border-r border-ink/10 p-1.5 cursor-pointer hover:bg-navy-light/30 transition-colors ${isOther ? 'other-month' : ''} ${isToday ? 'today' : ''}"
       onclick="openDayModal('${dateStr}')">
       <div class="text-xs font-semibold mb-1 ${isToday ? 'text-navy' : 'text-ink/70'}">${d.getDate()}</div>
-      ${chips}${more}${extraChips}
+      ${chips}${more}${extraChips}${capBadge}
     </div>`;
   }
   document.getElementById('cal-grid').innerHTML = html;
@@ -1305,7 +1354,8 @@ function openDayModal(dateStr) {
                 ? `<button data-rbac="schedule.edit" onclick="event.stopPropagation(); joinMeet('${s.id}','${s.plan_id}',${s.week_number},'${s.meet_link}','${s.session_date || ''}')" class="bg-navy text-white text-xs px-3 py-1 rounded-lg">🔗 Join Meet</button>`
                 : `<button data-rbac="schedule.edit" onclick="event.stopPropagation(); markHadir('${s.id}','${s.plan_id}',${s.week_number},'${s.session_date || ''}')" class="bg-green text-white text-xs px-3 py-1 rounded-lg">✅ Hadir</button>`}
               <button data-rbac="schedule.edit" onclick="event.stopPropagation(); openReschedule('${s.id}')" class="border border-gold text-gold-dark text-xs px-3 py-1 rounded-lg">🔄 Reschedule</button>
-              <button data-rbac="schedule.edit" onclick="event.stopPropagation(); openAbsenceAppt('${s.id}')" class="border border-terracotta text-terracotta text-xs px-3 py-1 rounded-lg">❌ Tidak Hadir</button>` : ''}
+              <button data-rbac="schedule.edit" onclick="event.stopPropagation(); openAbsenceAppt('${s.id}')" class="border border-terracotta text-terracotta text-xs px-3 py-1 rounded-lg">❌ Tidak Hadir</button>
+              <button data-rbac="schedule.edit" onclick="event.stopPropagation(); cancelSessionAppt('${s.id}')" class="border border-ink/25 text-ink/55 text-xs px-3 py-1 rounded-lg">🚫 Batal</button>` : ''}
           </div>
         </div>`;
       }).join('')
@@ -1426,7 +1476,8 @@ function renderList() {
                 ? `<button data-rbac="schedule.edit" onclick="joinMeet('${s.id}','${s.plan_id}',${s.week_number},'${s.meet_link}','${s.session_date || ''}')" class="bg-navy text-white text-xs px-3 py-1.5 rounded-lg">🔗 Join Meet</button>`
                 : `<button data-rbac="schedule.edit" onclick="markHadir('${s.id}','${s.plan_id}',${s.week_number},'${s.session_date || ''}')" class="bg-green text-white text-xs px-3 py-1.5 rounded-lg">✅ Hadir</button>`}
               <button data-rbac="schedule.edit" onclick="openReschedule('${s.id}')" class="text-gold-dark text-xs ml-1 hover:underline">Reschedule</button>
-              <button data-rbac="schedule.edit" onclick="openAbsenceAppt('${s.id}')" class="text-terracotta text-xs ml-1 hover:underline">Tidak Hadir</button>` : ''}
+              <button data-rbac="schedule.edit" onclick="openAbsenceAppt('${s.id}')" class="text-terracotta text-xs ml-1 hover:underline">Tidak Hadir</button>
+              <button data-rbac="schedule.edit" onclick="cancelSessionAppt('${s.id}')" class="text-ink/50 text-xs ml-1 hover:underline">Batal</button>` : ''}
           </td>
         </tr>`;
       }).join('')
@@ -1444,6 +1495,7 @@ async function markHadir(id, planId, week, sessionDate) {
       status: 'hadir', updated_by: window.currentUser.id,
       updated_by_name: window.currentUser.full_name, updated_at: new Date().toISOString(),
     });
+    await syncLinkedAppointment(allSessions.find(x => x.id === id)?.appointment_id, null, 'hadir');
     await window.db.from('psy_treatment_plans').update({ current_week: week }).eq('id', planId).lte('current_week', week);
     await auditLog('plan.week_hadir', planId, { week });
     banner(`Minggu ${week}: Hadir`);
@@ -1556,6 +1608,7 @@ async function confirmAbsence() {
         status: 'reschedule', session_date: newDate.toISOString(), absence_reason: reason, notes: reason,
         updated_by: window.currentUser.id, updated_by_name: window.currentUser.full_name, updated_at: new Date().toISOString(),
       });
+      await syncLinkedAppointment(sess.appointment_id, newDate.toISOString(), 'reschedule');
       await auditLog('plan.reschedule', id, { date, reason, from_absence: true });
 
       let shifted = 0;
@@ -1566,11 +1619,13 @@ async function confirmAbsence() {
           `Sesi beralih ${diffDays > 0 ? '+' : ''}${diffDays} hari. Mahu shift sesi minggu seterusnya (W${sess.week_number + 1}+) sama jumlah?`,
           `The session moved ${diffDays > 0 ? '+' : ''}${diffDays} days. Shift the following weeks (W${sess.week_number + 1}+) by the same amount?`))) {
           const { data: subsequent } = await window.db.from('psy_plan_weekly_progress')
-            .select('id, session_date').eq('plan_id', sess.plan_id).gt('week_number', sess.week_number).in('status', ['booked', 'reschedule']);
+            .select('id, session_date, appointment_id').eq('plan_id', sess.plan_id).gt('week_number', sess.week_number).in('status', ['booked', 'reschedule']);
           for (const x of (subsequent || [])) {
             if (!x.session_date) continue;
+            const xShifted = new Date(new Date(x.session_date).getTime() + diffMs);
             await window.db.from('psy_plan_weekly_progress')
-              .update({ session_date: new Date(new Date(x.session_date).getTime() + diffMs).toISOString(), updated_at: new Date().toISOString() }).eq('id', x.id);
+              .update({ session_date: xShifted.toISOString(), updated_at: new Date().toISOString() }).eq('id', x.id);
+            await syncLinkedAppointment(x.appointment_id, xShifted.toISOString(), null);
             shifted++;
           }
           await auditLog('plan.cascade_shift', sess.plan_id, { from_week: sess.week_number, shifted_count: shifted, diff_days: diffDays });
@@ -1586,6 +1641,7 @@ async function confirmAbsence() {
         status: 'cancel', absence_reason: reason,
         updated_by: window.currentUser.id, updated_by_name: window.currentUser.full_name, updated_at: new Date().toISOString(),
       });
+      await syncLinkedAppointment(sess.appointment_id, null, 'cancel');
       await auditLog('plan.absence', id, { reason });
       if (patUserProfileId) {
         await notify(patUserProfileId, 'plan', iswL('Sesi Ditanda Tidak Hadir', 'Session marked Absent'),
@@ -1604,6 +1660,33 @@ async function confirmAbsence() {
     banner(iswL('Ralat: ', 'Error: ') + err.message, 'error');
   } finally { reset(); }
 }
+
+// Audit #B2-30 (Tier 4) — dulu day-modal cuma ada Hadir/Reschedule/TidakHadir;
+// tiada cara batalkan terus tempahan yang tersilap (cth pesakit/tarikh salah)
+// TANPA melalui alur Tidak Hadir — yang sengaja diblok utk sesi akan datang
+// (openAbsenceAppt baris ~1467) sbb kehadiran tak boleh dinilai sebelum ia
+// berlaku. "Batal" berbeza konsep: buang tempahan (silap staf), bukan rekod
+// ketidakhadiran pesakit — jadi dibenarkan utk tarikh lepas ATAU akan datang,
+// guna semula status 'cancel' sedia ada (rekod kekal, bukan padam).
+async function cancelSessionAppt(id) {
+  const sess = allSessions.find(x => x.id === id);
+  if (!sess) return;
+  const reason = prompt('Sebab batalkan sesi ini? (wajib, direkod dlm audit trail)');
+  if (reason === null) return;
+  if (!reason.trim()) { banner('Sebab wajib diisi utk batalkan sesi', 'error'); return; }
+  try {
+    await dbUpdate('psy_plan_weekly_progress', id, {
+      status: 'cancel', absence_reason: reason.trim(), notes: reason.trim(),
+      updated_by: window.currentUser.id, updated_by_name: window.currentUser.full_name, updated_at: new Date().toISOString(),
+    });
+    await syncLinkedAppointment(sess.appointment_id, null, 'cancel');
+    await auditLog('plan.session_cancelled', id, { plan_id: sess.plan_id, week: sess.week_number, reason: reason.trim() });
+    banner('Sesi dibatalkan ✓');
+    document.getElementById('day-modal').classList.add('hidden');
+    loadSessions();
+  } catch (err) { banner('Ralat: ' + err.message, 'error'); }
+}
+window.cancelSessionAppt = cancelSessionAppt;
 
 // ── Coach Ganti ────────────────────────────────────────
 function openApptCoachGanti(sessionId, currentSubId) {
@@ -1703,6 +1786,7 @@ async function confirmReschedule() {
       notes: reason || null, updated_by: window.currentUser.id,
       updated_by_name: window.currentUser.full_name, updated_at: new Date().toISOString(),
     });
+    await syncLinkedAppointment(currentSession?.appointment_id, newDate.toISOString(), 'reschedule');
     await auditLog('plan.reschedule', rescheduleId, { date, reason });
 
     // Auto-shift subsequent weeks if user confirms
@@ -1714,7 +1798,7 @@ async function confirmReschedule() {
         const cascade = confirm(`Sesi shift ${diffDays > 0 ? '+' : ''}${diffDays} hari. Mahu shift sesi minggu seterusnya (W${currentSession.week_number + 1}+) sama jumlah?`);
         if (cascade) {
           const { data: subsequent } = await window.db.from('psy_plan_weekly_progress')
-            .select('id, session_date, week_number, status')
+            .select('id, session_date, week_number, status, appointment_id')
             .eq('plan_id', currentSession.plan_id)
             .gt('week_number', currentSession.week_number)
             .in('status', ['booked', 'reschedule']);
@@ -1724,6 +1808,7 @@ async function confirmReschedule() {
             await window.db.from('psy_plan_weekly_progress')
               .update({ session_date: shiftedDate.toISOString(), updated_at: new Date().toISOString() })
               .eq('id', s.id);
+            await syncLinkedAppointment(s.appointment_id, shiftedDate.toISOString(), null);
             shifted++;
           }
           await auditLog('plan.cascade_shift', currentSession.plan_id, {
@@ -1842,6 +1927,14 @@ async function saveSession() {
   if (!date)      { errEl.textContent = 'Sila pilih tarikh sesi.'; errEl.classList.remove('hidden'); return; }
   if (date < localDateStr(new Date())) { errEl.textContent = '🚫 Tarikh yang dipilih sudah lepas. Sila pilih tarikh akan datang.'; errEl.classList.remove('hidden'); return; }
   if (!week || week < 1) { errEl.textContent = 'Sila masukkan nombor minggu yang sah.'; errEl.classList.remove('hidden'); return; }
+  // Audit #B2-28 (Tier 4) — dulu boleh book sesi rawatan tanpa pesakit ada coach
+  // ditugaskan langsung. Sesi jadi "yatim" (tiada siapa bertanggungjawab) sampai
+  // staf assign coach kemudian — sila assign dulu di halaman Pesakit.
+  if (!patientMap[patientId]?.coach_id) {
+    errEl.textContent = '⚠️ Pesakit ini belum ada coach ditugaskan. Sila assign coach di halaman Pesakit dahulu sebelum book sesi.';
+    errEl.classList.remove('hidden');
+    return;
+  }
 
   const plan = allPlansList.find(p => p.id === planId);
   if (plan?.duration_weeks && week > plan.duration_weeks) {
@@ -1933,15 +2026,27 @@ async function saveSession() {
   const btn = document.getElementById('btn-save-session');
   btn.disabled = true; btn.textContent = 'Menyimpan...';
   try {
-    const { error: insertErr } = await window.db.from('psy_plan_weekly_progress').upsert({
+    const { data: savedRow, error: insertErr } = await window.db.from('psy_plan_weekly_progress').upsert({
       patient_id: patientId, plan_id: planId,
       session_date: sessionIso,
       week_number: week, status: 'booked',
       notes: notes || null,
       session_type: sessionType,
       meet_link: meetLink,
-    }, { onConflict: 'plan_id,week_number' });
+    }, { onConflict: 'plan_id,week_number' }).select('id, appointment_id').single();
     if (insertErr) throw insertErr;
+    // Audit #B2-17 (Tier 4) — dulu sesi dibuat dari appointments.html TIADA baris
+    // psy_appointments dipautkan langsung (lain drpd laluan plan-week.html), jadi
+    // sync-balik (syncLinkedAppointment) tak berkesan bila sesi ni diedit kemudian
+    // dari mana-mana halaman. Cipta pautan di sini juga supaya dua-dua laluan konsisten.
+    if (savedRow && !savedRow.appointment_id) {
+      const coachId = patientMap[patientId]?.coach_id || null;
+      const { data: appt } = await window.db.from('psy_appointments').insert({
+        patient_id: patientId, staff_id: coachId, staff_name: coachId ? (apptStaffMap[coachId]?.name || null) : null,
+        service: `${plan?.name || 'Sesi Rawatan'} · Minggu ${week}`, appointment_time: sessionIso, duration_min: 60, status: 'scheduled',
+      }).select('id').single();
+      if (appt?.id) await window.db.from('psy_plan_weekly_progress').update({ appointment_id: appt.id }).eq('id', savedRow.id);
+    }
     await auditLog('plan.session_booked', planId, { patientId, week, date });
     banner('Sesi berjaya dibuat ✅');
     closeBookModal();
