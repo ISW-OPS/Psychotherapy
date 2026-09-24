@@ -378,7 +378,8 @@ INSERT INTO psy_roles (code, label, description, color, icon, is_system, sort_or
   ('manager',     'Manager',     'Pengurus klinik — operasi penuh + kewangan + governance.', 'navy', '👔', true, 20),
   ('admin',       'Admin',       'Admin operasi — urus pesakit, pakej, inventori, surat.', 'teal', '🧑‍💼', true, 30),
   ('doctor',      'Doctor',      'Doktor klinikal — pesakit, KYC, KOB, plan rawatan.', 'green', '🩺', true, 40),
-  ('coach',       'Coach',       'Coach — pesakit ditugaskan, plan, sesi coaching.', 'gold', '🧑‍🏫', true, 50)
+  ('coach',       'Coach',       'Coach — pesakit ditugaskan, plan, sesi coaching.', 'gold', '🧑‍🏫', true, 50),
+  ('telesale',    'Telesale',    'Telesale — urus lead & KOB (onboarding), pembayaran & slot konsultasi.', 'orange', '📞', true, 55)
 ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label, description=EXCLUDED.description, color=EXCLUDED.color, icon=EXCLUDED.icon, is_system=true;
 
 -- Role 'patient' — diperlukan oleh grant modul pat_* (FK ke psy_roles).
@@ -438,6 +439,17 @@ FROM (VALUES
   ('announcements'),('events'),('library'),('kb'),
   ('kehadiran'),('issue'),('surat'),
   ('coaching'),('inventory'),('communication'),('operations')
+) AS m(code)
+ON CONFLICT DO NOTHING;
+
+-- Telesale: fokus KOB (onboarding) & lead — pesakit, pakej, pembayaran, slot.
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT 'telesale', m.code, 'view'
+FROM (VALUES
+  ('dashboard'),('patient'),('kyc'),('schedule'),
+  ('kob'),('kob_slots'),('package'),('payment'),
+  ('announcements'),('events'),
+  ('communication'),('operations')
 ) AS m(code)
 ON CONFLICT DO NOTHING;
 

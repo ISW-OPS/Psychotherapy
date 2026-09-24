@@ -9,7 +9,7 @@ import { corsHeaders } from '../_shared/cors.ts'
 interface InviteRequest {
   email: string;
   full_name: string;
-  staff_role: 'admin' | 'doctor' | 'coach' | 'manager';
+  staff_role: 'admin' | 'doctor' | 'coach' | 'manager' | 'telesale';
   specialization?: string;
   registration_no?: string;
   phone?: string;
@@ -58,8 +58,8 @@ Deno.serve(async (req: Request) => {
     if (!body.email || !body.full_name) {
       throw new Error('Email dan nama wajib diisi')
     }
-    if (!['admin', 'doctor', 'coach', 'manager'].includes(body.staff_role)) {
-      throw new Error('Staff role mesti admin, doctor, coach, atau manager')
+    if (!['admin', 'doctor', 'coach', 'manager', 'telesale'].includes(body.staff_role)) {
+      throw new Error('Staff role mesti admin, doctor, coach, manager, atau telesale')
     }
 
     // Use service role key for admin operations

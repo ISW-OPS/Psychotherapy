@@ -248,6 +248,8 @@ const NAV_GROUPS_BY_ROLE = {
   staff_coach: STAFF_NAV_MASTER,
   staff_doctor: STAFF_NAV_MASTER,
   staff_super_admin: STAFF_NAV_MASTER,
+  staff_telesale: STAFF_NAV_MASTER,
+  staff_telesales: STAFF_NAV_MASTER,
 };
 
 const ROLE_CONFIG = {
@@ -257,6 +259,8 @@ const ROLE_CONFIG = {
   staff_doctor: { label: 'Doctor Portal', icon: '⚕' },
   staff_manager: { label: 'Manager Portal', icon: '⚕' },
   staff_super_admin: { label: 'Super Admin Portal', icon: '⚕' },
+  staff_telesale: { label: 'Telesale Portal', icon: '📞' },
+  staff_telesales: { label: 'KOB Portal', icon: '📞' },
   staff: { label: 'Staff Portal', icon: '⚕' },
 };
 
@@ -266,6 +270,8 @@ const STAFF_ROLE_BADGE = {
   doctor: { label: 'Doctor', cls: 'role-accent-bg' },
   manager: { label: 'Manager', cls: 'role-accent-bg' },
   super_admin: { label: 'Super Admin', cls: 'role-accent-bg' },
+  telesale: { label: 'Telesale', cls: 'role-accent-bg' },
+  telesales: { label: 'KOB', cls: 'role-accent-bg' },
 };
 
 // Get flat nav items for a role (for goTo, staffCanAccess, badge counts)

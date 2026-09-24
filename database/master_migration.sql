@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-09-23T05:03:02.128498Z
+-- Generated: 2026-09-24T03:15:56.014457Z
 -- Jumlah fail: 36
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -493,7 +493,8 @@ INSERT INTO psy_roles (code, label, description, color, icon, is_system, sort_or
   ('manager',     'Manager',     'Pengurus klinik — operasi penuh + kewangan + governance.', 'navy', '👔', true, 20),
   ('admin',       'Admin',       'Admin operasi — urus pesakit, pakej, inventori, surat.', 'teal', '🧑‍💼', true, 30),
   ('doctor',      'Doctor',      'Doktor klinikal — pesakit, KYC, KOB, plan rawatan.', 'green', '🩺', true, 40),
-  ('coach',       'Coach',       'Coach — pesakit ditugaskan, plan, sesi coaching.', 'gold', '🧑‍🏫', true, 50)
+  ('coach',       'Coach',       'Coach — pesakit ditugaskan, plan, sesi coaching.', 'gold', '🧑‍🏫', true, 50),
+  ('telesale',    'Telesale',    'Telesale — urus lead & KOB (onboarding), pembayaran & slot konsultasi.', 'orange', '📞', true, 55)
 ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label, description=EXCLUDED.description, color=EXCLUDED.color, icon=EXCLUDED.icon, is_system=true;
 
 -- Role 'patient' — diperlukan oleh grant modul pat_* (FK ke psy_roles).
@@ -553,6 +554,17 @@ FROM (VALUES
   ('announcements'),('events'),('library'),('kb'),
   ('kehadiran'),('issue'),('surat'),
   ('coaching'),('inventory'),('communication'),('operations')
+) AS m(code)
+ON CONFLICT DO NOTHING;
+
+-- Telesale: fokus KOB (onboarding) & lead — pesakit, pakej, pembayaran, slot.
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT 'telesale', m.code, 'view'
+FROM (VALUES
+  ('dashboard'),('patient'),('kyc'),('schedule'),
+  ('kob'),('kob_slots'),('package'),('payment'),
+  ('announcements'),('events'),
+  ('communication'),('operations')
 ) AS m(code)
 ON CONFLICT DO NOTHING;
 
@@ -1312,6 +1324,12 @@ CREATE TABLE IF NOT EXISTS psy_packages (
   extension_price_per_week NUMERIC(10,2) DEFAULT 50,
   extension_price_per_session NUMERIC(10,2) DEFAULT 25,
   meet_link TEXT,
+  -- Ditambah 24 Sept 2026 (audit management #B1-7/8 Tier 4) — keperluan DNA Test
+  -- datang dari config pakej (pola sama macam hk1_types Sesi 1:1), bukan hard-code
+  -- atau bergantung staf ingat "Cipta Proses Baharu" manual. Auto-cipta di plan-week.html.
+  dna_test_required BOOLEAN NOT NULL DEFAULT false,
+  dna_test_count     INT DEFAULT 1,
+  dna_test_week      INT DEFAULT 1,
   -- bayaran ansuran — Deposit (Bayaran Pertama) + Tempoh(bulan) + Bayaran
   -- Bulanan RATA. Pesakit boleh top-up jumlah bebas bila-bila (payment.html),
   -- tapi jadual checkpoint (psy_kob_installment_checkpoints) dijana dari
@@ -1722,7 +1740,17 @@ CREATE TABLE IF NOT EXISTS psy_payments (
   sst NUMERIC(10,2) DEFAULT 0,
   total NUMERIC(10,2) NOT NULL,
   payment_method TEXT CHECK (payment_method IN ('fpx','card','transfer','ghl','manual','gateway')),
-  status TEXT DEFAULT 'completed' CHECK (status IN ('pending','completed','refunded','failed')),
+  -- 'voided' ditambah 24 Sept 2026 (audit management #B1-24) — transaksi yg tersalah
+  -- rekod terus (bukan pesakit betul-betul minta wang balik). Beza drpd 'refunded'
+  -- (bayaran sah, wang dipulangkan). Lihat psy_payment_adjustments utk sebab/approver.
+  status TEXT DEFAULT 'completed' CHECK (status IN ('pending','completed','refunded','failed','voided')),
+  -- Ditambah 24 Sept 2026 (audit management #B1-23) — bayaran ujian/demo, DIKECUALIKAN
+  -- drpd semua laporan kewangan sebenar (KPI dashboard, laporan bulanan dll).
+  is_test BOOLEAN NOT NULL DEFAULT false,
+  -- Ditambah 24 Sept 2026 (audit management #B1-27) — status penghantaran resit/invois
+  -- (WhatsApp) supaya staf tahu ia dihantar atau gagal, bukan senyap "fire and forget".
+  receipt_last_sent_at     TIMESTAMPTZ,
+  receipt_last_sent_status TEXT CHECK (receipt_last_sent_status IS NULL OR receipt_last_sent_status IN ('sent','failed')),
   ghl_transaction_id TEXT,
   invoice_number TEXT,                        -- bayaran manual — no. invois ditaip staff/doktor
   manual_method TEXT CHECK (manual_method IN ('transfer','cash','other')),  -- kaedah bayaran manual (payment_method='manual')
@@ -1803,6 +1831,89 @@ CREATE POLICY "Staff manage all payments" ON psy_payments FOR ALL
 
 COMMENT ON COLUMN psy_payments.intent IS
   'Snapshot pendingItems + konteks bayaran; dibaca oleh payments-webhook untuk fulfillment idempotent selepas gateway sahkan.';
+
+-- ──────────────────────────────────────────────────────────────
+-- psy_payment_adjustments — Void/Refund/Correction workflow (audit #B1-24, 24 Sept 2026)
+-- Transaksi kewangan tersalah TAK boleh dipadam terus — kena melalui rekod ni dgn
+-- sebab+amount+approver. type='void' (transaksi tak sepatutnya wujud, status→'voided'),
+-- 'refund' (bayaran sah, wang dipulangkan, status→'refunded'), 'correction'
+-- (dokumentasi pembetulan — TAK ubah amount psy_payments terus, sbb amount berkait
+-- invois/jadual ansuran KOB; staf betulkan rekod berkaitan secara manual selepas
+-- catat sebab di sini).
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_payment_adjustments (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  payment_id         UUID NOT NULL REFERENCES psy_payments(id) ON DELETE CASCADE,
+  type               TEXT NOT NULL CHECK (type IN ('void','refund','correction')),
+  reason             TEXT NOT NULL,
+  amount             NUMERIC(10,2),  -- refund/correction; NULL utk void (batal penuh)
+  requested_by       UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  requested_by_name  TEXT,
+  requested_at       TIMESTAMPTZ DEFAULT now(),
+  approved_by        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  approved_by_name   TEXT,
+  approved_at        TIMESTAMPTZ,
+  status             TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
+  notes              TEXT,
+  created_at         TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_adj_payment ON psy_payment_adjustments(payment_id);
+CREATE INDEX IF NOT EXISTS idx_payment_adj_status  ON psy_payment_adjustments(status, requested_at);
+
+ALTER TABLE psy_payment_adjustments ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage payment adjustments" ON psy_payment_adjustments;
+CREATE POLICY "Staff manage payment adjustments" ON psy_payment_adjustments FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+COMMENT ON COLUMN psy_payment_adjustments.status IS
+  'pending = menunggu kelulusan super_admin; approved = diluluskan & kesan diterapkan (psy_payments.status dikemaskini); rejected = ditolak, psy_payments tak berubah.';
+
+-- ──────────────────────────────────────────────────────────────
+-- psy_payment_status_log — Status Timeline (audit #B1-25/26, 24 Sept 2026)
+-- Tambahan SEMATA-MATA (trigger auto-isi) — psy_payments.status tetap satu kolum
+-- macam sedia ada, jadual ni cuma simpan SETIAP perubahan supaya boleh papar
+-- "carta perjalanan" Created→Gateway/Manual→Verified→Paid/Failed/Refunded/Voided
+-- kat UI. Bayaran SEDIA ADA (sebelum trigger dipasang) tiada sejarah — timeline
+-- bermula dari bila migration ni run.
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_payment_status_log (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  payment_id  UUID NOT NULL REFERENCES psy_payments(id) ON DELETE CASCADE,
+  old_status  TEXT,          -- NULL utk baris pertama (payment baru dicipta)
+  new_status  TEXT NOT NULL,
+  changed_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_status_log_payment ON psy_payment_status_log(payment_id, changed_at);
+
+ALTER TABLE psy_payment_status_log ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff read payment status log" ON psy_payment_status_log;
+CREATE POLICY "Staff read payment status log" ON psy_payment_status_log FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+-- Tiada INSERT/UPDATE/DELETE policy utk client — cuma trigger (SECURITY DEFINER) yg tulis.
+
+CREATE OR REPLACE FUNCTION trg_log_payment_status()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO psy_payment_status_log (payment_id, old_status, new_status) VALUES (NEW.id, NULL, NEW.status);
+  ELSIF TG_OP = 'UPDATE' AND NEW.status IS DISTINCT FROM OLD.status THEN
+    INSERT INTO psy_payment_status_log (payment_id, old_status, new_status) VALUES (NEW.id, OLD.status, NEW.status);
+  END IF;
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_log_payment_status: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_log_payment_status ON psy_payments;
+CREATE TRIGGER trg_log_payment_status
+  AFTER INSERT OR UPDATE OF status ON psy_payments
+  FOR EACH ROW EXECUTE FUNCTION trg_log_payment_status();
 
 -- ──────────────────────────────────────────────────────────────
 -- psy_orders — pesanan produk pesakit (penghantaran bekalan)
@@ -3078,6 +3189,7 @@ CREATE TABLE IF NOT EXISTS psy_kob_slot_config (
   label        TEXT NOT NULL,         -- paparan cth "7-9 pg"
   sort_order   INT NOT NULL DEFAULT 0,
   note         TEXT,                  -- nota peringatan untuk slot
+  max_bookings INT,                   -- audit #B2-47 (Tier 4): kapasiti maksimum blok ni (rawatan sahaja); NULL = tiada had/belum dikonfigur
   created_at   TIMESTAMPTZ DEFAULT now(),
   updated_at   TIMESTAMPTZ DEFAULT now(),
   CONSTRAINT psy_kob_slot_config_unique UNIQUE (slot_type, day_of_week, slot_start)
@@ -3192,6 +3304,15 @@ ALTER TABLE psy_vitals ADD COLUMN IF NOT EXISTS respiratory_rate INT;
 ALTER TABLE psy_vitals ADD COLUMN IF NOT EXISTS pain_score INT CHECK (pain_score BETWEEN 0 AND 10);
 ALTER TABLE psy_vitals ADD COLUMN IF NOT EXISTS is_abnormal BOOLEAN NOT NULL DEFAULT false;
 
+-- Kritikal (bahaya klinikal, perlu tindakan segera) — tahap lebih ketat drpd
+-- "Tidak Normal" (is_abnormal) di atas. Dikira SERVER-SIDE SAHAJA (trigger di bawah),
+-- tak boleh diubah/dipintas oleh client — supaya bacaan kritikal SENTIASA dikesan
+-- tanpa bergantung laluan insert (patient-hub.html/plan-week.html/vitals-detail.html)
+-- atau staf lupa tanda. Bila true, auto-cipta/kemaskini kes di Red Emergency
+-- Protocol (psy_emergency_alerts) — lihat trg_vitals_notify_emergency di
+-- 18_notifications_automations.sql.
+ALTER TABLE psy_vitals ADD COLUMN IF NOT EXISTS is_critical BOOLEAN NOT NULL DEFAULT false;
+
 -- Indeks
 CREATE INDEX IF NOT EXISTS idx_psy_vitals_patient ON psy_vitals(patient_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_vitals_plan_week
@@ -3208,6 +3329,40 @@ UPDATE psy_vitals SET is_abnormal = true WHERE is_abnormal = false AND (
   (temperature IS NOT NULL AND (temperature < 36.1 OR temperature > 37.2)) OR
   (spo2 IS NOT NULL AND spo2 < 95)
 );
+
+-- ──── Ambang KRITIKAL — dikira server-side, elak client pintas/lupa tanda ────
+-- NOTA: ambang default di bawah (BP/nadi/suhu/SpO2/RR) belum disahkan klinikal
+-- ISW — ni piawai am industri sahaja. TUKAR di fn_vitals_compute_critical() ni
+-- sahaja (satu tempat) selepas doktor/klinikal sahkan.
+CREATE OR REPLACE FUNCTION fn_vitals_compute_critical()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.is_critical := (
+    (NEW.bp_systolic IS NOT NULL AND (NEW.bp_systolic < 80 OR NEW.bp_systolic >= 180)) OR
+    (NEW.bp_diastolic IS NOT NULL AND NEW.bp_diastolic >= 120) OR
+    (NEW.heart_rate IS NOT NULL AND (NEW.heart_rate < 40 OR NEW.heart_rate > 130)) OR
+    (NEW.temperature IS NOT NULL AND (NEW.temperature < 35.0 OR NEW.temperature >= 39.5)) OR
+    (NEW.spo2 IS NOT NULL AND NEW.spo2 < 90) OR
+    (NEW.respiratory_rate IS NOT NULL AND (NEW.respiratory_rate < 8 OR NEW.respiratory_rate > 30))
+  );
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_vitals_compute_critical ON psy_vitals;
+CREATE TRIGGER trg_vitals_compute_critical
+  BEFORE INSERT OR UPDATE ON psy_vitals
+  FOR EACH ROW EXECUTE FUNCTION fn_vitals_compute_critical();
+
+-- Backfill sekali sahaja (sama sebab macam is_abnormal di atas)
+UPDATE psy_vitals SET is_critical = (
+  (bp_systolic IS NOT NULL AND (bp_systolic < 80 OR bp_systolic >= 180)) OR
+  (bp_diastolic IS NOT NULL AND bp_diastolic >= 120) OR
+  (heart_rate IS NOT NULL AND (heart_rate < 40 OR heart_rate > 130)) OR
+  (temperature IS NOT NULL AND (temperature < 35.0 OR temperature >= 39.5)) OR
+  (spo2 IS NOT NULL AND spo2 < 90) OR
+  (respiratory_rate IS NOT NULL AND (respiratory_rate < 8 OR respiratory_rate > 30))
+) WHERE is_critical = false;
 
 -- RLS
 ALTER TABLE psy_vitals ENABLE ROW LEVEL SECURITY;
@@ -3254,6 +3409,13 @@ COMMENT ON COLUMN psy_vitals.pain_score IS 'Skor kesakitan pesakit, 0 (tiada) hi
 COMMENT ON COLUMN psy_vitals.is_abnormal IS
   'Dikira semasa simpan (ambang klinikal BP/HR/suhu/SpO2/resp rate) ATAU ditanda manual oleh staff. '
   'Disimpan (bukan dikira semula tiap kali) supaya statistik dashboard Vitals murah untuk query.';
+
+COMMENT ON COLUMN psy_vitals.is_critical IS
+  'Bacaan kritikal (bahaya klinikal, perlu tindakan segera) — dikira SERVER-SIDE sahaja '
+  '(trg_vitals_compute_critical), staf TAK boleh override/uncheck macam is_abnormal. Bila true, '
+  'trg_vitals_notify_emergency (18_notifications_automations.sql) auto-cipta/kemaskini kes di '
+  'psy_emergency_alerts — Red Emergency Protocol. Ambang belum disahkan klinikal ISW, lihat nota '
+  'di fn_vitals_compute_critical().';
 
 
 -- ════════════════════════════════════════════════════════════════
@@ -3621,6 +3783,19 @@ CREATE TABLE IF NOT EXISTS psy_reaksi_actions (
   kategori     TEXT,
   jenis        TEXT NOT NULL DEFAULT 'am',
   panduan      TEXT,
+  -- Ditambah 23 Sept 2026 (audit management #B2-3, contraindication) — kata kunci
+  -- dipisah koma (cth "diabetes, kencing manis") yang, bila dijumpai dalam
+  -- psy_patients.medical_condition pesakit (carian teks, tak sensitif huruf besar),
+  -- akan sorok/gantung cadangan ni + papar amaran kat staf/coach dari terus hantar
+  -- kat pesakit. Pilihan (NULL/kosong = tiada sekatan diketahui).
+  contraindication_keywords TEXT,
+  -- Ditambah 23 Sept 2026 (audit management #B2-39/#B2-45) — status semakan.
+  -- DEFAULT DB ialah 'active' (kekalkan tingkah laku sedia ada utk rekod sedia
+  -- ada/laluan insert lain yg tak eksplisit set), TAPI kod baharu (import, tindakan
+  -- baharu di drawer) set 'draft' secara eksplisit supaya kandungan baharu tak terus
+  -- pengaruh cadangan pesakit sebelum staf semak. Cuma tindakan status='active' yang
+  -- digunakan utk jana cadangan — lihat filter di roles/patient/kepatuhan.html.
+  status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('draft','reviewed','approved','active')),
   created_at   TIMESTAMPTZ DEFAULT now(),
   updated_at   TIMESTAMPTZ DEFAULT now(),
   CONSTRAINT chk_reaksi_actions_jenis CHECK (jenis IN ('am','pemakanan','gaya_hidup','terapi','pemerhatian','tindakan','kecemasan'))
@@ -3675,7 +3850,13 @@ CREATE TABLE IF NOT EXISTS psy_reaksi_advice_log (
   actions          JSONB NOT NULL DEFAULT '[]',   -- [{id,title,priority,is_emergency}] snapshot dijana
   message_text     TEXT NOT NULL,                 -- boleh diedit staff sebelum hantar
   is_emergency     BOOLEAN NOT NULL DEFAULT false,
-  status           TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','sent','skipped')),
+  -- 'needs_review' ditambah 23 Sept 2026 (audit management #B2-2, conflict-check) —
+  -- bila 1 submission Catatan Harian cetuskan >1 reaksi serentak, baris digantung
+  -- di status ni (cron reaksi-advice-send HANYA proses status='draft' — lihat
+  -- supabase/functions/reaksi-advice-send/index.ts, jadi 'needs_review' auto tak
+  -- terhantar) sehingga staff Lulus (→'draft') atau Skip (→'skipped') di
+  -- reaksi-laporan.html. Guna kolum reviewed_by/reviewed_at sedia ada.
+  status           TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','sent','skipped','needs_review')),
   msg_jenis        TEXT        NOT NULL DEFAULT 'tindakan',
   send_after       TIMESTAMPTZ NOT NULL DEFAULT now(),
   send_attempts    INT         NOT NULL DEFAULT 0,
@@ -5472,7 +5653,9 @@ CREATE TABLE IF NOT EXISTS psy_emergency_alerts (
   -- source 'patient' ditambah 22 Jul 2026 via migration adaptif (20260722c) —
   -- pesakit lapor sendiri dari seksyen Protokol Kecemasan di roles/patient/dashboard.html
   -- (butang kecemasan; bukan lagi halaman berasingan — consolidated 22 Jul 2026).
-  source                   TEXT DEFAULT 'auto' CHECK (source IN ('auto','manual','patient')),
+  -- source 'vitals' ditambah 23 Sept 2026 — bacaan Vitals kritikal auto-cipta kes,
+  -- lihat trg_vitals_notify_emergency di bawah.
+  source                   TEXT DEFAULT 'auto' CHECK (source IN ('auto','manual','patient','vitals')),
   source_log_id            UUID REFERENCES psy_reaksi_advice_log(id) ON DELETE SET NULL,
   reported_at              TIMESTAMPTZ DEFAULT now(),
   response_target_minutes  INT NOT NULL,          -- 15 (merah) / 60 (kuning)
@@ -5583,6 +5766,126 @@ DROP TRIGGER IF EXISTS trg_reaksi_advice_notify_emergency ON psy_reaksi_advice_l
 CREATE TRIGGER trg_reaksi_advice_notify_emergency
   AFTER INSERT ON psy_reaksi_advice_log
   FOR EACH ROW EXECUTE FUNCTION trg_reaksi_advice_notify_emergency();
+
+-- ──── Fungsi trigger: bacaan Vitals KRITIKAL → auto-cipta/kemaskini kes Red Emergency ────
+-- Sama pola dgn trg_reaksi_advice_notify_emergency di atas (satu alert AKTIF per
+-- pesakit, taraf naik ke merah dibenarkan, taraf turun DISEKAT). is_critical
+-- dikira server-side di fn_vitals_compute_critical() (10_vitals.sql) — trigger ni
+-- cuma respons bila NEW.is_critical = true, tak kira laluan insert (patient-hub/
+-- plan-week/vitals-detail) atau staf sedar/tidak.
+CREATE OR REPLACE FUNCTION trg_vitals_notify_emergency()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_coach_id     UUID;
+  v_patient_name TEXT;
+  v_open_id      UUID;
+  v_reason       TEXT;
+BEGIN
+  IF NOT NEW.is_critical THEN RETURN NEW; END IF;
+
+  SELECT pt.coach_id, COALESCE(pr.full_name, pt.full_name, 'Pesakit')
+    INTO v_coach_id, v_patient_name
+  FROM psy_patients pt
+  LEFT JOIN psy_profiles pr ON pr.id = pt.user_id
+  WHERE pt.id = NEW.patient_id;
+  IF v_coach_id IS NULL THEN RETURN NEW; END IF;
+
+  v_reason := 'Bacaan Vitals kritikal: ' || COALESCE(NULLIF(concat_ws(', ',
+    CASE WHEN NEW.bp_systolic IS NOT NULL AND (NEW.bp_systolic < 80 OR NEW.bp_systolic >= 180)
+      THEN 'BP ' || NEW.bp_systolic || '/' || COALESCE(NEW.bp_diastolic::TEXT, '—') END,
+    CASE WHEN NEW.bp_diastolic IS NOT NULL AND NEW.bp_diastolic >= 120
+      THEN 'BP diastolik ' || NEW.bp_diastolic END,
+    CASE WHEN NEW.heart_rate IS NOT NULL AND (NEW.heart_rate < 40 OR NEW.heart_rate > 130)
+      THEN 'Nadi ' || NEW.heart_rate || ' bpm' END,
+    CASE WHEN NEW.temperature IS NOT NULL AND (NEW.temperature < 35.0 OR NEW.temperature >= 39.5)
+      THEN 'Suhu ' || NEW.temperature || '°C' END,
+    CASE WHEN NEW.spo2 IS NOT NULL AND NEW.spo2 < 90
+      THEN 'SpO2 ' || NEW.spo2 || '%' END,
+    CASE WHEN NEW.respiratory_rate IS NOT NULL AND (NEW.respiratory_rate < 8 OR NEW.respiratory_rate > 30)
+      THEN 'RR ' || NEW.respiratory_rate || '/min' END
+  ), ''), 'ambang kritikal');
+
+  INSERT INTO psy_notifications (user_id, type, title, body, link)
+  VALUES (
+    v_coach_id, 'vitals',
+    '🔴 BACAAN KRITIKAL: ' || v_patient_name,
+    v_reason || ' — sila susul SEGERA.',
+    'emergency.html?patient_id=' || NEW.patient_id::TEXT
+  );
+
+  -- Worklist: satu alert AKTIF per pesakit — kemaskini kalau dah ada (taraf terus
+  -- ke merah, tak pernah turun), cipta baharu kalau tiada.
+  SELECT id INTO v_open_id FROM psy_emergency_alerts
+  WHERE patient_id = NEW.patient_id AND status <> 'resolved'
+  ORDER BY created_at DESC LIMIT 1;
+
+  IF v_open_id IS NOT NULL THEN
+    UPDATE psy_emergency_alerts
+    SET zon = 'merah', reported_at = now(), response_target_minutes = 15, updated_at = now(),
+        notes = CASE WHEN notes IS NULL OR notes = '' THEN v_reason ELSE notes || E'\n' || v_reason END
+    WHERE id = v_open_id;
+  ELSE
+    INSERT INTO psy_emergency_alerts
+      (patient_id, zon, source, response_target_minutes, assigned_to, notes)
+    VALUES
+      (NEW.patient_id, 'merah', 'vitals', 15, v_coach_id, v_reason);
+  END IF;
+
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_vitals_notify_emergency: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_vitals_notify_emergency ON psy_vitals;
+CREATE TRIGGER trg_vitals_notify_emergency
+  AFTER INSERT ON psy_vitals
+  FOR EACH ROW EXECUTE FUNCTION trg_vitals_notify_emergency();
+
+-- ──── Fungsi trigger: saranan Reaksi tergantung 'needs_review' → notify coach ────
+-- Audit management #B2-2 (23 Sept 2026). Bila roles/patient/kepatuhan.html kesan
+-- >1 reaksi tercetus serentak dlm satu submission (conflict-check), baris
+-- psy_reaksi_advice_log dicipta dgn status='needs_review' (bukan 'draft') supaya
+-- cron reaksi-advice-send TAK auto-hantar. Patient client tak boleh INSERT terus
+-- ke psy_notifications (RLS staff-only), jadi trigger ni yang notify coach.
+-- Dedup: hanya baris PERTAMA (msg_jenis='tindakan', send_after≈created_at) bagi
+-- satu submission yang cetus notifikasi — elak 3 notifikasi berulang.
+CREATE OR REPLACE FUNCTION trg_reaksi_advice_notify_review()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_coach_id     UUID;
+  v_patient_name TEXT;
+BEGIN
+  IF NEW.status <> 'needs_review' THEN RETURN NEW; END IF;
+  IF NOT (NEW.send_after IS NULL OR NEW.send_after <= NEW.created_at + interval '2 minutes') THEN RETURN NEW; END IF;
+
+  SELECT pt.coach_id, COALESCE(pr.full_name, pt.full_name, 'Pesakit')
+    INTO v_coach_id, v_patient_name
+  FROM psy_patients pt
+  LEFT JOIN psy_profiles pr ON pr.id = pt.user_id
+  WHERE pt.id = NEW.patient_id;
+  IF v_coach_id IS NULL THEN RETURN NEW; END IF;
+
+  INSERT INTO psy_notifications (user_id, type, title, body, link)
+  VALUES (
+    v_coach_id, 'reaksi',
+    '⚠️ Cadangan Perlu Disemak: ' || v_patient_name,
+    v_patient_name || ' alami beberapa reaksi serentak — cadangan digenerate TAPI belum dihantar sehingga disemak. Sila semak di reaksi-laporan.html.',
+    'reaksi-laporan.html'
+  );
+
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_reaksi_advice_notify_review: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_reaksi_advice_notify_review ON psy_reaksi_advice_log;
+CREATE TRIGGER trg_reaksi_advice_notify_review
+  AFTER INSERT ON psy_reaksi_advice_log
+  FOR EACH ROW EXECUTE FUNCTION trg_reaksi_advice_notify_review();
 
 -- ──── Fungsi RPC: pesakit tekan butang kecemasan (seksyen Protokol Kecemasan, roles/patient/dashboard.html) ────
 -- Satu alert AKTIF per pesakit — dedup sama logic dgn trigger di atas. Taraf
@@ -6615,7 +6918,13 @@ CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
   session_type      TEXT CHECK (session_type IN ('hakeema','hakeem','dr')),
   created_at        TIMESTAMPTZ DEFAULT now(),
   updated_at        TIMESTAMPTZ DEFAULT now(),
-  resolved_at       TIMESTAMPTZ
+  resolved_at       TIMESTAMPTZ,
+  -- Ditambah 23 Sept 2026 (audit management #B2-4) — saranan sesi tak boleh berhenti
+  -- sbg nota bebas; perlu Next Action + PIC + Due Date boleh dijejak sehingga selesai.
+  next_action        TEXT,
+  next_action_pic    UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  next_action_due    DATE,
+  next_action_done_at TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_psy_clinical_referrals_target  ON psy_clinical_referrals(target_id, status, created_at DESC);
@@ -7494,6 +7803,12 @@ CREATE TABLE IF NOT EXISTS psy_patient_events (
   reported_by           UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
   closed_by             UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
   closed_at             TIMESTAMPTZ,
+  -- Ditambah 23 Sept 2026 (audit management #B1-40) — pautan balik ke kes Red
+  -- Emergency Protocol (psy_emergency_alerts) yang mencetuskan rekod klinikal ni,
+  -- cth staf tandakan pesakit Masuk Wad terus dari emergency.html. Bila rekod ni
+  -- ditutup (status → closed), trigger di bawah auto-kemaskini nota kes asal —
+  -- lihat trg_patient_event_notify_emergency.
+  source_emergency_alert_id UUID REFERENCES psy_emergency_alerts(id) ON DELETE SET NULL,
   created_at            TIMESTAMPTZ DEFAULT now(),
   updated_at            TIMESTAMPTZ DEFAULT now()
 );
@@ -7502,6 +7817,7 @@ CREATE INDEX IF NOT EXISTS idx_pe_patient  ON psy_patient_events(patient_id, cre
 CREATE INDEX IF NOT EXISTS idx_pe_status   ON psy_patient_events(status, event_date DESC);
 CREATE INDEX IF NOT EXISTS idx_pe_type     ON psy_patient_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_pe_assigned ON psy_patient_events(assigned_to) WHERE assigned_to IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_pe_source_alert ON psy_patient_events(source_emergency_alert_id) WHERE source_emergency_alert_id IS NOT NULL;
 
 ALTER TABLE psy_patient_events ENABLE ROW LEVEL SECURITY;
 
@@ -7757,6 +8073,42 @@ CREATE TRIGGER trg_patient_event_log_created
   AFTER INSERT ON psy_patient_events
   FOR EACH ROW EXECUTE FUNCTION trg_patient_event_log_created();
 
+-- ──── Fungsi trigger: rekod klinikal (dicipta drpd kes Emergency) ditutup → kemaskini kes asal ────
+-- Audit management #B1-40 (23 Sept 2026). Bila peristiwa (warded/ICU/kecemasan dll)
+-- yang dipautkan ke satu kes Red Emergency Protocol (source_emergency_alert_id)
+-- ditutup, tambah nota di kes asal supaya staf yang urus emergency.html nampak
+-- perkembangan — TAK auto-resolve kes (staf tetap perlu semak & tutup sendiri
+-- di emergency.html, sebab kes emergency mungkin masih perlukan susulan lain).
+CREATE OR REPLACE FUNCTION trg_patient_event_notify_emergency()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_note TEXT;
+BEGIN
+  IF NEW.source_emergency_alert_id IS NULL THEN RETURN NEW; END IF;
+  IF NOT (NEW.status = 'closed' AND OLD.status <> 'closed') THEN RETURN NEW; END IF;
+
+  v_note := 'Rekod Klinikal Pesakit (' || NEW.event_type || ') ditutup pada ' ||
+            to_char(now(), 'DD Mon YYYY HH24:MI') ||
+            COALESCE(' — ' || NEW.notes, '') ||
+            '. Lihat peristiwa-detail.html?id=' || NEW.id::TEXT;
+
+  UPDATE psy_emergency_alerts
+  SET notes = CASE WHEN notes IS NULL OR notes = '' THEN v_note ELSE notes || E'\n' || v_note END,
+      updated_at = now()
+  WHERE id = NEW.source_emergency_alert_id;
+
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_patient_event_notify_emergency: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_patient_event_notify_emergency ON psy_patient_events;
+CREATE TRIGGER trg_patient_event_notify_emergency
+  AFTER UPDATE ON psy_patient_events
+  FOR EACH ROW EXECUTE FUNCTION trg_patient_event_notify_emergency();
+
 
 -- ════════════════════════════════════════════════════════════════
 -- schema/26_dna_test.sql
@@ -7776,6 +8128,10 @@ CREATE TABLE IF NOT EXISTS psy_dna_test_process (
   id                              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id                      UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
   coach_id                        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  -- Ditambah 24 Sept 2026 (audit management #B1-7/8 Tier 4) — pautan ke pelan
+  -- rawatan yang cetus proses ni, supaya boleh kira "berapa proses DNA test dah
+  -- dicipta utk pelan ni" (banding dgn pakej.dna_test_count) sebelum auto-cipta lagi.
+  plan_id                         UUID REFERENCES psy_treatment_plans(id) ON DELETE SET NULL,
   current_step                    INT NOT NULL DEFAULT 1 CHECK (current_step BETWEEN 1 AND 6),
   status                          TEXT NOT NULL DEFAULT 'in_progress'
                                     CHECK (status IN ('in_progress','completed','cancelled')),
@@ -7829,6 +8185,7 @@ CREATE TABLE IF NOT EXISTS psy_dna_test_process (
 
 CREATE INDEX IF NOT EXISTS idx_dna_test_patient ON psy_dna_test_process(patient_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_dna_test_status  ON psy_dna_test_process(status);
+CREATE INDEX IF NOT EXISTS idx_dna_test_plan    ON psy_dna_test_process(plan_id) WHERE plan_id IS NOT NULL;
 
 ALTER TABLE psy_dna_test_process ENABLE ROW LEVEL SECURITY;
 
