@@ -1441,6 +1441,56 @@
       sumEl.textContent = `${items.length} saranan`;
     }
 
+    // Kira pratonton PENUH (kategori/reaksi/tindakan baharu vs guna semula + amaran)
+    // TANPA sentuh DB — guna RXcats/RXitems/RXactions yg dah dimuat client-side
+    // (audit #B2-40/#B2-41/#B2-1/#B2-42). Dipanggil sebelum tulis sebenar di imRun().
+    function imComputePlan(cat, solRows, dietGroups, lifeLines) {
+      const plan = { newCategory: false, newSymptoms: [], newActionTitles: [], reusedActionTitles: [], errors: [], warnings: [] };
+      plan.newCategory = !RXcats.find(c => c.nama.toLowerCase() === cat.toLowerCase());
+
+      const symByLabel = {};
+      RXitems.filter(it => it.kumpulan === cat).forEach(it => symByLabel[it.label.toLowerCase()] = true);
+      const seenSym = new Set();
+      solRows.forEach(r => {
+        const k = r.label.toLowerCase();
+        if (seenSym.has(k)) plan.warnings.push(`Reaksi "${r.label}" disenaraikan lebih drpd sekali dlm import ni`);
+        seenSym.add(k);
+        if (!r.id && !symByLabel[k]) plan.newSymptoms.push(r.label);
+      });
+
+      const actByTitle = {};
+      RXactions.forEach(a => actByTitle[a.title.trim().toLowerCase()] = true);
+      const seenAct = new Set();
+      const countAction = (title, sourceLabel) => {
+        const t = (title || '').trim();
+        if (!t) { plan.errors.push(`${sourceLabel}: tindakan tanpa nama (kosong)`); return; }
+        const k = t.toLowerCase();
+        if (seenAct.has(k)) return;
+        seenAct.add(k);
+        (actByTitle[k] ? plan.reusedActionTitles : plan.newActionTitles).push(t);
+      };
+      solRows.forEach(r => {
+        if (!r.sols.length) plan.errors.push(`Reaksi "${r.label}": tiada solusi diisi`);
+        r.sols.forEach(s => countAction(s.title, `Reaksi "${r.label}"`));
+      });
+      dietGroups.forEach(g => {
+        if (!g.items.length) plan.warnings.push(`Diet "${g.title}": tiada senarai makanan di bawahnya`);
+        countAction(g.title, 'Diet & Nutrisi');
+      });
+      lifeLines.forEach(t => countAction(t, 'Gaya Hidup Fitrah'));
+
+      return plan;
+    }
+    function imPlanText(plan) {
+      const lines = [];
+      lines.push(plan.newCategory ? '📁 Kategori BAHARU akan dicipta' : '📁 Kategori sedia ada (tiada perubahan)');
+      lines.push(plan.newSymptoms.length ? `🆕 ${plan.newSymptoms.length} reaksi BAHARU: ${plan.newSymptoms.join(', ')}` : '🆕 Tiada reaksi baharu');
+      lines.push(plan.newActionTitles.length ? `🆕 ${plan.newActionTitles.length} tindakan/saranan BAHARU (status Draft): ${plan.newActionTitles.join(', ')}` : '🆕 Tiada tindakan baharu');
+      lines.push(plan.reusedActionTitles.length ? `♻️ ${plan.reusedActionTitles.length} tindakan diguna SEMULA: ${plan.reusedActionTitles.join(', ')}` : '♻️ Tiada tindakan diguna semula');
+      if (plan.warnings.length) lines.push('', '⚠️ AMARAN:', ...plan.warnings.map(w => '  • ' + w));
+      return lines.join('\n');
+    }
+
     async function imRun() {
       const btn = document.getElementById('im-run-btn'), stat = document.getElementById('im-status'), resBox = document.getElementById('im-result');
       const cat = imCatName();
@@ -1450,13 +1500,28 @@
 
       const dietGroups = imParseGroups(document.getElementById('im-diet').value);
       const lifeLines = imLines(document.getElementById('im-life').value);
-      const solRows = imRows.map(r => ({ ...r, label: r.label.trim(), sols: imParseSolusi(r.solusi) })).filter(r => r.label && r.sols.length);
+      const solRowsRaw = imRows.map(r => ({ ...r, label: r.label.trim(), sols: imParseSolusi(r.solusi) }));
+      const solRows = solRowsRaw.filter(r => r.label && r.sols.length);
       if (!dietGroups.length && !lifeLines.length && !solRows.length) return alert('Tiada data untuk diimport — isi sekurang-kurangnya satu bahagian.');
 
       // Wajib pilih Tahap Risiko utk SETIAP reaksi baharu — jangan biar silently default
       // 'rendah' (audit #B2-43). Reaksi sedia ada (r.id set) tahap risikonya diurus di tab Tindakan.
       const missingRisk = solRows.filter(r => !r.id && !r.tahap_risiko);
       if (missingRisk.length) return alert(`Sila pilih Tahap Risiko utk reaksi baharu: ${missingRisk.map(r => r.label).join(', ')}`);
+
+      // Baris ada label TAPI tiada solusi (atau sebaliknya) — dulu senyap dibuang oleh
+      // filter di atas, kini dilaporkan jelas (audit #B2-41) supaya staf tahu & boleh betulkan.
+      const droppedRows = solRowsRaw.filter(r => (r.label && !r.sols.length) || (!r.label && r.sols.length));
+      if (droppedRows.length) {
+        const msg = droppedRows.map(r => r.label ? `"${r.label}" (tiada solusi)` : '(baris tanpa nama reaksi, ada solusi)').join('\n  • ');
+        if (!confirm(`⚠️ ${droppedRows.length} baris akan DIABAIKAN sebab tak lengkap:\n  • ${msg}\n\nTeruskan tanpa baris ni?`)) return;
+      }
+
+      // Preview/Summary PENUH sebelum tulis DB (audit #B2-40/#B2-1/#B2-42) — staf nampak
+      // apa yang akan berubah dahulu, bukan lepas import siap.
+      const plan = imComputePlan(cat, solRows, dietGroups, lifeLines);
+      if (plan.errors.length) return alert(`Tak boleh import — ada ralat:\n\n${plan.errors.map(e => '• ' + e).join('\n')}`);
+      if (!confirm(`PRATONTON IMPORT — kategori "${cat}"\n\n${imPlanText(plan)}\n\nTeruskan import?`)) return;
 
       btn.disabled = true; stat.textContent = 'Mengimport…'; resBox.classList.add('hidden');
       try {
