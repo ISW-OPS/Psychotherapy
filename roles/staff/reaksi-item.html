@@ -332,6 +332,7 @@
               </div>
             </div>
             <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+              <div id="pm-unmapped-banner" class="hidden mb-3"></div>
               <div id="pm-cat-head" class="flex items-center gap-3 mb-3"></div>
               <div class="overflow-x-auto">
                 <table class="w-full text-left">
@@ -989,10 +990,17 @@
       rsCat = kumpulan;
       await rxLoad();
     }
+    // Dependency-check sebelum buang (audit #B2-36) — sama pola dgn kategori (ktDelete)
+    // yg dah sedia blocked. Elak pemetaan sedia ada rosak senyap via CASCADE.
     async function rsDelete() {
       if (!rsSel || rsSel === '__new__') return rsClose();
       const it = RXitems.find(x => x.id === rsSel);
-      if (!confirm(`Buang reaksi "${it?.label || ''}"?\n\nPemetaan tindakan simptom ini turut dibuang. Rekod poll lama tidak terjejas.`)) return;
+      const { count } = await window.db.from('psy_reaksi_action_map')
+        .select('*', { count: 'exact', head: true }).eq('symptom_id', rsSel);
+      if (count) {
+        return alert(`Tak boleh buang — reaksi "${it?.label || ''}" masih dipetakan kepada ${count} tindakan.\n\nBuang pemetaan di tab Tindakan dahulu, ATAU nyahaktifkan reaksi ni (togol Aktif) supaya kekal dlm sejarah tapi tak digunakan lagi utk cadangan baharu.`);
+      }
+      if (!confirm(`Buang reaksi "${it?.label || ''}"?\n\nRekod poll lama tidak terjejas.`)) return;
       const { error } = await window.db.from('psy_reaksi_item').delete().eq('id', rsSel);
       if (error) return alert('Gagal: ' + error.message);
       rsClose();
@@ -1029,7 +1037,14 @@
     async function rxBulkDelete(key) {
       const ids = [...rxSelIds[key]];
       if (!ids.length) return;
-      if (!confirm(`Padam ${ids.length} saranan dipilih sepenuhnya?\n\nSemua pemetaan simptom berkaitan turut dibuang. Rekod poll lama tidak terjejas.`)) return;
+      const { data: inUse } = await window.db.from('psy_reaksi_action_map')
+        .select('action_id').in('action_id', ids);
+      const usedIds = new Set((inUse || []).map(r => r.action_id));
+      if (usedIds.size) {
+        const usedTitles = ids.filter(id => usedIds.has(id)).map(id => RXactions.find(a => a.id === id)?.title || id);
+        return alert(`Tak boleh padam pukal — ${usedIds.size} saranan masih dipetakan ke simptom: ${usedTitles.join(', ')}.\n\nBuang pemetaan dahulu, ATAU nyahaktifkan satu-satu drpd drawer.`);
+      }
+      if (!confirm(`Padam ${ids.length} saranan dipilih sepenuhnya?\n\nRekod poll lama tidak terjejas.`)) return;
       const { error } = await window.db.from('psy_reaksi_actions').delete().in('id', ids);
       if (error) return alert('Gagal: ' + error.message);
       rxSelIds[key].clear();
@@ -1142,7 +1157,12 @@
     async function tdDelete() {
       if (!tdSel || tdSel === '__new__') return tdClose();
       const a = RXactions.find(x => x.id === tdSel);
-      if (!confirm(`Buang tindakan "${a?.title || ''}" sepenuhnya?\n\nSemua simptom yang dipetakan turut terjejas.`)) return;
+      const { count } = await window.db.from('psy_reaksi_action_map')
+        .select('*', { count: 'exact', head: true }).eq('action_id', tdSel);
+      if (count) {
+        return alert(`Tak boleh buang — tindakan "${a?.title || ''}" masih dipetakan kepada ${count} simptom.\n\nBuang pemetaan (unselect simptom berkaitan di drawer ni) dahulu, ATAU nyahaktifkan tindakan ni (togol Aktif) supaya kekal dlm sejarah tapi tak dicadangkan lagi.`);
+      }
+      if (!confirm(`Buang tindakan "${a?.title || ''}" sepenuhnya?`)) return;
       const { error } = await window.db.from('psy_reaksi_actions').delete().eq('id', tdSel);
       if (error) return alert('Gagal: ' + error.message);
       tdClose();
@@ -1197,21 +1217,52 @@
     }
 
     // ══════════ TAB PEMETAAN ══════════
-    function pmSetCat(nama) { pmCat = nama; pmRenderCats(); pmRender(); }
+    function pmSetCat(nama) { pmCat = nama; pmShowUnmappedOnly = false; pmRenderCats(); pmRender(); }
+    // Unmapped Reaction detection (audit #B2-38) — reaksi AKTIF tiada tindakan
+    // dipetakan langsung (RXmapBySym kosong/tiada). Banner klik → papar merentas
+    // SEMUA kategori (pmShowUnmappedOnly), bukan perlu semak kategori satu-satu.
+    let pmShowUnmappedOnly = false;
+    function pmUnmappedList() {
+      return RXitems.filter(it => it.aktif && !(RXmapBySym[it.id] && RXmapBySym[it.id].size));
+    }
+    function pmRenderUnmappedBanner() {
+      const n = pmUnmappedList().length;
+      const el = document.getElementById('pm-unmapped-banner');
+      if (!n) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+      el.classList.remove('hidden');
+      el.innerHTML = pmShowUnmappedOnly
+        ? `<div class="flex items-center justify-between gap-2 bg-terracotta/10 border border-terracotta/30 rounded-xl px-3.5 py-2.5">
+             <span class="text-[12.5px] font-semibold text-terracotta">⚠️ Memaparkan ${n} reaksi aktif TANPA tindakan dipetakan (merentas semua kategori)</span>
+             <button onclick="pmToggleUnmapped(false)" class="text-[11px] font-semibold text-navy hover:underline shrink-0">✕ Papar ikut kategori semula</button>
+           </div>`
+        : `<button onclick="pmToggleUnmapped(true)" class="w-full text-left flex items-center justify-between gap-2 bg-terracotta/10 border border-terracotta/30 rounded-xl px-3.5 py-2.5 hover:bg-terracotta/15">
+             <span class="text-[12.5px] font-semibold text-terracotta">⚠️ ${n} reaksi aktif TIADA tindakan dipetakan — reaksi ni tak akan hasilkan cadangan</span>
+             <span class="text-[11px] font-bold text-terracotta shrink-0">Papar semua →</span>
+           </button>`;
+    }
+    function pmToggleUnmapped(on) { pmShowUnmappedOnly = on; pmRender(); }
+    window.pmToggleUnmapped = pmToggleUnmapped;
+
     function pmRenderCats() {
       const counts = {}; RXitems.forEach(it => counts[it.kumpulan] = (counts[it.kumpulan] || 0) + 1);
       catSidebar('pm-cat-list', pmCat, counts, 'pmSetCat');
+      pmRenderUnmappedBanner();
     }
     function pmRender() {
+      pmRenderUnmappedBanner();
       const c = RXcats.find(x => x.nama === pmCat);
-      document.getElementById('pm-cat-head').innerHTML = c ? `
+      document.getElementById('pm-cat-head').innerHTML = pmShowUnmappedOnly ? `
+    <div class="min-w-0">
+      <span class="text-[16px] font-bold text-ink">Reaksi Tanpa Pemetaan</span>
+      <div class="text-[12px] text-ink/45">Merentas semua kategori.</div>
+    </div>` : (c ? `
     <div class="min-w-0">
       <div class="flex items-center gap-2"><span class="text-[16px] font-bold text-ink">${esc2(c.nama)}</span>
         <span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-green-light text-green-dark">${itemsInCat(c.nama).length} reaksi</span></div>
       <div class="text-[12px] text-ink/45">Pemetaan reaksi kategori ${esc2(c.nama)} dengan tindakan mesej pertama — saranan Diet &amp; Nutrisi / Gaya Hidup Fitrah tidak disenaraikan di sini (urus di tab masing-masing).</div>
-    </div>` : '<span class="text-[13px] text-ink/40 italic">Pilih kategori di sebelah kiri.</span>';
+    </div>` : '<span class="text-[13px] text-ink/40 italic">Pilih kategori di sebelah kiri.</span>');
       const q = (document.getElementById('pm-f-cari').value || '').toLowerCase().trim();
-      const all = itemsInCat(pmCat).filter(s => !q || s.label.toLowerCase().includes(q));
+      const all = (pmShowUnmappedOnly ? pmUnmappedList() : itemsInCat(pmCat)).filter(s => !q || s.label.toLowerCase().includes(q));
       const actCell = (a, extra) => a ? `
     <div class="flex items-start gap-2">
       <div class="min-w-0">
