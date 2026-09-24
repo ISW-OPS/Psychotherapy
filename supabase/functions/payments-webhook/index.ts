@@ -46,6 +46,16 @@ function fillTemplate(tpl: string, vars: Record<string, string>) {
   return Object.entries(vars).reduce((s, [k, v]) => s.split(`{{${k}}}`).join(v ?? '').split(`{${k}}`).join(v ?? ''), tpl || '').replace(/\n{3,}/g, '\n\n').trim()
 }
 
+// Audit management #B1-28 (24 Sept 2026) — bayaran gateway (HitPay) auto-fulfill
+// TAK pernah dilog ke psy_audit_log sebelum ni (cuma laluan manual/staff dilog di
+// client). Sama pattern dgn ghl-booking-webhook/index.ts. Best-effort — kegagalan
+// log TAK patut gagalkan webhook (fulfillment/status dah selesai).
+async function auditLog(svc: any, action: string, target: string, meta: Record<string, unknown>) {
+  try {
+    await svc.from('psy_audit_log').insert({ actor_name: 'Gateway (HitPay)', actor_role: 'system', action, target, meta })
+  } catch (_) { /* jangan gagalkan webhook */ }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   if (req.method !== 'POST') return json({ error: 'POST sahaja' }, 405)
@@ -86,6 +96,7 @@ Deno.serve(async (req) => {
       if (!alreadyFailed) {
         try { await notifyPaymentFailed(admin, payment) }
         catch (e) { console.warn('payments-webhook: notifyPaymentFailed gagal —', (e as Error).message) }
+        await auditLog(admin, 'payment.gateway_failed', payment.id, { receipt_ref: payment.receipt_ref, gateway_status: result.status })
       }
       return json({ ok: true, note: 'ditanda failed' })
     }
@@ -131,6 +142,8 @@ Deno.serve(async (req) => {
       status: 'completed',
       paid_at: new Date().toISOString(),
     }).eq('id', payment.id)
+
+    await auditLog(admin, 'payment.gateway_completed', payment.id, { receipt_ref: payment.receipt_ref, amount: payment.total, provider: result.status })
 
     // Notifikasi pesakit
     if (payment.user_id) {
