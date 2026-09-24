@@ -9,6 +9,14 @@
 <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="_styles.css" rel="stylesheet">
+<style>
+  /* Sama gaya select macam kob-detail.html (.finput) — untuk dropdown assign
+     Collector/Closer terus dari senarai. */
+  .finput { width: 100%; padding: 6px 10px; border: 1.5px solid #e5e7eb; border-radius: 10px;
+    font-size: 12.5px; outline: none; transition: border-color .15s; background: white; color: #111; }
+  .finput:focus { border-color: #1a3a5c; }
+  select.finput { cursor: pointer; }
+</style>
 </head>
 <body class="min-h-screen">
 
@@ -56,7 +64,8 @@
                 <th>Pesakit</th>
                 <th>MRN</th>
                 <th>Mod</th>
-                <th>Doktor</th>
+                <th>Collector</th>
+                <th>Closer</th>
                 <th>Status</th>
                 <th>Sumber</th>
                 <th>Signup Pakej</th>
@@ -93,6 +102,46 @@ const STATUS_LABEL = {
   cancelled:  { label: 'Batal',    cls: 'bg-terracotta/15 text-terracotta' },
 };
 
+// ── Collector / Closer assign & tukar terus dari senarai (sama pattern
+// dgn assign Coach di patients.html, dan assign single-record di kob-detail.html) ──
+let kobRoleStaff = [];
+async function loadKobRoleStaff() {
+  const { data } = await window.db.from('psy_profiles')
+    .select('id, full_name').eq('role', 'staff').eq('staff_role', 'kob').order('full_name');
+  kobRoleStaff = data || [];
+}
+const KOB_ROLE_LABEL = { collector: 'Collector', closer: 'Closer' };
+
+function kobRoleCellHtml(k, field) {
+  const idKey = `${field}_id`, nameKey = `${field}_name`;
+  if (!can('kob', 'edit')) return `<span class="text-ink/70">${escapeHtml(k[nameKey] || '—')}</span>`;
+  const current = k[idKey];
+  const opts = kobRoleStaff.map(s => `<option value="${s.id}" ${s.id === current ? 'selected' : ''}>${escapeHtml(s.full_name)}</option>`).join('');
+  return `<select class="finput" data-rbac="kob.edit" onchange="onKobRoleChange(this,'${field}','${k.id}')">
+    <option value="" ${current ? '' : 'selected'}>— Pilih ${KOB_ROLE_LABEL[field]} —</option>
+    ${opts}
+  </select>`;
+}
+
+async function onKobRoleChange(sel, field, kobId) {
+  const k = allKob.find(x => x.id === kobId);
+  if (!k) return;
+  const idKey = `${field}_id`, nameKey = `${field}_name`;
+  const fromId = k[idKey], fromName = k[nameKey];
+  const staff = kobRoleStaff.find(s => s.id === sel.value);
+  const toId = staff?.id || null, toName = staff?.full_name || null;
+  if (toId === fromId) return;
+  sel.disabled = true;
+  const { error } = await window.db.from('psy_kob_sessions')
+    .update({ [idKey]: toId, [nameKey]: toName, updated_at: new Date().toISOString() })
+    .eq('id', kobId);
+  sel.disabled = false;
+  if (error) { banner('Ralat: ' + error.message, 'error'); sel.value = fromId || ''; return; }
+  await auditLog(`kob.${field}_${toId ? 'assigned' : 'unassigned'}`, kobId, { patient_id: k.patient_id, from_id: fromId, from_name: fromName, to_id: toId, to_name: toName });
+  k[idKey] = toId; k[nameKey] = toName;
+  banner(toId ? `${KOB_ROLE_LABEL[field]} ditetapkan kepada ${toName} ✅` : `${KOB_ROLE_LABEL[field]} dikosongkan`);
+}
+
 // "Terlepas" bukan status DB sebenar — ia keadaan terbitan: masih 'booked' tapi
 // tarikh/masa dah lepas & staff belum tandakan Hadir/Reschedule/Batal.
 const isMissed = k => k.status === 'booked' && k.scheduled_at < new Date().toISOString();
@@ -110,6 +159,7 @@ async function loadAll() {
   const [kobRes, patRes] = await Promise.all([
     window.db.from('psy_kob_sessions').select('*').order('scheduled_at', { ascending: false }),
     window.db.from('psy_patients').select('id, mrn, full_name, kob_status, active_package_id, active_package_name, psy_profiles!psy_patients_user_id_fkey(full_name, phone)'),
+    loadKobRoleStaff(),
   ]);
   allKob = kobRes.data || [];
   (patRes.data || []).forEach(p => { patientMap[p.id] = p; });
@@ -186,7 +236,7 @@ function render() {
 
   const body = document.getElementById('kob-body');
   if (!list.length) {
-    body.innerHTML = '<tr><td colspan="9" class="text-center text-ink/40 py-8">Tiada KOB ditemui</td></tr>';
+    body.innerHTML = '<tr><td colspan="10" class="text-center text-ink/40 py-8">Tiada KOB ditemui</td></tr>';
     return;
   }
 
@@ -198,16 +248,13 @@ function render() {
     const timeStr = dt.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
     const missed = isMissed(k);
     const st = missed ? { label: 'Terlepas', cls: 'bg-terracotta/15 text-terracotta' } : (STATUS_LABEL[k.status] || STATUS_LABEL.booked);
-    const doctorInfo = [
-      k.doctor_hadir_name ? `H: ${k.doctor_hadir_name}` : null,
-      k.doctor_selesai_name ? `S: ${k.doctor_selesai_name}` : null,
-    ].filter(Boolean).join(' · ') || '—';
     return `<tr${missed ? ' class="bg-terracotta/5"' : ''}>
       <td class="whitespace-nowrap"><div class="font-semibold">${escapeHtml(dateStr)}</div><div class="text-xs text-ink/50">${escapeHtml(timeStr)}</div></td>
       <td>${escapeHtml(patName)}</td>
       <td class="text-xs font-mono">${escapeHtml(pat?.mrn || '—')}</td>
       <td class="text-xs">${k.mode === 'online' ? '💻 Online' : '🏥 F2F'}</td>
-      <td class="text-xs text-ink/70">${escapeHtml(doctorInfo)}</td>
+      <td class="text-xs">${kobRoleCellHtml(k, 'collector')}</td>
+      <td class="text-xs">${kobRoleCellHtml(k, 'closer')}</td>
       <td><span class="chip ${st.cls}">${st.label}</span></td>
       <td class="text-xs">${k.source === 'ghl' ? '<span class="text-navy font-semibold">🔗 GHL Sync</span>' : '<span class="text-ink/50">🖥️ PT System</span>'}</td>
       <td>${signupChip(k, pat)}</td>

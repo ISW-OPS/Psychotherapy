@@ -160,12 +160,20 @@
                 <div class="text-xs text-ink/50">STATUS</div>
                 <div id="status-chip" class="mt-1">—</div>
               </div>
+              <div>
+                <div class="text-xs text-ink/50">COLLECTOR</div>
+                <div id="collector-cell" class="mt-1 text-sm">—</div>
+              </div>
+              <div>
+                <div class="text-xs text-ink/50">CLOSER</div>
+                <div id="closer-cell" class="mt-1 text-sm">—</div>
+              </div>
             </div>
           </div>
 
-          <!-- Tindakan Doktor (top) → Maklumat Pesakit (below) -->
+          <!-- Tindakan Sesi (top) → Maklumat Pesakit (below) -->
           <div class="space-y-8">
-            <!-- TOP: Doctor actions -->
+            <!-- TOP: Session actions -->
             <div class="min-w-0 space-y-3">
               <div class="flex items-center justify-between flex-wrap gap-2 border-b border-ink/10 pb-2">
                 <h3 class="font-bold text-navy text-base">Tindakan Sesi</h3>
@@ -806,6 +814,8 @@
         .eq('id', kob.patient_id).single().then(r => r, () => ({ data: null }));
       patient = patData;
 
+      await loadKobRoleStaff();
+
       // Templat mesej WA "lepas KOB agreement di-sign" — boleh-edit/on-off dari auto-mesej.html
       const { data: tpl } = await window.db.from('psy_auto_messages')
         .select('message_template, is_active').eq('key', 'kob_agreement_signed').maybeSingle();
@@ -826,6 +836,49 @@
       reschedule: { label: 'Reschedule', cls: 'bg-ink/10 text-ink/70' },
       cancelled: { label: 'Batal', cls: 'bg-terracotta/15 text-terracotta' },
     };
+
+    // ── Collector / Closer assign & tukar (gantikan peranan "Doktor" lama) ──
+    // Kedua-dua peranan assignable/berubah bila-bila (bukan auto-terikat dgn
+    // butang Hadir/Selesai) — sama pattern dgn assign Coach di patients.html.
+    let kobRoleStaff = [];
+    async function loadKobRoleStaff() {
+      const { data } = await window.db.from('psy_profiles')
+        .select('id, full_name').eq('role', 'staff').eq('staff_role', 'kob').order('full_name');
+      kobRoleStaff = data || [];
+    }
+    const KOB_ROLE_LABEL = { collector: 'Collector', closer: 'Closer' };
+
+    function renderRoleCell(field) {
+      const idKey = `${field}_id`, nameKey = `${field}_name`;
+      const cell = document.getElementById(`${field}-cell`);
+      if (!cell) return;
+      if (!can('kob', 'edit')) { cell.innerHTML = `<span class="text-ink/70">${escapeHtml(kob[nameKey] || '—')}</span>`; return; }
+      const current = kob[idKey];
+      const opts = kobRoleStaff.map(s => `<option value="${s.id}" ${s.id === current ? 'selected' : ''}>${escapeHtml(s.full_name)}</option>`).join('');
+      cell.innerHTML = `
+        <select class="finput" data-rbac="kob.edit" onchange="onKobRoleChange(this,'${field}')">
+          <option value="" ${current ? '' : 'selected'}>— Pilih ${KOB_ROLE_LABEL[field]} —</option>
+          ${opts}
+        </select>
+      `;
+    }
+
+    async function onKobRoleChange(sel, field) {
+      const idKey = `${field}_id`, nameKey = `${field}_name`;
+      const fromId = kob[idKey], fromName = kob[nameKey];
+      const staff = kobRoleStaff.find(s => s.id === sel.value);
+      const toId = staff?.id || null, toName = staff?.full_name || null;
+      if (toId === fromId) return;
+      sel.disabled = true;
+      const { error } = await window.db.from('psy_kob_sessions')
+        .update({ [idKey]: toId, [nameKey]: toName, updated_at: new Date().toISOString() })
+        .eq('id', kobId);
+      sel.disabled = false;
+      if (error) { banner('Ralat: ' + error.message, 'error'); sel.value = fromId || ''; return; }
+      await auditLog(`kob.${field}_${toId ? 'assigned' : 'unassigned'}`, kobId, { patient_id: patient.id, from_id: fromId, from_name: fromName, to_id: toId, to_name: toName });
+      kob[idKey] = toId; kob[nameKey] = toName;
+      banner(toId ? `${KOB_ROLE_LABEL[field]} ditetapkan kepada ${toName} ✅` : `${KOB_ROLE_LABEL[field]} dikosongkan`);
+    }
 
     async function render() {
       // Header
@@ -856,6 +909,8 @@
       }
       const st = STATUS_LABEL[kob.status] || STATUS_LABEL.booked;
       document.getElementById('status-chip').innerHTML = `<span class="chip ${st.cls}">${st.label}</span>`;
+      renderRoleCell('collector');
+      renderRoleCell('closer');
 
       renderPatientDetails();
 
@@ -1322,8 +1377,6 @@
       try {
         const { error } = await window.db.from('psy_kob_sessions').update({
           status: 'hadir',
-          doctor_hadir_id: window.currentUser.id,
-          doctor_hadir_name: window.currentUser.full_name,
           hadir_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         }).eq('id', kobId);
@@ -1434,7 +1487,7 @@
       }
       try {
         const { error } = await window.db.from('psy_kob_sessions').update({
-          status: 'hadir', doctor_selesai_id: null, doctor_selesai_name: null, selesai_at: null,
+          status: 'hadir', selesai_at: null,
           updated_at: new Date().toISOString(),
         }).eq('id', kobId);
         if (error) throw error;
@@ -1497,8 +1550,6 @@
       try {
         const { error } = await window.db.from('psy_kob_sessions').update({
           status: 'completed',
-          doctor_selesai_id: window.currentUser.id,
-          doctor_selesai_name: window.currentUser.full_name,
           selesai_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         }).eq('id', kobId);
@@ -2233,8 +2284,8 @@
         row('Tarikh & Masa', dt.toLocaleDateString(LCALE(), { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' }) + ' - ' + dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
         row('Mod', kob.mode === 'online' ? 'Online' : 'F2F');
         row('Status', (STATUS_LABEL[kob.status] || STATUS_LABEL.booked).label);
-        row('Doktor Hadir', kob.doctor_hadir_name);
-        row('Doktor Selesai', kob.doctor_selesai_name);
+        row('Collector', kob.collector_name);
+        row('Closer', kob.closer_name);
         row('Notes Sesi', kob.notes);
 
         sec('Biologi - B1. Sejarah Ginekologi');
@@ -2802,7 +2853,7 @@
       } else if (kob.package_payment_status === 'skipped') {
         const savedInfo = document.getElementById('rec-saved-info');
         savedInfo.classList.remove('hidden');
-        savedInfo.innerHTML = '✓ Doktor cadangkan tiada pakej rawatan';
+        savedInfo.innerHTML = '✓ Staff cadangkan tiada pakej rawatan';
       }
       renderPaymentMethodSection();
     }
@@ -3080,7 +3131,7 @@
         ${hasToday ? tierCardHtml('today', 'Harga Hari Ini (Today)', todayPrice, todayNote, todayActive) : ''}
       </div>
       <p class="text-[10px] text-ink/40 mt-1.5">ℹ️ ${isSelectMode
-          ? 'Doktor pilih harga mana nak digunakan utk bayaran ini — plan pembayaran di Langkah 4 dikira ikut harga yang dipilih.'
+          ? 'Staff pilih harga mana nak digunakan utk bayaran ini — plan pembayaran di Langkah 4 dikira ikut harga yang dipilih.'
           : decisionHandler
             ? 'Tunjuk perbandingan ni kat pesakit dulu, lepas tu klik kad yang sepadan dengan keputusan dia.'
             : `Plan pembayaran di bawah dikira guna ${hasToday ? 'Harga Hari Ini' : 'Harga Sekarang'} — perbandingan ni sekadar tunjuk kat pesakit, bukan pilihan.`}</p>

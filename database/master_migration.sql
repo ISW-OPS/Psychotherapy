@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-09-24T07:30:35.688377Z
+-- Generated: 2026-09-24T07:59:30.322030Z
 -- Jumlah fail: 36
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -2921,15 +2921,24 @@ CREATE TABLE IF NOT EXISTS psy_kob_sessions (
   -- 'ghl' = disync automatik dari GHL Calendar (lihat _shared/ghl-sync.ts).
   source              TEXT NOT NULL DEFAULT 'system' CHECK (source IN ('system','ghl')),
 
-  -- Doktor yang tanda kehadiran (mungkin berbeza dengan yang selesaikan)
+  -- LEGACY — peranan "Doktor" dibuang (gantikan Collector/Closer di bawah). Lajur ni
+  -- kekal utk baca rekod lama sahaja, TAK DIISI LAGI utk rekod baharu.
   doctor_hadir_id     UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
   doctor_hadir_name   TEXT,
   hadir_at            TIMESTAMPTZ,
-
-  -- Doktor yang tanda selesai
   doctor_selesai_id   UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
   doctor_selesai_name TEXT,
   selesai_at          TIMESTAMPTZ,
+
+  -- Collector — staff "owner" pesakit sepanjang proses KOB. Ditugaskan/ditukar bila-bila
+  -- (macam coach_id pesakit), TIDAK auto-terikat dgn butang Hadir/Selesai. Assign/tukar di
+  -- kob-detail.html (openChangeKobRole). Staff yg layak dipilih = staff_role 'kob'.
+  collector_id        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  collector_name      TEXT,
+  -- Closer — staff yang handle sesi presentation KOB. Berasingan drpd Collector, ditugaskan/
+  -- ditukar bila-bila sama cara. Staff yg layak dipilih = staff_role 'kob'.
+  closer_id           UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  closer_name         TEXT,
 
   -- Nota klinikal doktor
   notes               TEXT,
