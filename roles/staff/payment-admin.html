@@ -45,7 +45,7 @@
         </div>
 
         <!-- KPI Row -->
-        <div id="kpi-row" class="grid grid-cols-2 lg:grid-cols-4 gap-4"></div>
+        <div id="kpi-row" class="grid grid-cols-2 lg:grid-cols-5 gap-4"></div>
 
         <!-- Void/Refund/Correction menunggu kelulusan (super_admin sahaja, audit #B1-24) -->
         <div id="pending-adj-card" class="hidden bg-white rounded-2xl border border-terracotta/30 shadow-sm p-5"></div>
@@ -292,6 +292,7 @@
     function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
 let allPayments = [];
 let patientLookup = {};
+let unpaidInvoices = []; // Audit #F-23 (Tier 5) — psy_invoices unpaid/partially_paid
 
 function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function fmtRM(n) { return 'RM ' + Number(n||0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -346,6 +347,13 @@ function renderKpi() {
     card('Jumlah Transaksi', txCount, 'Pembayaran selesai',
       'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
       'bg-[#6366f1]/10','text-[#6366f1]'),
+    // Audit #F-23 (Tier 5) — invois psy_invoices (amaun tertunggak SEBELUM sebarang
+    // percubaan bayaran, cth denda tidak hadir) — berasingan drpd "Pending" di atas
+    // (tu percubaan bayaran/gateway yg dah dimulakan, konsep lain).
+    card('Invois Belum Bayar', unpaidInvoices.length,
+      unpaidInvoices.length ? fmtRM(unpaidInvoices.reduce((s,i)=>s+Number(i.amount||0),0)) + ' tertunggak' : 'Tiada invois tertunggak',
+      'M9 17v-2a4 4 0 014-4h6M9 17H5a2 2 0 01-2-2V7a2 2 0 012-2h9l4 4v6a2 2 0 01-2 2h-1M9 17v2a2 2 0 002 2h6a2 2 0 002-2v-2',
+      unpaidInvoices.length ? 'bg-terracotta/10' : 'bg-ink/5', unpaidInvoices.length ? 'text-terracotta' : 'text-ink/30'),
   ].join('');
 }
 
@@ -766,12 +774,17 @@ async function onManualPatientChange() {
   if (!pid) { sel.disabled = true; sel.innerHTML = '<option value="">— Pilih pesakit dahulu —</option>'; onManualTargetChange(); return; }
   sel.disabled = true; sel.innerHTML = '<option value="">' + iswL('Memuatkan…', 'Loading…') + '</option>';
 
-  const [{ data: kobs }, { data: pend }] = await Promise.all([
+  const [{ data: kobs }, { data: pend }, { data: invs }] = await Promise.all([
     window.db.from('psy_kob_sessions')
       .select('id, recommended_package_name, recommended_package_price, package_payment_mode, package_payment_status')
       .eq('patient_id', pid).eq('package_payment_status', 'partial'),
     window.db.from('psy_payments').select('id, invoice_no, total, items, created_at')
       .eq('patient_id', pid).eq('status', 'pending').is('intent->>kob_session_id', null),
+    // Audit #F-23 (Tier 5) — invois SEBENAR (psy_invoices), berasingan drpd baris
+    // psy_payments 'pending' di atas (yg tu kekal utk sambung checkout gateway
+    // yang tergantung — dua sumber, dua kind, dua-dua muncul dlm dropdown sama).
+    window.db.from('psy_invoices').select('id, invoice_no, amount, description')
+      .eq('patient_id', pid).in('status', ['unpaid', 'partially_paid']),
   ]);
   const kobIds = (kobs || []).map(k => k.id);
   const [{ data: cps }, { data: pays }] = kobIds.length ? await Promise.all([
@@ -803,7 +816,12 @@ async function onManualPatientChange() {
     const item = (Array.isArray(p.items) ? p.items : [])[0] || {};
     const v = `inv|${p.id}`;
     manualTargets[v] = { kind: 'inv', paymentId: p.id, invoiceNo: p.invoice_no, amount: Number(p.total || 0), locked: true, title: item.title || item.name || iswL('Bayaran', 'Payment') };
-    opts.push(`<option value="${v}">${iswL('Invois', 'Invoice')} ${escHtml(p.invoice_no || '—')} — ${escHtml(item.title || item.name || '')} (${fmtRMs(p.total)})</option>`);
+    opts.push(`<option value="${v}">${iswL('Bayaran Tergantung', 'Stuck Payment')} ${escHtml(p.invoice_no || '—')} — ${escHtml(item.title || item.name || '')} (${fmtRMs(p.total)})</option>`);
+  });
+  (invs || []).forEach(inv => {
+    const v = `invoice|${inv.id}`;
+    manualTargets[v] = { kind: 'invoice', invoiceId: inv.id, invoiceNo: inv.invoice_no, amount: Number(inv.amount || 0), locked: true, title: inv.description };
+    opts.push(`<option value="${v}">${iswL('Invois', 'Invoice')} ${escHtml(inv.invoice_no || '—')} — ${escHtml(inv.description || '')} (${fmtRMs(inv.amount)})</option>`);
   });
   [['consultation', iswL('Konsultasi', 'Consultation')], ['product', iswL('Produk', 'Product')], ['other', iswL('Lain-lain', 'Other')]].forEach(([t, lbl]) => {
     const v = `other|${t}`;
@@ -880,6 +898,22 @@ async function saveManual() {
       if (error) throw error;
       if (!upd?.length) throw new Error(iswL('Invois ini sudah tidak menunggu bayaran.', 'This invoice is no longer awaiting payment.'));
       paymentId = t.paymentId;
+    } else if (t.kind === 'invoice') {
+      // Audit #F-23 (Tier 5) — lunaskan invois SEBENAR (psy_invoices). Cipta baris
+      // psy_payments baharu (bukan update, tiada baris sedia ada) berpaut invoice_id —
+      // trigger DB kemaskini status psy_invoices automatik (unpaid/partially_paid/paid).
+      const { data: row, error } = await window.db.from('psy_payments').insert({
+        ...common,
+        receipt_ref: 'INV-MNL-' + Date.now(),
+        patient_id: patientId,
+        user_id: patientLookup[patientId]?.user_id || null,
+        items: [{ type: 'invoice', title: t.title, amount: total }],
+        intent: { type: 'invoice_settle', invoice_id: t.invoiceId },
+        paid_for_type: 'invoice', paid_for_ref: t.invoiceNo || null,
+        invoice_id: t.invoiceId,
+      }).select('id').single();
+      if (error) throw error;
+      paymentId = row.id;
     } else {
       const isKob = t.kind === 'kob';
       const item = isKob ? { type: 'kob_package', title: t.title, amount: total } : { type: t.forType, title: desc, amount: total };
@@ -960,15 +994,18 @@ async function loadData() {
     query = query.gte('created_at', d.toISOString());
   }
 
-  const [payRes, patRes] = await Promise.all([
+  const [payRes, patRes, invRes] = await Promise.all([
     query,
     // Semua pesakit (bukan 'active' sahaja) supaya nama sentiasa boleh dipadankan pada resit/invois
     // psy_patients ada DUA FK ke psy_profiles (user_id + coach_id) — embed
     // psy_profiles(...) tanpa disambiguasi punca PostgREST error diam-diam.
     window.db.from('psy_patients').select('id, mrn, status, full_name, user_id, psy_profiles!user_id(full_name)'),
+    // Audit #F-23 (Tier 5) — invois psy_invoices belum settle, kad KPI berasingan
+    window.db.from('psy_invoices').select('amount').in('status', ['unpaid', 'partially_paid']).then(r => r, () => ({ data: [] })),
   ]);
 
   allPayments = payRes.data || [];
+  unpaidInvoices = invRes.data || [];
   patientLookup = {};
   (patRes.data || []).forEach(p => {
     patientLookup[p.id] = { name: p.psy_profiles?.full_name || p.full_name || p.mrn || 'Pesakit', mrn: p.mrn, status: p.status, user_id: p.user_id };
@@ -995,6 +1032,7 @@ function subscribePaymentsRealtime() {
       if (p.new?.status === 'completed') banner('💳 Pembayaran diterima — RM ' + Number(p.new.total || 0).toFixed(2), 'ok');
     })
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'psy_payments' }, () => loadData())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'psy_invoices' }, () => loadData())
     .subscribe();
 }
 

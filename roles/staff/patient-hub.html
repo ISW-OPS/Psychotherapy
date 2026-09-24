@@ -1150,6 +1150,9 @@
             <div id="bayaran-loading" class="text-center text-ink/50 text-sm py-10">⏳ Memuatkan rekod bayaran...</div>
             <div id="bayaran-content" class="hidden space-y-4">
               <div id="bayaran-stats"></div>
+              <!-- Audit #F-23 (Tier 5) — invois psy_invoices belum settle (cth denda tidak
+                   hadir), dulu senyap hilang drpd senarai ni sbb pindah keluar psy_payments. -->
+              <div id="bayaran-unpaid-invoices"></div>
               <div id="bayaran-empty" class="hidden bg-white rounded-2xl border border-ink/10 shadow-sm p-6 text-center text-sm text-ink/45">
                 Pesakit ini tiada sebarang rekod bayaran.
               </div>
@@ -4369,6 +4372,7 @@
       package:          { icon: '📦', label: 'Pakej', section: 'Pakej & Ansuran', tint: 'bg-navy-light' },
       package_existing: { icon: '📦', label: 'Pakej', section: 'Pakej & Ansuran', tint: 'bg-navy-light' },
       kob:              { icon: '📦', label: 'Yuran KOB', section: 'Pakej & Ansuran', tint: 'bg-navy-light' },
+      invoice:          { icon: '🧾', label: 'Invois Diselesaikan', section: 'Sesi & Sambungan', tint: 'bg-terracotta-light' },
     };
     const BAYARAN_SECTION_ORDER = ['Pakej & Ansuran', 'Sesi & Sambungan', 'Pesanan Kedai', 'Lain-lain'];
 
@@ -4490,7 +4494,7 @@
     }
 
     async function loadBayaran() {
-      const [{ data: kobSessions }, { data: allPayments }] = await Promise.all([
+      const [{ data: kobSessions }, { data: allPayments }, { data: unpaidInvs }] = await Promise.all([
         window.db.from('psy_kob_sessions')
           .select('id, recommended_package_id, recommended_package_name, recommended_package_price, package_payment_status, package_payment_mode, created_at')
           .eq('patient_id', patientId).not('recommended_package_id', 'is', null)
@@ -4500,8 +4504,22 @@
         window.db.from('psy_payments')
           .select('id, invoice_number, invoice_no, receipt_no, receipt_ref, receipt_url, checkout_url, total, discount, items, intent, notes, status, payment_method, manual_method, bank_reference, is_partial, paid_for_type, paid_for_seq, gateway_provider, gateway_status, paid_at, created_at')
           .eq('patient_id', patientId).order('created_at', { ascending: false }),
+        // Audit #F-23 (Tier 5) — invois psy_invoices belum settle (cth denda tidak hadir)
+        window.db.from('psy_invoices').select('id, invoice_no, description, amount, status, created_at')
+          .eq('patient_id', patientId).in('status', ['unpaid', 'partially_paid']).order('created_at', { ascending: false })
+          .then(r => r, () => ({ data: [] })),
       ]);
       bayaranAllPayments = allPayments || [];
+      document.getElementById('bayaran-unpaid-invoices').innerHTML = (unpaidInvs || []).length ? `
+        <div class="bg-terracotta/10 border border-terracotta/30 rounded-2xl p-4">
+          <div class="text-xs font-bold text-terracotta mb-2">⚠️ ${escHtml(String(unpaidInvs.length))} ${iswL('Invois Belum Bayar', 'Unpaid Invoice(s)')}</div>
+          <div class="space-y-1.5">
+            ${unpaidInvs.map(inv => `<div class="flex items-center justify-between gap-2 text-xs">
+              <span class="text-ink/70 truncate">${escHtml(inv.invoice_no || '—')} — ${escHtml(inv.description || '')}</span>
+              <span class="font-bold text-terracotta shrink-0">${bpMoney(inv.amount)}</span>
+            </div>`).join('')}
+          </div>
+        </div>` : '';
 
       // Checkpoint SEMUA sesi KOB pesakit ni sekali gus (bukan tunggu buka detail)
       // — perlu utk kira "Outstanding" (baki tertunggak) di kad ringkasan atas.
