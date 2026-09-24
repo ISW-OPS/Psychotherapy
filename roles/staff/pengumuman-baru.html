@@ -136,9 +136,11 @@
                   <div class="text-xs text-ink/40">Memuatkan pakej…</div>
                 </div>
                 <label class="flex items-center gap-2.5 text-sm cursor-pointer pt-2.5 border-t border-ink/8">
-                  <input type="checkbox" id="aud-staff" class="w-4 h-4 accent-green-600"> 🧑‍⚕️ Staff
+                  <input type="checkbox" id="aud-staff" class="w-4 h-4 accent-green-600" onchange="updateRecipientCount()"> 🧑‍⚕️ Staff
                 </label>
               </div>
+              <!-- Audit #G-31 (Tier 5) — jumlah penerima anggaran, dulu tiada langsung -->
+              <div class="mt-3 text-[12px] font-semibold text-navy bg-navy/5 rounded-lg px-3 py-2">📊 Anggaran penerima: <span id="recipient-count">—</span> pesakit</div>
             </div>
           </div>
         </div>
@@ -146,6 +148,7 @@
         <!-- Actions -->
         <div id="form-error" class="hidden text-sm text-terracotta bg-terracotta/10 rounded-xl px-4 py-2.5"></div>
         <div class="flex flex-wrap justify-end gap-3 pb-6">
+          <button onclick="previewAnnouncement()" class="inline-flex items-center gap-2 border border-navy/30 text-navy rounded-xl px-6 py-3 text-sm font-semibold hover:bg-navy/5">👁 Preview</button>
           <button onclick="submitForm('draft')" data-rbac="announcements.create" class="inline-flex items-center gap-2 border border-ink/20 text-ink/70 rounded-xl px-6 py-3 text-sm font-semibold hover:bg-ink/5">📄 Simpan Draft</button>
           <button id="publish-btn" onclick="submitForm('published')" data-rbac="announcements.create" class="inline-flex items-center gap-2 bg-green hover:bg-green-dark text-white rounded-xl px-6 py-3 text-sm font-semibold shadow-sm">🚀 Publish Pengumuman</button>
         </div>
@@ -179,6 +182,24 @@
     <div class="px-5 py-4 border-t border-ink/10 flex gap-2">
       <button onclick="closeCrop()" class="flex-1 border border-ink/20 text-ink/60 py-2.5 rounded-xl text-sm font-semibold hover:bg-ink/5">Batal</button>
       <button onclick="applyCrop()" class="flex-1 bg-navy text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-dark">✓ Guna Gambar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Preview Pengumuman — audit #G-29/30 (Tier 5), dulu tiada langsung -->
+<div id="preview-modal" class="hidden fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl max-w-sm w-full overflow-hidden">
+    <div class="px-5 py-4 border-b border-ink/10 flex items-center justify-between">
+      <h3 class="font-bold text-lg">👁 Preview — apa pesakit akan nampak</h3>
+      <button onclick="closePreview()" class="text-ink/50 text-xl leading-none">&times;</button>
+    </div>
+    <div class="p-4">
+      <div id="preview-card"></div>
+      <p class="text-[11px] text-ink/45 text-center mt-3">Paparan sebenar (saiz/susun atur) boleh berbeza sikit ikut peranti.</p>
+    </div>
+    <div class="px-5 py-4 border-t border-ink/10 flex gap-2">
+      <button onclick="closePreview()" class="flex-1 border border-ink/20 text-ink/60 py-2.5 rounded-xl text-sm font-semibold hover:bg-ink/5">Tutup, Sunting Lagi</button>
+      <button onclick="closePreview(); submitForm('published');" data-rbac="announcements.create" class="flex-1 bg-green hover:bg-green-dark text-white py-2.5 rounded-xl text-sm font-semibold">🚀 Publish</button>
     </div>
   </div>
 </div>
@@ -370,18 +391,44 @@ async function loadPackages() {
     return;
   }
   wrap.innerHTML = data.map(p => `<label class="flex items-center gap-2 text-[13px] cursor-pointer">
-    <input type="checkbox" class="pkg-cb w-4 h-4 accent-green-600" value="${escOpt(p.package_id)}"> ${escOpt(p.name)}</label>`).join('');
+    <input type="checkbox" class="pkg-cb w-4 h-4 accent-green-600" value="${escOpt(p.package_id)}" onchange="updateRecipientCount()"> ${escOpt(p.name)}</label>`).join('');
 }
 function onAllPatients() {
   if (document.getElementById('aud-all-patients').checked) {
     document.getElementById('aud-package').checked = false;
     document.getElementById('pkg-list').classList.add('hidden');
   }
+  updateRecipientCount();
 }
 function onPackageToggle() {
   const on = document.getElementById('aud-package').checked;
   document.getElementById('pkg-list').classList.toggle('hidden', !on);
-  if (on) { document.getElementById('aud-all-patients').checked = false; loadPackages(); }
+  if (on) { document.getElementById('aud-all-patients').checked = false; loadPackages().then(updateRecipientCount); }
+  updateRecipientCount();
+}
+
+// Audit #G-31 (Tier 5) — anggaran jumlah penerima ikut sasaran dipilih
+let allActivePatients = null;
+async function updateRecipientCount() {
+  const el = document.getElementById('recipient-count');
+  if (!el) return;
+  el.textContent = '…';
+  if (allActivePatients == null) {
+    const { data } = await window.db.from('psy_patients').select('id, active_package_id').neq('status', 'deleted');
+    allActivePatients = data || [];
+  }
+  const wantsStaff = document.getElementById('aud-staff').checked;
+  const wantsPatients = document.getElementById('aud-all-patients').checked || document.getElementById('aud-package').checked;
+  let n = 0;
+  if (wantsPatients) {
+    const pkgIds = getPackageIds();
+    n += pkgIds.length ? allActivePatients.filter(p => p.active_package_id && pkgIds.includes(p.active_package_id)).length : allActivePatients.length;
+  }
+  if (wantsStaff) {
+    const { count } = await window.db.from('psy_profiles').select('id', { count: 'exact', head: true }).eq('role', 'staff');
+    n += count || 0;
+  }
+  el.textContent = n.toLocaleString();
 }
 function getAudience() {
   const audience = [];
@@ -393,6 +440,31 @@ function getPackageIds() {
   if (!document.getElementById('aud-package').checked) return [];
   return Array.from(document.querySelectorAll('.pkg-cb:checked')).map(c => c.value);
 }
+
+// Audit #G-29/30 (Tier 5) — preview sebelum publish, sama gaya kad
+// carousel pesakit (roles/patient/dashboard.html annCards)
+function previewAnnouncement() {
+  const title = document.getElementById('f-title').value.trim() || '(Tiada tajuk)';
+  const summary = document.getElementById('f-summary').value.trim();
+  const image = document.getElementById('f-image-url').value;
+  const cl = document.getElementById('f-cta-label').value.trim();
+  const t = curType();
+  const hasImg = !!image;
+  const bgCls = hasImg ? '' : 'bg-gradient-to-r from-navy to-teal';
+  const bgStyle = hasImg ? `background-image:url('${image}');background-size:cover;background-position:center;` : '';
+  document.getElementById('preview-card').innerHTML = `
+    <div class="rounded-xl overflow-hidden relative h-32 ${bgCls}" style="${bgStyle}">
+      <div class="absolute inset-0 bg-gradient-to-r from-black/65 via-black/35 to-black/10"></div>
+      <div class="relative z-10 h-full p-4 flex flex-col">
+        <span class="self-start text-[9px] font-bold px-2 py-0.5 rounded-full bg-white/25 text-white uppercase tracking-wide backdrop-blur-sm mb-1.5">${escOpt(t.title)}</span>
+        <div class="font-bold text-base text-white leading-snug">${escOpt(title)}</div>
+        ${summary ? `<div class="text-[12px] text-white/85 mt-1 flex-1">${escOpt(summary)}</div>` : '<div class="flex-1"></div>'}
+        ${cl ? `<div class="mt-2"><span class="text-[11px] font-bold bg-white/90 text-navy px-3 py-1.5 rounded-lg inline-block">${escOpt(cl)}</span></div>` : ''}
+      </div>
+    </div>`;
+  document.getElementById('preview-modal').classList.remove('hidden');
+}
+function closePreview() { document.getElementById('preview-modal').classList.add('hidden'); }
 
 async function submitForm(statusVal) {
   const errEl = document.getElementById('form-error');
@@ -514,6 +586,7 @@ async function delType(id){
   const user = await initStaff('announcements', 'Cipta pengumuman baharu');
   if (!user) return;
   await loadTypes();
+  updateRecipientCount();
 })();
 </script>
 </body>

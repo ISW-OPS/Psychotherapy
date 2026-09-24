@@ -59,6 +59,23 @@ const STATUS_BADGE = {
 };
 
 let IT = null, CREATOR = '';
+let REACH = { isPatientTarget: false, recipients: 0, reads: 0 };
+
+// Audit #G-31/33/34 (Tier 5) — anggaran penerima (patut nampak dashboard/senarai
+// pengumuman pesakit) + berapa dah "dibaca" (psy_announcement_reads, impression-based).
+async function computeReach() {
+  const isPatientTarget = !Array.isArray(IT.audience) || IT.audience.length === 0 || IT.audience.includes('patient');
+  if (!isPatientTarget) { REACH = { isPatientTarget: false, recipients: 0, reads: 0 }; return; }
+  let q = window.db.from('psy_patients').select('id, active_package_id', { count: 'exact' }).neq('status', 'deleted');
+  const { data: patients } = await q;
+  const pkgIds = Array.isArray(IT.package_ids) ? IT.package_ids : [];
+  const recipients = pkgIds.length
+    ? (patients || []).filter(p => p.active_package_id && pkgIds.includes(p.active_package_id)).length
+    : (patients || []).length;
+  const { count: reads } = await window.db.from('psy_announcement_reads')
+    .select('id', { count: 'exact', head: true }).eq('announcement_id', IT.id);
+  REACH = { isPatientTarget: true, recipients, reads: reads || 0 };
+}
 
 function statusKey() {
   if (!IT.is_active) return 'draft';
@@ -95,9 +112,16 @@ function render() {
     ? `<a href="${IT.cta_url}" class="w-full bg-navy hover:bg-navy-dark text-white font-bold py-3.5 rounded-xl flex items-center justify-center gap-2">${IT.cta_label}</a>`
     : '';
 
-  const statsCards = `<div class="col-span-2 bg-cream/40 rounded-xl p-4 text-center">
+  // Audit #G-31/33/34 (Tier 5) — jumlah penerima (sasaran) + berapa dah baca
+  const pct = REACH.recipients > 0 ? Math.round((REACH.reads / REACH.recipients) * 100) : 0;
+  const statsCards = REACH.isPatientTarget
+    ? `${statBox('🎯', REACH.recipients.toLocaleString(), 'Anggaran Penerima', 'text-navy')}
+       ${statBox('👁️', `${REACH.reads.toLocaleString()}${REACH.recipients ? ` (${pct}%)` : ''}`, 'Telah Dibaca', 'text-green-dark')}
+       ${statBox('🎯', audLabel(IT.audience), 'Sasaran', 'text-sm')}
+       ${statBox('🏷️', tag, 'Kategori', 'text-sm')}`
+    : `<div class="col-span-2 bg-cream/40 rounded-xl p-4 text-center">
         <div class="text-2xl mb-1">📊</div>
-        <div class="text-[12px] text-ink/55">Penjejakan paparan & klik (views / CTA) belum diaktifkan untuk pengumuman.</div>
+        <div class="text-[12px] text-ink/55">Penjejakan bacaan cuma utk sasaran Pesakit — pengumuman ni sasar ${audLabel(IT.audience)}.</div>
        </div>
        ${statBox('🎯', audLabel(IT.audience), 'Sasaran', 'text-sm')}
        ${statBox('🏷️', tag, 'Kategori', 'text-sm')}`;
@@ -195,6 +219,7 @@ async function toggleActive() {
       const { data: prof } = await window.db.from('psy_profiles').select('full_name').eq('id', IT.created_by).maybeSingle();
       CREATOR = prof?.full_name || '';
     }
+    await computeReach();
     render();
   } catch (e) {
     document.getElementById('detail-wrap').innerHTML = `<div class="lg:col-span-3 bg-terracotta/10 text-terracotta rounded-xl p-4 text-sm">Ralat: ${e.message}</div>`;

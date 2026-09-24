@@ -1392,6 +1392,15 @@ async function emgInit() {
       : '<div class="text-xs text-ink/40 text-center py-6 w-full">Tiada pengumuman buat masa ini</div>';
 
     renderAnnounceDots(feedCards.length);
+
+    // Audit #G-33/34 (Tier 5) — tanda "dibaca" bila pengumuman muncul di dashboard
+    // (impression-based). Fire-and-forget, tak block render; onConflict elak
+    // duplicate bila pesakit buka dashboard berulang kali.
+    if (annVisible.length && patientRecord?.id) {
+      window.db.from('psy_announcement_reads')
+        .upsert(annVisible.map(a => ({ announcement_id: a.id, patient_id: patientRecord.id })), { onConflict: 'announcement_id,patient_id', ignoreDuplicates: true })
+        .then(() => {}, () => {});
+    }
     if (feedCards.length > 1) startAnnounceAutoSlide();
   } catch (err) {
     console.error('Dashboard error:', err);
