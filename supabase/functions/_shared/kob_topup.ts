@@ -55,10 +55,11 @@ export async function createKobInstallmentTopupLink(
   const itemTitle = `${checkpointLabel} — ${kob.recommended_package_name || ''}`.trim()
 
   const { data: ptRows } = await admin.from('psy_patients')
-    .select('user_id, full_name, phone').eq('id', kob.patient_id).limit(1)
+    .select('user_id, full_name, phone, email').eq('id', kob.patient_id).limit(1)
   const patient = ptRows?.[0]
-  let patientEmail: string | undefined
-  if (patient?.user_id) {
+  // psy_patients.email ialah sumber utama (lihat nota sama di kob_retry_link.ts)
+  let patientEmail: string | undefined = patient?.email || undefined
+  if (!patientEmail && patient?.user_id) {
     const { data: au } = await admin.auth.admin.getUserById(patient.user_id).catch(() => ({ data: null }))
     patientEmail = au?.user?.email || undefined
   }

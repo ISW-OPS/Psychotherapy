@@ -2518,6 +2518,39 @@
       }
     }
 
+    // Jana pautan lampir-kad & terus BUKA tab baharu (bukan hantar WhatsApp) —
+    // utk pesakit yang ADA di kaunter/depan staff (isi kad terus di skru staff/
+    // telefon pesakit sendiri), atau staff nak test/salin pautan manual. Sama
+    // pattern copyKobHitpayLink() tapi mode='attach_card'.
+    let cardAttachCopying = false;
+    async function openCardAttachLink() {
+      if (cardAttachCopying) return;
+      cardAttachCopying = true;
+      renderPaymentMethodSection();
+      try {
+        const returnUrl = `${location.origin}/roles/patient/payment-receipt.html`;
+        const { data, error } = await window.db.functions.invoke('payments-kob-initiate', {
+          body: { kobSessionId: kobId, mode: 'attach_card', returnUrl },
+        });
+        if (error) {
+          let msg = error.message;
+          try { const ctx = await error.context?.json(); if (ctx?.error) msg = ctx.error; } catch (_) { }
+          throw new Error(msg);
+        }
+        if (data?.error) throw new Error(data.error);
+        if (!data?.checkoutUrl) throw new Error('Pautan tidak diterima daripada server.');
+
+        window.open(data.checkoutUrl, '_blank', 'noopener');
+        try { await navigator.clipboard.writeText(data.checkoutUrl); } catch (_) { /* clipboard optional */ }
+        banner(iswL('Pautan lampir kad dibuka di tab baharu (& disalin) ✅', 'Card-attach link opened in a new tab (and copied) ✅'));
+      } catch (e) {
+        banner('Gagal jana pautan lampir kad: ' + e.message, 'error');
+      } finally {
+        cardAttachCopying = false;
+        renderPaymentMethodSection();
+      }
+    }
+
     // Jana pautan HitPay & salin ke clipboard sahaja (tiada hantar WhatsApp) —
     // utk staff kongsi manual (SMS/e-mel/lain) atau kalau nombor telefon tiada.
     async function copyKobHitpayLink(mode) {
@@ -2543,8 +2576,16 @@
         if (data?.error) throw new Error(data.error);
         if (!data?.checkoutUrl) throw new Error('Pautan tidak diterima daripada server.');
 
-        await navigator.clipboard.writeText(data.checkoutUrl);
-        banner('Pautan HitPay disalin ke clipboard ✅');
+        // Pautan HitPay dah berjaya dijana pada titik ni (data.checkoutUrl wujud) —
+        // clipboard API boleh gagal sebab sebab tak berkaitan (cth tab/window tak
+        // fokus semasa await di atas), jadi kegagalan salin JANGAN dilaporkan macam
+        // kegagalan jana pautan (staff akan fikir kena cuba semula dari kosong).
+        try {
+          await navigator.clipboard.writeText(data.checkoutUrl);
+          banner('Pautan HitPay disalin ke clipboard ✅');
+        } catch (_) {
+          window.prompt('Pautan dijana tapi auto-salin gagal (tab tak fokus) — salin manual dari sini:', data.checkoutUrl);
+        }
       } catch (e) {
         banner('Gagal jana/salin pautan HitPay: ' + e.message, 'error');
       } finally {
@@ -3416,7 +3457,10 @@
             ? `<div class="text-xs text-green-dark bg-green-light/50 p-2 rounded mb-2">💳 Kad dilampirkan${auth.card_brand ? ` (${escapeHtml(auth.card_brand)} •••• ${escapeHtml(auth.card_last4 || '')})` : ''} — ansuran seterusnya akan di-auto-caj pada tarikh due.</div>`
             : `<div class="text-xs text-ink/60 bg-ink/5 p-2 rounded mb-2 flex items-center justify-between gap-2 flex-wrap">
                  <span>💳 ${auth?.status === 'pending' ? 'Pautan lampir kad telah dihantar, menunggu pesakit lengkapkan.' : 'Kad belum dilampirkan — ansuran seterusnya perlu bayar manual (pautan/reminder sedia ada).'}</span>
-                 <button type="button" onclick="sendCardAttachLink()" class="text-[11px] font-semibold border border-navy text-navy px-2.5 py-1 rounded-md hover:bg-navy/5 whitespace-nowrap">${auth?.status === 'pending' ? 'Hantar Semula' : 'Hantar Pautan Lampir Kad'}</button>
+                 <div class="flex gap-1.5">
+                   <button type="button" onclick="sendCardAttachLink()" class="text-[11px] font-semibold border border-navy text-navy px-2.5 py-1 rounded-md hover:bg-navy/5 whitespace-nowrap">${auth?.status === 'pending' ? 'Hantar Semula' : '📱 Hantar WhatsApp'}</button>
+                   <button type="button" onclick="openCardAttachLink()" class="text-[11px] font-semibold border border-ink/15 text-ink px-2.5 py-1 rounded-md hover:bg-ink/5 whitespace-nowrap">🔗 Buka/Salin Pautan</button>
+                 </div>
                </div>`;
 
           wizMain.innerHTML = `

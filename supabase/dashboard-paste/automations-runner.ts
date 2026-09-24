@@ -119,10 +119,10 @@ async function createKobInstallmentTopupLink(admin, kobSessionId, returnUrl) {
   if (!(amount > 0)) throw new Error("Tiada ansuran tertunggak");
   const checkpointLabel = nextCp.seq === 0 ? "Deposit" : `Ansuran ${nextCp.seq}`;
   const itemTitle = `${checkpointLabel} \u2014 ${kob.recommended_package_name || ""}`.trim();
-  const { data: ptRows } = await admin.from("psy_patients").select("user_id, full_name, phone").eq("id", kob.patient_id).limit(1);
+  const { data: ptRows } = await admin.from("psy_patients").select("user_id, full_name, phone, email").eq("id", kob.patient_id).limit(1);
   const patient = ptRows?.[0];
-  let patientEmail;
-  if (patient?.user_id) {
+  let patientEmail = patient?.email || void 0;
+  if (!patientEmail && patient?.user_id) {
     const { data: au } = await admin.auth.admin.getUserById(patient.user_id).catch(() => ({ data: null }));
     patientEmail = au?.user?.email || void 0;
   }

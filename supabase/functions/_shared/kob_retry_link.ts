@@ -100,12 +100,19 @@ export async function createKobDepositLink(
   }
 
   const { data: ptRows } = await admin.from('psy_patients')
-    .select('user_id, full_name, phone').eq('id', kob.patient_id).limit(1)
+    .select('user_id, full_name, phone, email').eq('id', kob.patient_id).limit(1)
   const patient = ptRows?.[0]
-  let patientEmail: string | undefined
-  if (patient?.user_id) {
+  // psy_patients.email (diisi masa pendaftaran) ialah sumber utama — auth user
+  // email cuma fallback (patient boleh wujud tanpa user_id, atau akaun auth
+  // tiada email kalau daftar guna telefon). HitPay recurring-billing WAJIBKAN
+  // customer_email (422 kalau kosong), jadi ni bukan cuma "nice to have".
+  let patientEmail: string | undefined = patient?.email || undefined
+  if (!patientEmail && patient?.user_id) {
     const { data: au } = await admin.auth.admin.getUserById(patient.user_id).catch(() => ({ data: null }))
     patientEmail = au?.user?.email || undefined
+  }
+  if (useSaveCard && !patientEmail) {
+    throw new Error('Pesakit ini tiada alamat emel dalam rekod — wajib untuk simpan kad (auto-caj ansuran). Kemaskini emel pesakit dulu (Pesakit → Kemaskini Pesakit), atau tanggalkan tanda "Simpan kad" dan hantar pautan biasa.')
   }
 
   const receiptRef = 'RCP-' + Date.now().toString(36).toUpperCase() +
