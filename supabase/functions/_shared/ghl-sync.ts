@@ -124,6 +124,7 @@ export async function syncAppointmentToSession(svc: any, patientId: string, opts
       scheduled_at: iso,
       mode: opts.mode,
       status: 'booked',
+      source: 'ghl',
     }).select('id').single()
     if (error) throw error
     kobSessionId = session.id

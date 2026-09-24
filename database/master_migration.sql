@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-09-24T03:15:56.014457Z
+-- Generated: 2026-09-24T07:30:35.688377Z
 -- Jumlah fail: 36
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -2917,6 +2917,9 @@ CREATE TABLE IF NOT EXISTS psy_kob_sessions (
   meet_link           TEXT,
   status              TEXT NOT NULL DEFAULT 'booked'
                       CHECK (status IN ('booked','hadir','completed','reschedule','cancelled')),
+  -- Asal tempahan: 'system' = dicipta dalam ISW system (staff/pesakit sendiri),
+  -- 'ghl' = disync automatik dari GHL Calendar (lihat _shared/ghl-sync.ts).
+  source              TEXT NOT NULL DEFAULT 'system' CHECK (source IN ('system','ghl')),
 
   -- Doktor yang tanda kehadiran (mungkin berbeza dengan yang selesaikan)
   doctor_hadir_id     UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
@@ -6616,6 +6619,34 @@ DROP POLICY IF EXISTS "Staff manage announcements" ON psy_announcements;
 CREATE POLICY "Staff manage announcements" ON psy_announcements FOR ALL
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
+-- ──── psy_announcement_reads (audit #G-33/34, Tier 5) ────
+-- Tanda "dibaca" bila pengumuman muncul di dashboard pesakit (impression-based,
+-- bukan scroll-tracking terperinci) — cukup utk staf nampak jangkauan sebenar
+-- vs sasaran, tanpa infrastruktur analytics berasingan.
+CREATE TABLE IF NOT EXISTS psy_announcement_reads (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  announcement_id UUID NOT NULL REFERENCES psy_announcements(id) ON DELETE CASCADE,
+  patient_id      UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  read_at         TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (announcement_id, patient_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ann_reads_ann ON psy_announcement_reads(announcement_id);
+
+ALTER TABLE psy_announcement_reads ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patients mark own reads" ON psy_announcement_reads;
+CREATE POLICY "Patients mark own reads" ON psy_announcement_reads FOR INSERT
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Patients view own reads" ON psy_announcement_reads;
+CREATE POLICY "Patients view own reads" ON psy_announcement_reads FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff view all reads" ON psy_announcement_reads;
+CREATE POLICY "Staff view all reads" ON psy_announcement_reads FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
 -- ──── psy_events (acara / kelas) ────
 CREATE TABLE IF NOT EXISTS psy_events (
   id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -6625,7 +6656,6 @@ CREATE TABLE IF NOT EXISTS psy_events (
   start_at              TIMESTAMPTZ NOT NULL,
   end_at                TIMESTAMPTZ,
   mode                  TEXT DEFAULT 'online',
-  meet_link             TEXT,
   location              TEXT,
   address               TEXT,
   maps_url              TEXT,
@@ -6655,6 +6685,37 @@ DROP POLICY IF EXISTS "events staff manage" ON psy_events;
 CREATE POLICY "events staff manage" ON psy_events FOR ALL
   USING (auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff'))
   WITH CHECK (auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff'));
+
+-- ──── psy_event_meet_links (audit #H-36, Tier 5) ────
+-- meet_link SENGAJA DIKELUARKAN dari psy_events (lihat migration
+-- 20260924_event_meet_link_capacity.sql utk ALTER TABLE DROP COLUMN + backfill
+-- data sedia ada) — RLS Postgres cuma boleh benar/tolak SEBARIS, bukan sembunyi
+-- SATU LAJUR sahaja. Dulu meet_link tinggal dlm psy_events (dibaca terus lepas
+-- event 'published', tak kira pesakit dah daftar atau belum; UI event-detail.html
+-- cuma sorok butang client-side, data sebenar tetap ADA dlm respons API). Jadual
+-- berasingan + RLS sendiri tutup jurang tu betul-betul. Staf (acara-baru.html/
+-- acara-edit.html/acara-detail.html/events.html) baca/tulis terus jadual ni.
+CREATE TABLE IF NOT EXISTS psy_event_meet_links (
+  event_id   UUID PRIMARY KEY REFERENCES psy_events(id) ON DELETE CASCADE,
+  meet_link  TEXT,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE psy_event_meet_links ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage event meet links" ON psy_event_meet_links;
+CREATE POLICY "Staff manage event meet links" ON psy_event_meet_links FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Registered patients read meet link" ON psy_event_meet_links;
+CREATE POLICY "Registered patients read meet link" ON psy_event_meet_links FOR SELECT
+  USING (EXISTS (
+    SELECT 1 FROM psy_event_registrations r
+    JOIN psy_patients p ON p.id = r.patient_id
+    WHERE r.event_id = psy_event_meet_links.event_id
+      AND p.user_id = auth.uid() AND r.status <> 'batal'
+  ));
 
 -- ──── psy_event_registrations (pendaftaran acara) ────
 CREATE TABLE IF NOT EXISTS psy_event_registrations (
@@ -6689,6 +6750,41 @@ CREATE POLICY "regs patient update" ON psy_event_registrations FOR UPDATE USING 
 DROP POLICY IF EXISTS "regs staff delete" ON psy_event_registrations;
 CREATE POLICY "regs staff delete" ON psy_event_registrations FOR DELETE USING (
   auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff'));
+
+-- ──── Trigger: kuatkuasa kapasiti acara (audit #H-35, Tier 5) ────
+-- Dulu client terus upsert tanpa apa-apa semakan — kapasiti cuma paparan
+-- ("6 sesi/8 slot" style), tak dikuatkuasa langsung. Server-side (bukan
+-- client) supaya tak boleh dipintas — staf (INSERT terus dari admin,
+-- cth manual add) tetap dibenarkan lepas kapasiti (override sengaja).
+CREATE OR REPLACE FUNCTION trg_enforce_event_capacity()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_capacity INT;
+  v_count    INT;
+  v_is_staff BOOLEAN;
+BEGIN
+  IF NEW.status = 'batal' THEN RETURN NEW; END IF;
+  SELECT EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff') INTO v_is_staff;
+  IF v_is_staff THEN RETURN NEW; END IF;
+
+  SELECT capacity INTO v_capacity FROM psy_events WHERE id = NEW.event_id;
+  IF v_capacity IS NULL THEN RETURN NEW; END IF;
+
+  SELECT COUNT(*) INTO v_count FROM psy_event_registrations
+    WHERE event_id = NEW.event_id AND status <> 'batal' AND id <> COALESCE(NEW.id, '00000000-0000-0000-0000-000000000000'::uuid);
+  IF v_count >= v_capacity THEN
+    RAISE EXCEPTION 'Acara ini telah penuh (kapasiti % peserta).', v_capacity;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_enforce_event_capacity ON psy_event_registrations;
+CREATE TRIGGER trg_enforce_event_capacity
+  BEFORE INSERT OR UPDATE ON psy_event_registrations
+  FOR EACH ROW EXECUTE FUNCTION trg_enforce_event_capacity();
 
 -- ──── psy_event_materials (bahan / rakaman acara) ────
 CREATE TABLE IF NOT EXISTS psy_event_materials (
@@ -8632,7 +8728,13 @@ CREATE TABLE IF NOT EXISTS psy_promo_codes (
   is_active             BOOLEAN NOT NULL DEFAULT true,
   created_by            UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
   created_at            TIMESTAMPTZ DEFAULT now(),
-  updated_at            TIMESTAMPTZ DEFAULT now()
+  updated_at            TIMESTAMPTZ DEFAULT now(),
+  -- Audit #D-15/16/17 (Tier 5)
+  applies_to            TEXT NOT NULL DEFAULT 'all' CHECK (applies_to IN ('all','product','category','package')),
+  applies_to_values     TEXT[],       -- product_id / category / package_id list, ikut applies_to (NULL bila 'all')
+  stackable             BOOLEAN NOT NULL DEFAULT true,   -- boleh digabung dgn baucar ganjaran auto-apply (psy_vouchers)?
+  new_customer_only     BOOLEAN NOT NULL DEFAULT false,  -- hanya pesakit TANPA sebarang bayaran 'completed' terdahulu
+  campaign              TEXT          -- label kempen (pilihan, utk pengelompokan/laporan sahaja — bukan gate)
 );
 
 CREATE INDEX IF NOT EXISTS idx_psy_promo_codes_code ON psy_promo_codes(code);
@@ -8654,6 +8756,12 @@ COMMENT ON COLUMN psy_promo_codes.min_subtotal IS
   'Subjumlah troli minimum (RM) sebelum kod boleh diguna. 0 = tiada syarat.';
 COMMENT ON COLUMN psy_promo_codes.max_uses_per_patient IS
   'Had berapa kali SATU pesakit boleh guna kod ni (dikira dari psy_promo_redemptions).';
+COMMENT ON COLUMN psy_promo_codes.applies_to IS
+  'Skop troli yang perlu ADA sebelum kod sah dipakai (gate seluruh-atau-tiada — diskaun tetap kena SELURUH subjumlah, bukan pro-rata baris tertentu, sama falsafah macam min_subtotal).';
+COMMENT ON COLUMN psy_promo_codes.applies_to_values IS
+  'product_id (psy_products) / category (psy_products.category) / package_id (psy_packages), ikut applies_to.';
+COMMENT ON COLUMN psy_promo_codes.stackable IS
+  'false = tak boleh dipakai serentak dgn baucar ganjaran auto-apply (psy_vouchers, cth baucar tukar mata) dlm checkout yang sama.';
 
 -- ──── psy_promo_redemptions ────
 -- Lejar penggunaan — dicipta oleh trigger (bukan client) bila bayaran sah selesai.
@@ -8982,8 +9090,11 @@ BEGIN
   INSERT INTO psy_points_ledger (patient_id, source_type, source_ref, points, note)
   VALUES (v_patient_id, 'reward_redeem', v_reward.id, -v_reward.points_cost, 'Tukar: ' || v_reward.name);
 
-  INSERT INTO psy_vouchers (patient_id, source_type, source_ref, amount, note)
-  VALUES (v_patient_id, 'point_redeem', v_reward.id, v_reward.voucher_amount, 'Ditukar dari mata: ' || v_reward.name)
+  -- Audit #C-13 (Tier 5) — tempoh sah 90 hari dari tarikh tebus (dulu expires_at
+  -- sentiasa NULL = tiada luput langsung). payments-initiate.ts (checkout) & profile.html
+  -- (paparan pesakit) dua-dua dah semak expires_at, jadi terus berkesan.
+  INSERT INTO psy_vouchers (patient_id, source_type, source_ref, amount, note, expires_at)
+  VALUES (v_patient_id, 'point_redeem', v_reward.id, v_reward.voucher_amount, 'Ditukar dari mata: ' || v_reward.name, now() + interval '90 days')
   RETURNING * INTO v_voucher;
 
   RETURN v_voucher;
@@ -8991,6 +9102,40 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION redeem_point_reward(UUID) TO authenticated;
+
+-- ──── adjust_points_manual() ────
+-- Audit #C-13 (Tier 5) — dulu TIADA cara staf laras mata pesakit secara manual
+-- (cth pampasan kesilapan sistem, ganjaran ad-hoc) sbb psy_points_ledger langsung
+-- tiada INSERT policy (sengaja, elak forge). RPC ni SATU-SATUNYA laluan tulisan
+-- manual — sebab WAJIB, staf-sahaja (semak role dlm function, bukan harap RLS).
+CREATE OR REPLACE FUNCTION adjust_points_manual(p_patient_id UUID, p_points INT, p_reason TEXT)
+RETURNS psy_points_ledger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_is_staff BOOLEAN;
+  v_row      psy_points_ledger%ROWTYPE;
+BEGIN
+  SELECT EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff') INTO v_is_staff;
+  IF NOT v_is_staff THEN
+    RAISE EXCEPTION 'Hanya staf boleh laras mata pesakit.';
+  END IF;
+  IF p_points = 0 THEN
+    RAISE EXCEPTION 'Bilangan mata mesti bukan sifar.';
+  END IF;
+  IF p_reason IS NULL OR btrim(p_reason) = '' THEN
+    RAISE EXCEPTION 'Sebab pelarasan diperlukan.';
+  END IF;
+
+  INSERT INTO psy_points_ledger (patient_id, source_type, points, note)
+  VALUES (p_patient_id, 'manual_adjustment', p_points, btrim(p_reason))
+  RETURNING * INTO v_row;
+
+  RETURN v_row;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION adjust_points_manual(UUID, INT, TEXT) TO authenticated;
 
 
 -- ════════════════════════════════════════════════════════════════

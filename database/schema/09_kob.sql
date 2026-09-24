@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS psy_kob_sessions (
   meet_link           TEXT,
   status              TEXT NOT NULL DEFAULT 'booked'
                       CHECK (status IN ('booked','hadir','completed','reschedule','cancelled')),
+  -- Asal tempahan: 'system' = dicipta dalam ISW system (staff/pesakit sendiri),
+  -- 'ghl' = disync automatik dari GHL Calendar (lihat _shared/ghl-sync.ts).
+  source              TEXT NOT NULL DEFAULT 'system' CHECK (source IN ('system','ghl')),
 
   -- Doktor yang tanda kehadiran (mungkin berbeza dengan yang selesaikan)
   doctor_hadir_id     UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
