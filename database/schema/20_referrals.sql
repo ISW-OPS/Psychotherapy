@@ -140,7 +140,13 @@ CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
   session_type      TEXT CHECK (session_type IN ('hakeema','hakeem','dr')),
   created_at        TIMESTAMPTZ DEFAULT now(),
   updated_at        TIMESTAMPTZ DEFAULT now(),
-  resolved_at       TIMESTAMPTZ
+  resolved_at       TIMESTAMPTZ,
+  -- Ditambah 23 Sept 2026 (audit management #B2-4) — saranan sesi tak boleh berhenti
+  -- sbg nota bebas; perlu Next Action + PIC + Due Date boleh dijejak sehingga selesai.
+  next_action        TEXT,
+  next_action_pic    UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  next_action_due    DATE,
+  next_action_done_at TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_psy_clinical_referrals_target  ON psy_clinical_referrals(target_id, status, created_at DESC);
