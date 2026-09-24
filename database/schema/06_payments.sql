@@ -25,6 +25,10 @@ CREATE TABLE IF NOT EXISTS psy_payments (
   -- Ditambah 24 Sept 2026 (audit management #B1-23) — bayaran ujian/demo, DIKECUALIKAN
   -- drpd semua laporan kewangan sebenar (KPI dashboard, laporan bulanan dll).
   is_test BOOLEAN NOT NULL DEFAULT false,
+  -- Ditambah 24 Sept 2026 (audit management #B1-27) — status penghantaran resit/invois
+  -- (WhatsApp) supaya staf tahu ia dihantar atau gagal, bukan senyap "fire and forget".
+  receipt_last_sent_at     TIMESTAMPTZ,
+  receipt_last_sent_status TEXT CHECK (receipt_last_sent_status IS NULL OR receipt_last_sent_status IN ('sent','failed')),
   ghl_transaction_id TEXT,
   invoice_number TEXT,                        -- bayaran manual — no. invois ditaip staff/doktor
   manual_method TEXT CHECK (manual_method IN ('transfer','cash','other')),  -- kaedah bayaran manual (payment_method='manual')

@@ -469,6 +469,10 @@ function openDetail(id) {
       <button onclick="openInvoice('${p.id}')" class="flex-1 text-center text-sm font-semibold bg-navy text-white py-2 rounded-lg hover:bg-navy-dark transition-colors">🧾 Jana Invois</button>
       ${p.status === 'pending' ? `<button onclick="markComplete('${p.id}')" data-rbac="payment.edit" class="flex-1 text-sm font-semibold bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition-colors">Sahkan Selesai</button>` : ''}
     </div>
+    ${p.status === 'completed' ? `<div class="flex items-center justify-between gap-2 text-xs">
+      <span class="text-ink/50">${p.receipt_last_sent_at ? `${p.receipt_last_sent_status === 'failed' ? '❌ Gagal hantar' : '✅ Dihantar'} ${fmtDate(p.receipt_last_sent_at)} ${fmtTime(p.receipt_last_sent_at)}` : '— Resit belum pernah dihantar semula'}</span>
+      <button id="resend-btn-${p.id}" onclick="resendReceipt('${p.id}')" class="font-semibold text-navy hover:underline shrink-0">📤 Hantar Semula</button>
+    </div>` : ''}
     ${(p.status === 'completed' || p.status === 'refunded') ? `<button onclick="openAdjustPanel('${p.id}')" data-rbac="payment.edit" class="w-full text-center text-xs font-semibold text-terracotta border border-terracotta/30 py-2 rounded-lg hover:bg-terracotta/5">⚠️ Void / Refund / Correction</button>` : ''}
     <div id="adj-history-${p.id}"></div>
   `;
@@ -545,6 +549,27 @@ async function openInvoice(id) {
 }
 
 function closeInvoice() { document.getElementById('invoice-overlay').classList.add('hidden'); }
+
+// Status penghantaran resit (audit #B1-27) — dulu fire-and-forget, staf tak tahu
+// sama ada mesej betul-betul sampai. Status dikemaskini client-side selepas edge
+// function `payments-send-receipt` selesai (tak ubah kod edge function).
+async function resendReceipt(id) {
+  const btn = document.getElementById(`resend-btn-${id}`);
+  if (btn) { btn.disabled = true; btn.textContent = 'Menghantar…'; }
+  let status = 'sent';
+  try {
+    const { error } = await window.db.functions.invoke('payments-send-receipt', { body: { paymentId: id } });
+    if (error) status = 'failed';
+  } catch (_) { status = 'failed'; }
+  const patch = { receipt_last_sent_at: new Date().toISOString(), receipt_last_sent_status: status };
+  await window.db.from('psy_payments').update(patch).eq('id', id);
+  const p = allPayments.find(x => x.id === id);
+  if (p) Object.assign(p, patch);
+  if (window.auditLog) window.auditLog('payment.receipt_resent', id, { status });
+  if (status === 'sent') banner('Resit dihantar semula ✅'); else banner('Gagal hantar resit ❌', 'error');
+  openDetail(id);
+}
+window.resendReceipt = resendReceipt;
 
 async function markComplete(id) {
   if (!confirm('Sahkan pembayaran ini sebagai selesai?')) return;
