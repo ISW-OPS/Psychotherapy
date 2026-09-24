@@ -65,6 +65,7 @@
                   <option value="sd">Sederhana</option>
                   <option value="r">Rendah</option>
                   <option value="sr">Sangat Rendah</option>
+                  <option value="partial">Data Tidak Lengkap</option>
                   <option value="none">Belum isi</option>
                 </select>
                 <input type="text" id="search" placeholder="Cari nama atau ID..." class="text-xs border border-ink/15 rounded-lg px-3 py-1.5 bg-white text-ink focus:outline-none focus:ring-2 focus:ring-navy/20 w-36">
@@ -205,8 +206,16 @@ function tier5(score){
   return            {key:'sr',  label:'Sangat Rendah',  chip:'bg-red-100 text-red-600',       bar:'#ef4444'};
 }
 // Override coach (A/B/C) → tier mewakili supaya paparan konsisten
+// Audit management #B2-24: bezakan dgn TEGAS "Data Tidak Lengkap" (majoriti hari
+// dlm minggu tu belum diisi, skor rendah sbb kekosongan dikira 0 — Pilihan B) drpd
+// "Sangat Rendah/Rendah" sebenar (majoriti hari DIISI tapi skor amalan memang rendah).
+// Ambang 50% hari belum isi — di bawah tu skor mingguan tak boleh dipercayai sbg
+// cerminan usaha sebenar pesakit.
 function rowTier(r){
   if(r.override) return tier5({A:90,B:60,C:20}[r.override]);
+  if (r.avg != null && r.avg < 50 && r.filled < weekDenom(viewWeekStart) * 0.5) {
+    return { key: 'partial', label: 'Data Tidak Lengkap', chip: 'bg-slate-100 text-slate-600', bar: '#94a3b8' };
+  }
   return tier5(r.avg);
 }
 const STATUS5 = { st:'Aktif & Konsisten', t:'Aktif', sd:'Tidak Konsisten', r:'Perlu Ditingkatkan', sr:'Tidak Aktif', none:'Belum isi' };
@@ -364,13 +373,14 @@ async function loadData(){
 
 function renderPie(){
   const el=document.getElementById('pie-card'); if(!el) return;
-  const order=['st','t','sd','r','sr','none'];
+  const order=['st','t','sd','r','sr','partial','none'];
   const META={
     st:{label:'Sangat Tinggi', color:'#16a34a'}, t:{label:'Tinggi', color:'#65a30d'},
     sd:{label:'Sederhana', color:'#f59e0b'}, r:{label:'Rendah', color:'#f97316'},
-    sr:{label:'Sangat Rendah', color:'#ef4444'}, none:{label:'Belum isi', color:'#d1d5db'},
+    sr:{label:'Sangat Rendah', color:'#ef4444'}, partial:{label:'Data Tidak Lengkap', color:'#94a3b8'},
+    none:{label:'Belum isi', color:'#d1d5db'},
   };
-  const counts={st:0,t:0,sd:0,r:0,sr:0,none:0};
+  const counts={st:0,t:0,sd:0,r:0,sr:0,partial:0,none:0};
   rows.forEach(r=>{ counts[rowTier(r).key]++; });
   const total=rows.length||1;
   let acc=0; const stops=[];
