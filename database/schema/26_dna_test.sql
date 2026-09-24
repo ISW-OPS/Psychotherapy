@@ -12,6 +12,10 @@ CREATE TABLE IF NOT EXISTS psy_dna_test_process (
   id                              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id                      UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
   coach_id                        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  -- Ditambah 24 Sept 2026 (audit management #B1-7/8 Tier 4) — pautan ke pelan
+  -- rawatan yang cetus proses ni, supaya boleh kira "berapa proses DNA test dah
+  -- dicipta utk pelan ni" (banding dgn pakej.dna_test_count) sebelum auto-cipta lagi.
+  plan_id                         UUID REFERENCES psy_treatment_plans(id) ON DELETE SET NULL,
   current_step                    INT NOT NULL DEFAULT 1 CHECK (current_step BETWEEN 1 AND 6),
   status                          TEXT NOT NULL DEFAULT 'in_progress'
                                     CHECK (status IN ('in_progress','completed','cancelled')),
@@ -65,6 +69,7 @@ CREATE TABLE IF NOT EXISTS psy_dna_test_process (
 
 CREATE INDEX IF NOT EXISTS idx_dna_test_patient ON psy_dna_test_process(patient_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_dna_test_status  ON psy_dna_test_process(status);
+CREATE INDEX IF NOT EXISTS idx_dna_test_plan    ON psy_dna_test_process(plan_id) WHERE plan_id IS NOT NULL;
 
 ALTER TABLE psy_dna_test_process ENABLE ROW LEVEL SECURITY;
 

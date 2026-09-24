@@ -524,8 +524,11 @@ async function bootPlanWeek() {
   // diedit per-pesakit — ia cuma salinan; jadi baca live selamat. Snapshot dikekal sebagai
   // fallback sahaja (cth pakej dipadam).
   if (activePlan.template) {
-    const { data: pkg } = await window.db.from('psy_packages').select('coaching_schedule').eq('package_id', activePlan.template).maybeSingle();
+    const { data: pkg } = await window.db.from('psy_packages').select('coaching_schedule, dna_test_required, dna_test_count, dna_test_week').eq('package_id', activePlan.template).maybeSingle();
     if (pkg?.coaching_schedule?.length) activePlan.coaching_schedule = pkg.coaching_schedule;
+    activePlan.dna_test_required = pkg?.dna_test_required || false;
+    activePlan.dna_test_count = pkg?.dna_test_count || 1;
+    activePlan.dna_test_week = pkg?.dna_test_week || 1;
   }
 
   const { data: pt } = await window.db.from('psy_patients').select('user_id, full_name, coach_id').eq('id', patientId).single();
@@ -656,6 +659,7 @@ async function loadWeek() {
   updateBreadcrumb();
   renderHero();
   await loadHk1();
+  await checkDnaTestAutoCreate();
   renderHk1Section();
   renderCoachingSchedule();
   fillCoachForm();
@@ -964,6 +968,24 @@ async function loadHk1() {
       .select('message_template, is_active').eq('key', 'referral_saranan').maybeSingle();
     hk1SarananTpl = (tpl && tpl.is_active !== false && tpl.message_template) ? tpl.message_template : '';
   }
+}
+
+// Auto-cipta proses DNA Test (audit #B1-7/8 Tier 4) — bila pakej mewajibkan DNA
+// Test dan pesakit sampai minggu yg ditetapkan (dna_test_week), sistem sendiri
+// cipta psy_dna_test_process — staf tak perlu ingat "Cipta Proses Baharu" manual.
+// Sekat guna dna_test_count (jangan lebih drpd bilangan yg pakej benarkan).
+async function checkDnaTestAutoCreate() {
+  if (!activePlan.dna_test_required) return;
+  if (weekNumber < (activePlan.dna_test_week || 1)) return;
+  const { count } = await window.db.from('psy_dna_test_process')
+    .select('*', { count: 'exact', head: true }).eq('plan_id', activePlan.id);
+  if ((count || 0) >= (activePlan.dna_test_count || 1)) return;
+  const { error } = await window.db.from('psy_dna_test_process').insert({
+    patient_id: patientId, plan_id: activePlan.id, coach_id: primaryCoachId || null,
+    current_step: 1, status: 'in_progress',
+  });
+  if (error) { console.error('[dna-test] auto-cipta gagal:', error); return; }
+  banner(`🧬 Proses DNA Test auto-dicipta (Minggu ${weekNumber}, ikut keperluan pakej) — semak di Pesakit Hub.`);
 }
 
 async function hk1ResolveTarget(type) {

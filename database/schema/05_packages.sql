@@ -49,6 +49,12 @@ CREATE TABLE IF NOT EXISTS psy_packages (
   extension_price_per_week NUMERIC(10,2) DEFAULT 50,
   extension_price_per_session NUMERIC(10,2) DEFAULT 25,
   meet_link TEXT,
+  -- Ditambah 24 Sept 2026 (audit management #B1-7/8 Tier 4) — keperluan DNA Test
+  -- datang dari config pakej (pola sama macam hk1_types Sesi 1:1), bukan hard-code
+  -- atau bergantung staf ingat "Cipta Proses Baharu" manual. Auto-cipta di plan-week.html.
+  dna_test_required BOOLEAN NOT NULL DEFAULT false,
+  dna_test_count     INT DEFAULT 1,
+  dna_test_week      INT DEFAULT 1,
   -- bayaran ansuran — Deposit (Bayaran Pertama) + Tempoh(bulan) + Bayaran
   -- Bulanan RATA. Pesakit boleh top-up jumlah bebas bila-bila (payment.html),
   -- tapi jadual checkpoint (psy_kob_installment_checkpoints) dijana dari
