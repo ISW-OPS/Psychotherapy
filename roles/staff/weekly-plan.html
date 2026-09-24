@@ -193,6 +193,9 @@
                 <div class="text-[10px] font-bold uppercase tracking-wider text-ink/35">📌 Task Peribadi</div>
                 <div id="task-day-label" class="text-[10px] text-ink/45 font-medium"></div>
               </div>
+              <!-- Audit #B2-23 (Tier 4) — dulu tiada reminder utk task lepas tarikh & belum selesai -->
+              <button id="task-overdue-banner" onclick="jumpToOverdueTask()" type="button"
+                class="hidden w-full text-left mb-2 bg-terracotta/10 border border-terracotta/30 text-terracotta text-[11px] font-semibold px-3 py-2 rounded-lg hover:bg-terracotta/15"></button>
               <div id="personal-tasks-host" class="space-y-2">
                 <p class="text-xs text-ink/40 italic py-1">Pilih hari untuk lihat task.</p>
               </div>
@@ -594,6 +597,31 @@ function initTaskDayPicker() {
   taskDayStr = new Date().toISOString().slice(0, 10);
   renderDayTaskPicker();
   loadPersonalTasks(taskDayStr);
+  checkOverdueTasks();
+}
+
+// Audit #B2-23 (Tier 4) — reminder task peribadi terlepas tarikh & belum selesai,
+// merentas SEMUA hari (bukan cuma hari sedang dipilih di picker).
+let _overdueTaskDates = [];
+async function checkOverdueTasks() {
+  const banner = document.getElementById('task-overdue-banner');
+  if (!banner) return;
+  const myId = window.currentUser?.id;
+  if (!myId) return;
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const { data } = await window.db.from('psy_coach_tasks')
+    .select('id, task_date').eq('coach_id', myId).lt('task_date', todayStr).neq('status', 'selesai')
+    .order('task_date', { ascending: true })
+    .then(r => r, () => ({ data: [] }));
+  const overdue = data || [];
+  if (!overdue.length) { banner.classList.add('hidden'); _overdueTaskDates = []; return; }
+  _overdueTaskDates = [...new Set(overdue.map(t => t.task_date))];
+  banner.textContent = `⏰ ${overdue.length} task peribadi terlewat (belum selesai) — klik utk lihat hari terawal`;
+  banner.classList.remove('hidden');
+}
+function jumpToOverdueTask() {
+  if (!_overdueTaskDates.length) return;
+  selectTaskDay(_overdueTaskDates[0]);
 }
 
 function renderDayTaskPicker() {

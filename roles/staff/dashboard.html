@@ -407,6 +407,15 @@
             </div>
           </div>
 
+          <!-- Pesakit Tanpa Plan Aktif — audit #B2-21 (Tier 4), papar bila ada sahaja -->
+          <div id="a-noplan-wrap" class="hidden bg-white rounded-2xl border border-red-200 shadow-sm overflow-hidden">
+            <div class="px-5 py-4 border-b border-ink/8 flex items-center justify-between">
+              <h3 class="font-semibold text-sm text-ink flex items-center gap-2">📋 Pesakit Tanpa Plan Aktif</h3>
+              <span id="a-noplan-count" class="text-xs text-red-600 font-semibold"></span>
+            </div>
+            <div id="a-noplan-list" class="overflow-x-auto"></div>
+          </div>
+
           <!-- Red Emergency Protocol — alert aktif (SENTIASA nampak, sama corak Manager/Doctor) -->
           <div class="bg-white rounded-2xl border border-red-200 shadow-sm overflow-hidden">
             <div class="px-5 py-4 border-b border-ink/8 flex items-center justify-between">
@@ -2139,6 +2148,7 @@
       const [
         ordersRes, todaySessRes, issueRepRes, issueClosedRes,
         patientsRes, inventoryRes, pendingSessRes, prPendingRes, emergencyRes,
+        confirmWindowRes, activePlansRes,
       ] = await Promise.all([
         window.db.from('psy_orders').select('id, order_ref, patient_id, items, status, created_at').in('status', ['pending', 'paid', 'packed']).order('created_at', { ascending: false }),
         window.db.from('psy_plan_weekly_progress').select('id, session_date, status, patient_id').gte('session_date', _dayLo.toISOString()).lt('session_date', _dayHi.toISOString()).order('session_date', { ascending: true }),
@@ -2158,6 +2168,13 @@
         // Red Emergency Protocol — SEMUA alert aktif klinik (sama corak Manager/Doctor); kad khas sendiri
         // di bawah (renderEmergencyPanel), BUKAN dalam "Perlu Tindakan Segera".
         window.db.from('psy_emergency_alerts').select('id, patient_id, zon, status, reported_at, psy_patients(mrn, phone, psy_profiles!psy_patients_user_id_fkey(full_name))').neq('status', 'resolved').order('reported_at', { ascending: true }).then(r => r, () => ({ data: [] })),
+        // Audit #B2-20 (Tier 4) — sesi ditempah 7 hari akan datang, blm disahkan pesakit
+        // (sama tetingkap macam panel Pengesahan Sesi di kehadiran.html, elak dua sumber lari beza).
+        window.db.from('psy_plan_weekly_progress').select('id, patient_confirmed')
+          .eq('status', 'booked').gt('session_date', new Date().toISOString()).lte('session_date', new Date(Date.now() + 7 * 86400000).toISOString())
+          .then(r => r, () => ({ data: [] })),
+        // Audit #B2-21 (Tier 4) — utk kira pesakit aktif TANPA plan rawatan aktif.
+        window.db.from('psy_treatment_plans').select('patient_id').eq('status', 'active').then(r => r, () => ({ data: [] })),
       ]);
 
       const orders = ordersRes.data || [];
@@ -2170,6 +2187,26 @@
       const prPending = prPendingRes.data || [];
       const emergencyAlerts = emergencyRes.data || [];
       renderEmergencyPanel('a-emergency-list', emergencyAlerts);
+
+      // #B2-20 — belum disahkan = tiada patient_confirmed=true
+      const confirmPendingCount = (confirmWindowRes.data || []).filter(s => !s.patient_confirmed).length;
+      // #B2-21 — pesakit status 'active' tapi tiada baris psy_treatment_plans status 'active'
+      const activePlanPatientIds = new Set((activePlansRes.data || []).map(p => p.patient_id));
+      const noPlanPatients = patients.filter(p => p.status === 'active' && !activePlanPatientIds.has(p.id));
+      const noPlanWrap = document.getElementById('a-noplan-wrap');
+      if (noPlanPatients.length) {
+        noPlanWrap.classList.remove('hidden');
+        document.getElementById('a-noplan-count').textContent = `${noPlanPatients.length} pesakit`;
+        document.getElementById('a-noplan-list').innerHTML = noPlanPatients.slice(0, 20).map(p => {
+          const name = p.psy_profiles?.full_name || p.mrn || 'Pesakit';
+          return `<a href="patient-hub.html?patient_id=${p.id}" class="flex items-center justify-between gap-2 px-5 py-2.5 border-t border-ink/5 hover:bg-cream/20 no-underline">
+            <div class="min-w-0"><div class="text-[13px] font-semibold text-ink truncate">${esc(name)}</div><div class="text-[10px] text-ink/45 font-mono">${esc(p.mrn || '—')}</div></div>
+            <span class="text-[11px] font-semibold text-navy flex-shrink-0">Assign plan →</span>
+          </a>`;
+        }).join('') + (noPlanPatients.length > 20 ? `<div class="px-5 py-2 text-[11px] text-ink/40 border-t border-ink/5">+${noPlanPatients.length - 20} lagi — semak di patients.html</div>` : '');
+      } else {
+        noPlanWrap.classList.add('hidden');
+      }
 
       // ── Derived ──
       const openIssues = issuesRep.filter(i => !closedIds.has(i.id));
@@ -2195,6 +2232,8 @@
         statCard('📅', 'bg-blue-100', 'Sesi Rawatan Hari Ini', sessCount, 'Sesi dijadualkan', 'text-ink/40', apptTodayUrl()),
         statCard('💬', 'bg-purple-100', 'Report Issue Baru', issueCount, 'Perlu tindakan', issueCount ? 'text-purple-600 font-medium' : 'text-ink/40', 'issue.html'),
         statCard('🛒', 'bg-teal/10', 'Order Tertunggak', orderCount, 'Perlu diproses', orderCount ? 'text-teal font-medium' : 'text-ink/40', 'orders.html'),
+        statCard('⏳', 'bg-amber-100', 'Sesi Menunggu Pengesahan', confirmPendingCount, '7 hari akan datang', confirmPendingCount ? 'text-amber-600 font-medium' : 'text-ink/40', 'kehadiran.html'),
+        statCard('📋', 'bg-red-100', 'Pesakit Tanpa Plan Aktif', noPlanPatients.length, 'Perlu assign plan', noPlanPatients.length ? 'text-red-600 font-medium' : 'text-ink/40', noPlanPatients.length ? '#a-noplan-wrap' : 'patients.html'),
       ].join('');
 
       // ═══ JADUAL SESI HARI INI (senarai kronologi + pemilih hari) ═══

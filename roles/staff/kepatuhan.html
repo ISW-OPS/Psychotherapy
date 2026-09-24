@@ -57,7 +57,7 @@
           <div class="flex-1 min-w-0 bg-white rounded-2xl border border-[#edeff2] shadow-sm overflow-hidden">
             <div class="px-5 py-4 border-b border-ink/8 flex items-center justify-between gap-3 flex-wrap">
               <h3 class="font-semibold text-sm text-ink">Kepatuhan Pesakit — Minggu Ini</h3>
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
                 <select id="class-filter" class="text-xs border border-ink/15 rounded-lg px-2 py-1.5 bg-white text-ink focus:outline-none focus:ring-2 focus:ring-navy/20">
                   <option value="">Semua Tahap Kepatuhan</option>
                   <option value="st">Sangat Tinggi</option>
@@ -68,7 +68,19 @@
                   <option value="partial">Data Tidak Lengkap</option>
                   <option value="none">Belum isi</option>
                 </select>
+                <!-- Audit #B2-19 (Tier 4) — dulu cuma Tahap+carian wujud -->
+                <select id="program-filter" class="text-xs border border-ink/15 rounded-lg px-2 py-1.5 bg-white text-ink focus:outline-none focus:ring-2 focus:ring-navy/20">
+                  <option value="">Semua Program</option>
+                </select>
+                <select id="pakej-filter" class="text-xs border border-ink/15 rounded-lg px-2 py-1.5 bg-white text-ink focus:outline-none focus:ring-2 focus:ring-navy/20">
+                  <option value="">Semua Pakej</option>
+                </select>
+                <select id="coach-filter" class="text-xs border border-ink/15 rounded-lg px-2 py-1.5 bg-white text-ink focus:outline-none focus:ring-2 focus:ring-navy/20">
+                  <option value="">Semua Coach</option>
+                </select>
                 <input type="text" id="search" placeholder="Cari nama atau ID..." class="text-xs border border-ink/15 rounded-lg px-3 py-1.5 bg-white text-ink focus:outline-none focus:ring-2 focus:ring-navy/20 w-36">
+                <!-- Audit #B2-18 (Tier 4) — reminder terus dari senarai (dulu cuma dalam modal per-pesakit) -->
+                <button data-rbac="kepatuhan.edit" onclick="bulkReminder()" class="text-xs bg-amber-500 text-white px-3 py-1.5 rounded-lg font-semibold hover:bg-amber-600">🔔 Reminder "Belum Isi"</button>
               </div>
             </div>
             <div class="overflow-x-auto">
@@ -319,14 +331,18 @@ async function loadData(){
   document.getElementById('patient-table').innerHTML = '<div class="px-5 py-8 text-center text-sm text-ink/35">Memuatkan...</div>';
   const weekEnd = addDays(viewWeekStart, 6);
 
-  const [patientsRes, logsRes, weeklyRes, plansRes] = await Promise.all([
-    window.db.from('psy_patients').select('id, mrn, full_name, phone, status, active_package_id, package_expires_at').neq('status','deleted').neq('status','rejected'),
+  const [patientsRes, logsRes, weeklyRes, plansRes, packagesRes, coachesRes] = await Promise.all([
+    window.db.from('psy_patients').select('id, mrn, full_name, phone, status, active_package_id, package_expires_at, coach_id, psy_profiles!psy_patients_user_id_fkey(id)').neq('status','deleted').neq('status','rejected'),
     window.db.from('psy_kepatuhan_log')
       .select('patient_id, log_date, fasa, skor_harian, jawapan')
       .gte('log_date', viewWeekStart).lte('log_date', weekEnd),
     window.db.from('psy_kepatuhan_weekly')
       .select('patient_id, override_kelas, nota_coach').eq('minggu_mula', viewWeekStart),
     window.db.from('psy_treatment_plans').select('patient_id, name, created_at').then(r=>r).catch(()=>({data:[]})),
+    // Audit #B2-19 (Tier 4) — utk filter Pakej. active_package_id boleh UUID ATAU kod
+    // (lihat memori project_active_package_id_gotcha) — peta guna DUA-DUA kunci.
+    window.db.from('psy_packages').select('id, package_id, name').then(r=>r, () => ({ data: [] })),
+    window.db.from('psy_profiles').select('id, full_name').eq('role','staff').eq('staff_role','coach').then(r=>r, () => ({ data: [] })),
   ]);
 
   const _nowIso = new Date().toISOString();
@@ -339,6 +355,10 @@ async function loadData(){
     const cur = programByPatient[pl.patient_id];
     if (!cur || (pl.created_at || '') > cur._t) programByPatient[pl.patient_id] = { name: pl.name, _t: pl.created_at || '' };
   });
+  const pkgMap = {};
+  (packagesRes.data || []).forEach(pk => { pkgMap[pk.id] = pk.name; if (pk.package_id) pkgMap[pk.package_id] = pk.name; });
+  const coachMap = {};
+  (coachesRes.data || []).forEach(c => { coachMap[c.id] = c.full_name; });
 
   const logsByPatient = {};
   logs.forEach(l => { (logsByPatient[l.patient_id] ||= []).push(l); });
@@ -356,7 +376,11 @@ async function loadData(){
       id: p.id, mrn: p.mrn,
       name: p.full_name || p.mrn || 'Pesakit',
       phone: p.phone || '',
+      profileId: p.psy_profiles?.id || null,
       program: programByPatient[p.id]?.name || '—',
+      pakej: pkgMap[p.active_package_id] || '—',
+      coachId: p.coach_id || '',
+      coachName: coachMap[p.coach_id] || '—',
       filled: pl.length, avg, autoClass,
       override: ov?.override_kelas || null,
       note: ov?.nota_coach || '',
@@ -364,11 +388,29 @@ async function loadData(){
     };
   });
 
+  populateFilterOptions();
   currentPage = 1;
   renderPie();
   renderTable();
   renderHeatmap();
   renderTrendChart().catch(() => {});
+}
+
+// Audit #B2-19 (Tier 4) — isi pilihan Program/Pakej/Coach dari data sedia-ada (dedup),
+// kekalkan pilihan semasa staf kalau masih wujud selepas navigasi minggu.
+function populateFilterOptions() {
+  const fillSelect = (id, values, keepVal) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const uniq = [...new Set(values.filter(v => v && v !== '—'))].sort((a, b) => a.localeCompare(b));
+    const cur = keepVal ?? el.value;
+    el.innerHTML = `<option value="">${el.dataset.allLabel || el.options[0].textContent}</option>` +
+      uniq.map(v => `<option value="${escHtml(v)}">${escHtml(v)}</option>`).join('');
+    if (cur && uniq.includes(cur)) el.value = cur;
+  };
+  fillSelect('program-filter', rows.map(r => r.program));
+  fillSelect('pakej-filter', rows.map(r => r.pakej));
+  fillSelect('coach-filter', rows.map(r => r.coachName));
 }
 
 function renderPie(){
@@ -452,9 +494,15 @@ function effClass(r){ return r.override || r.autoClass; }
 function filteredRows(){
   const f = document.getElementById('class-filter').value;
   const q = (document.getElementById('search').value||'').toLowerCase().trim();
+  const fProgram = document.getElementById('program-filter')?.value || '';
+  const fPakej = document.getElementById('pakej-filter')?.value || '';
+  const fCoach = document.getElementById('coach-filter')?.value || '';
   return rows.filter(r => {
     if (q && !r.name.toLowerCase().includes(q) && !(r.mrn||'').toLowerCase().includes(q)) return false;
     if (f && rowTier(r).key !== f) return false;           // tapis ikut tahap (5-aras)
+    if (fProgram && r.program !== fProgram) return false;  // audit #B2-19
+    if (fPakej && r.pakej !== fPakej) return false;
+    if (fCoach && r.coachName !== fCoach) return false;
     return true;
   }).sort((a,b)=>{                                          // skor rendah dahulu (perlu perhatian)
     const sa = a.avg==null?999:a.avg, sb = b.avg==null?999:b.avg;
@@ -499,7 +547,8 @@ function renderTable(){
       </td>
       <td class="py-3 px-2 text-center"><span class="text-sm font-bold ${r.filled>=6?'text-green-700':r.filled>0?'text-amber-600':'text-ink/30'}">${r.filled}</span><span class="text-[10px] text-ink/35">/7</span></td>
       <td class="py-3 px-2"><span class="text-[12px] font-semibold leading-tight ${STATUS5_COLOR[t.key]}">${STATUS5[t.key]}</span></td>
-      <td class="py-3 px-4 text-right">
+      <td class="py-3 px-4 text-right whitespace-nowrap">
+        ${r.filled === 0 && r.phone ? `<button data-rbac="kepatuhan.edit" onclick="event.stopPropagation(); sendReminder('${r.id}')" title="Hantar reminder isi Catatan Harian" class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-amber-200 text-amber-600 hover:border-amber-400 mr-1">🔔</button>` : ''}
         <button onclick="openModal('${r.id}')" title="Lihat detail kepatuhan" class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-ink/15 hover:border-navy hover:text-navy text-ink/50">👁</button>
       </td>
     </tr>`;
@@ -511,6 +560,43 @@ function renderTable(){
   tbody.innerHTML = bodyHtml;
   renderPagination(list.length, pages);
 }
+
+// Audit #B2-18 (Tier 4) — reminder terus dari senarai (dulu cuma butang "Mesej
+// Pesakit" di dalam modal per-pesakit, tiada cara pantas/pukal utk "Belum Isi").
+async function sendReminder(id){
+  const r = rows.find(x=>x.id===id); if(!r) return;
+  try {
+    if (r.profileId) {
+      await notify(r.profileId, 'kepatuhan',
+        'Peringatan: Isi Catatan Harian',
+        `Anda belum isi Catatan Harian minggu ${fmtRange(viewWeekStart)}. Sila isi supaya coach dapat pantau kemajuan anda.`,
+        '../patient/kepatuhan.html');
+    }
+    if (typeof auditLog === 'function') { try { await auditLog('kepatuhan.reminder_sent', id, { week: viewWeekStart, bulk: false }); } catch(_){} }
+    if (r.phone) window.open(`https://wa.me/${r.phone.replace(/\D/g,'')}?text=${encodeURIComponent(`Assalamualaikum ${r.name}, jangan lupa isi Catatan Harian anda hari ini ya 😊`)}`, '_blank');
+    banner(`Reminder dihantar kepada ${r.name} ✓`);
+  } catch(e){ banner('Ralat: '+e.message, 'error'); }
+}
+window.sendReminder = sendReminder;
+
+async function bulkReminder(){
+  const target = filteredRows().filter(r => r.filled === 0 && r.profileId);
+  if (!target.length) { banner('Tiada pesakit "Belum Isi" (dgn akaun) dalam senarai tertapis ini.', 'error'); return; }
+  if (!confirm(`Hantar reminder dalam-app kepada ${target.length} pesakit "Belum Isi"?`)) return;
+  let sent = 0;
+  for (const r of target) {
+    try {
+      await notify(r.profileId, 'kepatuhan',
+        'Peringatan: Isi Catatan Harian',
+        `Anda belum isi Catatan Harian minggu ${fmtRange(viewWeekStart)}. Sila isi supaya coach dapat pantau kemajuan anda.`,
+        '../patient/kepatuhan.html');
+      sent++;
+    } catch(_) {}
+  }
+  if (typeof auditLog === 'function') { try { await auditLog('kepatuhan.reminder_sent', null, { week: viewWeekStart, bulk: true, count: sent }); } catch(_){} }
+  banner(`Reminder dihantar kepada ${sent}/${target.length} pesakit ✓`);
+}
+window.bulkReminder = bulkReminder;
 
 function gotoPage(p){ currentPage = p; renderTable(); }
 function renderPagination(total, pages){
@@ -828,17 +914,20 @@ function heatmapData(srcRows, denomDays){
   const cols=SCORED_ORDER.map(k=>({ key:k, label:ITEM_LABEL[k]||k, short:SHORT_LABEL[k]||(ITEM_LABEL[k]||k) }));
   const active=srcRows.filter(r=>r.logs && r.logs.length>0);
   const data=active.map(r=>({
-    name:r.name, mrn:r.mrn||'',
+    id:r.id, name:r.name, mrn:r.mrn||'',
     overall:avgScore(r.logs, denomDays),
     cells:cols.map(c=>itemPct(r.logs, c.key, denomDays)),
   })).sort((a,b)=>(a.overall==null?999:a.overall)-(b.overall==null?999:b.overall));
   return { cols, data };
 }
 function hmCellCls(p){ return p==null?'bg-ink/[0.03] text-ink/30':p<=50?'bg-red-100 text-red-700':p<85?'bg-amber-100 text-amber-700':'bg-green-100 text-green-700'; }
+// Audit #B2-35 (Tier 4) — subtitle heatmap dah janji "klik untuk buka" sejak awal
+// tapi baris tiada onclick langsung. Klik baris = buka modal pesakit (dah ada
+// pecahan skor per-amalan penuh di situ — itu "drill-down ke pesakit+amalan").
 function heatmapHtml(hd){
   if(!hd.data.length) return '<p class="text-sm text-ink/35">Tiada pesakit isi pada tempoh ini.</p>';
   const headCols=hd.cols.map(c=>`<th class="px-2 py-2 text-[10px] font-bold text-ink/45 text-center whitespace-nowrap">${escHtml(c.short)}</th>`).join('');
-  const body=hd.data.map((r,i)=>`<tr class="border-b border-ink/5">
+  const body=hd.data.map((r,i)=>`<tr class="border-b border-ink/5 hover:bg-navy-light/10 cursor-pointer" onclick="openModal('${r.id}')" title="Klik untuk buka pecahan pesakit ini">
       <td class="px-2 py-1.5 text-xs text-ink/35">${i+1}</td>
       <td class="px-2 py-1.5"><div class="text-sm font-medium text-ink whitespace-nowrap">${escHtml(r.name)}</div><div class="text-[10px] font-mono text-navy/50">${escHtml(r.mrn)}</div></td>
       <td class="px-2 py-1.5 text-center"><span class="text-xs font-bold ${r.overall==null?'text-ink/30':r.overall<=50?'text-red-600':r.overall<85?'text-amber-600':'text-green-700'}">${r.overall!=null?r.overall+'%':'—'}</span></td>
@@ -1144,9 +1233,9 @@ async function loadMonthly(){
     });
     const denomM=elapsedDays(first,last);
     const mavg=monthLogs.length?Math.round(monthLogs.reduce((a,l)=>a+(l.skor_harian!=null?l.skor_harian:0),0)/Math.max(denomM,1)):null;
-    return { mrn:p.mrn, name:p.full_name||p.mrn||'Pesakit', wcls, mavg, mclass:classify(mavg), logs:monthLogs };
+    return { id:p.id, mrn:p.mrn, name:p.full_name||p.mrn||'Pesakit', wcls, mavg, mclass:classify(mavg), logs:monthLogs };
   });
-  const monthHd = heatmapData(data.map(d=>({ name:d.name, mrn:d.mrn, logs:d.logs })), elapsedDays(first,last));
+  const monthHd = heatmapData(data.map(d=>({ id:d.id, name:d.name, mrn:d.mrn, logs:d.logs })), elapsedDays(first,last));
   monthData={ weeks, data, heatmap: monthHd };
 
   const head=['#','ID','Nama',...weeks.map((w,i)=>`M${i+1}`),'Purata','Kelas'];
@@ -1204,6 +1293,9 @@ document.addEventListener('click', (e)=>{
 });
 document.getElementById('class-filter').addEventListener('change', () => { currentPage = 1; renderTable(); });
 document.getElementById('search').addEventListener('input', () => { currentPage = 1; renderTable(); });
+document.getElementById('program-filter').addEventListener('change', () => { currentPage = 1; renderTable(); });
+document.getElementById('pakej-filter').addEventListener('change', () => { currentPage = 1; renderTable(); });
+document.getElementById('coach-filter').addEventListener('change', () => { currentPage = 1; renderTable(); });
 
 (async () => {
   const user = await initStaff('kepatuhan', 'Laporan Kepatuhan');
