@@ -111,6 +111,32 @@ window.attachInventoryForecast = async function (items) {
   return items;
 };
 
+// Audit #E-21 (Tier 4) — bezakan "item tak pernah dikaitkan ke mana-mana pakej
+// langsung" drpd "dikaitkan tapi kebetulan tiada sesi dijadualkan dlm tempoh
+// forecast sekarang" (forecast_required=0 diam-diam sebelum ni, dua kes nampak
+// sama). Imbas SEMUA psy_packages.coaching_schedule (bukan date-scoped macam
+// computeForecastForRange) → satu Set item_id yg PERNAH disebut dlm mana-mana
+// pakej, tak kira ada sesi aktif ke tidak sekarang.
+window.computeMappedItemIds = async function () {
+  const { data: pkgs, error } = await window.db.from('psy_packages').select('coaching_schedule');
+  if (error) { console.error('[inventoryForecast] gagal baca pakej:', error); return new Set(); }
+  const ids = new Set();
+  (pkgs || []).forEach(pk => {
+    (Array.isArray(pk.coaching_schedule) ? pk.coaching_schedule : []).forEach(w => {
+      (Array.isArray(w?.supplies) ? w.supplies : []).forEach(s => { if (s?.item_id) ids.add(s.item_id); });
+    });
+  });
+  return ids;
+};
+
+// Lampirkan item.is_pkg_mapped (boolean, statik — bukan date-scoped) pada setiap item.
+window.attachPackageMappingFlag = async function (items) {
+  if (!items?.length) return items;
+  const mapped = await window.computeMappedItemIds();
+  items.forEach(i => { i.is_pkg_mapped = mapped.has(i.id); });
+  return items;
+};
+
 // Helper: julat tarikh ISO (YYYY-MM-DD) untuk "minggu ini" (Isnin-Ahad) / "bulan ini".
 window.inventoryForecastRange = function (period) {
   const now = new Date();

@@ -42,6 +42,36 @@
           </select>
         </div>
 
+        <!-- Audit #E-22 (Tier 4) — amaran proaktif bila Current Stock (psy_inventory_items.qty_in_stock)
+             tak sepadan dgn jumlah Stock by Location. Trigger DB (psy_sync_item_stock_total) sepatutnya
+             elak ni terus, tapi edit manual DB/migration lama boleh terlepas trigger — safety net paparan. -->
+        <div id="recon-alert-wrap" class="hidden">
+          <div class="bg-amber-50 border border-amber-300 rounded-xl overflow-hidden">
+            <button onclick="toggleReconPanel()" class="w-full flex items-center justify-between px-4 py-3 hover:bg-amber-100/50 transition-colors">
+              <div class="flex items-center gap-2">
+                <span class="text-lg">⚠️</span>
+                <span class="font-semibold text-sm text-amber-700">Stok Tidak Sepadan — Current Stock vs Stock by Location</span>
+                <span id="recon-badge" class="bg-amber-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full"></span>
+              </div>
+              <span id="recon-chevron" class="text-amber-700 text-sm font-bold">▼</span>
+            </button>
+            <div id="recon-panel" class="hidden border-t border-amber-200">
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="bg-amber-50/60 text-left">
+                      <th class="px-4 py-2 text-[10px] font-semibold text-amber-700 uppercase">Item</th>
+                      <th class="px-4 py-2 text-[10px] font-semibold text-amber-700 uppercase text-center">Current Stock</th>
+                      <th class="px-4 py-2 text-[10px] font-semibold text-amber-700 uppercase text-center">Jumlah Stock by Location</th>
+                    </tr>
+                  </thead>
+                  <tbody id="recon-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Stat Cards -->
         <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
           <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
@@ -220,7 +250,34 @@ async function loadOverview() {
   renderLocationBars();
   renderPendingRequests(reqRes.data || []);
   renderTopLowStock(activeItems);
+  renderReconciliation();
   await loadMovements();
+}
+
+// Audit #E-22 (Tier 4) — banding qty_in_stock (jumlah automatik trigger) dgn SUM
+// baris stock_by_location SEBENAR untuk item tu. Item tanpa sebarang baris lokasi
+// (tak location-tracked langsung) dilangkau — bukan "tak sepadan", cuma tiada data.
+function toggleReconPanel() {
+  document.getElementById('recon-panel').classList.toggle('hidden');
+}
+function renderReconciliation() {
+  const wrap = document.getElementById('recon-alert-wrap');
+  const locSum = {};
+  const hasLocRows = new Set();
+  stockByLocationRows.forEach(r => {
+    hasLocRows.add(r.item_id);
+    locSum[r.item_id] = (locSum[r.item_id] || 0) + (Number(r.qty_in_stock) || 0);
+  });
+  const mismatches = allItems.filter(i => hasLocRows.has(i.id) && Math.abs((Number(i.qty_in_stock) || 0) - (locSum[i.id] || 0)) >= 0.01);
+  if (!mismatches.length) { wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden');
+  document.getElementById('recon-badge').textContent = mismatches.length;
+  document.getElementById('recon-tbody').innerHTML = mismatches.map(i => `
+    <tr class="border-t border-amber-100">
+      <td class="px-4 py-2"><a href="inventory-detail.html?id=${i.id}" class="text-navy font-medium hover:underline">${escHtml(i.name)}</a></td>
+      <td class="px-4 py-2 text-center font-semibold">${Number(i.qty_in_stock) || 0}</td>
+      <td class="px-4 py-2 text-center font-semibold text-amber-700">${locSum[i.id] || 0}</td>
+    </tr>`).join('');
 }
 
 function renderPendingRequests(rows) {

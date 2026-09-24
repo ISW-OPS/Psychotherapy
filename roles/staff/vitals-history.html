@@ -68,6 +68,21 @@
                 <option value="critical">Kritikal</option>
               </select>
             </div>
+            <!-- Audit #B2-12 (Tier 4) — dulu cuma tarikh+status+carian, tiada sumber/pakej -->
+            <div>
+              <label class="text-[10px] font-bold text-ink/40 uppercase tracking-wide">Sumber</label>
+              <select id="vh-source" onchange="loadVitals()" class="block mt-1 px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
+                <option value="">Semua Sumber</option>
+                <option value="staff">Staff</option>
+                <option value="patient_self">Pesakit</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-[10px] font-bold text-ink/40 uppercase tracking-wide">Pakej</label>
+              <select id="vh-pakej" onchange="applyFilters()" class="block mt-1 px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:border-navy outline-none">
+                <option value="">Semua Pakej</option>
+              </select>
+            </div>
             <button onclick="resetFilters()" class="px-3 py-2.5 border border-ink/15 rounded-lg text-sm bg-white hover:bg-ink/5">↻ Reset</button>
           </div>
           <div class="flex flex-wrap gap-1.5">
@@ -193,7 +208,19 @@ function resetFilters() {
   document.getElementById('vh-from').value = '';
   document.getElementById('vh-to').value = '';
   document.getElementById('vh-status').value = '';
+  document.getElementById('vh-source').value = '';
+  document.getElementById('vh-pakej').value = '';
   loadVitals();
+}
+
+// Audit #B2-12 — active_package_id boleh UUID ATAU kod (rujuk memori
+// project_active_package_id_gotcha), peta guna DUA-DUA kunci.
+let pkgMap = {};
+async function loadPkgMap() {
+  const { data } = await window.db.from('psy_packages').select('id, package_id, name').then(r => r, () => ({ data: [] }));
+  (data || []).forEach(pk => { pkgMap[pk.id] = pk.name; if (pk.package_id) pkgMap[pk.package_id] = pk.name; });
+  const opts = [...new Set(Object.values(pkgMap))].sort((a, b) => a.localeCompare(b));
+  document.getElementById('vh-pakej').innerHTML = '<option value="">Semua Pakej</option>' + opts.map(n => `<option value="${escHtml(n)}">${escHtml(n)}</option>`).join('');
 }
 
 function toggleExportMenu() { document.getElementById('vh-export-menu').classList.toggle('hidden'); }
@@ -216,11 +243,16 @@ function setPage(p) { currentPage = Math.min(Math.max(1, p), maxPage()); renderT
 
 function applyFilters() {
   const q = document.getElementById('vh-search').value.trim().toLowerCase();
-  filteredRows = !q ? allRows.slice() : allRows.filter(v => {
-    const n = nameOf(v.psy_patients).toLowerCase();
-    const mrn = (v.psy_patients?.mrn || '').toLowerCase();
-    const phone = (v.psy_patients?.phone || '').toLowerCase();
-    return n.includes(q) || mrn.includes(q) || phone.includes(q);
+  const pakejFilter = document.getElementById('vh-pakej')?.value || '';
+  filteredRows = allRows.filter(v => {
+    if (q) {
+      const n = nameOf(v.psy_patients).toLowerCase();
+      const mrn = (v.psy_patients?.mrn || '').toLowerCase();
+      const phone = (v.psy_patients?.phone || '').toLowerCase();
+      if (!n.includes(q) && !mrn.includes(q) && !phone.includes(q)) return false;
+    }
+    if (pakejFilter && (pkgMap[v.psy_patients?.active_package_id] || '') !== pakejFilter) return false;
+    return true;
   });
   filteredRows.sort((a, b) => {
     let cmp;
@@ -332,14 +364,16 @@ async function loadVitals() {
   const from = document.getElementById('vh-from').value;
   const to = document.getElementById('vh-to').value;
   const status = document.getElementById('vh-status').value;
+  const source = document.getElementById('vh-source')?.value || '';
   let q = window.db.from('psy_vitals')
-    .select('*, psy_patients(mrn, full_name, phone, psy_profiles!psy_patients_user_id_fkey(full_name))');
+    .select('*, psy_patients(mrn, full_name, phone, active_package_id, psy_profiles!psy_patients_user_id_fkey(full_name))');
   if (scopedPatientId) q = q.eq('patient_id', scopedPatientId);
   if (from) q = q.gte('reading_date', from);
   if (to) q = q.lte('reading_date', to);
   if (status === 'normal') q = q.eq('is_abnormal', false);
   if (status === 'abnormal') q = q.eq('is_abnormal', true).eq('is_critical', false);
   if (status === 'critical') q = q.eq('is_critical', true);
+  if (source) q = q.eq('source', source);
   q = q.order('reading_date', { ascending: false, nullsFirst: false })
        .order('reading_time', { ascending: false, nullsFirst: false })
        .order('created_at', { ascending: false })
@@ -444,7 +478,9 @@ async function exportScheduleExcel() {
   const params = new URLSearchParams(location.search);
   scopedPatientId = params.get('patient_id');
   const statusParam = params.get('status');
-  if (statusParam === 'abnormal' || statusParam === 'normal') document.getElementById('vh-status').value = statusParam;
+  if (['abnormal', 'normal', 'critical'].includes(statusParam)) document.getElementById('vh-status').value = statusParam;
+  // Audit #B2-9 (Tier 4) — kad KPI di vitals.html kini boleh klik, hantar ?chip=today dsb
+  const chipParam = params.get('chip');
 
   if (scopedPatientId) {
     document.getElementById('vh-search-wrap').classList.add('hidden');
@@ -453,7 +489,8 @@ async function exportScheduleExcel() {
     if (p) document.getElementById('vh-title').textContent = `Sejarah Bacaan — ${nameOf(p)}`;
   }
 
-  await loadVitals();
+  await loadPkgMap();
+  if (chipParam) applyChip(chipParam); else await loadVitals();
 })();
 </script>
 </body>
