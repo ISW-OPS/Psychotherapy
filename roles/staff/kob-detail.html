@@ -154,8 +154,7 @@
                       data-rbac="kob.edit" class="accent-navy"> 💻 Online
                   </label>
                 </div>
-                <button type="button" id="btn-reschedule-kob" onclick="openRescheduleKobModal()" data-rbac="kob.edit"
-                  class="hidden text-xs font-semibold text-navy hover:underline mt-1">🔄 Tukar Jadual</button>
+                <div id="reschedule-kob-btn-wrap" class="mt-1"></div>
               </div>
               <div>
                 <div class="text-xs text-ink/50">STATUS</div>
@@ -839,7 +838,13 @@
       const modeEl = document.getElementById('kob-mode');
       const modeGroup = document.getElementById('kob-mode-group');
       const canEditMode = (kob.status === 'booked' || kob.status === 'reschedule');
-      document.getElementById('btn-reschedule-kob').classList.toggle('hidden', !canEditMode);
+      // Bina butang secara dinamik (bukan toggle class "hidden" statik) — elemen
+      // bertag data-rbac yg mula "hidden" akan di-unhide semula oleh applyRbacUI()
+      // (authGuard.js) setiap kali DOM berubah, jadi toggle status di sini akan
+      // "kalah" dan butang nampak walaupun status dah bukan booked/reschedule.
+      document.getElementById('reschedule-kob-btn-wrap').innerHTML = canEditMode
+        ? '<button type="button" onclick="openRescheduleKobModal()" data-rbac="kob.edit" class="text-xs font-semibold text-navy hover:underline">🔄 Tukar Jadual</button>'
+        : '';
       if (canEditMode) {
         modeEl.classList.add('hidden');
         modeGroup.classList.remove('hidden');
@@ -4029,13 +4034,16 @@
 
       const newScheduledAt = new Date(`${date}T${slotStart}`).toISOString();
       const oldScheduledAt = kob.scheduled_at;
-      const updates = { scheduled_at: newScheduledAt, updated_at: new Date().toISOString() };
+      const oldStatus = kob.status;
+      // Slot baharu dah ditetapkan → sesi kembali "Ditempah", bukan lagi "Reschedule"
+      // (status ni cuma bendera "perlu tukar tarikh", bukan keadaan kekal).
+      const updates = { scheduled_at: newScheduledAt, status: 'booked', updated_at: new Date().toISOString() };
 
       try {
         const { error } = await window.db.from('psy_kob_sessions').update(updates).eq('id', kobId);
         if (error) throw error;
         Object.assign(kob, updates);
-        await auditLog('kob.rescheduled', kobId, { from: oldScheduledAt, to: newScheduledAt });
+        await auditLog('kob.rescheduled', kobId, { from: oldScheduledAt, to: newScheduledAt, status_from: oldStatus, status_to: 'booked' });
 
         if (patient?.user_id) {
           const nd = new Date(newScheduledAt);
