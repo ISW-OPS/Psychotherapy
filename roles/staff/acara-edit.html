@@ -324,7 +324,7 @@ async function saveEdit() {
       title, description: content || summary, tag: category || null, audience, package_ids: packageIds,
       start_at: new Date(`${date}T${start}`).toISOString(),
       end_at: end ? new Date(`${edate}T${end}`).toISOString() : null,
-      mode, meet_link: mode === 'online' ? link : null, maps_url: mode === 'f2f' ? link : null,
+      mode, maps_url: mode === 'f2f' ? link : null,
       location: document.getElementById('f-locname')?.value.trim() || null,
       capacity: document.getElementById('f-capacity')?.value ? parseInt(document.getElementById('f-capacity').value) : null,
       host: document.getElementById('f-host')?.value.trim() || null,
@@ -334,6 +334,8 @@ async function saveEdit() {
     if (imgData) payload.cover_image = imgData;
     const { error } = await window.db.from('psy_events').update(payload).eq('id', IT.id);
     if (error) throw error;
+    // Audit #H-36 (Tier 5) — meet_link disimpan berasingan (psy_event_meet_links)
+    await window.db.from('psy_event_meet_links').upsert({ event_id: IT.id, meet_link: mode === 'online' ? link : null, updated_at: new Date().toISOString() });
     banner('Perubahan disimpan ✅');
     setTimeout(() => location.href = 'acara-detail.html?id=' + IT.id, 700);
   } catch (e) { fail('Ralat: ' + e.message); }
@@ -361,6 +363,8 @@ async function toggleActive() {
     IT = item;
     if (IT.created_by) { const { data: prof } = await window.db.from('psy_profiles').select('full_name').eq('id', IT.created_by).maybeSingle(); CREATOR = prof?.full_name || ''; }
     try { const { data: pkgs } = await window.db.from('psy_packages').select('package_id, name').order('name', { ascending: true }); PACKAGES = pkgs || []; } catch (_) {}
+    // Audit #H-36 (Tier 5) — meet_link kini di psy_event_meet_links (staf full access)
+    try { const { data: ml } = await window.db.from('psy_event_meet_links').select('meet_link').eq('event_id', IT.id).maybeSingle(); IT.meet_link = ml?.meet_link || null; } catch (_) {}
     render();
   } catch (e) {
     document.getElementById('edit-body').innerHTML = `<div class="lg:col-span-3 bg-terracotta/10 text-terracotta rounded-xl p-4 text-sm">Ralat: ${e.message}</div>`;

@@ -365,7 +365,6 @@ async function submitForm(statusVal) {
       location: locname || null,
       address: document.getElementById('f-address').value.trim() || null,
       maps_url: mode !== 'online' ? mapurl : null,
-      meet_link: mode === 'online' ? mapurl : null,
       capacity: document.getElementById('f-capacity').value ? parseInt(document.getElementById('f-capacity').value) : null,
       host: document.getElementById('f-host').value.trim() || null,
       host_role: document.getElementById('f-host').value.trim() ? document.getElementById('f-host-role').value : null,
@@ -375,6 +374,11 @@ async function submitForm(statusVal) {
     };
     const { data: inserted, error } = await window.db.from('psy_events').insert(payload).select('id').single();
     if (error) throw error;
+    // Audit #H-36 (Tier 5) — meet_link disimpan berasingan (psy_event_meet_links,
+    // RLS-gated ikut pendaftaran), bukan lajur terus di psy_events.
+    if (mode === 'online' && mapurl) {
+      await window.db.from('psy_event_meet_links').upsert({ event_id: inserted.id, meet_link: mapurl, updated_at: new Date().toISOString() });
+    }
     banner('Acara disimpan ✅');
     setTimeout(() => location.href = 'acara-detail.html?id=' + inserted.id, 700);
   } catch (e) {

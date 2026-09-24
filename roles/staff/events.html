@@ -294,7 +294,7 @@ function renderEvents() {
   document.getElementById('ev-pager').innerHTML = pages > 1 ? pg : '';
 }
 
-function openEventModal(id) {
+async function openEventModal(id) {
   const ev = id ? allEvents.find(e => e.id === id) : null;
   document.getElementById('ev-modal-title').textContent = ev ? '✏️ Edit Acara' : '📅 Acara Baru';
   const set = (k, v) => document.getElementById('ev-' + k).value = v ?? '';
@@ -302,11 +302,16 @@ function openEventModal(id) {
   set('title', ev?.title); set('type', ev?.type || 'kelas'); set('tag', ev?.tag);
   set('start', toLocalInput(ev?.start_at)); set('end', toLocalInput(ev?.end_at));
   set('mode', ev?.mode || 'online'); set('capacity', ev?.capacity);
-  set('meet', ev?.meet_link); set('location', ev?.location); set('host', ev?.host);
+  set('meet', ''); set('location', ev?.location); set('host', ev?.host);
   set('price', ev?.price ?? 0); set('desc', ev?.description); set('recording', ev?.recording_url);
   set('status', ev?.status || 'published');
   document.getElementById('ev-error').classList.add('hidden');
   document.getElementById('ev-modal').classList.remove('hidden');
+  // Audit #H-36 (Tier 5) — meet_link kini di psy_event_meet_links (staf full access)
+  if (ev?.id) {
+    const { data: ml } = await window.db.from('psy_event_meet_links').select('meet_link').eq('event_id', ev.id).maybeSingle();
+    set('meet', ml?.meet_link || '');
+  }
 }
 function closeEventModal() { document.getElementById('ev-modal').classList.add('hidden'); }
 
@@ -325,7 +330,6 @@ async function saveEvent() {
     end_at: v('end') ? new Date(v('end')).toISOString() : null,
     mode: v('mode'),
     capacity: v('capacity') ? parseInt(v('capacity')) : null,
-    meet_link: v('meet') || null,
     location: v('location') || null,
     host: v('host') || null,
     price: parseFloat(v('price')) || 0,
@@ -338,6 +342,7 @@ async function saveEvent() {
   btn.disabled = true; btn.textContent = 'Menyimpan...';
   try {
     const id = document.getElementById('ev-id').value;
+    let eventId = id;
     if (id) {
       const prev = allEvents.find(e => e.id === id);
       const { error } = await window.db.from('psy_events').update(payload).eq('id', id);
@@ -346,9 +351,12 @@ async function saveEvent() {
       if (payload.status === 'cancelled' && prev && prev.status !== 'cancelled') notifyCancellation(id, title);
     } else {
       payload.created_by = window.currentUser.id;
-      const { error } = await window.db.from('psy_events').insert(payload);
+      const { data: inserted, error } = await window.db.from('psy_events').insert(payload).select('id').single();
       if (error) throw error;
+      eventId = inserted.id;
     }
+    // Audit #H-36 (Tier 5) — meet_link disimpan berasingan (psy_event_meet_links)
+    await window.db.from('psy_event_meet_links').upsert({ event_id: eventId, meet_link: v('meet') || null, updated_at: new Date().toISOString() });
     banner('Acara disimpan ✅');
     closeEventModal();
     await loadEvents();

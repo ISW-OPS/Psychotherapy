@@ -74,7 +74,6 @@ CREATE TABLE IF NOT EXISTS psy_events (
   start_at              TIMESTAMPTZ NOT NULL,
   end_at                TIMESTAMPTZ,
   mode                  TEXT DEFAULT 'online',
-  meet_link             TEXT,
   location              TEXT,
   address               TEXT,
   maps_url              TEXT,
@@ -104,6 +103,37 @@ DROP POLICY IF EXISTS "events staff manage" ON psy_events;
 CREATE POLICY "events staff manage" ON psy_events FOR ALL
   USING (auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff'))
   WITH CHECK (auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff'));
+
+-- ──── psy_event_meet_links (audit #H-36, Tier 5) ────
+-- meet_link SENGAJA DIKELUARKAN dari psy_events (lihat migration
+-- 20260924_event_meet_link_capacity.sql utk ALTER TABLE DROP COLUMN + backfill
+-- data sedia ada) — RLS Postgres cuma boleh benar/tolak SEBARIS, bukan sembunyi
+-- SATU LAJUR sahaja. Dulu meet_link tinggal dlm psy_events (dibaca terus lepas
+-- event 'published', tak kira pesakit dah daftar atau belum; UI event-detail.html
+-- cuma sorok butang client-side, data sebenar tetap ADA dlm respons API). Jadual
+-- berasingan + RLS sendiri tutup jurang tu betul-betul. Staf (acara-baru.html/
+-- acara-edit.html/acara-detail.html/events.html) baca/tulis terus jadual ni.
+CREATE TABLE IF NOT EXISTS psy_event_meet_links (
+  event_id   UUID PRIMARY KEY REFERENCES psy_events(id) ON DELETE CASCADE,
+  meet_link  TEXT,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE psy_event_meet_links ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage event meet links" ON psy_event_meet_links;
+CREATE POLICY "Staff manage event meet links" ON psy_event_meet_links FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Registered patients read meet link" ON psy_event_meet_links;
+CREATE POLICY "Registered patients read meet link" ON psy_event_meet_links FOR SELECT
+  USING (EXISTS (
+    SELECT 1 FROM psy_event_registrations r
+    JOIN psy_patients p ON p.id = r.patient_id
+    WHERE r.event_id = psy_event_meet_links.event_id
+      AND p.user_id = auth.uid() AND r.status <> 'batal'
+  ));
 
 -- ──── psy_event_registrations (pendaftaran acara) ────
 CREATE TABLE IF NOT EXISTS psy_event_registrations (
@@ -138,6 +168,41 @@ CREATE POLICY "regs patient update" ON psy_event_registrations FOR UPDATE USING 
 DROP POLICY IF EXISTS "regs staff delete" ON psy_event_registrations;
 CREATE POLICY "regs staff delete" ON psy_event_registrations FOR DELETE USING (
   auth.uid() IN (SELECT id FROM psy_profiles WHERE role = 'staff'));
+
+-- ──── Trigger: kuatkuasa kapasiti acara (audit #H-35, Tier 5) ────
+-- Dulu client terus upsert tanpa apa-apa semakan — kapasiti cuma paparan
+-- ("6 sesi/8 slot" style), tak dikuatkuasa langsung. Server-side (bukan
+-- client) supaya tak boleh dipintas — staf (INSERT terus dari admin,
+-- cth manual add) tetap dibenarkan lepas kapasiti (override sengaja).
+CREATE OR REPLACE FUNCTION trg_enforce_event_capacity()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_capacity INT;
+  v_count    INT;
+  v_is_staff BOOLEAN;
+BEGIN
+  IF NEW.status = 'batal' THEN RETURN NEW; END IF;
+  SELECT EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff') INTO v_is_staff;
+  IF v_is_staff THEN RETURN NEW; END IF;
+
+  SELECT capacity INTO v_capacity FROM psy_events WHERE id = NEW.event_id;
+  IF v_capacity IS NULL THEN RETURN NEW; END IF;
+
+  SELECT COUNT(*) INTO v_count FROM psy_event_registrations
+    WHERE event_id = NEW.event_id AND status <> 'batal' AND id <> COALESCE(NEW.id, '00000000-0000-0000-0000-000000000000'::uuid);
+  IF v_count >= v_capacity THEN
+    RAISE EXCEPTION 'Acara ini telah penuh (kapasiti % peserta).', v_capacity;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_enforce_event_capacity ON psy_event_registrations;
+CREATE TRIGGER trg_enforce_event_capacity
+  BEFORE INSERT OR UPDATE ON psy_event_registrations
+  FOR EACH ROW EXECUTE FUNCTION trg_enforce_event_capacity();
 
 -- ──── psy_event_materials (bahan / rakaman acara) ────
 CREATE TABLE IF NOT EXISTS psy_event_materials (

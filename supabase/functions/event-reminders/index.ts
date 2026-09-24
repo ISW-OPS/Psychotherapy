@@ -104,9 +104,13 @@ async function runEventReminders(supabase, locationId) {
   const now = Date.now()
   const t1 = new Date(now + (beforeMin - WINDOW_HALF_MIN) * 60000).toISOString()
   const t2 = new Date(now + (beforeMin + WINDOW_HALF_MIN) * 60000).toISOString()
-  const { data: events } = await supabase.from('psy_events').select('id, title, start_at, mode, meet_link, location, maps_url').eq('status', 'published').gte('start_at', t1).lte('start_at', t2)
+  const { data: events } = await supabase.from('psy_events').select('id, title, start_at, mode, location, maps_url').eq('status', 'published').gte('start_at', t1).lte('start_at', t2)
   if (!events?.length) return { due: 0, sent: 0 }
-  const evMap = Object.fromEntries(events.map((e) => [e.id, e]))
+  // Audit #H-36 (Tier 5) — meet_link kini di psy_event_meet_links (service role di sini
+  // bypass RLS macam biasa, jadi terus baca; hantar cuma kpd pendaftar lepas ni pun sama).
+  const { data: links } = await supabase.from('psy_event_meet_links').select('event_id, meet_link').in('event_id', events.map((e) => e.id))
+  const linkMap = Object.fromEntries((links || []).map((l) => [l.event_id, l.meet_link]))
+  const evMap = Object.fromEntries(events.map((e) => [e.id, { ...e, meet_link: linkMap[e.id] || null }]))
   const { data: regs } = await supabase.from('psy_event_registrations').select('id, event_id, psy_patients(phone, full_name, emergency_contact_phone, emergency_contact_name, contact_preference)').in('event_id', events.map((e) => e.id)).is('reminder_sent_at', null).neq('status', 'batal')
   let sent = 0, skipped = 0
   const errors = []

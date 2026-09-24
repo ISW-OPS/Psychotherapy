@@ -164,11 +164,16 @@ document.addEventListener('click', (e) => {
     regs.forEach(r => { myRegs[r.event_id] = r; });
 
     // Tarik juga acara LEPAS yang pesakit telah daftar (untuk tab "Acara Saya" + akses rakaman)
-    const regIds = regs.map(r => r.event_id).filter(Boolean);
+    const regIds = regs.filter(r => r.status !== 'batal').map(r => r.event_id).filter(Boolean);
     if (regIds.length) {
       const { data: regEvs } = await window.db.from('psy_events').select('*')
         .eq('status', 'published').in('id', regIds);
       (regEvs || []).forEach(e => { if (!allEvents.some(a => a.id === e.id)) allEvents.push(e); });
+      // Audit #H-36 (Tier 5) — meet_link kini di psy_event_meet_links (RLS: didaftar sahaja).
+      // Hanya utk acara yg pesakit BENAR-BENAR daftar (regIds), bukan senarai penuh.
+      const { data: links } = await window.db.from('psy_event_meet_links').select('event_id, meet_link').in('event_id', regIds);
+      const linkMap = {}; (links || []).forEach(l => { linkMap[l.event_id] = l.meet_link; });
+      allEvents.forEach(e => { if (linkMap[e.id]) e.meet_link = linkMap[e.id]; });
     }
     render();
   } catch (e) {

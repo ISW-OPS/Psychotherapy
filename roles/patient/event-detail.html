@@ -118,6 +118,10 @@ function actionHtml() {
       ${EV.maps_url ? `<a href="${EV.maps_url}" target="_blank" rel="noopener" class="block text-center text-xs text-navy hover:underline mt-2">🗺 Lihat lokasi di peta</a>` : ''}
       <button onclick="toggleReg()" class="w-full text-sm font-bold text-terracotta hover:text-terracotta/70 mt-1">Batal pendaftaran</button>`;
   }
+  // Audit #H-35 (Tier 5) — dulu langsung tiada state Penuh, cuma paparan angka kapasiti
+  if (EV.capacity && (EV.registered_count || 0) >= EV.capacity) {
+    return `<div class="w-full bg-ink/5 text-ink/50 font-semibold py-3.5 rounded-xl text-center">🚫 Acara Penuh (${EV.capacity}/${EV.capacity} peserta)</div>`;
+  }
   return `<button onclick="toggleReg()" class="w-full bg-navy hover:bg-navy-dark text-white font-bold py-3.5 rounded-xl flex items-center justify-center gap-2">📝 Daftar Sekarang <span>→</span></button>`;
 }
 
@@ -187,7 +191,7 @@ function render() {
         ${infoRow('💻', 'Platform', EV.mode === 'f2f' ? `Bersemuka${EV.location ? ' · ' + EV.location : ''}` : 'Google Meet (Online)')}
         ${infoRow('👤', EV.host_role || 'Penganjur', EV.host || 'Ibnu Sina Wellness')}
         ${infoRow('👥', 'Sasaran', audLabel(EV.audience))}
-        ${EV.capacity ? infoRow('🎟️', 'Kapasiti', EV.capacity + ' peserta') : ''}
+        ${EV.capacity ? infoRow('🎟️', 'Kapasiti', `${EV.registered_count || 0}/${EV.capacity} peserta`) : ''}
       </div>
 
       <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
@@ -223,12 +227,18 @@ async function toggleReg() {
         .eq('event_id', EV.id).eq('patient_id', window.patientRecord.id);
       if (error) throw error;
       REG = { ...REG, status:'batal' };
+      if (EV.capacity) EV.registered_count = Math.max(0, (EV.registered_count || 1) - 1);
       banner('Pendaftaran dibatalkan');
     } else {
       const { error } = await window.db.from('psy_event_registrations')
         .upsert({ event_id:EV.id, patient_id:window.patientRecord.id, status:'registered' }, { onConflict:'event_id,patient_id' });
       if (error) throw error;
       REG = { status:'registered' };
+      if (EV.capacity) EV.registered_count = (EV.registered_count || 0) + 1;
+      if (EV.mode === 'online') {
+        const { data: ml } = await window.db.from('psy_event_meet_links').select('meet_link').eq('event_id', EV.id).maybeSingle();
+        EV.meet_link = ml?.meet_link || null;
+      }
       banner('Berjaya daftar ✓');
       notify(window.currentUser.id, 'system', 'Pendaftaran acara disahkan', `Anda telah mendaftar: ${EV.title}`, 'event-detail.html?id=' + EV.id).catch(() => {});
     }
@@ -270,13 +280,30 @@ async function loadOthers() {
   const id = new URLSearchParams(location.search).get('id');
   if (!id) { document.getElementById('detail-wrap').innerHTML = '<div class="lg:col-span-3 text-center py-16 text-ink/40">Acara tidak dijumpai.</div>'; return; }
   try {
-    const { data: ev } = await window.db.from('psy_events').select('*').eq('id', id).maybeSingle();
+    // Audit #H-36 (Tier 5) — meet_link TIDAK dibaca di sini terus drpd psy_events
+    // (kolum tu dikeluarkan dari jadual utama, lihat 19_events_announcements.sql);
+    // ambil dari psy_event_meet_links yg RLS-nya SEMAK pendaftaran betul-betul,
+    // bukan sekadar sorok butang di UI (dulu meet_link ADA dlm respons API walau
+    // pesakit tak daftar, cuma disorok client-side — RLS "bocor").
+    const { data: ev } = await window.db.from('psy_events')
+      .select('id, title, description, type, start_at, end_at, mode, location, address, maps_url, capacity, registration_deadline, cover_image, tag, host, host_role, price, status, recording_url, audience, package_ids, created_at')
+      .eq('id', id).maybeSingle();
     if (!ev) { document.getElementById('detail-wrap').innerHTML = '<div class="lg:col-span-3 text-center py-16 text-ink/40">Acara tidak dijumpai.</div>'; return; }
     EV = ev;
     if (window.patientRecord?.id) {
       const { data: reg } = await window.db.from('psy_event_registrations').select('status')
         .eq('event_id', id).eq('patient_id', window.patientRecord.id).maybeSingle();
       REG = reg;
+      if (reg && reg.status !== 'batal') {
+        const { data: ml } = await window.db.from('psy_event_meet_links').select('meet_link').eq('event_id', id).maybeSingle();
+        EV.meet_link = ml?.meet_link || null;
+      }
+    }
+    // Audit #H-35 (Tier 5) — kapasiti sebenar utk papar "X/Y peserta" + state Penuh
+    if (EV.capacity) {
+      const { count } = await window.db.from('psy_event_registrations')
+        .select('id', { count: 'exact', head: true }).eq('event_id', id).neq('status', 'batal');
+      EV.registered_count = count || 0;
     }
     const { data: mats } = await window.db.from('psy_event_materials').select('*').eq('event_id', id).order('created_at', { ascending: true });
     MATS = mats || [];
