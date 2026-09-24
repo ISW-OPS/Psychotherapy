@@ -102,18 +102,31 @@ window.hk1CreateBooking = hk1CreateBooking;
 // Semak konflik slot SEBENAR — query terus psy_clinical_referrals (bukan cache tempatan)
 // supaya elak race condition antara buka borang & hantar. Panggil sekali lagi sejurus
 // sebelum insert.
+// Audit #B1-30 (Tier 4) — dulu cuma semak sesama Sesi 1:1, TAK semak psy_appointments
+// (Kalendar & Jadual). Kini semak DUA-DUA supaya Hakeema/Hakeem/Dr tak overlap dengan
+// appointment biasa (KOB, DNA consultation dll) pada masa sama.
 async function hk1CheckSlotConflict(targetId, meetDate, scheduledTime) {
   if (!targetId || !scheduledTime) return false;
-  const { data, error } = await window.db.from('psy_clinical_referrals')
-    .select('id, consultation')
-    .eq('source', 'plan_1on1').eq('target_id', targetId).eq('meet_date', meetDate)
-    .neq('status', 'declined');
-  if (error) {
+  const [hk1Res, apptRes] = await Promise.all([
+    window.db.from('psy_clinical_referrals')
+      .select('id, consultation')
+      .eq('source', 'plan_1on1').eq('target_id', targetId).eq('meet_date', meetDate)
+      .neq('status', 'declined'),
+    window.db.from('psy_appointments')
+      .select('id')
+      .eq('staff_id', targetId)
+      .gte('appointment_time', `${meetDate}T${scheduledTime}:00`)
+      .lt('appointment_time', `${meetDate}T${scheduledTime}:59`)
+      .not('status', 'in', '("cancelled","no_show")'),
+  ]);
+  if (hk1Res.error || apptRes.error) {
     // Safety-critical (cegah double-booking) — jangan senyap-senyap anggap "tiada konflik"
     // bila query sendiri gagal. Biar caller anggap konflik & block submit.
-    console.error('[hk1] hk1CheckSlotConflict gagal:', error);
+    console.error('[hk1] hk1CheckSlotConflict gagal:', hk1Res.error || apptRes.error);
     return true;
   }
-  return (data || []).some(r => r.consultation?.scheduled_time === scheduledTime);
+  const hk1Conflict = (hk1Res.data || []).some(r => r.consultation?.scheduled_time === scheduledTime);
+  const apptConflict = (apptRes.data || []).length > 0;
+  return hk1Conflict || apptConflict;
 }
 window.hk1CheckSlotConflict = hk1CheckSlotConflict;

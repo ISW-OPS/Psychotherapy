@@ -173,7 +173,8 @@ function hk1Block(r) {
 
       ${hphNextActionHtml(r)}
 
-      <div class="mt-3 pt-3 border-t border-ink/8 flex justify-end">
+      <div class="mt-3 pt-3 border-t border-ink/8 flex justify-end gap-1.5">
+        <button type="button" data-rbac="rujukan.edit" onclick="hphCancelSession('${r.id}')" class="px-3 py-1.5 rounded-lg border border-terracotta/40 text-terracotta text-[11px] font-semibold hover:bg-terracotta/5">🚫 Batal</button>
         <button type="button" data-rbac="rujukan.edit" onclick="hphMarkResolved('${r.id}')" class="px-3 py-1.5 rounded-lg bg-navy text-white text-[11px] font-semibold hover:bg-navy-dark">✓ Tandakan Selesai</button>
       </div>
     </div>`;
@@ -481,6 +482,26 @@ async function hphMarkResolved(id) {
   refreshHk1Card(ref.session_type);
 }
 window.hphMarkResolved = hphMarkResolved;
+
+// Cancel-with-reason (audit #B1-32 Tier 4) — status='declined' sedia ada dlm enum
+// tapi tiada laluan UI utk set ia khusus utk Sesi 1:1 (dulu cuma "Selesai" wujud,
+// tiada cara "batal" berdokumen — hard-delete pun tiada, jadi rekod tersekat kekal
+// "pending" selama-lamanya kalau sesi sebenarnya tak jadi).
+async function hphCancelSession(id) {
+  const reason = prompt('Sebab batalkan sesi ini? (wajib, direkod dlm audit trail)');
+  if (reason === null) return; // batal prompt
+  if (!reason.trim()) { banner('Sebab wajib diisi utk batalkan sesi', 'error'); return; }
+  const ref = hk1FindRow(id);
+  const c = Object.assign({}, ref.consultation || {}, { cancel_reason: reason.trim(), cancelled_at: new Date().toISOString(), cancelled_by: window.currentUser?.full_name || null });
+  const { error } = await window.db.from('psy_clinical_referrals')
+    .update({ status: 'declined', consultation: c }).eq('id', id);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  ref.status = 'declined'; ref.consultation = c;
+  if (typeof auditLog === 'function') { try { await auditLog('referral.cancelled', patientId, { source: 'plan_1on1', session_type: ref.session_type, reason: reason.trim() }); } catch (_) {} }
+  banner('Sesi dibatalkan (rekod kekal, tak dipadam) ✓');
+  refreshHk1Card(ref.session_type);
+}
+window.hphCancelSession = hphCancelSession;
 
 function statusChipHp(s) {
   const m = { pending: 'bg-gold/30 text-gold-dark', resolved: 'bg-green-light text-green-dark' };
