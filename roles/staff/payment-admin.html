@@ -441,6 +441,7 @@ function openDetail(id) {
       <div><div class="text-xs text-ink/45">Kaedah</div><div class="font-semibold">${METHOD_LABEL[p.payment_method] || '—'}</div></div>
       <div><div class="text-xs text-ink/45">Ref GHL</div><div class="font-mono text-xs">${escHtml(p.ghl_transaction_id || '—')}</div></div>
     </div>
+    <div id="status-timeline-${p.id}"></div>
     ${items.length ? `<div>
       <div class="text-xs font-bold text-ink/55 uppercase tracking-wider mb-2">Item</div>
       <div class="divide-y divide-ink/5 border border-ink/10 rounded-lg">
@@ -477,6 +478,7 @@ function openDetail(id) {
     <div id="adj-history-${p.id}"></div>
   `;
   renderAdjustmentHistory(p.id);
+  renderStatusTimeline(p.id);
   document.getElementById('detail-modal').classList.remove('hidden');
 }
 
@@ -648,6 +650,30 @@ async function submitAdjustment() {
   finally { btn.disabled = false; }
 }
 window.submitAdjustment = submitAdjustment;
+
+// Status Timeline (audit #B1-25/26) — drill-down "carta perjalanan" per bayaran.
+// psy_payment_status_log diisi automatik oleh trigger (backend), page ni cuma baca.
+async function renderStatusTimeline(paymentId) {
+  const host = document.getElementById(`status-timeline-${paymentId}`);
+  if (!host) return;
+  const { data } = await window.db.from('psy_payment_status_log').select('*').eq('payment_id', paymentId).order('changed_at');
+  if (!data?.length) { host.innerHTML = ''; return; }
+  host.innerHTML = `<div class="mt-2">
+    <div class="text-[10px] font-bold text-ink/45 uppercase mb-1.5">Status Timeline</div>
+    <div class="space-y-0">
+      ${data.map((s, i) => `<div class="flex items-start gap-2.5">
+        <div class="flex flex-col items-center">
+          <span class="w-2.5 h-2.5 rounded-full ${STATUS_META[s.new_status]?.cls?.split(' ')[0] || 'bg-ink/20'} shrink-0 mt-1"></span>
+          ${i < data.length - 1 ? '<span class="w-px flex-1 bg-ink/10" style="min-height:18px"></span>' : ''}
+        </div>
+        <div class="pb-2.5 text-xs">
+          <span class="font-semibold text-ink">${STATUS_META[s.new_status]?.label || s.new_status}</span>
+          <span class="text-ink/40 ml-1.5">${fmtDate(s.changed_at)} ${fmtTime(s.changed_at)}</span>
+        </div>
+      </div>`).join('')}
+    </div>
+  </div>`;
+}
 
 async function renderAdjustmentHistory(paymentId) {
   const host = document.getElementById(`adj-history-${paymentId}`);
