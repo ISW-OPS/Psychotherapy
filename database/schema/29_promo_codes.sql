@@ -24,7 +24,13 @@ CREATE TABLE IF NOT EXISTS psy_promo_codes (
   is_active             BOOLEAN NOT NULL DEFAULT true,
   created_by            UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
   created_at            TIMESTAMPTZ DEFAULT now(),
-  updated_at            TIMESTAMPTZ DEFAULT now()
+  updated_at            TIMESTAMPTZ DEFAULT now(),
+  -- Audit #D-15/16/17 (Tier 5)
+  applies_to            TEXT NOT NULL DEFAULT 'all' CHECK (applies_to IN ('all','product','category','package')),
+  applies_to_values     TEXT[],       -- product_id / category / package_id list, ikut applies_to (NULL bila 'all')
+  stackable             BOOLEAN NOT NULL DEFAULT true,   -- boleh digabung dgn baucar ganjaran auto-apply (psy_vouchers)?
+  new_customer_only     BOOLEAN NOT NULL DEFAULT false,  -- hanya pesakit TANPA sebarang bayaran 'completed' terdahulu
+  campaign              TEXT          -- label kempen (pilihan, utk pengelompokan/laporan sahaja — bukan gate)
 );
 
 CREATE INDEX IF NOT EXISTS idx_psy_promo_codes_code ON psy_promo_codes(code);
@@ -46,6 +52,12 @@ COMMENT ON COLUMN psy_promo_codes.min_subtotal IS
   'Subjumlah troli minimum (RM) sebelum kod boleh diguna. 0 = tiada syarat.';
 COMMENT ON COLUMN psy_promo_codes.max_uses_per_patient IS
   'Had berapa kali SATU pesakit boleh guna kod ni (dikira dari psy_promo_redemptions).';
+COMMENT ON COLUMN psy_promo_codes.applies_to IS
+  'Skop troli yang perlu ADA sebelum kod sah dipakai (gate seluruh-atau-tiada — diskaun tetap kena SELURUH subjumlah, bukan pro-rata baris tertentu, sama falsafah macam min_subtotal).';
+COMMENT ON COLUMN psy_promo_codes.applies_to_values IS
+  'product_id (psy_products) / category (psy_products.category) / package_id (psy_packages), ikut applies_to.';
+COMMENT ON COLUMN psy_promo_codes.stackable IS
+  'false = tak boleh dipakai serentak dgn baucar ganjaran auto-apply (psy_vouchers, cth baucar tukar mata) dlm checkout yang sama.';
 
 -- ──── psy_promo_redemptions ────
 -- Lejar penggunaan — dicipta oleh trigger (bukan client) bila bayaran sah selesai.

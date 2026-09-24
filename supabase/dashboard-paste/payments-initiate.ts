@@ -152,18 +152,28 @@ Deno.serve(async (req) => {
     let promoId = null;
     let promoDiscount = 0;
     if (promoCode && patientId) {
-      const { data: promo } = await admin.from("psy_promo_codes").select("id, discount_type, discount_value, min_subtotal, max_uses, used_count, max_uses_per_patient, valid_from, valid_until, is_active").eq("code", promoCode.toUpperCase()).maybeSingle();
+      const { data: promo } = await admin.from("psy_promo_codes").select("id, discount_type, discount_value, min_subtotal, max_uses, used_count, max_uses_per_patient, valid_from, valid_until, is_active, applies_to, applies_to_values, stackable, new_customer_only").eq("code", promoCode.toUpperCase()).maybeSingle();
       if (promo && promo.is_active) {
         const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
         const dateOk = (!promo.valid_from || promo.valid_from <= today) && (!promo.valid_until || promo.valid_until >= today);
         const usesOk = promo.max_uses == null || promo.used_count < promo.max_uses;
         const minOk = total >= (Number(promo.min_subtotal) || 0);
+        const stackOk = promo.stackable !== false || voucherDiscount <= 0;
         let perPatientOk = true;
-        if (dateOk && usesOk && minOk && promo.max_uses_per_patient != null) {
+        if (dateOk && usesOk && minOk && stackOk && promo.max_uses_per_patient != null) {
           const { count } = await admin.from("psy_promo_redemptions").select("id", { count: "exact", head: true }).eq("promo_id", promo.id).eq("patient_id", patientId);
           perPatientOk = (count || 0) < promo.max_uses_per_patient;
         }
-        if (dateOk && usesOk && minOk && perPatientOk) {
+        let newCustOk = true;
+        if (dateOk && usesOk && minOk && stackOk && perPatientOk && promo.new_customer_only) {
+          const { count } = await admin.from("psy_payments").select("id", { count: "exact", head: true }).eq("patient_id", patientId).eq("status", "completed");
+          newCustOk = (count || 0) === 0;
+        }
+        let scopeOk = true;
+        if (dateOk && usesOk && minOk && stackOk && perPatientOk && newCustOk && promo.applies_to !== "all") {
+          scopeOk = await cartMatchesPromoScope(admin, items, promo.applies_to, promo.applies_to_values || []);
+        }
+        if (dateOk && usesOk && minOk && stackOk && perPatientOk && newCustOk && scopeOk) {
           promoId = promo.id;
           promoDiscount = promo.discount_type === "percent" ? total * (Number(promo.discount_value) / 100) : Number(promo.discount_value);
           promoDiscount = Math.min(promoDiscount, total);
@@ -255,6 +265,30 @@ async function findUnavailableShopProduct(admin, items) {
   }
   return null;
 }
+async function cartMatchesPromoScope(admin, items, appliesTo, values) {
+  if (!values.length) return false;
+  if (appliesTo === "package") {
+    return items.some((i) => {
+      if (!["package", "package_existing", "kob_package"].includes(i.type)) return false;
+      const key = i.packageId || i.raw?.package_id;
+      return key && values.includes(String(key));
+    });
+  }
+  if (appliesTo === "product") {
+    return items.some((i) => i.type === "shop_order" && Array.isArray(i.items) &&
+      i.items.some((line) => values.includes(String(line.id))));
+  }
+  if (appliesTo === "category") {
+    const productIds = items
+      .filter((i) => i.type === "shop_order" && Array.isArray(i.items))
+      .flatMap((i) => i.items.map((line) => line.id)).filter(Boolean);
+    if (!productIds.length) return false;
+    const { data } = await admin.from("psy_products").select("product_id, category").in("product_id", productIds);
+    return (data || []).some((p) => p.category && values.includes(p.category));
+  }
+  return false;
+}
+
 async function verifiedAmount(admin, it, patientId) {
   const clientAmt = Number(it.amount) || 0;
   if (it.type === "kob_installment_topup") {

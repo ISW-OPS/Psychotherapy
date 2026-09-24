@@ -102,21 +102,36 @@ Deno.serve(async (req) => {
     let promoDiscount = 0
     if (promoCode && patientId) {
       const { data: promo } = await admin.from('psy_promo_codes')
-        .select('id, discount_type, discount_value, min_subtotal, max_uses, used_count, max_uses_per_patient, valid_from, valid_until, is_active')
+        .select('id, discount_type, discount_value, min_subtotal, max_uses, used_count, max_uses_per_patient, valid_from, valid_until, is_active, applies_to, applies_to_values, stackable, new_customer_only')
         .eq('code', promoCode.toUpperCase()).maybeSingle()
       if (promo && promo.is_active) {
         const today = new Date().toISOString().slice(0, 10)
         const dateOk = (!promo.valid_from || promo.valid_from <= today) && (!promo.valid_until || promo.valid_until >= today)
         const usesOk = promo.max_uses == null || promo.used_count < promo.max_uses
         const minOk = total >= (Number(promo.min_subtotal) || 0)
+        // Audit #D-16 (Tier 5) — tak stackable dgn baucar ganjaran auto-apply (3b di atas)
+        const stackOk = promo.stackable !== false || voucherDiscount <= 0
         let perPatientOk = true
-        if (dateOk && usesOk && minOk && promo.max_uses_per_patient != null) {
+        if (dateOk && usesOk && minOk && stackOk && promo.max_uses_per_patient != null) {
           const { count } = await admin.from('psy_promo_redemptions')
             .select('id', { count: 'exact', head: true })
             .eq('promo_id', promo.id).eq('patient_id', patientId)
           perPatientOk = (count || 0) < promo.max_uses_per_patient
         }
-        if (dateOk && usesOk && minOk && perPatientOk) {
+        // Audit #D-17 (Tier 5) — "pelanggan baru" = tiada sebarang bayaran 'completed' terdahulu
+        let newCustOk = true
+        if (dateOk && usesOk && minOk && stackOk && perPatientOk && promo.new_customer_only) {
+          const { count } = await admin.from('psy_payments')
+            .select('id', { count: 'exact', head: true })
+            .eq('patient_id', patientId).eq('status', 'completed')
+          newCustOk = (count || 0) === 0
+        }
+        // Audit #D-15 (Tier 5) — skop troli (gate seluruh-atau-tiada, bukan pro-rata baris)
+        let scopeOk = true
+        if (dateOk && usesOk && minOk && stackOk && perPatientOk && newCustOk && promo.applies_to !== 'all') {
+          scopeOk = await cartMatchesPromoScope(admin, items, promo.applies_to, promo.applies_to_values || [])
+        }
+        if (dateOk && usesOk && minOk && stackOk && perPatientOk && newCustOk && scopeOk) {
           promoId = promo.id
           promoDiscount = promo.discount_type === 'percent'
             ? total * (Number(promo.discount_value) / 100)
@@ -244,6 +259,34 @@ async function findUnavailableShopProduct(admin: any, items: any[]): Promise<str
     if (Number(linked.qty_in_stock ?? 0) < (qtyById.get(p.product_id) || 1)) return p.name || p.product_id
   }
   return null
+}
+
+// Audit #D-15 (Tier 5) — semak troli SEBENAR (bukan client-declared) ada item
+// yang padan skop kod promo. Gate seluruh-atau-tiada: kalau padan, diskaun
+// kena SELURUH subjumlah (bukan pro-rata baris tertentu) — elak kerumitan
+// alokasi separa yang mudah tersilap dlm sistem pembayaran hidup.
+async function cartMatchesPromoScope(admin: any, items: any[], appliesTo: string, values: string[]): Promise<boolean> {
+  if (!values.length) return false
+  if (appliesTo === 'package') {
+    return items.some((i) => {
+      if (!['package', 'package_existing', 'kob_package'].includes(i.type)) return false
+      const key = i.packageId || i.raw?.package_id
+      return key && values.includes(String(key))
+    })
+  }
+  if (appliesTo === 'product') {
+    return items.some((i) => i.type === 'shop_order' && Array.isArray(i.items) &&
+      i.items.some((line: any) => values.includes(String(line.id))))
+  }
+  if (appliesTo === 'category') {
+    const productIds = items
+      .filter((i) => i.type === 'shop_order' && Array.isArray(i.items))
+      .flatMap((i) => i.items.map((line: any) => line.id)).filter(Boolean)
+    if (!productIds.length) return false
+    const { data } = await admin.from('psy_products').select('product_id, category').in('product_id', productIds)
+    return (data || []).some((p: any) => p.category && values.includes(p.category))
+  }
+  return false
 }
 
 // Pulangkan amaun (RM) yang DIPERCAYAI untuk satu item — semak semula dari DB.

@@ -123,6 +123,32 @@
         <input id="pf-until" type="date" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm">
       </div>
     </div>
+
+    <!-- Audit #D-15/16/17 (Tier 5) -->
+    <div class="border-t border-ink/8 pt-3">
+      <label class="text-xs font-semibold text-ink/60">Terpakai Untuk</label>
+      <select id="pf-applies-to" onchange="updateAppliesToUI()" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white">
+        <option value="all">Semua (troli)</option>
+        <option value="product">Produk Tertentu</option>
+        <option value="category">Kategori Tertentu</option>
+        <option value="package">Pakej Tertentu</option>
+      </select>
+      <p class="text-[10px] text-ink/40 mt-1">Kod cuma sah kalau troli ADA item ni — diskaun tetap kena seluruh subjumlah troli.</p>
+      <div id="pf-applies-values-wrap" class="hidden mt-2 border border-ink/10 rounded-lg max-h-40 overflow-y-auto p-2 space-y-1"></div>
+    </div>
+    <div class="grid grid-cols-2 gap-3 items-center">
+      <label class="flex items-center gap-2 text-sm">
+        <input id="pf-stackable" type="checkbox" checked class="accent-[#6366f1]"> Boleh digabung dgn baucar ganjaran
+      </label>
+      <label class="flex items-center gap-2 text-sm">
+        <input id="pf-new-customer" type="checkbox" class="accent-[#6366f1]"> Pelanggan baharu sahaja
+      </label>
+    </div>
+    <div>
+      <label class="text-xs font-semibold text-ink/60">Kempen (pilihan, utk laporan)</label>
+      <input id="pf-campaign" type="text" placeholder="cth: Raya 2026" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm">
+    </div>
+
     <button onclick="savePromoCode()" class="w-full purple-btn py-2.5 rounded-xl text-sm font-semibold mt-2">Simpan Kod Promo</button>
   </div>
 </div>
@@ -138,6 +164,34 @@ function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&
 function fmtRM(n) { return 'RM ' + Number(n||0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
 let allPromoCodes = [];
+let allProductsForPromo = [];
+let allPackagesForPromo = [];
+let allCategoriesForPromo = [];
+
+async function loadPromoScopeOptions() {
+  const [prodRes, pkgRes] = await Promise.all([
+    window.db.from('psy_products').select('product_id, name, category').eq('is_active', true).order('name').then(r => r, () => ({ data: [] })),
+    window.db.from('psy_packages').select('package_id, name').eq('is_active', true).order('name').then(r => r, () => ({ data: [] })),
+  ]);
+  allProductsForPromo = prodRes.data || [];
+  allPackagesForPromo = pkgRes.data || [];
+  allCategoriesForPromo = [...new Set(allProductsForPromo.map(p => p.category).filter(Boolean))].sort();
+}
+
+function updateAppliesToUI() {
+  const type = document.getElementById('pf-applies-to').value;
+  const wrap = document.getElementById('pf-applies-values-wrap');
+  if (type === 'all') { wrap.classList.add('hidden'); wrap.innerHTML = ''; return; }
+  wrap.classList.remove('hidden');
+  const checked = window._pfAppliesValuesChecked || [];
+  let options = [];
+  if (type === 'product') options = allProductsForPromo.map(p => ({ value: p.product_id, label: p.name }));
+  else if (type === 'category') options = allCategoriesForPromo.map(c => ({ value: c, label: c }));
+  else if (type === 'package') options = allPackagesForPromo.map(p => ({ value: p.package_id, label: p.name }));
+  wrap.innerHTML = options.length
+    ? options.map(o => `<label class="flex items-center gap-2 text-xs px-1 py-1"><input type="checkbox" class="pf-applies-cb accent-[#6366f1]" value="${escHtml(o.value)}" ${checked.includes(o.value) ? 'checked' : ''}> ${escHtml(o.label)}</label>`).join('')
+    : '<p class="text-[11px] text-ink/35 px-1 py-1">Tiada pilihan tersedia</p>';
+}
 
 function promoStatusBadge(p) {
   const today = new Date().toISOString().slice(0, 10);
@@ -164,7 +218,14 @@ function renderPromoTable() {
     const period = (p.valid_from || p.valid_until)
       ? `${p.valid_from || '—'} → ${p.valid_until || '—'}` : 'Tiada had';
     return `<tr class="hover:bg-ink/[0.01]">
-      <td class="px-5 py-3 font-bold text-ink">${escHtml(p.code)}${p.description ? `<div class="text-[11px] font-normal text-ink/45 mt-0.5">${escHtml(p.description)}</div>` : ''}</td>
+      <td class="px-5 py-3 font-bold text-ink">${escHtml(p.code)}${p.description ? `<div class="text-[11px] font-normal text-ink/45 mt-0.5">${escHtml(p.description)}</div>` : ''}
+        <div class="flex items-center gap-1.5 mt-1 flex-wrap">
+          ${p.applies_to && p.applies_to !== 'all' ? `<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-navy/8 text-navy">${{ product:'Produk', category:'Kategori', package:'Pakej' }[p.applies_to]} Tertentu</span>` : ''}
+          ${p.stackable === false ? `<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">Tak Boleh Gabung</span>` : ''}
+          ${p.new_customer_only ? `<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-purple-50 text-purple-700">Pelanggan Baharu</span>` : ''}
+          ${p.campaign ? `<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-ink/8 text-ink/55">${escHtml(p.campaign)}</span>` : ''}
+        </div>
+      </td>
       <td class="px-3 py-3">${discountLabel}</td>
       <td class="px-3 py-3">${fmtRM(p.min_subtotal)}</td>
       <td class="px-3 py-3">${usageLabel}</td>
@@ -201,6 +262,12 @@ function openPromoModal(id) {
   document.getElementById('pf-active').checked = p ? !!p.is_active : true;
   document.getElementById('pf-from').value = p?.valid_from || '';
   document.getElementById('pf-until').value = p?.valid_until || '';
+  document.getElementById('pf-applies-to').value = p?.applies_to || 'all';
+  document.getElementById('pf-stackable').checked = p ? p.stackable !== false : true;
+  document.getElementById('pf-new-customer').checked = !!p?.new_customer_only;
+  document.getElementById('pf-campaign').value = p?.campaign || '';
+  window._pfAppliesValuesChecked = p?.applies_to_values || [];
+  updateAppliesToUI();
   document.getElementById('promo-modal').classList.remove('hidden');
 }
 
@@ -213,6 +280,10 @@ async function savePromoCode() {
   if (!code) { banner('Sila isi kod promo', 'error'); return; }
   if (!(value > 0)) { banner('Sila isi nilai diskaun', 'error'); return; }
 
+  const appliesTo = document.getElementById('pf-applies-to').value;
+  const appliesValues = [...document.querySelectorAll('.pf-applies-cb:checked')].map(cb => cb.value);
+  if (appliesTo !== 'all' && !appliesValues.length) { banner('Sila pilih sekurang-kurangnya 1 item utk skop "Terpakai Untuk"', 'error'); return; }
+
   const payload = {
     code,
     description: document.getElementById('pf-desc').value.trim() || null,
@@ -224,6 +295,11 @@ async function savePromoCode() {
     is_active: document.getElementById('pf-active').checked,
     valid_from: document.getElementById('pf-from').value || null,
     valid_until: document.getElementById('pf-until').value || null,
+    applies_to: appliesTo,
+    applies_to_values: appliesTo === 'all' ? null : appliesValues,
+    stackable: document.getElementById('pf-stackable').checked,
+    new_customer_only: document.getElementById('pf-new-customer').checked,
+    campaign: document.getElementById('pf-campaign').value.trim() || null,
     updated_at: new Date().toISOString(),
   };
 
@@ -261,7 +337,7 @@ async function togglePromoActive(id) {
   const user = await initStaff('promo_codes', 'Kod diskaun kedai', 'psy_products');
   if (!user) return;
   if (can('products','create')) document.getElementById('btn-promo-new').classList.remove('hidden');
-  await loadPromoCodes();
+  await Promise.all([loadPromoCodes(), loadPromoScopeOptions()]);
 })();
 </script>
 </body>
