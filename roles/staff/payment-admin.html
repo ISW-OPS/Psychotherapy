@@ -47,6 +47,9 @@
         <!-- KPI Row -->
         <div id="kpi-row" class="grid grid-cols-2 lg:grid-cols-4 gap-4"></div>
 
+        <!-- Void/Refund/Correction menunggu kelulusan (super_admin sahaja, audit #B1-24) -->
+        <div id="pending-adj-card" class="hidden bg-white rounded-2xl border border-terracotta/30 shadow-sm p-5"></div>
+
         <!-- Filters -->
         <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4 flex flex-wrap items-center gap-3">
           <input id="search-input" type="text" placeholder="Cari no. resit (REC) / no. invois (INV) / rujukan / nama pesakit..." oninput="renderTable()"
@@ -180,6 +183,39 @@
   </div>
 </div>
 
+<!-- Void/Refund/Correction Modal (audit #B1-24) -->
+<div id="adjust-modal" class="hidden fixed inset-0 z-[70] flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/50" onclick="closeAdjustPanel()"></div>
+  <div class="relative bg-white rounded-2xl max-w-md w-full max-h-[92vh] overflow-y-auto">
+    <div class="p-5 border-b border-ink/10 flex items-center justify-between sticky top-0 bg-white">
+      <h3 class="font-bold text-lg text-terracotta">⚠️ Void / Refund / Correction</h3>
+      <button onclick="closeAdjustPanel()" class="text-ink/60 text-2xl leading-none hover:text-ink">×</button>
+    </div>
+    <div class="p-5 space-y-3">
+      <div>
+        <label class="text-xs font-semibold text-ink/65">Jenis</label>
+        <select id="adj-type" onchange="onAdjTypeChange()" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white">
+          <option value="void">Void (transaksi tersalah rekod, tak sepatutnya wujud)</option>
+          <option value="refund">Refund (bayaran sah, wang dipulangkan)</option>
+          <option value="correction">Correction (dokumentasi pembetulan sahaja)</option>
+        </select>
+      </div>
+      <div id="adj-amount-wrap" class="hidden">
+        <label class="text-xs font-semibold text-ink/65">Amount (RM)</label>
+        <input id="adj-amount" type="number" step="0.01" min="0" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm">
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-ink/65">Sebab <span class="text-terracotta">*</span></label>
+        <textarea id="adj-reason" rows="3" placeholder="Kenapa perlu void/refund/correction ni..." class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm resize-y"></textarea>
+      </div>
+      <label class="flex items-center gap-2 text-xs text-ink/60" id="adj-approve-now-wrap">
+        <input type="checkbox" id="adj-approve-now" class="w-4 h-4"> Luluskan terus (super_admin)
+      </label>
+      <button id="adj-submit-btn" onclick="submitAdjustment()" class="w-full bg-terracotta text-white text-sm font-semibold py-2.5 rounded-lg hover:bg-terracotta-dark">Hantar Permohonan</button>
+    </div>
+  </div>
+</div>
+
 <!-- Manual Payment Modal — bayaran MESTI dipautkan kepada sasaran sebenar (pakej/ansuran, invois, konsultasi, produk) -->
 <div id="manual-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
   <div class="absolute inset-0 bg-black/50" onclick="closeManualModal()"></div>
@@ -235,6 +271,9 @@
         <label class="text-xs font-semibold text-ink/65">Nota (opsyenal)</label>
         <textarea id="m-notes" rows="2" class="w-full mt-1 px-3 py-2 border border-ink/15 rounded-lg text-sm"></textarea>
       </div>
+      <label class="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 cursor-pointer">
+        <input type="checkbox" id="m-is-test" class="w-4 h-4"> 🧪 Ini data ujian/demo (dikecualikan drpd laporan kewangan sebenar)
+      </label>
       <button onclick="saveManual()" id="btn-save-manual" data-rbac="payment.create" class="w-full bg-navy text-white font-semibold py-2.5 rounded-lg hover:bg-navy-dark transition-colors">
         Simpan Bayaran
       </button>
@@ -263,7 +302,10 @@ const STATUS_META = {
   completed: { label: 'Selesai',  cls: 'bg-green-100 text-green-700' },
   pending:   { label: 'Pending',  cls: 'bg-amber-100 text-amber-700' },
   failed:    { label: 'Gagal',    cls: 'bg-red-100 text-red-600' },
+  refunded:  { label: 'Refund',   cls: 'bg-purple-100 text-purple-700' },
+  voided:    { label: 'Void',     cls: 'bg-ink/15 text-ink/50' },
 };
+const isSuperAdmin = () => window.currentUser?.staff_role === 'super_admin';
 
 const METHOD_LABEL = { fpx:'FPX', card:'Kad', transfer:'Transfer', ghl:'GHL', manual:'Manual' };
 
@@ -271,10 +313,13 @@ function renderKpi() {
   const _td = new Date(); const today = `${_td.getFullYear()}-${String(_td.getMonth()+1).padStart(2,'0')}-${String(_td.getDate()).padStart(2,'0')}`;
   const monthStart = today.slice(0,8) + '01';
 
-  const todayTotal  = allPayments.filter(p => p.status==='completed' && p.paid_at >= today).reduce((s,p)=>s+Number(p.total||0),0);
-  const monthTotal  = allPayments.filter(p => p.status==='completed' && p.paid_at >= monthStart).reduce((s,p)=>s+Number(p.total||0),0);
-  const pendingCount = allPayments.filter(p => p.status==='pending').length;
-  const txCount      = allPayments.filter(p => p.status==='completed').length;
+  // is_test DIKECUALIKAN drpd semua KPI kewangan (audit #B1-23) — bayaran ujian/demo
+  // tak patut cemari laporan kutipan sebenar.
+  const realPayments = allPayments.filter(p => !p.is_test);
+  const todayTotal  = realPayments.filter(p => p.status==='completed' && p.paid_at >= today).reduce((s,p)=>s+Number(p.total||0),0);
+  const monthTotal  = realPayments.filter(p => p.status==='completed' && p.paid_at >= monthStart).reduce((s,p)=>s+Number(p.total||0),0);
+  const pendingCount = realPayments.filter(p => p.status==='pending').length;
+  const txCount      = realPayments.filter(p => p.status==='completed').length;
 
   const card = (label, value, sub, icon, bg, clr) => `
     <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex items-center gap-4">
@@ -341,7 +386,7 @@ function renderTable() {
         ${p.invoice_no || p.invoice_number ? `<div class="text-[10px] font-mono text-ink/40 truncate">${escHtml(p.invoice_no || p.invoice_number)}</div>` : ''}
       </div>
       <div class="min-w-0">
-        <div class="text-sm font-semibold text-ink truncate">${escHtml(name)}</div>
+        <div class="text-sm font-semibold text-ink truncate">${escHtml(name)}${p.is_test ? ' <span class="text-[9px] font-bold px-1 py-0.5 rounded bg-amber-100 text-amber-700 align-middle">🧪 TEST</span>' : ''}</div>
         <div class="text-[10px] text-ink/40">${escHtml(mrn)}</div>
       </div>
       <div class="text-xs text-ink/65">${METHOD_LABEL[p.payment_method] || p.payment_method || '—'}</div>
@@ -424,7 +469,10 @@ function openDetail(id) {
       <button onclick="openInvoice('${p.id}')" class="flex-1 text-center text-sm font-semibold bg-navy text-white py-2 rounded-lg hover:bg-navy-dark transition-colors">🧾 Jana Invois</button>
       ${p.status === 'pending' ? `<button onclick="markComplete('${p.id}')" data-rbac="payment.edit" class="flex-1 text-sm font-semibold bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition-colors">Sahkan Selesai</button>` : ''}
     </div>
+    ${(p.status === 'completed' || p.status === 'refunded') ? `<button onclick="openAdjustPanel('${p.id}')" data-rbac="payment.edit" class="w-full text-center text-xs font-semibold text-terracotta border border-terracotta/30 py-2 rounded-lg hover:bg-terracotta/5">⚠️ Void / Refund / Correction</button>` : ''}
+    <div id="adj-history-${p.id}"></div>
   `;
+  renderAdjustmentHistory(p.id);
   document.getElementById('detail-modal').classList.remove('hidden');
 }
 
@@ -501,13 +549,144 @@ function closeInvoice() { document.getElementById('invoice-overlay').classList.a
 async function markComplete(id) {
   if (!confirm('Sahkan pembayaran ini sebagai selesai?')) return;
   try {
+    const p = allPayments.find(x => x.id === id);
     const { error: updErr } = await window.db.from('psy_payments').update({ status: 'completed', paid_at: new Date().toISOString() }).eq('id', id);
     if (updErr) throw updErr;
+    // Baiki gap audit #B1-25/26 — staf sahkan bayaran pending sebelum ni TAK trigger
+    // sync status pakej/KOB (cuma laluan bayaran manual/gateway lain yg buat), dan
+    // tiada log audit langsung utk tindakan ni.
+    const kobId = p?.intent?.kob_session_id;
+    if (kobId) await iswRecalcKobPayment(kobId).catch(() => {});
+    if (window.auditLog) window.auditLog('payment.marked_complete', id, { patient_id: p?.patient_id, amount: p?.total });
     banner('Pembayaran disahkan');
     closeDetailModal();
     await loadData();
   } catch(e) { banner('Ralat: ' + e.message, 'error'); }
 }
+
+// ══════════ Void / Refund / Correction (audit #B1-24) ══════════
+let adjPaymentId = null;
+function onAdjTypeChange() {
+  document.getElementById('adj-amount-wrap').classList.toggle('hidden', document.getElementById('adj-type').value === 'void');
+  document.getElementById('adj-approve-now-wrap').classList.toggle('hidden', !isSuperAdmin());
+}
+function openAdjustPanel(paymentId) {
+  adjPaymentId = paymentId;
+  document.getElementById('adj-type').value = 'void';
+  document.getElementById('adj-amount').value = '';
+  document.getElementById('adj-reason').value = '';
+  document.getElementById('adj-approve-now').checked = false;
+  onAdjTypeChange();
+  document.getElementById('adjust-modal').classList.remove('hidden');
+}
+window.openAdjustPanel = openAdjustPanel;
+function closeAdjustPanel() { document.getElementById('adjust-modal').classList.add('hidden'); adjPaymentId = null; }
+window.closeAdjustPanel = closeAdjustPanel;
+
+async function applyAdjustmentEffect(adj) {
+  if (adj.type === 'void') {
+    await window.db.from('psy_payments').update({ status: 'voided' }).eq('id', adj.payment_id);
+  } else if (adj.type === 'refund') {
+    await window.db.from('psy_payments').update({ status: 'refunded' }).eq('id', adj.payment_id);
+  }
+  // 'correction' — dokumentasi sahaja, tiada perubahan automatik pada psy_payments
+  // (amount berkait invois/jadual ansuran KOB — staf betulkan rekod berkaitan manual).
+}
+
+async function submitAdjustment() {
+  const type = document.getElementById('adj-type').value;
+  const reason = document.getElementById('adj-reason').value.trim();
+  const amount = document.getElementById('adj-amount').value ? Number(document.getElementById('adj-amount').value) : null;
+  if (!reason) { banner('Sila isi sebab', 'error'); return; }
+  const approveNow = isSuperAdmin() && document.getElementById('adj-approve-now').checked;
+
+  const payload = {
+    payment_id: adjPaymentId, type, reason, amount,
+    requested_by: window.currentUser?.id || null, requested_by_name: window.currentUser?.full_name || null,
+    status: approveNow ? 'approved' : 'pending',
+  };
+  if (approveNow) { payload.approved_by = window.currentUser?.id || null; payload.approved_by_name = window.currentUser?.full_name || null; payload.approved_at = new Date().toISOString(); }
+
+  const btn = document.getElementById('adj-submit-btn');
+  btn.disabled = true;
+  try {
+    const { data, error } = await window.db.from('psy_payment_adjustments').insert(payload).select().single();
+    if (error) throw error;
+    if (approveNow) await applyAdjustmentEffect(data);
+    if (window.auditLog) window.auditLog(`payment.adjustment_${approveNow ? 'approved' : 'requested'}`, adjPaymentId, { type, amount, reason });
+    banner(approveNow ? `${type} diluluskan & diterapkan ✅` : 'Permohonan dihantar — menunggu kelulusan super_admin');
+    closeAdjustPanel();
+    await loadData();
+    await loadPendingAdjustments();
+    openDetail(adjPaymentId);
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+  finally { btn.disabled = false; }
+}
+window.submitAdjustment = submitAdjustment;
+
+async function renderAdjustmentHistory(paymentId) {
+  const host = document.getElementById(`adj-history-${paymentId}`);
+  if (!host) return;
+  const { data } = await window.db.from('psy_payment_adjustments').select('*').eq('payment_id', paymentId).order('created_at', { ascending: false });
+  if (!data?.length) { host.innerHTML = ''; return; }
+  const STATUS_LBL = { pending: '⏳ Menunggu', approved: '✅ Diluluskan', rejected: '❌ Ditolak' };
+  host.innerHTML = `<div class="bg-cream rounded-lg p-3 mt-2">
+    <div class="text-[10px] font-bold text-ink/45 uppercase mb-1.5">Sejarah Void/Refund/Correction</div>
+    ${data.map(a => `<div class="text-xs text-ink/70 py-1 border-t border-ink/8 first:border-0 first:pt-0">
+      <div class="flex items-center justify-between"><b class="capitalize">${a.type}</b><span>${STATUS_LBL[a.status]}</span></div>
+      <div class="text-[11px] text-ink/55">${escHtml(a.reason)}${a.amount ? ' · RM ' + Number(a.amount).toFixed(2) : ''}</div>
+      <div class="text-[10px] text-ink/40">Oleh ${escHtml(a.requested_by_name || '—')} · ${fmtDate(a.requested_at)}${a.approved_by_name ? ` · Diluluskan ${escHtml(a.approved_by_name)}` : ''}</div>
+    </div>`).join('')}
+  </div>`;
+}
+
+async function loadPendingAdjustments() {
+  const card = document.getElementById('pending-adj-card');
+  if (!isSuperAdmin()) { card.classList.add('hidden'); return; }
+  const { data } = await window.db.from('psy_payment_adjustments')
+    .select('*, psy_payments(receipt_no, total, patient_id)').eq('status', 'pending').order('requested_at');
+  if (!data?.length) { card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  card.innerHTML = `<h3 class="font-bold text-sm text-terracotta mb-3">⚠️ ${data.length} Void/Refund/Correction Menunggu Kelulusan</h3>
+    <div class="space-y-2">
+      ${data.map(a => `<div class="flex items-center justify-between gap-3 border border-ink/10 rounded-lg p-3">
+        <div class="min-w-0">
+          <div class="text-sm font-semibold text-ink"><span class="capitalize">${a.type}</span> — ${escHtml(a.psy_payments?.receipt_no || a.payment_id)}${a.amount ? ' · RM ' + Number(a.amount).toFixed(2) : ''}</div>
+          <div class="text-xs text-ink/55">${escHtml(a.reason)}</div>
+          <div class="text-[10px] text-ink/40">Dimohon oleh ${escHtml(a.requested_by_name || '—')} · ${fmtDate(a.requested_at)}</div>
+        </div>
+        <div class="flex gap-1.5 shrink-0">
+          <button onclick="approveAdjustment('${a.id}')" class="text-xs font-semibold bg-green-600 text-white px-3 py-1.5 rounded-lg hover:bg-green-700">Lulus</button>
+          <button onclick="rejectAdjustment('${a.id}')" class="text-xs font-semibold border border-ink/20 text-ink/60 px-3 py-1.5 rounded-lg hover:bg-ink/5">Tolak</button>
+        </div>
+      </div>`).join('')}
+    </div>`;
+}
+
+async function approveAdjustment(id) {
+  if (!confirm('Luluskan permohonan ni? Kesan akan terus diterapkan pada bayaran berkaitan.')) return;
+  const { data: adj, error: e1 } = await window.db.from('psy_payment_adjustments')
+    .update({ status: 'approved', approved_by: window.currentUser?.id, approved_by_name: window.currentUser?.full_name, approved_at: new Date().toISOString() })
+    .eq('id', id).select().single();
+  if (e1) { banner('Ralat: ' + e1.message, 'error'); return; }
+  await applyAdjustmentEffect(adj);
+  if (window.auditLog) window.auditLog('payment.adjustment_approved', adj.payment_id, { adjustment_id: id, type: adj.type });
+  banner('Diluluskan ✅');
+  await loadData(); await loadPendingAdjustments();
+}
+window.approveAdjustment = approveAdjustment;
+
+async function rejectAdjustment(id) {
+  if (!confirm('Tolak permohonan ni?')) return;
+  const { error } = await window.db.from('psy_payment_adjustments')
+    .update({ status: 'rejected', approved_by: window.currentUser?.id, approved_by_name: window.currentUser?.full_name, approved_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  if (window.auditLog) window.auditLog('payment.adjustment_rejected', id, {});
+  banner('Ditolak');
+  await loadPendingAdjustments();
+}
+window.rejectAdjustment = rejectAdjustment;
 
 let manualTargets = {};   // value → {kind, ...} untuk pilihan "Bayaran untuk" semasa
 
@@ -639,6 +818,7 @@ async function saveManual() {
       payment_method: 'manual', manual_method: method, status: 'completed', total, subtotal: total,
       bank_reference: bankRef || null, paid_at: iswLocalInputToIso(paidAtVal), receipt_url: proofUrl,
       recorded_by: window.currentUser?.id || null, is_partial: isPartial, notes: notes || null,
+      is_test: document.getElementById('m-is-test').checked,
     };
     let paymentId;
     if (t.kind === 'inv') {
@@ -672,6 +852,7 @@ async function saveManual() {
     ['m-desc', 'm-total', 'm-notes', 'm-bankref'].forEach(id => { document.getElementById(id).value = ''; });
     document.getElementById('m-proof').value = '';
     document.getElementById('m-target').value = '';
+    document.getElementById('m-is-test').checked = false;
     await loadData();
   } catch (e) { banner(iswL('Ralat: ', 'Error: ') + e.message, 'error'); }
   finally { btn.disabled = false; }
@@ -770,6 +951,7 @@ async function init() {
   const user = await initStaff('payment_admin', 'Patient Payment');
   if (!user) return;
   await loadData();
+  await loadPendingAdjustments();
   subscribePaymentsRealtime();
 }
 

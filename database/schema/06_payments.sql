@@ -18,7 +18,13 @@ CREATE TABLE IF NOT EXISTS psy_payments (
   sst NUMERIC(10,2) DEFAULT 0,
   total NUMERIC(10,2) NOT NULL,
   payment_method TEXT CHECK (payment_method IN ('fpx','card','transfer','ghl','manual','gateway')),
-  status TEXT DEFAULT 'completed' CHECK (status IN ('pending','completed','refunded','failed')),
+  -- 'voided' ditambah 24 Sept 2026 (audit management #B1-24) — transaksi yg tersalah
+  -- rekod terus (bukan pesakit betul-betul minta wang balik). Beza drpd 'refunded'
+  -- (bayaran sah, wang dipulangkan). Lihat psy_payment_adjustments utk sebab/approver.
+  status TEXT DEFAULT 'completed' CHECK (status IN ('pending','completed','refunded','failed','voided')),
+  -- Ditambah 24 Sept 2026 (audit management #B1-23) — bayaran ujian/demo, DIKECUALIKAN
+  -- drpd semua laporan kewangan sebenar (KPI dashboard, laporan bulanan dll).
+  is_test BOOLEAN NOT NULL DEFAULT false,
   ghl_transaction_id TEXT,
   invoice_number TEXT,                        -- bayaran manual — no. invois ditaip staff/doktor
   manual_method TEXT CHECK (manual_method IN ('transfer','cash','other')),  -- kaedah bayaran manual (payment_method='manual')
@@ -99,6 +105,44 @@ CREATE POLICY "Staff manage all payments" ON psy_payments FOR ALL
 
 COMMENT ON COLUMN psy_payments.intent IS
   'Snapshot pendingItems + konteks bayaran; dibaca oleh payments-webhook untuk fulfillment idempotent selepas gateway sahkan.';
+
+-- ──────────────────────────────────────────────────────────────
+-- psy_payment_adjustments — Void/Refund/Correction workflow (audit #B1-24, 24 Sept 2026)
+-- Transaksi kewangan tersalah TAK boleh dipadam terus — kena melalui rekod ni dgn
+-- sebab+amount+approver. type='void' (transaksi tak sepatutnya wujud, status→'voided'),
+-- 'refund' (bayaran sah, wang dipulangkan, status→'refunded'), 'correction'
+-- (dokumentasi pembetulan — TAK ubah amount psy_payments terus, sbb amount berkait
+-- invois/jadual ansuran KOB; staf betulkan rekod berkaitan secara manual selepas
+-- catat sebab di sini).
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_payment_adjustments (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  payment_id         UUID NOT NULL REFERENCES psy_payments(id) ON DELETE CASCADE,
+  type               TEXT NOT NULL CHECK (type IN ('void','refund','correction')),
+  reason             TEXT NOT NULL,
+  amount             NUMERIC(10,2),  -- refund/correction; NULL utk void (batal penuh)
+  requested_by       UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  requested_by_name  TEXT,
+  requested_at       TIMESTAMPTZ DEFAULT now(),
+  approved_by        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  approved_by_name   TEXT,
+  approved_at        TIMESTAMPTZ,
+  status             TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
+  notes              TEXT,
+  created_at         TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_adj_payment ON psy_payment_adjustments(payment_id);
+CREATE INDEX IF NOT EXISTS idx_payment_adj_status  ON psy_payment_adjustments(status, requested_at);
+
+ALTER TABLE psy_payment_adjustments ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage payment adjustments" ON psy_payment_adjustments;
+CREATE POLICY "Staff manage payment adjustments" ON psy_payment_adjustments FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+COMMENT ON COLUMN psy_payment_adjustments.status IS
+  'pending = menunggu kelulusan super_admin; approved = diluluskan & kesan diterapkan (psy_payments.status dikemaskini); rejected = ditolak, psy_payments tak berubah.';
 
 -- ──────────────────────────────────────────────────────────────
 -- psy_orders — pesanan produk pesakit (penghantaran bekalan)
