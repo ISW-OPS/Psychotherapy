@@ -154,6 +154,8 @@
                       data-rbac="kob.edit" class="accent-navy"> 💻 Online
                   </label>
                 </div>
+                <button type="button" id="btn-reschedule-kob" onclick="openRescheduleKobModal()" data-rbac="kob.edit"
+                  class="hidden text-xs font-semibold text-navy hover:underline mt-1">🔄 Tukar Jadual</button>
               </div>
               <div>
                 <div class="text-xs text-ink/50">STATUS</div>
@@ -743,6 +745,33 @@
     </div>
   </div>
 
+  <!-- Tukar Jadual KOB -->
+  <div id="reschedule-kob-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-ink/10">
+        <h3 class="font-bold">🔄 Tukar Jadual KOB</h3>
+        <button onclick="closeRescheduleKobModal()" class="text-ink/40 hover:text-ink text-xl leading-none">&times;</button>
+      </div>
+      <div class="p-6 space-y-4">
+        <div>
+          <label class="lbl">Tarikh Baru</label>
+          <input id="rsk-date" type="date" onchange="loadRescheduleKobSlots()" class="finput">
+        </div>
+        <div>
+          <label class="lbl">Slot Waktu Baru</label>
+          <select id="rsk-slot-select" onchange="selectRescheduleKobSlot(this.value)" class="finput">
+            <option value="">— Pilih tarikh dahulu —</option>
+          </select>
+          <input type="hidden" id="rsk-slot-start">
+        </div>
+      </div>
+      <div class="px-6 pb-5 flex gap-3">
+        <button onclick="closeRescheduleKobModal()" class="flex-1 border border-ink/20 text-ink/60 py-2.5 rounded-xl text-sm">Batal</button>
+        <button onclick="confirmRescheduleKob()" id="btn-rsk-confirm" class="flex-1 bg-navy text-white py-2.5 rounded-xl text-sm font-semibold">Simpan</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/shared/supabase.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
   <script src="../../config/supabase.js"></script>
@@ -810,6 +839,7 @@
       const modeEl = document.getElementById('kob-mode');
       const modeGroup = document.getElementById('kob-mode-group');
       const canEditMode = (kob.status === 'booked' || kob.status === 'reschedule');
+      document.getElementById('btn-reschedule-kob').classList.toggle('hidden', !canEditMode);
       if (canEditMode) {
         modeEl.classList.add('hidden');
         modeGroup.classList.remove('hidden');
@@ -3934,6 +3964,93 @@
       } catch (e) {
         banner('Ralat: ' + e.message, 'error');
         render();
+      }
+    }
+
+    // ── Tukar Jadual KOB ──
+    let rskSlots = [];
+    function openRescheduleKobModal() {
+      const pad = n => String(n).padStart(2, '0');
+      const now = new Date();
+      const dateInput = document.getElementById('rsk-date');
+      dateInput.min = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+      const cur = new Date(kob.scheduled_at);
+      dateInput.value = isNaN(cur) ? '' : `${cur.getFullYear()}-${pad(cur.getMonth() + 1)}-${pad(cur.getDate())}`;
+      document.getElementById('rsk-slot-start').value = '';
+      document.getElementById('reschedule-kob-modal').classList.remove('hidden');
+      loadRescheduleKobSlots();
+    }
+
+    function closeRescheduleKobModal() {
+      document.getElementById('reschedule-kob-modal').classList.add('hidden');
+    }
+
+    async function loadRescheduleKobSlots() {
+      const date = document.getElementById('rsk-date').value;
+      const sel = document.getElementById('rsk-slot-select');
+      document.getElementById('rsk-slot-start').value = '';
+      rskSlots = [];
+      if (!date) {
+        sel.innerHTML = '<option value="">— Pilih tarikh dahulu —</option>';
+        return;
+      }
+      const day = new Date(date + 'T00:00:00').getDay();
+      if (day === 1 || day === 2) {
+        sel.innerHTML = '<option value="">🚫 Konsultasi tutup Isnin/Selasa</option>';
+        return;
+      }
+      const { data: closure } = await window.db.from('psy_clinic_closures')
+        .select('label').eq('closure_date', date).limit(1);
+      if (closure?.[0]) {
+        sel.innerHTML = `<option value="">🚫 ${escapeHtml(closure[0].label)}</option>`;
+        return;
+      }
+      const { data: slots } = await window.db.from('psy_kob_slot_config')
+        .select('*').eq('slot_type', 'kob').eq('day_of_week', day).eq('is_active', true)
+        .order('sort_order', { ascending: true });
+      rskSlots = slots || [];
+      if (!rskSlots.length) {
+        sel.innerHTML = '<option value="">— Tiada slot tersedia —</option>';
+        return;
+      }
+      sel.innerHTML = '<option value="">— Pilih slot —</option>' +
+        rskSlots.map(s => `<option value="${s.id}">${escapeHtml(s.label)}</option>`).join('');
+    }
+
+    function selectRescheduleKobSlot(slotId) {
+      const s = rskSlots.find(x => x.id === slotId);
+      document.getElementById('rsk-slot-start').value = s ? s.slot_start : '';
+    }
+
+    async function confirmRescheduleKob() {
+      const date = document.getElementById('rsk-date').value;
+      const slotStart = document.getElementById('rsk-slot-start').value;
+      if (!date || !slotStart) { banner('Sila pilih tarikh & slot waktu', 'error'); return; }
+
+      const newScheduledAt = new Date(`${date}T${slotStart}`).toISOString();
+      const oldScheduledAt = kob.scheduled_at;
+      const updates = { scheduled_at: newScheduledAt, updated_at: new Date().toISOString() };
+
+      try {
+        const { error } = await window.db.from('psy_kob_sessions').update(updates).eq('id', kobId);
+        if (error) throw error;
+        Object.assign(kob, updates);
+        await auditLog('kob.rescheduled', kobId, { from: oldScheduledAt, to: newScheduledAt });
+
+        if (patient?.user_id) {
+          const nd = new Date(newScheduledAt);
+          await notify(patient.user_id, 'appointment',
+            iswL('Sesi KOB anda dijadual semula', 'Your KOB session has been rescheduled'),
+            iswL(`Sesi KOB baharu: ${nd.toLocaleDateString('ms-MY', { weekday: 'long', day: '2-digit', month: 'long' })} · ${nd.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`,
+              `New KOB session: ${nd.toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'long' })} · ${nd.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`),
+            'kob.html');
+        }
+
+        closeRescheduleKobModal();
+        banner('Jadual KOB dikemas kini ✅');
+        render();
+      } catch (e) {
+        banner('Ralat: ' + e.message, 'error');
       }
     }
 
