@@ -20,21 +20,26 @@
 // akhirnya discan & disegerak secara berperingkat.
 //
 // Untuk contact yang custom field "ISW STATUS" bermula KOB/SU KOB/SU
-// OB/OB (kes tak sensitif huruf) — SYARAT MASUK (keputusan user 11-12
-// Ogos 2026, TAMBAHAN atas filter status): mesti JUGA ada (a) sekurang-
-// kurangnya 1 appointment pada kalendar KOB khusus DAN (b) sekurang-
-// kurangnya 1 GHL Transaction succeeded/paid/completed **UNTUK PRODUK
-// KOB KHUSUS** (`/payments/transactions` — LEDGER BERSEPADU rasmi GHL,
-// tangkap Order/checkout + Invoice/manual-transfer + Stripe SEKALI GUS;
-// bukan /payments/orders sahaja SEBAB kebanyakan yuran KOB akaun ni
-// dibayar transfer manual via Invoice — tak muncul dalam Orders
-// langsung). Transaction pakej/kontrak LAIN (bukan yuran KOB) TAK dikira
-// — lihat getKobPaidTransactions() (keputusan user 12 Ogos: mula-mula
-// terima MANA-MANA transaction "buat masa sekarang", kemudian diketatkan
-// kepada KOB sahaja). Status sahaja TAK MEMADAI — contact yang belum
-// book/bayar diskip (skippedNoPaymentOrBooking), TAK dicipta dalam
-// psy_patients. Lihat getKobCalendarIds() (auto-resolve ikut nama
-// kalendar "KONSULTASI OVERHAUL BODY", bukan ID hardcode).
+// OB/OB (kes tak sensitif huruf) — SYARAT MASUK: mesti JUGA ada
+// sekurang-kurangnya 1 appointment AKTIF pada kalendar KOB khusus
+// (lihat getKobCalendarIds(), auto-resolve ikut nama kalendar
+// "KONSULTASI OVERHAUL BODY", bukan ID hardcode). Status sahaja TAK
+// MEMADAI — contact yang belum book diskip (skippedNoPaymentOrBooking),
+// TAK dicipta dalam psy_patients.
+//
+// Bayaran (24 Sept 2026, keputusan user — GANTI syarat 11-12 Ogos yang
+// mula-mula WAJIBKAN transaction paid/completed/succeeded juga): ADA
+// sesi KOB PERCUMA (tiada caj direkod GHL langsung) — mewajibkan bayaran
+// buat sesi macam ni skip SELAMA-LAMANYA walaupun booking sah. Appointment
+// kalendar KOB SAHAJA kini memadai (requirePayment default FALSE).
+// Bayaran (kalau ada, via getKobPaidTransactions()/`/payments/transactions`
+// — ledger bersepadu Order+Invoice+Stripe) tetap disync sebagai rekod
+// tambahan (psy_payments), cuma TAK gate penciptaan pesakit/sesi lagi.
+//
+// Pembatalan (24 Sept 2026, keputusan user): kalau appointment KOB
+// dibatal/dipadam terus di GHL Calendar (bukan reschedule ke slot lain),
+// sesi 'booked'/'reschedule' pesakit berkenaan di ISW turut ditanda
+// 'cancelled' — lihat cancelStaleKobSessions() dalam _shared/ghl-sync.ts.
 //
 // Guna semula SEPENUHNYA logik teras _shared/ghl-sync.ts — TIADA logik
 // sync baharu ditulis di sini, hanya orkestrasi pull+loop.
@@ -50,7 +55,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
 import { ghl, cleanGhlName, phoneKey } from '../_shared/ghl.ts'
-import { syncContactToPatient, syncAppointmentToSession, syncTransactionToPayment } from '../_shared/ghl-sync.ts'
+import { syncContactToPatient, syncAppointmentToSession, syncTransactionToPayment, findPatientIdByPhone, cancelStaleKobSessions } from '../_shared/ghl-sync.ts'
 
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
@@ -174,23 +179,27 @@ async function getKobCalendarIds(locationId: string): Promise<Set<string>> {
   return kobCalendarIdsCache
 }
 
-// Proses SATU contact ikut syarat penuh (status + kalendar KOB + bayaran)
+// Proses SATU contact ikut syarat penuh (status + kalendar KOB, ± bayaran)
 // — sumber tunggal dikongsi antara scan sistematik (loop utama) DAN
 // carian sasaran (action sync_matching). Elak drift dua salinan logik.
 //
-// `requirePayment`/`requireAppointment` (default true/true): keputusan asal
-// user (11-12 Ogos) — mesti ada appointment KOB DAN bayaran sah. 12 Ogos
-// user minta longgarkan SEMENTARA ("untuk sekarang ni") khas utk backfill
-// kontak SU/JS/OB yang status dah relevan tapi belum sempat sync
-// appointment/bayaran — mula-mula bayaran dilonggarkan, kemudian
-// appointment turut dilonggarkan (baki ~247 kontak yang status relevan
-// tapi tiada appointment KOB langsung). Loop scan sistematik (Deno.serve)
-// kekal panggil dgn default (true/true) — hanya sync_matching boleh set
-// false secara eksplisit.
-async function processOneContact(svc: any, locationId: string, c: any, requirePayment = true, requireAppointment = true): Promise<{
+// `requirePayment` (default FALSE sejak 24 Sept 2026, keputusan user) —
+// asalnya (11-12 Ogos) mesti ada appointment KOB DAN bayaran sah, tapi ada
+// sesi KOB PERCUMA (tiada caj/transaction direkod GHL) — gate bayaran
+// sebelum ni buat sesi macam ni skip SELAMA-LAMANYA. Sekarang tempahan
+// pada kalendar KOB SAHAJA sudah memadai (`requireAppointment`, default
+// true) — bayaran (kalau ada) tetap disync sebagai rekod tambahan, cuma
+// TAK gate lagi.
+//
+// Pembatalan (24 Sept 2026, keputusan user): kalau contact tiada LANGSUNG
+// appointment KOB aktif semasa (dibatal/dipadam di GHL Calendar) tapi
+// pesakit tu dah wujud di ISW (pernah disync), batalkan sesi
+// 'booked'/'reschedule' dia — lihat cancelStaleKobSessions().
+async function processOneContact(svc: any, locationId: string, c: any, requirePayment = false, requireAppointment = true): Promise<{
   status: 'not_relevant' | 'skipped_gate' | 'synced'
   patientId?: string
   appointmentSynced?: boolean
+  sessionsCancelled?: number
   paymentsSynced?: number
   error?: string
 }> {
@@ -199,21 +208,38 @@ async function processOneContact(svc: any, locationId: string, c: any, requirePa
     if (!isKobRelevantStatus(iswStatus)) return { status: 'not_relevant' }
 
     let latestKobAppt: any = null
+    let activeKobIsoTimes: string[] = []
     try {
       const apptData = await ghl(`/contacts/${c.id}/appointments`, { method: 'GET' })
       const kobCalIds = await getKobCalendarIds(locationId)
-      const events = (apptData?.events || apptData?.appointments || [])
-        .filter((a: any) => !a.deleted && kobCalIds.has(a.calendarId))
-      events.sort((a: any, b: any) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())
-      latestKobAppt = events[0] || null
+      const activeEvents = (apptData?.events || apptData?.appointments || [])
+        .filter((a: any) => !a.deleted && a.appointmentStatus !== 'cancelled' && kobCalIds.has(a.calendarId))
+      activeKobIsoTimes = activeEvents
+        .map((a: any) => { const d = new Date(String(a.startTime).replace(' ', 'T') + '+08:00'); return Number.isNaN(d.getTime()) ? null : d.toISOString() })
+        .filter((s: string | null): s is string => !!s)
+      activeEvents.sort((a: any, b: any) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())
+      latestKobAppt = activeEvents[0] || null
     } catch (e) { return { status: 'skipped_gate', error: `appt-check: ${(e as Error).message}` } }
 
     let paidTransactions: any[] = []
     try {
       paidTransactions = await getKobPaidTransactions(locationId, c.id)
-    } catch (e) { return { status: 'skipped_gate', error: `transaction-check: ${(e as Error).message}` } }
+    } catch (e) { /* bayaran gagal tarik TAK block sync appointment — bayaran cuma rekod tambahan, bukan gate lagi */ }
 
-    if ((requireAppointment && !latestKobAppt) || (requirePayment && paidTransactions.length === 0)) return { status: 'skipped_gate' }
+    if ((requireAppointment && !latestKobAppt) || (requirePayment && paidTransactions.length === 0)) {
+      // Tiada appointment KOB aktif — kalau pesakit ni dah wujud (pernah
+      // disync dari appointment sebelum ni), batalkan sesi 'booked'/
+      // 'reschedule' dia (appointment dibatal/dipadam di GHL Calendar).
+      let sessionsCancelled: number | undefined
+      if (!latestKobAppt) {
+        const existingPatientId = await findPatientIdByPhone(svc, c.phone).catch(() => null)
+        if (existingPatientId) {
+          const r = await cancelStaleKobSessions(svc, existingPatientId, activeKobIsoTimes).catch(() => null)
+          if (r) sessionsCancelled = r.cancelled
+        }
+      }
+      return { status: 'skipped_gate', sessionsCancelled }
+    }
 
     const fullName = [c.firstNameRaw, c.lastNameRaw].filter(Boolean).join(' ').trim() || c.contactName || null
     const { patientId } = await syncContactToPatient(svc, {
@@ -237,6 +263,16 @@ async function processOneContact(svc: any, locationId: string, c: any, requirePa
       } catch (e) { return { status: 'synced', patientId, error: `appt-sync: ${(e as Error).message}` } }
     }
 
+    // Batalkan sesi lama patient ni yang TAK LAGI wujud dalam senarai
+    // appointment KOB aktif semasa (cth slot lain sebelum ni dibatal di
+    // GHL, bukan reschedule) — dedup tambahan selain hard-delete dalam
+    // syncAppointmentToSession (yang cuma buang bila ADA booking baharu).
+    let sessionsCancelled = 0
+    try {
+      const r = await cancelStaleKobSessions(svc, patientId, activeKobIsoTimes)
+      sessionsCancelled = r.cancelled
+    } catch (_) { /* gagal batal tak patut gagalkan keseluruhan sync contact ni */ }
+
     let paymentsSynced = 0
     try {
       for (const t of paidTransactions) {
@@ -245,9 +281,9 @@ async function processOneContact(svc: any, locationId: string, c: any, requirePa
         })
         if (!result.skipped) paymentsSynced++
       }
-    } catch (e) { return { status: 'synced', patientId, appointmentSynced, error: `transaction-sync: ${(e as Error).message}` } }
+    } catch (e) { return { status: 'synced', patientId, appointmentSynced, sessionsCancelled, error: `transaction-sync: ${(e as Error).message}` } }
 
-    return { status: 'synced', patientId, appointmentSynced, paymentsSynced }
+    return { status: 'synced', patientId, appointmentSynced, sessionsCancelled, paymentsSynced }
   } catch (e) {
     return { status: 'skipped_gate', error: `contact: ${(e as Error).message}` }
   }
@@ -346,19 +382,18 @@ Deno.serve(async (req: Request) => {
         }
       }
       if (body.action === 'sync_matching') {
-        // { debug:true, action:'sync_matching', query:'SU' | 'JS' | ..., requirePayment?:false, requireAppointment?:false }
+        // { debug:true, action:'sync_matching', query:'SU' | 'JS' | ..., requirePayment?:true, requireAppointment?:false }
         // Carian TERUS (GHL text search, bukan scan cursor sistematik) —
         // utk utamakan kelompok pesakit tertentu (cth nama "SU"/"JS")
         // TANPA tunggu giliran scan menyeluruh. Lalui syarat status
-        // SENTIASA via processOneContact(). `requirePayment:false` /
-        // `requireAppointment:false` (keputusan user 12 Ogos, SEMENTARA
-        // "untuk sekarang ni") longgarkan syarat bayaran/appointment khas
-        // utk carian sasaran ni — default kedua-dua masih true (loop scan
-        // sistematik TAK terjejas, sentiasa panggil processOneContact
-        // tanpa override = true/true).
+        // SENTIASA via processOneContact(). Default (24 Sept 2026) padan
+        // loop scan sistematik: requirePayment FALSE (appointment KOB
+        // sahaja memadai — ada sesi percuma), requireAppointment true.
+        // Override eksplisit `requirePayment:true` kalau perlu ketatkan
+        // semula utk carian sasaran ni sahaja.
         const q = String(body.query || '')
         if (!q) return json({ debug: true, action: 'sync_matching', error: 'query wajib' }, 400)
-        const requirePayment = body.requirePayment !== false
+        const requirePayment = body.requirePayment === true
         const requireAppointment = body.requireAppointment !== false
         let sAfterId: string | undefined = body.startAfterId
         let sAfter: number | undefined = body.startAfter
@@ -463,7 +498,10 @@ Deno.serve(async (req: Request) => {
               transactionStatuses,
               paidTransactions: paidTransactionCount,
               kobPaidTransactions: kobPaidTransactionCount,
-              passed: kobEvents.length > 0 && kobPaidTransactionCount > 0,
+              // 24 Sept 2026: appointment kalendar KOB sahaja memadai (bayaran
+              // tak digate lagi — ada sesi KOB percuma). `passed` cerminkan
+              // gate SEBENAR processOneContact() guna sekarang.
+              passed: kobEvents.length > 0,
             })
           }
           if (cs.length < PAGE_LIMIT) break
@@ -648,6 +686,7 @@ Deno.serve(async (req: Request) => {
     let skippedNoPaymentOrBooking = 0
     let patientsSynced = 0
     let appointmentsSynced = 0
+    let sessionsCancelled = 0
     let paymentsSynced = 0
     const errors: string[] = []
 
@@ -675,12 +714,14 @@ Deno.serve(async (req: Request) => {
         const r = await processOneContact(svc, locationId, c)
         if (r.status === 'skipped_gate') {
           skippedNoPaymentOrBooking++
+          sessionsCancelled += r.sessionsCancelled || 0
           if (r.error) errors.push(`${c.id}: ${r.error}`)
           continue
         }
         if (r.status === 'synced') {
           patientsSynced++
           if (r.appointmentSynced) appointmentsSynced++
+          sessionsCancelled += r.sessionsCancelled || 0
           paymentsSynced += r.paymentsSynced || 0
           if (r.error) errors.push(`${c.id}: ${r.error}`)
         }
@@ -700,7 +741,7 @@ Deno.serve(async (req: Request) => {
       await svc.from('psy_settings').upsert({ key: CURSOR_KEY, value: nextCursor, updated_at: new Date().toISOString() })
     } catch (_) { /* cursor gagal simpan — run seterusnya mula semula, tak fatal */ }
 
-    const summary = { totalContacts, kobRelevant, skippedNoPaymentOrBooking, patientsSynced, appointmentsSynced, paymentsSynced, errorCount: errors.length, errors: errors.slice(0, 20), reachedEnd, nextCursor }
+    const summary = { totalContacts, kobRelevant, skippedNoPaymentOrBooking, patientsSynced, appointmentsSynced, sessionsCancelled, paymentsSynced, errorCount: errors.length, errors: errors.slice(0, 20), reachedEnd, nextCursor }
 
     try {
       await svc.from('psy_audit_log').insert({

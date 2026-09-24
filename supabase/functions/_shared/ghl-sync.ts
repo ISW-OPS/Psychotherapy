@@ -133,6 +133,42 @@ export async function syncAppointmentToSession(svc: any, patientId: string, opts
   return { kobSessionId }
 }
 
+// Padan pesakit ikut telefon TANPA cipta baharu — dipakai bila kita cuma
+// nak semak/kemaskini rekod sedia ada (cth batalkan sesi), bukan sync
+// penuh (elak cipta psy_patients untuk contact yang appointment dia
+// dah dibatal/dipadam di GHL — tiada apa nak disync lagi).
+export async function findPatientIdByPhone(svc: any, phone: string | null | undefined): Promise<string | null> {
+  const p = toE164(phone)
+  if (!p) return null
+  const key = phoneKey(p)
+  if (!key) return null
+  const { data: candidates } = await svc.from('psy_patients')
+    .select('id, phone, emergency_contact_phone')
+    .or(`phone.ilike.%${key},emergency_contact_phone.ilike.%${key}`)
+  const match = (candidates || []).find(
+    (row: any) => phoneKey(row.phone) === key || phoneKey(row.emergency_contact_phone) === key,
+  )
+  return match?.id || null
+}
+
+// Batalkan sesi KOB 'booked'/'reschedule' pesakit yang TAK LAGI wujud dalam
+// senarai appointment KOB AKTIF semasa di GHL (dibatal/dipadam di GHL
+// Calendar). Sesi 'hadir'/'completed' TIDAK disentuh — dah lepas peringkat
+// tempahan, pembatalan calendar lewat tak patut buang progres klinikal.
+export async function cancelStaleKobSessions(
+  svc: any, patientId: string, activeScheduledIso: string[],
+): Promise<{ cancelled: number }> {
+  const { data: rows } = await svc.from('psy_kob_sessions')
+    .select('id, scheduled_at').eq('patient_id', patientId).in('status', ['booked', 'reschedule'])
+  const activeSet = new Set(activeScheduledIso)
+  const staleIds = (rows || [])
+    .filter((r: any) => !activeSet.has(new Date(r.scheduled_at).toISOString()))
+    .map((r: any) => r.id)
+  if (!staleIds.length) return { cancelled: 0 }
+  await svc.from('psy_kob_sessions').update({ status: 'cancelled' }).in('id', staleIds)
+  return { cancelled: staleIds.length }
+}
+
 // ── 3. Sync bayaran (yuran KOB dari GHL) ────────────────────
 const PAID_LIKE = new Set(['paid', 'completed', 'succeeded', 'success'])
 
