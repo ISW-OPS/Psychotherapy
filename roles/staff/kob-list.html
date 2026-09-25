@@ -62,7 +62,7 @@
               <tr>
                 <th>Tarikh & Masa</th>
                 <th>Pesakit</th>
-                <th>MRN</th>
+                <th>Kod KOB</th>
                 <th>Mod</th>
                 <th>Collector</th>
                 <th>Closer</th>
@@ -124,8 +124,16 @@ function kobRoleCellHtml(k, field) {
   if (!can('kob', 'edit')) return `<span class="text-ink/70">${escapeHtml(k[nameKey] || '—')}</span>`;
   const current = k[idKey];
   const opts = kobRoleStaff.map(s => `<option value="${s.id}" ${s.id === current ? 'selected' : ''}>${escapeHtml(s.full_name)}</option>`).join('');
+  // Sesi dari GHL — nama collector ditarik terus dari GHL (cth. "T103 SABRINA"),
+  // TIADA akaun staff ISW sepadan (collector_id kosong). Papar teks GHL tu sbg
+  // placeholder dropdown supaya nampak, bukan hilang jadi "— Pilih —" kosong.
+  // Staff ISW tetap boleh timpa manual ke Collector sebenar bila-bila.
+  const ghlOnly = !current && k[nameKey];
+  const placeholder = ghlOnly
+    ? `<option value="" selected>${escapeHtml(k[nameKey])} (GHL)</option>`
+    : `<option value="" ${current ? '' : 'selected'}>— Pilih ${KOB_ROLE_LABEL[field]} —</option>`;
   return `<select class="finput" data-rbac="kob.edit" onchange="onKobRoleChange(this,'${field}','${k.id}')">
-    <option value="" ${current ? '' : 'selected'}>— Pilih ${KOB_ROLE_LABEL[field]} —</option>
+    ${placeholder}
     ${opts}
   </select>`;
 }
@@ -165,7 +173,7 @@ function setFilter(mode) {
 async function loadAll() {
   const [kobRes, patRes] = await Promise.all([
     window.db.from('psy_kob_sessions').select('*').order('scheduled_at', { ascending: false }),
-    window.db.from('psy_patients').select('id, mrn, full_name, kob_status, active_package_id, active_package_name, psy_profiles!psy_patients_user_id_fkey(full_name, phone)'),
+    window.db.from('psy_patients').select('id, mrn, full_name, kob_status, active_package_id, active_package_name, ghl_kob_code, psy_profiles!psy_patients_user_id_fkey(full_name, phone)'),
     loadKobRoleStaff(),
   ]);
   allKob = kobRes.data || [];
@@ -197,16 +205,16 @@ function signupChip(kob, pat) {
   const kobDone = pat?.kob_status === 'completed';
   const hasPkg = !!pat?.active_package_id;
   if (kobDone && hasPkg) {
-    return `<span class="chip bg-green-light text-green-dark text-[10px]">✅ ${escapeHtml(pat.active_package_name || 'Signup')}</span>`;
+    return `<span class="text-xs text-green-dark">✅ ${escapeHtml(pat.active_package_name || 'Signup')}</span>`;
   }
   if (kobDone && !hasPkg) {
-    return '<span class="chip bg-terracotta/15 text-terracotta text-[10px]">⚠️ Tak Signup</span>';
+    return '<span class="text-xs text-terracotta">⚠️ Tak Signup</span>';
   }
   // KOB session has recommendation but not finalized
   if (kob.recommended_package_name) {
-    return `<span class="chip bg-gold/20 text-gold-dark text-[10px]">⏳ Cadang: ${escapeHtml(kob.recommended_package_name)}</span>`;
+    return `<span class="text-xs text-gold-dark">⏳ Cadang: ${escapeHtml(kob.recommended_package_name)}</span>`;
   }
-  return '<span class="text-[10px] text-ink/40">—</span>';
+  return '<span class="text-xs text-ink/40">—</span>';
 }
 
 function signupCategory(kob, pat) {
@@ -258,7 +266,7 @@ function render() {
     return `<tr${missed ? ' class="bg-terracotta/5"' : ''}>
       <td class="whitespace-nowrap"><div class="font-semibold">${escapeHtml(dateStr)}</div><div class="text-xs text-ink/50">${escapeHtml(timeStr)}</div></td>
       <td>${escapeHtml(patName)}</td>
-      <td class="text-xs font-mono">${escapeHtml(pat?.mrn || '—')}</td>
+      <td class="text-xs font-mono">${escapeHtml(pat?.ghl_kob_code || '—')}</td>
       <td class="text-xs">${k.mode === 'online' ? '💻 Online' : '🏥 F2F'}</td>
       <td class="text-xs">${kobRoleCellHtml(k, 'collector')}</td>
       <td class="text-xs">${kobRoleCellHtml(k, 'closer')}</td>
