@@ -43,7 +43,22 @@ CREATE INDEX IF NOT EXISTS idx_library_tags        ON psy_library_items USING GI
 ALTER TABLE psy_library_items ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Anyone read library" ON psy_library_items;
-CREATE POLICY "Anyone read library" ON psy_library_items FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Patients read allowed library" ON psy_library_items;
+CREATE POLICY "Patients read allowed library" ON psy_library_items FOR SELECT
+  TO authenticated
+  USING (
+    is_active = true
+    AND (
+      package_ids IS NULL OR array_length(package_ids, 1) IS NULL
+      OR EXISTS (
+        SELECT 1 FROM psy_patients p
+        LEFT JOIN psy_packages pk
+          ON pk.id::text = p.active_package_id OR pk.package_id = p.active_package_id
+        WHERE p.user_id = auth.uid()
+          AND (p.active_package_id = ANY(package_ids) OR pk.package_id = ANY(package_ids))
+      )
+    )
+  );
 
 DROP POLICY IF EXISTS "Staff manage library" ON psy_library_items;
 CREATE POLICY "Staff manage library" ON psy_library_items FOR ALL

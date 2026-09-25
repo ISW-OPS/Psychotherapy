@@ -146,6 +146,21 @@
   </div>
 </div>
 
+<!-- Kesiapan Pakej Modal -->
+<div id="readiness-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/60" onclick="closeReadinessModal()"></div>
+  <div class="relative bg-white rounded-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col shadow-2xl">
+    <div class="px-5 py-4 border-b border-ink/10 flex items-center justify-between">
+      <div>
+        <h3 class="font-bold text-base">Pakej Perlu Semakan</h3>
+        <p class="text-[11px] text-ink/50 mt-0.5">Klik pakej untuk terus buka & lengkapkan bahagian yang tertinggal</p>
+      </div>
+      <button onclick="closeReadinessModal()" class="text-ink/50 text-2xl leading-none hover:text-ink">×</button>
+    </div>
+    <div id="readiness-list" class="p-5 overflow-y-auto space-y-2"></div>
+  </div>
+</div>
+
 <!-- modal removed — edit via pakej-edit.html -->
 <div id="pkg-modal" class="hidden">
   <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeForm()"></div>
@@ -762,14 +777,37 @@ function versionCell(p) {
   return `<span class="text-xs font-semibold ${isLatest ? 'text-teal' : 'text-ink/35'}">V${n}</span>`;
 }
 
+// Kesiapan pakej: Bimbingan/Aktiviti/Jadual/Bekalan/Rujukan/Dokumen — 6 bahagian
+// yang staf/coach perlukan siap sebelum pakej sepatutnya dijual/digunakan.
+// Lengkap=100%, Perlu Semakan=50-99%, Belum Lengkap=<50%.
+function computePkgReadiness(p) {
+  const cs = Array.isArray(p.coaching_schedule) ? p.coaching_schedule : [];
+  const hasBimbingan = cs.some(w => (w.guidance||[]).length || (w.guidance_2||[]).length);
+  const hasAktiviti  = Array.isArray(p.daily_schedule) && p.daily_schedule.length > 0;
+  const hasJadual    = cs.length > 0;
+  const hasBekalan   = cs.some(w => (w.supplies||[]).length || (w.supplies_2||[]).length) || (Array.isArray(p.supplies) && p.supplies.length > 0);
+  const hasRujukan   = cs.some(w => Array.isArray(w.rujukan_files) && w.rujukan_files.length > 0);
+  const hasDokumen   = !!p.agreement_pdf;
+  const checks = [
+    ['Bimbingan', hasBimbingan], ['Aktiviti', hasAktiviti], ['Jadual', hasJadual],
+    ['Bekalan', hasBekalan], ['Rujukan', hasRujukan], ['Dokumen Perjanjian', hasDokumen],
+  ];
+  const passed = checks.filter(([,ok]) => ok).length;
+  const pct = Math.round(passed / checks.length * 100);
+  const missing = checks.filter(([,ok]) => !ok).map(([label]) => label);
+  const label = pct === 100 ? 'Lengkap' : pct >= 50 ? 'Perlu Semakan' : 'Belum Lengkap';
+  return { pct, label, missing };
+}
+
 function renderPkgKpi() {
   const total = allPackages.length;
   const active = allPackages.filter(p => p.is_active).length;
-  const needsReview = allPackages.filter(p => !p.is_active || !p.price || !p.duration).length;
   const draftInactive = allPackages.filter(p => !p.is_active).length;
+  const readinessByPkg = allPackages.map(p => ({ p, r: computePkgReadiness(p) }));
+  const needsReview = readinessByPkg.filter(x => x.r.label !== 'Lengkap').length;
 
-  const card = (icon, iconBg, label, value, sub) => `
-    <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex items-center gap-4">
+  const card = (icon, iconBg, label, value, sub, onclick) => `
+    <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex items-center gap-4${onclick ? ' cursor-pointer hover:shadow-md transition-shadow' : ''}"${onclick ? ` onclick="${onclick}"` : ''}>
       <div class="w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 ${iconBg}">
         <span class="text-2xl">${icon}</span>
       </div>
@@ -783,9 +821,29 @@ function renderPkgKpi() {
   document.getElementById('pkg-kpi').innerHTML = [
     card('📦', 'bg-green-50',   'Jumlah Pakej',    total,       'Semua pakej berdaftar'),
     card('✅', 'bg-emerald-50', 'Pakej Aktif',     active,      'Pakej sedang aktif'),
-    card('⚠️', 'bg-amber-50',   'Perlu Semakan',   needsReview, 'Perlu tindakan admin'),
+    card('⚠️', 'bg-amber-50',   'Perlu Semakan',   needsReview, needsReview ? 'Klik untuk lihat isu' : 'Semua pakej lengkap', needsReview ? 'openReadinessModal()' : ''),
     card('📥', 'bg-indigo-50',  'Draf / Tidak Aktif', draftInactive, 'Pakej belum siap atau tidak digunakan'),
   ].join('');
+  window._readinessByPkg = readinessByPkg;
+}
+
+function openReadinessModal() {
+  const rows = (window._readinessByPkg || []).filter(x => x.r.label !== 'Lengkap')
+    .sort((a, b) => a.r.pct - b.r.pct);
+  document.getElementById('readiness-list').innerHTML = rows.length ? rows.map(({ p, r }) => `
+    <a href="pakej-edit.html?id=${p.id}" class="block border border-ink/10 rounded-xl p-3 hover:bg-cream/30 transition-colors">
+      <div class="flex items-center justify-between gap-3">
+        <div class="min-w-0">
+          <div class="text-sm font-semibold text-ink truncate">${escHtml(p.name || p.package_id)}</div>
+          <div class="text-[11px] text-ink/50 mt-0.5">Belum lengkap: ${r.missing.map(escHtml).join(', ')}</div>
+        </div>
+        <span class="text-[10px] font-bold px-2 py-1 rounded-full flex-shrink-0 ${r.label === 'Belum Lengkap' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'}">${r.label} · ${r.pct}%</span>
+      </div>
+    </a>`).join('') : '<div class="text-center text-ink/40 text-sm py-8">Semua pakej lengkap ✓</div>';
+  document.getElementById('readiness-modal').classList.remove('hidden');
+}
+function closeReadinessModal() {
+  document.getElementById('readiness-modal').classList.add('hidden');
 }
 
 function pkgFiltered() {
