@@ -366,7 +366,9 @@
             <div>
               <label class="text-xs font-semibold">Telefon <span id="lbl-phone-req">*</span></label>
               <input id="cp-phone" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm"
-                placeholder="cth: 0123456789">
+                placeholder="cth: 0172637812" oninput="checkPhoneDuplicate(this.value)">
+              <div class="mt-1 text-[11px] text-ink/50">Format: nombor tempatan sahaja, cth <b>0172637812</b> (tiada ruang, sengkang, atau +60)</div>
+              <div id="cp-phone-warning" class="hidden mt-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"></div>
             </div>
           </div>
 
@@ -1074,6 +1076,7 @@
     }
 
     let icCheckTimer = null;
+    let phoneCheckTimer = null;
     async function checkIcDuplicate(val) {
       const warn = document.getElementById('cp-ic-warning');
       const ic = val.trim();
@@ -1087,6 +1090,28 @@
           const p = data[0];
           const name = p.full_name || p.mrn;
           warn.innerHTML = `⚠️ IC ini sudah wujud dalam sistem — <strong>${name}</strong> (${p.mrn}) · ${STATUS_LABELS[p.status] || p.status}`;
+          warn.classList.remove('hidden');
+        } else {
+          warn.classList.add('hidden');
+        }
+      }, 500);
+    }
+
+    // Padan format sama macam savePatient() (normalizePhoneMY, ditakrif di bawah —
+    // function declaration di-hoist jadi selamat panggil dari sini).
+    async function checkPhoneDuplicate(val) {
+      const warn = document.getElementById('cp-phone-warning');
+      if (!warn) return;
+      const phone = normalizePhoneMY(val);
+      clearTimeout(phoneCheckTimer);
+      if (phone.length < 9) { warn.classList.add('hidden'); return; }
+      phoneCheckTimer = setTimeout(async () => {
+        const { data } = await window.db.from('psy_patients').select('id, mrn, phone, full_name, status')
+          .eq('phone', phone).neq('id', editingPatientId || '00000000-0000-0000-0000-000000000000').limit(1);
+        if (data?.[0]) {
+          const p = data[0];
+          const name = p.full_name || p.mrn;
+          warn.innerHTML = `⚠️ Nombor telefon ini sudah wujud dalam sistem — <strong>${name}</strong> (${p.mrn}) · ${STATUS_LABELS[p.status] || p.status}. Sila guna rekod sedia ada, bukan cipta baru.`;
           warn.classList.remove('hidden');
         } else {
           warn.classList.add('hidden');
@@ -1133,6 +1158,7 @@
       const pakejDate = document.getElementById('cp-pakej-date'); if (pakejDate) pakejDate.value = '';
       document.getElementById('cp-error').classList.add('hidden');
       document.getElementById('cp-ic-warning')?.classList.add('hidden');
+      document.getElementById('cp-phone-warning')?.classList.add('hidden');
       const defaultRadio = document.querySelector('input[name="cp-status-radio"][value="unregistered"]');
       if (defaultRadio) { defaultRadio.checked = true; onStatusChange('unregistered'); }
       document.querySelectorAll('input[name="cp-emg-rel-radio"]').forEach(r => r.checked = false);
@@ -1373,10 +1399,22 @@
       await window.db.from('psy_patients').update({ documents: { reports: existing } }).eq('id', patientId);
     }
 
+    // Piawaikan nombor telefon ke format tempatan bersih: "0123456789"
+    // (buang ruang/sengkang/kurungan, tukar +60/60 awalan → 0). Elak
+    // masalah padanan pesakit pendua bila format staf taip tak konsisten
+    // vs nombor yang disync dari GHL (cth "+60 13-396 4416" vs "60133964416").
+    function normalizePhoneMY(raw) {
+      let d = String(raw || '').replace(/\D/g, '');
+      if (d.startsWith('60')) d = '0' + d.slice(2);
+      return d;
+    }
+
     async function savePatient() {
       const name = document.getElementById('cp-name').value.trim();
       const ic = document.getElementById('cp-ic').value.trim();
-      const phone = document.getElementById('cp-phone').value.trim();
+      const phoneEl = document.getElementById('cp-phone');
+      const phone = normalizePhoneMY(phoneEl.value);
+      phoneEl.value = phone;   // papar semula format bersih kat form supaya staf nampak
       const address = document.getElementById('cp-address').value.trim();
       const postcode = document.getElementById('cp-postcode').value.trim();
       const city = document.getElementById('cp-city').value.trim();
@@ -1426,6 +1464,11 @@
         errEl.textContent = isNew
           ? 'Semua field bertanda * wajib diisi untuk Pesakit Baru.'
           : 'Nama, IC, dan Telefon wajib diisi.';
+        errEl.classList.remove('hidden');
+        return;
+      }
+      if (phone && !/^0\d{8,10}$/.test(phone)) {
+        errEl.textContent = `Format telefon tak sah ("${phone}") — mesti nombor tempatan sahaja, cth 0172637812 (tiada ruang/sengkang/+6).`;
         errEl.classList.remove('hidden');
         return;
       }
@@ -1687,6 +1730,8 @@
               status: statusVal,
               kob_status: kobStatusVal,
               created_by_staff: true,
+              created_by: window.currentUser.id,
+              created_by_name: window.currentUser.full_name,
               ...payload, ...coachAutoAssign,
             }).select('id, mrn').single();
             if (!res.error) { inserted = res.data; error = null; break; }
