@@ -67,6 +67,8 @@ window.PAGE_MODULE = {
   psy_products:     'products',
   promo_codes:      'products',
   point_rewards:    'products',
+  produk_bahan:       'produk_bahan',
+  direktori_cadangan: 'direktori_cadangan',
   inventory:        'inventory', kit_prosedur: 'inventory', suppliers: 'inventory',
   purchase_requests: 'inventory', stock_in: 'inventory', stock_alerts: 'inventory',
   inventory_overview: 'inventory', stock_movement: 'inventory', pemberian_stok: 'inventory',

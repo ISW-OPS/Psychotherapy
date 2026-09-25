@@ -330,6 +330,9 @@ INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
   -- OPERASI
   ('package',          'Pakej & Pembayaran',   '🗂️', 'staff',  90),
   ('products',         'Produk',               '🛍️', 'staff', 100),
+  -- Modul baharu (audit management Tier 5, VI & VII) — 24 Sept 2026
+  ('produk_bahan',      'Produk & Bahan Luar',  '🧴', 'staff', 101),
+  ('direktori_cadangan','Direktori Cadangan',   '📇', 'staff', 102),
   ('inventory',        'Inventori & Produk',   '🏭', 'staff', 110),
   ('orders',           'Orders & Tracking',    '📦', 'staff', 120),
   ('pulangan',         'Pulangan Botol',       '🍯', 'staff', 130),
@@ -426,7 +429,8 @@ FROM (VALUES
   ('kepatuhan'),('reaksi'),('vitals'),('rujukan'),('emergency'),('patient_events'),
   ('announcements'),('events'),('library'),('kb'),
   ('kehadiran'),('issue'),('surat'),('kob_slots'),
-  ('coaching'),('inventory'),('communication'),('operations')
+  ('coaching'),('inventory'),('communication'),('operations'),
+  ('produk_bahan'),('direktori_cadangan')
 ) AS m(code)
 ON CONFLICT DO NOTHING;
 
@@ -438,7 +442,8 @@ FROM (VALUES
   ('kepatuhan'),('reaksi'),('vitals'),('rujukan'),('emergency'),('patient_events'),('pulangan'),('dna_test'),
   ('announcements'),('events'),('library'),('kb'),
   ('kehadiran'),('issue'),('surat'),
-  ('coaching'),('inventory'),('communication'),('operations')
+  ('coaching'),('inventory'),('communication'),('operations'),
+  ('produk_bahan'),('direktori_cadangan')
 ) AS m(code)
 ON CONFLICT DO NOTHING;
 

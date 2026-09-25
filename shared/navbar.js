@@ -147,6 +147,8 @@ const STAFF_NAV_MASTER = [
     group: 'OPERASI', collapsible: true, items: [
       { id: 'pakej', url: 'pakej.html', icon: '🗂️', label: 'Pakej Rawatan' },
       { id: 'psy_products', url: 'products.html', icon: '🛍️', label: 'Produk' },
+      { id: 'produk_bahan', url: 'produk-bahan.html', icon: '🧴', label: 'Produk & Bahan Luar' },
+      { id: 'direktori_cadangan', url: 'direktori-cadangan.html', icon: '📇', label: 'Direktori Cadangan' },
       { id: 'ganjaran', url: 'promo-codes.html', icon: '🎁', label: 'Ganjaran', children: [
         { id: 'promo_codes',   url: 'promo-codes.html',   icon: '🏷️', label: 'Kod Promo' },
         { id: 'point_rewards', url: 'point-rewards.html', icon: '🏆', label: 'Ganjaran Mata' },
