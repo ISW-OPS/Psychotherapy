@@ -624,12 +624,14 @@ async function loadNavBadges(role, _staffRole, userId) {
   try {
     if (role === 'staff') {
       const absentSince = new Date(Date.now() - 7 * 86400000).toISOString();
+      const nowIso = new Date().toISOString();
       const [ordersRes, issuesRes, closedRes, invRes, kobRes, patientsRes, peRes, plansRes, activePatRes, recentHadirRes] = await Promise.all([
         window.db.from('psy_orders').select('id', { count: 'exact', head: true }).in('status', ['paid', 'packed']),
         window.db.from('psy_audit_log').select('id').eq('action', 'issue.reported'),
         window.db.from('psy_audit_log').select('meta').eq('action', 'issue.closed'),
         window.db.from('psy_inventory_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending_approval'),
-        window.db.from('psy_kob_sessions').select('id', { count: 'exact', head: true }).eq('status', 'booked'),
+        // Today + upcoming sahaja — sesi 'booked' yang dah lepas masa (Missed) tak dikira
+        window.db.from('psy_kob_sessions').select('id', { count: 'exact', head: true }).eq('status', 'booked').gte('scheduled_at', nowIso),
         window.db.from('psy_patients').select('id', { count: 'exact', head: true }).eq('status', 'pending_kyc'),
         window.db.from('psy_patient_events').select('id', { count: 'exact', head: true }).eq('status', 'open'),
         // Tidak hadir > 7 hari (badge Kalendar): pesakit aktif + pelan aktif tolak yang ada sesi 'hadir' dlm 7 hari lepas
