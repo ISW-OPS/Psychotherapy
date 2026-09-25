@@ -144,7 +144,7 @@
         <div id="role-select-card" class="bg-white rounded-2xl border border-ink/10 p-5">
           <div class="font-bold text-sm mb-1">Anda mengisi borang ini sebagai...</div>
           <p class="text-xs text-ink/50 mb-4">Jawapan ini akan susun borang di bawah ikut siapa yang mengisi.</p>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <button type="button" class="role-card" data-role="pesakit" onclick="selectRegistrantRole('pesakit')">
               <span class="role-radio"></span>
               <span class="min-w-0">
@@ -152,11 +152,18 @@
                 <span class="block text-xs text-ink/50 mt-0.5">Saya mendaftar untuk diri sendiri.</span>
               </span>
             </button>
-            <button type="button" class="role-card" data-role="waris" onclick="selectRegistrantRole('waris')">
+            <button type="button" class="role-card" data-role="waris_urus_penuh" onclick="selectRegistrantRole('waris_urus_penuh')">
               <span class="role-radio"></span>
               <span class="min-w-0">
-                <span class="block font-bold text-sm">Saya Waris / Wakil</span>
-                <span class="block text-xs text-ink/50 mt-0.5">Saya mendaftar bagi pihak pesakit lain.</span>
+                <span class="block font-bold text-sm">Saya Waris (Urus Penuh)</span>
+                <span class="block text-xs text-ink/50 mt-0.5">Saya uruskan sepenuhnya bagi pihak pesakit.</span>
+              </span>
+            </button>
+            <button type="button" class="role-card" data-role="waris_wakil" onclick="selectRegistrantRole('waris_wakil')">
+              <span class="role-radio"></span>
+              <span class="min-w-0">
+                <span class="block font-bold text-sm">Saya Waris (Bantu Isi)</span>
+                <span class="block text-xs text-ink/50 mt-0.5">Saya bantu isi borang sahaja bagi pihak pesakit.</span>
               </span>
             </button>
           </div>
@@ -477,33 +484,40 @@
 <script>
 let existingKYC  = null;
 let patientRecord = null;
-let registrantRole = null; // 'pesakit' | 'waris' — dijawab di soalan awal borang
+let registrantRole = null; // 'pesakit' | 'waris_urus_penuh' | 'waris_wakil' — dijawab di soalan awal borang
 let contactPrefTouched = false; // true bila pengguna sendiri tukar Keutamaan Hubungan
 const DRAFT_KEY  = 'isw_kyc_draft_v2';
+// registrantRole (3 kategori, sama makna dgn GHL "Peranan Pendaftar" — lihat
+// ghl-booking-webhook) → psy_patients.registrant_capacity. Logik borang
+// (susunan, Keutamaan Hubungan) TAK beza antara 2 kategori waris — cuma label
+// direkod beza, utk rujukan staff (tulis ke psy_patients di submitKYC()).
+const ROLE_TO_CAPACITY = { pesakit: 'sendiri', waris_urus_penuh: 'urus_penuh', waris_wakil: 'bantu_isi' };
 
 // ── Soalan awal: Waris atau Pesakit ─────────────────────
 function selectRegistrantRole(role) {
   registrantRole = role;
+  const isWaris = role !== 'pesakit';
   document.getElementById('f-registrant-role').value = role;
   document.querySelectorAll('.role-card').forEach(el => el.classList.toggle('selected', el.dataset.role === role));
-  document.getElementById('role-waris-warning').classList.toggle('hidden', role !== 'waris');
+  document.getElementById('role-waris-warning').classList.toggle('hidden', !isWaris);
   document.getElementById('err-registrant-role').classList.remove('show');
 
   const cardPesakit = document.getElementById('card-pesakit');
   const cardWaris = document.getElementById('card-waris');
-  cardPesakit.classList.toggle('order-1', role !== 'waris');
-  cardPesakit.classList.toggle('order-2', role === 'waris');
-  cardWaris.classList.toggle('order-2', role !== 'waris');
-  cardWaris.classList.toggle('order-1', role === 'waris');
+  cardPesakit.classList.toggle('order-1', !isWaris);
+  cardPesakit.classList.toggle('order-2', isWaris);
+  cardWaris.classList.toggle('order-2', !isWaris);
+  cardWaris.classList.toggle('order-1', isWaris);
 
   // Pesakit isi sendiri — jelas notifikasi pergi kepada diri sendiri, tiada pilihan perlu ditanya.
+  // Kedua-dua kategori waris (Urus Penuh/Bantu Isi) kelakuan SAMA di sini.
   const contactPrefCard = document.getElementById('kyc-contact-pref-card');
-  if (role === 'pesakit') {
+  if (!isWaris) {
     contactPrefCard.classList.add('hidden');
     selectContactPref('pesakit');
   } else {
     contactPrefCard.classList.remove('hidden');
-    if (!contactPrefTouched) selectContactPref(role);
+    if (!contactPrefTouched) selectContactPref('waris');
   }
   computeKycProgress();
 }
@@ -673,7 +687,7 @@ function validateAll() {
   document.getElementById('err-registrant-role').classList.remove('show');
 
   if (!registrantRole) {
-    footerErr.textContent = 'Sila pilih "Saya Pesakit" atau "Saya Waris / Wakil" di bahagian atas borang';
+    footerErr.textContent = 'Sila pilih peranan anda di bahagian atas borang';
     footerErr.classList.remove('hidden');
     document.getElementById('err-registrant-role').classList.add('show');
     document.getElementById('role-select-card').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -835,9 +849,16 @@ async function tryLivePrefill() {
   } catch (e) { console.warn('[tryLivePrefill] gagal:', e.message); }
 }
 
+const CAPACITY_TO_ROLE = { sendiri: 'pesakit', urus_penuh: 'waris_urus_penuh', bantu_isi: 'waris_wakil' };
+
 function fillForm(k) {
-  if (typeof k.submitted_by_proxy === 'boolean') {
-    selectRegistrantRole(k.submitted_by_proxy ? 'waris' : 'pesakit');
+  if (k.registrant_capacity && CAPACITY_TO_ROLE[k.registrant_capacity]) {
+    // Kategori penuh (dari GHL "Peranan Pendaftar" atau draf sendiri) — paling tepat.
+    selectRegistrantRole(CAPACITY_TO_ROLE[k.registrant_capacity]);
+  } else if (typeof k.submitted_by_proxy === 'boolean') {
+    // Fallback: rekod lama/KYC sedia ada cuma ada boolean, tiada butiran sejauh
+    // mana — anggap "Bantu Isi" (kuasa terhad, lebih selamat drpd anggap penuh).
+    selectRegistrantRole(k.submitted_by_proxy ? 'waris_wakil' : 'pesakit');
   }
   if (k.contact_preference) {
     selectContactPref(k.contact_preference, true);
@@ -990,7 +1011,8 @@ function doSaveDraft(showBanner = false) {
   d.postcode = fv('f-postcode');
   d.city = fv('f-city');
   d.state = fv('f-state');
-  d.submitted_by_proxy = registrantRole === 'waris';
+  d.submitted_by_proxy = registrantRole !== 'pesakit';
+  d.registrant_capacity = ROLE_TO_CAPACITY[registrantRole] || null;
   localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
   setDraftIndicator('saved');
   if (showBanner) banner('Draf disimpan ✓');
@@ -1059,7 +1081,7 @@ function clearDraftManual() {
 async function submitKYC() {
   if (!validateAll()) return;
   // Diri (Pesakit/Waris) sudah dijawab di soalan awal borang — tiada popup berulang.
-  const submitterType = registrantRole === 'waris' ? 'proxy' : 'self';
+  const submitterType = registrantRole !== 'pesakit' ? 'proxy' : 'self';
 
   const btn = document.getElementById('btn-submit');
   btn.disabled = true; btn.textContent = 'Menghantar...';
@@ -1143,6 +1165,7 @@ async function submitKYC() {
         emergency_contact_relationship: payload.emergency_contact_relationship,
         emergency_contact_email: payload.emergency_contact_email,
         contact_preference:      payload.contact_preference,
+        registrant_capacity:     ROLE_TO_CAPACITY[registrantRole] || null,
       }).eq('id', patientRecord.id);
       await window.db.from('psy_profiles').update({
         full_name: finalName, phone: payload.phone,
@@ -1342,6 +1365,16 @@ const originalBody = document.getElementById('kyc-body').innerHTML;
       emergency_contact_email: prefillRecord.emergency_contact_email,
       emergency_contact_ic: prefillRecord.emergency_contact_ic,
       referral_source: prefillRecord.referral_source,
+      // GHL dah tanya "Peranan Pendaftar" (4 kategori, sama makna dgn 3 kad di
+      // sini + registrant_capacity — lihat ghl-booking-webhook) semasa booking —
+      // kalau rekod ni memang dari GHL, pra-pilih soalan awal borang supaya
+      // pesakit/waris TAK ditanya 2 kali. Patient isi terus guna PT System
+      // (bukan dari GHL) — referral_source kosong, soalan awal kekal kosong
+      // macam biasa (tiada perubahan).
+      contact_preference: prefillRecord.referral_source === 'GHL' ? prefillRecord.contact_preference : undefined,
+      registrant_capacity: prefillRecord.referral_source === 'GHL' ? prefillRecord.registrant_capacity : undefined,
+      submitted_by_proxy: (prefillRecord.referral_source === 'GHL' && prefillRecord.contact_preference)
+        ? prefillRecord.contact_preference === 'waris' : undefined,
     } : {};
 
     // Overlay draft values (so refresh keeps unsaved typing)

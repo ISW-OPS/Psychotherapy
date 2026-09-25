@@ -28,13 +28,39 @@ async function advanceKobStatus(svc: any, patientId: string, next: string) {
 export interface GhlContactExtra {
   icNumber?: string | null
   address?: string | null
+  postcode?: string | null
+  city?: string | null
+  state?: string | null
   dateOfBirth?: string | null   // ISO date (YYYY-MM-DD)
   gender?: string | null        // 'M' | 'F'
+  maritalStatus?: string | null
+  occupation?: string | null
+  company?: string | null
   emergencyContactName?: string | null
   emergencyContactPhone?: string | null
   emergencyContactIc?: string | null
   emergencyContactRelationship?: string | null
   emergencyContactEmail?: string | null
+  contactPreference?: 'pesakit' | 'waris' | null   // GHL "Peranan Pendaftar" (4 kategori dipermudah ke 2)
+  registrantCapacity?: string | null               // GHL "Anda mengisi borang ini sebagai?" (sejauh mana terlibat)
+  ghlContactId?: string | null                     // {{contact.id}} — rujukan pantas/debug sahaja, bukan kunci padanan
+  kobCode?: string | null                          // GHL {{contact.first_name}} — kod KOB (medan berasingan, SUMBER UTAMA)
+}
+
+// GHL (Workflow "SU KOB Auto ID") dulu prepend kod macam "KOB'26-000139"
+// terus dalam SATU field nama ("KOB'26-000139. Pn Syamira") — kod ni
+// KEKAL sbg FALLBACK (parse dari fullName) utk contact lama/laluan lain.
+// SUMBER UTAMA sekarang: `opts.kobCode` (medan GHL berasingan,
+// {{contact.first_name}} — disahkan 25 Sept 2026, lebih boleh dipercayai
+// drpd regex parse). Kod masuk `ghl_kob_code` (BUKAN `reference_code`/"Kod
+// Pesakit" — tu medan lain, diisi lepas pesakit signup pakej OB).
+const GHL_NAME_CODE_RE = /^([A-Za-z]{2,6}'\d{2}-\d{3,6})[.\s]+(.+)$/
+
+function splitGhlNameCode(rawName: string | null | undefined): { name: string | null; code: string | null } {
+  const raw = String(rawName || '').trim()
+  const m = raw.match(GHL_NAME_CODE_RE)
+  if (!m) return { name: raw || null, code: null }
+  return { name: m[2].trim(), code: m[1] }
 }
 
 // ── 1. Padan/cipta pesakit ikut telefon ─────────────────────
@@ -48,9 +74,16 @@ export async function syncContactToPatient(svc: any, opts: {
   const key = phoneKey(phone)
   if (!key) throw new Error('phone tidak sah (kurang 9 digit)')
 
+  // SUMBER UTAMA: opts.kobCode (medan GHL berasingan). FALLBACK: parse
+  // dari fullName (contact lama/laluan lain yg masih gabung kod+nama).
+  const { name: parsedName, code: parsedCode } = splitGhlNameCode(opts.fullName)
+  const cleanFullName = opts.kobCode ? (opts.fullName?.trim() || parsedName) : parsedName
+  const ghlRefCode = opts.kobCode || parsedCode
+
   const { data: candidates } = await svc.from('psy_patients')
     .select(`id, phone, emergency_contact_phone, full_name, email, ic_number, address,
-      date_of_birth, gender, emergency_contact_name, emergency_contact_ic,
+      postcode, city, state, date_of_birth, gender, marital_status, occupation, company,
+      ghl_kob_code, contact_preference, registrant_capacity, ghl_contact_id, emergency_contact_name, emergency_contact_ic,
       emergency_contact_relationship, emergency_contact_email`)
     .or(`phone.ilike.%${key},emergency_contact_phone.ilike.%${key}`)
   const match = (candidates || []).find(
@@ -60,18 +93,32 @@ export async function syncContactToPatient(svc: any, opts: {
   // Peta field GHL → kolum psy_patients — isi field KOSONG sahaja, jangan
   // timpa data yang pesakit/staff dah sahkan (borang KYC ialah sumber
   // kebenaran lebih tinggi selepas dihantar).
+  // Nota: contact_preference ada DEFAULT 'pesakit' di DB (tak pernah NULL
+  // utk pesakit sedia ada), jadi peraturan "isi kosong sahaja" ni hanya
+  // berkesan bila CIPTA pesakit baru — utk pesakit sedia ada, nilai GHL
+  // tak akan timpa default/pilihan sedia ada (selamat by design).
   const fieldMap: Record<string, any> = {
-    full_name: opts.fullName,
+    full_name: cleanFullName,
+    ghl_kob_code: ghlRefCode,
     email: opts.email,
     ic_number: opts.icNumber,
     address: opts.address,
+    postcode: opts.postcode,
+    city: opts.city,
+    state: opts.state,
     date_of_birth: opts.dateOfBirth,
     gender: opts.gender,
+    marital_status: opts.maritalStatus,
+    occupation: opts.occupation,
+    company: opts.company,
     emergency_contact_name: opts.emergencyContactName,
     emergency_contact_phone: opts.emergencyContactPhone,
     emergency_contact_ic: opts.emergencyContactIc,
     emergency_contact_relationship: opts.emergencyContactRelationship,
     emergency_contact_email: opts.emergencyContactEmail,
+    contact_preference: opts.contactPreference,
+    registrant_capacity: opts.registrantCapacity,
+    ghl_contact_id: opts.ghlContactId,
   }
 
   if (match) {
@@ -105,6 +152,14 @@ export async function syncContactToPatient(svc: any, opts: {
 export async function syncAppointmentToSession(svc: any, patientId: string, opts: {
   scheduledAt: Date
   mode: 'f2f' | 'online'
+  // Nama staff GHL — label GHL sendiri (cth. "T103 SABRINA"), TIADA padanan
+  // psy_profiles di ISW. Simpan sebagai TEKS sahaja (collector_id/closer_id
+  // kekal kosong — bukan akaun staff ISW sebenar); staff boleh timpa manual
+  // ke Collector/Closer ISW sebenar bila-bila di kob-list.html/kob-detail.html.
+  // closerName  = "{{appointment.booked_by}}" (siapa buat booking/sahkan appointment)
+  // collectorName = "{{contact.owner_name}}" (Owner contact di GHL)
+  closerName?: string | null
+  collectorName?: string | null
 }): Promise<{ kobSessionId: string }> {
   const iso = opts.scheduledAt.toISOString()
 
@@ -125,6 +180,8 @@ export async function syncAppointmentToSession(svc: any, patientId: string, opts
       mode: opts.mode,
       status: 'booked',
       source: 'ghl',
+      collector_name: opts.collectorName || null,
+      closer_name: opts.closerName || null,
     }).select('id').single()
     if (error) throw error
     kobSessionId = session.id

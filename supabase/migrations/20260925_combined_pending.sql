@@ -449,3 +449,40 @@ ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES psy
 ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS created_by_name TEXT;
 
 
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260925_ghl_kob_code.sql
+-- ─────────────────────────────────────────────────────────────────
+-- GHL Workflow "SU KOB Auto ID" prepend kod (cth "KOB'26-000139") depan
+-- nama contact ("KOB'26-000139. Pn Syamira"). ghl-booking-webhook kini
+-- auto-asingkan kod tu drpd full_name, simpan berasingan di sini — BUKAN
+-- reference_code ("Kod Pesakit", diisi lepas pesakit signup pakej OB,
+-- tujuan lain). Rujuk: database/schema/04_patients.sql,
+-- supabase/functions/_shared/ghl-sync.ts (splitGhlNameCode).
+
+ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS ghl_kob_code TEXT;
+
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260925_registrant_capacity.sql
+-- ─────────────────────────────────────────────────────────────────
+-- GHL borang tanya 2 soalan berasingan pasal pendaftar: "Peranan
+-- Pendaftar" (Pesakit/Waris Bertanggungjawab/Waris Wakil/Waris — map ke
+-- contact_preference sedia ada) DAN "Anda mengisi borang ini sebagai?"
+-- (sejauh mana terlibat — sendiri/urus penuh/bantu isi sahaja, medan
+-- BAHARU registrant_capacity, TIADA di sistem lagi). Rujuk:
+-- database/schema/04_patients.sql, supabase/functions/ghl-booking-webhook.
+
+ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS registrant_capacity TEXT;
+
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260925_ghl_contact_id.sql
+-- ─────────────────────────────────────────────────────────────────
+-- Simpan ID dalaman contact GHL ({{contact.id}}) sebagai rujukan pantas/
+-- debug & future API call terus ke GHL. TIDAK dipakai untuk padanan
+-- pesakit (kekal ikut telefon). Rujuk: database/schema/04_patients.sql,
+-- supabase/functions/ghl-booking-webhook.
+
+ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS ghl_contact_id TEXT;
+
+

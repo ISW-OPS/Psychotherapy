@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS psy_patients (
   emergency_contact_relationship  TEXT,
   emergency_contact_email         TEXT,
   contact_preference              TEXT DEFAULT 'pesakit' CHECK (contact_preference IN ('pesakit','waris')),
+  -- Sejauh mana pendaftar (kalau bukan pesakit sendiri) terlibat isi borang.
+  -- BEZA drpd contact_preference (siapa) — ni "sejauh mana" (urus penuh /
+  -- bantu isi sahaja / sendiri). Sumber: GHL {{contact.anda_mengisi_borang_ini_sebagai}}.
+  registrant_capacity             TEXT,
+  -- ID dalaman contact GHL ({{contact.id}}) — rujukan pantas/debug & future
+  -- API call terus ke GHL. TIDAK dipakai untuk padanan pesakit (kekal ikut
+  -- telefon) — sekadar simpanan rujukan.
+  ghl_contact_id                  TEXT,
   insurance_provider              TEXT,
   insurance_policy                TEXT,
   referral_source                 TEXT,
@@ -62,6 +70,7 @@ CREATE TABLE IF NOT EXISTS psy_patients (
   assigned_at                     TIMESTAMPTZ,
   created_by_staff                BOOLEAN DEFAULT false,
   reference_code                  TEXT,
+  ghl_kob_code                    TEXT,  -- kod GHL "SU KOB Auto ID" (cth "KOB'26-000139"), diasingkan drpd full_name — LIHAT _shared/ghl-sync.ts. BUKAN reference_code (tu "Kod Pesakit", diisi lepas signup pakej OB).
   documents                       JSONB DEFAULT '{}',
   referral_code                   TEXT,
   referred_by_code                TEXT,

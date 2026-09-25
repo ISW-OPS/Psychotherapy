@@ -18,10 +18,16 @@
 // Dilindungi rahsia: GHL_BOOKING_WEBHOOK_SECRET (query ?secret=... atau
 // header x-ghl-booking-secret) — SAMA utk ketiga-tiga event.
 //
-// Payload dijangka dari GHL Workflow (Webhook action), body JSON cth:
+// Payload dijangka dari GHL Workflow (Webhook action), body JSON cth (rujuk
+// README.md utk senarai penuh & merge tag disahkan — full_name/kob_code
+// SEBENARNYA dari DUA field GHL berasingan: last_name/first_name):
 //   Appointment: { "event":"appointment", "phone":"{{contact.phone}}",
-//     "full_name":"{{contact.full_name}}", "email":"{{contact.email}}",
-//     "scheduled_at":"{{appointment.start_time}}", "mode":"f2f" }
+//     "full_name":"{{contact.last_name}}", "kob_code":"{{contact.first_name}}",
+//     "email":"{{contact.email}}", "scheduled_at":"{{appointment.start_time}}",
+//     "mode":"{{contact.mod_sesi_kob}}", "closer":"{{appointment.booked_by}}",
+//     "collector":"{{contact.collector_kob}}" }  ← semua opsyenal, label GHL
+//     ("T103 SABRINA" dll) — TIADA padanan psy_profiles (staff ISW boleh
+//     tukar manual bila perlu).
 //   Order:       { "event":"order", "phone":"...", "full_name":"...",
 //     "email":"...", "order_id":"{{order.id}}", "amount":"{{order.amount}}",
 //     "status":"{{order.status}}" }
@@ -70,6 +76,67 @@ function parseFlexibleDate(dateStr: string, timeStr?: string | null): Date | nul
   return Number.isNaN(d.getTime()) ? null : d
 }
 
+// GHL "GENDER" (radio) hantar label bebas ikut apa staff pilih — padankan
+// variasi biasa (BM/EN/singkatan) ke 'M'/'F' yang psy_patients.gender jangka.
+// Nilai tak dikenali → null (elak simpan sampah yg tak sepadan CHECK constraint).
+function normalizeGender(raw: unknown): 'M' | 'F' | null {
+  const v = String(raw || '').trim().toLowerCase()
+  if (['m', 'male', 'lelaki', 'l'].includes(v)) return 'M'
+  if (['f', 'female', 'perempuan', 'p'].includes(v)) return 'F'
+  return null
+}
+
+// GHL "{{contact.isw_location}}" TEXT bebas (staff taip sendiri) — bukan
+// f2f/online terus. Anggap "online" bila teks ada perkataan online/virtual/
+// zoom; selainnya (F2F, In-Person, atau alamat fizikal) → 'f2f' (default).
+function normalizeMode(raw: unknown): 'f2f' | 'online' {
+  const v = String(raw || '').trim().toLowerCase()
+  if (/online|virtual|zoom/.test(v)) return 'online'
+  return 'f2f'
+}
+
+// GHL "Peranan Pendaftar" — 4 kategori (Pesakit/Waris Bertanggungjawab/
+// Waris Wakil/Waris) dipermudah ke 2 nilai psy_patients.contact_preference
+// jangka (padan mana-mana perkataan "waris" → 'waris', selainnya → 'pesakit').
+function normalizeContactPreference(raw: unknown): 'pesakit' | 'waris' | null {
+  const v = String(raw || '').trim().toLowerCase()
+  if (!v) return null
+  if (v.includes('waris')) return 'waris'
+  if (v.includes('pesakit')) return 'pesakit'
+  return null
+}
+
+// GHL "Anda mengisi borang ini sebagai?" — sejauh mana pendaftar terlibat
+// (BEZA drpd contact_preference/"siapa"). Padankan 3 label biasa ke kod
+// pendek; teks lain/tak dikenali disimpan APA ADANYA (jangan buang data).
+function normalizeRegistrantCapacity(raw: unknown): string | null {
+  const v = String(raw || '').trim()
+  if (!v) return null
+  const lower = v.toLowerCase()
+  if (lower.includes('sendiri')) return 'sendiri'
+  if (lower.includes('urus segala') || lower.includes('urus semua')) return 'urus_penuh'
+  if (lower.includes('bantu')) return 'bantu_isi'
+  return v
+}
+
+// "Peranan Pendaftar" (4 kategori) SEBENARNYA dah sekaligus jawab "sejauh
+// mana terlibat" juga (disahkan dgn user 25 Sept 2026):
+//   PESAKIT                → isi sendiri, dia lah pesakit        → 'sendiri'
+//   WARIS BERTANGGUNGJAWAB → urus semua, kuasa penuh             → 'urus_penuh'
+//   WARIS WAKIL            → bantu je, kuasa terhad              → 'bantu_isi'
+//   WARIS (biasa/tanpa butiran)                                  → tak spesifik, null
+// Jadi ni SUMBER UTAMA registrant_capacity (lebih tepat, kategori tetap) —
+// `borang_isi_sebagai` (teks lebih bebas) cuma FALLBACK bila peranan_pendaftar
+// tak beri butiran (cth "WARIS" biasa) atau langsung tak dihantar.
+function deriveCapacityFromRole(raw: unknown): string | null {
+  const v = String(raw || '').trim().toLowerCase()
+  if (!v) return null
+  if (v.includes('bertanggungjawab')) return 'urus_penuh'
+  if (v.includes('wakil')) return 'bantu_isi'
+  if (v.includes('pesakit')) return 'sendiri'
+  return null
+}
+
 async function auditLog(svc: any, action: string, target: string, meta: Record<string, unknown>) {
   try {
     await svc.from('psy_audit_log').insert({ actor_name: 'GHL', actor_role: 'system', action, target, meta })
@@ -104,13 +171,23 @@ Deno.serve(async (req: Request) => {
       phone, fullName, email,
       icNumber: payload.ic_number || null,
       address: payload.address || null,
+      postcode: payload.postcode || null,
+      city: payload.city || null,
+      state: payload.state || null,
       dateOfBirth: payload.date_of_birth || null,
-      gender: payload.gender || null,
+      gender: normalizeGender(payload.gender),
+      maritalStatus: payload.marital_status || null,
+      occupation: payload.occupation || null,
+      company: payload.company || null,
       emergencyContactName: payload.emergency_contact_name || null,
       emergencyContactPhone: payload.emergency_contact_phone || null,
       emergencyContactIc: payload.emergency_contact_ic || null,
       emergencyContactRelationship: payload.emergency_contact_relationship || null,
       emergencyContactEmail: payload.emergency_contact_email || null,
+      contactPreference: normalizeContactPreference(payload.peranan_pendaftar),
+      registrantCapacity: deriveCapacityFromRole(payload.peranan_pendaftar) || normalizeRegistrantCapacity(payload.borang_isi_sebagai),
+      ghlContactId: payload.contact_id || payload.contactId || null,
+      kobCode: payload.kob_code || payload.kobCode || null,
     })
 
     if (event === 'contact') {
@@ -142,9 +219,16 @@ Deno.serve(async (req: Request) => {
     if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) {
       return json({ error: 'scheduled_at (ISO 8601) ATAU scheduled_date+scheduled_time wajib' }, 400)
     }
-    const mode = payload.mode === 'online' ? 'online' : 'f2f'
+    const mode = normalizeMode(payload.mode)
+    // Nama staff GHL — label GHL, bukan akaun ISW. Papar terus sbg Collector/Closer
+    // (teks) di kob-list.html/kob-detail.html — staff ISW boleh tukar manual bila perlu.
+    // closer    = "{{appointment.booked_by}}" (siapa buat/sahkan booking) — DISAHKAN.
+    // collector = "{{contact.collector_kob}}" — DISAHKAN 25 Sept 2026 (owner_name
+    // dikekalkan sbg alias fallback, dalam kes Workflow lama masih hantar tu).
+    const closerName = String(payload.closer || payload.booked_by || payload.bookedBy || '').trim() || null
+    const collectorName = String(payload.collector || payload.owner_name || payload.ownerName || payload.collector_name || '').trim() || null
 
-    const { kobSessionId } = await syncAppointmentToSession(svc, patientId, { scheduledAt, mode })
+    const { kobSessionId } = await syncAppointmentToSession(svc, patientId, { scheduledAt, mode, closerName, collectorName })
     await auditLog(svc, 'ghl_booking.received', patientId, {
       created_patient: created, kob_session_id: kobSessionId, scheduled_at: scheduledAt.toISOString(), mode,
     })
