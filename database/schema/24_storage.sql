@@ -53,6 +53,24 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO storage.buckets (id, name, public) VALUES ('dna-test', 'dna-test', false)
 ON CONFLICT (id) DO NOTHING;
 
+-- Library (video/audio/thumbnail/dokumen kandungan pesakit) — audit management
+-- batch 3 (25 Sept 2026) Tier 7 #4: bucket ni wujud sebelum ni tapi TIADA had
+-- saiz/format langsung (unaudited, ad hoc). Tambah had 500MB + whitelist format.
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('library-media', 'library-media', true, 524288000, ARRAY[
+  'video/mp4','video/quicktime','video/webm',
+  'audio/mpeg','audio/mp4','audio/x-m4a','audio/wav',
+  'image/png','image/jpeg','image/jpg','image/webp',
+  'application/pdf','application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+])
+ON CONFLICT (id) DO UPDATE
+  SET public = EXCLUDED.public,
+      file_size_limit = EXCLUDED.file_size_limit,
+      allowed_mime_types = EXCLUDED.allowed_mime_types;
+
 -- Supplier documents (SSM cert, agreement, dll.) — staff sahaja
 INSERT INTO storage.buckets (id, name, public) VALUES ('supplier-docs', 'supplier-docs', false)
 ON CONFLICT (id) DO NOTHING;
@@ -277,6 +295,25 @@ CREATE POLICY "kb_media_staff_delete" ON storage.objects
 DROP POLICY IF EXISTS "kb_media_public_read" ON storage.objects;
 CREATE POLICY "kb_media_public_read" ON storage.objects
     FOR SELECT USING (bucket_id = 'kb-media');
+
+DROP POLICY IF EXISTS "library_media_staff_write" ON storage.objects;
+CREATE POLICY "library_media_staff_write" ON storage.objects
+    FOR INSERT TO authenticated
+    WITH CHECK (bucket_id = 'library-media' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "library_media_staff_update" ON storage.objects;
+CREATE POLICY "library_media_staff_update" ON storage.objects
+    FOR UPDATE TO authenticated
+    USING (bucket_id = 'library-media' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "library_media_staff_delete" ON storage.objects;
+CREATE POLICY "library_media_staff_delete" ON storage.objects
+    FOR DELETE TO authenticated
+    USING (bucket_id = 'library-media' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "library_media_public_read" ON storage.objects;
+CREATE POLICY "library_media_public_read" ON storage.objects
+    FOR SELECT USING (bucket_id = 'library-media');
 
 DROP POLICY IF EXISTS "event_docs_staff_all" ON storage.objects;
 CREATE POLICY "event_docs_staff_all" ON storage.objects

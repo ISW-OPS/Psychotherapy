@@ -31,6 +31,12 @@ CREATE TABLE IF NOT EXISTS psy_library_items (
   view_count      INT DEFAULT 0,
   created_by_name TEXT,
   status          TEXT,
+  -- Audit management batch 3 (25 Sept 2026), Tier 7 — link ke minggu rawatan,
+  -- audience staf/peranan, dan jadual terbit yang benar-benar dikuatkuasa
+  -- (bukan kosmetik). Rujuk 20260925_library_workflow_week_audience.sql.
+  week_number     INT,
+  staff_roles     TEXT[],
+  publish_at      TIMESTAMPTZ,
   created_at      TIMESTAMPTZ DEFAULT now(),
   updated_at      TIMESTAMPTZ DEFAULT now()
 );
@@ -48,6 +54,8 @@ CREATE POLICY "Patients read allowed library" ON psy_library_items FOR SELECT
   TO authenticated
   USING (
     is_active = true
+    AND (staff_roles IS NULL OR array_length(staff_roles, 1) IS NULL)
+    AND (publish_at IS NULL OR publish_at <= now())
     AND (
       package_ids IS NULL OR array_length(package_ids, 1) IS NULL
       OR EXISTS (
@@ -76,7 +84,13 @@ COMMENT ON COLUMN psy_library_items.attachment_url IS 'Dokumen sokongan (PDF/DOC
 COMMENT ON COLUMN psy_library_items.view_count IS 'Jumlah tontonan — increment bila pesakit buka library-detail.';
 COMMENT ON COLUMN psy_library_items.created_by_name IS 'Nama staff yang cipta kandungan (Diterbitkan Oleh).';
 COMMENT ON COLUMN psy_library_items.status IS
-  'published | draft | inactive. is_active = (status=published). Pesakit nampak published sahaja.';
+  'draft | review | approved | published | archived. is_active = (status=published). Pesakit nampak published sahaja.';
+COMMENT ON COLUMN psy_library_items.week_number IS
+  'Minggu rawatan (dalam pakej yg dipilih di package_ids) kandungan ni relevan. NULL = semua minggu.';
+COMMENT ON COLUMN psy_library_items.staff_roles IS
+  'Kalau diisi, kandungan ni RUJUKAN STAF sahaja (bukan pesakit) — hanya staff dgn salah satu peranan ni nampak. NULL/kosong = kandungan pesakit biasa.';
+COMMENT ON COLUMN psy_library_items.publish_at IS
+  'Kalau diisi & di masa depan, kandungan tak nampak kpd pesakit walau status=published/is_active=true sehingga masa ni sampai (dikuatkuasa di RLS).';
 
 -- ──── psy_library_bookmarks — "Simpan" (bookmark) per pesakit ────
 
