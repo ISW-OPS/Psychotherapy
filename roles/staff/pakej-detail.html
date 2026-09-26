@@ -128,7 +128,7 @@
                 <a href="library.html" target="_blank" class="text-xs font-semibold text-navy hover:underline">Urus Library →</a>
               </div>
             </div>
-            <div id="library-body" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+            <div id="library-body"></div>
             <div id="library-empty" class="hidden py-10 text-center text-sm text-ink/35">Tiada kandungan library dikaitkan dengan pakej ini.</div>
           </div>
 
@@ -388,7 +388,7 @@ function renderBekalan() {
 
 async function renderLibrary() {
   const { data } = await window.db.from('psy_library_items')
-    .select('id, item_id, title, description, content_type, content_url, category, icon, gradient, package_ids')
+    .select('id, item_id, title, description, content_type, content_url, category, icon, gradient, package_ids, week_number')
     .eq('is_active', true)
     .order('sort_order', { ascending: true })
     .limit(100);
@@ -404,7 +404,7 @@ async function renderLibrary() {
   empty.classList.add('hidden');
 
   const typeIcon = { video: '🎬', article: '📄', pdf: '📑', audio: '🎧', link: '🔗' };
-  document.getElementById('library-body').innerHTML = list.map(it => {
+  const cardHtml = (it) => {
     const exclusiveBadge = (it.package_ids && it.package_ids.length)
       ? '<span class="absolute top-2 right-2 text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">🔒 Eksklusif</span>'
       : '<span class="absolute top-2 right-2 text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-600">🌐 Public</span>';
@@ -418,7 +418,23 @@ async function renderLibrary() {
         ${it.content_type ? `<span>${typeIcon[it.content_type] || ''} ${escHtml(it.content_type)}</span>` : ''}
       </div>
     </a>`;
-  }).join('');
+  };
+
+  // Kumpul ikut minggu — supaya staf boleh audit apa dipetakan ke minggu mana
+  // sebelum terbit (Semua Minggu dulu, lepas tu Minggu 1, 2, 3... menaik).
+  const allWeeks = list.filter(it => it.week_number == null);
+  const byWeek = {};
+  list.filter(it => it.week_number != null).forEach(it => {
+    (byWeek[it.week_number] ||= []).push(it);
+  });
+  const weekNums = Object.keys(byWeek).map(Number).sort((a, b) => a - b);
+  const groupHtml = (label, items) => `<div class="mb-4">
+      <div class="text-[11px] font-bold text-ink/50 uppercase tracking-wide mb-2">${escHtml(label)}</div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">${items.map(cardHtml).join('')}</div>
+    </div>`;
+  document.getElementById('library-body').innerHTML =
+    (allWeeks.length ? groupHtml('Semua Minggu', allWeeks) : '') +
+    weekNums.map(w => groupHtml(`Minggu ${w}`, byWeek[w])).join('');
 }
 
 function renderNota() {

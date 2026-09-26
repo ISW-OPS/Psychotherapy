@@ -767,6 +767,23 @@ function activePatientChip(p) {
   return `<span class="text-navy text-sm font-semibold">${n} Pesakit Aktif</span>`;
 }
 
+// Rujukan dari Library (psy_library_items dipetakan ke pakej) kira sebagai "ada Rujukan"
+// sama macam rujukan_files manual — satu query batched (bukan N+1 setiap pakej).
+let pkgLibraryRujukanMap = {};
+async function loadPkgLibraryRujukanMap() {
+  try {
+    const { data, error } = await window.db.from('psy_library_items')
+      .select('package_ids').eq('is_active', true).not('package_ids', 'is', null);
+    if (error) throw error;
+    const map = {};
+    (data || []).forEach(row => { (row.package_ids || []).forEach(pid => { map[pid] = true; }); });
+    pkgLibraryRujukanMap = map;
+  } catch (e) {
+    console.error('[library rujukan map]', e);
+    pkgLibraryRujukanMap = {};
+  }
+}
+
 // Tiada medan status berasingan — version tertinggi bagi Nama Pakej yang sama
 // dianggap semasa (teal), version lebih rendah = lama (kelabu), ikut nombor sahaja.
 function versionCell(p) {
@@ -786,7 +803,7 @@ function computePkgReadiness(p) {
   const hasAktiviti  = Array.isArray(p.daily_schedule) && p.daily_schedule.length > 0;
   const hasJadual    = cs.length > 0;
   const hasBekalan   = cs.some(w => (w.supplies||[]).length || (w.supplies_2||[]).length) || (Array.isArray(p.supplies) && p.supplies.length > 0);
-  const hasRujukan   = cs.some(w => Array.isArray(w.rujukan_files) && w.rujukan_files.length > 0);
+  const hasRujukan   = cs.some(w => Array.isArray(w.rujukan_files) && w.rujukan_files.length > 0) || !!pkgLibraryRujukanMap[p.package_id];
   const hasDokumen   = !!p.agreement_pdf;
   const checks = [
     ['Bimbingan', hasBimbingan], ['Aktiviti', hasAktiviti], ['Jadual', hasJadual],
@@ -956,7 +973,7 @@ document.addEventListener('click', () => {
 
 async function loadPackages() {
   allPackages = await dbQuery('psy_packages', { order: { col: 'sort_order', asc: true } });
-  await loadActivePatientCounts();
+  await Promise.all([loadActivePatientCounts(), loadPkgLibraryRujukanMap()]);
   renderPkgKpi();
   renderPkgTable();
 }

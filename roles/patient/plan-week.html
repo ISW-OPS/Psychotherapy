@@ -280,6 +280,17 @@ async function loadWeekDetail() {
   if (activePlan.template) {
     const { data: pkg } = await window.db.from('psy_packages').select('coaching_schedule').eq('package_id', activePlan.template).maybeSingle();
     if (pkg?.coaching_schedule?.length) activePlan.coaching_schedule = pkg.coaching_schedule;
+    // Kandungan Library dipetakan ke pakej ni (Rujukan automatik) — baca live sekali per
+    // load minggu, sama pola dgn coaching_schedule di atas. RLS server semak active_package_id
+    // SEMASA pesakit, bukan template plan ni — kalau pesakit buka plan lama drpd pakej lain,
+    // baris tak padan senyap tak papar (bukan error), diterima sbg had yg sama macam
+    // coaching_schedule sendiri sedia ada terima pada page ni.
+    const { data: libRows } = await window.db.from('psy_library_items')
+      .select('id,item_id,title,content_type,content_url,week_number,package_ids')
+      .eq('is_active', true);
+    activePlan._libraryItems = (libRows || []).filter(it => Array.isArray(it.package_ids) && it.package_ids.includes(activePlan.template));
+  } else {
+    activePlan._libraryItems = [];
   }
 
   weekNumber = Math.max(1, Math.min(parseWeekFromHash(), planTotalPeriods()));
@@ -425,11 +436,15 @@ function renderCoachingSchedule() {
     </div>`;
   };
 
-  const rujukanSection = (values) => {
-    if (!(values || []).length) return `<div class="rounded-lg bg-navy/5 border border-navy/20 p-3"><div class="text-xs font-bold text-navy mb-2">Rujukan</div><p class="text-xs text-ink/40 italic">Tiada</p></div>`;
-    return `<div class="rounded-lg bg-navy/5 border border-navy/20 p-3">
-      <div class="text-xs font-bold text-navy mb-2">Rujukan</div>
-      <div class="space-y-2">
+  const libraryItemsForWeek = (wkNum) => (activePlan._libraryItems || []).filter(it =>
+    it.week_number == null || Number(it.week_number) === Number(wkNum));
+
+  const rujukanSection = (values, libItems) => {
+    const hasFiles = (values || []).length > 0;
+    const hasLib = (libItems || []).length > 0;
+    if (!hasFiles && !hasLib) return `<div class="rounded-lg bg-navy/5 border border-navy/20 p-3"><div class="text-xs font-bold text-navy mb-2">Rujukan</div><p class="text-xs text-ink/40 italic">Tiada</p></div>`;
+    const fileRows = hasFiles ? `<div class="text-[10px] font-bold text-navy/60 uppercase tracking-wide mb-1">Fail Rujukan</div>
+      <div class="space-y-2 mb-3">
         ${values.map(v => {
           const { label, url } = parseRef(v);
           return `<div class="flex items-start gap-2 text-xs">
@@ -440,18 +455,30 @@ function renderCoachingSchedule() {
             </div>
           </div>`;
         }).join('')}
-      </div>
+      </div>` : '';
+    const libRows = hasLib ? `<div class="text-[10px] font-bold text-navy/60 uppercase tracking-wide mb-1">Kandungan Berkaitan</div>
+      <div class="space-y-2">
+        ${libItems.map(it => `<a href="library-detail.html?id=${escHtml(it.item_id||it.id)}" class="flex items-start gap-2 text-xs hover:bg-navy/5 rounded p-1 -m-1">
+          <span class="text-navy flex-shrink-0 mt-0.5">${it.content_type==='video'?'🎬':it.content_type==='audio'?'🎧':'📝'}</span>
+          <div class="min-w-0"><div class="text-ink/80 break-words">${escHtml(it.title)}</div></div>
+        </a>`).join('')}
+      </div>` : '';
+    return `<div class="rounded-lg bg-navy/5 border border-navy/20 p-3">
+      <div class="text-xs font-bold text-navy mb-2">Rujukan</div>
+      ${fileRows}${libRows}
     </div>`;
   };
 
   host.innerHTML = items.map(item => {
     const prefix = item.period === 'day' || item.day ? `D${item.day}` : `M${item.week}`;
+    const wkNum = item.week || item.day;
     return `<div class="md:col-span-2">
       ${items.length > 1 ? `<div class="text-xs font-bold text-ink/40 uppercase tracking-wide mb-3">${escHtml(prefix)}</div>` : ''}
       <div class="grid md:grid-cols-2 gap-3">
         ${combinedReadonly(item, prefix)}
         ${readonlyList('Bekalan', 'supplies', item.supplies, prefix, 'text-green-dark', 'bg-green/5 border-green/20')}
       </div>
+      ${rujukanSection(item.rujukan_files, libraryItemsForWeek(wkNum))}
     </div>`;
   }).join('');
 }
