@@ -11,8 +11,11 @@ CREATE TABLE IF NOT EXISTS psy_kob_sessions (
   scheduled_at        TIMESTAMPTZ NOT NULL,
   mode                TEXT NOT NULL DEFAULT 'f2f' CHECK (mode IN ('f2f','online')),
   meet_link           TEXT,
+  -- kiv = sesi selesai TAPI pesakit tak teruskan pakej (parking, bukan cancel).
+  -- no_show = staff sahkan pesakit tak hadir (BEZA drpd "Terlepas" — tu label
+  -- terbitan sementara ikut masa lepas, no_show status TETAP yg staff set sendiri).
   status              TEXT NOT NULL DEFAULT 'booked'
-                      CHECK (status IN ('booked','hadir','completed','reschedule','cancelled')),
+                      CHECK (status IN ('booked','hadir','completed','reschedule','cancelled','kiv','no_show')),
   -- Asal tempahan: 'system' = dicipta dalam ISW system (staff/pesakit sendiri),
   -- 'ghl' = disync automatik dari GHL Calendar (lihat _shared/ghl-sync.ts).
   source              TEXT NOT NULL DEFAULT 'system' CHECK (source IN ('system','ghl')),

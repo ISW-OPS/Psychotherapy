@@ -52,7 +52,28 @@ const CF = {
   kobDate:      'kob_session_date',
   regStatus:    'isw_registration_status',
   inSystem:     'pt_in_system',
+  iswStatus:    'isw_status_2026',
 }
+
+// ── MAPPING: psy_kob_sessions.status → label "ISW STATUS" di GHL ──
+// Disahkan dgn user 25 Sept 2026.
+// 'completed' SENGAJA TAK DALAM SENARAI NI — labelnya bukan SATU nilai
+// tetap, ia ikut PAKEJ yang disignup (cth "SU OBD1", "SU EOL", "SU
+// JUMPSTART" ... ~20 kemungkinan). Perlukan padanan package_id→label
+// berasingan sebelum boleh automate — buat masa ni field ISW STATUS
+// TAK disentuh bila status='completed' (staf isi manual di GHL kalau perlu).
+const KOB_STATUS_TO_ISW: Record<string, string> = {
+  booked:     'SU KOB',
+  reschedule: 'KOB RESCHEDULE',
+  cancelled:  'KOB CANCEL',
+  kiv:        'KOB KIV',
+  no_show:    'KOB NO SHOW',
+  hadir:      'SU KOB A',
+}
+
+// Status yang bermakna slot ni TAK LAGI aktif/akan datang — kosongkan
+// tarikh sesi di GHL (booked/hadir kekal tunjuk tarikh sebenar).
+const CLEAR_DATE_STATUSES = ['cancelled', 'kiv', 'no_show', 'reschedule']
 
 // Status akaun pesakit (psy_patients.status) → binari mudah untuk
 // automation GHL filter. BEZA dari kob_status (peringkat funnel KOB) —
@@ -192,13 +213,13 @@ Deno.serve(async (req: Request) => {
       if (sessions?.[0]) kobDate = kobDateLabel(sessions[0].scheduled_at, sessions[0].mode)
     } catch (e) { console.error('sync-ghl: kob date lookup failed:', e) }
 
-    const [firstName, ...rest] = String(record.full_name || '').trim().split(/\s+/)
+    // JANGAN hantar firstName/lastName — Workflow "SU KOB Auto ID" GHL letak
+    // KOD KOB dalam first_name (bukan nama), nama sebenar dalam last_name
+    // (lihat ghl-booking-webhook README). Upsert dgn firstName/lastName
+    // terbitan drpd full_name akan TIMPA/musnahkan kod tu senyap-senyap.
     const upsertBody = {
       locationId,
       phone,
-      firstName: firstName || undefined,
-      lastName: rest.join(' ') || undefined,
-      name: record.full_name || undefined,
       customFields: [
         { key: CF.kobStage,    field_value: stageInfo.label },
         { key: CF.kobStatus,   field_value: status },
@@ -278,7 +299,7 @@ async function handleKobSession(record: any, oldRecord: any): Promise<Response> 
     return json({ skipped: 'session unchanged' })
   }
 
-  const relevant = ['booked', 'reschedule', 'cancelled']
+  const relevant = ['booked', 'reschedule', 'cancelled', 'kiv', 'no_show', 'hadir']
   if (!relevant.includes(record.status)) {
     return json({ skipped: `status ${record.status}` })
   }
@@ -291,25 +312,25 @@ async function handleKobSession(record: any, oldRecord: any): Promise<Response> 
   const phone = toE164(patient.phone)
   if (!phone) return json({ skipped: 'no phone', patient: patient.id })
 
-  // Batal → kosongkan tarikh; booked/reschedule → tarikh baru
-  const dateValue = record.status === 'cancelled'
+  const dateValue = CLEAR_DATE_STATUSES.includes(record.status)
     ? ''
     : kobDateLabel(record.scheduled_at, record.mode)
 
   const locationId = Deno.env.get('GHL_ISW_LOCATION_ID')!
-  const [firstName, ...rest] = String(patient.full_name || '').trim().split(/\s+/)
+  const iswStatusLabel = KOB_STATUS_TO_ISW[record.status]
+  const customFields = [
+    { key: CF.kobDate, field_value: dateValue },
+    { key: CF.mrn,     field_value: patient.mrn || '' },
+  ]
+  if (iswStatusLabel) customFields.push({ key: CF.iswStatus, field_value: iswStatusLabel })
   const upsert = await ghl('/contacts/upsert', {
     method: 'POST',
     body: JSON.stringify({
+      // JANGAN hantar firstName/lastName — lihat nota di handler psy_patients
+      // atas (kod KOB tersimpan dalam first_name GHL, elak ditimpa).
       locationId,
       phone,
-      firstName: firstName || undefined,
-      lastName: rest.join(' ') || undefined,
-      name: patient.full_name || undefined,
-      customFields: [
-        { key: CF.kobDate, field_value: dateValue },
-        { key: CF.mrn,     field_value: patient.mrn || '' },
-      ],
+      customFields,
       tags: ['patient', 'isw-kob'],
     }),
   })

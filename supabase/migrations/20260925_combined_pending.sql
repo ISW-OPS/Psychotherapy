@@ -486,3 +486,17 @@ ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS registrant_capacity TEXT;
 ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS ghl_contact_id TEXT;
 
 
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260925_kob_status_kiv_noshow.sql
+-- ─────────────────────────────────────────────────────────────────
+-- Status KOB dropdown boleh-edit di kob-list.html — 2 status BAHARU:
+-- kiv (sesi selesai, pesakit tak teruskan pakej) & no_show (staff sahkan
+-- tak hadir, status TETAP — beza drpd "Terlepas" label terbitan
+-- sementara). Disync balik ke GHL "ISW STATUS" (sync-ghl). Rujuk:
+-- database/schema/09_kob.sql, supabase/functions/sync-ghl.
+
+ALTER TABLE psy_kob_sessions DROP CONSTRAINT IF EXISTS psy_kob_sessions_status_check;
+ALTER TABLE psy_kob_sessions ADD CONSTRAINT psy_kob_sessions_status_check
+  CHECK (status IN ('booked','hadir','completed','reschedule','cancelled','kiv','no_show'));
+
+

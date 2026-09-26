@@ -30,6 +30,24 @@ Cipta field berikut. **Key mesti sama** macam dalam `index.ts` (`CF`):
 | Pakej Tamat         | `kob_package_expires`  |
 | ISW MRN             | `isw_mrn`              |
 | Tarikh Sesi KOB     | `kob_session_date`     |
+| ISW STATUS          | `isw_status_2026`      |
+
+`isw_status_2026` diisi bila `psy_kob_sessions.status` berubah — padanan
+disahkan dgn user 25 Sept 2026:
+
+| `psy_kob_sessions.status` | Nilai "ISW STATUS" di GHL |
+|---|---|
+| `booked` | `SU KOB` |
+| `reschedule` | `KOB RESCHEDULE` |
+| `cancelled` | `KOB CANCEL` |
+| `kiv` | `KOB KIV` |
+| `no_show` | `KOB NO SHOW` |
+| `hadir` | `SU KOB A` |
+| `completed` | ⚠️ **TAK dipush** — label GHL utk status ni ikut PAKEJ yg disignup (~20 kemungkinan, cth `SU OBD1`/`SU EOL`/`SU JUMPSTART`), perlukan padanan package_id→label berasingan yg belum dibina. Field ISW STATUS TAK disentuh bila sesi jadi `completed`; isi manual di GHL kalau perlu. |
+
+`booked`/`hadir` kekalkan tarikh sesi sebenar di `kob_session_date`;
+`reschedule`/`cancelled`/`kiv`/`no_show` kosongkan tarikh (slot tu tak
+lagi aktif/akan datang).
 
 ### b) Pipeline (Settings → Pipelines)
 Cipta pipeline "KOB" dengan stages yang padan dengan setiap `kob_status`.
@@ -107,12 +125,23 @@ Uji tarikh booking: login sebagai patient ujian → tempah slot KOB di
 (`26/07/2026, 10:00 am (fizikal)`). Reschedule → tarikh bertukar.
 Batal (staff set `status='cancelled'`) → field dikosongkan.
 
+Uji status: staff tukar status di dropdown kob-list.html (Batal/KIV/No
+Show) → semak custom field **ISW STATUS** pada contact GHL terus
+bertukar ikut mapping di atas.
+
 Lihat log: `supabase functions logs sync-ghl`.
 
 ---
 
 ## Nota & had (Fasa 1)
 
+- **PENTING (dibetulkan 25 Sept 2026):** upsert contact TIDAK LAGI hantar
+  `firstName`/`lastName`. Workflow "SU KOB Auto ID" GHL letak **kod KOB**
+  dalam `first_name` contact (bukan nama — lihat
+  `ghl-booking-webhook/README.md`) — sync-ghl dulu hantar firstName/lastName
+  terbitan drpd `full_name`, yang akan **menimpa/musnahkan kod tu senyap**
+  setiap kali `kob_status`/status sesi berubah. Elak ubah nama contact di
+  GHL langsung drpd fungsi ni.
 - **Sehala sahaja** (ISW → GHL). Perubahan di GHL tidak balik ke ISW lagi (Fasa 3).
 - **Join key = no. telefon** (E.164). Pastikan KYC/patient ada phone betul.
   Tiada phone → di-skip (dilog), bukan error.

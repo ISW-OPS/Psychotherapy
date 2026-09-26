@@ -100,7 +100,14 @@ const STATUS_LABEL = {
   completed:  { label: 'Selesai',  cls: 'bg-green-light text-green-dark' },
   reschedule: { label: 'Reschedule', cls: 'bg-ink/10 text-ink/70' },
   cancelled:  { label: 'Batal',    cls: 'bg-terracotta/15 text-terracotta' },
+  kiv:        { label: 'KIV',      cls: 'bg-amber-100 text-amber-700' },
+  no_show:    { label: 'Tidak Hadir', cls: 'bg-terracotta/15 text-terracotta' },
 };
+// Status yang staff boleh set manual dari dropdown senarai (bukan semua —
+// 'hadir'/'completed' ada gate/syarat sendiri di kob-detail.html, kekal di sana.
+// 'kiv' JUGA bukan pilihan manual di sini — ia auto-set bila doktor klik
+// "Patient Tidak Teruskan" di kob-detail.html, lihat saveRecommendation()).
+const EDITABLE_STATUS = ['booked', 'cancelled', 'no_show'];
 
 // ── Collector / Closer assign & tukar terus dari senarai (sama pattern
 // dgn assign Coach di patients.html, dan assign single-record di kob-detail.html) ──
@@ -155,6 +162,37 @@ async function onKobRoleChange(sel, field, kobId) {
   await auditLog(`kob.${field}_${toId ? 'assigned' : 'unassigned'}`, kobId, { patient_id: k.patient_id, from_id: fromId, from_name: fromName, to_id: toId, to_name: toName });
   k[idKey] = toId; k[nameKey] = toName;
   banner(toId ? `${KOB_ROLE_LABEL[field]} ditetapkan kepada ${toName} ✅` : `${KOB_ROLE_LABEL[field]} dikosongkan`);
+}
+
+// Dropdown status terus dari senarai — cuma untuk status "flat" (booked/
+// cancelled/kiv/no_show), TIADA syarat/gate. 'hadir'/'completed'/'reschedule'
+// ada logik/gate sendiri (agreement, pakej dll) — kekal di kob-detail.html sahaja,
+// papar sbg chip read-only di sini (elak staff terlepas syarat penting).
+function statusCellHtml(k, missed) {
+  const st = missed ? { label: 'Terlepas', cls: 'bg-terracotta/15 text-terracotta' } : (STATUS_LABEL[k.status] || STATUS_LABEL.booked);
+  const hint = missed ? '<div class="text-[10px] text-terracotta mt-0.5">⚠️ Terlepas</div>' : '';
+  if (!can('kob', 'edit') || !EDITABLE_STATUS.includes(k.status)) {
+    return `<span class="chip ${st.cls}">${st.label}</span>${hint}`;
+  }
+  const opts = EDITABLE_STATUS.map(s => `<option value="${s}" ${s === k.status ? 'selected' : ''}>${STATUS_LABEL[s].label}</option>`).join('');
+  return `<select class="finput" data-rbac="kob.edit" onchange="onKobStatusChange(this,'${k.id}')">${opts}</select>${hint}`;
+}
+
+async function onKobStatusChange(sel, kobId) {
+  const k = allKob.find(x => x.id === kobId);
+  if (!k) return;
+  const fromStatus = k.status, toStatus = sel.value;
+  if (toStatus === fromStatus) return;
+  sel.disabled = true;
+  const { error } = await window.db.from('psy_kob_sessions')
+    .update({ status: toStatus, updated_at: new Date().toISOString() })
+    .eq('id', kobId);
+  sel.disabled = false;
+  if (error) { banner('Ralat: ' + error.message, 'error'); sel.value = fromStatus; return; }
+  await auditLog('kob.status_changed', kobId, { patient_id: k.patient_id, from: fromStatus, to: toStatus });
+  k.status = toStatus;
+  banner(`Status ditukar ke ${STATUS_LABEL[toStatus].label} ✅`);
+  render();
 }
 
 // "Terlepas" bukan status DB sebenar — ia keadaan terbitan: masih 'booked' tapi
@@ -262,7 +300,6 @@ function render() {
     const dateStr = dt.toLocaleDateString(LCALE(), { day:'2-digit', month:'short', year:'numeric' });
     const timeStr = dt.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
     const missed = isMissed(k);
-    const st = missed ? { label: 'Terlepas', cls: 'bg-terracotta/15 text-terracotta' } : (STATUS_LABEL[k.status] || STATUS_LABEL.booked);
     return `<tr${missed ? ' class="bg-terracotta/5"' : ''}>
       <td class="whitespace-nowrap"><div class="font-semibold">${escapeHtml(dateStr)}</div><div class="text-xs text-ink/50">${escapeHtml(timeStr)}</div></td>
       <td>${escapeHtml(patName)}</td>
@@ -270,7 +307,7 @@ function render() {
       <td class="text-xs">${k.mode === 'online' ? '💻 Online' : '🏥 F2F'}</td>
       <td class="text-xs">${kobRoleCellHtml(k, 'collector')}</td>
       <td class="text-xs">${kobRoleCellHtml(k, 'closer')}</td>
-      <td><span class="chip ${st.cls}">${st.label}</span></td>
+      <td class="text-xs">${statusCellHtml(k, missed)}</td>
       <td class="text-xs">${k.source === 'ghl' ? '<span class="text-navy font-semibold">🔗 GHL Sync</span>' : '<span class="text-ink/50">🖥️ PT System</span>'}</td>
       <td>${signupChip(k, pat)}</td>
       <td class="text-right whitespace-nowrap flex items-center justify-end gap-3">
