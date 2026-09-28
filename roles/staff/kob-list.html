@@ -104,10 +104,16 @@ const STATUS_LABEL = {
   no_show:    { label: 'Tidak Hadir', cls: 'bg-terracotta/15 text-terracotta' },
 };
 // Status yang staff boleh set manual dari dropdown senarai (bukan semua —
-// 'hadir'/'completed' ada gate/syarat sendiri di kob-detail.html, kekal di sana.
-// 'kiv' JUGA bukan pilihan manual di sini — ia auto-set bila doktor klik
-// "Patient Tidak Teruskan" di kob-detail.html, lihat saveRecommendation()).
-const EDITABLE_STATUS = ['booked', 'cancelled', 'no_show'];
+// 'completed' ada gate/syarat berat di kob-detail.html (agreement, bayaran,
+// pengaktifan pakej+plan), kekal di sana sahaja. 'kiv' JUGA bukan pilihan
+// manual di sini — ia auto-set bila doktor klik "Patient Tidak Teruskan" di
+// kob-detail.html, lihat saveRecommendation()). 'reschedule' pilihan manual
+// TAPI tak tulis status terus dari sini — onKobStatusChange redirect ke modal
+// "Tukar Jadual" kob-detail.html supaya tarikh/slot baharu wajib dipilih
+// serta-merta (elak sesi tergantung dgn status Reschedule tapi tarikh lama).
+// 'hadir' pun selamat manual — cuma sekatan ringan (tak boleh sebelum tarikh
+// sesi, lihat onKobStatusChange), tiada automasi pakej seperti 'completed'.
+const EDITABLE_STATUS = ['booked', 'hadir', 'reschedule', 'cancelled', 'no_show'];
 
 // ── Collector / Closer assign & tukar terus dari senarai (sama pattern
 // dgn assign Coach di patients.html, dan assign single-record di kob-detail.html) ──
@@ -128,7 +134,14 @@ const KOB_ROLE_LABEL = { collector: 'Collector', closer: 'Closer' };
 
 function kobRoleCellHtml(k, field) {
   const idKey = `${field}_id`, nameKey = `${field}_name`;
-  if (!can('kob', 'edit')) return `<span class="text-ink/70">${escapeHtml(k[nameKey] || '—')}</span>`;
+  // Collector selalunya ditarik terus dari GHL (medan "Collector KOB",
+  // {{contact.collector_kob}}) — bukan akaun staff ISW, jadi papar apa
+  // adanya, bukan dropdown untuk dipadan/timpa manual (keputusan 28 Sept
+  // 2026). Closer kekal dropdown — staff tetapkan/tukar manual sepenuhnya
+  // (idea auto-assign closer digugurkan, 28 Sept 2026).
+  if (field === 'collector' || !can('kob', 'edit')) {
+    return `<span class="text-ink/70">${escapeHtml(k[nameKey] || '—')}</span>`;
+  }
   const current = k[idKey];
   const opts = kobRoleStaff.map(s => `<option value="${s.id}" ${s.id === current ? 'selected' : ''}>${escapeHtml(s.full_name)}</option>`).join('');
   // Sesi dari GHL — nama collector ditarik terus dari GHL (cth. "T103 SABRINA"),
@@ -164,10 +177,11 @@ async function onKobRoleChange(sel, field, kobId) {
   banner(toId ? `${KOB_ROLE_LABEL[field]} ditetapkan kepada ${toName} ✅` : `${KOB_ROLE_LABEL[field]} dikosongkan`);
 }
 
-// Dropdown status terus dari senarai — cuma untuk status "flat" (booked/
-// cancelled/kiv/no_show), TIADA syarat/gate. 'hadir'/'completed'/'reschedule'
-// ada logik/gate sendiri (agreement, pakej dll) — kekal di kob-detail.html sahaja,
-// papar sbg chip read-only di sini (elak staff terlepas syarat penting).
+// Dropdown status terus dari senarai — status "flat" (booked/hadir/
+// reschedule/cancelled/no_show), TIADA gate berat. 'completed'/'kiv' ada
+// logik/gate sendiri (agreement, pengaktifan pakej+plan, auto-trigger
+// doktor) — kekal di kob-detail.html sahaja, papar sbg chip read-only di
+// sini (elak staff terlepas syarat penting / conflict dgn automasi).
 function statusCellHtml(k, missed) {
   const st = missed ? { label: 'Terlepas', cls: 'bg-terracotta/15 text-terracotta' } : (STATUS_LABEL[k.status] || STATUS_LABEL.booked);
   const hint = missed ? '<div class="text-[10px] text-terracotta mt-0.5">⚠️ Terlepas</div>' : '';
@@ -183,13 +197,33 @@ async function onKobStatusChange(sel, kobId) {
   if (!k) return;
   const fromStatus = k.status, toStatus = sel.value;
   if (toStatus === fromStatus) return;
+  // 'reschedule' tanpa tarikh baru tak berguna (sesi tergantung dgn tarikh lama) —
+  // jangan tulis status terus dari sini, bawa ke modal "Tukar Jadual" kob-detail.html
+  // supaya tarikh/slot baharu wajib dipilih serta-merta. Modal tu sendiri akan
+  // set status='booked' + tarikh baharu bila staff confirm (tiada tarikh dipilih =
+  // batal, status kekal macam asal, tiada apa ditulis).
+  if (toStatus === 'reschedule') {
+    sel.value = fromStatus;
+    location.href = `kob-detail.html?id=${kobId}&action=reschedule`;
+    return;
+  }
+  // 'hadir' bawa sekatan ringan yang sama macam markHadir() di kob-detail.html —
+  // elak tandakan hadir utk sesi yang belum sampai tarikhnya.
+  if (toStatus === 'hadir' && k.scheduled_at && new Date(k.scheduled_at) > new Date()) {
+    banner('Belum boleh tandakan hadir — sesi KOB ini dijadualkan pada masa akan datang.', 'error');
+    sel.value = fromStatus;
+    return;
+  }
   sel.disabled = true;
-  const { error } = await window.db.from('psy_kob_sessions')
-    .update({ status: toStatus, updated_at: new Date().toISOString() })
-    .eq('id', kobId);
+  const updates = { status: toStatus, updated_at: new Date().toISOString() };
+  if (toStatus === 'hadir') updates.hadir_at = new Date().toISOString();
+  const { error } = await window.db.from('psy_kob_sessions').update(updates).eq('id', kobId);
+  if (!error && toStatus === 'hadir') {
+    await window.db.from('psy_patients').update({ kob_status: 'hadir' }).eq('id', k.patient_id);
+  }
   sel.disabled = false;
   if (error) { banner('Ralat: ' + error.message, 'error'); sel.value = fromStatus; return; }
-  await auditLog('kob.status_changed', kobId, { patient_id: k.patient_id, from: fromStatus, to: toStatus });
+  await auditLog(toStatus === 'hadir' ? 'kob.hadir' : 'kob.status_changed', kobId, { patient_id: k.patient_id, from: fromStatus, to: toStatus });
   k.status = toStatus;
   banner(`Status ditukar ke ${STATUS_LABEL[toStatus].label} ✅`);
   render();
@@ -281,7 +315,10 @@ function render() {
   } else if (filterMode === 'hadir') {
     list = list.filter(k => k.status === 'hadir');
   } else if (filterMode === 'completed') {
-    list = list.filter(k => k.status === 'completed');
+    // KIV turut dikira "Selesai" di sini — sesi dah berlaku (parking sebab
+    // patient tak teruskan pakej), bukan tempahan aktif lagi. Papar tab ni,
+    // tapi badge STATUS kekal tunjuk "KIV" berasingan drpd "Selesai" (statusCellHtml).
+    list = list.filter(k => k.status === 'completed' || k.status === 'kiv');
   }
   if (signupFilter) {
     list = list.filter(k => signupCategory(k, patientMap[k.patient_id]) === signupFilter);

@@ -4,12 +4,20 @@
 // ============================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders } from '../_shared/cors.ts'
+
+// Diletak terus dalam fail ni (bukan import '../_shared/cors.ts') sebab
+// deploy manual via Supabase Dashboard (paste code editor) tak bundle fail
+// luar — cuma index.ts dalam function ni sahaja yang di-deploy.
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
 
 interface InviteRequest {
   email: string;
   full_name: string;
-  staff_role: 'admin' | 'doctor' | 'coach' | 'manager' | 'telesale';
+  staff_role: string;
   specialization?: string;
   registration_no?: string;
   phone?: string;
@@ -58,8 +66,15 @@ Deno.serve(async (req: Request) => {
     if (!body.email || !body.full_name) {
       throw new Error('Email dan nama wajib diisi')
     }
-    if (!['admin', 'doctor', 'coach', 'manager', 'telesale'].includes(body.staff_role)) {
-      throw new Error('Staff role mesti admin, doctor, coach, manager, atau telesale')
+    // Semak terus dari psy_roles (bukan senarai hardcode) — supaya role custom
+    // ciptaan peranan.html (cth. 'kob') turut boleh diguna di sini, sepadan dgn
+    // dropdown "Pilih Role" di staff_management.html yg dah tarik dinamik dari
+    // psy_roles. Senarai hardcode lama ('telesale') tak sepadan dgn role sebenar
+    // yg wujud (cth. 'kob'/'telesales'), punca staff baharu gagal dijemput ke role tu.
+    const { data: roleRow } = await userClient.from('psy_roles')
+      .select('code').eq('code', body.staff_role).eq('is_active', true).maybeSingle()
+    if (!roleRow) {
+      throw new Error(`Staff role '${body.staff_role}' tidak sah atau tidak aktif`)
     }
 
     // Use service role key for admin operations

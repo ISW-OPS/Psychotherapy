@@ -154,10 +154,12 @@ export async function syncAppointmentToSession(svc: any, patientId: string, opts
   mode: 'f2f' | 'online'
   // Nama staff GHL — label GHL sendiri (cth. "T103 SABRINA"), TIADA padanan
   // psy_profiles di ISW. Simpan sebagai TEKS sahaja (collector_id/closer_id
-  // kekal kosong — bukan akaun staff ISW sebenar); staff boleh timpa manual
-  // ke Collector/Closer ISW sebenar bila-bila di kob-list.html/kob-detail.html.
-  // closerName  = "{{appointment.booked_by}}" (siapa buat booking/sahkan appointment)
-  // collectorName = "{{contact.owner_name}}" (Owner contact di GHL)
+  // kekal kosong — bukan akaun staff ISW sebenar). Collector papar read-only
+  // di kob-list.html (data GHL, bukan medan boleh timpa manual — keputusan
+  // 28 Sept 2026); Closer kekal boleh dipilih/timpa manual di sana.
+  // closerName    = "{{appointment.booked_by}}" (siapa buat booking/sahkan appointment)
+  // collectorName = "{{contact.collector_kob}}" (medan "Collector KOB" GHL,
+  //   DISAHKAN 25 Sept 2026 — gantikan owner_name yg dipakai sementara dulu)
   closerName?: string | null
   collectorName?: string | null
 }): Promise<{ kobSessionId: string }> {
