@@ -243,12 +243,23 @@ CREATE POLICY "Registered patients read meet link" ON psy_event_meet_links FOR S
       AND p.user_id = auth.uid() AND r.status <> 'batal'
   ));
 
--- Backfill dari lajur lama SEBELUM dibuang
-INSERT INTO psy_event_meet_links (event_id, meet_link)
-SELECT id, meet_link FROM psy_events WHERE meet_link IS NOT NULL
-ON CONFLICT (event_id) DO UPDATE SET meet_link = EXCLUDED.meet_link;
+-- Backfill dari lajur lama SEBELUM dibuang. Dibungkus check column wujud —
+-- kalau section ni dah pernah run (meet_link dah dibuang dari psy_events),
+-- run berulang kali skip terus (bukan error 42703 "column does not exist",
+-- sebab SELECT meet_link FROM psy_events cuma sah bila lajur tu masih ada).
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'psy_events' AND column_name = 'meet_link'
+  ) THEN
+    INSERT INTO psy_event_meet_links (event_id, meet_link)
+    SELECT id, meet_link FROM psy_events WHERE meet_link IS NOT NULL
+    ON CONFLICT (event_id) DO UPDATE SET meet_link = EXCLUDED.meet_link;
 
-ALTER TABLE psy_events DROP COLUMN IF EXISTS meet_link;
+    ALTER TABLE psy_events DROP COLUMN meet_link;
+  END IF;
+END $$;
 
 -- #H-35 — kuatkuasa kapasiti pendaftaran acara (server-side, staf override dibenarkan)
 CREATE OR REPLACE FUNCTION trg_enforce_event_capacity()
