@@ -2664,11 +2664,13 @@
       const q = document.getElementById('link-search').value.trim();
       if (q.length < 2) { document.getElementById('link-results').innerHTML = ''; return; }
 
-      const { data } = await window.db.from('psy_profiles')
-        .select('id, full_name, email, phone')
-        .eq('role', 'patient')
-        .or(`full_name.ilike.%${q}%,email.ilike.%${q}%`)
-        .limit(8);
+      const [byName, byEmail] = await Promise.all([
+        window.db.from('psy_profiles').select('id, full_name, email, phone').eq('role', 'patient').ilike('full_name', `%${q}%`).limit(8),
+        window.db.from('psy_profiles').select('id, full_name, email, phone').eq('role', 'patient').ilike('email', `%${q}%`).limit(8),
+      ]);
+      const seen = new Set();
+      const data = [...(byName.data || []), ...(byEmail.data || [])]
+        .filter(r => seen.has(r.id) ? false : (seen.add(r.id), true)).slice(0, 8);
 
       document.getElementById('link-results').innerHTML = (data || []).length
         ? (data).map(u => `

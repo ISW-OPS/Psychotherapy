@@ -24,10 +24,12 @@
 //   Appointment: { "event":"appointment", "phone":"{{contact.phone}}",
 //     "full_name":"{{contact.last_name}}", "kob_code":"{{contact.first_name}}",
 //     "email":"{{contact.email}}", "scheduled_at":"{{appointment.start_time}}",
-//     "mode":"{{contact.mod_sesi_kob}}", "closer":"{{appointment.booked_by}}",
-//     "collector":"{{contact.collector_kob}}" }  ← semua opsyenal, label GHL
-//     ("T103 SABRINA" dll) — TIADA padanan psy_profiles (staff ISW boleh
-//     tukar manual bila perlu).
+//     "mode":"{{contact.mod_sesi_kob}}", "closer":"{{appointment.booked_by}}" }
+//     ← "closer" field GHL diguna sbg Collector di ISW (keputusan 28 Sept 2026,
+//     lihat komen dekat parsing di bawah) — label GHL ("T103 SABRINA" dll),
+//     TIADA padanan psy_profiles, papar read-only. "collector_kob" custom field
+//     GHL TAK LAGI diguna (papar nama Kaunselor, bukan Collector sebenar).
+//     Closer di ISW sentiasa manual dropdown, tiada input dari webhook ni.
 //   Order:       { "event":"order", "phone":"...", "full_name":"...",
 //     "email":"...", "order_id":"{{order.id}}", "amount":"{{order.amount}}",
 //     "status":"{{order.status}}" }
@@ -220,13 +222,17 @@ Deno.serve(async (req: Request) => {
       return json({ error: 'scheduled_at (ISO 8601) ATAU scheduled_date+scheduled_time wajib' }, 400)
     }
     const mode = normalizeMode(payload.mode)
-    // Nama staff GHL — label GHL, bukan akaun ISW. Papar terus sbg Collector/Closer
-    // (teks) di kob-list.html/kob-detail.html — staff ISW boleh tukar manual bila perlu.
-    // closer    = "{{appointment.booked_by}}" (siapa buat/sahkan booking) — DISAHKAN.
-    // collector = "{{contact.collector_kob}}" — DISAHKAN 25 Sept 2026 (owner_name
-    // dikekalkan sbg alias fallback, dalam kes Workflow lama masih hantar tu).
-    const closerName = String(payload.closer || payload.booked_by || payload.bookedBy || '').trim() || null
-    const collectorName = String(payload.collector || payload.owner_name || payload.ownerName || payload.collector_name || '').trim() || null
+    // Nama staff GHL — label GHL, bukan akaun ISW. Papar terus sbg Collector (teks,
+    // read-only) di kob-list.html/kob-detail.html.
+    // collector = "{{appointment.booked_by}}" (siapa buat/sahkan booking KOB —
+    //   ejen telesales yg collect/book lead tu masuk slot) — keputusan 28 Sept 2026,
+    //   gantikan "{{contact.collector_kob}}" lama (field tu sebenarnya papar nama
+    //   Kaunselor, bukan Collector — silap konfig GHL).
+    // closer TIDAK diambil dari GHL langsung — sentiasa manual dropdown di ISW,
+    //   sebab closer sebenar (yg tutup jualan pakej) cuma diketahui semasa sesi
+    //   KOB berlangsung, GHL tak boleh tahu awal-awal lagi.
+    const collectorName = String(payload.closer || payload.booked_by || payload.bookedBy || '').trim() || null
+    const closerName = null
 
     const { kobSessionId } = await syncAppointmentToSession(svc, patientId, { scheduledAt, mode, closerName, collectorName })
     await auditLog(svc, 'ghl_booking.received', patientId, {

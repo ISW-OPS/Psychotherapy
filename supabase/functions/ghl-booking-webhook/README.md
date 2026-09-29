@@ -68,7 +68,6 @@ tak melalui closer boleh terus tempah slot ISW seperti biasa).
   "scheduled_at": "{{appointment.start_time}}",
   "mode": "{{contact.mod_sesi_kob}}",
   "closer": "{{appointment.booked_by}}",
-  "collector": "{{contact.collector_kob}}",
   "contact_id": "{{contact.id}}",
   "ic_number": "{{contact.no_ic}}",
   "date_of_birth": "{{contact.date_of_birth}}",
@@ -109,14 +108,16 @@ tak melalui closer boleh terus tempah slot ISW seperti biasa).
   → `F`. Nilai lain diabaikan (bukan disimpan sbg sampah).
 - `closer` — opsyenal. Label staff GHL yang buat/sahkan booking
   (`{{appointment.booked_by}}`, cth. `"T103 SABRINA"`) — disimpan sbg
-  **teks** ke `psy_kob_sessions.closer_name`, dipapar di kolum **Closer**.
-  **Disahkan.** (Alias diterima: `booked_by`/`bookedBy`.)
-- `collector` — opsyenal. Label staff GHL (`{{contact.collector_kob}}`,
-  field khusus "Collector KOB" — **DISAHKAN 25 Sept 2026**, gantikan
-  `owner_name` yg dipakai sementara sebelum ni) — disimpan sbg **teks** ke
-  `psy_kob_sessions.collector_name`, dipapar di kolum **Collector**. (Alias
-  diterima: `owner_name`/`ownerName`/`collector_name`, utk keserasian
-  kalau ada Workflow lama guna tag tu.)
+  **teks** ke `psy_kob_sessions.collector_name`, dipapar (read-only) di
+  kolum **Collector**. Keputusan 28 Sept 2026: booked_by = ejen telesales
+  yg collect/book lead masuk slot KOB, jadi tu Collector sebenar — gantikan
+  `{{contact.collector_kob}}` lama (field GHL tu rupanya papar nama
+  Kaunselor, bukan Collector — silap konfig, DIBUANG). (Alias diterima:
+  `booked_by`/`bookedBy`.)
+- `psy_kob_sessions.closer_name` TIDAK diisi drpd webhook ni langsung —
+  Closer sentiasa dropdown manual di ISW (kob-list.html/kob-detail.html),
+  sebab closer sebenar (yg tutup jualan pakej) cuma diketahui semasa sesi
+  KOB berlangsung, bukan waktu booking.
   Kedua-dua `closer`/`collector` TIADA padanan ke akaun staff ISW
   (`closer_id`/`collector_id` kekal kosong) sebab staff GHL ni tak
   semestinya ada akaun ISW — staff ISW boleh timpa manual ke Collector/

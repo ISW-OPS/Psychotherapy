@@ -316,11 +316,15 @@ Deno.serve(async (req: Request) => {
       // padan pesakit ikut 9 digit terakhir
       let patient_id: string | null = null
       if (last9) {
-        const { data: profs } = await svc.from('psy_profiles').select('id, phone').or(`phone.ilike.%${last9}`)
+        const { data: profs } = await svc.from('psy_profiles').select('id, phone').ilike('phone', `%${last9}`)
         const uids = (profs || []).filter((p: any) => phoneKey(p.phone) === last9).map((p: any) => p.id)
         // Padan ikut nombor pesakit ATAU nombor waris (contact_preference='waris')
-        const { data: pat1 } = await svc.from('psy_patients').select('id, user_id, phone, emergency_contact_phone').or(`phone.ilike.%${last9},emergency_contact_phone.ilike.%${last9}`)
-        const hit = (pat1 || []).find((p: any) => phoneKey(p.phone) === last9 || phoneKey(p.emergency_contact_phone) === last9)
+        const [pat1a, pat1b] = await Promise.all([
+          svc.from('psy_patients').select('id, user_id, phone, emergency_contact_phone').ilike('phone', `%${last9}`),
+          svc.from('psy_patients').select('id, user_id, phone, emergency_contact_phone').ilike('emergency_contact_phone', `%${last9}`),
+        ])
+        const pat1 = [...(pat1a.data || []), ...(pat1b.data || [])]
+        const hit = pat1.find((p: any) => phoneKey(p.phone) === last9 || phoneKey(p.emergency_contact_phone) === last9)
         if (hit) patient_id = hit.id
         else if (uids.length) {
           const { data: pat2 } = await svc.from('psy_patients').select('id').in('user_id', uids).limit(1)
@@ -359,11 +363,15 @@ Deno.serve(async (req: Request) => {
 
       let patient_id: string | null = null
       if (last9) {
-        const { data: profs } = await svc.from('psy_profiles').select('id, phone').or(`phone.ilike.%${last9}`)
+        const { data: profs } = await svc.from('psy_profiles').select('id, phone').ilike('phone', `%${last9}`)
         const uids = (profs || []).filter((p: any) => phoneKey(p.phone) === last9).map((p: any) => p.id)
         // Padan ikut nombor pesakit ATAU nombor waris (contact_preference='waris')
-        const { data: pat1 } = await svc.from('psy_patients').select('id, user_id, phone, emergency_contact_phone').or(`phone.ilike.%${last9},emergency_contact_phone.ilike.%${last9}`)
-        const hit = (pat1 || []).find((p: any) => phoneKey(p.phone) === last9 || phoneKey(p.emergency_contact_phone) === last9)
+        const [pat1a, pat1b] = await Promise.all([
+          svc.from('psy_patients').select('id, user_id, phone, emergency_contact_phone').ilike('phone', `%${last9}`),
+          svc.from('psy_patients').select('id, user_id, phone, emergency_contact_phone').ilike('emergency_contact_phone', `%${last9}`),
+        ])
+        const pat1 = [...(pat1a.data || []), ...(pat1b.data || [])]
+        const hit = pat1.find((p: any) => phoneKey(p.phone) === last9 || phoneKey(p.emergency_contact_phone) === last9)
         if (hit) patient_id = hit.id
         else if (uids.length) {
           const { data: pat2 } = await svc.from('psy_patients').select('id').in('user_id', uids).limit(1)
@@ -396,11 +404,15 @@ Deno.serve(async (req: Request) => {
 
       let patient_id: string | null = null
       if (last9) {
-        const { data: profs } = await svc.from('psy_profiles').select('id, phone').or(`phone.ilike.%${last9}`)
+        const { data: profs } = await svc.from('psy_profiles').select('id, phone').ilike('phone', `%${last9}`)
         const uids = (profs || []).filter((p: any) => phoneKey(p.phone) === last9).map((p: any) => p.id)
         // Padan ikut nombor pesakit ATAU nombor waris (contact_preference='waris')
-        const { data: pat1 } = await svc.from('psy_patients').select('id, user_id, phone, emergency_contact_phone').or(`phone.ilike.%${last9},emergency_contact_phone.ilike.%${last9}`)
-        const hit = (pat1 || []).find((p: any) => phoneKey(p.phone) === last9 || phoneKey(p.emergency_contact_phone) === last9)
+        const [pat1a, pat1b] = await Promise.all([
+          svc.from('psy_patients').select('id, user_id, phone, emergency_contact_phone').ilike('phone', `%${last9}`),
+          svc.from('psy_patients').select('id, user_id, phone, emergency_contact_phone').ilike('emergency_contact_phone', `%${last9}`),
+        ])
+        const pat1 = [...(pat1a.data || []), ...(pat1b.data || [])]
+        const hit = pat1.find((p: any) => phoneKey(p.phone) === last9 || phoneKey(p.emergency_contact_phone) === last9)
         if (hit) patient_id = hit.id
         else if (uids.length) {
           const { data: pat2 } = await svc.from('psy_patients').select('id').in('user_id', uids).limit(1)

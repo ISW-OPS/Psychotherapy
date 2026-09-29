@@ -253,12 +253,15 @@ function onPointsPatientSearch() {
   const results = document.getElementById('pt-search-results');
   if (q.length < 2) { results.classList.add('hidden'); return; }
   ptSearchTimer = setTimeout(async () => {
-    const { data } = await window.db.from('psy_patients')
-      .select('id, mrn, full_name, phone, psy_profiles!psy_patients_user_id_fkey(full_name)')
-      .neq('status', 'deleted')
-      .or(`full_name.ilike.%${q}%,mrn.ilike.%${q}%,phone.ilike.%${q}%`)
-      .limit(8);
-    const rows = data || [];
+    const SEL = 'id, mrn, full_name, phone, psy_profiles!psy_patients_user_id_fkey(full_name)';
+    const [byName, byMrn, byPhone] = await Promise.all([
+      window.db.from('psy_patients').select(SEL).neq('status', 'deleted').ilike('full_name', `%${q}%`).limit(8),
+      window.db.from('psy_patients').select(SEL).neq('status', 'deleted').ilike('mrn', `%${q}%`).limit(8),
+      window.db.from('psy_patients').select(SEL).neq('status', 'deleted').ilike('phone', `%${q}%`).limit(8),
+    ]);
+    const seen = new Set();
+    const rows = [...(byName.data || []), ...(byMrn.data || []), ...(byPhone.data || [])]
+      .filter(r => seen.has(r.id) ? false : (seen.add(r.id), true)).slice(0, 8);
     if (!rows.length) { results.innerHTML = '<div class="px-3 py-2.5 text-xs text-ink/40">Tiada pesakit dijumpai.</div>'; results.classList.remove('hidden'); return; }
     results.innerHTML = rows.map(p => {
       const name = p.psy_profiles?.full_name || p.full_name || p.mrn || '—';

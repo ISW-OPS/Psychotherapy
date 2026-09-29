@@ -80,13 +80,30 @@ export async function syncContactToPatient(svc: any, opts: {
   const cleanFullName = opts.kobCode ? (opts.fullName?.trim() || parsedName) : parsedName
   const ghlRefCode = opts.kobCode || parsedCode
 
-  const { data: candidates } = await svc.from('psy_patients')
-    .select(`id, phone, emergency_contact_phone, full_name, email, ic_number, address,
-      postcode, city, state, date_of_birth, gender, marital_status, occupation, company,
-      ghl_kob_code, contact_preference, registrant_capacity, ghl_contact_id, emergency_contact_name, emergency_contact_ic,
-      emergency_contact_relationship, emergency_contact_email`)
-    .or(`phone.ilike.%${key},emergency_contact_phone.ilike.%${key}`)
-  const match = (candidates || []).find(
+  // PENTING: elak .or(`col.ilike.*${key}`) — string DSL .or() manual ni
+  // TERBUKTI tak boleh dipercayai (dicuba 28 Sept 2026, dua kali — baik '%'
+  // mahupun '*' sebagai wildcard TETAP gagal cari padanan sedia ada dlm
+  // ujian sebenar PROD, punca sebenar tak dapat disahkan). Guna DUA panggilan
+  // `.ilike()` berasingan (kaedah rasmi supabase-js, bukan string DSL tulis
+  // tangan) + gabung dalam JS — cara PALING selamat/telus, elak dedup
+  // "senyap" gagal & cipta pesakit BAHARU setiap kali dipanggil semula utk
+  // contact yg sama (punca pendua KOB bila laluan pantas ghl-pull-sync
+  // re-check contact sama setiap 15 minit).
+  // PENTING: select() SATU BARIS SAHAJA — versi lama guna template string
+  // merentas beberapa baris (aksara baris-baru terbenam dlm parameter select),
+  // disyaki punca sebenar dedup ni GAGAL SENYAP (PostgREST mungkin tersalah
+  // hurai senarai lajur bila ada \n terbenam, `error` pun tak pernah disemak
+  // sebelum ni — silap besar). Fix 29 Sept 2026.
+  const selectCols = 'id, phone, emergency_contact_phone, full_name, email, ic_number, address, postcode, city, state, date_of_birth, gender, marital_status, occupation, company, ghl_kob_code, contact_preference, registrant_capacity, ghl_contact_id, emergency_contact_name, emergency_contact_ic, emergency_contact_relationship, emergency_contact_email'
+  const [byPhone, byEmergency] = await Promise.all([
+    svc.from('psy_patients').select(selectCols).ilike('phone', `%${key}`),
+    svc.from('psy_patients').select(selectCols).ilike('emergency_contact_phone', `%${key}`),
+  ])
+  if (byPhone.error || byEmergency.error) {
+    throw new Error(`candidate lookup gagal: ${byPhone.error?.message || ''} ${byEmergency.error?.message || ''}`.trim())
+  }
+  const candidates = [...(byPhone.data || []), ...(byEmergency.data || [])]
+  const match = candidates.find(
     (p: any) => phoneKey(p.phone) === key || phoneKey(p.emergency_contact_phone) === key,
   )
 
@@ -155,11 +172,13 @@ export async function syncAppointmentToSession(svc: any, patientId: string, opts
   // Nama staff GHL — label GHL sendiri (cth. "T103 SABRINA"), TIADA padanan
   // psy_profiles di ISW. Simpan sebagai TEKS sahaja (collector_id/closer_id
   // kekal kosong — bukan akaun staff ISW sebenar). Collector papar read-only
-  // di kob-list.html (data GHL, bukan medan boleh timpa manual — keputusan
-  // 28 Sept 2026); Closer kekal boleh dipilih/timpa manual di sana.
-  // closerName    = "{{appointment.booked_by}}" (siapa buat booking/sahkan appointment)
-  // collectorName = "{{contact.collector_kob}}" (medan "Collector KOB" GHL,
-  //   DISAHKAN 25 Sept 2026 — gantikan owner_name yg dipakai sementara dulu)
+  // di kob-list.html (data GHL); Closer kekal boleh dipilih/timpa manual di
+  // sana — GHL TAK PERNAH bekalkan nilai closer (keputusan 28 Sept 2026).
+  // collectorName = "{{appointment.booked_by}}" (ejen telesales yg buat/sahkan
+  //   booking KOB) — keputusan 28 Sept 2026, gantikan "{{contact.collector_kob}}"
+  //   lama (field tu rupanya papar nama Kaunselor, bukan Collector — silap konfig).
+  // closerName selalunya null — closer sebenar (tutup jualan) cuma diketahui
+  //   semasa sesi KOB, bukan waktu booking; staff set manual di ISW.
   closerName?: string | null
   collectorName?: string | null
 }): Promise<{ kobSessionId: string }> {
@@ -202,10 +221,13 @@ export async function findPatientIdByPhone(svc: any, phone: string | null | unde
   if (!p) return null
   const key = phoneKey(p)
   if (!key) return null
-  const { data: candidates } = await svc.from('psy_patients')
-    .select('id, phone, emergency_contact_phone')
-    .or(`phone.ilike.%${key},emergency_contact_phone.ilike.%${key}`)
-  const match = (candidates || []).find(
+  // .ilike() rasmi berasingan + gabung JS — lihat nota sama di syncContactToPatient().
+  const [byPhone, byEmergency] = await Promise.all([
+    svc.from('psy_patients').select('id, phone, emergency_contact_phone').ilike('phone', `%${key}`),
+    svc.from('psy_patients').select('id, phone, emergency_contact_phone').ilike('emergency_contact_phone', `%${key}`),
+  ])
+  const candidates = [...(byPhone.data || []), ...(byEmergency.data || [])]
+  const match = candidates.find(
     (row: any) => phoneKey(row.phone) === key || phoneKey(row.emergency_contact_phone) === key,
   )
   return match?.id || null

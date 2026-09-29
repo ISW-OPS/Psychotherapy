@@ -676,6 +676,56 @@ Deno.serve(async (req: Request) => {
       return json({ debug: true, raw: data })
     }
 
+    // ── Laluan pantas: booking TERKINI terus dari Calendar Events API ──
+    // Cursor contact (di bawah) scan SEMUA contact lama→baharu (dateAdded
+    // ascending) — bermakna booking BAHARU jadi yang PALING LAMBAT disync
+    // (akaun besar boleh ambil berjam-jam sepusingan). Laluan ni pula tanya
+    // terus kalendar KOB utk appointment 7 hari lepas → 60 hari depan
+    // SETIAP run (~15 minit) — booking baharu/reschedule nampak dlm minit,
+    // tanpa tunggu giliran cursor. Cursor lama TETAP jalan di bawah utk
+    // backfill sejarah/contact tanpa appointment KOB aktif. Keputusan
+    // 28 Sept 2026 (punca: booking hari sama tak muncul, cursor takde
+    // sampai lagi sebab contact tu paling baharu = paling akhir dicapai).
+    let recentScanned = 0
+    let recentSynced = 0
+    const recentErrors: string[] = []
+    // DIMATIKAN 28 Sept 2026 — punca pendua pesakit/sesi KOB setiap 15 minit
+    // (cipta rekod BAHARU berulang utk contact SAMA walaupun dah 3 pendekatan
+    // dicuba: .or() '%', .or() '*', .ilike() rasmi — semua gagal cari padanan
+    // sedia ada atas sebab yg belum disahkan). JANGAN aktifkan semula sebelum
+    // punca sebenar disahkan & diuji — laluan cursor lama di bawah (stabil,
+    // tiada isu ni) kekal jalan sahaja buat masa ini.
+    if (false) try {
+      const kobCalIds = await getKobCalendarIds(locationId)
+      const now = Date.now()
+      const startTime = now - 7 * 24 * 60 * 60 * 1000
+      const endTime = now + 60 * 24 * 60 * 60 * 1000
+      for (const calId of kobCalIds) {
+        try {
+          const evData = await ghl(`/calendars/events?locationId=${locationId}&calendarId=${calId}&startTime=${startTime}&endTime=${endTime}`, { method: 'GET' })
+          const events = (evData?.events || []).filter((e: any) => !e.deleted && e.appointmentStatus !== 'cancelled' && e.contactId)
+          for (const ev of events) {
+            recentScanned++
+            try {
+              const cRes = await ghl(`/contacts/${ev.contactId}`, { method: 'GET' })
+              const contact = cRes?.contact || cRes || {}
+              // GET /contacts/:id (single) bagi firstName/lastName/name — BUKAN
+              // firstNameRaw/lastNameRaw macam GET /contacts/ (senarai). processOneContact
+              // hanya baca *Raw / contactName, jadi tanpa normalize ni fullName jadi
+              // kosong (bug jumpa 28 Sept 2026 — punca full_name null utk sesi
+              // laluan pantas ni).
+              if (!contact.firstNameRaw && !contact.lastNameRaw && !contact.contactName) {
+                contact.contactName = contact.name || [contact.firstName, contact.lastName].filter(Boolean).join(' ') || null
+              }
+              const r = await processOneContact(svc, locationId, contact)
+              if (r.status === 'synced' && r.appointmentSynced) recentSynced++
+              if (r.error) recentErrors.push(`${ev.contactId}: ${r.error}`)
+            } catch (e) { recentErrors.push(`contact ${ev.contactId}: ${(e as Error).message}`) }
+          }
+        } catch (e) { recentErrors.push(`calendar ${calId}: ${(e as Error).message}`) }
+      }
+    } catch (e) { recentErrors.push(`kob-calendars: ${(e as Error).message}`) }
+
     // ── Muatkan cursor dari run sebelum ini (psy_settings) ──
     const { data: cursorRow } = await svc.from('psy_settings').select('value').eq('key', CURSOR_KEY).maybeSingle()
     let startAfterId: string | undefined = cursorRow?.value?.startAfterId
@@ -741,7 +791,10 @@ Deno.serve(async (req: Request) => {
       await svc.from('psy_settings').upsert({ key: CURSOR_KEY, value: nextCursor, updated_at: new Date().toISOString() })
     } catch (_) { /* cursor gagal simpan — run seterusnya mula semula, tak fatal */ }
 
-    const summary = { totalContacts, kobRelevant, skippedNoPaymentOrBooking, patientsSynced, appointmentsSynced, sessionsCancelled, paymentsSynced, errorCount: errors.length, errors: errors.slice(0, 20), reachedEnd, nextCursor }
+    const summary = {
+      recentScanned, recentSynced, recentErrorCount: recentErrors.length, recentErrors: recentErrors.slice(0, 20),
+      totalContacts, kobRelevant, skippedNoPaymentOrBooking, patientsSynced, appointmentsSynced, sessionsCancelled, paymentsSynced, errorCount: errors.length, errors: errors.slice(0, 20), reachedEnd, nextCursor,
+    }
 
     try {
       await svc.from('psy_audit_log').insert({

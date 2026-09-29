@@ -29,6 +29,21 @@ seluruh akaun akhirnya discan secara berperingkat & berterusan
 (self-healing — tangkap perubahan status lama juga, bukan sekadar
 sekali sahaja).
 
+**Isu jumpa 28 Sept 2026:** cursor contact scan lama→baharu (`dateAdded`
+ascending) bermakna booking BAHARU jadi yang PALING LAMBAT disync —
+utk akaun >2000 contact, satu pusingan penuh boleh ambil berjam-jam,
+jadi booking hari yang sama boleh "tak nampak lagi" di ISW buat
+sementara. **Fix:** laluan pantas tambahan SETIAP run — tanya terus
+`GET /calendars/events?calendarId=...&startTime=...&endTime=...` utk
+setiap kalendar KOB (tetingkap 7 hari lepas → 60 hari depan), fetch
+contact penuh bagi setiap event (`GET /contacts/:id`), proses guna
+`processOneContact()` yang sama (tiada logik sync baharu ditulis).
+Cursor lama (di atas) TETAP jalan sekali di setiap run juga, utk
+backfill sejarah + tangkap contact yang tiada appointment aktif lagi
+(pembatalan). Metrik `recentScanned`/`recentSynced`/`recentErrors`
+dalam `psy_audit_log` (`ghl_pull_sync.run`) — laluan pantas berasingan
+drpd `totalContacts`/`kobRelevant`/dll (laluan cursor lama).
+
 **3 GHL Workflow yang sedang/pernah dibina (Appointment/Order/Contact)
 TIDAK DIPERLUKAN LAGI** — boleh dibuang atau tinggalkan sebagai Draft di
 GHL dashboard, tak digunakan oleh seni bina ni.

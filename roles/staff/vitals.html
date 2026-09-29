@@ -298,12 +298,15 @@ async function doSearch(e) {
   const q = document.getElementById('vh-search-input').value.trim();
   const resultsEl = document.getElementById('vh-search-results');
   if (!q) { resultsEl.classList.add('hidden'); return false; }
-  const { data } = await window.db.from('psy_patients')
-    .select('id, mrn, full_name, phone, psy_profiles!psy_patients_user_id_fkey(full_name)')
-    .neq('status', 'deleted')
-    .or(`full_name.ilike.%${q}%,mrn.ilike.%${q}%,phone.ilike.%${q}%`)
-    .limit(8);
-  const rows = data || [];
+  const VH_SEL = 'id, mrn, full_name, phone, psy_profiles!psy_patients_user_id_fkey(full_name)';
+  const [vhByName, vhByMrn, vhByPhone] = await Promise.all([
+    window.db.from('psy_patients').select(VH_SEL).neq('status', 'deleted').ilike('full_name', `%${q}%`).limit(8),
+    window.db.from('psy_patients').select(VH_SEL).neq('status', 'deleted').ilike('mrn', `%${q}%`).limit(8),
+    window.db.from('psy_patients').select(VH_SEL).neq('status', 'deleted').ilike('phone', `%${q}%`).limit(8),
+  ]);
+  const vhSeen = new Set();
+  const rows = [...(vhByName.data || []), ...(vhByMrn.data || []), ...(vhByPhone.data || [])]
+    .filter(r => vhSeen.has(r.id) ? false : (vhSeen.add(r.id), true)).slice(0, 8);
   if (rows.length === 1) { location.href = `vitals-detail.html?patient_id=${rows[0].id}`; return false; }
   if (!rows.length) { resultsEl.classList.remove('hidden'); resultsEl.innerHTML = `<div class="px-4 py-3 text-sm text-ink/40">Tiada pesakit dijumpai.</div>`; return false; }
   resultsEl.classList.remove('hidden');
