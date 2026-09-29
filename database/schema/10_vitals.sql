@@ -66,20 +66,70 @@ UPDATE psy_vitals SET is_abnormal = true WHERE is_abnormal = false AND (
 );
 
 -- ──── Ambang KRITIKAL — dikira server-side, elak client pintas/lupa tanda ────
--- NOTA: ambang default di bawah (BP/nadi/suhu/SpO2/RR) belum disahkan klinikal
--- ISW — ni piawai am industri sahaja. TUKAR di fn_vitals_compute_critical() ni
--- sahaja (satu tempat) selepas doktor/klinikal sahkan.
+-- Audit management batch 3 (29-30 Sept 2026): ambang BUKAN lagi hardcode di sini —
+-- dibaca dari psy_settings key 'vitals_thresholds' (JSONB per-vital, diedit oleh
+-- super_admin/doktor melalui tetapan.html, rujuk 23_settings.sql). critical_min/
+-- critical_max kosong (NULL) utk sesuatu vital = automasi TAK aktif utk vital tu
+-- (NULL dlm OR chain = falsy automatik) — jadi shipping fungsi ni TIDAK sendiri
+-- menghidupkan apa-apa automasi baharu sehingga seseorang isi nilai melalui UI.
+-- Dibalut exception-safe SEPENUHNYA (config rosak/parse gagal → is_critical=false)
+-- sebab ni BEFORE trigger — kalau throw, ia boleh sekat SEMUA simpanan vitals klinik.
 CREATE OR REPLACE FUNCTION fn_vitals_compute_critical()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+  v_cfg JSONB;
+  v_bp_sys JSONB; v_bp_dia JSONB; v_hr JSONB; v_temp JSONB; v_spo2 JSONB; v_rr JSONB;
 BEGIN
-  NEW.is_critical := (
-    (NEW.bp_systolic IS NOT NULL AND (NEW.bp_systolic < 80 OR NEW.bp_systolic >= 180)) OR
-    (NEW.bp_diastolic IS NOT NULL AND NEW.bp_diastolic >= 120) OR
-    (NEW.heart_rate IS NOT NULL AND (NEW.heart_rate < 40 OR NEW.heart_rate > 130)) OR
-    (NEW.temperature IS NOT NULL AND (NEW.temperature < 35.0 OR NEW.temperature >= 39.5)) OR
-    (NEW.spo2 IS NOT NULL AND NEW.spo2 < 90) OR
-    (NEW.respiratory_rate IS NOT NULL AND (NEW.respiratory_rate < 8 OR NEW.respiratory_rate > 30))
-  );
+  NEW.is_critical := false;
+
+  BEGIN
+    SELECT value INTO v_cfg FROM psy_settings WHERE key = 'vitals_thresholds';
+  EXCEPTION WHEN OTHERS THEN
+    v_cfg := NULL;
+  END;
+
+  IF v_cfg IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  BEGIN
+    v_bp_sys := v_cfg -> 'bp_systolic';
+    v_bp_dia := v_cfg -> 'bp_diastolic';
+    v_hr     := v_cfg -> 'heart_rate';
+    v_temp   := v_cfg -> 'temperature';
+    v_spo2   := v_cfg -> 'spo2';
+    v_rr     := v_cfg -> 'respiratory_rate';
+
+    NEW.is_critical := (
+      (NEW.bp_systolic IS NOT NULL AND v_bp_sys IS NOT NULL AND (
+        (v_bp_sys->>'critical_min' IS NOT NULL AND NEW.bp_systolic < (v_bp_sys->>'critical_min')::numeric) OR
+        (v_bp_sys->>'critical_max' IS NOT NULL AND NEW.bp_systolic >= (v_bp_sys->>'critical_max')::numeric)
+      )) OR
+      (NEW.bp_diastolic IS NOT NULL AND v_bp_dia IS NOT NULL AND (
+        (v_bp_dia->>'critical_min' IS NOT NULL AND NEW.bp_diastolic < (v_bp_dia->>'critical_min')::numeric) OR
+        (v_bp_dia->>'critical_max' IS NOT NULL AND NEW.bp_diastolic >= (v_bp_dia->>'critical_max')::numeric)
+      )) OR
+      (NEW.heart_rate IS NOT NULL AND v_hr IS NOT NULL AND (
+        (v_hr->>'critical_min' IS NOT NULL AND NEW.heart_rate < (v_hr->>'critical_min')::numeric) OR
+        (v_hr->>'critical_max' IS NOT NULL AND NEW.heart_rate > (v_hr->>'critical_max')::numeric)
+      )) OR
+      (NEW.temperature IS NOT NULL AND v_temp IS NOT NULL AND (
+        (v_temp->>'critical_min' IS NOT NULL AND NEW.temperature < (v_temp->>'critical_min')::numeric) OR
+        (v_temp->>'critical_max' IS NOT NULL AND NEW.temperature >= (v_temp->>'critical_max')::numeric)
+      )) OR
+      (NEW.spo2 IS NOT NULL AND v_spo2 IS NOT NULL AND
+        (v_spo2->>'critical_min' IS NOT NULL AND NEW.spo2 < (v_spo2->>'critical_min')::numeric)
+      ) OR
+      (NEW.respiratory_rate IS NOT NULL AND v_rr IS NOT NULL AND (
+        (v_rr->>'critical_min' IS NOT NULL AND NEW.respiratory_rate < (v_rr->>'critical_min')::numeric) OR
+        (v_rr->>'critical_max' IS NOT NULL AND NEW.respiratory_rate > (v_rr->>'critical_max')::numeric)
+      ))
+    );
+  EXCEPTION WHEN OTHERS THEN
+    RAISE LOG 'fn_vitals_compute_critical: %', SQLERRM;
+    NEW.is_critical := false;
+  END;
+
   RETURN NEW;
 END;
 $$;
@@ -89,15 +139,8 @@ CREATE TRIGGER trg_vitals_compute_critical
   BEFORE INSERT OR UPDATE ON psy_vitals
   FOR EACH ROW EXECUTE FUNCTION fn_vitals_compute_critical();
 
--- Backfill sekali sahaja (sama sebab macam is_abnormal di atas)
-UPDATE psy_vitals SET is_critical = (
-  (bp_systolic IS NOT NULL AND (bp_systolic < 80 OR bp_systolic >= 180)) OR
-  (bp_diastolic IS NOT NULL AND bp_diastolic >= 120) OR
-  (heart_rate IS NOT NULL AND (heart_rate < 40 OR heart_rate > 130)) OR
-  (temperature IS NOT NULL AND (temperature < 35.0 OR temperature >= 39.5)) OR
-  (spo2 IS NOT NULL AND spo2 < 90) OR
-  (respiratory_rate IS NOT NULL AND (respiratory_rate < 8 OR respiratory_rate > 30))
-) WHERE is_critical = false;
+-- TIADA backfill is_critical — config critical_* kosong (NULL) secara default, jadi
+-- backfill akan sentiasa false utk semua rekod sedia ada sehingga doktor isi ambang.
 
 -- RLS
 ALTER TABLE psy_vitals ENABLE ROW LEVEL SECURITY;
@@ -149,5 +192,5 @@ COMMENT ON COLUMN psy_vitals.is_critical IS
   'Bacaan kritikal (bahaya klinikal, perlu tindakan segera) — dikira SERVER-SIDE sahaja '
   '(trg_vitals_compute_critical), staf TAK boleh override/uncheck macam is_abnormal. Bila true, '
   'trg_vitals_notify_emergency (18_notifications_automations.sql) auto-cipta/kemaskini kes di '
-  'psy_emergency_alerts — Red Emergency Protocol. Ambang belum disahkan klinikal ISW, lihat nota '
-  'di fn_vitals_compute_critical().';
+  'psy_emergency_alerts — Red Emergency Protocol. Ambang dibaca dari psy_settings.vitals_thresholds '
+  '(diedit oleh super_admin/doktor di tetapan.html) — kosong (NULL) = automasi TAK aktif utk vital tu.';

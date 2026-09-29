@@ -374,6 +374,33 @@
                   </div>
                 </div>
               </div>
+
+              <!-- TAB: Ambang Vitals -->
+              <div id="tab-vitals" class="p-5 md:p-6 hidden">
+                <h3 class="font-bold text-ink">Ambang Bacaan Vitals</h3>
+                <p class="text-xs text-ink/55 mt-0.5 mb-4">Tetapkan julat Normal dan Kritikal bagi setiap bacaan vitals. Ambang ni menentukan bila sistem tanda bacaan "Tidak Normal" atau "Kritikal" — dan bila kosong dibiarkan, automasi berkenaan TIDAK aktif.</p>
+                <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 text-xs text-amber-800 flex items-start gap-2">
+                  <span class="flex-shrink-0">ⓘ</span>
+                  <span><b>Ambang Kritikal kosong = automasi Protokol Kecemasan TIDAK aktif</b> untuk bacaan tersebut. Isi nilai hanya selepas disahkan oleh doktor. Perubahan cuma terpakai untuk bacaan BAHARU — rekod lama tak dikira semula.</span>
+                </div>
+                <div class="overflow-x-auto border border-ink/10 rounded-xl">
+                  <table class="w-full text-sm">
+                    <thead>
+                      <tr class="bg-ink/[0.02] text-[10px] uppercase tracking-wider text-ink/45">
+                        <th class="text-left px-4 py-3">Vital</th>
+                        <th class="text-left px-3 py-3 w-28">Normal Min</th>
+                        <th class="text-left px-3 py-3 w-28">Normal Maks</th>
+                        <th class="text-left px-3 py-3 w-28">Kritikal Min</th>
+                        <th class="text-left px-3 py-3 w-28">Kritikal Maks</th>
+                      </tr>
+                    </thead>
+                    <tbody id="vt-tbody" class="divide-y divide-ink/6"></tbody>
+                  </table>
+                </div>
+                <div class="save-bar mt-4">
+                  <button onclick="saveVitalsThresholds(this)" data-rbac="settings.edit" class="bg-navy text-white text-sm font-semibold px-5 py-2.5 rounded-lg hover:bg-navy-dark">💾 Simpan Ambang</button>
+                </div>
+              </div>
             </div>
 
             <div class="bg-white rounded-2xl border border-ink/10 p-5">
@@ -401,10 +428,13 @@
 <script src="../../shared/navbar.js"></script>
 <script src="_shared.js"></script>
 <script src="../../shared/settings.js"></script>
+<script src="../../shared/vitalsThresholds.js"></script>
 <script>
-const TABS = ['umum','rupa','klinik','peristiwa','notifikasi','integrasi','keselamatan','affiliate'];
+const TABS = ['umum','rupa','klinik','peristiwa','notifikasi','integrasi','keselamatan','affiliate','vitals'];
+let _currentTab = 'umum';
 
 function setTab(t) {
+  _currentTab = t;
   document.querySelectorAll('#sidebar [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
   TABS.forEach(k => document.getElementById('tab-' + k).classList.toggle('hidden', k !== t));
 }
@@ -453,6 +483,8 @@ function fillForm() {
   setV('s-payment_provider',  val('payment_provider', 'hitpay'));
   setV('s-payment_mode',      val('payment_mode', 'sandbox'));
   setV('s-whatsapp_provider', val('whatsapp_provider', 'ghl'));
+  // Ambang Vitals
+  renderVitalsThresholdTable();
 
   // Info panel
   document.getElementById('info-version').textContent = 'v' + val('app_version', '1.0.0');
@@ -474,11 +506,29 @@ async function saveKeys(map, btn) {
   try {
     const uid = window.currentUser?.id || null;
     const now = new Date().toISOString();
+    // Sebelum/lepas utk audit trail (rujuk peranan.html punya corak) — snapshot
+    // nilai LAMA sebelum overwrite window.iswSettings.
+    const previous = {};
+    Object.keys(map).forEach(k => { previous[k] = window.iswSettings?.[k] ?? null; });
     const rows = Object.entries(map).map(([key, value]) => ({ key, value, updated_by: uid, updated_at: now }));
     const { error } = await window.db.from('psy_settings').upsert(rows, { onConflict: 'key' });
     if (error) throw error;
     Object.assign(window.iswSettings, map);
     refreshUpdatedInfo();
+    // Audit trail — jangan block simpan tetapan kalau ni gagal (defensive, macam
+    // trigger-trigger lain dlm sistem ni yg EXCEPTION WHEN OTHERS).
+    try {
+      await window.db.from('psy_permission_audit').insert({
+        actor_id: uid,
+        actor_email: window.currentUser?.email || null,
+        action: 'settings_update',
+        target_type: 'setting',
+        target_id: _currentTab,
+        details: { keys: Object.keys(map), previous, next: map },
+      });
+    } catch (auditErr) {
+      console.warn('audit trail gagal (tetapan tetap tersimpan):', auditErr);
+    }
     banner('Tetapan disimpan ✅');
   } catch (e) {
     banner('Gagal simpan: ' + (e.message || e), 'error');
@@ -895,6 +945,52 @@ function saveReferralVoucherAmount(btn) {
   saveKeys({ referral_signup_voucher_amount: amt }, btn);
 }
 window.saveReferralVoucherAmount = saveReferralVoucherAmount;
+
+// ── Ambang Vitals (Normal/Kritikal per-vital) — psy_settings.vitals_thresholds ──
+function vtInputId(key, field) { return `vt-${key}-${field}`; }
+function renderVitalsThresholdTable() {
+  const cfg = iswVitalsThresholds();
+  document.getElementById('vt-tbody').innerHTML = Object.keys(ISW_VITALS_META).map(key => {
+    const meta = ISW_VITALS_META[key];
+    const t = cfg[key] || {};
+    const numInput = (field, ph) => {
+      const v = (t[field] === null || t[field] === undefined) ? '' : t[field];
+      return `<input id="${vtInputId(key, field)}" type="number" step="any" value="${v}" placeholder="${ph || ''}" class="w-full px-2.5 py-1.5 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none">`;
+    };
+    return `<tr>
+      <td class="px-4 py-2.5"><div class="font-semibold text-ink">${meta.label}</div><div class="text-[10px] text-ink/45">${meta.unit}</div></td>
+      <td class="px-3 py-2.5">${numInput('normal_min')}</td>
+      <td class="px-3 py-2.5">${numInput('normal_max')}</td>
+      <td class="px-3 py-2.5">${numInput('critical_min', 'kosong')}</td>
+      <td class="px-3 py-2.5">${numInput('critical_max', 'kosong')}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function saveVitalsThresholds(btn) {
+  const parsed = {};
+  for (const key of Object.keys(ISW_VITALS_META)) {
+    const readField = (field) => {
+      const raw = document.getElementById(vtInputId(key, field)).value.trim();
+      if (raw === '') return null;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : null;
+    };
+    const row = {
+      normal_min: readField('normal_min'), normal_max: readField('normal_max'),
+      critical_min: readField('critical_min'), critical_max: readField('critical_max'),
+    };
+    if (row.normal_min !== null && row.normal_max !== null && row.normal_min > row.normal_max) {
+      banner(`${ISW_VITALS_META[key].label}: Normal Min tak boleh lebih besar drpd Normal Maks`, 'error'); return;
+    }
+    if (row.critical_min !== null && row.critical_max !== null && row.critical_min > row.critical_max) {
+      banner(`${ISW_VITALS_META[key].label}: Kritikal Min tak boleh lebih besar drpd Kritikal Maks`, 'error'); return;
+    }
+    parsed[key] = row;
+  }
+  await saveKeys({ vitals_thresholds: parsed }, btn);
+}
+window.saveVitalsThresholds = saveVitalsThresholds;
 
 // ── Rupa (keutamaan setempat) ────────────────────────────────
 function markSeg(segId, v) {

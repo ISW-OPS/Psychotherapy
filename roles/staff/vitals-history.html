@@ -167,6 +167,8 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
+<script src="../../shared/settings.js"></script>
+<script src="../../shared/vitalsThresholds.js"></script>
 <script src="_shared.js"></script>
 <script>
 function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
@@ -270,6 +272,29 @@ function rowStatusBadge(v) {
   if (!v.is_abnormal) return `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-light text-green-dark">Normal</span>`;
   return `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-terracotta-light text-terracotta">Tidak Normal</span>`;
 }
+// Sel nombor yang jadi PUNCA "Tidak Normal"/"Kritikal" — highlight + tooltip sebab,
+// supaya tak perlu klik masuk detail utk tahu bacaan mana bermasalah.
+function vCellCls(status) {
+  if (status === 'critical_low' || status === 'critical_high') return 'text-red-700 font-bold bg-red-50 rounded px-1 -mx-1';
+  if (status === 'low' || status === 'high') return 'text-terracotta font-semibold bg-terracotta-light/50 rounded px-1 -mx-1';
+  return '';
+}
+function vCell(text, key, classify) {
+  if (!classify || classify.status === 'ok' || classify.status === 'na') return escHtml(String(text));
+  const arrow = (classify.status === 'high' || classify.status === 'critical_high') ? '▲' : '▼';
+  const note = iswThresholdDescribe(key, classify.status);
+  const title = `${ISW_VITALS_META[key].short} ${classify.label.toLowerCase()}${note ? ' (' + note + ')' : ''}`;
+  return `<span class="${vCellCls(classify.status)}" title="${escHtml(title)}">${escHtml(String(text))} ${arrow}</span>`;
+}
+function vBpClassify(sys, dia) {
+  const order = { critical_low: 3, critical_high: 3, low: 1, high: 1, ok: 0, na: -1 };
+  let best = null, bestKey = 'bp_systolic';
+  [['bp_systolic', sys], ['bp_diastolic', dia]].forEach(([key, val]) => {
+    const c = iswClassifyVital(key, val);
+    if (c.status !== 'na' && (!best || order[c.status] > order[best.status])) { best = c; bestKey = key; }
+  });
+  return best ? { ...best, key: bestKey } : null;
+}
 
 function renderTable() {
   const body = document.getElementById('vh-tbody');
@@ -287,6 +312,7 @@ function renderTable() {
       const timeStr = vHasTime(v) ? dt.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' }) : '';
       const bp = (v.bp_systolic && v.bp_diastolic) ? `${v.bp_systolic}/${v.bp_diastolic}` : '—';
       const initials = nameOf(v.psy_patients).trim().split(/\s+/).slice(0,2).map(w => w[0]||'').join('').toUpperCase();
+      const bpC = vBpClassify(v.bp_systolic, v.bp_diastolic);
       return `<tr class="hover:bg-cream/30">
         <td class="pl-5 pr-2 py-3"><input type="checkbox" class="vh-row-check rounded border-ink/30" data-id="${v.id}" ${SELECTED.has(v.id) ? 'checked' : ''} onchange="toggleSelectRow('${v.id}', this.checked)"></td>
         <td class="py-3 px-3 text-xs font-semibold text-ink whitespace-nowrap">${dateStr}${timeStr ? `, ${timeStr}` : ''}</td>
@@ -294,11 +320,11 @@ function renderTable() {
           <span class="w-6 h-6 rounded-full bg-navy-light text-navy flex items-center justify-center text-[9px] font-bold flex-shrink-0">${initials}</span>
           <span class="font-semibold text-ink">${escHtml(nameOf(v.psy_patients))}</span></a></td>
         <td class="py-3 px-3 text-xs text-ink/60 vh-patient-col">${escHtml(v.psy_patients?.mrn || '—')}</td>
-        <td class="py-3 px-3 text-xs">${bp}</td>
-        <td class="py-3 px-3 text-xs">${v.heart_rate ?? '—'}</td>
-        <td class="py-3 px-3 text-xs">${v.temperature ?? '—'}</td>
-        <td class="py-3 px-3 text-xs">${v.spo2 ?? '—'}</td>
-        <td class="py-3 px-3 text-xs">${v.respiratory_rate ?? '—'}</td>
+        <td class="py-3 px-3 text-xs">${bpC ? vCell(bp, bpC.key, bpC) : bp}</td>
+        <td class="py-3 px-3 text-xs">${vCell(v.heart_rate ?? '—', 'heart_rate', iswClassifyVital('heart_rate', v.heart_rate))}</td>
+        <td class="py-3 px-3 text-xs">${vCell(v.temperature ?? '—', 'temperature', iswClassifyVital('temperature', v.temperature))}</td>
+        <td class="py-3 px-3 text-xs">${vCell(v.spo2 ?? '—', 'spo2', iswClassifyVital('spo2', v.spo2))}</td>
+        <td class="py-3 px-3 text-xs">${vCell(v.respiratory_rate ?? '—', 'respiratory_rate', iswClassifyVital('respiratory_rate', v.respiratory_rate))}</td>
         <td class="py-3 px-3 text-xs">${v.weight ?? '—'}</td>
         <td class="py-3 px-3 text-xs">${v.height ?? '—'}</td>
         <td class="py-3 px-3 text-xs">${v.bmi ?? '—'}</td>
@@ -474,6 +500,7 @@ async function exportScheduleExcel() {
 (async () => {
   const user = await initStaff('vitals_history', 'Senarai penuh rekod bacaan vitals');
   if (!user) return;
+  await iswLoadSettings();
 
   const params = new URLSearchParams(location.search);
   scopedPatientId = params.get('patient_id');

@@ -245,6 +245,8 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
+<script src="../../shared/settings.js"></script>
+<script src="../../shared/vitalsThresholds.js"></script>
 <script src="_shared.js"></script>
 <script>
 function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
@@ -267,18 +269,27 @@ function vDateTime(v) {
 }
 function vHasTime(v) { return !!(v.reading_time || !v.reading_date); }
 
-// ── Julat klinikal standard ────────────────────────────
-function bpStatus(s, d) {
-  if (!s && !d) return null;
-  if ((s && s < 90) || (d && d < 60)) return ['Rendah', 'low'];
-  if ((s && s >= 130) || (d && d >= 85)) return ['Tinggi', 'high'];
-  return ['Normal', 'ok'];
+// ── Julat klinikal — baca dari psy_settings.vitals_thresholds (shared/vitalsThresholds.js),
+// bukan hardcode di sini lagi. Wrapper ni kekal supaya call-site (card/chart) tak berubah.
+function singleTuple(key, val) {
+  const c = iswClassifyVital(key, val);
+  return c.status === 'na' ? null : [c.label, c.status];
 }
-function hrStatus(v)   { if (!v) return null; if (v < 60) return ['Rendah','low']; if (v > 100) return ['Tinggi','high']; return ['Normal','ok']; }
-function tempStatus(v) { if (!v) return null; if (v < 36.1) return ['Rendah','low']; if (v > 37.2) return ['Tinggi','high']; return ['Normal','ok']; }
-function spo2Status(v) { if (!v) return null; return v < 95 ? ['Rendah','low'] : ['Normal','ok']; }
-function rrStatus(v)   { if (!v) return null; if (v < 12) return ['Rendah','low']; if (v > 20) return ['Tinggi','high']; return ['Normal','ok']; }
-const STATUS_CLS = { ok: 'bg-green-light text-green-dark', low: 'bg-blue-100 text-blue-700', high: 'bg-terracotta-light text-terracotta' };
+function combineClassify(...pairs) {
+  const order = { critical_low: 3, critical_high: 3, low: 1, high: 1, ok: 0, na: -1 };
+  let best = null;
+  pairs.forEach(([key, val]) => {
+    const c = iswClassifyVital(key, val);
+    if (c.status !== 'na' && (!best || order[c.status] > order[best.status])) best = c;
+  });
+  return best ? [best.label, best.status] : null;
+}
+function bpStatus(s, d) { return combineClassify(['bp_systolic', s], ['bp_diastolic', d]); }
+function hrStatus(v)   { return singleTuple('heart_rate', v); }
+function tempStatus(v) { return singleTuple('temperature', v); }
+function spo2Status(v) { return singleTuple('spo2', v); }
+function rrStatus(v)   { return singleTuple('respiratory_rate', v); }
+const STATUS_CLS = { ok: 'bg-green-light text-green-dark', low: 'bg-blue-100 text-blue-700', high: 'bg-terracotta-light text-terracotta', critical_low: 'bg-red-100 text-red-700', critical_high: 'bg-red-100 text-red-700' };
 function statusBadge(st) {
   if (!st) return '';
   return `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${STATUS_CLS[st[1]]}">${st[0]}</span>`;
@@ -578,6 +589,7 @@ async function loadVitals() {
 (async () => {
   const user = await initStaff('vitals_detail', 'Detail bacaan vitals pesakit');
   if (!user) return;
+  await iswLoadSettings();
 
   const pid = new URLSearchParams(location.search).get('patient_id');
   if (!pid) { document.getElementById('vd-notfound').classList.remove('hidden'); return; }

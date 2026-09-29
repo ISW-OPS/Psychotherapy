@@ -239,6 +239,7 @@ const SETTINGS_SUBNAV = [
   { id: 'integrasi', icon: '🧩', label: 'Integrasi' },
   { id: 'keselamatan', icon: '🛡️', label: 'Keselamatan' },
   { id: 'affiliate', icon: '🤝', label: 'Affiliate' },
+  { id: 'vitals', icon: '🩺', label: 'Ambang Vitals' },
 ];
 // Halaman lain yang tergolong dlm keluarga Tetapan (dibuka dari senarai Tetapan) —
 // bila dibuka terus (bukan dari tab), sidebar kekal dalam mod Tetapan jugak.
