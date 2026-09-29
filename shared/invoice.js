@@ -21,7 +21,7 @@
 
     const [{ data: kob }, { data: cps }, { data: pays }, { data: pending }] = await Promise.all([
       window.db.from('psy_kob_sessions')
-        .select('recommended_package_name, recommended_package_price, package_discount, package_payment_mode, recommended_at, created_at, invoice_no')
+        .select('recommended_package_id, recommended_package_name, recommended_package_price, package_discount, package_payment_mode, recommended_at, created_at, invoice_no')
         .eq('id', kobId).maybeSingle(),
       window.db.from('psy_kob_installment_checkpoints').select('seq, due_date, target_cumulative').eq('kob_session_id', kobId).order('seq'),
       window.db.from('psy_payments').select('total').eq('status', 'completed').eq('intent->>kob_session_id', kobId),
@@ -29,6 +29,17 @@
         .eq('intent->>kob_session_id', kobId).order('created_at', { ascending: false }).limit(1),
     ]);
     if (!kob) throw new Error(L('Sesi KOB tidak dijumpai', 'KOB session not found'));
+
+    // Logo/gambar pakej (image_url ditetapkan di pakej-edit.html) — dipaparkan sebelah nama item.
+    let pkgImageUrl = null;
+    if (kob.recommended_package_id) {
+      const { data: pkg } = await window.db.from('psy_packages').select('image_url')
+        .eq('package_id', kob.recommended_package_id).maybeSingle();
+      pkgImageUrl = pkg?.image_url || null;
+    }
+    const itemNameCell = (name) => pkgImageUrl
+      ? `<div class="flex items-center gap-2"><img src="${esc(pkgImageUrl)}" class="w-8 h-8 rounded object-cover flex-shrink-0" onerror="this.remove()"><span>${esc(name)}</span></div>`
+      : esc(name);
 
     const price = Number(kob.recommended_package_price || 0);
     const pkgDiscount = Number(kob.package_discount || 0);
@@ -100,7 +111,7 @@
           </thead>
           <tbody>
             <tr class="border-b border-ink/10">
-              <td class="py-4 px-1 text-xs text-ink/70 uppercase">${esc(kob.recommended_package_name || L('Pakej', 'Package'))}</td>
+              <td class="py-4 px-1 text-xs text-ink/70 uppercase">${itemNameCell(kob.recommended_package_name || L('Pakej', 'Package'))}</td>
               <td class="py-4 text-xs text-ink/70 text-right whitespace-nowrap">${money(listPrice)}</td>
               <td class="py-4 text-xs text-ink/70 text-right">1</td>
               <td class="py-4 text-xs text-ink/70 text-right">-</td>
@@ -157,7 +168,7 @@
         </thead>
         <tbody>
           <tr class="border-b border-ink/10">
-            <td class="py-4 px-3 text-xs text-ink/70 uppercase">${esc(kob.recommended_package_name || L('Pakej', 'Package'))}</td>
+            <td class="py-4 px-3 text-xs text-ink/70 uppercase">${itemNameCell(kob.recommended_package_name || L('Pakej', 'Package'))}</td>
             <td class="py-4 text-xs text-ink/70 text-right whitespace-nowrap">${money(listPrice)}</td>
             <td class="py-4 text-xs text-ink/70 text-right">1</td>
             <td class="py-4 text-xs text-ink/70 text-right">-</td>

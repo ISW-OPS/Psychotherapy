@@ -44,6 +44,7 @@ export interface InvoicePdfData {
   amountDue: number        // jumlah yang perlu dibayar SEKARANG (ansuran itu sahaja / baki)
   dueLabel?: string | null // cth "Installment 2 - 2 of 3"
   payUrl?: string | null   // pautan HitPay — butang Pay boleh diklik
+  itemImageUrl?: string | null // gambar/logo pakej (psy_packages.image_url) — dipaparkan sebelah nama item
 }
 
 export async function buildInvoicePdf(d: InvoicePdfData): Promise<Uint8Array> {
@@ -134,7 +135,20 @@ export async function buildInvoicePdf(d: InvoicePdfData): Promise<Uint8Array> {
   hdr('Item Name', M + 8)
   hdr('Price', cPrice, true); hdr('Quantity', cQty, true); hdr('Tax', cTax, true); hdr('Subtotal', R - 8, true)
   y -= 34
-  text(String(d.itemName).toUpperCase(), M + 8, 8.5, { color: GRAY })
+  let itemNameX = M + 8
+  if (d.itemImageUrl) {
+    try {
+      const res = await fetch(d.itemImageUrl)
+      const buf = new Uint8Array(await res.arrayBuffer())
+      const ct = res.headers.get('content-type') || ''
+      const img = ct.includes('png') ? await doc.embedPng(buf) : await doc.embedJpg(buf)
+      const ih = 16
+      const iw = (img.width / img.height) * ih
+      page.drawImage(img, { x: M + 8, y: y - 4, width: iw, height: ih })
+      itemNameX = M + 8 + iw + 8
+    } catch (_) { /* gambar pakej gagal muat — teruskan tanpa imej */ }
+  }
+  text(String(d.itemName).toUpperCase(), itemNameX, 8.5, { color: GRAY })
   text(rm(d.listPrice), cPrice, 8.5, { color: GRAY, right: true })
   text('1', cQty, 8.5, { color: GRAY, right: true })
   text('-', cTax, 8.5, { color: GRAY, right: true })

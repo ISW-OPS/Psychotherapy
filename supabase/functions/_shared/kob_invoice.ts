@@ -19,16 +19,20 @@ export interface KobInvoiceOpts {
 
 export async function generateKobInvoiceUrl(admin: any, o: KobInvoiceOpts): Promise<{ url: string; invoiceNo: string }> {
   const { data: ks } = await admin.from('psy_kob_sessions')
-    .select('patient_id, recommended_package_name, recommended_package_price, package_discount, package_payment_mode, recommended_at, created_at, invoice_no')
+    .select('patient_id, recommended_package_id, recommended_package_name, recommended_package_price, package_discount, package_payment_mode, recommended_at, created_at, invoice_no')
     .eq('id', o.kobSessionId).limit(1)
   const kob = ks?.[0]
   if (!kob) throw new Error('Sesi KOB tidak dijumpai')
 
-  const [{ data: cps }, { data: pays }, { data: pts }] = await Promise.all([
+  const [{ data: cps }, { data: pays }, { data: pts }, { data: pkgs }] = await Promise.all([
     admin.from('psy_kob_installment_checkpoints').select('seq, due_date, target_cumulative').eq('kob_session_id', o.kobSessionId).order('seq'),
     admin.from('psy_payments').select('total').eq('status', 'completed').eq('intent->>kob_session_id', o.kobSessionId),
     admin.from('psy_patients').select('full_name, phone, user_id').eq('id', kob.patient_id).limit(1),
+    kob.recommended_package_id
+      ? admin.from('psy_packages').select('image_url').eq('package_id', kob.recommended_package_id).limit(1)
+      : Promise.resolve({ data: null }),
   ])
+  const itemImageUrl: string | null = pkgs?.[0]?.image_url || null
   let name: string | null = pts?.[0]?.full_name || null
   let phone: string | null = pts?.[0]?.phone || null
   if ((!name || !phone) && pts?.[0]?.user_id) {
@@ -76,7 +80,7 @@ export async function generateKobInvoiceUrl(admin: any, o: KobInvoiceOpts): Prom
     invoiceNo, issueDate: issue, dueDate,
     patientName: name, phone,
     itemName: kob.recommended_package_name || 'Package',
-    listPrice, discount, amountDue, dueLabel, payUrl: o.payUrl || null,
+    listPrice, discount, amountDue, dueLabel, payUrl: o.payUrl || null, itemImageUrl,
   })
   const bucket = 'receipts'
   await admin.storage.createBucket(bucket, { public: false }).catch(() => {})

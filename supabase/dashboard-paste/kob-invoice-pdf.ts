@@ -112,7 +112,21 @@ async function buildInvoicePdf(d) {
   hdr("Tax", cTax, true);
   hdr("Subtotal", R - 8, true);
   y -= 34;
-  text(String(d.itemName).toUpperCase(), M + 8, 8.5, { color: GRAY });
+  let itemNameX = M + 8;
+  if (d.itemImageUrl) {
+    try {
+      const res = await fetch(d.itemImageUrl);
+      const buf = new Uint8Array(await res.arrayBuffer());
+      const ct = res.headers.get("content-type") || "";
+      const img = ct.includes("png") ? await doc.embedPng(buf) : await doc.embedJpg(buf);
+      const ih = 16;
+      const iw = img.width / img.height * ih;
+      page.drawImage(img, { x: M + 8, y: y - 4, width: iw, height: ih });
+      itemNameX = M + 8 + iw + 8;
+    } catch (_) {
+    }
+  }
+  text(String(d.itemName).toUpperCase(), itemNameX, 8.5, { color: GRAY });
   text(rm(d.listPrice), cPrice, 8.5, { color: GRAY, right: true });
   text("1", cQty, 8.5, { color: GRAY, right: true });
   text("-", cTax, 8.5, { color: GRAY, right: true });
@@ -146,14 +160,16 @@ async function buildInvoicePdf(d) {
 
 // ../../../../../../../../ISW system/supabase/functions/_shared/kob_invoice.ts
 async function generateKobInvoiceUrl(admin, o) {
-  const { data: ks } = await admin.from("psy_kob_sessions").select("patient_id, recommended_package_name, recommended_package_price, package_discount, package_payment_mode, recommended_at, created_at, invoice_no").eq("id", o.kobSessionId).limit(1);
+  const { data: ks } = await admin.from("psy_kob_sessions").select("patient_id, recommended_package_id, recommended_package_name, recommended_package_price, package_discount, package_payment_mode, recommended_at, created_at, invoice_no").eq("id", o.kobSessionId).limit(1);
   const kob = ks?.[0];
   if (!kob) throw new Error("Sesi KOB tidak dijumpai");
-  const [{ data: cps }, { data: pays }, { data: pts }] = await Promise.all([
+  const [{ data: cps }, { data: pays }, { data: pts }, { data: pkgs }] = await Promise.all([
     admin.from("psy_kob_installment_checkpoints").select("seq, due_date, target_cumulative").eq("kob_session_id", o.kobSessionId).order("seq"),
     admin.from("psy_payments").select("total").eq("status", "completed").eq("intent->>kob_session_id", o.kobSessionId),
-    admin.from("psy_patients").select("full_name, phone, user_id").eq("id", kob.patient_id).limit(1)
+    admin.from("psy_patients").select("full_name, phone, user_id").eq("id", kob.patient_id).limit(1),
+    kob.recommended_package_id ? admin.from("psy_packages").select("image_url").eq("package_id", kob.recommended_package_id).limit(1) : Promise.resolve({ data: null })
   ]);
+  const itemImageUrl = pkgs?.[0]?.image_url || null;
   let name = pts?.[0]?.full_name || null;
   let phone = pts?.[0]?.phone || null;
   if ((!name || !phone) && pts?.[0]?.user_id) {
@@ -204,7 +220,8 @@ async function generateKobInvoiceUrl(admin, o) {
     discount,
     amountDue,
     dueLabel,
-    payUrl: o.payUrl || null
+    payUrl: o.payUrl || null,
+    itemImageUrl
   });
   const bucket = "receipts";
   await admin.storage.createBucket(bucket, { public: false }).catch(() => {
