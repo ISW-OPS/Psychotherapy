@@ -67,6 +67,7 @@
                 <thead><tr class="border-b border-ink/10 text-left text-[10px] uppercase tracking-wider text-ink/45">
                   <th class="pb-2">Product</th>
                   <th class="pb-2 text-right">Qty</th>
+                  <th class="pb-2 text-right">Received</th>
                 </tr></thead>
                 <tbody id="pr-items-tbody"></tbody>
               </table></div>
@@ -107,10 +108,11 @@ let prData = null;
 let prItems = [];
 
 const REQ_STATUS = {
-  pending_approval: { label: 'Pending Approval', cls: 'text-gold-dark bg-gold/20' },
-  approved:         { label: 'Approved',         cls: 'text-teal bg-teal/15' },
-  purchased:        { label: 'Purchased',        cls: 'text-green-dark bg-green-light' },
-  rejected:         { label: 'Rejected',         cls: 'text-terracotta bg-terracotta/15' },
+  pending_approval:   { label: 'Pending Approval',    cls: 'text-gold-dark bg-gold/20' },
+  approved:           { label: 'Approved',            cls: 'text-teal bg-teal/15' },
+  partially_received: { label: 'Partially Received',  cls: 'text-indigo-600 bg-indigo-100' },
+  purchased:          { label: 'Purchased',           cls: 'text-green-dark bg-green-light' },
+  rejected:           { label: 'Rejected',             cls: 'text-terracotta bg-terracotta/15' },
 };
 
 function escHtml(str) {
@@ -145,7 +147,7 @@ function renderHeaderInfo() {
   document.getElementById('pr-request-no').textContent = prData.request_no || '—';
   const st = REQ_STATUS[prData.status] || { label: prData.status, cls: 'text-ink/60 bg-ink/10' };
   document.getElementById('pr-status-chip').innerHTML = `<span class="text-xs font-semibold px-2.5 py-1 rounded-full ${st.cls}">${st.label}</span>`;
-  const statusSub = prData.status === 'approved' || prData.status === 'purchased'
+  const statusSub = ['approved', 'partially_received', 'purchased'].includes(prData.status)
     ? `by ${escHtml(prData.approved_by ? (window.currentUser?.id === prData.approved_by ? 'you' : 'manager') : '—')}`
     : prData.status === 'rejected' ? 'Not approved' : 'Awaiting review';
   document.getElementById('pr-status-sub').textContent = statusSub;
@@ -154,11 +156,16 @@ function renderHeaderInfo() {
 }
 
 function renderItems() {
-  document.getElementById('pr-items-tbody').innerHTML = prItems.map(r => `
+  document.getElementById('pr-items-tbody').innerHTML = prItems.map(r => {
+    const received = Number(r.qty_received) || 0;
+    const done = received >= Number(r.qty_requested);
+    return `
     <tr class="border-b border-ink/5 last:border-0">
       <td class="py-2.5 font-medium text-sm">${escHtml(r.item_name)}</td>
       <td class="py-2.5 text-right text-sm">${Number(r.qty_requested)}</td>
-    </tr>`).join('') || '<tr><td colspan="2" class="text-center text-ink/40 text-sm py-6 italic">Tiada item.</td></tr>';
+      <td class="py-2.5 text-right text-sm font-semibold ${done ? 'text-green-dark' : 'text-ink/60'}">${received}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="3" class="text-center text-ink/40 text-sm py-6 italic">Tiada item.</td></tr>';
 }
 
 function renderApproval() {
@@ -166,7 +173,7 @@ function renderApproval() {
     ['Requested By', escHtml(prData.requested_by_name || '—')],
     ['Requested On', fmtDateTime(prData.created_at)],
   ];
-  if (prData.status === 'approved' || prData.status === 'purchased') {
+  if (['approved', 'partially_received', 'purchased'].includes(prData.status)) {
     rows.push(['Approved On', fmtDateTime(prData.approved_at)]);
   }
   if (prData.status === 'rejected') {
@@ -199,7 +206,7 @@ function renderActions() {
   if (prData.status === 'pending_approval') {
     html += `<button onclick="approveRequest()" class="px-4 py-2.5 bg-teal/10 text-teal text-sm font-semibold rounded-xl hover:bg-teal/20">✓ Approve Request</button>
       <button onclick="rejectRequest()" class="px-4 py-2.5 bg-terracotta/10 text-terracotta text-sm font-semibold rounded-xl hover:bg-terracotta/20">✕ Reject Request</button>`;
-  } else if (prData.status === 'approved') {
+  } else if (prData.status === 'approved' || prData.status === 'partially_received') {
     html += `<button onclick="location.href='stock-in.html?ref=${requestId}'" class="px-4 py-2.5 border border-ink/20 rounded-xl text-sm font-semibold bg-white hover:bg-ink/5">📥 Stock In (dgn batch/expiry)</button>
       <button onclick="markPurchased()" class="px-4 py-2.5 bg-green-light text-green-dark text-sm font-semibold rounded-xl hover:bg-green-light/80">🛍️ Mark as Purchased (Cepat)</button>`;
   }
@@ -268,11 +275,18 @@ async function markPurchased() {
     }).eq('id', requestId);
     if (reqErr) throw reqErr;
 
+    // Shortcut ni anggap SEMUA baki (bukan setakat yg dicatat via Stock In sebelum ni)
+    // sampai sekali gus — tambah stok utk baki sahaja supaya item yang dah separuh
+    // diterima (partially_received) tak double-count.
     for (const line of prItems) {
-      if (!line.item_id) continue;
-      await addStockToLocation(line.item_id, Number(line.qty_requested), null, { type: 'in', refType: 'purchase_request', refId: requestId, refLabel: prData.request_no, itemName: line.item_name });
-      const { data: item } = await window.db.from('psy_inventory_items').select('qty_in_stock,name').eq('id', line.item_id).single();
-      if (item) await (window.syncStockToProducts?.(item.name, Number(item.qty_in_stock)));
+      const remaining = Number(line.qty_requested) - (Number(line.qty_received) || 0);
+      if (remaining <= 0) continue;
+      if (line.item_id) {
+        await addStockToLocation(line.item_id, remaining, null, { type: 'in', refType: 'purchase_request', refId: requestId, refLabel: prData.request_no, itemName: line.item_name });
+        const { data: item } = await window.db.from('psy_inventory_items').select('qty_in_stock,name').eq('id', line.item_id).single();
+        if (item) await (window.syncStockToProducts?.(item.name, Number(item.qty_in_stock)));
+      }
+      await window.db.from('psy_inventory_request_items').update({ qty_received: Number(line.qty_requested) }).eq('id', line.id);
     }
 
     const { data: managers } = await window.db.from('psy_profiles').select('id').eq('role', 'staff').eq('staff_role', 'manager');

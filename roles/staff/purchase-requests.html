@@ -99,6 +99,7 @@
               <option value="">All Status</option>
               <option value="pending_approval">Pending Approval</option>
               <option value="approved">Approved</option>
+              <option value="partially_received">Partially Received</option>
               <option value="rejected">Rejected</option>
               <option value="purchased">Purchased</option>
             </select>
@@ -226,10 +227,11 @@ let allRequests = []; // header rows, each with .items = [{item_name, qty_reques
 let reqCurrentPage = 1;
 
 const REQ_STATUS = {
-  pending_approval: { label: 'Pending',   cls: 'text-gold-dark bg-gold/20' },
-  approved:         { label: 'Approved',  cls: 'text-teal bg-teal/15' },
-  purchased:        { label: 'Purchased', cls: 'text-green-dark bg-green-light' },
-  rejected:         { label: 'Rejected',  cls: 'text-terracotta bg-terracotta/15' },
+  pending_approval:    { label: 'Pending',            cls: 'text-gold-dark bg-gold/20' },
+  approved:            { label: 'Approved',           cls: 'text-teal bg-teal/15' },
+  partially_received:  { label: 'Partially Received', cls: 'text-indigo-600 bg-indigo-100' },
+  purchased:           { label: 'Purchased',          cls: 'text-green-dark bg-green-light' },
+  rejected:            { label: 'Rejected',           cls: 'text-terracotta bg-terracotta/15' },
 };
 const PRIORITY_CHIP = {
   tinggi:     '<span class="text-[11px] font-semibold text-terracotta bg-terracotta/10 px-2 py-0.5 rounded-full">🔴 Tinggi</span>',
@@ -246,7 +248,7 @@ async function loadRequests() {
   const [reqRes, itemsRes, actRes] = await Promise.all([
     window.db.from('psy_inventory_requests').select('*').order('created_at', { ascending: false }),
     window.db.from('psy_inventory_request_items').select('*'),
-    window.db.from('psy_audit_log').select('*').in('action', ['inventory.approve','inventory.reject','inventory.purchased']).order('created_at', { ascending: false }).limit(6),
+    window.db.from('psy_audit_log').select('*').in('action', ['inventory.approve','inventory.reject','inventory.purchased','inventory.partial_receive']).order('created_at', { ascending: false }).limit(6),
   ]);
   if (reqRes.error) { banner('Gagal memuatkan permohonan: ' + reqRes.error.message, 'error'); return; }
   const itemsByRequest = {};
@@ -287,12 +289,13 @@ function populateRequesterFilter() {
 function renderRecentActivity(logs) {
   const wrap = document.getElementById('req-recent-activity');
   if (!logs.length) { wrap.innerHTML = '<div class="text-ink/40 italic">Tiada aktiviti terkini.</div>'; return; }
-  const iconFor = a => a === 'inventory.approve' ? { icon: '✓', cls: 'bg-teal/15 text-teal' } : a === 'inventory.reject' ? { icon: '✕', cls: 'bg-terracotta/15 text-terracotta' } : { icon: '🛍️', cls: 'bg-green-light text-green-dark' };
+  const iconFor = a => a === 'inventory.approve' ? { icon: '✓', cls: 'bg-teal/15 text-teal' } : a === 'inventory.reject' ? { icon: '✕', cls: 'bg-terracotta/15 text-terracotta' } : a === 'inventory.partial_receive' ? { icon: '📥', cls: 'bg-indigo-100 text-indigo-600' } : { icon: '🛍️', cls: 'bg-green-light text-green-dark' };
   const labelFor = (l) => {
     const req = allRequests.find(r => r.id === l.target);
     const no = req?.request_no || '—';
     if (l.action === 'inventory.approve') return `${no} approved`;
     if (l.action === 'inventory.reject')  return `${no} rejected`;
+    if (l.action === 'inventory.partial_receive') return `${no} partially received`;
     return `${no} purchased`;
   };
   wrap.innerHTML = logs.map(l => {
@@ -363,10 +366,11 @@ function getFilteredRequests() {
 function renderSummarySidebar(list) {
   const total = list.length || 1;
   const rows = [
-    ['pending_approval', 'Pending',   'bg-gold'],
-    ['approved',         'Approved',  'bg-teal'],
-    ['purchased',        'Purchased', 'bg-green-dark'],
-    ['rejected',         'Rejected',  'bg-terracotta'],
+    ['pending_approval',   'Pending',            'bg-gold'],
+    ['approved',           'Approved',           'bg-teal'],
+    ['partially_received', 'Partially Received', 'bg-indigo-500'],
+    ['purchased',          'Purchased',          'bg-green-dark'],
+    ['rejected',           'Rejected',           'bg-terracotta'],
   ];
   document.getElementById('req-sum-breakdown').innerHTML = rows.map(([key, label, dot]) => {
     const count = list.filter(r => r.status === key).length;

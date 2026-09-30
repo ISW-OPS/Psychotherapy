@@ -174,7 +174,7 @@ CREATE TABLE IF NOT EXISTS psy_inventory_requests (
   priority          TEXT NOT NULL DEFAULT 'sederhana'
                     CHECK (priority IN ('tinggi','sederhana','rendah')),
   status            TEXT NOT NULL DEFAULT 'pending_approval'
-                    CHECK (status IN ('pending_approval','approved','rejected','purchased')),
+                    CHECK (status IN ('pending_approval','approved','partially_received','rejected','purchased')),
   subtotal          NUMERIC(12,2) NOT NULL DEFAULT 0,
   tax_amount        NUMERIC(12,2) NOT NULL DEFAULT 0,
   total_amount      NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -196,6 +196,9 @@ CREATE TABLE IF NOT EXISTS psy_inventory_request_items (
   item_id        UUID REFERENCES psy_inventory_items(id) ON DELETE SET NULL,
   item_name      TEXT NOT NULL,
   qty_requested  NUMERIC(10,2) NOT NULL,
+  -- Kumulatif kuantiti item ni yang dah sampai (merentas berbilang Stock In jika
+  -- supplier hantar berperingkat). Baki belum sampai = qty_requested - qty_received.
+  qty_received   NUMERIC(10,2) NOT NULL DEFAULT 0,
   unit_price     NUMERIC(10,2) NOT NULL DEFAULT 0,
   subtotal       NUMERIC(12,2) NOT NULL DEFAULT 0,
   created_at     TIMESTAMPTZ DEFAULT now()

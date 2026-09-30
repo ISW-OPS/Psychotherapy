@@ -194,6 +194,7 @@
                 <div class="flex justify-between"><span class="text-ink/40">Requested By</span><span id="si-pr-by" class="font-semibold text-ink">—</span></div>
                 <div class="flex justify-between"><span class="text-ink/40">Status</span><span id="si-pr-status" class="font-semibold text-ink">—</span></div>
               </div>
+              <div id="si-pr-items-breakdown" class="mt-3 pt-3 border-t border-ink/8 space-y-1 text-[11px]"></div>
               <a id="si-pr-link" href="#" class="text-xs font-semibold text-navy hover:underline mt-3 inline-block">View Purchase Request →</a>
             </div>
           </div>
@@ -237,9 +238,11 @@ async function loadLocations() {
   sel.innerHTML = allLocations.map(l => `<option value="${l.id}" ${l.is_default ? 'selected' : ''}>${escHtml(l.name)}</option>`).join('');
 }
 
+// 'approved' = belum sentuh langsung; 'partially_received' = ada Stock In sebelum ni
+// tapi belum lengkap semua item — kedua-dua tetap perlu muncul di sini utk terus terima baki.
 async function loadApprovedRequests() {
   const [reqRes, itemsRes] = await Promise.all([
-    window.db.from('psy_inventory_requests').select('*').eq('status', 'approved').order('created_at', { ascending: false }),
+    window.db.from('psy_inventory_requests').select('*').in('status', ['approved', 'partially_received']).order('created_at', { ascending: false }),
     window.db.from('psy_inventory_request_items').select('*'),
   ]);
   const itemsByReq = {};
@@ -247,7 +250,10 @@ async function loadApprovedRequests() {
   approvedRequests = (reqRes.data || []).map(r => ({ ...r, items: itemsByReq[r.id] || [] }));
   const sel = document.getElementById('si-ref-no');
   sel.innerHTML = '<option value="">— Pilih Purchase Request (Approved) —</option>' +
-    approvedRequests.map(r => `<option value="${r.id}">${escHtml(r.request_no)} — ${escHtml(r.requested_by_name || '')} (${r.items.length} item)</option>`).join('');
+    approvedRequests.map(r => {
+      const tag = r.status === 'partially_received' ? ' · baki sahaja' : '';
+      return `<option value="${r.id}">${escHtml(r.request_no)} — ${escHtml(r.requested_by_name || '')} (${r.items.length} item${tag})</option>`;
+    }).join('');
 }
 
 // Ringkasan invois/penerimaan: hari ini / menunggu (PR approved blm posted) / sejarah.
@@ -270,7 +276,7 @@ async function loadReceivingSummary() {
 
   document.getElementById('rcv-pending-count').textContent = approvedRequests.length;
   document.getElementById('rcv-pending-list').innerHTML = approvedRequests.length
-    ? approvedRequests.slice(0, 5).map(r => `<div class="flex justify-between gap-2"><a href="purchase-request-detail.html?id=${r.id}" class="truncate hover:underline text-navy">${escHtml(r.request_no)}</a><span class="text-ink/50 whitespace-nowrap">${r.items.length} item</span></div>`).join('')
+    ? approvedRequests.slice(0, 5).map(r => `<div class="flex justify-between gap-2"><a href="purchase-request-detail.html?id=${r.id}" class="truncate hover:underline text-navy">${escHtml(r.request_no)}</a><span class="text-ink/50 whitespace-nowrap">${r.items.length} item${r.status === 'partially_received' ? ' · baki' : ''}</span></div>`).join('')
       + (approvedRequests.length > 5 ? `<div class="text-ink/40">+${approvedRequests.length - 5} lagi</div>` : '')
     : '<span class="italic text-ink/35">Tiada PR menunggu diterima</span>';
 
@@ -298,17 +304,38 @@ function onRefNoChange() {
   wrap.classList.remove('hidden');
   document.getElementById('si-pr-no').textContent = selectedPR.request_no || '—';
   document.getElementById('si-pr-by').textContent = selectedPR.requested_by_name || '—';
-  document.getElementById('si-pr-status').textContent = 'Approved';
+  document.getElementById('si-pr-status').textContent = selectedPR.status === 'partially_received' ? 'Partially Received' : 'Approved';
   document.getElementById('si-pr-link').href = `purchase-request-detail.html?id=${selectedPR.id}`;
+  renderPrItemsBreakdown();
 
-  // Auto-populate line items dari PR
-  lineItems = selectedPR.items.map(it => ({
-    _key: ++lineSeq, item_id: it.item_id || '', item_name: it.item_name,
-    batch_no: '', expiry_date: '', qty_received: Number(it.qty_requested), unit_cost: Number(it.unit_price) || 0,
-  }));
+  // Auto-populate line items dari BAKI sahaja (qty_requested - qty_received setakat ini) —
+  // item yang dah lengkap diterima sebelum ni tak diulang masuk sini.
+  lineItems = selectedPR.items
+    .map(it => ({ it, remaining: Number(it.qty_requested) - (Number(it.qty_received) || 0) }))
+    .filter(({ remaining }) => remaining > 0)
+    .map(({ it, remaining }) => ({
+      _key: ++lineSeq, req_item_id: it.id, item_id: it.item_id || '', item_name: it.item_name,
+      batch_no: '', expiry_date: '', qty_received: remaining, unit_cost: Number(it.unit_price) || 0,
+    }));
   renderLineItems();
 }
 window.onRefNoChange = onRefNoChange;
+
+// Baris per item PR: berapa dah diterima (sebelum ni) / diminta, supaya staff nampak
+// baki sebenar sebelum isi borang — terutama utk PR 'partially_received'.
+function renderPrItemsBreakdown() {
+  const wrap = document.getElementById('si-pr-items-breakdown');
+  if (!selectedPR) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = selectedPR.items.map(it => {
+    const requested = Number(it.qty_requested) || 0;
+    const received = Number(it.qty_received) || 0;
+    const done = received >= requested;
+    return `<div class="flex justify-between gap-2">
+      <span class="truncate text-ink/60">${escHtml(it.item_name)}</span>
+      <span class="whitespace-nowrap font-semibold ${done ? 'text-green-dark' : 'text-ink/70'}">${received}/${requested}</span>
+    </div>`;
+  }).join('');
+}
 
 function addLineRow() {
   lineItems.push({ _key: ++lineSeq, item_id: '', item_name: '', batch_no: '', expiry_date: '', qty_received: 1, unit_cost: 0 });
@@ -459,10 +486,33 @@ async function saveStockIn(status) {
         if (r.item_id) await addStockToLocation(r.item_id, r.qty_received, loc?.name, { type: 'in', refType: 'stock_in', refId: stockInId, refLabel: rec.receive_no, itemName: r.item_name });
       }
       if (selectedPR) {
-        await window.db.from('psy_inventory_requests').update({ status: 'purchased', purchased_at: new Date().toISOString() }).eq('id', selectedPR.id);
+        // Tambah qty diterima sekarang pada baki qty_received SEBENAR di DB (bukan
+        // snapshot semasa borang dibuka) — elak konflik kalau ada Stock In lain
+        // sempat post kat PR yang sama sebelum ni. Item yang tiada dlm stock-in ni
+        // (blm sentuh langsung) dikekalkan macam sedia ada.
+        const { data: freshItems } = await window.db.from('psy_inventory_request_items').select('id,qty_requested,qty_received').eq('request_id', selectedPR.id);
+        const deltaByReqItem = {};
+        for (const r of lineItems) {
+          if (!r.req_item_id) continue;
+          deltaByReqItem[r.req_item_id] = (deltaByReqItem[r.req_item_id] || 0) + Number(r.qty_received);
+        }
+        let allComplete = true;
+        for (const it of (freshItems || [])) {
+          const newReceived = Number(it.qty_received || 0) + (deltaByReqItem[it.id] || 0);
+          if (deltaByReqItem[it.id]) {
+            await window.db.from('psy_inventory_request_items').update({ qty_received: newReceived }).eq('id', it.id);
+          }
+          if (newReceived < Number(it.qty_requested)) allComplete = false;
+        }
+
+        const newStatus = allComplete ? 'purchased' : 'partially_received';
+        const reqUpdate = { status: newStatus };
+        if (allComplete) reqUpdate.purchased_at = new Date().toISOString();
+        await window.db.from('psy_inventory_requests').update(reqUpdate).eq('id', selectedPR.id);
         await window.db.from('psy_audit_log').insert({
           actor_id: window.currentUser.id, actor_name: window.currentUser.full_name, actor_role: 'staff',
-          action: 'inventory.purchased', target: selectedPR.id, meta: { via: 'stock_in', stock_in_id: stockInId },
+          action: allComplete ? 'inventory.purchased' : 'inventory.partial_receive',
+          target: selectedPR.id, meta: { via: 'stock_in', stock_in_id: stockInId },
         });
       }
       await window.db.from('psy_audit_log').insert({
