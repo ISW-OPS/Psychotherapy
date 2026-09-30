@@ -430,7 +430,10 @@ FROM (VALUES
   ('announcements'),('events'),('library'),('kb'),
   ('kehadiran'),('issue'),('surat'),('kob_slots'),
   ('coaching'),('inventory'),('communication'),('operations'),
-  ('produk_bahan'),('direktori_cadangan')
+  ('produk_bahan'),('direktori_cadangan'),
+  -- Audit management batch 3 (30 Sept 2026): laporan pakej (siap/berhenti/
+  -- meninggal per-pakej) mesti nampak utk doktor jugak, bukan admin sahaja.
+  ('package'),('pakej_laporan')
 ) AS m(code)
 ON CONFLICT DO NOTHING;
 
@@ -443,7 +446,9 @@ FROM (VALUES
   ('announcements'),('events'),('library'),('kb'),
   ('kehadiran'),('issue'),('surat'),
   ('coaching'),('inventory'),('communication'),('operations'),
-  ('produk_bahan'),('direktori_cadangan')
+  ('produk_bahan'),('direktori_cadangan'),
+  -- Audit management batch 3 (30 Sept 2026): sama macam doktor di atas.
+  ('package'),('pakej_laporan')
 ) AS m(code)
 ON CONFLICT DO NOTHING;
 

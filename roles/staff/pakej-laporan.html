@@ -69,12 +69,17 @@
           </select>
         </div>
 
+        <div class="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-blue-800 flex items-start gap-2">
+          <span class="flex-shrink-0">ⓘ</span>
+          <span>Kiraan Selesai/Berhenti/Meninggal ikut <b>outcome_status</b> semasa. Pesakit yang siap satu pakej dan TERUS sambung ke pakej lain (renewal) tak dikira Selesai/Berhenti pada pakej asal — sistem tak rekod outcome pakej lama bila ia berlaku. Angka ni panduan, bukan 100% tepat utk pakej yang biasa disambung.</span>
+        </div>
+
         <!-- Table -->
         <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden">
-          <div class="px-5 py-2 grid gap-3 items-center text-[10px] font-bold text-ink/40 uppercase tracking-wider border-b border-ink/5 bg-ink/[0.015]" style="grid-template-columns: 1fr 110px 100px 110px 100px 80px">
+          <div class="px-5 py-2 grid gap-3 items-center text-[10px] font-bold text-ink/40 uppercase tracking-wider border-b border-ink/5 bg-ink/[0.015]" style="grid-template-columns: 1fr 100px 150px 100px 100px 80px">
             <span>Pakej</span>
             <span class="text-center">Pesakit Aktif</span>
-            <span class="text-center">Selesai</span>
+            <span class="text-center">Selesai / Berhenti / Meninggal</span>
             <span class="text-center">Aktiviti 30H</span>
             <span>Status</span>
             <span class="text-right">Tindakan</span>
@@ -138,7 +143,7 @@ function renderRows() {
   tbody.innerHTML = rows.map(r => {
     const p = r.pkg;
     const info = statusInfo(p);
-    return `<a href="pakej-report.html?id=${p.id}" class="grid gap-3 items-center px-5 py-3.5 hover:bg-ink/[0.015] transition-colors" style="grid-template-columns: 1fr 110px 100px 110px 100px 80px">
+    return `<a href="pakej-report.html?id=${p.id}" class="grid gap-3 items-center px-5 py-3.5 hover:bg-ink/[0.015] transition-colors" style="grid-template-columns: 1fr 100px 150px 100px 100px 80px">
       <div class="flex items-center gap-3 min-w-0">
         <div class="w-10 h-10 rounded-xl ${p.bg_color || 'bg-cream'} flex items-center justify-center flex-shrink-0 text-xl">${p.icon || '📦'}</div>
         <div class="min-w-0">
@@ -150,9 +155,10 @@ function renderRows() {
         <div class="text-base font-bold text-navy">${r.activeCount}</div>
         <div class="text-[10px] text-ink/40">aktif</div>
       </div>
-      <div class="text-center">
-        <div class="text-base font-bold text-ink/65">${r.doneCount}</div>
-        <div class="text-[10px] text-ink/40">selesai</div>
+      <div class="flex items-center justify-center gap-3">
+        <div class="text-center"><div class="text-sm font-bold text-green-dark">${r.doneCount}</div><div class="text-[9px] text-ink/40">✅ Selesai</div></div>
+        <div class="text-center"><div class="text-sm font-bold text-amber-600">${r.berhentiCount}</div><div class="text-[9px] text-ink/40">⚠️ Berhenti</div></div>
+        <div class="text-center"><div class="text-sm font-bold text-ink/50">${r.meninggalCount}</div><div class="text-[9px] text-ink/40">🖤 Meninggal</div></div>
       </div>
       <div class="text-center">
         <div class="text-base font-bold text-ink/65">${r.activity30}</div>
@@ -171,7 +177,7 @@ async function init() {
   // Load all packages + patients + activity counts
   const [pkgRes, ptRes, logRes] = await Promise.all([
     window.db.from('psy_packages').select('id, name, package_id, price, icon, bg_color, is_active').order('sort_order', { ascending: true }),
-    window.db.from('psy_patients').select('id, status, active_package_id'),
+    window.db.from('psy_patients').select('id, status, active_package_id, outcome_status'),
     window.db.from('psy_audit_log').select('action, target, meta, created_at').gte('created_at', new Date(Date.now() - 30*86400000).toISOString()).like('action', 'package.%'),
   ]);
 
@@ -179,12 +185,16 @@ async function init() {
   const pts  = ptRes.data  || [];
   const logs = logRes.data || [];
 
+  // Selesai/Berhenti/Meninggal ikut outcome_status semasa — nota had (renewal/
+  // continuity) dipaparkan sebagai banner di atas jadual, bukan disorok senyap.
   stats = pkgs.map(p => {
     const inPkg = pts.filter(x => x.active_package_id === p.package_id);
-    const activeCount = inPkg.filter(x => x.status === 'active').length;
-    const doneCount   = inPkg.filter(x => x.status === 'inactive').length;
+    const activeCount    = inPkg.filter(x => x.status === 'active').length;
+    const doneCount      = inPkg.filter(x => x.outcome_status === 'completed').length;
+    const berhentiCount  = inPkg.filter(x => x.outcome_status === 'berhenti').length;
+    const meninggalCount = inPkg.filter(x => x.outcome_status === 'meninggal' || x.status === 'deceased').length;
     const activity30  = logs.filter(l => l.target === p.id || l.meta?.package_id === p.id).length;
-    return { pkg: p, activeCount, doneCount, activity30 };
+    return { pkg: p, activeCount, doneCount, berhentiCount, meninggalCount, activity30 };
   });
 
   // KPIs
