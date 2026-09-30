@@ -679,6 +679,9 @@ CREATE TABLE IF NOT EXISTS psy_coach_tasks (
   title        TEXT NOT NULL,
   notes        TEXT,
   task_date    DATE NOT NULL,
+  -- Audit Tier 9 #8 — bezakan "bila nak buat" (task_date) drpd "bila deadline"
+  -- (due_date, opsyen — NULL = tiada deadline berasingan, ikut task_date sahaja).
+  due_date     DATE,
   status       TEXT DEFAULT 'belum_mula' CHECK (status IN ('belum_mula','dalam_proses','selesai')),
   priority     TEXT DEFAULT 'sederhana'  CHECK (priority IN ('rendah','sederhana','tinggi')),
   patient_id   UUID REFERENCES psy_patients(id) ON DELETE SET NULL,

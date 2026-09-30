@@ -767,6 +767,8 @@ function renderPersonalTaskList(tasks) {
         <div class="flex items-center gap-2 mt-1.5 flex-wrap">
           <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${pBadge[t.priority]||pBadge.sederhana}">${(t.priority||'').toUpperCase()}</span>
           <span class="text-[9px] text-ink/40">${sLbl[t.status]||t.status}</span>
+          ${t.due_date ? `<span class="text-[9px] text-terracotta font-semibold">⏰ Due ${new Date(t.due_date).toLocaleDateString('ms-MY',{day:'2-digit',month:'short'})}</span>` : ''}
+          ${t.patient_id && patientMap[t.patient_id] ? `<span class="text-[9px] text-navy font-semibold">👤 ${escHtml(patientMap[t.patient_id].name)}</span>` : ''}
         </div>
       </div>
       <div class="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
@@ -783,8 +785,17 @@ function openTaskModal(taskId) {
   document.getElementById('task-id').value       = task?.id || '';
   document.getElementById('task-title').value    = task?.title || '';
   document.getElementById('task-date').value     = task?.task_date || taskDayStr;
+  document.getElementById('task-due-date').value = task?.due_date || '';
   document.getElementById('task-priority').value = task?.priority || 'sederhana';
   document.getElementById('task-notes').value    = task?.notes || '';
+
+  const patSel = document.getElementById('task-patient');
+  const myId = window.currentUser?.id;
+  const myPatients = Object.entries(patientMap).filter(([id]) => myCoachedPatientIds.has(id) || id === task?.patient_id);
+  patSel.innerHTML = '<option value="">—</option>' + myPatients
+    .sort((a, b) => (a[1].name || '').localeCompare(b[1].name || ''))
+    .map(([id, p]) => `<option value="${id}" ${task?.patient_id === id ? 'selected' : ''}>${escHtml(p.name)}</option>`).join('');
+
   document.getElementById('task-err').classList.add('hidden');
   document.getElementById('task-modal').classList.remove('hidden');
   setTimeout(() => document.getElementById('task-title').focus(), 50);
@@ -797,7 +808,9 @@ function closeTaskModal() {
 async function saveTask() {
   const title    = document.getElementById('task-title').value.trim();
   const date     = document.getElementById('task-date').value;
+  const dueDate  = document.getElementById('task-due-date').value;
   const priority = document.getElementById('task-priority').value;
+  const patientId = document.getElementById('task-patient').value;
   const notes    = document.getElementById('task-notes').value.trim();
   const taskId   = document.getElementById('task-id').value;
   const errEl    = document.getElementById('task-err');
@@ -808,7 +821,10 @@ async function saveTask() {
 
   const myId = window.currentUser?.id;
   if (!myId) return;
-  const payload = { coach_id:myId, title, task_date:date, priority, notes:notes||null, updated_at:new Date().toISOString() };
+  const payload = {
+    coach_id:myId, title, task_date:date, due_date: dueDate || null, priority,
+    patient_id: patientId || null, notes:notes||null, updated_at:new Date().toISOString(),
+  };
 
   let error;
   if (taskId) {
@@ -889,12 +905,26 @@ async function saveCoachGanti() {
             class="w-full border border-ink/20 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-navy/50">
         </div>
         <div>
+          <label class="block text-xs font-semibold text-ink/60 mb-1">Due Date (opsional)</label>
+          <input id="task-due-date" type="date"
+            class="w-full border border-ink/20 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-navy/50">
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
           <label class="block text-xs font-semibold text-ink/60 mb-1">Keutamaan</label>
           <select id="task-priority"
             class="w-full border border-ink/20 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-navy/50">
             <option value="rendah">Rendah</option>
             <option value="sederhana" selected>Sederhana</option>
             <option value="tinggi">Tinggi</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-ink/60 mb-1">Pesakit (opsional)</label>
+          <select id="task-patient"
+            class="w-full border border-ink/20 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-navy/50">
+            <option value="">—</option>
           </select>
         </div>
       </div>
