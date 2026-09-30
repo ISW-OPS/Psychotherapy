@@ -219,6 +219,7 @@
             <button class="tab-btn" onclick="switchTab('peristiwa')">🏥 Rekod Klinikal</button>
             <button class="tab-btn" onclick="switchTab('progress')">📝 Progress Rawatan</button>
             <button class="tab-btn" onclick="switchTab('bayaran')">💳 Bayaran</button>
+            <button class="tab-btn" onclick="switchTab('surat')">✉️ Surat</button>
             <button class="tab-btn" onclick="switchTab('profile')">👤 Profil</button>
           </div>
 
@@ -1161,6 +1162,24 @@
             </div>
           </div>
 
+          <!-- ═══════════════ TAB: SURAT (Audit Tier 9 #38) ═══════════════ -->
+          <div id="tab-surat" class="tab-content space-y-4">
+            <div>
+              <h3 class="font-bold text-ink flex items-center gap-2">✉️ Surat</h3>
+              <p class="text-xs text-ink/45 mt-0.5">Surat rasmi yang dipohon &amp; dikeluarkan untuk pesakit ini — sebelum ni hanya boleh dilihat di akaun pesakit sendiri.</p>
+            </div>
+            <div id="surat-loading" class="text-center text-ink/50 text-sm py-10">⏳ Memuatkan surat...</div>
+            <div id="surat-content" class="hidden space-y-4">
+              <div id="surat-requests-empty" class="hidden text-xs text-ink/40 italic mb-2">Tiada permohonan surat.</div>
+              <div id="surat-requests-body" class="space-y-2"></div>
+              <div class="border-t border-ink/8 pt-3">
+                <h4 class="text-xs font-semibold text-ink/60 uppercase tracking-wide mb-2">Surat Dikeluarkan</h4>
+                <div id="surat-issued-empty" class="hidden text-xs text-ink/40 italic">Tiada surat dikeluarkan lagi.</div>
+                <div id="surat-issued-body" class="space-y-2"></div>
+              </div>
+            </div>
+          </div>
+
           <!-- ═══════════════ TAB: PROFILE & DOKUMEN ═══════════════ -->
           <div id="tab-profile" class="tab-content space-y-5">
 
@@ -1755,6 +1774,7 @@
       if (tab === 'peristiwa') await loadPeristiwa();
       if (tab === 'progress') await loadProgress();
       if (tab === 'bayaran') await loadBayaran();
+      if (tab === 'surat') await loadSurat();
       if (tab === 'profile') renderProfile();
     }
 
@@ -4495,6 +4515,51 @@
 
       groups.sort((a, b) => new Date(b.date) - new Date(a.date));
       return groups;
+    }
+
+    // Audit Tier 9 #38 — surat pesakit (roles/patient/surat.html "Surat Saya")
+    // sebelum ni langsung tak muncul di pihak staf. Read-only ringkasan sahaja
+    // (permohonan + surat dikeluarkan) — laluan mohon/keluarkan surat kekal di
+    // modul Surat sedia ada (surat-baru.html/surat-approval.html), bukan di sini.
+    const SURAT_STATUS_META = {
+      draft: { l: 'Draf', c: 'bg-ink/8 text-ink/60' },
+      submitted: { l: 'Dihantar', c: 'bg-amber-100 text-amber-700' },
+      pending_approval: { l: 'Menunggu Lulus', c: 'bg-amber-100 text-amber-700' },
+      revision_requested: { l: 'Perlu Semakan', c: 'bg-terracotta/10 text-terracotta' },
+      rejected: { l: 'Ditolak', c: 'bg-terracotta/10 text-terracotta' },
+      issued: { l: 'Dikeluarkan', c: 'bg-emerald-100 text-emerald-700' },
+      cancelled: { l: 'Dibatalkan', c: 'bg-ink/8 text-ink/40' },
+    };
+    async function loadSurat() {
+      const [{ data: requests }, { data: issued }] = await Promise.all([
+        window.db.from('psy_letter_requests').select('id, template_name, status, created_at').eq('patient_id', patientId).order('created_at', { ascending: false }),
+        window.db.from('psy_letter_issued').select('id, template_name, ref_number, signed_at, file_url').eq('patient_id', patientId).order('signed_at', { ascending: false }),
+      ]);
+      document.getElementById('surat-loading').classList.add('hidden');
+      document.getElementById('surat-content').classList.remove('hidden');
+
+      const reqEmpty = document.getElementById('surat-requests-empty');
+      const reqBody = document.getElementById('surat-requests-body');
+      reqEmpty.classList.toggle('hidden', !!(requests || []).length);
+      reqBody.innerHTML = (requests || []).map(r => {
+        const sm = SURAT_STATUS_META[r.status] || SURAT_STATUS_META.draft;
+        const d = new Date(r.created_at).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' });
+        return `<div class="flex items-center justify-between gap-3 bg-white rounded-xl border border-ink/10 px-4 py-2.5">
+          <div class="min-w-0"><div class="text-sm font-semibold text-ink truncate">${escHtml(r.template_name)}</div><div class="text-[11px] text-ink/40">${d}</div></div>
+          <span class="text-[10px] font-bold px-2 py-1 rounded-full shrink-0 ${sm.c}">${sm.l}</span>
+        </div>`;
+      }).join('');
+
+      const isuEmpty = document.getElementById('surat-issued-empty');
+      const isuBody = document.getElementById('surat-issued-body');
+      isuEmpty.classList.toggle('hidden', !!(issued || []).length);
+      isuBody.innerHTML = (issued || []).map(l => {
+        const d = new Date(l.signed_at).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' });
+        return `<div class="flex items-center justify-between gap-3 bg-white rounded-xl border border-ink/10 px-4 py-2.5">
+          <div class="min-w-0"><div class="text-sm font-semibold text-ink truncate">${escHtml(l.template_name)}</div><div class="text-[11px] text-ink/40">${escHtml(l.ref_number || '—')} · ${d}</div></div>
+          ${l.file_url ? `<a href="${l.file_url}" target="_blank" rel="noopener" class="text-xs font-semibold text-navy hover:underline shrink-0">👁 Lihat</a>` : ''}
+        </div>`;
+      }).join('');
     }
 
     async function loadBayaran() {
