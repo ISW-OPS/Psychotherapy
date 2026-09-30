@@ -50,8 +50,13 @@ INSERT INTO storage.buckets (id, name, public) VALUES ('event-docs', 'event-docs
 ON CONFLICT (id) DO NOTHING;
 
 -- DNA Test (gambar sample/barcode + 3 laporan PDF ATGC) — staff sahaja
-INSERT INTO storage.buckets (id, name, public) VALUES ('dna-test', 'dna-test', false)
-ON CONFLICT (id) DO NOTHING;
+-- Audit management (30 Sept 2026): bucket ni dulu tiada had saiz/format
+-- langsung (unaudited, sama corak dgn library-media sebelum dibaiki).
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('dna-test', 'dna-test', false, 52428800, ARRAY['application/pdf','image/jpeg','image/png','image/jpg','image/webp'])
+ON CONFLICT (id) DO UPDATE
+  SET file_size_limit = EXCLUDED.file_size_limit,
+      allowed_mime_types = EXCLUDED.allowed_mime_types;
 
 -- Library (video/audio/thumbnail/dokumen kandungan pesakit) — audit management
 -- batch 3 (25 Sept 2026) Tier 7 #4: bucket ni wujud sebelum ni tapi TIADA had
@@ -327,6 +332,11 @@ CREATE POLICY "dna_test_staff_all" ON storage.objects
     USING (bucket_id = 'dna-test' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
     WITH CHECK (bucket_id = 'dna-test' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
+-- Audit management (30 Sept 2026): dulu pesakit boleh baca SEMUA fail dalam
+-- folder mereka sendiri tanpa kira status proses — bermakna laporan DNA boleh
+-- dimuat turun terus sebaik staf upload (Step 4), SEBELUM konsultasi/hadir
+-- disahkan (Step 5-6). Kini kuatkuasa gate status='completed' di server —
+-- path fail berbentuk <patient_id>/<process_id>/nama-fail.
 DROP POLICY IF EXISTS "dna_test_patient_read_own" ON storage.objects;
 CREATE POLICY "dna_test_patient_read_own" ON storage.objects
     FOR SELECT TO authenticated
@@ -334,6 +344,11 @@ CREATE POLICY "dna_test_patient_read_own" ON storage.objects
       bucket_id = 'dna-test'
       AND (storage.foldername(name))[1] IN (
         SELECT id::text FROM psy_patients WHERE user_id = auth.uid()
+      )
+      AND EXISTS (
+        SELECT 1 FROM psy_dna_test_process p
+        WHERE p.id::text = (storage.foldername(name))[2]
+          AND p.status = 'completed'
       )
     );
 

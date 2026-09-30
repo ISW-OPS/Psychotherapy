@@ -363,23 +363,27 @@ window.viewDnaFile=viewDnaFile;
 
 async function loadDnaTest(){
   const { data: procs }=await window.db.from('psy_dna_test_process')
-    .select('id, report_files, appointment_id').eq('patient_id',patientRecord.id)
+    .select('id, report_files, appointment_id, status').eq('patient_id',patientRecord.id)
     .order('created_at',{ascending:false});
   if(!procs || !procs.length) return;
   const proc=procs.find(p=>Object.values(p.report_files||{}).some(a=>(a||[]).length)) || procs[0];
+  // Laporan hanya boleh dipapar/muat turun selepas konsultasi selesai (status='completed')
+  // — sepadan dengan gerbang RLS storan dna-test (24_storage.sql), elak pautan rosak/leak akses awal.
   const files=[];
-  Object.values(proc.report_files||{}).forEach(paths=>(paths||[]).forEach(p=>files.push(p)));
+  if(proc.status==='completed') Object.values(proc.report_files||{}).forEach(paths=>(paths||[]).forEach(p=>files.push(p)));
+  const hasPendingReports=proc.status!=='completed' && Object.values(proc.report_files||{}).some(a=>(a||[]).length);
 
   let apptText='Belum dijadualkan';
   if(proc.appointment_id){
     const { data: appt }=await window.db.from('psy_appointments').select('appointment_time').eq('id',proc.appointment_id).maybeSingle();
     if(appt?.appointment_time) apptText=new Date(appt.appointment_time).toLocaleString(LCALE(),{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
   }
-  if(!files.length && !proc.appointment_id) return;
+  if(!files.length && !hasPendingReports && !proc.appointment_id) return;
 
   document.getElementById('dna-section').classList.remove('hidden');
   document.getElementById('dna-consult-date').textContent='Consultation: '+apptText;
   const box=document.getElementById('dna-files'), empty=document.getElementById('dna-files-empty');
+  if(hasPendingReports){ box.innerHTML=''; empty.classList.remove('hidden'); empty.textContent='Laporan sedia, akan dipaparkan selepas sesi konsultasi selesai.'; return; }
   if(!files.length){ box.innerHTML=''; empty.classList.remove('hidden'); return; }
   empty.classList.add('hidden');
   box.innerHTML=files.map(p=>`
