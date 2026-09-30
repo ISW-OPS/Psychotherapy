@@ -822,6 +822,7 @@
       // Nama bertukar — kemaskini reaksi & tindakan yang guna nama lama
       await window.db.from('psy_reaksi_item').update({ kumpulan: nama, ikon: '' }).eq('kumpulan', ktEdit);
       await window.db.from('psy_reaksi_actions').update({ kategori: nama }).eq('kategori', ktEdit);
+      try { await auditLog('reaksi.kategori_edit', c.id, { from: ktEdit, to: nama }); } catch (_) { }
       ktEdit = null;
       await rxLoad();
     }
@@ -843,6 +844,7 @@
         updated_at: new Date().toISOString(),
       });
       if (error) return alert('Gagal: ' + error.message);
+      try { await auditLog('reaksi.kategori_add', nama, {}); } catch (_) { }
       ktAddHide();
       await rxLoad();
       // Lompat ke halaman terakhir supaya kategori baru terus kelihatan
@@ -855,6 +857,7 @@
       const { error } = await window.db.from('psy_reaksi_kategori')
         .update({ aktif: baru, updated_at: new Date().toISOString() }).eq('id', c.id);
       if (error) return alert('Gagal: ' + error.message);
+      try { await auditLog('reaksi.kategori_toggle', c.id, { aktif: baru }); } catch (_) { }
       c.aktif = baru;
       rxRenderAll();
     }
@@ -867,6 +870,7 @@
       const { error } = await window.db.from('psy_reaksi_kategori').delete().eq('id', c.id);
       if (error) return alert('Gagal: ' + error.message);
       await window.db.from('psy_reaksi_actions').update({ kategori: null }).eq('kategori', nama);
+      try { await auditLog('reaksi.kategori_delete', c.id, { nama }); } catch (_) { }
       await rxLoad();
     }
 
@@ -899,6 +903,7 @@
     async function rsToggleAktif(id) {
       const it = RXitems.find(x => x.id === id); if (!it) return;
       await window.db.from('psy_reaksi_item').update({ aktif: !it.aktif, updated_at: new Date().toISOString() }).eq('id', id);
+      try { await auditLog('reaksi.item_toggle', id, { aktif: !it.aktif, label: it.label }); } catch (_) { }
       it.aktif = !it.aktif; rsRenderList(); pmRender();
     }
     function rsNew() { rsSel = '__new__'; rsRenderDrawer(); document.getElementById('rs-drawer').classList.remove('hidden'); }
@@ -955,6 +960,7 @@
     async function rsActToggle(actionId) {
       const a = RXactions.find(x => x.id === actionId); if (!a) return;
       await window.db.from('psy_reaksi_actions').update({ aktif: !a.aktif, updated_at: new Date().toISOString() }).eq('id', actionId);
+      try { await auditLog('reaksi.tindakan_toggle', actionId, { aktif: !a.aktif, title: a.title }); } catch (_) { }
       a.aktif = !a.aktif; rsRenderActTable(); tdRenderList(); dtRenderList(); ghRenderList();
     }
     async function rsMapAdd() {
@@ -962,6 +968,7 @@
       if (!actionId || !rsSel || rsSel === '__new__') return;
       const { error } = await window.db.from('psy_reaksi_action_map').insert({ symptom_id: rsSel, action_id: actionId });
       if (error) return alert('Gagal: ' + error.message);
+      try { await auditLog('reaksi.mapping_add', rsSel, { action_id: actionId }); } catch (_) { }
       (RXmapBySym[rsSel] ||= new Set()).add(actionId);
       (RXmapByAct[actionId] ||= new Set()).add(rsSel);
       rsRenderActTable(); pmRender();
@@ -969,6 +976,7 @@
     async function rsUnmap(actionId) {
       const { error } = await window.db.from('psy_reaksi_action_map').delete().eq('symptom_id', rsSel).eq('action_id', actionId);
       if (error) return alert('Gagal: ' + error.message);
+      try { await auditLog('reaksi.mapping_remove', rsSel, { action_id: actionId }); } catch (_) { }
       (RXmapBySym[rsSel] || new Set()).delete(actionId);
       (RXmapByAct[actionId] || new Set()).delete(rsSel);
       rsRenderActTable(); pmRender();
@@ -996,6 +1004,7 @@
         ({ error } = await window.db.from('psy_reaksi_item').insert(payload));
       }
       if (error) return alert('Gagal: ' + error.message);
+      try { await auditLog(rsSel && rsSel !== '__new__' ? 'reaksi.item_edit' : 'reaksi.item_add', rsSel && rsSel !== '__new__' ? rsSel : label, { label, kumpulan }); } catch (_) { }
       rsClose();
       rsCat = kumpulan;
       await rxLoad();
@@ -1013,6 +1022,7 @@
       if (!confirm(`Buang reaksi "${it?.label || ''}"?\n\nRekod poll lama tidak terjejas.`)) return;
       const { error } = await window.db.from('psy_reaksi_item').delete().eq('id', rsSel);
       if (error) return alert('Gagal: ' + error.message);
+      try { await auditLog('reaksi.item_delete', rsSel, { label: it?.label }); } catch (_) { }
       rsClose();
       await rxLoad();
     }
@@ -1057,6 +1067,7 @@
       if (!confirm(`Padam ${ids.length} saranan dipilih sepenuhnya?\n\nRekod poll lama tidak terjejas.`)) return;
       const { error } = await window.db.from('psy_reaksi_actions').delete().in('id', ids);
       if (error) return alert('Gagal: ' + error.message);
+      try { await auditLog('reaksi.tindakan_bulk_delete', key, { ids, count: ids.length }); } catch (_) { }
       rxSelIds[key].clear();
       await rxLoad();
     }
@@ -1106,6 +1117,7 @@
     async function tdToggleAktif(id) {
       const a = RXactions.find(x => x.id === id); if (!a) return;
       await window.db.from('psy_reaksi_actions').update({ aktif: !a.aktif, updated_at: new Date().toISOString() }).eq('id', id);
+      try { await auditLog('reaksi.tindakan_toggle', id, { aktif: !a.aktif, title: a.title }); } catch (_) { }
       a.aktif = !a.aktif; tdRenderList(); dtRenderList(); ghRenderList(); pmRender();
     }
     let tdJenisDefault = 'tindakan'; // pratetap Jenis Saranan ikut tab asal butang + Tambah
@@ -1171,6 +1183,7 @@
       const toDel = [...before].filter(s => !tdSelSym.has(s));
       if (toAdd.length) await window.db.from('psy_reaksi_action_map').insert(toAdd.map(s => ({ symptom_id: s, action_id: actionId })));
       if (toDel.length) await window.db.from('psy_reaksi_action_map').delete().eq('action_id', actionId).in('symptom_id', toDel);
+      try { await auditLog(exAct ? 'reaksi.tindakan_edit' : 'reaksi.tindakan_add', actionId, { title }); } catch (_) { }
       tdClose();
       await rxLoad();
     }
@@ -1185,6 +1198,7 @@
       if (!confirm(`Buang tindakan "${a?.title || ''}" sepenuhnya?`)) return;
       const { error } = await window.db.from('psy_reaksi_actions').delete().eq('id', tdSel);
       if (error) return alert('Gagal: ' + error.message);
+      try { await auditLog('reaksi.tindakan_delete', tdSel, { title: a?.title }); } catch (_) { }
       tdClose();
       await rxLoad();
     }
