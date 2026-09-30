@@ -477,6 +477,7 @@
                 <h3 class="font-semibold text-sm text-ink flex items-center gap-2"><span>🛒</span> Order Tertunggak</h3>
                 <a href="orders.html" class="text-xs text-navy font-semibold hover:underline">Lihat semua →</a>
               </div>
+              <div id="a-order-stock-warning" class="hidden px-4 py-2 bg-terracotta/10 border-b border-terracotta/20 text-[10px] text-terracotta"></div>
               <div id="a-order-table" class="flex-1 overflow-y-auto"></div>
             </div>
 
@@ -2177,7 +2178,7 @@
       const [
         ordersRes, todaySessRes, issueRepRes, issueClosedRes,
         patientsRes, inventoryRes, pendingSessRes, prPendingRes, emergencyRes,
-        confirmWindowRes, activePlansRes,
+        confirmWindowRes, activePlansRes, productsRes,
       ] = await Promise.all([
         window.db.from('psy_orders').select('id, order_ref, patient_id, items, status, created_at').in('status', ['pending', 'paid', 'packed']).order('created_at', { ascending: false }),
         window.db.from('psy_plan_weekly_progress').select('id, session_date, status, patient_id').gte('session_date', _dayLo.toISOString()).lt('session_date', _dayHi.toISOString()).order('session_date', { ascending: true }),
@@ -2204,6 +2205,9 @@
           .then(r => r, () => ({ data: [] })),
         // Audit #B2-21 (Tier 4) — utk kira pesakit aktif TANPA plan rawatan aktif.
         window.db.from('psy_treatment_plans').select('patient_id').eq('status', 'active').then(r => r, () => ({ data: [] })),
+        // Jambatan items[].id (psy_orders, = product_id) → inventory_item_id, utk banding
+        // demand order tertunggak dgn stok semasa (checkStockShortfall di bawah).
+        window.db.from('psy_products').select('product_id, inventory_item_id').then(r => r, () => ({ data: [] })),
       ]);
 
       const orders = ordersRes.data || [];
@@ -2212,6 +2216,7 @@
       const closedIds = new Set((issueClosedRes.data || []).map(r => r.meta?.issue_id).filter(Boolean));
       const patients = patientsRes.data || [];
       const inventory = inventoryRes.data || [];
+      const products = productsRes.data || [];
       const pendingSessions = (pendingSessRes.data || []).filter(s => !s.is_extension); // sesi extension tiada bekalan
       const prPending = prPendingRes.data || [];
       const emergencyAlerts = emergencyRes.data || [];
@@ -2605,24 +2610,70 @@
       const ORDER_LABEL = { pending: ['Menunggu', 'bg-amber-100 text-amber-700'], paid: ['Proses', 'bg-red-100 text-red-600'], packed: ['Sedia', 'bg-teal/15 text-teal'] };
       document.getElementById('a-order-table').innerHTML = orders.length ? `
     <table class="w-full table-fixed text-sm">
-      <colgroup><col style="width:30%"><col style="width:28%"><col style="width:23%"><col style="width:19%"></colgroup>
+      <colgroup><col style="width:30%"><col style="width:27%"><col style="width:22%"><col style="width:21%"></colgroup>
       <thead class="bg-cream/40 text-[9px] uppercase tracking-wide text-ink/45">
-        <tr><th class="text-left py-2 px-3 font-semibold">Pesakit</th><th class="text-left py-2 px-1.5 font-semibold">Produk</th><th class="text-left py-2 px-1.5 font-semibold">Tarikh</th><th class="text-left py-2 px-1.5 font-semibold">Status</th></tr>
+        <tr><th class="text-left py-2 px-3 font-semibold">No. Order</th><th class="text-left py-2 px-1.5 font-semibold">Produk</th><th class="text-left py-2 px-1.5 font-semibold">Tertunggak</th><th class="text-left py-2 px-1.5 font-semibold">Status</th></tr>
       </thead>
       <tbody class="divide-y divide-ink/5">
         ${orders.slice(0, 5).map(o => {
         const items = Array.isArray(o.items) ? o.items : [];
         const prod = items.length ? (items[0].name + (items.length > 1 ? ` +${items.length - 1}` : '')) : '—';
         const lbl = ORDER_LABEL[o.status] || [o.status, 'bg-ink/10 text-ink/50'];
+        const daysPending = Math.max(0, Math.floor((Date.now() - new Date(o.created_at)) / 86400000));
+        const daysLbl = daysPending === 0 ? 'Hari ini' : daysPending === 1 ? '1 hari' : `${daysPending} hari`;
         return `<tr class="hover:bg-cream/20 cursor-pointer" onclick="location.href='orders.html?id=${o.id}'">
-            <td class="py-2 px-3 text-[11px] font-medium text-ink truncate">${esc(orderProf[o.patient_id] || 'Pesakit')}</td>
-            <td class="py-2 px-1.5 text-[10px] text-ink/60 truncate">${esc(prod)}</td>
-            <td class="py-2 px-1.5 text-[10px] text-ink/55 truncate">${fmtDate(o.created_at)}</td>
-            <td class="py-2 px-1.5"><span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${lbl[1]} whitespace-nowrap">${esc(lbl[0])}</span></td>
+            <td class="py-2 px-3 align-top">
+              <div class="text-[9px] font-mono text-ink/40 truncate">${esc(o.order_ref)}</div>
+              <div class="text-[11px] font-medium text-ink truncate">${esc(orderProf[o.patient_id] || 'Pesakit')}</div>
+              <div class="text-[9px] text-ink/40 truncate">${fmtDate(o.created_at)}</div>
+            </td>
+            <td class="py-2 px-1.5 text-[10px] text-ink/60 truncate align-top">${esc(prod)}</td>
+            <td class="py-2 px-1.5 text-[10px] text-terracotta font-semibold whitespace-nowrap align-top">${daysLbl}</td>
+            <td class="py-2 px-1.5 align-top"><span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${lbl[1]} whitespace-nowrap">${esc(lbl[0])}</span></td>
           </tr>`;
       }).join('')}
       </tbody>
     </table>` : '<div class="h-full flex items-center justify-center text-xs text-ink/30 p-6">Tiada order tertunggak</div>';
+
+      // Banding jumlah order tertunggak dgn stok inventori semasa (audit management #7,
+      // 30 Sept 2026) — items[].id (psy_orders) = psy_products.product_id, jambatan ke
+      // psy_inventory_items.qty_in_stock via productsRes yg baru difetch di atas.
+      (async () => {
+        const demand = {};
+        orders.forEach(o => (Array.isArray(o.items) ? o.items : []).forEach(it => {
+          if (!it.id) return;
+          demand[it.id] = (demand[it.id] || 0) + Number(it.qty || 0);
+        }));
+        if (!Object.keys(demand).length) return;
+        const invById = {}; inventory.forEach(i => { invById[i.id] = i; });
+        const shortfalls = products.map(p => {
+          const inv = p.inventory_item_id ? invById[p.inventory_item_id] : null;
+          if (!inv) return null;
+          const needed = demand[p.product_id] || 0;
+          const stock = Number(inv.qty_in_stock || 0);
+          return needed > stock ? { name: inv.name, needed, stock, short: needed - stock } : null;
+        }).filter(Boolean);
+        if (!shortfalls.length) return;
+
+        const warnEl = document.getElementById('a-order-stock-warning');
+        warnEl.textContent = `⚠️ Stok tak cukup: ${shortfalls.map(s => `${s.name} (kurang ${s.short})`).join(', ')}`;
+        warnEl.classList.remove('hidden');
+
+        // Notifikasi loceng — sekali sehari sahaja per staff (elak spam tiap kali buka dashboard).
+        const { data: { user } } = await window.db.auth.getUser();
+        if (!user) return;
+        const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+        const { data: already } = await window.db.from('psy_notifications')
+          .select('id').eq('user_id', user.id).eq('type', 'order').eq('title', '⚠️ Stok Tak Cukup')
+          .gte('created_at', todayStart.toISOString()).limit(1);
+        if (already?.length) return;
+        await window.db.from('psy_notifications').insert({
+          user_id: user.id, type: 'order', title: '⚠️ Stok Tak Cukup',
+          body: `${shortfalls.length} item stok tak cukup utk tampung order tertunggak: ${shortfalls.map(s => s.name).join(', ')}.`,
+          link: 'orders.html',
+        });
+        if (typeof loadNotifBadge === 'function') loadNotifBadge();
+      })();
 
       document.getElementById('a-stock-table').innerHTML = stockNeeded.length ? `
     <table class="w-full table-fixed text-sm">

@@ -38,6 +38,18 @@
           <button onclick="dismissOrdersAlert()" class="text-orange-400 hover:text-orange-700 text-xl leading-none px-1 flex-shrink-0">×</button>
         </div>
 
+        <!-- Stok Tak Cukup Alert Banner — bandingkan jumlah order tertunggak (pending/paid/packed)
+             dgn stok inventori semasa (audit management #7, 30 Sept 2026); bantu admin nampak
+             order mana perlu restock dulu sebelum boleh diproses. -->
+        <div id="stock-shortfall-banner" class="hidden bg-terracotta/10 border border-terracotta/30 rounded-xl px-4 py-3 flex items-start gap-3">
+          <span class="text-lg flex-shrink-0">⚠️</span>
+          <div class="flex-1 min-w-0">
+            <div class="font-semibold text-sm text-terracotta">Stok tak cukup untuk order tertunggak</div>
+            <div id="stock-shortfall-list" class="text-xs text-terracotta/80 mt-1 space-y-0.5"></div>
+          </div>
+          <button onclick="document.getElementById('stock-shortfall-banner').classList.add('hidden')" class="text-terracotta/50 hover:text-terracotta text-xl leading-none px-1 flex-shrink-0">×</button>
+        </div>
+
         <!-- Stat Cards -->
         <div id="stat-row" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
 
@@ -719,6 +731,54 @@ function pendingBadge(o) {
   return `<span class="chip text-[10px] font-semibold ${cls}">⏱ ${label} tertunggak</span>`;
 }
 
+// Banding jumlah order tertunggak (pending/paid/packed) dgn stok inventori semasa —
+// papar amaran bila item tak cukup utk tampung kesemua order yg belum diproses.
+// items[].id di psy_orders = psy_products.product_id (bukan terus inventory_item_id),
+// jadi kena jambatan psy_products → psy_inventory_items.qty_in_stock.
+async function checkStockShortfall() {
+  const pending = allOrders.filter(o => ['pending', 'paid', 'packed'].includes(o.status));
+  if (!pending.length) return;
+  const demand = {};
+  pending.forEach(o => (Array.isArray(o.items) ? o.items : []).forEach(it => {
+    if (!it.id) return;
+    demand[it.id] = (demand[it.id] || 0) + Number(it.qty || 0);
+  }));
+  if (!Object.keys(demand).length) return;
+
+  const [{ data: products }, { data: inventory }] = await Promise.all([
+    window.db.from('psy_products').select('product_id, inventory_item_id').in('product_id', Object.keys(demand)),
+    window.db.from('psy_inventory_items').select('id, name, qty_in_stock'),
+  ]);
+  const invById = {}; (inventory || []).forEach(i => { invById[i.id] = i; });
+  const shortfalls = (products || []).map(p => {
+    const inv = p.inventory_item_id ? invById[p.inventory_item_id] : null;
+    if (!inv) return null;
+    const needed = demand[p.product_id] || 0;
+    const stock = Number(inv.qty_in_stock || 0);
+    return needed > stock ? { name: inv.name, needed, stock, short: needed - stock } : null;
+  }).filter(Boolean);
+  if (!shortfalls.length) return;
+
+  document.getElementById('stock-shortfall-list').innerHTML = shortfalls
+    .map(s => `<div>${s.name} — perlu ${s.needed}, stok ada ${s.stock} <span class="font-semibold">(kurang ${s.short})</span></div>`).join('');
+  document.getElementById('stock-shortfall-banner').classList.remove('hidden');
+
+  // Notifikasi loceng — sekali sehari sahaja per staff (elak spam tiap kali buka page).
+  const { data: { user } } = await window.db.auth.getUser();
+  if (!user) return;
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const { data: already } = await window.db.from('psy_notifications')
+    .select('id').eq('user_id', user.id).eq('type', 'order').eq('title', '⚠️ Stok Tak Cukup')
+    .gte('created_at', todayStart.toISOString()).limit(1);
+  if (already?.length) return;
+  await window.db.from('psy_notifications').insert({
+    user_id: user.id, type: 'order', title: '⚠️ Stok Tak Cukup',
+    body: `${shortfalls.length} item stok tak cukup utk tampung order tertunggak: ${shortfalls.map(s => s.name).join(', ')}.`,
+    link: 'orders.html',
+  });
+  if (typeof loadNotifBadge === 'function') loadNotifBadge();
+}
+
 async function checkNewOrderNotifs() {
   const { data: { user } } = await window.db.auth.getUser();
   if (!user) return;
@@ -796,6 +856,7 @@ function subscribeOrdersRealtime() {
   if (can('orders','edit')) document.getElementById('ship-btn').classList.remove('hidden');
   await loadOrders();
   checkNewOrderNotifs();
+  checkStockShortfall();
   subscribeOrdersRealtime();
 
   // Datang dari widget "Order Tertunggak" (dashboard) — terus buka Detail order tu.
