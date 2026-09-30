@@ -823,6 +823,7 @@ function renderStep3() {
   const activated = PROC.atgc_status === 'activated';
   const atgcUrl = iswGetSetting('dna_test_atgc_url', '');
   const activatedByName = ALL_STAFF.find(s => s.id === PROC.atgc_activated_by)?.full_name;
+  const handlingCoachName = COACHES.find(c => c.id === PROC.atgc_coach_id)?.full_name;
   document.getElementById('dt-step-content').innerHTML = `
     <div class="flex items-center justify-between gap-3 flex-wrap mb-1">
       <h2 class="font-bold text-ink flex items-center gap-2">🧬 Activate on ATGC Portal</h2>
@@ -846,9 +847,10 @@ function renderStep3() {
     <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
       <div class="lg:col-span-3 border border-ink/10 rounded-2xl p-4">
         <div class="dt-section-title text-sm">Activation Status in This System</div>
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+        <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
           <div><div class="text-ink/45 mb-1">ATGC Kit Barcode</div><div class="font-semibold text-ink">${esc(PROC.barcode_number || '—')}</div></div>
           <div><div class="text-ink/45 mb-1">Current Status</div><span class="font-semibold ${activated ? 'text-green-dark' : 'text-gold-dark'}">${activated ? 'Activated' : 'Not Activated'}</span></div>
+          <div><div class="text-ink/45 mb-1">Coach Uruskan</div><div class="font-semibold text-ink">${esc(handlingCoachName || '—')}</div></div>
           <div><div class="text-ink/45 mb-1">Activated By</div><div class="font-semibold text-ink">${esc(activatedByName || '—')}</div></div>
           <div><div class="text-ink/45 mb-1">Activation Date</div><div class="font-semibold text-ink">${activated ? fmtDT(PROC.atgc_activated_at) : '—'}</div></div>
         </div>
@@ -856,6 +858,12 @@ function renderStep3() {
       <div class="lg:col-span-2 rounded-2xl border border-navy/15 bg-navy/5 p-4">
         <div class="text-sm font-bold text-navy mb-1">After Activation</div>
         <p class="text-xs text-ink/60 mb-3">After you have successfully activated the kit on ATGC, please click the button below to update the status.</p>
+        <div class="mb-3">
+          <label class="block text-xs font-semibold text-ink/70 mb-1.5">Coach Yang Uruskan</label>
+          <select id="dt-s3-coach" class="w-full border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white outline-none">
+            ${COACHES.map(c => `<option value="${c.id}">${esc(c.full_name)}</option>`).join('')}
+          </select>
+        </div>
         <button onclick="toggleAtgcActivated()" class="w-full text-sm font-semibold px-4 py-2.5 rounded-lg ${activated ? 'border border-ink/15 text-ink/60 hover:bg-ink/5 bg-white' : 'bg-navy text-white hover:bg-navy/90'}">${activated ? 'Batalkan' : '✓ Mark as Activated'}</button>
       </div>
     </div>
@@ -864,13 +872,18 @@ function renderStep3() {
       <button onclick="goStep(2)" class="text-sm font-semibold px-5 py-2.5 rounded-lg border border-ink/15 text-ink/60 hover:bg-ink/5">← Previous Step</button>
       <button id="dt-s3-next" onclick="advanceStep3()" ${activated ? '' : 'disabled'} class="text-sm font-semibold px-6 py-2.5 rounded-lg ${activated ? 'bg-navy text-white hover:bg-navy/90' : 'bg-ink/10 text-ink/40 cursor-not-allowed'}">Next: Muat Naik Laporan →</button>
     </div>`;
+  const coachSel = document.getElementById('dt-s3-coach');
+  if (coachSel) coachSel.value = PROC.atgc_coach_id || PATIENT.coach_id || (COACHES[0]?.id || '');
 }
 
 async function toggleAtgcActivated() {
   const activated = PROC.atgc_status === 'activated';
   const patch = activated
     ? { atgc_status: 'not_activated', atgc_activated_at: null, atgc_activated_by: null }
-    : { atgc_status: 'activated', atgc_activated_at: new Date().toISOString(), atgc_activated_by: window.currentUser.id };
+    : {
+        atgc_status: 'activated', atgc_activated_at: new Date().toISOString(), atgc_activated_by: window.currentUser.id,
+        atgc_coach_id: document.getElementById('dt-s3-coach')?.value || null,
+      };
   const ok = await saveProc(patch);
   if (!ok) return;
   renderStepContent();
@@ -1249,11 +1262,6 @@ async function renderStep6() {
         <div class="dt-section-title text-sm">Reports & Documents</div>
         ${REPORT_SLOTS.map(([key, , , code]) => docRow(REPORT_ICONS[key], key, code)).join('')}
       </div>
-    </div>
-
-    <div class="flex justify-end gap-2 pt-4 mt-2 border-t border-ink/8">
-      <button onclick="window.print()" class="text-sm font-semibold px-5 py-2.5 rounded-lg border border-ink/15 text-ink/60 hover:bg-ink/5">🖨️ Print Summary</button>
-      <a href="patient-hub.html?id=${PATIENT_ID}" class="text-sm font-semibold px-6 py-2.5 rounded-lg bg-navy text-white hover:bg-navy/90 no-underline">Back to Patient Workspace</a>
     </div>`;
 }
 

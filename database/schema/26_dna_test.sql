@@ -42,6 +42,10 @@ CREATE TABLE IF NOT EXISTS psy_dna_test_process (
   atgc_status                     TEXT DEFAULT 'not_activated' CHECK (atgc_status IN ('not_activated','activated')),
   atgc_activated_at               TIMESTAMPTZ,
   atgc_activated_by               UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  -- Coach yang URUSKAN langkah ni (dipilih staf via dropdown) — BEZA drpd
+  -- atgc_activated_by (akaun yang literal klik butang, cth Customer Service
+  -- boleh klik bagi pihak coach). Audit management batch (30 Sept 2026).
+  atgc_coach_id                   UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
 
   -- Step 4: Muat Naik Laporan DNA (dari portal ATGC — boleh >1 fail setiap kategori)
   -- report_files: {"plant_based": ["path1","path2"], "health_risk": [...], "carrier_drug": [...], "summary": [...]}
