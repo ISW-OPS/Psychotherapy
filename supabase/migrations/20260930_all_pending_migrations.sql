@@ -1,4 +1,1563 @@
 -- ═══════════════════════════════════════════════════════════════════
+-- SEMUA MIGRATION TERTUNGGAK — digabung jadi SATU fail (30 Sept 2026)
+-- Gabungan akhir drpd 5 fail/bundle berasingan (senarai di bawah).
+-- Semua idempotent (selamat run berulang, termasuk bahagian yang
+-- mungkin dah pernah run sebelum ni — akan no-op je).
+--
+-- Cara run: Supabase Studio -> SQL Editor -> paste SELURUH fail ni -> Run.
+-- Buat kat TESTING dulu, confirm tiada error, baru PROD.
+--
+-- ⚠️ Fitur auto-caj HitPay (dalam bahagian installment_autocharge) —
+-- skema SELAMAT run, tapi JANGAN aktifkan ciri tu (deploy edge function/
+-- templat WA) sebelum diuji sandbox HitPay sebenar (risiko duit pesakit).
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ═════════════════════════════════════════════════════════════════
+-- BUNDLE: 20260901_combined_migrations.sql
+-- ═════════════════════════════════════════════════════════════════
+-- ═══════════════════════════════════════════════════════════════
+-- COMBINED MIGRATION — 2026-09-01
+-- Gabungan 10 migration berasingan (29-31 Ogos 2026) jadi satu fail
+-- untuk dijalankan sekali gus. Susunan asal DIKEKALKAN (penting —
+-- 20260830 cipta Purchase Orders, 20260831 buang balik modul sama).
+-- ═══════════════════════════════════════════════════════════════
+
+
+-- ───────────────────────────────────────────────────────────────
+-- 1) 20260829_drop_inventory_auto_po_trigger.sql
+-- ───────────────────────────────────────────────────────────────
+-- Buang trigger DB psy_inventory_auto_request — ia guna medan `max_qty` yang tak pernah
+-- diisi di mana-mana borang/kod staff (sentiasa NULL), jadi trigger ni sentiasa fallback ke
+-- min_qty untuk SEMUA item (tak kira consumption_type='package' ke tidak) — langsung tak
+-- selaras dengan logik forecast (shared/inventoryForecast.js) yang kini jadi SATU-SATUNYA
+-- sumber kebenaran utk Auto-PO (checkAutoPO() di inventory.html, dipanggil client-side
+-- setiap kali page dibuka). Lihat database/schema/14_products_inventory.sql baris 174-283
+-- utk versi asal (sumber kebenaran skema patut dikemaskini buang bahagian trigger ni juga).
+
+DROP TRIGGER IF EXISTS trg_psy_inventory_auto_request ON psy_inventory_items;
+DROP FUNCTION IF EXISTS psy_inventory_auto_request();
+
+
+-- ───────────────────────────────────────────────────────────────
+-- 2) 20260829b_inventory_request_no_priority.sql
+-- ───────────────────────────────────────────────────────────────
+-- Tambah request_no (auto-generate PR-00001, ...) + priority (tinggi/sederhana/rendah)
+-- pada psy_inventory_requests. Lihat database/schema/14_products_inventory.sql utk
+-- versi sumber kebenaran + nota lengkap.
+
+ALTER TABLE psy_inventory_requests ADD COLUMN IF NOT EXISTS request_no TEXT UNIQUE;
+ALTER TABLE psy_inventory_requests ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'sederhana';
+ALTER TABLE psy_inventory_requests DROP CONSTRAINT IF EXISTS psy_inventory_requests_priority_check;
+ALTER TABLE psy_inventory_requests ADD CONSTRAINT psy_inventory_requests_priority_check
+  CHECK (priority IN ('tinggi','sederhana','rendah'));
+
+CREATE SEQUENCE IF NOT EXISTS psy_inventory_request_no_seq START 1;
+
+CREATE OR REPLACE FUNCTION psy_inventory_set_request_no()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.request_no IS NULL THEN
+    NEW.request_no := 'PR-' || LPAD(nextval('psy_inventory_request_no_seq')::text, 5, '0');
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_psy_inventory_set_request_no ON psy_inventory_requests;
+CREATE TRIGGER trg_psy_inventory_set_request_no
+BEFORE INSERT ON psy_inventory_requests
+FOR EACH ROW EXECUTE FUNCTION psy_inventory_set_request_no();
+
+-- Backfill request_no utk baris sedia ada.
+DO $$
+DECLARE r RECORD;
+BEGIN
+  FOR r IN SELECT id FROM psy_inventory_requests WHERE request_no IS NULL ORDER BY created_at LOOP
+    UPDATE psy_inventory_requests
+      SET request_no = 'PR-' || LPAD(nextval('psy_inventory_request_no_seq')::text, 5, '0')
+      WHERE id = r.id;
+  END LOOP;
+END $$;
+
+
+-- ───────────────────────────────────────────────────────────────
+-- 3) 20260829c_suppliers_module.sql
+-- ───────────────────────────────────────────────────────────────
+-- Modul Suppliers (P18-20) — supplier jadi entiti sendiri, bukan lagi teks
+-- bebas dalam psy_inventory_items.supplier_info. Lihat
+-- database/schema/32_suppliers.sql (sumber kebenaran) + 24_storage.sql
+-- (bucket supplier-docs) utk versi penuh + nota.
+
+CREATE TABLE IF NOT EXISTS psy_suppliers (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  supplier_code       TEXT UNIQUE,
+  supplier_type       TEXT NOT NULL DEFAULT 'supplier'
+                      CHECK (supplier_type IN ('supplier','manufacturer','distributor','service_provider')),
+  name                TEXT NOT NULL,
+  registration_no     TEXT,
+  gst_no              TEXT,
+  tax_type            TEXT,
+  currency            TEXT NOT NULL DEFAULT 'MYR',
+  category            TEXT,
+  is_preferred        BOOLEAN NOT NULL DEFAULT false,
+  status              TEXT NOT NULL DEFAULT 'active'
+                      CHECK (status IN ('active','inactive','blacklisted')),
+  phone               TEXT,
+  mobile              TEXT,
+  email               TEXT,
+  fax                 TEXT,
+  website             TEXT,
+  address             TEXT,
+  city                TEXT,
+  state               TEXT,
+  postcode            TEXT,
+  country             TEXT DEFAULT 'Malaysia',
+  business_nature     TEXT,
+  payment_terms       TEXT,
+  credit_limit        NUMERIC(12,2),
+  min_order_amount    NUMERIC(12,2),
+  lead_time_days      INT,
+  bank_name           TEXT,
+  bank_account_no     TEXT,
+  bank_account_name   TEXT,
+  notes               TEXT,
+  created_by          UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_by_name     TEXT,
+  updated_by          UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  updated_by_name     TEXT,
+  created_at          TIMESTAMPTZ DEFAULT now(),
+  updated_at          TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_suppliers_status ON psy_suppliers(status);
+CREATE INDEX IF NOT EXISTS idx_suppliers_name   ON psy_suppliers(name);
+
+CREATE SEQUENCE IF NOT EXISTS psy_supplier_code_seq START 1;
+
+CREATE OR REPLACE FUNCTION psy_set_supplier_code()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.supplier_code IS NULL THEN
+    NEW.supplier_code := 'SUP-' || LPAD(nextval('psy_supplier_code_seq')::text, 4, '0');
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_psy_set_supplier_code ON psy_suppliers;
+CREATE TRIGGER trg_psy_set_supplier_code
+BEFORE INSERT ON psy_suppliers
+FOR EACH ROW EXECUTE FUNCTION psy_set_supplier_code();
+
+CREATE TABLE IF NOT EXISTS psy_supplier_contacts (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  supplier_id   UUID NOT NULL REFERENCES psy_suppliers(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  position      TEXT,
+  phone         TEXT,
+  email         TEXT,
+  created_at    TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_supplier_contacts_supplier ON psy_supplier_contacts(supplier_id);
+
+CREATE TABLE IF NOT EXISTS psy_supplier_documents (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  supplier_id       UUID NOT NULL REFERENCES psy_suppliers(id) ON DELETE CASCADE,
+  file_name         TEXT NOT NULL,
+  file_path         TEXT NOT NULL,
+  file_size         INT,
+  uploaded_by_name  TEXT,
+  created_at        TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_supplier_documents_supplier ON psy_supplier_documents(supplier_id);
+
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS supplier_id UUID REFERENCES psy_suppliers(id) ON DELETE SET NULL;
+
+ALTER TABLE psy_suppliers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_supplier_contacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_supplier_documents ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage suppliers" ON psy_suppliers;
+CREATE POLICY "Staff manage suppliers" ON psy_suppliers FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff manage supplier contacts" ON psy_supplier_contacts;
+CREATE POLICY "Staff manage supplier contacts" ON psy_supplier_contacts FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff manage supplier documents" ON psy_supplier_documents;
+CREATE POLICY "Staff manage supplier documents" ON psy_supplier_documents FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- Storage bucket + policy
+INSERT INTO storage.buckets (id, name, public) VALUES ('supplier-docs', 'supplier-docs', false)
+ON CONFLICT (id) DO NOTHING;
+
+DROP POLICY IF EXISTS "supplier_docs_staff_all" ON storage.objects;
+CREATE POLICY "supplier_docs_staff_all" ON storage.objects
+    FOR ALL TO authenticated
+    USING (bucket_id = 'supplier-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (bucket_id = 'supplier-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+
+-- ───────────────────────────────────────────────────────────────
+-- 4) 20260830_purchase_orders_module.sql
+-- ───────────────────────────────────────────────────────────────
+-- Modul Purchase Orders (P15-17) — PO rasmi ke supplier, banyak line item
+-- setiap PO. Lihat database/schema/33_purchase_orders.sql (sumber kebenaran)
+-- utk versi penuh + nota.
+-- NOTA: modul ni DIBUANG balik di bahagian 6) di bawah — dikekalkan di sini
+-- supaya susunan migration ikut sejarah sebenar (created lalu dropped).
+
+CREATE TABLE IF NOT EXISTS psy_purchase_orders (
+  id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  po_number               TEXT UNIQUE,
+  supplier_id             UUID NOT NULL REFERENCES psy_suppliers(id) ON DELETE RESTRICT,
+  status                  TEXT NOT NULL DEFAULT 'draft'
+                          CHECK (status IN ('draft','sent','partially_received','received','cancelled')),
+  order_date              DATE DEFAULT CURRENT_DATE,
+  expected_delivery_date  DATE,
+  notes                   TEXT,
+  subtotal                NUMERIC(12,2) NOT NULL DEFAULT 0,
+  tax_amount              NUMERIC(12,2) NOT NULL DEFAULT 0,
+  total_amount            NUMERIC(12,2) NOT NULL DEFAULT 0,
+
+  created_by              UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_by_name         TEXT,
+  updated_by              UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  updated_by_name         TEXT,
+  created_at              TIMESTAMPTZ DEFAULT now(),
+  updated_at              TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_po_status   ON psy_purchase_orders(status);
+CREATE INDEX IF NOT EXISTS idx_po_supplier ON psy_purchase_orders(supplier_id);
+
+CREATE SEQUENCE IF NOT EXISTS psy_po_number_seq START 1;
+
+CREATE OR REPLACE FUNCTION psy_set_po_number()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.po_number IS NULL THEN
+    NEW.po_number := 'PO-' || LPAD(nextval('psy_po_number_seq')::text, 4, '0');
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_psy_set_po_number ON psy_purchase_orders;
+CREATE TRIGGER trg_psy_set_po_number
+BEFORE INSERT ON psy_purchase_orders
+FOR EACH ROW EXECUTE FUNCTION psy_set_po_number();
+
+CREATE TABLE IF NOT EXISTS psy_purchase_order_items (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  po_id          UUID NOT NULL REFERENCES psy_purchase_orders(id) ON DELETE CASCADE,
+  item_id        UUID REFERENCES psy_inventory_items(id) ON DELETE SET NULL,
+  item_name      TEXT NOT NULL,
+  qty_ordered    NUMERIC(10,2) NOT NULL,
+  qty_received   NUMERIC(10,2) NOT NULL DEFAULT 0,
+  unit_price     NUMERIC(10,2) NOT NULL DEFAULT 0,
+  subtotal       NUMERIC(12,2) NOT NULL DEFAULT 0,
+  created_at     TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_po_items_po ON psy_purchase_order_items(po_id);
+
+ALTER TABLE psy_purchase_orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_purchase_order_items ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage purchase orders" ON psy_purchase_orders;
+CREATE POLICY "Staff manage purchase orders" ON psy_purchase_orders FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff manage purchase order items" ON psy_purchase_order_items;
+CREATE POLICY "Staff manage purchase order items" ON psy_purchase_order_items FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+
+-- ───────────────────────────────────────────────────────────────
+-- 5) 20260830b_purchase_requests_multiitem.sql
+-- ───────────────────────────────────────────────────────────────
+-- Purchase Requests jadi multi-item (macam Purchase Orders) — sebelum ni
+-- item_id/item_name/qty_requested/unit_price terus di psy_inventory_requests
+-- (1 request = 1 produk). Lihat database/schema/14_products_inventory.sql
+-- (sumber kebenaran) utk versi penuh + nota.
+
+-- 1) Jadual line items baharu
+CREATE TABLE IF NOT EXISTS psy_inventory_request_items (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id     UUID NOT NULL REFERENCES psy_inventory_requests(id) ON DELETE CASCADE,
+  item_id        UUID REFERENCES psy_inventory_items(id) ON DELETE SET NULL,
+  item_name      TEXT NOT NULL,
+  qty_requested  NUMERIC(10,2) NOT NULL,
+  unit_price     NUMERIC(10,2) NOT NULL DEFAULT 0,
+  subtotal       NUMERIC(12,2) NOT NULL DEFAULT 0,
+  created_at     TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_inv_request_items_request ON psy_inventory_request_items(request_id);
+
+ALTER TABLE psy_inventory_request_items ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Staff manage request items" ON psy_inventory_request_items;
+CREATE POLICY "Staff manage request items" ON psy_inventory_request_items FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- 2) Header: tambah subtotal/tax_amount (total_amount dah wujud, tapi nullable —
+-- baris lama (auto-generated / tiada harga) simpan NULL, kena backfill dulu
+-- sebelum boleh set NOT NULL).
+ALTER TABLE psy_inventory_requests ADD COLUMN IF NOT EXISTS subtotal NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE psy_inventory_requests ADD COLUMN IF NOT EXISTS tax_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+UPDATE psy_inventory_requests SET total_amount = 0 WHERE total_amount IS NULL;
+ALTER TABLE psy_inventory_requests ALTER COLUMN total_amount SET DEFAULT 0;
+ALTER TABLE psy_inventory_requests ALTER COLUMN total_amount SET NOT NULL;
+
+-- 3) Pindah data sedia ada (jika ada) ke jadual line items sebelum drop kolum lama.
+-- Guarded — DB yang dibina terus dari schema/14_products_inventory.sql terkini
+-- (yang dah tiada kolum single-item ni) takkan ada apa-apa nak dipindah.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'psy_inventory_requests' AND column_name = 'item_name'
+  ) THEN
+    INSERT INTO psy_inventory_request_items (request_id, item_id, item_name, qty_requested, unit_price, subtotal)
+    SELECT id, item_id, item_name, qty_requested, COALESCE(unit_price, 0), COALESCE(total_amount, 0)
+    FROM psy_inventory_requests
+    WHERE item_name IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM psy_inventory_request_items WHERE request_id = psy_inventory_requests.id);
+  END IF;
+END $$;
+
+UPDATE psy_inventory_requests SET subtotal = COALESCE(total_amount, 0) WHERE subtotal = 0;
+
+-- 4) Buang kolum single-item lama dari header
+ALTER TABLE psy_inventory_requests DROP COLUMN IF EXISTS item_id;
+ALTER TABLE psy_inventory_requests DROP COLUMN IF EXISTS item_name;
+ALTER TABLE psy_inventory_requests DROP COLUMN IF EXISTS qty_requested;
+ALTER TABLE psy_inventory_requests DROP COLUMN IF EXISTS unit_price;
+
+
+-- ───────────────────────────────────────────────────────────────
+-- 6) 20260831_drop_purchase_orders_module.sql
+-- ───────────────────────────────────────────────────────────────
+-- Modul Purchase Orders (P15-17) DIBUANG — proses sebenar syarikat tak hantar
+-- PO rasmi ke supplier; staff beli terus lepas PR diluluskan ("Tandakan Dibeli"
+-- di Purchase Requests dah cukup, terus update stok). Jadual ni cuma perlu
+-- dibuang KALAU 20260830_purchase_orders_module.sql sempat di-run di
+-- testing/prod sebelum keputusan ni — kalau belum, migration ni tiada kesan.
+
+DROP TABLE IF EXISTS psy_purchase_order_items;
+DROP TABLE IF EXISTS psy_purchase_orders;
+DROP SEQUENCE IF EXISTS psy_po_number_seq;
+DROP FUNCTION IF EXISTS psy_set_po_number();
+
+
+-- ───────────────────────────────────────────────────────────────
+-- 7) 20260831b_inventory_locations.sql
+-- ───────────────────────────────────────────────────────────────
+-- Multi-warehouse stock (P1-related) — lihat database/schema/34_inventory_locations.sql
+-- (sumber kebenaran) utk versi penuh + nota. qty_in_stock pada psy_inventory_items
+-- kekal kolum sedia ada, tapi kini jadi AGGREGATE dikawal trigger.
+
+CREATE TABLE IF NOT EXISTS psy_inventory_locations (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        TEXT NOT NULL UNIQUE,
+  code        TEXT UNIQUE,
+  is_default  BOOLEAN NOT NULL DEFAULT false,
+  is_active   BOOLEAN NOT NULL DEFAULT true,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS psy_inventory_stock_by_location (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  item_id       UUID NOT NULL REFERENCES psy_inventory_items(id) ON DELETE CASCADE,
+  location_id   UUID NOT NULL REFERENCES psy_inventory_locations(id) ON DELETE RESTRICT,
+  qty_in_stock  NUMERIC(10,2) NOT NULL DEFAULT 0,
+  min_qty       NUMERIC(10,2),
+  updated_at    TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (item_id, location_id)
+);
+CREATE INDEX IF NOT EXISTS idx_stock_by_location_item ON psy_inventory_stock_by_location(item_id);
+
+CREATE OR REPLACE FUNCTION psy_sync_item_stock_total()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE target_item UUID := COALESCE(NEW.item_id, OLD.item_id);
+BEGIN
+  UPDATE psy_inventory_items
+  SET qty_in_stock = (SELECT COALESCE(SUM(qty_in_stock), 0) FROM psy_inventory_stock_by_location WHERE item_id = target_item)
+  WHERE id = target_item;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_sync_item_stock_total ON psy_inventory_stock_by_location;
+CREATE TRIGGER trg_sync_item_stock_total
+AFTER INSERT OR UPDATE OR DELETE ON psy_inventory_stock_by_location
+FOR EACH ROW EXECUTE FUNCTION psy_sync_item_stock_total();
+
+INSERT INTO psy_inventory_locations (name, code, is_default) VALUES
+  ('General Inventory',   'GEN',  true),
+  ('Clinical Pharmacy',   'PHARM', false),
+  ('Shop Warehouse',      'SHOP', false),
+  ('Raw Material Store',  'RAW',  false),
+  ('Equipment Store',     'EQUIP', false)
+ON CONFLICT (name) DO NOTHING;
+
+-- Pastikan source_type wujud dulu — testing kadang tertinggal patch ni
+-- (lihat database/schema/14_products_inventory.sql baris 47).
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'am'
+  CHECK (source_type IN ('farmasi_klinikal','am'));
+
+INSERT INTO psy_inventory_stock_by_location (item_id, location_id, qty_in_stock)
+SELECT i.id,
+       (SELECT id FROM psy_inventory_locations WHERE name = CASE WHEN i.source_type = 'farmasi_klinikal' THEN 'Clinical Pharmacy' ELSE 'General Inventory' END),
+       COALESCE(i.qty_in_stock, 0)
+FROM psy_inventory_items i
+WHERE NOT EXISTS (SELECT 1 FROM psy_inventory_stock_by_location WHERE item_id = i.id);
+
+ALTER TABLE psy_inventory_locations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_inventory_stock_by_location ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff read locations" ON psy_inventory_locations;
+CREATE POLICY "Staff read locations" ON psy_inventory_locations FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff manage stock by location" ON psy_inventory_stock_by_location;
+CREATE POLICY "Staff manage stock by location" ON psy_inventory_stock_by_location FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+
+-- ───────────────────────────────────────────────────────────────
+-- 8) 20260831c_product_form_fields.sql
+-- ───────────────────────────────────────────────────────────────
+-- Kolum baharu utk borang Add/Edit Product yang dikemas kini — lihat
+-- database/schema/14_products_inventory.sql + 24_storage.sql (sumber
+-- kebenaran) utk versi penuh + nota.
+
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS barcode TEXT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS shelf_life_days INT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS internal_notes TEXT;
+
+INSERT INTO storage.buckets (id, name, public) VALUES ('inventory-images', 'inventory-images', true)
+ON CONFLICT (id) DO NOTHING;
+
+DROP POLICY IF EXISTS "inventory_images_public_read" ON storage.objects;
+CREATE POLICY "inventory_images_public_read" ON storage.objects
+    FOR SELECT USING (bucket_id = 'inventory-images');
+
+DROP POLICY IF EXISTS "inventory_images_staff_write" ON storage.objects;
+CREATE POLICY "inventory_images_staff_write" ON storage.objects
+    FOR ALL TO authenticated
+    USING (bucket_id = 'inventory-images' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (bucket_id = 'inventory-images' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+
+-- ───────────────────────────────────────────────────────────────
+-- 9) 20260831d_inventory_item_status.sql
+-- ───────────────────────────────────────────────────────────────
+-- Product Status peringkat halus (Active/Inactive/Discontinued) — lihat
+-- database/schema/14_products_inventory.sql (sumber kebenaran) utk versi
+-- penuh + nota. is_active DIKEKALKAN (banyak query lain guna
+-- .eq('is_active', true)) — status='inactive' ATAU 'discontinued' kedua-dua
+-- set is_active=false.
+
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'
+  CHECK (status IN ('active','inactive','discontinued'));
+
+-- Pastikan is_active wujud dulu — testing kadang tertinggal patch ni
+-- (lihat database/schema/14_products_inventory.sql baris 52).
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;
+
+UPDATE psy_inventory_items SET status = CASE WHEN is_active = false THEN 'inactive' ELSE 'active' END
+  WHERE status = 'active' AND is_active = false;
+
+
+-- ───────────────────────────────────────────────────────────────
+-- 10) 20260831e_stock_in_module.sql
+-- ───────────────────────────────────────────────────────────────
+-- Stock In / Receive module — lihat database/schema/35_stock_in.sql +
+-- 24_storage.sql (sumber kebenaran) utk versi penuh + nota.
+
+CREATE TABLE IF NOT EXISTS psy_stock_in_records (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  receive_no         TEXT UNIQUE,
+  receive_date       DATE DEFAULT CURRENT_DATE,
+  reference_type     TEXT NOT NULL DEFAULT 'manual'
+                     CHECK (reference_type IN ('purchase_request','manual')),
+  reference_id       UUID REFERENCES psy_inventory_requests(id) ON DELETE SET NULL,
+  location_id        UUID NOT NULL REFERENCES psy_inventory_locations(id) ON DELETE RESTRICT,
+  status             TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','posted')),
+  delivery_note_no   TEXT,
+  invoice_no         TEXT,
+  transporter        TEXT,
+  received_condition TEXT,
+  remarks            TEXT,
+  subtotal           NUMERIC(12,2) NOT NULL DEFAULT 0,
+  tax_amount         NUMERIC(12,2) NOT NULL DEFAULT 0,
+  total_cost         NUMERIC(12,2) NOT NULL DEFAULT 0,
+  received_by        UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  received_by_name   TEXT,
+  posted_at          TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ DEFAULT now(),
+  updated_at         TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_stock_in_reference ON psy_stock_in_records(reference_id);
+
+CREATE SEQUENCE IF NOT EXISTS psy_stock_in_no_seq START 1;
+
+CREATE OR REPLACE FUNCTION psy_set_stock_in_no()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.receive_no IS NULL THEN
+    NEW.receive_no := 'RCV-' || LPAD(nextval('psy_stock_in_no_seq')::text, 4, '0');
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_psy_set_stock_in_no ON psy_stock_in_records;
+CREATE TRIGGER trg_psy_set_stock_in_no
+BEFORE INSERT ON psy_stock_in_records
+FOR EACH ROW EXECUTE FUNCTION psy_set_stock_in_no();
+
+CREATE TABLE IF NOT EXISTS psy_stock_in_items (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  stock_in_id    UUID NOT NULL REFERENCES psy_stock_in_records(id) ON DELETE CASCADE,
+  item_id        UUID REFERENCES psy_inventory_items(id) ON DELETE SET NULL,
+  item_name      TEXT NOT NULL,
+  batch_no       TEXT,
+  expiry_date    DATE,
+  qty_received   NUMERIC(10,2) NOT NULL,
+  unit_cost      NUMERIC(10,2) NOT NULL DEFAULT 0,
+  subtotal       NUMERIC(12,2) NOT NULL DEFAULT 0,
+  created_at     TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_stock_in_items_record ON psy_stock_in_items(stock_in_id);
+CREATE INDEX IF NOT EXISTS idx_stock_in_items_item ON psy_stock_in_items(item_id);
+CREATE INDEX IF NOT EXISTS idx_stock_in_items_expiry ON psy_stock_in_items(expiry_date) WHERE expiry_date IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS psy_stock_in_documents (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  stock_in_id       UUID NOT NULL REFERENCES psy_stock_in_records(id) ON DELETE CASCADE,
+  file_name         TEXT NOT NULL,
+  file_path         TEXT NOT NULL,
+  file_size         INT,
+  uploaded_by_name  TEXT,
+  created_at        TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_stock_in_documents_record ON psy_stock_in_documents(stock_in_id);
+
+ALTER TABLE psy_stock_in_records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_stock_in_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_stock_in_documents ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage stock in records" ON psy_stock_in_records;
+CREATE POLICY "Staff manage stock in records" ON psy_stock_in_records FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff manage stock in items" ON psy_stock_in_items;
+CREATE POLICY "Staff manage stock in items" ON psy_stock_in_items FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Staff manage stock in documents" ON psy_stock_in_documents;
+CREATE POLICY "Staff manage stock in documents" ON psy_stock_in_documents FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+INSERT INTO storage.buckets (id, name, public) VALUES ('stock-in-docs', 'stock-in-docs', false)
+ON CONFLICT (id) DO NOTHING;
+
+DROP POLICY IF EXISTS "stock_in_docs_staff_all" ON storage.objects;
+CREATE POLICY "stock_in_docs_staff_all" ON storage.objects
+    FOR ALL TO authenticated
+    USING (bucket_id = 'stock-in-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+    WITH CHECK (bucket_id = 'stock-in-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+
+-- ═════════════════════════════════════════════════════════════════
+-- BUNDLE: 20260925_combined_pending.sql
+-- ═════════════════════════════════════════════════════════════════
+-- ═══════════════════════════════════════════════════════════════════
+-- GABUNGAN MIGRATION TERTUNGGAK — audit management Sept 2026
+-- Digabung 2026-09-25 drpd 7 fail berasingan (senarai di bawah).
+-- Semua idempotent (selamat run berulang). Susunan tiada kebergantungan
+-- antara satu sama lain (jadual berlainan), tapi dikekalkan ikut tier.
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260923_reaksi_conflict_contraindication.sql
+-- ─────────────────────────────────────────────────────────────────
+-- Audit management 23 Sept 2026, Tier 1 (#B2-2 conflict-check, #B2-3 contraindication).
+-- Rujuk: database/schema/12_reaksi.sql
+
+-- #B2-2 — status 'needs_review' utk saranan yang tergantung sbb >1 reaksi
+-- triggered serentak (conflict-check). Cron reaksi-advice-send cuma proses
+-- status='draft', jadi 'needs_review' auto tak terhantar sehingga staf Lulus/Skip.
+ALTER TABLE psy_reaksi_advice_log DROP CONSTRAINT IF EXISTS psy_reaksi_advice_log_status_check;
+ALTER TABLE psy_reaksi_advice_log ADD CONSTRAINT psy_reaksi_advice_log_status_check
+  CHECK (status IN ('draft','sent','skipped','needs_review'));
+
+-- #B2-3 — kata kunci contraindication (padan drpd psy_patients.medical_condition)
+ALTER TABLE psy_reaksi_actions ADD COLUMN IF NOT EXISTS contraindication_keywords TEXT;
+
+-- #B2-39/#B2-45 — status semakan (Draft/Reviewed/Approved/Active). DEFAULT 'active'
+-- supaya rekod sedia ada tak terjejas; kod baharu (import/drawer) set 'draft' eksplisit.
+ALTER TABLE psy_reaksi_actions ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE psy_reaksi_actions DROP CONSTRAINT IF EXISTS psy_reaksi_actions_status_check;
+ALTER TABLE psy_reaksi_actions ADD CONSTRAINT psy_reaksi_actions_status_check
+  CHECK (status IN ('draft','reviewed','approved','active'));
+
+-- #B2-2 — notify coach bila baris 'needs_review' dicipta (patient client tak boleh
+-- INSERT terus ke psy_notifications, RLS staff-only)
+CREATE OR REPLACE FUNCTION trg_reaksi_advice_notify_review()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_coach_id     UUID;
+  v_patient_name TEXT;
+BEGIN
+  IF NEW.status <> 'needs_review' THEN RETURN NEW; END IF;
+  IF NOT (NEW.send_after IS NULL OR NEW.send_after <= NEW.created_at + interval '2 minutes') THEN RETURN NEW; END IF;
+
+  SELECT pt.coach_id, COALESCE(pr.full_name, pt.full_name, 'Pesakit')
+    INTO v_coach_id, v_patient_name
+  FROM psy_patients pt
+  LEFT JOIN psy_profiles pr ON pr.id = pt.user_id
+  WHERE pt.id = NEW.patient_id;
+  IF v_coach_id IS NULL THEN RETURN NEW; END IF;
+
+  INSERT INTO psy_notifications (user_id, type, title, body, link)
+  VALUES (
+    v_coach_id, 'reaksi',
+    '⚠️ Cadangan Perlu Disemak: ' || v_patient_name,
+    v_patient_name || ' alami beberapa reaksi serentak — cadangan digenerate TAPI belum dihantar sehingga disemak. Sila semak di reaksi-laporan.html.',
+    'reaksi-laporan.html'
+  );
+
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_reaksi_advice_notify_review: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_reaksi_advice_notify_review ON psy_reaksi_advice_log;
+CREATE TRIGGER trg_reaksi_advice_notify_review
+  AFTER INSERT ON psy_reaksi_advice_log
+  FOR EACH ROW EXECUTE FUNCTION trg_reaksi_advice_notify_review();
+
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260924_referral_next_action.sql
+-- ─────────────────────────────────────────────────────────────────
+-- Audit management 23 Sept 2026, Tier 2 (#B2-4): saranan Sesi 1:1 perlu Next Action +
+-- PIC + Due Date boleh dijejak sehingga selesai, bukan berhenti sebagai nota bebas.
+-- Rujuk: database/schema/20_referrals.sql
+
+ALTER TABLE psy_clinical_referrals ADD COLUMN IF NOT EXISTS next_action TEXT;
+ALTER TABLE psy_clinical_referrals ADD COLUMN IF NOT EXISTS next_action_pic UUID REFERENCES psy_profiles(id) ON DELETE SET NULL;
+ALTER TABLE psy_clinical_referrals ADD COLUMN IF NOT EXISTS next_action_due DATE;
+ALTER TABLE psy_clinical_referrals ADD COLUMN IF NOT EXISTS next_action_done_at TIMESTAMPTZ;
+
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260924_points_manual_adjust_voucher_expiry.sql
+-- ─────────────────────────────────────────────────────────────────
+-- Audit management 23 Sept 2026, Tier 5 (#C-13) — pelarasan mata manual (staf,
+-- sebab wajib, audit trail) + tempoh sah 90 hari utk baucar tukar mata.
+-- Rujuk: database/schema/31_points.sql
+
+CREATE OR REPLACE FUNCTION redeem_point_reward(p_reward_id UUID)
+RETURNS psy_vouchers
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_patient_id UUID;
+  v_reward     psy_point_rewards%ROWTYPE;
+  v_balance    INT;
+  v_redeemed   INT;
+  v_voucher    psy_vouchers%ROWTYPE;
+BEGIN
+  SELECT id INTO v_patient_id FROM psy_patients WHERE user_id = auth.uid() LIMIT 1;
+  IF v_patient_id IS NULL THEN
+    RAISE EXCEPTION 'Rekod pesakit tidak dijumpai.';
+  END IF;
+
+  SELECT * INTO v_reward FROM psy_point_rewards WHERE id = p_reward_id;
+  IF v_reward.id IS NULL OR NOT v_reward.is_active THEN
+    RAISE EXCEPTION 'Ganjaran ini tidak sah atau tidak lagi ditawarkan.';
+  END IF;
+
+  IF v_reward.max_redemptions_per_patient IS NOT NULL THEN
+    SELECT COUNT(*) INTO v_redeemed FROM psy_points_ledger
+      WHERE patient_id = v_patient_id AND source_type = 'reward_redeem' AND source_ref = v_reward.id;
+    IF v_redeemed >= v_reward.max_redemptions_per_patient THEN
+      RAISE EXCEPTION 'Anda telah mencapai had tukaran untuk ganjaran ini.';
+    END IF;
+  END IF;
+
+  SELECT COALESCE(SUM(points), 0) INTO v_balance FROM psy_points_ledger WHERE patient_id = v_patient_id;
+  IF v_balance < v_reward.points_cost THEN
+    RAISE EXCEPTION 'Mata tidak mencukupi.';
+  END IF;
+
+  INSERT INTO psy_points_ledger (patient_id, source_type, source_ref, points, note)
+  VALUES (v_patient_id, 'reward_redeem', v_reward.id, -v_reward.points_cost, 'Tukar: ' || v_reward.name);
+
+  INSERT INTO psy_vouchers (patient_id, source_type, source_ref, amount, note, expires_at)
+  VALUES (v_patient_id, 'point_redeem', v_reward.id, v_reward.voucher_amount, 'Ditukar dari mata: ' || v_reward.name, now() + interval '90 days')
+  RETURNING * INTO v_voucher;
+
+  RETURN v_voucher;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION redeem_point_reward(UUID) TO authenticated;
+
+CREATE OR REPLACE FUNCTION adjust_points_manual(p_patient_id UUID, p_points INT, p_reason TEXT)
+RETURNS psy_points_ledger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_is_staff BOOLEAN;
+  v_row      psy_points_ledger%ROWTYPE;
+BEGIN
+  SELECT EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff') INTO v_is_staff;
+  IF NOT v_is_staff THEN
+    RAISE EXCEPTION 'Hanya staf boleh laras mata pesakit.';
+  END IF;
+  IF p_points = 0 THEN
+    RAISE EXCEPTION 'Bilangan mata mesti bukan sifar.';
+  END IF;
+  IF p_reason IS NULL OR btrim(p_reason) = '' THEN
+    RAISE EXCEPTION 'Sebab pelarasan diperlukan.';
+  END IF;
+
+  INSERT INTO psy_points_ledger (patient_id, source_type, points, note)
+  VALUES (p_patient_id, 'manual_adjustment', p_points, btrim(p_reason))
+  RETURNING * INTO v_row;
+
+  RETURN v_row;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION adjust_points_manual(UUID, INT, TEXT) TO authenticated;
+
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260924_promo_scope_stack_eligibility.sql
+-- ─────────────────────────────────────────────────────────────────
+-- Audit management 23 Sept 2026, Tier 5 (#D-15, #D-16, #D-17) — skop
+-- "Terpakai Untuk" (Produk/Kategori/Pakej), gabung baucar (stackable),
+-- eligibility pelanggan baharu, label kempen.
+-- Rujuk: database/schema/29_promo_codes.sql
+
+ALTER TABLE psy_promo_codes ADD COLUMN IF NOT EXISTS applies_to TEXT NOT NULL DEFAULT 'all'
+  CHECK (applies_to IN ('all','product','category','package'));
+ALTER TABLE psy_promo_codes ADD COLUMN IF NOT EXISTS applies_to_values TEXT[];
+ALTER TABLE psy_promo_codes ADD COLUMN IF NOT EXISTS stackable BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE psy_promo_codes ADD COLUMN IF NOT EXISTS new_customer_only BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE psy_promo_codes ADD COLUMN IF NOT EXISTS campaign TEXT;
+
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260924_announcement_reads.sql
+-- ─────────────────────────────────────────────────────────────────
+-- Audit management 23 Sept 2026, Tier 5 (#G-33, #G-34) — penjejakan "dibaca"
+-- pengumuman (impression-based, bila muncul di dashboard/senarai pesakit).
+-- Rujuk: database/schema/19_events_announcements.sql
+
+CREATE TABLE IF NOT EXISTS psy_announcement_reads (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  announcement_id UUID NOT NULL REFERENCES psy_announcements(id) ON DELETE CASCADE,
+  patient_id      UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  read_at         TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (announcement_id, patient_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ann_reads_ann ON psy_announcement_reads(announcement_id);
+
+ALTER TABLE psy_announcement_reads ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patients mark own reads" ON psy_announcement_reads;
+CREATE POLICY "Patients mark own reads" ON psy_announcement_reads FOR INSERT
+  WITH CHECK (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Patients view own reads" ON psy_announcement_reads;
+CREATE POLICY "Patients view own reads" ON psy_announcement_reads FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff view all reads" ON psy_announcement_reads;
+CREATE POLICY "Staff view all reads" ON psy_announcement_reads FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260924_event_meet_link_capacity.sql
+-- ─────────────────────────────────────────────────────────────────
+-- Audit management 23 Sept 2026, Tier 5 (#H-35, #H-36) — kuatkuasa kapasiti
+-- pendaftaran acara + keluarkan meet_link dari psy_events (RLS row-level tak
+-- boleh sembunyi satu lajur sahaja — jadual berasingan supaya pesakit yang
+-- BELUM daftar betul-betul tak dapat baca pautan Meet, bukan sekadar disorok
+-- di UI). Rujuk: database/schema/19_events_announcements.sql
+
+CREATE TABLE IF NOT EXISTS psy_event_meet_links (
+  event_id   UUID PRIMARY KEY REFERENCES psy_events(id) ON DELETE CASCADE,
+  meet_link  TEXT,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE psy_event_meet_links ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage event meet links" ON psy_event_meet_links;
+CREATE POLICY "Staff manage event meet links" ON psy_event_meet_links FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Registered patients read meet link" ON psy_event_meet_links;
+CREATE POLICY "Registered patients read meet link" ON psy_event_meet_links FOR SELECT
+  USING (EXISTS (
+    SELECT 1 FROM psy_event_registrations r
+    JOIN psy_patients p ON p.id = r.patient_id
+    WHERE r.event_id = psy_event_meet_links.event_id
+      AND p.user_id = auth.uid() AND r.status <> 'batal'
+  ));
+
+-- Backfill dari lajur lama SEBELUM dibuang. Dibungkus check column wujud —
+-- kalau section ni dah pernah run (meet_link dah dibuang dari psy_events),
+-- run berulang kali skip terus (bukan error 42703 "column does not exist",
+-- sebab SELECT meet_link FROM psy_events cuma sah bila lajur tu masih ada).
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'psy_events' AND column_name = 'meet_link'
+  ) THEN
+    INSERT INTO psy_event_meet_links (event_id, meet_link)
+    SELECT id, meet_link FROM psy_events WHERE meet_link IS NOT NULL
+    ON CONFLICT (event_id) DO UPDATE SET meet_link = EXCLUDED.meet_link;
+
+    ALTER TABLE psy_events DROP COLUMN meet_link;
+  END IF;
+END $$;
+
+-- #H-35 — kuatkuasa kapasiti pendaftaran acara (server-side, staf override dibenarkan)
+CREATE OR REPLACE FUNCTION trg_enforce_event_capacity()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_capacity INT;
+  v_count    INT;
+  v_is_staff BOOLEAN;
+BEGIN
+  IF NEW.status = 'batal' THEN RETURN NEW; END IF;
+  SELECT EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff') INTO v_is_staff;
+  IF v_is_staff THEN RETURN NEW; END IF;
+
+  SELECT capacity INTO v_capacity FROM psy_events WHERE id = NEW.event_id;
+  IF v_capacity IS NULL THEN RETURN NEW; END IF;
+
+  SELECT COUNT(*) INTO v_count FROM psy_event_registrations
+    WHERE event_id = NEW.event_id AND status <> 'batal' AND id <> COALESCE(NEW.id, '00000000-0000-0000-0000-000000000000'::uuid);
+  IF v_count >= v_capacity THEN
+    RAISE EXCEPTION 'Acara ini telah penuh (kapasiti % peserta).', v_capacity;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_enforce_event_capacity ON psy_event_registrations;
+CREATE TRIGGER trg_enforce_event_capacity
+  BEFORE INSERT OR UPDATE ON psy_event_registrations
+  FOR EACH ROW EXECUTE FUNCTION trg_enforce_event_capacity();
+
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260924_split_invoice_receipt_payment.sql
+-- ─────────────────────────────────────────────────────────────────
+-- Audit management 23 Sept 2026 (#F-23, Tier 3→5 — sengaja ditangguh di Tier 3,
+-- kini dibuat) — Pisah Invoice/Receipt/Payment jadi 3 jadual berasingan.
+-- Rujuk: database/schema/06_payments.sql (sumber kebenaran, dah dikemaskini).
+--
+-- PENDEKATAN: tambahan sahaja (additive) — psy_payments KEKAL bentuk sedia ada,
+-- SEMUA laluan tulis sedia ada (webhook gateway, autocharge ansuran, GHL sync,
+-- entri manual staf KOB/kedai) TAK disentuh langsung. Cuma denda tidak hadir
+-- (plan-week.html) dipindah guna psy_invoices sebenar (kod app dikemaskini
+-- berasingan, bukan dalam migration ni).
+
+-- ──── 1. Betulkan trigger invoice_no sedia ada (elak nombor berganda) ────
+ALTER TABLE psy_payments ADD COLUMN IF NOT EXISTS invoice_id UUID;
+
+CREATE OR REPLACE FUNCTION psy_assign_payment_invoice_no() RETURNS trigger AS $$
+BEGIN
+  IF NEW.invoice_no IS NULL AND NEW.status IN ('pending','completed')
+     AND (NEW.intent ->> 'kob_session_id') IS NULL
+     AND NEW.invoice_id IS NULL THEN
+    NEW.invoice_no := 'INV-' || lpad(nextval('psy_invoice_no_seq')::text, 6, '0');
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+-- ──── 2. psy_receipts — trigger-created sahaja, tiada laluan client INSERT ────
+CREATE TABLE IF NOT EXISTS psy_receipts (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  payment_id UUID NOT NULL UNIQUE REFERENCES psy_payments(id) ON DELETE CASCADE,
+  patient_id UUID REFERENCES psy_patients(id),
+  receipt_no TEXT,
+  total      NUMERIC(10,2) NOT NULL,
+  issued_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  pdf_url    TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_psy_receipts_patient ON psy_receipts(patient_id);
+
+ALTER TABLE psy_receipts ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patients read own receipts" ON psy_receipts;
+CREATE POLICY "Patients read own receipts" ON psy_receipts FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff read all receipts" ON psy_receipts;
+CREATE POLICY "Staff read all receipts" ON psy_receipts FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+CREATE OR REPLACE FUNCTION trg_create_receipt_on_payment_completed()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF NEW.status = 'completed' AND (TG_OP = 'INSERT' OR OLD.status IS DISTINCT FROM 'completed') THEN
+    INSERT INTO psy_receipts (payment_id, patient_id, receipt_no, total, pdf_url)
+    VALUES (NEW.id, NEW.patient_id, NEW.receipt_no, NEW.total, NEW.receipt_url)
+    ON CONFLICT (payment_id) DO NOTHING;
+  END IF;
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_create_receipt_on_payment_completed: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_create_receipt_on_payment_completed ON psy_payments;
+CREATE TRIGGER trg_create_receipt_on_payment_completed
+  AFTER INSERT OR UPDATE OF status ON psy_payments
+  FOR EACH ROW EXECUTE FUNCTION trg_create_receipt_on_payment_completed();
+
+-- Backfill sejarah — semua bayaran 'completed' sedia ada dapat rekod resit serta-merta.
+INSERT INTO psy_receipts (payment_id, patient_id, receipt_no, total, pdf_url, issued_at)
+SELECT id, patient_id, receipt_no, total, receipt_url, COALESCE(paid_at, created_at)
+FROM psy_payments WHERE status = 'completed'
+ON CONFLICT (payment_id) DO NOTHING;
+
+-- ──── 3. psy_invoices — amaun tertunggak, boleh wujud sebelum sebarang bayaran ────
+CREATE TABLE IF NOT EXISTS psy_invoices (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  invoice_no  TEXT UNIQUE,
+  patient_id  UUID NOT NULL REFERENCES psy_patients(id),
+  description TEXT NOT NULL,
+  amount      NUMERIC(10,2) NOT NULL CHECK (amount > 0),
+  status      TEXT NOT NULL DEFAULT 'unpaid' CHECK (status IN ('unpaid','partially_paid','paid','void')),
+  source_type TEXT,
+  source_ref  TEXT,
+  created_by  UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  updated_at  TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_psy_invoices_patient ON psy_invoices(patient_id, status);
+
+ALTER TABLE psy_invoices ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patients read own invoices" ON psy_invoices;
+CREATE POLICY "Patients read own invoices" ON psy_invoices FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff manage invoices" ON psy_invoices;
+CREATE POLICY "Staff manage invoices" ON psy_invoices FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+CREATE OR REPLACE FUNCTION psy_assign_invoice_no() RETURNS trigger AS $$
+BEGIN
+  IF NEW.invoice_no IS NULL THEN
+    NEW.invoice_no := 'INV-' || lpad(nextval('psy_invoice_no_seq')::text, 6, '0');
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_psy_assign_invoice_no ON psy_invoices;
+CREATE TRIGGER trg_psy_assign_invoice_no BEFORE INSERT ON psy_invoices
+  FOR EACH ROW EXECUTE FUNCTION psy_assign_invoice_no();
+
+ALTER TABLE psy_payments DROP CONSTRAINT IF EXISTS psy_payments_invoice_id_fkey;
+ALTER TABLE psy_payments ADD CONSTRAINT psy_payments_invoice_id_fkey
+  FOREIGN KEY (invoice_id) REFERENCES psy_invoices(id);
+CREATE INDEX IF NOT EXISTS idx_psy_payments_invoice ON psy_payments(invoice_id);
+
+CREATE OR REPLACE FUNCTION trg_update_invoice_status_on_payment()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_amount NUMERIC;
+  v_paid   NUMERIC;
+BEGIN
+  IF NEW.invoice_id IS NULL THEN RETURN NEW; END IF;
+  SELECT amount INTO v_amount FROM psy_invoices WHERE id = NEW.invoice_id;
+  IF v_amount IS NULL THEN RETURN NEW; END IF;
+  SELECT COALESCE(SUM(total), 0) INTO v_paid FROM psy_payments
+    WHERE invoice_id = NEW.invoice_id AND status = 'completed';
+  UPDATE psy_invoices SET
+    status = CASE
+      WHEN v_paid <= 0 THEN 'unpaid'
+      WHEN v_paid + 0.005 >= v_amount THEN 'paid'
+      ELSE 'partially_paid'
+    END,
+    updated_at = now()
+  WHERE id = NEW.invoice_id AND status <> 'void';
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_update_invoice_status_on_payment: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_update_invoice_status_on_payment ON psy_payments;
+CREATE TRIGGER trg_update_invoice_status_on_payment
+  AFTER INSERT OR UPDATE OF status ON psy_payments
+  FOR EACH ROW EXECUTE FUNCTION trg_update_invoice_status_on_payment();
+
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260925_patients_created_by.sql
+-- ─────────────────────────────────────────────────────────────────
+-- Jejak SIAPA cipta rekod pesakit manual dalam PT System (roles/staff/patients.html
+-- "+ Tambah Pesakit / Tempah KOB") — sebelum ni cuma `created_by_staff` (boolean,
+-- true/false je). Punca rekod pendua Sept 2026: staf create manual SEBELUM cron
+-- ghl-pull-sync sempat proses contact GHL yang sama, dua patient_id berasingan
+-- tercipta. `created_by`/`created_by_name` bantu kenal pasti punca (rekod mana
+-- dicipta staf manual vs auto-sync GHL, referral_source dah bezakan tu — lajur
+-- ni tambah SIAPA secara khusus).
+
+ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES psy_profiles(id) ON DELETE SET NULL;
+ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS created_by_name TEXT;
+
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260925_ghl_kob_code.sql
+-- ─────────────────────────────────────────────────────────────────
+-- GHL Workflow "SU KOB Auto ID" prepend kod (cth "KOB'26-000139") depan
+-- nama contact ("KOB'26-000139. Pn Syamira"). ghl-booking-webhook kini
+-- auto-asingkan kod tu drpd full_name, simpan berasingan di sini — BUKAN
+-- reference_code ("Kod Pesakit", diisi lepas pesakit signup pakej OB,
+-- tujuan lain). Rujuk: database/schema/04_patients.sql,
+-- supabase/functions/_shared/ghl-sync.ts (splitGhlNameCode).
+
+ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS ghl_kob_code TEXT;
+
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260925_registrant_capacity.sql
+-- ─────────────────────────────────────────────────────────────────
+-- GHL borang tanya 2 soalan berasingan pasal pendaftar: "Peranan
+-- Pendaftar" (Pesakit/Waris Bertanggungjawab/Waris Wakil/Waris — map ke
+-- contact_preference sedia ada) DAN "Anda mengisi borang ini sebagai?"
+-- (sejauh mana terlibat — sendiri/urus penuh/bantu isi sahaja, medan
+-- BAHARU registrant_capacity, TIADA di sistem lagi). Rujuk:
+-- database/schema/04_patients.sql, supabase/functions/ghl-booking-webhook.
+
+ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS registrant_capacity TEXT;
+
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260925_ghl_contact_id.sql
+-- ─────────────────────────────────────────────────────────────────
+-- Simpan ID dalaman contact GHL ({{contact.id}}) sebagai rujukan pantas/
+-- debug & future API call terus ke GHL. TIDAK dipakai untuk padanan
+-- pesakit (kekal ikut telefon). Rujuk: database/schema/04_patients.sql,
+-- supabase/functions/ghl-booking-webhook.
+
+ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS ghl_contact_id TEXT;
+
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260925_kob_status_kiv_noshow.sql
+-- ─────────────────────────────────────────────────────────────────
+-- Status KOB dropdown boleh-edit di kob-list.html — 2 status BAHARU:
+-- kiv (sesi selesai, pesakit tak teruskan pakej) & no_show (staff sahkan
+-- tak hadir, status TETAP — beza drpd "Terlepas" label terbitan
+-- sementara). Disync balik ke GHL "ISW STATUS" (sync-ghl). Rujuk:
+-- database/schema/09_kob.sql, supabase/functions/sync-ghl.
+
+ALTER TABLE psy_kob_sessions DROP CONSTRAINT IF EXISTS psy_kob_sessions_status_check;
+ALTER TABLE psy_kob_sessions ADD CONSTRAINT psy_kob_sessions_status_check
+  CHECK (status IN ('booked','hadir','completed','reschedule','cancelled','kiv','no_show'));
+
+
+
+
+-- ═════════════════════════════════════════════════════════════════
+-- BUNDLE: 20260930_data_maintenance.sql
+-- ═════════════════════════════════════════════════════════════════
+-- ═══════════════════════════════════════════════════════════════════
+-- GABUNGAN MIGRATION TERTUNGGAK — audit management Sept 2026 (batch 2)
+-- Digabung 2026-09-30 drpd 7 fail berasingan (senarai di bawah), semua
+-- ditulis/disemak SELEPAS 20260925_combined_pending.sql (checkpoint gabungan
+-- sebelum ni). Semua idempotent (selamat run berulang). Susunan tiada
+-- kebergantungan antara satu sama lain (jadual berlainan) KECUALI 2 fail
+-- Library — KEKALKAN turutan (rls_package_restrict dulu, workflow_week_audience
+-- lepas, policy kedua menggantikan yang pertama dgn versi lebih lengkap).
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260925_library_rls_package_restrict.sql
+-- ─────────────────────────────────────────────────────────────────
+-- Audit management batch 3 (25 Sept 2026), Tier 7 #2 — isu keselamatan:
+-- psy_library_items policy lama "Anyone read library" USING (true) bermakna
+-- sekatan package_ids cuma di UI (isLocked() client-side), sesiapa (termasuk
+-- tak login) boleh baca content_url semua rekod terus melalui API. Gantikan
+-- dgn policy yang benar-benar kuatkuasa sekatan pakej di server.
+-- Rujuk: database/schema/13_library_faq.sql, memory project_audit_tier6_7_sept2026.
+
+DROP POLICY IF EXISTS "Anyone read library" ON psy_library_items;
+DROP POLICY IF EXISTS "Patients read allowed library" ON psy_library_items;
+CREATE POLICY "Patients read allowed library" ON psy_library_items FOR SELECT
+  TO authenticated
+  USING (
+    is_active = true
+    AND (
+      package_ids IS NULL OR array_length(package_ids, 1) IS NULL
+      OR EXISTS (
+        SELECT 1 FROM psy_patients p
+        LEFT JOIN psy_packages pk
+          ON pk.id::text = p.active_package_id OR pk.package_id = p.active_package_id
+        WHERE p.user_id = auth.uid()
+          AND (p.active_package_id = ANY(package_ids) OR pk.package_id = ANY(package_ids))
+      )
+    )
+  );
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260925_library_workflow_week_audience.sql
+-- ─────────────────────────────────────────────────────────────────
+-- Audit management batch 3 (25 Sept 2026), Tier 7 #1/#2/#3a/#4 — Library.
+-- Rujuk: database/schema/13_library_faq.sql, database/schema/24_storage.sql
+
+-- ═══ 1. Kolum baharu psy_library_items ═══
+ALTER TABLE psy_library_items ADD COLUMN IF NOT EXISTS week_number INT;
+ALTER TABLE psy_library_items ADD COLUMN IF NOT EXISTS staff_roles TEXT[];
+ALTER TABLE psy_library_items ADD COLUMN IF NOT EXISTS publish_at TIMESTAMPTZ;
+
+COMMENT ON COLUMN psy_library_items.status IS
+  'draft | review | approved | published | archived. is_active = (status=published). Pesakit nampak published sahaja.';
+COMMENT ON COLUMN psy_library_items.week_number IS
+  'Minggu rawatan (dalam pakej yg dipilih di package_ids) kandungan ni relevan. NULL = semua minggu.';
+COMMENT ON COLUMN psy_library_items.staff_roles IS
+  'Kalau diisi, kandungan ni RUJUKAN STAF sahaja (bukan pesakit) — hanya staff dgn salah satu peranan ni nampak. NULL/kosong = kandungan pesakit biasa.';
+COMMENT ON COLUMN psy_library_items.publish_at IS
+  'Kalau diisi & di masa depan, kandungan tak nampak kpd pesakit walau status=published/is_active=true sehingga masa ni sampai (dikuatkuasa di RLS).';
+
+-- ═══ 2. RLS: kuatkuasa sekatan pakej + role + jadual terbit di server ═══
+-- (menggantikan policy dari fail sebelum ni dgn versi lebih lengkap)
+DROP POLICY IF EXISTS "Anyone read library" ON psy_library_items;
+DROP POLICY IF EXISTS "Patients read allowed library" ON psy_library_items;
+CREATE POLICY "Patients read allowed library" ON psy_library_items FOR SELECT
+  TO authenticated
+  USING (
+    is_active = true
+    AND (staff_roles IS NULL OR array_length(staff_roles, 1) IS NULL)
+    AND (publish_at IS NULL OR publish_at <= now())
+    AND (
+      package_ids IS NULL OR array_length(package_ids, 1) IS NULL
+      OR EXISTS (
+        SELECT 1 FROM psy_patients p
+        LEFT JOIN psy_packages pk
+          ON pk.id::text = p.active_package_id OR pk.package_id = p.active_package_id
+        WHERE p.user_id = auth.uid()
+          AND (p.active_package_id = ANY(package_ids) OR pk.package_id = ANY(package_ids))
+      )
+    )
+  );
+
+-- ═══ 3. Bucket library-media — had saiz/format (dulu tiada langsung) ═══
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('library-media', 'library-media', true, 524288000, ARRAY[
+  'video/mp4','video/quicktime','video/webm',
+  'audio/mpeg','audio/mp4','audio/x-m4a','audio/wav',
+  'image/png','image/jpeg','image/jpg','image/webp',
+  'application/pdf','application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+])
+ON CONFLICT (id) DO UPDATE
+  SET public = EXCLUDED.public,
+      file_size_limit = EXCLUDED.file_size_limit,
+      allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+DROP POLICY IF EXISTS "library_media_staff_write" ON storage.objects;
+CREATE POLICY "library_media_staff_write" ON storage.objects
+    FOR INSERT TO authenticated
+    WITH CHECK (bucket_id = 'library-media' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "library_media_staff_update" ON storage.objects;
+CREATE POLICY "library_media_staff_update" ON storage.objects
+    FOR UPDATE TO authenticated
+    USING (bucket_id = 'library-media' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "library_media_staff_delete" ON storage.objects;
+CREATE POLICY "library_media_staff_delete" ON storage.objects
+    FOR DELETE TO authenticated
+    USING (bucket_id = 'library-media' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "library_media_public_read" ON storage.objects;
+CREATE POLICY "library_media_public_read" ON storage.objects
+    FOR SELECT USING (bucket_id = 'library-media');
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260925_recommended_directory.sql
+-- ─────────────────────────────────────────────────────────────────
+-- Audit management 23 Sept 2026, Tier 5 batch 2 module VI & VII — 2 modul
+-- BAHARU: Master Produk & Bahan + Direktori Cadangan.
+-- Rujuk: database/schema/39_recommended_directory.sql, database/schema/03_rbac_security.sql
+
+-- ═══ 1. Jadual baharu ═══
+
+CREATE TABLE IF NOT EXISTS psy_recommended_products (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name              TEXT NOT NULL,
+  category          TEXT,
+  purpose           TEXT,
+  qty_note          TEXT,
+  requirement_level TEXT NOT NULL DEFAULT 'cadangan'
+                    CHECK (requirement_level IN ('wajib','cadangan','opsyenal')),
+  price             NUMERIC(10,2),
+  notes             TEXT,
+  is_active         BOOLEAN NOT NULL DEFAULT true,
+  last_verified_at  TIMESTAMPTZ,
+  created_by        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  created_at        TIMESTAMPTZ DEFAULT now(),
+  updated_at        TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_rec_products_active ON psy_recommended_products(is_active);
+
+ALTER TABLE psy_recommended_products ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage recommended products" ON psy_recommended_products;
+CREATE POLICY "Staff manage recommended products" ON psy_recommended_products FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+CREATE TABLE IF NOT EXISTS psy_recommended_product_sellers (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  product_id  UUID NOT NULL REFERENCES psy_recommended_products(id) ON DELETE CASCADE,
+  platform    TEXT,
+  seller_name TEXT,
+  link        TEXT,
+  price       NUMERIC(10,2),
+  notes       TEXT,
+  sort_order  INT DEFAULT 0,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_rec_sellers_product ON psy_recommended_product_sellers(product_id);
+
+ALTER TABLE psy_recommended_product_sellers ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage recommended product sellers" ON psy_recommended_product_sellers;
+CREATE POLICY "Staff manage recommended product sellers" ON psy_recommended_product_sellers FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+CREATE TABLE IF NOT EXISTS psy_package_recommended_products (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  package_id  TEXT NOT NULL,
+  product_id  UUID NOT NULL REFERENCES psy_recommended_products(id) ON DELETE CASCADE,
+  week_number INT,
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (package_id, product_id, week_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rec_pkg_map_package ON psy_package_recommended_products(package_id);
+CREATE INDEX IF NOT EXISTS idx_rec_pkg_map_product ON psy_package_recommended_products(product_id);
+
+ALTER TABLE psy_package_recommended_products ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage package recommended products" ON psy_package_recommended_products;
+CREATE POLICY "Staff manage package recommended products" ON psy_package_recommended_products FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+CREATE TABLE IF NOT EXISTS psy_recommended_restaurants (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name              TEXT NOT NULL,
+  category          TEXT,
+  location          TEXT,
+  maps_url          TEXT,
+  menu_notes        TEXT,
+  price_range       TEXT,
+  status            TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
+  notes             TEXT,
+  last_verified_at  TIMESTAMPTZ,
+  created_by        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  created_at        TIMESTAMPTZ DEFAULT now(),
+  updated_at        TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_rec_restaurants_status ON psy_recommended_restaurants(status);
+
+ALTER TABLE psy_recommended_restaurants ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage recommended restaurants" ON psy_recommended_restaurants;
+CREATE POLICY "Staff manage recommended restaurants" ON psy_recommended_restaurants FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ═══ 2. Pendaftaran RBAC (2 modul baharu) ═══
+
+INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
+  ('produk_bahan',      'Produk & Bahan Luar',  '🧴', 'staff', 101),
+  ('direktori_cadangan','Direktori Cadangan',   '📇', 'staff', 102)
+ON CONFLICT (code) DO UPDATE SET
+  label = EXCLUDED.label, icon = EXCLUDED.icon, scope = EXCLUDED.scope, sort_order = EXCLUDED.sort_order;
+
+-- Module × Action — semua action utk 2 modul baharu
+INSERT INTO psy_module_actions (module_code, action_code)
+SELECT m.code, a.code FROM psy_modules m CROSS JOIN psy_actions a
+WHERE m.code IN ('produk_bahan','direktori_cadangan')
+ON CONFLICT DO NOTHING;
+
+-- super_admin / manager / admin dapat automatik (grant sedia ada guna
+-- "WHERE scope='staff'" blanket query — cuma perlu ULANG langkah 3 di bawah
+-- utk 2 modul baharu ni kembang ke create/edit/delete/export).
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT 'super_admin', code, 'view' FROM psy_modules WHERE code IN ('produk_bahan','direktori_cadangan')
+ON CONFLICT DO NOTHING;
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT 'manager', code, 'view' FROM psy_modules WHERE code IN ('produk_bahan','direktori_cadangan')
+ON CONFLICT DO NOTHING;
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT 'admin', code, 'view' FROM psy_modules WHERE code IN ('produk_bahan','direktori_cadangan')
+ON CONFLICT DO NOTHING;
+-- Doctor & Coach — paling relevan (beri cadangan kpd pesakit)
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT r.role, m.code, 'view'
+FROM (VALUES ('doctor'),('coach')) AS r(role)
+CROSS JOIN (VALUES ('produk_bahan'),('direktori_cadangan')) AS m(code)
+ON CONFLICT DO NOTHING;
+
+-- Kembangkan 'view' → create/edit/delete/export utk role yg baru diberi view di atas
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT rma.role_code, rma.module_code, a.code
+FROM psy_role_module_actions rma
+CROSS JOIN psy_actions a
+WHERE rma.module_code IN ('produk_bahan','direktori_cadangan')
+  AND rma.action_code = 'view'
+  AND a.code IN ('create','edit','delete','export')
+ON CONFLICT DO NOTHING;
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260928_rename_telesales_role_to_kob.sql
+-- ─────────────────────────────────────────────────────────────────
+-- Rename legacy role code 'telesales' (label "KOB" di peranan.html, drives
+-- Collector/Closer assign dropdown di roles/staff/kob-list.html/kob-detail.html)
+-- -> 'kob', ikut niat asal reka bentuk (lihat komen "staff_role 'kob'" di
+-- database/schema/09_kob.sql baris 34/38). Keputusan 28 Sept 2026.
+--
+-- Kebenaran (psy_role_module_actions) DIKEKALKAN apa adanya (~semua modul,
+-- keputusan user 28 Sept — bukan direset ke set KOB-focus yg dirangka utk
+-- role 'telesale' berasingan di 03_rbac_security.sql; 'telesale' tu kekal
+-- tidak digunakan/orphan, tiada kaitan dgn rename ni).
+--
+-- Guna INSERT+UPDATE+DELETE (bukan UPDATE terus atas psy_roles.code) sebab
+-- psy_role_module_actions.role_code ada FK ke psy_roles(code) TANPA
+-- ON UPDATE CASCADE — UPDATE PK terus akan gagal dgn FK violation.
+-- Idempotent — selamat di-run berulang kali (no-op lepas kali pertama).
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM psy_roles WHERE code = 'telesales')
+     AND NOT EXISTS (SELECT 1 FROM psy_roles WHERE code = 'kob') THEN
+    INSERT INTO psy_roles (code, label, description, color, icon, is_active, is_system, sort_order)
+    SELECT 'kob', label, description, color, icon, is_active, is_system, sort_order
+    FROM psy_roles WHERE code = 'telesales';
+  END IF;
+END $$;
+
+UPDATE psy_role_module_actions SET role_code = 'kob' WHERE role_code = 'telesales';
+UPDATE psy_profiles SET staff_role = 'kob' WHERE staff_role = 'telesales';
+
+DELETE FROM psy_roles WHERE code = 'telesales';
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260929_ghl_patient_phone_unique.sql
+-- ─────────────────────────────────────────────────────────────────
+-- Jaring keselamatan DB terhadap bug dedup pesakit GHL (syncContactToPatient
+-- gagal senyap cari padanan phone sedia ada, cipta pesakit BAHARU setiap
+-- kali dipanggil semula utk contact yg sama — punca sebenar dalam kod masih
+-- disiasat 28-29 Sept 2026). Constraint ni tak fix punca, tapi tukar tingkah
+-- laku dari "senyap cipta pendua" ke "INSERT gagal terus" — nampak jelas
+-- dalam psy_audit_log/errors, bukan senyap corrupt data lagi.
+--
+-- Skop HANYA referral_source='GHL' (bukan semua psy_patients) — rekod
+-- staff-created/self-signup masih boleh kongsi phone (cth ahli keluarga
+-- guna nombor sama), cuma pesakit auto-sync GHL yang patut 1 phone = 1 rekod.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_psy_patients_ghl_phone_unique
+  ON psy_patients (phone) WHERE referral_source = 'GHL' AND phone IS NOT NULL;
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260930_package_version_number.sql
+-- ─────────────────────────────────────────────────────────────────
+-- Version Management pakej (audit management, gantikan corak manual "(new)" dlm
+-- nama pakej — lihat pakej.html versionCell()/pakej-edit.html f-version).
+-- psy_packages.version_number sudah ADA dlm CREATE TABLE (database/schema/05_packages.sql)
+-- utk pemasangan BAHARU, tapi tiada ALTER TABLE ditulis utk DB SEDIA ADA (testing/prod)
+-- — kod UI dah siap sejak 18 Sept 2026 tapi lajur ni tak pernah benar-benar wujud
+-- di live DB sehingga migration ni dijalankan.
+ALTER TABLE psy_packages ADD COLUMN IF NOT EXISTS version_number INT NOT NULL DEFAULT 1;
+
+COMMENT ON COLUMN psy_packages.version_number IS
+  'Nombor version pakej (1, 2, 3, ...) — gantikan corak manual "(new)" dalam nama pakej. Version tertinggi bagi Nama Pakej yang sama = version semasa (implicit ikut nombor, tiada medan status berasingan).';
+
+-- ─────────────────────────────────────────────────────────────────
+-- FAIL: 20260930_vitals_threshold_governance.sql
+-- ─────────────────────────────────────────────────────────────────
+-- Audit management batch 3 (29-30 Sept 2026) — Governance ambang vitals.
+-- Menggantikan pendekatan lama (20260923_vitals_critical_emergency.sql, TAK PERNAH
+-- dijalankan) yang hardcode nombor kritikal terus dalam fungsi SQL tanpa pengesahan
+-- doktor. Kini ambang dibaca dari psy_settings.vitals_thresholds (diedit oleh
+-- super_admin/doktor di tetapan.html, tab "Ambang Vitals").
+--
+-- PENTING: critical_min/critical_max SENGAJA null untuk semua vital dalam seed di
+-- bawah — automasi Protokol Kecemasan (is_critical → auto-cipta psy_emergency_alerts)
+-- TAK AKAN aktif sehingga seseorang isi nilai melalui UI. Migration ni sendiri TIDAK
+-- menghidupkan apa-apa automasi baharu.
+--
+-- Rujuk: database/schema/10_vitals.sql, database/schema/23_settings.sql
+
+-- ═══ 1. Kolum is_critical (belum wujud di prod) ═══
+ALTER TABLE psy_vitals ADD COLUMN IF NOT EXISTS is_critical BOOLEAN NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS idx_psy_vitals_abnormal ON psy_vitals(is_abnormal) WHERE is_abnormal = true;
+
+-- ═══ 2. Seed ambang — normal_* sepadan angka client-side sedia ada (tiada perubahan
+-- tingkah laku is_abnormal semasa cutover); critical_* kosong sehingga doktor sahkan ═══
+INSERT INTO psy_settings (key, value) VALUES
+  ('vitals_thresholds', '{
+    "bp_systolic":      {"normal_min": 90,   "normal_max": 129,  "critical_min": null, "critical_max": null},
+    "bp_diastolic":      {"normal_min": 60,   "normal_max": 84,   "critical_min": null, "critical_max": null},
+    "heart_rate":        {"normal_min": 60,   "normal_max": 100,  "critical_min": null, "critical_max": null},
+    "temperature":       {"normal_min": 36.1, "normal_max": 37.2, "critical_min": null, "critical_max": null},
+    "spo2":              {"normal_min": 95,   "normal_max": null, "critical_min": null, "critical_max": null},
+    "respiratory_rate":  {"normal_min": 12,   "normal_max": 20,   "critical_min": null, "critical_max": null}
+  }'::jsonb)
+ON CONFLICT (key) DO NOTHING;
+
+-- ═══ 3. fn_vitals_compute_critical() — config-driven, exception-safe sepenuhnya
+-- (BEFORE trigger; kalau throw, ia boleh sekat SEMUA simpanan vitals klinik) ═══
+CREATE OR REPLACE FUNCTION fn_vitals_compute_critical()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+  v_cfg JSONB;
+  v_bp_sys JSONB; v_bp_dia JSONB; v_hr JSONB; v_temp JSONB; v_spo2 JSONB; v_rr JSONB;
+BEGIN
+  NEW.is_critical := false;
+
+  BEGIN
+    SELECT value INTO v_cfg FROM psy_settings WHERE key = 'vitals_thresholds';
+  EXCEPTION WHEN OTHERS THEN
+    v_cfg := NULL;
+  END;
+
+  IF v_cfg IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  BEGIN
+    v_bp_sys := v_cfg -> 'bp_systolic';
+    v_bp_dia := v_cfg -> 'bp_diastolic';
+    v_hr     := v_cfg -> 'heart_rate';
+    v_temp   := v_cfg -> 'temperature';
+    v_spo2   := v_cfg -> 'spo2';
+    v_rr     := v_cfg -> 'respiratory_rate';
+
+    NEW.is_critical := (
+      (NEW.bp_systolic IS NOT NULL AND v_bp_sys IS NOT NULL AND (
+        (v_bp_sys->>'critical_min' IS NOT NULL AND NEW.bp_systolic < (v_bp_sys->>'critical_min')::numeric) OR
+        (v_bp_sys->>'critical_max' IS NOT NULL AND NEW.bp_systolic >= (v_bp_sys->>'critical_max')::numeric)
+      )) OR
+      (NEW.bp_diastolic IS NOT NULL AND v_bp_dia IS NOT NULL AND (
+        (v_bp_dia->>'critical_min' IS NOT NULL AND NEW.bp_diastolic < (v_bp_dia->>'critical_min')::numeric) OR
+        (v_bp_dia->>'critical_max' IS NOT NULL AND NEW.bp_diastolic >= (v_bp_dia->>'critical_max')::numeric)
+      )) OR
+      (NEW.heart_rate IS NOT NULL AND v_hr IS NOT NULL AND (
+        (v_hr->>'critical_min' IS NOT NULL AND NEW.heart_rate < (v_hr->>'critical_min')::numeric) OR
+        (v_hr->>'critical_max' IS NOT NULL AND NEW.heart_rate > (v_hr->>'critical_max')::numeric)
+      )) OR
+      (NEW.temperature IS NOT NULL AND v_temp IS NOT NULL AND (
+        (v_temp->>'critical_min' IS NOT NULL AND NEW.temperature < (v_temp->>'critical_min')::numeric) OR
+        (v_temp->>'critical_max' IS NOT NULL AND NEW.temperature >= (v_temp->>'critical_max')::numeric)
+      )) OR
+      (NEW.spo2 IS NOT NULL AND v_spo2 IS NOT NULL AND
+        (v_spo2->>'critical_min' IS NOT NULL AND NEW.spo2 < (v_spo2->>'critical_min')::numeric)
+      ) OR
+      (NEW.respiratory_rate IS NOT NULL AND v_rr IS NOT NULL AND (
+        (v_rr->>'critical_min' IS NOT NULL AND NEW.respiratory_rate < (v_rr->>'critical_min')::numeric) OR
+        (v_rr->>'critical_max' IS NOT NULL AND NEW.respiratory_rate > (v_rr->>'critical_max')::numeric)
+      ))
+    );
+  EXCEPTION WHEN OTHERS THEN
+    RAISE LOG 'fn_vitals_compute_critical: %', SQLERRM;
+    NEW.is_critical := false;
+  END;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_vitals_compute_critical ON psy_vitals;
+CREATE TRIGGER trg_vitals_compute_critical
+  BEFORE INSERT OR UPDATE ON psy_vitals
+  FOR EACH ROW EXECUTE FUNCTION fn_vitals_compute_critical();
+
+-- TIADA backfill is_critical — config critical_* kosong (NULL) secara default, jadi
+-- backfill akan sentiasa false utk semua rekod sedia ada sehingga doktor isi ambang.
+
+COMMENT ON COLUMN psy_vitals.is_critical IS
+  'Bacaan kritikal (bahaya klinikal, perlu tindakan segera) — dikira SERVER-SIDE sahaja '
+  '(trg_vitals_compute_critical), staf TAK boleh override/uncheck macam is_abnormal. Bila true, '
+  'trg_vitals_notify_emergency (18_notifications_automations.sql) auto-cipta/kemaskini kes di '
+  'psy_emergency_alerts — Red Emergency Protocol. Ambang dibaca dari psy_settings.vitals_thresholds '
+  '(diedit oleh super_admin/doktor di tetapan.html) — kosong (NULL) = automasi TAK aktif utk vital tu.';
+
+
+-- ═════════════════════════════════════════════════════════════════
+-- BUNDLE: 20260930_pakej_report_completion_rbac.sql
+-- ═════════════════════════════════════════════════════════════════
+-- Audit management batch 3 (30 Sept 2026) — Laporan Siap/Berhenti/Meninggal
+-- per-pakej (pakej-laporan.html + pakej-report.html) kini guna outcome_status
+-- sebenar (bukan status cetek). Coach & Doktor diberi akses 'view' modul
+-- package/pakej_laporan (sebelum ni tiada langsung, tersekat RBAC).
+-- Rujuk: database/schema/03_rbac_security.sql
+
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT 'doctor', m.code, 'view'
+FROM (VALUES ('package'), ('pakej_laporan')) AS m(code)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT 'coach', m.code, 'view'
+FROM (VALUES ('package'), ('pakej_laporan')) AS m(code)
+ON CONFLICT DO NOTHING;
+
+
+-- ═════════════════════════════════════════════════════════════════
+-- BUNDLE: 20260930b_legacy_pending_combined.sql
+-- ═════════════════════════════════════════════════════════════════
+-- ═══════════════════════════════════════════════════════════════════
 -- GABUNGAN MIGRATION TERTUNGGAK (batch lama, 1 Ogos - 24 Sept 2026)
 -- Digabung 2026-09-30 drpd 30 fail berasingan (senarai di bawah), yang
 -- kekal berdiri sendiri (belum masuk 20260901_combined_migrations.sql
@@ -1601,5 +3160,7 @@ ALTER TABLE psy_payments ADD COLUMN IF NOT EXISTS receipt_last_sent_status TEXT;
 ALTER TABLE psy_payments DROP CONSTRAINT IF EXISTS psy_payments_receipt_last_sent_status_check;
 ALTER TABLE psy_payments ADD CONSTRAINT psy_payments_receipt_last_sent_status_check
   CHECK (receipt_last_sent_status IS NULL OR receipt_last_sent_status IN ('sent','failed'));
+
+
 
 
