@@ -770,7 +770,7 @@ async function runInstallmentAutoChargeCheck(supabase, locationId) {
 
   const myToday = new Date(Date.now() + MY_OFFSET_MS).toISOString().slice(0, 10)
   const { data: rows } = await supabase.from('psy_kob_installment_checkpoints')
-    .select('id, seq, due_date, target_cumulative, kob_session_id, patient_id, autocharge_attempts, autocharge_last_attempt_at, psy_patients(full_name, phone, emergency_contact_phone, emergency_contact_name, contact_preference)')
+    .select('id, seq, due_date, target_cumulative, kob_session_id, patient_id, autocharge_attempts, autocharge_last_attempt_at, psy_patients(full_name, phone, emergency_contact_phone, emergency_contact_name, contact_preference, status, outcome_status)')
     .eq('status', 'pending').lte('due_date', myToday).lt('autocharge_attempts', 3).limit(200)
   const res = { checked: 0, charged: 0, failed: 0, skipped: 0, errors: [] }
   if (!rows?.length) return res
@@ -780,6 +780,11 @@ async function runInstallmentAutoChargeCheck(supabase, locationId) {
 
   for (const row of rows) {
     res.checked++
+    // Audit Tier 9 #47 — jangan auto-caj pesakit yang dah stop/tamat rawatan,
+    // walau kad masih 'attached' (staf mungkin belum sempat "Henti Auto-Caj" manual).
+    const patientStopped = (row.psy_patients?.status && row.psy_patients.status !== 'active')
+      || ['berhenti', 'meninggal'].includes(row.psy_patients?.outcome_status)
+    if (patientStopped) { res.skipped++; continue }
     // Sekali sahaja sehari — elak caj berulang tiap 15 min cron jalan.
     if (row.autocharge_last_attempt_at && row.autocharge_last_attempt_at.slice(0, 10) === myToday) { res.skipped++; continue }
 
@@ -852,6 +857,21 @@ async function runInstallmentAutoChargeCheck(supabase, locationId) {
         autocharge_status: 'failed', autocharge_last_attempt_at: nowIso, autocharge_attempts: attempts,
       }).eq('id', row.id)
       res.failed++
+
+      // Audit Tier 9 #46 — sebelum ni staf TAK dapat sebarang notifikasi bila auto-caj
+      // gagal (beza drpd laluan method_attached yang notify staf, payments-webhook-recurring).
+      try {
+        const targets = new Set()
+        const { data: staff } = await supabase.from('psy_profiles').select('id').eq('role', 'staff').in('staff_role', ['admin', 'manager'])
+        ;(staff || []).forEach((s) => targets.add(s.id))
+        for (const uid of targets) {
+          await supabase.from('psy_notifications').insert({
+            user_id: uid, type: 'payment', title: 'Auto-Caj Ansuran Gagal ❌',
+            body: `${p.full_name || 'Pesakit'} — ${checkpointLabel} (${amount.toFixed(2)}) gagal dicaj (percubaan ${attempts}/3). ${attempts >= 3 ? 'Serah ke aliran bayaran manual.' : 'Akan cuba semula esok.'}`,
+            link: `../staff/patient-hub.html?id=${row.patient_id}`,
+          }).catch(() => {})
+        }
+      } catch (e) { res.errors.push(`${row.id}: notifikasi staf gagal — ${String(e?.message || e)}`) }
 
       if (failedCfg?.is_active && failedCfg.message_template && phone) {
         try {
