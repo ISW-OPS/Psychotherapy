@@ -263,11 +263,11 @@ FROM (VALUES
   ('Pencernaan','🍽️','Sembelit',100),
   ('Pencernaan','🍽️','Najis hitam',110),
   ('Pencernaan','🍽️','Tiada simptom',120),
-  -- 2. Peredaran Darah
-  ('Peredaran Darah','🩸','Tekanan darah tinggi',130),
-  ('Peredaran Darah','🩸','Tekanan darah rendah',140),
-  ('Peredaran Darah','🩸','Berdebar-debar',150),
-  ('Peredaran Darah','🩸','Tiada simptom',160),
+  -- 2. Jantung (dulu "Peredaran Darah", ditukar 1 Okt 2026 atas permintaan staf)
+  ('Jantung','❤️','Tekanan darah tinggi',130),
+  ('Jantung','❤️','Tekanan darah rendah',140),
+  ('Jantung','❤️','Berdebar-debar',150),
+  ('Jantung','❤️','Tiada simptom',160),
   -- 3. Otot & Saraf
   ('Otot & Saraf','💪','Sakit badan',170),
   ('Otot & Saraf','💪','Sakit sendi',180),
@@ -321,7 +321,7 @@ SELECT kumpulan, MAX(COALESCE(ikon, '')), MIN(COALESCE(urutan, 100))
 FROM psy_reaksi_item GROUP BY kumpulan
 ON CONFLICT (nama) DO NOTHING;
 
--- ──── Seed contoh psy_reaksi_actions + pemetaan (Pencernaan + Peredaran Darah) ────
+-- ──── Seed contoh psy_reaksi_actions + pemetaan (Pencernaan + Jantung) ────
 -- Supaya engine boleh diuji serta-merta; staff tambah/kemaskini selebihnya
 -- dari Staff Portal (bukan hardcode). Hanya jalan bila jadual masih kosong.
 DO $$
@@ -343,7 +343,7 @@ BEGIN
   SELECT id INTO s_kembung  FROM psy_reaksi_item WHERE kumpulan='Pencernaan' AND label='Kembung perut' LIMIT 1;
   SELECT id INTO s_angin    FROM psy_reaksi_item WHERE kumpulan='Pencernaan' AND label='Banyak angin' LIMIT 1;
   SELECT id INTO s_loya     FROM psy_reaksi_item WHERE kumpulan='Pencernaan' AND label='Loya' LIMIT 1;
-  SELECT id INTO s_berdebar FROM psy_reaksi_item WHERE kumpulan='Peredaran Darah' AND label='Berdebar-debar' LIMIT 1;
+  SELECT id INTO s_berdebar FROM psy_reaksi_item WHERE kumpulan='Jantung' AND label='Berdebar-debar' LIMIT 1;
 
   IF s_kembung IS NOT NULL THEN
     INSERT INTO psy_reaksi_action_map (symptom_id, action_id) VALUES
