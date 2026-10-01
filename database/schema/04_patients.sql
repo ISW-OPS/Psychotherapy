@@ -249,6 +249,56 @@ CREATE TRIGGER trg_set_patients_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION set_patients_updated_at();
 
+-- ──── trigger: sepadankan status <-> outcome_status ────
+-- status (akses akaun: active/inactive/deceased/...) & outcome_status
+-- (outcome klinikal utk laporan: otw/berhenti/meninggal/completed) overlap
+-- bila rekod maut/selesai rawatan. Staff kadang tukar salah satu je (cth
+-- dropdown "Status Outcome Rawatan" di patient-form.html) — medan lain
+-- tercicir, jadi automasi (tapis ikut status) & laporan (tapis ikut
+-- outcome_status) boleh tak sepadan utk pesakit yang sama. Trigger ni
+-- paksa kedua-dua medan sentiasa konsisten tanpa kena ubah setiap tempat
+-- yang baca/tulis column ni.
+CREATE OR REPLACE FUNCTION sync_patient_status_outcome()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.outcome_status = 'meninggal' THEN
+    NEW.status := 'deceased';
+  ELSIF NEW.status = 'deceased' THEN
+    NEW.outcome_status := 'meninggal';
+  END IF;
+
+  IF NEW.outcome_status IN ('completed', 'berhenti') AND NEW.status = 'active' THEN
+    NEW.status := 'inactive';
+  END IF;
+
+  -- Account bertukar tak-aktif (session selesai/pakej luput/staff arkib) tapi
+  -- outcome masih 'otw' (atau kosong) — 'otw' bermaksud "sedang berjalan",
+  -- jadi dah tak tepat lagi bila akaun dah tak aktif. Naikkan ke 'completed'
+  -- supaya UI tak papar kombinasi mengelirukan macam "Tidak Aktif" + "Sedang
+  -- Berjalan". Staff masih boleh override ke 'berhenti' selepas ni kalau perlu.
+  IF NEW.status IN ('inactive', 'archived')
+     AND (NEW.outcome_status IS NULL OR NEW.outcome_status IN ('', 'otw')) THEN
+    NEW.outcome_status := 'completed';
+  END IF;
+
+  IF NEW.outcome_status IS DISTINCT FROM OLD.outcome_status
+     AND NEW.outcome_status IS NOT NULL
+     AND NEW.outcome_status_at IS NULL THEN
+    NEW.outcome_status_at := now();
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_sync_patient_status_outcome ON psy_patients;
+CREATE TRIGGER trg_sync_patient_status_outcome
+  BEFORE UPDATE ON psy_patients
+  FOR EACH ROW
+  EXECUTE FUNCTION sync_patient_status_outcome();
+
 -- ──── trigger: auto-jana MRN unik bila tidak dibekalkan ────
 -- Client tak boleh query MRN tertinggi sebab RLS — jadi jana di DB.
 CREATE OR REPLACE FUNCTION assign_patient_mrn()

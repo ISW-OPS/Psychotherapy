@@ -201,11 +201,13 @@
   async function buildPaymentInvoiceInner(pay, override) {
     const doc = D();
     if (!doc) throw new Error('shared/receipt.js belum dimuat / not loaded');
-    const { esc, money, dateLong, header, TEAL, L } = doc;
+    const { esc, money, dateLong, header, TEAL, L, method } = doc;
     const cu = override ? { full_name: override.full_name } : (window.currentUser || {});
-    const pr = override ? { phone: override.phone } : (window.patientRecord || {});
+    const pr = override ? { phone: override.phone, mrn: override.mrn } : (window.patientRecord || {});
     const total = Number(pay.total || 0);
-    const [items, discLines] = await Promise.all([doc.resolveItems(pay), doc.resolveDiscounts(pay)]);
+    const [items, discLines, kb, supplies] = await Promise.all([
+      doc.resolveItems(pay), doc.resolveDiscounts(pay), doc.resolveKobBreakdown(pay), resolvePackageSupplies(pay),
+    ]);
     const disc = Math.max(Number(pay.discount || 0), discLines.reduce((a, l) => a + l.amount, 0));
     const isPaid = pay.status === 'completed';
     const th = 'text-[11px] font-medium uppercase tracking-wide text-ink/70 py-3';
@@ -223,14 +225,18 @@
       <div class="border-t border-ink/10 mt-6 pt-5 grid grid-cols-2 md:grid-cols-4 gap-6 text-sm">
         <div>
           <div class="font-semibold text-ink">${L('Dibilkan kepada', 'Billed to')}</div>
-          <div class="text-ink/60 text-xs mt-2 leading-relaxed">${esc(cu.full_name || '—')}<br>${esc(pr.phone || '—')}<br>Malaysia</div>
+          <div class="text-ink/60 text-xs mt-2 leading-relaxed">${esc(cu.full_name || '—')}<br>${pr.mrn ? `MRN: ${esc(pr.mrn)}<br>` : ''}${esc(pr.phone || '—')}<br>Malaysia</div>
         </div>
         <div><div class="font-semibold text-ink">${L('No. Invois', 'Invoice Number')}</div><div class="text-ink/60 text-xs mt-2">${esc(pay.invoice_no || pay.invoice_number || pay.receipt_ref || '—')}</div></div>
         <div class="space-y-3">
           <div><div class="font-semibold text-ink">${L('Tarikh Dikeluarkan', 'Issue Date')}</div><div class="text-ink/60 text-xs mt-1">${dateLong(issue)}</div></div>
           <div><div class="font-semibold text-ink">${L('Tarikh Akhir Bayaran', 'Due Date')}</div><div class="text-ink/60 text-xs mt-1">${dateLong(issue)}</div></div>
         </div>
-        <div class="text-right">${action}</div>
+        <div class="text-right space-y-2">
+          ${method(pay) ? `<div class="text-xs text-ink/60">${L('Kaedah Bayaran', 'Payment Method')}: ${esc(method(pay))}</div>` : ''}
+          ${pay.receipt_ref ? `<div class="text-xs text-ink/45">${L('Rujukan', 'Reference')}: ${esc(pay.receipt_ref)}</div>` : ''}
+          ${action}
+        </div>
       </div>
 
       <table class="w-full mt-10 text-sm">
@@ -261,7 +267,42 @@
             `<div class="flex justify-between py-1"><span class="font-semibold text-ink">${esc(l.label)}</span><span class="text-ink/60 text-xs">-${money(l.amount)}</span></div>`).join('')}
           <div class="flex justify-between py-2.5 mt-1 border-t border-ink/20"><span class="font-bold text-ink">${L('Baki Perlu Dibayar (MYR)', 'Amount Due (MYR)')}</span><span class="font-bold text-ink">${money(dueAmt)}</span></div>
         </div>
-      </div>`;
+      </div>
+
+      ${kb ? `
+      <div class="mt-8 border-t border-ink/10 pt-5">
+        <div class="text-[11px] font-medium uppercase tracking-wide text-ink/70 mb-2">${L('Pecahan Bayaran', 'Payment Breakdown')}${kb.invoiceNo ? ` <span class="normal-case text-ink/40">· ${L('Invois', 'Invoice')} ${esc(kb.invoiceNo)}</span>` : ''}</div>
+        <div class="max-w-sm ml-auto text-sm">
+          ${kb.pkgDiscount > 0 ? `<div class="flex justify-between py-1"><span class="text-ink/70">${L('Harga Pakej', 'Package Price')}</span><span class="text-ink/60 text-xs">${money(kb.listPrice)}</span></div>
+          <div class="flex justify-between py-1"><span class="text-ink/70">${L('Diskaun', 'Discount')}</span><span class="text-ink/60 text-xs">-${money(kb.pkgDiscount)}</span></div>` : ''}
+          <div class="flex justify-between py-1.5 border-t border-ink/10 mt-1"><span class="font-semibold text-ink">${L('Jumlah Pakej', 'Package Total')}</span><span class="font-semibold text-ink">${money(kb.owed)}</span></div>
+          <div class="flex justify-between py-1"><span class="text-ink/70">${L('Dibayar pada invois ini', 'Paid on this invoice')} (${esc(kb.thisLabel)})</span><span class="text-ink/60 text-xs">${money(total)}</span></div>
+          <div class="flex justify-between py-1"><span class="text-ink/70">${L('Jumlah Dibayar Setakat Ini', 'Total Paid to Date')}</span><span class="text-ink/60 text-xs">${money(kb.paidToDate)}</span></div>
+          <div class="flex justify-between py-2 border-t border-ink/20 mt-1"><span class="font-bold text-ink">${L('Baki Perlu Dibayar', 'Balance Remaining')}</span><span class="font-bold text-ink">${money(kb.outstanding)}</span></div>
+        </div>
+      </div>` : ''}
+
+      ${supplies?.length ? `
+      <div class="mt-6 border-t border-ink/10 pt-5">
+        <div class="text-[11px] font-medium uppercase tracking-wide text-ink/70 mb-2">${L('Kandungan Pakej (Bekalan)', 'Package Contents (Supplies)')}</div>
+        <ul class="text-xs text-ink/70 space-y-1 list-disc pl-4">
+          ${supplies.map(s => `<li>${esc(s.name)}${s.qty ? ` × ${esc(String(s.qty))}` : ''}</li>`).join('')}
+        </ul>
+      </div>` : ''}`;
+  }
+
+  // Senarai bekalan/stok keseluruhan pakej (psy_packages.supplies) — utk invois pakej
+  // KOB sahaja. Bukan pengiraan refund — sekadar rujukan kandungan pakej pada invois.
+  async function resolvePackageSupplies(pay) {
+    const kobId = pay.intent?.kob_session_id;
+    if (!kobId || !window.db) return null;
+    try {
+      const { data: kob } = await window.db.from('psy_kob_sessions').select('recommended_package_id').eq('id', kobId).maybeSingle();
+      if (!kob?.recommended_package_id) return null;
+      const { data: pkg } = await window.db.from('psy_packages').select('supplies').eq('package_id', kob.recommended_package_id).maybeSingle();
+      const list = Array.isArray(pkg?.supplies) ? pkg.supplies.filter(s => s?.name) : [];
+      return list.length ? list : null;
+    } catch (_) { return null; }
   }
 
   async function viewPaymentInvoice(pay, override) {

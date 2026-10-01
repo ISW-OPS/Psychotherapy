@@ -9,7 +9,7 @@
 (function () {
   const RCPT_METHODS = {
     fpx: 'FPX Online Banking', card: 'Kad Kredit/Debit', transfer: 'Bank Transfer',
-    ghl: 'GHL Payment', manual: 'Manual', gateway: 'Online (FPX/Kad)',
+    ghl: 'Maju Jaya Payment', manual: 'Manual', gateway: 'Online (FPX/Kad)',
   };
   // Dwibahasa: L(BM, EN) — bahasa semasa (i18n.js). Default EN kalau i18n belum dimuat.
   const L = (ms, en) => (window.iswL ? window.iswL(ms, en) : en);
@@ -267,7 +267,7 @@
     printHtml(await buildReceiptInner(r), r.receipt_no || r.receipt_ref);
   }
 
-  window.iswDoc = { header: docHeaderHtml, money: rMoney, dateLong: rDateLong, esc: rEsc, L, printHtml, TEAL: DOC_TEAL, resolveItems: resolveReceiptItems, resolveDiscounts: resolveDiscountLines };
+  window.iswDoc = { header: docHeaderHtml, money: rMoney, dateLong: rDateLong, esc: rEsc, L, printHtml, TEAL: DOC_TEAL, resolveItems: resolveReceiptItems, resolveDiscounts: resolveDiscountLines, resolveKobBreakdown, method: rMethod };
   window.buildReceiptInner = buildReceiptInner;
   window.viewReceiptPDF = viewReceiptPDF;
   window.printReceipt = printReceipt;

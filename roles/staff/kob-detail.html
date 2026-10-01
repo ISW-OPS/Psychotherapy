@@ -874,7 +874,7 @@
       // dropdown, bukan hilang jadi "— Pilih —" kosong. Staff tetap boleh timpa manual.
       const ghlOnly = !current && kob[nameKey];
       const placeholder = ghlOnly
-        ? `<option value="" selected>${escapeHtml(kob[nameKey])} (GHL)</option>`
+        ? `<option value="" selected>${escapeHtml(kob[nameKey])} (Maju Jaya)</option>`
         : `<option value="" ${current ? '' : 'selected'}>— Pilih ${KOB_ROLE_LABEL[field]} —</option>`;
       cell.innerHTML = `
         <select class="finput" data-rbac="kob.edit" onchange="onKobRoleChange(this,'${field}')">
@@ -2555,7 +2555,7 @@
 
         const ec = await ghlInvoke('ensurecontact', { phone: cleanPhone, name: patName });
         const contactId = ec?.contact?.contactId;
-        if (!contactId) throw new Error('Tak dapat sediakan contact GHL untuk nombor ini.');
+        if (!contactId) throw new Error('Tak dapat sediakan contact Maju Jaya untuk nombor ini.');
         const label = mode === 'full' ? 'Bayaran Penuh' : 'Deposit Ansuran';
         // Invois (PDF, butang Pay boleh diklik) dilampirkan bersama pautan. Gagal jana TAK gagalkan hantar pautan.
         let invoiceUrl = null, invoiceErr = '';
@@ -2615,7 +2615,7 @@
 
         const ec = await ghlInvoke('ensurecontact', { phone: cleanPhone, name: patName });
         const contactId = ec?.contact?.contactId;
-        if (!contactId) throw new Error('Tak dapat sediakan contact GHL untuk nombor ini.');
+        if (!contactId) throw new Error('Tak dapat sediakan contact Maju Jaya untuk nombor ini.');
         await ghlInvoke('send', {
           contactId,
           message: `Salam ${patName} 👋\n\nUntuk memudahkan bayaran ansuran pakej rawatan anda, sila lampirkan kad debit/kredit anda (pengesahan RM1) melalui pautan selamat di bawah. Ansuran seterusnya akan ditolak SECARA AUTOMATIK pada tarikh due — anda tak perlu klik pautan bayaran setiap bulan lagi.\n\n${data.checkoutUrl}\n\n— ISW`,
@@ -2718,7 +2718,7 @@
       try {
         const ec = await ghlInvoke('ensurecontact', { phone: cleanPhone, name: patName });
         const contactId = ec?.contact?.contactId;
-        if (!contactId) throw new Error('Tak dapat sediakan contact GHL untuk nombor ini.');
+        if (!contactId) throw new Error('Tak dapat sediakan contact Maju Jaya untuk nombor ini.');
         await ghlInvoke('send', {
           contactId,
           message: buildKobAgreementSignedMessage(patName),
@@ -3344,8 +3344,8 @@
       <div>
         <div class="text-[11px] font-semibold text-ink/50 uppercase mb-2">5. Payment Method</div>
         <div class="flex gap-3 max-w-md">
-          <button type="button" onclick="wizSelectMethod('manual')" class="flex-1 px-4 py-2.5 border border-ink/15 rounded-lg text-sm font-semibold hover:bg-ink/5">💳 Bayaran Manual</button>
-          <button type="button" onclick="wizSelectMethod('hitpay')" class="flex-1 px-4 py-2.5 border border-ink/15 rounded-lg text-sm font-semibold hover:bg-ink/5">🔗 HitPay</button>
+          <button type="button" onclick="wizSelectMethod('manual')" title="Rekod bayaran manual (tunai/pindahan bank) — tidak melalui gateway HitPay; staff perlu muat naik/tandakan bukti bayaran sendiri" class="flex-1 px-4 py-2.5 border border-ink/15 rounded-lg text-sm font-semibold hover:bg-ink/5">💳 Bayaran Manual</button>
+          <button type="button" onclick="wizSelectMethod('hitpay')" title="Hantar pautan bayaran HitPay kepada pesakit — bayaran & status dikemas kini automatik melalui gateway" class="flex-1 px-4 py-2.5 border border-ink/15 rounded-lg text-sm font-semibold hover:bg-ink/5">🔗 HitPay</button>
         </div>
         ${isManual ? '<p class="text-[10px] text-ink/40 mt-1.5">ℹ️ Jadual Ansuran Manual di Langkah 4 disimpan dulu — HitPay jana pautan ikut jumlah deposit yg sama; pesakit tetap perlu klik pautan &amp; lengkapkan checkout sendiri (bukan auto-caj tanpa tindakan).</p>' : ''}
       </div>`;
@@ -3557,8 +3557,36 @@
           // ansuran) — jangan guna packagePrice sbg penyebut di sini, elak "Sudah
           // dibayar X / Y" tersasar drpd apa yg sebenarnya patient kena bayar.
           const { data: cps } = await window.db.from('psy_kob_installment_checkpoints')
-            .select('target_cumulative').eq('kob_session_id', kobId).order('seq', { ascending: false }).limit(1);
-          const commitment = cps?.[0] ? Number(cps[0].target_cumulative) : packagePrice;
+            .select('seq, due_date, target_cumulative, status').eq('kob_session_id', kobId).order('seq', { ascending: true });
+          const commitment = cps?.length ? Number(cps[cps.length - 1].target_cumulative) : packagePrice;
+
+          // Jadual penuh IPP guna tarikh SEBENAR dari checkpoint tersimpan (bukan
+          // kira ulang dari "hari ini" setiap kali page dibuka — tu laluan wizard
+          // sebelum deposit direkod sahaja). Kekal dipaparkan lepas deposit supaya
+          // staff masih boleh rujuk baki & tarikh due akan datang.
+          const checkpointScheduleHtml = (checkpoints) => {
+            if (!checkpoints?.length) return '';
+            let prevCumulative = 0;
+            const rows = checkpoints.map((cp, i) => {
+              const amt = Number(cp.target_cumulative) - prevCumulative;
+              prevCumulative = Number(cp.target_cumulative);
+              const label = i === 0 ? 'Bayaran Pertama'
+                : `Ansuran ${i}${i === checkpoints.length - 1 ? ' (Terakhir)' : ''}`;
+              const statusTag = cp.status === 'met' ? '<span class="text-green-dark font-semibold">✅ Dibayar</span>'
+                : cp.status === 'overdue' ? '<span class="text-terracotta font-semibold">⚠️ Tertunggak</span>'
+                : '<span class="text-ink/40">Menunggu</span>';
+              return `<tr class="border-b border-ink/5"><td class="py-1">${i + 1}</td><td>${label}</td><td>${fmtScheduleDate(cp.due_date)}</td><td class="text-right font-semibold">${fmtRM(amt)}</td><td class="text-right">${statusTag}</td></tr>`;
+            }).join('');
+            return `
+        <div class="bg-cream/50 rounded-xl border border-ink/10 p-4 mb-2">
+          <div class="text-xs font-bold text-ink/70 mb-2">DETAIL INSTALLMENT PAYMENT (IPP)</div>
+          <table class="w-full text-xs">
+            <thead><tr class="text-ink/45 text-left border-b border-ink/10"><th class="py-1">Bil.</th><th>Perkara</th><th>Tarikh</th><th class="text-right">Jumlah (RM)</th><th class="text-right">Status</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <div class="flex justify-between pt-2 mt-1 border-t border-ink/10 font-bold text-navy text-sm"><span>Jumlah Komitmen</span><span>${fmtRM(commitment)}</span></div>
+        </div>`;
+          };
 
           // Kad tersimpan (auto-caj) — 1 rekod per sesi KOB. Badge status + butang
           // hantar/ulang pautan lampir kad kalau belum 'attached'.
@@ -3578,6 +3606,7 @@
           wizMain.innerHTML = `
         <div class="text-xs text-green-dark bg-green-light/50 p-2 rounded mb-2">✅ Deposit diterima (${fmtRM(totalPaid)}). Baki ansuran diuruskan di Pesakit Hub selepas KOB ditandakan selesai.</div>
         ${cardBadge}
+        ${checkpointScheduleHtml(cps)}
         ${paymentHistoryHtml(payments, commitment, totalPaid)}`;
           return;
         }

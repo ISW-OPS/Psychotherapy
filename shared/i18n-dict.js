@@ -9200,5 +9200,15 @@ window.ISW_I18N_EXTRA = {
   "Memuatkan profil...": "Loading profile...",
   "Mengalih ke dashboard...": "Redirecting to dashboard...",
   "Mengesahkan jemputan...": "Verifying invitation...",
-  "Mengalih ke halaman log masuk...": "Redirecting to login page..."
+  "Mengalih ke halaman log masuk...": "Redirecting to login page...",
+
+  // — SOP button (dna-test.html) + SOP source setting (tetapan.html) — added 1 Oct —
+  "Sumber SOP (butang 📄 SOP di Step 2)": "SOP Source (📄 SOP button in Step 2)",
+  "Dokumen Knowledge Base": "Knowledge Base Document",
+  "Link Luar (URL)": "External Link (URL)",
+  "Pilih Dokumen": "Select Document",
+  "— Pilih dokumen —": "— Select document —",
+  "URL Link Luar": "External Link URL",
+  "SOP belum ditetapkan. Sila konfigur di Tetapan Sistem › Klinik.": "SOP not yet set. Please configure it in System Settings › Clinic.",
+  "Tak faham langkah di bawah? Tekan butang 📄 SOP di atas untuk panduan penuh.": "Not sure about the steps below? Tap the 📄 SOP button above for the full guide."
 };
