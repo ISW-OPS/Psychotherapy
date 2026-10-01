@@ -80,9 +80,13 @@ ON CONFLICT (id) DO UPDATE
 INSERT INTO storage.buckets (id, name, public) VALUES ('supplier-docs', 'supplier-docs', false)
 ON CONFLICT (id) DO NOTHING;
 
--- Gambar produk inventori — public (dipaparkan terus di senarai/detail produk)
-INSERT INTO storage.buckets (id, name, public) VALUES ('inventory-images', 'inventory-images', true)
-ON CONFLICT (id) DO NOTHING;
+-- Gambar produk inventori — public (dipaparkan terus di senarai/detail produk).
+-- Turut dikongsi oleh Produk & Bahan Luar (psy_recommended_products.image_url).
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('inventory-images', 'inventory-images', true, 2097152, ARRAY['image/png','image/jpeg','image/jpg','image/webp'])
+ON CONFLICT (id) DO UPDATE
+  SET file_size_limit = EXCLUDED.file_size_limit,
+      allowed_mime_types = EXCLUDED.allowed_mime_types;
 
 -- Gambar produk shop (gallery multi-gambar) — public (dipaparkan di shop & senarai produk)
 INSERT INTO storage.buckets (id, name, public) VALUES ('product-images', 'product-images', true)

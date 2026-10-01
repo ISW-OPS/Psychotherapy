@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS psy_recommended_products (
   requirement_level TEXT NOT NULL DEFAULT 'cadangan'
                     CHECK (requirement_level IN ('wajib','cadangan','opsyenal')),
   price             NUMERIC(10,2),  -- harga rujukan (opsyenal — setiap seller ada harga sendiri)
+  image_url         TEXT,        -- gambar produk (bucket inventory-images dikongsi)
   notes             TEXT,
   is_active         BOOLEAN NOT NULL DEFAULT true,
   last_verified_at  TIMESTAMPTZ,
