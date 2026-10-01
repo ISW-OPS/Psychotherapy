@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Butiran Produk</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🧴</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-5 max-w-4xl">
+        <div class="text-xs text-ink/40">
+          <a href="produk-bahan.html" class="hover:underline">Produk & Bahan Luar</a> <span class="mx-1">›</span>
+          <span class="text-ink/70 font-medium">Butiran Produk</span>
+        </div>
+
+        <div id="pv-content" class="hidden space-y-5">
+          <div class="flex items-center justify-between flex-wrap gap-3">
+            <div class="flex items-center gap-3">
+              <img id="pv-image" class="hidden w-16 h-16 rounded-xl object-cover border border-ink/10">
+              <div>
+                <h2 id="pv-name" class="text-xl font-bold text-navy">—</h2>
+                <div class="flex items-center gap-2 mt-1">
+                  <span id="pv-level" class="text-[11px] font-semibold px-2.5 py-0.5 rounded-full"></span>
+                  <span id="pv-status" class="text-[11px] font-semibold px-2.5 py-0.5 rounded-full"></span>
+                </div>
+              </div>
+            </div>
+            <a id="pv-edit-link" data-rbac="produk_bahan.edit" class="purple-btn px-5 py-2.5 rounded-xl text-sm font-semibold hover:opacity-90" style="background:#6366f1;color:white">✏️ Edit Produk</a>
+          </div>
+
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-6 grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div>
+              <div class="text-[11px] font-semibold text-ink/40 uppercase tracking-wide mb-1">Kategori</div>
+              <div id="pv-category" class="text-sm text-ink">—</div>
+            </div>
+            <div>
+              <div class="text-[11px] font-semibold text-ink/40 uppercase tracking-wide mb-1">Kuantiti Disyorkan</div>
+              <div id="pv-qty" class="text-sm text-ink">—</div>
+            </div>
+            <div class="md:col-span-2">
+              <div class="text-[11px] font-semibold text-ink/40 uppercase tracking-wide mb-1">Tujuan / Kegunaan</div>
+              <div id="pv-purpose" class="text-sm text-ink whitespace-pre-wrap">—</div>
+            </div>
+            <div class="md:col-span-2">
+              <div class="text-[11px] font-semibold text-ink/40 uppercase tracking-wide mb-1">Nota</div>
+              <div id="pv-notes" class="text-sm text-ink whitespace-pre-wrap">—</div>
+            </div>
+            <div>
+              <div class="text-[11px] font-semibold text-ink/40 uppercase tracking-wide mb-1">Kali Terakhir Disahkan</div>
+              <div id="pv-verified" class="text-sm text-ink">—</div>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-6">
+            <h3 class="font-bold text-sm text-ink mb-3">🛒 Tempat Beli (Pembekal)</h3>
+            <div id="pv-sellers" class="space-y-2"></div>
+            <div id="pv-sellers-empty" class="hidden text-xs text-ink/40 italic">Tiada pembekal direkod.</div>
+          </div>
+
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-6">
+            <h3 class="font-bold text-sm text-ink mb-3">🗂️ Pautan ke Pakej</h3>
+            <div id="pv-packages" class="space-y-1.5"></div>
+            <div id="pv-packages-empty" class="hidden text-xs text-ink/40 italic">Tiada pakej dipautkan.</div>
+          </div>
+        </div>
+
+        <div id="pv-notfound" class="hidden text-center py-16 text-sm text-ink/40">Produk tidak dijumpai.</div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmtDate(d) { return d ? new Date(d).toLocaleDateString('ms-MY', { day:'2-digit', month:'short', year:'numeric' }) : '—'; }
+
+const LEVEL_META = {
+  wajib:     { label: 'Wajib',     cls: 'bg-terracotta/15 text-terracotta' },
+  cadangan:  { label: 'Cadangan',  cls: 'bg-gold/20 text-gold-dark' },
+  opsyenal:  { label: 'Opsyenal',  cls: 'bg-ink/8 text-ink/55' },
+};
+
+(async () => {
+  const user = await initStaff('produk_bahan', 'Butiran Produk');
+  if (!user) return;
+
+  const qs = new URLSearchParams(location.search);
+  const id = qs.get('id');
+  if (!id) { document.getElementById('pv-notfound').classList.remove('hidden'); return; }
+
+  const { data: p, error } = await window.db.from('psy_recommended_products').select('*').eq('id', id).maybeSingle();
+  if (error || !p) { document.getElementById('pv-notfound').classList.remove('hidden'); return; }
+
+  document.getElementById('pv-edit-link').href = `produk-bahan-form.html?id=${id}`;
+  document.getElementById('pv-name').textContent = p.name;
+  document.title = `Ibnu Sina Wellness — ${p.name}`;
+  if (p.image_url) {
+    const img = document.getElementById('pv-image');
+    img.src = p.image_url; img.classList.remove('hidden');
+  }
+  const lvl = LEVEL_META[p.requirement_level] || LEVEL_META.cadangan;
+  const lvlEl = document.getElementById('pv-level');
+  lvlEl.textContent = lvl.label; lvlEl.className = `text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${lvl.cls}`;
+  const statusEl = document.getElementById('pv-status');
+  statusEl.textContent = p.is_active ? '● Aktif' : '● Tidak Aktif';
+  statusEl.className = `text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${p.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-ink/8 text-ink/55'}`;
+
+  document.getElementById('pv-category').textContent = p.category || '—';
+  document.getElementById('pv-qty').textContent = p.qty_note || '—';
+  document.getElementById('pv-purpose').textContent = p.purpose || '—';
+  document.getElementById('pv-notes').textContent = p.notes || '—';
+  document.getElementById('pv-verified').textContent = p.last_verified_at ? fmtDate(p.last_verified_at) : 'Belum pernah disahkan';
+
+  const [{ data: sellers }, { data: maps }] = await Promise.all([
+    window.db.from('psy_recommended_product_sellers').select('*').eq('product_id', id).order('sort_order', { ascending: true }),
+    window.db.from('psy_package_recommended_products').select('*, psy_packages(name)').eq('product_id', id),
+  ]);
+
+  const sellersEl = document.getElementById('pv-sellers');
+  if ((sellers || []).length) {
+    sellersEl.innerHTML = sellers.map(s => `
+      <div class="flex items-center gap-3 border border-ink/10 rounded-xl px-3 py-2 text-sm">
+        <span class="font-semibold text-ink/70 w-24 flex-shrink-0 truncate">${escHtml(s.platform || '—')}</span>
+        <span class="text-ink/60 flex-shrink-0">${escHtml(s.seller_name || '—')}</span>
+        ${s.link ? `<a href="${escHtml(s.link)}" target="_blank" rel="noopener" class="text-navy hover:underline truncate flex-1 min-w-0">${escHtml(s.link)}</a>` : '<span class="text-ink/30">—</span>'}
+      </div>`).join('');
+  } else document.getElementById('pv-sellers-empty').classList.remove('hidden');
+
+  const pkgEl = document.getElementById('pv-packages');
+  if ((maps || []).length) {
+    pkgEl.innerHTML = maps.map(m => `
+      <div class="flex items-center justify-between text-sm border-b border-ink/5 last:border-0 py-1.5">
+        <span class="text-ink">${escHtml(m.psy_packages?.name || m.package_id)}</span>
+        <span class="text-ink/45 text-xs">${m.week_number ? `Minggu ${m.week_number}` : 'Sepanjang pakej'}</span>
+      </div>`).join('');
+  } else document.getElementById('pv-packages-empty').classList.remove('hidden');
+
+  document.getElementById('pv-content').classList.remove('hidden');
+})();
+</script>
+</body>
+</html>
