@@ -928,6 +928,8 @@ async function addReportFiles(key, code, fileList) {
   }
   const current = { ...(PROC.report_files || {}) };
   const arr = [...(current[key] || [])];
+  const meta = { ...(PROC.report_files_meta || {}) };
+  const nowIso = new Date().toISOString();
   const patientName = (iswPatientName(PATIENT) || 'Pesakit').replace(/[\/\\?#%]/g, '').trim();
   for (const file of files) {
     const idx = arr.length + 1;
@@ -936,9 +938,10 @@ async function addReportFiles(key, code, fileList) {
     const { error } = await window.db.storage.from('dna-test').upload(path, file, { upsert: true });
     if (error) { banner(`Gagal muat naik: ${error.message}`, 'error'); continue; }
     arr.push(path);
+    meta[path] = { uploaded_at: nowIso, uploaded_by: window.currentUser?.id || null, uploaded_by_name: window.currentUser?.full_name || null };
   }
   current[key] = arr;
-  const patch = { report_files: current };
+  const patch = { report_files: current, report_files_meta: meta };
   const nowAllUploaded = REQUIRED_REPORT_KEYS.every(k => (current[k] || []).length > 0);
   if (nowAllUploaded && PROC.current_step < 5) {
     patch.reports_uploaded_at = PROC.reports_uploaded_at || new Date().toISOString();
@@ -957,7 +960,9 @@ async function removeReportFile(key, path) {
   await window.db.storage.from('dna-test').remove([path]);
   const current = { ...(PROC.report_files || {}) };
   current[key] = (current[key] || []).filter(p => p !== path);
-  const ok = await saveProc({ report_files: current });
+  const meta = { ...(PROC.report_files_meta || {}) };
+  delete meta[path];
+  const ok = await saveProc({ report_files: current, report_files_meta: meta });
   if (!ok) return;
   renderStepContent();
 }
@@ -977,11 +982,16 @@ function renderStep4() {
           <div class="text-2xl mb-2">${REPORT_ICONS[key]}</div>
           <div class="text-sm font-bold text-ink mb-2">${esc(code)}</div>
           <div class="space-y-1 mb-2">
-            ${files.length ? files.map(p => `
+            ${files.length ? files.map(p => {
+              const m = (PROC.report_files_meta || {})[p];
+              const when = m?.uploaded_at ? new Date(m.uploaded_at).toLocaleString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : null;
+              return `
               <div class="flex items-center justify-between gap-2 text-[11px]">
                 <button type="button" onclick="downloadReport('${p}')" class="text-green-dark font-semibold hover:underline truncate">✅ ${esc(p.split('/').pop())}</button>
                 <button type="button" onclick="removeReportFile('${key}','${p}')" class="text-terracotta hover:underline flex-shrink-0">Padam</button>
-              </div>`).join('') : '<div class="text-[11px] text-ink/40">Belum dimuat naik</div>'}
+              </div>
+              ${when ? `<div class="text-[10px] text-ink/40">${when}${m.uploaded_by_name ? ' · ' + esc(m.uploaded_by_name) : ''}</div>` : ''}`;
+            }).join('') : '<div class="text-[11px] text-ink/40">Belum dimuat naik</div>'}
           </div>
           <input type="file" accept="application/pdf" multiple onchange="addReportFiles('${key}','${code}', this.files); this.value='';" class="w-full text-xs">
         </div>`;

@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS psy_dna_test_process (
   -- Step 4: Muat Naik Laporan DNA (dari portal ATGC — boleh >1 fail setiap kategori)
   -- report_files: {"plant_based": ["path1","path2"], "health_risk": [...], "carrier_drug": [...], "summary": [...]}
   report_files                    JSONB DEFAULT '{}'::jsonb,
+  -- report_files_meta: {"path1": {"uploaded_at": "...", "uploaded_by": "uuid", "uploaded_by_name": "..."}}
+  -- Berasingan drpd report_files (bukan ubah bentuk sedia ada — elak pecahkan
+  -- consumer lain cth rekod-perubatan.html yg jangka array string path).
+  report_files_meta               JSONB DEFAULT '{}'::jsonb,
   report_notes                    TEXT,
   reports_uploaded_at              TIMESTAMPTZ,
   lab_report_issued_at            DATE,       -- tarikh laporan dikeluarkan oleh lab (bukan tarikh upload)
