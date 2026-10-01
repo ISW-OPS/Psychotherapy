@@ -100,3 +100,9 @@ CREATE TRIGGER trg_sync_patient_status_outcome
   BEFORE UPDATE ON psy_patients
   FOR EACH ROW
   EXECUTE FUNCTION sync_patient_status_outcome();
+
+-- Knowledge Base: buang kategori "Policies & Procedures" (permintaan staff,
+-- 1 Okt 2026). category_id di psy_kb_resources ON DELETE SET NULL, jadi
+-- selamat — resource sedia ada (jika ada) akan jadi tiada kategori, bukan
+-- hilang. Rujuk: database/schema/22_knowledge_base.sql
+DELETE FROM psy_kb_categories WHERE slug = 'policies-procedures';

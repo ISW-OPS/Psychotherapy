@@ -80,9 +80,12 @@
           </select></div>
       </div>
     </div>
-    <div class="flex justify-end gap-2 mt-5">
-      <button onclick="closeModal()" class="px-4 py-2 rounded-lg text-sm font-semibold border border-ink/15 text-ink/70">Batal</button>
-      <button id="m-save" data-rbac="kb.edit" class="px-4 py-2 rounded-lg text-sm font-semibold bg-navy text-white">Simpan</button>
+    <div class="flex justify-between items-center gap-2 mt-5">
+      <button id="m-delete" data-rbac="kb.delete" class="hidden px-4 py-2 rounded-lg text-sm font-semibold border border-terracotta/30 text-terracotta hover:bg-terracotta/5">Padam</button>
+      <div class="flex justify-end gap-2 ml-auto">
+        <button onclick="closeModal()" class="px-4 py-2 rounded-lg text-sm font-semibold border border-ink/15 text-ink/70">Batal</button>
+        <button id="m-save" data-rbac="kb.edit" class="px-4 py-2 rounded-lg text-sm font-semibold bg-navy text-white">Simpan</button>
+      </div>
     </div>
   </div>
 </div>
@@ -142,9 +145,27 @@ function openModal(c) {
   document.getElementById('m-desc').value = c?.description || '';
   document.getElementById('m-icon').value = c?.icon || '📁';
   document.getElementById('m-color').value = c?.color || 'navy';
+  document.getElementById('m-delete').classList.toggle('hidden', !c);
   document.getElementById('cat-modal').classList.remove('hidden');
 }
 window.closeModal = () => document.getElementById('cat-modal').classList.add('hidden');
+
+async function deleteCat() {
+  const id = document.getElementById('m-id').value;
+  if (!id) return;
+  const name = document.getElementById('m-name').value.trim();
+  const docCount = COUNTS[id] || 0;
+  const msg = docCount
+    ? `Padam kategori "${name}"? ${docCount} dokumen dalam kategori ni akan jadi "Tiada Kategori" — dokumen itu sendiri TIDAK dipadam.`
+    : `Padam kategori "${name}"?`;
+  if (!confirm(msg)) return;
+  try {
+    await dbDelete('psy_kb_categories', id);
+    closeModal(); banner('Kategori dipadam.');
+    [CATS, COUNTS] = await Promise.all([kbCategories().catch(() => []), kbCategoryCounts().catch(() => ({}))]);
+    render();
+  } catch (_) { banner('Gagal padam', 'error'); }
+}
 
 async function saveCat() {
   const id = document.getElementById('m-id').value;
@@ -171,6 +192,7 @@ async function boot() {
     document.getElementById('btn-new').onclick = () => openModal(null);
   }
   document.getElementById('m-save').onclick = saveCat;
+  document.getElementById('m-delete').onclick = deleteCat;
   [CATS, COUNTS] = await Promise.all([kbCategories().catch(() => []), kbCategoryCounts().catch(() => ({}))]);
   render();
 }

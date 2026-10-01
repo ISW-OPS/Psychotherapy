@@ -254,7 +254,6 @@ INSERT INTO psy_kb_categories (name, slug, description, icon, color, sort_order)
   ('Medication References','medication-references','Maklumat ubat, interaksi dan rujukan.',                 '💊', 'navy',       60),
   ('Psychotherapy Modules','psychotherapy-modules','Modul terapi, teknik dan pendekatan rawatan.',          '🧠', 'teal',       70),
   ('FAQ',                  'faq',                  'Soalan lazim dan jawapan.',                              '❓', 'gold',       80),
-  ('Policies & Procedures','policies-procedures',  'Dasar syarikat dan prosedur pentadbiran.',              '🛡️', 'navy',       90),
   ('Announcements',        'kb-announcements',     'Pengumuman dan notis penting.',                          '📢', 'green',     100),
   ('Other Resources',      'other-resources',      'Sumber dan rujukan lain yang berguna.',                  '📦', 'grey',      110)
 ON CONFLICT (slug) DO NOTHING;
