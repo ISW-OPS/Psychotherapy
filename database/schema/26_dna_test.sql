@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS psy_dna_test_process (
   reports_uploaded_at              TIMESTAMPTZ,
   lab_report_issued_at            DATE,       -- tarikh laporan dikeluarkan oleh lab (bukan tarikh upload)
   reports_emailed_at              TIMESTAMPTZ, -- tarikh laporan dihantar ke pesakit via emel
+  -- Staff yg uruskan muat naik/susulan laporan langkah ni (dipilih via dropdown) —
+  -- sama corak macam atgc_coach_id (Step 3), supaya setiap langkah ada "siapa handle".
+  report_handler_id               UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
 
   -- Step 5: Consultation (reuse psy_appointments)
   appointment_id                  UUID REFERENCES psy_appointments(id) ON DELETE SET NULL,

@@ -129,15 +129,22 @@ async function loadRows() {
   const { data: staff } = await window.db.from('psy_profiles').select('id, full_name').eq('role', 'staff');
   STAFF_MAP = {}; (staff || []).forEach(s => STAFF_MAP[s.id] = s.full_name);
 
-  // Pakej/Minggu Rawatan = pelan AKTIF pesakit SEKARANG (bukan psy_dna_test_process.plan_id,
-  // yg cuma snapshot sejarah pelan yg cetus proses tu — kosong utk proses lama sebelum column
-  // ni wujud/pelan dah bertukar sejak tu, walhal pesakit tetap ada pelan aktif semasa).
+  // Pakej/Minggu Rawatan = pelan pesakit SEKARANG (bukan psy_dna_test_process.plan_id, yg cuma
+  // snapshot sejarah pelan yg cetus proses tu — kosong utk proses lama sebelum column ni wujud).
+  // Sama definisi macam patient-hub.html: utamakan pelan status='active', fallback ke pelan
+  // PALING BARU (cth pesakit dah selesai rawatan, tiada plan aktif lagi tapi nak papar yg last).
   const patientIds = [...new Set(ALL_ROWS.map(r => r.patient_id).filter(Boolean))];
   ACTIVE_PLAN_BY_PATIENT = {};
   if (patientIds.length) {
     const { data: plans } = await window.db.from('psy_treatment_plans')
-      .select('patient_id, name, current_week, duration_weeks').eq('status', 'active').in('patient_id', patientIds);
-    (plans || []).forEach(p => { ACTIVE_PLAN_BY_PATIENT[p.patient_id] = p; });
+      .select('patient_id, name, current_week, duration_weeks, status')
+      .in('patient_id', patientIds).order('created_at', { ascending: false });
+    const byPatient = {};
+    (plans || []).forEach(p => { (byPatient[p.patient_id] ||= []).push(p); });
+    Object.keys(byPatient).forEach(pid => {
+      const list = byPatient[pid];
+      ACTIVE_PLAN_BY_PATIENT[pid] = list.find(p => p.status === 'active') || list[0] || null;
+    });
   }
 
   const coachSel = document.getElementById('dt-coach');

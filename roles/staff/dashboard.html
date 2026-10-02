@@ -3160,6 +3160,7 @@
       updateLastRefreshedStamp();
     }
 
+    let _lastRefreshAt = 0;
     async function refreshDashboard() {
       if (!_dashUser) return;
       const btns = document.querySelectorAll('.dash-refresh-btn');
@@ -3168,11 +3169,24 @@
         const _now = new Date();
         const today = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
         await renderDashboardForRole(_dashUser, today);
+        _lastRefreshAt = Date.now();
       } finally {
         btns.forEach(b => b.disabled = false);
       }
     }
     window.refreshDashboard = refreshDashboard;
+
+    // Auto-refresh bila page jadi "live" semula tanpa staff perasan data dah lapuk:
+    // 1) Balik dari bfcache (browser back/forward serve semula DOM lama tanpa
+    //    jalankan script semula) — refresh TERUS, data tu sah-sah snapshot lama.
+    // 2) Tab/window jadi visible semula lepas dibiar di latar > 2 minit — refresh
+    //    (elak bebanan query berulang kalau staff kerap tukar tab sekejap-sekejap).
+    window.addEventListener('pageshow', (e) => { if (e.persisted) refreshDashboard(); });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && _lastRefreshAt && (Date.now() - _lastRefreshAt > 120000)) {
+        refreshDashboard();
+      }
+    });
 
     (async () => {
       const user = await initStaff('dashboard',
@@ -3184,6 +3198,7 @@
       const today = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
 
       await renderDashboardForRole(user, today);
+      _lastRefreshAt = Date.now();
       restoreScrollPreserve();
     })();
   </script>
