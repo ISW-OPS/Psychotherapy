@@ -10,6 +10,12 @@ async function initStaff(pageId, titleSub, rbacId) {
 
   const staffRole = window.currentUser.staff_role;
 
+  // Role 'kob' belum ada dashboard sendiri — landing page terus ke Sesi KOB.
+  if (staffRole === 'kob' && pageId === 'dashboard') {
+    window.location.replace('kob-list.html');
+    return null;
+  }
+
   // Akses dikawal sepenuhnya oleh RBAC DB (psy_role_module_actions).
   // super_admin bypass semua; dashboard sentiasa allow.
   // rbacId: bila pageId ialah sub-menu (cth auto_dashboard), semak kebenaran
