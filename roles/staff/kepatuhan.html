@@ -60,18 +60,13 @@
               <div class="flex items-center gap-2 flex-wrap">
                 <select id="class-filter" class="text-xs border border-ink/15 rounded-lg px-2 py-1.5 bg-white text-ink focus:outline-none focus:ring-2 focus:ring-navy/20">
                   <option value="">Semua Tahap Kepatuhan</option>
-                  <option value="st">Sangat Tinggi</option>
                   <option value="t">Tinggi</option>
                   <option value="sd">Sederhana</option>
                   <option value="r">Rendah</option>
-                  <option value="sr">Sangat Rendah</option>
                   <option value="partial">Data Tidak Lengkap</option>
                   <option value="none">Belum isi</option>
                 </select>
                 <!-- Audit #B2-19 (Tier 4) — dulu cuma Tahap+carian wujud -->
-                <select id="program-filter" class="text-xs border border-ink/15 rounded-lg px-2 py-1.5 bg-white text-ink focus:outline-none focus:ring-2 focus:ring-navy/20">
-                  <option value="">Semua Program</option>
-                </select>
                 <select id="pakej-filter" class="text-xs border border-ink/15 rounded-lg px-2 py-1.5 bg-white text-ink focus:outline-none focus:ring-2 focus:ring-navy/20">
                   <option value="">Semua Pakej</option>
                 </select>
@@ -88,7 +83,7 @@
                 <thead>
                   <tr class="text-left text-[10px] uppercase tracking-wider text-ink/40 border-b border-ink/8">
                     <th class="py-2.5 px-4 font-bold">Pesakit</th>
-                    <th class="py-2.5 px-2 font-bold">Program</th>
+                    <th class="py-2.5 px-2 font-bold">Pakej</th>
                     <th class="py-2.5 px-2 font-bold">Tahap</th>
                     <th class="py-2.5 px-2 font-bold">Skor</th>
                     <th class="py-2.5 px-2 font-bold text-center">Hari Isi</th>
@@ -208,14 +203,14 @@ const CLASS_META = {
   C: { label: 'C — Tidak',    cls: 'bg-red-100 text-red-600',     dot: 'bg-red-500' },
 };
 
-// 5-aras Tahap Kepatuhan (paparan) — diterbit dari skor 0-100
+// 3-aras Tahap Kepatuhan (paparan) — diterbit dari skor 0-100.
+// Dikurangkan drpd 5-aras asal (Sangat Tinggi/Tinggi/Sederhana/Rendah/Sangat
+// Rendah) ikut arahan management Okt 2026 — terlalu banyak pilihan filter.
 function tier5(score){
-  if(score==null)  return {key:'none', label:'Belum isi',     chip:'bg-gray-100 text-gray-500',     bar:'#d1d5db'};
-  if(score>=85)    return {key:'st',   label:'Sangat Tinggi',  chip:'bg-green-100 text-green-700',   bar:'#16a34a'};
-  if(score>=70)    return {key:'t',    label:'Tinggi',         chip:'bg-lime-100 text-lime-700',     bar:'#65a30d'};
-  if(score>=50)    return {key:'sd',   label:'Sederhana',      chip:'bg-amber-100 text-amber-700',   bar:'#f59e0b'};
-  if(score>=30)    return {key:'r',    label:'Rendah',         chip:'bg-orange-100 text-orange-600', bar:'#f97316'};
-  return            {key:'sr',  label:'Sangat Rendah',  chip:'bg-red-100 text-red-600',       bar:'#ef4444'};
+  if(score==null)  return {key:'none', label:'Belum isi',  chip:'bg-gray-100 text-gray-500',   bar:'#d1d5db'};
+  if(score>=70)    return {key:'t',    label:'Tinggi',      chip:'bg-green-100 text-green-700',  bar:'#16a34a'};
+  if(score>=50)    return {key:'sd',   label:'Sederhana',   chip:'bg-amber-100 text-amber-700',  bar:'#f59e0b'};
+  return            {key:'r',   label:'Rendah',      chip:'bg-red-100 text-red-600',      bar:'#ef4444'};
 }
 // Override coach (A/B/C) → tier mewakili supaya paparan konsisten
 // Audit management #B2-24: bezakan dgn TEGAS "Data Tidak Lengkap" (majoriti hari
@@ -230,8 +225,8 @@ function rowTier(r){
   }
   return tier5(r.avg);
 }
-const STATUS5 = { st:'Aktif & Konsisten', t:'Aktif', sd:'Tidak Konsisten', r:'Perlu Ditingkatkan', sr:'Tidak Aktif', none:'Belum isi' };
-const STATUS5_COLOR = { st:'text-green-700', t:'text-green-600', sd:'text-amber-600', r:'text-orange-600', sr:'text-red-600', none:'text-ink/40' };
+const STATUS5 = { t:'Aktif', sd:'Tidak Konsisten', r:'Tidak Aktif', none:'Belum isi' };
+const STATUS5_COLOR = { t:'text-green-600', sd:'text-amber-600', r:'text-red-600', none:'text-ink/40' };
 
 function escHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 const MOOD_EMOJI = { Gembira:'😊', Sedih:'😔', Cemas:'😟', Marah:'😠', Burnout:'😩', Biasa:'😐' };
@@ -331,14 +326,13 @@ async function loadData(){
   document.getElementById('patient-table').innerHTML = '<div class="px-5 py-8 text-center text-sm text-ink/35">Memuatkan...</div>';
   const weekEnd = addDays(viewWeekStart, 6);
 
-  const [patientsRes, logsRes, weeklyRes, plansRes, packagesRes, coachesRes] = await Promise.all([
+  const [patientsRes, logsRes, weeklyRes, packagesRes, coachesRes] = await Promise.all([
     window.db.from('psy_patients').select('id, mrn, full_name, phone, status, active_package_id, package_expires_at, coach_id, psy_profiles!psy_patients_user_id_fkey(id)').neq('status','deleted').neq('status','rejected'),
     window.db.from('psy_kepatuhan_log')
       .select('patient_id, log_date, fasa, skor_harian, jawapan')
       .gte('log_date', viewWeekStart).lte('log_date', weekEnd),
     window.db.from('psy_kepatuhan_weekly')
       .select('patient_id, override_kelas, nota_coach').eq('minggu_mula', viewWeekStart),
-    window.db.from('psy_treatment_plans').select('patient_id, name, created_at').then(r=>r).catch(()=>({data:[]})),
     // Audit #B2-19 (Tier 4) — utk filter Pakej. active_package_id boleh UUID ATAU kod
     // (lihat memori project_active_package_id_gotcha) — peta guna DUA-DUA kunci.
     window.db.from('psy_packages').select('id, package_id, name').then(r=>r, () => ({ data: [] })),
@@ -350,11 +344,6 @@ async function loadData(){
   const patients = (patientsRes.data || []).filter(p => p.active_package_id && (!p.package_expires_at || p.package_expires_at >= _nowIso));
   const logs     = logsRes.data || [];
   const weekly   = weeklyRes.data || [];
-  const programByPatient = {};
-  (plansRes.data || []).forEach(pl => {
-    const cur = programByPatient[pl.patient_id];
-    if (!cur || (pl.created_at || '') > cur._t) programByPatient[pl.patient_id] = { name: pl.name, _t: pl.created_at || '' };
-  });
   const pkgMap = {};
   (packagesRes.data || []).forEach(pk => { pkgMap[pk.id] = pk.name; if (pk.package_id) pkgMap[pk.package_id] = pk.name; });
   const coachMap = {};
@@ -377,7 +366,6 @@ async function loadData(){
       name: p.full_name || p.mrn || 'Pesakit',
       phone: p.phone || '',
       profileId: p.psy_profiles?.id || null,
-      program: programByPatient[p.id]?.name || '—',
       pakej: pkgMap[p.active_package_id] || '—',
       coachId: p.coach_id || '',
       coachName: coachMap[p.coach_id] || '—',
@@ -396,7 +384,7 @@ async function loadData(){
   renderTrendChart().catch(() => {});
 }
 
-// Audit #B2-19 (Tier 4) — isi pilihan Program/Pakej/Coach dari data sedia-ada (dedup),
+// Audit #B2-19 (Tier 4) — isi pilihan Pakej/Coach dari data sedia-ada (dedup),
 // kekalkan pilihan semasa staf kalau masih wujud selepas navigasi minggu.
 function populateFilterOptions() {
   const fillSelect = (id, values, keepVal) => {
@@ -408,21 +396,20 @@ function populateFilterOptions() {
       uniq.map(v => `<option value="${escHtml(v)}">${escHtml(v)}</option>`).join('');
     if (cur && uniq.includes(cur)) el.value = cur;
   };
-  fillSelect('program-filter', rows.map(r => r.program));
   fillSelect('pakej-filter', rows.map(r => r.pakej));
   fillSelect('coach-filter', rows.map(r => r.coachName));
 }
 
 function renderPie(){
   const el=document.getElementById('pie-card'); if(!el) return;
-  const order=['st','t','sd','r','sr','partial','none'];
+  const order=['t','sd','r','partial','none'];
   const META={
-    st:{label:'Sangat Tinggi', color:'#16a34a'}, t:{label:'Tinggi', color:'#65a30d'},
-    sd:{label:'Sederhana', color:'#f59e0b'}, r:{label:'Rendah', color:'#f97316'},
-    sr:{label:'Sangat Rendah', color:'#ef4444'}, partial:{label:'Data Tidak Lengkap', color:'#94a3b8'},
+    t:{label:'Tinggi', color:'#16a34a'},
+    sd:{label:'Sederhana', color:'#f59e0b'}, r:{label:'Rendah', color:'#ef4444'},
+    partial:{label:'Data Tidak Lengkap', color:'#94a3b8'},
     none:{label:'Belum isi', color:'#d1d5db'},
   };
-  const counts={st:0,t:0,sd:0,r:0,sr:0,partial:0,none:0};
+  const counts={t:0,sd:0,r:0,partial:0,none:0};
   rows.forEach(r=>{ counts[rowTier(r).key]++; });
   const total=rows.length||1;
   let acc=0; const stops=[];
@@ -494,14 +481,12 @@ function effClass(r){ return r.override || r.autoClass; }
 function filteredRows(){
   const f = document.getElementById('class-filter').value;
   const q = (document.getElementById('search').value||'').toLowerCase().trim();
-  const fProgram = document.getElementById('program-filter')?.value || '';
   const fPakej = document.getElementById('pakej-filter')?.value || '';
   const fCoach = document.getElementById('coach-filter')?.value || '';
   return rows.filter(r => {
     if (q && !r.name.toLowerCase().includes(q) && !(r.mrn||'').toLowerCase().includes(q)) return false;
     if (f && rowTier(r).key !== f) return false;           // tapis ikut tahap (5-aras)
-    if (fProgram && r.program !== fProgram) return false;  // audit #B2-19
-    if (fPakej && r.pakej !== fPakej) return false;
+    if (fPakej && r.pakej !== fPakej) return false;  // audit #B2-19
     if (fCoach && r.coachName !== fCoach) return false;
     return true;
   }).sort((a,b)=>{                                          // skor rendah dahulu (perlu perhatian)
@@ -537,7 +522,7 @@ function renderTable(){
           </div>
         </div>
       </td>
-      <td class="py-3 px-2 max-w-[140px]"><div class="text-[12px] text-ink/70 truncate">${escHtml(r.program)}</div></td>
+      <td class="py-3 px-2 max-w-[140px]"><div class="text-[12px] text-ink/70 truncate">${escHtml(r.pakej)}</div></td>
       <td class="py-3 px-2 whitespace-nowrap">
         <span class="inline-block text-[11px] font-bold px-2 py-0.5 rounded-full ${t.chip}">${t.label}</span>${r.override?'<span class="text-[9px] text-ink/40 ml-1">(ubah)</span>':''}
       </td>
@@ -1150,7 +1135,7 @@ function gridPrintTable(list, startDate, numDays){
   // GRID_PATIENTS_PER_PAGE pesakit setiap jadual/halaman cetak (page-break lepas tu)
   return list.map((r,idx)=>{
     const pageBreak = (idx>0 && idx % GRID_PATIENTS_PER_PAGE === 0) ? 'page-break-before:always;break-before:page;' : '';
-    const nameHeading = `<div style="font-size:12px;font-weight:700;color:#1a1a1a;margin:2px 0 5px;">${escHtml(r.name)} <span style="font-weight:400;color:#666;">· ${escHtml(r.program)}</span></div>`;
+    const nameHeading = `<div style="font-size:12px;font-weight:700;color:#1a1a1a;margin:2px 0 5px;">${escHtml(r.name)} <span style="font-weight:400;color:#666;">· ${escHtml(r.pakej)}</span></div>`;
     const dayRows = gridPatientDays(r, startDate, numDays).map(day=>{
       const cells = day.cells.map(c=>`<td style="border:1px solid #ddd;padding:5px 6px;font-size:9px;text-align:center;">
           <div>${escHtml(c.text)}</div>
@@ -1184,7 +1169,7 @@ async function printPatientGridMonth(){
   const { data } = await window.db.from('psy_kepatuhan_log')
     .select('patient_id, log_date, fasa, skor_harian, jawapan')
     .eq('patient_id', r.id).gte('log_date', first).lte('log_date', addDays(first, daysInMonth-1));
-  const pseudo = { name: r.name, program: r.program, logs: data||[] };
+  const pseudo = { name: r.name, pakej: r.pakej, logs: data||[] };
   printHTML(`Jadual Harian — ${escHtml(r.name)} · ${monthLabel(monthStr)}`,
     gridPrintTable([pseudo], first, daysInMonth) + `<div style="font-size:9px;color:#888;margin-top:4px;">Kosong = tidak diisi hari itu.</div>`);
 }
@@ -1293,7 +1278,6 @@ document.addEventListener('click', (e)=>{
 });
 document.getElementById('class-filter').addEventListener('change', () => { currentPage = 1; renderTable(); });
 document.getElementById('search').addEventListener('input', () => { currentPage = 1; renderTable(); });
-document.getElementById('program-filter').addEventListener('change', () => { currentPage = 1; renderTable(); });
 document.getElementById('pakej-filter').addEventListener('change', () => { currentPage = 1; renderTable(); });
 document.getElementById('coach-filter').addEventListener('change', () => { currentPage = 1; renderTable(); });
 
