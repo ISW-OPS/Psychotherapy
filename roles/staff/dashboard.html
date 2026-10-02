@@ -2184,7 +2184,7 @@
         window.db.from('psy_plan_weekly_progress').select('id, session_date, status, patient_id').gte('session_date', _dayLo.toISOString()).lt('session_date', _dayHi.toISOString()).order('session_date', { ascending: true }),
         window.db.from('psy_audit_log').select('id, actor_id, actor_name, created_at, meta').eq('action', 'issue.reported').order('created_at', { ascending: false }).limit(50),
         window.db.from('psy_audit_log').select('meta').eq('action', 'issue.closed'),
-        window.db.from('psy_patients').select('id, status, outcome_status, mrn, coach_id, psy_profiles!psy_patients_user_id_fkey(full_name)'),
+        window.db.from('psy_patients').select('id, full_name, status, outcome_status, mrn, coach_id, psy_profiles!psy_patients_user_id_fkey(full_name)'),
         window.db.from('psy_inventory_items').select('id, name, qty_in_stock, min_qty, source_type, consumption_type').eq('is_active', true),
         // Sesi F2F minggu ini yg BELUM Hadir — sumber "Stok Perlu Diberi" (bekalan dijadualkan,
         // belum ditick/ditolak lagi), gantikan log "dah diberi" (kini di Stock Movement/patient-hub).
@@ -2562,13 +2562,13 @@
       // supaya nama tetap resolve tak kira format id yang tersimpan.
       const [orderProfRes, orderPatRes, pendingPlansRes] = await Promise.all([
         orderPids.length ? window.db.from('psy_profiles').select('id, full_name').in('id', orderPids).then(r => r, () => ({ data: [] })) : Promise.resolve({ data: [] }),
-        orderPids.length ? window.db.from('psy_patients').select('id, mrn, psy_profiles!psy_patients_user_id_fkey(full_name)').in('id', orderPids).then(r => r, () => ({ data: [] })) : Promise.resolve({ data: [] }),
+        orderPids.length ? window.db.from('psy_patients').select('id, full_name, mrn, psy_profiles!psy_patients_user_id_fkey(full_name)').in('id', orderPids).then(r => r, () => ({ data: [] })) : Promise.resolve({ data: [] }),
         pendingPlanIds.length ? window.db.from('psy_treatment_plans').select('id, coaching_schedule').in('id', pendingPlanIds).then(r => r, () => ({ data: [] })) : Promise.resolve({ data: [] }),
       ]);
       const orderProf = {};
       (orderProfRes.data || []).forEach(p => { orderProf[p.id] = p.full_name; });
-      (orderPatRes.data || []).forEach(p => { if (!orderProf[p.id]) orderProf[p.id] = p.psy_profiles?.full_name || p.mrn; });
-      const patientNameById = {}; patients.forEach(p => { patientNameById[p.id] = p.psy_profiles?.full_name || p.mrn || 'Pesakit'; });
+      (orderPatRes.data || []).forEach(p => { if (!orderProf[p.id]) orderProf[p.id] = iswPatientName(p) || p.mrn; });
+      const patientNameById = {}; patients.forEach(p => { patientNameById[p.id] = iswPatientName(p) || p.mrn || 'Pesakit'; });
       const planScheduleById = {}; (pendingPlansRes.data || []).forEach(pl => { planScheduleById[pl.id] = Array.isArray(pl.coaching_schedule) ? pl.coaching_schedule : []; });
 
       // Sesi → bekalan dijadualkan minggu ni (ikut coaching_schedule pakej), skip kalau tiada
