@@ -180,6 +180,7 @@ CREATE TABLE IF NOT EXISTS psy_inventory_requests (
   total_amount      NUMERIC(12,2) NOT NULL DEFAULT 0,
   requested_by      UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   requested_by_name TEXT NOT NULL DEFAULT '',
+  requested_by_staff_code TEXT,
   approved_by       UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   approved_at       TIMESTAMPTZ,
   rejected_reason   TEXT,
@@ -204,6 +205,21 @@ CREATE TABLE IF NOT EXISTS psy_inventory_request_items (
   created_at     TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_inv_request_items_request ON psy_inventory_request_items(request_id);
+
+-- ──── Dokumen lampiran (invois/resit pembelian) — boleh ditambah masa cipta
+-- permohonan atau lepas tu (lazimnya invois/resit hanya ada lepas beli).
+CREATE TABLE IF NOT EXISTS psy_inventory_request_attachments (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id        UUID NOT NULL REFERENCES psy_inventory_requests(id) ON DELETE CASCADE,
+  file_name         TEXT NOT NULL,
+  file_path         TEXT NOT NULL,
+  file_size         BIGINT,
+  file_type         TEXT,
+  uploaded_by       UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  uploaded_by_name  TEXT,
+  created_at        TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_inv_request_attachments_request ON psy_inventory_request_attachments(request_id);
 
 -- ──── request_no auto-generate (PR-00001, PR-00002, ...) ────
 CREATE SEQUENCE IF NOT EXISTS psy_inventory_request_no_seq START 1;
@@ -260,6 +276,12 @@ ALTER TABLE psy_inventory_request_items ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Staff manage request items" ON psy_inventory_request_items;
 CREATE POLICY "Staff manage request items" ON psy_inventory_request_items FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+ALTER TABLE psy_inventory_request_attachments ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage request attachments" ON psy_inventory_request_attachments;
+CREATE POLICY "Staff manage request attachments" ON psy_inventory_request_attachments FOR ALL
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
 COMMENT ON COLUMN psy_inventory_requests.is_auto_generated IS

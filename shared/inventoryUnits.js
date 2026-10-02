@@ -4,4 +4,5 @@
 window.ISW_UNITS = [
   'Biji (pcs)', 'Botol', 'Kotak', 'Pek', 'Paket', 'Tiub', 'Tablet', 'Kapsul',
   'Set', 'Gulung', 'Beg', 'Pasang', 'Unit', 'Gram', 'Kg', 'Naskhah', 'Gelas',
+  'Liter (L)', 'Mililiter (ml)',
 ];

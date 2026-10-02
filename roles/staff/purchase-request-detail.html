@@ -51,6 +51,7 @@
           <div class="pl-10 border-l border-ink/8">
             <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Requested By</div>
             <div id="pr-requested-by" class="text-sm font-bold text-ink mt-1.5">—</div>
+            <div id="pr-requested-by-staffid" class="text-[11px] text-ink/40 mt-0.5">—</div>
           </div>
           <div class="pl-10 border-l border-ink/8">
             <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Request Date</div>
@@ -82,6 +83,12 @@
 
           <!-- ═══ SIDEBAR ═══ -->
           <div class="space-y-4">
+            <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+              <h3 class="font-bold text-sm text-ink mb-3">Attachments</h3>
+              <div id="pr-attachments-list" class="space-y-1.5 mb-3"></div>
+              <input id="pr-file-input" type="file" multiple class="hidden" onchange="onFilesSelected(event)">
+              <button onclick="document.getElementById('pr-file-input').click()" class="w-full text-xs font-semibold text-teal hover:underline border border-dashed border-ink/20 rounded-lg py-2">📎 + Add Document</button>
+            </div>
             <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
               <h3 class="font-bold text-sm text-ink mb-3">Activity Log</h3>
               <div id="pr-activity" class="space-y-3 text-xs text-ink/40 italic">Tiada aktiviti.</div>
@@ -126,10 +133,11 @@ function isManagerOrAdmin() { return can('inventory', 'approve'); }
 
 async function loadRequest() {
   if (!requestId) { banner('Permohonan tidak dijumpai', 'error'); setTimeout(() => location.href = 'purchase-requests.html', 1200); return; }
-  const [reqRes, itemsRes, actRes] = await Promise.all([
+  const [reqRes, itemsRes, actRes, attRes] = await Promise.all([
     window.db.from('psy_inventory_requests').select('*').eq('id', requestId).single(),
     window.db.from('psy_inventory_request_items').select('*').eq('request_id', requestId).order('created_at'),
     window.db.from('psy_audit_log').select('*').eq('target', requestId).order('created_at', { ascending: false }).limit(20),
+    window.db.from('psy_inventory_request_attachments').select('*').eq('request_id', requestId).order('created_at', { ascending: false }),
   ]);
   if (reqRes.error || !reqRes.data) { banner('Permohonan tidak dijumpai', 'error'); setTimeout(() => location.href = 'purchase-requests.html', 1200); return; }
   prData = reqRes.data;
@@ -140,6 +148,7 @@ async function loadRequest() {
   renderApproval();
   renderActivity(actRes.data || []);
   renderActions();
+  renderAttachments(attRes.data || []);
 }
 
 function renderHeaderInfo() {
@@ -152,8 +161,51 @@ function renderHeaderInfo() {
     : prData.status === 'rejected' ? 'Not approved' : 'Awaiting review';
   document.getElementById('pr-status-sub').textContent = statusSub;
   document.getElementById('pr-requested-by').textContent = prData.requested_by_name || '—';
+  document.getElementById('pr-requested-by-staffid').textContent = prData.requested_by_staff_code ? `Staff ID: ${prData.requested_by_staff_code}` : '';
   document.getElementById('pr-request-date').textContent = fmtDate(prData.created_at);
 }
+
+async function renderAttachments(attachments) {
+  const wrap = document.getElementById('pr-attachments-list');
+  if (!attachments.length) { wrap.innerHTML = '<div class="text-ink/40 text-xs italic">Tiada dokumen.</div>'; return; }
+  wrap.innerHTML = attachments.map(a => `
+    <div class="flex items-center justify-between gap-2 px-3 py-2 bg-cream/60 rounded-lg text-xs">
+      <a href="#" onclick="openAttachment('${a.file_path}'); return false;" class="truncate text-navy hover:underline" title="${escHtml(a.file_name)}">📄 ${escHtml(a.file_name)}</a>
+      <button onclick="removeAttachment('${a.id}','${a.file_path}')" class="text-terracotta hover:text-terracotta/70 flex-shrink-0">🗑</button>
+    </div>`).join('');
+}
+
+async function openAttachment(path) {
+  const { data, error } = await window.db.storage.from('stock-in-docs').createSignedUrl(path, 300);
+  if (error || !data) { banner('Gagal buka dokumen', 'error'); return; }
+  window.open(data.signedUrl, '_blank');
+}
+window.openAttachment = openAttachment;
+
+async function onFilesSelected(e) {
+  const files = Array.from(e.target.files || []);
+  e.target.value = '';
+  for (const f of files) {
+    const path = `${requestId}/${Date.now()}_${f.name}`;
+    const { error: upErr } = await window.db.storage.from('stock-in-docs').upload(path, f);
+    if (!upErr) {
+      await window.db.from('psy_inventory_request_attachments').insert({
+        request_id: requestId, file_name: f.name, file_path: path, file_size: f.size, file_type: f.type,
+        uploaded_by: window.currentUser.id, uploaded_by_name: window.currentUser.full_name || '',
+      });
+    }
+  }
+  await loadRequest();
+}
+window.onFilesSelected = onFilesSelected;
+
+async function removeAttachment(id, path) {
+  if (!confirm('Padam dokumen ini?')) return;
+  await window.db.storage.from('stock-in-docs').remove([path]);
+  await window.db.from('psy_inventory_request_attachments').delete().eq('id', id);
+  await loadRequest();
+}
+window.removeAttachment = removeAttachment;
 
 function renderItems() {
   document.getElementById('pr-items-tbody').innerHTML = prItems.map(r => {

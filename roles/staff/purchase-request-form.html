@@ -45,10 +45,14 @@
 
             <div class="space-y-4">
               <h3 class="font-bold text-sm text-ink">Request Information</h3>
-              <div class="grid grid-cols-2 gap-3">
+              <div class="grid grid-cols-3 gap-3">
                 <div>
                   <label class="text-sm font-semibold text-ink">Requested By</label>
-                  <input id="req-by-display" disabled class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-ink/5 text-ink/60">
+                  <select id="req-by-select" onchange="onRequestedByChange()" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none"></select>
+                </div>
+                <div>
+                  <label class="text-sm font-semibold text-ink">Staff ID</label>
+                  <input id="req-staff-id" disabled class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-ink/5 text-ink/60">
                 </div>
                 <div>
                   <label class="text-sm font-semibold text-ink">Request Date</label>
@@ -73,6 +77,14 @@
                   </table>
                 </div>
                 <div id="req-items-empty" class="text-center text-ink/40 text-sm py-6 italic">Tiada item — klik "+ Add Item" untuk mula.</div>
+              </div>
+              <div class="pt-5 mt-1 border-t border-ink/8 space-y-3">
+                <h3 class="font-bold text-sm text-ink">Attachments <span class="text-ink/35 font-normal">(Optional — invoice/receipt)</span></h3>
+                <input id="pr-file-input" type="file" multiple class="hidden" onchange="onFilesSelected(event)">
+                <div onclick="document.getElementById('pr-file-input').click()" class="border border-dashed border-ink/25 rounded-xl p-4 text-center cursor-pointer hover:bg-ink/[0.02]">
+                  <p class="text-sm text-ink/50">📎 <span class="text-navy font-semibold">Drag & drop files here</span> or click to upload</p>
+                </div>
+                <div id="pr-files-list" class="space-y-1.5"></div>
               </div>
             </div>
 
@@ -103,8 +115,10 @@
 <script src="_shared.js"></script>
 <script>
 let allItems = [];
+let allStaff = [];
 let lineItems = []; // { _key, item_id, item_name, qty_requested, unit_price }
 let lineSeq = 0;
+let stagedFiles = [];
 
 function escHtml(str) {
   if (!str) return '';
@@ -115,6 +129,20 @@ async function loadItems() {
   const { data } = await window.db.from('psy_inventory_items').select('id,name,supplier_info,qty_in_stock,unit,requires_approval').eq('is_active', true).order('name');
   allItems = data || [];
 }
+
+async function loadStaff() {
+  const { data } = await window.db.from('psy_profiles').select('id,full_name,registration_no').eq('role', 'staff').eq('is_active', true).order('full_name');
+  allStaff = data || [];
+  const sel = document.getElementById('req-by-select');
+  sel.innerHTML = allStaff.map(s => `<option value="${s.id}" ${s.id === window.currentUser.id ? 'selected' : ''}>${escHtml(s.full_name)}</option>`).join('');
+  onRequestedByChange();
+}
+
+function onRequestedByChange() {
+  const staff = allStaff.find(s => s.id === document.getElementById('req-by-select').value);
+  document.getElementById('req-staff-id').value = staff?.registration_no || '—';
+}
+window.onRequestedByChange = onRequestedByChange;
 
 function addLineRow() {
   lineItems.push({ _key: ++lineSeq, item_id: '', item_name: '', qty_requested: 1, unit_price: 0 });
@@ -169,12 +197,35 @@ function recalcTotals() {
 }
 window.recalcTotals = recalcTotals;
 
+function onFilesSelected(e) {
+  stagedFiles.push(...Array.from(e.target.files || []));
+  renderFilesList();
+  e.target.value = '';
+}
+window.onFilesSelected = onFilesSelected;
+
+function removeStagedFile(idx) {
+  stagedFiles.splice(idx, 1);
+  renderFilesList();
+}
+window.removeStagedFile = removeStagedFile;
+
+function renderFilesList() {
+  document.getElementById('pr-files-list').innerHTML = stagedFiles.map((f, i) => `
+    <div class="flex items-center justify-between px-3 py-2 bg-cream/60 rounded-lg text-xs">
+      <span class="truncate">📄 ${escHtml(f.name)} <span class="text-ink/40">(${Math.round(f.size/1024)} KB)</span></span>
+      <button onclick="removeStagedFile(${i})" class="text-terracotta hover:text-terracotta/70 flex-shrink-0 ml-2">🗑</button>
+    </div>`).join('');
+}
+
 async function submitRequest() {
   if (!lineItems.length) { banner('Sila tambah sekurang-kurangnya satu item', 'error'); return; }
   for (const r of lineItems) {
     if (!r.item_id) { banner('Sila pilih item untuk setiap baris', 'error'); return; }
     if (!r.qty_requested || r.qty_requested <= 0) { banner('Kuantiti setiap item mesti lebih daripada 0', 'error'); return; }
   }
+  const requestedBy = allStaff.find(s => s.id === document.getElementById('req-by-select').value);
+  if (!requestedBy) { banner('Sila pilih staff yang memohon', 'error'); return; }
 
   const subtotal = lineItems.reduce((sum, r) => sum + (Number(r.qty_requested) || 0) * (Number(r.unit_price) || 0), 0);
   const needsApproval = lineItems.some(r => allItems.find(i => i.id === r.item_id)?.requires_approval);
@@ -184,10 +235,22 @@ async function submitRequest() {
     const { data: reqRow, error } = await window.db.from('psy_inventory_requests').insert({
       status,
       subtotal, tax_amount: 0, total_amount: subtotal,
-      requested_by: window.currentUser.id,
-      requested_by_name: window.currentUser.full_name || '',
+      requested_by: requestedBy.id,
+      requested_by_name: requestedBy.full_name || '',
+      requested_by_staff_code: requestedBy.registration_no || null,
     }).select('id').single();
     if (error) throw error;
+
+    for (const f of stagedFiles) {
+      const path = `${reqRow.id}/${Date.now()}_${f.name}`;
+      const { error: upErr } = await window.db.storage.from('stock-in-docs').upload(path, f);
+      if (!upErr) {
+        await window.db.from('psy_inventory_request_attachments').insert({
+          request_id: reqRow.id, file_name: f.name, file_path: path, file_size: f.size, file_type: f.type,
+          uploaded_by: window.currentUser.id, uploaded_by_name: window.currentUser.full_name || '',
+        });
+      }
+    }
 
     const itemRows = lineItems.map(r => ({
       request_id: reqRow.id, item_id: r.item_id || null, item_name: r.item_name,
@@ -203,15 +266,15 @@ async function submitRequest() {
         user_id: m.id, type: 'system',
         title: needsApproval ? `Permohonan Beli: ${reqRow.id}` : `Pembelian Dilakukan`,
         body: needsApproval
-          ? `${window.currentUser.full_name || 'Staff'} memohon kelulusan untuk ${lineItems.length} item.`
-          : `${window.currentUser.full_name || 'Staff'} akan membeli ${lineItems.length} item.`,
+          ? `${requestedBy.full_name || 'Staff'} memohon kelulusan untuk ${lineItems.length} item.`
+          : `${requestedBy.full_name || 'Staff'} akan membeli ${lineItems.length} item.`,
         link: 'purchase-requests.html',
       });
     }
 
     await window.db.from('psy_audit_log').insert({
       actor_id: window.currentUser.id, actor_name: window.currentUser.full_name, actor_role: 'staff',
-      action: 'inventory.request_created', target: reqRow.id, meta: { item_count: lineItems.length },
+      action: 'inventory.request_created', target: reqRow.id, meta: { item_count: lineItems.length, requested_by_name: requestedBy.full_name },
     });
 
     banner('Permohonan berjaya dihantar');
@@ -225,8 +288,8 @@ window.submitRequest = submitRequest;
 (async () => {
   const user = await initStaff('purchase_requests', 'Create Purchase Request', 'inventory');
   if (!user) return;
-  document.getElementById('req-by-display').value = window.currentUser?.full_name || '';
   document.getElementById('req-date').value = new Date().toISOString().slice(0, 10);
+  await loadStaff();
   await loadItems();
 
   const prefillItemId = new URLSearchParams(location.search).get('item');
