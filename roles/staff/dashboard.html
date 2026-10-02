@@ -2178,7 +2178,7 @@
       const [
         ordersRes, todaySessRes, issueRepRes, issueClosedRes,
         patientsRes, inventoryRes, pendingSessRes, prPendingRes, emergencyRes,
-        confirmWindowRes, activePlansRes, productsRes,
+        activePlansRes, productsRes,
       ] = await Promise.all([
         window.db.from('psy_orders').select('id, order_ref, patient_id, items, status, created_at').in('status', ['pending', 'paid', 'packed']).order('created_at', { ascending: false }),
         window.db.from('psy_plan_weekly_progress').select('id, session_date, status, patient_id').gte('session_date', _dayLo.toISOString()).lt('session_date', _dayHi.toISOString()).order('session_date', { ascending: true }),
@@ -2198,11 +2198,6 @@
         // Red Emergency Protocol — SEMUA alert aktif klinik (sama corak Manager/Doctor); kad khas sendiri
         // di bawah (renderEmergencyPanel), BUKAN dalam "Perlu Tindakan Segera".
         window.db.from('psy_emergency_alerts').select('id, patient_id, zon, status, reported_at, psy_patients(mrn, phone, psy_profiles!psy_patients_user_id_fkey(full_name))').neq('status', 'resolved').order('reported_at', { ascending: true }).then(r => r, () => ({ data: [] })),
-        // Audit #B2-20 (Tier 4) — sesi ditempah 7 hari akan datang, blm disahkan pesakit
-        // (sama tetingkap macam panel Pengesahan Sesi di kehadiran.html, elak dua sumber lari beza).
-        window.db.from('psy_plan_weekly_progress').select('id, patient_confirmed')
-          .eq('status', 'booked').gt('session_date', new Date().toISOString()).lte('session_date', new Date(Date.now() + 7 * 86400000).toISOString())
-          .then(r => r, () => ({ data: [] })),
         // Audit #B2-21 (Tier 4) — utk kira pesakit aktif TANPA plan rawatan aktif.
         window.db.from('psy_treatment_plans').select('patient_id').eq('status', 'active').then(r => r, () => ({ data: [] })),
         // Jambatan items[].id (psy_orders, = product_id) → inventory_item_id, utk banding
@@ -2222,8 +2217,6 @@
       const emergencyAlerts = emergencyRes.data || [];
       renderEmergencyPanel('a-emergency-list', emergencyAlerts);
 
-      // #B2-20 — belum disahkan = tiada patient_confirmed=true
-      const confirmPendingCount = (confirmWindowRes.data || []).filter(s => !s.patient_confirmed).length;
       // #B2-21 — pesakit status 'active' tapi tiada baris psy_treatment_plans status 'active'
       const activePlanPatientIds = new Set((activePlansRes.data || []).map(p => p.patient_id));
       const noPlanPatients = patients.filter(p => p.status === 'active' && !activePlanPatientIds.has(p.id));
@@ -2266,8 +2259,6 @@
         statCard('📅', 'bg-blue-100', 'Sesi Rawatan Hari Ini', sessCount, 'Sesi dijadualkan', 'text-ink/40', apptTodayUrl()),
         statCard('💬', 'bg-purple-100', 'Report Issue Baru', issueCount, 'Perlu tindakan', issueCount ? 'text-purple-600 font-medium' : 'text-ink/40', 'issue.html'),
         statCard('🛒', 'bg-teal/10', 'Order Tertunggak', orderCount, 'Perlu diproses', orderCount ? 'text-teal font-medium' : 'text-ink/40', 'orders.html'),
-        statCard('⏳', 'bg-amber-100', 'Sesi Menunggu Pengesahan', confirmPendingCount, '7 hari akan datang', confirmPendingCount ? 'text-amber-600 font-medium' : 'text-ink/40', 'kehadiran.html'),
-        statCard('📋', 'bg-red-100', 'Pesakit Tanpa Plan Aktif', noPlanPatients.length, 'Perlu assign plan', noPlanPatients.length ? 'text-red-600 font-medium' : 'text-ink/40', noPlanPatients.length ? '#a-noplan-wrap' : 'patients.html'),
       ].join('');
 
       // ═══ JADUAL SESI HARI INI (senarai kronologi + pemilih hari) ═══
@@ -2285,7 +2276,7 @@
         const gridStart = aCalGridStart(year, month);
         const gridEnd = new Date(gridStart); gridEnd.setDate(gridEnd.getDate() + 42);
         const { data } = await window.db.from('psy_plan_weekly_progress')
-          .select('id, session_date, status, week_number, plan_id, patient_id, psy_treatment_plans(name), psy_patients(mrn, coach_id, psy_profiles!psy_patients_user_id_fkey(full_name))')
+          .select('id, session_date, status, week_number, plan_id, patient_id, psy_treatment_plans(name), psy_patients(mrn, full_name, coach_id, psy_profiles!psy_patients_user_id_fkey(full_name))')
           .gte('session_date', gridStart.toISOString()).lt('session_date', gridEnd.toISOString())
           .order('session_date', { ascending: true })
           .then(r => r, () => ({ data: [] }));
@@ -2294,9 +2285,14 @@
       }
       const schedRow = (s, showCoach = true) => {
         const t = new Date(s.session_date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-        const name = s.psy_patients?.psy_profiles?.full_name || s.psy_patients?.mrn || 'Pesakit';
+        const name = iswPatientName(s.psy_patients) || s.psy_patients?.mrn || 'Pesakit';
         const initial = (name.trim()[0] || '?').toUpperCase();
-        const label = s.psy_treatment_plans?.name || (s.week_number ? `Sesi Susulan ${s.week_number}` : 'Sesi');
+        // Nama pakej tersimpan selalunya format "Pelan X — Nama Pesakit"; nama pesakit
+        // dibuang sbb dah papar berasingan dlm lajur pesakit, elak ulang.
+        const label = (s.psy_treatment_plans?.name || (s.week_number ? `Sesi Susulan ${s.week_number}` : 'Sesi')).split(' — ')[0];
+        // Status "booked"/"pending" = lalai utk sesi akan datang — tiada nilai tambah, jadi disorok;
+        // chip hanya papar bila status menyimpang (disahkan/dijadual semula/tidak hadir).
+        const showChip = s.status !== 'booked' && s.status !== 'pending';
         const chipCls = SESS_CHIP[s.status] || 'bg-ink/10 text-ink/50';
         const chipTxt = SESS_LABEL[s.status] || s.status;
         const coachName = coachCache[s.psy_patients?.coach_id]?.full_name || 'Tiada coach';
@@ -2310,9 +2306,9 @@
         <div class="text-[11px] text-teal font-semibold truncate">${esc(coachName)}</div>
         <div class="text-[10px] text-ink/40">Coach</div>
       </div>` : ''}
-      <div class="flex-1 min-w-0 flex items-center gap-2">
-        <span class="text-xs text-ink/70 truncate">${esc(label)}</span>
-        <span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${chipCls} whitespace-nowrap">${esc(chipTxt)}</span>
+      <div class="flex-1 min-w-0">
+        <div class="text-xs text-ink/70 truncate">${esc(label)}</div>
+        ${showChip ? `<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${chipCls} whitespace-nowrap">${esc(chipTxt)}</span>` : ''}
       </div>
       <a href="patient-hub.html?patient_id=${s.patient_id}" class="text-[11px] font-semibold text-ink/60 border border-ink/15 hover:border-ink/30 hover:text-ink px-2.5 py-1 rounded-lg flex-shrink-0 whitespace-nowrap">Lihat detail</a>
     </div>`;
