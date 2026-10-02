@@ -773,7 +773,7 @@
     async function renderCoachKepatuhan(user, today) {
       const el = document.getElementById('c-kepatuhan-summary'); if (!el) return;
       const { data: patients } = await window.db.from('psy_patients')
-        .select('id, mrn, coach_id, phone, psy_profiles!psy_patients_user_id_fkey(full_name)').neq('status', 'deleted').neq('status', 'rejected');
+        .select('id, full_name, mrn, coach_id, phone, psy_profiles!psy_patients_user_id_fkey(full_name)').neq('status', 'deleted').neq('status', 'rejected');
       const list = patients || [];
       // Nama coach untuk mod "Semua"
       const coachNm = {};
@@ -814,7 +814,7 @@
         const pageItems = sorted.slice(kepPage * KEP_PAGE_SIZE, kepPage * KEP_PAGE_SIZE + KEP_PAGE_SIZE);
         const rows = pageItems.map(p => {
           const g = gradeOf(p.id);
-          const nm = p.psy_profiles?.full_name || p.mrn || 'Pesakit';
+          const nm = iswPatientName(p) || p.mrn || 'Pesakit';
           const pill = g
             ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${GR[g][1]} whitespace-nowrap">${GR[g][0]}</span>`
             : '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-ink/10 text-ink/45 whitespace-nowrap">Belum isi</span>';
@@ -885,7 +885,7 @@
       </thead>
       <tbody class="divide-y divide-ink/5">
         ${rows.map(r => {
-        const nm = r.psy_patients?.psy_profiles?.full_name || r.psy_patients?.mrn || 'Pesakit';
+        const nm = iswPatientName(r.psy_patients) || r.psy_patients?.mrn || 'Pesakit';
         const lbl = HK1_ST[r.status] || [r.status, 'bg-ink/10 text-ink/50'];
         return `<tr class="hover:bg-cream/20">
             <td class="py-2 px-4"><input type="time" value="${r.consultation?.scheduled_time || ''}" onchange="hk1DashSetTime('${r.id}', this.value)" class="px-1.5 py-1 border border-ink/15 rounded text-[11px] outline-none focus:border-navy"></td>
@@ -920,7 +920,7 @@
       <tbody class="divide-y divide-ink/5">
         ${rows.map(a => {
         const p = a.psy_patients || {};
-        const nm = p.psy_profiles?.full_name || p.mrn || 'Pesakit';
+        const nm = iswPatientName(p) || p.mrn || 'Pesakit';
         const zm = EMG_ZON_META[a.zon] || EMG_ZON_META.kuning;
         const sm = EMG_STATUS_META[a.status] || { label: a.status, cls: 'bg-ink/10 text-ink/50' };
         const waHref = p.phone ? `inbox.html?phone=${encodeURIComponent(p.phone)}&name=${encodeURIComponent(nm)}` : '#';
@@ -950,17 +950,17 @@
       const zonSince = new Date(today + 'T00:00:00'); zonSince.setDate(zonSince.getDate() - 2);   // 3 hari (hari ini + 2 lepas)
 
       const [allPatients, weekSessions, adherenceRows, checkinRows, complianceRows, zonRows, hk1Rows, emergencyRows] = await Promise.all([
-        window.db.from('psy_patients').select('id, mrn, coach_id, status, active_package_id, psy_profiles!psy_patients_user_id_fkey(full_name, avatar_url)').neq('status', 'deleted').then(r => r.data || []),
-        window.db.from('psy_plan_weekly_progress').select('id, session_date, status, week_number, plan_id, patient_id, psy_treatment_plans(name), psy_patients(id, mrn, coach_id, phone, psy_profiles!psy_patients_user_id_fkey(full_name))').gte('session_date', weekStart.toISOString()).lte('session_date', weekEnd.toISOString()).order('session_date', { ascending: true }).then(r => r.data || []),
+        window.db.from('psy_patients').select('id, full_name, mrn, coach_id, status, active_package_id, psy_profiles!psy_patients_user_id_fkey(full_name, avatar_url)').neq('status', 'deleted').then(r => r.data || []),
+        window.db.from('psy_plan_weekly_progress').select('id, session_date, status, week_number, plan_id, patient_id, psy_treatment_plans(name), psy_patients(id, full_name, mrn, coach_id, phone, psy_profiles!psy_patients_user_id_fkey(full_name))').gte('session_date', weekStart.toISOString()).lte('session_date', weekEnd.toISOString()).order('session_date', { ascending: true }).then(r => r.data || []),
         window.db.from('psy_adherence_alerts').select('id, patient_id, details').eq('notified_coach_id', user.id).is('acknowledged_at', null).then(r => r.data || []),
         window.db.from('psy_daily_checkins').select('patient_id, checkin_date').gte('checkin_date', weekStartISO).then(r => r.data || []).catch(() => []),
         window.db.from('psy_plan_compliance').select('patient_id, madu_sudu, week_number, updated_at').gte('updated_at', weekStartISO).then(r => r.data || []).catch(() => []),
         // Zon Merah/Kuning (Reaksi Pemulihan, Catatan Harian) — 3 hari kebelakang, sumber trg_reaksi_advice_notify_emergency
         window.db.from('psy_reaksi_advice_log').select('patient_id, zon, log_date, created_at, symptoms').in('zon', ['merah', 'kuning']).gte('log_date', zonSince.toISOString().slice(0, 10)).order('created_at', { ascending: false }).then(r => r.data || []).catch(() => []),
         // Sesi 1:1 (Hakeema/Hakeem/Dr) hari ini (belum selesai) — meet_date = hari sebenar pesakit di klinik
-        window.db.from('psy_clinical_referrals').select('id, patient_id, plan_id, week_number, session_type, consultation, status, psy_patients(mrn, coach_id, psy_profiles!psy_patients_user_id_fkey(full_name))').eq('source', 'plan_1on1').eq('meet_date', today).in('status', ['pending', 'accepted']).then(r => r.data || []).catch(() => []),
+        window.db.from('psy_clinical_referrals').select('id, patient_id, plan_id, week_number, session_type, consultation, status, psy_patients(full_name, mrn, coach_id, psy_profiles!psy_patients_user_id_fkey(full_name))').eq('source', 'plan_1on1').eq('meet_date', today).in('status', ['pending', 'accepted']).then(r => r.data || []).catch(() => []),
         // Red Emergency Protocol — alert aktif (belum resolved)
-        window.db.from('psy_emergency_alerts').select('id, patient_id, zon, status, reported_at, psy_patients(mrn, phone, coach_id, psy_profiles!psy_patients_user_id_fkey(full_name))').neq('status', 'resolved').order('reported_at', { ascending: true }).then(r => r.data || []).catch(() => []),
+        window.db.from('psy_emergency_alerts').select('id, patient_id, zon, status, reported_at, psy_patients(full_name, mrn, phone, coach_id, psy_profiles!psy_patients_user_id_fkey(full_name))').neq('status', 'resolved').order('reported_at', { ascending: true }).then(r => r.data || []).catch(() => []),
       ]);
 
       const myPatients = allPatients.filter(p => p.coach_id === user.id);
@@ -1030,7 +1030,7 @@
 
       // Zon Merah/Kuning (Reaksi Pemulihan) — satu baris per pesakit, ambil zon TERBURUK/TERKINI
       // dalam tetingkap 3 hari (satu submission jana hingga 3 baris advice_log, zon sama utk ketiga-tiga).
-      const patientNameById = {}; myPatients.forEach(p => { patientNameById[p.id] = p.psy_profiles?.full_name || p.mrn || 'Pesakit'; });
+      const patientNameById = {}; myPatients.forEach(p => { patientNameById[p.id] = iswPatientName(p) || p.mrn || 'Pesakit'; });
       const zonByPatient = {};
       (zonRows || []).forEach(r => {
         if (!myPatientIds.has(r.patient_id)) return;
@@ -1085,7 +1085,7 @@
       let myCancels = [];
       try {
         const { data: cancelRows } = await window.db.from('psy_plan_weekly_progress')
-          .select('id, week_number, session_day, plan_id, patient_id, is_extension, psy_patients(coach_id, mrn, phone, psy_profiles!psy_patients_user_id_fkey(full_name))')
+          .select('id, week_number, session_day, plan_id, patient_id, is_extension, psy_patients(coach_id, full_name, mrn, phone, psy_profiles!psy_patients_user_id_fkey(full_name))')
           .eq('status', 'cancel');
         myCancels = (cancelRows || []).filter(r => !r.is_extension && r.psy_patients?.coach_id === user.id);
       } catch (_) { /* biar myCancels kosong */ }
@@ -1111,7 +1111,7 @@
           }
           const todo = nearEnd.filter(p => !handled.has(p.id));
           if (todo.length) {
-            const nm = p => p.psy_profiles?.full_name || p.mrn || 'Pesakit';
+            const nm = p => iswPatientName(p) || p.mrn || 'Pesakit';
             const names = todo.slice(0, 3).map(nm).join(', ') + (todo.length > 3 ? ` +${todo.length - 3} lagi` : '');
             const first = todo[0];
             cbBanner.className = 'bg-[#6366f1]/8 border border-[#6366f1]/30 rounded-xl p-3 flex items-center gap-3';
@@ -1136,7 +1136,7 @@
         async function loadHk1Day(ymd) {
           if (hk1Cache[ymd]) return hk1Cache[ymd];
           const { data } = await window.db.from('psy_clinical_referrals')
-            .select('id, patient_id, plan_id, week_number, session_type, consultation, status, psy_patients(mrn, coach_id, psy_profiles!psy_patients_user_id_fkey(full_name))')
+            .select('id, patient_id, plan_id, week_number, session_type, consultation, status, psy_patients(full_name, mrn, coach_id, psy_profiles!psy_patients_user_id_fkey(full_name))')
             .eq('source', 'plan_1on1').eq('meet_date', ymd).in('status', ['pending', 'accepted'])
             .then(r => r, () => ({ data: [] }));
           hk1Cache[ymd] = data || [];
@@ -1157,7 +1157,7 @@
           <tbody class="divide-y divide-ink/5">
             ${rows.map(r => {
             const p = r.psy_patients || {};
-            const nm = p.psy_profiles?.full_name || p.mrn || 'Pesakit';
+            const nm = iswPatientName(p) || p.mrn || 'Pesakit';
             const lbl = HK1_ST[r.status] || [r.status, 'bg-ink/10 text-ink/50'];
             const isMine = p.coach_id === user.id;
             const coachLine = isMine ? '' : `<div class="text-[10px] text-teal truncate">👤 ${escHtml(p.coach_id ? (coachNameById[p.coach_id] || 'Coach') : 'Tiada coach')}</div>`;
@@ -1226,7 +1226,7 @@
 
           function sessionCard(s, showActions) {
             const pt = s.psy_patients || {};
-            const name = pt.psy_profiles?.full_name || pt.mrn || 'Pesakit';
+            const name = iswPatientName(pt) || pt.mrn || 'Pesakit';
             const time = s.session_date ? new Date(s.session_date).toLocaleTimeString(LCALE(), { hour: '2-digit', minute: '2-digit' }) : '—';
             const plan = s.psy_treatment_plans?.name || 'Sesi Coaching';
             const isActive = ['booked', 'pending'].includes(s.status);
@@ -1345,7 +1345,7 @@
         const gridStart = cCalGridStart(year, month);
         const gridEnd = new Date(gridStart); gridEnd.setDate(gridEnd.getDate() + 42);
         const { data } = await window.db.from('psy_plan_weekly_progress')
-          .select('id, session_date, status, week_number, plan_id, patient_id, substitute_coach_id, psy_patients(coach_id, mrn, psy_profiles!psy_patients_user_id_fkey(full_name))')
+          .select('id, session_date, status, week_number, plan_id, patient_id, substitute_coach_id, psy_patients(coach_id, full_name, mrn, psy_profiles!psy_patients_user_id_fkey(full_name))')
           .gte('session_date', gridStart.toISOString()).lt('session_date', gridEnd.toISOString())
           .order('session_date', { ascending: true }).then(r => r, () => ({ data: [] }));
         cMonthCache[key] = (data || []).filter(s => s.session_date && (scope === 'all' || s.psy_patients?.coach_id === user.id || s.substitute_coach_id === user.id));
@@ -1358,7 +1358,7 @@
       const weeklyList = document.getElementById('c-weekly-list');
       const coachSchedRow = (s) => {
         const p = s.psy_patients;
-        const name = p?.psy_profiles?.full_name || p?.mrn || 'Pesakit';
+        const name = iswPatientName(p) || p?.mrn || 'Pesakit';
         const d = new Date(s.session_date);
         const dayShort = ['Aha', 'Isn', 'Sel', 'Rab', 'Kha', 'Jum', 'Sab'][d.getDay()];
         const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
@@ -1511,7 +1511,7 @@
         const emgRows = [];
         emergencyRows.forEach(a => {
           const p = a.psy_patients || {};
-          const nm = p.psy_profiles?.full_name || p.mrn || 'Pesakit';
+          const nm = iswPatientName(p) || p.mrn || 'Pesakit';
           const zm = EMG_ZON_META[a.zon] || EMG_ZON_META.kuning;
           const sm = EMG_STATUS_META[a.status] || { label: a.status, cls: 'bg-ink/10 text-ink/50' };
           const reported = a.reported_at ? new Date(a.reported_at).toLocaleString(LCALE(), { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
@@ -1539,7 +1539,7 @@
         myCancels.forEach(r => {
           if (cancelSeen.has(r.patient_id)) return;
           cancelSeen.add(r.patient_id);
-          const nm = r.psy_patients?.psy_profiles?.full_name || r.psy_patients?.mrn || 'Pesakit';
+          const nm = iswPatientName(r.psy_patients) || r.psy_patients?.mrn || 'Pesakit';
           const cnt = myCancels.filter(x => x.patient_id === r.patient_id).length;
           const phone = r.psy_patients?.phone ? r.psy_patients.phone.replace(/\D/g, '') : '';
           const waHref = phone ? `https://wa.me/${phone.startsWith('0') ? '6' + phone : phone}` : '';
@@ -1554,7 +1554,7 @@
         allPatients.filter(p => ['B', 'C'].includes(kepGrade[p.id]))
           .sort((a, b) => (kepGrade[a.id] === 'C' ? 0 : 1) - (kepGrade[b.id] === 'C' ? 0 : 1))
           .forEach(p => {
-            const nm = p.psy_profiles?.full_name || p.mrn || 'Pesakit';
+            const nm = iswPatientName(p) || p.mrn || 'Pesakit';
             const isMine = p.coach_id === user.id;
             const coachTag = isMine ? '' : ` · 👤 ${p.coach_id ? (coachNameById[p.coach_id] || 'Coach') : 'Tiada coach'}`;
             kepRows.push(naRow(nm, KEP_DESC[kepGrade[p.id]] + coachTag,
@@ -1585,7 +1585,7 @@
           .filter(x => x.days === null || x.days >= 7)
           .sort((a, b) => (b.days ?? 999) - (a.days ?? 999))
           .forEach(({ p, last, days, notBooked }) => {
-            const nm = p.psy_profiles?.full_name || p.mrn || 'Pesakit';
+            const nm = iswPatientName(p) || p.mrn || 'Pesakit';
             const isMine = p.coach_id === user.id;
             const coachTag = isMine ? '' : ` · 👤 ${p.coach_id ? (coachNameById[p.coach_id] || 'Coach') : 'Tiada coach'}`;
             const pl = planById[p.id];
@@ -1907,9 +1907,9 @@
         window.db.from('psy_profiles').select('id, full_name').eq('staff_role', 'coach').then(r => r, () => ({ data: [] })),
         window.db.from('psy_treatment_plans').select('patient_id, current_week, duration_weeks').then(r => r, () => ({ data: [] })),
         // Sesi 1:1 (Hakeema/Hakeem/Dr) hari ini (belum selesai) — meet_date = hari sebenar pesakit di klinik
-        window.db.from('psy_clinical_referrals').select('id, patient_id, plan_id, week_number, session_type, consultation, status, target_id, target_name, psy_patients(mrn, psy_profiles!psy_patients_user_id_fkey(full_name))').eq('source', 'plan_1on1').eq('meet_date', today).in('status', ['pending', 'accepted']).then(r => r, () => ({ data: [] })),
+        window.db.from('psy_clinical_referrals').select('id, patient_id, plan_id, week_number, session_type, consultation, status, target_id, target_name, psy_patients(full_name, mrn, psy_profiles!psy_patients_user_id_fkey(full_name))').eq('source', 'plan_1on1').eq('meet_date', today).in('status', ['pending', 'accepted']).then(r => r, () => ({ data: [] })),
         // Red Emergency Protocol — alert aktif (belum resolved), SEMUA pesakit
-        window.db.from('psy_emergency_alerts').select('id, patient_id, zon, status, reported_at, psy_patients(mrn, phone, psy_profiles!psy_patients_user_id_fkey(full_name))').neq('status', 'resolved').order('reported_at', { ascending: true }).then(r => r, () => ({ data: [] })),
+        window.db.from('psy_emergency_alerts').select('id, patient_id, zon, status, reported_at, psy_patients(full_name, mrn, phone, psy_profiles!psy_patients_user_id_fkey(full_name))').neq('status', 'resolved').order('reported_at', { ascending: true }).then(r => r, () => ({ data: [] })),
       ]);
 
       const patients = patientsRes.data || [];
@@ -2197,7 +2197,7 @@
         window.db.from('psy_inventory_requests').select('id, request_no, requested_by_name, total_amount, priority, created_at').eq('status', 'pending_approval').order('created_at', { ascending: false }).then(r => r, () => ({ data: [] })),
         // Red Emergency Protocol — SEMUA alert aktif klinik (sama corak Manager/Doctor); kad khas sendiri
         // di bawah (renderEmergencyPanel), BUKAN dalam "Perlu Tindakan Segera".
-        window.db.from('psy_emergency_alerts').select('id, patient_id, zon, status, reported_at, psy_patients(mrn, phone, psy_profiles!psy_patients_user_id_fkey(full_name))').neq('status', 'resolved').order('reported_at', { ascending: true }).then(r => r, () => ({ data: [] })),
+        window.db.from('psy_emergency_alerts').select('id, patient_id, zon, status, reported_at, psy_patients(full_name, mrn, phone, psy_profiles!psy_patients_user_id_fkey(full_name))').neq('status', 'resolved').order('reported_at', { ascending: true }).then(r => r, () => ({ data: [] })),
         // Audit #B2-21 (Tier 4) — utk kira pesakit aktif TANPA plan rawatan aktif.
         window.db.from('psy_treatment_plans').select('patient_id').eq('status', 'active').then(r => r, () => ({ data: [] })),
         // Jambatan items[].id (psy_orders, = product_id) → inventory_item_id, utk banding
@@ -2225,7 +2225,7 @@
         noPlanWrap.classList.remove('hidden');
         document.getElementById('a-noplan-count').textContent = `${noPlanPatients.length} pesakit`;
         document.getElementById('a-noplan-list').innerHTML = noPlanPatients.slice(0, 20).map(p => {
-          const name = p.psy_profiles?.full_name || p.mrn || 'Pesakit';
+          const name = iswPatientName(p) || p.mrn || 'Pesakit';
           return `<a href="patient-hub.html?patient_id=${p.id}" class="flex items-center justify-between gap-2 px-5 py-2.5 border-t border-ink/5 hover:bg-cream/20 no-underline">
             <div class="min-w-0"><div class="text-[13px] font-semibold text-ink truncate">${esc(name)}</div><div class="text-[10px] text-ink/45 font-mono">${esc(p.mrn || '—')}</div></div>
             <span class="text-[11px] font-semibold text-navy flex-shrink-0">Assign plan →</span>
@@ -2493,10 +2493,10 @@
       // "Jana Pautan Bayaran" / "Sign Agreement" berada — staff terus boleh bertindak, bukan
       // kena cari lagi. Julat "hari ini" guna _dayLo/_dayHi (dah dikira di atas utk todaySess).
       const [overdueRes, pkgPaidKobRes, agreementRes, apptTodayRes, hadirRes] = await Promise.all([
-        window.db.from('psy_kob_installment_checkpoints').select('patient_id, kob_session_id, due_date, psy_patients(mrn, psy_profiles!psy_patients_user_id_fkey(full_name))').eq('status', 'overdue').order('due_date', { ascending: true }).then(r => r, () => ({ data: [] })),
-        window.db.from('psy_kob_sessions').select('id, patient_id, scheduled_at, psy_patients(mrn, psy_profiles!psy_patients_user_id_fkey(full_name))').eq('package_payment_status', 'paid').order('scheduled_at', { ascending: false }).then(r => r, () => ({ data: [] })),
+        window.db.from('psy_kob_installment_checkpoints').select('patient_id, kob_session_id, due_date, psy_patients(full_name, mrn, psy_profiles!psy_patients_user_id_fkey(full_name))').eq('status', 'overdue').order('due_date', { ascending: true }).then(r => r, () => ({ data: [] })),
+        window.db.from('psy_kob_sessions').select('id, patient_id, scheduled_at, psy_patients(full_name, mrn, psy_profiles!psy_patients_user_id_fkey(full_name))').eq('package_payment_status', 'paid').order('scheduled_at', { ascending: false }).then(r => r, () => ({ data: [] })),
         window.db.from('psy_kob_agreements').select('patient_id').then(r => r, () => ({ data: [] })),
-        window.db.from('psy_plan_weekly_progress').select('id, patient_id, plan_id, week_number, psy_patients(mrn, psy_profiles!psy_patients_user_id_fkey(full_name))').in('status', ['pending', 'booked']).gte('session_date', _dayLo.toISOString()).lt('session_date', _dayHi.toISOString()).then(r => r, () => ({ data: [] })),
+        window.db.from('psy_plan_weekly_progress').select('id, patient_id, plan_id, week_number, psy_patients(full_name, mrn, psy_profiles!psy_patients_user_id_fkey(full_name))').in('status', ['pending', 'booked']).gte('session_date', _dayLo.toISOString()).lt('session_date', _dayHi.toISOString()).then(r => r, () => ({ data: [] })),
         window.db.from('psy_plan_weekly_progress').select('patient_id, session_date').eq('status', 'hadir').order('session_date', { ascending: false }).then(r => r, () => ({ data: [] })),
       ]);
       // Satu baris per PESAKIT (bukan per checkpoint) — checkpoint paling awal (due_date terkecil) tu je.
@@ -2510,15 +2510,15 @@
       const sevenDaysAgoMs = Date.now() - 7 * 86400000;
       const absentOver7 = patients.filter(p => p.status === 'active' && lastHadirByPid[p.id] && new Date(lastHadirByPid[p.id]).getTime() < sevenDaysAgoMs);
 
-      const kpName = r => r.psy_patients?.psy_profiles?.full_name || r.psy_patients?.mrn || 'Pesakit';
-      const paName = p => p.psy_profiles?.full_name || p.mrn || 'Pesakit';
+      const kpName = r => iswPatientName(r.psy_patients) || r.psy_patients?.mrn || 'Pesakit';
+      const paName = p => iswPatientName(p) || p.mrn || 'Pesakit';
       const paRow = (dot, href, name, desc, tagText, tagCls) => actionRow(dot, href,
         `${esc(name)} <span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${tagCls} whitespace-nowrap">${esc(tagText)}</span>`, esc(desc), '');
 
       const patientActionHtml = [
         ...Object.values(overdueByPatient).slice(0, 3).map(r => paRow('bg-terracotta', `kob-detail.html?id=${r.kob_session_id}`, kpName(r), `Ansuran overdue sejak ${new Date(r.due_date).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short' })}`, 'Bayaran', 'bg-terracotta/15 text-terracotta')),
         ...Object.values(unsignedByPatient).slice(0, 3).map(r => paRow('bg-amber-400', `kob-detail.html?id=${r.id}`, kpName(r), 'Pakej dibayar, agreement belum ditandatangan', 'Agreement', 'bg-amber-100 text-amber-700')),
-        ...(apptTodayRes.data || []).slice(0, 3).map(r => paRow('bg-navy', `plan-week.html?plan_id=${r.plan_id}&week=${r.week_number}`, r.psy_patients?.psy_profiles?.full_name || r.psy_patients?.mrn || 'Pesakit', 'Sesi hari ini belum disahkan/hadir', 'Sesi Hari Ini', 'bg-navy/10 text-navy')),
+        ...(apptTodayRes.data || []).slice(0, 3).map(r => paRow('bg-navy', `plan-week.html?plan_id=${r.plan_id}&week=${r.week_number}`, iswPatientName(r.psy_patients) || r.psy_patients?.mrn || 'Pesakit', 'Sesi hari ini belum disahkan/hadir', 'Sesi Hari Ini', 'bg-navy/10 text-navy')),
         ...absentOver7.slice(0, 3).map(p => paRow('bg-gold', `patient-hub.html?patient_id=${p.id}`, paName(p), `Tiada sesi Hadir sejak ${new Date(lastHadirByPid[p.id]).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short' })}`, 'Tak Hadir >7 Hari', 'bg-gold/20 text-gold-dark')),
       ].slice(0, 10);
       document.getElementById('a-patient-action').innerHTML = patientActionHtml.length ? patientActionHtml.join('')
@@ -2710,14 +2710,14 @@
 
       // Red Emergency Protocol — semua alert aktif klinik (doktor tiada caseload sendiri, jadi tak ditapis)
       const { data: doctorEmergencyRows } = await window.db.from('psy_emergency_alerts')
-        .select('id, patient_id, zon, status, reported_at, psy_patients(mrn, phone, coach_id, psy_profiles!psy_patients_user_id_fkey(full_name))')
+        .select('id, patient_id, zon, status, reported_at, psy_patients(full_name, mrn, phone, coach_id, psy_profiles!psy_patients_user_id_fkey(full_name))')
         .neq('status', 'resolved').order('reported_at', { ascending: true })
         .then(r => r, () => ({ data: [] }));
       renderEmergencyPanel('d-emergency-list', doctorEmergencyRows || []);
 
       // Sesi 1:1 Saya (Dr Session) — queue diri sendiri, meet_date=hari ini, ikut target_id.
       const { data: myDrHk1Rows } = await window.db.from('psy_clinical_referrals')
-        .select('id, patient_id, plan_id, week_number, session_type, consultation, status, target_id, psy_patients(mrn, psy_profiles!psy_patients_user_id_fkey(full_name))')
+        .select('id, patient_id, plan_id, week_number, session_type, consultation, status, target_id, psy_patients(full_name, mrn, psy_profiles!psy_patients_user_id_fkey(full_name))')
         .eq('source', 'plan_1on1').eq('session_type', 'dr').eq('meet_date', today).eq('target_id', user.id)
         .in('status', ['pending', 'accepted'])
         .then(r => r, () => ({ data: [] }));
@@ -2765,7 +2765,7 @@
             const DISRUPT_LABEL = { reschedule: ['Dijadual Semula', 'bg-gold/30 text-gold-dark'], cancelled: ['Dibatalkan', 'bg-terracotta/20 text-terracotta'] };
             dKobDisrupted.innerHTML = disruptedRows.map(s => {
               const p = s.psy_patients || {};
-              const nm = p.psy_profiles?.full_name || p.mrn || 'Pesakit';
+              const nm = iswPatientName(p) || p.mrn || 'Pesakit';
               const dt = s.scheduled_at ? new Date(s.scheduled_at).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
               const lbl = DISRUPT_LABEL[s.status] || [s.status, 'bg-ink/10 text-ink/50'];
               const phone = p.phone ? p.phone.replace(/\D/g, '') : '';
@@ -2843,7 +2843,7 @@
       } else {
         dSess.innerHTML = todaySessions.map(s => {
           const p = s.psy_patients;
-          const name = p?.psy_profiles?.full_name || p?.mrn || 'Pesakit';
+          const name = iswPatientName(p) || p?.mrn || 'Pesakit';
           const time = new Date(s.scheduled_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
           const modeLabel = s.mode === 'online' ? 'Online' : 'Bersemuka';
           const statusChips = {
@@ -2886,7 +2886,7 @@
         }
         const dSchedRow = s => {
           const p = s.psy_patients || {};
-          const nm = p.psy_profiles?.full_name || p.mrn || 'Pesakit';
+          const nm = iswPatientName(p) || p.mrn || 'Pesakit';
           const t = new Date(s.scheduled_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
           return `<div class="flex items-center gap-2 px-4 py-2.5 hover:bg-cream/20">
         <div class="text-[10px] font-semibold text-ink/50 w-9 flex-shrink-0">${t}</div>

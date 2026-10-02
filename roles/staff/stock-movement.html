@@ -370,10 +370,10 @@ async function resolvePatientNames(rows) {
   let patMap = {};
   if (allPatientIds.length) {
     const [{ data: pats }, { data: profs }] = await Promise.all([
-      window.db.from('psy_patients').select('id, mrn, psy_profiles!psy_patients_user_id_fkey(full_name)').in('id', allPatientIds).then(r => r, () => ({ data: [] })),
+      window.db.from('psy_patients').select('id, full_name, mrn, psy_profiles!psy_patients_user_id_fkey(full_name)').in('id', allPatientIds).then(r => r, () => ({ data: [] })),
       window.db.from('psy_profiles').select('id, full_name').in('id', allPatientIds).then(r => r, () => ({ data: [] })),
     ]);
-    (pats || []).forEach(p => { patMap[p.id] = p.psy_profiles?.full_name || p.mrn || null; });
+    (pats || []).forEach(p => { patMap[p.id] = iswPatientName(p) || p.mrn || null; });
     (profs || []).forEach(p => { if (!patMap[p.id]) patMap[p.id] = p.full_name || null; });
   }
 
@@ -534,10 +534,10 @@ async function setupContextFilter() {
   let patientName = null;
   if (ctxPatientId) {
     const [{ data: pat }, { data: orders }] = await Promise.all([
-      window.db.from('psy_patients').select('id, mrn, psy_profiles!psy_patients_user_id_fkey(full_name)').eq('id', ctxPatientId).maybeSingle(),
+      window.db.from('psy_patients').select('id, full_name, mrn, psy_profiles!psy_patients_user_id_fkey(full_name)').eq('id', ctxPatientId).maybeSingle(),
       window.db.from('psy_orders').select('id').eq('patient_id', ctxPatientId),
     ]);
-    patientName = pat?.psy_profiles?.full_name || pat?.mrn || null;
+    patientName = iswPatientName(pat) || pat?.mrn || null;
     ctxPatientOrderIds = (orders || []).map(o => o.id);
   }
   const itemName = ctxItemId ? allItems.find(i => i.id === ctxItemId)?.name : null;

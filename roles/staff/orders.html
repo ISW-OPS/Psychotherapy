@@ -700,10 +700,10 @@ async function loadOrders() {
   if (ids.length) {
     const [{ data: profiles }, { data: pats }] = await Promise.all([
       window.db.from('psy_profiles').select('id, full_name, phone').in('id', ids).then(r => r, () => ({ data: [] })),
-      window.db.from('psy_patients').select('id, mrn, phone, psy_profiles!psy_patients_user_id_fkey(full_name)').in('id', ids).then(r => r, () => ({ data: [] })),
+      window.db.from('psy_patients').select('id, full_name, mrn, phone, psy_profiles!psy_patients_user_id_fkey(full_name)').in('id', ids).then(r => r, () => ({ data: [] })),
     ]);
     (profiles || []).forEach(p => { profileMap[p.id] = p; });
-    (pats || []).forEach(p => { if (!profileMap[p.id]) profileMap[p.id] = { full_name: p.psy_profiles?.full_name || p.mrn, phone: p.phone }; });
+    (pats || []).forEach(p => { if (!profileMap[p.id]) profileMap[p.id] = { full_name: iswPatientName(p) || p.mrn, phone: p.phone }; });
   }
 
   allOrders = orders.map(o => ({ ...o, psy_profiles: profileMap[o.patient_id] || null }));
@@ -803,11 +803,11 @@ async function checkNewOrderNotifs() {
       // sebaliknya — cuba dua-dua supaya nama tetap resolve.
       const [{ data: profiles }, { data: pats }] = await Promise.all([
         window.db.from('psy_profiles').select('id, full_name').in('id', uniqIds).then(r => r, () => ({ data: [] })),
-        window.db.from('psy_patients').select('id, mrn, psy_profiles!psy_patients_user_id_fkey(full_name)').in('id', uniqIds).then(r => r, () => ({ data: [] })),
+        window.db.from('psy_patients').select('id, full_name, mrn, psy_profiles!psy_patients_user_id_fkey(full_name)').in('id', uniqIds).then(r => r, () => ({ data: [] })),
       ]);
       const nameMap = {};
       (profiles || []).forEach(p => { nameMap[p.id] = p.full_name; });
-      (pats || []).forEach(p => { if (!nameMap[p.id]) nameMap[p.id] = p.psy_profiles?.full_name || p.mrn; });
+      (pats || []).forEach(p => { if (!nameMap[p.id]) nameMap[p.id] = iswPatientName(p) || p.mrn; });
       const names = patientIds.map(id => nameMap[id]).filter(Boolean);
       if (names.length) {
         const shown = names.slice(0, 3).join(', ');
