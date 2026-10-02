@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-10-02T04:01:13.610657Z
+-- Generated: 2026-10-02T08:34:32.573399Z
 -- Jumlah fail: 37
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -8043,6 +8043,17 @@ CREATE POLICY "Staff manage pakej rujukan"
         AND role = 'staff'
         AND staff_role IN ('admin','manager','doctor')
       )
+    );
+
+-- Pesakit perlu baca fail Rujukan pakej di This Week Coaching (plan-week.html)
+-- supaya butang buka fail/link tak mati senyap bila signed URL tersimpan dah luput
+-- (audit management Okt 2026 — box "Rujukan" nampak tak boleh tekan).
+DROP POLICY IF EXISTS "Patients read pakej rujukan" ON storage.objects;
+CREATE POLICY "Patients read pakej rujukan"
+    ON storage.objects FOR SELECT
+    USING (
+      bucket_id = 'pakej-rujukan'
+      AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'patient')
     );
 
 DROP POLICY IF EXISTS "medical_upload" ON storage.objects;

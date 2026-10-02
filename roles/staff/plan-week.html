@@ -1418,18 +1418,28 @@ function renderCoachingSchedule() {
   function parseRef(value) {
     // Backward compat: object form { label, url } or { name, link }
     if (value && typeof value === 'object') {
-      return { label: value.label || value.name || value.title || '', url: value.url || value.link || null };
+      return { label: value.label || value.name || value.title || '', url: value.url || value.link || null, path: value.path || null };
     }
     const text = String(value || '');
     const m = text.match(/https?:\/\/[^\s]+/);
     if (m) {
       const url = m[0];
       const label = text.replace(url, '').trim().replace(/[:—\-,]+$/, '').trim();
-      return { label: label || url, url };
+      return { label: label || url, url, path: null };
     }
-    if (text.trimStart().startsWith('www.')) return { label: text, url: 'https://' + text.trim() };
-    return { label: text, url: null };
+    if (text.trimStart().startsWith('www.')) return { label: text, url: 'https://' + text.trim(), path: null };
+    return { label: text, url: null, path: null };
   }
+
+  // Signed URL tersimpan dalam coaching_schedule boleh luput (1 tahun) atau gagal
+  // dijana masa upload — jana semula secara live bila staff tekan "Buka Fail"
+  // supaya pautan tak mati senyap (audit management Okt 2026).
+  async function openRujukanFile(path) {
+    const { data, error } = await window.db.storage.from('pakej-rujukan').createSignedUrl(path, 3600);
+    if (error || !data?.signedUrl) { banner('Tak dapat buka fail: ' + (error?.message || 'fail tiada'), 'error'); return; }
+    window.open(data.signedUrl, '_blank');
+  }
+  window.openRujukanFile = openRujukanFile;
 
   function checklistSection(title, type, values, prefix, colorClass, bgClass, slot) {
     // Helper: extract display label dari item (boleh string atau object)
@@ -1512,15 +1522,23 @@ function renderCoachingSchedule() {
     const fileRows = hasFiles ? `<div class="text-[10px] font-bold text-navy/60 uppercase tracking-wide mb-1">Fail Rujukan (staff sahaja)</div>
       <div class="space-y-2 mb-3">
         ${values.map(text => {
-          const { label, url } = parseRef(text);
+          const { label, url, path } = parseRef(text);
+          const action = url
+            ? `<a href="${escHtml(url)}" target="_blank" rel="noopener noreferrer"
+                class="inline-flex items-center gap-1 mt-0.5 text-[10px] font-semibold text-navy hover:text-navy-dark hover:underline">
+                Buka Link →
+              </a>`
+            : path
+              ? `<button type="button" onclick="openRujukanFile('${escHtml(path)}')"
+                  class="inline-flex items-center gap-1 mt-0.5 text-[10px] font-semibold text-navy hover:text-navy-dark hover:underline">
+                  Buka Fail →
+                </button>`
+              : `<span class="inline-block mt-0.5 text-[10px] text-ink/35 italic">(tiada pautan)</span>`;
           return `<div class="flex items-start gap-2 text-xs">
             <span class="text-navy flex-shrink-0 mt-0.5">📎</span>
             <div class="min-w-0">
               <div class="text-ink/80 break-words">${escHtml(label)}</div>
-              ${url ? `<a href="${escHtml(url)}" target="_blank" rel="noopener noreferrer"
-                class="inline-flex items-center gap-1 mt-0.5 text-[10px] font-semibold text-navy hover:text-navy-dark hover:underline">
-                Buka Link →
-              </a>` : ''}
+              ${action}
             </div>
           </div>`;
         }).join('')}

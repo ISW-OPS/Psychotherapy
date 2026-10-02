@@ -222,6 +222,17 @@ CREATE POLICY "Staff manage pakej rujukan"
       )
     );
 
+-- Pesakit perlu baca fail Rujukan pakej di This Week Coaching (plan-week.html)
+-- supaya butang buka fail/link tak mati senyap bila signed URL tersimpan dah luput
+-- (audit management Okt 2026 — box "Rujukan" nampak tak boleh tekan).
+DROP POLICY IF EXISTS "Patients read pakej rujukan" ON storage.objects;
+CREATE POLICY "Patients read pakej rujukan"
+    ON storage.objects FOR SELECT
+    USING (
+      bucket_id = 'pakej-rujukan'
+      AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'patient')
+    );
+
 DROP POLICY IF EXISTS "medical_upload" ON storage.objects;
 CREATE POLICY "medical_upload" ON storage.objects FOR INSERT TO authenticated
     WITH CHECK (bucket_id = 'medical-reports');
