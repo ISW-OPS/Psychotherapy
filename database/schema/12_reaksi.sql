@@ -176,7 +176,11 @@ CREATE TABLE IF NOT EXISTS psy_reaksi_advice_log (
   CONSTRAINT chk_reaksi_advice_zon       CHECK (zon IN ('hijau','kuning','merah'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_reaksi_advice_log_status  ON psy_reaksi_advice_log(status, created_at);
+-- Simptom yang pesakit tanda "Teruk" (format sama dgn symptoms: "Kumpulan::Label").
+-- Dibaca oleh trg_reaksi_compute_zon utk kira zon di server, bukan pelayar pesakit.
+ALTER TABLE psy_reaksi_advice_log ADD COLUMN IF NOT EXISTS teruk_labels JSONB NOT NULL DEFAULT '[]';
+
+CREATE INDEX IF NOT EXISTS idx_reaksi_advice_log_status ON psy_reaksi_advice_log(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_reaksi_advice_log_patient ON psy_reaksi_advice_log(patient_id, log_date);
 CREATE INDEX IF NOT EXISTS idx_reaksi_advice_log_queue   ON psy_reaksi_advice_log(status, send_after);
 CREATE INDEX IF NOT EXISTS idx_reaksi_advice_log_zon     ON psy_reaksi_advice_log(zon, log_date);

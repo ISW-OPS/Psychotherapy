@@ -76,7 +76,7 @@
                   <th class="py-2.5 px-5 font-bold">Pesakit</th>
                   <th class="py-2.5 px-3 font-bold">Zon</th>
                   <th class="py-2.5 px-3 font-bold">Trigger / Simptom</th>
-                  <th class="py-2.5 px-3 font-bold">Assigned To</th>
+                  <th class="py-2.5 px-3 font-bold">Ditugaskan Kepada</th>
                   <th class="py-2.5 px-3 font-bold">Status</th>
                   <th class="py-2.5 px-5 font-bold text-right">Tindakan</th>
                 </tr>
@@ -119,6 +119,11 @@
         <label class="text-xs font-semibold text-ink/60 mb-1 block">Trigger / Simptom</label>
         <textarea id="lapor-notes" rows="3" placeholder="cth. Sesak nafas, sakit dada (dilaporkan via telefon)..." class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy resize-none"></textarea>
       </div>
+      <div>
+        <label class="text-xs font-semibold text-ink/60 mb-1 block">Tarikh &amp; Masa Dilaporkan</label>
+        <input id="lapor-reported-at" type="datetime-local" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+        <p class="text-[11px] text-ink/40 mt-1">Default masa sekarang — tukar kalau kecemasan ni dilaporkan lewat (cth. berlaku pagi tadi).</p>
+      </div>
     </div>
     <div class="px-5 pb-5 flex gap-2">
       <button onclick="closeLaporModal()" class="flex-1 border border-ink/20 text-ink/60 py-2.5 rounded-xl text-sm">Batal</button>
@@ -143,13 +148,20 @@
         <p id="case-trigger" class="text-sm text-ink/80 bg-cream/50 rounded-xl px-3 py-2.5"></p>
       </div>
       <div id="case-overdue-banner" class="hidden bg-terracotta/10 border border-terracotta/30 text-terracotta text-xs font-semibold rounded-xl px-3 py-2.5"></div>
-      <div class="grid grid-cols-2 gap-3">
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div>
+          <label class="text-xs font-semibold text-ink/60 mb-1 block">Zon</label>
+          <select id="case-zon" onchange="onCaseZonChange()" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy">
+            <option value="merah">🔴 Merah</option>
+            <option value="kuning">🟡 Kuning</option>
+          </select>
+        </div>
         <div>
           <label class="text-xs font-semibold text-ink/60 mb-1 block">Status</label>
           <select id="case-status" onchange="onCaseStatusChange()" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy"></select>
         </div>
         <div>
-          <label class="text-xs font-semibold text-ink/60 mb-1 block">PIC (Assigned To)</label>
+          <label class="text-xs font-semibold text-ink/60 mb-1 block">PIC (Ditugaskan Kepada)</label>
           <select id="case-pic" class="w-full border border-ink/20 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-navy"></select>
         </div>
       </div>
@@ -192,18 +204,30 @@ const STATUS_META = {
   waiting_coach: { label: 'Baru',                          stage: 1, cls: 'bg-red-100 text-red-600' },
   contacted:     { label: 'Acknowledged',                  stage: 2, cls: 'bg-blue-100 text-blue-600' },
   waiting_vital: { label: 'Dalam Tindakan · Vitals',        stage: 3, cls: 'bg-amber-100 text-amber-600' },
-  follow_up:     { label: 'Dalam Tindakan · Follow-up',     stage: 3, cls: 'bg-amber-100 text-amber-600' },
+  follow_up:     { label: 'Dalam Tindakan · Susulan',       stage: 3, cls: 'bg-amber-100 text-amber-600' },
   resolved:      { label: 'Selesai',                        stage: 4, cls: 'bg-ink/10 text-ink/50' },
   stable:        { label: 'Stabil',                         stage: 0, cls: 'bg-green-100 text-green-700' },
 };
+// Fallback utk kes ada alert AKTIF tapi status tersimpan tak padan STATUS_META
+// (cth. nilai lama 'open' sebelum rebuild 23 Sept 2026 yang tak pernah di-migrate).
+// Sengaja TAK guna STATUS_META.stable (hijau) sebab alert aktif + status tak dikenali
+// bukan "stabil" — silap tu yang buat badge hijau + "Terlewat Xmin" bercanggah serentak.
+const STATUS_UNKNOWN_META = { label: 'Status Tidak Sah', cls: 'bg-terracotta/15 text-terracotta' };
 // Susunan progres yang staf boleh pilih di modal detail (label mudah, bukan nilai DB terus)
 const STATUS_FLOW = [
   { value: 'waiting_coach', label: 'Baru' },
   { value: 'contacted',     label: 'Acknowledged' },
   { value: 'waiting_vital', label: 'Dalam Tindakan (Menunggu Vitals)' },
-  { value: 'follow_up',     label: 'Dalam Tindakan (Follow-up)' },
+  { value: 'follow_up',     label: 'Dalam Tindakan (Susulan)' },
   { value: 'resolved',      label: 'Selesai' },
 ];
+
+let emgTargets = { merah: 15, kuning: 30 };   // masa sasaran (minit) — dibaca dari Tetapan
+function emgTarget(zon) { return emgTargets[zon] ?? (zon === 'merah' ? 15 : 30); }
+async function loadEmergencyTargets() {
+  const { data } = await window.db.from('psy_settings').select('value').eq('key', 'emergency_targets').maybeSingle();
+  if (data?.value) emgTargets = { ...emgTargets, ...data.value };
+}
 
 let patients = [];          // pesakit aktif
 let patientById = {};
@@ -220,6 +244,10 @@ function symptomText(alert) {
   if (syms.length) return syms.slice(0, 3).join(', ');
   return (alert && alert.notes) || '—';
 }
+function reportedAtLabel(alert) {
+  if (!alert || !alert.reported_at) return '—';
+  return new Date(alert.reported_at).toLocaleString('ms-MY', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
 function patientZon(p) { return alertByPatient[p.id] ? alertByPatient[p.id].zon : 'hijau'; }
 function patientStatus(p) { const a = alertByPatient[p.id]; return a ? a.status : 'stable'; }
 
@@ -229,6 +257,31 @@ function overdueMinutes(alert) {
   const elapsedMin = (Date.now() - new Date(alert.reported_at).getTime()) / 60000;
   const over = elapsedMin - (alert.response_target_minutes || 0);
   return over > 0 ? Math.round(over) : 0;
+}
+
+// Papar "Terlewat" ikut unit paling sesuai (bulan/minggu/hari/jam/minit) — angka minit
+// mentah (cth. 51665min) pening nak baca bila kes dah lama tersangkut.
+const OVERDUE_UNITS = [
+  { label: 'bulan',  mins: 30 * 24 * 60 },
+  { label: 'minggu', mins: 7 * 24 * 60 },
+  { label: 'hari',   mins: 24 * 60 },
+  { label: 'jam',    mins: 60 },
+  { label: 'minit',  mins: 1 },
+];
+function formatOverdue(totalMin) {
+  for (let i = 0; i < OVERDUE_UNITS.length; i++) {
+    const u = OVERDUE_UNITS[i];
+    if (totalMin >= u.mins) {
+      const val = Math.floor(totalMin / u.mins);
+      const next = OVERDUE_UNITS[i + 1];
+      const rem = totalMin - val * u.mins;
+      if (next && rem >= next.mins) {
+        return `${val} ${u.label} ${Math.floor(rem / next.mins)} ${next.label}`;
+      }
+      return `${val} ${u.label}`;
+    }
+  }
+  return `${totalMin} minit`;
 }
 
 async function loadEmergency() {
@@ -329,16 +382,20 @@ function renderTable() {
 
   let bodyHtml = pageRows.map(p => {
     const zon = patientZon(p), zm = ZON_META[zon];
-    const status = patientStatus(p), sm = STATUS_META[status] || STATUS_META.stable;
     const alert = alertByPatient[p.id];
+    const status = patientStatus(p);
+    const sm = STATUS_META[status] || (alert ? STATUS_UNKNOWN_META : STATUS_META.stable);
     const picId = alert ? (alert.assigned_to || null) : p.coach_id;
     const overdue = overdueMinutes(alert);
     const waHref = p.phone ? `inbox.html?phone=${encodeURIComponent(p.phone)}&name=${encodeURIComponent(p.name)}` : '#';
     return `<tr class="border-b border-ink/5 hover:bg-ink/[0.015] ${alert ? 'cursor-pointer' : ''}" ${alert ? `onclick="openCaseModal('${p.id}')"` : ''}>
       <td class="py-3 px-5">
-        <div class="min-w-0">
-          <div class="text-[13px] font-semibold text-ink truncate">${escapeHtml(p.name)}</div>
-          <div class="text-[10px] font-mono text-navy/55">${escapeHtml(p.mrn || '—')}</div>
+        <div class="flex items-start gap-2.5 min-w-0">
+          <div class="text-[10px] text-ink/40 whitespace-nowrap pt-0.5 w-16 shrink-0">${reportedAtLabel(alert)}</div>
+          <div class="min-w-0">
+            <div class="text-[13px] font-semibold text-ink truncate">${escapeHtml(p.name)}</div>
+            <div class="text-[10px] font-mono text-navy/55">${escapeHtml(p.mrn || '—')}</div>
+          </div>
         </div>
       </td>
       <td class="py-3 px-3"><span class="chip ${zm.chip} text-[10px] font-bold">${zm.label}</span><div class="text-[10px] text-ink/40 mt-0.5">${zm.sub}</div></td>
@@ -346,7 +403,7 @@ function renderTable() {
       <td class="py-3 px-3 text-[12px] text-ink/70 whitespace-nowrap">👤 ${escapeHtml(coachNameById[picId] || '—')}</td>
       <td class="py-3 px-3">
         <span class="inline-block px-2.5 py-1 rounded-full text-[10px] font-bold ${sm.cls}">${sm.label}</span>
-        ${overdue ? `<div class="text-[10px] font-bold text-terracotta mt-1">⏰ Terlewat ${overdue}min</div>` : ''}
+        ${overdue ? `<div class="text-[10px] font-bold text-terracotta mt-1">⏰ Terlewat ${formatOverdue(overdue)}</div>` : ''}
       </td>
       <td class="py-3 px-5 text-right" onclick="event.stopPropagation()">
         ${alert ? `<button title="Urus Kes" onclick="openCaseModal('${p.id}')" class="inline-flex w-8 h-8 rounded-full border border-navy/20 text-navy items-center justify-center hover:bg-navy/5 mr-1.5">📋</button>` : ''}
@@ -376,12 +433,19 @@ function renderTable() {
 }
 
 // ── Lapor Kecemasan (manual) ──
+function toDatetimeLocal(date) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
 function openLaporModal() {
   const sel = document.getElementById('lapor-patient');
   sel.innerHTML = [...patients].sort((a, b) => a.name.localeCompare(b.name))
     .map(p => `<option value="${p.id}">${escapeHtml(p.name)} (${escapeHtml(p.mrn || '—')})</option>`).join('');
   document.getElementById('lapor-notes').value = '';
   document.querySelector('input[name="lapor-zon"][value="merah"]').checked = true;
+  const reportedAtInput = document.getElementById('lapor-reported-at');
+  reportedAtInput.value = toDatetimeLocal(new Date());
+  reportedAtInput.max = toDatetimeLocal(new Date());
   document.getElementById('lapor-modal').classList.remove('hidden');
 }
 function closeLaporModal() { document.getElementById('lapor-modal').classList.add('hidden'); }
@@ -390,7 +454,15 @@ async function submitLapor() {
   const patientId = document.getElementById('lapor-patient').value;
   const zon = document.querySelector('input[name="lapor-zon"]:checked').value;
   const notes = document.getElementById('lapor-notes').value.trim();
+  const reportedAtRaw = document.getElementById('lapor-reported-at').value;
   if (!patientId) { banner('Pilih pesakit dahulu', 'error'); return; }
+  if (!reportedAtRaw) { banner('Sila isi tarikh & masa dilaporkan', 'error'); return; }
+
+  const reportedAt = new Date(reportedAtRaw);
+  if (reportedAt.getTime() > Date.now()) {
+    banner('Tarikh & masa tak boleh di masa depan', 'error');
+    return;
+  }
 
   if (alertByPatient[patientId]) {
     banner('Pesakit ini sudah ada alert aktif — sila lihat di senarai', 'error');
@@ -404,7 +476,8 @@ async function submitLapor() {
 
   const { data: inserted, error } = await window.db.from('psy_emergency_alerts').insert({
     patient_id: patientId, zon, notes: notes || null, source: 'manual',
-    response_target_minutes: zon === 'merah' ? 15 : 60,
+    reported_at: reportedAt.toISOString(),
+    response_target_minutes: emgTarget(zon),
     assigned_to: p.coach_id || null, created_by: window.currentUser?.id,
   }).select().single();
 
@@ -440,15 +513,15 @@ function openCaseModal(patientId) {
   if (!p || !alert) return;
   caseModalPatientId = patientId;
 
-  const zm = ZON_META[alert.zon] || ZON_META.hijau;
   document.getElementById('case-title').textContent = `Urus Kes — ${p.name}`;
-  document.getElementById('case-zon-chip').innerHTML = `<span class="chip ${zm.chip} text-[10px] font-bold">${zm.label}</span>`;
+  document.getElementById('case-zon').value = alert.zon;
+  onCaseZonChange();
   document.getElementById('case-trigger').textContent = symptomText(alert);
 
   const overdue = overdueMinutes(alert);
   const banner_ = document.getElementById('case-overdue-banner');
   if (overdue) {
-    banner_.textContent = `⏰ Kes ini TERLEWAT ${overdue} minit drpd sasaran tindak balas (${alert.response_target_minutes} min).`;
+    banner_.textContent = `⏰ Kes ini TERLEWAT ${formatOverdue(overdue)} drpd sasaran tindak balas (${alert.response_target_minutes} min).`;
     banner_.classList.remove('hidden');
   } else {
     banner_.classList.add('hidden');
@@ -475,10 +548,17 @@ function onCaseStatusChange() {
   document.getElementById('case-resolution-block').classList.toggle('hidden', !isResolved);
 }
 
+function onCaseZonChange() {
+  const zon = document.getElementById('case-zon').value;
+  const zm = ZON_META[zon] || ZON_META.hijau;
+  document.getElementById('case-zon-chip').innerHTML = `<span class="chip ${zm.chip} text-[10px] font-bold">${zm.label}</span>`;
+}
+
 async function saveCaseModal() {
   const alert = alertByPatient[caseModalPatientId];
   if (!alert) return;
 
+  const newZon = document.getElementById('case-zon').value;
   const newStatus = document.getElementById('case-status').value;
   const newPic = document.getElementById('case-pic').value || null;
   const newNote = document.getElementById('case-note-new').value.trim();
@@ -497,7 +577,10 @@ async function saveCaseModal() {
     ? (alert.notes ? alert.notes + '\n' + notesParts.join('\n') : notesParts.join('\n'))
     : alert.notes;
 
-  const payload = { status: newStatus, assigned_to: newPic, notes: updatedNotes, updated_at: new Date().toISOString() };
+  const payload = {
+    zon: newZon, response_target_minutes: emgTarget(newZon),
+    status: newStatus, assigned_to: newPic, notes: updatedNotes, updated_at: new Date().toISOString(),
+  };
   if (newStatus === 'resolved') {
     payload.resolved_at = new Date().toISOString();
     payload.resolved_by = window.currentUser?.id;
@@ -511,6 +594,7 @@ async function saveCaseModal() {
   if (error) { banner('Ralat: ' + error.message, 'error'); return; }
 
   const changes = {};
+  if (newZon !== alert.zon) changes.zon = { from: alert.zon, to: newZon };
   if (newStatus !== alert.status) changes.status = { from: alert.status, to: newStatus };
   if (newPic !== (alert.assigned_to || null)) changes.assigned_to = { from: alert.assigned_to, to: newPic };
   if (Object.keys(changes).length) await auditLog('emergency.case_updated', alert.id, changes);
@@ -524,7 +608,8 @@ async function saveCaseModal() {
 (async () => {
   const user = await initStaff('emergency', 'Monitor dan follow up pesakit mengikut aras risiko');
   if (!user) return;
-  await Promise.all([loadEmergency(), loadStaffList()]);
+  await Promise.all([loadEmergencyTargets(), loadStaffList()]);
+  await loadEmergency();
 
   // Refresh badge escalation ("Terlewat Xmin") tanpa tunggu realtime event
   setInterval(renderTable, 60000);

@@ -398,6 +398,11 @@
                   <span class="flex-shrink-0">ⓘ</span>
                   <span><b>Ambang Kritikal kosong = automasi Protokol Kecemasan TIDAK aktif</b> untuk bacaan tersebut. Isi nilai hanya selepas disahkan oleh doktor. Perubahan cuma terpakai untuk bacaan BAHARU — rekod lama tak dikira semula.</span>
                 </div>
+                <div class="flex flex-wrap gap-2 mb-4 text-xs font-semibold">
+                  <span class="px-3 py-1.5 rounded-lg bg-green-100 text-green-700">🟢 Normal → Hijau (tiada kes)</span>
+                  <span class="px-3 py-1.5 rounded-lg bg-amber-100 text-amber-700">🟡 Tidak Normal → Kuning</span>
+                  <span class="px-3 py-1.5 rounded-lg bg-red-100 text-red-700">🔴 Kritikal → Merah</span>
+                </div>
                 <div class="overflow-x-auto border border-ink/10 rounded-xl">
                   <table class="w-full text-sm">
                     <thead>
@@ -411,6 +416,18 @@
                     </thead>
                     <tbody id="vt-tbody" class="divide-y divide-ink/6"></tbody>
                   </table>
+                </div>
+                <div class="mt-5 border border-ink/10 rounded-xl p-4">
+                  <h4 class="font-bold text-sm text-ink">Masa Sasaran Tindak Balas (Red Emergency)</h4>
+                  <p class="text-xs text-ink/55 mt-0.5 mb-3">Masa maksimum (minit) untuk staf bertindak balas selepas kes dicipta. Kes yang lewat akan ditanda dan dieskalasi.</p>
+                  <div class="grid grid-cols-2 gap-3 max-w-md">
+                    <label class="text-xs font-semibold text-ink/60">🔴 Merah (minit)
+                      <input id="et-merah" type="number" min="1" step="1" class="mt-1 w-full px-2.5 py-1.5 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none">
+                    </label>
+                    <label class="text-xs font-semibold text-ink/60">🟡 Kuning (minit)
+                      <input id="et-kuning" type="number" min="1" step="1" class="mt-1 w-full px-2.5 py-1.5 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none">
+                    </label>
+                  </div>
                 </div>
                 <div class="save-bar mt-4">
                   <button onclick="saveVitalsThresholds(this)" data-rbac="settings.edit" class="bg-navy text-white text-sm font-semibold px-5 py-2.5 rounded-lg hover:bg-navy-dark">💾 Simpan Ambang</button>
@@ -994,6 +1011,9 @@ window.saveReferralVoucherAmount = saveReferralVoucherAmount;
 function vtInputId(key, field) { return `vt-${key}-${field}`; }
 function renderVitalsThresholdTable() {
   const cfg = iswVitalsThresholds();
+  const et = (typeof iswGetSetting === 'function') ? iswGetSetting('emergency_targets', null) : null;
+  document.getElementById('et-merah').value = et?.merah ?? 15;
+  document.getElementById('et-kuning').value = et?.kuning ?? 30;
   document.getElementById('vt-tbody').innerHTML = Object.keys(ISW_VITALS_META).map(key => {
     const meta = ISW_VITALS_META[key];
     const t = cfg[key] || {};
@@ -1032,7 +1052,13 @@ async function saveVitalsThresholds(btn) {
     }
     parsed[key] = row;
   }
-  await saveKeys({ vitals_thresholds: parsed }, btn);
+  const targets = {};
+  for (const zon of ['merah', 'kuning']) {
+    const n = Number(document.getElementById(zon === 'merah' ? 'et-merah' : 'et-kuning').value);
+    if (!Number.isInteger(n) || n < 1) { banner(`Masa sasaran ${zon} mesti nombor minit yang sah (≥ 1)`, 'error'); return; }
+    targets[zon] = n;
+  }
+  await saveKeys({ vitals_thresholds: parsed, emergency_targets: targets }, btn);
 }
 window.saveVitalsThresholds = saveVitalsThresholds;
 
