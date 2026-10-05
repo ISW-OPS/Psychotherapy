@@ -212,7 +212,7 @@
           <!-- Tab Bar -->
           <div class="tab-bar overflow-x-auto">
             <button class="tab-btn active" onclick="switchTab('overview')">📋 Overview</button>
-            <button class="tab-btn" onclick="switchTab('checkin')">✅ Poll Harian</button>
+            <button class="tab-btn" onclick="switchTab('checkin')">✅ Kepatuhan Pesakit</button>
             <button class="tab-btn" onclick="switchTab('vitals')">📊 Vitals</button>
             <button class="tab-btn" onclick="switchTab('supply')">📦 Bekalan</button>
             <button class="tab-btn" onclick="switchTab('dna')">🧬 Laporan</button>
@@ -243,7 +243,7 @@
               </div>
               <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 text-center">
                 <div id="ov-checkin-streak" class="text-3xl font-bold text-amber-600">—</div>
-                <div class="text-xs text-ink/55 font-medium mt-1">Poll (7 hari)</div>
+                <div class="text-xs text-ink/55 font-medium mt-1">Kepatuhan (7 hari)</div>
                 <div id="ov-checkin-pct" class="text-[10px] text-amber-600 font-semibold mt-1">—</div>
               </div>
               <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 text-center">
@@ -443,7 +443,7 @@
                 <div class="text-3xl">⚠️</div>
                 <div>
                   <div id="ci-missed" class="text-3xl font-bold text-amber-700">0</div>
-                  <div class="text-xs text-amber-700 font-medium mt-0.5">Poll Terlepas</div>
+                  <div class="text-xs text-amber-700 font-medium mt-0.5">Kepatuhan Terlepas</div>
                   <div id="ci-missed-sub" class="text-[10px] text-amber-600 mt-0.5">7 hari lepas</div>
                 </div>
               </div>
@@ -451,7 +451,7 @@
                 <div class="text-3xl">📅</div>
                 <div>
                   <div id="ci-last-date" class="text-base font-bold text-indigo-700">—</div>
-                  <div class="text-xs text-indigo-700 font-medium mt-0.5">Poll Terakhir</div>
+                  <div class="text-xs text-indigo-700 font-medium mt-0.5">Kepatuhan Terakhir</div>
                   <div id="ci-last-time" class="text-[10px] text-indigo-600 mt-0.5">—</div>
                 </div>
               </div>
@@ -465,7 +465,7 @@
 
                 <!-- Trend 7 Hari -->
                 <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
-                  <h3 class="font-bold text-sm text-ink mb-4">Trend Poll 7 Hari</h3>
+                  <h3 class="font-bold text-sm text-ink mb-4">Trend Kepatuhan 7 Hari</h3>
                   <div id="ci-trend-grid" class="grid grid-cols-7 gap-2"></div>
                 </div>
 
@@ -473,7 +473,7 @@
                 <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden">
                   <div class="px-5 py-4 border-b border-ink/8 flex items-center justify-between flex-wrap gap-2">
                     <div>
-                      <h3 class="font-bold text-sm text-ink">Senarai Poll Hari Ini</h3>
+                      <h3 class="font-bold text-sm text-ink">Senarai Kepatuhan Hari Ini</h3>
                       <p id="ci-today-stamp" class="text-[11px] text-ink/45 mt-0.5">—</p>
                     </div>
                   </div>
@@ -1780,7 +1780,7 @@
 
     // ── TAB: NOTA / PROGRES PENUH ──────────────────────────
     // Vitals, Check-in, Bayaran & Bekalan sengaja tidak diulang di sini —
-    // sudah ada tab/bahagian sendiri (Vitals, Poll Harian, Bekalan, Profil).
+    // sudah ada tab/bahagian sendiri (Vitals, Kepatuhan Pesakit, Bekalan, Profil).
     async function loadProgress() {
       const g = q => q.then(r => (r.error ? [] : (r.data || [])), () => []);
       const [kepLog, kepItems, reports, sesi1on1, notes, reaksi, offers] = await Promise.all([
@@ -2367,6 +2367,7 @@
     let ovWeeklyRows = [];
     let ovCurrentPage = 1;
     const OV_PAGE_SIZE = 6;
+    let ovCoachList = []; // senarai coach utk pilihan "Tambah Sesi" (audit management)
 
     const ovFmt = d => new Date(d).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' });
     const ovFmtT = d => new Date(d).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
@@ -2723,6 +2724,11 @@
         if (ovSessionsForWeek(w) === 1) eligible.push(w);
       }
       await loadRawatanAvailability();
+      if (!ovCoachList.length) {
+        const { data: coaches } = await window.db.from('psy_profiles')
+          .select('id, full_name').eq('role', 'staff').eq('staff_role', 'coach').order('full_name');
+        ovCoachList = coaches || [];
+      }
 
       const m = document.createElement('div');
       m.id = 'addsession-modal';
@@ -2751,6 +2757,22 @@
           <option value="">— Pilih tarikh dahulu —</option>
         </select>
       </div>
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="text-xs font-semibold text-ink/60 uppercase">Coach/Perawat</label>
+          <select id="as-coach" class="w-full mt-1.5 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:outline-none focus:border-navy">
+            <option value="">— Tiada —</option>
+            ${ovCoachList.map(c => `<option value="${c.id}" ${c.id === patient?.coach_id ? 'selected' : ''}>${escHtml(c.full_name)}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-ink/60 uppercase">Mod</label>
+          <select id="as-mode" class="w-full mt-1.5 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:outline-none focus:border-navy">
+            <option value="f2f">Fizikal</option>
+            <option value="online">Online</option>
+          </select>
+        </div>
+      </div>
       <div class="flex justify-end gap-2 pt-1">
         <button onclick="document.getElementById('addsession-modal').remove()" class="px-4 py-2 border border-ink/20 rounded-lg text-sm">Batal</button>
         <button data-rbac="patient.create" onclick="confirmAddSession()" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">Tambah</button>
@@ -2776,8 +2798,11 @@
         if (!time) { banner('Sila pilih slot masa, atau kosongkan tarikh.', 'error'); return; }
         sessionDateIso = new Date(`${date}T${time}:00`).toISOString();
       }
+      const coachId = document.getElementById('as-coach')?.value || null;
+      const coachName = coachId ? (ovCoachList.find(c => c.id === coachId)?.full_name || null) : null;
+      const sessionMode = document.getElementById('as-mode')?.value || 'f2f';
       document.getElementById('addsession-modal')?.remove();
-      await addSingleSessionPayment(w, sessionDateIso);
+      await addSingleSessionPayment(w, sessionDateIso, coachId, coachName, sessionMode);
     }
 
     async function addExtensionWeeks(count) {
@@ -2848,7 +2873,7 @@
     // Berbeza dengan Tambah Minggu (buka minggu BARU di hujung plan): ini letak
     // Sesi 2 pada mana-mana minggu yang pakej hanya tetapkan 1 sesi. Harga = separuh
     // extension_price_per_week pakej (1 minggu tambahan = 2 sesi pada harga penuh).
-    async function addSingleSessionPayment(w, sessionDateIso) {
+    async function addSingleSessionPayment(w, sessionDateIso, coachId, coachName, sessionMode) {
       if (!canEdit) { banner('Anda hanya boleh melihat rekod pesakit ini.', 'error'); return; }
       if (!activePlan) { banner('Tiada plan rawatan aktif.', 'error'); return; }
       try {
@@ -2868,6 +2893,8 @@
         const { data: inserted, error } = await window.db.from('psy_plan_weekly_progress').insert({
           plan_id: activePlan.id, patient_id: patientId, week_number: w, session_day: 2,
           status: 'extension_pending_payment', is_extension: true, extension_price: sesPrice,
+          session_type: sessionMode || 'f2f',
+          ...(coachId ? { coach_id: coachId, coach_name: coachName } : {}),
           ...(sessionDateIso ? { session_date: sessionDateIso } : {}),
         }).select('id').single();
         if (error) throw error;

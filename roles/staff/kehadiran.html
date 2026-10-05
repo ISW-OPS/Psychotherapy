@@ -740,13 +740,17 @@ async function loadConfirmPanel(user) {
 }
 
 // Staff tekan lepas baca balasan WhatsApp pesakit ("ya boleh hadir" dll).
+// .eq('status','booked') — elak sahkan sesi yang status dia dah berubah (cth
+// ditanda Tidak Hadir/reschedule) antara panel dimuat & butang ditekan.
 async function markConfirmed(rowId) {
   try {
-    await window.db.from('psy_plan_weekly_progress').update({
+    const { data, error } = await window.db.from('psy_plan_weekly_progress').update({
       patient_confirmed: true,
       patient_confirmed_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-    }).eq('id', rowId);
+    }).eq('id', rowId).eq('status', 'booked').select('id');
+    if (error) throw error;
+    if (!data || !data.length) { banner('Sesi ini sudah berubah status — tidak boleh disahkan.', 'error'); await loadConfirmPanel(window.currentUser); return; }
     banner('Kehadiran ditandakan disahkan ✅');
     await loadConfirmPanel(window.currentUser);
   } catch (e) { banner('Ralat: ' + e.message, 'error'); }

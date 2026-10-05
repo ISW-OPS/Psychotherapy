@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Task Detail</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">✅</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8">
+        <div id="td-missing" class="hidden text-sm text-ink/50">Task tak dijumpai.</div>
+
+        <div id="td-body" class="hidden grid grid-cols-1 xl:grid-cols-[1fr_300px] gap-6 items-start">
+
+          <!-- Kiri: kandungan -->
+          <div class="space-y-6 min-w-0">
+            <div class="bg-white rounded-2xl border border-ink/10 p-6">
+              <div class="flex items-start gap-3">
+                <button id="td-check" onclick="cycleStatus()" title="Tukar status"
+                  class="flex-shrink-0 w-6 h-6 rounded-full border-2 mt-1 transition-colors"></button>
+                <input id="td-title" type="text" onblur="saveTitle()"
+                  class="flex-1 min-w-0 text-xl font-bold text-ink border border-transparent hover:border-ink/15 focus:border-navy/50 rounded-lg px-2 py-1 outline-none">
+              </div>
+              <div id="td-recur-note" class="hidden mt-3 ml-9 text-[12px] text-ink/55">
+                🔁 Task berulang — status & tarikh di kanan untuk kejadian <span id="td-occ-date" class="font-semibold"></span>. Nota dan lampiran dikongsi untuk semua kejadian.
+              </div>
+            </div>
+
+            <div class="bg-white rounded-2xl border border-ink/10 p-6">
+              <div class="text-[11px] font-bold uppercase tracking-wider text-ink/45 mb-2">Nota</div>
+              <textarea id="td-notes" rows="6" placeholder="Tulis nota kerja di sini..." onblur="saveNotes()"
+                class="w-full border border-ink/15 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-navy/50 resize-y"></textarea>
+            </div>
+
+            <div class="bg-white rounded-2xl border border-ink/10 p-6">
+              <div class="flex items-center justify-between mb-3">
+                <div class="text-[11px] font-bold uppercase tracking-wider text-ink/45">Lampiran <span id="td-file-count" class="text-ink/35"></span></div>
+                <label class="text-xs font-semibold text-navy border border-navy/30 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-navy hover:text-white transition-colors">
+                  ⬆ Muat Naik<input id="td-file" type="file" multiple class="hidden" onchange="uploadFiles(this)">
+                </label>
+              </div>
+              <div id="td-files" class="space-y-2"></div>
+            </div>
+
+            <div class="bg-white rounded-2xl border border-ink/10 p-6">
+              <div class="text-[11px] font-bold uppercase tracking-wider text-ink/45 mb-3">Aktiviti</div>
+              <div id="td-activity" class="space-y-3"></div>
+            </div>
+          </div>
+
+          <!-- Kanan: maklumat -->
+          <aside class="bg-white rounded-2xl border border-ink/10 p-5 space-y-5 xl:sticky xl:top-24">
+            <div>
+              <div class="text-[11px] font-bold uppercase tracking-wider text-ink/45 mb-2">Status</div>
+              <div id="td-status" class="grid grid-cols-3 gap-1.5"></div>
+            </div>
+
+            <div>
+              <div class="text-[11px] font-bold uppercase tracking-wider text-ink/45 mb-2" id="td-date-label">Tarikh</div>
+              <input id="td-date" type="date" onchange="saveDate()"
+                class="w-full border border-ink/15 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-navy/50">
+            </div>
+
+            <div id="td-due-wrap">
+              <div class="text-[11px] font-bold uppercase tracking-wider text-ink/45 mb-2">Due Date</div>
+              <input id="td-due" type="date" onchange="saveDue()"
+                class="w-full border border-ink/15 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-navy/50">
+            </div>
+
+            <div>
+              <div class="text-[11px] font-bold uppercase tracking-wider text-ink/45 mb-2">Ulangan</div>
+              <div id="td-repeat" class="text-sm text-ink/75"></div>
+            </div>
+
+            <div>
+              <div class="text-[11px] font-bold uppercase tracking-wider text-ink/45 mb-2">Pesakit</div>
+              <select id="td-patient" onchange="savePatient()"
+                class="w-full border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-navy/50">
+                <option value="">— Tiada —</option>
+              </select>
+              <a id="td-patient-link" class="hidden mt-2 inline-block text-[12px] text-navy hover:underline" href="#">Buka profil pesakit →</a>
+            </div>
+
+          </aside>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
+const params = new URLSearchParams(location.search);
+const taskId = params.get('id');
+const occDate = params.get('date');
+let task = null;
+let logStatus = null;
+
+const STATUS_OPTS = [
+  { v:'belum_mula',   lbl:'To Do',       on:'bg-ink/10 text-ink border-ink/30' },
+  { v:'dalam_proses', lbl:'In Progress', on:'bg-amber-100 text-amber-800 border-amber-400' },
+  { v:'selesai',      lbl:'Complete',    on:'bg-green-100 text-green-800 border-green-500' },
+];
+const STATUS_TXT = { belum_mula:'To Do', dalam_proses:'In Progress', selesai:'Complete' };
+const DOW_LBL = ['Ahd','Isn','Sel','Rab','Kha','Jum','Sab'];
+const NEXT = { belum_mula:'dalam_proses', dalam_proses:'selesai', selesai:'belum_mula' };
+
+function escH(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmtDate(ymd) { return ymd ? new Date(ymd + 'T00:00:00').toLocaleDateString(LCALE(), { weekday:'short', day:'numeric', month:'short', year:'numeric' }) : '—'; }
+function fmtDT(iso) { return iso ? new Date(iso).toLocaleString(LCALE(), { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'; }
+
+function currentStatus() {
+  if (!task) return 'belum_mula';
+  return task.recur_type === 'none' ? task.status : (logStatus || 'belum_mula');
+}
+function isRecur() { return task && task.recur_type !== 'none'; }
+
+function renderHead() {
+  document.getElementById('td-title').value = task.title || '';
+  document.getElementById('td-notes').value = task.notes || '';
+  document.getElementById('td-recur-note').classList.toggle('hidden', !isRecur());
+  if (isRecur()) document.getElementById('td-occ-date').textContent = fmtDate(occDate);
+  document.getElementById('td-date-label').textContent = isRecur() ? 'Tarikh kejadian' : 'Tarikh';
+  document.getElementById('td-date').value = isRecur() ? (occDate || '') : (task.task_date || '');
+  document.getElementById('td-date').disabled = isRecur();
+  document.getElementById('td-due-wrap').classList.toggle('hidden', isRecur());
+  document.getElementById('td-due').value = task.due_date || '';
+  document.getElementById('td-repeat').textContent = isRecur()
+    ? (task.recur_type === 'daily' ? 'Setiap hari' : 'Setiap ' + (task.recur_days || []).slice().sort().map(i => DOW_LBL[i]).join(', '))
+      + (task.recur_until ? ` · hingga ${fmtDate(task.recur_until)}` : '')
+    : 'Sekali sahaja';
+  document.getElementById('td-patient').value = task.patient_id || '';
+  const link = document.getElementById('td-patient-link');
+  link.classList.toggle('hidden', !task.patient_id);
+  if (task.patient_id) link.href = `patient-hub.html?patient_id=${task.patient_id}`;
+}
+
+function renderStatus() {
+  const cur = currentStatus();
+  document.getElementById('td-status').innerHTML = STATUS_OPTS.map(o => {
+    const on = o.v === cur;
+    return `<button onclick="setStatus('${o.v}')" class="px-2 py-2 rounded-lg border text-[12px] font-semibold transition-colors ${on ? o.on : 'bg-white border-ink/15 text-ink/50 hover:bg-cream'}">${o.lbl}</button>`;
+  }).join('');
+  const ring = { belum_mula:'border-ink/30 bg-white', dalam_proses:'border-amber-400 bg-amber-100', selesai:'border-green-500 bg-green-500' };
+  document.getElementById('td-check').className = `flex-shrink-0 w-6 h-6 rounded-full border-2 mt-1 transition-colors ${ring[cur] || ring.belum_mula}`;
+}
+
+function renderFiles() {
+  const atts = Array.isArray(task.attachments) ? task.attachments : [];
+  document.getElementById('td-file-count').textContent = atts.length ? `(${atts.length})` : '';
+  document.getElementById('td-files').innerHTML = atts.length ? atts.map((a, i) => `
+    <div class="flex items-center justify-between gap-3 px-3 py-2.5 border border-ink/10 rounded-xl hover:bg-cream/40">
+      <button onclick="openFile('${escH(a.path)}')" class="text-sm text-navy hover:underline truncate text-left">📄 ${escH(a.name)}</button>
+      <div class="flex items-center gap-3 flex-shrink-0">
+        <span class="text-[10px] text-ink/40">${fmtDT(a.uploaded_at)}</span>
+        <button onclick="downloadFile('${escH(a.path)}','${escH(a.name)}')" class="text-[11px] text-navy font-semibold">Muat turun</button>
+        <button onclick="removeFile(${i})" class="text-[11px] text-terracotta font-semibold">Padam</button>
+      </div>
+    </div>`).join('') : '<p class="text-xs text-ink/40 italic">Tiada lampiran.</p>';
+}
+
+async function loadActivity() {
+  const { data } = await window.db.from('psy_coach_task_activity')
+    .select('*').eq('task_id', task.id).order('created_at', { ascending: false }).limit(100)
+    .then(r => r, () => ({ data: [] }));
+  const rows = data || [];
+  const createdBy = task.coach_id === window.currentUser?.id ? (window.currentUser?.full_name || 'Sistem') : 'Sistem';
+  const createdRow = { actor_name: createdBy, action: 'created', created_at: task.created_at, detail: {} };
+  document.getElementById('td-activity').innerHTML = [...rows, createdRow].map(a => `
+    <div class="flex items-start gap-3 text-[12px]">
+      <div class="w-1.5 h-1.5 rounded-full bg-navy/40 mt-1.5 flex-shrink-0"></div>
+      <div class="flex-1 min-w-0">
+        <span class="font-semibold text-ink">${escH(a.actor_name || 'Sistem')}</span>
+        <span class="text-ink/70"> ${activityText(a)}</span>
+        <div class="text-[10px] text-ink/40">${fmtDT(a.created_at)}</div>
+      </div>
+    </div>`).join('');
+}
+
+function activityText(a) {
+  const d = a.detail || {};
+  switch (a.action) {
+    case 'created':      return 'mencipta task ini';
+    case 'edited':       return 'mengemaskini task';
+    case 'status':       return `tukar status: ${STATUS_TXT[d.from] || d.from || '—'} → ${STATUS_TXT[d.to] || d.to || '—'}${d.date ? ` (${fmtDate(d.date)})` : ''}`;
+    case 'title':        return `tukar tajuk kepada "${escH(d.to)}"`;
+    case 'notes':        return 'kemas kini nota';
+    case 'task_date':    return `tukar tarikh kepada ${fmtDate(d.to)}`;
+    case 'due_date':     return d.to ? `tetapkan due date ${fmtDate(d.to)}` : 'padam due date';
+    case 'patient':      return d.to ? `tetapkan pesakit: ${escH(d.to)}` : 'buang pesakit';
+    case 'file_added':   return `muat naik fail "${escH(d.name)}"`;
+    case 'file_removed': return `padam fail "${escH(d.name)}"`;
+    default:             return escH(a.action);
+  }
+}
+
+async function logActivity(action, detail = {}) {
+  const me = window.currentUser || {};
+  const { error } = await window.db.from('psy_coach_task_activity').insert({
+    task_id: task.id, actor_id: me.id || null, actor_name: me.full_name || null, action, detail,
+  });
+  if (error) console.error('[task] log aktiviti gagal:', error);
+  await loadActivity();
+}
+
+async function setStatus(v) {
+  const from = currentStatus();
+  if (from === v) return;
+  const now = new Date().toISOString();
+  let error;
+  if (!isRecur()) {
+    ({ error } = await window.db.from('psy_coach_tasks').update({ status: v, updated_at: now }).eq('id', task.id));
+    if (!error) task.status = v;
+  } else {
+    ({ error } = await window.db.from('psy_coach_task_logs').upsert(
+      { task_id: task.id, log_date: occDate, status: v, updated_at: now }, { onConflict: 'task_id,log_date' }));
+    if (!error) logStatus = v;
+  }
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  renderStatus();
+  await logActivity('status', { from, to: v, ...(isRecur() ? { date: occDate } : {}) });
+}
+function cycleStatus() { setStatus(NEXT[currentStatus()] || 'dalam_proses'); }
+
+async function updateTask(patch, okMsg, action, detail) {
+  const { error } = await window.db.from('psy_coach_tasks').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', task.id);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return false; }
+  Object.assign(task, patch);
+  if (okMsg) banner(okMsg);
+  if (action) await logActivity(action, detail || {});
+  return true;
+}
+
+async function saveTitle() {
+  const title = document.getElementById('td-title').value.trim();
+  if (!title) { document.getElementById('td-title').value = task.title || ''; return; }
+  if (title !== task.title) await updateTask({ title }, 'Tajuk disimpan ✅', 'title', { to: title });
+}
+async function saveNotes() {
+  const notes = document.getElementById('td-notes').value.trim() || null;
+  if ((notes || '') !== (task.notes || '')) await updateTask({ notes }, 'Nota disimpan ✅', 'notes');
+}
+async function saveDate() {
+  if (isRecur()) return;
+  const v = document.getElementById('td-date').value;
+  if (!v) { document.getElementById('td-date').value = task.task_date; return; }
+  const from = task.task_date;
+  if (v !== from) await updateTask({ task_date: v }, 'Tarikh disimpan ✅', 'task_date', { from, to: v });
+}
+async function saveDue() {
+  const v = document.getElementById('td-due').value || null;
+  if (v !== (task.due_date || null)) await updateTask({ due_date: v }, 'Due date disimpan ✅', 'due_date', { to: v });
+}
+async function savePatient() {
+  const v = document.getElementById('td-patient').value || null;
+  if (v === (task.patient_id || null)) return;
+  const name = v ? (document.querySelector(`#td-patient option[value="${v}"]`)?.textContent || '') : '';
+  if (await updateTask({ patient_id: v }, 'Pesakit disimpan ✅', 'patient', { to: name || null })) renderHead();
+}
+
+async function uploadFiles(input) {
+  const files = [...input.files]; input.value = '';
+  if (!files.length) return;
+  const atts = Array.isArray(task.attachments) ? task.attachments.slice() : [];
+  const uploaded = [];
+  for (const f of files) {
+    if (f.size > 10 * 1024 * 1024) { banner(`${f.name}: melebihi 10MB`, 'error'); continue; }
+    const path = `tasks/${task.id}/${Date.now()}_${f.name.replace(/[^\w.\-]/g, '_')}`;
+    const { error } = await window.db.storage.from('referral-docs').upload(path, f, { contentType: f.type || undefined });
+    if (error) { banner('Gagal muat naik: ' + error.message, 'error'); continue; }
+    atts.push({ name: f.name, path, uploaded_at: new Date().toISOString() });
+    uploaded.push({ name: f.name, path });
+  }
+  if (!uploaded.length) return;
+  if (!await updateTask({ attachments: atts }, 'Lampiran disimpan ✅')) {
+    try { await window.db.storage.from('referral-docs').remove(uploaded.map(u => u.path)); } catch (_) {}
+    return;
+  }
+  for (const u of uploaded) await logActivity('file_added', { name: u.name });
+  renderFiles();
+}
+
+async function signedUrl(path) {
+  const { data, error } = await window.db.storage.from('referral-docs').createSignedUrl(path, 3600);
+  if (error || !data?.signedUrl) { banner('Gagal dapatkan fail', 'error'); return null; }
+  return data.signedUrl;
+}
+async function openFile(path) {
+  const url = await signedUrl(path);
+  if (url) window.open(url, '_blank');
+}
+async function downloadFile(path, name) {
+  const url = await signedUrl(path);
+  if (!url) return;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name || path.split('/').pop();
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+async function removeFile(i) {
+  if (!confirm('Padam lampiran ini?')) return;
+  const atts = (task.attachments || []).slice();
+  const [rm] = atts.splice(i, 1);
+  if (rm?.path) { try { await window.db.storage.from('referral-docs').remove([rm.path]); } catch (_) {} }
+  if (await updateTask({ attachments: atts })) {
+    await logActivity('file_removed', { name: rm?.name || '' });
+    renderFiles();
+  }
+}
+
+(async () => {
+  const user = await initStaff('plan_week', 'Detail task peribadi');
+  if (!user) return;
+  setHeaderBack('weekly-plan.html', 'Kembali ke Jadual Mingguan');
+
+  const { data: pts } = await window.db.from('psy_patients').select('id, mrn, full_name, psy_profiles!psy_patients_user_id_fkey(full_name)').neq('status', 'deleted');
+  const patients = (pts || []).map(p => ({ id: p.id, name: p.full_name || p.psy_profiles?.full_name || p.mrn || 'Pesakit' }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  document.getElementById('td-patient').innerHTML = '<option value="">— Tiada —</option>' +
+    patients.map(p => `<option value="${p.id}">${escH(p.name)}</option>`).join('');
+
+  if (!taskId) { document.getElementById('td-missing').classList.remove('hidden'); document.getElementById('app-loading').classList.add('hidden'); return; }
+  const { data: row, error } = await window.db.from('psy_coach_tasks').select('*').eq('id', taskId).maybeSingle();
+  if (error || !row) { document.getElementById('td-missing').classList.remove('hidden'); return; }
+  task = row;
+  if (isRecur() && occDate) {
+    const { data: lg } = await window.db.from('psy_coach_task_logs').select('status')
+      .eq('task_id', task.id).eq('log_date', occDate).maybeSingle();
+    logStatus = lg?.status || 'belum_mula';
+  }
+  document.getElementById('td-body').classList.remove('hidden');
+  renderHead();
+  renderStatus();
+  renderFiles();
+  loadActivity();
+})();
+</script>
+</body>
+</html>

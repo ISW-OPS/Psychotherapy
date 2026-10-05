@@ -198,6 +198,27 @@ DROP POLICY IF EXISTS "Patient read own emergency alert" ON psy_emergency_alerts
 CREATE POLICY "Patient read own emergency alert" ON psy_emergency_alerts FOR SELECT
   USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
 
+-- Masa sasaran tindak balas (minit) ikut zon — boleh diubah di Tetapan (key 'emergency_targets').
+INSERT INTO psy_settings (key, value) VALUES ('emergency_targets', '{"merah":15,"kuning":30}')
+ON CONFLICT (key) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION fn_emergency_target(p_zon TEXT)
+RETURNS INT LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT COALESCE(
+    (SELECT (value->>p_zon)::INT FROM psy_settings WHERE key = 'emergency_targets'),
+    CASE WHEN p_zon = 'merah' THEN 15 ELSE 30 END
+  );
+$$;
+
+-- PIC lalai bila pesakit tiada coach: staf aktif peringkat pengurusan (ikut nama).
+CREATE OR REPLACE FUNCTION fn_emergency_fallback_pic()
+RETURNS UUID LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT id FROM psy_profiles
+  WHERE role = 'staff' AND staff_role IN ('super_admin','manager','admin')
+  ORDER BY full_name
+  LIMIT 1;
+$$;
+
 -- ──── Fungsi trigger: alert coach + worklist kecemasan bila advice log zon merah/kuning ────
 -- Satu submission boleh insert hingga 3 baris mesej serentak; notifikasi
 -- hanya utk BARIS PERTAMA (send_after ≈ created_at; baris 2/3 = +5/+10 min).
@@ -223,10 +244,10 @@ BEGIN
   FROM psy_patients pt
   LEFT JOIN psy_profiles pr ON pr.id = pt.user_id
   WHERE pt.id = NEW.patient_id;
-  IF v_coach_id IS NULL THEN RETURN NEW; END IF;
+  v_coach_id := COALESCE(v_coach_id, fn_emergency_fallback_pic());
 
   v_zon := CASE WHEN NEW.is_emergency THEN 'merah' ELSE NEW.zon END;
-  v_target_min := CASE WHEN v_zon = 'merah' THEN 15 ELSE 60 END;
+  v_target_min := fn_emergency_target(v_zon);
 
   IF v_zon = 'merah' THEN
     INSERT INTO psy_notifications (user_id, type, title, body, link)
@@ -258,12 +279,31 @@ BEGIN
       SET zon = v_zon, symptoms = COALESCE(NEW.symptoms, symptoms),
           reported_at = now(), response_target_minutes = v_target_min, updated_at = now()
       WHERE id = v_open_id;
+      -- Audit trail (management audit item 97.2): perubahan zon AUTOMATIK pun
+      -- kena tercatat, bukan hanya perubahan manual staf dari emergency.html.
+      -- Dibungkus sub-block sendiri — audit log gagal TAK BOLEH rollback alert
+      -- kecemasan yang dah berjaya dicipta/dikemaskini di atas.
+      IF v_open_zon IS DISTINCT FROM v_zon THEN
+        BEGIN
+          INSERT INTO psy_audit_log (actor_name, actor_role, action, target, meta)
+          VALUES ('System (Reaksi & Tindakan)', 'system', 'emergency.auto_zon_escalated', v_open_id::TEXT,
+            jsonb_build_object('patient_id', NEW.patient_id, 'from', v_open_zon, 'to', v_zon, 'trigger_source', 'reaksi_advice_log', 'source_log_id', NEW.id));
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END;
+      END IF;
     END IF;
   ELSE
     INSERT INTO psy_emergency_alerts
       (patient_id, zon, symptoms, source, source_log_id, response_target_minutes, assigned_to)
     VALUES
-      (NEW.patient_id, v_zon, COALESCE(NEW.symptoms, '[]'::jsonb), 'auto', NEW.id, v_target_min, v_coach_id);
+      (NEW.patient_id, v_zon, COALESCE(NEW.symptoms, '[]'::jsonb), 'auto', NEW.id, v_target_min, v_coach_id)
+    RETURNING id INTO v_open_id;
+    BEGIN
+      INSERT INTO psy_audit_log (actor_name, actor_role, action, target, meta)
+      VALUES ('System (Reaksi & Tindakan)', 'system', 'emergency.auto_created', v_open_id::TEXT,
+        jsonb_build_object('patient_id', NEW.patient_id, 'zon', v_zon, 'trigger_source', 'reaksi_advice_log', 'source_log_id', NEW.id));
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
   END IF;
 
   RETURN NEW;
@@ -278,6 +318,109 @@ CREATE TRIGGER trg_reaksi_advice_notify_emergency
   AFTER INSERT ON psy_reaksi_advice_log
   FOR EACH ROW EXECUTE FUNCTION trg_reaksi_advice_notify_emergency();
 
+-- Kira zon di SERVER (peraturan yang diluluskan): simptom teruk/kecemasan/tahap tinggi → merah,
+-- tahap sederhana → kuning, tindakan kecemasan → merah, selain itu hijau. Dijalankan SEBELUM
+-- trigger AFTER di atas supaya trg_reaksi_advice_notify_emergency guna zon yang sahih.
+CREATE OR REPLACE FUNCTION fn_reaksi_compute_zon()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_zon   TEXT := 'hijau';
+  v_tahap TEXT;
+  r       RECORD;
+BEGIN
+  FOR r IN
+    SELECT (i.kumpulan || '::' || i.label) AS key, i.is_emergency, i.tahap_risiko, i.boleh_pilih_teruk
+    FROM psy_reaksi_item i
+    WHERE (i.kumpulan || '::' || i.label) IN (SELECT jsonb_array_elements_text(NEW.symptoms))
+  LOOP
+    v_tahap := CASE
+      WHEN (NEW.teruk_labels ? r.key) AND COALESCE(r.boleh_pilih_teruk, true) THEN 'tinggi'
+      ELSE COALESCE(r.tahap_risiko, 'rendah')
+    END;
+    IF COALESCE(r.is_emergency, false) OR v_tahap = 'tinggi' THEN
+      v_zon := 'merah';
+    ELSIF v_tahap = 'sederhana' AND v_zon <> 'merah' THEN
+      v_zon := 'kuning';
+    END IF;
+  END LOOP;
+
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.actions) a WHERE COALESCE((a->>'is_emergency')::BOOLEAN, false)) THEN
+    v_zon := 'merah';
+  END IF;
+
+  NEW.zon := v_zon;
+  NEW.is_emergency := (v_zon = 'merah');
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'fn_reaksi_compute_zon: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_reaksi_compute_zon ON psy_reaksi_advice_log;
+CREATE TRIGGER trg_reaksi_compute_zon
+  BEFORE INSERT ON psy_reaksi_advice_log
+  FOR EACH ROW EXECUTE FUNCTION fn_reaksi_compute_zon();
+
+-- ──── Eskalasi kes lewat (SOP): kes belum Selesai melebihi masa sasaran → notifikasi PIC + pengurusan ────
+-- Sekali sahaja per kes (escalated_at). Dijalankan pg_cron tiap 5 minit.
+ALTER TABLE psy_emergency_alerts ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMPTZ;
+
+CREATE OR REPLACE FUNCTION fn_emergency_escalate_overdue()
+RETURNS INT LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  r        RECORD;
+  v_mgr    UUID;
+  v_title  TEXT;
+  v_body   TEXT;
+  v_link   TEXT;
+  v_n      INT := 0;
+BEGIN
+  FOR r IN
+    SELECT ea.id, ea.patient_id, ea.zon, ea.assigned_to, ea.response_target_minutes,
+           COALESCE(pr.full_name, pt.full_name, 'Pesakit') AS patient_name
+    FROM psy_emergency_alerts ea
+    JOIN psy_patients pt ON pt.id = ea.patient_id
+    LEFT JOIN psy_profiles pr ON pr.id = pt.user_id
+    WHERE ea.status <> 'resolved'
+      AND ea.escalated_at IS NULL
+      AND ea.reported_at + make_interval(mins => ea.response_target_minutes) < now()
+  LOOP
+    UPDATE psy_emergency_alerts SET escalated_at = now() WHERE id = r.id;
+    v_n := v_n + 1;
+
+    v_title := '⏰ KES LEWAT: ' || r.patient_name;
+    v_body  := 'Kes zon ' || upper(r.zon) || ' belum selesai melebihi masa sasaran (' || r.response_target_minutes || ' min). Sila tindak SEGERA.';
+    v_link  := 'emergency.html?patient_id=' || r.patient_id::TEXT;
+
+    IF r.assigned_to IS NOT NULL THEN
+      INSERT INTO psy_notifications (user_id, type, title, body, link)
+      VALUES (r.assigned_to, 'reaksi', v_title, v_body, v_link);
+    END IF;
+
+    FOR v_mgr IN
+      SELECT id FROM psy_profiles
+      WHERE role = 'staff' AND staff_role IN ('super_admin','manager','admin')
+        AND id IS DISTINCT FROM r.assigned_to
+    LOOP
+      INSERT INTO psy_notifications (user_id, type, title, body, link)
+      VALUES (v_mgr, 'reaksi', v_title, v_body, v_link);
+    END LOOP;
+
+    BEGIN
+      INSERT INTO psy_audit_log (actor_name, actor_role, action, target, meta)
+      VALUES ('System (Eskalasi)', 'system', 'emergency.auto_escalated_overdue', r.id::TEXT,
+        jsonb_build_object('patient_id', r.patient_id, 'zon', r.zon, 'target_min', r.response_target_minutes));
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+  END LOOP;
+
+  RETURN v_n;
+END;
+$$;
+
+SELECT cron.schedule('emergency-overdue-escalate', '*/5 * * * *', $$SELECT fn_emergency_escalate_overdue();$$);
+
 -- ──── Fungsi trigger: bacaan Vitals KRITIKAL → auto-cipta/kemaskini kes Red Emergency ────
 -- Sama pola dgn trg_reaksi_advice_notify_emergency di atas (satu alert AKTIF per
 -- pesakit, taraf naik ke merah dibenarkan, taraf turun DISEKAT). is_critical
@@ -290,16 +433,45 @@ DECLARE
   v_coach_id     UUID;
   v_patient_name TEXT;
   v_open_id      UUID;
+  v_open_zon     TEXT;
   v_reason       TEXT;
 BEGIN
-  IF NOT NEW.is_critical THEN RETURN NEW; END IF;
+  IF NOT NEW.is_critical AND NOT NEW.is_abnormal THEN RETURN NEW; END IF;
 
   SELECT pt.coach_id, COALESCE(pr.full_name, pt.full_name, 'Pesakit')
     INTO v_coach_id, v_patient_name
   FROM psy_patients pt
   LEFT JOIN psy_profiles pr ON pr.id = pt.user_id
   WHERE pt.id = NEW.patient_id;
-  IF v_coach_id IS NULL THEN RETURN NEW; END IF;
+  v_coach_id := COALESCE(v_coach_id, fn_emergency_fallback_pic());
+
+  -- Tidak Normal sahaja (bukan kritikal) → kes KUNING, hanya kalau pesakit belum ada kes aktif.
+  IF NOT NEW.is_critical THEN
+    IF EXISTS (SELECT 1 FROM psy_emergency_alerts WHERE patient_id = NEW.patient_id AND status <> 'resolved') THEN
+      RETURN NEW;
+    END IF;
+
+    INSERT INTO psy_notifications (user_id, type, title, body, link)
+    VALUES (
+      v_coach_id, 'vitals',
+      '🟡 BACAAN TIDAK NORMAL: ' || v_patient_name,
+      'Bacaan Vitals di luar julat normal — sila semak dan susul pesakit.',
+      'emergency.html?patient_id=' || NEW.patient_id::TEXT
+    );
+
+    INSERT INTO psy_emergency_alerts
+      (patient_id, zon, source, response_target_minutes, assigned_to, notes)
+    VALUES
+      (NEW.patient_id, 'kuning', 'vitals', fn_emergency_target('kuning'), v_coach_id, 'Bacaan Vitals tidak normal')
+    RETURNING id INTO v_open_id;
+    BEGIN
+      INSERT INTO psy_audit_log (actor_name, actor_role, action, target, meta)
+      VALUES ('System (Vitals Tidak Normal)', 'system', 'emergency.auto_created', v_open_id::TEXT,
+        jsonb_build_object('patient_id', NEW.patient_id, 'zon', 'kuning', 'trigger_source', 'vitals', 'vitals_id', NEW.id));
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+    RETURN NEW;
+  END IF;
 
   v_reason := 'Bacaan Vitals kritikal: ' || COALESCE(NULLIF(concat_ws(', ',
     CASE WHEN NEW.bp_systolic IS NOT NULL AND (NEW.bp_systolic < 80 OR NEW.bp_systolic >= 180)
@@ -326,20 +498,40 @@ BEGIN
 
   -- Worklist: satu alert AKTIF per pesakit — kemaskini kalau dah ada (taraf terus
   -- ke merah, tak pernah turun), cipta baharu kalau tiada.
-  SELECT id INTO v_open_id FROM psy_emergency_alerts
+  SELECT id, zon INTO v_open_id, v_open_zon
+  FROM psy_emergency_alerts
   WHERE patient_id = NEW.patient_id AND status <> 'resolved'
   ORDER BY created_at DESC LIMIT 1;
 
   IF v_open_id IS NOT NULL THEN
     UPDATE psy_emergency_alerts
-    SET zon = 'merah', reported_at = now(), response_target_minutes = 15, updated_at = now(),
+    SET zon = 'merah', reported_at = now(), response_target_minutes = fn_emergency_target('merah'), updated_at = now(),
         notes = CASE WHEN notes IS NULL OR notes = '' THEN v_reason ELSE notes || E'\n' || v_reason END
     WHERE id = v_open_id;
+    -- Audit trail (management audit item 97.2): perubahan/zon-refresh AUTOMATIK
+    -- pun kena tercatat, bukan hanya perubahan manual staf dari emergency.html.
+    -- Dibungkus sub-block sendiri — audit log gagal TAK BOLEH rollback alert
+    -- kecemasan yang dah berjaya dicipta/dikemaskini di atas.
+    BEGIN
+      INSERT INTO psy_audit_log (actor_name, actor_role, action, target, meta)
+      VALUES ('System (Vitals Kritikal)', 'system',
+        CASE WHEN v_open_zon IS DISTINCT FROM 'merah' THEN 'emergency.auto_zon_escalated' ELSE 'emergency.auto_vitals_critical_repeat' END,
+        v_open_id::TEXT,
+        jsonb_build_object('patient_id', NEW.patient_id, 'from', v_open_zon, 'to', 'merah', 'trigger_source', 'vitals', 'reason', v_reason, 'vitals_id', NEW.id));
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
   ELSE
     INSERT INTO psy_emergency_alerts
       (patient_id, zon, source, response_target_minutes, assigned_to, notes)
     VALUES
-      (NEW.patient_id, 'merah', 'vitals', 15, v_coach_id, v_reason);
+      (NEW.patient_id, 'merah', 'vitals', fn_emergency_target('merah'), v_coach_id, v_reason)
+    RETURNING id INTO v_open_id;
+    BEGIN
+      INSERT INTO psy_audit_log (actor_name, actor_role, action, target, meta)
+      VALUES ('System (Vitals Kritikal)', 'system', 'emergency.auto_created', v_open_id::TEXT,
+        jsonb_build_object('patient_id', NEW.patient_id, 'zon', 'merah', 'trigger_source', 'vitals', 'reason', v_reason, 'vitals_id', NEW.id));
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
   END IF;
 
   RETURN NEW;
@@ -410,6 +602,7 @@ DECLARE
   v_coach_id     UUID;
   v_patient_name TEXT;
   v_open_id      UUID;
+  v_open_zon     TEXT;
   v_alert_id     UUID;
   v_note         TEXT;
 BEGIN
@@ -425,20 +618,39 @@ BEGIN
   v_note := 'Pesakit tekan butang kecemasan (' || COALESCE(p_channel, 'unknown') || ') pada '
             || to_char(now(), 'DD Mon YYYY HH24:MI');
 
-  SELECT id INTO v_open_id FROM psy_emergency_alerts
+  SELECT id, zon INTO v_open_id, v_open_zon FROM psy_emergency_alerts
   WHERE patient_id = v_patient_id AND status <> 'resolved'
   ORDER BY created_at DESC LIMIT 1;
 
   IF v_open_id IS NOT NULL THEN
     UPDATE psy_emergency_alerts
-    SET zon = 'merah', reported_at = now(), response_target_minutes = 15, updated_at = now(),
+    SET zon = 'merah', reported_at = now(), response_target_minutes = fn_emergency_target('merah'), updated_at = now(),
         notes = CASE WHEN notes IS NULL OR notes = '' THEN v_note ELSE notes || E'\n' || v_note END
     WHERE id = v_open_id
     RETURNING id INTO v_alert_id;
+    -- Audit trail (management audit item 97.2): laporan sendiri pesakit pun
+    -- kena tercatat, bukan hanya perubahan manual staf dari emergency.html.
+    -- Dibungkus sub-block sendiri — fungsi ni TIADA exception handler lain
+    -- langsung, jadi audit log gagal TAK BOLEH rollback laporan kecemasan
+    -- pesakit yang dah berjaya disimpan di atas.
+    BEGIN
+      INSERT INTO psy_audit_log (actor_id, actor_name, actor_role, action, target, meta)
+      VALUES (auth.uid(), v_patient_name, 'patient',
+        CASE WHEN v_open_zon IS DISTINCT FROM 'merah' THEN 'emergency.auto_zon_escalated' ELSE 'emergency.auto_patient_repeat' END,
+        v_alert_id::TEXT,
+        jsonb_build_object('patient_id', v_patient_id, 'from', v_open_zon, 'to', 'merah', 'trigger_source', 'patient_button', 'channel', p_channel));
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
   ELSE
     INSERT INTO psy_emergency_alerts (patient_id, zon, source, response_target_minutes, assigned_to, notes)
-    VALUES (v_patient_id, 'merah', 'patient', 15, v_coach_id, v_note)
+    VALUES (v_patient_id, 'merah', 'patient', fn_emergency_target('merah'), v_coach_id, v_note)
     RETURNING id INTO v_alert_id;
+    BEGIN
+      INSERT INTO psy_audit_log (actor_id, actor_name, actor_role, action, target, meta)
+      VALUES (auth.uid(), v_patient_name, 'patient', 'emergency.auto_created', v_alert_id::TEXT,
+        jsonb_build_object('patient_id', v_patient_id, 'zon', 'merah', 'trigger_source', 'patient_button', 'channel', p_channel));
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
   END IF;
 
   IF v_coach_id IS NOT NULL THEN
@@ -686,8 +898,24 @@ CREATE TABLE IF NOT EXISTS psy_coach_tasks (
   priority     TEXT DEFAULT 'sederhana'  CHECK (priority IN ('rendah','sederhana','tinggi')),
   patient_id   UUID REFERENCES psy_patients(id) ON DELETE SET NULL,
   session_id   UUID REFERENCES psy_plan_weekly_progress(id) ON DELETE SET NULL,
+  -- Ulangan: none = sekali sahaja (task_date); daily = setiap hari; weekly = hari tertentu (recur_days, 0=Ahad..6=Sabtu)
+  recur_type   TEXT NOT NULL DEFAULT 'none' CHECK (recur_type IN ('none','daily','weekly')),
+  recur_days   INT[],
+  recur_until  DATE,
+  -- Lampiran fail task (bucket referral-docs, path tasks/<task_id>/...): [{name,path,uploaded_at}]
+  attachments  JSONB DEFAULT '[]'::jsonb,
   created_at   TIMESTAMPTZ DEFAULT now(),
   updated_at   TIMESTAMPTZ DEFAULT now()
+);
+
+-- Status setiap kejadian task berulang (task berulang tak ada satu status sahaja)
+CREATE TABLE IF NOT EXISTS psy_coach_task_logs (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  task_id     UUID NOT NULL REFERENCES psy_coach_tasks(id) ON DELETE CASCADE,
+  log_date    DATE NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'belum_mula' CHECK (status IN ('belum_mula','dalam_proses','selesai')),
+  updated_at  TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT psy_coach_task_logs_task_date_key UNIQUE (task_id, log_date)
 );
 
 CREATE INDEX IF NOT EXISTS idx_coach_tasks_coach_date ON psy_coach_tasks (coach_id, task_date);
@@ -701,6 +929,44 @@ CREATE POLICY "coach_tasks_own" ON psy_coach_tasks
 
 DROP POLICY IF EXISTS "coach_tasks_manager_read" ON psy_coach_tasks;
 CREATE POLICY "coach_tasks_manager_read" ON psy_coach_tasks
+  FOR SELECT USING (
+    EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('manager','admin'))
+  );
+
+ALTER TABLE psy_coach_task_logs ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "coach_task_logs_own" ON psy_coach_task_logs;
+CREATE POLICY "coach_task_logs_own" ON psy_coach_task_logs
+  USING (EXISTS (SELECT 1 FROM psy_coach_tasks t WHERE t.id = task_id AND t.coach_id = auth.uid()))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_coach_tasks t WHERE t.id = task_id AND t.coach_id = auth.uid()));
+
+DROP POLICY IF EXISTS "coach_task_logs_manager_read" ON psy_coach_task_logs;
+CREATE POLICY "coach_task_logs_manager_read" ON psy_coach_task_logs
+  FOR SELECT USING (
+    EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('manager','admin'))
+  );
+
+-- Log aktiviti task (siapa buat apa, bila) — dipaparkan di halaman detail task
+CREATE TABLE IF NOT EXISTS psy_coach_task_activity (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  task_id     UUID NOT NULL REFERENCES psy_coach_tasks(id) ON DELETE CASCADE,
+  actor_id    UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  actor_name  TEXT,
+  action      TEXT NOT NULL,
+  detail      JSONB DEFAULT '{}'::jsonb,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_coach_task_activity_task ON psy_coach_task_activity (task_id, created_at DESC);
+
+ALTER TABLE psy_coach_task_activity ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "coach_task_activity_own" ON psy_coach_task_activity;
+CREATE POLICY "coach_task_activity_own" ON psy_coach_task_activity
+  USING (EXISTS (SELECT 1 FROM psy_coach_tasks t WHERE t.id = task_id AND t.coach_id = auth.uid()))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_coach_tasks t WHERE t.id = task_id AND t.coach_id = auth.uid()));
+
+DROP POLICY IF EXISTS "coach_task_activity_manager_read" ON psy_coach_task_activity;
+CREATE POLICY "coach_task_activity_manager_read" ON psy_coach_task_activity
   FOR SELECT USING (
     EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('manager','admin'))
   );

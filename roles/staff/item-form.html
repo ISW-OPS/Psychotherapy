@@ -51,7 +51,12 @@
           <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
               <label class="text-sm font-semibold text-ink">Product Name <span class="text-terracotta">*</span></label>
-              <input id="item-name" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm focus:border-navy outline-none" placeholder="e.g. Air Afiya (Bottle 500ml)">
+              <input id="item-name" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm focus:border-navy outline-none" placeholder="e.g. Air Afiyah (Bottle 500ml)">
+            </div>
+            <div>
+              <label class="text-sm font-semibold text-ink">Shop Name (for patients) <span class="text-ink/35 font-normal">(Optional)</span></label>
+              <input id="item-shop-name" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm focus:border-navy outline-none" placeholder="e.g. Air Mineral">
+              <div class="text-[10px] text-ink/40 mt-1">Nama yang pesakit nampak di Shop. Kosong = tak tukar nama Shop.</div>
             </div>
             <div>
               <label class="text-sm font-semibold text-ink">Product Description <span class="text-terracotta">*</span></label>
@@ -303,6 +308,9 @@ async function loadForEdit(id) {
   }
   document.getElementById('item-id').value        = data.id;
   document.getElementById('item-name').value      = data.name || '';
+  // Nama Shop (untuk pesakit) — dibaca dari produk Shop yang dipaut ke item ini
+  const { data: shopRows } = await window.db.from('psy_products').select('name').eq('inventory_item_id', data.id).limit(1);
+  document.getElementById('item-shop-name').value = shopRows?.[0]?.name || '';
   document.getElementById('item-category').value  = data.category || '';
   const unitSel = document.getElementById('item-unit');
   if (data.unit && ![...unitSel.options].some(o => o.value === data.unit)) {
@@ -346,6 +354,8 @@ function cancelForm() {
 
 function finishAndClose() {
   try { window.opener?.postMessage({ type: 'isw-item-saved', id: editingItemId }, '*'); } catch (e) {}
+  // Laluan kedua: tak bergantung pada window.opener (boleh putus bila tab dibuka semula / browser sekat)
+  try { const bc = new BroadcastChannel('isw-inventory'); bc.postMessage({ type: 'isw-item-saved', id: editingItemId }); bc.close(); } catch (e) {}
   setTimeout(() => {
     if (window.opener && !window.opener.closed) window.close();
     else location.href = 'inventory.html';
@@ -428,7 +438,9 @@ async function saveItem() {
       const ext = stagedImageFile.name.split('.').pop();
       const path = `${itemId}/${Date.now()}.${ext}`;
       const { error: upErr } = await window.db.storage.from('inventory-images').upload(path, stagedImageFile, { upsert: true });
-      if (!upErr) {
+      if (upErr) {
+        banner('Gambar gagal dimuat naik: ' + upErr.message, 'error');
+      } else {
         const { data: pub } = window.db.storage.from('inventory-images').getPublicUrl(path);
         await window.db.from('psy_inventory_items').update({ image_url: pub.publicUrl }).eq('id', itemId);
       }
@@ -436,6 +448,13 @@ async function saveItem() {
 
     const { data: finalItem } = await window.db.from('psy_inventory_items').select('qty_in_stock').eq('id', itemId).single();
     await (window.syncStockToProducts?.(payload.name, finalItem?.qty_in_stock ?? 0));
+
+    // Nama Shop untuk pesakit — kemas kini semua produk Shop yang dipaut ke item ini (lepas sync supaya tak ditimpa)
+    const shopName = document.getElementById('item-shop-name').value.trim();
+    if (shopName) {
+      const { error: shopErr } = await window.db.from('psy_products').update({ name: shopName }).eq('inventory_item_id', itemId);
+      if (shopErr) banner('Nama Shop gagal dikemaskini: ' + shopErr.message, 'error');
+    }
 
     banner(editingItemId ? 'Produk dikemaskini' : 'Produk berjaya ditambah');
     editingItemId = itemId;

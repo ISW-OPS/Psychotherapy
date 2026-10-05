@@ -164,6 +164,8 @@
                     <th class="px-4 py-3 text-left text-[10px] font-bold text-ink/40 uppercase tracking-widest">Category</th>
                     <th class="px-4 py-3 text-left text-[10px] font-bold text-ink/40 uppercase tracking-widest">Location</th>
                     <th class="px-4 py-3 text-center text-[10px] font-bold text-ink/40 uppercase tracking-widest">Current Stock</th>
+                    <th class="px-4 py-3 text-center text-[10px] font-bold text-ink/40 uppercase tracking-widest" title="Jumlah semua stok masuk (ledger)">Stock In</th>
+                    <th class="px-4 py-3 text-center text-[10px] font-bold text-ink/40 uppercase tracking-widest" title="Jumlah semua stok keluar (ledger)">Stock Out</th>
                     <th class="px-4 py-3 text-center text-[10px] font-bold text-ink/40 uppercase tracking-widest">Minimum / Forecast</th>
                     <th class="px-4 py-3 text-center text-[10px] font-bold text-ink/40 uppercase tracking-widest">Stock Status</th>
                     <th class="px-4 py-3 text-left text-[10px] font-bold text-ink/40 uppercase tracking-widest">Supplier</th>
@@ -172,7 +174,7 @@
                   </tr>
                 </thead>
                 <tbody id="inv-tbody">
-                  <tr><td colspan="12" class="text-center py-12 text-ink/40 text-sm">Memuatkan...</td></tr>
+                  <tr><td colspan="14" class="text-center py-12 text-ink/40 text-sm">Memuatkan...</td></tr>
                 </tbody>
               </table>
             </div>
@@ -275,6 +277,7 @@ async function loadAll() {
     _cachedPkgs = pkgRes.data   || [];
     _cachedPats = patRes.data   || [];
 
+    await loadMovementTotals();
     await window.attachInventoryForecast(allItems);
     await window.attachPackageMappingFlag(allItems); // audit #E-21 (Tier 4)
     updateStats();
@@ -297,6 +300,7 @@ async function refreshInventory() {
     ]);
     allItems    = itemsRes.data || [];
     allRequests = reqsRes.data  || [];
+    await loadMovementTotals();
     await window.attachInventoryForecast(allItems);
     await window.attachPackageMappingFlag(allItems); // audit #E-21 (Tier 4)
     renderItems();
@@ -538,6 +542,39 @@ function exportProducts() {
 window.exportProducts = exportProducts;
 
 // ── Inventory table ────────────────────────────────────────
+// Jumlah stok masuk/keluar setiap produk — dikira dari ledger psy_stock_movements (shared/inventoryStock.js).
+// adjustment: delta positif = masuk, negatif = keluar. Dibaca berhalaman (had 1000 baris/permintaan).
+let movTotals = {}; // item_id -> { inQty, outQty }
+
+async function loadMovementTotals() {
+  const PAGE = 1000;
+  const totals = {};
+  try {
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await window.db.from('psy_stock_movements')
+        .select('id, item_id, movement_type, qty')
+        .order('id')
+        .range(from, from + PAGE - 1);
+      if (error) throw error;
+      (data || []).forEach(r => {
+        if (!r.item_id) return;
+        const t = totals[r.item_id] || (totals[r.item_id] = { inQty: 0, outQty: 0 });
+        const q = Number(r.qty) || 0;
+        if (r.movement_type === 'in') t.inQty += Math.abs(q);
+        else if (r.movement_type === 'out') t.outQty += Math.abs(q);
+        else if (q >= 0) t.inQty += q;
+        else t.outQty += Math.abs(q);
+      });
+      if (!data || data.length < PAGE) break;
+    }
+    movTotals = totals;
+  } catch (e) {
+    console.error('Gagal muatkan jumlah stok masuk/keluar', e);
+    movTotals = {};
+  }
+}
+const fmtMovQty = n => Math.round((Number(n) || 0) * 100) / 100;
+
 const PAGE_SIZE = 10;
 let currentPage = 1;
 
@@ -562,7 +599,7 @@ function renderItems() {
   if (statFilter) list = list.filter(i => getStockStatus(i) === statFilter);
 
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="12" class="text-center py-12 text-ink/40 text-sm">${allItems.length ? 'Tiada produk sepadan dengan carian' : 'Tiada produk inventori'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="14" class="text-center py-12 text-ink/40 text-sm">${allItems.length ? 'Tiada produk sepadan dengan carian' : 'Tiada produk inventori'}</td></tr>`;
     document.getElementById('inv-pagination').classList.add('hidden');
     return;
   }
@@ -583,8 +620,12 @@ function renderItems() {
     const isLow     = threshold > 0 && qty <= threshold;
     const isFarmasi = item.source_type === 'farmasi_klinikal';
     const stockStatusChip = STOCK_STATUS_CHIP[getStockStatus(item)];
+    const thumb = item.image_url
+      ? `<img src="${escHtml(item.image_url)}" alt="" loading="lazy" class="w-9 h-9 rounded-lg object-cover border border-ink/10 bg-white flex-shrink-0">`
+      : `<div class="w-9 h-9 rounded-lg border border-dashed border-ink/20 bg-cream/40 flex items-center justify-center text-sm text-ink/30 flex-shrink-0" title="Tiada gambar produk">📦</div>`;
 
     const qtyColor = qty === 0 ? 'text-terracotta' : isLow ? 'text-amber-700' : 'text-ink';
+    const mt        = movTotals[item.id] || { inQty: 0, outQty: 0 };
 
     const itemStatus = getItemStatus(item);
     const activeChip = itemStatus === 'discontinued'
@@ -603,7 +644,10 @@ function renderItems() {
       <td class="px-5 py-3.5" onclick="event.stopPropagation()"><input type="checkbox" class="inv-row-check w-4 h-4 rounded border-ink/30 cursor-pointer" value="${item.id}" onchange="onRowCheckChange()"></td>
       <td class="px-5 py-3.5 text-xs font-mono text-ink/45">${escHtml(item.item_code || '—')}</td>
       <td class="px-4 py-3.5" onclick="event.stopPropagation()">
-        <a href="inventory-detail.html?id=${item.id}" class="font-semibold text-sm text-ink hover:text-navy hover:underline block">${escHtml(item.name)}</a>
+        <div class="flex items-center gap-3">
+          ${thumb}
+          <a href="inventory-detail.html?id=${item.id}" class="font-semibold text-sm text-ink hover:text-navy hover:underline block">${escHtml(item.name)}</a>
+        </div>
         ${(isPkgLinked || expiryNote || !item.is_pkg_mapped) ? `<div class="flex items-center gap-1.5 mt-0.5">
           ${isPkgLinked ? '<span class="text-[10px] font-semibold text-gold-dark">Pakej</span>' : ''}
           ${!item.is_pkg_mapped ? '<span class="text-[10px] font-medium text-ink/35" title="Item ni tak dikaitkan ke mana-mana bekalan pakej — forecast keperluan tak boleh dikira utknya">Belum Dipetakan ke Pakej</span>' : ''}
@@ -618,6 +662,8 @@ function renderItems() {
       <td class="px-4 py-3.5 text-center">
         <span class="font-bold text-sm ${qtyColor}">${qty}</span> <span class="text-[11px] font-normal text-ink/40">${escHtml(item.unit||'')}</span>
       </td>
+      <td class="px-4 py-3.5 text-center text-sm font-semibold ${mt.inQty ? 'text-green-dark' : 'text-ink/30'}">${fmtMovQty(mt.inQty)}</td>
+      <td class="px-4 py-3.5 text-center text-sm font-semibold ${mt.outQty ? 'text-terracotta' : 'text-ink/30'}">${fmtMovQty(mt.outQty)}</td>
       <td class="px-4 py-3.5 text-center" onclick="${isPkgLinked ? `event.stopPropagation(); showDemandBreakdown('${item.id}')` : ''}">
         ${isPkgLinked
           ? `<span class="font-semibold text-sm text-navy underline decoration-dotted cursor-pointer" title="Klik untuk lihat breakdown">${needed}</span> <span class="text-[11px] font-normal text-ink/40">${escHtml(item.unit||'')}</span>`

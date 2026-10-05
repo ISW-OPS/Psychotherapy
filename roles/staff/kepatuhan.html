@@ -63,8 +63,11 @@
                   <option value="t">Tinggi</option>
                   <option value="sd">Sederhana</option>
                   <option value="r">Rendah</option>
-                  <option value="partial">Data Tidak Lengkap</option>
-                  <option value="none">Belum isi</option>
+                </select>
+                <select id="status-filter" class="text-xs border border-ink/15 rounded-lg px-2 py-1.5 bg-white text-ink focus:outline-none focus:ring-2 focus:ring-navy/20">
+                  <option value="">Semua Status</option>
+                  <option value="isi">Dah Isi</option>
+                  <option value="none">Belum Isi</option>
                 </select>
                 <!-- Audit #B2-19 (Tier 4) — dulu cuma Tahap+carian wujud -->
                 <select id="pakej-filter" class="text-xs border border-ink/15 rounded-lg px-2 py-1.5 bg-white text-ink focus:outline-none focus:ring-2 focus:ring-navy/20">
@@ -84,6 +87,7 @@
                   <tr class="text-left text-[10px] uppercase tracking-wider text-ink/40 border-b border-ink/8">
                     <th class="py-2.5 px-4 font-bold">Pesakit</th>
                     <th class="py-2.5 px-2 font-bold">Pakej</th>
+                    <th class="py-2.5 px-2 font-bold">Coach</th>
                     <th class="py-2.5 px-2 font-bold">Tahap</th>
                     <th class="py-2.5 px-2 font-bold">Skor</th>
                     <th class="py-2.5 px-2 font-bold text-center">Hari Isi</th>
@@ -203,30 +207,27 @@ const CLASS_META = {
   C: { label: 'C — Tidak',    cls: 'bg-red-100 text-red-600',     dot: 'bg-red-500' },
 };
 
-// 3-aras Tahap Kepatuhan (paparan) — diterbit dari skor 0-100.
+// 3-aras Tahap Kepatuhan (paparan) — diterbit dari skor 0-100 semata-mata.
 // Dikurangkan drpd 5-aras asal (Sangat Tinggi/Tinggi/Sederhana/Rendah/Sangat
 // Rendah) ikut arahan management Okt 2026 — terlalu banyak pilihan filter.
-function tier5(score){
-  if(score==null)  return {key:'none', label:'Belum isi',  chip:'bg-gray-100 text-gray-500',   bar:'#d1d5db'};
+// Kelengkapan data (Data Lengkap/Tidak Lengkap/Belum isi) TIDAK lagi bercampur
+// di sini — ia medan "Status" berasingan (r.dataStatus, lihat loadData), supaya
+// pilihan filter Tahap & label dipaparkan sentiasa sepadan (hanya 3 nilai).
+function tier3(score){
+  if(score==null)  return {key:'none', label:'—',          chip:'bg-gray-100 text-gray-400',    bar:'#e5e7eb'};
   if(score>=70)    return {key:'t',    label:'Tinggi',      chip:'bg-green-100 text-green-700',  bar:'#16a34a'};
   if(score>=50)    return {key:'sd',   label:'Sederhana',   chip:'bg-amber-100 text-amber-700',  bar:'#f59e0b'};
   return            {key:'r',   label:'Rendah',      chip:'bg-red-100 text-red-600',      bar:'#ef4444'};
 }
-// Override coach (A/B/C) → tier mewakili supaya paparan konsisten
-// Audit management #B2-24: bezakan dgn TEGAS "Data Tidak Lengkap" (majoriti hari
-// dlm minggu tu belum diisi, skor rendah sbb kekosongan dikira 0 — Pilihan B) drpd
-// "Sangat Rendah/Rendah" sebenar (majoriti hari DIISI tapi skor amalan memang rendah).
-// Ambang 50% hari belum isi — di bawah tu skor mingguan tak boleh dipercayai sbg
-// cerminan usaha sebenar pesakit.
+// Override coach (A/B/C) → tier mewakili supaya paparan konsisten.
+// Guna avgFilled (bukan avg Pilihan B) — Tahap Kepatuhan tak patut dicemari
+// oleh hari yg belum sempat diisi.
 function rowTier(r){
-  if(r.override) return tier5({A:90,B:60,C:20}[r.override]);
-  if (r.avg != null && r.avg < 50 && r.filled < weekDenom(viewWeekStart) * 0.5) {
-    return { key: 'partial', label: 'Data Tidak Lengkap', chip: 'bg-slate-100 text-slate-600', bar: '#94a3b8' };
-  }
-  return tier5(r.avg);
+  if(r.override) return tier3({A:90,B:60,C:20}[r.override]);
+  return tier3(r.avgFilled);
 }
-const STATUS5 = { t:'Aktif', sd:'Tidak Konsisten', r:'Tidak Aktif', none:'Belum isi' };
-const STATUS5_COLOR = { t:'text-green-600', sd:'text-amber-600', r:'text-red-600', none:'text-ink/40' };
+const DATA_STATUS_LABEL = { isi:'Dah Isi', none:'Belum Isi' };
+const DATA_STATUS_COLOR = { isi:'text-green-600', none:'text-ink/40' };
 
 function escHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 const MOOD_EMOJI = { Gembira:'😊', Sedih:'😔', Cemas:'😟', Marah:'😠', Burnout:'😩', Biasa:'😐' };
@@ -357,10 +358,17 @@ async function loadData(){
   const denomW = weekDenom(viewWeekStart);
   rows = patients.map(p => {
     const pl = logsByPatient[p.id] || [];
-    // Pilihan B: hari tak isi dikira 0 (denominator = hari berlalu dlm minggu)
+    // Pilihan B (kekal utk modal "Kelas auto" + Laporan Bulanan): hari tak isi
+    // dikira 0 (denominator = hari berlalu dlm minggu).
     const avg = pl.length ? Math.round(pl.reduce((a,l)=>a+(l.skor_harian!=null?l.skor_harian:0),0)/Math.max(denomW,1)) : null;
     const autoClass = classify(avg);
     const ov = overrideMap[p.id];
+    // Status (dah isi/belum) — berasingan drpd Tahap Kepatuhan (skor).
+    const dataStatus = pl.length === 0 ? 'none' : 'isi';
+    // Audit: jangan kira hari belum isi sbg skor 0 — pesakit yg tak hantar data
+    // tak semestinya tak patuh. Tahap Kepatuhan (senarai/carta) guna purata HARI
+    // YG DIISI SAHAJA, bukan Pilihan B — supaya Skor Rendah ≠ Tiada Data.
+    const avgFilled = pl.length ? Math.round(pl.reduce((a,l)=>a+(l.skor_harian!=null?l.skor_harian:0),0)/pl.length) : null;
     return {
       id: p.id, mrn: p.mrn,
       name: p.full_name || p.mrn || 'Pesakit',
@@ -369,7 +377,7 @@ async function loadData(){
       pakej: pkgMap[p.active_package_id] || '—',
       coachId: p.coach_id || '',
       coachName: coachMap[p.coach_id] || '—',
-      filled: pl.length, avg, autoClass,
+      filled: pl.length, avg, avgFilled, autoClass, dataStatus,
       override: ov?.override_kelas || null,
       note: ov?.nota_coach || '',
       logs: pl,
@@ -402,14 +410,13 @@ function populateFilterOptions() {
 
 function renderPie(){
   const el=document.getElementById('pie-card'); if(!el) return;
-  const order=['t','sd','r','partial','none'];
+  const order=['t','sd','r','none'];
   const META={
     t:{label:'Tinggi', color:'#16a34a'},
     sd:{label:'Sederhana', color:'#f59e0b'}, r:{label:'Rendah', color:'#ef4444'},
-    partial:{label:'Data Tidak Lengkap', color:'#94a3b8'},
     none:{label:'Belum isi', color:'#d1d5db'},
   };
-  const counts={t:0,sd:0,r:0,partial:0,none:0};
+  const counts={t:0,sd:0,r:0,none:0};
   rows.forEach(r=>{ counts[rowTier(r).key]++; });
   const total=rows.length||1;
   let acc=0; const stops=[];
@@ -480,17 +487,19 @@ function effClass(r){ return r.override || r.autoClass; }
 // Pesakit yang lepas tapis (tahap + carian) di jadual utama — dikongsi dgn Jadual Harian export
 function filteredRows(){
   const f = document.getElementById('class-filter').value;
+  const fStatus = document.getElementById('status-filter')?.value || '';
   const q = (document.getElementById('search').value||'').toLowerCase().trim();
   const fPakej = document.getElementById('pakej-filter')?.value || '';
   const fCoach = document.getElementById('coach-filter')?.value || '';
   return rows.filter(r => {
     if (q && !r.name.toLowerCase().includes(q) && !(r.mrn||'').toLowerCase().includes(q)) return false;
-    if (f && rowTier(r).key !== f) return false;           // tapis ikut tahap (5-aras)
+    if (f && rowTier(r).key !== f) return false;           // tapis ikut tahap (3-aras)
+    if (fStatus && r.dataStatus !== fStatus) return false; // tapis ikut kelengkapan data
     if (fPakej && r.pakej !== fPakej) return false;  // audit #B2-19
     if (fCoach && r.coachName !== fCoach) return false;
     return true;
   }).sort((a,b)=>{                                          // skor rendah dahulu (perlu perhatian)
-    const sa = a.avg==null?999:a.avg, sb = b.avg==null?999:b.avg;
+    const sa = a.avgFilled==null?999:a.avgFilled, sb = b.avgFilled==null?999:b.avgFilled;
     return sa - sb;
   });
 }
@@ -511,7 +520,7 @@ function renderTable(){
 
   let bodyHtml = pageRows.map((r, idx) => {
     const t = rowTier(r);
-    const pct = r.avg!=null ? r.avg : 0;
+    const pct = r.avgFilled!=null ? r.avgFilled : 0;
     return `<tr class="border-b border-ink/5 hover:bg-ink/[0.015] transition-colors">
       <td class="py-3 px-4">
         <div class="flex items-center gap-2 min-w-0">
@@ -523,15 +532,16 @@ function renderTable(){
         </div>
       </td>
       <td class="py-3 px-2 max-w-[140px]"><div class="text-[12px] text-ink/70 truncate">${escHtml(r.pakej)}</div></td>
+      <td class="py-3 px-2 max-w-[120px]"><div class="text-[12px] text-ink/70 truncate">${escHtml(r.coachName)}</div></td>
       <td class="py-3 px-2 whitespace-nowrap">
         <span class="inline-block text-[11px] font-bold px-2 py-0.5 rounded-full ${t.chip}">${t.label}</span>${r.override?'<span class="text-[9px] text-ink/40 ml-1">(ubah)</span>':''}
       </td>
       <td class="py-3 px-2 min-w-[84px]">
-        <div class="text-sm font-bold text-ink">${r.avg!=null?r.avg+'%':'—'}</div>
+        <div class="text-sm font-bold text-ink">${r.avgFilled!=null?r.avgFilled+'%':'—'}</div>
         <div class="h-1.5 rounded-full bg-ink/10 mt-1 overflow-hidden"><div class="h-full rounded-full" style="width:${pct}%;background:${t.bar}"></div></div>
       </td>
       <td class="py-3 px-2 text-center"><span class="text-sm font-bold ${r.filled>=6?'text-green-700':r.filled>0?'text-amber-600':'text-ink/30'}">${r.filled}</span><span class="text-[10px] text-ink/35">/7</span></td>
-      <td class="py-3 px-2"><span class="text-[12px] font-semibold leading-tight ${STATUS5_COLOR[t.key]}">${STATUS5[t.key]}</span></td>
+      <td class="py-3 px-2"><span class="text-[12px] font-semibold leading-tight ${DATA_STATUS_COLOR[r.dataStatus]}">${DATA_STATUS_LABEL[r.dataStatus]}</span></td>
       <td class="py-3 px-4 text-right whitespace-nowrap">
         ${r.filled === 0 && r.phone ? `<button data-rbac="kepatuhan.edit" onclick="event.stopPropagation(); sendReminder('${r.id}')" title="Hantar reminder isi Catatan Harian" class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-amber-200 text-amber-600 hover:border-amber-400 mr-1">🔔</button>` : ''}
         <button onclick="openModal('${r.id}')" title="Lihat detail kepatuhan" class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-ink/15 hover:border-navy hover:text-navy text-ink/50">👁</button>
@@ -540,7 +550,7 @@ function renderTable(){
   }).join('');
   // Isi baris kosong supaya tinggi jadual konsisten (pagination tak bergerak) bila >1 halaman
   if (pages > 1 && pageRows.length < PAGE_SIZE) {
-    bodyHtml += `<tr style="height:57px"><td colspan="7"></td></tr>`.repeat(PAGE_SIZE - pageRows.length);
+    bodyHtml += `<tr style="height:57px"><td colspan="8"></td></tr>`.repeat(PAGE_SIZE - pageRows.length);
   }
   tbody.innerHTML = bodyHtml;
   renderPagination(list.length, pages);
@@ -1277,6 +1287,7 @@ document.addEventListener('click', (e)=>{
   loadData();
 });
 document.getElementById('class-filter').addEventListener('change', () => { currentPage = 1; renderTable(); });
+document.getElementById('status-filter').addEventListener('change', () => { currentPage = 1; renderTable(); });
 document.getElementById('search').addEventListener('input', () => { currentPage = 1; renderTable(); });
 document.getElementById('pakej-filter').addEventListener('change', () => { currentPage = 1; renderTable(); });
 document.getElementById('coach-filter').addEventListener('change', () => { currentPage = 1; renderTable(); });

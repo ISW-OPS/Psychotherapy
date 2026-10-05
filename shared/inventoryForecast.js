@@ -26,7 +26,7 @@ window.computeForecastForRange = async function (itemIds, startDate, endDate) {
   if (!itemIds?.length || !startDate || !endDate) return forecast;
 
   const { data: rows, error } = await window.db.from('psy_plan_weekly_progress')
-    .select('id, plan_id, week_number, patient_id, is_extension, session_date, status, psy_patients(full_name, mrn)')
+    .select('id, plan_id, week_number, patient_id, is_extension, session_date, status, coaching_checks, psy_patients(full_name, mrn)')
     .gte('session_date', startDate).lte('session_date', endDate)
     .neq('status', 'hadir').neq('status', 'cancel');
   if (error) { console.error('[inventoryForecast] gagal baca sesi:', error); return forecast; }
@@ -41,24 +41,49 @@ window.computeForecastForRange = async function (itemIds, startDate, endDate) {
   const planMap = {};
   (plans || []).forEach(p => { planMap[p.id] = Array.isArray(p.coaching_schedule) ? p.coaching_schedule : []; });
 
+  // Kit bekalan (kit_id) dikembangkan kepada item individu — sama macam applySupplyStock() di plan-week.html
+  const kitIds = new Set();
+  (plans || []).forEach(p => (Array.isArray(p.coaching_schedule) ? p.coaching_schedule : []).forEach(w =>
+    (Array.isArray(w.supplies) ? w.supplies : []).forEach(s => { if (s?.kit_id) kitIds.add(s.kit_id); })));
+  const kitMap = {};
+  if (kitIds.size) {
+    const { data: kits, error: kitErr } = await window.db.from('psy_procedure_kits')
+      .select('id, items').in('id', [...kitIds]);
+    if (kitErr) console.error('[inventoryForecast] gagal baca kit:', kitErr);
+    (kits || []).forEach(k => { kitMap[k.id] = Array.isArray(k.items) ? k.items : []; });
+  }
+
   upcoming.forEach(r => {
     const schedule = planMap[r.plan_id] || [];
     const weekObj = schedule.find(w => w.week === r.week_number) || schedule[r.week_number - 1];
     if (!weekObj || weekObj.mode === 'online') return;
 
     const supplies = Array.isArray(weekObj.supplies) ? weekObj.supplies : [];
-    supplies.forEach(s => {
-      const itemId = s?.item_id;
-      const qty    = Number(s?.qty || s?.quantity || 0);
-      const auto   = s?.auto_stock !== false;
-      if (!itemId || qty <= 0 || !auto || !forecast[itemId]) return;
+    supplies.forEach((s, idx) => {
+      // Bekalan yang dah DITICK staff = stok dah keluar (lihat deductSessionSupplies / applySupplyStock).
+      // Tak perlu dikira sebagai keperluan lagi — elak kiraan berganda. Kunci tick ikut bekalan (idx),
+      // jadi untuk kit ia terpakai pada keseluruhan kit tu.
+      const ticked = (r.coaching_checks || {})[`M${r.week_number}_supplies_${idx}`] === true;
+      if (ticked) return;
+      const auto = s?.auto_stock !== false;
+      if (!auto) return;
 
-      forecast[itemId].required += qty;
-      forecast[itemId].breakdown.push({
-        patient_name: r.psy_patients?.full_name || r.psy_patients?.mrn || '—',
-        week_number:  r.week_number,
-        session_date: r.session_date,
-        qty,
+      // Senarai (item, qty) untuk bekalan ni: kit → item dalam kit × bilangan kit; item biasa → terus
+      const parts = s?.kit_id
+        ? (kitMap[s.kit_id] || []).filter(ki => ki.item_id).map(ki => ({
+            itemId: ki.item_id, qty: (Number(ki.qty) || 0) * (Number(s.qty) || 1),
+          }))
+        : [{ itemId: s?.item_id, qty: Number(s?.qty || s?.quantity || 0) }];
+
+      parts.forEach(({ itemId, qty }) => {
+        if (!itemId || qty <= 0 || !forecast[itemId]) return;
+        forecast[itemId].required += qty;
+        forecast[itemId].breakdown.push({
+          patient_name: r.psy_patients?.full_name || r.psy_patients?.mrn || '—',
+          week_number:  r.week_number,
+          session_date: r.session_date,
+          qty,
+        });
       });
     });
   });
