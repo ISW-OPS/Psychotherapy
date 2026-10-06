@@ -155,7 +155,7 @@ const STAFF_NAV_MASTER = [
         { id: 'affiliate',     url: 'affiliate.html',     icon: '🤝', label: 'Affiliate' },
       ] },
       { id: 'inventory_group', url: 'inventory.html', icon: '🏭', label: 'Inventori', children: [
-        { id: 'inventory',          url: 'inventory.html',          label: 'Products' },
+        { id: 'inventory',          url: 'inventory.html',          label: 'Inventori' },
         { id: 'stock_movement',     url: 'stock-movement.html',     label: 'Stock Movement' },
         { id: 'pemberian_stok',     url: 'pemberian-stok.html',     label: 'Pemberian Stok' },
         { id: 'stock_alerts',       url: 'stock-alerts.html',       label: 'Stock Alerts' },
