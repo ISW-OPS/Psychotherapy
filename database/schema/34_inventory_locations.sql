@@ -18,6 +18,12 @@ CREATE TABLE IF NOT EXISTS psy_inventory_locations (
   created_at  TIMESTAMPTZ DEFAULT now()
 );
 
+-- Permohonan belian simpan lokasi (rujukan kpd psy_inventory_locations) — ALTER di sini
+-- sebab jadual lokasi ditakrif selepas psy_inventory_requests (14_products_inventory.sql).
+ALTER TABLE psy_inventory_requests
+  ADD COLUMN IF NOT EXISTS location_id UUID REFERENCES psy_inventory_locations(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_inventory_requests_location ON psy_inventory_requests (location_id);
+
 CREATE TABLE IF NOT EXISTS psy_inventory_stock_by_location (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   item_id       UUID NOT NULL REFERENCES psy_inventory_items(id) ON DELETE CASCADE,

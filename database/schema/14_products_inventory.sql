@@ -10,6 +10,7 @@
 CREATE TABLE IF NOT EXISTS psy_inventory_items (
   id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name                 TEXT NOT NULL,
+  shopee_url           TEXT,   -- pautan Shopee untuk beli produk ini
   category             TEXT NOT NULL DEFAULT 'Bekalan Coaching',
   unit                 TEXT NOT NULL DEFAULT 'Unit'
                        CHECK (unit IN ('Biji (pcs)','Botol','Kotak','Pek','Paket','Tiub','Tablet',

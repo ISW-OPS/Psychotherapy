@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS psy_suppliers (
   mobile              TEXT,
   email               TEXT,
   fax                 TEXT,
+  location_url        TEXT,   -- pautan Waze lokasi supplier
   website             TEXT,
   address             TEXT,
   city                TEXT,
