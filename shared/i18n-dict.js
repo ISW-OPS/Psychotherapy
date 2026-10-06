@@ -5351,6 +5351,7 @@ window.ISW_I18N_EXTRA = {
   "Published (papar ke pesakit)": "Published (visible to patients)",
   "Pulangan": "Return",
   "Pulangan Botol": "Bottle Return",
+  "Senarai Peralatan": "Equipment List",
   "Pulangan botol madu — sembang dengan staff": "Honey bottle return — chat with staff",
   "Pulangan Diterima": "Return Received",
   "Pulangan diterima ✅": "Return received ✅",
