@@ -154,15 +154,13 @@ const STAFF_NAV_MASTER = [
         { id: 'point_rewards', url: 'point-rewards.html', icon: '🏆', label: 'Ganjaran Mata' },
         { id: 'affiliate',     url: 'affiliate.html',     icon: '🤝', label: 'Affiliate' },
       ] },
-      { id: 'inventory_group', url: 'inventory-overview.html', icon: '🏭', label: 'Inventori', children: [
-        { id: 'inventory_overview', url: 'inventory-overview.html', label: 'Overview' },
+      { id: 'inventory_group', url: 'inventory.html', icon: '🏭', label: 'Inventori', children: [
         { id: 'inventory',          url: 'inventory.html',          label: 'Products' },
         { id: 'stock_movement',     url: 'stock-movement.html',     label: 'Stock Movement' },
         { id: 'pemberian_stok',     url: 'pemberian-stok.html',     label: 'Pemberian Stok' },
         { id: 'stock_alerts',       url: 'stock-alerts.html',       label: 'Stock Alerts' },
-        { id: 'stock_in',           url: 'stock-in.html',           label: 'Stock In / Receive' },
         { id: 'suppliers',          url: 'suppliers.html',          label: 'Suppliers' },
-        { id: 'purchase_requests',  url: 'purchase-requests.html',  label: 'Purchase Requests' },
+        { id: 'equipment',          url: 'equipment-list.html',     label: 'Equipment List' },
       ] },
       { id: 'psy_orders', url: 'orders.html', icon: '📦', label: 'Orders & Tracking' },
       { id: 'pulangan', url: 'pulangan.html', icon: '🍯', label: 'Pulangan Botol' },
