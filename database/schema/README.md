@@ -11,17 +11,14 @@ database/
 │   ├── ...                  (satu fail per domain, susunan nombor = urutan run)
 │   └── 24_storage.sql
 ├── master_migration.sql     ← DIJANA dari schema/ — jangan edit terus
-├── _generate_master.py      ← penjana master
-├── seeds.sql                ← data rujukan (run selepas master)
-├── seeds_demo_*.sql         ← data demo
-└── archive/                 ← fail step/part lama (sejarah, jangan run)
+└── _generate_master.py      ← penjana master
 
 supabase/migrations/         ← migrasi tambahan (deploy ke DB sedia ada / prod)
 ```
 
 ## Setup projek Supabase BARU (DB kosong)
 
-Run `master_migration.sql` penuh dalam SQL Editor, kemudian `seeds.sql`.
+Run `master_migration.sql` penuh dalam SQL Editor.
 (Atau run fail `schema/*.sql` satu-satu ikut nombor.)
 
 ## Bila buat DEVELOPMENT BARU (ubah skema)

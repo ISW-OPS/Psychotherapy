@@ -1,8 +1,8 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-10-05T07:45:15.183401Z
--- Jumlah fail: 37
+-- Generated: 2026-10-06T04:42:35.409015Z
+-- Jumlah fail: 38
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
 
@@ -4678,6 +4678,7 @@ ON CONFLICT (code) DO NOTHING;
 CREATE TABLE IF NOT EXISTS psy_inventory_items (
   id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name                 TEXT NOT NULL,
+  shopee_url           TEXT,   -- pautan Shopee untuk beli produk ini
   category             TEXT NOT NULL DEFAULT 'Bekalan Coaching',
   unit                 TEXT NOT NULL DEFAULT 'Unit'
                        CHECK (unit IN ('Biji (pcs)','Botol','Kotak','Pek','Paket','Tiub','Tablet',
@@ -9899,6 +9900,7 @@ CREATE TABLE IF NOT EXISTS psy_suppliers (
   mobile              TEXT,
   email               TEXT,
   fax                 TEXT,
+  location_url        TEXT,   -- pautan Waze lokasi supplier
   website             TEXT,
   address             TEXT,
   city                TEXT,
@@ -10023,6 +10025,12 @@ CREATE TABLE IF NOT EXISTS psy_inventory_locations (
   is_active   BOOLEAN NOT NULL DEFAULT true,
   created_at  TIMESTAMPTZ DEFAULT now()
 );
+
+-- Permohonan belian simpan lokasi (rujukan kpd psy_inventory_locations) — ALTER di sini
+-- sebab jadual lokasi ditakrif selepas psy_inventory_requests (14_products_inventory.sql).
+ALTER TABLE psy_inventory_requests
+  ADD COLUMN IF NOT EXISTS location_id UUID REFERENCES psy_inventory_locations(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_inventory_requests_location ON psy_inventory_requests (location_id);
 
 CREATE TABLE IF NOT EXISTS psy_inventory_stock_by_location (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -10440,3 +10448,157 @@ DROP POLICY IF EXISTS "Staff manage recommended restaurants" ON psy_recommended_
 CREATE POLICY "Staff manage recommended restaurants" ON psy_recommended_restaurants FOR ALL
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
   WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/40_equipment.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 40 — EQUIPMENT STORE + PERMINTAAN MAINTENANCE
+-- psy_equipment: rekod peralatan (berasingan dari item inventori)
+-- psy_equipment_documents: lampiran (invois, waranti, manual, foto)
+-- psy_equipment_maintenance: staf lapor masalah → manager lulus/tolak → selesai
+-- Kod peralatan (EQ-0001...) & no. permohonan (MR-2026-00001...) dijana DB.
+-- Asal: migration 20261008-20261012 (digabung ke schema bersih).
+-- ═══════════════════════════════════════════════════════════════════
+
+CREATE SEQUENCE IF NOT EXISTS psy_equipment_code_seq;
+CREATE SEQUENCE IF NOT EXISTS psy_maint_request_seq;
+
+CREATE TABLE IF NOT EXISTS psy_equipment (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name                     TEXT NOT NULL,
+  code                     TEXT UNIQUE DEFAULT 'EQ-' || lpad(nextval('psy_equipment_code_seq')::text, 4, '0'),
+  location_id              UUID REFERENCES psy_inventory_locations(id) ON DELETE SET NULL,
+  category                 TEXT,
+  brand                    TEXT,
+  model                    TEXT,
+  serial_no                TEXT,
+  description              TEXT,
+  purchase_date            DATE,
+  purchase_cost            NUMERIC(12,2),
+  warranty_expiry          DATE,
+  condition                TEXT CHECK (condition IS NULL OR condition IN ('good','fair','poor')),
+  supplier                 TEXT,
+  invoice_no               TEXT,
+  po_no                    TEXT,
+  remarks                  TEXT,
+  assigned_to_name         TEXT,
+  last_service_date        DATE,
+  next_maintenance_date    DATE,
+  maintenance_cycle_months INT,
+  maintenance_remarks      TEXT,
+  image_url                TEXT,
+  status                   TEXT NOT NULL DEFAULT 'available'
+                           CHECK (status IN ('available','in_use','under_maintenance','damaged','lost','retired')),
+  notes                    TEXT,
+  created_at               TIMESTAMPTZ DEFAULT now(),
+  updated_at               TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS psy_equipment_documents (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  equipment_id       UUID NOT NULL REFERENCES psy_equipment(id) ON DELETE CASCADE,
+  file_name          TEXT NOT NULL,
+  file_path          TEXT NOT NULL,
+  file_size          BIGINT,
+  file_type          TEXT,
+  uploaded_by        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  uploaded_by_name   TEXT,
+  created_at         TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS psy_equipment_maintenance (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  equipment_id       UUID NOT NULL REFERENCES psy_equipment(id) ON DELETE CASCADE,
+  request_no         TEXT UNIQUE
+                     DEFAULT 'MR-' || to_char(now(), 'YYYY') || '-' || lpad(nextval('psy_maint_request_seq')::text, 5, '0'),
+  issue              TEXT NOT NULL,
+  request_type       TEXT,
+  issue_category     TEXT,
+  priority           TEXT CHECK (priority IS NULL OR priority IN ('low','medium','high','urgent')),
+  preferred_date     DATE,
+  notes              TEXT,
+  photo_url          TEXT,
+  status             TEXT NOT NULL DEFAULT 'baru'
+                     CHECK (status IN ('baru','diluluskan','dalam_servis','selesai','ditolak')),
+  reported_by        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  reported_by_name   TEXT,
+  manager_note       TEXT,
+  handled_by         UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  handled_by_name    TEXT,
+  handled_at         TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ DEFAULT now(),
+  updated_at         TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_equip_maint_status    ON psy_equipment_maintenance (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_equip_maint_equipment ON psy_equipment_maintenance (equipment_id);
+CREATE INDEX IF NOT EXISTS idx_equip_docs_equipment  ON psy_equipment_documents (equipment_id);
+
+ALTER TABLE psy_equipment             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_equipment_documents   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE psy_equipment_maintenance ENABLE ROW LEVEL SECURITY;
+
+-- Staff boleh baca peralatan
+DROP POLICY IF EXISTS "staff read equipment" ON psy_equipment;
+CREATE POLICY "staff read equipment" ON psy_equipment FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- Manager/admin urus peralatan (tambah, ubah)
+DROP POLICY IF EXISTS "manager manage equipment" ON psy_equipment;
+CREATE POLICY "manager manage equipment" ON psy_equipment FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('super_admin','admin','manager')))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('super_admin','admin','manager')));
+
+-- Staff boleh baca & lapor masalah
+DROP POLICY IF EXISTS "staff read maintenance" ON psy_equipment_maintenance;
+CREATE POLICY "staff read maintenance" ON psy_equipment_maintenance FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "staff report maintenance" ON psy_equipment_maintenance;
+CREATE POLICY "staff report maintenance" ON psy_equipment_maintenance FOR INSERT
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff') AND reported_by = auth.uid());
+
+-- Manager/admin kemaskini status (lulus/tolak/selesai)
+DROP POLICY IF EXISTS "manager update maintenance" ON psy_equipment_maintenance;
+CREATE POLICY "manager update maintenance" ON psy_equipment_maintenance FOR UPDATE
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('super_admin','admin','manager')))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('super_admin','admin','manager')));
+
+-- Lampiran dokumen
+DROP POLICY IF EXISTS "staff read equipment docs" ON psy_equipment_documents;
+CREATE POLICY "staff read equipment docs" ON psy_equipment_documents FOR SELECT
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "manager manage equipment docs" ON psy_equipment_documents;
+CREATE POLICY "manager manage equipment docs" ON psy_equipment_documents FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('super_admin','admin','manager')))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('super_admin','admin','manager')));
+
+-- ───────────────────────────────────────────────────────────────────
+-- RBAC: modul 'equipment' (Equipment Store)
+-- Coach: lihat + lapor masalah. Manager/Admin/Super Admin: view, create, edit.
+-- ───────────────────────────────────────────────────────────────────
+INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
+  ('equipment', 'Equipment Store', '🛠️', 'staff', 112)
+ON CONFLICT (code) DO UPDATE SET label = EXCLUDED.label, icon = EXCLUDED.icon;
+
+INSERT INTO psy_module_actions (module_code, action_code) VALUES
+  ('equipment', 'view'), ('equipment', 'create'), ('equipment', 'edit')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code) VALUES
+  ('coach',       'equipment', 'view'),
+  ('coach',       'equipment', 'create'),
+  ('manager',     'equipment', 'view'),
+  ('manager',     'equipment', 'create'),
+  ('manager',     'equipment', 'edit'),
+  ('admin',       'equipment', 'view'),
+  ('admin',       'equipment', 'create'),
+  ('admin',       'equipment', 'edit'),
+  ('super_admin', 'equipment', 'view'),
+  ('super_admin', 'equipment', 'create'),
+  ('super_admin', 'equipment', 'edit')
+ON CONFLICT DO NOTHING;
