@@ -40,7 +40,7 @@
             </div>
             <div class="flex items-center gap-2">
               <button onclick="exportProducts()" class="px-4 py-2.5 border border-ink/20 rounded-xl text-sm font-semibold bg-white hover:bg-ink/5">⭳ Export</button>
-              <button data-rbac="inventory.create" onclick="location.href='stock-in.html'" class="px-4 py-2.5 border border-navy/30 text-navy rounded-xl text-sm font-semibold bg-white hover:bg-navy/5">📥 Stock Masuk</button>
+              <button data-rbac="inventory.create" onclick="openStockPicker()" class="px-4 py-2.5 border border-navy/30 text-navy rounded-xl text-sm font-semibold bg-white hover:bg-navy/5">📥 Stock Masuk</button>
               <button id="btn-tambah" data-rbac="inventory.create" onclick="window.open('item-form.html', '_blank')"
                 class="hidden bg-navy text-white text-sm px-5 py-2.5 rounded-xl font-semibold hover:bg-navy-dark transition-colors shadow-sm">
                 + Add Product
@@ -523,6 +523,39 @@ function updateStats() {
   supSel.innerHTML = '<option value="">All Suppliers</option>' + suppliers.map(s => `<option value="${escHtml(s)}">${escHtml(s)}</option>`).join('');
   supSel.value = curSup;
 }
+
+function openStockPicker() {
+  document.getElementById('stock-picker-search').value = '';
+  renderStockPicker();
+  document.getElementById('stock-picker').classList.remove('hidden');
+  setTimeout(() => document.getElementById('stock-picker-search').focus(), 50);
+}
+function closeStockPicker() { document.getElementById('stock-picker').classList.add('hidden'); }
+window.openStockPicker = openStockPicker;
+window.closeStockPicker = closeStockPicker;
+
+function renderStockPicker() {
+  const q = (document.getElementById('stock-picker-search').value || '').toLowerCase().trim();
+  const list = allItems.filter(i => i.is_active !== false && (!q || (i.name || '').toLowerCase().includes(q) || (i.item_code || '').toLowerCase().includes(q)));
+  document.getElementById('stock-picker-list').innerHTML = list.length
+    ? list.map(i => `<button type="button" onclick="pickStockItem('${i.id}')" class="w-full text-left px-4 py-2.5 hover:bg-ink/5 flex items-center justify-between gap-3">
+        <span class="min-w-0"><span class="block text-sm font-semibold text-ink truncate">${escHtml(i.name)}</span>
+        <span class="block text-[11px] text-ink/45 font-mono">${escHtml(i.item_code || '')}</span></span>
+        ${i.requires_approval ? '<span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-navy/10 text-navy flex-shrink-0">Perlu kelulusan</span>' : ''}
+      </button>`).join('')
+    : '<p class="text-center text-sm text-ink/40 py-6">Tiada produk dijumpai</p>';
+}
+// Item perlu kelulusan → purchase request dulu; tak perlu → stock-in terus (sama logik dgn inventory-detail.html openStockIn).
+function pickStockItem(id) {
+  const item = allItems.find(x => x.id === id);
+  if (!item) return;
+  closeStockPicker();
+  const url = item.requires_approval
+    ? `purchase-request-form.html?item=${id}`
+    : `stock-in.html?item=${id}`;
+  window.open(url, '_blank');
+}
+window.pickStockItem = pickStockItem;
 
 function exportProducts() {
   const rows = [['Product Code','Product Name','Requires Approval','Category','Unit','Location','Current Stock','Minimum','Stock Status','Supplier','Status']];
@@ -1094,5 +1127,18 @@ window.addEventListener('message', (e) => {
   await loadAll();
 })();
 </script>
+
+<div id="stock-picker" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/40" onclick="closeStockPicker()"></div>
+  <div class="relative bg-white rounded-2xl w-full max-w-md p-5 space-y-3 max-h-[80vh] flex flex-col">
+    <div class="flex items-center justify-between">
+      <h3 class="font-bold text-base text-ink">📥 Stok Masuk — pilih produk</h3>
+      <button onclick="closeStockPicker()" class="text-ink/50 text-xl">×</button>
+    </div>
+    <input id="stock-picker-search" type="text" oninput="renderStockPicker()" placeholder="Cari nama / kod produk..."
+      class="w-full border border-ink/15 rounded-lg px-3 py-2 text-sm">
+    <div id="stock-picker-list" class="overflow-y-auto divide-y divide-ink/5 border border-ink/10 rounded-xl"></div>
+  </div>
+</div>
 </body>
 </html>
