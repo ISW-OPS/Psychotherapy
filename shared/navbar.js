@@ -147,16 +147,19 @@ const STAFF_NAV_MASTER = [
     group: 'OPERASI', collapsible: true, items: [
       { id: 'pakej', url: 'pakej.html', icon: '🗂️', label: 'Pakej Rawatan' },
       { id: 'psy_products', url: 'products.html', icon: '🛍️', label: 'Produk' },
-      { id: 'produk_bahan', url: 'produk-bahan.html', icon: '🧴', label: 'Produk & Bahan Luar' },
-      { id: 'direktori_cadangan', url: 'direktori-cadangan.html', icon: '📇', label: 'Direktori Cadangan' },
+      { id: 'produk_bahan_group', url: 'produk-bahan.html', icon: '🧴', label: 'External Product', children: [
+        { id: 'produk_bahan',  url: 'produk-bahan.html',  label: 'Produk & Bahan' },
+        { id: 'produk_seller', url: 'produk-seller.html', label: 'Seller / Platform' },
+      ] },
       { id: 'ganjaran', url: 'promo-codes.html', icon: '🎁', label: 'Ganjaran', children: [
         { id: 'promo_codes',   url: 'promo-codes.html',   icon: '🏷️', label: 'Kod Promo' },
+        { id: 'promo_vouchers', url: 'promo-vouchers.html', icon: '🎟️', label: 'Voucher Pesakit' },
+        { id: 'promo_redemptions', url: 'promo-redemptions.html', icon: '🧾', label: 'Penggunaan Promo' },
         { id: 'point_rewards', url: 'point-rewards.html', icon: '🏆', label: 'Ganjaran Mata' },
         { id: 'affiliate',     url: 'affiliate.html',     icon: '🤝', label: 'Affiliate' },
       ] },
       { id: 'inventory_group', url: 'inventory.html', icon: '🏭', label: 'Inventori', children: [
         { id: 'inventory',          url: 'inventory.html',          label: 'Inventori' },
-        { id: 'stock_movement',     url: 'stock-movement.html',     label: 'Stock Movement' },
         { id: 'pemberian_stok',     url: 'pemberian-stok.html',     label: 'Pemberian Stok' },
         { id: 'suppliers',          url: 'suppliers.html',          label: 'Suppliers' },
         { id: 'equipment',          url: 'equipment-list.html',     label: 'Senarai Peralatan' },
