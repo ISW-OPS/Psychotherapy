@@ -46,6 +46,9 @@
             <div id="d-chips" class="flex flex-wrap gap-2 mt-3"></div>
           </div>
           <div id="admin-actions" class="hidden flex items-center gap-2 flex-shrink-0">
+            <button onclick="exportMovementsCsv()" class="flex items-center gap-1.5 px-4 py-2 border border-ink/20 bg-white text-ink text-sm font-semibold rounded-xl hover:bg-ink/5 transition-colors shadow-sm">
+              ⭳ Export CSV
+            </button>
             <button onclick="openEdit()" data-rbac="inventory.edit" class="flex items-center gap-1.5 px-4 py-2 border border-ink/20 bg-white text-ink text-sm font-semibold rounded-xl hover:bg-ink/5 transition-colors shadow-sm">
               ✏️ Edit Item
             </button>
@@ -192,19 +195,6 @@
           </div>
 
         <!-- ── Stok Masuk & Stok Keluar (lebar penuh, pagination 6 baris) ── -->
-        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm px-5 py-4 flex items-center gap-3 flex-wrap">
-          <span class="text-lg">📊</span>
-          <div class="mr-auto">
-            <div class="text-sm font-semibold text-ink/70">Pergerakan Stok</div>
-            <div class="text-[10px] text-ink/35">Tapis ikut tarikh &amp; export rekod</div>
-          </div>
-          <label class="text-[11px] font-semibold text-ink/50">Dari</label>
-          <input id="mov-date-from" type="date" onchange="loadMovements()" class="border border-ink/15 rounded-lg px-2.5 py-1.5 text-xs">
-          <label class="text-[11px] font-semibold text-ink/50">Hingga</label>
-          <input id="mov-date-to" type="date" onchange="loadMovements()" class="border border-ink/15 rounded-lg px-2.5 py-1.5 text-xs">
-          <button onclick="document.getElementById('mov-date-from').value='';document.getElementById('mov-date-to').value='';loadMovements()" class="text-[11px] font-semibold text-navy hover:underline whitespace-nowrap">✕ Buang tapisan</button>
-          <button onclick="exportMovementsCsv()" class="px-3 py-1.5 border border-ink/20 rounded-lg text-xs font-semibold bg-white hover:bg-ink/5 whitespace-nowrap">⭳ Export CSV</button>
-        </div>
         <div id="movements-in-card" class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden">
           <div class="px-5 py-8 text-center text-ink/30 text-sm">Memuatkan...</div>
         </div>
@@ -698,14 +688,9 @@ function renderStockByLocation(rows) {
 // setiap lokasi setakat tu). balance_after ialah baki ABSOLUT per lokasi, jadi ia boleh
 // dijumlahkan terus tanpa perlu bermula dari sifar.
 async function loadMovements() {
-  const from = document.getElementById('mov-date-from')?.value;
-  const to = document.getElementById('mov-date-to')?.value;
-  let q = window.db.from('psy_stock_movements')
+  const { data, error } = await window.db.from('psy_stock_movements')
     .select('id, movement_type, qty, balance_after, location_id, reference_label, reference_type, reference_id, notes, actor_name, created_at, psy_inventory_locations(name)')
-    .eq('item_id', itemId);
-  if (from) q = q.gte('created_at', from + 'T00:00:00');
-  if (to) q = q.lte('created_at', to + 'T23:59:59');
-  const { data, error } = await q
+    .eq('item_id', itemId)
     .order('created_at', { ascending: true })
     .order('id', { ascending: true });
   if (error) { console.error('[inventory-detail] gagal baca ledger:', error); movInRows = []; movOutRows = []; renderMovCard('in'); renderMovCard('out'); return; }
@@ -751,7 +736,7 @@ async function loadMovements() {
   renderMovCard('out');
 }
 
-// Export CSV — gabungan Stok Masuk + Stok Keluar (ikut tapisan tarikh semasa), kronologi terbaru dulu.
+// Export CSV — gabungan Stok Masuk + Stok Keluar (semua rekod), kronologi terbaru dulu.
 function exportMovementsCsv() {
   const rows = [...movInRows, ...movOutRows].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   if (!rows.length) { banner('Tiada rekod untuk export', 'error'); return; }
