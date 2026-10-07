@@ -312,6 +312,12 @@ ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label, icon=EXCLUDED.icon, sort_
 -- (Red Emergency Protocol) di bawah. CASCADE buang grant lama sekali.
 DELETE FROM psy_modules WHERE code = 'risk';
 
+-- 'direktori_cadangan' (Restoran & Tempat Makan) DIBUANG 7 Okt 2026 —
+-- halaman direktori-cadangan.html dipadam, digabung terus ke modul
+-- 'produk_bahan' (psy_recommended_products.item_type='kedai_makan').
+-- CASCADE buang grant lama sekali.
+DELETE FROM psy_modules WHERE code = 'direktori_cadangan';
+
 INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
   -- UTAMA
   ('dashboard',        'Dashboard',            '🏠', 'staff',  10),
@@ -331,8 +337,8 @@ INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
   ('package',          'Pakej & Pembayaran',   '🗂️', 'staff',  90),
   ('products',         'Produk',               '🛍️', 'staff', 100),
   -- Modul baharu (audit management Tier 5, VI & VII) — 24 Sept 2026
+  -- 'direktori_cadangan' DIBUANG 7 Okt 2026, digabung ke 'produk_bahan' (atas).
   ('produk_bahan',      'Produk & Bahan Luar',  '🧴', 'staff', 101),
-  ('direktori_cadangan','Direktori Cadangan',   '📇', 'staff', 102),
   ('inventory',        'Inventori & Produk',   '🏭', 'staff', 110),
   ('orders',           'Orders & Tracking',    '📦', 'staff', 120),
   ('pulangan',         'Pulangan Botol',       '🍯', 'staff', 130),
@@ -430,7 +436,7 @@ FROM (VALUES
   ('announcements'),('events'),('library'),('kb'),
   ('kehadiran'),('issue'),('surat'),('kob_slots'),
   ('coaching'),('inventory'),('communication'),('operations'),
-  ('produk_bahan'),('direktori_cadangan'),
+  ('produk_bahan'),
   -- Audit management batch 3 (30 Sept 2026): laporan pakej (siap/berhenti/
   -- meninggal per-pakej) mesti nampak utk doktor jugak, bukan admin sahaja.
   ('package'),('pakej_laporan')
@@ -446,7 +452,7 @@ FROM (VALUES
   ('announcements'),('events'),('library'),('kb'),
   ('kehadiran'),('issue'),('surat'),
   ('coaching'),('inventory'),('communication'),('operations'),
-  ('produk_bahan'),('direktori_cadangan'),
+  ('produk_bahan'),
   -- Audit management batch 3 (30 Sept 2026): sama macam doktor di atas.
   ('package'),('pakej_laporan')
 ) AS m(code)

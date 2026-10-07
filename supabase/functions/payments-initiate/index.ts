@@ -53,6 +53,7 @@ Deno.serve(async (req) => {
     const items = Array.isArray(body.items) ? body.items : []
     const patientId: string | null = body.patientId || null
     const promoCode: string | null = body.promoCode ? String(body.promoCode).trim() : null
+    const voucherIdParam: string | null = body.voucherId ? String(body.voucherId).trim() : null
     const method: string = 'gateway'
     const returnUrl: string = String(body.returnUrl || '')
     if (!items.length) return json({ error: 'Tiada item untuk dibayar' }, 400)
@@ -76,21 +77,33 @@ Deno.serve(async (req) => {
     //     Terpakai utk MANA-MANA pembelian (bukan terhad pakej pertama sahaja) —
     //     supaya baucar tak "terperap" tak boleh guna kalau pakej pesakit
     //     diaktifkan melalui laluan lain (cth staff Tandakan Selesai KOB terus).
-    //     Guna voucher AKTIF terlama (FIFO); ditanda 'used' oleh trigger DB
+    //     Fasa 3 (7 Okt) — pesakit PILIH SENDIRI baucar (voucherId dari client),
+    //     BUKAN auto FIFO. Tiada voucherId dihantar = tiada baucar dipakai,
+    //     walaupun pesakit ada baucar aktif lain. Ditanda 'used' oleh trigger DB
     //     bila psy_payments jadi 'completed' (lihat 28_rewards.sql).
     let voucherId: string | null = null
     let voucherDiscount = 0
-    if (patientId) {
+    if (patientId && voucherIdParam) {
       // Audit #C-13 (Tier 5) — elak baucar luput (expires_at lepas) terpakai;
       // tiada cron fizikal tukar status ke 'expired', jadi semak terus di sini.
+      // .eq('patient_id', ...) wajib — elak pesakit hantar voucherId org lain.
       const { data: voucher } = await admin.from('psy_vouchers')
-        .select('id, amount').eq('patient_id', patientId).eq('status', 'active')
+        .select('id, amount, min_subtotal, applies_to, applies_to_values').eq('id', voucherIdParam).eq('patient_id', patientId).eq('status', 'active')
         .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
-        .order('created_at', { ascending: true }).limit(1).maybeSingle()
+        .maybeSingle()
       if (voucher) {
-        voucherId = voucher.id
-        voucherDiscount = Math.min(Number(voucher.amount) || 0, total)
-        total = Math.max(1, total - voucherDiscount) // elak jumlah RM0 ke gateway
+        // Fasa 3 (7 Okt) — kuatkuasakan Min. Belanja & Terpakai Untuk baucar
+        // (staff tetapkan di promo-vouchers.html; sebelum ni disimpan tapi tak disemak).
+        const vMinOk = total >= (Number(voucher.min_subtotal) || 0)
+        let vScopeOk = true
+        if (vMinOk && voucher.applies_to && voucher.applies_to !== 'all') {
+          vScopeOk = await cartMatchesPromoScope(admin, items, voucher.applies_to, voucher.applies_to_values || [])
+        }
+        if (vMinOk && vScopeOk) {
+          voucherId = voucher.id
+          voucherDiscount = Math.min(Number(voucher.amount) || 0, total)
+          total = Math.max(1, total - voucherDiscount) // elak jumlah RM0 ke gateway
+        }
       }
     }
 
@@ -102,11 +115,14 @@ Deno.serve(async (req) => {
     let promoDiscount = 0
     if (promoCode && patientId) {
       const { data: promo } = await admin.from('psy_promo_codes')
-        .select('id, discount_type, discount_value, min_subtotal, max_uses, used_count, max_uses_per_patient, valid_from, valid_until, is_active, applies_to, applies_to_values, stackable, new_customer_only')
+        .select('id, discount_type, discount_value, min_subtotal, max_uses, used_count, max_uses_per_patient, valid_from, valid_until, is_active, applies_to, applies_to_values, stackable, new_customer_only, customer_eligibility, selected_patient_ids, start_time, end_time')
         .eq('code', promoCode.toUpperCase()).maybeSingle()
       if (promo && promo.is_active) {
-        const today = new Date().toISOString().slice(0, 10)
-        const dateOk = (!promo.valid_from || promo.valid_from <= today) && (!promo.valid_until || promo.valid_until >= today)
+        // Sah ikut tarikh + masa tempatan Malaysia (UTC+8)
+        const nowMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 19)
+        const startMY = promo.valid_from ? `${promo.valid_from}T${promo.start_time || '00:00:00'}` : null
+        const endMY = promo.valid_until ? `${promo.valid_until}T${promo.end_time || '23:59:59'}` : null
+        const dateOk = (!startMY || nowMY >= startMY) && (!endMY || nowMY <= endMY)
         const usesOk = promo.max_uses == null || promo.used_count < promo.max_uses
         const minOk = total >= (Number(promo.min_subtotal) || 0)
         // Audit #D-16 (Tier 5) — tak stackable dgn baucar ganjaran auto-apply (3b di atas)
@@ -119,12 +135,19 @@ Deno.serve(async (req) => {
           perPatientOk = (count || 0) < promo.max_uses_per_patient
         }
         // Audit #D-17 (Tier 5) — "pelanggan baru" = tiada sebarang bayaran 'completed' terdahulu
+        // Fasa 2 (6 Okt) — kelayakan pelanggan: all | new | existing | selected
         let newCustOk = true
-        if (dateOk && usesOk && minOk && stackOk && perPatientOk && promo.new_customer_only) {
-          const { count } = await admin.from('psy_payments')
-            .select('id', { count: 'exact', head: true })
-            .eq('patient_id', patientId).eq('status', 'completed')
-          newCustOk = (count || 0) === 0
+        const eligMode = promo.customer_eligibility || (promo.new_customer_only ? 'new' : 'all')
+        if (dateOk && usesOk && minOk && stackOk && perPatientOk && eligMode !== 'all') {
+          if (eligMode === 'selected') {
+            newCustOk = Array.isArray(promo.selected_patient_ids) && promo.selected_patient_ids.includes(patientId)
+          } else {
+            const { count } = await admin.from('psy_payments')
+              .select('id', { count: 'exact', head: true })
+              .eq('patient_id', patientId).eq('status', 'completed')
+            const hasPaid = (count || 0) > 0
+            newCustOk = eligMode === 'new' ? !hasPaid : hasPaid
+          }
         }
         // Audit #D-15 (Tier 5) — skop troli (gate seluruh-atau-tiada, bukan pro-rata baris)
         let scopeOk = true
@@ -379,7 +402,9 @@ async function verifiedAmount(admin: any, it: any, patientId: string | null): Pr
         const onPromo = promo > 0 && promo < orig && (!p.promo_until || p.promo_until >= today)
         sub += (onPromo ? promo : orig) * qty
       }
-      const deliveryFee = Number(it.deliveryFee) || (it.deliveryMethod === 'pos' ? 8 : 0)
+      // Fasa 3 (7 Okt) — JANGAN percaya it.deliveryFee dari client (boleh ditokok tolak).
+      // Server kira sendiri berdasarkan deliveryMethod sahaja — sama falsafah dgn harga produk di atas.
+      const deliveryFee = it.deliveryMethod === 'pos' ? 8 : 0
       return sub + deliveryFee
     }
     return clientAmt

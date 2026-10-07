@@ -264,6 +264,9 @@
       return Math.min(raw, totalBeforeDiscount);
     }
 
+    // Pratonton sahaja — server (payments-initiate) yang sah & kunci sebenar.
+    // Tapi kena cukup tepat supaya pesakit tak nampak "✓ sah" sedangkan server
+    // akan tolak lepas tu (skop produk, kelayakan, had per-pesakit, masa).
     async function applyPromoCode() {
       const input = document.getElementById('promo-input');
       const msg = document.getElementById('promo-msg');
@@ -271,19 +274,61 @@
       if (!code) return;
       msg.className = 'text-xs mt-1 text-ink/50';
       msg.textContent = 'Menyemak kod…';
-      const today = new Date().toISOString().slice(0, 10);
+      const nowMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 19);
       const { data: promo } = await window.db.from('psy_promo_codes')
-        .select('id, discount_type, discount_value, min_subtotal, max_uses, used_count, valid_from, valid_until, is_active')
+        .select('id, discount_type, discount_value, min_subtotal, max_uses, used_count, max_uses_per_patient, valid_from, valid_until, start_time, end_time, is_active, applies_to, applies_to_values, customer_eligibility, new_customer_only')
         .eq('code', code).maybeSingle();
-      const dateOk = promo && (!promo.valid_from || promo.valid_from <= today) && (!promo.valid_until || promo.valid_until >= today);
-      const usesOk = promo && (promo.max_uses == null || promo.used_count < promo.max_uses);
-      if (!promo || !promo.is_active || !dateOk || !usesOk) {
+
+      const fail = (text) => {
         appliedPromo = null;
         msg.className = 'text-xs mt-1 text-terracotta';
-        msg.textContent = 'Kod tidak sah atau telah luput.';
+        msg.textContent = text;
         updateCartTotals();
-        return;
+      };
+
+      if (!promo || !promo.is_active) return fail('Kod tidak sah.');
+
+      const startMY = promo.valid_from ? `${promo.valid_from}T${promo.start_time || '00:00:00'}` : null;
+      const endMY = promo.valid_until ? `${promo.valid_until}T${promo.end_time || '23:59:59'}` : null;
+      if ((startMY && nowMY < startMY) || (endMY && nowMY > endMY)) return fail('Kod tidak sah atau telah luput.');
+      if (promo.max_uses != null && promo.used_count >= promo.max_uses) return fail('Kod ini telah mencapai had penggunaan.');
+
+      // Had setiap pesakit — perlukan login
+      if (window.patientRecord?.id && promo.max_uses_per_patient != null) {
+        const { count } = await window.db.from('psy_promo_redemptions')
+          .select('id', { count: 'exact', head: true }).eq('promo_id', promo.id).eq('patient_id', window.patientRecord.id);
+        if ((count || 0) >= promo.max_uses_per_patient) return fail('Anda sudah guna had maksimum untuk kod ini.');
       }
+
+      // Kelayakan pelanggan — baharu/sedia ada
+      const eligMode = promo.customer_eligibility || (promo.new_customer_only ? 'new' : 'all');
+      if (window.patientRecord?.id && (eligMode === 'new' || eligMode === 'existing')) {
+        const { count } = await window.db.from('psy_payments')
+          .select('id', { count: 'exact', head: true }).eq('patient_id', window.patientRecord.id).eq('status', 'completed');
+        const hasPaid = (count || 0) > 0;
+        if (eligMode === 'new' && hasPaid) return fail('Kod ini untuk pesakit baharu sahaja.');
+        if (eligMode === 'existing' && !hasPaid) return fail('Kod ini untuk pesakit sedia ada sahaja.');
+      }
+
+      // Skop troli — produk/kategori/pakej tertentu
+      if (promo.applies_to && promo.applies_to !== 'all') {
+        const cartItems = getCart();
+        const values = promo.applies_to_values || [];
+        let scopeOk = false;
+        if (promo.applies_to === 'product') {
+          scopeOk = cartItems.some(i => values.includes(String(i.id)));
+        } else if (promo.applies_to === 'category') {
+          const ids = cartItems.map(i => i.id).filter(Boolean);
+          if (ids.length) {
+            const { data: prods } = await window.db.from('psy_products').select('product_id, category').in('product_id', ids);
+            scopeOk = (prods || []).some(p => values.includes(p.category));
+          }
+        } else if (promo.applies_to === 'package') {
+          scopeOk = false; // cart Shop ni produk sahaja, tiada pakej dlm troli
+        }
+        if (!scopeOk) return fail('Kod ini hanya sah untuk produk tertentu yang belum ada dalam troli anda.');
+      }
+
       appliedPromo = { id: promo.id, code, discount_type: promo.discount_type, discount_value: promo.discount_value, min_subtotal: promo.min_subtotal };
       updateCartTotals(); // kira semula dulu supaya mesej min_subtotal (jika ada) tepat
       const cartItems = getCart();

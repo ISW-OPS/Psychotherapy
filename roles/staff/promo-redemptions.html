@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Penggunaan Promosi</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+.purple-btn { background: #6366f1; color: white; transition: background .15s; }
+.purple-btn:hover { background: #4f46e5; }
+.card { background: white; border: 1px solid rgba(15,23,42,.1); border-radius: 1rem; padding: 1.25rem; }
+.summary-card { transition: box-shadow .15s; }
+.summary-card:hover { box-shadow: 0 4px 14px rgba(15,23,42,.08); }
+.kv { display: flex; justify-content: space-between; gap: .75rem; padding: .5rem 0; border-bottom: 1px solid rgba(15,23,42,.05); font-size: .85rem; }
+.kv dt { color: rgba(15,23,42,.55); }
+.kv dd { font-weight: 600; color: #0f172a; text-align: right; }
+tr.row-sel { background: #eef2ff; }
+</style>
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🧾</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-6 space-y-5">
+        <div class="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-2xl font-bold text-ink">Penggunaan Promosi</h1>
+            <div class="text-sm text-ink/55 mt-0.5">Semua penggunaan kod promo merentas pesanan, termasuk jumlah diskaun yang diberi.</div>
+          </div>
+          <button onclick="exportCsv()" class="purple-btn px-4 py-2.5 rounded-xl text-sm font-semibold shadow-sm">⬇ Eksport</button>
+        </div>
+
+        <!-- Kad ringkasan: klik untuk tapis -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <button type="button" onclick="clearFilters()" class="summary-card card text-left">
+            <div class="text-[11px] font-semibold text-ink/45 uppercase">Jumlah Penggunaan</div><div id="sum-count" class="text-2xl font-bold text-ink mt-1">0</div></button>
+          <button type="button" onclick="setStatus('completed')" class="summary-card card text-left" title="Tapis: bayaran selesai sahaja">
+            <div class="text-[11px] font-semibold text-ink/45 uppercase">Bayaran Selesai</div><div id="sum-completed" class="text-2xl font-bold text-emerald-600 mt-1">0</div></button>
+          <button type="button" onclick="setStatus('pending')" class="summary-card card text-left" title="Tapis: bayaran menunggu">
+            <div class="text-[11px] font-semibold text-ink/45 uppercase">Menunggu Bayaran</div><div id="sum-pending" class="text-2xl font-bold text-amber-600 mt-1">0</div></button>
+          <button type="button" class="summary-card card text-left" onclick="document.getElementById('f-search').focus()">
+            <div class="text-[11px] font-semibold text-ink/45 uppercase">Jumlah Diskaun</div><div id="sum-discount" class="text-2xl font-bold text-red-600 mt-1">RM 0.00</div></button>
+        </div>
+
+        <!-- Penapis -->
+        <div class="card grid grid-cols-1 md:grid-cols-6 gap-3">
+          <input id="f-search" type="text" oninput="render()" placeholder="Cari pesakit, MRN, no. resit…" class="md:col-span-2 border border-ink/15 rounded-lg px-3 py-2 text-sm">
+          <select id="f-promo" onchange="render()" class="border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white"><option value="">Semua Kod Promo</option></select>
+          <select id="f-status" onchange="render()" class="border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white">
+            <option value="">Semua Status</option>
+            <option value="completed">Selesai</option>
+            <option value="pending">Menunggu</option>
+            <option value="refunded">Dibayar Balik</option>
+            <option value="failed">Gagal</option>
+            <option value="voided">Dibatalkan</option>
+          </select>
+          <input id="f-from" type="date" onchange="render()" class="border border-ink/15 rounded-lg px-2 py-2 text-xs" title="Dari tarikh">
+          <input id="f-to" type="date" onchange="render()" class="border border-ink/15 rounded-lg px-2 py-2 text-xs" title="Hingga tarikh">
+        </div>
+
+        <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+          <!-- Jadual -->
+          <div class="xl:col-span-2 card !p-0 overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="border-b border-ink/8 bg-ink/[0.015]">
+                    <th class="text-left px-4 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Tarikh &amp; Masa</th>
+                    <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Pesakit</th>
+                    <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">No. Pesanan</th>
+                    <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Kod</th>
+                    <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Jumlah Asal</th>
+                    <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Diskaun</th>
+                    <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Jumlah Akhir</th>
+                    <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="red-body" class="divide-y divide-ink/5"></tbody>
+              </table>
+            </div>
+            <div id="red-empty" class="hidden px-5 py-12 text-center text-sm text-ink/35">Tiada penggunaan dijumpai</div>
+          </div>
+
+          <!-- Panel butiran -->
+          <aside class="card xl:sticky xl:top-24 self-start">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-bold text-ink">Butiran Penggunaan</h3>
+              <span id="pd-status"></span>
+            </div>
+            <div id="pd-body" class="text-sm text-ink/50">Pilih satu penggunaan untuk lihat butiran.</div>
+          </aside>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+if (typeof window.iswL !== "function") window.iswL = function (ms) { return ms; };
+
+function waitI18n() {
+  return new Promise(res => {
+    if (window.__iswI18n) return res();
+    let done = false;
+    const fin = () => { if (!done) { done = true; res(); } };
+    document.addEventListener('isw:langchange', fin, { once: true });
+    setTimeout(fin, 1500);
+  });
+}
+function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtRM(n) { return 'RM ' + Number(n||0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtDT(d) { return d ? new Date(d).toLocaleString('ms-MY', { dateStyle: 'medium', timeStyle: 'short' }) : '—'; }
+
+const PAY_META = {
+  completed: { label: () => iswL('Selesai', 'Completed'),       cls: 'bg-emerald-50 text-emerald-700' },
+  pending:   { label: () => iswL('Menunggu', 'Pending'),        cls: 'bg-amber-50 text-amber-700' },
+  refunded:  { label: () => iswL('Dibayar Balik', 'Refunded'),  cls: 'bg-sky-50 text-sky-700' },
+  failed:    { label: () => iswL('Gagal', 'Failed'),            cls: 'bg-red-50 text-red-600' },
+  voided:    { label: () => iswL('Dibatalkan', 'Cancelled'),    cls: 'bg-ink/8 text-ink/55' },
+};
+
+let all = [];
+let selectedId = null;
+
+function linesOf(intent) {
+  const items = Array.isArray(intent?.items) ? intent.items : [];
+  return items.filter(i => i.type === 'shop_order' && Array.isArray(i.items)).flatMap(i => i.items.map(l => ({ id: l.id, qty: Number(l.qty || 1), price: Number(l.price || 0), name: l.name })));
+}
+
+async function loadAll() {
+  const { data, error } = await window.db.from('psy_promo_redemptions')
+    .select('id, promo_id, discount_amount, created_at, patient_id, psy_patients(full_name, mrn), psy_payments(receipt_ref, status, subtotal, total, payment_method, intent), psy_promo_codes(code, name)')
+    .order('created_at', { ascending: false }).limit(1000);
+  if (error) { banner(iswL('Gagal muat penggunaan: ', 'Failed to load redemptions: ') + error.message, 'error'); return; }
+  const rows = data || [];
+  const pids = new Set();
+  rows.forEach(r => linesOf(r.psy_payments?.intent).forEach(l => l.id && pids.add(String(l.id))));
+  const names = new Map();
+  if (pids.size) {
+    const { data: prods } = await window.db.from('psy_products').select('product_id, name').in('product_id', [...pids]);
+    (prods || []).forEach(p => names.set(p.product_id, p.name));
+  }
+  all = rows.map(r => ({
+    id: r.id,
+    promo_id: r.promo_id,
+    created_at: r.created_at,
+    discount: Number(r.discount_amount || 0),
+    patient: r.psy_patients?.full_name || '—',
+    mrn: r.psy_patients?.mrn || '',
+    receipt: r.psy_payments?.receipt_ref || '—',
+    status: r.psy_payments?.status || 'completed',
+    subtotal: Number(r.psy_payments?.subtotal || 0),
+    total: Number(r.psy_payments?.total || 0),
+    method: r.psy_payments?.payment_method || '—',
+    code: r.psy_promo_codes?.code || '—',
+    lines: linesOf(r.psy_payments?.intent).map(l => ({ ...l, name: names.get(String(l.id)) || l.name || l.id })),
+  }));
+  const codes = [...new Map(all.map(r => [r.promo_id, r.code])).entries()];
+  document.getElementById('f-promo').insertAdjacentHTML('beforeend', codes.map(([id, c]) => `<option value="${id}">${escHtml(c)}</option>`).join(''));
+  render();
+}
+
+function filtered() {
+  const q = document.getElementById('f-search').value.trim().toLowerCase();
+  const promo = document.getElementById('f-promo').value;
+  const status = document.getElementById('f-status').value;
+  const from = document.getElementById('f-from').value;
+  const to = document.getElementById('f-to').value;
+  return all.filter(r => {
+    if (promo && r.promo_id !== promo) return false;
+    if (status && r.status !== status) return false;
+    const day = (r.created_at || '').slice(0, 10);
+    if (from && day < from) return false;
+    if (to && day > to) return false;
+    if (q && !`${r.patient} ${r.mrn} ${r.receipt}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+function setStatus(s) { document.getElementById('f-status').value = s; render(); }
+function clearFilters() {
+  ['f-search', 'f-from', 'f-to'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('f-promo').value = '';
+  document.getElementById('f-status').value = '';
+  render();
+}
+
+function render() {
+  const rows = filtered();
+  const total = rows.reduce((s, r) => s + r.discount, 0);
+  document.getElementById('sum-count').textContent = rows.length;
+  document.getElementById('sum-completed').textContent = rows.filter(r => r.status === 'completed').length;
+  document.getElementById('sum-pending').textContent = rows.filter(r => r.status === 'pending').length;
+  document.getElementById('sum-discount').textContent = fmtRM(total);
+
+  const tbody = document.getElementById('red-body');
+  document.getElementById('red-empty').classList.toggle('hidden', rows.length > 0);
+  if (!selectedId || !rows.some(r => r.id === selectedId)) selectedId = rows[0]?.id || null;
+  tbody.innerHTML = rows.map(r => {
+    const pm = PAY_META[r.status] || { label: () => escHtml(r.status), cls: 'bg-ink/8 text-ink/55' };
+    const itemsTxt = r.lines.length ? r.lines.map(l => `${escHtml(l.name)} × ${l.qty}`).join(', ') : '—';
+    return `<tr onclick="select('${r.id}')" class="cursor-pointer hover:bg-ink/[0.02] ${r.id === selectedId ? 'row-sel' : ''}">
+      <td class="px-4 py-3 text-xs">${fmtDT(r.created_at)}</td>
+      <td class="px-3 py-3"><div class="font-semibold text-ink">${escHtml(r.patient)}</div><div class="text-[11px] text-ink/45">${escHtml(r.mrn)}</div></td>
+      <td class="px-3 py-3 font-mono text-xs">${escHtml(r.receipt)}<div class="font-sans text-[11px] text-ink/45 max-w-[180px] truncate">${itemsTxt}</div></td>
+      <td class="px-3 py-3 font-semibold">${escHtml(r.code)}</td>
+      <td class="px-3 py-3">${fmtRM(r.subtotal)}</td>
+      <td class="px-3 py-3 text-red-600">-${fmtRM(r.discount)}</td>
+      <td class="px-3 py-3">${fmtRM(r.total)}</td>
+      <td class="px-3 py-3"><span class="inline-block px-2 py-0.5 rounded-full text-[11px] font-semibold ${pm.cls}">${pm.label()}</span></td>
+    </tr>`;
+  }).join('');
+  renderPanel();
+  if (typeof applyRbacUI === 'function') applyRbacUI();
+}
+
+function select(id) { selectedId = id; render(); }
+
+function renderPanel() {
+  const r = all.find(x => x.id === selectedId);
+  const body = document.getElementById('pd-body');
+  const st = document.getElementById('pd-status');
+  if (!r) { body.innerHTML = iswL('Tiada penggunaan dipilih.', 'No redemption selected.'); st.innerHTML = ''; return; }
+  const pm = PAY_META[r.status] || { label: () => escHtml(r.status), cls: 'bg-ink/8 text-ink/55' };
+  st.innerHTML = `<span class="inline-block px-2 py-0.5 rounded-full text-[11px] font-semibold ${pm.cls}">${pm.label()}</span>`;
+  const lines = r.lines.map(l => `<div class="flex justify-between text-sm py-1"><span>${escHtml(l.name)} × ${l.qty}</span><span>${fmtRM(l.price * l.qty)}</span></div>`).join('') || `<p class="text-ink/40 text-sm">${iswL('Tiada item', 'No items')}</p>`;
+  body.innerHTML = `
+    <div class="kv"><dt>${iswL('No. Pesanan', 'Order No.')}</dt><dd class="font-mono">${escHtml(r.receipt)}</dd></div>
+    <div class="kv"><dt>${iswL('Tarikh & Masa', 'Date & Time')}</dt><dd>${fmtDT(r.created_at)}</dd></div>
+    <div class="kv"><dt>${iswL('Pesakit', 'Patient')}</dt><dd>${escHtml(r.patient)} <span class="text-xs text-ink/40">${escHtml(r.mrn)}</span></dd></div>
+    <div class="kv"><dt>${iswL('Kod Promo', 'Promo Code')}</dt><dd>${escHtml(r.code)}</dd></div>
+    <div class="font-semibold text-ink mt-3 mb-1">${iswL('Item', 'Items')}</div>${lines}
+    <div class="mt-3 border-t border-ink/8 pt-2">
+      <div class="kv"><dt>${iswL('Jumlah Asal', 'Order Amount')}</dt><dd>${fmtRM(r.subtotal)}</dd></div>
+      <div class="kv"><dt>${iswL('Diskaun', 'Discount')}</dt><dd class="text-red-600">-${fmtRM(r.discount)}</dd></div>
+      <div class="kv"><dt>${iswL('Jumlah Akhir', 'Final Amount')}</dt><dd>${fmtRM(r.total)}</dd></div>
+      <div class="kv"><dt>${iswL('Kaedah Bayaran', 'Payment Method')}</dt><dd>${escHtml(r.method)}</dd></div>
+    </div>
+    <a href="promo-detail.html?id=${r.promo_id}" class="mt-4 block text-center px-4 py-2 rounded-xl text-sm font-semibold border border-ink/15 hover:bg-ink/5">${iswL('Lihat Promosi', 'View Promotion')}</a>`;
+}
+
+function exportCsv() {
+  const rows = filtered();
+  if (!rows.length) { banner(iswL('Tiada data untuk dieksport', 'No data to export'), 'error'); return; }
+  const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const lines = [['Pesakit', 'MRN', 'No Pesanan', 'Kod Promo', 'Jumlah Asal', 'Diskaun', 'Jumlah Akhir', 'Status Bayaran', 'Tarikh'].join(',')]
+    .concat(rows.map(r => [r.patient, r.mrn, r.receipt, r.code, r.subtotal.toFixed(2), r.discount.toFixed(2), r.total.toFixed(2), r.status, r.created_at].map(esc).join(',')));
+  const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `penggunaan-promosi-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+document.addEventListener('isw:langchange', () => { try { render(); } catch (e) {} });
+(async () => {
+  await waitI18n();
+  const user = await initStaff('promo_codes', 'Penggunaan promosi', 'psy_products');
+  if (!user) return;
+  await loadAll();
+})();
+</script>
+</body>
+</html>

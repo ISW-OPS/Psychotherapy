@@ -114,24 +114,64 @@ window.inventoryReorderRange = function () {
 // tiada sesi dlm julat sekarang), fallback ke Stok Minimum. Elak staff perlu declare/ingat
 // jenis item — data sebenar (ada dlm jadual bekalan pakej ke tidak) yang tentukan.
 window.getInventoryReorderThreshold = function (item) {
-  const req = Number(item.forecast_required) || 0;
-  if (req > 0) return req;
-  return Number(item.min_qty) || 0;
+  const esok = Number(item.forecast?.tomorrow ?? item.forecast_required) || 0;
+  return esok + (Number(item.min_qty) || 0);
+};
+
+// Empat tempoh keperluan (rolling dari hari ini) — barang mesti sedia awal untuk semua tempoh.
+window.inventoryHorizonRanges = function () {
+  const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const today = new Date();
+  const add = n => { const d = new Date(today); d.setDate(today.getDate() + n); return ymd(d); };
+  const t = ymd(today);
+  return {
+    today:    { start: t, end: t },
+    tomorrow: { start: add(1), end: add(1) },
+    week:     { start: t, end: add(6) },
+    month:    { start: t, end: add(29) },
+  };
+};
+
+// Keperluan setiap item untuk 4 tempoh — SATU round-trip DB (julat bulan),
+// dibahagi 4 tempoh di client dari breakdown (session_date setiap baris).
+// Dulu 4 round-trip berasingan (satu per tempoh) — tukar ni elak beban DB
+// berganda setiap kali halaman item/senarai Inventori dibuka.
+window.computeForecastHorizons = async function (itemIds) {
+  const r = window.inventoryHorizonRanges();
+  const full = await window.computeForecastForRange(itemIds, r.month.start, r.month.end);
+  const sumInRange = (breakdown, start, end) => breakdown
+    .filter(b => b.session_date && b.session_date.slice(0, 10) >= start && b.session_date.slice(0, 10) <= end)
+    .reduce((a, b) => a + (Number(b.qty) || 0), 0);
+  const out = {};
+  (itemIds || []).forEach(id => {
+    const bd = full[id]?.breakdown || [];
+    out[id] = {
+      today:    Math.ceil(sumInRange(bd, r.today.start, r.today.end)),
+      tomorrow: Math.ceil(sumInRange(bd, r.tomorrow.start, r.tomorrow.end)),
+      week:     Math.ceil(sumInRange(bd, r.week.start, r.week.end)),
+      month:    Math.ceil(sumInRange(bd, r.month.start, r.month.end)),
+      weekBreakdown: bd.filter(b => b.session_date && b.session_date.slice(0, 10) <= r.week.end),
+      monthBreakdown: bd,
+    };
+  });
+  return out;
 };
 
 // Lampirkan item.forecast_required + item.forecast_breakdown pada SETIAP item aktif (tiada
 // lagi filter consumption_type='package' — semua item cuba dikira, sebab data sebenar yang
 // tentukan sama ada ia "package-linked" atau tidak, bukan flag manual staff).
 window.attachInventoryForecast = async function (items) {
-  (items || []).forEach(i => { i.forecast_required = 0; i.forecast_breakdown = []; });
+  (items || []).forEach(i => { i.forecast_required = 0; i.forecast_breakdown = []; i.forecast = { today: 0, tomorrow: 0, week: 0, month: 0 }; });
   if (!items?.length) return items;
 
-  const { start, end } = window.inventoryReorderRange();
-  const result = await window.computeForecastForRange(items.map(i => i.id), start, end);
+  const result = await window.computeForecastHorizons(items.map(i => i.id));
   items.forEach(i => {
-    const f = result[i.id] || { required: 0, breakdown: [] };
-    i.forecast_required = f.required;
-    i.forecast_breakdown = f.breakdown;
+    const f = result[i.id] || { today: 0, tomorrow: 0, week: 0, month: 0, weekBreakdown: [] };
+    i.forecast = { today: f.today, tomorrow: f.tomorrow, week: f.week, month: f.month };
+    i.forecast_required = f.tomorrow;
+    // "Permintaan Berdasarkan Pakej" (kad senarai pesakit) tunjuk senarai PENUH bulan ini —
+    // lebih berguna utk kad terperinci drpd had minggu sempit.
+    i.forecast_breakdown = f.monthBreakdown;
   });
   return items;
 };

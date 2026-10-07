@@ -28,9 +28,18 @@ CREATE TABLE IF NOT EXISTS psy_promo_codes (
   -- Audit #D-15/16/17 (Tier 5)
   applies_to            TEXT NOT NULL DEFAULT 'all' CHECK (applies_to IN ('all','product','category','package')),
   applies_to_values     TEXT[],       -- product_id / category / package_id list, ikut applies_to (NULL bila 'all')
-  stackable             BOOLEAN NOT NULL DEFAULT true,   -- boleh digabung dgn baucar ganjaran auto-apply (psy_vouchers)?
-  new_customer_only     BOOLEAN NOT NULL DEFAULT false,  -- hanya pesakit TANPA sebarang bayaran 'completed' terdahulu
-  campaign              TEXT          -- label kempen (pilihan, utk pengelompokan/laporan sahaja — bukan gate)
+  stackable             BOOLEAN NOT NULL DEFAULT false,  -- MVP: tak boleh gabung (lock 6 Okt). Medan kekal utk kegunaan masa depan
+  new_customer_only     BOOLEAN NOT NULL DEFAULT false,  -- LEGACY — digantikan customer_eligibility='new' (kekal utk kod lama)
+  campaign              TEXT,         -- label kempen (pilihan, utk pengelompokan/laporan sahaja — bukan gate)
+  -- Fasa 2 (6 Okt 2026)
+  start_time            TIME NOT NULL DEFAULT '00:00:00',  -- masa mula (masa tempatan MY)
+  end_time              TIME NOT NULL DEFAULT '23:59:59',  -- masa tamat (masa tempatan MY)
+  promotion_type        TEXT NOT NULL DEFAULT 'promo_code' CHECK (promotion_type IN ('promo_code','voucher')),  -- promo_code=taip/claim sendiri; voucher=push ke wallet (lihat 30_promo_claims.sql)
+  name                  TEXT,         -- nama promosi (cth "New Patient 10% Off"); description kekal utk penerangan
+  max_discount          NUMERIC(10,2) CHECK (max_discount IS NULL OR max_discount > 0),  -- had maksimum RM utk diskaun peratus (NULL = tiada)
+  show_on_shop          BOOLEAN NOT NULL DEFAULT false,  -- papar dalam banner Shop pesakit?
+  customer_eligibility  TEXT NOT NULL DEFAULT 'all' CHECK (customer_eligibility IN ('all','new','existing','selected')),
+  selected_patient_ids  UUID[]        -- pesakit tertentu (bila customer_eligibility='selected')
 );
 
 CREATE INDEX IF NOT EXISTS idx_psy_promo_codes_code ON psy_promo_codes(code);

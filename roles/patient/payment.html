@@ -111,7 +111,7 @@
                 <div class="w-8 h-8 rounded-lg bg-green-light text-green-dark grid place-items-center text-sm">🧾</div>
                 <h2 class="font-bold text-navy-dark">1. Ringkasan Bayaran</h2>
               </div>
-              <div id="pay-voucher-banner" class="hidden mb-3 bg-green-light border border-green/30 rounded-lg px-3 py-2.5 text-xs text-green-dark font-semibold"></div>
+              <div id="pay-voucher-select" class="hidden mb-3 bg-green-light border border-green/30 rounded-lg px-3 py-2.5 space-y-1.5"></div>
               <div id="pay-promo-banner" class="hidden mb-3 bg-green-light border border-green/30 rounded-lg px-3 py-2.5 text-xs text-green-dark font-semibold"></div>
               <div id="pay-items" class="divide-y divide-ink/10"></div>
               <div class="mt-3 pt-3 border-t border-ink/10 space-y-1.5 text-sm">
@@ -618,22 +618,89 @@ function lineItemHtml(item) {
 
 const isPackageItem = (i) => i && (i.type === 'package' || i.type === 'package_existing' || i.type === 'kob_package');
 
-// Tunjuk notis kalau pesakit ada baucar aktif yang akan diguna pakai automatik
-// (server yang sahkan & tolak sebenar dalam payments-initiate — ini sekadar pratonton).
+// Pesakit PILIH SENDIRI baucar mana nak pakai (bukan FIFO automatik).
+// Server (payments-initiate) sah & kunci semula ikut voucherId yang dihantar —
+// tak hantar langsung = tiada baucar dipakai, walaupun pesakit ada baucar aktif.
+let selectedVoucherId = null;
+let _voucherListCache = null; // elak query DB berulang setiap kali renderReview() panggil fungsi ni semula
+let _appliedPromoStackCache; // undefined = belum fetch, null = tiada promo, {} = ada promo
+
+// Kod promo yang dipakai di cart (shop.html) — dah TETAP di sini, tak boleh tukar
+// di halaman bayaran. Fetch sekali & cache, dikongsi oleh kedua-dua fungsi bawah.
+async function getAppliedPromoStack() {
+  if (_appliedPromoStackCache !== undefined) return _appliedPromoStackCache;
+  const shopItem = pendingItems.find(i => i.type === 'shop_order' && i.promoCode);
+  if (!shopItem) { _appliedPromoStackCache = null; return null; }
+  const { data } = await window.db.from('psy_promo_codes')
+    .select('discount_type, discount_value, stackable').eq('code', shopItem.promoCode).eq('is_active', true).maybeSingle();
+  _appliedPromoStackCache = data ? { code: shopItem.promoCode, ...data } : null;
+  return _appliedPromoStackCache;
+}
+
 async function checkReferralVoucherBanner() {
-  const banner_ = document.getElementById('pay-voucher-banner');
-  if (!banner_) return;
-  banner_.classList.add('hidden');
-  if (!patientRecord?.id) return;
+  const box = document.getElementById('pay-voucher-select');
+  if (!box) return;
+  if (!patientRecord?.id) { box.classList.add('hidden'); return; }
   try {
-    const { data } = await window.db.from('psy_vouchers')
-      .select('amount').eq('patient_id', patientRecord.id).eq('status', 'active')
-      .order('created_at', { ascending: true }).limit(1).maybeSingle();
-    if (data?.amount) {
-      banner_.textContent = `🎉 Anda ada baucar RM${Number(data.amount).toFixed(2)} — akan digunakan automatik untuk bayaran ini.`;
-      banner_.classList.remove('hidden');
+    if (!_voucherListCache) {
+      const { data } = await window.db.from('psy_vouchers')
+        .select('id, amount, note, expires_at, min_subtotal, applies_to').eq('patient_id', patientRecord.id).eq('status', 'active')
+        .or('expires_at.is.null,expires_at.gt.' + new Date().toISOString())
+        .order('created_at', { ascending: true });
+      _voucherListCache = data || [];
     }
+    const list = _voucherListCache;
+    if (!list.length) { box.classList.add('hidden'); return; }
+
+    // Kod promo tak boleh gabung dah dipakai → grey out baucar terus, elak
+    // pesakit pilih kombinasi yang server akan senyap tolak separuh.
+    const promoInfo = await getAppliedPromoStack();
+    const blocked = promoInfo && promoInfo.stackable === false;
+    if (blocked) selectedVoucherId = null; // tak boleh ada baucar terpilih dlm keadaan ni
+    else if (selectedVoucherId && !list.some(v => v.id === selectedVoucherId)) selectedVoucherId = null;
+
+    box.classList.remove('hidden');
+    if (blocked) {
+      box.innerHTML = `<div class="text-xs font-bold text-ink/40 mb-1">🔒 Baucar tidak boleh digunakan — kod promo ${promoInfo.code} sudah dipakai dan tak boleh digabung.</div>`
+        + list.map(v => `
+          <label class="flex items-center gap-2 text-xs text-ink/35 cursor-not-allowed">
+            <input type="radio" disabled class="accent-ink/20">
+            RM${Number(v.amount).toFixed(2)}${v.note ? ' — ' + v.note : ''}
+          </label>`).join('')
+        + `<button type="button" onclick="removePromoAndUnlockVoucher()" class="text-[11px] text-navy underline mt-1">Buang kod promo supaya boleh guna baucar</button>`;
+      return;
+    }
+    box.innerHTML = `<div class="text-xs font-bold text-green-dark mb-1">🎉 Anda ada ${list.length} baucar. Pilih untuk guna (pilihan):</div>`
+      + list.map(v => {
+          // Pratonton sahaja — server (payments-initiate) yang sah & kunci sebenar.
+          const minReq = Number(v.min_subtotal) || 0;
+          const minFail = grandTotal < minReq;
+          const scoped = v.applies_to && v.applies_to !== 'all';
+          const reasons = [];
+          if (minFail) reasons.push(`perlu belanja min. RM${minReq.toFixed(2)}`);
+          if (scoped) reasons.push('produk tertentu sahaja — tertakluk semakan semasa bayar');
+          const vDisabled = minFail; // skop produk tak dicek di sini (lebih selamat biar server tentukan)
+          return `
+        <label class="flex items-center gap-2 text-xs ${vDisabled ? 'text-ink/35 cursor-not-allowed' : 'text-green-dark cursor-pointer'}">
+          <input type="radio" name="voucherPick" value="${v.id}" ${vDisabled ? 'disabled' : ''} ${selectedVoucherId === v.id ? 'checked' : ''} onchange="selectedVoucherId='${v.id}'; renderReview();" class="${vDisabled ? 'accent-ink/20' : 'accent-green'}">
+          RM${Number(v.amount).toFixed(2)}${v.note ? ' — ' + v.note : ''}${reasons.length ? ` <span class="italic">(${reasons.join(', ')})</span>` : ''}
+        </label>`;
+        }).join('')
+      + `<label class="flex items-center gap-2 text-xs text-ink/50 cursor-pointer pt-1 border-t border-green/20 mt-1">
+           <input type="radio" name="voucherPick" ${selectedVoucherId ? '' : 'checked'} onchange="selectedVoucherId=null; renderReview();" class="accent-ink/40">
+           Jangan guna baucar untuk pesanan ini
+         </label>`;
   } catch (_) {}
+}
+
+// Buang kod promo dari item shop_order dalam sessionStorage + pendingItems,
+// supaya baucar boleh dibuka semula tanpa pesakit kena patah balik ke cart.
+function removePromoAndUnlockVoucher() {
+  const shopItem = pendingItems.find(i => i.type === 'shop_order' && i.promoCode);
+  if (shopItem) delete shopItem.promoCode;
+  _appliedPromoStackCache = undefined;
+  try { localStorage.setItem('isw_pending_payment', JSON.stringify(pendingItems)); } catch (_) {}
+  renderReview();
 }
 
 // Tunjuk notis kalau troli shop ada kod promo diguna pakai — preview sahaja
@@ -642,16 +709,14 @@ async function checkPromoCodeBanner() {
   const banner_ = document.getElementById('pay-promo-banner');
   if (!banner_) return;
   banner_.classList.add('hidden');
-  const shopItem = pendingItems.find(i => i.type === 'shop_order' && i.promoCode);
-  if (!shopItem) return;
   try {
-    const { data } = await window.db.from('psy_promo_codes')
-      .select('discount_type, discount_value').eq('code', shopItem.promoCode).eq('is_active', true).maybeSingle();
+    const data = await getAppliedPromoStack();
     if (!data) return;
     const discount = data.discount_type === 'percent'
       ? grandTotal * (Number(data.discount_value) / 100)
       : Math.min(Number(data.discount_value), grandTotal);
-    banner_.textContent = `🏷️ Kod ${shopItem.promoCode} akan menjimatkan RM${discount.toFixed(2)}.`;
+    banner_.className = 'mb-3 bg-green-light border border-green/30 rounded-lg px-3 py-2.5 text-xs text-green-dark font-semibold';
+    banner_.textContent = `🏷️ Kod ${data.code} akan menjimatkan RM${discount.toFixed(2)}.`;
     banner_.classList.remove('hidden');
   } catch (_) {}
 }
@@ -792,7 +857,7 @@ async function processPayment() {
     const returnUrl = window.location.origin + window.location.pathname;
     const promoCode = pendingItems.find(i => i.type === 'shop_order' && i.promoCode)?.promoCode || null;
     const { data, error } = await window.db.functions.invoke('payments-initiate', {
-      body: { items: pendingItems, patientId: patientRecord?.id || null, returnUrl, promoCode },
+      body: { items: pendingItems, patientId: patientRecord?.id || null, returnUrl, promoCode, voucherId: selectedVoucherId },
     });
     if (error) {
       let m = error.message;

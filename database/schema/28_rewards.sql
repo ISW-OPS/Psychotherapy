@@ -20,7 +20,14 @@ CREATE TABLE IF NOT EXISTS psy_vouchers (
   expires_at        TIMESTAMPTZ,        -- NULL = tiada tarikh luput
   used_at           TIMESTAMPTZ,
   used_in_payment_id UUID REFERENCES psy_payments(id) ON DELETE SET NULL,
-  created_at        TIMESTAMPTZ DEFAULT now()
+  created_at        TIMESTAMPTZ DEFAULT now(),
+  -- Fasa 2 (6 Okt 2026)
+  voucher_code      TEXT NOT NULL UNIQUE DEFAULT ('VC' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8))),  -- kod paparan baucar (auto jika tak diisi)
+  title             TEXT,                  -- nama baucar (cth "Birthday Reward")
+  min_subtotal      NUMERIC(10,2) NOT NULL DEFAULT 0,
+  applies_to        TEXT NOT NULL DEFAULT 'all' CHECK (applies_to IN ('all','product','category','package')),
+  applies_to_values TEXT[],
+  issued_by         UUID REFERENCES psy_profiles(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_psy_vouchers_patient_active

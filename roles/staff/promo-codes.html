@@ -12,6 +12,12 @@
 <style>
 .purple-btn { background: #6366f1; color: white; transition: background .15s; }
 .purple-btn:hover { background: #4f46e5; }
+.summary-card { transition: box-shadow .15s, border-color .15s; }
+.summary-card:hover { box-shadow: 0 4px 14px rgba(15,23,42,.08); }
+.summary-card.is-active { border-color: #818cf8; box-shadow: 0 0 0 2px #c7d2fe; }
+.bar { height: 6px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
+.bar > span { display: block; height: 100%; background: #22c55e; }
+.bar.full > span { background: #ef4444; }
 </style>
 </head>
 <body class="min-h-screen bg-cream">
@@ -27,129 +33,95 @@
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
       <div class="p-4 md:p-6 space-y-5">
-
-        <!-- Page header -->
         <div class="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <h1 class="text-2xl font-bold text-ink">Kod Promo</h1>
-            <div class="text-sm text-ink/55 mt-0.5">🏷️ Kod diskaun umum untuk kedai — pesakit taip kod ni di cart sebelum bayar.</div>
+            <div class="text-sm text-ink/55 mt-0.5">Cipta dan urus kod promosi untuk produk dan pakej Shop.</div>
           </div>
-          <button data-rbac="products.create" id="btn-promo-new" onclick="openPromoModal()" class="hidden purple-btn px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 shadow-sm">+ Tambah Kod</button>
+          <button data-rbac="products.create" id="btn-promo-new" onclick="location.href='promo-form.html'" class="hidden purple-btn px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 shadow-sm">+ Cipta Promosi</button>
         </div>
 
+        <!-- Kad ringkasan: klik untuk tapis -->
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <button type="button" data-card="all" onclick="setStatus('all')" class="summary-card bg-white rounded-2xl border border-ink/10 p-4 text-left">
+            <div class="text-[11px] font-semibold text-ink/45 uppercase tracking-wide">Jumlah Promosi</div><div id="sum-total" class="text-2xl font-bold text-ink mt-1">0</div></button>
+          <button type="button" data-card="active" onclick="setStatus('active')" class="summary-card bg-white rounded-2xl border border-ink/10 p-4 text-left">
+            <div class="text-[11px] font-semibold text-ink/45 uppercase tracking-wide">Aktif</div><div id="sum-active" class="text-2xl font-bold text-emerald-600 mt-1">0</div></button>
+          <button type="button" data-card="inactive" onclick="setStatus('inactive')" class="summary-card bg-white rounded-2xl border border-ink/10 p-4 text-left">
+            <div class="text-[11px] font-semibold text-ink/45 uppercase tracking-wide">Tidak Aktif</div><div id="sum-inactive" class="text-2xl font-bold text-ink/60 mt-1">0</div></button>
+          <button type="button" data-card="expired" onclick="setStatus('expired')" class="summary-card bg-white rounded-2xl border border-ink/10 p-4 text-left">
+            <div class="text-[11px] font-semibold text-ink/45 uppercase tracking-wide">Luput</div><div id="sum-expired" class="text-2xl font-bold text-red-600 mt-1">0</div></button>
+          <button type="button" onclick="location.href='promo-redemptions.html'" class="summary-card bg-white rounded-2xl border border-ink/10 p-4 text-left" title="Lihat senarai penggunaan">
+            <div class="text-[11px] font-semibold text-ink/45 uppercase tracking-wide">Jumlah Penggunaan</div><div id="sum-redemptions" class="text-2xl font-bold text-ink mt-1">0</div></button>
+        </div>
+
+        <!-- Penapis -->
+        <div class="bg-white rounded-2xl border border-ink/10 p-4 grid grid-cols-1 md:grid-cols-6 gap-3">
+          <input id="f-search" type="text" oninput="render()" placeholder="Cari kod, nama atau penerangan…" class="md:col-span-2 border border-ink/15 rounded-lg px-3 py-2 text-sm">
+          <select id="f-type" onchange="render()" class="border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white">
+            <option value="">Semua Jenis</option>
+            <option value="percent">Peratus (%)</option>
+            <option value="fixed">Tetap (RM)</option>
+          </select>
+          <select id="f-status" onchange="syncCards(); render()" class="border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white">
+            <option value="all">Semua Status</option>
+            <option value="active">Aktif</option>
+            <option value="scheduled">Dijadualkan</option>
+            <option value="inactive">Tidak Aktif</option>
+            <option value="expired">Luput</option>
+            <option value="fullyused">Habis Guna</option>
+          </select>
+          <select id="f-applies" onchange="render()" class="border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white">
+            <option value="">Semua Skop</option>
+            <option value="all">Semua Produk</option>
+            <option value="product">Produk Tertentu</option>
+            <option value="category">Kategori Tertentu</option>
+            <option value="package">Pakej Tertentu</option>
+          </select>
+          <div class="flex gap-2">
+            <input id="f-from" type="date" onchange="render()" class="flex-1 min-w-0 border border-ink/15 rounded-lg px-2 py-2 text-xs" title="Sah dari">
+            <input id="f-to" type="date" onchange="render()" class="flex-1 min-w-0 border border-ink/15 rounded-lg px-2 py-2 text-xs" title="Sah hingga">
+          </div>
+        </div>
+
+        <!-- Jadual -->
         <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden">
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-ink/8 bg-ink/[0.015]">
-                  <th class="text-left px-5 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Kod</th>
+                  <th class="px-4 py-3 w-8"><input type="checkbox" id="chk-all" onchange="toggleAll(this.checked)" class="accent-[#6366f1]"></th>
+                  <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Kod</th>
+                  <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Nama Promosi</th>
+                  <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Dicipta oleh</th>
                   <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Diskaun</th>
-                  <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Min. Belanja</th>
-                  <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Guna</th>
+                  <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Terpakai Untuk</th>
                   <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Tempoh Sah</th>
+                  <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Penggunaan</th>
                   <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Status</th>
-                  <th class="text-right px-5 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Tindakan</th>
+                  <th class="text-right px-4 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Tindakan</th>
                 </tr>
               </thead>
               <tbody id="promo-body" class="divide-y divide-ink/5"></tbody>
             </table>
           </div>
-          <div id="promo-empty-state" class="hidden px-5 py-12 text-center text-sm text-ink/35">Tiada kod promo lagi</div>
+          <div id="promo-empty" class="hidden px-5 py-12 text-center text-sm text-ink/35">Tiada promosi dalam senarai ini</div>
+          <div class="flex items-center justify-between flex-wrap gap-3 px-4 py-3 border-t border-ink/8 text-sm">
+            <div id="page-info" class="text-ink/55"></div>
+            <div class="flex items-center gap-2">
+              <button onclick="changePage(-1)" class="w-8 h-8 border border-ink/15 rounded-lg hover:bg-ink/5">‹</button>
+              <span id="page-num" class="text-xs text-ink/60"></span>
+              <button onclick="changePage(1)" class="w-8 h-8 border border-ink/15 rounded-lg hover:bg-ink/5">›</button>
+              <select id="per-page" onchange="pageSize=+this.value; page=1; render()" class="border border-ink/15 rounded-lg px-2 py-1.5 text-xs bg-white">
+                <option value="10">10 / halaman</option>
+                <option value="25">25 / halaman</option>
+                <option value="50">50 / halaman</option>
+              </select>
+            </div>
+          </div>
         </div>
-
       </div>
     </main>
-  </div>
-</div>
-
-<!-- ═══ Modal: Tambah/Edit Kod Promo ═══ -->
-<div id="promo-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
-  <div class="absolute inset-0 bg-black/40" onclick="closePromoModal()"></div>
-  <div class="relative bg-white rounded-2xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
-    <div class="flex items-center justify-between">
-      <h3 id="promo-modal-title" class="font-bold text-lg text-ink">Tambah Kod Promo</h3>
-      <button onclick="closePromoModal()" class="text-ink/50 text-xl">×</button>
-    </div>
-    <input type="hidden" id="pf-id">
-    <div>
-      <label class="text-xs font-semibold text-ink/60">Kod</label>
-      <input id="pf-code" type="text" placeholder="RAYA10" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm uppercase">
-    </div>
-    <div>
-      <label class="text-xs font-semibold text-ink/60">Penerangan (opsyenal)</label>
-      <input id="pf-desc" type="text" placeholder="Promosi Hari Raya" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm">
-    </div>
-    <div class="grid grid-cols-2 gap-3">
-      <div>
-        <label class="text-xs font-semibold text-ink/60">Jenis Diskaun</label>
-        <select id="pf-type" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white">
-          <option value="percent">Peratus (%)</option>
-          <option value="fixed">Tetap (RM)</option>
-        </select>
-      </div>
-      <div>
-        <label class="text-xs font-semibold text-ink/60">Nilai</label>
-        <input id="pf-value" type="number" min="0" step="0.01" placeholder="10" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm">
-      </div>
-    </div>
-    <div class="grid grid-cols-2 gap-3">
-      <div>
-        <label class="text-xs font-semibold text-ink/60">Min. Subjumlah (RM)</label>
-        <input id="pf-min" type="number" min="0" step="0.01" value="0" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm">
-      </div>
-      <div>
-        <label class="text-xs font-semibold text-ink/60">Had Guna Keseluruhan</label>
-        <input id="pf-max-uses" type="number" min="1" placeholder="Tiada had" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm">
-      </div>
-    </div>
-    <div class="grid grid-cols-2 gap-3">
-      <div>
-        <label class="text-xs font-semibold text-ink/60">Had Guna / Pesakit</label>
-        <input id="pf-max-per-patient" type="number" min="1" value="1" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm">
-      </div>
-      <div class="flex items-end pb-2">
-        <label class="flex items-center gap-2 text-sm">
-          <input id="pf-active" type="checkbox" checked class="accent-[#6366f1]"> Aktif
-        </label>
-      </div>
-    </div>
-    <div class="grid grid-cols-2 gap-3">
-      <div>
-        <label class="text-xs font-semibold text-ink/60">Sah Dari</label>
-        <input id="pf-from" type="date" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm">
-      </div>
-      <div>
-        <label class="text-xs font-semibold text-ink/60">Sah Hingga</label>
-        <input id="pf-until" type="date" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm">
-      </div>
-    </div>
-
-    <!-- Audit #D-15/16/17 (Tier 5) -->
-    <div class="border-t border-ink/8 pt-3">
-      <label class="text-xs font-semibold text-ink/60">Terpakai Untuk</label>
-      <select id="pf-applies-to" onchange="updateAppliesToUI()" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white">
-        <option value="all">Semua (troli)</option>
-        <option value="product">Produk Tertentu</option>
-        <option value="category">Kategori Tertentu</option>
-        <option value="package">Pakej Tertentu</option>
-      </select>
-      <p class="text-[10px] text-ink/40 mt-1">Kod cuma sah kalau troli ADA item ni — diskaun tetap kena seluruh subjumlah troli.</p>
-      <div id="pf-applies-values-wrap" class="hidden mt-2 border border-ink/10 rounded-lg max-h-40 overflow-y-auto p-2 space-y-1"></div>
-    </div>
-    <div class="grid grid-cols-2 gap-3 items-center">
-      <label class="flex items-center gap-2 text-sm">
-        <input id="pf-stackable" type="checkbox" checked class="accent-[#6366f1]"> Boleh digabung dgn baucar ganjaran
-      </label>
-      <label class="flex items-center gap-2 text-sm">
-        <input id="pf-new-customer" type="checkbox" class="accent-[#6366f1]"> Pelanggan baharu sahaja
-      </label>
-    </div>
-    <div>
-      <label class="text-xs font-semibold text-ink/60">Kempen (pilihan, utk laporan)</label>
-      <input id="pf-campaign" type="text" placeholder="cth: Raya 2026" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm">
-    </div>
-
-    <button onclick="savePromoCode()" class="w-full purple-btn py-2.5 rounded-xl text-sm font-semibold mt-2">Simpan Kod Promo</button>
   </div>
 </div>
 
@@ -160,184 +132,180 @@
 <script src="../../shared/navbar.js"></script>
 <script src="_shared.js"></script>
 <script>
+if (typeof window.iswL !== "function") window.iswL = function (ms) { return ms; };
+
+function waitI18n() {
+  return new Promise(res => {
+    if (window.__iswI18n) return res();
+    let done = false;
+    const fin = () => { if (!done) { done = true; res(); } };
+    document.addEventListener('isw:langchange', fin, { once: true });
+    setTimeout(fin, 1500);
+  });
+}
 function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function fmtRM(n) { return 'RM ' + Number(n||0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtDay(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; }
+function todayStr() { return new Date().toISOString().slice(0, 10); }
 
-let allPromoCodes = [];
+let allPromos = [];
 let allProductsForPromo = [];
-let allPackagesForPromo = [];
-let allCategoriesForPromo = [];
+let page = 1;
+let pageSize = 10;
+let selectedIds = new Set();
 
-async function loadPromoScopeOptions() {
-  const [prodRes, pkgRes] = await Promise.all([
-    window.db.from('psy_products').select('product_id, name, category').eq('is_active', true).order('name').then(r => r, () => ({ data: [] })),
-    window.db.from('psy_packages').select('package_id, name').eq('is_active', true).order('name').then(r => r, () => ({ data: [] })),
-  ]);
-  allProductsForPromo = prodRes.data || [];
-  allPackagesForPromo = pkgRes.data || [];
-  allCategoriesForPromo = [...new Set(allProductsForPromo.map(p => p.category).filter(Boolean))].sort();
+// Status automatik: Aktif / Dijadualkan / Luput / Habis Guna / Tidak Aktif
+function promoStatus(p) {
+  const today = todayStr();
+  if (!p.is_active) return 'inactive';
+  if (p.valid_from && p.valid_from > today) return 'scheduled';
+  if (p.valid_until && p.valid_until < today) return 'expired';
+  if (p.max_uses != null && (p.used_count || 0) >= p.max_uses) return 'fullyused';
+  return 'active';
 }
 
-function updateAppliesToUI() {
-  const type = document.getElementById('pf-applies-to').value;
-  const wrap = document.getElementById('pf-applies-values-wrap');
-  if (type === 'all') { wrap.classList.add('hidden'); wrap.innerHTML = ''; return; }
-  wrap.classList.remove('hidden');
-  const checked = window._pfAppliesValuesChecked || [];
-  let options = [];
-  if (type === 'product') options = allProductsForPromo.map(p => ({ value: p.product_id, label: p.name }));
-  else if (type === 'category') options = allCategoriesForPromo.map(c => ({ value: c, label: c }));
-  else if (type === 'package') options = allPackagesForPromo.map(p => ({ value: p.package_id, label: p.name }));
-  wrap.innerHTML = options.length
-    ? options.map(o => `<label class="flex items-center gap-2 text-xs px-1 py-1"><input type="checkbox" class="pf-applies-cb accent-[#6366f1]" value="${escHtml(o.value)}" ${checked.includes(o.value) ? 'checked' : ''}> ${escHtml(o.label)}</label>`).join('')
-    : '<p class="text-[11px] text-ink/35 px-1 py-1">Tiada pilihan tersedia</p>';
+const STATUS_META = {
+  active:    { label: () => iswL('Aktif', 'Active'),            cls: 'bg-emerald-50 text-emerald-700' },
+  scheduled: { label: () => iswL('Dijadualkan', 'Scheduled'),   cls: 'bg-sky-50 text-sky-700' },
+  inactive:  { label: () => iswL('Tidak Aktif', 'Inactive'),    cls: 'bg-ink/8 text-ink/55' },
+  expired:   { label: () => iswL('Luput', 'Expired'),           cls: 'bg-red-50 text-red-600' },
+  fullyused: { label: () => iswL('Habis Guna', 'Fully Used'),   cls: 'bg-amber-50 text-amber-700' },
+};
+const TYPE_META = {
+  percent: { label: () => iswL('Peratus', 'Percentage'), cls: 'bg-blue-50 text-blue-700' },
+  fixed:   { label: () => iswL('Tetap (RM)', 'Fixed Amount'), cls: 'bg-orange-50 text-orange-700' },
+};
+
+function setStatus(s) {
+  document.getElementById('f-status').value = s;
+  syncCards();
+  render();
 }
 
-function promoStatusBadge(p) {
-  const today = new Date().toISOString().slice(0, 10);
-  const expired = p.valid_until && p.valid_until < today;
-  const maxedOut = p.max_uses != null && p.used_count >= p.max_uses;
-  if (!p.is_active) return `<span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-ink/8 text-ink/55">● Tidak Aktif</span>`;
-  if (expired) return `<span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-red-50 text-red-600">● Luput</span>`;
-  if (maxedOut) return `<span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700">● Habis Had</span>`;
-  return `<span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700">● Aktif</span>`;
+function syncCards() {
+  const s = document.getElementById('f-status').value;
+  document.querySelectorAll('.summary-card[data-card]').forEach(c => c.classList.toggle('is-active', c.dataset.card === s));
 }
 
-function renderPromoTable() {
+function filtered() {
+  const q = document.getElementById('f-search').value.trim().toLowerCase();
+  const type = document.getElementById('f-type').value;
+  const status = document.getElementById('f-status').value;
+  const applies = document.getElementById('f-applies').value;
+  const from = document.getElementById('f-from').value;
+  const to = document.getElementById('f-to').value;
+  return allPromos.filter(p => {
+    if (status !== 'all' && promoStatus(p) !== status) return false;
+    if (type && p.discount_type !== type) return false;
+    if (applies && (p.applies_to || 'all') !== applies) return false;
+    if (from && p.valid_until && p.valid_until < from) return false;
+    if (to && p.valid_from && p.valid_from > to) return false;
+    if (q && !`${p.code} ${p.name || ''} ${p.description || ''}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+function renderSummary() {
+  const count = s => allPromos.filter(p => promoStatus(p) === s).length;
+  document.getElementById('sum-total').textContent = allPromos.length;
+  document.getElementById('sum-active').textContent = count('active');
+  document.getElementById('sum-inactive').textContent = count('inactive');
+  document.getElementById('sum-expired').textContent = count('expired');
+  document.getElementById('sum-redemptions').textContent = allPromos.reduce((s, p) => s + (p.used_count || 0), 0);
+}
+
+function changePage(d) {
+  const pages = Math.max(1, Math.ceil(filtered().length / pageSize));
+  page = Math.min(pages, Math.max(1, page + d));
+  render();
+}
+
+function toggleAll(on) {
+  const rows = pageRows();
+  rows.forEach(p => on ? selectedIds.add(p.id) : selectedIds.delete(p.id));
+  render();
+}
+
+function pageRows() {
+  const rows = filtered();
+  const start = (page - 1) * pageSize;
+  return rows.slice(start, start + pageSize);
+}
+
+function render() {
+  renderSummary();
+  const rows = filtered();
+  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+  if (page > pages) page = pages;
+  const shown = pageRows();
+  const APPLIES = { all: iswL('Semua Produk', 'All Products'), product: iswL('Produk Tertentu', 'Selected Products'), category: iswL('Kategori Tertentu', 'Selected Categories'), package: iswL('Pakej Tertentu', 'Selected Packages') };
   const tbody = document.getElementById('promo-body');
-  const empty = document.getElementById('promo-empty-state');
-  if (!allPromoCodes.length) {
-    tbody.innerHTML = '';
-    empty.classList.remove('hidden');
-    return;
-  }
-  empty.classList.add('hidden');
-  tbody.innerHTML = allPromoCodes.map(p => {
-    const discountLabel = p.discount_type === 'percent' ? `${Number(p.discount_value)}%` : fmtRM(p.discount_value);
-    const usageLabel = `${p.used_count || 0}${p.max_uses != null ? ' / ' + p.max_uses : ''}`;
-    const period = (p.valid_from || p.valid_until)
-      ? `${p.valid_from || '—'} → ${p.valid_until || '—'}` : 'Tiada had';
+  document.getElementById('promo-empty').classList.toggle('hidden', rows.length > 0);
+  tbody.innerHTML = shown.map(p => {
+    const st = promoStatus(p);
+    const sm = STATUS_META[st];
+    const tm = TYPE_META[p.discount_type];
+    const disc = p.discount_type === 'percent'
+      ? `${Number(p.discount_value)}%`
+      : fmtRM(p.discount_value);
+    const appliesLabel = !p.applies_to || p.applies_to === 'all' ? APPLIES.all : `${APPLIES[p.applies_to]} (${(p.applies_to_values || []).length})`;
+    const pct = p.max_uses ? Math.min(100, Math.round((p.used_count || 0) / p.max_uses * 100)) : 0;
+    const usage = `${p.used_count || 0}${p.max_uses != null ? ' / ' + p.max_uses : ''}`;
+    const barHtml = p.max_uses != null ? `<div class="bar ${pct >= 100 ? 'full' : ''} w-24 mt-1"><span style="width:${pct}%"></span></div>` : '';
     return `<tr class="hover:bg-ink/[0.01]">
-      <td class="px-5 py-3 font-bold text-ink">${escHtml(p.code)}${p.description ? `<div class="text-[11px] font-normal text-ink/45 mt-0.5">${escHtml(p.description)}</div>` : ''}
-        <div class="flex items-center gap-1.5 mt-1 flex-wrap">
-          ${p.applies_to && p.applies_to !== 'all' ? `<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-navy/8 text-navy">${{ product:'Produk', category:'Kategori', package:'Pakej' }[p.applies_to]} Tertentu</span>` : ''}
-          ${p.stackable === false ? `<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">Tak Boleh Gabung</span>` : ''}
-          ${p.new_customer_only ? `<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-purple-50 text-purple-700">Pelanggan Baharu</span>` : ''}
-          ${p.campaign ? `<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-ink/8 text-ink/55">${escHtml(p.campaign)}</span>` : ''}
-        </div>
-      </td>
-      <td class="px-3 py-3">${discountLabel}</td>
-      <td class="px-3 py-3">${fmtRM(p.min_subtotal)}</td>
-      <td class="px-3 py-3">${usageLabel}</td>
-      <td class="px-3 py-3 text-xs text-ink/60">${period}</td>
-      <td class="px-3 py-3">${promoStatusBadge(p)}</td>
-      <td class="px-5 py-3 text-right">
+      <td class="px-4 py-3"><input type="checkbox" ${selectedIds.has(p.id) ? 'checked' : ''} onchange="toggleOne('${p.id}', this.checked)" class="accent-[#6366f1]"></td>
+      <td class="px-3 py-3 font-bold text-ink">${escHtml(p.code)}</td>
+      <td class="px-3 py-3"><div class="font-semibold text-ink">${escHtml(p.name || '—')}</div><div class="text-[11px] text-ink/50">${escHtml(p.description || '')}</div></td>
+      <td class="px-3 py-3 text-xs">${escHtml(p.creator_name || '—')}</td>
+      <td class="px-3 py-3 font-semibold">${disc}</td>
+      <td class="px-3 py-3 text-xs">${appliesLabel}</td>
+      <td class="px-3 py-3 text-xs text-ink/60">${fmtDay(p.valid_from)} – ${fmtDay(p.valid_until)}</td>
+      <td class="px-3 py-3 text-xs">${usage}${barHtml}</td>
+      <td class="px-3 py-3"><span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${sm.cls}">● ${sm.label()}</span></td>
+      <td class="px-4 py-3 text-right">
         <div class="inline-flex items-center gap-1">
-          <button data-rbac="products.edit" onclick="openPromoModal('${p.id}')" class="w-8 h-8 flex items-center justify-center border border-ink/15 rounded-lg hover:bg-ink/5" title="Edit">✏️</button>
-          <button data-rbac="products.edit" onclick="togglePromoActive('${p.id}')" class="w-8 h-8 flex items-center justify-center border border-ink/15 rounded-lg hover:bg-ink/5" title="${p.is_active ? 'Nyahaktif' : 'Aktifkan'}">${p.is_active ? '⏸️' : '▶️'}</button>
+          <a href="promo-detail.html?id=${p.id}" class="px-2.5 py-1.5 border border-ink/15 rounded-lg text-xs hover:bg-ink/5">${iswL('Lihat', 'View')}</a>
         </div>
       </td>
     </tr>`;
   }).join('');
+  const from = rows.length ? (page - 1) * pageSize + 1 : 0;
+  const to = Math.min(rows.length, page * pageSize);
+  document.getElementById('page-info').textContent = iswL(`Menunjukkan ${from} hingga ${to} daripada ${rows.length} rekod`, `Showing ${from} to ${to} of ${rows.length} records`);
+  document.getElementById('page-num').textContent = `${page} / ${pages}`;
+  if (typeof applyRbacUI === 'function') applyRbacUI();
 }
 
-async function loadPromoCodes() {
+function toggleOne(id, on) { on ? selectedIds.add(id) : selectedIds.delete(id); }
+
+async function loadPromos() {
   const { data, error } = await window.db.from('psy_promo_codes').select('*').order('created_at', { ascending: false });
-  if (error) { banner('Gagal load kod promo: ' + error.message, 'error'); return; }
-  allPromoCodes = data || [];
-  renderPromoTable();
-}
-
-function openPromoModal(id) {
-  const p = id ? allPromoCodes.find(x => x.id === id) : null;
-  document.getElementById('promo-modal-title').textContent = p ? 'Edit Kod Promo' : 'Tambah Kod Promo';
-  document.getElementById('pf-id').value = p?.id || '';
-  document.getElementById('pf-code').value = p?.code || '';
-  document.getElementById('pf-desc').value = p?.description || '';
-  document.getElementById('pf-type').value = p?.discount_type || 'percent';
-  document.getElementById('pf-value').value = p?.discount_value ?? '';
-  document.getElementById('pf-min').value = p?.min_subtotal ?? 0;
-  document.getElementById('pf-max-uses').value = p?.max_uses ?? '';
-  document.getElementById('pf-max-per-patient').value = p?.max_uses_per_patient ?? 1;
-  document.getElementById('pf-active').checked = p ? !!p.is_active : true;
-  document.getElementById('pf-from').value = p?.valid_from || '';
-  document.getElementById('pf-until').value = p?.valid_until || '';
-  document.getElementById('pf-applies-to').value = p?.applies_to || 'all';
-  document.getElementById('pf-stackable').checked = p ? p.stackable !== false : true;
-  document.getElementById('pf-new-customer').checked = !!p?.new_customer_only;
-  document.getElementById('pf-campaign').value = p?.campaign || '';
-  window._pfAppliesValuesChecked = p?.applies_to_values || [];
-  updateAppliesToUI();
-  document.getElementById('promo-modal').classList.remove('hidden');
-}
-
-function closePromoModal() { document.getElementById('promo-modal').classList.add('hidden'); }
-
-async function savePromoCode() {
-  const id = document.getElementById('pf-id').value || null;
-  const code = document.getElementById('pf-code').value.trim().toUpperCase();
-  const value = Number(document.getElementById('pf-value').value);
-  if (!code) { banner('Sila isi kod promo', 'error'); return; }
-  if (!(value > 0)) { banner('Sila isi nilai diskaun', 'error'); return; }
-
-  const appliesTo = document.getElementById('pf-applies-to').value;
-  const appliesValues = [...document.querySelectorAll('.pf-applies-cb:checked')].map(cb => cb.value);
-  if (appliesTo !== 'all' && !appliesValues.length) { banner('Sila pilih sekurang-kurangnya 1 item utk skop "Terpakai Untuk"', 'error'); return; }
-
-  const payload = {
-    code,
-    description: document.getElementById('pf-desc').value.trim() || null,
-    discount_type: document.getElementById('pf-type').value,
-    discount_value: value,
-    min_subtotal: Number(document.getElementById('pf-min').value) || 0,
-    max_uses: document.getElementById('pf-max-uses').value ? Number(document.getElementById('pf-max-uses').value) : null,
-    max_uses_per_patient: document.getElementById('pf-max-per-patient').value ? Number(document.getElementById('pf-max-per-patient').value) : null,
-    is_active: document.getElementById('pf-active').checked,
-    valid_from: document.getElementById('pf-from').value || null,
-    valid_until: document.getElementById('pf-until').value || null,
-    applies_to: appliesTo,
-    applies_to_values: appliesTo === 'all' ? null : appliesValues,
-    stackable: document.getElementById('pf-stackable').checked,
-    new_customer_only: document.getElementById('pf-new-customer').checked,
-    campaign: document.getElementById('pf-campaign').value.trim() || null,
-    updated_at: new Date().toISOString(),
-  };
-
-  try {
-    if (id) {
-      const { error } = await window.db.from('psy_promo_codes').update(payload).eq('id', id);
-      if (error) throw error;
-      banner('Kod promo dikemaskini ✅');
-    } else {
-      const uid = (await window.db.auth.getUser()).data.user?.id || null;
-      const { error } = await window.db.from('psy_promo_codes').insert({ ...payload, created_by: uid });
-      if (error) throw error;
-      banner('Kod promo ditambah ✅');
-    }
-    closePromoModal();
-    await loadPromoCodes();
-  } catch (e) {
-    banner('Ralat: ' + (e.message.includes('duplicate') ? 'Kod ini sudah wujud' : e.message), 'error');
+  if (error) { banner(iswL('Gagal muat kod promo: ', 'Failed to load promo codes: ') + error.message, 'error'); return; }
+  allPromos = data || [];
+  // Nama pencipta (created_by → psy_profiles)
+  const ids = [...new Set(allPromos.map(p => p.created_by).filter(Boolean))];
+  const names = new Map();
+  if (ids.length) {
+    const { data: profs } = await window.db.from('psy_profiles').select('id, full_name').in('id', ids);
+    (profs || []).forEach(x => names.set(x.id, x.full_name));
   }
+  allPromos.forEach(p => { p.creator_name = names.get(p.created_by) || null; });
+  render();
 }
 
-async function togglePromoActive(id) {
-  const p = allPromoCodes.find(x => x.id === id);
-  if (!p) return;
-  try {
-    const { error } = await window.db.from('psy_promo_codes').update({ is_active: !p.is_active, updated_at: new Date().toISOString() }).eq('id', id);
-    if (error) throw error;
-    p.is_active = !p.is_active;
-    banner(p.is_active ? 'Kod diaktifkan ✅' : 'Kod dinyahaktifkan ⛔');
-    renderPromoTable();
-  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
-}
 
+// Duplikat: salin rules, kod baharu TIDAK AKTIF untuk semakan
+
+document.addEventListener('isw:langchange', () => { try { render(); } catch (e) {} });
 (async () => {
+  await waitI18n();
   const user = await initStaff('promo_codes', 'Kod diskaun kedai', 'psy_products');
   if (!user) return;
   if (can('products','create')) document.getElementById('btn-promo-new').classList.remove('hidden');
-  await Promise.all([loadPromoCodes(), loadPromoScopeOptions()]);
+  const { data } = await window.db.from('psy_products').select('product_id, name').eq('is_active', true).then(r => r, () => ({ data: [] }));
+  allProductsForPromo = data || [];
+  await loadPromos();
+  syncCards();
 })();
 </script>
 </body>

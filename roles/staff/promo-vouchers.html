@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Voucher Pesakit</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+.purple-btn { background: #6366f1; color: white; transition: background .15s; }
+.purple-btn:hover { background: #4f46e5; }
+.card { background: white; border: 1px solid rgba(15,23,42,.1); border-radius: 1rem; padding: 1.25rem; }
+.summary-card { transition: box-shadow .15s; }
+.summary-card:hover { box-shadow: 0 4px 14px rgba(15,23,42,.08); }
+.summary-card.is-active { border-color: #818cf8; box-shadow: 0 0 0 2px #c7d2fe; }
+.kv { display: flex; justify-content: space-between; gap: .75rem; padding: .5rem 0; border-bottom: 1px solid rgba(15,23,42,.05); font-size: .85rem; }
+.kv dt { color: rgba(15,23,42,.55); }
+.kv dd { font-weight: 600; color: #0f172a; text-align: right; }
+tr.row-sel { background: #eef2ff; }
+</style>
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🎟️</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-6 space-y-5">
+        <div class="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-2xl font-bold text-ink">Voucher Pesakit</h1>
+            <div class="text-sm text-ink/55 mt-0.5">Voucher yang dikeluarkan kepada pesakit. Boleh dikeluarkan secara manual, atau datang dari ganjaran mata &amp; rujukan.</div>
+          </div>
+          <button data-rbac="products.create" id="btn-issue" onclick="openIssue()" class="hidden purple-btn px-4 py-2.5 rounded-xl text-sm font-semibold shadow-sm">+ Keluarkan Voucher</button>
+        </div>
+
+        <!-- Kad ringkasan: klik untuk tapis -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <button type="button" data-card="all" onclick="setStatus('all')" class="summary-card card text-left">
+            <div class="text-[11px] font-semibold text-ink/45 uppercase">Jumlah Voucher</div><div id="sum-total" class="text-2xl font-bold text-ink mt-1">0</div></button>
+          <button type="button" data-card="active" onclick="setStatus('active')" class="summary-card card text-left">
+            <div class="text-[11px] font-semibold text-ink/45 uppercase">Tersedia</div><div id="sum-active" class="text-2xl font-bold text-emerald-600 mt-1">0</div></button>
+          <button type="button" data-card="used" onclick="setStatus('used')" class="summary-card card text-left">
+            <div class="text-[11px] font-semibold text-ink/45 uppercase">Digunakan</div><div id="sum-used" class="text-2xl font-bold text-indigo-600 mt-1">0</div></button>
+          <button type="button" data-card="expired" onclick="setStatus('expired')" class="summary-card card text-left">
+            <div class="text-[11px] font-semibold text-ink/45 uppercase">Luput / Dibatalkan</div><div id="sum-expired" class="text-2xl font-bold text-red-600 mt-1">0</div></button>
+        </div>
+
+        <!-- Penapis -->
+        <div class="card grid grid-cols-1 md:grid-cols-6 gap-3">
+          <input id="f-search" type="text" oninput="render()" placeholder="Cari kod voucher, nama atau pesakit…" class="md:col-span-2 border border-ink/15 rounded-lg px-3 py-2 text-sm">
+          <select id="f-status" onchange="syncCards(); render()" class="border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white">
+            <option value="all">Semua Status</option>
+            <option value="active">Tersedia</option>
+            <option value="used">Digunakan</option>
+            <option value="expired">Luput / Dibatalkan</option>
+          </select>
+          <select id="f-source" onchange="render()" class="border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white">
+            <option value="">Semua Sumber</option>
+            <option value="manual">Manual</option>
+            <option value="point_reward">Ganjaran Mata</option>
+            <option value="referral_signup">Rujukan</option>
+            <option value="campaign">Kempen</option>
+            <option value="compensation">Pampasan</option>
+          </select>
+          <select id="f-applies" onchange="render()" class="border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white">
+            <option value="">Semua Skop</option>
+            <option value="all">Semua Produk</option>
+            <option value="product">Produk Tertentu</option>
+            <option value="category">Kategori Tertentu</option>
+            <option value="package">Pakej Tertentu</option>
+          </select>
+          <div class="flex gap-2">
+            <input id="f-from" type="date" onchange="render()" class="flex-1 min-w-0 border border-ink/15 rounded-lg px-2 py-2 text-xs" title="Luput dari">
+            <input id="f-to" type="date" onchange="render()" class="flex-1 min-w-0 border border-ink/15 rounded-lg px-2 py-2 text-xs" title="Luput hingga">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+          <div class="xl:col-span-2 card !p-0 overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="border-b border-ink/8 bg-ink/[0.015]">
+                    <th class="text-left px-4 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Kod Voucher</th>
+                    <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Nama Voucher</th>
+                    <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Nilai</th>
+                    <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Sumber</th>
+                    <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Pesakit</th>
+                    <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Tempoh Sah</th>
+                    <th class="text-left px-3 py-3 text-[10px] font-bold text-ink/45 uppercase tracking-wider">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="v-body" class="divide-y divide-ink/5"></tbody>
+              </table>
+            </div>
+            <div id="v-empty" class="hidden px-5 py-12 text-center text-sm text-ink/35">Tiada voucher dalam senarai ini</div>
+          </div>
+
+          <!-- Panel butiran -->
+          <aside class="card xl:sticky xl:top-24 self-start">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-bold text-ink">Butiran Voucher</h3>
+              <span id="pd-status"></span>
+            </div>
+            <div id="pd-body" class="text-sm text-ink/50">Pilih voucher untuk lihat butiran.</div>
+          </aside>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- Modal: Keluarkan Voucher -->
+<div id="issue-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/40" onclick="closeIssue()"></div>
+  <div class="relative bg-white rounded-2xl w-full max-w-lg p-6 space-y-4 max-h-[92vh] overflow-y-auto">
+    <div class="flex items-center justify-between">
+      <h3 class="font-bold text-lg text-ink">Keluarkan Voucher</h3>
+      <button onclick="closeIssue()" class="text-ink/50 text-xl">×</button>
+    </div>
+    <div>
+      <label class="text-xs font-semibold text-ink/60">Pesakit <span class="text-red-500">*</span></label>
+      <input id="i-psearch" type="text" oninput="onIssueSearch()" placeholder="Cari nama, MRN atau telefon…" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm">
+      <div id="i-results" class="space-y-1 mt-1"></div>
+      <div id="i-selected" class="text-xs text-ink/60 mt-1"></div>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div>
+        <label class="text-xs font-semibold text-ink/60">Nama Voucher</label>
+        <input id="i-title" type="text" placeholder="cth: Birthday Reward" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm">
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-ink/60">Nilai (RM) <span class="text-red-500">*</span></label>
+        <input id="i-amount" type="number" min="0.01" step="0.01" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm">
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-ink/60">Min. Belanja (RM)</label>
+        <input id="i-min" type="number" min="0" step="0.01" value="0" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm">
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-ink/60">Tarikh Luput</label>
+        <input id="i-expires" type="date" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm">
+      </div>
+    </div>
+    <div>
+      <label class="text-xs font-semibold text-ink/60">Terpakai Untuk</label>
+      <select id="i-applies" onchange="onIssueApplies()" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white">
+        <option value="all">Semua Produk</option>
+        <option value="product">Produk Tertentu</option>
+        <option value="category">Kategori Tertentu</option>
+        <option value="package">Pakej Tertentu</option>
+      </select>
+      <div id="i-values" class="hidden mt-2 border border-ink/10 rounded-lg max-h-40 overflow-y-auto p-2 space-y-1"></div>
+    </div>
+    <div>
+      <label class="text-xs font-semibold text-ink/60">Catatan (pilihan)</label>
+      <input id="i-note" type="text" placeholder="cth: Pampasan kelewatan penghantaran" class="w-full mt-1 border border-ink/15 rounded-lg px-3 py-2 text-sm">
+    </div>
+    <button id="i-save" onclick="saveIssue()" class="w-full purple-btn py-2.5 rounded-xl text-sm font-semibold">Keluarkan Voucher</button>
+  </div>
+</div>
+
+<!-- Modal: Lanjut tempoh -->
+<div id="extend-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/40" onclick="closeExtend()"></div>
+  <div class="relative bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
+    <h3 class="font-bold text-lg text-ink">Lanjut Tempoh Sah</h3>
+    <input id="x-date" type="date" class="w-full border border-ink/15 rounded-lg px-3 py-2 text-sm">
+    <div class="flex gap-2">
+      <button onclick="closeExtend()" class="flex-1 border border-ink/15 py-2 rounded-xl text-sm">Batal</button>
+      <button onclick="saveExtend()" class="flex-1 purple-btn py-2 rounded-xl text-sm font-semibold">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+if (typeof window.iswL !== "function") window.iswL = function (ms) { return ms; };
+
+function waitI18n() {
+  return new Promise(res => {
+    if (window.__iswI18n) return res();
+    let done = false;
+    const fin = () => { if (!done) { done = true; res(); } };
+    document.addEventListener('isw:langchange', fin, { once: true });
+    setTimeout(fin, 1500);
+  });
+}
+function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtRM(n) { return 'RM ' + Number(n||0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtDay(d) { return d ? new Date(d).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; }
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+
+const SOURCE_META = {
+  manual:           { label: () => iswL('Manual', 'Manual'),            cls: 'bg-ink/8 text-ink/70' },
+  point_reward:     { label: () => iswL('Ganjaran Mata', 'Point Rewards'), cls: 'bg-pink-50 text-pink-700' },
+  referral_signup:  { label: () => iswL('Rujukan', 'Referral'),         cls: 'bg-emerald-50 text-emerald-700' },
+  campaign:         { label: () => iswL('Kempen', 'Campaign'),          cls: 'bg-amber-50 text-amber-700' },
+  compensation:     { label: () => iswL('Pampasan', 'Compensation'),    cls: 'bg-sky-50 text-sky-700' },
+};
+const V_META = {
+  active:  { label: () => iswL('Tersedia', 'Available'),   cls: 'bg-emerald-50 text-emerald-700' },
+  used:    { label: () => iswL('Digunakan', 'Used'),        cls: 'bg-indigo-50 text-indigo-700' },
+  expired: { label: () => iswL('Luput', 'Expired'),         cls: 'bg-red-50 text-red-600' },
+  void:    { label: () => iswL('Dibatalkan', 'Cancelled'),  cls: 'bg-ink/8 text-ink/55' },
+};
+
+let all = [];
+let selectedId = null;
+
+// Status paparan: active yang lepas tarikh luput = expired
+function vStatus(v) {
+  if (v.status === 'void') return 'void';
+  if (v.status === 'used') return 'used';
+  if (v.status === 'expired') return 'expired';
+  if (v.expires_at && new Date(v.expires_at) < new Date()) return 'expired';
+  return 'active';
+}
+function tabOf(s) { return s === 'void' ? 'expired' : s; }
+
+function setStatus(s) { document.getElementById('f-status').value = s; syncCards(); render(); }
+function syncCards() {
+  const s = document.getElementById('f-status').value;
+  document.querySelectorAll('.summary-card[data-card]').forEach(c => c.classList.toggle('is-active', c.dataset.card === s));
+}
+
+async function loadAll() {
+  const { data, error } = await window.db.from('psy_vouchers')
+    .select('*, psy_patients(full_name, mrn)').order('created_at', { ascending: false }).limit(1000);
+  if (error) { banner(iswL('Gagal muat voucher: ', 'Failed to load vouchers: ') + error.message, 'error'); return; }
+  all = data || [];
+  syncCards();
+  render();
+}
+
+function filtered() {
+  const q = document.getElementById('f-search').value.trim().toLowerCase();
+  const status = document.getElementById('f-status').value;
+  const source = document.getElementById('f-source').value;
+  const applies = document.getElementById('f-applies').value;
+  const from = document.getElementById('f-from').value;
+  const to = document.getElementById('f-to').value;
+  return all.filter(v => {
+    if (status !== 'all' && tabOf(vStatus(v)) !== status) return false;
+    if (source && v.source_type !== source) return false;
+    if (applies && (v.applies_to || 'all') !== applies) return false;
+    const day = v.expires_at ? v.expires_at.slice(0, 10) : null;
+    if (from && (!day || day < from)) return false;
+    if (to && (!day || day > to)) return false;
+    if (q && !`${v.voucher_code || ''} ${v.title || ''} ${v.note || ''} ${v.psy_patients?.full_name || ''} ${v.psy_patients?.mrn || ''}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+function renderSummary() {
+  const st = all.map(vStatus);
+  document.getElementById('sum-total').textContent = all.length;
+  document.getElementById('sum-active').textContent = st.filter(s => s === 'active').length;
+  document.getElementById('sum-used').textContent = st.filter(s => s === 'used').length;
+  document.getElementById('sum-expired').textContent = st.filter(s => s === 'expired' || s === 'void').length;
+}
+
+function render() {
+  renderSummary();
+  const rows = filtered();
+  if (!selectedId || !rows.some(v => v.id === selectedId)) selectedId = rows[0]?.id || null;
+  document.getElementById('v-empty').classList.toggle('hidden', rows.length > 0);
+  document.getElementById('v-body').innerHTML = rows.map(v => {
+    const s = vStatus(v);
+    const m = V_META[s];
+    const sm = SOURCE_META[v.source_type] || { label: () => escHtml(v.source_type), cls: 'bg-ink/8 text-ink/70' };
+    return `<tr onclick="selectVoucher('${v.id}')" class="cursor-pointer hover:bg-ink/[0.02] ${v.id === selectedId ? 'row-sel' : ''}">
+      <td class="px-4 py-3 font-mono font-semibold text-ink">${escHtml(v.voucher_code)}</td>
+      <td class="px-3 py-3 text-xs">${escHtml(v.title || v.note || '—')}</td>
+      <td class="px-3 py-3"><span class="inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold bg-orange-50 text-orange-700">${fmtRM(v.amount)}</span>${Number(v.min_subtotal) > 0 ? `<div class="text-[10px] text-ink/45 mt-0.5">${iswL('Min.', 'Min.')} ${fmtRM(v.min_subtotal)}</div>` : ''}</td>
+      <td class="px-3 py-3"><span class="inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold ${sm.cls}">${sm.label()}</span></td>
+      <td class="px-3 py-3"><div class="text-sm">${escHtml(v.psy_patients?.full_name || '—')}</div><div class="text-[11px] text-ink/45">${escHtml(v.psy_patients?.mrn || '')}</div></td>
+      <td class="px-3 py-3 text-xs">${v.expires_at ? fmtDay(v.expires_at) : iswL('Tiada', 'None')}</td>
+      <td class="px-3 py-3"><span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${m.cls}">● ${m.label()}</span></td>
+    </tr>`;
+  }).join('');
+  renderPanel();
+  if (typeof applyRbacUI === 'function') applyRbacUI();
+}
+
+function selectVoucher(id) { selectedId = id; render(); }
+
+function renderPanel() {
+  const v = all.find(x => x.id === selectedId);
+  const body = document.getElementById('pd-body');
+  const st = document.getElementById('pd-status');
+  if (!v) { body.innerHTML = iswL('Tiada voucher dipilih.', 'No voucher selected.'); st.innerHTML = ''; return; }
+  const s = vStatus(v);
+  const m = V_META[s];
+  st.innerHTML = `<span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${m.cls}">● ${m.label()}</span>`;
+  const sm = SOURCE_META[v.source_type] || { label: () => escHtml(v.source_type) };
+  const canAct = s === 'active';
+  body.innerHTML = `
+    <div class="kv"><dt>${iswL('Kod Voucher', 'Voucher Code')}</dt><dd class="font-mono">${escHtml(v.voucher_code)}</dd></div>
+    <div class="kv"><dt>${iswL('Nilai', 'Value')}</dt><dd>${fmtRM(v.amount)}</dd></div>
+    <div class="kv"><dt>${iswL('Min. Belanja', 'Min. Spend')}</dt><dd>${fmtRM(v.min_subtotal)}</dd></div>
+    <div class="kv"><dt>${iswL('Sumber', 'Source')}</dt><dd>${sm.label()}</dd></div>
+    <div class="kv"><dt>${iswL('Pesakit', 'Patient')}</dt><dd>${escHtml(v.psy_patients?.full_name || '—')} <span class="text-xs text-ink/40">${escHtml(v.psy_patients?.mrn || '')}</span></dd></div>
+    <div class="kv"><dt>${iswL('Terpakai Untuk', 'Applicable To')}</dt><dd>${escHtml(v.applies_to || 'all')}</dd></div>
+    <div class="kv"><dt>${iswL('Tarikh Luput', 'Expiry Date')}</dt><dd>${v.expires_at ? fmtDay(v.expires_at) : iswL('Tiada', 'None')}</dd></div>
+    <div class="kv"><dt>${iswL('Tarikh Guna', 'Used Date')}</dt><dd>${v.used_at ? fmtDay(v.used_at) : '—'}</dd></div>
+    <div class="kv"><dt>${iswL('Catatan', 'Note')}</dt><dd>${escHtml(v.note || '—')}</dd></div>
+    ${canAct ? `<div class="grid grid-cols-1 gap-2 mt-4">
+      <button data-rbac="products.edit" onclick="openReassign()" class="px-4 py-2 rounded-xl text-sm font-semibold border border-ink/15 hover:bg-ink/5">${iswL('Tugaskan ke Pesakit Lain', 'Assign to Another Patient')}</button>
+      <button data-rbac="products.edit" onclick="markUsed()" class="px-4 py-2 rounded-xl text-sm font-semibold border border-ink/15 hover:bg-ink/5">✓ ${iswL('Tanda Digunakan', 'Mark as Used')}</button>
+      <button data-rbac="products.edit" onclick="openExtend()" class="px-4 py-2 rounded-xl text-sm font-semibold border border-ink/15 hover:bg-ink/5">${iswL('Lanjut Tempoh', 'Extend Validity')}</button>
+      <button data-rbac="products.edit" onclick="voidVoucher()" class="px-4 py-2 rounded-xl text-sm font-semibold border border-red-200 text-red-600 hover:bg-red-50">${iswL('Nyahaktif Voucher', 'Deactivate Voucher')}</button>
+    </div>` : `<p class="text-xs text-ink/40 mt-4">${iswL('Tiada tindakan untuk voucher yang sudah digunakan, luput atau dibatalkan.', 'No actions for used, expired or cancelled vouchers.')}</p>`}`;
+  if (typeof applyRbacUI === 'function') applyRbacUI();
+}
+
+// ── Keluarkan voucher ──
+let issuePatient = null;
+let issueScope = { product: [], package: [], category: [] };
+let issueValues = [];
+
+async function openIssue() { reassignFromId = null; await showIssue(); }
+
+async function showIssue() {
+  issuePatient = null;
+  issueValues = [];
+  ['i-psearch', 'i-title', 'i-note', 'i-expires'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('i-amount').value = '';
+  document.getElementById('i-min').value = 0;
+  document.getElementById('i-applies').value = 'all';
+  document.getElementById('i-results').innerHTML = '';
+  document.getElementById('i-selected').innerHTML = '';
+  document.getElementById('issue-modal').classList.remove('hidden');
+  if (!issueScope.product.length) await loadScope();
+  onIssueApplies();
+}
+function closeIssue() { document.getElementById('issue-modal').classList.add('hidden'); }
+
+async function loadScope() {
+  const [p, k] = await Promise.all([
+    window.db.from('psy_products').select('product_id, name, category').eq('is_active', true).order('name').then(r => r, () => ({ data: [] })),
+    window.db.from('psy_packages').select('package_id, name').eq('is_active', true).order('name').then(r => r, () => ({ data: [] })),
+  ]);
+  const prods = p.data || [];
+  issueScope.product = prods.map(x => ({ value: x.product_id, label: x.name }));
+  issueScope.package = (k.data || []).map(x => ({ value: x.package_id, label: x.name }));
+  issueScope.category = [...new Set(prods.map(x => x.category).filter(Boolean))].sort().map(c => ({ value: c, label: c }));
+}
+
+function onIssueApplies() {
+  issueValues = [];
+  const t = document.getElementById('i-applies').value;
+  const box = document.getElementById('i-values');
+  if (t === 'all') { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  box.classList.remove('hidden');
+  box.innerHTML = (issueScope[t] || []).map(o => `<label class="flex items-center gap-2 text-xs px-1 py-1"><input type="checkbox" class="i-cb accent-[#6366f1]" value="${escHtml(o.value)}"> ${escHtml(o.label)}</label>`).join('')
+    || `<p class="text-[11px] text-ink/35 px-1">${iswL('Tiada pilihan tersedia', 'No options available')}</p>`;
+}
+
+let issueTimer = null;
+function onIssueSearch() { clearTimeout(issueTimer); issueTimer = setTimeout(searchIssue, 250); }
+async function searchIssue() {
+  const q = document.getElementById('i-psearch').value.trim();
+  const box = document.getElementById('i-results');
+  if (q.length < 2) { box.innerHTML = ''; return; }
+  const SEL = 'id, mrn, full_name';
+  const [a, b, c] = await Promise.all([
+    window.db.from('psy_patients').select(SEL).neq('status', 'deleted').ilike('full_name', `%${q}%`).limit(8),
+    window.db.from('psy_patients').select(SEL).neq('status', 'deleted').ilike('mrn', `%${q}%`).limit(8),
+    window.db.from('psy_patients').select(SEL).neq('status', 'deleted').ilike('phone', `%${q}%`).limit(8),
+  ]);
+  const seen = new Map();
+  [...(a.data || []), ...(b.data || []), ...(c.data || [])].forEach(p => { if (!seen.has(p.id)) seen.set(p.id, p); });
+  box.innerHTML = [...seen.values()].slice(0, 10).map(p => {
+    const obj = { id: p.id, name: p.full_name || p.mrn || '—', mrn: p.mrn || '' };
+    return `<button type="button" onclick='pickIssue(${JSON.stringify(obj).replace(/'/g, "&#39;")})' class="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-ink/[0.03]">+ ${escHtml(obj.name)} <span class="text-xs text-ink/40">${escHtml(obj.mrn)}</span></button>`;
+  }).join('') || `<p class="text-xs text-ink/40 px-2">${iswL('Tiada padanan', 'No matches')}</p>`;
+}
+function pickIssue(p) {
+  issuePatient = p;
+  document.getElementById('i-results').innerHTML = '';
+  document.getElementById('i-psearch').value = '';
+  document.getElementById('i-selected').innerHTML = `${iswL('Dipilih:', 'Selected:')} <b>${escHtml(p.name)}</b> <span class="text-ink/40">${escHtml(p.mrn)}</span>`;
+}
+
+async function saveIssue() {
+  const btn = document.getElementById('i-save');
+  const amount = Number(document.getElementById('i-amount').value);
+  const appliesTo = document.getElementById('i-applies').value;
+  const values = [...document.querySelectorAll('.i-cb:checked')].map(c => c.value);
+  if (!issuePatient) return banner(iswL('Sila pilih pesakit', 'Please select a patient'), 'error');
+  if (!(amount > 0)) return banner(iswL('Sila isi nilai voucher', 'Please enter the voucher value'), 'error');
+  if (appliesTo !== 'all' && !values.length) return banner(iswL('Sila pilih sekurang-kurangnya 1 item', 'Please select at least 1 item'), 'error');
+  const uid = (await window.db.auth.getUser()).data.user?.id || null;
+  const d = document.getElementById('i-expires').value;
+  const payload = {
+    patient_id: issuePatient.id, source_type: 'manual', amount,
+    title: document.getElementById('i-title').value.trim() || null,
+    min_subtotal: Number(document.getElementById('i-min').value) || 0,
+    applies_to: appliesTo, applies_to_values: appliesTo === 'all' ? null : values,
+    expires_at: d ? new Date(d + 'T23:59:59').toISOString() : null,
+    note: document.getElementById('i-note').value.trim() || null,
+    issued_by: uid, status: 'active',
+  };
+  btn.disabled = true;
+  try {
+    const { data, error } = await window.db.from('psy_vouchers').insert(payload).select('id, voucher_code').single();
+    if (error) throw error;
+    if (typeof auditLog === 'function') await auditLog('voucher.issue', data.id, { code: data.voucher_code, amount, patient_id: issuePatient.id });
+    if (reassignFromId) {
+      // Tugaskan semula: batalkan voucher lama selepas yang baharu berjaya
+      const { error: vErr } = await window.db.from('psy_vouchers').update({ status: 'void' }).eq('id', reassignFromId).eq('status', 'active');
+      if (vErr) throw vErr;
+      if (typeof auditLog === 'function') await auditLog('voucher.void', reassignFromId, { reassigned_to: data.id });
+      reassignFromId = null;
+    }
+    banner(iswL(`Voucher ${data.voucher_code} dikeluarkan ✅`, `Voucher ${data.voucher_code} issued ✅`));
+    closeIssue();
+    selectedId = data.id;
+    await loadAll();
+  } catch (e) { banner(iswL('Ralat: ', 'Error: ') + e.message, 'error'); }
+  finally { btn.disabled = false; }
+}
+
+// ── Tindakan ──
+function current() { return all.find(x => x.id === selectedId); }
+
+function openExtend() {
+  const v = current();
+  document.getElementById('x-date').value = v?.expires_at ? v.expires_at.slice(0, 10) : '';
+  document.getElementById('extend-modal').classList.remove('hidden');
+}
+function closeExtend() { document.getElementById('extend-modal').classList.add('hidden'); }
+
+async function saveExtend() {
+  const v = current();
+  const d = document.getElementById('x-date').value;
+  if (!v || !d) return banner(iswL('Sila pilih tarikh baharu', 'Please select a new date'), 'error');
+  if (d < todayStr()) return banner(iswL('Tarikh luput baharu mesti hari ini atau selepas', 'New expiry date must be today or later'), 'error');
+  try {
+    const { error } = await window.db.from('psy_vouchers').update({ expires_at: new Date(d + 'T23:59:59').toISOString() }).eq('id', v.id);
+    if (error) throw error;
+    if (typeof auditLog === 'function') await auditLog('voucher.extend', v.id, { expires_at: d });
+    banner(iswL('Tarikh luput dikemaskini ✅', 'Expiry date updated ✅'));
+    closeExtend();
+    await loadAll();
+  } catch (e) { banner(iswL('Ralat: ', 'Error: ') + e.message, 'error'); }
+}
+
+async function markUsed() {
+  const v = current();
+  if (!v) return;
+  if (!confirm(iswL('Tanda voucher ini sebagai digunakan secara manual? Tindakan ini direkod dalam audit.', 'Mark this voucher as used manually? This action is recorded in the audit log.'))) return;
+  try {
+    const { error } = await window.db.from('psy_vouchers').update({ status: 'used', used_at: new Date().toISOString() }).eq('id', v.id).eq('status', 'active');
+    if (error) throw error;
+    if (typeof auditLog === 'function') await auditLog('voucher.mark_used', v.id, {});
+    banner(iswL('Voucher ditanda digunakan ✅', 'Voucher marked as used ✅'));
+    await loadAll();
+  } catch (e) { banner(iswL('Ralat: ', 'Error: ') + e.message, 'error'); }
+}
+
+async function voidVoucher() {
+  const v = current();
+  if (!v) return;
+  if (!confirm(iswL('Batalkan voucher ini? Pesakit tidak akan boleh menggunakannya lagi.', 'Cancel this voucher? The patient can no longer use it.'))) return;
+  try {
+    const { error } = await window.db.from('psy_vouchers').update({ status: 'void' }).eq('id', v.id).eq('status', 'active');
+    if (error) throw error;
+    if (typeof auditLog === 'function') await auditLog('voucher.void', v.id, {});
+    banner(iswL('Voucher dibatalkan ⛔', 'Voucher cancelled ⛔'));
+    await loadAll();
+  } catch (e) { banner(iswL('Ralat: ', 'Error: ') + e.message, 'error'); }
+}
+
+// Tugaskan semula: guna modal keluarkan (pesakit baharu sahaja)
+let reassignFromId = null;
+async function openReassign() {
+  reassignFromId = selectedId;
+  await showIssue();
+  banner(iswL('Pilih pesakit baharu dan keluarkan voucher baharu. Voucher lama dibatalkan selepas itu.', 'Pick a new patient and issue a new voucher. The old voucher is cancelled afterwards.'), 'ok');
+}
+
+document.addEventListener('isw:langchange', () => { try { render(); } catch (e) {} });
+(async () => {
+  await waitI18n();
+  const user = await initStaff('promo_codes', 'Voucher pesakit', 'psy_products');
+  if (!user) return;
+  if (can('products','create')) document.getElementById('btn-issue').classList.remove('hidden');
+  await loadAll();
+})();
+</script>
+</body>
+</html>

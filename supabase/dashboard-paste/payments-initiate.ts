@@ -127,6 +127,7 @@ Deno.serve(async (req) => {
     const items = Array.isArray(body.items) ? body.items : [];
     const patientId = body.patientId || null;
     const promoCode = body.promoCode ? String(body.promoCode).trim() : null;
+    const voucherIdParam = body.voucherId ? String(body.voucherId).trim() : null;
     const method = "gateway";
     const returnUrl = String(body.returnUrl || "");
     if (!items.length) return json({ error: "Tiada item untuk dibayar" }, 400);
@@ -139,23 +140,35 @@ Deno.serve(async (req) => {
       total += await verifiedAmount(admin, it, patientId);
     }
     if (!(total > 0)) return json({ error: "Jumlah bayaran tidak sah" }, 400);
+    // Fasa 3 (7 Okt) — pesakit PILIH SENDIRI baucar, bukan auto FIFO.
     let voucherId = null;
     let voucherDiscount = 0;
-    if (patientId) {
-      const { data: voucher } = await admin.from("psy_vouchers").select("id, amount").eq("patient_id", patientId).eq("status", "active").or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`).order("created_at", { ascending: true }).limit(1).maybeSingle();
+    if (patientId && voucherIdParam) {
+      const { data: voucher } = await admin.from("psy_vouchers").select("id, amount, min_subtotal, applies_to, applies_to_values").eq("id", voucherIdParam).eq("patient_id", patientId).eq("status", "active").or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`).maybeSingle();
       if (voucher) {
-        voucherId = voucher.id;
-        voucherDiscount = Math.min(Number(voucher.amount) || 0, total);
-        total = Math.max(1, total - voucherDiscount);
+        // Fasa 3 (7 Okt) — kuatkuasakan Min. Belanja & Terpakai Untuk baucar.
+        const vMinOk = total >= (Number(voucher.min_subtotal) || 0);
+        let vScopeOk = true;
+        if (vMinOk && voucher.applies_to && voucher.applies_to !== "all") {
+          vScopeOk = await cartMatchesPromoScope(admin, items, voucher.applies_to, voucher.applies_to_values || []);
+        }
+        if (vMinOk && vScopeOk) {
+          voucherId = voucher.id;
+          voucherDiscount = Math.min(Number(voucher.amount) || 0, total);
+          total = Math.max(1, total - voucherDiscount);
+        }
       }
     }
     let promoId = null;
     let promoDiscount = 0;
     if (promoCode && patientId) {
-      const { data: promo } = await admin.from("psy_promo_codes").select("id, discount_type, discount_value, min_subtotal, max_uses, used_count, max_uses_per_patient, valid_from, valid_until, is_active, applies_to, applies_to_values, stackable, new_customer_only").eq("code", promoCode.toUpperCase()).maybeSingle();
+      const { data: promo } = await admin.from("psy_promo_codes").select("id, discount_type, discount_value, min_subtotal, max_uses, used_count, max_uses_per_patient, valid_from, valid_until, is_active, applies_to, applies_to_values, stackable, new_customer_only, customer_eligibility, selected_patient_ids, start_time, end_time").eq("code", promoCode.toUpperCase()).maybeSingle();
       if (promo && promo.is_active) {
-        const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-        const dateOk = (!promo.valid_from || promo.valid_from <= today) && (!promo.valid_until || promo.valid_until >= today);
+        // Sah ikut tarikh + masa tempatan Malaysia (UTC+8)
+        const nowMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 19);
+        const startMY = promo.valid_from ? `${promo.valid_from}T${promo.start_time || "00:00:00"}` : null;
+        const endMY = promo.valid_until ? `${promo.valid_until}T${promo.end_time || "23:59:59"}` : null;
+        const dateOk = (!startMY || nowMY >= startMY) && (!endMY || nowMY <= endMY);
         const usesOk = promo.max_uses == null || promo.used_count < promo.max_uses;
         const minOk = total >= (Number(promo.min_subtotal) || 0);
         const stackOk = promo.stackable !== false || voucherDiscount <= 0;
@@ -164,10 +177,17 @@ Deno.serve(async (req) => {
           const { count } = await admin.from("psy_promo_redemptions").select("id", { count: "exact", head: true }).eq("promo_id", promo.id).eq("patient_id", patientId);
           perPatientOk = (count || 0) < promo.max_uses_per_patient;
         }
+        // Fasa 2 (6 Okt) — kelayakan pelanggan: all | new | existing | selected
         let newCustOk = true;
-        if (dateOk && usesOk && minOk && stackOk && perPatientOk && promo.new_customer_only) {
-          const { count } = await admin.from("psy_payments").select("id", { count: "exact", head: true }).eq("patient_id", patientId).eq("status", "completed");
-          newCustOk = (count || 0) === 0;
+        const eligMode = promo.customer_eligibility || (promo.new_customer_only ? "new" : "all");
+        if (dateOk && usesOk && minOk && stackOk && perPatientOk && eligMode !== "all") {
+          if (eligMode === "selected") {
+            newCustOk = Array.isArray(promo.selected_patient_ids) && promo.selected_patient_ids.includes(patientId);
+          } else {
+            const { count } = await admin.from("psy_payments").select("id", { count: "exact", head: true }).eq("patient_id", patientId).eq("status", "completed");
+            const hasPaid = (count || 0) > 0;
+            newCustOk = eligMode === "new" ? !hasPaid : hasPaid;
+          }
         }
         let scopeOk = true;
         if (dateOk && usesOk && minOk && stackOk && perPatientOk && newCustOk && promo.applies_to !== "all") {
@@ -357,7 +377,8 @@ async function verifiedAmount(admin, it, patientId) {
         const onPromo = promo > 0 && promo < orig && (!p.promo_until || p.promo_until >= today);
         sub += (onPromo ? promo : orig) * qty;
       }
-      const deliveryFee = Number(it.deliveryFee) || (it.deliveryMethod === "pos" ? 8 : 0);
+      // Fasa 3 (7 Okt) — JANGAN percaya it.deliveryFee dari client (boleh ditokok tolak).
+      const deliveryFee = it.deliveryMethod === "pos" ? 8 : 0;
       return sub + deliveryFee;
     }
     return clientAmt;
