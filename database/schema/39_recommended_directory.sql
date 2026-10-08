@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS psy_recommended_products (
   contact_phone     TEXT,        -- No. Telefon
   website           TEXT,        -- Website (jika ada)
   operating_hours   TEXT,        -- Waktu Operasi (cth "9:00 AM - 10:00 PM (Setiap Hari)")
-  menu_items        TEXT,        -- Menu / Hidangan Cadangan (satu baris satu item)
+  menu_items        JSONB DEFAULT '[]',  -- Menu / Hidangan Cadangan — array [{name, image_url}], gambar opsyenal per-item
   price_range       TEXT,        -- Julat Harga (opsyenal, cth "RM10-20") — legacy drpd psy_recommended_restaurants
   created_by        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
   updated_by        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,

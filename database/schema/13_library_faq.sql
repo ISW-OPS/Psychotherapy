@@ -37,6 +37,10 @@ CREATE TABLE IF NOT EXISTS psy_library_items (
   week_number     INT,
   staff_roles     TEXT[],
   publish_at      TIMESTAMPTZ,
+  -- Audit management batch — item 139, Tier Library Content: staf pilih sendiri
+  -- "Kandungan Berkaitan" (bukan setakat cadangan automatik ikut topik).
+  -- Rujuk 20261007_library_related_items.sql.
+  related_item_ids UUID[] DEFAULT '{}',
   created_at      TIMESTAMPTZ DEFAULT now(),
   updated_at      TIMESTAMPTZ DEFAULT now()
 );
@@ -45,6 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_library_package_ids ON psy_library_items USING GI
 CREATE INDEX IF NOT EXISTS idx_library_media_type  ON psy_library_items(media_type);
 CREATE INDEX IF NOT EXISTS idx_library_topic       ON psy_library_items(topic);
 CREATE INDEX IF NOT EXISTS idx_library_tags        ON psy_library_items USING GIN (tags);
+CREATE INDEX IF NOT EXISTS idx_library_related     ON psy_library_items USING GIN (related_item_ids);
 
 ALTER TABLE psy_library_items ENABLE ROW LEVEL SECURITY;
 
@@ -91,6 +96,8 @@ COMMENT ON COLUMN psy_library_items.staff_roles IS
   'Kalau diisi, kandungan ni RUJUKAN STAF sahaja (bukan pesakit) — hanya staff dgn salah satu peranan ni nampak. NULL/kosong = kandungan pesakit biasa.';
 COMMENT ON COLUMN psy_library_items.publish_at IS
   'Kalau diisi & di masa depan, kandungan tak nampak kpd pesakit walau status=published/is_active=true sehingga masa ni sampai (dikuatkuasa di RLS).';
+COMMENT ON COLUMN psy_library_items.related_item_ids IS
+  'Senarai id (psy_library_items.id) kandungan lain yang staf PILIH SENDIRI sebagai "Kandungan Berkaitan", ikut urutan staf pilih. Kosong/NULL = patient-side fallback ke cadangan automatik ikut topik sama (lihat loadRelated() di library-detail.html).';
 
 -- ──── psy_library_bookmarks — "Simpan" (bookmark) per pesakit ────
 

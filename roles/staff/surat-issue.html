@@ -555,7 +555,7 @@ async function confirmSign() {
     : new Date().toISOString();
   const requesterLabel = isInternal ? 'Internal Document' : patient.full_name;
   try {
-    await window.db.from('psy_letter_issued').insert({
+    const { data: issuedRow } = await window.db.from('psy_letter_issued').insert({
       patient_id:      isInternal ? null : patient.id,
       patient_name:    requesterLabel,
       template_code:   'simple',
@@ -567,10 +567,16 @@ async function confirmSign() {
       signed_by_role:  window.currentUser.staff_role || '',
       signature_url:   sigData,
       signed_at:       signedAt,
-    });
+    }).select('id').single();
     if (!isInternal && patient?.user_id) {
       try { await notify(patient.user_id, 'system', 'Surat Anda Sedia',
         `${tpl.name} (${refNumber}) telah dikeluarkan.`, 'surat.html'); } catch {}
+    }
+    // Audit #143: auto-hantar WhatsApp kepada pesakit lepas surat sedia (tambahan
+    // kepada notify() dalam-app di atas). Gagal/pesakit tiada telefon TAK halang
+    // proses keluarkan surat — biar error senyap, status rekod kat psy_letter_issued.
+    if (!isInternal && issuedRow?.id) {
+      Promise.resolve(window.db.functions.invoke('letters-send-wa', { body: { issuedId: issuedRow.id } })).catch(() => {});
     }
     try {
       await window.db.from('psy_audit_log').insert({

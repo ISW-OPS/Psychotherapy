@@ -81,6 +81,7 @@ const STATUS_LABELS = {
   unregistered: 'Belum Aktif',
   archived:     'Diarkibkan',
   deceased:     'Meninggal',
+  warded:       'Warded (Masuk Wad)',
   pending:      'Pending',
   approved:     'Diluluskan',
   scheduled:    'Dijadualkan',
@@ -143,6 +144,7 @@ function statusChip(s) {
     resolved:     'bg-green-light text-green-dark',
     unregistered: 'bg-amber-100 text-amber-800',
     inactive:     'bg-ink/10 text-ink/50',
+    warded:       'bg-terracotta-light text-terracotta',
   };
   const label = STATUS_LABELS[s] || s;
   return `<span class="chip ${m[s] || 'bg-ink/10 text-ink/60'}">${label}</span>`;
@@ -181,4 +183,22 @@ function banner(msg, type = 'ok') {
   el.textContent = msg;
   document.body.appendChild(el);
   setTimeout(() => el.remove(), type === 'error' ? 6000 : 2500);
+}
+
+// Audit #133 — delivery log penghantaran Pengumuman. Guna semula jadual
+// psy_notification_logs sedia ada (enjin automasi, 18_notifications_automations.sql)
+// — bukan jadual baharu. Pengumuman kini IN-APP SAHAJA (tiada laluan WA/email
+// terus dari borang pengumuman-baru.html/pengumuman-edit.html), jadi SATU baris
+// 'in_app' direkod setiap kali pengumuman diterbitkan/diaktifkan (bukan draf).
+// Rujukan guna lajur `event` sedia ada (tiada lajur FK khusus): 'announcement:<id>'.
+async function logAnnouncementDelivery(announcementId, title, status, errMsg) {
+  if (!announcementId) return;
+  try {
+    await window.db.from('psy_notification_logs').insert({
+      event: 'announcement:' + announcementId, channel: 'in_app', status: status || 'sent',
+      patient_name: (window.currentUser && window.currentUser.full_name) ? ('Staff: ' + window.currentUser.full_name) : 'Staff',
+      message: title || null, error: errMsg || null,
+      sent_at: status === 'failed' ? null : new Date().toISOString(),
+    });
+  } catch (_) { /* jangan halang aliran utama walau log gagal */ }
 }

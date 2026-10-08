@@ -434,7 +434,7 @@ async function doApprove() {
     const { count } = await window.db.from('psy_letter_issued').select('id', { count: 'exact', head: true });
     const refNumber = `ISW/${new Date().getFullYear()}/${String((count || 0) + 1).padStart(4, '0')}`;
 
-    await window.db.from('psy_letter_issued').insert({
+    const { data: issuedRow } = await window.db.from('psy_letter_issued').insert({
       request_id:     req.id,
       patient_id:     isInternal ? null : (patient?.id || req.patient_id || null),
       patient_name:   requesterLabel,
@@ -447,13 +447,19 @@ async function doApprove() {
       signed_by_role: window.currentUser.staff_role || '',
       signature_url:  sigData,
       signed_at:      new Date().toISOString(),
-    });
+    }).select('id').single();
     await window.db.from('psy_letter_requests').update({
       status: 'issued', approved_by: window.currentUser.id, approved_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     }).eq('id', req.id);
 
     await logAudit('letter.issued', req.id, { template: tpl.name, ref: refNumber });
     await notifyRequester('Surat Anda Sedia', `${tpl.name} (${refNumber}) telah dikeluarkan.`);
+    // Audit #143: auto-hantar WhatsApp kepada pesakit lepas kelulusan surat (tambahan
+    // kepada notifyRequester() dalam-app di atas). requester_type='staff' (surat internal
+    // utk staff sendiri, cth KWSP/RELA) = tiada pesakit → fungsi letters-send-wa skip sendiri.
+    if (!isInternal && issuedRow?.id) {
+      Promise.resolve(window.db.functions.invoke('letters-send-wa', { body: { issuedId: issuedRow.id } })).catch(() => {});
+    }
 
     banner('Surat dikeluarkan ✓');
     setTimeout(() => location.href = 'surat-request-detail.html?id=' + req.id, 700);

@@ -9,7 +9,8 @@ import os, datetime
 DB = os.path.dirname(os.path.abspath(__file__))
 SCHEMA = os.path.join(DB, "schema")
 
-files = sorted(f for f in os.listdir(SCHEMA) if f.endswith(".sql"))
+EXCLUDE = {"master_migration.sql", "drop_all.sql"}
+files = sorted(f for f in os.listdir(SCHEMA) if f.endswith(".sql") and f not in EXCLUDE)
 
 parts = [
     "-- ISW System — master_migration.sql",

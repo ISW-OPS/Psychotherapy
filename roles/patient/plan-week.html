@@ -316,6 +316,7 @@ async function loadWeekDetail() {
   applyUnitHeaders();
   renderHero();
   renderCoachNotes();
+  await loadProcedureKitsCache();
   renderCoachingSchedule();
   await Promise.all([loadVitals(), loadCompliance(), loadWeeklyFeedback(), loadWeekDocs()]);
   renderFeedbackSection();
@@ -359,6 +360,39 @@ function getWeekCoachingItems() {
   });
   return items;
 }
+
+// Auto-simplify paparan Bekalan (audit #144c) — sama logik dgn roles/staff/plan-week.html:
+// kalau senarai supplies SATU minggu (≥3 item) kesemuanya tergolong dlm SATU kit prosedur
+// (psy_procedure_kits.items), papar collapse jadi SATU baris "🧰 Nama Prosedur (N item)" dgn
+// "Lihat butiran" utk expand. Padan ikut NAMA (bukan item_id, sbb templat kit selalunya
+// item_id NULL). Tak match mana2 kit → kekal papar satu-satu macam biasa.
+let procKitsCache = null;
+let kitExpandState = {};
+async function loadProcedureKitsCache() {
+  if (procKitsCache) return procKitsCache;
+  const { data, error } = await window.db.from('psy_procedure_kits').select('id, name, items').eq('is_active', true);
+  if (error) { console.error('[procedure-kits] gagal muat:', error); procKitsCache = []; return procKitsCache; }
+  procKitsCache = (data || []).map(k => ({
+    name: k.name,
+    names: new Set((k.items || []).map(it => String(it.item_name || it.name || '').trim().toLowerCase()).filter(Boolean)),
+  })).filter(k => k.names.size > 0);
+  return procKitsCache;
+}
+function matchProcedureKit(values, type) {
+  if (type !== 'supplies' || !Array.isArray(values) || !procKitsCache?.length) return null;
+  const names = values.map(v => {
+    if (typeof v === 'string') return v.trim().toLowerCase();
+    if (v && typeof v === 'object') return String(v.item_name || v.name || '').trim().toLowerCase();
+    return '';
+  }).filter(Boolean);
+  if (names.length < 3) return null;
+  return procKitsCache.find(k => names.every(n => k.names.has(n))) || null;
+}
+function toggleKitExpand(key) {
+  kitExpandState[key] = !kitExpandState[key];
+  renderCoachingSchedule();
+}
+window.toggleKitExpand = toggleKitExpand;
 
 function renderCoachingSchedule() {
   const items = getWeekCoachingItems();
@@ -405,22 +439,35 @@ function renderCoachingSchedule() {
 
   const readonlyList = (title, type, values, prefix, colorClass, bgClass) => {
     if (!(values || []).length) return `<div class="rounded-lg ${bgClass} border p-3"><div class="text-xs font-bold ${colorClass} mb-2">${title}</div><p class="text-xs text-ink/40 italic">Tiada</p></div>`;
+    const rows = values.map((value, idx) => {
+      const key = `${prefix}_${type}_${idx}`;
+      const done = !!checks[key];
+      const reason = checks[key + '_reason'] || '';
+      return `<div>
+        <div class="flex items-start gap-2 text-xs">
+          <span class="flex-shrink-0">${done ? '✅' : '☐'}</span>
+          <span class="${done ? 'line-through text-ink/40' : 'text-ink/80'}">${escHtml(labelOf(value))}</span>
+        </div>
+        ${!done && reason ? `<div class="mt-1 ml-5 text-xs text-gold-dark italic">Alasan: ${escHtml(reason)}</div>` : ''}
+      </div>`;
+    }).join('');
+
+    // Kit prosedur padan (≥3 item, SATU kit sahaja) — collapse default utk pesakit,
+    // "Lihat butiran" utk expand (audit #144c).
+    const matchedKit = matchProcedureKit(values, type);
+    const kitKey = `${prefix}_${type}_kit`;
+    const kitExpanded = !!kitExpandState[kitKey];
+    const body = matchedKit
+      ? `<div class="flex items-center justify-between gap-2 bg-white/70 rounded-lg px-2.5 py-2 border border-ink/10">
+          <span class="text-xs font-semibold text-ink/80 min-w-0 truncate">🧰 ${escHtml(matchedKit.name)} <span class="text-ink/40 font-normal">(${values.length} item)</span></span>
+          <button type="button" onclick="toggleKitExpand('${kitKey}')" class="text-[11px] font-semibold text-navy hover:underline flex-shrink-0">${kitExpanded ? 'Sembunyikan' : 'Lihat butiran'}</button>
+        </div>
+        ${kitExpanded ? `<div class="space-y-2 mt-2">${rows}</div>` : ''}`
+      : `<div class="space-y-2">${rows}</div>`;
+
     return `<div class="rounded-lg ${bgClass} border p-3">
       <div class="text-xs font-bold ${colorClass} mb-2">${title}</div>
-      <div class="space-y-2">
-        ${values.map((value, idx) => {
-          const key = `${prefix}_${type}_${idx}`;
-          const done = !!checks[key];
-          const reason = checks[key + '_reason'] || '';
-          return `<div>
-            <div class="flex items-start gap-2 text-xs">
-              <span class="flex-shrink-0">${done ? '✅' : '☐'}</span>
-              <span class="${done ? 'line-through text-ink/40' : 'text-ink/80'}">${escHtml(labelOf(value))}</span>
-            </div>
-            ${!done && reason ? `<div class="mt-1 ml-5 text-xs text-gold-dark italic">Alasan: ${escHtml(reason)}</div>` : ''}
-          </div>`;
-        }).join('')}
-      </div>
+      ${body}
     </div>`;
   };
 

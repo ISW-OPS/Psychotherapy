@@ -350,6 +350,13 @@
               </div>
             </div>
             <div>
+              <label class="text-xs font-semibold">Kandungan Berkaitan <span class="text-ink/40 font-normal">(Pilihan)</span></label>
+              <p class="text-[10px] text-ink/40 mt-0.5 mb-2">Pilih sendiri kandungan lain untuk dipaparkan sebagai "Kandungan Berkaitan" kepada pesakit. Jika tiada dipilih, sistem akan cadangkan secara automatik ikut topik yang sama.</p>
+              <input id="rel-search" type="text" oninput="relRenderList()" class="w-full px-3 py-2 border border-ink/20 rounded-lg text-xs focus:border-blue-500 outline-none mb-2" placeholder="Cari kandungan...">
+              <div id="rel-count" class="text-[10px] text-ink/40 mb-1"></div>
+              <div id="rel-list" class="space-y-1 max-h-48 overflow-y-auto border border-ink/10 rounded-lg p-2"></div>
+            </div>
+            <div>
               <label class="text-xs font-semibold">Notifikasi <span class="text-ink/40 font-normal">(Opsyenal)</span></label>
               <label class="flex items-start gap-2 mt-2 cursor-pointer">
                 <input type="checkbox" id="cb-notify" class="mt-0.5 accent-blue-600" checked>
@@ -582,6 +589,10 @@ function validateStep(s){
     if((selectedType==='video'||selectedType==='audio')&&!hasFile&&!hasUrl){
       showError('Sila muat naik fail atau masukkan pautan '+selectedType+'.');return false;
     }
+    if(selectedType==='video'){
+      const hasThumb=!!thumbFile||(!thumbRemoved&&!!existing.thumbnail_url);
+      if(!hasThumb){showError('Sila ambil/upload thumbnail dahulu sebelum terbitkan video.');return false;}
+    }
   }
   return true;
 }
@@ -750,6 +761,24 @@ function tickAllPkg(on){document.querySelectorAll('.pkg-chk').forEach(c=>c.check
 function collectPkg(){return Array.from(document.querySelectorAll('.pkg-chk:checked')).map(c=>c.value);}
 function collectRoles(){return Array.from(document.querySelectorAll('.role-chk:checked')).map(c=>c.value);}
 
+// ── Kandungan Berkaitan (pilihan manual staf — fallback auto-ikut-topik di library-detail.html) ──
+let relSel=new Set(),ALL_LIB_ITEMS=[];
+async function loadRelatableItems(excludeId){
+  const {data}=await window.db.from('psy_library_items').select('id,item_id,title,media_type').order('title',{ascending:true});
+  ALL_LIB_ITEMS=(data||[]).filter(r=>r.id!==excludeId);
+  relRenderList();
+}
+function relRenderList(){
+  const el=document.getElementById('rel-list');if(!el)return;
+  const q=(document.getElementById('rel-search')?.value||'').toLowerCase().trim();
+  const filtered=ALL_LIB_ITEMS.filter(r=>!q||String(r.title||'').toLowerCase().includes(q));
+  const cnt=document.getElementById('rel-count');if(cnt)cnt.textContent=relSel.size?`${relSel.size} dipilih`:'';
+  el.innerHTML=filtered.length?filtered.map(r=>`<label class="flex items-center gap-2 text-xs py-1 cursor-pointer hover:bg-ink/5 rounded px-1"><input type="checkbox" class="rel-chk accent-blue-600" value="${escH(r.id)}" ${relSel.has(r.id)?'checked':''} onchange="relToggle('${r.id}',this.checked)"><span class="flex-1 truncate">${escH(r.title||r.item_id||'')}</span><span class="text-[9px] px-1.5 py-0.5 rounded bg-ink/8 text-ink/45 uppercase flex-shrink-0">${escH(r.media_type||'')}</span></label>`).join('')
+    :'<p class="text-[10px] text-ink/40 italic px-1">Tiada hasil.</p>';
+}
+function relToggle(id,on){if(on)relSel.add(id);else relSel.delete(id);relRenderList();}
+function collectRelated(){return Array.from(relSel);}
+
 // ── Categories ──
 async function loadCategories(){
   const {data,error}=await window.db.from('psy_library_categories').select('name').eq('scope','content').eq('is_active',true).order('sort_order',{ascending:true});
@@ -818,6 +847,7 @@ async function saveItem(mode){
       content_body:(t==='article'||t==='faq')?(document.getElementById('f-body').innerHTML.trim()||null):null,
       content_url:contentUrl,thumbnail_url:thumbnailUrl,attachment_url:attachmentUrl,
       package_ids:pkgIds.length?pkgIds:null,
+      related_item_ids:collectRelated(),
       week_number:weekNum,
       staff_roles:staffRoles.length?staffRoles:null,
       status:statusVal,is_active:publish,
@@ -856,12 +886,13 @@ async function delItem(){
 (async()=>{
   authUser=await initStaff('library','');if(!authUser)return;
   setHeaderBack?.('library.html','Kembali ke Library');
+  const editId=new URLSearchParams(location.search).get('id');
   await loadCategories();
   await loadPkgList([]);
+  await loadRelatableItems(editId||null);
   updateStepper();
   setType('video');
 
-  const editId=new URLSearchParams(location.search).get('id');
   if(editId){
     document.getElementById('page-h1').textContent='Edit Kandungan';
     document.getElementById('crumb').textContent='Edit Kandungan';
@@ -901,6 +932,8 @@ async function delItem(){
     const hasRoles=Array.isArray(item.staff_roles)&&item.staff_roles.length>0;
     document.querySelector(`input[name="akses"][value="${hasRoles?'staff':(hasPkg?'private':'public')}"]`).checked=true;
     await loadPkgList(item.package_ids);
+    relSel=new Set(Array.isArray(item.related_item_ids)?item.related_item_ids:[]);
+    relRenderList();
     if(item.week_number)document.getElementById('f-week').value=item.week_number;
     if(hasRoles)document.querySelectorAll('.role-chk').forEach(c=>{c.checked=item.staff_roles.includes(c.value);});
     onAksesChange();

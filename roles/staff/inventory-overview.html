@@ -90,25 +90,36 @@
             <div class="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center text-base mb-2">⚠️</div>
             <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Low Stock Items</div>
             <div id="stat-low" class="text-2xl font-bold text-amber-700">—</div>
+            <div class="text-[10px] text-amber-700/70 mt-0.5">Pantau — belum mendesak</div>
             <a href="inventory.html" class="text-[10px] text-navy hover:underline">View details →</a>
           </div>
           <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
             <div class="w-9 h-9 rounded-xl bg-terracotta/10 flex items-center justify-center text-base mb-2">⛔</div>
             <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Out of Stock Items</div>
             <div id="stat-empty" class="text-2xl font-bold text-terracotta">—</div>
+            <div class="text-[10px] text-terracotta/80 mt-0.5 font-semibold">Beli segera — stok habis</div>
             <a href="inventory.html" class="text-[10px] text-terracotta hover:underline">View details →</a>
           </div>
           <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
             <div class="w-9 h-9 rounded-xl bg-teal/10 flex items-center justify-center text-base mb-2">📉</div>
             <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Insufficient for Forecast</div>
             <div id="stat-insufficient" class="text-2xl font-bold text-teal">—</div>
+            <div class="text-[10px] text-teal/80 mt-0.5 font-semibold">Beli sebelum pesakit dijadualkan</div>
             <a href="inventory.html" class="text-[10px] text-navy hover:underline">View details →</a>
           </div>
           <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
             <div class="w-9 h-9 rounded-xl bg-gold/15 flex items-center justify-center text-base mb-2">📋</div>
             <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Pending Requests</div>
             <div id="stat-pending" class="text-2xl font-bold text-ink">—</div>
-            <a href="purchase-requests.html" class="text-[10px] text-navy hover:underline">View details →</a>
+            <div class="text-[10px] text-ink/40 mt-0.5">Tunggu kelulusan manager</div>
+            <a href="purchase-requests.html?view=pending_approval" class="text-[10px] text-navy hover:underline">View details →</a>
+          </div>
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
+            <div class="w-9 h-9 rounded-xl bg-teal/15 flex items-center justify-center text-base mb-2">🛒</div>
+            <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Ready to Buy</div>
+            <div id="stat-approved-buy" class="text-2xl font-bold text-teal">—</div>
+            <div class="text-[10px] text-teal/80 mt-0.5 font-semibold">Lulus (auto) — belum dibeli</div>
+            <a href="ready-to-buy.html" class="text-[10px] text-navy hover:underline">View details →</a>
           </div>
         </div>
 
@@ -130,7 +141,7 @@
 
           <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex flex-col">
             <div class="flex items-center justify-between mb-4">
-              <h3 class="font-bold text-sm text-ink">PR Menunggu Kelulusan</h3>
+              <h3 class="font-bold text-sm text-ink">PR Perlu Tindakan</h3>
               <a href="purchase-requests.html" class="text-xs text-navy hover:underline">Lihat semua →</a>
             </div>
             <div id="ov-pr-pending" class="space-y-2 text-xs flex-1"></div>
@@ -233,7 +244,12 @@ async function loadOverview() {
     window.db.from('psy_inventory_items').select('*'),
     window.db.from('psy_inventory_locations').select('*').eq('is_active', true).order('name'),
     window.db.from('psy_inventory_stock_by_location').select('*, psy_inventory_locations(name)'),
-    window.db.from('psy_inventory_requests').select('id, request_no, requested_by_name, total_amount, priority, created_at', { count: 'exact' }).eq('status', 'pending_approval').order('created_at', { ascending: false }),
+    // Dua status dikira sebagai "perlu tindakan": pending_approval (tunggu lulus)
+    // DAN approved (item tak perlu kelulusan — auto-lulus, tapi belum dibeli).
+    // Dulu query ni tapis pending_approval sahaja, jadi item requires_approval=false
+    // (auto-approved terus) tak pernah muncul di dashboard ni — staff kena bukak
+    // purchase-requests.html sendiri baru nampak.
+    window.db.from('psy_inventory_requests').select('id, request_no, requested_by_name, total_amount, priority, created_at, status', { count: 'exact' }).in('status', ['pending_approval', 'approved']).order('created_at', { ascending: false }),
   ]);
 
   allItems = itemsRes.data || [];
@@ -243,9 +259,13 @@ async function loadOverview() {
   const activeItems = allItems.filter(i => (i.status || (i.is_active === false ? 'inactive' : 'active')) === 'active');
   await window.attachInventoryForecast(activeItems);
 
-  renderStats(activeItems, reqRes.count || 0);
+  const reqRows = reqRes.data || [];
+  const pendingCount  = reqRows.filter(r => r.status === 'pending_approval').length;
+  const approvedCount = reqRows.filter(r => r.status === 'approved').length;
+
+  renderStats(activeItems, pendingCount, approvedCount);
   renderLocationBars();
-  renderPendingRequests(reqRes.data || []);
+  renderPendingRequests(reqRows);
   renderTopLowStock(activeItems);
   renderReconciliation();
   await loadMovements();
@@ -280,13 +300,16 @@ function renderReconciliation() {
 function renderPendingRequests(rows) {
   const host = document.getElementById('ov-pr-pending');
   if (!host) return;
-  if (!rows.length) { host.innerHTML = '<div class="h-full flex items-center justify-center text-ink/30 py-6">Tiada PR menunggu kelulusan 🎉</div>'; return; }
+  if (!rows.length) { host.innerHTML = '<div class="h-full flex items-center justify-center text-ink/30 py-6">Tiada PR perlu tindakan 🎉</div>'; return; }
   const locale = (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB';
   const fmtDate = d => d ? new Date(d).toLocaleDateString(locale, { day: '2-digit', month: 'short' }) : '—';
+  const statusBadge = r => r.status === 'approved'
+    ? '<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-teal/15 text-teal flex-shrink-0">Beli</span>'
+    : '<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-gold/15 text-gold-dark flex-shrink-0">Lulus</span>';
   host.innerHTML = rows.slice(0, 5).map(r => `
     <a href="purchase-request-detail.html?id=${r.id}" class="flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-ink/8 hover:bg-cream/30 transition-colors">
       <div class="min-w-0">
-        <div class="font-semibold text-ink truncate">${escHtml(r.request_no || 'PR')}</div>
+        <div class="font-semibold text-ink truncate flex items-center gap-1.5">${escHtml(r.request_no || 'PR')} ${statusBadge(r)}</div>
         <div class="text-[10px] text-ink/45 truncate">${escHtml(r.requested_by_name || 'Staff')} · ${fmtDate(r.created_at)}</div>
       </div>
       <div class="text-right flex-shrink-0">
@@ -296,7 +319,7 @@ function renderPendingRequests(rows) {
     (rows.length > 5 ? `<div class="text-center pt-1"><a href="purchase-requests.html" class="text-[10px] text-navy hover:underline">+${rows.length - 5} lagi →</a></div>` : '');
 }
 
-function renderStats(activeItems, pendingCount) {
+function renderStats(activeItems, pendingCount, approvedCount) {
   document.getElementById('stat-total').textContent = allItems.length;
   document.getElementById('stat-active').textContent = `Active: ${activeItems.length}`;
 
@@ -307,6 +330,7 @@ function renderStats(activeItems, pendingCount) {
   document.getElementById('stat-empty').textContent = activeItems.filter(i => getStockStatus(i) === 'empty').length;
   document.getElementById('stat-insufficient').textContent = activeItems.filter(i => getStockStatus(i) === 'insufficient').length;
   document.getElementById('stat-pending').textContent = pendingCount;
+  document.getElementById('stat-approved-buy').textContent = approvedCount;
 }
 
 function renderLocationBars() {

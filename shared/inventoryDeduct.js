@@ -5,7 +5,9 @@
 
 /**
  * Deduct supplies for a session that was just marked as attended.
- * - Pulls plan.coaching_schedule[weekIndex].supplies
+ * - Pulls plan.coaching_schedule[weekIndex].supplies (session_day=2 guna supplies_2
+ *   — pakej 2 sesi/minggu ada 2 baris psy_plan_weekly_progress berasingan, satu per
+ *   session_day; padan dgn getWeekCoachingItems() di plan-week.html)
  * - Skips weeks with mode='online' (no physical supplies)
  * - Each supply needs item_id + qty + auto_stock !== false, DAN mesti ditick
  *   staff dalam checklist "Bekalan" (plan-week.html) — coaching_checks[`M{week}_supplies_{idx}`]
@@ -23,7 +25,7 @@ window.deductSessionSupplies = async function (sessionId) {
     // Get session detail
     const { data: sess, error: sessErr } = await window.db
       .from('psy_plan_weekly_progress')
-      .select('id, plan_id, week_number, patient_id, is_extension, coaching_checks')
+      .select('id, plan_id, week_number, session_day, patient_id, is_extension, coaching_checks')
       .eq('id', sessionId)
       .single();
     if (sessErr || !sess) { result.errors.push('Sesi tidak ditemui'); return result; }
@@ -44,7 +46,10 @@ window.deductSessionSupplies = async function (sessionId) {
     // Online sessions have no physical supplies to deduct
     if (weekObj.mode === 'online') { result.skipped.push('Sesi online — tiada bekalan'); return result; }
 
-    const supplies = Array.isArray(weekObj.supplies) ? weekObj.supplies : [];
+    // Sesi 2 (session_day=2) guna senarai bekalan berasingan — lihat nota fungsi di atas.
+    const activeDay = sess.session_day || 1;
+    const suppliesRaw = activeDay === 2 ? weekObj.supplies_2 : weekObj.supplies;
+    const supplies = Array.isArray(suppliesRaw) ? suppliesRaw : [];
     if (!supplies.length) { result.skipped.push('Tiada bekalan disetkan untuk minggu ini'); return result; }
 
     const coachingChecks = sess.coaching_checks || {};

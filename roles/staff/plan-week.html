@@ -41,6 +41,14 @@
               <span id="plan-name-crumb-list" class="font-semibold text-ink"></span>
             </div>
           </div>
+
+          <!-- Ringkasan Sesi — kiraan automatik, dikira terus dari data yg dipaparkan dlm Senarai Sesi di bawah (audit #145) -->
+          <div class="bg-white rounded-xl p-5 border border-ink/10">
+            <h3 class="font-bold text-base mb-1">📊 Ringkasan Sesi</h3>
+            <p class="text-xs text-ink/60 mb-4">Kiraan status sesi untuk pakej ini. Klik kad untuk tapis senarai di bawah.</p>
+            <div id="session-summary-cards" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+          </div>
+
           <div class="bg-white rounded-xl p-5 border border-ink/10">
             <h3 class="font-bold text-base mb-1">📅 Senarai Sesi &amp; Tarikh</h3>
             <p class="text-xs text-ink/60 mb-4">Semua minggu untuk pakej ini. Klik satu minggu untuk lihat/edit butiran.</p>
@@ -382,6 +390,7 @@ let weekEntry    = null;   // psy_plan_weekly_progress row (sesi pertama)
 let weekSessions = [];     // semua baris sesi minggu ini (1–2)
 let extForThisWeek = null; // baris minggu tambahan yg dah dibuka utk minggu ini (atau null)
 let planMaxWeek  = 0;      // minggu tertinggi (termasuk extension)
+let sessionSummaryFilter = null; // kategori kad Ringkasan Sesi yg aktif (audit #145), null = semua
 let patientId    = null;   // psy_patients.id
 let patientUserId = null;  // psy_profiles.id (for notify)
 let patientName  = '';     // nama pesakit (prefill tandatangan)
@@ -573,12 +582,36 @@ async function bootPlanWeek() {
   await loadWeek();
 }
 
+// ── Ringkasan Sesi (audit #145): petakan 1 baris psy_plan_weekly_progress kepada
+// salah satu daripada 4 kategori yg diminta — guna status ENUM sedia ada +
+// patient_confirmed sahaja, TIADA status/kolum baharu.
+//   Disahkan          = status hadir/consultation_done/extension_paid (sesi dah lepas),
+//                        ATAU patient_confirmed=true (pesakit dah sahkan akan hadir)
+//   Dibatalkan         = status cancel, ATAU patient_confirmed=false (pesakit sahkan TIDAK hadir)
+//   Menunggu Pengesahan = status booked DAN patient_confirmed masih NULL (tempahan sedia,
+//                        tunggu jawapan pesakit)
+//   Dirancang          = selebihnya (pending / extension_pending_payment / reschedule —
+//                        belum ditempah atau tunggu tarikh baharu)
+function categorizeSession(r) {
+  if (!r) return 'dirancang';
+  if (r.status === 'hadir' || r.status === 'consultation_done' || r.status === 'extension_paid') return 'disahkan';
+  if (r.status === 'cancel') return 'dibatalkan';
+  if (r.patient_confirmed === true) return 'disahkan';
+  if (r.patient_confirmed === false) return 'dibatalkan';
+  if (r.status === 'booked' && r.patient_confirmed == null) return 'menunggu';
+  return 'dirancang'; // pending, extension_pending_payment, reschedule
+}
+
 // ── Senarai Minggu (landing bila tiada &week=) ─────────
 async function renderWeekListView() {
   const { data: rows } = await window.db.from('psy_plan_weekly_progress')
-    .select('week_number, session_day, session_date, status, is_extension')
+    .select('week_number, session_day, session_date, status, is_extension, patient_confirmed')
     .eq('plan_id', activePlan.id).order('week_number').order('session_day');
   const weekRows = rows || [];
+
+  // Kad Ringkasan Sesi — kiraan terus dari weekRows yg sama dipaparkan dlm senarai di bawah,
+  // supaya kad & jadual sentiasa sepadan (sumber data tunggal, dikira semula setiap render).
+  renderSessionSummaryCards(weekRows);
 
   const maxRowWeek = Math.max(0, ...weekRows.map(r => r.week_number || 0));
   const weeks = Math.max(activePlan.duration_weeks || 12, maxRowWeek);
@@ -601,6 +634,8 @@ async function renderWeekListView() {
   let html = '';
   for (let w = 1; w <= weeks; w++) {
     const rowsForWeek = weekRows.filter(r => r.week_number === w);
+    // Kad Ringkasan Sesi aktif sbg tapisan — hanya papar minggu yg ada sesi dlm kategori tu.
+    if (sessionSummaryFilter && !rowsForWeek.some(r => categorizeSession(r) === sessionSummaryFilter)) continue;
     const s1 = sessionMap[`${w}_1`];
     const s2 = sessionMap[`${w}_2`];
     const isCurrent = w === cw;
@@ -626,7 +661,37 @@ async function renderWeekListView() {
     </a>`;
   }
 
-  document.getElementById('week-list-grid').innerHTML = html || '<div class="col-span-3 text-sm text-ink/40 italic py-4 text-center">Tiada data</div>';
+  document.getElementById('week-list-grid').innerHTML = html || (sessionSummaryFilter
+    ? '<div class="col-span-3 text-sm text-ink/40 italic py-4 text-center">Tiada sesi dalam kategori ini.</div>'
+    : '<div class="col-span-3 text-sm text-ink/40 italic py-4 text-center">Tiada data</div>');
+}
+
+// Kad Ringkasan Sesi (audit #145) — kiraan automatik dari weekRows yg sama dgn Senarai
+// Sesi di bawah. Klik kad = tapis senarai minggu ikut kategori (klik semula utk buang tapis).
+function renderSessionSummaryCards(weekRows) {
+  const counts = { dirancang: 0, menunggu: 0, disahkan: 0, dibatalkan: 0 };
+  weekRows.forEach(r => { counts[categorizeSession(r)]++; });
+
+  const cards = [
+    { key: 'dirancang', icon: '🗓️', label: 'Dirancang',            border: 'border-navy',       text: 'text-navy' },
+    { key: 'menunggu',  icon: '⏳', label: 'Menunggu Pengesahan',   border: 'border-gold',       text: 'text-gold-dark' },
+    { key: 'disahkan',  icon: '✅', label: 'Disahkan',              border: 'border-green-dark', text: 'text-green-dark' },
+    { key: 'dibatalkan',icon: '❌', label: 'Dibatalkan',            border: 'border-terracotta', text: 'text-terracotta' },
+  ];
+
+  document.getElementById('session-summary-cards').innerHTML = cards.map(c => {
+    const active = sessionSummaryFilter === c.key;
+    return `<button type="button" onclick="toggleSessionSummaryFilter('${c.key}')"
+      class="text-left bg-white rounded-xl p-4 border-t-4 ${c.border} ${active ? 'ring-2 ring-navy shadow-md' : 'hover:shadow-sm'} transition">
+      <div class="text-[10px] uppercase font-semibold text-ink/50 tracking-wide">${c.icon} ${c.label}</div>
+      <div class="text-2xl font-bold mt-1 ${c.text}">${counts[c.key]}</div>
+    </button>`;
+  }).join('');
+}
+
+function toggleSessionSummaryFilter(key) {
+  sessionSummaryFilter = (sessionSummaryFilter === key) ? null : key;
+  renderWeekListView();
 }
 
 // ── Load week data ────────────────────────────────────
@@ -669,6 +734,7 @@ async function loadWeek() {
   await loadHk1();
   await checkDnaTestAutoCreate();
   renderHk1Section();
+  await loadProcedureKitsCache();
   renderCoachingSchedule();
   fillCoachForm();
   renderSignoff();
@@ -904,12 +970,20 @@ function renderOverrideNote() {
 // Vitals: tick checkbox terus di sini). Guna jadual psy_clinical_referrals sahaja (rujuk.html/
 // rujukan.html/rujukan-konsultasi.html dah dipadam — tiada lagi laluan lain utk konsultasi ni).
 // Ditanda ad-hoc terus di plan-week.html (bukan pra-set pakej-edit).
+// fisioterapi/kaunselor/bekam/masseur: boleh ada LEBIH DARIPADA SATU staff per role, jadi
+// tak boleh auto-resolve senyap macam hakeema/hakeem/dr — multiTarget:true papar dropdown
+// "Pilih coach" dalam toolbar, staff kena pilih sendiri sebelum boleh tick. Role code mesti
+// sepadan staff_role yang dicipta staff sendiri di peranan.html.
 const HK1_TYPES = {
-  hakeema: { label: 'Hakeema Session', emoji: '🧑‍💼', role: 'manager', nameLike: 'hakeema', exclude: null,      fallback: 'Hakeema' },
-  hakeem:  { label: 'Hakeem Session',  emoji: '🧑',          role: 'manager', nameLike: 'hakeem',  exclude: 'hakeema', fallback: 'Hakeem' },
-  dr:      { label: 'Dr Session',      emoji: '🩺',          role: 'doctor',  nameLike: null,      exclude: null,      fallback: 'Dr' },
+  hakeema:     { label: 'Hakeema Session',     emoji: '🧑‍💼', role: 'manager',     nameLike: 'hakeema', exclude: null,      fallback: 'Hakeema', multiTarget: false },
+  hakeem:      { label: 'Hakeem Session',      emoji: '🧑',   role: 'manager',     nameLike: 'hakeem',  exclude: 'hakeema', fallback: 'Hakeem', multiTarget: false },
+  dr:          { label: 'Dr Session',          emoji: '🩺',   role: 'doctor',      nameLike: null,      exclude: null,      fallback: 'Dr', multiTarget: false },
+  fisioterapi: { label: 'Fisioterapi Session', emoji: '🏃',   role: 'fisioterapi', nameLike: null,      exclude: null,      fallback: 'Fisioterapi', multiTarget: true },
+  kaunselor:   { label: 'Kaunselor Session',   emoji: '🗣️',   role: 'kaunselor',   nameLike: null,      exclude: null,      fallback: 'Kaunselor', multiTarget: true },
+  bekam:       { label: 'Bekam Session',       emoji: '🩸',   role: 'bekam',       nameLike: null,      exclude: null,      fallback: 'Bekam', multiTarget: true },
+  masseur:     { label: 'Masseur Session',     emoji: '💆',   role: 'masseur',     nameLike: null,      exclude: null,      fallback: 'Tukang Urut', multiTarget: true },
 };
-let hk1Refs = { hakeema: null, hakeem: null, dr: null }; // rekod psy_clinical_referrals penuh, ikut jenis
+let hk1Refs = { hakeema: null, hakeem: null, dr: null, fisioterapi: null, kaunselor: null, bekam: null, masseur: null }; // rekod psy_clinical_referrals penuh, ikut jenis
 let hk1SarananTpl = null;  // templat mesej WA boleh-edit (psy_auto_messages key='referral_saranan')
 let hk1StaffList = [];     // senarai staff utk pilihan PIC Next Action (audit #B2-4)
 const STATUS_1ON1_MAP = {
@@ -939,7 +1013,7 @@ function hk1RequiredTypesThisWeek() {
 }
 
 async function loadHk1() {
-  hk1Refs = { hakeema: null, hakeem: null, dr: null };
+  hk1Refs = { hakeema: null, hakeem: null, dr: null, fisioterapi: null, kaunselor: null, bekam: null, masseur: null };
   const { data } = await window.db.from('psy_clinical_referrals')
     .select('*').eq('plan_id', activePlan.id).eq('week_number', weekNumber).eq('source', 'plan_1on1');
 
@@ -980,9 +1054,15 @@ async function loadHk1() {
 
   if (!hk1StaffList.length) {
     const { data: staff } = await window.db.from('psy_profiles')
-      .select('id, full_name').eq('role', 'staff').order('full_name');
+      .select('id, full_name, staff_role').eq('role', 'staff').order('full_name');
     hk1StaffList = staff || [];
   }
+}
+
+// Staff yg boleh jadi target utk jenis multiTarget (fisioterapi/kaunselor/bekam/masseur) —
+// filter hk1StaffList ikut staff_role, dipakai bina dropdown "Pilih coach" dalam toolbar.
+function hk1StaffForRole(role) {
+  return hk1StaffList.filter(s => s.staff_role === role);
 }
 
 // Auto-cipta proses DNA Test (audit #B1-7/8 Tier 4) — bila pakej mewajibkan DNA
@@ -1023,7 +1103,15 @@ async function hk1Toggle(type, checked) {
   if (checked) {
     if (hk1Refs[type]) return;
     const cfg = HK1_TYPES[type];
-    const target = await hk1ResolveTarget(type);
+    let target;
+    if (cfg.multiTarget) {
+      const sel = document.getElementById(`hk1-target-${type}`);
+      const staffId = sel?.value || '';
+      if (!staffId) { banner(`Pilih coach ${cfg.fallback} dahulu sebelum tandakan sesi ini.`, 'error'); if (cb) cb.checked = false; return; }
+      target = { id: staffId, name: hk1StaffList.find(s => s.id === staffId)?.full_name || cfg.fallback };
+    } else {
+      target = await hk1ResolveTarget(type);
+    }
     const { data: created, error } = await window.db.from('psy_clinical_referrals').insert({
       patient_id: patientId, plan_id: activePlan.id, week_number: weekNumber, source: 'plan_1on1', session_type: type,
       referred_by: window.currentUser?.id, referred_by_name: window.currentUser?.full_name,
@@ -1035,11 +1123,36 @@ async function hk1Toggle(type, checked) {
   } else {
     const ref = hk1Refs[type];
     if (!ref) return;
-    const hasData = !!(ref.consultation && (ref.consultation.examination || ref.consultation.saranan || ref.consultation.saranan_sent_at));
-    if (!confirm(hasData ? 'Rekod ini sudah ada nota/saranan. Padam terus?' : `Padam rekod ${HK1_TYPES[type].label} minggu ini?`)) { if (cb) cb.checked = true; return; }
-    const { error } = await window.db.from('psy_clinical_referrals').delete().eq('id', ref.id);
-    if (error) { banner('Gagal padam: ' + error.message, 'error'); if (cb) cb.checked = true; return; }
-    hk1Refs[type] = null;
+    // Rekod dianggap "ada kandungan" (bukan sekadar placeholder requirement kosong) kalau mana-mana
+    // nota/saranan/status/next-action dah diisi — padam terus akan hilangkan sejarah tu.
+    const hasData = !!(
+      (ref.consultation && (ref.consultation.examination || ref.consultation.saranan || ref.consultation.saranan_sent_at)) ||
+      ref.resolution_note || ref.consultation_note || ref.next_action || (ref.status && ref.status !== 'pending')
+    );
+    if (hasData) {
+      // Rekod BUKAN kosong — JANGAN hard-delete. Ikut pola hphCancelSession()
+      // (sesi-1on1-detail.html): batalkan dgn sebab + audit trail, rekod KEKAL sbg
+      // sejarah (status='declined'), bukan dipadam (audit #102).
+      if (!confirm(`Rekod ${HK1_TYPES[type].label} minggu ini sudah ada nota/saranan. Tak boleh dipadam terus. Batalkan sesi ini (rekod kekal sebagai sejarah, status jadi "Ditolak")?`)) { if (cb) cb.checked = true; return; }
+      const reason = (prompt('Sebab batalkan sesi ini? (wajib, direkod dalam audit trail)') || '').trim();
+      if (!reason) { banner('Sebab wajib diisi untuk batalkan sesi.', 'error'); if (cb) cb.checked = true; return; }
+      const c = Object.assign({}, ref.consultation || {}, { cancel_reason: reason, cancelled_at: new Date().toISOString(), cancelled_by: window.currentUser?.full_name || null });
+      const { data: updated, error } = await window.db.from('psy_clinical_referrals')
+        .update({ status: 'declined', consultation: c }).eq('id', ref.id).select('*').maybeSingle();
+      if (error) { banner('Gagal batalkan: ' + error.message, 'error'); if (cb) cb.checked = true; return; }
+      hk1Refs[type] = updated || Object.assign({}, ref, { status: 'declined', consultation: c });
+      if (typeof auditLog === 'function') { try { await auditLog('referral.cancelled', patientId, { source: 'plan_1on1', session_type: type, week_number: weekNumber, reason }); } catch (_) {} }
+      if (cb) cb.checked = true;
+      banner('Sesi dibatalkan (rekod kekal sebagai sejarah, tak dipadam) ✓');
+    } else {
+      // Rekod MASIH KOSONG (pending, tiada nota langsung) — sekadar placeholder requirement
+      // kosong, bukan "sejarah" — hard-delete kekal dibenarkan. Tetap log (konsistensi audit).
+      if (!confirm(`Padam rekod ${HK1_TYPES[type].label} minggu ini?`)) { if (cb) cb.checked = true; return; }
+      const { error } = await window.db.from('psy_clinical_referrals').delete().eq('id', ref.id);
+      if (error) { banner('Gagal padam: ' + error.message, 'error'); if (cb) cb.checked = true; return; }
+      if (typeof auditLog === 'function') { try { await auditLog('referral.requirement_removed', patientId, { source: 'plan_1on1', session_type: type, week_number: weekNumber }); } catch (_) {} }
+      hk1Refs[type] = null;
+    }
   }
   renderHk1Section();
 }
@@ -1053,11 +1166,17 @@ function renderHk1Section() {
   const toolbar = `<div class="bg-white rounded-xl px-5 py-4 border border-ink/10 flex flex-wrap items-center gap-x-5 gap-y-2">
     <span class="text-xs font-bold text-ink/60">Sesi 1:1 minggu ini:</span>
     ${Object.entries(HK1_TYPES).map(([type, cfg]) => `
-      <label data-rbac="rujukan.edit" class="flex items-center gap-1.5 text-sm font-semibold cursor-pointer">
-        <input type="checkbox" id="hk1-chk-${type}" ${hk1Refs[type] ? 'checked' : ''} onchange="hk1Toggle('${type}', this.checked)">
-        ${cfg.emoji} ${cfg.label}
-        ${requiredTypes.includes(type) ? '<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-terracotta/15 text-terracotta">Wajib ikut Pakej</span>' : ''}
-      </label>`).join('')}
+      <span class="flex items-center gap-1.5">
+        <label data-rbac="rujukan.reschedule" class="flex items-center gap-1.5 text-sm font-semibold cursor-pointer">
+          <input type="checkbox" id="hk1-chk-${type}" ${hk1Refs[type] ? 'checked' : ''} onchange="hk1Toggle('${type}', this.checked)">
+          ${cfg.emoji} ${cfg.label}
+          ${requiredTypes.includes(type) ? '<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-terracotta/15 text-terracotta">Wajib ikut Pakej</span>' : ''}
+        </label>
+        ${cfg.multiTarget && !hk1Refs[type] ? `<select id="hk1-target-${type}" data-rbac="rujukan.reschedule" class="text-[11px] border border-ink/15 rounded-lg px-2 py-1 bg-white outline-none focus:border-navy max-w-[140px]">
+          <option value="">— Pilih ${escHtml(cfg.fallback)} —</option>
+          ${hk1StaffForRole(cfg.role).map(s => `<option value="${s.id}">${escHtml(s.full_name)}</option>`).join('')}
+        </select>` : ''}
+      </span>`).join('')}
   </div>`;
 
   const cards = Object.keys(HK1_TYPES).filter(t => hk1Refs[t]).map(t => renderHk1Card(t)).join('');
@@ -1150,7 +1269,7 @@ function renderHk1Card(type) {
     ${hk1NextActionHtml(type)}
 
     ${editable ? `<div class="mt-5 pt-4 border-t border-ink/10 flex justify-end">
-      <button type="button" data-rbac="rujukan.edit" onclick="hk1MarkResolved('${type}')" class="px-4 py-2 rounded-lg bg-navy text-white text-sm font-semibold hover:bg-navy-dark">✓ Tandakan Selesai</button>
+      <button type="button" data-rbac="rujukan.complete" onclick="hk1MarkResolved('${type}')" class="px-4 py-2 rounded-lg bg-navy text-white text-sm font-semibold hover:bg-navy-dark">✓ Tandakan Selesai</button>
     </div>` : ''}
   </div>`;
 }
@@ -1514,6 +1633,42 @@ async function hk1MarkResolved(type) {
 }
 window.hk1MarkResolved = hk1MarkResolved;
 
+// Auto-simplify paparan Bekalan (audit #144c) — kalau senarai supplies SATU minggu
+// (≥3 item) kesemuanya tergolong dlm SATU kit prosedur (psy_procedure_kits.items), papar
+// collapse jadi SATU baris "🧰 Nama Prosedur (N item)" dgn "Lihat butiran" utk expand.
+// Padan ikut NAMA (bukan item_id) sbb templat kit selalunya item_id NULL (lihat seed
+// contoh IV Drip Setup dll di 14_products_inventory.sql). Tak match mana2 kit → kekal
+// papar satu-satu macam biasa. procKitsCache dimuat sekali (loadProcedureKitsCache,
+// dipanggil dlm loadWeek() sebelum render); kitExpandState ialah state UI tempatan
+// sahaja (reset bila buka semula halaman), bukan disimpan ke DB.
+let procKitsCache = null;
+let kitExpandState = {};
+async function loadProcedureKitsCache() {
+  if (procKitsCache) return procKitsCache;
+  const { data, error } = await window.db.from('psy_procedure_kits').select('id, name, items').eq('is_active', true);
+  if (error) { console.error('[procedure-kits] gagal muat:', error); procKitsCache = []; return procKitsCache; }
+  procKitsCache = (data || []).map(k => ({
+    name: k.name,
+    names: new Set((k.items || []).map(it => String(it.item_name || it.name || '').trim().toLowerCase()).filter(Boolean)),
+  })).filter(k => k.names.size > 0);
+  return procKitsCache;
+}
+function matchProcedureKit(values, type) {
+  if (type !== 'supplies' || !Array.isArray(values) || !procKitsCache?.length) return null;
+  const names = values.map(v => {
+    if (typeof v === 'string') return v.trim().toLowerCase();
+    if (v && typeof v === 'object') return String(v.item_name || v.name || '').trim().toLowerCase();
+    return '';
+  }).filter(Boolean);
+  if (names.length < 3) return null;
+  return procKitsCache.find(k => names.every(n => k.names.has(n))) || null;
+}
+function toggleKitExpand(key) {
+  kitExpandState[key] = !kitExpandState[key];
+  renderCoachingSchedule();
+}
+window.toggleKitExpand = toggleKitExpand;
+
 function renderCoachingSchedule() {
   const items = getWeekCoachingItems();
   const section = document.getElementById('coaching-schedule-section');
@@ -1599,6 +1754,18 @@ function renderCoachingSchedule() {
       </div>`;
     }).join('') || '<p class="text-xs text-ink/40 italic">Tiada</p>';
 
+    // Kit prosedur padan (≥3 item, SATU kit sahaja) — collapse default, "Lihat butiran" utk expand.
+    const matchedKit = matchProcedureKit(values, type);
+    const kitKey = `${prefix}_${type}_kit`;
+    const kitExpanded = !!kitExpandState[kitKey];
+    const rowsBlock = matchedKit
+      ? `<div class="flex items-center justify-between gap-2 bg-white/70 rounded-lg px-2.5 py-2 border border-ink/10">
+          <span class="text-xs font-semibold text-ink/80 min-w-0 truncate">🧰 ${escHtml(matchedKit.name)} <span class="text-ink/40 font-normal">(${(values || []).length} item)</span></span>
+          <button type="button" onclick="toggleKitExpand('${kitKey}')" class="text-[11px] font-semibold text-navy hover:underline flex-shrink-0">${kitExpanded ? 'Sembunyikan' : 'Lihat butiran'}</button>
+        </div>
+        ${kitExpanded ? `<div class="space-y-2 mt-2">${rows}</div>` : ''}`
+      : `<div class="space-y-2">${rows}</div>`;
+
     const addRow = type === 'supplies'
       ? `<div class="flex items-center gap-1 mt-2 pt-2 border-t border-ink/10">
           <select id="ie-sel-${slot}-supplies" class="flex-1 min-w-0 px-1.5 py-1 border border-ink/15 rounded text-[11px] bg-white">${supplyOptionsHtml()}</select>
@@ -1621,7 +1788,7 @@ function renderCoachingSchedule() {
         <div class="text-xs font-bold ${colorClass}">${title}</div>
         ${resetLink}
       </div>
-      <div class="space-y-2">${rows}</div>
+      ${rowsBlock}
       ${addRow}
     </div>`;
   }

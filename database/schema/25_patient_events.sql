@@ -346,3 +346,70 @@ DROP TRIGGER IF EXISTS trg_patient_event_notify_emergency ON psy_patient_events;
 CREATE TRIGGER trg_patient_event_notify_emergency
   AFTER UPDATE ON psy_patient_events
   FOR EACH ROW EXECUTE FUNCTION trg_patient_event_notify_emergency();
+
+-- ──── Fungsi trigger: auto-cipta Rekod Klinikal Pesakit bila status → 'warded' ────
+-- Audit management #124 (7 Okt 2026). Staf dulu kena tukar status pesakit KE
+-- 'warded' (roles/staff/patient-hub.html — butang "🏥 Tandakan Warded") DAN klik
+-- pautan berasingan ke peristiwa-baru.html utk cipta rekod. Trigger ni gantikan
+-- langkah manual kedua tu: sebaik status psy_patients bertukar ke 'warded', satu
+-- psy_patient_events (event_type='warded') auto dicipta + lawatan auto-assign
+-- kepada coach pesakit (assigned_to = psy_patients.coach_id). Notifikasi loceng &
+-- log timeline ikut sendiri melalui trigger sedia ada (trg_patient_event_notify /
+-- trg_patient_event_log_created) sebab ia AFTER INSERT ON psy_patient_events.
+CREATE OR REPLACE FUNCTION trg_patient_warded_auto_event()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF NEW.status <> 'warded' OR OLD.status IS NOT DISTINCT FROM 'warded' THEN
+    RETURN NEW;
+  END IF;
+
+  -- Elak rekod berganda kalau dah ada rekod 'warded' TERBUKA utk pesakit ni
+  -- (cth staf toggle status warded→aktif→warded semula tanpa tutup rekod lama).
+  IF EXISTS (
+    SELECT 1 FROM psy_patient_events
+    WHERE patient_id = NEW.id AND event_type = 'warded' AND status = 'open'
+  ) THEN
+    RETURN NEW;
+  END IF;
+
+  INSERT INTO psy_patient_events (
+    patient_id, event_type, priority, status, event_date,
+    need_visit, visit_priority, assigned_to, notify_roles, notes, reported_by
+  ) VALUES (
+    NEW.id, 'warded', 'high', 'open', CURRENT_DATE,
+    true, 'high', NEW.coach_id, '["manager","coach"]'::jsonb,
+    'Rekod dicipta automatik — status pesakit ditukar ke Warded (Masuk Wad/Hospital).',
+    NULL
+  );
+
+  -- Audit #146 (sub-3, 7 Okt 2026) — task peribadi auto-cipta & dipautkan kpd
+  -- coach pesakit ni (psy_coach_tasks.patient_id), supaya terus muncul di
+  -- widget "Task Peribadi" dashboard coach tanpa staf perlu taip manual.
+  -- Marker '[auto:warded]' dlm notes elak duplikasi kalau status toggle
+  -- warded→aktif→warded berulang kali sebelum task lama ditutup.
+  IF NEW.coach_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM psy_coach_tasks
+    WHERE patient_id = NEW.id AND coach_id = NEW.coach_id
+      AND status <> 'selesai' AND notes LIKE '%[auto:warded]%'
+  ) THEN
+    INSERT INTO psy_coach_tasks (
+      coach_id, title, notes, task_date, priority, status, patient_id
+    ) VALUES (
+      NEW.coach_id,
+      '🏥 Pesakit ' || COALESCE(NEW.full_name, 'Tanpa Nama') || ' masuk Wad/Hospital — rancang lawatan',
+      'Dicipta automatik — status pesakit ditukar ke Warded. [auto:warded]',
+      CURRENT_DATE, 'tinggi', 'belum_mula', NEW.id
+    );
+  END IF;
+
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_patient_warded_auto_event: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_patient_warded_auto_event ON psy_patients;
+CREATE TRIGGER trg_patient_warded_auto_event
+  AFTER UPDATE ON psy_patients
+  FOR EACH ROW EXECUTE FUNCTION trg_patient_warded_auto_event();

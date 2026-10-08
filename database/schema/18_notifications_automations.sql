@@ -795,6 +795,12 @@ drop policy if exists "notif_logs staff read" on psy_notification_logs;
 create policy "notif_logs staff read" on psy_notification_logs for select
   using (auth.uid() in (select id from psy_profiles where role = 'staff'));
 
+-- Staff boleh tulis terus dari client (audit #133 — delivery log pengumuman
+-- in-app, roles/staff/pengumuman-baru.html, bukan setakat dari Edge Function).
+drop policy if exists "notif_logs staff insert" on psy_notification_logs;
+create policy "notif_logs staff insert" on psy_notification_logs for insert
+  with check (auth.uid() in (select id from psy_profiles where role = 'staff'));
+
 -- ──── psy_audiences — audience tersimpan (guna semula merentas automasi) ────
 -- Bentuk conditions SAMA dengan psy_automations: [{field, op, value}]
 --   field: patient_status | gender | has_whatsapp | package | state | age
@@ -904,6 +910,11 @@ CREATE TABLE IF NOT EXISTS psy_coach_tasks (
   recur_until  DATE,
   -- Lampiran fail task (bucket referral-docs, path tasks/<task_id>/...): [{name,path,uploaded_at}]
   attachments  JSONB DEFAULT '[]'::jsonb,
+  -- Audit #146 (7 Okt 2026) — pautan SEHALA (task→appointment) ke psy_appointments
+  -- supaya task peribadi (sekali sahaja, bukan berulang) muncul dalam Jadual
+  -- Temujanji bersama sesi/temujanji lain. Lihat roles/staff/weekly-plan.html
+  -- syncTaskAppointment().
+  linked_appointment_id UUID REFERENCES psy_appointments(id) ON DELETE SET NULL,
   created_at   TIMESTAMPTZ DEFAULT now(),
   updated_at   TIMESTAMPTZ DEFAULT now()
 );

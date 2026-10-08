@@ -36,6 +36,8 @@
 
         <div id="patient-card" class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex items-center gap-3"></div>
 
+        <div id="ringkasan-hakeema" class="hidden"></div>
+
         <div id="hk1-cards" class="space-y-4"></div>
 
       </div>
@@ -63,9 +65,13 @@ let staffList = [];
 let hk1SarananTpl = null;
 
 const HK1_META_HP = {
-  hakeema: { emoji: '🧑‍💼', fallback: 'Hakeema' },
-  hakeem:  { emoji: '🧑',   fallback: 'Hakeem' },
-  dr:      { emoji: '🩺',   fallback: 'Dr' },
+  hakeema:     { emoji: '🧑‍💼', fallback: 'Hakeema', title: 'Sesi Hakeema' },
+  hakeem:      { emoji: '🧑',   fallback: 'Hakeem', title: 'Sesi Hakeem' },
+  dr:          { emoji: '🩺',   fallback: 'Dr', title: 'Sesi Dr' },
+  fisioterapi: { emoji: '🏃',   fallback: 'Fisioterapi', title: 'Sesi Fisioterapi' },
+  kaunselor:   { emoji: '🗣️',   fallback: 'Kaunselor', title: 'Sesi Kaunselor' },
+  bekam:       { emoji: '🩸',   fallback: 'Bekam', title: 'Sesi Bekam' },
+  masseur:     { emoji: '💆',   fallback: 'Tukang Urut', title: 'Sesi Masseur' },
 };
 const HK1_STATUS_HP = {
   pending:  { lbl: 'Belum konsultasi', cls: 'bg-amber-100 text-amber-700' },
@@ -98,6 +104,106 @@ function cardWrap(id, emoji, title, count, bodyHtml) {
       ${count != null ? `<span class="chip bg-ink/10 text-ink/60">${count}</span>` : ''}</h3>
     ${bodyHtml}
   </div>`;
+}
+
+// ──── Ringkasan untuk Hakeema (audit #16) ────
+// Panel konteks ringkas supaya Hakeema/Hakeem/Dr ada gambaran penuh pesakit
+// SEBELUM sesi 1:1 — kondisi sedia ada + kepatuhan + reaksi pemulihan +
+// saranan sesi 1:1 terdahulu. Semua data AGREGAT sedia ada (bukan jadual
+// baharu), dikira sejak sesi Hakeema (session_type='hakeema') RESOLVED
+// terakhir pesakit, atau 4 minggu terkini jika tiada sesi terdahulu.
+// Nota: tiada field jejak minggu rawatan (milestone M1/M2/Q1 dsb) dalam
+// skema psy_clinical_referrals sedia ada — panel ni dipaparkan utk SETIAP
+// sesi 1:1 (bukan ikut minggu tertentu), itu cukup penuhi tujuan asal.
+function hk1WindowStart() {
+  const resolvedHakeema = hk1Rows
+    .filter(r => r.session_type === 'hakeema' && r.status === 'resolved')
+    .slice()
+    .sort((a, b) => new Date(b.resolved_at || b.meet_date || b.created_at) - new Date(a.resolved_at || a.meet_date || a.created_at));
+  if (resolvedHakeema.length) {
+    const d = resolvedHakeema[0].resolved_at || resolvedHakeema[0].meet_date || resolvedHakeema[0].created_at;
+    return String(d).slice(0, 10);
+  }
+  return hphAddDays(hphToday(), -28);
+}
+
+function hk1RenderRingkasan(windowStart, kLogs, rLogs, prevSaranan) {
+  const el = document.getElementById('ringkasan-hakeema');
+  if (!el) return;
+
+  // 1) Kondisi sedia ada
+  const conds = (patient?.medical_condition || '').split(',').map(c => c.trim()).filter(Boolean);
+  const condHtml = conds.length
+    ? `<div class="flex flex-wrap gap-1.5">${conds.map(c => `<span class="chip bg-terracotta/10 text-terracotta">${escHtml(c)}</span>`).join('')}</div>`
+    : `<p class="text-ink/40 italic">Tiada kondisi direkodkan.</p>`;
+
+  // 2) Kepatuhan purata
+  const skorVals = (kLogs || []).filter(l => l.skor_harian != null).map(l => Number(l.skor_harian));
+  const avgSkor = skorVals.length ? Math.round(skorVals.reduce((a, b) => a + b, 0) / skorVals.length) : null;
+  const kepatuhanHtml = avgSkor != null
+    ? `<p class="text-ink/70">Kepatuhan purata: <b class="${avgSkor >= 80 ? 'text-green-dark' : avgSkor >= 50 ? 'text-gold-dark' : 'text-terracotta'}">${avgSkor}%</b> <span class="text-ink/45">(${kLogs.length} hari direkod)</span></p>`
+    : `<p class="text-ink/40 italic">Tiada Catatan Harian direkod dalam tempoh ini.</p>`;
+
+  // 3) Reaksi pemulihan — kekerapan simptom + tahap zon
+  const symptomCount = {};
+  const zonCount = { hijau: 0, kuning: 0, merah: 0 };
+  (rLogs || []).forEach(r => {
+    if (r.zon && zonCount[r.zon] != null) zonCount[r.zon]++;
+    (Array.isArray(r.symptoms) ? r.symptoms : []).forEach(s => {
+      const label = String(s).split('::').pop();
+      symptomCount[label] = (symptomCount[label] || 0) + 1;
+    });
+  });
+  const topSymptoms = Object.entries(symptomCount).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const zonChips = [
+    zonCount.merah ? `<span class="chip bg-terracotta/15 text-terracotta">🔴 Merah ×${zonCount.merah}</span>` : '',
+    zonCount.kuning ? `<span class="chip bg-amber-100 text-amber-700">🟡 Kuning ×${zonCount.kuning}</span>` : '',
+    zonCount.hijau ? `<span class="chip bg-green-light text-green-dark">🟢 Hijau ×${zonCount.hijau}</span>` : '',
+  ].filter(Boolean).join(' ');
+  const reaksiHtml = topSymptoms.length
+    ? `<div class="flex flex-wrap gap-1.5 mb-1.5">${zonChips}</div>
+       <p class="text-ink/70">Simptom paling kerap: ${topSymptoms.map(([s, n]) => `${escHtml(s)} (${n}×)`).join(', ')}</p>`
+    : `<p class="text-ink/40 italic">Tiada reaksi pemulihan direkod dalam tempoh ini.</p>`;
+
+  // 4) Saranan sesi 1:1 terdahulu
+  const saranHtml = prevSaranan.length
+    ? prevSaranan.map(r => {
+        const c = r.consultation || {};
+        const who = r.target_name || HK1_META_HP[r.session_type]?.fallback || '';
+        return `<div class="border-t border-ink/5 pt-2 mt-2 first:border-t-0 first:pt-0 first:mt-0">
+          <div class="text-[10px] text-ink/45">${formatDate(r.created_at)} · ${escHtml(who)}</div>
+          <p class="text-ink/70">${escHtml(c.saranan)}</p>
+        </div>`;
+      }).join('')
+    : `<p class="text-ink/40 italic">Tiada saranan sesi 1:1 terdahulu.</p>`;
+
+  el.className = 'bg-white rounded-2xl border border-ink/10 shadow-sm p-5 space-y-3';
+  el.innerHTML = `
+    <h3 class="font-bold text-sm text-ink flex items-center gap-2">📋 Ringkasan untuk Hakeema</h3>
+    <p class="text-[10px] text-ink/40">Kepatuhan &amp; reaksi pemulihan sejak ${hphPretty(windowStart)} ${windowStart === hphAddDays(hphToday(), -28) ? '(4 minggu terkini — tiada sesi Hakeema terdahulu)' : '(sejak sesi Hakeema terakhir)'}</p>
+    <div class="grid md:grid-cols-2 gap-4 text-xs">
+      <div class="space-y-3">
+        <div><div class="text-[10px] font-bold text-ink/55 mb-1">🩺 Kondisi sedia ada</div>${condHtml}</div>
+        <div><div class="text-[10px] font-bold text-ink/55 mb-1">✅ Kepatuhan</div>${kepatuhanHtml}</div>
+        <div><div class="text-[10px] font-bold text-ink/55 mb-1">🌿 Reaksi Pemulihan</div>${reaksiHtml}</div>
+      </div>
+      <div>
+        <div class="text-[10px] font-bold text-ink/55 mb-1">💊 Saranan sesi 1:1 terdahulu</div>
+        <div class="text-xs">${saranHtml}</div>
+      </div>
+    </div>`;
+}
+
+async function hk1LoadRingkasan() {
+  const start = hk1WindowStart();
+  const today = hphToday();
+  const [kLogsRes, rLogsRes, prevRes] = await Promise.all([
+    window.db.from('psy_kepatuhan_log').select('log_date, skor_harian').eq('patient_id', patientId).gte('log_date', start).lte('log_date', today).then(r => r, () => ({ data: [] })),
+    window.db.from('psy_reaksi_advice_log').select('log_date, symptoms, zon').eq('patient_id', patientId).gte('log_date', start).lte('log_date', today).then(r => r, () => ({ data: [] })),
+    window.db.from('psy_clinical_referrals').select('created_at, consultation, target_name, session_type').eq('patient_id', patientId).eq('source', 'plan_1on1').order('created_at', { ascending: false }).limit(20).then(r => r, () => ({ data: [] })),
+  ]);
+  const prevSaranan = (prevRes.data || []).filter(r => r.consultation?.saranan).slice(0, 5);
+  hk1RenderRingkasan(start, kLogsRes.data || [], rLogsRes.data || [], prevSaranan);
 }
 
 function hk1Block(r) {
@@ -160,6 +266,14 @@ function hk1Block(r) {
             <input id="hk1-days-${r.id}" type="number" min="1" max="90" value="${c.saranan_days || ''}" oninput="hphUpdPreview('${r.id}')" placeholder="Tempoh (hari)" class="w-full px-2 py-1.5 border border-ink/15 rounded-lg text-[11px] outline-none focus:border-navy">
             <input id="hk1-start-${r.id}" type="date" value="${c.saranan_start || hphToday()}" onchange="hphUpdPreview('${r.id}')" class="w-full px-2 py-1.5 border border-ink/15 rounded-lg text-[11px] outline-none focus:border-navy">
           </div>
+          <div class="flex items-center gap-2 mt-1.5">
+            <label class="inline-flex items-center gap-1.5 text-[11px] text-ink/60 cursor-pointer">
+              <input type="checkbox" id="hk1-remind-on-${r.id}" ${r.reminder_time ? 'checked' : ''} onchange="hphToggleReminder('${r.id}')" class="w-3.5 h-3.5">
+              ⏰ Perlu reminder harian?
+            </label>
+            <input type="time" id="hk1-remind-time-${r.id}" value="${r.reminder_time ? String(r.reminder_time).slice(0, 5) : ''}" onchange="hphSaveReminder('${r.id}')" class="${r.reminder_time ? '' : 'hidden'} w-28 px-2 py-1 border border-ink/15 rounded-lg text-[11px] outline-none focus:border-navy">
+          </div>
+          ${r.reminder_time ? `<p class="text-[10px] text-ink/40 mt-0.5">Reminder dihantar setiap hari ${String(r.reminder_time).slice(0, 5)} sepanjang tempoh saranan.${r.reminder_last_sent_date ? ' Terakhir: ' + hphPretty(r.reminder_last_sent_date) : ''}</p>` : ''}
           <button type="button" id="hk1-send-btn-${r.id}" onclick="hphSend('${r.id}')" class="mt-2 inline-flex items-center gap-1.5 bg-green text-white text-[11px] font-semibold px-3 py-2 rounded-lg hover:bg-green-dark disabled:opacity-60">📱 Hantar ke WhatsApp</button>
           <span id="hk1-wa-sent-${r.id}" class="block text-[10px] text-ink/50 mt-1.5">${c.saranan_sent_at ? ('✅ Dihantar ' + formatDateTime(c.saranan_sent_at)) : ''}</span>
         </div>
@@ -174,8 +288,8 @@ function hk1Block(r) {
       ${hphNextActionHtml(r)}
 
       <div class="mt-3 pt-3 border-t border-ink/8 flex justify-end gap-1.5">
-        <button type="button" data-rbac="rujukan.edit" onclick="hphCancelSession('${r.id}')" class="px-3 py-1.5 rounded-lg border border-terracotta/40 text-terracotta text-[11px] font-semibold hover:bg-terracotta/5">🚫 Batal</button>
-        <button type="button" data-rbac="rujukan.edit" onclick="hphMarkResolved('${r.id}')" class="px-3 py-1.5 rounded-lg bg-navy text-white text-[11px] font-semibold hover:bg-navy-dark">✓ Tandakan Selesai</button>
+        <button type="button" data-rbac="rujukan.reschedule" onclick="hphCancelSession('${r.id}')" class="px-3 py-1.5 rounded-lg border border-terracotta/40 text-terracotta text-[11px] font-semibold hover:bg-terracotta/5">🚫 Batal</button>
+        <button type="button" data-rbac="rujukan.complete" onclick="hphMarkResolved('${r.id}')" class="px-3 py-1.5 rounded-lg bg-navy text-white text-[11px] font-semibold hover:bg-navy-dark">✓ Tandakan Selesai</button>
       </div>
     </div>`;
 }
@@ -187,14 +301,26 @@ function hphFollowUpHtml(r) {
   const fuStr = fu ? hphPretty(fu) : '—';
   const due = fu && fu <= hphToday();
   const res = c.follow_up_result;
+  // Audit #17b — follow-up kini AUTO-dihantar oleh cron (event-reminders, kolum
+  // top-level follow_up_sent_at, lihat hphWaFollowUp()); butang bawah kekal sbg
+  // override manual SAHAJA (staf nak hantar awal), bukan satu-satunya laluan lagi.
+  const autoSentAt = r.follow_up_sent_at;
   let body;
   if (res) {
     const ok = res === 'ikut';
     body = `<div class="flex items-center gap-2 text-[11px] font-semibold ${ok ? 'text-green-700' : 'text-terracotta'}">${ok ? '✅ Pesakit ikut saranan' : '❌ Pesakit tidak ikut saranan'}</div>${c.follow_up_note ? `<div class="text-[11px] text-ink/60 mt-1">📝 ${escHtml(c.follow_up_note)}</div>` : ''}`;
   } else {
-    body = `<div class="text-[11px] ${due ? 'text-gold-dark font-semibold' : 'text-ink/60'} mb-2">${due ? '⏰ Masa untuk follow-up — mesej pesakit & rekod jawapannya.' : 'Follow-up dijadualkan pada ' + fuStr}</div>
+    let statusLine;
+    if (autoSentAt) {
+      statusLine = `<div class="text-[11px] text-green-700 mb-2">✅ Auto-dihantar ${formatDateTime(autoSentAt)} — sila rekod jawapan pesakit di bawah.</div>`;
+    } else if (due) {
+      statusLine = `<div class="text-[11px] text-gold-dark font-semibold mb-2">⏰ Sistem akan auto-hantar follow-up ini (cron 15 min) — atau klik "Hantar sekarang" jika nak segera.</div>`;
+    } else {
+      statusLine = `<div class="text-[11px] text-ink/60 mb-2">⏰ Auto-hantar pada ${fuStr} — sistem hantar sendiri, staf tak perlu klik. "Hantar sekarang" hanya jika nak hantar awal.</div>`;
+    }
+    body = `${statusLine}
       <div class="flex gap-1.5 flex-wrap" data-rbac="rujukan.edit">
-        <button onclick="hphWaFollowUp('${r.id}')" class="bg-green text-white text-[11px] font-semibold px-2.5 py-1.5 rounded-lg hover:bg-green-dark">📱 Mesej pesakit</button>
+        <button onclick="hphWaFollowUp('${r.id}')" class="bg-green text-white text-[11px] font-semibold px-2.5 py-1.5 rounded-lg hover:bg-green-dark">📱 Hantar sekarang (manual)</button>
         <button onclick="hphRecordFollowUp('${r.id}', 'ikut')" class="border border-green text-green-dark text-[11px] font-semibold px-2.5 py-1.5 rounded-lg hover:bg-green/5">✅ Ikut</button>
         <button onclick="hphRecordFollowUp('${r.id}', 'tak_ikut')" class="border border-terracotta text-terracotta text-[11px] font-semibold px-2.5 py-1.5 rounded-lg hover:bg-terracotta/5">❌ Tak ikut</button>
       </div>`;
@@ -267,11 +393,11 @@ function renderCards() {
   // Halaman ni fokus semata-mata (bukan patient-hub.html) — papar HANYA jenis yg memang
   // ditempah, tak kira Hakeema/Hakeem/Dr (beza dari patient-hub.html yg sengaja sentiasa
   // papar kad Sesi Hakeema walau kosong).
-  const hakeemaSesi = hk1List('hakeema'), hakeemSesi = hk1List('hakeem'), drSesi = hk1List('dr');
   const parts = [];
-  if (hakeemaSesi.rows.length) parts.push(cardWrap('hakeema', '🧑‍💼', 'Sesi Hakeema', hakeemaSesi.rows.length, hakeemaSesi.html));
-  if (hakeemSesi.rows.length) parts.push(cardWrap('hakeem', '🧑', 'Sesi Hakeem', hakeemSesi.rows.length, hakeemSesi.html));
-  if (drSesi.rows.length) parts.push(cardWrap('dr', '🩺', 'Sesi Dr', drSesi.rows.length, drSesi.html));
+  Object.keys(HK1_META_HP).forEach(type => {
+    const info = hk1List(type);
+    if (info.rows.length) parts.push(cardWrap(type, HK1_META_HP[type].emoji, HK1_META_HP[type].title, info.rows.length, info.html));
+  });
   document.getElementById('hk1-cards').innerHTML = parts.length ? parts.join('') : '<div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-8 text-center text-sm text-ink/40">Tiada rekod Sesi 1:1 utk pesakit ini.</div>';
   hk1Rows.forEach(r => { if (!r.plan_id && r.status !== 'resolved' && r.status !== 'declined') hphUpdPreview(r.id); });
 }
@@ -281,9 +407,8 @@ function refreshHk1Card(type) {
   const host = document.getElementById(`hk1-sec-${type}`);
   if (!host) return;
   const info = hk1List(type);
-  const emoji = HK1_META_HP[type]?.emoji || '';
-  const title = type === 'hakeema' ? 'Sesi Hakeema' : type === 'hakeem' ? 'Sesi Hakeem' : 'Sesi Dr';
-  host.outerHTML = cardWrap(type, emoji, title, info.rows.length, info.html);
+  const meta = HK1_META_HP[type] || {};
+  host.outerHTML = cardWrap(type, meta.emoji || '', meta.title || `Sesi ${type}`, info.rows.length, info.html);
   info.rows.forEach(r => { if (!r.plan_id && r.status !== 'resolved' && r.status !== 'declined') hphUpdPreview(r.id); });
 }
 
@@ -309,6 +434,39 @@ async function hphSaveTime(id) {
   await hphPersist(id, { scheduled_time: document.getElementById(`hk1-time-${id}`).value || null });
 }
 window.hphSaveTime = hphSaveTime;
+
+// Audit #17c — reminder harian per-saranan. reminder_time (TIME) & reminder_last_sent_date
+// (DATE) kolum TOP-LEVEL (bukan dlm consultation JSONB) supaya cron (event-reminders)
+// senang query/filter. hphToggleReminder() tunjuk/sembunyi medan masa; hphSaveReminder()
+// simpan terus ke DB (null = reminder dimatikan).
+function hphToggleReminder(id) {
+  const cb = document.getElementById(`hk1-remind-on-${id}`);
+  const timeInp = document.getElementById(`hk1-remind-time-${id}`);
+  if (!cb || !timeInp) return;
+  if (!cb.checked) {
+    timeInp.classList.add('hidden');
+    timeInp.value = '';
+    hphSaveReminder(id, null);
+  } else {
+    timeInp.classList.remove('hidden');
+    if (!timeInp.value) timeInp.focus();
+  }
+}
+window.hphToggleReminder = hphToggleReminder;
+
+async function hphSaveReminder(id, forceNull) {
+  const ref = hk1FindRow(id); if (!ref) return;
+  const timeInp = document.getElementById(`hk1-remind-time-${id}`);
+  const val = forceNull === null ? null : (timeInp?.value || null);
+  const { error } = await window.db.from('psy_clinical_referrals')
+    .update({ reminder_time: val, reminder_last_sent_date: null }).eq('id', id);
+  if (error) { banner('Ralat simpan reminder: ' + error.message, 'error'); return; }
+  ref.reminder_time = val; ref.reminder_last_sent_date = null;
+  if (val) banner('Reminder harian diaktifkan ✅'); else banner('Reminder harian dimatikan');
+  if (typeof auditLog === 'function') { try { await auditLog(val ? 'referral.reminder_set' : 'referral.reminder_cleared', patientId, { referral_id: id, reminder_time: val }); } catch (_) {} }
+  refreshHk1Card(ref.session_type);
+}
+window.hphSaveReminder = hphSaveReminder;
 
 async function hphUploadDoc(id, input) {
   const files = [...input.files]; input.value = '';
@@ -454,6 +612,16 @@ async function hphWaFollowUp(id) {
     `Mohon balas: *Ya, saya ikut* atau *Belum / Tidak ikut*. Terima kasih. 🌿`,
   ].filter(x => x !== '');
   window.open(`https://wa.me/${phone}?text=${encodeURIComponent(L.join('\n'))}`, '_blank');
+  // Audit #17b — tanda follow_up_sent_at (top-level) bila staf hantar MANUAL juga,
+  // supaya cron auto-hantar (event-reminders) tak hantar follow-up berganda hari yg sama.
+  if (ref && !ref.follow_up_sent_at) {
+    const now = new Date().toISOString();
+    try {
+      await window.db.from('psy_clinical_referrals').update({ follow_up_sent_at: now }).eq('id', id);
+      ref.follow_up_sent_at = now;
+      refreshHk1Card(ref.session_type);
+    } catch (_) {}
+  }
 }
 window.hphWaFollowUp = hphWaFollowUp;
 
@@ -547,6 +715,7 @@ function renderPatientCard() {
   staffList = staff || []; // PIC Next Action (audit #B2-4)
   renderPatientCard();
   renderCards();
+  hk1LoadRingkasan(); // Ringkasan untuk Hakeema (audit #16) — tak block render kad utama
 })();
 </script>
 </body>

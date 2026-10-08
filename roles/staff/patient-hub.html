@@ -179,6 +179,17 @@
 
         <div class="p-4 md:p-6 space-y-4">
 
+          <!-- Amaran buah pinggang/dialisis (audit #20, 8 Okt 2026) — papar setiap kali
+               profil pesakit ni dibuka (bukan setakat notifikasi sekali yg boleh terlepas
+               pandang). Diisi oleh renderPatientHeader() ikut patient.has_kidney_condition. -->
+          <div id="kidney-alert-banner" class="hidden bg-terracotta/10 border-2 border-terracotta rounded-2xl px-5 py-4 flex items-start gap-3">
+            <span class="text-2xl leading-none">⚠️</span>
+            <div class="text-sm text-terracotta font-semibold leading-relaxed">
+              Pesakit ini ada masalah buah pinggang/dialisis — perhatikan kadar peminuman air pesakit
+              &amp; <u>ELAK</u> penyuntikan/pengambilan darah di lengan yang ada akses dialisis (fistula/kolaps vena).
+            </div>
+          </div>
+
           <!-- Patient Header Card -->
           <div class="bg-white rounded-2xl border border-ink/10 p-5">
             <div class="flex items-center gap-4 flex-wrap">
@@ -203,6 +214,7 @@
                   class="bg-white border border-navy/40 text-navy text-xs px-4 py-2 rounded-lg font-semibold hover:bg-navy/5">🧬 DNA Test</button>
                 <a id="patient-wa-link" href="#"
                   class="hidden bg-green text-white text-xs px-4 py-2 rounded-lg font-semibold hover:bg-green-dark">💬 WhatsApp</a>
+                <span id="warded-btn-wrap"></span>
                 <a id="patient-plan-link" href="#"
                   class="bg-navy text-white text-xs px-4 py-2 rounded-lg font-semibold hover:bg-navy-dark">📅 Plan Minggu Ini</a>
               </div>
@@ -1594,10 +1606,11 @@
       patient = p;
       const sc = document.getElementById('patient-status-chip');
       if (sc) {
-        const cls = { active: 'bg-green-light text-green-dark', pending_kyc: 'bg-gold-light text-gold-dark', inactive: 'bg-ink/10 text-ink/50', unregistered: 'bg-amber-100 text-amber-800', rejected: 'bg-terracotta/15 text-terracotta' }[p.status] || 'bg-ink/10 text-ink/50';
+        const cls = { active: 'bg-green-light text-green-dark', pending_kyc: 'bg-gold-light text-gold-dark', inactive: 'bg-ink/10 text-ink/50', unregistered: 'bg-amber-100 text-amber-800', rejected: 'bg-terracotta/15 text-terracotta', warded: 'bg-terracotta-light text-terracotta' }[p.status] || 'bg-ink/10 text-ink/50';
         sc.textContent = hubStatusLabel(p.status);
         sc.className = `chip text-xs ${cls}`;
       }
+      renderWardedButton();
     }
     let _hubRtChannel = null;
     function subscribeHubRealtime() {
@@ -1702,10 +1715,12 @@
         inactive: 'bg-ink/10 text-ink/50',
         unregistered: 'bg-amber-100 text-amber-800',
         rejected: 'bg-terracotta/15 text-terracotta',
+        warded: 'bg-terracotta-light text-terracotta',
       };
       const sc = document.getElementById('patient-status-chip');
       sc.textContent = hubStatusLabel(patient.status);
       sc.className = `chip text-xs ${statusChips[patient.status] || 'bg-ink/10 text-ink/50'}`;
+      renderWardedButton();
 
       const kycChip = document.getElementById('patient-kyc-chip');
       if (kyc) {
@@ -1720,6 +1735,10 @@
       } else {
         document.getElementById('patient-plan-link').style.display = 'none';
       }
+
+      // Audit #20 (8 Okt 2026) — banner amaran buah pinggang/dialisis, papar setiap
+      // kali profil ni dibuka (notifikasi loceng sahaja senang terlepas pandang).
+      document.getElementById('kidney-alert-banner')?.classList.toggle('hidden', !patient.has_kidney_condition);
     }
 
     // ── Access control ────────────────────────────────────
@@ -1838,9 +1857,13 @@
     // plan-week.html yg cuma 1 rekod aktif/minggu). Guna field consultation JSONB SAMA
     // dgn plan-week.html supaya data konsisten kalau rekod sama dibuka dari mana-mana. ──
     const HK1_META_HP = {
-      hakeema: { emoji: '🧑‍💼', fallback: 'Hakeema' },
-      hakeem:  { emoji: '🧑',   fallback: 'Hakeem' },
-      dr:      { emoji: '🩺',   fallback: 'Dr' },
+      hakeema:     { emoji: '🧑‍💼', fallback: 'Hakeema', title: 'Sesi Hakeema' },
+      hakeem:      { emoji: '🧑',   fallback: 'Hakeem', title: 'Sesi Hakeem' },
+      dr:          { emoji: '🩺',   fallback: 'Dr', title: 'Sesi Dr' },
+      fisioterapi: { emoji: '🏃',   fallback: 'Fisioterapi', title: 'Sesi Fisioterapi' },
+      kaunselor:   { emoji: '🗣️',   fallback: 'Kaunselor', title: 'Sesi Kaunselor' },
+      bekam:       { emoji: '🩸',   fallback: 'Bekam', title: 'Sesi Bekam' },
+      masseur:     { emoji: '💆',   fallback: 'Tukang Urut', title: 'Sesi Masseur' },
     };
     const HK1_STATUS_HP = {
       pending:  { lbl: 'Belum konsultasi', cls: 'bg-amber-100 text-amber-700' },
@@ -1966,9 +1989,8 @@
       const host = document.getElementById(`prog-sec-sesi-${type}`);
       if (!host) return;
       const info = hk1List(type);
-      const emoji = HK1_META_HP[type]?.emoji || '';
-      const title = type === 'hakeema' ? 'Sesi Hakeema' : type === 'hakeem' ? 'Sesi Hakeem' : 'Sesi Dr';
-      host.outerHTML = progressSection(`sesi-${type}`, emoji, title, info.rows.length, info.html);
+      const meta = HK1_META_HP[type] || {};
+      host.outerHTML = progressSection(`sesi-${type}`, meta.emoji || '', meta.title || `Sesi ${type}`, info.rows.length, info.html);
       info.rows.forEach(r => { if (r.status !== 'resolved' && r.status !== 'declined') hphUpdPreview(r.id); });
     }
 
@@ -2237,10 +2259,14 @@
       // read-only, sbb pesakit tanpa plan aktif tiada tempat lain isi konsultasi ni
       // (plan-week.html perlukan plan_id). Rekod resolved/declined kekal ringkasan baca-sahaja.
       hk1Rows = d.sesi1on1 || [];
-      const hakeemaSesi = hk1List('hakeema'), hakeemSesi = hk1List('hakeem'), drSesi = hk1List('dr');
+      const hakeemaSesi = hk1List('hakeema');
       parts.push(progressSection('sesi-hakeema', '🧑‍💼', 'Sesi Hakeema', hakeemaSesi.rows.length, hakeemaSesi.html));
-      if (hakeemSesi.rows.length) parts.push(progressSection('sesi-hakeem', '🧑', 'Sesi Hakeem', hakeemSesi.rows.length, hakeemSesi.html));
-      if (drSesi.rows.length) parts.push(progressSection('sesi-dr', '🩺', 'Sesi Dr', drSesi.rows.length, drSesi.html));
+      // Hakeem/Dr/Fisioterapi/Kaunselor/Bekam/Masseur hanya keluar bila ada rekod utk
+      // pesakit ni (Hakeema sahaja sentiasa papar — lihat komen audit #9 di atas).
+      ['hakeem', 'dr', 'fisioterapi', 'kaunselor', 'bekam', 'masseur'].forEach(type => {
+        const info = hk1List(type);
+        if (info.rows.length) parts.push(progressSection(`sesi-${type}`, HK1_META_HP[type].emoji, HK1_META_HP[type].title, info.rows.length, info.html));
+      });
 
       // 10) Pendaftaran + Sejarah Pakej + Tawaran sambungan
       const kycHtml = kyc ? `<div class="flex items-center gap-2 flex-wrap text-xs">
@@ -4560,7 +4586,7 @@
     async function loadSurat() {
       const [{ data: requests }, { data: issued }] = await Promise.all([
         window.db.from('psy_letter_requests').select('id, template_name, status, created_at').eq('patient_id', patientId).order('created_at', { ascending: false }),
-        window.db.from('psy_letter_issued').select('id, template_name, ref_number, signed_at, file_url').eq('patient_id', patientId).order('signed_at', { ascending: false }),
+        window.db.from('psy_letter_issued').select('id, template_name, ref_number, signed_at, file_url, wa_sent_at, wa_send_status').eq('patient_id', patientId).order('signed_at', { ascending: false }),
       ]);
       document.getElementById('surat-loading').classList.add('hidden');
       document.getElementById('surat-content').classList.remove('hidden');
@@ -4582,9 +4608,18 @@
       isuEmpty.classList.toggle('hidden', !!(issued || []).length);
       isuBody.innerHTML = (issued || []).map(l => {
         const d = new Date(l.signed_at).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' });
+        // Audit #143: status ringkas penghantaran WhatsApp auto-mesej "surat sedia".
+        const waBadge = l.wa_send_status === 'sent'
+          ? `<span class="text-[10px] font-bold px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 shrink-0" title="WA dihantar">📤 WA Hantar</span>`
+          : l.wa_send_status === 'failed'
+            ? `<span class="text-[10px] font-bold px-2 py-1 rounded-full bg-terracotta/10 text-terracotta shrink-0" title="WA gagal dihantar">📤 WA Gagal</span>`
+            : '';
         return `<div class="flex items-center justify-between gap-3 bg-white rounded-xl border border-ink/10 px-4 py-2.5">
           <div class="min-w-0"><div class="text-sm font-semibold text-ink truncate">${escHtml(l.template_name)}</div><div class="text-[11px] text-ink/40">${escHtml(l.ref_number || '—')} · ${d}</div></div>
-          ${l.file_url ? `<a href="${l.file_url}" target="_blank" rel="noopener" class="text-xs font-semibold text-navy hover:underline shrink-0">👁 Lihat</a>` : ''}
+          <div class="flex items-center gap-2 shrink-0">
+            ${waBadge}
+            ${l.file_url ? `<a href="${l.file_url}" target="_blank" rel="noopener" class="text-xs font-semibold text-navy hover:underline shrink-0">👁 Lihat</a>` : ''}
+          </div>
         </div>`;
       }).join('');
     }
@@ -5453,6 +5488,22 @@
           .eq('status', 'completed').eq('intent->>kob_session_id', bayaranSession.id);
         const totalPaid = (allPayments || []).reduce((s, p) => s + Number(p.total || 0), 0);
 
+        // Notifikasi segera kepada pesakit bila bayaran ni masih belum cukup (baki tertunggak
+        // tetap wujud) — audit #125. Dihantar SEJURUS lepas insert psy_payments berjaya.
+        try {
+          const { data: lastCpRow } = await window.db.from('psy_kob_installment_checkpoints')
+            .select('target_cumulative').eq('kob_session_id', bayaranSession.id).order('seq', { ascending: false }).limit(1);
+          const commitment = lastCpRow?.[0] ? Number(lastCpRow[0].target_cumulative) : Number(bayaranSession.recommended_package_price || 0);
+          const bakiNotify = Math.max(0, commitment - totalPaid);
+          if (bakiNotify > 0.01 && patient?.user_id) {
+            await notify(patient.user_id, 'payment',
+              iswL('Bayaran Diterima — Baki Tertunggak', 'Payment Received — Balance Due'),
+              iswL(`Bayaran RM${amount.toFixed(2)} diterima. Baki tertunggak: RM${bakiNotify.toFixed(2)}.`,
+                   `Payment of RM${amount.toFixed(2)} received. Outstanding balance: RM${bakiNotify.toFixed(2)}.`),
+              'payment.html');
+          }
+        } catch (_) { /* notifikasi gagal tidak halang bayaran */ }
+
         const { data: openCheckpoints } = await window.db.from('psy_kob_installment_checkpoints')
           .select('id, target_cumulative').eq('kob_session_id', bayaranSession.id).neq('status', 'met');
         const nowIso = new Date().toISOString();
@@ -6231,6 +6282,63 @@
       } catch (err) {
         banner('Ralat: ' + err.message, 'error');
         btn.disabled = false; btn.textContent = 'Padam Pesakit';
+      }
+    }
+
+    // ── Butang "Warded" (Masuk Wad/Hospital) — audit #124 ──────────────
+    // Tukar psy_patients.status terus ke 'warded'. Trigger DB
+    // (trg_patient_warded_auto_event) automatik cipta Rekod Klinikal Pesakit
+    // (psy_patient_events) + assign lawatan kepada coach pesakit — staf TAK
+    // perlu klik pautan berasingan ke peristiwa-baru.html lagi. Wrapper dinamik
+    // (bukan toggle class 'hidden' pada elemen data-rbac sendiri) sengaja dipilih
+    // supaya tak bercanggah dengan MutationObserver applyRbacUI().
+    function renderWardedButton() {
+      const wrap = document.getElementById('warded-btn-wrap');
+      if (!wrap) return;
+      if (!canEdit) { wrap.innerHTML = ''; return; }
+      if (patient.status === 'warded') {
+        wrap.innerHTML = `<button id="btn-mark-warded" data-rbac="patient_events.create" onclick="toggleWardedStatus()"
+          class="bg-green text-white text-xs px-4 py-2 rounded-lg font-semibold hover:bg-green-dark">✅ Discaj (Set Aktif)</button>`;
+      } else if (['active', 'pending_kyc'].includes(patient.status)) {
+        wrap.innerHTML = `<button id="btn-mark-warded" data-rbac="patient_events.create" onclick="toggleWardedStatus()"
+          class="bg-white border border-terracotta/40 text-terracotta text-xs px-4 py-2 rounded-lg font-semibold hover:bg-terracotta-light">🏥 Tandakan Warded</button>`;
+      } else {
+        wrap.innerHTML = '';
+      }
+    }
+
+    async function toggleWardedStatus() {
+      const name = iswPatientName(patient, profile, kyc) || patient.mrn;
+
+      if (patient.status === 'warded') {
+        if (!confirm(`Pesakit "${name}" sudah discaj / keluar wad?\n\nStatus akan ditukar semula ke Aktif. Rekod Klinikal Pesakit yang dicipta automatik kekal — tutup rekod itu sendiri di tab "Rekod Klinikal" jika perlu.`)) return;
+        const btn = document.getElementById('btn-mark-warded');
+        if (btn) { btn.disabled = true; btn.textContent = 'Menyimpan...'; }
+        try {
+          const { error } = await window.db.from('psy_patients').update({ status: 'active' }).eq('id', patientId);
+          if (error) throw error;
+          await auditLog('patient.warded_discharged', patientId, { name });
+          banner('✅ Status pesakit ditukar semula ke Aktif.');
+          await loadPatient();
+        } catch (err) {
+          banner('Ralat: ' + err.message, 'error');
+          if (btn) btn.disabled = false;
+        }
+        return;
+      }
+
+      if (!confirm(`Tandakan pesakit "${name}" sebagai WARDED (Masuk Wad/Hospital)?\n\nSistem akan automatik:\n• Cipta Rekod Klinikal Pesakit\n• Assign lawatan kepada coach pesakit\n\nTiada langkah manual berasingan lagi diperlukan. Butiran lanjut (nama hospital, wad, diagnosis dll) boleh diisi kemudian di tab "Rekod Klinikal".`)) return;
+      const btn = document.getElementById('btn-mark-warded');
+      if (btn) { btn.disabled = true; btn.textContent = 'Menyimpan...'; }
+      try {
+        const { error } = await window.db.from('psy_patients').update({ status: 'warded' }).eq('id', patientId);
+        if (error) throw error;
+        await auditLog('patient.marked_warded', patientId, { name });
+        banner('✅ Status ditukar ke Warded. Rekod Klinikal Pesakit auto-dicipta & lawatan auto-assign kepada coach.');
+        await loadPatient();
+      } catch (err) {
+        banner('Ralat: ' + err.message, 'error');
+        if (btn) btn.disabled = false;
       }
     }
 

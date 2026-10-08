@@ -411,6 +411,14 @@ DROP POLICY IF EXISTS "Staff manage kits" ON psy_procedure_kits;
 CREATE POLICY "Staff manage kits" ON psy_procedure_kits FOR ALL
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
+-- Baca sahaja utk pesakit (audit #144c) — roles/patient/plan-week.html perlu padan nama
+-- item Bekalan dgn kit prosedur utk auto-collapse paparan "🧰 Nama Prosedur (N item)".
+-- Data tak sensitif (nama kit + nama item generik), ikut corak baca-terbuka sedia ada
+-- (cth psy_library_categories/psy_faq_items FOR SELECT USING (true)).
+DROP POLICY IF EXISTS "Read active procedure kits" ON psy_procedure_kits;
+CREATE POLICY "Read active procedure kits" ON psy_procedure_kits FOR SELECT
+  USING (is_active = true);
+
 -- ──── psy_bottle_returns ────
 -- Permohonan pulangan botol madu oleh pesakit.
 CREATE TABLE IF NOT EXISTS psy_bottle_returns (

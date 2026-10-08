@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ms">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ibnu Sina Wellness — Mission Saya</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="../../shared/theme.js"></script>
+  <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="_styles.css" rel="stylesheet">
+  <style>.bar { height: 8px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; background: #16a34a; }</style>
+</head>
+
+<body class="min-h-screen">
+
+  <div id="app-loading" class="min-h-screen flex items-center justify-center">
+    <div class="text-center">
+      <div class="text-4xl mb-3">🎯</div>
+      <p class="text-ink/60 text-sm">Memuatkan...</p>
+    </div>
+  </div>
+
+  <div id="app-shell" class="hidden">
+    <div class="flex min-h-screen">
+      <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+      <main class="main-content flex-1 min-w-0">
+        <header id="page-header"
+          class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4">
+        </header>
+        <div class="p-4 md:p-8 max-w-2xl mx-auto space-y-5">
+
+          <div class="bg-navy rounded-2xl p-5 text-white flex items-center justify-between">
+            <div>
+              <div class="text-xs opacity-70">Mata Anda</div>
+              <div id="points-balance" class="text-3xl font-bold mt-0.5">0 pts</div>
+            </div>
+            <a href="vouchers.html" class="text-xs bg-white/15 rounded-full px-3 py-1.5 hover:bg-white/25">Tukar Ganjaran →</a>
+          </div>
+
+          <div class="flex gap-2 border-b border-ink/10">
+            <button id="tab-btn-available" onclick="switchTab('available')"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2 border-navy text-navy">Belum Selesai</button>
+            <button id="tab-btn-completed" onclick="switchTab('completed')"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2 border-transparent text-ink/50 hover:text-ink transition-colors">Selesai</button>
+          </div>
+
+          <div id="mission-list" class="space-y-3"></div>
+          <div id="mission-empty" class="hidden text-center text-sm text-ink/40 py-12">Tiada mission lagi</div>
+
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="/shared/supabase.js"></script>
+  <script src="../../config/supabase.js"></script>
+  <script src="../../shared/authGuard.js"></script>
+  <script src="../../shared/logout.js"></script>
+  <script src="../../shared/navbar.js"></script>
+  <script src="_shared.js"></script>
+  <script>
+    function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    let allMissions = [];
+    let myProgress = {}; // mission_id -> progress row (siklus SEMASA sahaja)
+    let activeTab = 'available';
+
+    function currentCycleKeyFor(m) {
+      if (m.repeat_cycle !== 'weekly') return '2000-01-01';
+      const d = new Date();
+      const day = (d.getDay() + 6) % 7; // Isnin=0
+      d.setDate(d.getDate() - day);
+      return d.toISOString().slice(0, 10);
+    }
+
+    async function loadPointsBalance() {
+      if (!window.patientRecord?.id) return;
+      const { data } = await window.db.from('psy_points_balance')
+        .select('balance').eq('patient_id', window.patientRecord.id).maybeSingle();
+      document.getElementById('points-balance').textContent = `${data?.balance || 0} pts`;
+    }
+
+    async function loadMissions() {
+      if (!window.patientRecord?.id) return;
+      const today = new Date().toISOString().slice(0, 10);
+      const { data: missions } = await window.db.from('psy_missions')
+        .select('*').eq('is_active', true)
+        .or(`start_date.is.null,start_date.lte.${today}`)
+        .or(`end_date.is.null,end_date.gte.${today}`);
+      allMissions = missions || [];
+
+      const { data: prog } = await window.db.from('psy_mission_progress')
+        .select('*').eq('patient_id', window.patientRecord.id);
+      myProgress = {};
+      (prog || []).forEach(p => {
+        const key = p.mission_id + '|' + p.cycle_start;
+        myProgress[key] = p;
+      });
+      render();
+    }
+
+    function switchTab(tab) {
+      activeTab = tab;
+      document.getElementById('tab-btn-available').className = 'px-4 py-2.5 text-sm font-semibold border-b-2 ' + (tab === 'available' ? 'border-navy text-navy' : 'border-transparent text-ink/50 hover:text-ink transition-colors');
+      document.getElementById('tab-btn-completed').className = 'px-4 py-2.5 text-sm font-semibold border-b-2 ' + (tab === 'completed' ? 'border-navy text-navy' : 'border-transparent text-ink/50 hover:text-ink transition-colors');
+      render();
+    }
+
+    const TYPE_NOTE = { daily_checkin: 'Isi Catatan Harian untuk teruskan', manual: null };
+
+    function render() {
+      const rows = allMissions.map(m => {
+        const cycle = currentCycleKeyFor(m);
+        const p = myProgress[m.id + '|' + cycle];
+        const progress = p?.progress || 0;
+        const status = p?.status || 'in_progress';
+        return { mission: m, progress, status, progressId: p?.id || null };
+      }).filter(r => activeTab === 'completed' ? (r.status === 'completed' || r.status === 'claimed') : (r.status === 'in_progress'));
+
+      const list = document.getElementById('mission-list');
+      const empty = document.getElementById('mission-empty');
+      if (!rows.length) { list.innerHTML = ''; empty.classList.remove('hidden'); return; }
+      empty.classList.add('hidden');
+
+      list.innerHTML = rows.map(r => {
+        const m = r.mission;
+        const pct = Math.min(100, Math.round(r.progress / m.target * 100));
+        const note = TYPE_NOTE[m.mission_type];
+        let actionHtml = '';
+        if (r.status === 'completed') {
+          actionHtml = `<button onclick="claimReward('${r.progressId}')" class="w-full bg-gold text-white py-2.5 rounded-xl text-sm font-semibold mt-2">🎁 Tuntut ${m.reward_points} Mata</button>`;
+        } else if (r.status === 'claimed') {
+          actionHtml = `<div class="text-xs text-emerald-600 font-semibold mt-2">✓ Ganjaran dah dituntut</div>`;
+        } else if (m.mission_type === 'manual') {
+          // Had sekali sehari disahkan server-side (last_advanced_on) dalam advance_my_mission();
+          // sini cuma papar butang — ralat mesra dipaparkan kalau pesakit dah tekan hari ni.
+          actionHtml = `<button onclick="advanceMission('${m.id}')" class="w-full bg-navy text-white py-2.5 rounded-xl text-sm font-semibold mt-2">Tandakan Selesai Hari Ini</button>`;
+        } else if (note) {
+          actionHtml = `<div class="text-xs text-ink/50 mt-2">ℹ️ ${note}</div>`;
+        }
+        return `<div class="bg-white rounded-2xl border border-ink/10 p-4">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <div class="font-bold text-ink">${escHtml(m.name)}</div>
+              ${m.description ? `<div class="text-xs text-ink/50 mt-0.5">${escHtml(m.description)}</div>` : ''}
+            </div>
+            <div class="text-xs font-semibold text-gold-dark whitespace-nowrap">+${m.reward_points} pts</div>
+          </div>
+          <div class="flex items-center gap-2 mt-3">
+            <div class="bar flex-1"><span style="width:${pct}%"></span></div>
+            <div class="text-xs font-semibold text-ink/60 whitespace-nowrap">${r.progress} / ${m.target}</div>
+          </div>
+          ${actionHtml}
+        </div>`;
+      }).join('');
+    }
+
+    async function advanceMission(missionId) {
+      try {
+        const { error } = await window.db.rpc('advance_my_mission', { p_mission_id: missionId });
+        if (error) throw error;
+        banner('Progress dikemaskini ✅');
+        await loadMissions();
+      } catch (e) { banner(e.message || 'Ralat', 'error'); }
+    }
+
+    async function claimReward(progressId) {
+      try {
+        const { error } = await window.db.rpc('claim_mission_reward', { p_progress_id: progressId });
+        if (error) throw error;
+        banner('🎉 Ganjaran dituntut!');
+        await Promise.all([loadMissions(), loadPointsBalance()]);
+      } catch (e) { banner(e.message || 'Ralat', 'error'); }
+    }
+
+    (async () => {
+      const user = await initPatient('missions', 'Mission Saya · selesaikan untuk dapat mata');
+      if (!user) return;
+      await Promise.all([loadPointsBalance(), loadMissions()]);
+    })();
+  </script>
+</body>
+</html>

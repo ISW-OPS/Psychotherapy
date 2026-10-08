@@ -6,11 +6,21 @@
 // sendiri keyed ikut record id, sbb boleh ada >1 rekod sejarah per jenis).
 // ============================================================
 
+// fisioterapi/kaunselor/bekam/masseur: boleh ada LEBIH DARIPADA SATU staff per role (tak
+// macam hakeema/hakeem/dr yang auto-resolve seorang sahaja ikut nama/role unik) — multiTarget:
+// true tandakan UI perlu papar dropdown "pilih coach" supaya staff pilih sendiri yang mana
+// handle, bukan auto-resolve senyap. Role code ('fisioterapi' dll) MESTI sepadan staff_role
+// yang dicipta staff sendiri di peranan.html.
 const HK1_TYPES_META = {
-  hakeema: { label: 'Hakeema Session', emoji: '🧑‍💼', role: 'manager', nameLike: 'hakeema', exclude: null,      fallback: 'Hakeema' },
-  hakeem:  { label: 'Hakeem Session',  emoji: '🧑',          role: 'manager', nameLike: 'hakeem',  exclude: 'hakeema', fallback: 'Hakeem' },
-  dr:      { label: 'Dr Session',      emoji: '🩺',          role: 'doctor',  nameLike: null,      exclude: null,      fallback: 'Dr' },
+  hakeema:     { label: 'Hakeema Session',     emoji: '🧑‍💼', role: 'manager',     nameLike: 'hakeema', exclude: null,      fallback: 'Hakeema', multiTarget: false },
+  hakeem:      { label: 'Hakeem Session',      emoji: '🧑',   role: 'manager',     nameLike: 'hakeem',  exclude: 'hakeema', fallback: 'Hakeem', multiTarget: false },
+  dr:          { label: 'Dr Session',          emoji: '🩺',   role: 'doctor',      nameLike: null,      exclude: null,      fallback: 'Dr', multiTarget: false },
+  fisioterapi: { label: 'Fisioterapi Session', emoji: '🏃',   role: 'fisioterapi', nameLike: null,      exclude: null,      fallback: 'Fisioterapi', multiTarget: true },
+  kaunselor:   { label: 'Kaunselor Session',   emoji: '🗣️',   role: 'kaunselor',   nameLike: null,      exclude: null,      fallback: 'Kaunselor', multiTarget: true },
+  bekam:       { label: 'Bekam Session',       emoji: '🩸',   role: 'bekam',       nameLike: null,      exclude: null,      fallback: 'Bekam', multiTarget: true },
+  masseur:     { label: 'Masseur Session',     emoji: '💆',   role: 'masseur',     nameLike: null,      exclude: null,      fallback: 'Tukang Urut', multiTarget: true },
 };
+window.HK1_TYPES_META = HK1_TYPES_META;
 
 async function hk1ResolveTarget(type) {
   const cfg = HK1_TYPES_META[type];
@@ -42,12 +52,30 @@ const HK1_SLOTS_DEFAULT_BLOCKS = {
   0: [{ start: '09:00', end: '12:00', label: '9-12 pg' }, { start: '14:00', end: '17:00', label: '2-5 ptg' }],
 };
 
+// Pecahkan SATU baris blok kepada slot diskret (2:00-2:30, 2:30-3:00, ...) bila
+// slot_duration_minutes + max_bookings dikonfigur (Jadual Slot Konsultasi redesign, 7 Okt 2026).
+// Tiada duration/kapasiti = mod lama, blok kekal utuh (1 entry = 1 blok, macam KOB/Rawatan).
+function hk1ExpandBlock(r) {
+  const start = (r.slot_start || '').slice(0, 5), end = (r.slot_end || '').slice(0, 5);
+  if (!r.slot_duration_minutes || !r.max_bookings) return [{ start, end, label: r.label }];
+  const [h0, m0] = start.split(':').map(Number);
+  const pad2 = n => String(n).padStart(2, '0');
+  const fmt = mins => `${pad2(Math.floor(mins / 60) % 24)}:${pad2(mins % 60)}`;
+  const out = [];
+  for (let i = 0; i < r.max_bookings; i++) {
+    const sMin = h0 * 60 + m0 + i * r.slot_duration_minutes;
+    const s = fmt(sMin), e = fmt(sMin + r.slot_duration_minutes);
+    out.push({ start: s, end: e, label: `${s}-${e}` });
+  }
+  return out;
+}
+
 // Panggil sekali di init page (await) sebelum hk1GetSlotsForDay()/hk1GetAllowedDays() dipakai.
 let _hk1SlotBlocksCache = null;
 async function hk1LoadSlotConfig(force = false) {
   if (_hk1SlotBlocksCache && !force) return _hk1SlotBlocksCache;
   const { data, error } = await window.db.from('psy_kob_slot_config')
-    .select('day_of_week, slot_start, slot_end, label')
+    .select('day_of_week, slot_start, slot_end, label, max_bookings, slot_duration_minutes')
     .eq('slot_type', 'sesi_1on1').eq('is_active', true);
   if (error) {
     console.error('[hk1] hk1LoadSlotConfig gagal, guna fallback:', error);
@@ -56,9 +84,7 @@ async function hk1LoadSlotConfig(force = false) {
   }
   const byDay = {};
   (data || []).forEach(r => {
-    (byDay[r.day_of_week] = byDay[r.day_of_week] || []).push({
-      start: (r.slot_start || '').slice(0, 5), end: (r.slot_end || '').slice(0, 5), label: r.label,
-    });
+    (byDay[r.day_of_week] = byDay[r.day_of_week] || []).push(...hk1ExpandBlock(r));
   });
   Object.values(byDay).forEach(list => list.sort((a, b) => a.start.localeCompare(b.start)));
   _hk1SlotBlocksCache = Object.keys(byDay).length ? byDay : HK1_SLOTS_DEFAULT_BLOCKS;
@@ -130,3 +156,33 @@ async function hk1CheckSlotConflict(targetId, meetDate, scheduledTime) {
   return hk1Conflict || apptConflict;
 }
 window.hk1CheckSlotConflict = hk1CheckSlotConflict;
+
+// Auto-cipta SEMUA rekod Sesi 1:1 (psy_clinical_referrals, source='plan_1on1') untuk SETIAP
+// minggu dalam coaching_schedule yang ada hk1_types, SERTA-MERTA bila treatment plan pesakit
+// dicipta — bukan tunggu staf buka plan-week.html minggu tu (lazy-on-open lama). Dipanggil oleh
+// mana-mana laluan yang insert psy_treatment_plans baharu (kob-detail.html markSelesai/
+// activateKobPackage, patients.html/patient-form.html seedStaffTreatmentPlan).
+// Unique index uq_psy_clinical_referrals_plan_1on1 (plan_id, week_number, session_type) jadi
+// benteng kedua kalau fungsi ni terpanggil dua kali / race — ralat kod 23505 diabaikan senyap.
+// loadHk1() di plan-week.html (per-minggu, bila dibuka) KEKAL sebagai safety net — kalau-kalau
+// ada minggu yang terlepas (cth pakej diubah lepas plan dicipta).
+async function hk1SeedForPlan(planId, patientId, coachingSchedule, referredBy = null, referredByName = null) {
+  const sched = Array.isArray(coachingSchedule) ? coachingSchedule : [];
+  for (const entry of sched) {
+    const weekNum = Number(entry?.week ?? entry?.day);
+    if (!weekNum) continue;
+    const types = Array.isArray(entry?.hk1_types) ? entry.hk1_types.filter(t => HK1_TYPES_META[t]) : [];
+    for (const type of types) {
+      const cfg = HK1_TYPES_META[type];
+      const target = await hk1ResolveTarget(type);
+      const { error } = await window.db.from('psy_clinical_referrals').insert({
+        patient_id: patientId, plan_id: planId, week_number: weekNum, source: 'plan_1on1', session_type: type,
+        referred_by: referredBy, referred_by_name: referredByName,
+        target_role: cfg.role, target_id: target.id, target_name: target.name,
+        reason: `Sesi 1:1 ${cfg.label} — Minggu ${weekNum} (Wajib ikut Pakej)`, meet_date: null, priority: 'sederhana',
+      });
+      if (error && error.code !== '23505') console.error('[hk1] hk1SeedForPlan gagal:', weekNum, type, error);
+    }
+  }
+}
+window.hk1SeedForPlan = hk1SeedForPlan;

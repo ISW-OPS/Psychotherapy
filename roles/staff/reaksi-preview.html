@@ -64,6 +64,7 @@
             <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
               <h3 class="text-[14px] font-bold text-ink mb-3">2. Hasil Cadangan Automatik</h3>
               <div id="pv-stats" class="grid sm:grid-cols-3 gap-3 mb-4"></div>
+              <div id="pv-conflict-warn" class="hidden bg-terracotta-light border border-terracotta/30 rounded-xl px-4 py-3 text-[13px] text-terracotta font-semibold mb-4"></div>
               <div id="pv-hasil" class="grid md:grid-cols-2 gap-5 min-h-[180px]"></div>
             </div>
 
@@ -94,21 +95,28 @@
 <script>
 // ══════════ Preview Auto Cadangan (simulasi — tiada penghantaran) ══════════
 let pvSymptoms = [], pvActions = [], pvMap = {}, pvTemplates = [], pvSel = new Set(), pvMsgTexts = ['', '', ''];
+// Pasangan tindakan bercanggah (audit #118, staf tetapkan di reaksi-item.html tab
+// Konflik) — dimuat sekali di pvLoad, diguna pvGenerate utk amaran SEBELUM pesakit
+// submit sebenar.
+let pvConflictPairs = [];
 const pvEsc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const PV_TAHAP = { rendah: ['Rendah', 'bg-green-light text-green-dark'], sederhana: ['Sederhana', 'bg-gold-light text-[#8a6d1a]'], tinggi: ['Tinggi', 'bg-terracotta-light text-terracotta'] };
 
 async function pvLoad() {
-  const [{ data: items }, { data: actions }, { data: maps }, tplRes] = await Promise.all([
+  const [{ data: items }, { data: actions }, { data: maps }, tplRes, ckRes] = await Promise.all([
     window.db.from('psy_reaksi_item').select('*').eq('aktif', true).order('urutan'),
     window.db.from('psy_reaksi_actions').select('*').order('priority'),
     window.db.from('psy_reaksi_action_map').select('symptom_id,action_id'),
     window.db.from('psy_auto_messages').select('id, key, name, message_template').in('key', ['reaksi_harian', 'reaksi_kritikal', 'reaksi_diet', 'reaksi_gaya_hidup']).eq('is_active', true),
+    window.db.from('psy_reaksi_conflict_pairs').select('action_id_1, action_id_2'),
   ]);
   pvSymptoms = items || [];
   pvActions = actions || [];
   pvMap = {};
   (maps || []).forEach(m => (pvMap[m.symptom_id] ||= new Set()).add(m.action_id));
   pvTemplates = (tplRes.data || []).map(t => ({ id: t.id, key: t.key, nama: t.name, kandungan: t.message_template }));
+  // migration 20261007_reaksi_conflict_pairs belum run — jadual tiada lagi, teruskan tanpa amaran
+  pvConflictPairs = ckRes.error ? [] : (ckRes.data || []);
   pvRenderSym();
   pvGenerate();
 }
@@ -140,6 +148,23 @@ function pvGenerate() {
     if (a && a.aktif !== false && !seen.has(a.id)) { seen.add(a.id); acts.push(a); }
   }));
   acts.sort((x, y) => (Number(y.is_emergency) - Number(x.is_emergency)) || (x.priority - y.priority));
+
+  // Conflict-check pasangan tindakan (audit #118) — staf uji di sini NAMPAK amaran
+  // SEBELUM simptom betul-betul disubmit pesakit (bukan laluan sebenar, cuma preview).
+  const actIdSet = new Set(acts.map(a => a.id));
+  const actTitleById = {}; acts.forEach(a => { actTitleById[a.id] = a.title; });
+  const conflictPairsFound = pvConflictPairs.filter(p => actIdSet.has(p.action_id_1) && actIdSet.has(p.action_id_2));
+  const warnEl = document.getElementById('pv-conflict-warn');
+  if (conflictPairsFound.length) {
+    warnEl.classList.remove('hidden');
+    warnEl.innerHTML = conflictPairsFound.map(p =>
+      `⚠️ Tindakan bercanggah dikesan: '${pvEsc(actTitleById[p.action_id_1] || '')}' vs '${pvEsc(actTitleById[p.action_id_2] || '')}' — mesej ni akan digantung utk semakan staf (bukan auto-hantar).`
+    ).join('<br>');
+  } else {
+    warnEl.classList.add('hidden');
+    warnEl.innerHTML = '';
+  }
+
   const isEmergency = acts.some(a => a.is_emergency) || selSyms.some(s => s.is_emergency);
   const tahapMax = selSyms.some(s => s.tahap_risiko === 'tinggi') ? 'tinggi' : selSyms.some(s => s.tahap_risiko === 'sederhana') ? 'sederhana' : selSyms.length ? 'rendah' : null;
 

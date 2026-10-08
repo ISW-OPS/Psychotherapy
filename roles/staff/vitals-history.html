@@ -34,11 +34,15 @@
             <h1 id="vh-title" class="text-2xl font-bold text-ink">Sejarah Bacaan Vitals</h1>
             <p class="text-sm text-ink/55 mt-0.5">Lihat dan urus semua rekod bacaan vitals pesakit.</p>
           </div>
-          <div class="relative inline-block">
-            <button onclick="toggleExportMenu()" class="px-4 py-2.5 rounded-xl border border-ink/15 text-sm font-semibold text-ink/70 hover:bg-ink/5 whitespace-nowrap">⬇️ Export ▾</button>
-            <div id="vh-export-menu" class="hidden absolute right-0 top-11 z-20 bg-white border border-ink/10 rounded-lg shadow-lg py-1 min-w-[240px] text-left">
-              <button onclick="exportScheduleExcel()" class="block w-full text-left px-3 py-2 text-xs text-ink hover:bg-cream/50">📅 Export Excel (ikut Jadual Rawatan)</button>
-              <button onclick="exportFilteredCsv()" class="block w-full text-left px-3 py-2 text-xs text-ink hover:bg-cream/50">📄 Export CSV (rekod tertapis)</button>
+          <div class="flex items-center gap-2">
+            <input id="vh-import-input" type="file" accept=".xlsx,.xls,.csv" class="hidden" onchange="handleImportFile(event)">
+            <button data-rbac="vitals.create" onclick="document.getElementById('vh-import-input').click()" class="px-4 py-2.5 rounded-xl border border-ink/15 text-sm font-semibold text-ink/70 hover:bg-ink/5 whitespace-nowrap">📤 Import Excel</button>
+            <div class="relative inline-block">
+              <button onclick="toggleExportMenu()" class="px-4 py-2.5 rounded-xl border border-ink/15 text-sm font-semibold text-ink/70 hover:bg-ink/5 whitespace-nowrap">⬇️ Export ▾</button>
+              <div id="vh-export-menu" class="hidden absolute right-0 top-11 z-20 bg-white border border-ink/10 rounded-lg shadow-lg py-1 min-w-[240px] text-left">
+                <button onclick="exportScheduleExcel()" class="block w-full text-left px-3 py-2 text-xs text-ink hover:bg-cream/50">📅 Export Excel (ikut Jadual Rawatan)</button>
+                <button onclick="exportFilteredCsv()" class="block w-full text-left px-3 py-2 text-xs text-ink hover:bg-cream/50">📄 Export CSV (rekod tertapis)</button>
+              </div>
             </div>
           </div>
         </div>
@@ -183,6 +187,50 @@
 
       </div>
     </main>
+  </div>
+</div>
+
+<!-- ═══ Modal Import Excel — preview + duplicate detection sebelum confirm ═══ -->
+<div id="vh-import-modal" class="hidden fixed inset-0 z-50">
+  <div class="absolute inset-0 bg-black/40" onclick="closeImportModal()"></div>
+  <div class="absolute inset-4 md:inset-10 bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+    <div class="flex items-start justify-between gap-3 px-5 py-4 border-b border-ink/10 flex-shrink-0">
+      <div>
+        <h3 class="text-base font-bold text-ink">📤 Import Bacaan Vitals dari Excel</h3>
+        <p id="vh-import-filename" class="text-xs text-ink/45 mt-0.5"></p>
+      </div>
+      <button onclick="closeImportModal()" class="w-8 h-8 rounded-lg hover:bg-ink/5 text-ink/50 text-lg flex-shrink-0">✕</button>
+    </div>
+
+    <div class="px-5 py-3 border-b border-ink/8 bg-cream/40 flex-shrink-0">
+      <p class="text-xs text-ink/55">Lajur dikenali (fleksibel, lajur yang tiada akan dilangkau): <b>Nama Pesakit</b>/<b>MRN</b> (wajib salah satu), <b>Tarikh</b> (wajib), Masa, BP Sistolik/Diastolik, Heart Rate, SpO2, Suhu, Berat, Tinggi, BMI, Lilitan Pinggang, RBS, HbA1c, PHQ-2, Pain Score, Resp Rate, Ubatan, Nota.</p>
+      <div id="vh-import-summary" class="flex flex-wrap gap-3 mt-2 text-xs font-semibold"></div>
+    </div>
+
+    <div class="flex-1 overflow-auto px-5 py-3">
+      <table class="w-full text-xs">
+        <thead class="bg-cream/60 text-[10px] uppercase tracking-wide text-ink/50 sticky top-0">
+          <tr>
+            <th class="py-2 px-2 w-8"><input id="vh-im-select-all" type="checkbox" onchange="imToggleSelectAll(this)" class="rounded border-ink/30"></th>
+            <th class="text-left py-2 px-2">#</th>
+            <th class="text-left py-2 px-2">Pesakit</th>
+            <th class="text-left py-2 px-2">Tarikh</th>
+            <th class="text-left py-2 px-2">Masa</th>
+            <th class="text-left py-2 px-2">Bacaan</th>
+            <th class="text-left py-2 px-2">Status</th>
+          </tr>
+        </thead>
+        <tbody id="vh-im-tbody"></tbody>
+      </table>
+    </div>
+
+    <div class="px-5 py-4 border-t border-ink/10 flex items-center justify-between gap-3 flex-wrap flex-shrink-0 bg-white">
+      <span id="vh-import-status" class="text-xs text-ink/50"></span>
+      <div class="flex gap-2">
+        <button onclick="closeImportModal()" class="px-4 py-2.5 rounded-xl border border-ink/15 text-sm font-semibold text-ink/60 hover:bg-ink/5">Batal</button>
+        <button data-rbac="vitals.create" id="vh-import-confirm-btn" onclick="confirmImport()" class="px-4 py-2.5 rounded-xl bg-navy text-white text-sm font-semibold hover:bg-navy-dark">✅ Sahkan Import</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -577,6 +625,278 @@ async function exportScheduleExcel() {
     banner('Excel dimuat turun ✅');
   } catch (e) {
     banner('Ralat: ' + e.message, 'error');
+  }
+}
+
+// ── Import Excel (Audit #120) — parse + preview + duplicate detection sebelum confirm ──
+const VH_VITAL_FIELDS = ['bp_systolic','bp_diastolic','heart_rate','spo2','temperature','weight','height','bmi','waist_cm','rbs','hba1c','phq2_score','pain_score','respiratory_rate'];
+const VH_COLUMN_ALIASES = {
+  name: ['nama pesakit','nama','patient name','name','nama klien','nama penuh'],
+  mrn: ['mrn','id pesakit','no mrn','patient id','no id pesakit','kod pesakit'],
+  date: ['tarikh','tarikh bacaan','date','reading date','tarikh rawatan'],
+  time: ['masa','masa bacaan','time','reading time'],
+  bp_systolic: ['bp sistolik','sistolik','systolic','bp systolic','tekanan darah sistolik'],
+  bp_diastolic: ['bp diastolik','diastolik','diastolic','bp diastolic','tekanan darah diastolik'],
+  heart_rate: ['heart rate','denyutan nadi','pulse','hr','nadi','pulse bpm'],
+  spo2: ['spo2','sp02','oxygen saturation','saturasi oksigen'],
+  temperature: ['suhu','suhu badan','temperature','temp','suhu badan c'],
+  weight: ['berat','berat badan','weight','berat badan kg'],
+  height: ['tinggi','height','tinggi badan','tinggi cm'],
+  bmi: ['bmi'],
+  waist_cm: ['lilitan pinggang','waist','waist cm','lilitan pinggang cm'],
+  rbs: ['rbs','gula darah','blood sugar','gula darahrbs'],
+  hba1c: ['hba1c','hba1c '],
+  phq2_score: ['phq2','skor phq2','phq 2'],
+  pain_score: ['pain score','skor kesakitan'],
+  respiratory_rate: ['resp rate','respiratory rate','kadar pernafasan','rr'],
+  medications: ['ubatan','medications','medication'],
+  notes: ['nota','notes'],
+};
+const VH_BP_COMBO_ALIASES = ['tekanan darah','blood pressure','bp'];
+
+function vhNormHeader(h) {
+  return String(h || '').toLowerCase().trim().normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function vhBuildColMap(headerKeys) {
+  const map = {};
+  headerKeys.forEach(h => {
+    const norm = vhNormHeader(h);
+    if (!norm) return;
+    for (const [canon, aliases] of Object.entries(VH_COLUMN_ALIASES)) {
+      if (!map[canon] && aliases.includes(norm)) { map[canon] = h; return; }
+    }
+    if (!map.bp_combo && VH_BP_COMBO_ALIASES.includes(norm)) map.bp_combo = h;
+  });
+  return map;
+}
+function vhParseNum(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = parseFloat(String(v).replace(',', '.'));
+  return isNaN(n) ? null : n;
+}
+function vhParseDate(v) {
+  if (v === null || v === undefined || v === '') return null;
+  if (v instanceof Date && !isNaN(v)) return ymd(v);
+  if (typeof v === 'number') {
+    try { const d = XLSX.SSF.parse_date_code(v); if (d) return `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`; } catch (e) {}
+    return null;
+  }
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+  m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) return ymd(d);
+  return null;
+}
+function vhParseTime(v) {
+  if (v === null || v === undefined || v === '') return null;
+  if (v instanceof Date && !isNaN(v)) return v.toTimeString().slice(0, 5);
+  if (typeof v === 'number') {
+    const totalMin = Math.round(v * 24 * 60);
+    return `${String(Math.floor(totalMin / 60) % 24).padStart(2, '0')}:${String(totalMin % 60).padStart(2, '0')}`;
+  }
+  const s = String(v).trim();
+  const m = s.match(/^(\d{1,2}):(\d{2})/);
+  if (m) return `${m[1].padStart(2, '0')}:${m[2]}`;
+  return null;
+}
+
+let vhPatientIndex = null;
+async function vhLoadPatientIndex() {
+  const { data } = await window.db.from('psy_patients')
+    .select('id, mrn, full_name, psy_profiles!psy_patients_user_id_fkey(full_name)');
+  const list = data || [];
+  const byMrn = {}, byName = {};
+  list.forEach(p => {
+    const nm = nameOf(p).toLowerCase().trim();
+    if (p.mrn) byMrn[p.mrn.toLowerCase().trim()] = p;
+    if (nm && nm !== '—') (byName[nm] ??= []).push(p);
+  });
+  vhPatientIndex = { list, byMrn, byName };
+}
+function vhMatchPatient(nameVal, mrnVal) {
+  const mrnKey = String(mrnVal || '').toLowerCase().trim();
+  if (mrnKey && vhPatientIndex.byMrn[mrnKey]) return { patient: vhPatientIndex.byMrn[mrnKey] };
+  const nameKey = String(nameVal || '').toLowerCase().trim();
+  if (nameKey) {
+    const exact = vhPatientIndex.byName[nameKey];
+    if (exact && exact.length === 1) return { patient: exact[0] };
+    if (exact && exact.length > 1) return { error: `Nama "${nameVal}" sepadan dengan ${exact.length} pesakit — guna MRN untuk pastikan.` };
+    const fuzzy = vhPatientIndex.list.filter(p => {
+      const nm = nameOf(p).toLowerCase();
+      return nm !== '—' && (nm.includes(nameKey) || nameKey.includes(nm));
+    });
+    if (fuzzy.length === 1) return { patient: fuzzy[0] };
+    if (fuzzy.length > 1) return { error: `Nama "${nameVal}" sepadan dengan ${fuzzy.length} pesakit (tidak pasti) — guna MRN.` };
+  }
+  return { error: `Pesakit tidak ditemui: ${nameVal || mrnVal || '(tiada nama/MRN)'}` };
+}
+
+let vhImportRows = [];
+
+async function handleImportFile(e) {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  if (typeof XLSX === 'undefined') { banner('XLSX belum siap, cuba lagi', 'error'); return; }
+  banner('Membaca fail...');
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const raw = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    if (!raw.length) { banner('Fail kosong atau format tidak dikenali', 'error'); return; }
+    document.getElementById('vh-import-filename').textContent = `${file.name} — ${raw.length} baris dijumpai`;
+    await vhProcessImportRows(raw);
+    document.getElementById('vh-import-modal').classList.remove('hidden');
+  } catch (err) {
+    banner('Ralat membaca fail: ' + err.message, 'error');
+  }
+}
+
+async function vhProcessImportRows(raw) {
+  await vhLoadPatientIndex();
+  const colMap = vhBuildColMap(Object.keys(raw[0]));
+
+  // Bina baris + padan pesakit dahulu
+  vhImportRows = raw.map((r, idx) => {
+    const nameVal = colMap.name ? r[colMap.name] : '';
+    const mrnVal = colMap.mrn ? r[colMap.mrn] : '';
+    const match = vhMatchPatient(nameVal, mrnVal);
+    const date = colMap.date ? vhParseDate(r[colMap.date]) : null;
+    const time = colMap.time ? vhParseTime(r[colMap.time]) : null;
+    const fields = {};
+    VH_VITAL_FIELDS.forEach(f => {
+      if (colMap[f] !== undefined) {
+        const v = vhParseNum(r[colMap[f]]);
+        if (v !== null) fields[f] = v;
+      }
+    });
+    if ((fields.bp_systolic === undefined || fields.bp_diastolic === undefined) && colMap.bp_combo) {
+      const m = String(r[colMap.bp_combo] || '').match(/(\d+)\s*\/\s*(\d+)/);
+      if (m) { fields.bp_systolic ??= parseInt(m[1]); fields.bp_diastolic ??= parseInt(m[2]); }
+    }
+    const medications = colMap.medications ? String(r[colMap.medications] || '').trim() || null : null;
+    const notes = colMap.notes ? String(r[colMap.notes] || '').trim() || null : null;
+
+    let status = 'new', errorMsg = null, dupOf = null;
+    if (match.error) { status = 'error'; errorMsg = match.error; }
+    else if (!date) { status = 'error'; errorMsg = 'Tarikh tiada atau tidak sah'; }
+    else if (!Object.keys(fields).length) { status = 'error'; errorMsg = 'Tiada bacaan vitals dalam baris ini'; }
+
+    return {
+      idx, raw: r, nameVal, mrnVal, patient: match.patient || null,
+      date, time, fields, medications, notes,
+      status, errorMsg, dupOf, checked: status === 'new',
+    };
+  });
+
+  // Semak duplicate: ambil semua vitals sedia ada utk pesakit yang dipadan, satu query
+  const patientIds = [...new Set(vhImportRows.filter(r => r.patient && r.date).map(r => r.patient.id))];
+  let existing = [];
+  if (patientIds.length) {
+    const { data } = await window.db.from('psy_vitals')
+      .select(['id,patient_id,reading_date,reading_time', ...VH_VITAL_FIELDS].join(','))
+      .in('patient_id', patientIds);
+    existing = data || [];
+  }
+  const existingByKey = {};
+  existing.forEach(v => { (existingByKey[`${v.patient_id}|${v.reading_date}`] ??= []).push(v); });
+
+  vhImportRows.forEach(row => {
+    if (row.status !== 'new') return;
+    const list = existingByKey[`${row.patient.id}|${row.date}`] || [];
+    const providedFields = Object.keys(row.fields);
+    const found = list.find(ex => {
+      if (row.time && ex.reading_time && !String(ex.reading_time).startsWith(row.time)) return false;
+      return providedFields.every(f => ex[f] !== null && Math.abs(Number(ex[f]) - Number(row.fields[f])) < 0.05);
+    });
+    if (found) { row.status = 'duplicate'; row.dupOf = found; row.checked = false; }
+  });
+
+  renderImportPreview();
+}
+
+function vhFieldsSummary(fields) {
+  const labels = { bp_systolic: 'Sis', bp_diastolic: 'Dia', heart_rate: 'HR', spo2: 'SpO2', temperature: 'Suhu', weight: 'BB', height: 'TB', bmi: 'BMI', waist_cm: 'Pinggang', rbs: 'RBS', hba1c: 'HbA1c', phq2_score: 'PHQ2', pain_score: 'Pain', respiratory_rate: 'RR' };
+  const parts = [];
+  if (fields.bp_systolic !== undefined || fields.bp_diastolic !== undefined) parts.push(`BP ${fields.bp_systolic ?? '—'}/${fields.bp_diastolic ?? '—'}`);
+  Object.keys(fields).forEach(k => {
+    if (k === 'bp_systolic' || k === 'bp_diastolic') return;
+    parts.push(`${labels[k] || k} ${fields[k]}`);
+  });
+  return parts.join(', ') || '—';
+}
+
+function renderImportPreview() {
+  const body = document.getElementById('vh-im-tbody');
+  const nNew = vhImportRows.filter(r => r.status === 'new').length;
+  const nDup = vhImportRows.filter(r => r.status === 'duplicate').length;
+  const nErr = vhImportRows.filter(r => r.status === 'error').length;
+  document.getElementById('vh-import-summary').innerHTML = `
+    <span class="px-2.5 py-1 rounded-full bg-green-light text-green-dark">✓ ${nNew} baharu</span>
+    <span class="px-2.5 py-1 rounded-full bg-gold/20 text-gold-dark">⚠️ ${nDup} kemungkinan duplicate</span>
+    <span class="px-2.5 py-1 rounded-full bg-terracotta-light text-terracotta">❌ ${nErr} ralat</span>`;
+
+  body.innerHTML = vhImportRows.map(r => {
+    const name = r.patient ? escHtml(nameOf(r.patient)) + (r.patient.mrn ? ` <span class="text-ink/40">(${escHtml(r.patient.mrn)})</span>` : '') : `<span class="text-terracotta">${escHtml(r.nameVal || r.mrnVal || '—')}</span>`;
+    let statusHtml, rowCls = '';
+    if (r.status === 'error') { statusHtml = `<span class="text-terracotta font-semibold" title="${escHtml(r.errorMsg)}">❌ ${escHtml(r.errorMsg)}</span>`; rowCls = 'bg-terracotta-light/20'; }
+    else if (r.status === 'duplicate') { statusHtml = `<span class="text-gold-dark font-semibold">⚠️ Kemungkinan duplicate — rekod sama utk ${escHtml(nameOf(r.patient))} pada ${escHtml(r.date)} dah wujud</span>`; rowCls = 'bg-gold/5'; }
+    else { statusHtml = `<span class="text-green-dark font-semibold">✓ Baharu</span>`; }
+    return `<tr class="border-b border-ink/5 ${rowCls}">
+      <td class="py-2 px-2"><input type="checkbox" class="vh-im-row-check rounded border-ink/30" data-idx="${r.idx}" ${r.checked ? 'checked' : ''} ${r.status === 'error' ? 'disabled' : ''} onchange="imToggleRow(${r.idx}, this.checked)"></td>
+      <td class="py-2 px-2 text-ink/50">${r.idx + 1}</td>
+      <td class="py-2 px-2">${name}</td>
+      <td class="py-2 px-2 whitespace-nowrap">${escHtml(r.date || '—')}</td>
+      <td class="py-2 px-2 whitespace-nowrap">${escHtml(r.time || '—')}</td>
+      <td class="py-2 px-2">${escHtml(vhFieldsSummary(r.fields))}</td>
+      <td class="py-2 px-2">${statusHtml}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('vh-import-status').textContent = `${vhImportRows.length} baris dibaca — tandakan baris duplicate yang anda tetap mahu import.`;
+}
+
+function imToggleRow(idx, checked) { const r = vhImportRows.find(x => x.idx === idx); if (r) r.checked = checked; }
+function imToggleSelectAll(cb) {
+  vhImportRows.forEach(r => { if (r.status !== 'error') r.checked = cb.checked; });
+  renderImportPreview();
+}
+function closeImportModal() {
+  document.getElementById('vh-import-modal').classList.add('hidden');
+  vhImportRows = [];
+}
+
+async function confirmImport() {
+  const toImport = vhImportRows.filter(r => r.checked && r.status !== 'error');
+  if (!toImport.length) { banner('Tiada baris dipilih untuk import', 'error'); return; }
+  const btn = document.getElementById('vh-import-confirm-btn');
+  btn.disabled = true; btn.textContent = 'Mengimport...';
+  try {
+    const payloads = toImport.map(r => {
+      const createdAt = (() => { try { return new Date(`${r.date}T${(r.time || '00:00')}:00`).toISOString(); } catch (e) { return new Date().toISOString(); } })();
+      return {
+        patient_id: r.patient.id, reading_date: r.date, reading_time: r.time || null, created_at: createdAt,
+        ...r.fields, medications: r.medications, notes: r.notes,
+        source: 'staff', recorded_by: window.currentUser.id, recorded_by_name: window.currentUser.full_name,
+      };
+    });
+    const { error } = await window.db.from('psy_vitals').insert(payloads);
+    if (error) throw error;
+    const nSkippedDup = vhImportRows.filter(r => r.status === 'duplicate' && !r.checked).length;
+    const nErr = vhImportRows.filter(r => r.status === 'error').length;
+    if (typeof auditLog === 'function') { try { await auditLog('vitals.imported', null); } catch (_) {} }
+    banner(`${payloads.length} rekod diimport, ${nSkippedDup} dilangkau sbg duplicate, ${nErr} ralat pesakit tidak ditemui`);
+    closeImportModal();
+    await loadVitals();
+    await loadKpis();
+  } catch (e) {
+    banner('Ralat import: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = '✅ Sahkan Import';
   }
 }
 

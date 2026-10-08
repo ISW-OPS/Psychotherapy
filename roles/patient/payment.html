@@ -88,6 +88,30 @@
           <div class="flex flex-col items-center gap-1 shrink-0"><div id="dot-2" class="w-8 h-8 rounded-full bg-ink/10 text-ink/50 grid place-items-center text-sm font-semibold">2</div><span class="text-[11px] text-ink/60">Selesai</span></div>
         </div>
 
+        <!-- Status Bayaran Pakej — ringkasan baki tertunggak (audit #125). Papar sahaja
+             bila ada baki sebenar; disorok bila pakej sudah dibayar penuh (tak papar "RM0"
+             secara menonjol). Staf tetap sahaja yang rekod/upload bukti bayaran. -->
+        <div id="tunggakan-summary" class="hidden bg-white rounded-xl p-5 border border-gold/40 mb-5">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="text-xl">💰</span>
+            <h3 class="font-bold text-navy-dark text-sm">Status Bayaran Pakej</h3>
+          </div>
+          <div class="grid sm:grid-cols-3 gap-3 text-sm">
+            <div>
+              <div class="text-ink/50 text-xs">Jumlah Disasarkan</div>
+              <div id="tg-target" class="font-bold text-ink">RM 0.00</div>
+            </div>
+            <div>
+              <div class="text-ink/50 text-xs">Jumlah Dibayar Setakat Ini</div>
+              <div id="tg-paid" class="font-bold text-green-dark">RM 0.00</div>
+            </div>
+            <div>
+              <div class="text-ink/50 text-xs">Baki Tertunggak</div>
+              <div id="tg-baki" class="font-bold text-terracotta">RM 0.00</div>
+            </div>
+          </div>
+        </div>
+
         <!-- Kosong -->
         <div id="view-empty" class="hidden bg-white rounded-xl p-8 border border-ink/10 text-center">
           <div class="text-4xl mb-2">✅</div>
@@ -517,7 +541,46 @@ async function loadPayments() {
   }
 
   await loadReceipts();   // populasi window._receipts dulu — dipakai bila tiada tertunggak (papar resit terakhir)
+  await renderTunggakanSummary();
   renderReview();
+}
+
+// Ringkasan "Status Bayaran Pakej" (audit #125) — jumlah disasarkan / dibayar /
+// baki tertunggak, dikira terus drpd psy_payments (bayaran completed sahaja) bagi
+// sesi KOB/pakej terbaru pesakit ini. Liputi DUA senario: ansuran berstruktur
+// (psy_kob_installment_checkpoints) DAN bayaran manual separa ad-hoc staf rekod
+// yang tidak (lagi) ikut jadual checkpoint formal — kedua-dua kekal nampak kat
+// sini supaya pesakit tahu baki sebenar tanpa perlu tanya staf. Disorok bila
+// tiada baki (pakej sudah dibayar penuh / tiada sesi KOB berkaitan harga).
+async function renderTunggakanSummary() {
+  const box = document.getElementById('tunggakan-summary');
+  if (!box) return;
+  if (!patientRecord) { box.classList.add('hidden'); return; }
+  try {
+    const { data: kobSessions } = await window.db.from('psy_kob_sessions')
+      .select('id, recommended_package_price')
+      .eq('patient_id', patientRecord.id)
+      .not('recommended_package_price', 'is', null)
+      .order('created_at', { ascending: false }).limit(1);
+    const kobSession = kobSessions?.[0];
+    if (!kobSession || !Number(kobSession.recommended_package_price)) { box.classList.add('hidden'); return; }
+
+    const [{ data: paidRows }, { data: cps }] = await Promise.all([
+      window.db.from('psy_payments').select('total')
+        .eq('status', 'completed').eq('intent->>kob_session_id', kobSession.id),
+      window.db.from('psy_kob_installment_checkpoints').select('target_cumulative')
+        .eq('kob_session_id', kobSession.id).order('seq', { ascending: false }).limit(1),
+    ]);
+    const totalPaid = (paidRows || []).reduce((s, p) => s + Number(p.total || 0), 0);
+    const target = cps?.[0] ? Number(cps[0].target_cumulative) : Number(kobSession.recommended_package_price || 0);
+    const baki = Math.max(0, target - totalPaid);
+    if (baki <= 0.01) { box.classList.add('hidden'); return; }
+
+    setText('tg-target', money(target));
+    setText('tg-paid', money(totalPaid));
+    setText('tg-baki', money(baki));
+    box.classList.remove('hidden');
+  } catch (_) { box.classList.add('hidden'); }
 }
 
 const money = (n) => 'RM ' + Number(n || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });

@@ -8,7 +8,9 @@
 // forecast benar-benar meramal apa yang akan ditolak dari stok:
 //   - skip sesi is_extension (tiada bekalan)
 //   - skip minggu mode='online' (tiada bekalan fizikal)
-//   - hanya baca weekObj.supplies (bukan supplies_2 — sepadan dgn deduct sebenar)
+//   - baca weekObj.supplies ATAU weekObj.supplies_2 ikut session_day baris sesi
+//     (2 sesi/minggu = 2 baris berasingan, session_day=2 guna supplies_2) — sama
+//     logik dgn plan-week.html getWeekCoachingItems()/applySupplyStock()
 //   - skip bekalan tanpa item_id / qty<=0 / auto_stock===false
 //   - sesi yang statusnya 'hadir' (dah berlaku, stok dah ditolak) atau
 //     'cancel' (tak jadi) TIDAK dikira — elak double-count dgn stok sedia ada
@@ -26,25 +28,36 @@ window.computeForecastForRange = async function (itemIds, startDate, endDate) {
   if (!itemIds?.length || !startDate || !endDate) return forecast;
 
   const { data: rows, error } = await window.db.from('psy_plan_weekly_progress')
-    .select('id, plan_id, week_number, patient_id, is_extension, session_date, status, coaching_checks, psy_patients(full_name, mrn)')
+    .select('id, plan_id, week_number, session_day, patient_id, is_extension, session_date, status, coaching_checks, psy_patients(full_name, mrn, status)')
     .gte('session_date', startDate).lte('session_date', endDate)
     .neq('status', 'hadir').neq('status', 'cancel');
   if (error) { console.error('[inventoryForecast] gagal baca sesi:', error); return forecast; }
 
-  const upcoming = (rows || []).filter(r => !r.is_extension);
+  // Pesakit AKTIF sahaja — pesakit yang dah Tidak Aktif/Berhenti/Meninggal tak patut
+  // sumbang kepada keperluan, walaupun baris sesi tertinggal masih 'booked'/'pending'.
+  const upcoming = (rows || []).filter(r => !r.is_extension && r.psy_patients?.status === 'active');
   const planIds = [...new Set(upcoming.map(r => r.plan_id).filter(Boolean))];
   if (!planIds.length) return forecast;
 
   const { data: plans, error: planErr } = await window.db.from('psy_treatment_plans')
-    .select('id, coaching_schedule').in('id', planIds);
+    .select('id, name, status, coaching_schedule').in('id', planIds);
   if (planErr) { console.error('[inventoryForecast] gagal baca pelan:', planErr); return forecast; }
   const planMap = {};
-  (plans || []).forEach(p => { planMap[p.id] = Array.isArray(p.coaching_schedule) ? p.coaching_schedule : []; });
+  const planNameMap = {};
+  const planActive = {};
+  (plans || []).forEach(p => {
+    planMap[p.id] = Array.isArray(p.coaching_schedule) ? p.coaching_schedule : [];
+    planNameMap[p.id] = p.name || '—';
+    planActive[p.id] = p.status === 'active';
+  });
 
   // Kit bekalan (kit_id) dikembangkan kepada item individu — sama macam applySupplyStock() di plan-week.html
+  // Kumpul dari KEDUA-DUA supplies (Sesi 1) dan supplies_2 (Sesi 2) sbb mana-mana satu boleh guna kit.
   const kitIds = new Set();
-  (plans || []).forEach(p => (Array.isArray(p.coaching_schedule) ? p.coaching_schedule : []).forEach(w =>
-    (Array.isArray(w.supplies) ? w.supplies : []).forEach(s => { if (s?.kit_id) kitIds.add(s.kit_id); })));
+  (plans || []).forEach(p => (Array.isArray(p.coaching_schedule) ? p.coaching_schedule : []).forEach(w => {
+    (Array.isArray(w.supplies) ? w.supplies : []).forEach(s => { if (s?.kit_id) kitIds.add(s.kit_id); });
+    (Array.isArray(w.supplies_2) ? w.supplies_2 : []).forEach(s => { if (s?.kit_id) kitIds.add(s.kit_id); });
+  }));
   const kitMap = {};
   if (kitIds.size) {
     const { data: kits, error: kitErr } = await window.db.from('psy_procedure_kits')
@@ -54,11 +67,19 @@ window.computeForecastForRange = async function (itemIds, startDate, endDate) {
   }
 
   upcoming.forEach(r => {
+    // Pakej/pelan AKTIF sahaja — pelan yang dijeda/selesai/dibatalkan tak patut sumbang
+    // kepada keperluan walaupun baris sesi tertinggal masih ada.
+    if (!planActive[r.plan_id]) return;
     const schedule = planMap[r.plan_id] || [];
     const weekObj = schedule.find(w => w.week === r.week_number) || schedule[r.week_number - 1];
     if (!weekObj || weekObj.mode === 'online') return;
 
-    const supplies = Array.isArray(weekObj.supplies) ? weekObj.supplies : [];
+    // Sesi 2 (session_day=2) guna senarai bekalan berasingan (supplies_2) — padan dgn
+    // getWeekCoachingItems() di plan-week.html. idx kekal relatif kepada senarai yang
+    // DIPILIH, sama macam kunci tick coaching_checks disimpan (session-agnostic).
+    const activeDay = r.session_day || 1;
+    const suppliesRaw = activeDay === 2 ? weekObj.supplies_2 : weekObj.supplies;
+    const supplies = Array.isArray(suppliesRaw) ? suppliesRaw : [];
     supplies.forEach((s, idx) => {
       // Bekalan yang dah DITICK staff = stok dah keluar (lihat deductSessionSupplies / applySupplyStock).
       // Tak perlu dikira sebagai keperluan lagi — elak kiraan berganda. Kunci tick ikut bekalan (idx),
@@ -80,6 +101,7 @@ window.computeForecastForRange = async function (itemIds, startDate, endDate) {
         forecast[itemId].required += qty;
         forecast[itemId].breakdown.push({
           patient_name: r.psy_patients?.full_name || r.psy_patients?.mrn || '—',
+          package_name: planNameMap[r.plan_id] || '—',
           week_number:  r.week_number,
           session_date: r.session_date,
           qty,
@@ -189,6 +211,7 @@ window.computeMappedItemIds = async function () {
   (pkgs || []).forEach(pk => {
     (Array.isArray(pk.coaching_schedule) ? pk.coaching_schedule : []).forEach(w => {
       (Array.isArray(w?.supplies) ? w.supplies : []).forEach(s => { if (s?.item_id) ids.add(s.item_id); });
+      (Array.isArray(w?.supplies_2) ? w.supplies_2 : []).forEach(s => { if (s?.item_id) ids.add(s.item_id); });
     });
   });
   return ids;

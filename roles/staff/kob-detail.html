@@ -704,6 +704,31 @@
             </div>
           </div>
 
+          <!-- Pemberian Stok semasa KOB — barang yang pesakit terima (sample/starter kit dll.)
+             semasa sesi KOB ni. Senarai preset + qty TETAP ditetapkan di Tetapan Sistem →
+             Bekalan KOB (staff cuma tick, tak boleh ubah kuantiti di sini). Item yang dah
+             direkod sebelum ni dikunci (elak tolak stok dua kali) — tiada senarai sejarah
+             berasingan sebab KOB cuma sekali per pesakit. Berasingan dari ledger "Bekalan"
+             pakej mingguan (patient-hub.html tab Bekalan / pemberian-stok.html), tapi sama-sama
+             tolak stok sebenar psy_inventory_items (reference_type='kob_session'). -->
+          <div class="space-y-3 pt-5 border-t border-ink/10">
+            <div class="flex items-center justify-between flex-wrap gap-2 border-b border-ink/10 pb-2">
+              <h3 class="font-bold text-navy text-base">📦 Pemberian Stok</h3>
+            </div>
+
+            <div id="ksup-checklist" class="space-y-2">Memuatkan...</div>
+            <div id="ksup-form-extra" class="hidden space-y-3">
+              <div>
+                <label class="lbl">Nota (pilihan)</label>
+                <textarea id="ksup-notes" rows="2" placeholder="cth: starter kit, sample produk..." class="finput"></textarea>
+              </div>
+              <div class="flex justify-end">
+                <button onclick="submitKobSupply()" id="btn-ksup-save" data-rbac="kob.edit"
+                  class="bg-navy text-white px-5 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">Rekod</button>
+              </div>
+            </div>
+          </div>
+
           <!-- Cadangan Pakej Rawatan + Bayaran — bawah sesi/soalan, sebab jadi
              SELEPAS konsultasi, bukan sebelum -->
           <div id="package-rec-card" class="hidden space-y-3 pt-5 border-t border-ink/10">
@@ -779,6 +804,7 @@
     </div>
   </div>
 
+
   <script src="/shared/supabase.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
   <script src="../../config/supabase.js"></script>
@@ -790,6 +816,9 @@
   <script src="../../shared/invoice.js"></script>
   <script src="../../shared/kobPayments.js"></script>
   <script src="../../shared/defaultAgreement.js"></script>
+  <script src="../../shared/hk1.js"></script>
+  <script src="../../shared/inventoryStock.js"></script>
+  <script src="../../shared/settings.js"></script>
   <script src="_shared.js"></script>
   <script>
     function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
@@ -1471,7 +1500,12 @@
           duration_weeks: weeks, current_week: 1, coaching_schedule: pkg.coaching_schedule || [],
           status: 'active',
         }).select('id').single();
-        if (plan?.id) await seedPlanWeeklyProgress(plan.id, patient.id, pkg, weeks);
+        if (plan?.id) {
+          await seedPlanWeeklyProgress(plan.id, patient.id, pkg, weeks);
+          // Serta-merta cipta Sesi 1:1 (Hakeema/Hakeem/Dr) wajib pakej utk SEMUA minggu —
+          // tak perlu tunggu staf buka plan-week.html minggu tu (audit #99).
+          await window.hk1SeedForPlan(plan.id, patient.id, pkg.coaching_schedule, window.currentUser?.id, window.currentUser?.full_name);
+        }
       }
       patient.active_package_id = kob.recommended_package_id;
       return true;
@@ -1624,7 +1658,12 @@
               coaching_schedule: pkg.coaching_schedule || [],
               status: 'active',
             }).select('id').single();
-            if (autoPlan?.id) await seedPlanWeeklyProgress(autoPlan.id, patient.id, pkg, weeks);
+            if (autoPlan?.id) {
+              await seedPlanWeeklyProgress(autoPlan.id, patient.id, pkg, weeks);
+              // Serta-merta cipta Sesi 1:1 (Hakeema/Hakeem/Dr) wajib pakej utk SEMUA minggu —
+              // tak perlu tunggu staf buka plan-week.html minggu tu (audit #99).
+              await window.hk1SeedForPlan(autoPlan.id, patient.id, pkg.coaching_schedule, window.currentUser?.id, window.currentUser?.full_name);
+            }
           }
         }
 
@@ -4172,6 +4211,92 @@
       }
     }
 
+    // ── Pemberian Stok (KOB) ──────────────────────────────────────────
+    // Ledger berasingan dari bekalan pakej mingguan (reference_type='kob_session',
+    // reference_id=kobId) supaya "barang KOB" boleh dibezakan daripada "bekalan
+    // sesi" di psy_stock_movements — tapi sama-sama tolak stok sebenar lalu
+    // addStockToLocation() (shared/inventoryStock.js). Qty TETAP ikut preset
+    // (Tetapan Sistem → Bekalan KOB) — staff cuma tick, tak boleh ubah kuantiti.
+    let kobSupplyPreset = []; // [{item_id, item_name, unit, qty}] dari Tetapan Sistem → Bekalan KOB
+    let kobSupplyStockById = {}; // item_id -> qty_in_stock semasa (utk amaran stok tak cukup)
+    let kobSupplyGivenIds = new Set(); // item_id yang dah direkod utk KOB ni (elak tolak stok dua kali)
+
+    async function loadKobSupply() {
+      await window.iswLoadSettings?.();
+      kobSupplyPreset = window.iswGetSetting?.('kob_default_supplies', []) || [];
+
+      const presetIds = kobSupplyPreset.map(s => s.item_id).filter(Boolean);
+      const [stockRes, givenRes] = await Promise.all([
+        presetIds.length
+          ? window.db.from('psy_inventory_items').select('id,qty_in_stock').in('id', presetIds)
+          : Promise.resolve({ data: [] }),
+        window.db.from('psy_stock_movements').select('item_id')
+          .eq('reference_type', 'kob_session').eq('reference_id', kobId).eq('movement_type', 'out'),
+      ]);
+      kobSupplyStockById = {}; (stockRes.data || []).forEach(i => { kobSupplyStockById[i.id] = Number(i.qty_in_stock) || 0; });
+      kobSupplyGivenIds = new Set((givenRes.data || []).map(r => r.item_id));
+      renderKsupChecklist();
+    }
+
+    function renderKsupChecklist() {
+      const box = document.getElementById('ksup-checklist');
+      const extra = document.getElementById('ksup-form-extra');
+      if (!box) return;
+      if (!kobSupplyPreset.length) {
+        box.innerHTML = `<div class="text-xs text-ink/50 italic">Senarai bekalan lalai belum ditetapkan.
+          Sila tetapkan di <a href="tetapan.html" target="_blank" class="text-navy underline">Tetapan Sistem → Bekalan KOB</a>.</div>`;
+        extra?.classList.add('hidden');
+        return;
+      }
+      box.innerHTML = kobSupplyPreset.map((s, i) => {
+        const given = kobSupplyGivenIds.has(s.item_id);
+        const stock = kobSupplyStockById[s.item_id];
+        const stockKnown = stock !== undefined;
+        return `<label class="flex items-center gap-3 px-3 py-2 rounded-lg border border-ink/10 ${given ? 'bg-green-light/40' : 'hover:bg-ink/[0.02] cursor-pointer'}">
+          <input type="checkbox" id="ksup-chk-${i}" class="w-4 h-4 flex-shrink-0" ${given ? 'checked disabled' : ''}>
+          <span class="flex-1 min-w-0 text-sm text-ink font-medium truncate">${escapeHtml(s.item_name)}</span>
+          <span class="text-xs text-ink/60 w-20 text-center">${s.qty} ${escapeHtml(s.unit || '')}</span>
+          ${given
+            ? `<span class="text-[11px] text-green-dark font-semibold w-24 text-right">✓ Sudah direkod</span>`
+            : `<span class="text-[11px] ${stockKnown && stock === 0 ? 'text-terracotta' : 'text-ink/40'} w-24 text-right">${stockKnown ? `Baki stok: ${stock}` : ''}</span>`}
+        </label>`;
+      }).join('');
+      extra?.classList.remove('hidden');
+      const notesEl = document.getElementById('ksup-notes');
+      if (notesEl) notesEl.value = '';
+    }
+
+    async function submitKobSupply() {
+      const picked = kobSupplyPreset.map((s, i) => ({
+        ...s, checked: document.getElementById(`ksup-chk-${i}`)?.checked,
+      })).filter(s => s.checked && !kobSupplyGivenIds.has(s.item_id));
+
+      if (!picked.length) { banner('Sila tick sekurang-kurangnya satu item', 'error'); return; }
+      const insufficient = picked.find(s => kobSupplyStockById[s.item_id] !== undefined && s.qty > kobSupplyStockById[s.item_id]);
+      if (insufficient) { banner(`Stok tidak mencukupi untuk "${insufficient.item_name}" (baki ${kobSupplyStockById[insufficient.item_id]} ${insufficient.unit || ''})`, 'error'); return; }
+
+      const notes = document.getElementById('ksup-notes').value.trim() || null;
+      const btn = document.getElementById('btn-ksup-save');
+      btn.disabled = true; btn.textContent = 'Merekod...';
+
+      try {
+        for (const s of picked) {
+          await window.addStockToLocation(s.item_id, -s.qty, null, {
+            type: 'out', refType: 'kob_session', refId: kobId,
+            note: `Pemberian stok KOB${notes ? ': ' + notes : ''}`, itemName: s.item_name,
+          });
+        }
+        await auditLog('kob.supply_given', kobId, { patient_id: patient?.id, items: picked.map(s => ({ item_id: s.item_id, item_name: s.item_name, qty: s.qty, unit: s.unit })) });
+        await loadKobSupply();
+        banner(`Bekalan direkod ✅ — ${picked.map(s => `${s.item_name} (${s.qty}${s.unit || ''})`).join(', ')}`);
+      } catch (e) {
+        banner('Ralat: ' + (e.message || e), 'error');
+      } finally {
+        btn.disabled = false; btn.textContent = 'Rekod';
+      }
+    }
+    window.submitKobSupply = submitKobSupply;
+
     async function saveMeetLink() {
       const link = document.getElementById('meet-link-input').value.trim();
       if (link && !/^https?:\/\//i.test(link)) {
@@ -4522,6 +4647,7 @@
       const user = await initStaff('kob_list', 'KOB Detail');
       if (!user) return;
       await loadKob();
+      if (kob) await loadKobSupply();
       restoreScrollPreserve();
       // Buka terus dari KOB Report (?autoprint=1) — jana laporan PDF automatik tanpa perlu klik lagi.
       if (new URLSearchParams(location.search).get('autoprint') === '1') printKobFullReport({ inSelf: true });

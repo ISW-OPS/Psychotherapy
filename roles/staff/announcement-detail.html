@@ -60,6 +60,33 @@ const STATUS_BADGE = {
 
 let IT = null, CREATOR = '';
 let REACH = { isPatientTarget: false, recipients: 0, reads: 0 };
+let DELIVERY = [];
+
+// Audit #133 — delivery log penghantaran (psy_notification_logs sedia ada,
+// lihat logAnnouncementDelivery() di _shared.js). Rujukan guna lajur `event`:
+// 'announcement:<id>' — ditulis bila pengumuman diterbitkan/diaktifkan.
+async function loadDeliveryLog() {
+  try {
+    const { data } = await window.db.from('psy_notification_logs')
+      .select('channel, status, message, error, sent_at, created_at')
+      .eq('event', 'announcement:' + IT.id)
+      .order('created_at', { ascending: false });
+    DELIVERY = data || [];
+  } catch (_) { DELIVERY = []; }
+}
+const CHANNEL_LABEL = { in_app: 'Dalam Apl', whatsapp: 'WhatsApp', email: 'E-mel', push: 'Push' };
+function deliveryHtml() {
+  if (!DELIVERY.length) return '';
+  return DELIVERY.map(d => {
+    const ok = d.status === 'sent';
+    const ch = CHANNEL_LABEL[d.channel] || d.channel || 'Dalam Apl';
+    return `<div class="flex items-start gap-3">
+      <span class="w-6 h-6 rounded-full ${ok ? 'bg-green/15 text-green-dark' : 'bg-terracotta/15 text-terracotta'} flex items-center justify-center text-xs flex-shrink-0">${ok ? '📨' : '⚠️'}</span>
+      <div><div class="text-sm font-semibold text-ink">📨 Status Penghantaran (${ch}): ${ok ? 'Berjaya' : 'Gagal'}</div>
+        <div class="text-[11px] text-ink/45">${fmtDateTime(d.sent_at || d.created_at)}${!ok && d.error ? ' — ' + d.error : ''}</div></div>
+    </div>`;
+  }).join('');
+}
 
 // Audit #G-31/33/34 (Tier 5) — anggaran penerima (patut nampak dashboard/senarai
 // pengumuman pesakit) + berapa dah "dibaca" (psy_announcement_reads, impression-based).
@@ -160,6 +187,7 @@ function render() {
             <div><div class="text-sm font-semibold text-ink">Terakhir dikemaskini</div>
               <div class="text-[11px] text-ink/45">${fmtDateTime(IT.updated_at)}</div></div>
           </div>` : ''}
+          ${deliveryHtml()}
         </div>
       </div>
     </div>
@@ -200,7 +228,11 @@ async function toggleActive() {
   try {
     const nv = !IT.is_active;
     await window.db.from('psy_announcements').update({ is_active: nv }).eq('id', IT.id);
-    IT.is_active = nv; banner(nv ? 'Diaktifkan' : 'Dinyahaktif');
+    IT.is_active = nv;
+    // Audit #133 — delivery log: aktifkan draf = "diterbitkan" juga
+    if (nv) await logAnnouncementDelivery(IT.id, IT.title, 'sent');
+    banner(nv ? 'Diaktifkan' : 'Dinyahaktif');
+    await loadDeliveryLog();
     render();
   } catch (e) { banner('Ralat: ' + e.message, 'error'); }
 }
@@ -220,6 +252,7 @@ async function toggleActive() {
       CREATOR = prof?.full_name || '';
     }
     await computeReach();
+    await loadDeliveryLog();
     render();
   } catch (e) {
     document.getElementById('detail-wrap').innerHTML = `<div class="lg:col-span-3 bg-terracotta/10 text-terracotta rounded-xl p-4 text-sm">Ralat: ${e.message}</div>`;

@@ -1405,19 +1405,39 @@
     async function loadReaksiGroups() {
       const [itemsRes, katRes] = await Promise.all([
         window.db.from('psy_reaksi_item')
-          .select('id,kumpulan,ikon,label,urutan,is_emergency,boleh_pilih_teruk').eq('aktif', true).order('urutan', { ascending: true }),
+          .select('id,kumpulan,ikon,label,urutan,is_emergency,boleh_pilih_teruk,boleh_pilih_lokasi,boleh_pilih_anggota,status').eq('aktif', true).order('urutan', { ascending: true }),
         // Kategori dimatikan staff (psy_reaksi_kategori.aktif=false) — sorok semua reaksi kumpulan itu.
         // Jika jadual belum wujud (migration belum run), error diabaikan = tiada tapisan.
-        window.db.from('psy_reaksi_kategori').select('nama,aktif'),
+        window.db.from('psy_reaksi_kategori').select('nama,aktif,status'),
       ]);
-      // Migration 20260721 (boleh_pilih_teruk) belum run — cuba tanpa kolum tu
+      // Migration 20261007 (status) belum run — cuba tanpa status, kekalkan boleh_pilih_teruk/lokasi/anggota
       let data = itemsRes.data;
       if (itemsRes.error) {
-        const fb = await window.db.from('psy_reaksi_item')
-          .select('id,kumpulan,ikon,label,urutan,is_emergency').eq('aktif', true).order('urutan', { ascending: true });
-        data = fb.data;
+        const fb1 = await window.db.from('psy_reaksi_item')
+          .select('id,kumpulan,ikon,label,urutan,is_emergency,boleh_pilih_teruk,boleh_pilih_lokasi,boleh_pilih_anggota').eq('aktif', true).order('urutan', { ascending: true });
+        data = fb1.data;
+        // Migration 20260721/20261008 (boleh_pilih_teruk/boleh_pilih_lokasi/anggota) pun belum run — cuba minimum
+        if (fb1.error) {
+          const fb2 = await window.db.from('psy_reaksi_item')
+            .select('id,kumpulan,ikon,label,urutan,is_emergency').eq('aktif', true).order('urutan', { ascending: true });
+          data = fb2.data;
+        }
       }
-      const katOff = new Set((katRes.data || []).filter(k => k.aktif === false).map(k => k.nama));
+      // Migration 20261007 (status kategori) belum run — cuba tanpa kolum tu, jangan
+      // biar seluruh query kategori gagal (nanti tapisan aktif pun hilang sekali).
+      let katData = katRes.data;
+      if (katRes.error) {
+        const katFb = await window.db.from('psy_reaksi_kategori').select('nama,aktif');
+        katData = katFb.data;
+      }
+      // Status semakan Draft/Reviewed/Approved (audit #B2-111) — hanya 'active'
+      // (atau rekod lama tiada kolum status langsung, sebelum migration 20261007)
+      // dipaparkan kpd pesakit. Ditapis client-side supaya select() di atas tak
+      // perlu fallback berasingan bila kolum belum wujud.
+      data = (data || []).filter(it => !('status' in it) || it.status === 'active');
+      const katOff = new Set((katData || [])
+        .filter(k => k.aktif === false || ('status' in k && k.status && k.status !== 'active'))
+        .map(k => k.nama));
       const groups = [], byKey = {};
       (data || []).filter(it => !katOff.has(it.kumpulan)).forEach(it => {
         if (!byKey[it.kumpulan]) { byKey[it.kumpulan] = { kumpulan: it.kumpulan, ikon: it.ikon || '', items: [] }; groups.push(byKey[it.kumpulan]); }
@@ -1438,53 +1458,13 @@
         const symptomIds = [...new Set(labels.map(l => REAKSI_ITEM_BY_KEY[l]).filter(Boolean))];
         if (!symptomIds.length) return;
 
-        // jenis & panduan = kolum v2 (migration 20260715); fallback tanpa mereka jika belum run
-        let maps = null;
-        {
-          const res = await window.db.from('psy_reaksi_action_map')
-            .select('symptom_id, action_id, psy_reaksi_actions(id,title,priority,is_emergency,aktif,jenis,panduan,contraindication_keywords,status)')
-            .in('symptom_id', symptomIds);
-          if (res.error) {
-            const res2 = await window.db.from('psy_reaksi_action_map')
-              .select('symptom_id, action_id, psy_reaksi_actions(id,title,priority,is_emergency,aktif)')
-              .in('symptom_id', symptomIds);
-            maps = res2.data;
-          } else maps = res.data;
-        }
-        if (!maps || !maps.length) return;
-
-        // Dedup GLOBAL ikut id — tindakan sama (cth dipetakan ke banyak simptom)
-        // hanya diambil SEKALI. actsBySym pula utk kumpulan per kategori (mesej 1).
-        const seen = new Set(), actionsAll = [], actsBySymAll = {};
-        maps.forEach(m => {
-          const a = m.psy_reaksi_actions;
-          // status audit #B2-39/#B2-45 — cuma tindakan 'active' (atau rekod lama tiada
-          // kolum status, fallback undefined = ikut default DB) yg jana cadangan pesakit;
-          // draft/reviewed/approved BELUM lepas semakan penuh.
-          if (!a || a.aktif === false || (a.status && a.status !== 'active')) return;
-          (actsBySymAll[m.symptom_id] ||= []).push(a);
-          if (!seen.has(a.id)) { seen.add(a.id); actionsAll.push(a); }
-        });
-        if (!actionsAll.length) return;
-
-        // ── Contraindication (audit #B2-3): tindakan bertag contraindication_keywords
-        // yang dijumpai dalam psy_patients.medical_condition pesakit ni DISOROK drpd
-        // mesej auto — bukan hantar terus. Direkodkan dlm restrictedActions utk
-        // notifikasi coach (bukan senyap hilang terus tanpa jejak).
-        const medCond = (window.patientRecord?.medical_condition || '').toLowerCase();
-        const isRestricted = a => {
-          if (!medCond || !a.contraindication_keywords) return false;
-          return a.contraindication_keywords.split(',').map(k => k.trim().toLowerCase()).filter(Boolean)
-            .some(k => medCond.includes(k));
-        };
-        const restrictedActions = actionsAll.filter(isRestricted);
-        const actions = actionsAll.filter(a => !isRestricted(a));
-        const actsBySym = {};
-        Object.entries(actsBySymAll).forEach(([k, arr]) => { actsBySym[k] = arr.filter(a => !isRestricted(a)); });
-        if (!actions.length) return;
-        actions.sort((x, y) => (Number(y.is_emergency) - Number(x.is_emergency)) || (x.priority - y.priority));
-
-        // ── ZON PROTOKOL (Red Emergency): ikut tahap risiko TERTINGGI simptom ──
+        // ── ZON PROTOKOL (Red Emergency) dikira DAHULU, bebas drpd tindakan dipetakan
+        // (audit #B2-115) — reaksi berisiko tinggi/kecemasan WAJIB route ke protokol
+        // kecemasan walaupun BELUM ada tindakan 'active' dipetakan (cth baru diimport,
+        // masih status Draft) atau mapping tiada langsung. Dulu fungsi ni "return" awal
+        // (tiada maps/actions = senyap keluar) SEBELUM zon dikira — pesakit berisiko
+        // tinggi jadi tersasul tanpa amaran/notifikasi coach. Zon kini dikira dulu;
+        // bail selepas ni (maps/actions kosong) hanya dibenarkan bila BUKAN kecemasan.
         //   hijau  = ikut saranan sahaja
         //   kuning = + notifikasi coach (perlu perhatian) — via trigger DB
         //   merah  = tahap tinggi / kecemasan / pesakit tanda Teruk → SATU mesej kritikal (hospital) + 🚨 coach
@@ -1504,8 +1484,56 @@
             else if (tahap === 'sederhana' && zon !== 'merah') zon = 'kuning';
           });
         } catch (_) { }
+        let isEmergency = zon === 'merah';
+
+        // jenis & panduan = kolum v2 (migration 20260715); fallback tanpa mereka jika belum run
+        let maps = null;
+        {
+          const res = await window.db.from('psy_reaksi_action_map')
+            .select('symptom_id, action_id, psy_reaksi_actions(id,title,priority,is_emergency,aktif,jenis,panduan,contraindication_keywords,status)')
+            .in('symptom_id', symptomIds);
+          if (res.error) {
+            const res2 = await window.db.from('psy_reaksi_action_map')
+              .select('symptom_id, action_id, psy_reaksi_actions(id,title,priority,is_emergency,aktif)')
+              .in('symptom_id', symptomIds);
+            maps = res2.data;
+          } else maps = res.data;
+        }
+        if ((!maps || !maps.length) && !isEmergency) return;
+
+        // Dedup GLOBAL ikut id — tindakan sama (cth dipetakan ke banyak simptom)
+        // hanya diambil SEKALI. actsBySym pula utk kumpulan per kategori (mesej 1).
+        const seen = new Set(), actionsAll = [], actsBySymAll = {};
+        (maps || []).forEach(m => {
+          const a = m.psy_reaksi_actions;
+          // status audit #B2-39/#B2-45 — cuma tindakan 'active' (atau rekod lama tiada
+          // kolum status, fallback undefined = ikut default DB) yg jana cadangan pesakit;
+          // draft/reviewed/approved BELUM lepas semakan penuh.
+          if (!a || a.aktif === false || (a.status && a.status !== 'active')) return;
+          (actsBySymAll[m.symptom_id] ||= []).push(a);
+          if (!seen.has(a.id)) { seen.add(a.id); actionsAll.push(a); }
+        });
+        if (!actionsAll.length && !isEmergency) return;
+
+        // ── Contraindication (audit #B2-3): tindakan bertag contraindication_keywords
+        // yang dijumpai dalam psy_patients.medical_condition pesakit ni DISOROK drpd
+        // mesej auto — bukan hantar terus. Direkodkan dlm restrictedActions utk
+        // notifikasi coach (bukan senyap hilang terus tanpa jejak).
+        const medCond = (window.patientRecord?.medical_condition || '').toLowerCase();
+        const isRestricted = a => {
+          if (!medCond || !a.contraindication_keywords) return false;
+          return a.contraindication_keywords.split(',').map(k => k.trim().toLowerCase()).filter(Boolean)
+            .some(k => medCond.includes(k));
+        };
+        const restrictedActions = actionsAll.filter(isRestricted);
+        const actions = actionsAll.filter(a => !isRestricted(a));
+        const actsBySym = {};
+        Object.entries(actsBySymAll).forEach(([k, arr]) => { actsBySym[k] = arr.filter(a => !isRestricted(a)); });
+        if (!actions.length && !isEmergency) return;
+        actions.sort((x, y) => (Number(y.is_emergency) - Number(x.is_emergency)) || (x.priority - y.priority));
+
         if (actions.some(a => a.is_emergency)) zon = 'merah';
-        const isEmergency = zon === 'merah';
+        isEmergency = zon === 'merah';
         const firstName = window.__firstName || (patientRecord.full_name || '').split(' ')[0] || 'Pesakit';
         const symptomLabels = [...new Set(labels.map(l => l.split('::').pop()))];
 
@@ -1574,15 +1602,18 @@
         const msgs = []; // { msg_jenis, text, actions } — dihantar berjarak 5 minit ikut susunan
 
         if (isEmergency) {
-          // Kecemasan: SATU mesej segera dengan SEMUA tindakan
+          // Kecemasan: SATU mesej segera dengan SEMUA tindakan. actions boleh KOSONG
+          // (audit #B2-115 — reaksi berisiko tinggi tiada tindakan Active dipetakan
+          // lagi); mesej tetap dihantar dgn baris fallback, bukan senarai kosong.
           const t = tpl.reaksi_kritikal || tpl.reaksi_harian;
+          const actionListText = allActionList || '⚠️ Tiada tindakan khusus disahkan staf buat masa ini.';
           const text = t
-            ? fill(t, { patient_name: firstName, symptom_list: symptomList, action_list: allActionList, emergency_message: '🚨 PENTING: Terdapat simptom yang memerlukan perhatian segera. Sila hubungi coach anda.\n\n' })
+            ? fill(t, { patient_name: firstName, symptom_list: symptomList, action_list: actionListText, emergency_message: '🚨 PENTING: Terdapat simptom yang memerlukan perhatian segera. Sila hubungi coach anda.\n\n' })
             : [
                 `Assalamualaikum ${firstName},`, '',
                 '🚨 PENTING: Berdasarkan Kepatuhan Pesakit anda, terdapat simptom yang memerlukan perhatian segera.', '',
                 'Reaksi yang dikesan:', symptomList, '',
-                'Tindakan disyorkan:', allActionList, '',
+                'Tindakan disyorkan:', actionListText, '',
                 'Sila hubungi coach anda DENGAN SEGERA atau dapatkan rawatan di hospital berdekatan jika keadaan serius.',
               ].join('\n');
           msgs.push({ msg_jenis: 'tindakan', text, actions: actionsJson(actions) });
@@ -1630,13 +1661,41 @@
         }
         if (!msgs.length) return;
 
+        // Conflict-check PASANGAN TINDAKAN (audit #118) — staf tetapkan sendiri
+        // pasangan tindakan yang bercanggah (reaksi-item.html tab Konflik, jadual
+        // psy_reaksi_conflict_pairs); sistem TIDAK cuba teka makna teks secara
+        // automatik. Kalau ADA pasangan yg KEDUA-DUA tindakannya muncul dalam
+        // `actions` (array di atas, SELEPAS filter contraindication), rekod sebab
+        // dalam conflictPairsFound supaya staf nampak KENAPA digantung (bukan
+        // setakat "≥2 simptom" generik) di reaksi-laporan.html.
+        let conflictPairsFound = [];
+        try {
+          const actionIds = actions.map(a => a.id);
+          if (actionIds.length >= 2) {
+            const { data: cpRows } = await window.db.from('psy_reaksi_conflict_pairs')
+              .select('action_id_1, action_id_2')
+              .or(`action_id_1.in.(${actionIds.join(',')}),action_id_2.in.(${actionIds.join(',')})`);
+            const idSet = new Set(actionIds);
+            const titleById = {}; actions.forEach(a => { titleById[a.id] = a.title; });
+            (cpRows || []).forEach(p => {
+              if (idSet.has(p.action_id_1) && idSet.has(p.action_id_2)) {
+                conflictPairsFound.push({
+                  action_id_1: p.action_id_1, title_1: titleById[p.action_id_1] || '',
+                  action_id_2: p.action_id_2, title_2: titleById[p.action_id_2] || '',
+                });
+              }
+            });
+          }
+        } catch (_) { /* migration 20261007_reaksi_conflict_pairs belum run — skip semakan */ }
+
         // Conflict-check (audit #B2-2): >1 reaksi tercetus SERENTAK boleh hasilkan
         // cadangan bercanggah (cth satu suruh tambah air, satu lagi suruh kurang).
         // Kecemasan dikecualikan (zon merah sentiasa SATU mesej kritikal ringkas,
         // bukan gabungan berbilang saranan). Bila conflict, baris digantung
         // status='needs_review' (cron TAK proses ni — lihat comment schema) sehingga
-        // staf Lulus/Skip di reaksi-laporan.html.
-        const needsReview = !isEmergency && labels.length >= 2;
+        // staf Lulus/Skip di reaksi-laporan.html. Pasangan tindakan bercanggah
+        // (audit #118) PAKSA needs_review walaupun cuma 1 simptom.
+        const needsReview = !isEmergency && (labels.length >= 2 || conflictPairsFound.length > 0);
 
         // Mesej pertama terus; seterusnya berjarak 5 minit (cron reaksi-advice-send
         // proses baris send_after yang cukup masa tiap 5 min → jarak sebenar ~5-10 min)
@@ -1653,14 +1712,15 @@
           msg_jenis: m.msg_jenis,
           send_after: new Date(nowMs + i * 5 * 60 * 1000).toISOString(),
           zon,
+          conflict_pairs: conflictPairsFound,
           ...(needsReview ? { status: 'needs_review' } : {}),
         }));
 
         let inserted = null;
         {
           let res = await window.db.from('psy_reaksi_advice_log').insert(rows).select('id');
-          if (res.error) { // 20260717 (zon) belum run — cuba tanpa kolum zon
-            res = await window.db.from('psy_reaksi_advice_log').insert(rows.map(({ zon: _z, ...r }) => r)).select('id');
+          if (res.error) { // 20261007 (conflict_pairs) atau 20260717 (zon) belum run — cuba tanpa kolum baharu
+            res = await window.db.from('psy_reaksi_advice_log').insert(rows.map(({ zon: _z, conflict_pairs: _cp, ...r }) => r)).select('id');
           }
           if (res.error) {
             // Migration 20260716 belum run (tiada msg_jenis/send_after) —
@@ -2080,6 +2140,13 @@
       // Simptom ditanda Teruk (subset reaksi_pemulihan) — dipakai zon protokol
       if (Array.isArray(answers.reaksi_pemulihan_teruk) && answers.reaksi_pemulihan_teruk.length) {
         jawapan.reaksi_pemulihan_teruk = answers.reaksi_pemulihan_teruk;
+      }
+      // Sub-pilihan sisi (kiri/kanan) + anggota (tangan/kaki) utk simptom boleh_pilih_lokasi (cth Kejang/Kebas)
+      if (answers.reaksi_pemulihan_sisi && Object.keys(answers.reaksi_pemulihan_sisi).length) {
+        jawapan.reaksi_pemulihan_sisi = answers.reaksi_pemulihan_sisi;
+      }
+      if (answers.reaksi_pemulihan_anggota && Object.keys(answers.reaksi_pemulihan_anggota).length) {
+        jawapan.reaksi_pemulihan_anggota = answers.reaksi_pemulihan_anggota;
       }
       // Simpan butiran check-in adaptif (kaya) dalam jawapan JSON
       jawapan.__mood = healthData.mood;
@@ -3144,7 +3211,19 @@
     // Kad reaksi — macam wizOptCard tapi bila dipilih & simptom benarkan (boleh_pilih_teruk),
     // papar toggle Biasa/Teruk sekali (Teruk → zon Merah terus, dikira di generateReaksiAdvice).
     // Simptom kecemasan (is_emergency) tak papar toggle — ia dah tetap Merah, pilihan jadi tak bermakna.
-    function wizReaksiCard(kumpulan, val, label, selected, boleh, teruk, emergency) {
+    function wizReaksiCard(kumpulan, val, label, selected, boleh, teruk, emergency, sisi, sisiVal, anggota, anggotaVal) {
+      const locPair = (dim, a, b, curVal) => `
+        <div class="mt-2 flex gap-2">
+          <button type="button" data-wiz-loc="${escAttr(val)}" data-wiz-loc-dim="${dim}" data-wiz-loc-val="${a.v}"
+            class="flex-1 rounded-lg px-2.5 py-1.5 text-[12px] font-bold border-2 transition-colors ${curVal === a.v ? 'border-green bg-green/10 text-green-dark' : 'border-[#e9ecf1] text-ink/45'}">${a.l}</button>
+          <button type="button" data-wiz-loc="${escAttr(val)}" data-wiz-loc-dim="${dim}" data-wiz-loc-val="${b.v}"
+            class="flex-1 rounded-lg px-2.5 py-1.5 text-[12px] font-bold border-2 transition-colors ${curVal === b.v ? 'border-green bg-green/10 text-green-dark' : 'border-[#e9ecf1] text-ink/45'}">${b.l}</button>
+        </div>`;
+      const locRows = selected && (sisi || anggota) ? `
+        <div class="mt-2">
+          ${anggota ? locPair('anggota', { v: 'tangan', l: 'Tangan' }, { v: 'kaki', l: 'Kaki' }, anggotaVal) : ''}
+          ${sisi ? locPair('sisi', { v: 'kanan', l: 'Kanan' }, { v: 'kiri', l: 'Kiri' }, sisiVal) : ''}
+        </div>` : '';
       const sevRow = emergency
         ? (selected ? '<div class="mt-2.5 pt-2.5 border-t border-terracotta/20 text-[11.5px] font-bold text-terracotta">🚨 Simptom kecemasan — terus Zon Merah</div>' : '')
         : (selected && boleh) ? `
@@ -3161,6 +3240,7 @@
         </button>
         ${selected ? '<span class="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-green text-white flex items-center justify-center text-[11px] shadow-sm">✓</span>' : ''}
         ${sevRow}
+        ${locRows}
       </div>`;
     }
 
@@ -3315,12 +3395,14 @@
         const g = step.g;
         const selArr = Array.isArray(answers.reaksi_pemulihan) ? answers.reaksi_pemulihan : [];
         const terukArr = Array.isArray(answers.reaksi_pemulihan_teruk) ? answers.reaksi_pemulihan_teruk : [];
+        const sisiMap = answers.reaksi_pemulihan_sisi || {};
+        const anggotaMap = answers.reaksi_pemulihan_anggota || {};
         const gItems = g.items.filter(it2 => !isNoneLabel(it2.label));   // "Tiada simptom" diganti kad Tiada masalah
         const anySel = gItems.some(it2 => selArr.includes(`${g.kumpulan}::${it2.label}`));
         const cards = gItems.map(it2 => {
           const val = `${g.kumpulan}::${it2.label}`;
           const selected = selArr.includes(val);
-          return wizReaksiCard(g.kumpulan, val, `${it2.ikon ? it2.ikon + ' ' : ''}${it2.label}`, selected, !it2.is_emergency && it2.boleh_pilih_teruk !== false, terukArr.includes(val), !!it2.is_emergency);
+          return wizReaksiCard(g.kumpulan, val, it2.label, selected, !it2.is_emergency && it2.boleh_pilih_teruk !== false, terukArr.includes(val), !!it2.is_emergency, !!it2.boleh_pilih_lokasi, sisiMap[val], !!it2.boleh_pilih_anggota, anggotaMap[val]);
         }).join('');
         const none = wizOptCard('reaksi', g.kumpulan, '__none__', 'Tiada masalah ✅', '', !anySel, false);
         const lainKey = `reaksi_pemulihan__lain__${slugRK(g.kumpulan)}`;
@@ -3344,10 +3426,17 @@
         // Kad 2: Reaksi Pemulihan (semua kumpulan digabung dalam satu box)
         const selArr = Array.isArray(answers.reaksi_pemulihan) ? answers.reaksi_pemulihan : [];
         const terukArrReview = Array.isArray(answers.reaksi_pemulihan_teruk) ? answers.reaksi_pemulihan_teruk : [];
+        const sisiMapReview = answers.reaksi_pemulihan_sisi || {};
+        const anggotaMapReview = answers.reaksi_pemulihan_anggota || {};
         const reaksiLines = [];
         REAKSI_GROUPS.forEach(g => {
           const syms = selArr.filter(v => v.startsWith(g.kumpulan + '::'))
-            .map(v => terukArrReview.includes(v) ? `${v.split('::').pop()} <b class="text-terracotta">(Teruk)</b>` : v.split('::').pop());
+            .map(v => {
+              const loc = [anggotaMapReview[v] === 'tangan' ? 'Tangan' : anggotaMapReview[v] === 'kaki' ? 'Kaki' : '',
+                sisiMapReview[v] === 'kanan' ? 'Kanan' : sisiMapReview[v] === 'kiri' ? 'Kiri' : ''].filter(Boolean).join(' ');
+              const tags = [terukArrReview.includes(v) ? '<b class="text-terracotta">Teruk</b>' : '', loc].filter(Boolean).join(', ');
+              return tags ? `${v.split('::').pop()} (${tags})` : v.split('::').pop();
+            });
           const lain = answersText[`reaksi_pemulihan__lain__${slugRK(g.kumpulan)}`];
           if (lain && lain.trim()) syms.push(`Lain-lain: ${lain.trim()}`);
           if (syms.length) reaksiLines.push(`<b>${g.ikon || ''} ${g.kumpulan}:</b> ${syms.join(', ')}`);
@@ -3662,6 +3751,16 @@
         else answers.reaksi_pemulihan_teruk = answers.reaksi_pemulihan_teruk.filter(v => v !== val);
         wizRender(); return;
       }
+      const locBtn = e.target.closest('[data-wiz-loc]');
+      if (locBtn) {
+        const val = locBtn.dataset.wizLoc, dim = locBtn.dataset.wizLocDim, locVal = locBtn.dataset.wizLocVal;
+        const key = dim === 'sisi' ? 'reaksi_pemulihan_sisi' : 'reaksi_pemulihan_anggota';
+        if (!answers[key] || typeof answers[key] !== 'object') answers[key] = {};
+        // Klik nilai sama = nyahpilih (sub-pilihan ni opsyenal)
+        if (answers[key][val] === locVal) delete answers[key][val];
+        else answers[key][val] = locVal;
+        wizRender(); return;
+      }
       const opt = e.target.closest('[data-wiz-opt]');
       if (opt) {
         const kind = opt.dataset.wizKind, key = opt.dataset.wizKey, val = opt.dataset.wizVal, multi = opt.dataset.wizMulti === '1';
@@ -3682,7 +3781,11 @@
         } else if (kind === 'reaksi') {
           if (!Array.isArray(answers.reaksi_pemulihan)) answers.reaksi_pemulihan = [];
           if (!Array.isArray(answers.reaksi_pemulihan_teruk)) answers.reaksi_pemulihan_teruk = [];
+          if (!answers.reaksi_pemulihan_sisi) answers.reaksi_pemulihan_sisi = {};
+          if (!answers.reaksi_pemulihan_anggota) answers.reaksi_pemulihan_anggota = {};
+          const clearLokasi = v => { delete answers.reaksi_pemulihan_sisi[v]; delete answers.reaksi_pemulihan_anggota[v]; };
           if (val === '__none__') {
+            answers.reaksi_pemulihan.filter(v => v.startsWith(key + '::')).forEach(clearLokasi);
             answers.reaksi_pemulihan = answers.reaksi_pemulihan.filter(v => !v.startsWith(key + '::'));
             answers.reaksi_pemulihan_teruk = answers.reaksi_pemulihan_teruk.filter(v => !v.startsWith(key + '::'));
           }
@@ -3692,8 +3795,9 @@
             if (answers.reaksi_pemulihan.includes(val)) {
               answers.reaksi_pemulihan = answers.reaksi_pemulihan.filter(v => v === val || !(v.startsWith(key + '::') && isNoneLabel(v.split('::').pop())));
             } else {
-              // Simptom baru dinyahpilih — buang status Teruk sekali
+              // Simptom baru dinyahpilih — buang status Teruk + sisi/anggota sekali
               answers.reaksi_pemulihan_teruk = answers.reaksi_pemulihan_teruk.filter(v => v !== val);
+              clearLokasi(val);
             }
           }
         }

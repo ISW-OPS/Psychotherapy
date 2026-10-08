@@ -277,8 +277,9 @@ function renderKpi() {
   const pendingCount = realPayments.filter(p => p.status==='pending').length;
   const txCount      = realPayments.filter(p => p.status==='completed').length;
 
-  const card = (label, value, sub, icon, bg, clr) => `
-    <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex items-center gap-4">
+  const currentStatus = document.getElementById('status-filter')?.value || '';
+  const card = (label, value, sub, icon, bg, clr, statusKey) => {
+    const body = `
       <div class="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${bg}">
         <svg class="w-5 h-5 ${clr}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="${icon}"/></svg>
       </div>
@@ -286,8 +287,13 @@ function renderKpi() {
         <div class="text-[11px] text-ink/45 font-medium">${label}</div>
         <div class="text-2xl font-bold text-ink mt-0.5">${value}</div>
         <div class="text-[11px] text-ink/40 mt-0.5">${sub}</div>
-      </div>
-    </div>`;
+      </div>`;
+    if (statusKey === undefined) {
+      return `<div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex items-center gap-4">${body}</div>`;
+    }
+    const active = currentStatus === statusKey;
+    return `<button type="button" onclick="pmtFilterStatus('${statusKey}')" class="w-full text-left bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex items-center gap-4 cursor-pointer hover:shadow-md transition-shadow ${active ? 'ring-2 ring-navy' : ''}">${body}</button>`;
+  };
 
   document.getElementById('kpi-row').innerHTML = [
     card('Kutipan Hari Ini', fmtRM(todayTotal), 'Pembayaran selesai sahaja',
@@ -298,19 +304,28 @@ function renderKpi() {
       'bg-[#6366f1]/10','text-[#6366f1]'),
     card('Pending', pendingCount, pendingCount ? 'Perlu disahkan' : 'Tiada pending',
       'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
-      pendingCount ? 'bg-amber-50' : 'bg-ink/5', pendingCount ? 'text-amber-500' : 'text-ink/30'),
+      pendingCount ? 'bg-amber-50' : 'bg-ink/5', pendingCount ? 'text-amber-500' : 'text-ink/30', 'pending'),
     card('Jumlah Transaksi', txCount, 'Pembayaran selesai',
       'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
-      'bg-[#6366f1]/10','text-[#6366f1]'),
+      'bg-[#6366f1]/10','text-[#6366f1]', 'completed'),
     // Audit #F-23 (Tier 5) — invois psy_invoices (amaun tertunggak SEBELUM sebarang
     // percubaan bayaran, cth denda tidak hadir) — berasingan drpd "Pending" di atas
-    // (tu percubaan bayaran/gateway yg dah dimulakan, konsep lain).
+    // (tu percubaan bayaran/gateway yg dah dimulakan, konsep lain). Tiada senarai invois
+    // di halaman ni, jadi kad ni kekal bukan-boleh-tekan.
     card('Invois Belum Bayar', unpaidInvoices.length,
       unpaidInvoices.length ? fmtRM(unpaidInvoices.reduce((s,i)=>s+Number(i.amount||0),0)) + ' tertunggak' : 'Tiada invois tertunggak',
       'M9 17v-2a4 4 0 014-4h6M9 17H5a2 2 0 01-2-2V7a2 2 0 012-2h9l4 4v6a2 2 0 01-2 2h-1M9 17v2a2 2 0 002 2h6a2 2 0 002-2v-2',
       unpaidInvoices.length ? 'bg-terracotta/10' : 'bg-ink/5', unpaidInvoices.length ? 'text-terracotta' : 'text-ink/30'),
   ].join('');
 }
+
+function pmtFilterStatus(status) {
+  const sel = document.getElementById('status-filter');
+  sel.value = (sel.value === status) ? '' : status;
+  renderKpi();
+  renderTable();
+}
+window.pmtFilterStatus = pmtFilterStatus;
 
 function renderTable() {
   const search   = (document.getElementById('search-input').value || '').toLowerCase().trim();
@@ -849,6 +864,19 @@ async function saveManual() {
     }
     Promise.resolve(window.db.functions.invoke('payments-send-receipt', { body: { paymentId } })).catch(() => {});
     if (window.auditLog) window.auditLog('payment.manual_recorded', paymentId, { patient_id: patientId, target: t.kind, amount: total, method, bank_reference: bankRef || null, paid_at: common.paid_at, partial: isPartial });
+    // Notifikasi segera kepada pesakit bila bayaran ni masih belum cukup (baki tertunggak) — audit #125.
+    // Dihantar SEJURUS lepas insert/update psy_payments berjaya, bukan tunggu cron.
+    if (isPartial) {
+      const bakiNotify = Math.max(0, Number(t.max || 0) - total);
+      const puid = patientLookup[patientId]?.user_id;
+      if (puid && bakiNotify > 0.01) {
+        notify(puid, 'payment',
+          iswL('Bayaran Diterima — Baki Tertunggak', 'Payment Received — Balance Due'),
+          iswL(`Bayaran RM${total.toFixed(2)} diterima. Baki tertunggak: RM${bakiNotify.toFixed(2)}.`,
+               `Payment of RM${total.toFixed(2)} received. Outstanding balance: RM${bakiNotify.toFixed(2)}.`),
+          'payment.html').catch(() => {});
+      }
+    }
     banner(iswL('Bayaran manual direkod ✅', 'Manual payment recorded ✅'));
     closeManualModal();
     ['m-desc', 'm-total', 'm-notes', 'm-bankref'].forEach(id => { document.getElementById(id).value = ''; });

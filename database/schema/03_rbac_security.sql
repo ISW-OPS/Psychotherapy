@@ -290,14 +290,23 @@ $$;
 -- DATA RUJUKAN (SEED)
 -- ═══════════════════════════════════════════════════════════════════
 
--- ──── seed: actions (6 standard) ────
+-- ──── seed: actions (8 standard) ────
+-- 'reschedule' & 'complete' ditambah 8 Okt 2026 (audit management #101) — asalnya
+-- Sesi 1:1 (modul 'rujukan') cuma guna 3 action generik create/edit/delete; kini
+-- reschedule (tukar/batal tempahan) & complete (tandakan selesai) dipisah supaya
+-- boleh diberi/ditarik kebenaran berasingan drpd "Edit nota" biasa. Action ni GLOBAL
+-- (ikut corak sedia ada psy_actions × psy_modules penuh — tiada cell "—"), jadi akan
+-- muncul jugak sbg togol utk modul lain dlm peranan.html walau tak semua modul pakai —
+-- sama macam 'export'/'settings' sedia ada utk sesetengah modul yg tiada ciri eksport/tetapan.
 INSERT INTO psy_actions (code, label, icon, sort_order) VALUES
-  ('view',     'Lihat',    '👁️',  10),
-  ('create',   'Tambah',   '➕',  20),
-  ('edit',     'Edit',     '✏️',  30),
-  ('delete',   'Padam',    '🗑️',  40),
-  ('export',   'Eksport',  '📤',  50),
-  ('settings', 'Tetapan',  '⚙️',  60)
+  ('view',        'Lihat',             '👁️',  10),
+  ('create',      'Tambah',            '➕',  20),
+  ('edit',        'Edit',              '✏️',  30),
+  ('reschedule',  'Jadual Semula',     '📅',  32),
+  ('complete',    'Tandakan Selesai',  '✅',  34),
+  ('delete',      'Padam',             '🗑️',  40),
+  ('export',      'Eksport',           '📤',  50),
+  ('settings',    'Tetapan',           '⚙️',  60)
 ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label, icon=EXCLUDED.icon, sort_order=EXCLUDED.sort_order;
 
 -- ──── seed: modules ────
@@ -500,6 +509,18 @@ CROSS JOIN psy_actions a
 WHERE rma.action_code = 'view'
   AND a.code IN ('create','edit','delete','export')
   AND rma.role_code <> 'patient'
+ON CONFLICT DO NOTHING;
+
+-- 3b) Grant 'reschedule' + 'complete' khusus modul 'rujukan' (Sesi 1:1) — audit #101.
+-- TIDAK dikembangkan macam langkah 3 (yg auto-bagi create/edit/delete/export kpd
+-- semua modul staff yg ada 'view'), sbb 2 action ni khusus Sesi 1:1 sahaja. Role yg
+-- sebelum ni dah ada rujukan.edit/delete penuh (super_admin/manager/admin/doctor/coach)
+-- diberi explicit di sini supaya kebenaran SEDIA ADA tak jadi lebih ketat drpd sebelum
+-- pemisahan granular ni — cuma lebih terperinci skrg (boleh admin tarik balik ikut keperluan).
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+SELECT r.role_code, 'rujukan', a.action_code
+FROM (VALUES ('super_admin'), ('manager'), ('admin'), ('doctor'), ('coach')) AS r(role_code)
+CROSS JOIN (VALUES ('reschedule'), ('complete')) AS a(action_code)
 ON CONFLICT DO NOTHING;
 
 -- 4) Grant portal pesakit (role 'patient').

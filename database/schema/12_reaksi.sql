@@ -28,6 +28,17 @@ CREATE TABLE IF NOT EXISTS psy_reaksi_item (
   tunjuk_ringkasan BOOLEAN NOT NULL DEFAULT true,
   notifikasi_coach BOOLEAN NOT NULL DEFAULT false,
   is_emergency     BOOLEAN NOT NULL DEFAULT false,
+  -- Ditambah 7 Okt 2026 (audit management #B2-111) — status semakan, sama pola
+  -- dgn psy_reaksi_actions.status. DEFAULT 'active' supaya rekod sedia ada tak
+  -- terjejas; kod baharu (borang Tambah Reaksi) set 'draft' secara eksplisit.
+  status           TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('draft','reviewed','approved','active')),
+  -- Ditambah 8 Okt 2026 — simptom yang boleh berlaku sebelah (kiri/kanan),
+  -- cth Kejang/Kebas/Sakit lutut/Sakit bahu. Pesakit pilih bila card ditanda;
+  -- false = tiada sub-pilihan sisi langsung.
+  boleh_pilih_lokasi BOOLEAN NOT NULL DEFAULT false,
+  -- Ditambah 8 Okt 2026 — simptom yang juga boleh ditentukan ikut anggota
+  -- (tangan/kaki), cth Kejang/Kebas. Hanya relevan bila boleh_pilih_lokasi=true.
+  boleh_pilih_anggota BOOLEAN NOT NULL DEFAULT false,
   created_at       TIMESTAMPTZ DEFAULT now(),
   updated_at       TIMESTAMPTZ DEFAULT now(),
   CONSTRAINT chk_reaksi_item_tahap CHECK (tahap_risiko IN ('rendah','sederhana','tinggi'))
@@ -62,6 +73,9 @@ CREATE TABLE IF NOT EXISTS psy_reaksi_kategori (
   penerangan TEXT,
   aktif      BOOLEAN NOT NULL DEFAULT true,
   urutan     INT NOT NULL DEFAULT 100,
+  -- Ditambah 7 Okt 2026 (audit management #B2-111) — status semakan peringkat
+  -- kategori, sama pola dgn psy_reaksi_actions.status.
+  status     TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('draft','reviewed','approved','active')),
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -141,6 +155,40 @@ DROP POLICY IF EXISTS "Authenticated read reaksi mapping" ON psy_reaksi_action_m
 CREATE POLICY "Authenticated read reaksi mapping" ON psy_reaksi_action_map FOR SELECT
   USING (auth.uid() IS NOT NULL);
 
+-- ──── psy_reaksi_conflict_pairs — pasangan tindakan yang BERCANGGAH (audit #118) ────
+-- Staf tetapkan sendiri pasangan tindakan yang bercanggah bila tercadang serentak
+-- (cth "Tambah air" vs "Kurangkan air") — sistem TIDAK cuba teka secara automatik
+-- berdasarkan makna teks. Diguna generateReaksiAdvice() (roles/patient/kepatuhan.html)
+-- utk paksa status='needs_review' bila mana-mana 2 tindakan dlm cadangan sepadan
+-- dgn pasangan di sini, dan reaksi-preview.html (UI uji staf) utk papar amaran
+-- SEBELUM pesakit submit sebenar. Urus senarai di reaksi-item.html tab Konflik.
+CREATE TABLE IF NOT EXISTS psy_reaksi_conflict_pairs (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  action_id_1 UUID NOT NULL REFERENCES psy_reaksi_actions(id) ON DELETE CASCADE,
+  action_id_2 UUID NOT NULL REFERENCES psy_reaksi_actions(id) ON DELETE CASCADE,
+  note        TEXT,                                   -- sebab bercanggah (pilihan)
+  created_by  UUID REFERENCES psy_profiles(id),
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT chk_reaksi_conflict_pair_distinct CHECK (action_id_1 <> action_id_2)
+);
+
+-- Elak pasangan duplicate tak kira arah (A,B) sama dgn (B,A) — LEAST/GREATEST
+-- supaya index tak kira susunan 2 tindakan diisi dalam borang.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_reaksi_conflict_pair
+  ON psy_reaksi_conflict_pairs (LEAST(action_id_1, action_id_2), GREATEST(action_id_1, action_id_2));
+
+ALTER TABLE psy_reaksi_conflict_pairs ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage reaksi conflict pairs" ON psy_reaksi_conflict_pairs;
+CREATE POLICY "Staff manage reaksi conflict pairs" ON psy_reaksi_conflict_pairs FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "Authenticated read reaksi conflict pairs" ON psy_reaksi_conflict_pairs;
+CREATE POLICY "Authenticated read reaksi conflict pairs" ON psy_reaksi_conflict_pairs FOR SELECT
+  USING (auth.uid() IS NOT NULL);
+
+COMMENT ON COLUMN psy_reaksi_conflict_pairs.note IS 'Sebab bercanggah — dipaparkan kpd staf, pilihan';
+
 -- ──── psy_reaksi_advice_log — log mesej saranan (draf WA, satu baris = satu mesej) ────
 -- Flow: pesakit submit Catatan Harian → client kumpul simptom ditanda →
 -- padankan tindakan (psy_reaksi_action_map) → dedupe + susun ikut priority →
@@ -179,6 +227,11 @@ CREATE TABLE IF NOT EXISTS psy_reaksi_advice_log (
 -- Simptom yang pesakit tanda "Teruk" (format sama dgn symptoms: "Kumpulan::Label").
 -- Dibaca oleh trg_reaksi_compute_zon utk kira zon di server, bukan pelayar pesakit.
 ALTER TABLE psy_reaksi_advice_log ADD COLUMN IF NOT EXISTS teruk_labels JSONB NOT NULL DEFAULT '[]';
+
+-- Pasangan tindakan bercanggah (audit #118) yg dikesan semasa generateReaksiAdvice()
+-- — array of {action_id_1, title_1, action_id_2, title_2}. Diguna reaksi-laporan.html
+-- papar SEBAB khusus di kad "Perlu Disemak" (bukan setakat "≥2 simptom" generik).
+ALTER TABLE psy_reaksi_advice_log ADD COLUMN IF NOT EXISTS conflict_pairs JSONB NOT NULL DEFAULT '[]';
 
 CREATE INDEX IF NOT EXISTS idx_reaksi_advice_log_status ON psy_reaksi_advice_log(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_reaksi_advice_log_patient ON psy_reaksi_advice_log(patient_id, log_date);
@@ -318,6 +371,83 @@ FROM (VALUES
   ('Bengkak & Cecair','💧','Tiada simptom',550)
 ) AS v(kumpulan, ikon, label, urutan)
 WHERE NOT EXISTS (SELECT 1 FROM psy_reaksi_item);
+
+-- ──── Tambah simptom baharu (8 Okt 2026): Pencernaan — Najis berdarah, Buasir, Buasir dah pulih ────
+-- Guard per-baris (bukan "jadual kosong") supaya jalan selamat pada DB sedia ada.
+INSERT INTO psy_reaksi_item (kumpulan, ikon, label, urutan)
+SELECT 'Pencernaan', '', v.label, v.urutan
+FROM (VALUES
+  ('Najis berdarah', 111),
+  ('Buasir', 112),
+  ('Buasir dah pulih', 113)
+) AS v(label, urutan)
+WHERE NOT EXISTS (
+  SELECT 1 FROM psy_reaksi_item WHERE kumpulan = 'Pencernaan' AND label = v.label
+);
+
+-- ──── Otot & Saraf (8 Okt 2026): Kejang & Kebas dapat sub-pilihan sisi + anggota ────
+-- (bukan item berasingan — ditarik balik, gantikan dgn boleh_pilih_lokasi di atas)
+UPDATE psy_reaksi_item SET boleh_pilih_lokasi = true, boleh_pilih_anggota = true
+WHERE kumpulan = 'Otot & Saraf' AND label IN ('Kejang','Kebas');
+
+-- ──── Otot & Saraf (8 Okt 2026): tambah Sakit lutut, Sakit bahu — sisi sahaja ────
+INSERT INTO psy_reaksi_item (kumpulan, ikon, label, urutan, boleh_pilih_lokasi)
+SELECT 'Otot & Saraf', '', v.label, v.urutan, true
+FROM (VALUES
+  ('Sakit lutut', 245),
+  ('Sakit bahu', 246)
+) AS v(label, urutan)
+WHERE NOT EXISTS (
+  SELECT 1 FROM psy_reaksi_item WHERE kumpulan = 'Otot & Saraf' AND label = v.label
+);
+
+-- ──── Kumpulan baharu (8 Okt 2026): 8. Wanita ────
+INSERT INTO psy_reaksi_item (kumpulan, ikon, label, urutan)
+SELECT 'Wanita', '🌸', v.label, v.urutan
+FROM (VALUES
+  ('Keputihan (discharge)', 560),
+  ('Period lambat datang', 570),
+  ('Tempoh haid lama', 580),
+  ('Keluar ketulan darah', 590),
+  ('Keluar nanah di payudara', 600),
+  ('Keluar lendir/darah/air di payudara', 610),
+  ('Senggugut', 620),
+  ('Keluar darah selepas menopaus', 630),
+  ('Tiada simptom', 640)
+) AS v(label, urutan)
+WHERE NOT EXISTS (
+  SELECT 1 FROM psy_reaksi_item WHERE kumpulan = 'Wanita' AND label = v.label
+);
+
+-- ──── Pernafasan (8 Okt 2026): kekal Sesak nafas/Batuk, tambah Semput/Tercungap-cungap,
+-- buang Kahak/Mukus/Hidung berair/Bersin + item staf tambah (Radang Paru-paru) ────
+INSERT INTO psy_reaksi_item (kumpulan, ikon, label, urutan)
+SELECT 'Pernafasan', '🫁', v.label, v.urutan
+FROM (VALUES
+  ('Semput', 445),
+  ('Tercungap-cungap', 447)
+) AS v(label, urutan)
+WHERE NOT EXISTS (
+  SELECT 1 FROM psy_reaksi_item WHERE kumpulan = 'Pernafasan' AND label = v.label
+);
+
+DELETE FROM psy_reaksi_item
+WHERE kumpulan = 'Pernafasan'
+  AND label NOT IN ('Sesak nafas','Batuk','Semput','Tercungap-cungap','Tiada simptom');
+
+-- ──── Emosi & Tenaga (8 Okt 2026): buang "Kurang tenaga" ────
+DELETE FROM psy_reaksi_item
+WHERE kumpulan = 'Emosi & Tenaga' AND label = 'Kurang tenaga';
+
+-- ──── Bengkak & Cecair (8 Okt 2026): tambah "Keradangan", buang "Edema" ────
+INSERT INTO psy_reaksi_item (kumpulan, ikon, label, urutan)
+SELECT 'Bengkak & Cecair', '💧', 'Keradangan', 535
+WHERE NOT EXISTS (
+  SELECT 1 FROM psy_reaksi_item WHERE kumpulan = 'Bengkak & Cecair' AND label = 'Keradangan'
+);
+
+DELETE FROM psy_reaksi_item
+WHERE kumpulan = 'Bengkak & Cecair' AND label = 'Edema';
 
 -- ──── Seed psy_reaksi_kategori — dijana dari kumpulan psy_reaksi_item ────
 INSERT INTO psy_reaksi_kategori (nama, ikon, urutan)

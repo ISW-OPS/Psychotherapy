@@ -33,23 +33,24 @@
           <p class="text-xs text-ink/50 mt-0.5">Bekalan yang sudah diberi (auto-potong sesi Hadir + manual "Bagi Bekalan") dan yang masih tertunggak.</p>
         </div>
 
-        <!-- Stat Cards — ikut tapisan semasa (bukan jumlah keseluruhan tanpa tapis) -->
+        <!-- Stat Cards — ikut tapisan semasa (bukan jumlah keseluruhan tanpa tapis). Boleh
+             diklik: terus tapis jadual bawah ikut Status (sama konsep dgn dashboard lain). -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
+          <button type="button" onclick="filterByStatCard('')" id="card-total" class="text-left bg-white rounded-2xl border border-ink/10 shadow-sm p-4 hover:shadow-md transition-shadow cursor-pointer">
             <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Jumlah Item</div>
             <div id="ps-stat-total" class="text-2xl font-bold text-ink">—</div>
             <div id="ps-stat-total-sub" class="text-[10px] text-ink/40 mt-0.5">—</div>
-          </div>
-          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
+          </button>
+          <button type="button" onclick="filterByStatCard('given')" id="card-given" class="text-left bg-white rounded-2xl border border-ink/10 shadow-sm p-4 hover:shadow-md transition-shadow cursor-pointer">
             <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">✅ Dah Bagi</div>
             <div id="ps-stat-given" class="text-2xl font-bold text-green-dark">—</div>
             <div id="ps-stat-given-sub" class="text-[10px] text-ink/40 mt-0.5">—</div>
-          </div>
-          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
+          </button>
+          <button type="button" onclick="filterByStatCard('pending')" id="card-pending" class="text-left bg-white rounded-2xl border border-ink/10 shadow-sm p-4 hover:shadow-md transition-shadow cursor-pointer">
             <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">⏳ Belum Bagi</div>
             <div id="ps-stat-pending" class="text-2xl font-bold text-amber-600">—</div>
             <div id="ps-stat-pending-sub" class="text-[10px] text-ink/40 mt-0.5">—</div>
-          </div>
+          </button>
           <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
             <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Pesakit Terlibat</div>
             <div id="ps-stat-patients" class="text-2xl font-bold text-navy">—</div>
@@ -57,14 +58,6 @@
           </div>
         </div>
 
-        <!-- Jumlah Stok Diperlukan (ikut tapisan tarikh/status semasa) -->
-        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
-          <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
-            <h3 class="font-bold text-sm text-ink">📋 Jumlah Stok Diperlukan (⏳ Belum Bagi<span id="ps-summary-range"></span>)</h3>
-            <span id="ps-summary-shortfall" class="hidden text-[10px] font-semibold text-terracotta bg-terracotta/10 px-2 py-1 rounded-full whitespace-nowrap"></span>
-          </div>
-          <div id="ps-summary" class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm"></div>
-        </div>
 
         <!-- Filters -->
         <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4 grid grid-cols-1 md:grid-cols-5 gap-3">
@@ -108,10 +101,11 @@
                   <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest">Nama Produk</th>
                   <th class="px-4 py-3 text-right text-[10px] font-bold text-ink/40 uppercase tracking-widest">Quantity</th>
                   <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest">Status</th>
+                  <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest">Tindakan</th>
                 </tr>
               </thead>
               <tbody id="ps-tbody">
-                <tr><td colspan="5" class="text-center py-12 text-ink/40 text-sm italic">Memuatkan...</td></tr>
+                <tr><td colspan="6" class="text-center py-12 text-ink/40 text-sm italic">Memuatkan...</td></tr>
               </tbody>
             </table>
           </div>
@@ -131,21 +125,74 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
+<script src="../../shared/inventoryStock.js"></script>
 <script src="_shared.js"></script>
 <script>
 let ALL_ROWS = [];
 let psPage = 1;
 const PS_PAGE_SIZE = 20;
-let STOCK_BY_ID = {};
-let STOCK_BY_NAME = {};
+let PS_ITEM_LOOKUP = {}; // movementId -> {itemId, productName, qty, unit, patientId, patientName}
 
-// Stok semasa Inventori — utk banding dgn "Jumlah Stok Diperlukan" (cukup/tak cukup).
-async function loadStockLevels() {
-  const { data } = await window.db.from('psy_inventory_items').select('id, name, qty_in_stock, unit').eq('is_active', true);
-  (data || []).forEach(it => {
-    STOCK_BY_ID[it.id] = it;
-    STOCK_BY_NAME[(it.name || '').trim().toLowerCase()] = it;
-  });
+// ── Pulangkan bekalan "Dah Bagi" (salah bagi / terlebih / tak jadi) — balik ke
+// Stok Masuk dengan sebab, pesakit & tarikh direkod terus dalam ledger. Rekod
+// asal (Stok Keluar) KEKAL sebagai sejarah — ini tambah pergerakan BAHARU, bukan padam.
+const PS_REVERSE_REASONS = [
+  { v: 'salah_bagi', lbl: 'Salah bagi (produk/pesakit silap)' },
+  { v: 'terlebih',   lbl: 'Terlebih bagi (kuantiti silap)' },
+  { v: 'tak_jadi',   lbl: 'Tak jadi / dibatalkan' },
+  { v: 'lain',       lbl: 'Lain-lain' },
+];
+function openReverseModal(movementId) {
+  const it = PS_ITEM_LOOKUP[movementId];
+  if (!it) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'fixed inset-0 bg-black/40 z-[80] flex items-center justify-center p-4';
+  wrap.innerHTML = `<div class="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5">
+    <h3 class="font-bold text-navy text-base mb-1">↩ Pulangkan Bekalan</h3>
+    <p class="text-xs text-ink/55 mb-3">${escHtml(it.productName)} · ${escHtml(String(it.qty))}${escHtml(it.unit)} — ${escHtml(it.patientName)}. Stok akan ditambah balik (Stok Masuk).</p>
+    <label class="block text-xs font-semibold text-ink/60 mb-1">Sebab *</label>
+    <select id="pr-reason" class="w-full border border-ink/20 rounded-lg px-3 py-2 text-sm bg-white mb-3">
+      ${PS_REVERSE_REASONS.map(r => `<option value="${r.v}">${escHtml(r.lbl)}</option>`).join('')}
+    </select>
+    <div id="pr-note-wrap" class="hidden mb-3">
+      <label class="block text-xs font-semibold text-ink/60 mb-1">Nota</label>
+      <textarea id="pr-note" rows="2" class="w-full border border-ink/20 rounded-lg px-3 py-2 text-sm" placeholder="Nyatakan sebab..."></textarea>
+    </div>
+    <div id="pr-err" class="text-xs text-terracotta mb-2 hidden">Sila isi nota untuk "Lain-lain".</div>
+    <div class="flex justify-end gap-2 mt-1">
+      <button id="pr-cancel" class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-ink/15 text-ink/60 hover:bg-cream">Batal</button>
+      <button id="pr-ok" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-navy text-white hover:bg-navy-dark">Sahkan Pulangan</button>
+    </div>
+  </div>`;
+  document.body.appendChild(wrap);
+  const reasonEl = wrap.querySelector('#pr-reason');
+  const noteWrap = wrap.querySelector('#pr-note-wrap');
+  reasonEl.onchange = () => noteWrap.classList.toggle('hidden', reasonEl.value !== 'lain');
+  wrap.querySelector('#pr-cancel').onclick = () => wrap.remove();
+  wrap.querySelector('#pr-ok').onclick = async () => {
+    const reasonVal = reasonEl.value;
+    const noteVal = wrap.querySelector('#pr-note').value.trim();
+    if (reasonVal === 'lain' && !noteVal) { wrap.querySelector('#pr-err').classList.remove('hidden'); return; }
+    const reasonLbl = PS_REVERSE_REASONS.find(r => r.v === reasonVal)?.lbl || reasonVal;
+    const okBtn = wrap.querySelector('#pr-ok');
+    okBtn.disabled = true; okBtn.textContent = 'Menyimpan…';
+    await submitReverse(movementId, it, reasonLbl, noteVal);
+    wrap.remove();
+  };
+}
+window.openReverseModal = openReverseModal;
+
+async function submitReverse(movementId, it, reasonLbl, noteVal) {
+  const note = `Pulangan: ${reasonLbl}${noteVal ? ' — ' + noteVal : ''} (asal: ${movementId.slice(0, 8)})`;
+  try {
+    await window.addStockToLocation(it.itemId, Math.abs(Number(it.qty)), null, {
+      type: 'in', refType: 'patient_package_reversal', refId: it.patientId, note, itemName: it.productName,
+    });
+    banner(`Pulangan direkod ✅ — ${it.productName} (${it.qty}${it.unit}) ditambah balik ke stok.`);
+    await loadAll();
+  } catch (e) {
+    banner('Ralat: ' + (e.message || e), 'error');
+  }
 }
 
 function escHtml(str) {
@@ -161,12 +208,13 @@ function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'm
 // buang rekod dalam julat yang staff sedang tengok.
 async function loadGivenRows(from, to) {
   let q = window.db.from('psy_stock_movements')
-    .select('item_name, qty, reference_id, created_at, psy_inventory_items(unit)')
+    .select('id, item_id, item_name, qty, reference_id, created_at, psy_inventory_items(unit)')
     .eq('reference_type', 'patient_package').eq('movement_type', 'out');
   if (from) q = q.gte('created_at', from + 'T00:00:00');
   if (to) q = q.lte('created_at', to + 'T23:59:59');
   const { data } = await q.order('created_at', { ascending: false }).limit(1000);
   return (data || []).map(r => ({
+    movementId: r.id, itemId: r.item_id,
     date: r.created_at, patientId: r.reference_id, productName: r.item_name,
     qty: Math.abs(Number(r.qty)), unit: r.psy_inventory_items?.unit || '', status: 'given',
     // Trace ke Sejarah Bekalan pesakit (tab Bekalan, patient-hub.html) — halaman
@@ -182,7 +230,7 @@ async function loadGivenRows(from, to) {
 // jumlah "Belum Bagi" di sini konsisten dgn enjin forecast rasmi (Amaran Stok/dashboard).
 async function loadPendingRows(from, to) {
   let q = window.db.from('psy_plan_weekly_progress')
-    .select('id, session_date, week_number, plan_id, patient_id, is_extension')
+    .select('id, session_date, week_number, session_day, plan_id, patient_id, is_extension')
     .eq('session_type', 'f2f').neq('status', 'hadir').neq('status', 'cancel')
     .not('session_date', 'is', null); // sesi belum dijadualkan (tiada tarikh) — tiada apa-apa nak diberi lagi
   if (from) q = q.gte('session_date', from + 'T00:00:00');
@@ -201,9 +249,11 @@ async function loadPendingRows(from, to) {
     const schedule = scheduleByPlan[s.plan_id] || [];
     const weekObj = schedule.find(w => w.week === s.week_number) || schedule[s.week_number - 1];
     if (!weekObj || weekObj.mode === 'online') return;
-    // Cuma weekObj.supplies (BUKAN supplies_2) — sepadan tepat dgn apa yg deductSessionSupplies()
-    // sebenarnya tolak bila sesi ditanda Hadir (shared/inventoryDeduct.js baca .supplies sahaja).
-    const supplies = (weekObj.supplies || [])
+    // Sesi 2 (session_day=2) guna senarai supplies_2 berasingan — sepadan dgn apa yg
+    // deductSessionSupplies() sebenarnya tolak (shared/inventoryDeduct.js).
+    const activeDay = s.session_day || 1;
+    const suppliesRaw = activeDay === 2 ? weekObj.supplies_2 : weekObj.supplies;
+    const supplies = (Array.isArray(suppliesRaw) ? suppliesRaw : [])
       .filter(sup => sup?.auto_stock !== false && Number(sup?.qty || sup?.quantity || 0) > 0);
     supplies.forEach(sup => {
       const name = sup.item_name || sup.name || '';
@@ -246,7 +296,7 @@ async function resolvePatientNames(rows) {
 async function loadAll() {
   const from = document.getElementById('ps-date-from').value;
   const to = document.getElementById('ps-date-to').value;
-  const [given, pending] = await Promise.all([loadGivenRows(from, to), loadPendingRows(from, to), loadStockLevels()]);
+  const [given, pending] = await Promise.all([loadGivenRows(from, to), loadPendingRows(from, to)]);
   const combined = [...pending, ...given]; // belum bagi (akan datang) dulu, dah bagi (lepas) lepas tu
   const nameMap = await resolvePatientNames(combined);
   ALL_ROWS = combined.map(r => ({ ...r, patientName: nameMap[r.patientId] || 'Pesakit' }));
@@ -268,7 +318,23 @@ function renderStats(filteredList) {
   document.getElementById('ps-stat-pending').textContent = pending.length;
   document.getElementById('ps-stat-pending-sub').textContent = `${new Set(pending.map(r => r.patientId)).size} pesakit`;
   document.getElementById('ps-stat-patients').textContent = patientIds.size;
+
+  // Highlight kad yang sepadan dgn tapisan Status semasa
+  const curStatus = document.getElementById('ps-status').value;
+  const cardByStatus = { '': 'card-total', given: 'card-given', pending: 'card-pending' };
+  Object.entries(cardByStatus).forEach(([v, id]) => {
+    document.getElementById(id)?.classList.toggle('ring-2', v === curStatus);
+    document.getElementById(id)?.classList.toggle('ring-navy/40', v === curStatus);
+    document.getElementById(id)?.classList.toggle('border-navy/30', v === curStatus);
+  });
 }
+
+// Kad stat diklik → terus tapis jadual ikut Status, sama konsep dgn kad dashboard lain.
+function filterByStatCard(status) {
+  document.getElementById('ps-status').value = status;
+  onFilterChange();
+}
+window.filterByStatCard = filterByStatCard;
 
 // Tarikh dah ditapis di SERVER (loadAll() hantar from/to terus ke query) — ALL_ROWS
 // sentiasa dalam julat yang dipilih, jadi di sini cuma tapis status + carian teks.
@@ -315,66 +381,16 @@ function groupRows(list) {
     const dateKey = r.date ? new Date(r.date).toISOString().slice(0, 10) : 'nodate';
     const key = `${dateKey}|${r.patientId}|${r.status}`;
     if (!groups.has(key)) {
-      groups.set(key, { date: r.date, patientName: r.patientName, status: r.status, goto: r.goto, items: [] });
+      groups.set(key, { date: r.date, patientId: r.patientId, patientName: r.patientName, status: r.status, goto: r.goto, items: [] });
     }
-    groups.get(key).items.push({ productName: r.productName, qty: r.qty, unit: r.unit });
+    groups.get(key).items.push({ productName: r.productName, qty: r.qty, unit: r.unit, movementId: r.movementId, itemId: r.itemId });
   });
   return [...groups.values()];
-}
-
-// Jumlah SEMUA stok "Belum Bagi" merentasi pesakit, dalam tapisan tarikh semasa —
-// senarai "beli/sediakan berapa" utk minggu/julat yang dipilih.
-function renderStockSummary(filteredList) {
-  const from = document.getElementById('ps-date-from').value;
-  const to = document.getElementById('ps-date-to').value;
-  const rangeTxt = from || to
-    ? `, ${from ? fmtDate(from) : 'Awal'} – ${to ? fmtDate(to) : 'Kini'}`
-    : ', semua tarikh';
-  document.getElementById('ps-summary-range').textContent = rangeTxt;
-
-  const totals = {};
-  filteredList.filter(r => r.status === 'pending').forEach(r => {
-    const key = r.itemId || ('name:' + r.productName.toLowerCase());
-    if (!totals[key]) totals[key] = { name: r.productName, unit: r.unit, qty: 0, itemId: r.itemId };
-    totals[key].qty += Number(r.qty) || 0;
-  });
-  const rows = Object.values(totals).map(r => {
-    const stockItem = (r.itemId && STOCK_BY_ID[r.itemId]) || STOCK_BY_NAME[(r.name || '').trim().toLowerCase()] || null;
-    const available = stockItem ? Number(stockItem.qty_in_stock) || 0 : null;
-    const short = available !== null && available < r.qty;
-    return { ...r, available, short };
-  }).sort((a, b) => (b.short - a.short) || (b.qty - a.qty)); // tak cukup dulu, pastu ikut qty terbesar
-
-  const shortfallCount = rows.filter(r => r.short).length;
-  const badgeEl = document.getElementById('ps-summary-shortfall');
-  if (shortfallCount) {
-    badgeEl.textContent = `⚠ ${shortfallCount} item stok tak cukup`;
-    badgeEl.classList.remove('hidden');
-  } else {
-    badgeEl.classList.add('hidden');
-  }
-
-  document.getElementById('ps-summary').innerHTML = rows.length ? rows.map(r => {
-    const statusHtml = r.available === null
-      ? `<span class="text-[9px] text-ink/35 italic">stok tidak dijumpai</span>`
-      : r.short
-        ? `<span class="text-[9px] font-semibold text-terracotta">⚠ Kurang ${escHtml(String(r.qty - r.available))}${escHtml(r.unit)} (ada ${escHtml(String(r.available))})</span>`
-        : `<span class="text-[9px] font-semibold text-green-dark">✓ Cukup (ada ${escHtml(String(r.available))}${escHtml(r.unit)})</span>`;
-    return `
-    <div class="flex flex-col gap-1 rounded-lg px-3 py-2 ${r.short ? 'bg-terracotta/10 ring-1 ring-terracotta/30' : 'bg-cream/60'}">
-      <div class="flex items-center justify-between gap-2">
-        <span class="text-ink/70 truncate">${escHtml(r.name)}</span>
-        <span class="font-bold text-ink whitespace-nowrap">${escHtml(String(r.qty))}${escHtml(r.unit)}</span>
-      </div>
-      ${statusHtml}
-    </div>`;
-  }).join('') : '<div class="text-xs text-ink/40 italic col-span-full">Tiada bekalan tertunggak dalam tapisan ini</div>';
 }
 
 function render() {
   const filtered = getFiltered();
   renderStats(filtered);
-  renderStockSummary(filtered);
   const groups = groupRows(filtered);
   const pages = Math.max(1, Math.ceil(groups.length / PS_PAGE_SIZE));
   if (psPage > pages) psPage = pages;
@@ -382,17 +398,31 @@ function render() {
   const pageGroups = groups.slice(start, start + PS_PAGE_SIZE);
 
   const tbody = document.getElementById('ps-tbody');
+  PS_ITEM_LOOKUP = {};
   tbody.innerHTML = pageGroups.length ? pageGroups.map(g => {
     const itemNames = g.items.map((it, i) => `<div class="${i > 0 ? 'mt-0.5' : ''}">${i + 1}. ${escHtml(it.productName)}</div>`).join('');
     const itemQtys = g.items.map((it, i) => `<div class="${i > 0 ? 'mt-0.5' : ''} text-ink/60">${escHtml(String(it.qty))}${escHtml(it.unit)}</div>`).join('');
+    // "🔍 Pergerakan" — buka Detail Item tu terus di Pergerakan Stok, ditapis ikut
+    // pesakit ni sahaja (bukan senarai Produk master). "↩ Pulangkan" — salah bagi/
+    // terlebih/tak jadi; balik sebagai Stok Masuk dengan sebab, bukan padam sejarah.
+    // Dua-dua hanya utk "Dah Bagi" & bekalan yang ada movementId/itemId sebenar.
+    const itemActions = g.items.map((it, i) => {
+      if (g.status !== 'given' || !it.movementId || !it.itemId) return `<div class="${i > 0 ? 'mt-0.5' : ''} text-ink/20">—</div>`;
+      PS_ITEM_LOOKUP[it.movementId] = { itemId: it.itemId, productName: it.productName, qty: it.qty, unit: it.unit, patientId: g.patientId, patientName: g.patientName };
+      return `<div class="${i > 0 ? 'mt-0.5' : ''} flex items-center gap-2">
+        <a href="inventory-detail.html?id=${it.itemId}&patient=${g.patientId}" onclick="event.stopPropagation()" class="text-[11px] font-semibold text-navy hover:underline whitespace-nowrap">🔍 Pergerakan</a>
+        <button type="button" onclick="event.stopPropagation(); openReverseModal('${it.movementId}')" data-rbac="inventory.edit" class="text-[11px] font-semibold text-terracotta hover:underline whitespace-nowrap">↩ Pulangkan</button>
+      </div>`;
+    }).join('');
     return `<tr class="border-b border-ink/5 last:border-0 hover:bg-ink/[0.015] align-top ${g.goto ? 'cursor-pointer' : ''}" ${g.goto ? `onclick="location.href='${g.goto}'"` : ''}>
       <td class="px-5 py-3 text-xs text-ink/55 whitespace-nowrap">${fmtDate(g.date)}</td>
       <td class="px-4 py-3 text-sm font-medium text-ink">${escHtml(g.patientName)}</td>
       <td class="px-4 py-3 text-sm text-ink/80">${itemNames}</td>
       <td class="px-4 py-3 text-sm text-right font-semibold">${itemQtys}</td>
       <td class="px-4 py-3">${STATUS_CHIP[g.status] || g.status}</td>
+      <td class="px-4 py-3">${itemActions}</td>
     </tr>`;
-  }).join('') : '<tr><td colspan="5" class="text-center py-12 text-ink/40 text-sm">Tiada rekod sepadan</td></tr>';
+  }).join('') : '<tr><td colspan="6" class="text-center py-12 text-ink/40 text-sm">Tiada rekod sepadan</td></tr>';
 
   const infoEl = document.getElementById('ps-page-info');
   infoEl.textContent = groups.length ? `Papar ${start + 1}–${Math.min(start + PS_PAGE_SIZE, groups.length)} daripada ${groups.length} rekod (${filtered.length} item)` : '0 rekod';

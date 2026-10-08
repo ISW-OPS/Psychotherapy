@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Jadual Sesi 1:1</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+</head>
+<body class="min-h-screen bg-cream">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">📅</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-5">
+
+        <div class="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h1 class="text-xl font-bold text-ink flex items-center gap-2">📅 Jadual Sesi 1:1</h1>
+            <p class="text-sm text-ink/45 mt-0.5">Lihat kapasiti & siapa dah menempah, ikut minggu.</p>
+          </div>
+          <a href="sesi-1on1.html" class="text-xs font-semibold text-navy hover:underline">← Senarai Tempahan</a>
+        </div>
+
+        <!-- Week nav -->
+        <div class="flex items-center justify-between gap-3 flex-wrap bg-white rounded-2xl border border-ink/10 shadow-sm px-4 py-3">
+          <button onclick="changeWeek(-1)" class="px-3 py-1.5 border border-ink/15 rounded-lg text-sm hover:border-navy">← Sebelum</button>
+          <div class="flex items-center gap-3">
+            <div id="week-label" class="font-bold text-sm text-ink"></div>
+            <button onclick="goThisWeek()" class="px-3 py-1 border border-navy/30 text-navy rounded-lg text-xs font-semibold hover:bg-navy/5">Minggu Ini</button>
+          </div>
+          <button onclick="changeWeek(1)" class="px-3 py-1.5 border border-ink/15 rounded-lg text-sm hover:border-navy">Berikut →</button>
+        </div>
+
+        <!-- Week grid: 7 kad hari -->
+        <div id="week-grid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3"></div>
+
+        <!-- Detail hari dipilih -->
+        <div id="day-detail" class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden"></div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="../../shared/utils.js"></script>
+<script src="../../shared/hk1.js"></script>
+<script src="_shared.js"></script>
+<script>
+function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
+function escHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+function ymd(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function fmt12h(hm) {
+  if (!hm) return '';
+  const [h, m] = hm.split(':').map(Number);
+  const period = h < 12 ? 'AM' : 'PM';
+  const hr12 = h === 0 ? 12 : (h > 12 ? h - 12 : h);
+  return `${hr12}:${String(m).padStart(2,'0')} ${period}`;
+}
+
+const DAY_NAMES_LONG = ['Ahad', 'Isnin', 'Selasa', 'Rabu', 'Khamis', 'Jumaat', 'Sabtu'];
+const MONTH_NAMES = ['Januari','Februari','Mac','April','Mei','Jun','Julai','Ogos','September','Oktober','November','Disember'];
+const HK1_DISPLAY = {
+  hakeema:     { label: 'Hakeema',     emoji: '🧑‍💼' },
+  hakeem:      { label: 'Hakeem',      emoji: '🧑' },
+  dr:          { label: 'Dr',          emoji: '🩺' },
+  fisioterapi: { label: 'Fisioterapi', emoji: '🏃' },
+  kaunselor:   { label: 'Kaunselor',   emoji: '🗣️' },
+  bekam:       { label: 'Bekam',       emoji: '🩸' },
+  masseur:     { label: 'Masseur',     emoji: '💆' },
+};
+const STATUS_1ON1 = {
+  pending:  { lbl: 'Belum Konsultasi', cls: 'bg-amber-100 text-amber-700' },
+  accepted: { lbl: 'Dijadualkan',      cls: 'bg-blue-100 text-blue-700' },
+  resolved: { lbl: 'Selesai',          cls: 'bg-green-100 text-green-700' },
+  declined: { lbl: 'Ditolak',          cls: 'bg-ink/10 text-ink/50' },
+};
+
+let weekOffset = 0;       // 0 = minggu ini, +1/-1 = minggu depan/lepas
+let weekDates = [];        // 7 tarikh ymd (Ahad..Sabtu) minggu dipilih
+let weekBookings = {};     // ymd -> [psy_clinical_referrals rows]
+let closureSet = new Set();
+let selectedDay = null;    // ymd hari dipilih utk detail panel
+const todayYmd = ymd(new Date());
+
+function computeWeekDates(offset) {
+  const now = new Date();
+  const sunday = new Date(now); sunday.setDate(now.getDate() - now.getDay() + offset * 7);
+  const out = [];
+  for (let i = 0; i < 7; i++) { const d = new Date(sunday); d.setDate(sunday.getDate() + i); out.push(ymd(d)); }
+  return out;
+}
+
+async function loadClosures() {
+  const { data } = await window.db.from('psy_clinic_closures').select('closure_date, label').then(r => r, () => ({ data: [] }));
+  closureSet = new Map((data || []).map(c => [c.closure_date, c.label || 'Cuti']));
+}
+
+async function loadWeekBookings() {
+  const { data, error } = await window.db.from('psy_clinical_referrals')
+    .select('id, patient_id, plan_id, week_number, session_type, consultation, status, meet_date, target_name, psy_patients(full_name, mrn, psy_profiles!psy_patients_user_id_fkey(full_name))')
+    .eq('source', 'plan_1on1').neq('status', 'declined')
+    .gte('meet_date', weekDates[0]).lte('meet_date', weekDates[6])
+    .then(r => r, () => ({ data: [] }));
+  if (error) { console.error('[jadual] loadWeekBookings gagal:', error); banner('Gagal muat tempahan minggu ini — cuba refresh.', 'error'); }
+  weekBookings = {};
+  (data || []).forEach(r => { if (r.meet_date) (weekBookings[r.meet_date] = weekBookings[r.meet_date] || []).push(r); });
+}
+
+function daySlotsSummary(dYmd, dow) {
+  if ((closureSet instanceof Map ? closureSet.has(dYmd) : false)) return { closed: true, label: closureSet.get(dYmd) };
+  const slots = hk1GetSlotsForDay(dow);
+  if (!slots.length) return { closed: true, label: 'Tutup' };
+  const booked = (weekBookings[dYmd] || []).length;
+  return { closed: false, total: slots.length, used: Math.min(booked, slots.length) };
+}
+
+function renderWeekGrid() {
+  const el = document.getElementById('week-grid');
+  el.innerHTML = weekDates.map(dYmd => {
+    const dt = new Date(dYmd + 'T00:00:00');
+    const dow = dt.getDay();
+    const s = daySlotsSummary(dYmd, dow);
+    const isToday = dYmd === todayYmd;
+    const isSelected = dYmd === selectedDay;
+    if (s.closed) {
+      return `<button onclick="selectDay('${dYmd}')" class="text-left rounded-2xl border p-4 bg-ink/[0.03] border-ink/10 ${isSelected ? 'ring-2 ring-navy/30' : ''}">
+        <div class="text-[10px] font-bold text-ink/40 uppercase">${DAY_NAMES_LONG[dow]}</div>
+        <div class="text-sm font-bold text-ink/50">${dt.getDate()} ${MONTH_NAMES[dt.getMonth()].slice(0,3)}</div>
+        <div class="text-[11px] text-ink/35 mt-2">🔒 ${escHtml(s.label)}</div>
+      </button>`;
+    }
+    const pct = s.total ? Math.round((s.used / s.total) * 100) : 0;
+    const barColor = pct >= 100 ? '#B85042' : pct >= 70 ? '#B8860B' : '#2E8B3E';
+    return `<button onclick="selectDay('${dYmd}')" class="text-left rounded-2xl border p-4 bg-white hover:border-navy/40 transition-colors ${isSelected ? 'border-navy ring-2 ring-navy/20' : 'border-ink/10'}">
+      <div class="text-[10px] font-bold text-ink/40 uppercase flex items-center gap-1">${DAY_NAMES_LONG[dow]} ${isToday ? '<span class="text-navy">· Hari Ini</span>' : ''}</div>
+      <div class="text-sm font-bold text-ink">${dt.getDate()} ${MONTH_NAMES[dt.getMonth()].slice(0,3)}</div>
+      <div class="text-[11px] text-ink/50 mt-2 font-semibold">${s.used}/${s.total} slot</div>
+      <div class="h-1.5 bg-ink/10 rounded-full mt-1.5 overflow-hidden"><div class="h-full rounded-full" style="width:${pct}%;background:${barColor}"></div></div>
+    </button>`;
+  }).join('');
+}
+
+function renderDayDetail() {
+  const el = document.getElementById('day-detail');
+  if (!selectedDay) { el.innerHTML = `<div class="p-10 text-center text-sm text-ink/35">Klik satu hari di atas untuk lihat slot.</div>`; return; }
+  const dt = new Date(selectedDay + 'T00:00:00');
+  const dow = dt.getDay();
+  const dateLabel = `${DAY_NAMES_LONG[dow]}, ${dt.getDate()} ${MONTH_NAMES[dt.getMonth()]} ${dt.getFullYear()}`;
+  const closed = (closureSet instanceof Map ? closureSet.has(selectedDay) : false);
+  const slots = closed ? [] : hk1GetSlotsForDay(dow);
+
+  if (closed || !slots.length) {
+    el.innerHTML = `<div class="px-5 py-4 border-b border-ink/8"><h2 class="font-bold text-sm text-ink">${dateLabel}</h2></div>
+      <div class="p-10 text-center text-sm text-ink/35">${closed ? '🔒 ' + escHtml(closureSet.get(selectedDay)) : 'Tiada slot Sesi 1:1 dikonfigurasi utk hari ini.'}</div>`;
+    return;
+  }
+
+  const bookings = weekBookings[selectedDay] || [];
+  const rows = slots.map((slot, i) => {
+    const b = bookings.find(r => r.consultation?.scheduled_time === slot.start);
+    const timeLbl = `${fmt12h(slot.start)} – ${fmt12h(slot.end)}`;
+    if (!b) {
+      return `<tr class="border-b border-ink/5">
+        <td class="py-2.5 px-5 text-[12px] text-ink/50 font-mono">${i + 1}</td>
+        <td class="py-2.5 px-3 text-[12px] text-ink/70 whitespace-nowrap">${timeLbl}</td>
+        <td class="py-2.5 px-3 text-[12px] text-ink/35 italic" colspan="2">— Slot tersedia —</td>
+        <td class="py-2.5 px-5 text-right">
+          <a href="sesi-1on1-form.html" target="_blank" class="text-[11px] font-semibold text-navy hover:underline">+ Tempah</a>
+        </td>
+      </tr>`;
+    }
+    const nm = iswPatientName(b.psy_patients) || b.psy_patients?.mrn || 'Pesakit';
+    const meta = HK1_DISPLAY[b.session_type] || { label: b.session_type || '—', emoji: '' };
+    const sm = STATUS_1ON1[b.status] || { lbl: b.status || '—', cls: 'bg-ink/10 text-ink/50' };
+    const link = b.plan_id
+      ? `plan-week.html?plan_id=${b.plan_id}&week=${b.week_number}&back=sesi-1on1-jadual.html`
+      : `sesi-1on1-detail.html?patient_id=${b.patient_id}&back=sesi-1on1-jadual.html`;
+    return `<tr class="border-b border-ink/5 hover:bg-ink/[0.015]">
+      <td class="py-2.5 px-5 text-[12px] text-ink/50 font-mono">${i + 1}</td>
+      <td class="py-2.5 px-3 text-[12px] text-ink/70 whitespace-nowrap">${timeLbl}</td>
+      <td class="py-2.5 px-3">
+        <div class="text-[13px] font-semibold text-ink truncate">${escHtml(nm)}</div>
+        <div class="text-[10px] font-mono text-navy/55">${escHtml(b.psy_patients?.mrn || '—')}</div>
+      </td>
+      <td class="py-2.5 px-3 text-[12px] text-ink/70 whitespace-nowrap">${meta.emoji} ${escHtml(meta.label)}</td>
+      <td class="py-2.5 px-5 text-right">
+        <span class="inline-block px-2.5 py-1 rounded-full text-[10px] font-bold ${sm.cls} mr-2">${sm.lbl}</span>
+        <a href="${link}" ${b.plan_id ? '' : 'target="_blank" rel="opener"'} class="text-[11px] font-semibold text-navy hover:underline whitespace-nowrap">Semak →</a>
+      </td>
+    </tr>`;
+  }).join('');
+
+  const used = bookings.length, total = slots.length;
+  el.innerHTML = `
+    <div class="px-5 py-4 border-b border-ink/8 flex items-center justify-between gap-3 flex-wrap">
+      <h2 class="font-bold text-sm text-ink">${dateLabel}</h2>
+      <span class="text-[11px] font-bold ${used >= total ? 'text-terracotta' : 'text-ink/50'}">${used}/${total} slot digunakan</span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead><tr class="bg-ink/[0.02] text-left">
+          <th class="px-5 py-2 text-[10px] font-semibold text-ink/50 uppercase">No.</th>
+          <th class="px-3 py-2 text-[10px] font-semibold text-ink/50 uppercase">Masa</th>
+          <th class="px-3 py-2 text-[10px] font-semibold text-ink/50 uppercase" colspan="2">Pesakit</th>
+          <th class="px-5 py-2 text-[10px] font-semibold text-ink/50 uppercase text-right">Status / Tindakan</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function selectDay(dYmd) { selectedDay = dYmd; renderWeekGrid(); renderDayDetail(); }
+window.selectDay = selectDay;
+
+function renderWeekLabel() {
+  const first = new Date(weekDates[0] + 'T00:00:00'), last = new Date(weekDates[6] + 'T00:00:00');
+  document.getElementById('week-label').textContent =
+    `${first.getDate()} ${MONTH_NAMES[first.getMonth()].slice(0,3)} – ${last.getDate()} ${MONTH_NAMES[last.getMonth()].slice(0,3)} ${last.getFullYear()}`;
+}
+
+async function refreshWeek() {
+  weekDates = computeWeekDates(weekOffset);
+  renderWeekLabel();
+  if (!weekDates.includes(selectedDay)) selectedDay = weekDates.includes(todayYmd) ? todayYmd : weekDates[0];
+  await loadWeekBookings();
+  renderWeekGrid();
+  renderDayDetail();
+}
+
+function changeWeek(dir) { weekOffset += dir; refreshWeek(); }
+window.changeWeek = changeWeek;
+function goThisWeek() { weekOffset = 0; refreshWeek(); }
+window.goThisWeek = goThisWeek;
+
+(async () => {
+  const user = await initStaff('sesi_1on1', 'Lihat kapasiti & siapa dah menempah, ikut minggu.');
+  if (!user) return;
+  await Promise.all([hk1LoadSlotConfig(), loadClosures()]);
+  await refreshWeek();
+})();
+</script>
+</body>
+</html>

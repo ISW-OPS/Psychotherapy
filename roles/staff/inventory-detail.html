@@ -373,11 +373,150 @@
 <script src="../../shared/inventoryStock.js"></script>
 <script src="_shared.js"></script>
 <script>
+function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
 let itemId   = null;
+let totalActivePatients = 0, totalActivePackages = 0;
 let itemData = null;
 let canManage = false;
 let stockByLocationRows = [];
 let allActiveLocations = [];
+let demandFullBd = [];       // breakdown PENUH (bulan ini, 30 hari) — sumber tapisan tab bawah
+let demandBd = [], demandPage = 1, demandUnit = '', demandNeeded = 0, demandHeaderHtml = '';
+let demandMode = 'month';    // 'today' | 'tomorrow' | 'week' | 'month' | 'custom'
+const DEMAND_PAGE_SIZE = 7;
+const DEMAND_TABS = [
+  { key: 'today',    lbl: 'Hari ini' },
+  { key: 'tomorrow', lbl: 'Esok' },
+  { key: 'week',     lbl: 'Minggu ini' },
+  { key: 'month',    lbl: 'Bulan ini' },
+];
+
+// Tarikh sesi: paparkan dalam masa Malaysia (bukan ISO mentah UTC)
+function fmtDay(d) { return new Date(d + 'T00:00:00').toLocaleDateString(LCALE(), { weekday: 'short', day: 'numeric', month: 'short' }); }
+function fmtSession(s) {
+  if (!s) return '—';
+  if (s.length <= 10) return fmtDay(s);
+  return new Date(s).toLocaleString(LCALE(), { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kuala_Lumpur' });
+}
+
+// Tab Hari ini/Esok/Minggu/Bulan — tapis dari demandFullBd (dah ada, tiada query baharu).
+// Tarikh custom — julat boleh lebih drpd 30 hari, jadi query terus utk item ni sahaja.
+async function applyDemandRange(mode) {
+  demandMode = mode;
+  demandPage = 1;
+  let start, end, bd;
+  if (mode === 'custom') {
+    start = document.getElementById('demand-from')?.value;
+    end   = document.getElementById('demand-to')?.value;
+    if (!start || !end) { banner('Pilih tarikh dari dan hingga dahulu.', 'error'); return; }
+    if (start > end) { banner('Tarikh "Dari" mesti sebelum atau sama dengan "Hingga".', 'error'); return; }
+    const result = await window.computeForecastForRange([itemData.id], start, end);
+    bd = (result[itemData.id]?.breakdown || []).slice();
+  } else {
+    const r = window.inventoryHorizonRanges()[mode] || window.inventoryHorizonRanges().month;
+    start = r.start; end = r.end;
+    bd = demandFullBd.filter(b => b.session_date && b.session_date.slice(0, 10) >= start && b.session_date.slice(0, 10) <= end);
+  }
+  bd.sort((a, b) => (a.session_date || '').localeCompare(b.session_date || ''));
+  demandBd = bd;
+  demandNeeded = bd.reduce((a, b) => a + (Number(b.qty) || 0), 0);
+  buildDemandHeader(start, end);
+  renderDemandPage();
+}
+window.applyDemandRange = applyDemandRange;
+
+function buildDemandHeader(start, end) {
+  const rangeLabel = `${new Date(start + 'T00:00:00').toLocaleDateString(LCALE(), { day: 'numeric', month: 'short' })} – ${new Date(end + 'T00:00:00').toLocaleDateString(LCALE(), { day: 'numeric', month: 'short', year: 'numeric' })}`;
+  // Pesakit & pakej AKTIF yang disumbang kepada keperluan ni — dipaparkan terus-terang
+  // (bukan terkubur dalam formula) sebab audit management minta bukti ia memang diambil kira.
+  const uniquePatients = new Set(demandBd.map(b => b.patient_name)).size;
+  const uniquePackages = new Set(demandBd.map(b => b.package_name).filter(Boolean)).size;
+  const qtyValues = [...new Set(demandBd.map(b => Number(b.qty)))];
+  const uniformQty = qtyValues.length === 1 ? qtyValues[0] : null;
+  let summaryLine;
+  if (!demandBd.length) {
+    summaryLine = iswL('Tiada sesi dalam tempoh ini', 'No sessions in this range');
+  } else if (uniformQty !== null && demandBd.length === uniquePatients) {
+    summaryLine = `${uniquePatients} pesakit × ${uniformQty} ${escHtml(demandUnit)} = ${demandNeeded} ${escHtml(demandUnit)} diperlukan`;
+  } else if (uniformQty !== null) {
+    summaryLine = `${demandBd.length} sesi (${uniquePatients} pesakit) × ${uniformQty} ${escHtml(demandUnit)} = ${demandNeeded} ${escHtml(demandUnit)} diperlukan`;
+  } else {
+    summaryLine = `${demandBd.length} sesi dari ${uniquePatients} pesakit = ${demandNeeded} ${escHtml(demandUnit)} diperlukan`;
+  }
+  const statBadges = demandBd.length ? `
+    <div class="flex items-center justify-end gap-2 mb-2 overflow-x-auto">
+      <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-navy/10 text-navy text-[11px] font-semibold whitespace-nowrap flex-shrink-0">👥 ${uniquePatients} ${iswL('daripada', 'of')} ${totalActivePatients} ${iswL('pesakit aktif perlukan item ini', 'active patients need this item')}</span>
+      <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-teal/15 text-teal text-[11px] font-semibold whitespace-nowrap flex-shrink-0">📦 ${uniquePackages} ${iswL('daripada', 'of')} ${totalActivePackages} ${iswL('pakej aktif terlibat', 'active packages involved')}</span>
+    </div>` : '';
+
+  const tabsHtml = DEMAND_TABS.map(t => `<button onclick="applyDemandRange('${t.key}')" class="px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${demandMode === t.key ? 'bg-navy text-white border-navy' : 'border-ink/15 text-ink/60 hover:bg-cream'}">${t.lbl}</button>`).join('');
+
+  demandHeaderHtml = `
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+      <div class="flex flex-wrap items-center gap-1.5">${tabsHtml}</div>
+      <div class="flex items-end gap-2 flex-shrink-0">
+        <div><label class="block text-[10px] text-ink/40 mb-0.5">${iswL('Dari', 'From')}</label><input id="demand-from" type="date" value="${demandMode === 'custom' ? escHtml(start) : ''}" class="border border-ink/15 rounded-lg px-2 py-1 text-[11px]"></div>
+        <div><label class="block text-[10px] text-ink/40 mb-0.5">${iswL('Hingga', 'To')}</label><input id="demand-to" type="date" value="${demandMode === 'custom' ? escHtml(end) : ''}" class="border border-ink/15 rounded-lg px-2 py-1 text-[11px]"></div>
+        <button onclick="applyDemandRange('custom')" class="px-3 py-1.5 rounded-lg text-[11px] font-semibold border ${demandMode === 'custom' ? 'bg-navy text-white border-navy' : 'border-ink/15 text-ink/60 hover:bg-cream'}">${iswL('Semak', 'Check')}</button>
+      </div>
+    </div>
+    <div class="text-xs text-ink/55 mb-1">${iswL('Sesi belum hadir dalam', 'Sessions not yet attended in')} <strong class="text-ink/75">${rangeLabel}</strong></div>
+    ${statBadges}
+    <div class="text-sm font-semibold text-navy mb-2">${summaryLine}</div>`;
+}
+
+// "Permintaan Berdasarkan Pakej" — jadual Tarikh | Nama Pesakit | Pakej | Minggu | Kuantiti,
+// overflow-x-auto (bukan susun lajur tegar) supaya tak kecut bila kad sempit; dipaginasi
+// ${DEMAND_PAGE_SIZE} baris/halaman bila > ${DEMAND_PAGE_SIZE}.
+function renderDemandPage() {
+  const totalPages = Math.max(1, Math.ceil(demandBd.length / DEMAND_PAGE_SIZE));
+  if (demandPage > totalPages) demandPage = totalPages;
+  if (demandPage < 1) demandPage = 1;
+  const startIdx = (demandPage - 1) * DEMAND_PAGE_SIZE;
+  const pageRows = demandBd.slice(startIdx, startIdx + DEMAND_PAGE_SIZE);
+
+  const table = demandBd.length ? `
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs">
+        <thead><tr class="text-left text-[10px] uppercase tracking-wide text-ink/40 border-b border-ink/8">
+          <th class="py-1.5 pr-3 font-semibold">${iswL('Tarikh', 'Date')}</th>
+          <th class="py-1.5 pr-3 font-semibold">${iswL('Nama Pesakit', 'Patient Name')}</th>
+          <th class="py-1.5 pr-3 font-semibold">${iswL('Pakej', 'Package')}</th>
+          <th class="py-1.5 pr-3 font-semibold text-center">${iswL('Minggu', 'Week')}</th>
+          <th class="py-1.5 font-semibold text-right">${iswL('Kuantiti', 'Quantity')}</th>
+        </tr></thead>
+        <tbody>${pageRows.map(b => `
+          <tr class="border-b border-ink/5">
+            <td class="py-2 pr-3 whitespace-nowrap text-ink/55">${escHtml(fmtSession(b.session_date))}</td>
+            <td class="py-2 pr-3 text-ink/80">${escHtml(b.patient_name)}</td>
+            <td class="py-2 pr-3 text-ink/60">${escHtml(b.package_name || '—')}</td>
+            <td class="py-2 pr-3 text-center text-ink/60">${b.week_number}</td>
+            <td class="py-2 font-semibold text-ink text-right whitespace-nowrap">${b.qty} ${escHtml(demandUnit)}</td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>` : '';
+
+  const pager = demandBd.length > DEMAND_PAGE_SIZE ? `
+    <div class="flex items-center justify-between pt-2 text-xs">
+      <button onclick="gotoDemandPage(-1)" ${demandPage <= 1 ? 'disabled' : ''} class="px-2.5 py-1 rounded-lg border border-ink/15 font-semibold ${demandPage <= 1 ? 'text-ink/25' : 'text-ink/60 hover:bg-cream'}">‹ ${iswL('Sebelum', 'Prev')}</button>
+      <span class="text-ink/45">${iswL('Halaman', 'Page')} ${demandPage} / ${totalPages}</span>
+      <button onclick="gotoDemandPage(1)" ${demandPage >= totalPages ? 'disabled' : ''} class="px-2.5 py-1 rounded-lg border border-ink/15 font-semibold ${demandPage >= totalPages ? 'text-ink/25' : 'text-ink/60 hover:bg-cream'}">${iswL('Seterusnya', 'Next')} ›</button>
+    </div>` : '';
+
+  document.getElementById('demand-content').innerHTML = `
+    ${demandHeaderHtml}
+    ${table}
+    ${pager}
+    <div class="flex items-center justify-between pt-2 mt-1 border-t-2 border-ink/15">
+      <span class="text-xs font-bold text-ink/50 uppercase tracking-wide">${iswL('Jumlah keperluan', 'Total required')}</span>
+      <span class="font-bold text-navy text-sm">${demandNeeded} ${escHtml(demandUnit)}</span>
+    </div>`;
+}
+function gotoDemandPage(delta) {
+  demandPage += delta;
+  renderDemandPage();
+}
+window.gotoDemandPage = gotoDemandPage;
 
 async function init() {
   const user = await initStaff('inventory', 'Detail Item');
@@ -390,13 +529,24 @@ async function init() {
   const params = new URLSearchParams(location.search);
   itemId = params.get('id');
   if (!itemId) { history.back(); return; }
+  movPatientFilter = params.get('patient') || null;
+  if (movPatientFilter) {
+    const { data: pt } = await window.db.from('psy_patients').select('full_name, mrn').eq('id', movPatientFilter).maybeSingle();
+    movPatientName = (pt ? iswPatientName(pt) || pt.mrn : null) || 'Pesakit';
+  }
 
-  const [itemRes, kitsRes, stockLocRes, locsRes] = await Promise.all([
+  const [itemRes, kitsRes, stockLocRes, locsRes, activePatRes, activePkgRes] = await Promise.all([
     window.db.from('psy_inventory_items').select('*').eq('id', itemId).single(),
     window.db.from('psy_procedure_kits').select('id, name, category, items'),
     window.db.from('psy_inventory_stock_by_location').select('*, psy_inventory_locations(name)').eq('item_id', itemId),
     window.db.from('psy_inventory_locations').select('id, name, is_default').eq('is_active', true).order('name'),
+    // Konteks "daripada berapa" utk badge pesakit/pakej aktif di kad Permintaan
+    // Berdasarkan Pakej (elak "33 pesakit aktif" disalah faham sbg jumlah SEMUA pesakit aktif).
+    window.db.from('psy_patients').select('id', { count: 'exact', head: true }).eq('status', 'active'),
+    window.db.from('psy_packages').select('id', { count: 'exact', head: true }).eq('is_active', true),
   ]);
+  totalActivePatients = activePatRes.count || 0;
+  totalActivePackages = activePkgRes.count || 0;
 
   if (!itemRes.data) { banner('Item tidak dijumpai', 'error'); return; }
   itemData = itemRes.data;
@@ -579,8 +729,9 @@ function renderDetail(item) {
   document.getElementById('mi-expiry').textContent  = item.expiry_date || '—';
   document.getElementById('mi-approval').textContent = item.requires_approval ? 'Ya' : 'Tidak diperlukan';
 
-  // Demand breakdown — sesi sebenar dijadualkan (belum hadir) dlm INVENTORY_REORDER_LOOKAHEAD_DAYS hari akan datang
+  // Demand breakdown — sesi sebenar dijadualkan (belum hadir), tapis ikut tempoh (lihat applyDemandRange)
   const bd = [...(item.forecast_breakdown || [])].sort((a, b) => (a.session_date || '').localeCompare(b.session_date || ''));
+  demandUnit = unit;
   if (!bd.length) {
     document.getElementById('demand-content').innerHTML = `
       <div class="flex flex-col items-center justify-center py-6 text-center">
@@ -589,42 +740,8 @@ function renderDetail(item) {
         <p class="text-[11px] text-ink/30 mt-1">Dalam 30 hari akan datang (bulan ini) — atau item belum dikaitkan pakej.</p>
       </div>`;
   } else {
-    const uniquePatients = new Set(bd.map(b => b.patient_name)).size;
-    const qtyValues = [...new Set(bd.map(b => Number(b.qty)))];
-    const uniformQty = qtyValues.length === 1 ? qtyValues[0] : null;
-    let summaryLine;
-    if (uniformQty !== null && bd.length === uniquePatients) {
-      summaryLine = `${uniquePatients} pesakit × ${uniformQty} ${escHtml(unit)} = ${needed} ${escHtml(unit)} diperlukan`;
-    } else if (uniformQty !== null) {
-      summaryLine = `${bd.length} sesi (${uniquePatients} pesakit) × ${uniformQty} ${escHtml(unit)} = ${needed} ${escHtml(unit)} diperlukan`;
-    } else {
-      summaryLine = `${bd.length} sesi dari ${uniquePatients} pesakit = ${needed} ${escHtml(unit)} diperlukan`;
-    }
-
-    // Tarikh sesi: paparkan dalam masa Malaysia (bukan ISO mentah UTC)
-    const fmtDay = d => new Date(d + 'T00:00:00').toLocaleDateString(LCALE(), { weekday: 'short', day: 'numeric', month: 'short' });
-    const fmtSession = s => {
-      if (!s) return '—';
-      if (s.length <= 10) return fmtDay(s);
-      return new Date(s).toLocaleString(LCALE(), { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kuala_Lumpur' });
-    };
-    const { start, end } = window.inventoryHorizonRanges().month;
-    const rangeLabel = `${new Date(start + 'T00:00:00').toLocaleDateString(LCALE(), { day: 'numeric', month: 'short' })} – ${new Date(end + 'T00:00:00').toLocaleDateString(LCALE(), { day: 'numeric', month: 'short', year: 'numeric' })}`;
-
-    const rows = bd.map(b => `
-      <div class="flex items-center gap-3 py-2 border-b border-ink/5">
-        <div class="w-32 flex-shrink-0 text-xs text-ink/55">${escHtml(fmtSession(b.session_date))}</div>
-        <div class="flex-1 min-w-0 text-xs text-ink/75 truncate" title="${escHtml(b.patient_name)}">${escHtml(b.patient_name)} <span class="text-ink/35">· Mgu ${b.week_number}</span></div>
-        <div class="text-xs font-semibold text-ink whitespace-nowrap">${b.qty} ${escHtml(unit)}</div>
-      </div>`).join('');
-    document.getElementById('demand-content').innerHTML = `
-      <div class="text-xs text-ink/55 mb-1">${iswL('Sesi belum hadir dalam', 'Sessions not yet attended in')} <strong class="text-ink/75">${rangeLabel}</strong> (30 ${iswL('hari akan datang', 'days ahead')})</div>
-      <div class="text-sm font-semibold text-navy mb-2">${summaryLine}</div>
-      <div class="space-y-0">${rows}</div>
-      <div class="flex items-center justify-between pt-2 mt-1 border-t-2 border-ink/15">
-        <span class="text-xs font-bold text-ink/50 uppercase tracking-wide">${iswL('Jumlah keperluan', 'Total required')}</span>
-        <span class="font-bold text-navy text-sm">${needed} ${escHtml(unit)}</span>
-      </div>`;
+    demandFullBd = bd;
+    applyDemandRange('month');
   }
 
   // Supplier
@@ -687,6 +804,16 @@ function renderStockByLocation(rows) {
 // "Jumlah Selepas" = jumlah stok SEMUA lokasi selepas pergerakan tu (jumlah baki terakhir
 // setiap lokasi setakat tu). balance_after ialah baki ABSOLUT per lokasi, jadi ia boleh
 // dijumlahkan terus tanpa perlu bermula dari sifar.
+function clearPatientFilter() {
+  movPatientFilter = null;
+  movPatientName = '';
+  const url = new URL(location.href);
+  url.searchParams.delete('patient');
+  history.replaceState(null, '', url.toString());
+  loadMovements();
+}
+window.clearPatientFilter = clearPatientFilter;
+
 async function loadMovements() {
   const { data, error } = await window.db.from('psy_stock_movements')
     .select('id, movement_type, qty, balance_after, location_id, reference_label, reference_type, reference_id, notes, actor_name, created_at, psy_inventory_locations(name)')
@@ -702,9 +829,9 @@ async function loadMovements() {
     return { ...r, totalAfter };
   });
 
-  // Nama pesakit: patient_package → reference_id ialah patient_id; shop_order → reference_id ialah order_id
-  // (psy_orders.patient_id).
-  const pkgIds   = [...new Set(rows.filter(r => r.reference_type === 'patient_package' && r.reference_id).map(r => r.reference_id))];
+  // Nama pesakit: patient_package / patient_package_reversal → reference_id ialah patient_id
+  // terus; shop_order → reference_id ialah order_id (psy_orders.patient_id).
+  const pkgIds   = [...new Set(rows.filter(r => (r.reference_type === 'patient_package' || r.reference_type === 'patient_package_reversal') && r.reference_id).map(r => r.reference_id))];
   const orderIds = [...new Set(rows.filter(r => r.reference_type === 'shop_order' && r.reference_id).map(r => r.reference_id))];
   const orderToPatient = {};
   if (orderIds.length) {
@@ -722,14 +849,21 @@ async function loadMovements() {
     (profs || []).forEach(p => { if (!patMap[p.id]) patMap[p.id] = p.full_name || null; });
   }
   rows.forEach(r => {
-    if (r.reference_type === 'patient_package' && r.reference_id) r.patientName = patMap[r.reference_id] || null;
+    if ((r.reference_type === 'patient_package' || r.reference_type === 'patient_package_reversal') && r.reference_id) r.patientName = patMap[r.reference_id] || null;
     else if (r.reference_type === 'shop_order' && r.reference_id) r.patientName = patMap[orderToPatient[r.reference_id]] || null;
   });
 
+  // Tapis ikut pesakit (?patient=) — SELEPAS totalAfter dikira (atas semua rekod item ni),
+  // supaya "Jumlah Selepas" kekal tepat walaupun senarai dipaparkan ditapis.
+  const visibleRows = movPatientFilter
+    ? rows.filter(r => r.reference_id === movPatientFilter &&
+        (r.reference_type === 'patient_package' || r.reference_type === 'patient_package_reversal'))
+    : rows;
+
   // Stok Masuk: 'in' + laras positif. Stok Keluar: 'out' (jualan Shop, bekalan sesi) + laras negatif.
   // Susunan terbaru di atas (rows asal ialah kronologi menaik).
-  movInRows  = rows.filter(r => r.movement_type === 'in'  || (r.movement_type === 'adjustment' && Number(r.qty) > 0)).reverse();
-  movOutRows = rows.filter(r => r.movement_type === 'out' || (r.movement_type === 'adjustment' && Number(r.qty) < 0)).reverse();
+  movInRows  = visibleRows.filter(r => r.movement_type === 'in'  || (r.movement_type === 'adjustment' && Number(r.qty) > 0)).reverse();
+  movOutRows = visibleRows.filter(r => r.movement_type === 'out' || (r.movement_type === 'adjustment' && Number(r.qty) < 0)).reverse();
   movInPage = 1;
   movOutPage = 1;
   renderMovCard('in');
@@ -740,12 +874,13 @@ async function loadMovements() {
 function exportMovementsCsv() {
   const rows = [...movInRows, ...movOutRows].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   if (!rows.length) { banner('Tiada rekod untuk export', 'error'); return; }
-  const header = ['Tarikh & Masa', 'Jenis', 'Kuantiti', 'Jumlah Selepas', 'Sumber', 'Pesakit', 'Lokasi', 'Oleh', 'Rujukan', 'Nota'];
+  const header = ['Tarikh & Masa', 'Jenis', 'Jumlah Asal', 'Kuantiti', 'Jumlah Selepas', 'Sumber', 'Pesakit', 'Lokasi', 'Oleh', 'Rujukan', 'Nota'];
   const csvEsc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const lines = [header.map(csvEsc).join(',')];
   rows.forEach(r => {
+    const totalBefore = (Number(r.totalAfter) || 0) - (Number(r.qty) || 0);
     lines.push([
-      formatDateTime(r.created_at), r.movement_type, r.qty, r.totalAfter,
+      formatDateTime(r.created_at), r.movement_type, totalBefore, r.qty, r.totalAfter,
       movSourceLabel(r.reference_type || r.movement_type), r.patientName || '',
       r.psy_inventory_locations?.name || '', r.actor_name || '', r.reference_label || '', r.notes || '',
     ].map(csvEsc).join(','));
@@ -762,6 +897,7 @@ window.exportMovementsCsv = exportMovementsCsv;
 // Pagination: 6 baris setiap halaman
 const MOV_PAGE_SIZE = 6;
 let movInRows = [], movOutRows = [];
+let movPatientFilter = null, movPatientName = '';
 let movInPage = 1, movOutPage = 1;
 
 function goMovPage(kind, n) {
@@ -777,6 +913,7 @@ function movSourceLabel(t) {
     adjustment:       iswL('Laras stok', 'Stock adjust'),
     opening_stock:    iswL('Stok permulaan', 'Opening stock'),
     patient_package:  iswL('Pesakit / Sesi', 'Patient / Session'),
+    patient_package_reversal: iswL('Pulangan Pesakit', 'Patient Return'),
     shop_order:       iswL('Jualan Shop', 'Shop sale'),
     transfer:         iswL('Pindahan', 'Transfer'),
   };
@@ -799,8 +936,10 @@ function renderMovCard(kind) {
     const q = Number(r.qty) || 0;
     const qtyColor = q > 0 ? 'text-green-dark' : 'text-terracotta';
     const where = r.notes || '';
+    const totalBefore = (Number(r.totalAfter) || 0) - q; // baki SEMUA lokasi sebelum pergerakan ni
     return `<tr class="border-b border-ink/5 hover:bg-ink/[0.015]">
       <td class="px-5 py-3 text-xs text-ink/50 whitespace-nowrap">${formatDateTime(r.created_at)}</td>
+      <td class="px-4 py-3 text-sm text-ink/60 whitespace-nowrap">${fmt(totalBefore)} ${unit}</td>
       <td class="px-4 py-3 text-sm font-semibold ${qtyColor} whitespace-nowrap">${q > 0 ? '+' : ''}${fmt(q)} ${unit}</td>
       <td class="px-4 py-3 text-sm font-bold text-ink whitespace-nowrap">${fmt(r.totalAfter)} ${unit}</td>
       <td class="px-4 py-3 text-xs text-ink/60">
@@ -811,7 +950,7 @@ function renderMovCard(kind) {
       <td class="px-4 py-3 text-xs text-ink/60 whitespace-nowrap">${escHtml(r.actor_name || '—')}</td>
       <td class="px-4 py-3 text-xs text-ink/50 max-w-[220px] truncate" title="${escHtml(where)}">${escHtml(r.reference_label || '') || escHtml(where) || '—'}</td>
     </tr>`;
-  }).join('') : `<tr><td colspan="7" class="text-center py-8 text-ink/30 text-sm">${isIn
+  }).join('') : `<tr><td colspan="8" class="text-center py-8 text-ink/30 text-sm">${isIn
     ? iswL('Tiada stok masuk direkod', 'No stock in recorded')
     : iswL('Tiada stok keluar direkod', 'No stock out recorded')}</td></tr>`;
 
@@ -839,11 +978,16 @@ function renderMovCard(kind) {
         ? iswL('Permohonan Belian', 'Purchase Request')
         : iswL('Stok Masuk', 'Stock In')}</button>` : `<button onclick="openStockOut()" data-rbac="inventory.create" class="ml-auto flex items-center gap-1.5 px-4 py-2 border border-ink/20 bg-white text-ink text-xs font-semibold rounded-xl hover:bg-ink/5 transition-colors shadow-sm whitespace-nowrap">+ ${iswL('Stok Keluar', 'Stock Out')}</button>`}
     </div>
+    ${movPatientFilter ? `<div class="px-5 py-2 bg-navy/5 border-b border-ink/8 flex items-center justify-between gap-2 text-xs">
+      <span class="text-ink/60">${iswL('Ditapis ikut pesakit', 'Filtered by patient')}: <strong class="text-navy">${escHtml(movPatientName)}</strong></span>
+      <button onclick="clearPatientFilter()" class="font-semibold text-ink/50 hover:text-ink">✕ ${iswL('Buang tapisan', 'Clear filter')}</button>
+    </div>` : ''}
     <div class="overflow-x-auto">
       <table class="w-full text-sm">
         <thead>
           <tr class="border-b border-ink/8 bg-ink/[0.02]">
             <th class="px-5 py-2.5 text-left text-[10px] font-bold text-ink/40 uppercase tracking-widest">${iswL('Tarikh & Masa', 'Date & Time')}</th>
+            <th class="px-4 py-2.5 text-left text-[10px] font-bold text-ink/40 uppercase tracking-widest">${iswL('Jumlah Asal', 'Qty Before')}</th>
             <th class="px-4 py-2.5 text-left text-[10px] font-bold text-ink/40 uppercase tracking-widest">${iswL('Kuantiti', 'Quantity')}</th>
             <th class="px-4 py-2.5 text-left text-[10px] font-bold text-ink/40 uppercase tracking-widest">${iswL('Jumlah Selepas', 'Total After')}</th>
             <th class="px-4 py-2.5 text-left text-[10px] font-bold text-ink/40 uppercase tracking-widest">${iswL('Sumber', 'Source')}</th>

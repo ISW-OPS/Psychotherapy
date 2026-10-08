@@ -18,7 +18,11 @@
 //      sekat tempahan sesi baru pesakit, WA sekali
 //   10) installment_reminder — SEBELUM due_date (rule.lead_days, default 3),
 //      WA + pautan bayaran HitPay dijana on-the-fly; dedup installment_reminder_sent_at
-// Konfig semua dari psy_auto_messages (boleh ubah di UI).
+//   11) followUpSend        — Sesi 1:1 (audit #17b): follow-up saranan AUTO-hantar
+//      bila follow_up_date sampai, dedup follow_up_sent_at
+//   12) reminderTimeSend    — Sesi 1:1 (audit #17c): reminder harian ikut reminder_time
+//      per-saranan, dedup reminder_last_sent_date, henti bila tempoh saranan tamat
+// Konfig 1-10 dari psy_auto_messages (boleh ubah di UI); 11-12 per-rekod psy_clinical_referrals.
 // Secrets: GHL_ISW_TOKEN, GHL_ISW_LOCATION_ID, CRON_SECRET, PUBLIC_APP_URL
 // ============================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -180,15 +184,30 @@ async function broadcastOne(supabase, locationId, m, sessionMin) {
     if (rows.length) { try { await supabase.from('psy_notifications').insert(rows); res.inapp = rows.length } catch (e) { res.errors.push('inapp: ' + String(e?.message || e)) } }
   }
   if (channels.includes('announcement')) {
+    // Audit #133 — delivery log: pengumuman auto-dicipta dari sini kekal IN-APP
+    // sahaja (sama macam publish manual di pengumuman-baru.html), jadi rekod
+    // SATU baris 'in_app' ke psy_notification_logs (guna semula logAuto(), bukan
+    // jadual log baharu). Rujukan guna lajur `event` sedia ada: 'announcement:<id>'.
+    let annId = null
     try {
-      await supabase.from('psy_announcements').insert({
+      const { data: annRow, error: annErr } = await supabase.from('psy_announcements').insert({
         title: m.name, body: render('').replace(/^Salam\s*\S*\s*/, ''), category: 'Komuniti', tag: 'Komuniti',
         audience: m.audience || ['patient'], package_ids: pkgs,
         cta_label: link ? 'Sertai Sekarang' : null, cta_url: link || null,
         is_active: true, expires_at: endOfTodayMyIso(),
-      })
+      }).select('id').single()
+      if (annErr) throw annErr
+      annId = annRow?.id || null
       res.announcement = 1
-    } catch (e) { res.errors.push('announcement: ' + String(e?.message || e)) }
+      await logAuto(supabase, { id: null, trigger_event: 'announcement:' + (annId || 'unknown') },
+        { id: null, full_name: `Broadcast automatik — anggaran ${targets.length} pesakit` },
+        'in_app', m.name, 'sent', null)
+    } catch (e) {
+      res.errors.push('announcement: ' + String(e?.message || e))
+      await logAuto(supabase, { id: null, trigger_event: 'announcement:' + (annId || 'unknown') },
+        { id: null, full_name: `Broadcast automatik — anggaran ${targets.length} pesakit` },
+        'in_app', m.name, 'failed', String(e?.message || e))
+    }
   }
   if (channels.includes('whatsapp')) {
     const withPhone = targets.map((p) => ({ ...p, ...resolveContact(p), e164: toE164(resolveContact(p).phone) })).filter((p) => p.e164)
@@ -998,6 +1017,103 @@ async function runInstallmentReminderCheck(supabase, locationId) {
   return res
 }
 
+// ───────── 11) Follow-up Saranan Sesi 1:1 — auto-hantar (audit #17b) ─────────
+// Sebelum ni staf kena klik "Mesej pesakit" (wa.me link) secara manual utk
+// follow-up saranan sesi 1:1 Hakeema/Hakeem/Dr — senang terlepas kalau staf
+// lupa. Sekarang: psy_clinical_referrals (source='plan_1on1') yang
+// consultation.follow_up_date dah sampai/lepas, saranan dah dihantar, pesakit
+// belum jawab (consultation.follow_up_result masih kosong) & belum
+// diautohantar (follow_up_sent_at top-level, BUKAN dlm consultation, masih
+// NULL) → hantar WA automatik. hphWaFollowUp() di sesi-1on1-detail.html kekal
+// sbg override manual (staf boleh hantar awal) — rekod jawapan pesakit
+// (hphRecordFollowUp) kekal manual, automasi ni TAK baca/parse balasan WA.
+const HK1_FALLBACK = { hakeema: 'Hakeema', hakeem: 'Hakeem', dr: 'Dr' }
+async function runFollowUpSend(supabase, locationId) {
+  const myToday = new Date(Date.now() + MY_OFFSET_MS).toISOString().slice(0, 10)
+  const { data: rows } = await supabase.from('psy_clinical_referrals')
+    .select('id, target_name, session_type, consultation, psy_patients(full_name, phone, emergency_contact_phone, emergency_contact_name, contact_preference)')
+    .eq('source', 'plan_1on1')
+    .is('follow_up_sent_at', null)
+    .not('consultation->>follow_up_date', 'is', null)
+    .lte('consultation->>follow_up_date', myToday)
+    .is('consultation->>follow_up_result', null)
+    .limit(500)
+  const res = { due: (rows || []).length, sent: 0, skipped: 0, errors: [] }
+  for (const r of rows || []) {
+    const c = r.consultation || {}
+    const p = r.psy_patients || {}
+    const { phone: rawPhone, contactName } = resolveContact(p)
+    const phone = toE164(rawPhone)
+    if (!phone) { res.skipped++; continue }
+    const who = r.target_name || HK1_FALLBACK[r.session_type] || 'coach anda'
+    const days = c.saranan_days ? `${c.saranan_days} hari` : 'tempoh yang disarankan'
+    const msg = [
+      `Assalamualaikum ${p.full_name || contactName || ''},`,
+      `${days} lepas sesi anda dengan ${who}, adakah anda telah ikut saranan: '${c.saranan || ''}'?`,
+      `Sila maklumkan kepada coach anda. Terima kasih. 🌿`,
+    ].join('\n')
+    try {
+      const cid = await upsertContact(locationId, phone, contactName)
+      if (!cid) throw new Error('no contactId')
+      await sendWA(cid, msg)
+      await supabase.from('psy_clinical_referrals').update({ follow_up_sent_at: new Date().toISOString() }).eq('id', r.id)
+      res.sent++
+    } catch (e) {
+      res.errors.push(`${r.id}: ${String(e?.message || e)}`)
+      // Tandakan tetap dihantar walau GAGAL (brief: dedup berjaya/gagal) — elak cron
+      // cuba berulang tiap 15 min utk nombor yg memang tak sah/GHL error berterusan.
+      try { await supabase.from('psy_clinical_referrals').update({ follow_up_sent_at: new Date().toISOString() }).eq('id', r.id) } catch (_) { /* jangan halang */ }
+    }
+  }
+  return res
+}
+
+// ───────── 12) Reminder Harian Per-Saranan (audit #17c) ─────────
+// Staf boleh tanda saranan sesi 1:1 perlu reminder harian pada masa tertentu
+// (checkbox + <input type=time> di sesi-1on1-detail.html, simpan reminder_time).
+// Tiap kali cron jalan (15 min), semak baris reminder_time dah sampai (jam
+// semasa MY >= reminder_time) & belum dihantar HARI NI (reminder_last_sent_date
+// != hari ini) & tempoh saranan masih aktif (saranan_start + saranan_days >=
+// hari ini) → hantar WA ringkas, tanda reminder_last_sent_date = hari ini.
+function addDaysYmd(ymd, n) {
+  const d = new Date(`${ymd}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + Number(n || 0))
+  return d.toISOString().slice(0, 10)
+}
+async function runReminderTimeSend(supabase, locationId) {
+  const myNow = new Date(Date.now() + MY_OFFSET_MS)
+  const myToday = myNow.toISOString().slice(0, 10)
+  const nowMin = myNow.getUTCHours() * 60 + myNow.getUTCMinutes()
+  const { data: rows } = await supabase.from('psy_clinical_referrals')
+    .select('id, reminder_time, reminder_last_sent_date, consultation, psy_patients(full_name, phone, emergency_contact_phone, emergency_contact_name, contact_preference)')
+    .eq('source', 'plan_1on1')
+    .not('reminder_time', 'is', null)
+    .or(`reminder_last_sent_date.is.null,reminder_last_sent_date.neq.${myToday}`)
+    .limit(500)
+  const res = { checked: (rows || []).length, due: 0, sent: 0, skipped: 0, errors: [] }
+  for (const r of rows || []) {
+    const c = r.consultation || {}
+    if (!c.saranan || !c.saranan_start || !c.saranan_days) { res.skipped++; continue }
+    const endDate = addDaysYmd(c.saranan_start, Number(c.saranan_days))
+    if (endDate < myToday) { res.skipped++; continue }   // tempoh saranan dah tamat
+    const [rh, rm] = String(r.reminder_time).split(':').map(Number)
+    if (!(nowMin >= (rh * 60 + (rm || 0)))) { res.skipped++; continue }   // masa belum sampai
+    res.due++
+    const p = r.psy_patients || {}
+    const { phone: rawPhone, contactName } = resolveContact(p)
+    const phone = toE164(rawPhone)
+    if (!phone) { res.skipped++; continue }
+    try {
+      const cid = await upsertContact(locationId, phone, contactName)
+      if (!cid) throw new Error('no contactId')
+      await sendWA(cid, `⏰ Peringatan: ${c.saranan}`)
+      await supabase.from('psy_clinical_referrals').update({ reminder_last_sent_date: myToday }).eq('id', r.id)
+      res.sent++
+    } catch (e) { res.errors.push(`${r.id}: ${String(e?.message || e)}`) }
+  }
+  return res
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   try {
@@ -1017,7 +1133,9 @@ Deno.serve(async (req) => {
     const installmentAutoCharge = await runInstallmentAutoChargeCheck(supabase, locationId)
     const installmentOverdue = await runInstallmentOverdueCheck(supabase, locationId)
     const installmentReminder = await runInstallmentReminderCheck(supabase, locationId)
-    return new Response(JSON.stringify({ success: true, eventReminders, broadcasts, catatanHarian, kepatuhanAlerts, automations, sessionConfirm, autoAbsence, dnaSampleReminder, installmentAutoCharge, installmentOverdue, installmentReminder }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    const followUpSend = await runFollowUpSend(supabase, locationId)
+    const reminderTimeSend = await runReminderTimeSend(supabase, locationId)
+    return new Response(JSON.stringify({ success: true, eventReminders, broadcasts, catatanHarian, kepatuhanAlerts, automations, sessionConfirm, autoAbsence, dnaSampleReminder, installmentAutoCharge, installmentOverdue, installmentReminder, followUpSend, reminderTimeSend }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
   } catch (err) {
     console.error('event-reminders error:', err)
     return new Response(JSON.stringify({ error: String(err?.message || err) }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })

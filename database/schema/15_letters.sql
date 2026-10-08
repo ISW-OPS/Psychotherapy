@@ -199,6 +199,13 @@ CREATE TABLE IF NOT EXISTS psy_letter_issued (
   created_at      TIMESTAMPTZ DEFAULT now()
 );
 
+-- Patch existing install — Audit #143: auto-hantar WhatsApp kepada pesakit
+-- lepas surat sedia (letters-send-wa edge function). Status penghantaran
+-- disimpan di sini supaya staff boleh nampak kat UI (surat-issue.html /
+-- patient-hub.html tab Surat) tanpa kena semak log edge function.
+ALTER TABLE psy_letter_issued ADD COLUMN IF NOT EXISTS wa_sent_at    TIMESTAMPTZ;
+ALTER TABLE psy_letter_issued ADD COLUMN IF NOT EXISTS wa_send_status TEXT;
+
 -- Indeks
 CREATE INDEX IF NOT EXISTS idx_letter_issued_patient ON psy_letter_issued(patient_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_letter_issued_code    ON psy_letter_issued(template_code);
@@ -256,6 +263,10 @@ CREATE POLICY "issued_staff_delete" ON psy_letter_issued FOR DELETE
 -- Komen
 COMMENT ON COLUMN psy_letter_issued.file_url IS
   'URL PDF/Word file lengkap yang dah disign (upload oleh staff).';
+COMMENT ON COLUMN psy_letter_issued.wa_sent_at IS
+  'Waktu mesej WhatsApp "surat sedia" berjaya dihantar kepada pesakit (letters-send-wa). NULL = belum/tak cuba.';
+COMMENT ON COLUMN psy_letter_issued.wa_send_status IS
+  'sent = WA berjaya hantar · failed = cuba tapi gagal (cth tiada no. telefon/GHL error) · NULL = belum cuba (surat internal, atau request lama sebelum ciri ni wujud).';
 
 -- ──── psy_letter_request_attachments ────
 -- Lampiran (PDF/gambar) yang requester upload masa mohon surat — cth salinan IC, surat tawaran

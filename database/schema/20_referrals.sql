@@ -146,7 +146,17 @@ CREATE TABLE IF NOT EXISTS psy_clinical_referrals (
   next_action        TEXT,
   next_action_pic    UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
   next_action_due    DATE,
-  next_action_done_at TIMESTAMPTZ
+  next_action_done_at TIMESTAMPTZ,
+  -- Ditambah 8 Okt 2026 (audit #17b/#17c) — follow-up saranan Sesi 1:1 kini
+  -- AUTO-hantar oleh cron (event-reminders), bukan staf klik wa.me manual lagi;
+  -- follow_up_date/follow_up_result sendiri KEKAL dlm consultation JSONB (sedia
+  -- ada), tapi follow_up_sent_at diletak TOP-LEVEL supaya cron senang query/dedup.
+  follow_up_sent_at        TIMESTAMPTZ,
+  -- Reminder harian per-saranan (audit #17c) — staf tandakan masa di
+  -- sesi-1on1-detail.html, cron hantar WA ringkas tiap hari sepanjang
+  -- tempoh saranan (saranan_start + saranan_days, dlm consultation JSONB).
+  reminder_time            TIME,
+  reminder_last_sent_date  DATE
 );
 
 CREATE INDEX IF NOT EXISTS idx_psy_clinical_referrals_target  ON psy_clinical_referrals(target_id, status, created_at DESC);

@@ -382,11 +382,28 @@
               </div>
             </div>
 
-            <!-- Kapasiti (Rawatan sahaja) — audit #B2-47 Tier 4: papar "X/Y slot" di Kalendar & Jadual -->
+            <!-- Kapasiti (Rawatan & Sesi 1:1) — audit #B2-47 Tier 4: papar "X/Y slot" di Kalendar & Jadual -->
             <div id="slot-maxbook-wrap" class="hidden">
               <label class="text-xs font-semibold text-ink/70">Kapasiti Maksimum (pilihan)</label>
-              <p class="text-[10px] text-ink/45 mt-0.5">Jumlah sesi rawatan dibenarkan pada blok masa ni. Kosongkan kalau tiada had.</p>
-              <input id="slot-max-bookings" type="number" min="1" placeholder="cth: 4" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-[#6366f1]">
+              <p class="text-[10px] text-ink/45 mt-0.5">Jumlah sesi dibenarkan pada blok masa ni (cth 5 pesakit dlm blok 9-12 pg). Kosongkan kalau tiada had.</p>
+              <input id="slot-max-bookings" type="number" min="1" placeholder="cth: 5" oninput="updateSlotPreview()" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:outline-none focus:border-[#6366f1]">
+            </div>
+
+            <!-- Tempoh Setiap Sesi (Sesi 1:1 sahaja) — Jadual Slot Konsultasi redesign, 7 Okt 2026.
+                 Bila diisi, blok ni auto-pecah jadi slot individu (09:00-09:30, 09:30-10:00, ...)
+                 bermula Masa Mula, sebanyak Kapasiti Maksimum di atas — setiap satu = 1 janji temu
+                 individu (bukan 1 blok = 1 kaunter). Kosongkan = mod lama (blok utuh). -->
+            <div id="slot-sesdur-wrap" class="hidden">
+              <label class="text-xs font-semibold text-ink/70">Tempoh Setiap Sesi (pilihan)</label>
+              <p class="text-[10px] text-ink/45 mt-0.5">Bila diisi, blok ni auto-pecah jadi slot individu bermula Masa Mula — setiap pesakit dapat masa sendiri, elak tempahan bertindih.</p>
+              <select id="slot-session-duration" onchange="updateSlotPreview()" class="w-full mt-1 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:outline-none focus:border-[#6366f1]">
+                <option value="">Guna blok utuh (mod lama, tiada slot individu)</option>
+                <option value="15">15 minit</option>
+                <option value="30">30 minit</option>
+                <option value="45">45 minit</option>
+                <option value="60">60 minit</option>
+              </select>
+              <div id="slot-preview" class="mt-2 text-[11px] text-ink/50"></div>
             </div>
 
             <!-- Label disembunyikan — auto-jana dari Masa Mula + Tamat -->
@@ -629,6 +646,7 @@ function renderType(slotType) {
     const sample = Object.values(dayMap)[0];
     const duration = computeDuration((sample?.slot_start||'').slice(0,5), (sample?.slot_end||'').slice(0,5));
 
+    const capAllowed = ['rawatan', 'sesi_1on1'].includes(slotType);
     const cells = DAYS.map(d => {
       const slot = dayMap[d.key];
       if (!slot) {
@@ -639,7 +657,15 @@ function renderType(slotType) {
       if (slot.is_active) activeCount++; else offCount++;
       const chipCls = slot.is_active ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-ink/8 text-ink/45 border-ink/10';
       const chipIcon = slot.is_active ? '<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>' : '<span class="text-ink/35">✕</span>';
-      return `<td class="text-center px-3 py-3.5"><button onclick="toggleSlot('${slot.id}', ${!slot.is_active})" data-rbac="kob_slots.edit" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-bold transition-colors hover:opacity-80 ${chipCls}">${chipIcon} ${slot.is_active ? 'ON' : 'OFF'}</button></td>`;
+      // Kapasiti per-hari (Rawatan & Sesi 1:1 sahaja) — baris DB sedia berasingan ikut hari,
+      // jadi input ni update HANYA baris tu (updateSlotCapacity), bukan seluruh kumpulan blok.
+      const capInput = (capAllowed && slot.is_active)
+        ? `<input type="number" min="1" value="${slot.max_bookings ?? ''}" placeholder="∞" title="Kapasiti maksimum hari ini (kosong = tiada had)"
+             onclick="event.stopPropagation()" onchange="updateSlotCapacity('${slot.id}', this.value)"
+             class="w-9 py-0.5 text-center text-[10px] text-ink/50 bg-ink/[0.04] border-0 rounded-full focus:outline-none focus:ring-1 focus:ring-[#6366f1] focus:bg-white placeholder:text-ink/25">`
+        : '';
+      const toggleBtn = `<button onclick="toggleSlot('${slot.id}', ${!slot.is_active})" data-rbac="kob_slots.edit" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-bold transition-colors hover:opacity-80 ${chipCls}">${chipIcon} ${slot.is_active ? 'ON' : 'OFF'}</button>`;
+      return `<td class="text-center px-3 py-3.5"><div class="flex flex-col items-center gap-1">${toggleBtn}${capInput}</div></td>`;
     }).join('');
 
     return `<tr class="hover:bg-ink/[0.01]">
@@ -665,6 +691,20 @@ function renderType(slotType) {
   document.getElementById(bodyId).innerHTML = rows || `<tr><td colspan="9" class="text-center text-ink/35 px-5 py-10">Tiada slot ${SLOT_TYPE_LABELS[slotType] || slotType}. Tekan + Tambah Slot untuk mula.</td></tr>`;
   document.getElementById(`${slotType}-active-count`).textContent = activeCount;
   document.getElementById(`${slotType}-off-count`).textContent = offCount;
+}
+
+// Kapasiti per-hari (lajur input dalam jadual) — ubah HANYA baris (hari) ni, tak jejas
+// hari lain dalam blok masa yang sama (cth Sabtu=5, Ahad=9 utk blok "9-12 pg" yang sama).
+async function updateSlotCapacity(slotId, value) {
+  const n = value.trim() === '' ? null : parseInt(value);
+  try {
+    const { error } = await window.db.from('psy_kob_slot_config').update({ max_bookings: n, updated_at: new Date().toISOString() }).eq('id', slotId);
+    if (error) throw error;
+    const slot = allSlots.find(s => s.id === slotId);
+    if (slot) slot.max_bookings = n;
+    await auditLog('clinic_slot.capacity_set', slotId, { max_bookings: n, slot_type: slot?.slot_type, day_of_week: slot?.day_of_week });
+    banner('Kapasiti dikemaskini ✅');
+  } catch (e) { banner('Ralat: ' + e.message, 'error'); loadSlots(); }
 }
 
 async function toggleSlot(slotId, isActive) {
@@ -721,7 +761,28 @@ function updateSlotTypeUI() {
     el.style.background = radio.checked ? '#eef2ff' : 'white';
   });
   const type = document.querySelector('input[name="slot-type"]:checked')?.value;
-  document.getElementById('slot-maxbook-wrap').classList.toggle('hidden', type !== 'rawatan');
+  document.getElementById('slot-maxbook-wrap').classList.toggle('hidden', !['rawatan', 'sesi_1on1'].includes(type));
+  document.getElementById('slot-sesdur-wrap').classList.toggle('hidden', type !== 'sesi_1on1');
+  updateSlotPreview();
+}
+
+// Pratonton ringkas: tunjuk slot individu pertama/terakhir akan dijana bila Tempoh + Kapasiti
+// diisi, supaya staff nampak kesan tetapan sebelum simpan.
+function updateSlotPreview() {
+  const el = document.getElementById('slot-preview');
+  if (!el) return;
+  const type = document.querySelector('input[name="slot-type"]:checked')?.value;
+  const dur = parseInt(document.getElementById('slot-session-duration')?.value || '');
+  const cap = parseInt(document.getElementById('slot-max-bookings')?.value || '');
+  const start = document.getElementById('slot-start')?.value;
+  if (type !== 'sesi_1on1' || !dur || !cap || !start) { el.textContent = ''; return; }
+  const [h0, m0] = start.split(':').map(Number);
+  const pad2 = n => String(n).padStart(2, '0');
+  const fmt = mins => `${pad2(Math.floor(mins / 60) % 24)}:${pad2(mins % 60)}`;
+  const firstEnd = fmt(h0 * 60 + m0 + dur);
+  const lastStart = fmt(h0 * 60 + m0 + (cap - 1) * dur);
+  const lastEnd = fmt(h0 * 60 + m0 + cap * dur);
+  el.innerHTML = `📋 Akan jana <b>${cap} slot</b>: ${start}-${firstEnd}, ... , ${lastStart}-${lastEnd}`;
 }
 
 function updateDayChips() {
@@ -753,6 +814,7 @@ function autoGenLabel() {
     document.getElementById('slot-duration').value = computeDuration(start, end);
   }
   updateDayConflicts();
+  updateSlotPreview();
 }
 
 // Detect conflict: untuk masa mula yang dipilih, hari mana dah ada slot
@@ -838,6 +900,7 @@ function openEditSlot(type, sortOrder) {
   document.getElementById('slot-duration').value = computeDuration((sample.slot_start || '').slice(0, 5), (sample.slot_end || '').slice(0, 5));
   document.getElementById('slot-note').value = sample.note || '';
   document.getElementById('slot-max-bookings').value = sample.max_bookings ?? '';
+  document.getElementById('slot-session-duration').value = sample.slot_duration_minutes ?? '';
   // Checkbox = hari AKTIF (ON), bukan sekadar wujud baris — supaya selari dgn toggle grid.
   const activeDays = new Set(rows.filter(r => r.is_active).map(r => r.day_of_week));
   document.querySelectorAll('.slot-day').forEach(el => el.checked = activeDays.has(parseInt(el.dataset.day)));
@@ -860,7 +923,9 @@ async function submitSlotModal() {
   const isActive = document.querySelector('input[name="slot-default-status"]:checked').value === 'on';
   const note = document.getElementById('slot-note').value.trim();
   const maxBookingsRaw = document.getElementById('slot-max-bookings').value;
-  const maxBookings = type === 'rawatan' && maxBookingsRaw ? parseInt(maxBookingsRaw) : null;
+  const maxBookings = ['rawatan', 'sesi_1on1'].includes(type) && maxBookingsRaw ? parseInt(maxBookingsRaw) : null;
+  const sessDurRaw = document.getElementById('slot-session-duration').value;
+  const sessionDuration = type === 'sesi_1on1' && sessDurRaw ? parseInt(sessDurRaw) : null;
   const { editOrder } = _slotModalState;
 
   if (!start || !end) return banner('Masa mula & tamat diperlukan', 'error');
@@ -875,9 +940,9 @@ async function submitSlotModal() {
       // bukan padam) supaya selari dgn grid & tak hilang config. Padam penuh guna butang 🗑️.
       for (const day of days) {
         if (existingByDay[day]) {
-          await window.db.from('psy_kob_slot_config').update({ label, slot_start: start, slot_end: end, note: note || null, max_bookings: maxBookings, is_active: isActive, updated_at: new Date().toISOString() }).eq('id', existingByDay[day].id);
+          await window.db.from('psy_kob_slot_config').update({ label, slot_start: start, slot_end: end, note: note || null, max_bookings: maxBookings, slot_duration_minutes: sessionDuration, is_active: isActive, updated_at: new Date().toISOString() }).eq('id', existingByDay[day].id);
         } else {
-          await window.db.from('psy_kob_slot_config').insert({ slot_type: type, day_of_week: day, slot_start: start, slot_end: end, label, note: note || null, max_bookings: maxBookings, sort_order: editOrder, is_active: isActive });
+          await window.db.from('psy_kob_slot_config').insert({ slot_type: type, day_of_week: day, slot_start: start, slot_end: end, label, note: note || null, max_bookings: maxBookings, slot_duration_minutes: sessionDuration, sort_order: editOrder, is_active: isActive });
         }
       }
       for (const row of existing) {
@@ -890,7 +955,7 @@ async function submitSlotModal() {
     } else {
       const maxSort = allSlots.filter(s => (s.slot_type || 'kob') === type).reduce((m, s) => Math.max(m, s.sort_order || 0), 0);
       const newOrder = maxSort + 1;
-      const rows = days.map(day => ({ slot_type: type, day_of_week: day, slot_start: start, slot_end: end, label, note: note || null, max_bookings: maxBookings, sort_order: newOrder, is_active: isActive }));
+      const rows = days.map(day => ({ slot_type: type, day_of_week: day, slot_start: start, slot_end: end, label, note: note || null, max_bookings: maxBookings, slot_duration_minutes: sessionDuration, sort_order: newOrder, is_active: isActive }));
       const { error } = await window.db.from('psy_kob_slot_config').insert(rows);
       if (error) throw error;
       await auditLog('clinic_slot.added', null, { type, label, days: days.length });

@@ -352,6 +352,17 @@
             <div id="m-hakeema1on1-list" class="overflow-x-auto"></div>
           </div>
 
+          <!-- ── Kepatuhan Rawatan — SEMUA pesakit klinik (audit: nak nampak terus kat dashboard) ── -->
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden">
+            <div class="px-5 py-4 border-b border-ink/8 flex items-center justify-between">
+              <h3 class="font-semibold text-sm text-ink flex items-center gap-2"><span>📊</span> Kepatuhan Rawatan — Semua Pesakit</h3>
+              <a href="kepatuhan.html" class="text-xs text-navy font-semibold hover:underline">Laporan →</a>
+            </div>
+            <div id="m-kepatuhan-summary" class="p-5">
+              <p class="text-xs text-ink/35 text-center py-4">Memuatkan...</p>
+            </div>
+          </div>
+
           <!-- ── Pendapatan + status + report issues ── -->
           <div class="grid grid-cols-1 lg:grid-cols-4 gap-4">
             <div class="lg:col-span-2 bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
@@ -469,6 +480,7 @@
                 <div id="a-sched-cal-grid" class="grid grid-cols-7 gap-1.5"></div>
               </div>
               <div id="a-sched-list" class="divide-y divide-ink/5 flex-1 overflow-y-auto"></div>
+              <div id="a-sched-pagination" class="hidden px-5 py-2.5 border-t border-ink/8 flex items-center justify-between gap-2 flex-shrink-0"></div>
             </div>
 
             <!-- Order Tertunggak -->
@@ -513,6 +525,17 @@
                 <h3 class="font-semibold text-sm text-ink flex items-center gap-2"><span>🧑‍⚕️</span> Pesakit Perlu Tindakan Hari Ini</h3>
               </div>
               <div id="a-patient-action" class="divide-y divide-ink/5 flex-1 overflow-y-auto"></div>
+            </div>
+
+            <!-- Kepatuhan Rawatan — SEMUA pesakit klinik (audit: nak nampak terus kat dashboard) -->
+            <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden flex flex-col h-[400px]">
+              <div class="px-6 h-[60px] border-b border-ink/8 flex items-center justify-between flex-shrink-0">
+                <h3 class="font-semibold text-sm text-ink flex items-center gap-2"><span>📊</span> Kepatuhan Rawatan</h3>
+                <a href="kepatuhan.html" class="text-xs text-navy font-semibold hover:underline">Laporan →</a>
+              </div>
+              <div id="ad-kepatuhan-summary" class="flex-1 overflow-y-auto p-5">
+                <p class="text-xs text-ink/35 text-center py-4">Memuatkan...</p>
+              </div>
             </div>
 
           </div>
@@ -770,8 +793,11 @@
     <div class="flex-1 space-y-1">${legend}</div>
   </div>`;
     }
-    async function renderCoachKepatuhan(user, today) {
-      const el = document.getElementById('c-kepatuhan-summary'); if (!el) return;
+    // Dikongsi oleh dashboard Coach ('c'), Manager ('m') dan Admin ('ad') — Manager/Admin
+    // guna opts.forceAll (tiada caseload sendiri, terus papar SEMUA pesakit klinik tanpa
+    // toggle Saya/Semua, sbb butang tu pun tiada dlm HTML utk view tersebut).
+    async function renderKepatuhanWidget(prefix, user, today, opts = {}) {
+      const el = document.getElementById(`${prefix}-kepatuhan-summary`); if (!el) return;
       const { data: patients } = await window.db.from('psy_patients')
         .select('id, full_name, mrn, coach_id, phone, psy_profiles!psy_patients_user_id_fkey(full_name)').neq('status', 'deleted').neq('status', 'rejected');
       const list = patients || [];
@@ -795,13 +821,17 @@
       };
       const GR = { A: ['A', 'bg-green-light text-green-dark'], B: ['B', 'bg-amber-100 text-amber-700'], C: ['C', 'bg-red-100 text-red-600'] };
       const KEP_PAGE_SIZE = 7;
-      let kepScope = 'mine', kepPage = 0;
+      let kepScope = opts.forceAll ? 'all' : 'mine', kepPage = 0;
       function paint(scope) { kepScope = scope; kepPage = 0; renderKepatuhan(); }
       function renderKepatuhan() {
         const scope = kepScope;
-        const on = 'px-2.5 py-1 rounded-md bg-white text-navy shadow-sm', off = 'px-2.5 py-1 rounded-md text-ink/50';
-        document.getElementById('c-kep-mine').className = scope === 'mine' ? on : off;
-        document.getElementById('c-kep-all').className = scope === 'all' ? on : off;
+        const mineBtn = document.getElementById(`${prefix}-kep-mine`);
+        const allBtn  = document.getElementById(`${prefix}-kep-all`);
+        if (mineBtn && allBtn) {
+          const on = 'px-2.5 py-1 rounded-md bg-white text-navy shadow-sm', off = 'px-2.5 py-1 rounded-md text-ink/50';
+          mineBtn.className = scope === 'mine' ? on : off;
+          allBtn.className  = scope === 'all' ? on : off;
+        }
         const shown = scope === 'all' ? list : list.filter(p => p.coach_id === user.id);
         if (!shown.length) { el.innerHTML = `<p class="text-xs text-ink/35 text-center py-6">${scope === 'all' ? 'Tiada pesakit.' : 'Tiada pesakit di bawah jagaan anda.'}</p>`; return; }
         const counts = { A: 0, B: 0, C: 0, none: 0 };
@@ -836,7 +866,7 @@
       </div>`;
         }).join('');
         const kepCard = (lbl, val, cls) => `<div class="rounded-xl border border-ink/10 p-2 text-center ${cls}"><div class="text-lg font-bold leading-none">${val}</div><div class="text-[9px] font-semibold mt-1 leading-tight">${lbl}</div></div>`;
-        const pagerBtn = (label, disabled, delta) => `<button onclick="window._kepGoPage(${delta})" ${disabled ? 'disabled' : ''}
+        const pagerBtn = (label, disabled, delta) => `<button onclick="window._kepGoPage_${prefix}(${delta})" ${disabled ? 'disabled' : ''}
       class="text-[10px] font-semibold px-2.5 py-1 rounded-lg border border-ink/15 ${disabled ? 'opacity-30 cursor-not-allowed' : 'hover:bg-ink/5'}">${label}</button>`;
         const pager = sorted.length > KEP_PAGE_SIZE
           ? `<div class="flex items-center justify-between mt-2 pt-2 border-t border-ink/8">
@@ -855,10 +885,14 @@
           + `<div class="-mx-1">${rows}</div>`
           + pager;
       }
-      window._kepGoPage = (delta) => { kepPage += delta; renderKepatuhan(); };
-      document.getElementById('c-kep-mine').onclick = () => paint('mine');
-      document.getElementById('c-kep-all').onclick = () => paint('all');
-      paint('mine');
+      window[`_kepGoPage_${prefix}`] = (delta) => { kepPage += delta; renderKepatuhan(); };
+      if (opts.forceAll) {
+        paint('all');
+      } else {
+        document.getElementById(`${prefix}-kep-mine`).onclick = () => paint('mine');
+        document.getElementById(`${prefix}-kep-all`).onclick = () => paint('all');
+        paint('mine');
+      }
     }
 
     // Simpan masa dijangka Sesi 1:1 Hakeema terus dari dashboard (elak staff kena buka
@@ -877,7 +911,7 @@
     function hk1RenderTable(rows, emptyMsg) {
       if (!rows.length) return `<div class="h-full flex items-center justify-center text-xs text-ink/35 p-10">${emptyMsg || 'Tiada Sesi 1:1 untuk hari ini'}</div>`;
       const HK1_ST = { pending: ['Belum konsultasi', 'bg-amber-100 text-amber-700'], accepted: ['Dijadualkan', 'bg-blue-50 text-blue-600'] };
-      const HK1_ICON = { hakeema: '🧑‍💼 Hakeema', hakeem: '🧑 Hakeem', dr: '🩺 Dr' };
+      const HK1_ICON = { hakeema: '🧑‍💼 Hakeema', hakeem: '🧑 Hakeem', dr: '🩺 Dr', fisioterapi: '🏃 Fisioterapi', kaunselor: '🗣️ Kaunselor', bekam: '🩸 Bekam', masseur: '💆 Masseur' };
       return `
     <table class="w-full text-sm">
       <thead class="bg-cream/40 text-[9px] uppercase tracking-wide text-ink/45">
@@ -986,7 +1020,7 @@
       }
 
       const myPatientIds = new Set(myPatients.map(p => p.id));
-      renderCoachKepatuhan(user, today).catch(() => { });
+      renderKepatuhanWidget('c', user, today).catch(() => { });
       const myWeekSessions = weekSessions.filter(s => myPatientIds.has(s.patient_id));
       const todayStr = today;
       const todaySessions = myWeekSessions.filter(s => s.session_date && s.session_date.slice(0, 10) === todayStr);
@@ -1148,7 +1182,7 @@
             return;
           }
           const HK1_ST = { pending: ['Belum konsultasi', 'bg-amber-100 text-amber-700'], accepted: ['Dijadualkan', 'bg-blue-50 text-blue-600'] };
-          const HK1_ICON = { hakeema: '🧑‍💼 Hakeema', hakeem: '🧑 Hakeem', dr: '🩺 Dr' };
+          const HK1_ICON = { hakeema: '🧑‍💼 Hakeema', hakeem: '🧑 Hakeem', dr: '🩺 Dr', fisioterapi: '🏃 Fisioterapi', kaunselor: '🗣️ Kaunselor', bekam: '🩸 Bekam', masseur: '💆 Masseur' };
           hkList.innerHTML = `
         <table class="w-full text-sm">
           <thead class="bg-cream/40 text-[9px] uppercase tracking-wide text-ink/45">
@@ -2156,6 +2190,8 @@
       document.getElementById('m-f-apply').addEventListener('click', applyFilters);
       document.getElementById('m-f-reset').addEventListener('click', () => { FILT_IDS.forEach(id => document.getElementById(id).value = ''); applyFilters(); });
       applyFilters();
+
+      renderKepatuhanWidget('m', user, today, { forceAll: true }).catch(() => { });
     }
 
     // ── ADMIN DASHBOARD ───────────────────────────────────────────────────────
@@ -2190,7 +2226,7 @@
         // belum ditick/ditolak lagi), gantikan log "dah diberi" (kini di Stock Movement/patient-hub).
         // Status: SEMUA kecuali 'hadir'/'cancel' (termasuk 'reschedule') — sepadan dgn
         // shared/inventoryForecast.js computeForecastForRange(), elak dua sumber forecast lari beza.
-        window.db.from('psy_plan_weekly_progress').select('id, session_date, week_number, plan_id, patient_id, is_extension')
+        window.db.from('psy_plan_weekly_progress').select('id, session_date, week_number, session_day, plan_id, patient_id, is_extension')
           .eq('session_type', 'f2f').neq('status', 'hadir').neq('status', 'cancel')
           .gte('session_date', _weekStart.toISOString()).lt('session_date', _weekEnd.toISOString())
           .order('session_date', { ascending: true }),
@@ -2329,19 +2365,28 @@
       const A_MONTH_NAMES = ['Januari', 'Februari', 'Mac', 'April', 'Mei', 'Jun', 'Julai', 'Ogos', 'September', 'Oktober', 'November', 'Disember'];
       const A_DAY_LABELS = ['Aha', 'Isn', 'Sel', 'Rab', 'Kha', 'Jum', 'Sab'];
       let aCalYear = Number(today.slice(0, 4)), aCalMonth = Number(today.slice(5, 7)) - 1, aCalSelectedYmd = today;
+      const A_SCHED_PAGE_SIZE = 5;
+      let aSchedPage = 1;
+      let aCalMonthRowsCache = [];
 
       async function renderDayList(ymd, monthRows) {
         const list = document.getElementById('a-sched-list');
+        const pager = document.getElementById('a-sched-pagination');
         const sess = (monthRows || []).filter(s => s.session_date && schedYmd(new Date(s.session_date)) === ymd);
         if (!sess.length) {
           list.innerHTML = '<div class="h-full flex items-center justify-center text-sm text-ink/35 p-6">Tiada sesi pada tarikh ini.</div>';
+          pager.classList.add('hidden');
           return;
         }
+        const totalPages = Math.max(1, Math.ceil(sess.length / A_SCHED_PAGE_SIZE));
+        if (aSchedPage > totalPages) aSchedPage = totalPages;
+        if (aSchedPage < 1) aSchedPage = 1;
+        const pageSess = sess.slice((aSchedPage - 1) * A_SCHED_PAGE_SIZE, aSchedPage * A_SCHED_PAGE_SIZE);
         // Muat nama coach dulu (dipakai dalam schedRow() utk mod Kronologi & Ikut Coach)
-        await ensureCoaches([...new Set(sess.map(s => s.psy_patients?.coach_id).filter(Boolean))]);
+        await ensureCoaches([...new Set(pageSess.map(s => s.psy_patients?.coach_id).filter(Boolean))]);
         if (schedMode === 'coach') {
           const groups = {};
-          sess.forEach(s => { const cid = s.psy_patients?.coach_id || 'none'; (groups[cid] ||= []).push(s); });
+          pageSess.forEach(s => { const cid = s.psy_patients?.coach_id || 'none'; (groups[cid] ||= []).push(s); });
           list.innerHTML = Object.entries(groups).map(([cid, arr]) => {
             const coach = coachCache[cid];
             const cName = coach?.full_name || 'Tiada coach ditetapkan';
@@ -2357,9 +2402,22 @@
         </div>`;
           }).join('');
         } else {
-          list.innerHTML = sess.map(s => schedRow(s)).join('');
+          list.innerHTML = pageSess.map(s => schedRow(s)).join('');
+        }
+        if (totalPages <= 1) {
+          pager.classList.add('hidden');
+        } else {
+          pager.classList.remove('hidden');
+          pager.innerHTML = `
+        <button onclick="aSchedGoPage(${aSchedPage - 1})" ${aSchedPage <= 1 ? 'disabled' : ''} class="text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-ink/15 text-ink/60 hover:bg-ink/5 disabled:opacity-30 disabled:cursor-not-allowed">‹ Sebelum</button>
+        <span class="text-[11px] text-ink/45">Mukasurat ${aSchedPage} / ${totalPages} &middot; ${sess.length} sesi</span>
+        <button onclick="aSchedGoPage(${aSchedPage + 1})" ${aSchedPage >= totalPages ? 'disabled' : ''} class="text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-ink/15 text-ink/60 hover:bg-ink/5 disabled:opacity-30 disabled:cursor-not-allowed">Seterusnya ›</button>`;
         }
       }
+      window.aSchedGoPage = (p) => {
+        aSchedPage = p;
+        renderDayList(aCalSelectedYmd, aCalMonthRowsCache);
+      };
 
       async function renderAdminCalendar() {
         const calGrid = document.getElementById('a-sched-cal-grid');
@@ -2367,6 +2425,7 @@
         calGrid.innerHTML = '<div class="col-span-7 text-center text-xs text-ink/35 py-6">Memuatkan…</div>';
         document.getElementById('a-sched-list').innerHTML = '<div class="h-full flex items-center justify-center text-xs text-ink/35 p-6">Memuatkan…</div>';
         const rows = await loadAdminMonth(aCalYear, aCalMonth);
+        aCalMonthRowsCache = rows;
         const countByDay = {};
         rows.forEach(s => { if (!s.session_date) return; const ymd = schedYmd(new Date(s.session_date)); countByDay[ymd] = (countByDay[ymd] || 0) + 1; });
         const gridStart = aCalGridStart(aCalYear, aCalMonth);
@@ -2394,6 +2453,7 @@
       window.aSelectDay = (ymd) => {
         const [y, m] = ymd.split('-').map(Number);
         aCalSelectedYmd = ymd;
+        aSchedPage = 1;
         if (y !== aCalYear || (m - 1) !== aCalMonth) { aCalYear = y; aCalMonth = m - 1; }
         renderAdminCalendar();
       };
@@ -2403,6 +2463,7 @@
         else if (aCalMonth > 11) { aCalMonth = 0; aCalYear++; }
         const todayY = Number(today.slice(0, 4)), todayM = Number(today.slice(5, 7)) - 1;
         aCalSelectedYmd = (aCalYear === todayY && aCalMonth === todayM) ? today : `${aCalYear}-${String(aCalMonth + 1).padStart(2, '0')}-01`;
+        aSchedPage = 1;
         renderAdminCalendar();
       }
       function setSchedMode(m) {
@@ -2410,6 +2471,7 @@
         const on = 'px-2.5 py-1 rounded-md bg-white text-navy shadow-sm', off = 'px-2.5 py-1 rounded-md text-ink/50';
         document.getElementById('a-sched-mode-time').className = m === 'time' ? on : off;
         document.getElementById('a-sched-mode-coach').className = m === 'coach' ? on : off;
+        aSchedPage = 1;
         renderAdminCalendar();
       }
       document.getElementById('a-sched-prev').onclick = () => aShiftMonth(-1);
@@ -2575,13 +2637,16 @@
       const planScheduleById = {}; (pendingPlansRes.data || []).forEach(pl => { planScheduleById[pl.id] = Array.isArray(pl.coaching_schedule) ? pl.coaching_schedule : []; });
 
       // Sesi → bekalan dijadualkan minggu ni (ikut coaching_schedule pakej), skip kalau tiada
-      // bekalan/auto_stock=false — sama logik dgn shared/inventoryDeduct.js. Cuma .supplies
-      // (BUKAN .supplies_2) — sepadan tepat dgn apa yg deductSessionSupplies() sebenar tolak.
+      // bekalan/auto_stock=false — sama logik dgn shared/inventoryDeduct.js. Sesi 2
+      // (session_day=2) guna senarai supplies_2 berasingan, padan dgn apa yg
+      // deductSessionSupplies() sebenar tolak.
       const stockNeeded = pendingSessions.map(s => {
         const schedule = planScheduleById[s.plan_id] || [];
         const weekObj = schedule.find(w => w.week === s.week_number) || schedule[s.week_number - 1];
+        const activeDay = s.session_day || 1;
+        const suppliesRaw = activeDay === 2 ? weekObj?.supplies_2 : weekObj?.supplies;
         const supplies = weekObj && weekObj.mode !== 'online'
-          ? (weekObj.supplies || []).filter(sup => sup?.auto_stock !== false && Number(sup?.qty || sup?.quantity || 0) > 0)
+          ? (Array.isArray(suppliesRaw) ? suppliesRaw : []).filter(sup => sup?.auto_stock !== false && Number(sup?.qty || sup?.quantity || 0) > 0)
           : [];
         return { patient_id: s.patient_id, session_date: s.session_date, plan_id: s.plan_id, week_number: s.week_number, supplies };
       }).filter(r => r.supplies.length);
@@ -2696,6 +2761,7 @@
       </tbody>
     </table>` : '<div class="h-full flex items-center justify-center text-xs text-ink/30 p-6">Tiada bekalan tertunggak minggu ini</div>';
 
+      renderKepatuhanWidget('ad', user, today, { forceAll: true }).catch(() => { });
     }
 
     // ── DOCTOR DASHBOARD ──────────────────────────────────────────────────────

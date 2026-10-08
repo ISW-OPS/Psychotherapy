@@ -24,6 +24,7 @@ const NAV_ITEMS_BY_ROLE = {
     },
     { id: 'shop', url: 'shop.html', icon: '🛒', label: 'Produk' },
     { id: 'vouchers', url: 'vouchers.html', icon: '🎟️', label: 'Voucher Saya' },
+    { id: 'missions', url: 'missions.html', icon: '🎯', label: 'Mission Saya' },
     {
       id: 'payment', url: 'payment-overview.html', icon: '💳', label: 'Pembayaran', children: [
         { id: 'payment_overview', url: 'payment-overview.html', icon: '📊', label: 'Plan Rawatan' },
@@ -156,11 +157,15 @@ const STAFF_NAV_MASTER = [
         { id: 'promo_vouchers', url: 'promo-vouchers.html', icon: '🎟️', label: 'Voucher Pesakit' },
         { id: 'promo_redemptions', url: 'promo-redemptions.html', icon: '🧾', label: 'Penggunaan Promo' },
         { id: 'point_rewards', url: 'point-rewards.html', icon: '🏆', label: 'Ganjaran Mata' },
+        { id: 'missions',      url: 'missions.html',      icon: '🎯', label: 'Mission' },
         { id: 'affiliate',     url: 'affiliate.html',     icon: '🤝', label: 'Affiliate' },
       ] },
       { id: 'inventory_group', url: 'inventory.html', icon: '🏭', label: 'Inventori', children: [
+        { id: 'inventory_overview', url: 'inventory-overview.html', label: 'Overview' },
         { id: 'inventory',          url: 'inventory.html',          label: 'Inventori' },
         { id: 'pemberian_stok',     url: 'pemberian-stok.html',     label: 'Pemberian Stok' },
+        { id: 'purchase_requests',  url: 'purchase-requests.html',  label: 'Purchase Requests' },
+        { id: 'ready_to_buy',       url: 'ready-to-buy.html',       label: 'Ready to Buy' },
         { id: 'suppliers',          url: 'suppliers.html',          label: 'Suppliers' },
         { id: 'equipment',          url: 'equipment-list.html',     label: 'Senarai Peralatan' },
       ] },
@@ -240,6 +245,7 @@ const SETTINGS_SUBNAV = [
   { id: 'keselamatan', icon: '🛡️', label: 'Keselamatan' },
   { id: 'affiliate', icon: '🤝', label: 'Affiliate' },
   { id: 'vitals', icon: '🩺', label: 'Ambang Vitals' },
+  { id: 'bekalan_kob', icon: '📦', label: 'Bekalan KOB' },
 ];
 // Halaman lain yang tergolong dlm keluarga Tetapan (dibuka dari senarai Tetapan) —
 // bila dibuka terus (bukan dari tab), sidebar kekal dalam mod Tetapan jugak.
@@ -629,11 +635,12 @@ async function loadNavBadges(role, _staffRole, userId) {
     if (role === 'staff') {
       const absentSince = new Date(Date.now() - 7 * 86400000).toISOString();
       const nowIso = new Date().toISOString();
-      const [ordersRes, issuesRes, closedRes, invRes, kobRes, patientsRes, peRes, plansRes, activePatRes, recentHadirRes] = await Promise.all([
+      const [ordersRes, issuesRes, closedRes, invRes, invApprovedRes, kobRes, patientsRes, peRes, plansRes, activePatRes, recentHadirRes] = await Promise.all([
         window.db.from('psy_orders').select('id', { count: 'exact', head: true }).in('status', ['paid', 'packed']),
         window.db.from('psy_audit_log').select('id').eq('action', 'issue.reported'),
         window.db.from('psy_audit_log').select('meta').eq('action', 'issue.closed'),
         window.db.from('psy_inventory_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending_approval'),
+        window.db.from('psy_inventory_requests').select('id', { count: 'exact', head: true }).eq('status', 'approved'),
         // Today + upcoming sahaja — sesi 'booked' yang dah lepas masa (Missed) tak dikira
         window.db.from('psy_kob_sessions').select('id', { count: 'exact', head: true }).eq('status', 'booked').gte('scheduled_at', nowIso),
         window.db.from('psy_patients').select('id', { count: 'exact', head: true }).eq('status', 'pending_kyc'),
@@ -646,6 +653,7 @@ async function loadNavBadges(role, _staffRole, userId) {
 
       setNavBadge('psy_orders', ordersRes.count || 0);
       setNavBadge('purchase_requests', invRes.count || 0);
+      setNavBadge('ready_to_buy', invApprovedRes.count || 0);
       setNavBadge('kob_list', kobRes.count || 0);
       setNavBadge('psy_patients', patientsRes.count || 0);
       setNavBadge('peristiwa', peRes?.count || 0); // peristiwa pesakit terbuka

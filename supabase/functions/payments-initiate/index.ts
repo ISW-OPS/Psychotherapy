@@ -68,8 +68,12 @@ Deno.serve(async (req) => {
     // 3. SAHKAN HARGA server-side — jangan percaya amaun dari client.
     //    Pakej & produk disemak semula dari DB; jenis lain guna amaun DB-derived.
     let total = 0
-    for (const it of items) {
-      total += await verifiedAmount(admin, it, patientId)
+    try {
+      for (const it of items) {
+        total += await verifiedAmount(admin, it, patientId)
+      }
+    } catch (e) {
+      return json({ error: e instanceof Error ? e.message : 'Jumlah bayaran tidak sah' }, 400)
     }
     if (!(total > 0)) return json({ error: 'Jumlah bayaran tidak sah' }, 400)
 
@@ -395,7 +399,10 @@ async function verifiedAmount(admin: any, it: any, patientId: string | null): Pr
       let sub = 0
       for (const line of it.items) {
         const p = map[line.id]
-        if (!p || p.is_active === false) return clientAmt // fallback kalau tak jumpa
+        // Audit 7 Okt — DULU fallback ke clientAmt di sini (percaya jumlah client utk
+        // SELURUH troli bila satu baris tak jumpa/tak aktif — boleh dieksploitasi bayar
+        // RM0.01 utk troli sebenar beratus ringgit). Tolak terus pembayaran sebaliknya.
+        if (!p || p.is_active === false) throw new Error('Satu atau lebih produk dalam troli tidak lagi tersedia. Sila buat semula order anda.')
         const qty = Math.max(1, parseInt(line.qty) || 1)
         const orig = Number(p.price) || 0
         const promo = Number(p.promo_price || 0)

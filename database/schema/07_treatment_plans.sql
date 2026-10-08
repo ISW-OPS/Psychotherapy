@@ -256,7 +256,10 @@ BEGIN
     INTO v_pstatus, v_pkg_expired, v_next_pkg, v_next_name
     FROM psy_patients WHERE id = v_patient_id;
 
-  IF v_pstatus IN ('inactive','archived','deceased','deleted') THEN
+  -- 'warded' ditambah 7 Okt 2026 (audit #124) — pesakit masuk wad TIDAK boleh
+  -- ditimpa balik ke 'inactive' oleh automasi ni semata kerana sesi lama ditanda
+  -- selesai; status klinikal 'warded' dikawal oleh modul Rekod Klinikal Pesakit.
+  IF v_pstatus IN ('inactive','archived','deceased','deleted','warded') THEN
     RETURN NEW;
   END IF;
 

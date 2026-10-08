@@ -50,6 +50,12 @@ CREATE TABLE IF NOT EXISTS psy_patients (
   medical_condition               TEXT,
   condition_duration              TEXT,
   medical_notes                   TEXT,
+  -- Ditambah 8 Okt 2026 (audit #20) — flag eksplisit ditandakan staf (checkbox),
+  -- BUKAN keyword-matching pada medical_condition free-text (terlalu fragile).
+  -- Bila true, trigger trg_patient_kidney_alert_notify (bawah) amaran coach
+  -- pasal kadar peminuman air & larangan suntikan/kolar vena di lengan akses
+  -- dialisis. Banner amaran jugak papar di patient-hub.html bila profil dibuka.
+  has_kidney_condition             BOOLEAN NOT NULL DEFAULT false,
   height_cm                       NUMERIC,
   active_package_id               TEXT,
   active_package_name             TEXT,
@@ -80,7 +86,7 @@ CREATE TABLE IF NOT EXISTS psy_patients (
   CONSTRAINT psy_patients_user_id_unique UNIQUE (user_id),
   CONSTRAINT psy_patients_status_check CHECK (status IN (
     'pending_kyc','active','inactive','rejected','deleted',
-    'unregistered','archived','deceased'
+    'unregistered','archived','deceased','warded'
   )),
   CONSTRAINT psy_patients_kob_status_check CHECK (kob_status IN (
     'pending_payment',      -- Patient baru daftar, belum bayar
@@ -413,8 +419,8 @@ BEGIN
     INTO v_pstatus, v_pkg_expired
     FROM psy_patients WHERE id = v_patient_id;
 
-  -- Sudah tak aktif → jangan ganggu
-  IF v_pstatus IN ('inactive','archived','deceased','deleted') THEN
+  -- Sudah tak aktif (atau sedang warded — jangan timpa status klinikal semasa) → jangan ganggu
+  IF v_pstatus IN ('inactive','archived','deceased','deleted','warded') THEN
     RETURN NEW;
   END IF;
 
@@ -596,6 +602,64 @@ CREATE TRIGGER trg_sync_kyc_to_patient
   AFTER INSERT OR UPDATE ON psy_kyc_submissions
   FOR EACH ROW
   EXECUTE FUNCTION sync_kyc_to_patient();
+
+-- ──── trigger: amaran coach bila pesakit buah pinggang/dialisis ────
+-- Audit #20 (8 Okt 2026). Bila staf tandakan has_kidney_condition = true
+-- (ATAU coach pesakit yg SUDAH ditanda true ditukar/diisi — supaya coach
+-- BAHARU pun kena notify "setiap kali DAPAT pesakit"), hantar notify() kpd
+-- coach_id tu. Ikut pola trg_patient_warded_auto_event (25_patient_events.sql)
+-- — SECURITY DEFINER + EXCEPTION WHEN OTHERS supaya tak gagalkan transaksi
+-- update psy_patients kalau notify silap. Banner visual (bukan notifikasi
+-- sahaja) papar di patient-hub.html setiap kali profil pesakit ni dibuka.
+CREATE OR REPLACE FUNCTION trg_patient_kidney_alert_notify()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_became_flagged BOOLEAN;
+  v_coach_changed BOOLEAN;
+BEGIN
+  v_became_flagged := NEW.has_kidney_condition = true
+    AND OLD.has_kidney_condition IS DISTINCT FROM true;
+  v_coach_changed := NEW.has_kidney_condition = true
+    AND NEW.coach_id IS NOT NULL
+    AND NEW.coach_id IS DISTINCT FROM OLD.coach_id;
+
+  IF NOT (v_became_flagged OR v_coach_changed) OR NEW.coach_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  PERFORM notify_patient_kidney_alert(NEW.coach_id, NEW.id, NEW.full_name);
+
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'trg_patient_kidney_alert_notify: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+-- Helper berasingan (bukan terus insert dlm trigger) supaya boleh re-use kalau
+-- perlu panggil dari tempat lain kemudian (cth backfill manual).
+CREATE OR REPLACE FUNCTION notify_patient_kidney_alert(p_coach_id UUID, p_patient_id UUID, p_patient_name TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  INSERT INTO psy_notifications (user_id, type, title, body, link)
+  VALUES (
+    p_coach_id,
+    'kidney_alert',
+    '⚠️ Pesakit Buah Pinggang/Dialisis',
+    'Pesakit ' || COALESCE(p_patient_name, 'ini') ||
+      ' ada masalah buah pinggang/dialisis — perhatikan kadar peminuman air pesakit ' ||
+      '& ELAK penyuntikan/pengambilan darah di lengan yang ada akses dialisis (fistula/kolaps vena).',
+    'patient-hub.html?id=' || p_patient_id::TEXT
+  );
+EXCEPTION WHEN OTHERS THEN
+  RAISE LOG 'notify_patient_kidney_alert: %', SQLERRM;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_patient_kidney_alert_notify ON psy_patients;
+CREATE TRIGGER trg_patient_kidney_alert_notify
+  AFTER UPDATE ON psy_patients
+  FOR EACH ROW EXECUTE FUNCTION trg_patient_kidney_alert_notify();
 
 -- ──── komen psy_kyc_submissions ────
 COMMENT ON COLUMN psy_kyc_submissions.submitted_by_proxy IS

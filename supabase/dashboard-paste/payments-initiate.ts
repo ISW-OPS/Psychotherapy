@@ -136,8 +136,12 @@ Deno.serve(async (req) => {
     const blockedProduct = await findUnavailableShopProduct(admin, items);
     if (blockedProduct) return json({ error: `"${blockedProduct}" tidak lagi tersedia. Sila buat semula order anda.` }, 400);
     let total = 0;
-    for (const it of items) {
-      total += await verifiedAmount(admin, it, patientId);
+    try {
+      for (const it of items) {
+        total += await verifiedAmount(admin, it, patientId);
+      }
+    } catch (e) {
+      return json({ error: e instanceof Error ? e.message : "Jumlah bayaran tidak sah" }, 400);
     }
     if (!(total > 0)) return json({ error: "Jumlah bayaran tidak sah" }, 400);
     // Fasa 3 (7 Okt) — pesakit PILIH SENDIRI baucar, bukan auto FIFO.
@@ -370,7 +374,8 @@ async function verifiedAmount(admin, it, patientId) {
       let sub = 0;
       for (const line of it.items) {
         const p = map[line.id];
-        if (!p || p.is_active === false) return clientAmt;
+        // Audit 7 Okt — jangan fallback ke clientAmt di sini (boleh dieksploitasi).
+        if (!p || p.is_active === false) throw new Error("Satu atau lebih produk dalam troli tidak lagi tersedia. Sila buat semula order anda.");
         const qty = Math.max(1, parseInt(line.qty) || 1);
         const orig = Number(p.price) || 0;
         const promo = Number(p.promo_price || 0);

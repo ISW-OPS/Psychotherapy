@@ -32,6 +32,19 @@
           <button data-rbac="dna_test.create" onclick="openPickerModal()" class="text-sm font-semibold px-4 py-2.5 rounded-lg bg-navy text-white hover:bg-navy/90">+ Cipta Proses Baharu</button>
         </div>
 
+        <!-- Ringkasan Prestasi -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="bg-white rounded-2xl border border-ink/10 p-4">
+            <div class="text-[10px] uppercase font-semibold text-ink/50 tracking-wide">Purata Hari (Hantar Sampel → Laporan Keluar)</div>
+            <div id="dt-sum-avg" class="text-2xl font-bold mt-1 text-navy">—</div>
+            <div class="text-[10px] text-ink/50 mt-1.5">Dikira merentas proses yang ada kedua-dua tarikh</div>
+          </div>
+          <div class="bg-white rounded-2xl border border-ink/10 p-4">
+            <div class="text-[10px] uppercase font-semibold text-ink/50 tracking-wide">Pecahan Mengikut Coach (ATGC)</div>
+            <div id="dt-sum-coach" class="text-xs text-ink/70 mt-1.5 space-y-0.5 leading-relaxed">—</div>
+          </div>
+        </div>
+
         <!-- Filters -->
         <div class="bg-white rounded-2xl border border-ink/10 p-3 flex items-center gap-2 flex-wrap">
           <input id="dt-search" oninput="filterChanged()" type="text" placeholder="🔍 Cari nama / MRN pesakit…" class="flex-1 min-w-[200px] border border-ink/15 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-navy">
@@ -44,6 +57,7 @@
             <span>—</span>
             <input id="dt-to" onchange="filterChanged()" type="date" class="border border-ink/15 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-navy">
           </div>
+          <button onclick="exportDnaExcel()" class="text-xs font-semibold px-3 py-2 rounded-lg border border-navy/30 text-navy hover:bg-navy/5 whitespace-nowrap">📥 Eksport Excel</button>
         </div>
 
         <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-x-auto">
@@ -60,6 +74,10 @@
                   <th class="text-left px-3 py-3 w-28">Minggu Rawatan</th>
                   <th class="text-left px-3 py-3 w-40">Pakej</th>
                   <th class="text-left px-3 py-3 w-28">Coach</th>
+                  <th class="text-left px-3 py-3 w-28">Coach ATGC</th>
+                  <th class="text-left px-3 py-3 w-32">Pengendali Laporan</th>
+                  <th class="text-left px-3 py-3 w-24">Tarikh Hantar Lab</th>
+                  <th class="text-left px-3 py-3 w-24">Tarikh Laporan Keluar</th>
                   <th class="text-left px-3 py-3">Progres Langkah</th>
                   <th class="text-left px-3 py-3 w-32">Dikemaskini</th>
                   <th class="text-left px-5 py-3 w-28">Tindakan</th>
@@ -99,6 +117,7 @@
 </div>
 
 <script src="/shared/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
 <script src="../../config/supabase.js"></script>
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
@@ -121,7 +140,7 @@ let ACTIVE_PLAN_BY_PATIENT = {};
 
 async function loadRows() {
   const { data, error } = await window.db.from('psy_dna_test_process')
-    .select('id, patient_id, coach_id, current_step, status, created_at, updated_at, completed_at, psy_patients(full_name, mrn, user_id, psy_profiles!psy_patients_user_id_fkey(full_name))')
+    .select('id, patient_id, coach_id, current_step, status, created_at, updated_at, completed_at, sample_sent_to_lab_at, lab_report_issued_at, reports_emailed_at, atgc_coach_id, report_handler_id, psy_patients(full_name, mrn, user_id, psy_profiles!psy_patients_user_id_fkey(full_name))')
     .order('updated_at', { ascending: false }).limit(500);
   if (error) { banner('Ralat: ' + error.message, 'error'); return; }
   ALL_ROWS = data || [];
@@ -179,6 +198,96 @@ function pkgCell(r) {
 function coachCell(r) {
   return miniCell('🧑‍🏫', STAFF_MAP[r.coach_id]);
 }
+
+function staffNameCell(id) {
+  return `<span class="text-xs text-ink">${esc(STAFF_MAP[id] || '—')}</span>`;
+}
+
+function dateOnlyCell(d) {
+  return `<span class="text-xs text-ink">${d ? fmtDateLine(d) : '—'}</span>`;
+}
+
+function statusText(status) {
+  if (status === 'completed') return 'Selesai';
+  if (status === 'cancelled') return 'Dibatalkan';
+  return 'Dalam Proses';
+}
+
+// Hari dari tarikh a (TIMESTAMPTZ/DATE) ke tarikh b (DATE), dikira ikut
+// tarikh kalendar sahaja (bukan jam), supaya tak terjejas oleh waktu created_at.
+function daysBetweenDates(a, b) {
+  if (!a || !b) return null;
+  const d1 = new Date(String(a).slice(0, 10));
+  const d2 = new Date(String(b).slice(0, 10));
+  if (isNaN(d1) || isNaN(d2)) return null;
+  return Math.round((d2 - d1) / 86400000);
+}
+
+function renderSummary(list) {
+  const durations = [];
+  const byCoach = {};
+  list.forEach(r => {
+    const days = daysBetweenDates(r.created_at, r.lab_report_issued_at);
+    if (days !== null) durations.push(days);
+    const key = r.atgc_coach_id || '__none__';
+    (byCoach[key] ||= { count: 0, durations: [] });
+    byCoach[key].count++;
+    if (days !== null) byCoach[key].durations.push(days);
+  });
+
+  const avgEl = document.getElementById('dt-sum-avg');
+  if (durations.length) {
+    const avg = durations.reduce((a, b) => a + b, 0) / durations.length;
+    avgEl.textContent = avg.toFixed(1) + ' hari';
+  } else {
+    avgEl.textContent = '—';
+  }
+
+  const coachEl = document.getElementById('dt-sum-coach');
+  const keys = Object.keys(byCoach).sort((a, b) => {
+    const nameA = a === '__none__' ? '' : (STAFF_MAP[a] || '');
+    const nameB = b === '__none__' ? '' : (STAFF_MAP[b] || '');
+    return nameA.localeCompare(nameB);
+  });
+  if (!keys.length) { coachEl.innerHTML = '—'; return; }
+  coachEl.innerHTML = keys.map(key => {
+    const entry = byCoach[key];
+    const label = key === '__none__' ? 'Tanpa Coach ATGC' : (STAFF_MAP[key] || '—');
+    const avgTxt = entry.durations.length ? (entry.durations.reduce((a, b) => a + b, 0) / entry.durations.length).toFixed(1) + ' hari' : '—';
+    return `<div>${esc(label)}: ${entry.count} proses, purata ${avgTxt}</div>`;
+  }).join('');
+}
+
+async function exportDnaExcel() {
+  if (typeof XLSX === 'undefined') { banner('XLSX belum siap, cuba lagi', 'error'); return; }
+  const list = getFiltered();
+  if (!list.length) { banner('Tiada rekod untuk dieksport', 'error'); return; }
+  banner('Menyediakan Excel...');
+  try {
+    const sheetRows = [
+      ['Nama Pesakit', 'MRN', 'Status', 'Coach (ATGC)', 'Pengendali Laporan', 'Tarikh Proses Dicipta', 'Tarikh Hantar ke Lab', 'Tarikh Laporan Keluar', 'Tarikh Emel Dihantar', 'Tempoh Hari (Dicipta→Laporan Keluar)'],
+      ...list.map(r => {
+        const days = daysBetweenDates(r.created_at, r.lab_report_issued_at);
+        return [
+          patName(r), r.psy_patients?.mrn || '—', statusText(r.status),
+          STAFF_MAP[r.atgc_coach_id] || '—', STAFF_MAP[r.report_handler_id] || '—',
+          r.created_at ? r.created_at.slice(0, 10) : '—',
+          r.sample_sent_to_lab_at || '—', r.lab_report_issued_at || '—',
+          r.reports_emailed_at ? r.reports_emailed_at.slice(0, 10) : '—',
+          days !== null ? days : '—',
+        ];
+      }),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(sheetRows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'DNA Test');
+    XLSX.writeFile(wb, 'dna-test-senarai-' + new Date().toISOString().slice(0, 10) + '.xlsx');
+    banner('Excel dimuat turun ✅');
+  } catch (e) {
+    banner('Ralat: ' + e.message, 'error');
+  }
+}
+window.exportDnaExcel = exportDnaExcel;
 
 function getFiltered() {
   const q = (document.getElementById('dt-search').value || '').toLowerCase().trim();
@@ -301,6 +410,7 @@ function renderPagination(total) {
 
 function render() {
   const filtered = getFiltered();
+  renderSummary(filtered);
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   if (PAGE > totalPages) PAGE = totalPages;
   if (PAGE < 1) PAGE = 1;
@@ -320,6 +430,10 @@ function render() {
         <td class="px-3 py-3">${weekCell(r)}</td>
         <td class="px-3 py-3">${pkgCell(r)}</td>
         <td class="px-3 py-3">${coachCell(r)}</td>
+        <td class="px-3 py-3">${staffNameCell(r.atgc_coach_id)}</td>
+        <td class="px-3 py-3">${staffNameCell(r.report_handler_id)}</td>
+        <td class="px-3 py-3">${dateOnlyCell(r.sample_sent_to_lab_at)}</td>
+        <td class="px-3 py-3">${dateOnlyCell(r.lab_report_issued_at)}</td>
         <td class="px-3 py-3">${stepDots(r)}</td>
         <td class="px-3 py-3 text-xs whitespace-nowrap">
           <div class="font-semibold text-ink">${fmtDateLine(r.updated_at)}</div>

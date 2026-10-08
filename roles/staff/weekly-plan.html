@@ -121,6 +121,9 @@
           <!-- Audit #B2-23 (Tier 4) — reminder task peribadi terlepas tarikh & belum selesai -->
           <button id="task-overdue-banner" onclick="jumpToOverdueTask()" type="button"
             class="hidden w-full text-left mb-3 bg-terracotta/10 border border-terracotta/30 text-terracotta text-[11px] font-semibold px-3 py-2 rounded-lg hover:bg-terracotta/15"></button>
+          <!-- Audit #146 (7 Okt 2026) — reminder proaktif: task akan due tak lama lagi (belum lepas tarikh) -->
+          <button id="task-duesoon-banner" onclick="jumpToDueSoonTask()" type="button"
+            class="hidden w-full text-left mb-3 bg-gold/10 border border-gold/30 text-gold-dark text-[11px] font-semibold px-3 py-2 rounded-lg hover:bg-gold/15"></button>
           <div id="schedule-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3"></div>
         </div>
 
@@ -240,8 +243,8 @@ function normStatus(src, raw) {
   return 'pending';
 }
 
-const HK1_LABEL = { hakeema: 'Hakeema Session', hakeem: 'Hakeem Session', dr: 'Dr Session' };
-const HK1_BADGE = { hakeema: '🧑‍💼', hakeem: '🧑', dr: '🩺' };
+const HK1_LABEL = { hakeema: 'Hakeema Session', hakeem: 'Hakeem Session', dr: 'Dr Session', fisioterapi: 'Fisioterapi Session', kaunselor: 'Kaunselor Session', bekam: 'Bekam Session', masseur: 'Masseur Session' };
+const HK1_BADGE = { hakeema: '🧑‍💼', hakeem: '🧑', dr: '🩺', fisioterapi: '🏃', kaunselor: '🗣️', bekam: '🩸', masseur: '💆' };
 
 async function loadWeek() {
   const weekEnd = addDays(weekStart, 7);
@@ -348,6 +351,7 @@ async function loadWeek() {
 
   await loadWeekTasks();
   checkOverdueTasks();
+  checkDueSoonTasks();
   applyScope();
 }
 
@@ -523,6 +527,9 @@ let taskOcc = {};              // ds (YYYY-MM-DD) -> [{ t, ds, status }] kejadia
 const TASK_STATUS_LBL = { belum_mula:'To Do', dalam_proses:'In Progress', selesai:'Complete ✓' };
 const TASK_STATUS_CLS = { belum_mula:'border-ink/25 bg-white', dalam_proses:'border-gold bg-gold/20', selesai:'border-green bg-green/20' };
 const TASK_NEXT = { belum_mula:'dalam_proses', dalam_proses:'selesai', selesai:'belum_mula' };
+// Audit #146 (7 Okt 2026) — priority badge, sama styling dgn dashboard.html (pBadge)
+const PRIORITY_BADGE = { tinggi:'bg-terracotta/15 text-terracotta', sederhana:'bg-gold/20 text-gold-dark', rendah:'bg-ink/8 text-ink/50' };
+const PRIORITY_LABEL = { tinggi:'🔴 Urgent', sederhana:'🟡 Normal', rendah:'⚪ Low' };
 const DOW_SHORT = ['Ahd','Isn','Sel','Rab','Kha','Jum','Sab'];
 
 function localYmd(d) {
@@ -595,6 +602,35 @@ function jumpToOverdueTask() {
   loadWeek();
 }
 
+// Audit #146 (7 Okt 2026) — amaran proaktif: task (sekali sahaja, belum selesai)
+// yang akan due dalam DUE_SOON_DAYS hari akan datang (belum lepas tarikh — itu
+// kes checkOverdueTasks()). Ambang hari di satu tempat sahaja supaya mudah ubah.
+const DUE_SOON_DAYS = 2;
+let _dueSoonTaskDates = [];
+async function checkDueSoonTasks() {
+  const banner = document.getElementById('task-duesoon-banner');
+  if (!banner) return;
+  const myId = window.currentUser?.id;
+  if (!myId) return;
+  const todayStr = localYmd(new Date());
+  const limitStr = localYmd(addDays(new Date(), DUE_SOON_DAYS));
+  const { data } = await window.db.from('psy_coach_tasks')
+    .select('id, task_date').eq('coach_id', myId).eq('recur_type', 'none')
+    .gte('task_date', todayStr).lte('task_date', limitStr).neq('status', 'selesai')
+    .order('task_date', { ascending: true })
+    .then(r => r, () => ({ data: [] }));
+  const dueSoon = data || [];
+  if (!dueSoon.length) { banner.classList.add('hidden'); _dueSoonTaskDates = []; return; }
+  _dueSoonTaskDates = [...new Set(dueSoon.map(t => t.task_date))];
+  banner.textContent = `📅 ${dueSoon.length} task peribadi due dalam ${DUE_SOON_DAYS} hari — jangan tertinggal (klik utk lihat hari terawal)`;
+  banner.classList.remove('hidden');
+}
+function jumpToDueSoonTask() {
+  if (!_dueSoonTaskDates.length) return;
+  weekStart = startOfWeek(new Date(_dueSoonTaskDates[0] + 'T00:00:00'));
+  loadWeek();
+}
+
 function renderTaskCard(it) {
   const { t, ds, status } = it;
   const isDone = status === 'selesai';
@@ -602,6 +638,7 @@ function renderTaskCard(it) {
   const repeatBadge = t.recur_type !== 'none'
     ? `<span title="${t.recur_type === 'daily' ? 'Setiap hari' : 'Ulang ikut hari dipilih'}" class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-navy/10 text-navy">🔁${t.recur_type === 'daily' ? ' Setiap hari' : ''}</span>`
     : '';
+  const priorityBadge = `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${PRIORITY_BADGE[t.priority] || PRIORITY_BADGE.sederhana}">${PRIORITY_LABEL[t.priority] || PRIORITY_LABEL.sederhana}</span>`;
   return `<div class="flex items-start gap-2 p-2 border rounded-lg group transition-colors ${isDone ? 'border-ink/6 opacity-60' : 'border-ink/10 hover:border-ink/20'}">
     <button data-rbac="plan_week.edit" onclick="cycleTaskStatus('${t.id}','${ds}','${status}')" title="Tukar status"
       class="flex-shrink-0 w-4 h-4 rounded-full border-2 mt-0.5 transition-colors ${TASK_STATUS_CLS[status] || TASK_STATUS_CLS.belum_mula}"></button>
@@ -609,6 +646,7 @@ function renderTaskCard(it) {
       <a href="${href}" class="block text-[12px] font-semibold ${isDone ? 'line-through text-ink/40' : 'text-ink hover:text-navy'}">${escHtml(t.title)}</a>
       <div class="flex items-center gap-1.5 mt-1 flex-wrap">
         <span class="text-[9px] text-ink/40">${TASK_STATUS_LBL[status] || status}</span>
+        ${priorityBadge}
         ${repeatBadge}
         ${t.due_date ? `<span class="text-[9px] text-terracotta font-semibold">⏰ Due ${new Date(t.due_date + 'T00:00:00').toLocaleDateString('ms-MY',{day:'2-digit',month:'short'})}</span>` : ''}
         ${t.patient_id && patientMap[t.patient_id] ? `<span class="text-[9px] text-navy font-semibold">👤 ${escHtml(patientMap[t.patient_id].name)}</span>` : ''}
@@ -648,6 +686,7 @@ function openTaskModal(taskId, defaultDate) {
   document.getElementById('task-notes').value    = task?.notes || '';
   document.getElementById('task-repeat').value   = task?.recur_type || 'none';
   document.getElementById('task-until').value    = task?.recur_until || '';
+  document.getElementById('task-priority').value = task?.priority || 'sederhana';
   for (let i = 0; i < 7; i++) {
     document.getElementById('task-day-' + i).checked = (task?.recur_days || []).includes(i);
   }
@@ -679,6 +718,7 @@ async function saveTask() {
   const repeat    = document.getElementById('task-repeat').value;
   const until     = document.getElementById('task-until').value || null;
   const days      = [0,1,2,3,4,5,6].filter(i => document.getElementById('task-day-' + i).checked);
+  const priority  = document.getElementById('task-priority').value || 'sederhana';
   const errEl     = document.getElementById('task-err');
   errEl.classList.add('hidden');
 
@@ -693,40 +733,122 @@ async function saveTask() {
     patient_id: patientId || null, notes: notes || null,
     recur_type: repeat, recur_days: repeat === 'weekly' ? days : null,
     recur_until: repeat === 'none' ? null : until,
+    priority,
     updated_at: new Date().toISOString(),
   };
 
-  let error;
+  let error, savedTask;
   if (taskId) {
     ({ error } = await window.db.from('psy_coach_tasks').update(payload).eq('id', taskId));
-    if (!error) await logTaskActivity(taskId, 'edited', {});
+    if (!error) {
+      savedTask = { ...personalTasksCache[taskId], ...payload, id: taskId };
+      await logTaskActivity(taskId, 'edited', {});
+      if (typeof auditLog === 'function') { try { await auditLog('coach_task.updated', taskId, { title, priority }); } catch (_) {} }
+    }
   } else {
     const ins = await window.db.from('psy_coach_tasks').insert(payload).select('id').single();
     error = ins.error;
-    if (!error) await logTaskActivity(ins.data.id, 'created', {});
+    if (!error) {
+      savedTask = { ...payload, id: ins.data.id, linked_appointment_id: null };
+      await logTaskActivity(ins.data.id, 'created', {});
+      if (typeof auditLog === 'function') { try { await auditLog('coach_task.created', ins.data.id, { title, priority }); } catch (_) {} }
+    }
   }
   if (error) { errEl.textContent = 'Ralat: ' + (error.message || JSON.stringify(error)); errEl.classList.remove('hidden'); return; }
+
+  // Sync ke Jadual Temujanji (psy_appointments) — SEHALA (task → appointment),
+  // hanya utk task sekali sahaja (recur_type='none') sebab satu appointment cuma
+  // boleh wakili satu masa, bukan siri ulangan tanpa noktah.
+  if (savedTask) {
+    if (savedTask.recur_type === 'none') {
+      await syncTaskAppointment(savedTask);
+    } else if (savedTask.linked_appointment_id) {
+      // Task ditukar dari sekali-sahaja → berulang: appointment lama dah tak relevan.
+      await cancelTaskAppointment(savedTask.linked_appointment_id);
+      await window.db.from('psy_coach_tasks').update({ linked_appointment_id: null }).eq('id', savedTask.id);
+    }
+  }
 
   banner(taskId ? 'Task dikemaskini ✅' : 'Task ditambah ✅');
   closeTaskModal();
   await loadWeekTasks();
   renderColumns();
   checkOverdueTasks();
+  checkDueSoonTasks();
 }
 
 async function deleteTask(taskId) {
   if (!confirm('Padam task ini? (semua kejadian ulangan juga akan dipadam)')) return;
+  const t = personalTasksCache[taskId];
+  const linkedApptId = t?.linked_appointment_id || null;
   const { error } = await window.db.from('psy_coach_tasks').delete().eq('id', taskId);
   if (error) { banner('Ralat padam: ' + error.message, 'error'); return; }
+  // Appointment yang dipautkan (Jadual Temujanji) ditanda cancelled, bukan dipadam
+  // terus — ikut polisi sedia ada appointments.html (status-based, bukan hard delete).
+  if (linkedApptId) await cancelTaskAppointment(linkedApptId);
+  if (typeof auditLog === 'function') { try { await auditLog('coach_task.deleted', taskId, { title: t?.title, linked_appointment_id: linkedApptId }); } catch (_) {} }
   banner('Task dipadam');
   await loadWeekTasks();
   renderColumns();
   checkOverdueTasks();
+  checkDueSoonTasks();
 }
 
 async function logTaskActivity(taskId, action, detail) {
   const me = window.currentUser || {};
   await window.db.from('psy_coach_task_activity').insert({ task_id: taskId, actor_id: me.id || null, actor_name: me.full_name || null, action, detail });
+}
+
+// ── Sync Task Peribadi → Jadual Temujanji (psy_appointments) ──────────────
+// Audit #146 (7 Okt 2026). SEHALA sahaja: task → appointment. Appointment yang
+// dicipta/dikemaskini di sini TIDAK dibaca balik oleh weekly-plan.html — kalau
+// appointment diedit terus di appointments.html, perubahan itu TAK sync balik
+// ke task (dua-hala penuh belum dibina — lihat laporan audit).
+const TASK_STATUS_TO_APPT = { belum_mula: 'scheduled', dalam_proses: 'scheduled', selesai: 'completed' };
+const TASK_DEFAULT_APPT_TIME = '09:00'; // task tiada medan masa sendiri — guna slot pagi lalai
+
+async function syncTaskAppointment(task) {
+  if (!task || !task.task_date) return null;
+  const coachId = task.coach_id || window.currentUser?.id || null;
+  const apptIso = new Date(`${task.task_date}T${TASK_DEFAULT_APPT_TIME}:00`).toISOString();
+  const patch = {
+    patient_id: task.patient_id || null,
+    staff_id: coachId,
+    staff_name: coachId ? (staffMap[coachId]?.name || window.currentUser?.full_name || null) : null,
+    service: `📌 Task: ${task.title}`,
+    appointment_time: apptIso,
+    duration_min: 30,
+    status: TASK_STATUS_TO_APPT[task.status] || 'scheduled',
+    notes: task.notes || null,
+  };
+  try {
+    if (task.linked_appointment_id) {
+      await window.db.from('psy_appointments').update(patch).eq('id', task.linked_appointment_id);
+      return task.linked_appointment_id;
+    }
+    const { data: appt, error } = await window.db.from('psy_appointments').insert(patch).select('id').single();
+    if (error) throw error;
+    if (appt?.id) {
+      await window.db.from('psy_coach_tasks').update({ linked_appointment_id: appt.id }).eq('id', task.id);
+      if (typeof auditLog === 'function') { try { await auditLog('coach_task.appointment_synced', task.id, { appointment_id: appt.id }); } catch (_) {} }
+    }
+    return appt?.id || null;
+  } catch (e) {
+    console.error('[weekly-plan] syncTaskAppointment gagal:', e);
+    return null;
+  }
+}
+
+async function cancelTaskAppointment(appointmentId) {
+  if (!appointmentId) return;
+  try { await window.db.from('psy_appointments').update({ status: 'cancelled' }).eq('id', appointmentId); }
+  catch (e) { console.error('[weekly-plan] cancelTaskAppointment gagal:', e); }
+}
+
+async function syncTaskAppointmentStatus(appointmentId, taskStatus) {
+  if (!appointmentId) return;
+  try { await window.db.from('psy_appointments').update({ status: TASK_STATUS_TO_APPT[taskStatus] || 'scheduled' }).eq('id', appointmentId); }
+  catch (e) { console.error('[weekly-plan] syncTaskAppointmentStatus gagal:', e); }
 }
 
 async function cycleTaskStatus(taskId, ds, currentStatus) {
@@ -735,6 +857,7 @@ async function cycleTaskStatus(taskId, ds, currentStatus) {
   let error;
   if (!t || t.recur_type === 'none') {
     ({ error } = await window.db.from('psy_coach_tasks').update({ status: next, updated_at: new Date().toISOString() }).eq('id', taskId));
+    if (!error && t?.linked_appointment_id) await syncTaskAppointmentStatus(t.linked_appointment_id, next);
   } else {
     ({ error } = await window.db.from('psy_coach_task_logs').upsert(
       { task_id: taskId, log_date: ds, status: next, updated_at: new Date().toISOString() },
@@ -742,9 +865,11 @@ async function cycleTaskStatus(taskId, ds, currentStatus) {
   }
   if (error) { banner('Ralat: ' + error.message, 'error'); return; }
   await logTaskActivity(taskId, 'status', { from: currentStatus, to: next, ...(t && t.recur_type !== 'none' ? { date: ds } : {}) });
+  if (typeof auditLog === 'function') { try { await auditLog('coach_task.status_changed', taskId, { from: currentStatus, to: next, date: ds }); } catch (_) {} }
   await loadWeekTasks();
   renderColumns();
   checkOverdueTasks();
+  checkDueSoonTasks();
 }
 
 // ── Coach Ganti ──────────────────────────────
@@ -801,12 +926,23 @@ async function saveCoachGanti() {
             class="w-full border border-ink/20 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-navy/50">
         </div>
       </div>
-      <div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
           <label class="block text-xs font-semibold text-ink/60 mb-1">Pesakit (opsional)</label>
           <select id="task-patient"
             class="w-full border border-ink/20 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-navy/50">
             <option value="">—</option>
           </select>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-ink/60 mb-1">Priority</label>
+          <select id="task-priority"
+            class="w-full border border-ink/20 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:border-navy/50">
+            <option value="tinggi">🔴 Urgent</option>
+            <option value="sederhana">🟡 Normal</option>
+            <option value="rendah">⚪ Low</option>
+          </select>
+        </div>
       </div>
       <div class="grid grid-cols-2 gap-3">
         <div>

@@ -44,6 +44,7 @@
             </div>
             <div class="flex items-center gap-2">
               <button onclick="history.back()" class="px-4 py-2.5 border border-ink/20 rounded-xl text-sm font-semibold bg-white hover:bg-ink/5">← Kembali ke Senarai</button>
+              <button id="pv-delete-btn" data-rbac="produk_bahan.delete" onclick="deleteProduct()" class="hidden px-4 py-2.5 border border-terracotta/40 text-terracotta rounded-xl text-sm font-semibold hover:bg-terracotta/10">🗑️ Hapus</button>
               <a id="pv-edit-link" data-rbac="produk_bahan.edit" class="purple-btn px-5 py-2.5 rounded-xl text-sm font-semibold">✏️ Edit Produk</a>
             </div>
           </div>
@@ -70,13 +71,11 @@
                 <div id="view-fields-resto" class="hidden grid grid-cols-2 gap-3 flex-1 text-sm">
                   <div><div class="text-[11px] font-semibold text-ink/40 uppercase">Nama Restoran</div><div id="pv-name3" class="text-ink">—</div></div>
                   <div><div class="text-[11px] font-semibold text-ink/40 uppercase">Status</div><div id="pv-status4" class="text-ink">—</div></div>
-                  <div><div class="text-[11px] font-semibold text-ink/40 uppercase">Kategori</div><div id="pv-category" class="text-ink">—</div></div>
                   <div><div class="text-[11px] font-semibold text-ink/40 uppercase">Kawasan / Bandar</div><div id="pv-area" class="text-ink">—</div></div>
                   <div class="col-span-2"><div class="text-[11px] font-semibold text-ink/40 uppercase">Alamat / Lokasi</div><div id="pv-address" class="text-ink">—</div></div>
                   <div><div class="text-[11px] font-semibold text-ink/40 uppercase">No. Telefon</div><div id="pv-phone" class="text-ink">—</div></div>
                   <div><div class="text-[11px] font-semibold text-ink/40 uppercase">Waktu Operasi</div><div id="pv-hours" class="text-ink">—</div></div>
-                  <div><div class="text-[11px] font-semibold text-ink/40 uppercase">Website</div><div id="pv-website" class="text-navy">—</div></div>
-                  <div><div class="text-[11px] font-semibold text-ink/40 uppercase">Julat Harga</div><div id="pv-price-range" class="text-ink">—</div></div>
+                  <div class="col-span-2"><div class="text-[11px] font-semibold text-ink/40 uppercase">Website</div><div id="pv-website" class="text-navy">—</div></div>
                 </div>
               </div>
               <div id="view-purpose-barang">
@@ -106,10 +105,9 @@
                   <h3 class="font-bold text-sm text-ink">📍 Lokasi</h3>
                   <a id="pv-map-open-link" target="_blank" rel="noopener" class="text-[11px] font-semibold text-navy hover:underline whitespace-nowrap">Buka di Google Maps ↗</a>
                 </div>
-                <div id="pv-map-iframe-wrap" class="rounded-lg overflow-hidden border border-ink/10" style="aspect-ratio:4/3">
+                <div class="rounded-lg overflow-hidden border border-ink/10" style="aspect-ratio:4/3">
                   <iframe id="pv-map-iframe" class="w-full h-full" style="border:0" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
                 </div>
-                <div id="pv-map-iframe-ph" class="hidden rounded-lg border border-dashed border-ink/15 text-center text-[11px] text-ink/40" style="aspect-ratio:4/3; display:flex; align-items:center; justify-content:center;">Tiada alamat utk pratonton peta. Guna pautan di atas.</div>
               </div>
             </div>
           </div>
@@ -172,7 +170,8 @@
                   <span class="text-lg">🍴</span>
                   <h2 class="font-bold text-sm text-ink">Menu & Hidangan Cadangan</h2>
                 </div>
-                <div id="pv-menu" class="text-sm text-ink whitespace-pre-wrap">—</div>
+                <div id="pv-menu" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+                <div id="pv-menu-empty" class="hidden text-xs text-ink/35 italic">Tiada menu direkod.</div>
               </div>
             </div>
 
@@ -340,36 +339,30 @@ function renderProduct(p) {
     document.getElementById('pv-name3').textContent = p.name;
     document.getElementById('pv-status4').textContent = statusTxt;
     document.getElementById('pv-status4').className = statusCls;
-    document.getElementById('pv-category').textContent = p.category || '—';
     document.getElementById('pv-area').textContent = p.area || '—';
     document.getElementById('pv-address').textContent = p.address || '—';
     document.getElementById('pv-phone').textContent = p.contact_phone || '—';
     document.getElementById('pv-hours').textContent = p.operating_hours || '—';
-    document.getElementById('pv-price-range').textContent = p.price_range || '—';
     const websiteEl = document.getElementById('pv-website');
     websiteEl.innerHTML = p.website ? `<a href="${escHtml(p.website)}" target="_blank" rel="noopener" class="hover:underline">${escHtml(p.website)}</a>` : '—';
     document.getElementById('pv-resto-notes').textContent = p.purpose || '—';
-    document.getElementById('pv-menu').textContent = p.menu_items || '—';
+    const menuItems = Array.isArray(p.menu_items) ? p.menu_items : [];
+    document.getElementById('pv-menu-empty').classList.toggle('hidden', !!menuItems.length);
+    document.getElementById('pv-menu').innerHTML = menuItems.map(m => `
+      <div class="rounded-xl border border-ink/10 overflow-hidden">
+        ${m.image_url
+          ? `<img src="${escHtml(m.image_url)}" onclick="openLightbox(${jsAttr(m.image_url)})" class="w-full h-20 object-cover cursor-zoom-in">`
+          : `<div class="w-full h-20 bg-ink/5 flex items-center justify-center text-2xl">🍽️</div>`}
+        <div class="px-2 py-1.5 text-xs font-semibold text-ink truncate">${escHtml(m.name || '—')}</div>
+      </div>`).join('');
     const purposeSubR = document.getElementById('pv-purpose-sub');
     if (p.purpose) { purposeSubR.textContent = p.purpose; purposeSubR.classList.remove('hidden'); }
 
     const mapCard = document.getElementById('view-map-card');
-    if (p.address || p.maps_url) {
+    if (p.address) {
       mapCard.classList.remove('hidden');
-      // Pratonton (iframe) guna ALAMAT sahaja — pautan Maps/Waze PENUH tak
-      // boleh dimasukkan terus dlm parameter q= embed (papar peta dunia kosong).
-      if (p.address) {
-        document.getElementById('pv-map-iframe').src = 'https://www.google.com/maps?q=' + encodeURIComponent(p.address) + '&output=embed';
-        document.getElementById('pv-map-iframe-wrap').classList.remove('hidden');
-        document.getElementById('pv-map-iframe-ph').classList.add('hidden');
-      } else {
-        document.getElementById('pv-map-iframe-wrap').classList.add('hidden');
-        document.getElementById('pv-map-iframe-ph').classList.remove('hidden');
-      }
-      const isWaze = /waze\.com/i.test(p.maps_url || '');
-      const openLink = document.getElementById('pv-map-open-link');
-      openLink.href = p.maps_url || ('https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(p.address));
-      openLink.textContent = isWaze ? 'Buka di Waze ↗' : 'Buka di Google Maps ↗';
+      document.getElementById('pv-map-iframe').src = 'https://www.google.com/maps?q=' + encodeURIComponent(p.address) + '&output=embed';
+      document.getElementById('pv-map-open-link').href = p.maps_url || ('https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(p.address));
     }
   } else {
     document.getElementById('pv-name2').textContent = p.name;
@@ -404,6 +397,22 @@ function openLightbox(url) {
   document.getElementById('lightbox').classList.remove('hidden');
 }
 window.openLightbox = openLightbox;
+
+async function deleteProduct() {
+  const isResto = product?.item_type === 'kedai_makan';
+  const label = isResto ? 'restoran' : 'produk';
+  if (!confirm(`Padam ${label} "${product?.name}"? Tindakan ni tak boleh dibatalkan — seller/pemetaan pakej yang dipautkan turut dibuang.`)) return;
+  try {
+    const { error } = await window.db.from('psy_recommended_products').delete().eq('id', productId);
+    if (error) throw error;
+    if (typeof auditLog === 'function') { try { await auditLog('produk_bahan.deleted', productId, { name: product?.name }); } catch (_) {} }
+    banner(`${isResto ? 'Restoran' : 'Produk'} dipadam ✅`);
+    setTimeout(() => location.href = 'produk-bahan.html', 600);
+  } catch (e) {
+    banner('Ralat memadam: ' + (e.message || e), 'error');
+  }
+}
+window.deleteProduct = deleteProduct;
 function closeLightbox() { document.getElementById('lightbox').classList.add('hidden'); }
 window.closeLightbox = closeLightbox;
 
