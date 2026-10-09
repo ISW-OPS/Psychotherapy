@@ -164,6 +164,7 @@ const STAFF_NAV_MASTER = [
         { id: 'inventory_overview', url: 'inventory-overview.html', label: 'Overview' },
         { id: 'inventory',          url: 'inventory.html',          label: 'Inventori' },
         { id: 'pemberian_stok',     url: 'pemberian-stok.html',     label: 'Pemberian Stok' },
+        { id: 'bekalan_kob',        url: 'tetapan.html?tab=bekalan_kob', label: 'Bekalan KOB', saOnly: true },
         { id: 'purchase_requests',  url: 'purchase-requests.html',  label: 'Purchase Requests' },
         { id: 'ready_to_buy',       url: 'ready-to-buy.html',       label: 'Ready to Buy' },
         { id: 'suppliers',          url: 'suppliers.html',          label: 'Suppliers' },
@@ -245,7 +246,9 @@ const SETTINGS_SUBNAV = [
   { id: 'keselamatan', icon: '🛡️', label: 'Keselamatan' },
   { id: 'affiliate', icon: '🤝', label: 'Affiliate' },
   { id: 'vitals', icon: '🩺', label: 'Ambang Vitals' },
-  { id: 'bekalan_kob', icon: '📦', label: 'Bekalan KOB' },
+  // 'Bekalan KOB' SENGAJA tiada di sini — ia tetap satu tab dalam tetapan.html (TABS
+  // array), tapi diakses dari grupan Inventori (inventory_group di bawah), bukan dari
+  // senarai Tetapan generik ni, supaya ia muncul sebelah Pemberian Stok/Purchase Requests.
 ];
 // Halaman lain yang tergolong dlm keluarga Tetapan (dibuka dari senarai Tetapan) —
 // bila dibuka terus (bukan dari tab), sidebar kekal dalam mod Tetapan jugak.

@@ -9241,5 +9241,12 @@ window.ISW_I18N_EXTRA = {
   "— Pilih dokumen —": "— Select document —",
   "URL Link Luar": "External Link URL",
   "SOP belum ditetapkan. Sila konfigur di Tetapan Sistem › Klinik.": "SOP not yet set. Please configure it in System Settings › Clinic.",
-  "Tak faham langkah di bawah? Tekan butang 📄 SOP di atas untuk panduan penuh.": "Not sure about the steps below? Tap the 📄 SOP button above for the full guide."
+  "Tak faham langkah di bawah? Tekan butang 📄 SOP di atas untuk panduan penuh.": "Not sure about the steps below? Tap the 📄 SOP button above for the full guide.",
+
+  // — Invois Bekalan Produk (patient weekly hub link) — added 8 Oct —
+  "📄 Invois Bekalan": "📄 Supply Invoices",
+  "Invois Bekalan Saya": "My Supply Invoices",
+  "Rekod bekalan produk (cth madu) yang diberikan sebagai sebahagian pakej rawatan anda.": "Records of product supplies (e.g. honey) given as part of your treatment package.",
+  "Tiada invois bekalan direkod lagi.": "No supply invoices recorded yet.",
+  "Diberi oleh": "Issued by"
 };

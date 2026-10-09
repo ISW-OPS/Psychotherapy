@@ -59,7 +59,7 @@ async function addStockToLocation(itemId, delta, locationName, meta) {
   }
 
   try {
-    await window.db.from('psy_stock_movements').insert({
+    const { data: movement } = await window.db.from('psy_stock_movements').insert({
       item_id: itemId,
       item_name: itemName,
       location_id: locId,
@@ -72,7 +72,8 @@ async function addStockToLocation(itemId, delta, locationName, meta) {
       notes: meta?.note || null,
       actor_id: window.currentUser?.id || null,
       actor_name: window.currentUser?.full_name || null,
-    });
-  } catch (e) { console.warn('[inventoryStock] gagal tulis movement ledger:', e); }
+    }).select('id').single();
+    return movement?.id || null;
+  } catch (e) { console.warn('[inventoryStock] gagal tulis movement ledger:', e); return null; }
 }
 window.addStockToLocation = addStockToLocation;

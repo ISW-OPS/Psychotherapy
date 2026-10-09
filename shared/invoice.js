@@ -348,8 +348,73 @@
     showInvoiceModal(inner);
   }
 
+  // ── Invois Bekalan Produk (bukan duit) ────────────────────────────────────
+  // Snapshot kuantiti diberi + baki pakej dari psy_supply_invoices (lihat
+  // database/schema/42_supply_invoices.sql, shared/supplyInvoice.js). Guna
+  // helper dokumen (window.iswDoc) sama dgn invois/resit pembayaran, tapi
+  // tanpa harga/subtotal — ini bukan transaksi duit.
+  async function buildSupplyInvoiceInner(inv, override) {
+    const doc = D();
+    if (!doc) throw new Error('shared/receipt.js belum dimuat / not loaded');
+    const { esc, dateLong, header, TEAL, L } = doc;
+    const cu = override ? { full_name: override.full_name } : (window.currentUser || {});
+    const pr = override ? { phone: override.phone, mrn: override.mrn } : (window.patientRecord || {});
+    const items = Array.isArray(inv.items) ? inv.items : [];
+    const th = 'text-[11px] font-medium uppercase tracking-wide text-ink/70 py-3';
+
+    return `
+      ${header(L('INVOIS BEKALAN', 'SUPPLY INVOICE'))}
+
+      <div class="border-t border-ink/10 mt-6 pt-5 grid grid-cols-2 md:grid-cols-3 gap-6 text-sm">
+        <div>
+          <div class="font-semibold text-ink">${L('Diberikan kepada', 'Issued to')}</div>
+          <div class="text-ink/60 text-xs mt-2 leading-relaxed">${esc(cu.full_name || '—')}<br>${pr.mrn ? `MRN: ${esc(pr.mrn)}<br>` : ''}${esc(pr.phone || '—')}</div>
+        </div>
+        <div><div class="font-semibold text-ink">${L('No. Invois', 'Invoice Number')}</div><div class="text-ink/60 text-xs mt-2">${esc(inv.invoice_no || '—')}</div></div>
+        <div>
+          <div class="font-semibold text-ink">${L('Tarikh', 'Date')}</div><div class="text-ink/60 text-xs mt-1">${dateLong(inv.created_at)}</div>
+          <div class="font-semibold text-ink mt-3">${L('Diberi oleh', 'Issued by')}</div><div class="text-ink/60 text-xs mt-1">${esc(inv.given_by_name || '—')}</div>
+        </div>
+      </div>
+
+      <table class="w-full mt-10 text-sm">
+        <thead>
+          <tr style="background:${TEAL}">
+            <th class="${th} text-left px-3 text-white">${L('Nama Produk', 'Product Name')}</th>
+            <th class="${th} text-right text-white">${L('Diberi Hari Ini', 'Given Today')}</th>
+            <th class="${th} text-right text-white">${L('Jumlah Pakej', 'Package Total')}</th>
+            <th class="${th} text-right px-3 text-white">${L('Baki Selepas Ini', 'Remaining After This')}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${items.map(it => `<tr class="border-b border-ink/10">
+            <td class="py-4 px-3 text-xs text-ink/70 uppercase">${esc(it.name)}</td>
+            <td class="py-4 text-xs text-ink/70 text-right whitespace-nowrap">${esc(String(it.qty_given))} ${esc(it.unit || '')}</td>
+            <td class="py-4 text-xs text-ink/70 text-right whitespace-nowrap">${esc(String(it.qty_planned_total))} ${esc(it.unit || '')}</td>
+            <td class="py-4 px-3 text-xs font-bold text-ink text-right whitespace-nowrap">${esc(String(it.qty_remaining))} ${esc(it.unit || '')}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+
+      ${inv.notes ? `<div class="mt-4 text-xs text-ink/60 italic">${esc(inv.notes)}</div>` : ''}
+
+      <div class="mt-auto pt-8 text-[11px] text-ink/50 text-center leading-relaxed">
+        ${L('Invois ini merekodkan produk/bekalan yang diberikan sebagai sebahagian daripada pakej rawatan anda. Sila simpan untuk rujukan.', 'This invoice records products/supplies issued as part of your treatment package. Please keep for your reference.')}
+      </div>`;
+  }
+
+  async function viewSupplyInvoice(inv, override) {
+    const L = (window.iswDoc && window.iswDoc.L) || ((ms, en) => en);
+    let inner;
+    try { inner = await buildSupplyInvoiceInner(inv, override); }
+    catch (e) { alert(L('Gagal muat invois: ', 'Failed to load invoice: ') + e.message); return; }
+    showInvoiceModal(inner);
+  }
+
   window.buildInvoiceInner = buildInvoiceInner;
   window.viewInvoice = viewInvoice;
   window.buildPaymentInvoiceInner = buildPaymentInvoiceInner;
   window.viewPaymentInvoice = viewPaymentInvoice;
+  window.buildSupplyInvoiceInner = buildSupplyInvoiceInner;
+  window.viewSupplyInvoice = viewSupplyInvoice;
 })();

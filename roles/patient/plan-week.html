@@ -62,7 +62,10 @@
         </div>
 
         <div id="coaching-schedule-section" class="bg-white rounded-xl p-5 border border-ink/10 hidden">
-          <h3 class="font-bold mb-1 flex items-center gap-2"><span id="uh-guidance">✅ Bimbingan &amp; Bekalan Minggu Ini</span></h3>
+          <div class="flex items-center justify-between gap-2 flex-wrap mb-1">
+            <h3 class="font-bold flex items-center gap-2"><span id="uh-guidance">✅ Bimbingan &amp; Bekalan Minggu Ini</span></h3>
+            <button type="button" onclick="openSupplyInvoiceList()" class="text-xs font-semibold text-navy hover:underline whitespace-nowrap">📄 Invois Bekalan →</button>
+          </div>
           <p class="text-xs text-ink/60 mb-4">Status tugasan yang direkod oleh coach semasa sesi coaching anda.</p>
           <div id="coaching-schedule-view" class="grid md:grid-cols-2 gap-3"></div>
         </div>
@@ -172,6 +175,8 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
+<script src="../../shared/receipt.js"></script>
+<script src="../../shared/invoice.js"></script>
 <script src="_shared.js"></script>
 <script>
     function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
@@ -184,6 +189,49 @@ let weekOverride = null; // override bekalan/sesi minggu ini (atau null = ikut p
 let weekEnd = null;
 
 function escHtml(s) { const d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
+
+// ── Invois Bekalan Produk (psy_supply_invoices) ───────────────────────────
+// Senarai SEMUA invois bekalan pesakit (manual + auto-deduct minggu), terbaharu
+// dahulu. Klik satu baris → papar invois penuh (shared/invoice.js viewSupplyInvoice()).
+let _supplyInvoices = [];
+async function openSupplyInvoiceList() {
+  const { data, error } = await window.db.from('psy_supply_invoices')
+    .select('*').eq('patient_id', patientRecord.id).order('created_at', { ascending: false }).limit(30);
+  if (error) { banner('Ralat muat invois: ' + error.message, 'error'); return; }
+  _supplyInvoices = data || [];
+  document.getElementById('supply-invoice-list-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'supply-invoice-list-modal';
+  modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
+  modal.innerHTML = `
+    <div class="absolute inset-0 bg-black/50" onclick="this.parentElement.remove()"></div>
+    <div class="relative bg-white rounded-2xl max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col">
+      <div class="p-4 border-b border-ink/10 flex items-center justify-between">
+        <h3 class="font-bold">Invois Bekalan Saya</h3>
+        <button type="button" onclick="document.getElementById('supply-invoice-list-modal').remove()" class="text-ink/60 text-xl px-2" aria-label="Close">×</button>
+      </div>
+      <p class="px-4 pt-3 text-xs text-ink/50">Rekod bekalan produk (cth madu) yang diberikan sebagai sebahagian pakej rawatan anda.</p>
+      <div class="flex-1 overflow-y-auto p-4 space-y-2">
+        ${_supplyInvoices.length ? _supplyInvoices.map(r => {
+          const items = Array.isArray(r.items) ? r.items : [];
+          const names = items.map(it => `${it.name} (${it.qty_given}${it.unit ? ' ' + it.unit : ''})`).join(', ');
+          const dt = new Date(r.created_at);
+          return `<button type="button" onclick="viewSupplyInvoiceRow('${r.id}')" class="w-full text-left border border-ink/10 rounded-lg p-3 hover:bg-cream/40">
+            <div class="flex items-center justify-between">
+              <span class="text-sm font-semibold text-ink">${escHtml(r.invoice_no || '—')}</span>
+              <span class="text-[11px] text-ink/45">${dt.toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+            </div>
+            <div class="text-xs text-ink/60 mt-1">${escHtml(names)}</div>
+          </button>`;
+        }).join('') : `<div class="text-center text-sm text-ink/40 italic py-10">Tiada invois bekalan direkod lagi.</div>`}
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+function viewSupplyInvoiceRow(id) {
+  const row = _supplyInvoices.find(r => r.id === id);
+  if (row) window.viewSupplyInvoice(row);
+}
 
 // Pakej harian → label "Hari" & jumlah tempoh ikut bil. hari (bukan duration_weeks).
 function isDailyPlan() { return activePlan?.duration_unit === 'day'; }

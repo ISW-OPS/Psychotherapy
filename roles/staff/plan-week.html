@@ -378,6 +378,7 @@
 <script src="../../shared/stockSync.js"></script>
 <script src="../../shared/inventoryStock.js"></script>
 <script src="../../shared/inventoryDeduct.js"></script>
+<script src="../../shared/supplyInvoice.js"></script>
 <script src="../../shared/utils.js"></script>
 <script src="../../shared/absenceAlert.js"></script>
 <script src="_shared.js"></script>
@@ -2973,14 +2974,33 @@ async function applySupplyStock(supplies, sign) {
       .select('id, name, unit').in('id', entries.map(([id]) => id));
 
     const changed = [];
+    const movementIds = [];
+    const givenForInvoice = [];
     for (const [itemId, qty] of entries) {
       const inv = (invItems || []).find(i => i.id === itemId);
       if (!inv) continue;
-      await window.addStockToLocation(itemId, sign * qty, null, {
+      const movementId = await window.addStockToLocation(itemId, sign * qty, null, {
         type: sign < 0 ? 'out' : 'in', refType: 'patient_package', refId: patientId,
         note: `Bekalan sesi minggu ${weekNumber}`, itemName: inv.name,
       });
       changed.push(`${inv.name} ${sign < 0 ? '−' : '+'}${qty}${inv.unit || ''}`);
+      if (sign < 0) {
+        if (movementId) movementIds.push(movementId);
+        givenForInvoice.push({ item_id: itemId, name: inv.name, unit: inv.unit, qty_given: qty });
+      }
+    }
+
+    // Invois bekalan hanya utk bekalan DIBERI (sign<0) — kembalikan stok (untick) bukan
+    // satu "pemberian", tiada invois perlu. Gagal cipta invois tak sekat potongan stok yg
+    // dah berjaya (createSupplyInvoice() pulang null senyap kalau gagal — lihat shared/supplyInvoice.js).
+    if (sign < 0 && givenForInvoice.length) {
+      const supplyInvoice = await window.createSupplyInvoice(givenForInvoice, {
+        patientId, activePlan, weekNumber, source: 'auto_weekly',
+        notes: `Bekalan sesi minggu ${weekNumber}`,
+      });
+      if (supplyInvoice && movementIds.length) {
+        await window.db.from('psy_stock_movements').update({ supply_invoice_id: supplyInvoice.id }).in('id', movementIds);
+      }
     }
 
     if (changed.length) {

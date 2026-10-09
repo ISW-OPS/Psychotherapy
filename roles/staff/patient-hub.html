@@ -1519,6 +1519,7 @@
   <script src="../../shared/stockSync.js"></script>
   <script src="../../shared/inventoryStock.js"></script>
   <script src="../../shared/inventoryDeduct.js"></script>
+  <script src="../../shared/supplyInvoice.js"></script>
   <script src="_shared.js"></script>
   <script src="../../shared/settings.js"></script>
   <script src="../../shared/receipt.js"></script>
@@ -5961,7 +5962,7 @@
       // manual. Dua-dua laluan tulis ke psy_stock_movements dgn reference_type='patient_package'.
       const [itemsRes, histRes] = await Promise.all([
         window.db.from('psy_inventory_items').select('id,name,unit,qty_in_stock,category').eq('is_active', true).order('name'),
-        window.db.from('psy_stock_movements').select('item_name, qty, notes, created_at, actor_name, psy_inventory_items(unit)')
+        window.db.from('psy_stock_movements').select('item_name, qty, notes, created_at, actor_name, supply_invoice_id, psy_inventory_items(unit)')
           .eq('reference_type', 'patient_package').eq('reference_id', patientId).eq('movement_type', 'out')
           .order('created_at', { ascending: false }).limit(50),
       ]);
@@ -5970,7 +5971,7 @@
       inventoryItems = itemsRes.data || [];
       supplyHistory = (histRes.data || []).map(r => ({
         item_name: r.item_name, qty: Math.abs(Number(r.qty)), unit: r.psy_inventory_items?.unit,
-        notes: r.notes, created_at: r.created_at, given_by_name: r.actor_name,
+        notes: r.notes, created_at: r.created_at, given_by_name: r.actor_name, supply_invoice_id: r.supply_invoice_id,
       }));
       renderSupplyHistory();
       renderSupplyKpiAndItems();
@@ -6101,6 +6102,7 @@
           ${d.notes ? `<div class="text-[11px] text-ink/65 mt-0.5">${escapeHtml(d.notes)}</div>` : ''}
           <div class="text-[10px] text-ink/45 mt-1">${dt.toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' })}, ${dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} · ${escapeHtml(d.given_by_name || 'Staff')}</div>
         </div>
+        ${d.supply_invoice_id ? `<button type="button" onclick="viewSupplyInvoiceById('${d.supply_invoice_id}')" class="flex-shrink-0 text-[10px] font-semibold text-navy hover:underline">📄 ${iswL('Invois', 'Invoice')}</button>` : ''}
       </div>`;
         }).join('');
       }
@@ -6176,6 +6178,17 @@
       }).join('');
     }
 
+    async function viewSupplyInvoiceById(invoiceId) {
+      if (!invoiceId) { banner('Invois tidak dijumpai untuk rekod ini', 'error'); return; }
+      const { data: inv, error } = await window.db.from('psy_supply_invoices').select('*').eq('id', invoiceId).maybeSingle();
+      if (error || !inv) { banner('Ralat muat invois: ' + (error?.message || 'tidak dijumpai'), 'error'); return; }
+      window.viewSupplyInvoice(inv, {
+        full_name: iswPatientName(patient, profile, kyc),
+        phone: iswPatientPhone(patient, profile, kyc),
+        mrn: patient?.mrn,
+      });
+    }
+
     async function openGiveSupplyModal() {
       // Always reload inventory fresh to get latest stock levels
       const { data, error: invErr } = await window.db.from('psy_inventory_items')
@@ -6245,11 +6258,21 @@
         // sumber TUNGGAL "Sejarah Bekalan" (loadSupply()) — tiada lagi psy_supply_disbursements
         // berasingan, supaya bekalan manual & auto-deduct sentiasa muncul sama tempat.
         console.log('[Supply] deducting stock…', { id: itemId, newQty: stock - qty });
-        await window.addStockToLocation(itemId, -qty, null, {
+        const movementId = await window.addStockToLocation(itemId, -qty, null, {
           type: 'out', refType: 'patient_package', refId: patientId,
           note: `Bagi Bekalan${notes ? ': ' + notes : ''}`, itemName,
         });
         console.log('[Supply] stock update OK');
+
+        // Keluarkan invois bekalan (snapshot diberi/jumlah pakej/baki) — gagal cipta invois
+        // TAK sekat bekalan yg dah direkod (createSupplyInvoice() pulang null senyap kalau gagal).
+        const supplyInvoice = await window.createSupplyInvoice(
+          [{ item_id: itemId, name: itemName, unit, qty_given: qty }],
+          { patientId, activePlan, source: 'manual', notes }
+        );
+        if (supplyInvoice && movementId) {
+          await window.db.from('psy_stock_movements').update({ supply_invoice_id: supplyInvoice.id }).eq('id', movementId);
+        }
 
         // Update local state
         const inv = inventoryItems.find(i => i.id === itemId);
@@ -6257,7 +6280,7 @@
 
         closeGiveSupplyModal();
         await loadSupply();
-        banner(`Bekalan "${itemName}" (${qty} ${unit}) berjaya direkod ✅`);
+        banner(`Bekalan "${itemName}" (${qty} ${unit}) berjaya direkod ✅${supplyInvoice ? ` · Invois ${supplyInvoice.invoice_no}` : ''}`);
       } catch (err) {
         console.error('[Supply] submitSupply error:', err);
         banner('Ralat: ' + (err.message || JSON.stringify(err)), 'error');

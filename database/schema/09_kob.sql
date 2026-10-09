@@ -214,6 +214,45 @@ DROP POLICY IF EXISTS "Staff manage card auth" ON psy_kob_card_authorizations;
 CREATE POLICY "Staff manage card auth" ON psy_kob_card_authorizations FOR ALL
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
+-- ──── trigger: auto-detach kad auto-caj bila pesakit stop/tamat rawatan ────
+-- Audit Tier 9 #47 dah elak cron auto-caj pesakit stop (defensive skip, lihat
+-- supabase/functions/event-reminders/index.ts), TAPI itu cuma semakan setiap
+-- kali cron jalan — rekod kad sendiri (status='attached') tak pernah ditukar
+-- secara automatik, kekal 'attached' sampai staff tekan "⏸️ Henti Auto-Caj"
+-- manual (roles/staff/patient-hub.html stopAutoChargePH()). Trigger ni padankan
+-- tindakan sama secara automatik bila outcome_status pesakit bertukar ke
+-- 'berhenti'/'meninggal' — supaya rekod kad sentiasa tepat walau staf terlupa.
+CREATE OR REPLACE FUNCTION auto_detach_card_on_patient_stop()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_row RECORD;
+BEGIN
+  IF NEW.outcome_status IN ('berhenti', 'meninggal')
+     AND OLD.outcome_status IS DISTINCT FROM NEW.outcome_status THEN
+    FOR v_row IN
+      UPDATE psy_kob_card_authorizations
+        SET status = 'detached', detached_at = now()
+        WHERE patient_id = NEW.id AND status = 'attached'
+        RETURNING id
+    LOOP
+      INSERT INTO psy_audit_log (actor_name, action, target, meta)
+      VALUES ('Sistem (Auto)', 'kob.autocharge_stopped', v_row.id::text,
+        jsonb_build_object('reason', 'patient_treatment_stopped', 'patient_id', NEW.id, 'outcome_status', NEW.outcome_status));
+    END LOOP;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_auto_detach_card_on_patient_stop ON psy_patients;
+CREATE TRIGGER trg_auto_detach_card_on_patient_stop
+  AFTER UPDATE OF outcome_status ON psy_patients
+  FOR EACH ROW
+  EXECUTE FUNCTION auto_detach_card_on_patient_stop();
+
 -- ──── psy_kob_agreements ────
 -- Rekod perjanjian yang ditandatangani pesakit.
 CREATE TABLE IF NOT EXISTS psy_kob_agreements (

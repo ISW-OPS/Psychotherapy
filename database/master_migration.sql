@@ -1,8 +1,8 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-10-08T09:14:01.739812Z
--- Jumlah fail: 39
+-- Generated: 2026-10-08T15:01:30.250036Z
+-- Jumlah fail: 40
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
 
@@ -3461,6 +3461,45 @@ CREATE POLICY "Patient read own card auth" ON psy_kob_card_authorizations FOR SE
 DROP POLICY IF EXISTS "Staff manage card auth" ON psy_kob_card_authorizations;
 CREATE POLICY "Staff manage card auth" ON psy_kob_card_authorizations FOR ALL
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ──── trigger: auto-detach kad auto-caj bila pesakit stop/tamat rawatan ────
+-- Audit Tier 9 #47 dah elak cron auto-caj pesakit stop (defensive skip, lihat
+-- supabase/functions/event-reminders/index.ts), TAPI itu cuma semakan setiap
+-- kali cron jalan — rekod kad sendiri (status='attached') tak pernah ditukar
+-- secara automatik, kekal 'attached' sampai staff tekan "⏸️ Henti Auto-Caj"
+-- manual (roles/staff/patient-hub.html stopAutoChargePH()). Trigger ni padankan
+-- tindakan sama secara automatik bila outcome_status pesakit bertukar ke
+-- 'berhenti'/'meninggal' — supaya rekod kad sentiasa tepat walau staf terlupa.
+CREATE OR REPLACE FUNCTION auto_detach_card_on_patient_stop()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_row RECORD;
+BEGIN
+  IF NEW.outcome_status IN ('berhenti', 'meninggal')
+     AND OLD.outcome_status IS DISTINCT FROM NEW.outcome_status THEN
+    FOR v_row IN
+      UPDATE psy_kob_card_authorizations
+        SET status = 'detached', detached_at = now()
+        WHERE patient_id = NEW.id AND status = 'attached'
+        RETURNING id
+    LOOP
+      INSERT INTO psy_audit_log (actor_name, action, target, meta)
+      VALUES ('Sistem (Auto)', 'kob.autocharge_stopped', v_row.id::text,
+        jsonb_build_object('reason', 'patient_treatment_stopped', 'patient_id', NEW.id, 'outcome_status', NEW.outcome_status));
+    END LOOP;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_auto_detach_card_on_patient_stop ON psy_patients;
+CREATE TRIGGER trg_auto_detach_card_on_patient_stop
+  AFTER UPDATE OF outcome_status ON psy_patients
+  FOR EACH ROW
+  EXECUTE FUNCTION auto_detach_card_on_patient_stop();
 
 -- ──── psy_kob_agreements ────
 -- Rekod perjanjian yang ditandatangani pesakit.
@@ -11457,3 +11496,73 @@ DROP TRIGGER IF EXISTS trg_advance_daily_checkin_missions ON psy_kepatuhan_log;
 CREATE TRIGGER trg_advance_daily_checkin_missions
   AFTER INSERT ON psy_kepatuhan_log
   FOR EACH ROW EXECUTE FUNCTION trg_advance_daily_checkin_missions();
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/42_supply_invoices.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 42 — SUPPLY INVOICES (invois bekalan produk kepada pesakit)
+-- Invois BUKAN-DUIT dikeluarkan setiap kali produk/bekalan (cth madu)
+-- diberi kepada pesakit — snapshot kuantiti diberi HARI INI + jumlah
+-- dirancang seluruh pakej + baki SELEPAS pemberian ini. Snapshot kekal
+-- (immutable) supaya sejarah tak berubah walau baki berubah kemudian.
+--
+-- Ditulis dari shared/supplyInvoice.js createSupplyInvoice() — dipanggil
+-- SELEPAS addStockToLocation() (shared/inventoryStock.js) berjaya, dari
+-- DUA laluan: "+ Bagi Bekalan" manual (roles/staff/patient-hub.html
+-- submitSupply()) & auto-deduct lepas sesi Hadir (roles/staff/plan-week.html
+-- applySupplyStock()). psy_stock_movements (36_stock_movements.sql) kekal
+-- SUMBER KEBENARAN stok — jadual ni cuma dokumen invois, tak pernah ditulis
+-- balik ke ledger.
+-- ═══════════════════════════════════════════════════════════════════
+
+CREATE SEQUENCE IF NOT EXISTS psy_supply_invoice_no_seq START 1;
+
+CREATE TABLE IF NOT EXISTS psy_supply_invoices (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  invoice_no    TEXT UNIQUE,
+  patient_id    UUID NOT NULL REFERENCES psy_patients(id),
+  plan_id       UUID REFERENCES psy_treatment_plans(id) ON DELETE SET NULL,
+  week_number   INT,
+  source        TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'auto_weekly')),
+  -- items: [{item_id, name, unit, qty_given, qty_planned_total, qty_given_cumulative, qty_remaining}]
+  items         JSONB NOT NULL DEFAULT '[]',
+  given_by      UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  given_by_name TEXT,
+  notes         TEXT,
+  created_at    TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_supply_invoices_patient ON psy_supply_invoices(patient_id, created_at DESC);
+
+ALTER TABLE psy_supply_invoices ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patients read own supply invoices" ON psy_supply_invoices;
+CREATE POLICY "Patients read own supply invoices" ON psy_supply_invoices FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff manage supply invoices" ON psy_supply_invoices;
+CREATE POLICY "Staff manage supply invoices" ON psy_supply_invoices FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+CREATE OR REPLACE FUNCTION psy_assign_supply_invoice_no() RETURNS trigger AS $$
+BEGIN
+  IF NEW.invoice_no IS NULL THEN
+    NEW.invoice_no := 'INV-BKL-' || lpad(nextval('psy_supply_invoice_no_seq')::text, 6, '0');
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_psy_assign_supply_invoice_no ON psy_supply_invoices;
+CREATE TRIGGER trg_psy_assign_supply_invoice_no BEFORE INSERT ON psy_supply_invoices
+  FOR EACH ROW EXECUTE FUNCTION psy_assign_supply_invoice_no();
+
+COMMENT ON TABLE psy_supply_invoices IS
+  'Invois bekalan produk (bukan duit) — snapshot kuantiti diberi + baki pakej setiap kali bekalan dikeluarkan kepada pesakit.';
+
+-- Pautan terus dari baris ledger (psy_stock_movements) ke invois yg merekodkannya, supaya
+-- UI sejarah bekalan boleh papar butang "Lihat Invois" terus tanpa carian masa/nama yg rapuh.
+ALTER TABLE psy_stock_movements ADD COLUMN IF NOT EXISTS supply_invoice_id UUID REFERENCES psy_supply_invoices(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_stock_movements_supply_invoice ON psy_stock_movements(supply_invoice_id);
