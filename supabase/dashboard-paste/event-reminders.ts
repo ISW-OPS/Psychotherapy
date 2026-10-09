@@ -836,7 +836,10 @@ async function runAutomationOne(supabase, locationId, a) {
   const actions = Array.isArray(a.actions) ? a.actions : [];
   const conds = a.conditions_enabled && Array.isArray(a.conditions) ? a.conditions : [];
   const { data: pats } = await supabase.from("psy_patients").select("id, user_id, full_name, phone, email, gender, status, active_package_id, active_package_name, package_purchased_at, package_expires_at, mrn, ic_number, coach_id, state, date_of_birth, created_at, emergency_contact_phone, emergency_contact_name, contact_preference").neq("status", "deleted").neq("status", "rejected");
-  const targets = applyConds(pats || [], conds);
+  // Default (tiada syarat "Status Pesakit" eksplisit) hanya target pesakit AKTIF.
+  const hasStatusCond = conds.some((c) => c.field === "patient_status");
+  const basePats = hasStatusCond ? (pats || []) : (pats || []).filter((p) => p.status === "active");
+  const targets = applyConds(basePats, conds);
   const coachMap = {}, pkgWeeksMap = {}, planMap = {}, upcomingMap = {};
   try {
     const coachIds = [...new Set(targets.map((p) => p.coach_id).filter(Boolean))];

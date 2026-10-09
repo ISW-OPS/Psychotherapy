@@ -352,6 +352,7 @@
   <script src="../../shared/logout.js"></script>
   <script src="../../shared/navbar.js"></script>
   <script src="../../shared/settings.js"></script>
+  <script src="../../shared/schedulePeriod.js"></script>
   <script src="_shared.js"></script>
   <script>
     function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
@@ -530,7 +531,7 @@
       const planNameEl = document.getElementById('plan-name');
       if (planNameEl) planNameEl.textContent = activePlan.name;
       const planMetaEl = document.getElementById('plan-meta');
-      if (planMetaEl) planMetaEl.textContent = `Mula ${planAnchorDate().toLocaleDateString(LCALE())} · Week ${activePlan.current_week}/${activePlan.duration_weeks}`;
+      if (planMetaEl) planMetaEl.textContent = `Mula ${planAnchorDate().toLocaleDateString(LCALE())} · ${iswPeriodLabel(activePlan.current_week)}/${activePlan.duration_weeks}`;
       // Hero greeting
       const greetEl = document.getElementById('hero-greeting');
       if (greetEl && patientRecord?.full_name) {
@@ -940,7 +941,7 @@
       const errors = [];
       for (const row of rows) {
         const { error } = await window.db.from('psy_plan_weekly_progress').insert(row);
-        if (error) errors.push(`M${row.week_number} S${row.session_day}: ${error.message}`);
+        if (error) errors.push(`${iswPeriodLabel(row.week_number)} S${row.session_day}: ${error.message}`);
       }
       if (errors.length) {
         console.warn('[plan] backfill errors:', errors);
@@ -1196,7 +1197,7 @@
       } else {
         const prevSession = weeklyProgressRows.find(r => r.week_number === w - 1 && (r.session_day || 1) === day);
         base = prevSession?.session_date ? new Date(prevSession.session_date) : new Date();
-        base.setDate(base.getDate() + 7);
+        base.setDate(base.getDate() + iswPeriodSpanDays(w - 1));
       }
       const toLocalDateStr = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
       document.getElementById('book-date').value = toLocalDateStr(base);
@@ -1421,7 +1422,7 @@
                 appointment_time: fixedDate.toISOString(),
               }).eq('id', otherInWeek.appointment_id);
             }
-            banner(`Sesi ${otherSessionDay} Minggu ${pendingBookWeek} auto-diubah ke ${fixedDate.toLocaleDateString(LCALE(), { day: 'numeric', month: 'long' })}`);
+            banner(`Sesi ${otherSessionDay} ${iswPeriodLabel(pendingBookWeek)} auto-diubah ke ${fixedDate.toLocaleDateString(LCALE(), { day: 'numeric', month: 'long' })}`);
           }
         }
 
@@ -1804,13 +1805,18 @@
         for (let i = 0; i < N; i++) {
           const dayNum = i + 1;
           if (!days.includes(dayNum)) continue;
+          // Period 1-12 = mingguan (7 hari/period), 13-15 = bulanan (28 hari),
+          // 16+ = suku tahun (84 hari) — lihat shared/schedulePeriod.js. Gantikan
+          // (w-1)*7 lama dgn offset kumulatif supaya pakej panjang (>12 minggu)
+          // betul-betul jarang (M/Q) bukan terus mingguan sepanjang tempoh.
+          const offsetDays = iswPeriodOffsetDays(w);
           const dt = new Date(m1[i]);
-          dt.setDate(dt.getDate() + (w - 1) * 7);
+          dt.setDate(dt.getDate() + offsetDays);
           dt.setHours(hm[i][0], hm[i][1], 0, 0);
 
-          // Safeguard 2-sesi: Sesi 2 mesti sentiasa selepas Sesi 1 pada minggu sama
+          // Safeguard 2-sesi: Sesi 2 mesti sentiasa selepas Sesi 1 pada period sama
           if (i === 1) {
-            const s1 = new Date(m1[0]); s1.setDate(s1.getDate() + (w - 1) * 7);
+            const s1 = new Date(m1[0]); s1.setDate(s1.getDate() + offsetDays);
             if (dt.toDateString() === s1.toDateString() || dt < s1) {
               const fix = new Date(s1); fix.setDate(fix.getDate() + 1);
               while (fix.getDay() !== dows[1]) fix.setDate(fix.getDate() + 1);
@@ -1820,7 +1826,7 @@
           }
 
           const closed = isClinicClosed(dt);
-          if (closed) warnings.push(`Minggu ${w} Sesi ${dayNum} (${fmtDayShort(dt)}) jatuh pada cuti konsultasi`);
+          if (closed) warnings.push(`${iswPeriodLabel(w)} Sesi ${dayNum} (${fmtDayShort(dt)}) jatuh pada cuti konsultasi`);
           sessions.push({ week: w, day: dayNum, dateTime: dt, closed });
         }
       }
@@ -1901,7 +1907,7 @@
       });
       const groups = Object.values(byWeek);
       const totalAmount = groups.reduce((s, g) => s + g.price, 0);
-      const weekList = groups.map(g => g.week).sort((a, b) => a - b).map(w => `M${w}`).join(', ');
+      const weekList = groups.map(g => g.week).sort((a, b) => a - b).map(w => iswPeriodLabel(w)).join(', ');
       const isMulti = groups.length > 1;
 
       // Bezakan jenis: 1 baris sahaja dlm minggu = 1 sesi tunggal ditambah coach (bukan

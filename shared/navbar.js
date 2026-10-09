@@ -147,7 +147,7 @@ const STAFF_NAV_MASTER = [
   {
     group: 'OPERASI', collapsible: true, items: [
       { id: 'pakej', url: 'pakej.html', icon: '🗂️', label: 'Pakej Rawatan' },
-      { id: 'psy_products', url: 'products.html', icon: '🛍️', label: 'Produk' },
+      { id: 'psy_products', url: 'products.html', icon: '🛍️', label: 'Shop' },
       { id: 'produk_bahan_group', url: 'produk-bahan.html', icon: '🧴', label: 'External Product', children: [
         { id: 'produk_bahan',  url: 'produk-bahan.html',  label: 'Produk & Bahan' },
         { id: 'produk_seller', url: 'produk-seller.html', label: 'Seller / Platform' },

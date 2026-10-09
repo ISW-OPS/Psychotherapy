@@ -1,8 +1,8 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-10-08T15:01:30.250036Z
--- Jumlah fail: 40
+-- Generated: 2026-10-09T07:43:49.961095Z
+-- Jumlah fail: 41
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
 
@@ -2625,6 +2625,87 @@ COMMENT ON COLUMN psy_plan_weekly_progress.reaksi_pemulihan IS
 -- 18_notifications_automations.sql bersama fungsinya.
 
 -- ──────────────────────────────────────────────────────────────
+-- Trigger: pesakit stop/tamat rawatan → buang sesi akan datang yang
+-- belum berlaku (pending/booked/reschedule) supaya jadual tak tinggal
+-- bersepah & tak trigger reminder/escalation palsu. Rekod SEJARAH
+-- (hadir/cancel/consultation_done) KEKAL — ni cuma buang slot yang
+-- tak pernah berlaku. Pasangan kepada trg_auto_detach_card_on_patient_stop
+-- (09_kob.sql, stop auto-caj) & trg_block_booking_for_inactive_patient
+-- (bawah) — tiga-tiga sekali tangani kesan "pesakit berhenti".
+-- ──────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION auto_clear_sessions_on_patient_stop()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_count INT;
+  v_appt_ids UUID[];
+BEGIN
+  IF NEW.outcome_status IN ('berhenti', 'meninggal')
+     AND OLD.outcome_status IS DISTINCT FROM NEW.outcome_status THEN
+    WITH deleted AS (
+      DELETE FROM psy_plan_weekly_progress
+        WHERE patient_id = NEW.id AND status IN ('pending', 'booked', 'reschedule')
+        RETURNING id, appointment_id
+    )
+    SELECT count(*), array_agg(appointment_id) FILTER (WHERE appointment_id IS NOT NULL)
+      INTO v_count, v_appt_ids FROM deleted;
+
+    -- Sesi terjadual yg dipadam mungkin pautan ke psy_appointments (kalendar umum) — batalkan
+    -- sekali supaya tak tinggal baris 'scheduled' bersepah merujuk sesi yg dah tak wujud.
+    IF v_appt_ids IS NOT NULL THEN
+      UPDATE psy_appointments SET status = 'cancelled'
+        WHERE id = ANY(v_appt_ids) AND status NOT IN ('completed', 'cancelled');
+    END IF;
+
+    IF v_count > 0 THEN
+      INSERT INTO psy_audit_log (actor_name, action, target, meta)
+      VALUES ('Sistem (Auto)', 'plan.sessions_cleared_on_stop', NEW.id::text,
+        jsonb_build_object('reason', 'patient_treatment_stopped', 'outcome_status', NEW.outcome_status, 'sessions_removed', v_count));
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_auto_clear_sessions_on_patient_stop ON psy_patients;
+CREATE TRIGGER trg_auto_clear_sessions_on_patient_stop
+  AFTER UPDATE OF outcome_status ON psy_patients
+  FOR EACH ROW
+  EXECUTE FUNCTION auto_clear_sessions_on_patient_stop();
+
+-- ──────────────────────────────────────────────────────────────
+-- Trigger: sekat sesi BAHARU (pending/booked/reschedule) dijadualkan
+-- untuk pesakit yang statusnya bukan 'active' (cth dah 'inactive' selepas
+-- outcome_status='berhenti'/'meninggal', atau 'archived'/'deceased').
+-- Rekod sejarah (hadir/cancel/consultation_done) & kemaskini baris sedia
+-- ada tak disekat — cuma INSERT slot BAHARU yang disekat.
+-- ──────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION block_booking_for_inactive_patient()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_status TEXT;
+BEGIN
+  IF NEW.status IN ('pending', 'booked', 'reschedule') THEN
+    SELECT status INTO v_status FROM psy_patients WHERE id = NEW.patient_id;
+    IF v_status IS DISTINCT FROM 'active' THEN
+      RAISE EXCEPTION 'Pesakit ini tidak aktif (status: %) — sesi baharu tidak boleh dijadualkan.', v_status;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_block_booking_for_inactive_patient ON psy_plan_weekly_progress;
+CREATE TRIGGER trg_block_booking_for_inactive_patient
+  BEFORE INSERT ON psy_plan_weekly_progress
+  FOR EACH ROW
+  EXECUTE FUNCTION block_booking_for_inactive_patient();
+
+-- ──────────────────────────────────────────────────────────────
 -- Fungsi: selesai semua sesi / pakej tamat → auto-complete pelan;
 -- pakej sambungan (continuity) beratur di-auto-aktif, jika tiada
 -- → pesakit ditanda inactive + outcome completed.
@@ -4690,6 +4771,14 @@ CREATE TABLE IF NOT EXISTS psy_library_items (
   updated_at      TIMESTAMPTZ DEFAULT now()
 );
 
+-- Patch jadual sedia ada — CREATE TABLE IF NOT EXISTS di atas tak tambah
+-- kolum baharu pada jadual yang dah wujud, jadi kolum lanjutan mesti di-ALTER
+-- secara eksplisit (sama corak dgn 14_products_inventory.sql dll).
+ALTER TABLE psy_library_items ADD COLUMN IF NOT EXISTS week_number INT;
+ALTER TABLE psy_library_items ADD COLUMN IF NOT EXISTS staff_roles TEXT[];
+ALTER TABLE psy_library_items ADD COLUMN IF NOT EXISTS publish_at TIMESTAMPTZ;
+ALTER TABLE psy_library_items ADD COLUMN IF NOT EXISTS related_item_ids UUID[] DEFAULT '{}';
+
 CREATE INDEX IF NOT EXISTS idx_library_package_ids ON psy_library_items USING GIN (package_ids);
 CREATE INDEX IF NOT EXISTS idx_library_media_type  ON psy_library_items(media_type);
 CREATE INDEX IF NOT EXISTS idx_library_topic       ON psy_library_items(topic);
@@ -5005,6 +5094,11 @@ ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS barcode TEXT;
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS shelf_life_days INT;
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS image_url TEXT;
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS internal_notes TEXT;
+-- Fail print-ready (PDF) item ni — cth reka bentuk Brochure BNP. Staff buka
+-- inventory-detail.html item ni terus untuk cetak semula bila nak restock,
+-- bukan cari dalam senarai dokumen berasingan. Bucket: inventory-print-files.
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS print_file_url TEXT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS print_file_size BIGINT;
 
 -- status: peringkat lebih halus drpd is_active — 'discontinued' bermaksud dibuang
 -- kekal (bukan cuma nyahaktif sementara). is_active DIKEKALKAN (banyak tempat lain
@@ -5073,7 +5167,8 @@ CREATE POLICY "Staff read inventory items" ON psy_inventory_items
 
 DROP POLICY IF EXISTS "Admin manage inventory items" ON psy_inventory_items;
 CREATE POLICY "Admin manage inventory items" ON psy_inventory_items
-  FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('admin','manager')));
+  FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('super_admin','admin','manager')))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('super_admin','admin','manager')));
 
 -- Komen
 COMMENT ON COLUMN psy_inventory_items.max_qty IS
@@ -5090,6 +5185,8 @@ COMMENT ON COLUMN psy_inventory_items.item_code IS
   'Kod item auto-generate (INV-01, ...) via trigger — tidak boleh diedit.';
 COMMENT ON COLUMN psy_inventory_items.is_active IS
   'false = item tidak aktif — disorok dari senarai pilihan (dispens/kit/jadual pakej) & auto-request.';
+COMMENT ON COLUMN psy_inventory_items.print_file_url IS
+  'Fail PDF print-ready (cth reka bentuk brochure) — dicetak terus dari inventory-detail.html bila restock.';
 COMMENT ON COLUMN psy_inventory_items.reorder_threshold_pct IS
   'Peratus keperluan bulanan (dynamic_monthly) yang trigger status "Stok Rendah" utk item source_type=package. NULL = guna default sistem 30%.';
 COMMENT ON COLUMN psy_inventory_items.manufacturer IS
@@ -8598,6 +8695,16 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO storage.buckets (id, name, public) VALUES ('automation-media', 'automation-media', true)
 ON CONFLICT (id) DO NOTHING;
 
+-- Fail print-ready item inventori (cth reka bentuk Brochure BNP) — dilampir pada
+-- psy_inventory_items.print_file_url (14_products_inventory.sql), staff cetak terus
+-- dari inventory-detail.html bila perlu restock.
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('inventory-print-files', 'inventory-print-files', true, 10485760, ARRAY['application/pdf','image/png'])
+ON CONFLICT (id) DO UPDATE
+  SET public = EXCLUDED.public,
+      file_size_limit = EXCLUDED.file_size_limit,
+      allowed_mime_types = EXCLUDED.allowed_mime_types;
+
 
 -- ---- Polisi storage.objects ----
 
@@ -8902,6 +9009,25 @@ CREATE POLICY "stock_in_docs_staff_all" ON storage.objects
     FOR ALL TO authenticated
     USING (bucket_id = 'stock-in-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
     WITH CHECK (bucket_id = 'stock-in-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "inventory_print_staff_write" ON storage.objects;
+CREATE POLICY "inventory_print_staff_write" ON storage.objects
+    FOR INSERT TO authenticated
+    WITH CHECK (bucket_id = 'inventory-print-files' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "inventory_print_staff_update" ON storage.objects;
+CREATE POLICY "inventory_print_staff_update" ON storage.objects
+    FOR UPDATE TO authenticated
+    USING (bucket_id = 'inventory-print-files' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "inventory_print_staff_delete" ON storage.objects;
+CREATE POLICY "inventory_print_staff_delete" ON storage.objects
+    FOR DELETE TO authenticated
+    USING (bucket_id = 'inventory-print-files' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "inventory_print_public_read" ON storage.objects;
+CREATE POLICY "inventory_print_public_read" ON storage.objects
+    FOR SELECT USING (bucket_id = 'inventory-print-files');
 
 -- Lampiran permohonan surat: staff (proses) + requester sendiri (laluan {request_id}/... —
 -- (storage.foldername(name))[1] mesti request_id kepunyaan pesakit/staff yang login).
@@ -11566,3 +11692,61 @@ COMMENT ON TABLE psy_supply_invoices IS
 -- UI sejarah bekalan boleh papar butang "Lihat Invois" terus tanpa carian masa/nama yg rapuh.
 ALTER TABLE psy_stock_movements ADD COLUMN IF NOT EXISTS supply_invoice_id UUID REFERENCES psy_supply_invoices(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_stock_movements_supply_invoice ON psy_stock_movements(supply_invoice_id);
+
+
+-- ════════════════════════════════════════════════════════════════
+-- schema/43_package_supply_invoices.sql
+-- ════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 43 — PACKAGE SUPPLY INVOICE HEADER (nombor invois tetap per pakej)
+-- Satu baris per (patient_id, plan_id) — pegang SATU nombor invois rasmi
+-- yang kekal sepanjang pakej tu, walau berapa kali bekalan ditambah
+-- lepas tu. Kandungan penuh invois (senarai produk + rekod mingguan)
+-- TIDAK disimpan di sini — ia dikira secara LIVE setiap kali dibuka,
+-- dengan menggabungkan semua baris psy_supply_invoices (42_supply_invoices.sql)
+-- bagi plan_id yang sama. Jadual ni cuma "pemegang nombor".
+--
+-- Dicipta lazy (get-or-create) oleh shared/supplyInvoice.js
+-- getOrCreatePackageSupplyInvoiceNo() — dipanggil SEKALI sebaik bekalan
+-- PERTAMA pakej tu diberi (dari createSupplyInvoice()), supaya nombor
+-- wujud dari transaksi pertama walau staff belum buka paparan invois lagi.
+-- ═══════════════════════════════════════════════════════════════════
+
+CREATE SEQUENCE IF NOT EXISTS psy_package_supply_invoice_no_seq START 1;
+
+CREATE TABLE IF NOT EXISTS psy_package_supply_invoices (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  invoice_no    TEXT UNIQUE,
+  patient_id    UUID NOT NULL REFERENCES psy_patients(id),
+  plan_id       UUID NOT NULL REFERENCES psy_treatment_plans(id) ON DELETE CASCADE,
+  created_at    TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (patient_id, plan_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_package_supply_invoices_patient ON psy_package_supply_invoices(patient_id);
+
+ALTER TABLE psy_package_supply_invoices ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Patients read own package supply invoices" ON psy_package_supply_invoices;
+CREATE POLICY "Patients read own package supply invoices" ON psy_package_supply_invoices FOR SELECT
+  USING (patient_id IN (SELECT id FROM psy_patients WHERE user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Staff manage package supply invoices" ON psy_package_supply_invoices;
+CREATE POLICY "Staff manage package supply invoices" ON psy_package_supply_invoices FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+CREATE OR REPLACE FUNCTION psy_assign_package_supply_invoice_no() RETURNS trigger AS $$
+BEGIN
+  IF NEW.invoice_no IS NULL THEN
+    NEW.invoice_no := 'INV-BK-' || lpad(nextval('psy_package_supply_invoice_no_seq')::text, 4, '0');
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_psy_assign_package_supply_invoice_no ON psy_package_supply_invoices;
+CREATE TRIGGER trg_psy_assign_package_supply_invoice_no BEFORE INSERT ON psy_package_supply_invoices
+  FOR EACH ROW EXECUTE FUNCTION psy_assign_package_supply_invoice_no();
+
+COMMENT ON TABLE psy_package_supply_invoices IS
+  'Pemegang nombor invois bekalan PAKEJ (satu nombor tetap per patient_id+plan_id). Kandungan invois dikira live dari psy_supply_invoices, bukan disimpan di sini.';

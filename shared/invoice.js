@@ -348,65 +348,167 @@
     showInvoiceModal(inner);
   }
 
-  // ── Invois Bekalan Produk (bukan duit) ────────────────────────────────────
-  // Snapshot kuantiti diberi + baki pakej dari psy_supply_invoices (lihat
-  // database/schema/42_supply_invoices.sql, shared/supplyInvoice.js). Guna
-  // helper dokumen (window.iswDoc) sama dgn invois/resit pembayaran, tapi
-  // tanpa harga/subtotal — ini bukan transaksi duit.
-  async function buildSupplyInvoiceInner(inv, override) {
+  // ── Invois Bekalan PAKEJ (merentas keseluruhan pakej, bukan 1 transaksi) ──────
+  // Gabungkan SEMUA baris psy_supply_invoices bagi (patientId, planId) jadi SATU
+  // dokumen: ringkasan per-produk (jumlah asal/diberi/baki) + rekod penyerahan
+  // mingguan per-produk. Nombor invois TETAP seluruh pakej (psy_package_supply_invoices,
+  // 43_package_supply_invoices.sql, dicipta lazy via shared/supplyInvoice.js
+  // getOrCreatePackageSupplyInvoiceNo()). `override` = {full_name, phone, mrn, address}
+  // — laluan staff (tiada window.currentUser/patientRecord pesakit).
+  async function buildPackageSupplyInvoiceInner(patientId, planId, override) {
     const doc = D();
     if (!doc) throw new Error('shared/receipt.js belum dimuat / not loaded');
     const { esc, dateLong, header, TEAL, L } = doc;
-    const cu = override ? { full_name: override.full_name } : (window.currentUser || {});
-    const pr = override ? { phone: override.phone, mrn: override.mrn } : (window.patientRecord || {});
-    const items = Array.isArray(inv.items) ? inv.items : [];
+
+    const [{ data: patient }, { data: plan }, { data: rows }] = await Promise.all([
+      window.db.from('psy_patients').select('full_name, mrn, phone, address, home_address').eq('id', patientId).maybeSingle(),
+      window.db.from('psy_treatment_plans').select('name, start_date, duration_weeks, status').eq('id', planId).maybeSingle(),
+      window.db.from('psy_supply_invoices').select('*').eq('patient_id', patientId).eq('plan_id', planId).order('created_at', { ascending: true }),
+    ]);
+    const pt = override
+      ? { full_name: override.full_name, phone: override.phone, mrn: override.mrn }
+      : { full_name: patient?.full_name, phone: patient?.phone, mrn: patient?.mrn };
+
+    const list = rows || [];
+
+    // key produk = item_id (atau nama kalau tiada) + unit — snapshot TERKINI (baris
+    // terakhir yg sentuh produk ni) utk jumlah, + senarai setiap transaksi utk ledger.
+    const productMap = new Map();
+    const ledgerMap = new Map();
+    list.forEach(r => {
+      (Array.isArray(r.items) ? r.items : []).forEach(it => {
+        const key = (it.item_id || it.name) + '|' + (it.unit || 'unit');
+        productMap.set(key, it);
+        if (!ledgerMap.has(key)) ledgerMap.set(key, []);
+        ledgerMap.get(key).push({
+          week_number: r.week_number, created_at: r.created_at,
+          qty_given: it.qty_given, qty_remaining: it.qty_remaining, given_by_name: r.given_by_name,
+        });
+      });
+    });
+    const products = Array.from(productMap.values());
+
+    if (!products.length) {
+      return `${header(L('INVOIS BEKALAN PAKEJ', 'PACKAGE SUPPLY INVOICE'))}
+        <div class="mt-10 text-center text-sm text-ink/50 italic py-16">${L('Tiada bekalan direkod lagi untuk pakej ini.', 'No supplies recorded yet for this package.')}</div>`;
+    }
+
+    // Nombor invois TETAP seluruh pakej — idempoten, backfill kalau header belum wujud lagi.
+    const headerRow = (window.getOrCreatePackageSupplyInvoiceNo
+      ? await window.getOrCreatePackageSupplyInvoiceNo(patientId, planId) : null);
+
+    const startDate = plan?.start_date || null;
+    const endDate = (plan?.start_date && plan?.duration_weeks)
+      ? new Date(new Date(plan.start_date).getTime() + Number(plan.duration_weeks) * 7 * 86400000) : null;
+
     const th = 'text-[11px] font-medium uppercase tracking-wide text-ink/70 py-3';
 
-    return `
-      ${header(L('INVOIS BEKALAN', 'SUPPLY INVOICE'))}
-
-      <div class="border-t border-ink/10 mt-6 pt-5 grid grid-cols-2 md:grid-cols-3 gap-6 text-sm">
-        <div>
-          <div class="font-semibold text-ink">${L('Diberikan kepada', 'Issued to')}</div>
-          <div class="text-ink/60 text-xs mt-2 leading-relaxed">${esc(cu.full_name || '—')}<br>${pr.mrn ? `MRN: ${esc(pr.mrn)}<br>` : ''}${esc(pr.phone || '—')}</div>
+    // Petak ringkasan hanya kalau SEMUA produk kongsi unit sama (biasanya 1 produk/pakej) —
+    // elak jumlahkan unit berlainan (cth botol + kotak) jadi angka yg mengelirukan.
+    const sameUnit = products.every(p => p.unit === products[0].unit);
+    const kpiTiles = sameUnit ? `
+      <div class="grid grid-cols-3 gap-4 mt-6">
+        <div class="rounded-xl border border-ink/10 bg-navy/5 p-4 text-center">
+          <div class="text-[10px] font-semibold uppercase tracking-wide text-ink/50">${L('Jumlah Asal', 'Original Total')}</div>
+          <div class="text-2xl font-bold text-ink mt-1">${esc(String(products.reduce((a, p) => a + Number(p.qty_planned_total || 0), 0)))}</div>
+          <div class="text-[11px] text-ink/50">${esc(products[0].unit || '')}</div>
         </div>
-        <div><div class="font-semibold text-ink">${L('No. Invois', 'Invoice Number')}</div><div class="text-ink/60 text-xs mt-2">${esc(inv.invoice_no || '—')}</div></div>
-        <div>
-          <div class="font-semibold text-ink">${L('Tarikh', 'Date')}</div><div class="text-ink/60 text-xs mt-1">${dateLong(inv.created_at)}</div>
-          <div class="font-semibold text-ink mt-3">${L('Diberi oleh', 'Issued by')}</div><div class="text-ink/60 text-xs mt-1">${esc(inv.given_by_name || '—')}</div>
+        <div class="rounded-xl border border-ink/10 bg-gold/5 p-4 text-center">
+          <div class="text-[10px] font-semibold uppercase tracking-wide text-ink/50">${L('Telah Diberi', 'Given So Far')}</div>
+          <div class="text-2xl font-bold text-ink mt-1">${esc(String(products.reduce((a, p) => a + Number(p.qty_given_cumulative || 0), 0)))}</div>
+          <div class="text-[11px] text-ink/50">${esc(products[0].unit || '')}</div>
         </div>
-      </div>
+        <div class="rounded-xl border border-ink/10 bg-green/5 p-4 text-center">
+          <div class="text-[10px] font-semibold uppercase tracking-wide text-ink/50">${L('Baki Semasa', 'Current Balance')}</div>
+          <div class="text-2xl font-bold text-ink mt-1">${esc(String(products.reduce((a, p) => a + Number(p.qty_remaining || 0), 0)))}</div>
+          <div class="text-[11px] text-ink/50">${esc(products[0].unit || '')}</div>
+        </div>
+      </div>` : '';
 
+    const productTable = `
       <table class="w-full mt-10 text-sm">
         <thead>
           <tr style="background:${TEAL}">
             <th class="${th} text-left px-3 text-white">${L('Nama Produk', 'Product Name')}</th>
-            <th class="${th} text-right text-white">${L('Diberi Hari Ini', 'Given Today')}</th>
-            <th class="${th} text-right text-white">${L('Jumlah Pakej', 'Package Total')}</th>
-            <th class="${th} text-right px-3 text-white">${L('Baki Selepas Ini', 'Remaining After This')}</th>
+            <th class="${th} text-right px-3 text-white">${L('Unit', 'Unit')}</th>
+            <th class="${th} text-right px-3 text-white">${L('Jumlah Asal', 'Original Qty')}</th>
+            <th class="${th} text-right px-3 text-white">${L('Telah Diberi', 'Given')}</th>
+            <th class="${th} text-right px-3 text-white">${L('Baki', 'Remaining')}</th>
           </tr>
         </thead>
         <tbody>
-          ${items.map(it => `<tr class="border-b border-ink/10">
-            <td class="py-4 px-3 text-xs text-ink/70 uppercase">${esc(it.name)}</td>
-            <td class="py-4 text-xs text-ink/70 text-right whitespace-nowrap">${esc(String(it.qty_given))} ${esc(it.unit || '')}</td>
-            <td class="py-4 text-xs text-ink/70 text-right whitespace-nowrap">${esc(String(it.qty_planned_total))} ${esc(it.unit || '')}</td>
-            <td class="py-4 px-3 text-xs font-bold text-ink text-right whitespace-nowrap">${esc(String(it.qty_remaining))} ${esc(it.unit || '')}</td>
+          ${products.map(p => `<tr class="border-b border-ink/10">
+            <td class="py-4 px-3 text-xs text-ink/70 uppercase">${esc(p.name)}</td>
+            <td class="py-4 px-3 text-xs text-ink/70 text-right">${esc(p.unit || '')}</td>
+            <td class="py-4 px-3 text-xs text-ink/70 text-right">${esc(String(p.qty_planned_total))}</td>
+            <td class="py-4 px-3 text-xs text-ink/70 text-right">${esc(String(p.qty_given_cumulative))}</td>
+            <td class="py-4 px-3 text-xs font-bold text-ink text-right">${esc(String(p.qty_remaining))}</td>
           </tr>`).join('')}
         </tbody>
-      </table>
+      </table>`;
 
-      ${inv.notes ? `<div class="mt-4 text-xs text-ink/60 italic">${esc(inv.notes)}</div>` : ''}
+    // Satu jadual "Rekod Penyerahan Mingguan" per produk — Baki Sebelum dikira
+    // berjujukan dari Jumlah Asal produk tu (ikut tertib created_at menaik).
+    const weeklyTables = Array.from(ledgerMap.entries()).map(([key, entries]) => {
+      const p = productMap.get(key);
+      let baki = Number(p.qty_planned_total || 0);
+      const rowsHtml = entries.map(e => {
+        const before = baki;
+        baki = Number(e.qty_remaining || 0);
+        return `<tr class="border-b border-ink/10">
+          <td class="py-3 px-3 text-xs text-ink/70 text-center">${e.week_number != null ? esc(String(e.week_number)) : '—'}</td>
+          <td class="py-3 px-3 text-xs text-ink/70">${dateLong(e.created_at)}</td>
+          <td class="py-3 px-3 text-xs text-ink/70 text-right">${esc(String(before))}</td>
+          <td class="py-3 px-3 text-xs font-semibold text-ink text-right">${esc(String(e.qty_given))}</td>
+          <td class="py-3 px-3 text-xs text-ink/70 text-right">${esc(String(e.qty_remaining))}</td>
+          <td class="py-3 pl-6 pr-3 text-xs text-ink/70">${esc(e.given_by_name || '—')}</td>
+        </tr>`;
+      }).join('');
+      return `
+        <div class="mt-8">
+          <div class="text-xs font-bold text-navy uppercase tracking-wide mb-2">${L('Rekod Penyerahan Mingguan', 'Weekly Delivery Record')} — ${esc(p.name)}</div>
+          <table class="w-full text-sm">
+            <thead><tr class="border-b-2" style="border-color:${TEAL}">
+              <th class="${th} text-center px-3">${L('Minggu', 'Week')}</th>
+              <th class="${th} text-left px-3">${L('Tarikh', 'Date')}</th>
+              <th class="${th} text-right px-3">${L('Baki Sebelum', 'Balance Before')}</th>
+              <th class="${th} text-right px-3">${L('Diberi', 'Given')}</th>
+              <th class="${th} text-right px-3">${L('Baki Selepas', 'Balance After')}</th>
+              <th class="${th} text-left pl-6 pr-3">${L('Staf', 'Staff')}</th>
+            </tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>`;
+    }).join('');
+
+    return `
+      ${header(L('INVOIS BEKALAN PAKEJ', 'PACKAGE SUPPLY INVOICE'))}
+
+      <div class="border-t border-ink/10 mt-6 pt-5 grid grid-cols-2 md:grid-cols-3 gap-6 text-sm">
+        <div>
+          <div class="font-semibold text-ink">${L('Maklumat Pesakit', 'Patient Info')}</div>
+          <div class="text-ink/60 text-xs mt-2 leading-relaxed">${esc(pt.full_name || '—')}<br>${pt.mrn ? `MRN: ${esc(pt.mrn)}<br>` : ''}${esc(pt.phone || '—')}</div>
+        </div>
+        <div><div class="font-semibold text-ink">${L('No. Invois', 'Invoice No')}</div><div class="text-ink/60 text-xs mt-2">${esc(headerRow?.invoice_no || '—')}</div></div>
+        <div>
+          <div class="font-semibold text-ink">${L('Nama Pakej', 'Package Name')}</div><div class="text-ink/60 text-xs mt-1">${esc(plan?.name || '—')}</div>
+          ${startDate ? `<div class="font-semibold text-ink mt-3">${L('Tempoh', 'Duration')}</div><div class="text-ink/60 text-xs mt-1">${dateLong(startDate)}${endDate ? ' – ' + dateLong(endDate) : ''}</div>` : ''}
+        </div>
+      </div>
+
+      ${kpiTiles}
+      ${productTable}
+      ${weeklyTables}
 
       <div class="mt-auto pt-8 text-[11px] text-ink/50 text-center leading-relaxed">
-        ${L('Invois ini merekodkan produk/bekalan yang diberikan sebagai sebahagian daripada pakej rawatan anda. Sila simpan untuk rujukan.', 'This invoice records products/supplies issued as part of your treatment package. Please keep for your reference.')}
+        ${L('Invois ini merekodkan produk/bekalan yang diberikan sebagai sebahagian daripada pakej rawatan anda, dikemaskini automatik setiap kali bekalan baharu diberi. Sila simpan untuk rujukan.', 'This invoice records products/supplies issued as part of your treatment package, automatically updated each time new supplies are given. Please keep for your reference.')}
       </div>`;
   }
 
-  async function viewSupplyInvoice(inv, override) {
+  async function viewPackageSupplyInvoice(patientId, planId, override) {
     const L = (window.iswDoc && window.iswDoc.L) || ((ms, en) => en);
     let inner;
-    try { inner = await buildSupplyInvoiceInner(inv, override); }
+    try { inner = await buildPackageSupplyInvoiceInner(patientId, planId, override); }
     catch (e) { alert(L('Gagal muat invois: ', 'Failed to load invoice: ') + e.message); return; }
     showInvoiceModal(inner);
   }
@@ -415,6 +517,6 @@
   window.viewInvoice = viewInvoice;
   window.buildPaymentInvoiceInner = buildPaymentInvoiceInner;
   window.viewPaymentInvoice = viewPaymentInvoice;
-  window.buildSupplyInvoiceInner = buildSupplyInvoiceInner;
-  window.viewSupplyInvoice = viewSupplyInvoice;
+  window.buildPackageSupplyInvoiceInner = buildPackageSupplyInvoiceInner;
+  window.viewPackageSupplyInvoice = viewPackageSupplyInvoice;
 })();

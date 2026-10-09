@@ -185,6 +185,15 @@
 
         </div>
 
+        <!-- Fail Print (reka bentuk print-ready item ni, cth Brochure) -->
+        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+          <div class="flex items-center gap-2 text-ink/50 text-sm font-semibold mb-4">
+            <span class="text-lg">🖨️</span> Fail Print
+          </div>
+          <div id="print-file-wrap"></div>
+          <input id="pf-file-input" type="file" accept="application/pdf,.pdf,image/png,.png" class="hidden">
+        </div>
+
         <!-- Permintaan Berdasarkan Pakej (bawah ringkasan) -->
           <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
             <div class="flex items-center gap-2 text-ink/50 text-sm font-semibold mb-1">
@@ -367,6 +376,7 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
+<script src="../../shared/schedulePeriod.js"></script>
 <script src="../../shared/stockSync.js"></script>
 <script src="../../shared/inventoryLink.js"></script>
 <script src="../../shared/inventoryForecast.js"></script>
@@ -559,6 +569,8 @@ async function init() {
   await window.attachInventoryForecast([itemData]);
 
   renderDetail(itemData);
+  renderPrintFile(itemData);
+  document.getElementById('pf-file-input').onchange = e => { if (e.target.files[0]) onPrintFilePicked(e.target.files[0]); e.target.value = ''; };
   await loadMovements();
   await loadItemAudit();
 
@@ -634,11 +646,13 @@ function renderShopProducts(products) {
 
 function renderDetail(item) {
   const qty       = Number(item.qty_in_stock);
-  const needed    = Number(item.forecast_required) || 0;  // keperluan INVENTORY_REORDER_LOOKAHEAD_DAYS hari akan datang
+  const needed    = Number(item.forecast?.month ?? item.forecast_required) || 0;  // keperluan BULAN INI (30 hari), bukan esok sahaja
   const isPkgLinked = needed > 0;  // auto-detect: ada sesi pesakit sebenar dijadualkan guna item ni
   const unit      = item.unit || '';
   const threshold = window.getInventoryReorderThreshold(item);
-  const weeklyUsage = needed > 0 ? +(needed / (INVENTORY_REORDER_LOOKAHEAD_DAYS / 7)).toFixed(1) : 0;
+  const minQty    = Number(item.min_qty) || 0;
+  const stockStatus = window.getInventoryStockStatus(item);
+  const weeklyUsage = needed > 0 ? +(needed / (30 / 7)).toFixed(1) : 0;
   const runway      = weeklyUsage > 0 ? +(qty / weeklyUsage).toFixed(1) : null;
 
   // Header
@@ -686,11 +700,12 @@ function renderDetail(item) {
 
   // Stock card
   const pct = needed > 0 ? Math.min(100, Math.round((qty / needed) * 100)) : (qty > 0 ? 100 : 0);
-  const barColor = qty === 0 ? 'bg-terracotta' : (threshold > 0 && qty <= threshold) ? 'bg-gold' : 'bg-green';
-  document.getElementById('d-stock-qty').innerHTML = `${qty} <span class="text-xl font-normal text-ink/40">${escHtml(unit)}</span>`;
+  const barColor = stockStatus === 'critical' || stockStatus === 'empty' ? 'bg-terracotta' : stockStatus === 'low' ? 'bg-gold' : 'bg-green';
+  document.getElementById('d-stock-qty').innerHTML = `${qty} <span class="text-xl font-normal text-ink/40">${escHtml(unit)}</span>` +
+    (minQty > 0 ? ` <span class="text-base font-semibold text-ink/35">/ Min ${minQty}</span>` : '');
   document.getElementById('d-bar').className = `h-1.5 rounded-full transition-all ${barColor}`;
   document.getElementById('d-bar').style.width = pct + '%';
-  document.getElementById('d-min').textContent       = threshold > 0 ? `${threshold} ${unit}` : '—';
+  document.getElementById('d-min').textContent       = minQty > 0 ? `${minQty} ${unit}` : '—';
   document.getElementById('d-threshold').textContent = threshold > 0 ? `${threshold} ${unit}` : '—';
   document.getElementById('d-weekly').textContent    = weeklyUsage > 0 ? `${weeklyUsage} ${unit}/minggu` : '—';
   document.getElementById('d-runway').textContent    = runway !== null ? `${runway} minggu` : '—';
@@ -711,11 +726,13 @@ function renderDetail(item) {
       ${hzRow('Hari ini', hz.today)}${hzRow('Esok', hz.tomorrow)}${hzRow('Minggu ini (7 hari)', hz.week)}${hzRow('Bulan ini (30 hari)', hz.month)}
     </tbody></table>`;
 
-  let chip = '';
-  if (qty === 0)                              chip = '<span class="text-xs font-bold text-terracotta bg-terracotta/10 px-2.5 py-1 rounded-full">Habis</span>';
-  else if (threshold > 0 && qty <= threshold) chip = '<span class="text-xs font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full">⚠ Rendah</span>';
-  else                                        chip = '<span class="text-xs font-bold text-green-dark bg-green-light px-2.5 py-1 rounded-full flex items-center gap-1"><span class="w-1.5 h-1.5 bg-green-dark rounded-full inline-block"></span>Mencukupi</span>';
-  document.getElementById('d-status-chip').innerHTML = chip;
+  const STATUS_CHIP = {
+    critical: '<span class="text-xs font-bold text-white bg-terracotta px-2.5 py-1 rounded-full" title="Pesakit aktif berjadual perlukan item ni tapi stok tak cukup — beli SEGERA">🚨 Kritikal</span>',
+    empty:    '<span class="text-xs font-bold text-terracotta bg-terracotta/10 px-2.5 py-1 rounded-full" title="Stok habis, tiada untuk pesakit">Habis</span>',
+    low:      '<span class="text-xs font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full" title="Bawah paras minimum — belum ada keperluan pakej mendesak, pantau">⚠ Rendah</span>',
+    ok:       '<span class="text-xs font-bold text-green-dark bg-green-light px-2.5 py-1 rounded-full flex items-center gap-1" title="Tiada tindakan diperlukan"><span class="w-1.5 h-1.5 bg-green-dark rounded-full inline-block"></span>Mencukupi</span>',
+  };
+  document.getElementById('d-status-chip').innerHTML = STATUS_CHIP[stockStatus];
 
   // Maklumat Item
   document.getElementById('mi-name').textContent     = item.name;
@@ -1124,6 +1141,83 @@ async function loadItemAudit() {
 }
 
 function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── Fail Print (reka bentuk print-ready item ni, cth Brochure BNP) ──────────
+// Staff restock item bercetak (brochure dll.) terus dari sini — bukan cari
+// dalam senarai dokumen berasingan. Bucket: inventory-print-files (24_storage.sql).
+function pfFileSize(bytes) {
+  if (!bytes && bytes !== 0) return '—';
+  const kb = bytes / 1024;
+  return kb < 1024 ? kb.toFixed(0) + ' KB' : (kb / 1024).toFixed(1) + ' MB';
+}
+
+function renderPrintFile(item) {
+  const wrap = document.getElementById('print-file-wrap');
+  if (item.print_file_url) {
+    const isPng = /\.png(\?|$)/i.test(item.print_file_url);
+    wrap.innerHTML = `
+      <div class="flex items-center gap-3">
+        <span class="text-2xl flex-shrink-0">${isPng ? '🖼️' : '📕'}</span>
+        <div class="min-w-0 flex-1">
+          <div class="text-sm font-semibold text-ink truncate">${escHtml(item.name)} — Print File</div>
+          <div class="text-[11px] text-ink/45">${isPng ? 'PNG' : 'PDF'}${item.print_file_size ? ' • ' + pfFileSize(item.print_file_size) : ''}</div>
+        </div>
+        <div class="flex items-center gap-1.5 flex-shrink-0">
+          <button onclick="window.open('${escHtml(item.print_file_url)}','_blank')" title="Lihat" class="w-8 h-8 flex items-center justify-center border border-ink/15 rounded-lg hover:bg-ink/5">👁️</button>
+          <button onclick="window.open('${escHtml(item.print_file_url)}','_blank')" title="Cetak" class="w-8 h-8 flex items-center justify-center border border-ink/15 rounded-lg hover:bg-ink/5">🖨️</button>
+          <button onclick="window.open('${escHtml(item.print_file_url)}','_blank')" title="Muat turun" class="w-8 h-8 flex items-center justify-center border border-ink/15 rounded-lg hover:bg-ink/5">⬇</button>
+          ${canManage ? `<button data-rbac="inventory.edit" onclick="document.getElementById('pf-file-input').click()" title="Ganti fail" class="w-8 h-8 flex items-center justify-center border border-ink/15 rounded-lg hover:bg-ink/5">🔄</button>
+          <button data-rbac="inventory.edit" onclick="removePrintFile()" title="Buang" class="w-8 h-8 flex items-center justify-center border border-terracotta/30 text-terracotta rounded-lg hover:bg-terracotta/5">🗑️</button>` : ''}
+        </div>
+      </div>`;
+  } else if (canManage) {
+    wrap.innerHTML = `
+      <div id="pf-drop" data-rbac="inventory.edit" class="border-2 border-dashed border-ink/20 rounded-xl p-5 text-center cursor-pointer hover:border-navy/40 hover:bg-navy-light/30 transition-colors">
+        <div class="text-2xl mb-1">☁️</div>
+        <div class="text-[13px] text-ink/60"><span class="text-navy font-semibold">Klik untuk muat naik</span> fail PDF/PNG print-ready (cth reka bentuk brochure)</div>
+        <div class="text-[11px] text-ink/40 mt-0.5">PDF sahaja, max 10MB</div>
+      </div>`;
+    document.getElementById('pf-drop').onclick = () => document.getElementById('pf-file-input').click();
+  } else {
+    wrap.innerHTML = `<p class="text-xs text-ink/40">Tiada fail print dilampirkan.</p>`;
+  }
+}
+
+async function uploadPrintFile(file) {
+  const safe = file.name.replace(/[^\w.\-]+/g, '_');
+  const path = `${itemId}/${Date.now()}_${safe}`;
+  const { error } = await window.db.storage.from('inventory-print-files').upload(path, file, { upsert: false });
+  if (error) throw error;
+  const url = window.db.storage.from('inventory-print-files').getPublicUrl(path).data.publicUrl;
+  return { url, size: file.size };
+}
+
+async function onPrintFilePicked(file) {
+  if (!['application/pdf', 'image/png'].includes(file.type)) return banner('Hanya fail PDF atau PNG dibenarkan.', 'error');
+  if (file.size > 10 * 1024 * 1024) return banner('Fail melebihi 10MB.', 'error');
+  try {
+    const up = await uploadPrintFile(file);
+    await dbUpdate('psy_inventory_items', itemId, { print_file_url: up.url, print_file_size: up.size });
+    itemData.print_file_url = up.url; itemData.print_file_size = up.size;
+    renderPrintFile(itemData);
+    auditLog?.('inventory_print_file_upload', itemId, { name: itemData.name });
+    banner('Fail print berjaya dimuat naik.');
+  } catch (e) {
+    banner(e.message || 'Gagal muat naik fail.', 'error');
+  }
+}
+
+async function removePrintFile() {
+  if (!confirm('Buang fail print item ni?')) return;
+  try {
+    await dbUpdate('psy_inventory_items', itemId, { print_file_url: null, print_file_size: null });
+    itemData.print_file_url = null; itemData.print_file_size = null;
+    renderPrintFile(itemData);
+    auditLog?.('inventory_print_file_remove', itemId, { name: itemData.name });
+    banner('Fail print dibuang.');
+  } catch (e) { banner(e.message || 'Gagal buang fail.', 'error'); }
+}
+window.removePrintFile = removePrintFile;
 
 // ── Request Purchase Modal ─────────────────────────────────
 function openRequestModal() {

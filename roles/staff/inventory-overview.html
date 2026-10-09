@@ -88,23 +88,23 @@
           </div>
           <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
             <div class="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center text-base mb-2">⚠️</div>
-            <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Low Stock Items</div>
+            <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Stok Rendah</div>
             <div id="stat-low" class="text-2xl font-bold text-amber-700">—</div>
-            <div class="text-[10px] text-amber-700/70 mt-0.5">Pantau — belum mendesak</div>
+            <div class="text-[10px] text-amber-700/70 mt-0.5">Bawah minimum — belum mendesak</div>
             <a href="inventory.html" class="text-[10px] text-navy hover:underline">View details →</a>
           </div>
           <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
             <div class="w-9 h-9 rounded-xl bg-terracotta/10 flex items-center justify-center text-base mb-2">⛔</div>
-            <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Out of Stock Items</div>
+            <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Kehabisan Stok</div>
             <div id="stat-empty" class="text-2xl font-bold text-terracotta">—</div>
             <div class="text-[10px] text-terracotta/80 mt-0.5 font-semibold">Beli segera — stok habis</div>
             <a href="inventory.html" class="text-[10px] text-terracotta hover:underline">View details →</a>
           </div>
           <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
-            <div class="w-9 h-9 rounded-xl bg-teal/10 flex items-center justify-center text-base mb-2">📉</div>
-            <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Insufficient for Forecast</div>
-            <div id="stat-insufficient" class="text-2xl font-bold text-teal">—</div>
-            <div class="text-[10px] text-teal/80 mt-0.5 font-semibold">Beli sebelum pesakit dijadualkan</div>
+            <div class="w-9 h-9 rounded-xl bg-terracotta/10 flex items-center justify-center text-base mb-2">🚨</div>
+            <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Kritikal</div>
+            <div id="stat-insufficient" class="text-2xl font-bold text-terracotta">—</div>
+            <div class="text-[10px] text-terracotta/80 mt-0.5 font-semibold">Perlu utk rawatan, stok tak cukup</div>
             <a href="inventory.html" class="text-[10px] text-navy hover:underline">View details →</a>
           </div>
           <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
@@ -193,6 +193,7 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
+<script src="../../shared/schedulePeriod.js"></script>
 <script src="../../shared/inventoryForecast.js"></script>
 <script src="../../shared/inventoryStock.js"></script>
 <script src="_shared.js"></script>
@@ -208,13 +209,7 @@ function escHtml(str) {
 function fmtRM(n) { return 'RM ' + Number(n || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
 function getStockStatus(item) {
-  const qty = Number(item.qty_in_stock);
-  if (qty === 0) return 'empty';
-  const threshold = window.getInventoryReorderThreshold(item);
-  if (threshold > 0 && qty <= threshold) {
-    return Number(item.forecast_required) > 0 ? 'insufficient' : 'low';
-  }
-  return 'ok';
+  return window.getInventoryStockStatus(item);
 }
 
 function periodRange(period) {
@@ -328,7 +323,7 @@ function renderStats(activeItems, pendingCount, approvedCount) {
 
   document.getElementById('stat-low').textContent = activeItems.filter(i => getStockStatus(i) === 'low').length;
   document.getElementById('stat-empty').textContent = activeItems.filter(i => getStockStatus(i) === 'empty').length;
-  document.getElementById('stat-insufficient').textContent = activeItems.filter(i => getStockStatus(i) === 'insufficient').length;
+  document.getElementById('stat-insufficient').textContent = activeItems.filter(i => getStockStatus(i) === 'critical').length;
   document.getElementById('stat-pending').textContent = pendingCount;
   document.getElementById('stat-approved-buy').textContent = approvedCount;
 }
@@ -351,22 +346,25 @@ function renderLocationBars() {
     </div>`).join('') || '<div class="text-ink/40 italic">Tiada data lokasi</div>';
 }
 
+const TOP_LOW_STATUS_LABEL = { critical: 'Kritikal', empty: 'Kehabisan', low: 'Rendah', ok: 'Cukup' };
 function renderTopLowStock(activeItems) {
   const rows = activeItems
-    .map(i => ({ item: i, threshold: window.getInventoryReorderThreshold(i) || i.min_qty || 0 }))
-    .filter(r => r.threshold > 0)
-    .sort((a,b) => (Number(a.item.qty_in_stock)/a.threshold) - (Number(b.item.qty_in_stock)/b.threshold))
+    .map(i => ({ item: i, status: getStockStatus(i), threshold: window.getInventoryReorderThreshold(i) || i.min_qty || 0 }))
+    .filter(r => r.status !== 'ok')
+    .sort((a,b) => (Number(a.item.qty_in_stock)/(a.threshold || 1)) - (Number(b.item.qty_in_stock)/(b.threshold || 1)))
     .slice(0, 5);
 
   document.getElementById('ov-top-low').innerHTML = rows.length ? rows.map(r => {
     const qty = Number(r.item.qty_in_stock);
-    const pct = Math.min(100, Math.round((qty / r.threshold) * 100));
-    const barColor = qty === 0 ? 'bg-terracotta' : pct <= 100 ? 'bg-amber-500' : 'bg-green';
+    const min = Number(r.item.min_qty) || 0;
+    const pct = Math.min(100, Math.round((qty / (r.threshold || 1)) * 100));
+    const barColor = r.status === 'critical' || r.status === 'empty' ? 'bg-terracotta' : 'bg-amber-500';
+    const badgeColor = r.status === 'critical' || r.status === 'empty' ? 'text-terracotta' : 'text-amber-700';
     return `
     <a href="inventory-detail.html?id=${r.item.id}" class="block hover:bg-ink/[0.03] -mx-1 px-1 py-1 rounded-lg">
       <div class="flex items-center justify-between mb-1">
         <span class="text-ink/80 truncate">${escHtml(r.item.name)}</span>
-        <span class="font-semibold text-ink flex-shrink-0">${qty} / ${r.threshold}</span>
+        <span class="font-semibold text-ink flex-shrink-0">Baki ${qty} / Min ${min} <span class="font-bold ${badgeColor}">${TOP_LOW_STATUS_LABEL[r.status]}</span></span>
       </div>
       <div class="h-1.5 bg-ink/8 rounded-full overflow-hidden"><div class="h-full ${barColor} rounded-full" style="width:${pct}%"></div></div>
     </a>`;

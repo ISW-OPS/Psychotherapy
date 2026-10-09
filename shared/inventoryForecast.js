@@ -84,7 +84,10 @@ window.computeForecastForRange = async function (itemIds, startDate, endDate) {
       // Bekalan yang dah DITICK staff = stok dah keluar (lihat deductSessionSupplies / applySupplyStock).
       // Tak perlu dikira sebagai keperluan lagi — elak kiraan berganda. Kunci tick ikut bekalan (idx),
       // jadi untuk kit ia terpakai pada keseluruhan kit tu.
-      const ticked = (r.coaching_checks || {})[`M${r.week_number}_supplies_${idx}`] === true;
+      // Prefix MESTI padan apa plan-week.html tulis — 'D{n}' harian, atau label
+      // bertingkat W/M/Q mingguan (shared/schedulePeriod.js), bukan 'M{n}' tegar.
+      const checkPrefix = weekObj.period === 'day' ? `D${r.week_number}` : window.iswPeriodLabel(r.week_number);
+      const ticked = (r.coaching_checks || {})[`${checkPrefix}_supplies_${idx}`] === true;
       if (ticked) return;
       const auto = s?.auto_stock !== false;
       if (!auto) return;
@@ -138,6 +141,29 @@ window.inventoryReorderRange = function () {
 window.getInventoryReorderThreshold = function (item) {
   const esok = Number(item.forecast?.tomorrow ?? item.forecast_required) || 0;
   return esok + (Number(item.min_qty) || 0);
+};
+
+// Status stok 4-tahap — SATU fungsi dipakai di inventory.html, inventory-detail.html &
+// inventory-overview.html supaya label/kiraan Kritikal vs Rendah sentiasa sepadan merentasi
+// page (audit: admin tak tahu kenapa item dianggap "rendah" atau sejauh mana kritikal).
+//   - critical: pesakit aktif berjadual MEMERLUKAN item ni DAN stok sedia ada tak cukup nak
+//     tampung keperluan BULAN INI (item.forecast.month — bukan cuma esok; "Kritikal" mesti
+//     tangkap keperluan sepanjang bulan, bukan sekadar esok sahaja, sebab item boleh nampak
+//     tiada keperluan esok tapi ada puluhan botol diperlukan minggu/bulan depan) — diperiksa
+//     INDEPENDENT drpd min_qty, sebab stok boleh nampak "atas minimum" tapi masih tak cukup
+//     utk sesi yang dah dijadualkan.
+//   - empty: stok 0 tapi tiada keperluan pakej mendesak (kalau ada keperluan, dah ditangkap 'critical' di atas)
+//   - low: bawah paras minimum umum (min_qty) — belum ada keperluan mendesak, sekadar perlu dipantau
+//   - ok: mencukupi
+// Perlu item.forecast (today/tomorrow/week/month) dah dilekatkan (attachInventoryForecast()) sebelum panggil ni.
+window.getInventoryStockStatus = function (item) {
+  const qty    = Number(item.qty_in_stock) || 0;
+  const needed = Number(item.forecast?.month ?? item.forecast_required) || 0;
+  if (needed > 0 && qty < needed) return 'critical';
+  if (qty === 0) return 'empty';
+  const min = Number(item.min_qty) || 0;
+  if (min > 0 && qty <= min) return 'low';
+  return 'ok';
 };
 
 // Empat tempoh keperluan (rolling dari hari ini) — barang mesti sedia awal untuk semua tempoh.

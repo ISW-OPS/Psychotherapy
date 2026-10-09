@@ -375,10 +375,13 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
+<script src="../../shared/schedulePeriod.js"></script>
 <script src="../../shared/stockSync.js"></script>
 <script src="../../shared/inventoryStock.js"></script>
 <script src="../../shared/inventoryDeduct.js"></script>
 <script src="../../shared/supplyInvoice.js"></script>
+<script src="../../shared/receipt.js"></script>
+<script src="../../shared/invoice.js"></script>
 <script src="../../shared/utils.js"></script>
 <script src="../../shared/absenceAlert.js"></script>
 <script src="_shared.js"></script>
@@ -395,6 +398,8 @@ let sessionSummaryFilter = null; // kategori kad Ringkasan Sesi yg aktif (audit 
 let patientId    = null;   // psy_patients.id
 let patientUserId = null;  // psy_profiles.id (for notify)
 let patientName  = '';     // nama pesakit (prefill tandatangan)
+let patientMrn   = '';     // utk paparan invois bekalan
+let patientPhone = '';     // utk paparan invois bekalan
 let weekStart    = null;
 let weekEnd      = null;
 let chainAnchor  = null;   // { week_number, session_date } bertarikh sebenar plg terkini <= minggu ini
@@ -549,9 +554,11 @@ async function bootPlanWeek() {
     activePlan._libraryItems = [];
   }
 
-  const { data: pt } = await window.db.from('psy_patients').select('user_id, full_name, coach_id').eq('id', patientId).single();
+  const { data: pt } = await window.db.from('psy_patients').select('user_id, full_name, coach_id, mrn, phone').eq('id', patientId).single();
   patientUserId = pt?.user_id || null;
   patientName   = pt?.full_name || '';
+  patientMrn    = pt?.mrn || '';
+  patientPhone  = pt?.phone || '';
   primaryCoachId = pt?.coach_id || null;
 
   // Senarai coach (dropdown ganti) + nama coach utama pesakit — satu round-trip.
@@ -976,13 +983,13 @@ function renderOverrideNote() {
 // "Pilih coach" dalam toolbar, staff kena pilih sendiri sebelum boleh tick. Role code mesti
 // sepadan staff_role yang dicipta staff sendiri di peranan.html.
 const HK1_TYPES = {
-  hakeema:     { label: 'Hakeema Session',     emoji: '🧑‍💼', role: 'manager',     nameLike: 'hakeema', exclude: null,      fallback: 'Hakeema', multiTarget: false },
-  hakeem:      { label: 'Hakeem Session',      emoji: '🧑',   role: 'manager',     nameLike: 'hakeem',  exclude: 'hakeema', fallback: 'Hakeem', multiTarget: false },
-  dr:          { label: 'Dr Session',          emoji: '🩺',   role: 'doctor',      nameLike: null,      exclude: null,      fallback: 'Dr', multiTarget: false },
-  fisioterapi: { label: 'Fisioterapi Session', emoji: '🏃',   role: 'fisioterapi', nameLike: null,      exclude: null,      fallback: 'Fisioterapi', multiTarget: true },
-  kaunselor:   { label: 'Kaunselor Session',   emoji: '🗣️',   role: 'kaunselor',   nameLike: null,      exclude: null,      fallback: 'Kaunselor', multiTarget: true },
-  bekam:       { label: 'Bekam Session',       emoji: '🩸',   role: 'bekam',       nameLike: null,      exclude: null,      fallback: 'Bekam', multiTarget: true },
-  masseur:     { label: 'Masseur Session',     emoji: '💆',   role: 'masseur',     nameLike: null,      exclude: null,      fallback: 'Tukang Urut', multiTarget: true },
+  hakeema:     { label: 'Hakeema Session',     emoji: '🧑‍💼', role: 'manager', nameLike: 'hakeema', exclude: null,      fallback: 'Hakeema', multiTarget: false },
+  hakeem:      { label: 'Hakeem Session',      emoji: '🧑',   role: 'manager', nameLike: 'hakeem',  exclude: 'hakeema', fallback: 'Hakeem', multiTarget: false },
+  dr:          { label: 'Dr Session',          emoji: '🩺',   role: 'doctor',  nameLike: null,      exclude: null,      fallback: 'Dr', multiTarget: false },
+  fisioterapi: { label: 'Fisioterapi Session', emoji: '🏃',   role: 'coach',   nameLike: null,      exclude: null,      fallback: 'Fisioterapi', multiTarget: true },
+  kaunselor:   { label: 'Kaunselor Session',   emoji: '🗣️',   role: 'coach',   nameLike: null,      exclude: null,      fallback: 'Kaunselor', multiTarget: true },
+  bekam:       { label: 'Bekam Session',       emoji: '🩸',   role: 'coach',   nameLike: null,      exclude: null,      fallback: 'Bekam', multiTarget: true },
+  masseur:     { label: 'Masseur Session',     emoji: '💆',   role: 'coach',   nameLike: null,      exclude: null,      fallback: 'Tukang Urut', multiTarget: true },
 };
 let hk1Refs = { hakeema: null, hakeem: null, dr: null, fisioterapi: null, kaunselor: null, bekam: null, masseur: null }; // rekod psy_clinical_referrals penuh, ikut jenis
 let hk1SarananTpl = null;  // templat mesej WA boleh-edit (psy_auto_messages key='referral_saranan')
@@ -1041,7 +1048,7 @@ async function loadHk1() {
       patient_id: patientId, plan_id: activePlan.id, week_number: weekNumber, source: 'plan_1on1', session_type: type,
       referred_by: window.currentUser?.id, referred_by_name: window.currentUser?.full_name,
       target_role: cfg.role, target_id: target.id, target_name: target.name,
-      reason: `Sesi 1:1 ${cfg.label} — Minggu ${weekNumber} (Wajib ikut Pakej)`, meet_date: sessYmd, priority: 'sederhana',
+      reason: `Sesi 1:1 ${cfg.label} — ${iswPeriodLabel(weekNumber)} (Wajib ikut Pakej)`, meet_date: sessYmd, priority: 'sederhana',
     }).select('*').single();
     if (!error) hk1Refs[type] = created;
     else console.error('[hk1] auto-cipta gagal:', type, error);
@@ -1081,7 +1088,7 @@ async function checkDnaTestAutoCreate() {
     current_step: 1, status: 'in_progress',
   });
   if (error) { console.error('[dna-test] auto-cipta gagal:', error); return; }
-  banner(`🧬 Proses DNA Test auto-dicipta (Minggu ${weekNumber}, ikut keperluan pakej) — semak di Pesakit Hub.`);
+  banner(`🧬 Proses DNA Test auto-dicipta (${iswPeriodLabel(weekNumber)}, ikut keperluan pakej) — semak di Pesakit Hub.`);
 }
 
 async function hk1ResolveTarget(type) {
@@ -1117,7 +1124,7 @@ async function hk1Toggle(type, checked) {
       patient_id: patientId, plan_id: activePlan.id, week_number: weekNumber, source: 'plan_1on1', session_type: type,
       referred_by: window.currentUser?.id, referred_by_name: window.currentUser?.full_name,
       target_role: cfg.role, target_id: target.id, target_name: target.name,
-      reason: `Sesi 1:1 ${cfg.label} — Minggu ${weekNumber}`, meet_date: hk1SessionYmd(), priority: 'sederhana',
+      reason: `Sesi 1:1 ${cfg.label} — ${iswPeriodLabel(weekNumber)}`, meet_date: hk1SessionYmd(), priority: 'sederhana',
     }).select('*').single();
     if (error) { banner('Gagal cipta rekod sesi: ' + error.message, 'error'); if (cb) cb.checked = false; return; }
     hk1Refs[type] = created;
@@ -1205,7 +1212,7 @@ function renderHk1Card(type) {
       </h3>
       <span id="hk1-saved-${type}" class="save-indicator">✓ Tersimpan</span>
     </div>
-    <p class="text-xs text-ink/60 mb-4">Rekod soal-jawab &amp; dokumen konsultasi Minggu ${weekNumber}. Saranan dihantar terus ke WhatsApp pesakit.</p>
+    <p class="text-xs text-ink/60 mb-4">Rekod soal-jawab &amp; dokumen konsultasi ${iswPeriodLabel(weekNumber)}. Saranan dihantar terus ke WhatsApp pesakit.</p>
 
     <div class="grid sm:grid-cols-[1fr_160px] gap-3 mb-4">
       <div>
@@ -1466,7 +1473,7 @@ window.hk1SaveTime = hk1SaveTime;
 // consultation) — update berasingan dari hk1Persist().
 async function hk1SaveReason(type) {
   const ref = hk1Refs[type];
-  const reason = document.getElementById(`hk1-reason-${type}`).value.trim() || `Sesi 1:1 ${HK1_TYPES[type].label} — Minggu ${weekNumber}`;
+  const reason = document.getElementById(`hk1-reason-${type}`).value.trim() || `Sesi 1:1 ${HK1_TYPES[type].label} — ${iswPeriodLabel(weekNumber)}`;
   const { error } = await window.db.from('psy_clinical_referrals').update({ reason, updated_at: new Date().toISOString() }).eq('id', ref.id);
   if (error) { banner('Ralat simpan: ' + error.message, 'error'); return; }
   ref.reason = reason;
@@ -1783,11 +1790,14 @@ function renderCoachingSchedule() {
     const resetLink = slotHasOverride(slot, type)
       ? `<button type="button" data-rbac="plan_week.edit" onclick="inlineResetSlot('${slot}','${type}')" class="text-[10px] text-red-500 hover:underline" title="Kembali ikut pakej">↺ pakej</button>`
       : '';
+    const invoiceLink = type === 'supplies'
+      ? `<button type="button" onclick="openPackageSupplyInvoice()" class="text-[10px] font-semibold text-navy hover:underline whitespace-nowrap">📄 Lihat Invois</button>`
+      : '';
 
     return `<div class="rounded-lg ${bgClass} border p-3">
       <div class="flex items-center justify-between gap-2 mb-2">
         <div class="text-xs font-bold ${colorClass}">${title}</div>
-        ${resetLink}
+        <div class="flex items-center gap-2">${invoiceLink}${resetLink}</div>
       </div>
       ${rowsBlock}
       ${addRow}
@@ -1839,7 +1849,7 @@ function renderCoachingSchedule() {
   }
 
   host.innerHTML = items.map(item => {
-    const prefix = item.period === 'day' || item.day ? `D${item.day}` : `M${item.week}`;
+    const prefix = item.period === 'day' || item.day ? `D${item.day}` : iswPeriodLabel(item.week);
     const wkNum = item.week || item.day;
     return `<div class="md:col-span-3 rounded-xl border border-ink/10 p-3">
       ${items.length > 1 ? `<div class="text-xs font-bold text-ink/40 uppercase tracking-wide mb-3">${escHtml(prefix)}</div>` : ''}
@@ -1891,15 +1901,15 @@ function planAnchorDate(plan) {
 function computeWeekRange(plan, w) {
   const start = planAnchorDate(plan);
   start.setHours(0, 0, 0, 0);
-  start.setDate(start.getDate() + (w - 1) * 7);
+  start.setDate(start.getDate() + iswPeriodOffsetDays(w));
   const end = new Date(start);
-  end.setDate(end.getDate() + 7);
+  end.setDate(end.getDate() + iswPeriodSpanDays(w));
   return { start, end };
 }
 
 function updateBreadcrumb() {
   document.getElementById('plan-name-crumb').textContent = activePlan.name;
-  document.getElementById('week-crumb').innerHTML = `<span>Minggu</span> ${weekNumber}`;
+  document.getElementById('week-crumb').innerHTML = iswPeriodLabel(weekNumber);
   const back = document.getElementById('btn-back');
   if (back && patientId) back.href = `patient-hub.html?patient_id=${patientId}&tab=${backTab}`;
   document.getElementById('btn-prev').disabled = weekNumber <= 1;
@@ -2022,7 +2032,7 @@ function renderHero() {
             ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700" title="Coach ganti sesi ini">🔁 ${escHtml(coachNameById(weekEntry.substitute_coach_id) || 'Coach Ganti')}</span>`
             : `<span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-navy-light text-navy" title="Coach utama pesakit">👤 ${escHtml(primaryCoachName || 'Coach belum ditetapkan')}</span>`}
         </div>
-        <h2 class="text-2xl md:text-3xl font-bold text-ink"><span>Minggu</span> ${weekNumber}</h2>
+        <h2 class="text-2xl md:text-3xl font-bold text-ink">${iswPeriodLabel(weekNumber)}</h2>
         <div class="text-sm text-ink/70 mt-1">
           ${weekEntry?.session_date
             ? `📅 ${new Date(weekEntry.session_date).toLocaleDateString(LCALE(), { weekday:'long', day:'2-digit', month:'long', year:'numeric' })} · 🕐 ${new Date(weekEntry.session_date).toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' })}`
@@ -2085,7 +2095,7 @@ function computeChainedDate(w, day, anchorWeek, anchorDate, anchorDay = 1) {
     ? activePlan.preferred_days
     : PAIR[activePlan.preferred_pair];
   const d = new Date(anchorDate); d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() + (w - anchorWeek) * 7);
+  d.setDate(d.getDate() + iswPeriodOffsetBetween(anchorWeek, w));
   if (dows) {
     const targetDow = dows[day - 1] != null ? dows[day - 1] : dows[dows.length - 1];
     let guard = 0;
@@ -2260,7 +2270,7 @@ async function chargeAbsenceFee() {
   if (!weekEntry?.id || absFee.row) return;
   const amt = absFee.amount;
   if (!confirm(iswL(`Kenakan denda tidak hadir RM ${amt.toFixed(2)}? Ia jadi invois tertunggak pada akaun pesakit (dibayar bersama baki pakej).`, `Charge an absence fee of RM ${amt.toFixed(2)}? It becomes an unpaid invoice on the patient's account (paid together with the package balance).`))) return;
-  const title = iswL(`Denda tidak hadir — Minggu ${weekNumber}`, `Absence fee — Week ${weekNumber}`);
+  const title = iswL(`Denda tidak hadir — ${iswPeriodLabel(weekNumber)}`, `Absence fee — ${iswPeriodLabel(weekNumber)}`);
   const { data: row, error } = await window.db.from('psy_invoices').insert({
     patient_id: patientId, description: title, amount: amt,
     source_type: 'absence_fee', source_ref: weekEntry.id, created_by: window.currentUser.id,
@@ -2270,7 +2280,7 @@ async function chargeAbsenceFee() {
   try { await auditLog('plan.absence_fee', weekEntry.id, { amount: amt, invoice_id: row.id }); } catch (_) { }
   if (patientUserId) {
     try { await notify(patientUserId, 'payment', iswL('Denda tidak hadir dikenakan', 'Absence fee charged'),
-      iswL(`Denda RM ${amt.toFixed(2)} untuk sesi Minggu ${weekNumber} yang tidak dihadiri. Sila jelaskan bersama baki pakej.`, `A fee of RM ${amt.toFixed(2)} for the missed Week ${weekNumber} session. Please settle it together with your package balance.`), 'payment.html'); } catch (_) { }
+      iswL(`Denda RM ${amt.toFixed(2)} untuk sesi ${iswPeriodLabel(weekNumber)} yang tidak dihadiri. Sila jelaskan bersama baki pakej.`, `A fee of RM ${amt.toFixed(2)} for the missed ${iswPeriodLabel(weekNumber)} session. Please settle it together with your package balance.`), 'payment.html'); } catch (_) { }
   }
   banner(iswL('Denda dikenakan ✅ — anda masih boleh jadual semula sesi ini.', 'Fee charged ✅ — you can still reschedule this session.'));
   renderHero();
@@ -2371,9 +2381,9 @@ async function markStatus(status) {
 
   const dayLabel = weekEntry.session_date ? new Date(weekEntry.session_date).toLocaleDateString(LCALE(),{weekday:'long'}) : `Sesi ${weekEntry.session_day || 1}`;
   const msgs = {
-    hadir:      [`Kehadiran disahkan ✅`, `${dayLabel} Minggu ${weekNumber} — kehadiran anda disahkan oleh Coach ${window.currentUser.full_name}.`],
-    reschedule: [`Sesi perlu dijadual semula`, `${dayLabel} Minggu ${weekNumber} perlu ditempah semula.`],
-    cancel:     [`Sesi ditanda tidak hadir`, `${dayLabel} Minggu ${weekNumber} ditanda tidak hadir. Anda boleh tempah semula (reschedule) sesi ini.`],
+    hadir:      [`Kehadiran disahkan ✅`, `${dayLabel} ${iswPeriodLabel(weekNumber)} — kehadiran anda disahkan oleh Coach ${window.currentUser.full_name}.`],
+    reschedule: [`Sesi perlu dijadual semula`, `${dayLabel} ${iswPeriodLabel(weekNumber)} perlu ditempah semula.`],
+    cancel:     [`Sesi ditanda tidak hadir`, `${dayLabel} ${iswPeriodLabel(weekNumber)} ditanda tidak hadir. Anda boleh tempah semula (reschedule) sesi ini.`],
   };
   if (patientUserId && msgs[status]) {
     await notify(patientUserId, 'plan', msgs[status][0], msgs[status][1], 'plan-week.html');
@@ -2395,7 +2405,7 @@ async function resetAttendance() {
   if (!weekEntry?.id) { banner('Tiada sesi untuk minggu ini', 'error'); return; }
   const curLbl = { hadir: 'Hadir', consultation_done: 'Selesai', cancel: 'Tidak Hadir' }[weekEntry.status] || weekEntry.status;
   const dayLabel = weekEntry.session_date ? new Date(weekEntry.session_date).toLocaleDateString(LCALE(),{weekday:'long'}) : `Sesi ${weekEntry.session_day || 1}`;
-  if (!confirm(`Reset kehadiran ${dayLabel} Minggu ${weekNumber} (kini: ${curLbl})?\n\nHanya sesi ini yang direset ke 'Ditempah'. Sesi & minggu lain tidak terjejas.`)) return;
+  if (!confirm(`Reset kehadiran ${dayLabel} ${iswPeriodLabel(weekNumber)} (kini: ${curLbl})?\n\nHanya sesi ini yang direset ke 'Ditempah'. Sesi & minggu lain tidak terjejas.`)) return;
   try {
     await window.db.from('psy_plan_weekly_progress').update({
       status:          'booked',
@@ -2603,7 +2613,7 @@ async function completeSession() {
 
   await auditLog('plan.session_completed', activePlan.id, { week: weekNumber, session: weekEntry.session_day || 1, signed: !!sigPath, online });
   if (patientUserId) {
-    await notify(patientUserId, 'plan', 'Sesi selesai ✅', `Sesi Minggu ${weekNumber} telah disahkan selesai oleh Coach ${window.currentUser.full_name}.`, 'plan.html');
+    await notify(patientUserId, 'plan', 'Sesi selesai ✅', `Sesi ${iswPeriodLabel(weekNumber)} telah disahkan selesai oleh Coach ${window.currentUser.full_name}.`, 'plan.html');
   }
   renderHero();
   renderSignoff();
@@ -2841,7 +2851,7 @@ async function remindPatientReschedule() {
     : `Sesi ${weekEntry.session_day || 1}`;
   await notify(patientUserId, 'plan',
     'Peringatan: Jadual Semula Sesi',
-    `Sesi Minggu ${weekNumber} (${dayLabel}) anda tidak hadir. Sila tempah semula (reschedule) untuk teruskan rawatan.`,
+    `Sesi ${iswPeriodLabel(weekNumber)} (${dayLabel}) anda tidak hadir. Sila tempah semula (reschedule) untuk teruskan rawatan.`,
     'plan.html');
   await auditLog('plan.reschedule_reminder', activePlan.id, { week: weekNumber, session: weekEntry.session_day || 1 });
   banner('Peringatan dihantar kepada pesakit ✅');
@@ -2864,7 +2874,7 @@ async function coachReschedule() {
     } else {
       const { data: appt } = await window.db.from('psy_appointments').insert({
         patient_id: patientId, staff_id: window.currentUser.id, staff_name: window.currentUser.full_name,
-        service: `${activePlan.name} · Minggu ${weekNumber}`, appointment_time: sessionAt, duration_min: 60, status: 'scheduled',
+        service: `${activePlan.name} · ${iswPeriodLabel(weekNumber)}`, appointment_time: sessionAt, duration_min: 60, status: 'scheduled',
       }).select('id').single();
       apptId = appt?.id || null;
     }
@@ -2879,7 +2889,7 @@ async function coachReschedule() {
     if (patientUserId) {
       const d = new Date(sessionAt);
       await notify(patientUserId, 'appointment',
-        `Sesi Minggu ${weekNumber} dijadual semula`,
+        `Sesi ${iswPeriodLabel(weekNumber)} dijadual semula`,
         `${d.toLocaleDateString(LCALE(),{weekday:'long',day:'2-digit',month:'long'})} · ${d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})} — dijadual semula oleh ${window.currentUser.full_name}.`,
         'plan.html');
     }
@@ -2921,6 +2931,16 @@ function fillCoachForm() {
   document.getElementById('coach-notes').value = weekEntry?.notes || '';
 }
 
+// ── Invois Bekalan PAKEJ (merentas keseluruhan pakej semasa) ──────────────
+// SATU dokumen (bukan senarai) — gabungan semua bekalan diberi sepanjang
+// pakej ni (manual Patient Hub + auto-deduct minggu), dgn nombor invois
+// tetap. Lihat shared/invoice.js buildPackageSupplyInvoiceInner().
+async function openPackageSupplyInvoice() {
+  if (!patientId || !activePlan?.id) return;
+  await window.viewPackageSupplyInvoice(patientId, activePlan.id, { full_name: patientName, phone: patientPhone, mrn: patientMrn });
+}
+window.openPackageSupplyInvoice = openPackageSupplyInvoice;
+
 // ── Inventory Stock (per item Bekalan) ────────────────
 // Cari objek bekalan dari key checklist `${prefix}_supplies_${idx}`
 function findSupplyByKey(key) {
@@ -2929,7 +2949,7 @@ function findSupplyByKey(key) {
   const prefix = m[1];
   const idx    = parseInt(m[2], 10);
   const items  = getWeekCoachingItems();
-  const item   = items.find(it => ((it.period === 'day' || it.day) ? `D${it.day}` : `M${it.week}`) === prefix);
+  const item   = items.find(it => ((it.period === 'day' || it.day) ? `D${it.day}` : iswPeriodLabel(it.week)) === prefix);
   return item?.supplies?.[idx] || null;
 }
 
@@ -3023,7 +3043,7 @@ async function openSupplyOverride() {
   const activeDay = weekEntry?.session_day || 1;
   const sesLbl = weekSessions.length > 1 ? ` · Sesi ${activeDay}` : '';
   document.getElementById('so-note').value = weekOverride?.note || '';
-  document.getElementById('so-subtitle').textContent = `Minggu ${weekNumber}${sesLbl} — ${patientName}`;
+  document.getElementById('so-subtitle').textContent = `${iswPeriodLabel(weekNumber)}${sesLbl} — ${patientName}`;
   document.getElementById('so-reset-btn').classList.toggle('hidden', !Array.isArray(supplyOverrideForDay(activeDay)));
 
   if (!soCatalog.length) {
@@ -3162,7 +3182,7 @@ async function openGuidanceOverride() {
   const activeDay = weekEntry?.session_day || 1;
   const sesLbl = weekSessions.length > 1 ? ` · Sesi ${activeDay}` : '';
   document.getElementById('go-note').value = weekOverride?.note || '';
-  document.getElementById('go-subtitle').textContent = `Minggu ${weekNumber}${sesLbl} — ${patientName}`;
+  document.getElementById('go-subtitle').textContent = `${iswPeriodLabel(weekNumber)}${sesLbl} — ${patientName}`;
   const hasOv = Array.isArray(guidanceOverrideForDay(activeDay)) || Array.isArray(aktivitiOverrideForDay(activeDay));
   document.getElementById('go-reset-btn').classList.toggle('hidden', !hasOv);
 
@@ -3940,7 +3960,7 @@ async function notify(userId, type, title, body, link) {
 
 // ── Admin: Reset tarikh sesi minggu ini ───────────────
 async function resetWeekSessions() {
-  if (!confirm(`Reset semua sesi Minggu ${weekNumber}? Rows akan dipadam dan dijana semula apabila pesakit buka plan.`)) return;
+  if (!confirm(`Reset semua sesi ${iswPeriodLabel(weekNumber)}? Rows akan dipadam dan dijana semula apabila pesakit buka plan.`)) return;
   const msgEl = document.getElementById('admin-tools-msg');
   msgEl.className = 'mt-2 text-xs font-semibold text-ink/60';
   msgEl.textContent = 'Memproses...';
@@ -3953,7 +3973,7 @@ async function resetWeekSessions() {
       .eq('week_number', weekNumber);
     if (error) throw error;
     msgEl.className = 'mt-2 text-xs font-semibold text-green-700';
-    msgEl.textContent = `Minggu ${weekNumber} berjaya dipadam. Tarikh akan dijana semula apabila pesakit buka halaman plan.`;
+    msgEl.textContent = `${iswPeriodLabel(weekNumber)} berjaya dipadam. Tarikh akan dijana semula apabila pesakit buka halaman plan.`;
   } catch (e) {
     msgEl.className = 'mt-2 text-xs font-semibold text-red-600';
     msgEl.textContent = 'Ralat: ' + e.message;

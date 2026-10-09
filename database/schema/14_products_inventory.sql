@@ -62,6 +62,11 @@ ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS barcode TEXT;
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS shelf_life_days INT;
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS image_url TEXT;
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS internal_notes TEXT;
+-- Fail print-ready (PDF) item ni — cth reka bentuk Brochure BNP. Staff buka
+-- inventory-detail.html item ni terus untuk cetak semula bila nak restock,
+-- bukan cari dalam senarai dokumen berasingan. Bucket: inventory-print-files.
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS print_file_url TEXT;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS print_file_size BIGINT;
 
 -- status: peringkat lebih halus drpd is_active — 'discontinued' bermaksud dibuang
 -- kekal (bukan cuma nyahaktif sementara). is_active DIKEKALKAN (banyak tempat lain
@@ -130,7 +135,8 @@ CREATE POLICY "Staff read inventory items" ON psy_inventory_items
 
 DROP POLICY IF EXISTS "Admin manage inventory items" ON psy_inventory_items;
 CREATE POLICY "Admin manage inventory items" ON psy_inventory_items
-  FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('admin','manager')));
+  FOR ALL USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('super_admin','admin','manager')))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff' AND staff_role IN ('super_admin','admin','manager')));
 
 -- Komen
 COMMENT ON COLUMN psy_inventory_items.max_qty IS
@@ -147,6 +153,8 @@ COMMENT ON COLUMN psy_inventory_items.item_code IS
   'Kod item auto-generate (INV-01, ...) via trigger — tidak boleh diedit.';
 COMMENT ON COLUMN psy_inventory_items.is_active IS
   'false = item tidak aktif — disorok dari senarai pilihan (dispens/kit/jadual pakej) & auto-request.';
+COMMENT ON COLUMN psy_inventory_items.print_file_url IS
+  'Fail PDF print-ready (cth reka bentuk brochure) — dicetak terus dari inventory-detail.html bila restock.';
 COMMENT ON COLUMN psy_inventory_items.reorder_threshold_pct IS
   'Peratus keperluan bulanan (dynamic_monthly) yang trigger status "Stok Rendah" utk item source_type=package. NULL = guna default sistem 30%.';
 COMMENT ON COLUMN psy_inventory_items.manufacturer IS

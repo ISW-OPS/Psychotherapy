@@ -10,9 +10,10 @@
  *   session_day; padan dgn getWeekCoachingItems() di plan-week.html)
  * - Skips weeks with mode='online' (no physical supplies)
  * - Each supply needs item_id + qty + auto_stock !== false, DAN mesti ditick
- *   staff dalam checklist "Bekalan" (plan-week.html) — coaching_checks[`M{week}_supplies_{idx}`]
- *   mesti true. Item tak ditick (staff isi "Sebab belum selesai...") dilangkau — bukan
- *   semua bekalan dijadualkan automatik ditolak semata sesi ditanda Hadir.
+ *   staff dalam checklist "Bekalan" (plan-week.html) — coaching_checks[`{prefix}_supplies_{idx}`]
+ *   mesti true, prefix = 'D{n}' (harian) atau label bertingkat W/M/Q (mingguan,
+ *   shared/schedulePeriod.js). Item tak ditick (staff isi "Sebab belum selesai...")
+ *   dilangkau — bukan semua bekalan dijadualkan automatik ditolak semata sesi ditanda Hadir.
  * - Decrements psy_inventory_items.qty_in_stock
  * - Logs to audit
  *
@@ -41,7 +42,7 @@ window.deductSessionSupplies = async function (sessionId) {
 
     const schedule = Array.isArray(plan.coaching_schedule) ? plan.coaching_schedule : [];
     const weekObj  = schedule.find(w => w.week === sess.week_number) || schedule[sess.week_number - 1];
-    if (!weekObj) { result.skipped.push(`Minggu ${sess.week_number} tiada dalam jadual`); return result; }
+    if (!weekObj) { result.skipped.push(`${window.iswPeriodLabel(sess.week_number)} tiada dalam jadual`); return result; }
 
     // Online sessions have no physical supplies to deduct
     if (weekObj.mode === 'online') { result.skipped.push('Sesi online — tiada bekalan'); return result; }
@@ -60,7 +61,11 @@ window.deductSessionSupplies = async function (sessionId) {
       const itemId = s?.item_id;
       const qty    = Number(s?.qty || s?.quantity || 0);
       const auto   = s?.auto_stock !== false; // default true
-      const ticked = coachingChecks[`M${sess.week_number}_supplies_${idx}`] === true;
+      // Prefix checklist kunci MESTI padan apa yg plan-week.html tulis (checklistSection()):
+      // 'D{n}' utk pakej harian, atau label bertingkat W/M/Q utk pakej mingguan
+      // (shared/schedulePeriod.js) — bukan 'M{n}' tegar lagi.
+      const checkPrefix = weekObj.period === 'day' ? `D${sess.week_number}` : window.iswPeriodLabel(sess.week_number);
+      const ticked = coachingChecks[`${checkPrefix}_supplies_${idx}`] === true;
 
       if (!itemId) { result.skipped.push(`Item tanpa ID: ${s?.item_name || s?.name || '(unknown)'}`); continue; }
       if (qty <= 0) { result.skipped.push(`Item qty=0: ${s?.item_name || itemId}`); continue; }

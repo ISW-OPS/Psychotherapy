@@ -131,6 +131,7 @@
                       <option value="day">Hari</option>
                     </select>
                   </div>
+                  <p id="f-weeks-hint" class="text-[10px] text-ink/40 mt-1 hidden">1-12 = mingguan (W1-W12) · 13-15 = bulanan (M1-M3) · 16+ = suku tahun (Q1, Q2…) — jarak sesi auto-jarang bila masuk fasa M/Q.</p>
                 </div>
 
                 <!-- ── Sesi/hari sesi (variant hari muncul utk Minggu & Hari) ── -->
@@ -596,6 +597,7 @@
 <script src="../../shared/navbar.js"></script>
 <script src="../../shared/defaultAgreement.js"></script>
 <script src="../../shared/defaultDailySchedule.js"></script>
+<script src="../../shared/schedulePeriod.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <script>
   if (window.pdfjsLib) {
@@ -731,6 +733,12 @@ function onDurationUnitChange() {
   toggleSessionsBlock();
   renderSessionDaysEditor();      // panjang variant beza ikut unit
   renderCoachingScheduleEditor(true);
+  toggleWeeksHint();
+}
+
+// Hint skema W/M/Q (shared/schedulePeriod.js) — relevan utk unit='week' sahaja.
+function toggleWeeksHint() {
+  document.getElementById('f-weeks-hint')?.classList.toggle('hidden', getDurationUnit() !== 'week');
 }
 
 // Duration NUMBER berubah (cth 7→3) → selaraskan Timeline + variant (Hari: panjang variant = tempoh).
@@ -983,6 +991,16 @@ function normalizeCoachingSchedule(schedule, count, unit = getDurationUnit()) {
   return Array.from({ length: count }, (_, i) => {
     const n = i + 1;
     const item = existing[n] || {};
+    // Period bulanan/suku tahun (lihat shared/schedulePeriod.js) cuma 1 sesi —
+    // tak kira apa data session_days lama (cth pakej disusun semula dari count
+    // lebih kecil), kunci kepada 1 hari sahaja utk period ni.
+    const isTiered = unit === 'week' && iswPeriodType(n) !== 'week';
+    const rawDays = Array.isArray(item.session_days) && item.session_days.length ? item.session_days : defaultSessionDays();
+    // Sesi 1:1 Hakeema WAJIB (default sistem) di W6, W11, dan semua period bulanan/suku
+    // tahun (M/Q) — checkpoint rawatan standard. Cuma terpakai bila period ni BELUM
+    // pernah disimpan (item.hk1_types tiada langsung); period yang dah ada rekod
+    // (termasuk array kosong sebab staff untick manual) tak diganggu.
+    const defaultHk1 = (unit === 'week' && (n === 6 || n === 11 || isTiered)) ? ['hakeema'] : [];
     return {
       period: unit,
       [keyName]: n,
@@ -996,10 +1014,10 @@ function normalizeCoachingSchedule(schedule, count, unit = getDurationUnit()) {
       supplies_2: item.supplies_2 || [],
       mode:       item.mode || 'both',
       // Hari sesi aktif minggu ini: [1,2]=dua sesi, [1]=sesi 1 saja, [2]=sesi 2 saja.
-      session_days: Array.isArray(item.session_days) && item.session_days.length ? item.session_days : defaultSessionDays(),
+      session_days: isTiered ? [rawDays[0] || 1] : rawDays,
       // Sesi 1:1 wajib minggu ini (['hakeema','hakeem','dr']) — auto-cipta rekod rujukan
       // di plan-week.html, staff tak perlu tick manual. Lihat HK1_TYPES_CFG.
-      hk1_types:  Array.isArray(item.hk1_types) ? item.hk1_types : [],
+      hk1_types:  Array.isArray(item.hk1_types) ? item.hk1_types : defaultHk1,
       rujukan_files: item.rujukan_files || [],
     };
   });
@@ -1366,31 +1384,36 @@ function renderCoachingScheduleEditor(forceRebuild = false) {
   const unit = getDurationUnit();
   const count = getScheduleCount();
   const keyName = unit === 'day' ? 'day' : 'week';
-  const prefix = unit === 'day' ? 'D' : 'M';
   if (forceRebuild || coachingSchedule.length !== count || coachingSchedule.some(x => (x.period || 'week') !== unit)) {
     coachingSchedule = normalizeCoachingSchedule(coachingSchedule, count, unit);
   }
   document.getElementById('weekly-schedule-editor').innerHTML = coachingSchedule.map(item => {
     const wk = item[keyName];
+    // Tempoh bertingkat: period 1-12 = W (mingguan), 13-15 = M (bulanan), 16+ = Q
+    // (suku tahun) — hanya utk pakej unit='week'; pakej unit='day' (D1, D2…) tak
+    // guna skema ni, lihat shared/schedulePeriod.js.
+    const periodType = unit === 'week' ? iswPeriodType(wk) : 'day';
+    const label = unit === 'week' ? iswPeriodLabel(wk) : `D${wk}`;
     const mode = item.mode || 'both';
     const sdArr = (Array.isArray(item.session_days) && item.session_days.length ? item.session_days : defaultSessionDays());
-    const nSes = sdArr.length >= 2 ? 2 : 1;
+    // Period bulanan/suku tahun cuma 1 sesi — tiada pilihan "2 sesi".
+    const nSes = periodType === 'week' && sdArr.length >= 2 ? 2 : 1;
     const files = item.rujukan_files || [];
     return `
     <div class="rounded-lg border border-ink/10 bg-cream/30 p-3" data-week="${wk}">
       <div class="flex items-center justify-between gap-3 flex-wrap mb-2">
-        <div class="font-bold text-sm text-navy">${prefix}${wk}</div>
+        <div class="font-bold text-sm text-navy">${label}</div>
         <div class="flex items-center gap-2 text-[11px] flex-wrap">
           <span class="text-ink/60 font-semibold">Mode:</span>
           <label class="flex items-center gap-1"><input type="radio" name="mode-${wk}" value="f2f" ${mode==='f2f'?'checked':''} onchange="updateMode(${wk}, 'f2f')"> 🏥 F2F</label>
           <label class="flex items-center gap-1"><input type="radio" name="mode-${wk}" value="online" ${mode==='online'?'checked':''} onchange="updateMode(${wk}, 'online')"> 💻 Online</label>
           <label class="flex items-center gap-1"><input type="radio" name="mode-${wk}" value="both" ${mode==='both'?'checked':''} onchange="updateMode(${wk}, 'both')"> 🔀 Both</label>
-          ${unit === 'week' ? `
+          ${periodType === 'week' ? `
           <span class="text-ink/60 font-semibold ml-2">Sesi:</span>
           <select onchange="updateSessions(${wk}, this.value)" class="border border-ink/20 rounded px-1.5 py-0.5 text-[11px] bg-white">
             <option value="2" ${nSes===2?'selected':''}>2 sesi</option>
             <option value="1" ${nSes===1?'selected':''}>1 sesi</option>
-          </select>` : ''}
+          </select>` : `<span class="text-ink/40 italic ml-2">1 sesi/${periodType === 'month' ? 'bulan' : 'suku tahun'}</span>`}
         </div>
       </div>
       <div class="flex items-center gap-2 text-[11px] flex-wrap mb-2 pb-2 border-b border-ink/10">
@@ -1400,7 +1423,7 @@ function renderCoachingScheduleEditor(forceRebuild = false) {
             <input type="checkbox" ${(item.hk1_types || []).includes(type) ? 'checked' : ''} onchange="updateHk1Type(${wk}, '${type}', this.checked)">
             ${cfg.emoji} ${cfg.label}
           </label>`).join('')}
-        <span class="text-ink/40">— auto-cipta rekod Sesi 1:1 ${prefix}${wk} ini, staff tak perlu tick manual</span>
+        <span class="text-ink/40">— auto-cipta rekod Sesi 1:1 ${label} ini, staff tak perlu tick manual</span>
       </div>
       ${nSes >= 2 ? `
         <div class="rounded-md border border-navy/15 bg-navy/[0.02] p-2 mb-2">
@@ -1929,6 +1952,7 @@ function populateForm(pkg) {
   document.getElementById('f-weeks').value = (document.getElementById('f-duration-unit').value === 'day')
     ? (parseInt(pkg?.duration) || pkg?.duration_days || pkg?.duration_weeks || '')
     : (pkg?.duration_weeks || '');
+  toggleWeeksHint();
   document.getElementById('f-image-url').value = pkg?.image_url || '';
   document.getElementById('f-image-raw').value = pkg?.image_url || '';
   document.getElementById('pkg-image-editor').classList.toggle('hidden', !pkg?.image_url);

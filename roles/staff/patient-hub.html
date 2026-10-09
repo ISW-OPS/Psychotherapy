@@ -1013,8 +1013,9 @@
 
                 <!-- Sejarah Bekalan & Aktiviti -->
                 <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden">
-                  <div class="px-5 py-4 border-b border-ink/8">
+                  <div class="px-5 py-4 border-b border-ink/8 flex items-center justify-between gap-2">
                     <h3 class="font-bold text-sm text-ink">Sejarah Bekalan &amp; Aktiviti</h3>
+                    <button type="button" onclick="openPackageSupplyInvoice()" class="text-xs font-semibold text-navy hover:underline whitespace-nowrap">📄 Invois Bekalan Pakej →</button>
                   </div>
                   <div id="sp-history-body" class="divide-y divide-ink/5"></div>
                   <div id="sp-history-empty" class="hidden px-5 py-8 text-center text-sm text-ink/35">Tiada aktiviti
@@ -1516,6 +1517,7 @@
   <script src="../../shared/authGuard.js"></script>
   <script src="../../shared/logout.js"></script>
   <script src="../../shared/navbar.js"></script>
+  <script src="../../shared/schedulePeriod.js"></script>
   <script src="../../shared/stockSync.js"></script>
   <script src="../../shared/inventoryStock.js"></script>
   <script src="../../shared/inventoryDeduct.js"></script>
@@ -2421,10 +2423,10 @@
       let d;
       if (base) {
         d = base; d.setHours(0, 0, 0, 0);
-        d.setDate(d.getDate() + (w - baseWeek) * 7);
+        d.setDate(d.getDate() + iswPeriodOffsetBetween(baseWeek, w));
       } else {
         d = phAnchorDate(activePlan); d.setHours(0, 0, 0, 0);
-        d.setDate(d.getDate() + (w - 1) * 7);
+        d.setDate(d.getDate() + iswPeriodOffsetDays(w));
       }
       if (dows) {
         const targetDow = dows[day - 1] != null ? dows[day - 1] : dows[dows.length - 1];
@@ -2493,15 +2495,16 @@
       const x = new Date(d); const p = n => String(n).padStart(2, '0');
       return `${x.getFullYear()}-${p(x.getMonth() + 1)}-${p(x.getDate())}`;
     }
-    // Padan tarikh (YYYY-MM-DD) -> minggu rawatan. Minggu 1 = anchor (start_date).
-    // Setiap minggu = 7 hari. Clamp [1, duration_weeks]; null kalau tiada plan.
+    // Padan tarikh (YYYY-MM-DD) -> period rawatan. Period 1 = anchor (start_date).
+    // Tempoh bertingkat (W=7hr/M=28hr/Q=84hr, shared/schedulePeriod.js). Clamp
+    // [1, duration_weeks]; null kalau tiada plan.
     function phWeekForDate(p, ymd) {
       p = p || activePlan;
       if (!p || !ymd) return null;
       const anchor = phAnchorDate(p); anchor.setHours(0, 0, 0, 0);
       const d = new Date(ymd + 'T00:00:00'); d.setHours(0, 0, 0, 0);
-      let wk = Math.floor((d - anchor) / (7 * 86400000)) + 1;
-      if (wk < 1) wk = 1;
+      const elapsedDays = Math.floor((d - anchor) / 86400000);
+      let wk = elapsedDays < 0 ? 1 : iswPeriodFromOffsetDays(elapsedDays);
       const dur = p.duration_weeks || 0;
       if (dur && wk > dur) wk = dur;
       return wk;
@@ -2625,7 +2628,7 @@
 
         html += `<div class="border ${border} ${isCurrent ? 'ring-2 ring-navy' : ''} rounded-xl p-3 transition">
       <div class="flex items-center justify-between mb-1 gap-1 flex-wrap">
-        <div class="text-sm font-bold ${isCurrent ? 'text-navy' : 'text-ink/80'}"><span>Minggu</span> ${w}${isCurrent ? ' · <span class="font-normal text-xs">Semasa</span>' : ''}</div>
+        <div class="text-sm font-bold ${isCurrent ? 'text-navy' : 'text-ink/80'}">${iswPeriodLabel(w)}${isCurrent ? ' · <span class="font-normal text-xs">Semasa</span>' : ''}</div>
         ${chip}
       </div>
       <div class="space-y-1.5 mt-2">${sessionRows}</div>
@@ -2769,7 +2772,7 @@
       <div>
         <label class="text-xs font-semibold text-ink/60 uppercase">Pilih minggu</label>
         <select id="as-week" class="w-full mt-1.5 px-3 py-2 border border-ink/20 rounded-lg text-sm bg-white focus:outline-none focus:border-navy">
-          ${eligible.map(w => `<option value="${w}">Minggu ${w}${w === (activePlan.current_week || 1) ? ' (semasa)' : ''}</option>`).join('')}
+          ${eligible.map(w => `<option value="${w}">${iswPeriodLabel(w)}${w === (activePlan.current_week || 1) ? ' (semasa)' : ''}</option>`).join('')}
         </select>
       </div>
       <div>
@@ -2911,7 +2914,7 @@
           sesPrice = Number(pkg?.extension_price_per_session) || 25;
         }
         const dateTxt = sessionDateIso ? ` pada ${ovFmt(sessionDateIso)} · ${ovFmtT(sessionDateIso)}` : '';
-        if (!confirm(`Tambah Sesi 2 pada Minggu ${w}${dateTxt}?\n\nPesakit perlu bayar RM ${sesPrice} dahulu sebelum sesi ini boleh diaktifkan dan ditempah.`)) return;
+        if (!confirm(`Tambah Sesi 2 pada ${iswPeriodLabel(w)}${dateTxt}?\n\nPesakit perlu bayar RM ${sesPrice} dahulu sebelum sesi ini boleh diaktifkan dan ditempah.`)) return;
 
         const { data: existing } = await window.db.from('psy_plan_weekly_progress')
           .select('id').eq('plan_id', activePlan.id).eq('week_number', w).eq('session_day', 2).maybeSingle();
@@ -2931,16 +2934,16 @@
           try {
             await window.db.from('psy_notifications').insert({
               user_id: patient.user_id, type: 'plan',
-              title: `1 sesi tambahan dibuka — Minggu ${w}`,
-              body: `Coach membuka 1 sesi tambahan untuk Minggu ${w}${dateTxt}. Bayar RM ${sesPrice} untuk mengaktifkan & menempah.`,
+              title: `1 sesi tambahan dibuka — ${iswPeriodLabel(w)}`,
+              body: `Coach membuka 1 sesi tambahan untuk ${iswPeriodLabel(w)}${dateTxt}. Bayar RM ${sesPrice} untuk mengaktifkan & menempah.`,
               link: 'payment.html',
             });
           } catch (_) { /* notifikasi tak kritikal */ }
         }
-        banner(`Sesi tambahan Minggu ${w} dibuka — pesakit perlu bayar RM ${sesPrice} ✅`);
+        banner(`Sesi tambahan ${iswPeriodLabel(w)} dibuka — pesakit perlu bayar RM ${sesPrice} ✅`);
         await reloadOverviewKeepPage();
         const checkoutUrl = await ovInitiateSessionCheckout({
-          rowIds: [inserted.id], price: sesPrice, title: `Penambahan Sesi di Minggu ${w}`,
+          rowIds: [inserted.id], price: sesPrice, title: `Penambahan Sesi di ${iswPeriodLabel(w)}`,
         });
         showSessionPaymentShareModal(w, sesPrice, true, checkoutUrl);
       } catch (e) {
@@ -2981,7 +2984,7 @@
       const payUrl = checkoutUrl || `${location.origin}/roles/patient/payment.html`;
       const isDirect = !!checkoutUrl;
       const hasPhone = !!(patient?.phone || '').replace(/\D/g, '');
-      const what = isSingleSession ? `Sesi tambahan Minggu ${w}` : `Minggu tambahan ${w}`;
+      const what = isSingleSession ? `Sesi tambahan ${iswPeriodLabel(w)}` : `${iswPeriodLabel(w)} tambahan`;
 
       const m = document.createElement('div');
       m.id = 'sesshare-modal';
@@ -3017,7 +3020,7 @@
       banner('Menjana pautan bayaran…', 'info');
       const checkoutUrl = await ovInitiateSessionCheckout({
         rowIds: rows.map(r => r.id), price,
-        title: isSingleSession ? `Penambahan Sesi di Minggu ${w}` : `Minggu Tambahan ${w}`,
+        title: isSingleSession ? `Penambahan Sesi di ${iswPeriodLabel(w)}` : `${iswPeriodLabel(w)} Tambahan`,
       });
       showSessionPaymentShareModal(w, price, isSingleSession, checkoutUrl);
     }
@@ -3028,8 +3031,8 @@
       if (!phone) { banner('Pesakit tiada nombor telefon.', 'error'); return; }
       const nm = (typeof iswPatientName === 'function' ? iswPatientName(patient, profile, kyc) : null) || patient?.full_name || 'Pesakit';
       const whatMsg = isSingleSession
-        ? `Coach telah membuka 1 sesi tambahan untuk Minggu ${w} rawatan anda.`
-        : `Coach telah membuka minggu tambahan (Minggu ${w}) rawatan anda.`;
+        ? `Coach telah membuka 1 sesi tambahan untuk ${iswPeriodLabel(w)} rawatan anda.`
+        : `Coach telah membuka tempoh tambahan (${iswPeriodLabel(w)}) rawatan anda.`;
       const howMsg = isDirect
         ? `Sila klik pautan di bawah untuk bayar terus (tiada log masuk diperlukan):`
         : `Sila log masuk ke akaun ISW Wellness anda dan pergi ke halaman Bayaran untuk aktifkan & tempah sesi ini:`;
@@ -3117,7 +3120,7 @@
         const currentSesi = ovWeeklyRows.find(p => p.week_number === cur);
         const curDate = currentSesi?.session_date ? new Date(currentSesi.session_date).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
-        document.getElementById('ov-week').textContent = `M${cur}`;
+        document.getElementById('ov-week').textContent = iswPeriodLabel(cur);
         document.getElementById('ov-week-date').textContent = curDate;
         document.getElementById('ov-attendance').textContent = `${done}/${totalSessions}`;
         document.getElementById('ov-attendance-pct').textContent = pct + '%';
@@ -3172,7 +3175,8 @@
       const allPkgs = (plansData || []).map((pl, idx) => {
         const pkg = pkgMap[pl.template] || {};
         const startDate = pl.start_date ? pl.start_date + 'T00:00:00' : pl.created_at;
-        const endDate = startDate ? new Date(new Date(startDate).getTime() + (pl.duration_weeks || 12) * 7 * 86400000).toISOString() : null;
+        const totalPeriods = pl.duration_weeks || 12;
+        const endDate = startDate ? new Date(new Date(startDate).getTime() + (iswPeriodOffsetDays(totalPeriods) + iswPeriodSpanDays(totalPeriods)) * 86400000).toISOString() : null;
         const sessionsTotal = pl.duration_weeks || 12;
         const sessionsUsed = pl.current_week ? Math.min(pl.current_week, sessionsTotal) : 0;
         return {
@@ -6102,7 +6106,6 @@
           ${d.notes ? `<div class="text-[11px] text-ink/65 mt-0.5">${escapeHtml(d.notes)}</div>` : ''}
           <div class="text-[10px] text-ink/45 mt-1">${dt.toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' })}, ${dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} · ${escapeHtml(d.given_by_name || 'Staff')}</div>
         </div>
-        ${d.supply_invoice_id ? `<button type="button" onclick="viewSupplyInvoiceById('${d.supply_invoice_id}')" class="flex-shrink-0 text-[10px] font-semibold text-navy hover:underline">📄 ${iswL('Invois', 'Invoice')}</button>` : ''}
       </div>`;
         }).join('');
       }
@@ -6178,11 +6181,11 @@
       }).join('');
     }
 
-    async function viewSupplyInvoiceById(invoiceId) {
-      if (!invoiceId) { banner('Invois tidak dijumpai untuk rekod ini', 'error'); return; }
-      const { data: inv, error } = await window.db.from('psy_supply_invoices').select('*').eq('id', invoiceId).maybeSingle();
-      if (error || !inv) { banner('Ralat muat invois: ' + (error?.message || 'tidak dijumpai'), 'error'); return; }
-      window.viewSupplyInvoice(inv, {
+    // Invois Bekalan PAKEJ (merentas keseluruhan pakej aktif) — lihat
+    // shared/invoice.js buildPackageSupplyInvoiceInner().
+    async function openPackageSupplyInvoice() {
+      if (!patient?.id || !activePlan?.id) { banner('Tiada pakej aktif untuk pesakit ini', 'error'); return; }
+      await window.viewPackageSupplyInvoice(patient.id, activePlan.id, {
         full_name: iswPatientName(patient, profile, kyc),
         phone: iswPatientPhone(patient, profile, kyc),
         mrn: patient?.mrn,
@@ -6737,7 +6740,7 @@
         d.setHours(h || 0, m || 0, 0, 0); return d;
       }
       const target = new Date(firstDate); target.setHours(0, 0, 0, 0);
-      target.setDate(target.getDate() + (w - 1) * 7 + (day === 2 ? 1 : 0));
+      target.setDate(target.getDate() + iswPeriodOffsetDays(w) + (day === 2 ? 1 : 0));
       const avail = ovNearestAvailable(target);
       if (!avail) return null;
       const slots = _rawatanSlotsByDay[avail.getDay()] || [];
@@ -6825,7 +6828,7 @@
           const iso = b.when.toISOString();
           const { data: appt } = await window.db.from('psy_appointments').insert({
             patient_id: patientId, staff_id: window.currentUser.id, staff_name: window.currentUser.full_name,
-            service: `${activePlan.name} · Minggu ${b.w}`, appointment_time: iso, duration_min: 60, status: 'scheduled',
+            service: `${activePlan.name} · ${iswPeriodLabel(b.w)}`, appointment_time: iso, duration_min: 60, status: 'scheduled',
           }).select('id').single();
           const apptId = appt?.id || null;
           if (b.existingId) {
@@ -6888,7 +6891,7 @@
       m.innerHTML = `
     <div class="absolute inset-0 bg-black/50" onclick="document.getElementById('editdate-modal').remove()"></div>
     <div class="relative bg-white rounded-2xl max-w-sm w-full p-6 space-y-4">
-      <h3 class="font-bold text-base">🔄 Jadual Semula Sesi — Minggu ${w}</h3>
+      <h3 class="font-bold text-base">🔄 Jadual Semula Sesi — ${iswPeriodLabel(w)}</h3>
       <p class="text-sm text-ink/60">Hanya slot rawatan dibuka (elak penutupan). Sesi pasangan minggu ini & minggu-minggu selepas auto anjak sekali ikut corak baru.</p>
       <div>
         <label class="text-xs font-semibold text-ink/60 uppercase">Tarikh baru</label>
@@ -6957,7 +6960,7 @@
         ? activePlan.preferred_days
         : PAIR[activePlan.preferred_pair];
       const target = new Date(firstDate); target.setHours(0, 0, 0, 0);
-      target.setDate(target.getDate() + (w - baseWeek) * 7);
+      target.setDate(target.getDate() + iswPeriodOffsetBetween(baseWeek, w));
       if (dows) {
         const targetDow = dows[day - 1] != null ? dows[day - 1] : dows[dows.length - 1];
         let guard = 0;
@@ -7159,7 +7162,7 @@
         activePlan.preferred_days = nd; activePlan.preferred_pair = legacyPair;
         if (patient?.user_id) {
           try { await notify(patient.user_id, 'appointment', iswL('Hari sesi anda dikemas kini', 'Your session days were updated'),
-            iswL(`Hari sesi rawatan kini ${cdName(nd)} bermula Minggu ${startW}. Sila semak jadual anda.`, `Your treatment session days are now ${cdName(nd)} starting Week ${startW}. Please check your schedule.`), 'plan.html'); } catch (_) { }
+            iswL(`Hari sesi rawatan kini ${cdName(nd)} bermula ${iswPeriodLabel(startW)}. Sila semak jadual anda.`, `Your treatment session days are now ${cdName(nd)} starting ${iswPeriodLabel(startW)}. Please check your schedule.`), 'plan.html'); } catch (_) { }
         }
         document.getElementById('changedays-modal')?.remove();
         banner(iswL(`Hari sesi ditukar ke ${cdName(nd)} ✅ — ${todo.length} sesi dijadual semula`, `Session days changed to ${cdName(nd)} ✅ — ${todo.length} sessions rescheduled`));
@@ -7293,10 +7296,10 @@
         for (let i = 0; i < N; i++) {
           const dayNum = i + 1;
           if (!days.includes(dayNum)) continue;
-          let dt = new Date(m1[i]); dt.setDate(dt.getDate() + (w - 1) * 7);
+          let dt = new Date(m1[i]); dt.setDate(dt.getDate() + iswPeriodOffsetDays(w));
           dt.setHours(hh, mm, 0, 0);
           if (i === 1) {
-            let s1 = new Date(m1[0]); s1.setDate(s1.getDate() + (w - 1) * 7);
+            let s1 = new Date(m1[0]); s1.setDate(s1.getDate() + iswPeriodOffsetDays(w));
             if (dt.toDateString() === s1.toDateString() || dt < s1) {
               let fix = new Date(s1); fix.setDate(fix.getDate() + 1);
               while (fix.getDay() !== dows[1]) fix.setDate(fix.getDate() + 1);
@@ -7799,7 +7802,7 @@
         if (r.is_extension) continue;                      // minggu tambahan ikut aliran bayaran sendiri
         const day = r.session_day || 1;
         let d = new Date(anchorDate); d.setHours(0, 0, 0, 0);
-        d.setDate(d.getDate() + (r.week_number - anchorWeek) * 7);
+        d.setDate(d.getDate() + iswPeriodOffsetBetween(anchorWeek, r.week_number));
         if (dows) {
           const targetDow = dows[day - 1] != null ? dows[day - 1] : dows[dows.length - 1];
           let guard = 0;
@@ -7816,7 +7819,7 @@
 
       if (!updates.length) { banner('Semua tarikh sesi akan datang dah selaras — tiada perubahan.'); return; }
       const weeksTouched = [...new Set(updates.map(u => u.week))].sort((a, b) => a - b);
-      if (!confirm(`Selaraskan tarikh ${updates.length} sesi akan datang (Minggu: ${weeksTouched.join(', ')}) supaya bersambung dari sesi Hadir terakhir (Minggu ${anchorWeek})?\n\n• Tarikh ditetapkan + status ditanda "Ditempah"\n• Hanya sesi Belum Tempah/Ditempah disentuh (bukan Cancel/Jadual Semula)\n• Tarikh sesi Hadir sedia ada TIDAK berubah\n\nTeruskan?`)) return;
+      if (!confirm(`Selaraskan tarikh ${updates.length} sesi akan datang (${weeksTouched.map(iswPeriodLabel).join(', ')}) supaya bersambung dari sesi Hadir terakhir (${iswPeriodLabel(anchorWeek)})?\n\n• Tarikh ditetapkan + status ditanda "Ditempah"\n• Hanya sesi Belum Tempah/Ditempah disentuh (bukan Cancel/Jadual Semula)\n• Tarikh sesi Hadir sedia ada TIDAK berubah\n\nTeruskan?`)) return;
 
       try {
         for (const u of updates) {
@@ -7878,8 +7881,8 @@
         const w = Number(r.week_number);
         return w >= fromWeek && w <= toWeek && KEEP.has(r.status);
       });
-      if (!targets.length) { banner(`Tiada sesi "Hadir"/Selesai dalam Minggu ${fromWeek}–${toWeek}.`); document.getElementById('resetatt-modal')?.remove(); return; }
-      if (!confirm(`Reset kehadiran ${targets.length} sesi (Minggu ${fromWeek}–${toWeek}) kembali ke "Ditempah"?\n\nTarikh sesi kekal, cuma status kehadiran direset. Rekod kehadiran sebenar akan HILANG untuk sesi ini.\n\nTeruskan?`)) return;
+      if (!targets.length) { banner(`Tiada sesi "Hadir"/Selesai dalam ${iswPeriodLabel(fromWeek)}–${iswPeriodLabel(toWeek)}.`); document.getElementById('resetatt-modal')?.remove(); return; }
+      if (!confirm(`Reset kehadiran ${targets.length} sesi (${iswPeriodLabel(fromWeek)}–${iswPeriodLabel(toWeek)}) kembali ke "Ditempah"?\n\nTarikh sesi kekal, cuma status kehadiran direset. Rekod kehadiran sebenar akan HILANG untuk sesi ini.\n\nTeruskan?`)) return;
       document.getElementById('resetatt-modal')?.remove();
       try {
         for (const r of targets) {

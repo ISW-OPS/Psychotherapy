@@ -45,6 +45,14 @@ CREATE TABLE IF NOT EXISTS psy_library_items (
   updated_at      TIMESTAMPTZ DEFAULT now()
 );
 
+-- Patch jadual sedia ada — CREATE TABLE IF NOT EXISTS di atas tak tambah
+-- kolum baharu pada jadual yang dah wujud, jadi kolum lanjutan mesti di-ALTER
+-- secara eksplisit (sama corak dgn 14_products_inventory.sql dll).
+ALTER TABLE psy_library_items ADD COLUMN IF NOT EXISTS week_number INT;
+ALTER TABLE psy_library_items ADD COLUMN IF NOT EXISTS staff_roles TEXT[];
+ALTER TABLE psy_library_items ADD COLUMN IF NOT EXISTS publish_at TIMESTAMPTZ;
+ALTER TABLE psy_library_items ADD COLUMN IF NOT EXISTS related_item_ids UUID[] DEFAULT '{}';
+
 CREATE INDEX IF NOT EXISTS idx_library_package_ids ON psy_library_items USING GIN (package_ids);
 CREATE INDEX IF NOT EXISTS idx_library_media_type  ON psy_library_items(media_type);
 CREATE INDEX IF NOT EXISTS idx_library_topic       ON psy_library_items(topic);

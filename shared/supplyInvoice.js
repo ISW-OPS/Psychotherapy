@@ -75,6 +75,15 @@ async function createSupplyInvoice(givenItems, opts) {
     }).select().single();
 
     if (error) { console.warn('[supplyInvoice] gagal cipta invois:', error); return null; }
+
+    // Pastikan header "Invois Bekalan Pakej" (nombor tetap seluruh pakej, lihat
+    // 43_package_supply_invoices.sql) wujud dari transaksi PERTAMA — tak sekat/rollback
+    // invois transaksi di atas kalau gagal (sama semangat dgn ralat insert di atas).
+    if (plan?.id) {
+      try { await getOrCreatePackageSupplyInvoiceNo(opts.patientId, plan.id); }
+      catch (e) { console.warn('[supplyInvoice] gagal pastikan header invois pakej:', e); }
+    }
+
     return inserted;
   } catch (e) {
     console.warn('[supplyInvoice] ralat:', e);
@@ -82,3 +91,26 @@ async function createSupplyInvoice(givenItems, opts) {
   }
 }
 window.createSupplyInvoice = createSupplyInvoice;
+
+// ── Invois Bekalan PAKEJ (header nombor tetap) ────────────────────────────
+// Get-or-create: pulangkan baris psy_package_supply_invoices sedia ada untuk
+// (patientId, planId), atau cipta baharu (trigger DB jana invoice_no). Idempoten
+// — selamat dipanggil berulang kali (give-event baharu, atau bila staf/pesakit
+// buka paparan invois). Lihat database/schema/43_package_supply_invoices.sql.
+async function getOrCreatePackageSupplyInvoiceNo(patientId, planId) {
+  if (!patientId || !planId) return null;
+  const { data: existing } = await window.db.from('psy_package_supply_invoices')
+    .select('*').eq('patient_id', patientId).eq('plan_id', planId).maybeSingle();
+  if (existing) return existing;
+
+  const { data: inserted, error } = await window.db.from('psy_package_supply_invoices')
+    .insert({ patient_id: patientId, plan_id: planId }).select().single();
+  if (!error) return inserted;
+
+  // Race: tab/panggilan lain mungkin dah cipta serentak (UNIQUE patient_id+plan_id) — baca semula.
+  const { data: retry } = await window.db.from('psy_package_supply_invoices')
+    .select('*').eq('patient_id', patientId).eq('plan_id', planId).maybeSingle();
+  if (!retry) console.warn('[supplyInvoice] gagal get-or-create header invois pakej:', error);
+  return retry || null;
+}
+window.getOrCreatePackageSupplyInvoiceNo = getOrCreatePackageSupplyInvoiceNo;

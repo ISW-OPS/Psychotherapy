@@ -104,6 +104,16 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO storage.buckets (id, name, public) VALUES ('automation-media', 'automation-media', true)
 ON CONFLICT (id) DO NOTHING;
 
+-- Fail print-ready item inventori (cth reka bentuk Brochure BNP) — dilampir pada
+-- psy_inventory_items.print_file_url (14_products_inventory.sql), staff cetak terus
+-- dari inventory-detail.html bila perlu restock.
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('inventory-print-files', 'inventory-print-files', true, 10485760, ARRAY['application/pdf','image/png'])
+ON CONFLICT (id) DO UPDATE
+  SET public = EXCLUDED.public,
+      file_size_limit = EXCLUDED.file_size_limit,
+      allowed_mime_types = EXCLUDED.allowed_mime_types;
+
 
 -- ---- Polisi storage.objects ----
 
@@ -408,6 +418,25 @@ CREATE POLICY "stock_in_docs_staff_all" ON storage.objects
     FOR ALL TO authenticated
     USING (bucket_id = 'stock-in-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
     WITH CHECK (bucket_id = 'stock-in-docs' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "inventory_print_staff_write" ON storage.objects;
+CREATE POLICY "inventory_print_staff_write" ON storage.objects
+    FOR INSERT TO authenticated
+    WITH CHECK (bucket_id = 'inventory-print-files' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "inventory_print_staff_update" ON storage.objects;
+CREATE POLICY "inventory_print_staff_update" ON storage.objects
+    FOR UPDATE TO authenticated
+    USING (bucket_id = 'inventory-print-files' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "inventory_print_staff_delete" ON storage.objects;
+CREATE POLICY "inventory_print_staff_delete" ON storage.objects
+    FOR DELETE TO authenticated
+    USING (bucket_id = 'inventory-print-files' AND EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+DROP POLICY IF EXISTS "inventory_print_public_read" ON storage.objects;
+CREATE POLICY "inventory_print_public_read" ON storage.objects
+    FOR SELECT USING (bucket_id = 'inventory-print-files');
 
 -- Lampiran permohonan surat: staff (proses) + requester sendiri (laluan {request_id}/... —
 -- (storage.foldername(name))[1] mesti request_id kepunyaan pesakit/staff yang login).

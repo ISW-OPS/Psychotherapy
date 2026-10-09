@@ -64,7 +64,7 @@
         <div id="coaching-schedule-section" class="bg-white rounded-xl p-5 border border-ink/10 hidden">
           <div class="flex items-center justify-between gap-2 flex-wrap mb-1">
             <h3 class="font-bold flex items-center gap-2"><span id="uh-guidance">✅ Bimbingan &amp; Bekalan Minggu Ini</span></h3>
-            <button type="button" onclick="openSupplyInvoiceList()" class="text-xs font-semibold text-navy hover:underline whitespace-nowrap">📄 Invois Bekalan →</button>
+            <button type="button" onclick="openPackageSupplyInvoice()" class="text-xs font-semibold text-navy hover:underline whitespace-nowrap">📄 Invois Bekalan →</button>
           </div>
           <p class="text-xs text-ink/60 mb-4">Status tugasan yang direkod oleh coach semasa sesi coaching anda.</p>
           <div id="coaching-schedule-view" class="grid md:grid-cols-2 gap-3"></div>
@@ -175,6 +175,8 @@
 <script src="../../shared/authGuard.js"></script>
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
+<script src="../../shared/schedulePeriod.js"></script>
+<script src="../../shared/supplyInvoice.js"></script>
 <script src="../../shared/receipt.js"></script>
 <script src="../../shared/invoice.js"></script>
 <script src="_shared.js"></script>
@@ -190,47 +192,13 @@ let weekEnd = null;
 
 function escHtml(s) { const d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
 
-// ── Invois Bekalan Produk (psy_supply_invoices) ───────────────────────────
-// Senarai SEMUA invois bekalan pesakit (manual + auto-deduct minggu), terbaharu
-// dahulu. Klik satu baris → papar invois penuh (shared/invoice.js viewSupplyInvoice()).
-let _supplyInvoices = [];
-async function openSupplyInvoiceList() {
-  const { data, error } = await window.db.from('psy_supply_invoices')
-    .select('*').eq('patient_id', patientRecord.id).order('created_at', { ascending: false }).limit(30);
-  if (error) { banner('Ralat muat invois: ' + error.message, 'error'); return; }
-  _supplyInvoices = data || [];
-  document.getElementById('supply-invoice-list-modal')?.remove();
-  const modal = document.createElement('div');
-  modal.id = 'supply-invoice-list-modal';
-  modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
-  modal.innerHTML = `
-    <div class="absolute inset-0 bg-black/50" onclick="this.parentElement.remove()"></div>
-    <div class="relative bg-white rounded-2xl max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col">
-      <div class="p-4 border-b border-ink/10 flex items-center justify-between">
-        <h3 class="font-bold">Invois Bekalan Saya</h3>
-        <button type="button" onclick="document.getElementById('supply-invoice-list-modal').remove()" class="text-ink/60 text-xl px-2" aria-label="Close">×</button>
-      </div>
-      <p class="px-4 pt-3 text-xs text-ink/50">Rekod bekalan produk (cth madu) yang diberikan sebagai sebahagian pakej rawatan anda.</p>
-      <div class="flex-1 overflow-y-auto p-4 space-y-2">
-        ${_supplyInvoices.length ? _supplyInvoices.map(r => {
-          const items = Array.isArray(r.items) ? r.items : [];
-          const names = items.map(it => `${it.name} (${it.qty_given}${it.unit ? ' ' + it.unit : ''})`).join(', ');
-          const dt = new Date(r.created_at);
-          return `<button type="button" onclick="viewSupplyInvoiceRow('${r.id}')" class="w-full text-left border border-ink/10 rounded-lg p-3 hover:bg-cream/40">
-            <div class="flex items-center justify-between">
-              <span class="text-sm font-semibold text-ink">${escHtml(r.invoice_no || '—')}</span>
-              <span class="text-[11px] text-ink/45">${dt.toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
-            </div>
-            <div class="text-xs text-ink/60 mt-1">${escHtml(names)}</div>
-          </button>`;
-        }).join('') : `<div class="text-center text-sm text-ink/40 italic py-10">Tiada invois bekalan direkod lagi.</div>`}
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-}
-function viewSupplyInvoiceRow(id) {
-  const row = _supplyInvoices.find(r => r.id === id);
-  if (row) window.viewSupplyInvoice(row);
+// ── Invois Bekalan PAKEJ (merentas keseluruhan pakej semasa) ──────────────
+// SATU dokumen (bukan senarai) — gabungan semua bekalan yang saya dah terima
+// sepanjang pakej ni, dgn nombor invois tetap. Lihat shared/invoice.js
+// buildPackageSupplyInvoiceInner().
+async function openPackageSupplyInvoice() {
+  if (!patientRecord?.id || !activePlan?.id) return;
+  await window.viewPackageSupplyInvoice(patientRecord.id, activePlan.id);
 }
 
 // Pakej harian → label "Hari" & jumlah tempoh ikut bil. hari (bukan duration_weeks).
@@ -244,6 +212,11 @@ function UNIT() {
 function planTotalPeriods() {
   if (isDailyPlan()) return (activePlan?.coaching_schedule?.length) || parseInt(activePlan?.duration) || 7;
   return activePlan?.duration_weeks || 12;
+}
+// Label tajuk period: "Hari N" utk pakej harian, "W1/M1/Q1" bertingkat utk pakej
+// mingguan (lihat shared/schedulePeriod.js) — gantikan "Minggu 13" yang mengelirukan.
+function periodCrumbLabel(w) {
+  return isDailyPlan() ? `${UNIT()} ${w}` : iswPeriodLabel(w);
 }
 
 // Tukar tajuk seksyen "... Minggu Ini" → "... Hari Ini" untuk pakej harian.
@@ -289,7 +262,7 @@ function updateWeekNav() {
   const btnBack = document.getElementById('btn-back');
   const btnPrev = document.getElementById('btn-prev');
   const btnNext = document.getElementById('btn-next');
-  if (crumb) crumb.textContent = `${UNIT()} ${weekNumber}`;
+  if (crumb) crumb.textContent = periodCrumbLabel(weekNumber);
   if (planCrumb) planCrumb.textContent = activePlan.name || 'Pelan Rawatan';
   if (btnBack) {
     const sp = new URLSearchParams(location.search);
@@ -305,9 +278,9 @@ function updateWeekNav() {
 
 function computeWeekRange(plan, w) {
   const start = new Date(plan.created_at);
-  start.setDate(start.getDate() + (w - 1) * 7);
+  start.setDate(start.getDate() + iswPeriodOffsetDays(w));
   const end = new Date(start);
-  end.setDate(end.getDate() + 7);
+  end.setDate(end.getDate() + iswPeriodSpanDays(w));
   return { start, end };
 }
 
@@ -580,7 +553,7 @@ function renderCoachingSchedule() {
   };
 
   host.innerHTML = items.map(item => {
-    const prefix = item.period === 'day' || item.day ? `D${item.day}` : `M${item.week}`;
+    const prefix = item.period === 'day' || item.day ? `D${item.day}` : iswPeriodLabel(item.week);
     const wkNum = item.week || item.day;
     return `<div class="md:col-span-2">
       ${items.length > 1 ? `<div class="text-xs font-bold text-ink/40 uppercase tracking-wide mb-3">${escHtml(prefix)}</div>` : ''}
@@ -677,7 +650,7 @@ function renderHero() {
           ${isCurrent ? '<span class="bg-gold text-ink text-[10px] font-bold px-2 py-0.5 rounded-full">SEMASA</span>' : ''}
           <span class="${s.color} text-xs font-semibold flex items-center gap-1">· ${s.icon} ${s.label}</span>
         </div>
-        <h2 class="text-2xl md:text-3xl font-bold text-ink">${UNIT()} ${weekNumber}</h2>
+        <h2 class="text-2xl md:text-3xl font-bold text-ink">${periodCrumbLabel(weekNumber)}</h2>
         <div class="text-sm text-ink/70 mt-1">
           ${sessionDate
             ? `📅 ${sessionDate.toLocaleDateString(LCALE(), { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })} · 🕐 ${sessionDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`
@@ -690,7 +663,7 @@ function renderHero() {
     </div>
 
     <div class="mt-4 flex items-center gap-3 text-[11px] text-ink/60">
-      <span>${UNIT()} ${weekNumber}/${totalWeeks}</span>
+      <span>${periodCrumbLabel(weekNumber)}/${totalWeeks}</span>
       <div class="flex-1 bg-ink/10 rounded-full h-1">
         <div class="bg-navy rounded-full h-1 transition-all" style="width: ${pct}%"></div>
       </div>

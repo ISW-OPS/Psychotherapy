@@ -9,16 +9,17 @@
 // fisioterapi/kaunselor/bekam/masseur: boleh ada LEBIH DARIPADA SATU staff per role (tak
 // macam hakeema/hakeem/dr yang auto-resolve seorang sahaja ikut nama/role unik) — multiTarget:
 // true tandakan UI perlu papar dropdown "pilih coach" supaya staff pilih sendiri yang mana
-// handle, bukan auto-resolve senyap. Role code ('fisioterapi' dll) MESTI sepadan staff_role
-// yang dicipta staff sendiri di peranan.html.
+// handle, bukan auto-resolve senyap. Role code 'coach' — semua 4 jenis sesi ni dikendalikan
+// oleh staff role Coach sedia ada (tiada role RBAC berasingan fisioterapi/kaunselor/bekam/
+// masseur), target_role simpan sbg label jenis sesi sahaja (write-only, tak difilter di mana-mana).
 const HK1_TYPES_META = {
-  hakeema:     { label: 'Hakeema Session',     emoji: '🧑‍💼', role: 'manager',     nameLike: 'hakeema', exclude: null,      fallback: 'Hakeema', multiTarget: false },
-  hakeem:      { label: 'Hakeem Session',      emoji: '🧑',   role: 'manager',     nameLike: 'hakeem',  exclude: 'hakeema', fallback: 'Hakeem', multiTarget: false },
-  dr:          { label: 'Dr Session',          emoji: '🩺',   role: 'doctor',      nameLike: null,      exclude: null,      fallback: 'Dr', multiTarget: false },
-  fisioterapi: { label: 'Fisioterapi Session', emoji: '🏃',   role: 'fisioterapi', nameLike: null,      exclude: null,      fallback: 'Fisioterapi', multiTarget: true },
-  kaunselor:   { label: 'Kaunselor Session',   emoji: '🗣️',   role: 'kaunselor',   nameLike: null,      exclude: null,      fallback: 'Kaunselor', multiTarget: true },
-  bekam:       { label: 'Bekam Session',       emoji: '🩸',   role: 'bekam',       nameLike: null,      exclude: null,      fallback: 'Bekam', multiTarget: true },
-  masseur:     { label: 'Masseur Session',     emoji: '💆',   role: 'masseur',     nameLike: null,      exclude: null,      fallback: 'Tukang Urut', multiTarget: true },
+  hakeema:     { label: 'Hakeema Session',     emoji: '🧑‍💼', role: 'manager', nameLike: 'hakeema', exclude: null,      fallback: 'Hakeema', multiTarget: false },
+  hakeem:      { label: 'Hakeem Session',      emoji: '🧑',   role: 'manager', nameLike: 'hakeem',  exclude: 'hakeema', fallback: 'Hakeem', multiTarget: false },
+  dr:          { label: 'Dr Session',          emoji: '🩺',   role: 'doctor',  nameLike: null,      exclude: null,      fallback: 'Dr', multiTarget: false },
+  fisioterapi: { label: 'Fisioterapi Session', emoji: '🏃',   role: 'coach',   nameLike: null,      exclude: null,      fallback: 'Fisioterapi', multiTarget: true },
+  kaunselor:   { label: 'Kaunselor Session',   emoji: '🗣️',   role: 'coach',   nameLike: null,      exclude: null,      fallback: 'Kaunselor', multiTarget: true },
+  bekam:       { label: 'Bekam Session',       emoji: '🩸',   role: 'coach',   nameLike: null,      exclude: null,      fallback: 'Bekam', multiTarget: true },
+  masseur:     { label: 'Masseur Session',     emoji: '💆',   role: 'coach',   nameLike: null,      exclude: null,      fallback: 'Tukang Urut', multiTarget: true },
 };
 window.HK1_TYPES_META = HK1_TYPES_META;
 
@@ -179,7 +180,7 @@ async function hk1SeedForPlan(planId, patientId, coachingSchedule, referredBy = 
         patient_id: patientId, plan_id: planId, week_number: weekNum, source: 'plan_1on1', session_type: type,
         referred_by: referredBy, referred_by_name: referredByName,
         target_role: cfg.role, target_id: target.id, target_name: target.name,
-        reason: `Sesi 1:1 ${cfg.label} — Minggu ${weekNum} (Wajib ikut Pakej)`, meet_date: null, priority: 'sederhana',
+        reason: `Sesi 1:1 ${cfg.label} — ${entry?.period === 'day' ? `D${weekNum}` : window.iswPeriodLabel(weekNum)} (Wajib ikut Pakej)`, meet_date: null, priority: 'sederhana',
       });
       if (error && error.code !== '23505') console.error('[hk1] hk1SeedForPlan gagal:', weekNum, type, error);
     }

@@ -210,6 +210,87 @@ COMMENT ON COLUMN psy_plan_weekly_progress.reaksi_pemulihan IS
 -- 18_notifications_automations.sql bersama fungsinya.
 
 -- ──────────────────────────────────────────────────────────────
+-- Trigger: pesakit stop/tamat rawatan → buang sesi akan datang yang
+-- belum berlaku (pending/booked/reschedule) supaya jadual tak tinggal
+-- bersepah & tak trigger reminder/escalation palsu. Rekod SEJARAH
+-- (hadir/cancel/consultation_done) KEKAL — ni cuma buang slot yang
+-- tak pernah berlaku. Pasangan kepada trg_auto_detach_card_on_patient_stop
+-- (09_kob.sql, stop auto-caj) & trg_block_booking_for_inactive_patient
+-- (bawah) — tiga-tiga sekali tangani kesan "pesakit berhenti".
+-- ──────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION auto_clear_sessions_on_patient_stop()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_count INT;
+  v_appt_ids UUID[];
+BEGIN
+  IF NEW.outcome_status IN ('berhenti', 'meninggal')
+     AND OLD.outcome_status IS DISTINCT FROM NEW.outcome_status THEN
+    WITH deleted AS (
+      DELETE FROM psy_plan_weekly_progress
+        WHERE patient_id = NEW.id AND status IN ('pending', 'booked', 'reschedule')
+        RETURNING id, appointment_id
+    )
+    SELECT count(*), array_agg(appointment_id) FILTER (WHERE appointment_id IS NOT NULL)
+      INTO v_count, v_appt_ids FROM deleted;
+
+    -- Sesi terjadual yg dipadam mungkin pautan ke psy_appointments (kalendar umum) — batalkan
+    -- sekali supaya tak tinggal baris 'scheduled' bersepah merujuk sesi yg dah tak wujud.
+    IF v_appt_ids IS NOT NULL THEN
+      UPDATE psy_appointments SET status = 'cancelled'
+        WHERE id = ANY(v_appt_ids) AND status NOT IN ('completed', 'cancelled');
+    END IF;
+
+    IF v_count > 0 THEN
+      INSERT INTO psy_audit_log (actor_name, action, target, meta)
+      VALUES ('Sistem (Auto)', 'plan.sessions_cleared_on_stop', NEW.id::text,
+        jsonb_build_object('reason', 'patient_treatment_stopped', 'outcome_status', NEW.outcome_status, 'sessions_removed', v_count));
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_auto_clear_sessions_on_patient_stop ON psy_patients;
+CREATE TRIGGER trg_auto_clear_sessions_on_patient_stop
+  AFTER UPDATE OF outcome_status ON psy_patients
+  FOR EACH ROW
+  EXECUTE FUNCTION auto_clear_sessions_on_patient_stop();
+
+-- ──────────────────────────────────────────────────────────────
+-- Trigger: sekat sesi BAHARU (pending/booked/reschedule) dijadualkan
+-- untuk pesakit yang statusnya bukan 'active' (cth dah 'inactive' selepas
+-- outcome_status='berhenti'/'meninggal', atau 'archived'/'deceased').
+-- Rekod sejarah (hadir/cancel/consultation_done) & kemaskini baris sedia
+-- ada tak disekat — cuma INSERT slot BAHARU yang disekat.
+-- ──────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION block_booking_for_inactive_patient()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_status TEXT;
+BEGIN
+  IF NEW.status IN ('pending', 'booked', 'reschedule') THEN
+    SELECT status INTO v_status FROM psy_patients WHERE id = NEW.patient_id;
+    IF v_status IS DISTINCT FROM 'active' THEN
+      RAISE EXCEPTION 'Pesakit ini tidak aktif (status: %) — sesi baharu tidak boleh dijadualkan.', v_status;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_block_booking_for_inactive_patient ON psy_plan_weekly_progress;
+CREATE TRIGGER trg_block_booking_for_inactive_patient
+  BEFORE INSERT ON psy_plan_weekly_progress
+  FOR EACH ROW
+  EXECUTE FUNCTION block_booking_for_inactive_patient();
+
+-- ──────────────────────────────────────────────────────────────
 -- Fungsi: selesai semua sesi / pakej tamat → auto-complete pelan;
 -- pakej sambungan (continuity) beratur di-auto-aktif, jika tiada
 -- → pesakit ditanda inactive + outcome completed.
