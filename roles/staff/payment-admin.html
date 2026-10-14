@@ -62,21 +62,25 @@
           </div>
         </div>
 
+        <!-- Drill-down kongsi — klik mana-mana jubin Ansuran/Kedai buka senarai di sini -->
+        <div id="drill-panel" class="hidden bg-white rounded-2xl border border-navy/20 shadow-sm overflow-hidden"></div>
+
         <!-- Void/Refund/Correction menunggu kelulusan (super_admin sahaja, audit #B1-24) -->
         <div id="pending-adj-card" class="hidden bg-white rounded-2xl border border-terracotta/30 shadow-sm p-5"></div>
 
-        <!-- Filters -->
-        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4 flex flex-wrap items-center gap-3">
-          <input id="search-input" type="text" placeholder="Cari no. resit (REC) / no. invois (INV) / rujukan / nama pesakit..." oninput="renderTable()"
+        <!-- Filters + Table — satu kad bersambung (bukan dua kad berasingan) -->
+        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden">
+        <div class="p-4 flex flex-wrap items-center gap-3 border-b border-ink/10">
+          <input id="search-input" type="text" placeholder="Cari no. resit (REC) / no. invois (INV) / rujukan / nama pesakit..." oninput="onPayFilterChange()"
             class="flex-1 min-w-[200px] px-3 py-2 border border-ink/15 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-navy/20">
-          <select id="status-filter" onchange="renderTable()"
+          <select id="status-filter" onchange="onPayFilterChange()"
             class="px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-navy/20">
             <option value="">Semua Status</option>
             <option value="completed">Selesai</option>
             <option value="pending">Pending</option>
             <option value="failed">Gagal</option>
           </select>
-          <select id="method-filter" onchange="renderTable()"
+          <select id="method-filter" onchange="onPayFilterChange()"
             class="px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-navy/20">
             <option value="">Semua Kaedah</option>
             <option value="fpx">FPX</option>
@@ -84,19 +88,19 @@
             <option value="transfer">Transfer</option>
             <option value="manual">Manual</option>
           </select>
-          <select id="kind-filter" onchange="renderTable()"
+          <select id="kind-filter" onchange="onPayFilterChange()"
             class="px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-navy/20">
             <option value="">Semua Jenis</option>
             <option value="full">Bayaran Penuh</option>
             <option value="ansuran">Ansuran</option>
           </select>
-          <select id="period-filter" onchange="loadData()"
+          <select id="period-filter" onchange="activeKpiTile=null;loadData()"
             class="px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-navy/20">
             <option value="7">7 Hari</option>
-            <option value="30" selected>30 Hari</option>
+            <option value="30">30 Hari</option>
             <option value="90">90 Hari</option>
             <option value="365">1 Tahun</option>
-            <option value="all">Semua</option>
+            <option value="all" selected>Semua</option>
           </select>
           <button onclick="exportCsv()" data-rbac="payment.export" class="px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white hover:bg-ink/5 transition-colors flex items-center gap-1.5">
             📥 Export CSV
@@ -104,7 +108,7 @@
         </div>
 
         <!-- Table -->
-        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden">
+        <div>
           <div class="px-5 py-2 border-b border-ink/5 grid gap-3 items-center" style="grid-template-columns:minmax(110px,1.1fr) minmax(180px,2.2fr) minmax(80px,0.9fr) minmax(100px,1fr) minmax(90px,1fr) minmax(80px,0.9fr) minmax(90px,1fr) minmax(80px,0.9fr)">
             <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Receipt</span>
             <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Pesakit</span>
@@ -117,6 +121,8 @@
           </div>
           <div id="pay-table" class="divide-y divide-ink/5"></div>
           <div id="pay-empty" class="hidden px-5 py-12 text-center text-sm text-ink/35">Tiada pembayaran ditemui</div>
+          <div id="pay-pagination" class="hidden px-5 py-3 border-t border-ink/5 flex items-center justify-between gap-3 flex-wrap"></div>
+        </div>
         </div>
 
       </div>
@@ -273,6 +279,9 @@ let allCheckpoints = [];
 let allCardAuths = [];
 let allOrders = [];
 let allTimePayments = [];
+const PAY_PAGE_SIZE = 25;
+let payCurrentPage = 1;
+let activeKpiTile = null;
 
 function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function fmtRM(n) { return 'RM ' + Number(n||0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -334,7 +343,6 @@ function renderKpi() {
   const allTimeReal  = allTimePayments.filter(p => !p.is_test);
   const grandTotal   = allTimeReal.filter(p => p.status==='completed').reduce((s,p)=>s+Number(p.total||0),0);
 
-  const currentStatus = document.getElementById('status-filter')?.value || '';
   const card = (label, value, sub, icon, bg, clr, onClick, active) => {
     const body = `
       <div class="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${bg}">
@@ -351,14 +359,14 @@ function renderKpi() {
   document.getElementById('kpi-row').innerHTML = [
     card('Jumlah Keseluruhan', fmtRM(grandTotal), 'Kesemua pembayaran selesai (ISW)',
       'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
-      'bg-green-50','text-green-600', `pmtFilterStatus('completed', true)`, currentStatus === 'completed'),
+      'bg-green-50','text-green-600', `pmtFilterStatus('completed', true, 'grand-total')`, activeKpiTile === 'grand-total'),
     card('Kutipan Bulan Ini', fmtRM(monthTotal), 'Dari awal bulan',
       'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z',
-      'bg-[#6366f1]/10','text-[#6366f1]', `pmtFilterStatus('completed')`, currentStatus === 'completed'),
+      'bg-[#6366f1]/10','text-[#6366f1]', `pmtFilterStatus('completed', false, 'month')`, activeKpiTile === 'month'),
     card('Pending', pendingCount, pendingCount ? 'Perlu disahkan' : 'Tiada pending',
       'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
       pendingCount ? 'bg-amber-50' : 'bg-ink/5', pendingCount ? 'text-amber-500' : 'text-ink/30',
-      `pmtFilterStatus('pending')`, currentStatus === 'pending'),
+      `pmtFilterStatus('pending', false, 'pending')`, activeKpiTile === 'pending'),
     // Audit #F-23 (Tier 5) — invois psy_invoices (amaun tertunggak SEBELUM sebarang
     // percubaan bayaran, cth denda tidak hadir) — berasingan drpd "Pending" di atas
     // (tu percubaan bayaran/gateway yg dah dimulakan, konsep lain).
@@ -388,10 +396,16 @@ function toggleUnpaidInvoices() {
 }
 window.toggleUnpaidInvoices = toggleUnpaidInvoices;
 
-function pmtFilterStatus(status, forceAllPeriod) {
+function pmtFilterStatus(status, forceAllPeriod, tileKey) {
   const sel = document.getElementById('status-filter');
-  sel.value = (sel.value === status) ? '' : status;
-  if (forceAllPeriod && sel.value === status) {
+  const turningOn = sel.value !== status;
+  sel.value = turningOn ? status : '';
+  // Jejak jubin MANA yang ditekan (bukan setakat nilai status-filter) — "Jumlah
+  // Keseluruhan" & "Kutipan Bulan Ini" dua-dua guna status='completed' yang sama,
+  // tanpa ni dua-dua akan nampak "aktif" serentak walaupun cuma SATU ditekan.
+  activeKpiTile = turningOn ? (tileKey || null) : null;
+  payCurrentPage = 1;
+  if (forceAllPeriod && turningOn) {
     const per = document.getElementById('period-filter');
     if (per.value !== 'all') { per.value = 'all'; loadData(); return; }
   }
@@ -399,6 +413,14 @@ function pmtFilterStatus(status, forceAllPeriod) {
   renderTable();
 }
 window.pmtFilterStatus = pmtFilterStatus;
+
+function onPayFilterChange() {
+  activeKpiTile = null;
+  payCurrentPage = 1;
+  renderKpi();
+  renderTable();
+}
+window.onPayFilterChange = onPayFilterChange;
 
 function renderTable() {
   const search   = (document.getElementById('search-input').value || '').toLowerCase().trim();
@@ -420,15 +442,22 @@ function renderTable() {
 
   const tbody = document.getElementById('pay-table');
   const empty = document.getElementById('pay-empty');
+  const pager = document.getElementById('pay-pagination');
 
   if (!filtered.length) {
     tbody.innerHTML = '';
     empty.classList.remove('hidden');
+    pager.classList.add('hidden');
     return;
   }
   empty.classList.add('hidden');
 
-  tbody.innerHTML = filtered.map(p => {
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAY_PAGE_SIZE));
+  if (payCurrentPage > totalPages) payCurrentPage = totalPages;
+  const start = (payCurrentPage - 1) * PAY_PAGE_SIZE;
+  const pageRows = filtered.slice(start, start + PAY_PAGE_SIZE);
+
+  tbody.innerHTML = pageRows.map(p => {
     const pt   = patientLookup[p.patient_id];
     const name = pt?.name || '—';
     const mrn  = pt?.mrn || '';
@@ -456,7 +485,39 @@ function renderTable() {
       </div>
     </div>`;
   }).join('');
+
+  renderPayPagination(totalPages, filtered.length);
 }
+
+function renderPayPagination(totalPages, totalCount) {
+  const pager = document.getElementById('pay-pagination');
+  if (totalPages <= 1) { pager.classList.add('hidden'); return; }
+  pager.classList.remove('hidden');
+  const btn = (label, page, disabled, active) => `
+    <button ${disabled ? 'disabled' : `onclick="goToPayPage(${page})"`}
+      class="px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors
+        ${active ? 'bg-navy text-white border-navy' : disabled ? 'text-ink/25 border-ink/10 cursor-not-allowed' : 'text-ink/65 border-ink/15 bg-white hover:bg-ink/5'}">
+      ${label}
+    </button>`;
+  let pages = [];
+  if (totalPages <= 7) { pages = Array.from({ length: totalPages }, (_, i) => i + 1); }
+  else {
+    pages = [1];
+    if (payCurrentPage > 3) pages.push('…');
+    for (let p = Math.max(2, payCurrentPage - 1); p <= Math.min(totalPages - 1, payCurrentPage + 1); p++) pages.push(p);
+    if (payCurrentPage < totalPages - 2) pages.push('…');
+    pages.push(totalPages);
+  }
+  pager.innerHTML = `
+    <div class="text-xs text-ink/45">Muka surat ${payCurrentPage} / ${totalPages} — ${totalCount} rekod</div>
+    <div class="flex items-center gap-1.5 flex-wrap">
+      ${btn('‹ Sebelum', payCurrentPage - 1, payCurrentPage === 1, false)}
+      ${pages.map(p => p === '…' ? `<span class="px-2 text-xs text-ink/35">…</span>` : btn(p, p, false, p === payCurrentPage)).join('')}
+      ${btn('Lepas ›', payCurrentPage + 1, payCurrentPage === totalPages, false)}
+    </div>`;
+}
+function goToPayPage(p) { payCurrentPage = p; renderTable(); }
+window.goToPayPage = goToPayPage;
 
 async function copyPaymentLink(id) {
   const p = allPayments.find(x => x.id === id);
@@ -1028,9 +1089,9 @@ async function loadData() {
     // Audit #F-23 (Tier 5) — invois psy_invoices belum settle, kad KPI berasingan.
     // Medan penuh (bukan 'amount' je) — dipaparkan dalam panel "Invois Belum Bayar".
     window.db.from('psy_invoices').select('id, invoice_no, patient_id, description, amount').in('status', ['unpaid', 'partially_paid']).then(r => r, () => ({ data: [] })),
-    window.db.from('psy_kob_installment_checkpoints').select('status, due_date, autocharge_status, autocharge_payment_id'),
-    window.db.from('psy_kob_card_authorizations').select('status, detached_at'),
-    window.db.from('psy_orders').select('status, total'),
+    window.db.from('psy_kob_installment_checkpoints').select('patient_id, status, due_date, target_cumulative, autocharge_status, autocharge_payment_id'),
+    window.db.from('psy_kob_card_authorizations').select('patient_id, status, card_brand, card_last4, attached_at, detached_at'),
+    window.db.from('psy_orders').select('patient_id, order_ref, status, total, created_at'),
     // Jumlah Keseluruhan (kad KPI pertama) SENGAJA tak ikut period-filter di atas —
     // query berasingan, medan minimum sahaja (bukan '*') supaya murah.
     window.db.from('psy_payments').select('status, total, is_test').neq('payment_method', 'ghl'),
@@ -1055,6 +1116,7 @@ async function loadData() {
       .map(([id, p]) =>
         `<option value="${id}">${escHtml(p.name)} (${escHtml(p.mrn || '')})</option>`).join('');
 
+  payCurrentPage = 1;
   renderKpi();
   renderInstallmentStats();
   renderShopStats();
@@ -1065,6 +1127,19 @@ function addDays(dateStr, n) { const d = new Date(dateStr); d.setDate(d.getDate(
 
 // psy_orders — jadual BERASINGAN dari psy_payments (tiada FK antara dua-dua), jadi
 // ringkasan ni dikira terus dari psy_orders, bukan dari allPayments/realPayments.
+// Semua jubin Ansuran/Kedai boleh klik — buka #drill-panel kongsi dengan senarai
+// rekod sebenar di sebalik nombor tu. Klik jubin yang sama sekali lagi = tutup.
+let drillOpenKey = null;
+
+function tileBtn(label, value, cls, key) {
+  const active = drillOpenKey === key;
+  return `<button type="button" onclick="toggleDrillPanel('${key}')"
+      class="text-left rounded-xl border p-3 transition-colors hover:bg-ink/[0.03] ${active ? 'border-navy ring-1 ring-navy' : 'border-ink/10'}">
+    <div class="text-[10px] text-ink/45 font-medium uppercase tracking-wide">${label}</div>
+    <div class="text-xl font-bold mt-0.5 ${cls||'text-ink'}">${value}</div>
+  </button>`;
+}
+
 function renderShopStats() {
   const paidStatuses = ['paid', 'packed', 'shipped', 'delivered'];
   const paidOrders = allOrders.filter(o => paidStatuses.includes(o.status));
@@ -1072,17 +1147,11 @@ function renderShopStats() {
   const collected = paidOrders.reduce((s,o) => s + Number(o.total||0), 0);
   const pendingAmt = pendingOrders.reduce((s,o) => s + Number(o.total||0), 0);
 
-  const tile = (label, value, cls) => `
-    <div class="rounded-xl border border-ink/10 p-3">
-      <div class="text-[10px] text-ink/45 font-medium uppercase tracking-wide">${label}</div>
-      <div class="text-xl font-bold mt-0.5 ${cls||'text-ink'}">${value}</div>
-    </div>`;
-
   document.getElementById('shop-stats').innerHTML = [
-    tile('Terkumpul', fmtRM(collected), ''),
-    tile('Pending', fmtRM(pendingAmt), pendingOrders.length ? 'text-amber-600' : ''),
-    tile('Jumlah Pesanan', allOrders.length, ''),
-    tile('Belum Bayar', pendingOrders.length, pendingOrders.length ? 'text-amber-600' : ''),
+    tileBtn('Terkumpul', fmtRM(collected), '', 'shop-collected'),
+    tileBtn('Pending', fmtRM(pendingAmt), pendingOrders.length ? 'text-amber-600' : '', 'shop-pending'),
+    tileBtn('Jumlah Pesanan', allOrders.length, '', 'shop-all'),
+    tileBtn('Belum Bayar', pendingOrders.length, pendingOrders.length ? 'text-amber-600' : '', 'shop-pending'),
   ].join('');
 }
 
@@ -1093,19 +1162,82 @@ function renderInstallmentStats() {
   const overdue = allCheckpoints.filter(c => c.status === 'overdue' || (c.status === 'pending' && c.due_date < today)).length;
   const autoFailed = allCheckpoints.filter(c => c.autocharge_status === 'failed').length;
 
-  const tile = (label, value, cls) => `
-    <div class="rounded-xl border border-ink/10 p-3">
-      <div class="text-[10px] text-ink/45 font-medium uppercase tracking-wide">${label}</div>
-      <div class="text-xl font-bold mt-0.5 ${cls||'text-ink'}">${value}</div>
-    </div>`;
-
   document.getElementById('installment-stats').innerHTML = [
-    tile('Kad Tersimpan Aktif', activeCards),
-    tile('Due ≤7 Hari', dueSoon, dueSoon ? 'text-amber-600' : ''),
-    tile('Tertunggak', overdue, overdue ? 'text-red-600' : ''),
-    tile('Auto-charge Gagal', autoFailed, autoFailed ? 'text-red-600' : ''),
+    tileBtn('Kad Tersimpan Aktif', activeCards, '', 'cards-active'),
+    tileBtn('Due ≤7 Hari', dueSoon, dueSoon ? 'text-amber-600' : '', 'due-soon'),
+    tileBtn('Tertunggak', overdue, overdue ? 'text-red-600' : '', 'overdue'),
+    tileBtn('Auto-charge Gagal', autoFailed, autoFailed ? 'text-red-600' : '', 'autocharge-failed'),
   ].join('');
 }
+
+// Konfigurasi setiap kunci drill-down: tajuk + baris (data) + lajur (cara papar).
+function drillConfig(key) {
+  const today = new Date().toISOString().slice(0,10);
+  const pname = (id) => escHtml(patientLookup[id]?.name || '—');
+  const cols3 = [
+    { label: 'Pesakit', get: r => pname(r.patient_id) },
+    { label: 'Tarikh Due', get: r => fmtDate(r.due_date) },
+    { label: 'Sasaran Kumulatif', get: r => fmtRM(r.target_cumulative), right: true },
+  ];
+  const orderCols = [
+    { label: 'Pesakit', get: r => pname(r.patient_id) },
+    { label: 'No. Pesanan', get: r => escHtml(r.order_ref || '—') },
+    { label: 'Status', get: r => escHtml(r.status || '—') },
+    { label: 'Jumlah', get: r => fmtRM(r.total), right: true },
+  ];
+  switch (key) {
+    case 'cards-active':
+      return { title: 'Kad Tersimpan Aktif', rows: allCardAuths.filter(a => !a.detached_at), cols: [
+        { label: 'Pesakit', get: r => pname(r.patient_id) },
+        { label: 'Kad', get: r => escHtml(`${r.card_brand || '—'} •••• ${r.card_last4 || '----'}`) },
+        { label: 'Dilampir', get: r => fmtDate(r.attached_at) },
+      ]};
+    case 'due-soon':
+      return { title: 'Ansuran Due ≤7 Hari', rows: allCheckpoints.filter(c => c.status === 'pending' && c.due_date >= today && c.due_date <= addDays(today,7)), cols: cols3 };
+    case 'overdue':
+      return { title: 'Ansuran Tertunggak', rows: allCheckpoints.filter(c => c.status === 'overdue' || (c.status === 'pending' && c.due_date < today)), cols: cols3 };
+    case 'autocharge-failed':
+      return { title: 'Auto-charge Gagal', rows: allCheckpoints.filter(c => c.autocharge_status === 'failed'), cols: cols3 };
+    case 'shop-collected':
+      return { title: 'Kedai — Terkumpul', rows: allOrders.filter(o => ['paid','packed','shipped','delivered'].includes(o.status)), cols: orderCols };
+    case 'shop-pending':
+      return { title: 'Kedai — Pending/Belum Bayar', rows: allOrders.filter(o => o.status === 'pending'), cols: orderCols };
+    case 'shop-all':
+      return { title: 'Kedai — Semua Pesanan', rows: allOrders, cols: orderCols };
+    default:
+      return null;
+  }
+}
+
+function toggleDrillPanel(key) {
+  const panel = document.getElementById('drill-panel');
+  if (drillOpenKey === key) {
+    drillOpenKey = null;
+    panel.classList.add('hidden');
+    panel.innerHTML = '';
+    renderInstallmentStats(); renderShopStats();
+    return;
+  }
+  drillOpenKey = key;
+  const cfg = drillConfig(key);
+  panel.classList.remove('hidden');
+  if (!cfg || !cfg.rows.length) {
+    panel.innerHTML = `<div class="p-5 text-center text-sm text-ink/35">Tiada rekod</div>`;
+  } else {
+    panel.innerHTML = `
+      <div class="px-5 py-3 border-b border-ink/10 flex items-center justify-between">
+        <h3 class="text-sm font-bold text-ink">${escHtml(cfg.title)} <span class="text-ink/40 font-normal">(${cfg.rows.length})</span></h3>
+        <button onclick="toggleDrillPanel('${key}')" class="text-xs text-ink/50 hover:text-ink">✕ Tutup</button>
+      </div>
+      <div class="divide-y divide-ink/5 max-h-80 overflow-y-auto">
+        ${cfg.rows.map(r => `<div class="px-5 py-2.5 grid gap-3 text-sm" style="grid-template-columns:repeat(${cfg.cols.length},1fr)">
+          ${cfg.cols.map(c => `<div class="${c.right ? 'text-right font-semibold' : ''} truncate">${c.get(r)}</div>`).join('')}
+        </div>`).join('')}
+      </div>`;
+  }
+  renderInstallmentStats(); renderShopStats();
+}
+window.toggleDrillPanel = toggleDrillPanel;
 
 function subscribePaymentsRealtime() {
   if (!window.db || window._paymentsRtSub) return;
