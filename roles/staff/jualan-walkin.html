@@ -51,14 +51,6 @@
                 <input id="jw-buyer-phone" type="text" placeholder="Optional" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm focus:border-navy outline-none">
               </div>
               <div>
-                <label class="text-sm font-semibold text-ink">Kaedah Bayaran <span class="text-terracotta">*</span></label>
-                <select id="jw-method" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none">
-                  <option value="cash">Tunai</option>
-                  <option value="transfer">Pindahan Bank</option>
-                  <option value="other">Lain-lain</option>
-                </select>
-              </div>
-              <div>
                 <label class="text-sm font-semibold text-ink">Storage Location <span class="text-terracotta">*</span></label>
                 <select id="jw-location" onchange="onLocationChange()" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none"></select>
               </div>
@@ -67,6 +59,30 @@
                 <input id="jw-by" disabled class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-ink/5 text-ink/50">
               </div>
             </div>
+
+            <div>
+              <label class="text-sm font-semibold text-ink">Cara Bayaran <span class="text-terracotta">*</span></label>
+              <div class="flex gap-2 mt-1.5">
+                <label class="flex-1 flex items-center gap-2 px-3 py-2.5 border border-ink/15 rounded-xl text-sm cursor-pointer has-[:checked]:border-navy has-[:checked]:bg-navy-light/30">
+                  <input type="radio" name="jw-paymode" value="manual" checked onchange="onPayModeChange()">
+                  <span>Manual <span class="text-ink/40">(tolak stok serta-merta)</span></span>
+                </label>
+                <label class="flex-1 flex items-center gap-2 px-3 py-2.5 border border-ink/15 rounded-xl text-sm cursor-pointer has-[:checked]:border-navy has-[:checked]:bg-navy-light/30">
+                  <input type="radio" name="jw-paymode" value="hitpay" onchange="onPayModeChange()">
+                  <span>Link HitPay <span class="text-ink/40">(FPX/Kad/QR — tolak stok lepas bayar)</span></span>
+                </label>
+              </div>
+            </div>
+
+            <div id="jw-manual-method-wrap">
+              <label class="text-sm font-semibold text-ink">Kaedah Bayaran <span class="text-terracotta">*</span></label>
+              <select id="jw-method" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none">
+                <option value="cash">Tunai</option>
+                <option value="transfer">Pindahan Bank</option>
+                <option value="other">Lain-lain</option>
+              </select>
+            </div>
+
             <div>
               <label class="text-sm font-semibold text-ink">Catatan</label>
               <textarea id="jw-notes" rows="2" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm focus:border-navy outline-none resize-none" placeholder="Optional"></textarea>
@@ -102,6 +118,15 @@
             </div>
           </div>
 
+          <div id="jw-link-result" class="hidden p-5 border-t border-ink/8 bg-[#6366f1]/5">
+            <div class="text-xs font-semibold text-[#6366f1] mb-1.5">🔗 Link bayaran dijana — kongsi dengan pembeli (WhatsApp/tunjuk QR)</div>
+            <div class="flex items-center gap-2">
+              <div id="jw-link-url" class="flex-1 text-xs font-mono text-ink/70 bg-white border border-ink/10 rounded-lg px-3 py-2 truncate"></div>
+              <button onclick="copyWalkinLink()" class="px-3 py-2 bg-[#6366f1] text-white text-xs font-semibold rounded-lg hover:bg-[#6366f1]/80 whitespace-nowrap">Salin Link</button>
+            </div>
+            <div class="text-[11px] text-ink/45 mt-1.5">Stok akan ditolak automatik sebaik pembeli bayar — belum ditolak sekarang.</div>
+          </div>
+
           <div class="p-6 border-t border-ink/8 flex justify-end gap-2">
             <button onclick="cancelForm()" class="px-4 py-2.5 border border-ink/20 rounded-xl text-sm font-semibold bg-white hover:bg-ink/5">Batal</button>
             <button id="jw-submit-btn" onclick="saveWalkinSale()" data-rbac="inventory.create" class="bg-navy text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-dark">✓ Sahkan &amp; Rekod Jualan</button>
@@ -121,6 +146,7 @@
                   <th class="px-4 pb-2 pt-3">Pembeli</th>
                   <th class="px-4 pb-2 pt-3">Resit</th>
                   <th class="px-4 pb-2 pt-3 text-right">Jumlah</th>
+                  <th class="px-4 pb-2 pt-3">Status</th>
                   <th class="px-5 pb-2 pt-3">Direkod Oleh</th>
                 </tr>
               </thead>
@@ -261,25 +287,102 @@ function cancelForm() {
 }
 window.cancelForm = cancelForm;
 
+function onPayModeChange() {
+  const mode = document.querySelector('input[name="jw-paymode"]:checked').value;
+  document.getElementById('jw-manual-method-wrap').classList.toggle('hidden', mode === 'hitpay');
+  const btn = document.getElementById('jw-submit-btn');
+  if (mode === 'hitpay') {
+    btn.textContent = '🔗 Jana Link Bayaran';
+    btn.onclick = generateWalkinLink;
+  } else {
+    btn.textContent = '✓ Sahkan & Rekod Jualan';
+    btn.onclick = saveWalkinSale;
+  }
+  document.getElementById('jw-link-result').classList.add('hidden');
+}
+window.onPayModeChange = onPayModeChange;
+
+function validateLineItemsForSubmit(locationId) {
+  if (!locationId) { banner(iswL('Sila pilih Storage Location', 'Please select a Storage Location'), 'error'); return false; }
+  if (!lineItems.length) { banner(iswL('Sila tambah sekurang-kurangnya satu produk', 'Please add at least one product'), 'error'); return false; }
+  for (const r of lineItems) {
+    if (!r.productId) { banner(iswL('Sila pilih produk untuk setiap baris', 'Please select a product for every row'), 'error'); return false; }
+    if (!r.qty || r.qty <= 0) { banner(iswL('Kuantiti setiap produk mesti lebih daripada 0', 'Quantity must be more than 0 for every product'), 'error'); return false; }
+    const prod = sellableProducts.find(p => p.id === r.productId);
+    const avail = prod ? availableQty(prod.inventoryItemId, locationId) : 0;
+    if (r.qty > avail) {
+      banner(`${r.productName}: ${iswL('kuantiti melebihi stok tersedia di lokasi ini', 'quantity exceeds available stock at this location')} (${avail})`, 'error');
+      return false;
+    }
+  }
+  return true;
+}
+
+// Link HitPay — stok TAK ditolak sekarang (hanya lepas payments-webhook sahkan
+// bayaran, lihat item.type==='walkin_sale' dalam fulfillOrder()). Pengesahan
+// stok di sini sekadar semakan lembut (elak jana link utk stok yg dah tak cukup).
+async function generateWalkinLink() {
+  const buyerName = document.getElementById('jw-buyer-name').value.trim();
+  const buyerPhone = document.getElementById('jw-buyer-phone').value.trim();
+  const notes = document.getElementById('jw-notes').value.trim();
+  const locationId = document.getElementById('jw-location').value;
+  if (!validateLineItemsForSubmit(locationId)) return;
+
+  const btn = document.getElementById('jw-submit-btn');
+  btn.disabled = true; btn.textContent = iswL('Menjana...', 'Generating...');
+  try {
+    const { data, error } = await window.db.functions.invoke('payments-initiate-walkin', {
+      body: {
+        buyerName: buyerName || null, buyerPhone: buyerPhone || null,
+        items: lineItems.map(r => ({ productId: r.productId, name: r.productName, price: r.price, qty: r.qty })),
+        notes: notes || null,
+        // Pembeli walk-in TIADA akaun/sesi (bukan staff) — destinasi lepas bayar
+        // MESTI page awam (sama pattern payments-kob-initiate di kob-detail.html),
+        // bukan halaman staff ni (akan disekat authGuard kalau pembeli yg buka).
+        returnUrl: `${location.origin}/roles/patient/payment-receipt.html`,
+      },
+    });
+    if (error) throw new Error(error.message || 'Edge function error');
+    if (data?.error) throw new Error(data.error);
+
+    document.getElementById('jw-link-url').textContent = data.checkoutUrl;
+    document.getElementById('jw-link-result').classList.remove('hidden');
+    window.__jwLastLink = data.checkoutUrl;
+    banner(`${iswL('Link dijana', 'Link generated')} — ${data.receiptRef} ✅`);
+    resetForm();
+    await loadRecentSales();
+  } catch (e) {
+    banner(iswL('Gagal jana link: ', 'Failed to generate link: ') + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = '🔗 Jana Link Bayaran';
+  }
+}
+window.generateWalkinLink = generateWalkinLink;
+
+function copyWalkinLink() {
+  const url = document.getElementById('jw-link-url').textContent;
+  if (!url) return;
+  navigator.clipboard?.writeText(url).then(() => banner(iswL('Link disalin', 'Link copied')))
+    .catch(() => prompt(iswL('Salin link bayaran:', 'Copy payment link:'), url));
+}
+window.copyWalkinLink = copyWalkinLink;
+
+let recentLinkById = {};
+function copyRecentLink(paymentId) {
+  const url = recentLinkById[paymentId];
+  if (!url) return;
+  navigator.clipboard?.writeText(url).then(() => banner(iswL('Link disalin', 'Link copied')))
+    .catch(() => prompt(iswL('Salin link bayaran:', 'Copy payment link:'), url));
+}
+window.copyRecentLink = copyRecentLink;
+
 async function saveWalkinSale() {
   const buyerName = document.getElementById('jw-buyer-name').value.trim();
   const buyerPhone = document.getElementById('jw-buyer-phone').value.trim();
   const method = document.getElementById('jw-method').value;
   const notes = document.getElementById('jw-notes').value.trim();
   const locationId = document.getElementById('jw-location').value;
-
-  if (!locationId) { banner(iswL('Sila pilih Storage Location', 'Please select a Storage Location'), 'error'); return; }
-  if (!lineItems.length) { banner(iswL('Sila tambah sekurang-kurangnya satu produk', 'Please add at least one product'), 'error'); return; }
-  for (const r of lineItems) {
-    if (!r.productId) { banner(iswL('Sila pilih produk untuk setiap baris', 'Please select a product for every row'), 'error'); return; }
-    if (!r.qty || r.qty <= 0) { banner(iswL('Kuantiti setiap produk mesti lebih daripada 0', 'Quantity must be more than 0 for every product'), 'error'); return; }
-    const prod = sellableProducts.find(p => p.id === r.productId);
-    const avail = prod ? availableQty(prod.inventoryItemId, locationId) : 0;
-    if (r.qty > avail) {
-      banner(`${r.productName}: ${iswL('kuantiti melebihi stok tersedia di lokasi ini', 'quantity exceeds available stock at this location')} (${avail})`, 'error');
-      return;
-    }
-  }
+  if (!validateLineItemsForSubmit(locationId)) return;
 
   const loc = allLocations.find(l => l.id === locationId);
 
@@ -344,10 +447,20 @@ function resetForm() {
   addLineRow();
 }
 
+// Selepas jana link HitPay — form ditutup/reset (lihat generateWalkinLink())
+// tapi KEKALKAN panel link (jangan toggle ia hidden di sini) supaya staff masih
+// nampak link yang baru dijana utk disalin.
+
+const SALE_STATUS_CHIP = {
+  completed: '<span class="text-xs font-semibold text-green-dark whitespace-nowrap">✅ Selesai</span>',
+  pending: '<span class="text-xs font-semibold text-amber-700 whitespace-nowrap">⏳ Menunggu Bayaran</span>',
+  failed: '<span class="text-xs font-semibold text-terracotta whitespace-nowrap">✕ Gagal</span>',
+};
+
 async function loadRecentSales() {
   const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
   const { data } = await window.db.from('psy_payments')
-    .select('id, receipt_no, receipt_ref, buyer_name, total, notes, created_at, recorded_by')
+    .select('id, receipt_no, receipt_ref, buyer_name, total, notes, created_at, recorded_by, status, checkout_url')
     .is('patient_id', null).eq('paid_for_type', 'product')
     .gte('created_at', todayStart.toISOString())
     .order('created_at', { ascending: false });
@@ -362,6 +475,9 @@ async function loadRecentSales() {
     (staff || []).forEach(s => { staffNameById[s.id] = s.full_name; });
   }
 
+  recentLinkById = {};
+  rows.forEach(r => { if (r.checkout_url) recentLinkById[r.id] = r.checkout_url; });
+
   document.getElementById('jw-recent-empty').classList.toggle('hidden', rows.length > 0);
   document.getElementById('jw-recent-tbody').innerHTML = rows.map(r => `
     <tr class="border-b border-ink/5 last:border-0">
@@ -369,6 +485,10 @@ async function loadRecentSales() {
       <td class="px-4 py-2.5 text-sm text-ink/80">${escHtml(r.buyer_name) || '—'}</td>
       <td class="px-4 py-2.5 text-xs font-mono text-ink/70 whitespace-nowrap">${escHtml(r.receipt_no || r.receipt_ref)}</td>
       <td class="px-4 py-2.5 text-sm text-right font-semibold text-ink whitespace-nowrap">RM${Number(r.total || 0).toFixed(2)}</td>
+      <td class="px-4 py-2.5">
+        ${SALE_STATUS_CHIP[r.status] || escHtml(r.status)}
+        ${r.status === 'pending' && r.checkout_url ? `<button type="button" onclick="copyRecentLink('${r.id}')" class="ml-2 text-[11px] font-semibold text-[#6366f1] hover:underline whitespace-nowrap">🔗 Salin Link</button>` : ''}
+      </td>
       <td class="px-5 py-2.5 text-sm text-ink/70 whitespace-nowrap">${escHtml(staffNameById[r.recorded_by]) || '—'}</td>
     </tr>`).join('');
 }

@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
     if (!ref) return json({ error: 'ref diperlukan' }, 400)
 
     const { data: rows } = await admin.from('psy_payments')
-      .select('status, total, items, paid_at, created_at, patient_id, gateway_provider, payment_method')
+      .select('status, total, items, paid_at, created_at, patient_id, buyer_name, gateway_provider, payment_method')
       .eq('receipt_ref', ref).limit(1)
     const p = rows?.[0]
     if (!p) return json({ found: false })
@@ -54,7 +54,13 @@ Deno.serve(async (req) => {
       patientName = ptRows?.[0]?.full_name || null
     }
 
-    const itemTitle = Array.isArray(p.items) && p.items[0]?.title ? String(p.items[0].title) : null
+    // Jualan walk-in (patient_id null) — tiada nama pesakit, guna buyer_name
+    // (psy_payments.buyer_name) supaya page resit awam ni tak papar "—" je.
+    const buyerName: string | null = p.buyer_name || null
+
+    // itemTitle: cart pesakit (package/shop_order/dll) simpan `.title`; jualan
+    // walk-in (payments-initiate-walkin) simpan `.name` — sokong dua-dua.
+    const itemTitle = Array.isArray(p.items) && p.items[0] ? String(p.items[0].title || p.items[0].name || '') || null : null
 
     // Resit PDF (dijana & disimpan oleh payments-webhook semasa fulfill, path
     // `${receipt_ref}.pdf` dalam bucket 'receipts') — jana semula signed URL
@@ -74,6 +80,7 @@ Deno.serve(async (req) => {
       total: p.total,
       itemTitle,
       patientName,
+      buyerName,
       paidAt: p.paid_at || p.created_at,
       pdfUrl,
       method: p.gateway_provider || p.payment_method || null,

@@ -89,7 +89,7 @@ var hitpay = {
   // Panggilan BERASINGAN ke GET /payment-requests/{id} (respons JSON penuh,
   // ada array `payments[]`, setiap satu ada `payment_type`). Dipanggil SELEPAS
   // webhook disahkan — best-effort, kegagalan di sini TAK patut gagalkan
-  // fulfillment bayaran.
+  // fulfillment bayaran (lihat pemanggil, payments-webhook/index.ts).
   async getPaymentChannel(gatewayRef) {
     const apiKey = Deno.env.get("HITPAY_API_KEY");
     if (!apiKey || !gatewayRef) return { channel: null, raw: null };
@@ -935,6 +935,12 @@ var json = (b, s = 200) => new Response(JSON.stringify(b), { status: s, headers:
 function fillTemplate(tpl, vars) {
   return Object.entries(vars).reduce((s, [k, v]) => s.split(`{{${k}}}`).join(v ?? "").split(`{${k}}`).join(v ?? ""), tpl || "").replace(/\n{3,}/g, "\n\n").trim();
 }
+async function auditLog(svc, action, target, meta) {
+  try {
+    await svc.from("psy_audit_log").insert({ actor_name: "Gateway (HitPay)", actor_role: "system", action, target, meta });
+  } catch (_) {
+  }
+}
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "POST sahaja" }, 405);
@@ -963,6 +969,7 @@ Deno.serve(async (req) => {
         } catch (e) {
           console.warn("payments-webhook: notifyPaymentFailed gagal \u2014", e.message);
         }
+        await auditLog(admin, "payment.gateway_failed", payment.id, { receipt_ref: payment.receipt_ref, gateway_status: result.status });
       }
       return json({ ok: true, note: "ditanda failed" });
     }
@@ -1001,8 +1008,9 @@ Deno.serve(async (req) => {
         if (channel) await admin.from("psy_payments").update({ gateway_channel: channel }).eq("id", payment.id);
       }
     } catch (e) {
-      console.warn("payments-webhook: getPaymentChannel gagal —", e.message);
+      console.warn("payments-webhook: getPaymentChannel gagal \u2014", e.message);
     }
+    await auditLog(admin, "payment.gateway_completed", payment.id, { receipt_ref: payment.receipt_ref, amount: payment.total, provider: result.status });
     if (payment.user_id) {
       try {
         await admin.from("psy_notifications").insert({
@@ -1034,12 +1042,13 @@ var PAYMENT_ITEM_LABELS = {
   kob: () => "Yuran KYC/KOB",
   kob_package: () => "Pakej KOB",
   kob_deposit: (item) => item.mode === "installment" ? "Deposit Ansuran Pakej" : "Bayaran Penuh Pakej (KOB)",
-  kob_installment_topup: () => "Ansuran Pakej (Top-up)"
+  kob_installment_topup: () => "Ansuran Pakej (Top-up)",
+  walkin_sale: () => "Jualan Walk-in"
 };
-async function notifyStaffPaymentReceived(admin, patientId, labels, total, receiptRef) {
+async function notifyStaffPaymentReceived(admin, patientId, labels, total, receiptRef, buyerName) {
   if (!labels.length) return;
   const targets = /* @__PURE__ */ new Set();
-  let patientLabel = "Pesakit";
+  let patientLabel = buyerName || "Pesakit";
   if (patientId) {
     const { data: pt } = await admin.from("psy_patients").select("coach_id, full_name, mrn").eq("id", patientId).limit(1);
     const p = pt?.[0];
@@ -1056,7 +1065,9 @@ async function notifyStaffPaymentReceived(admin, patientId, labels, total, recei
         type: "payment",
         title: "Pembayaran Diterima \u{1F4B3}",
         body,
-        link: patientId ? `../staff/patient-hub.html?id=${patientId}` : "payment-admin.html"
+        // patientId null = jualan walk-in (tiada akaun pesakit) — bawa staff ke
+        // Payment Management (papar SEMUA bayaran) bukan Patient Payment (khusus pesakit).
+        link: patientId ? `../staff/patient-hub.html?id=${patientId}` : "payment-ledger.html"
       });
     } catch {
     }
@@ -1306,10 +1317,16 @@ async function fulfillOrder(admin, payment) {
         }
       } catch (_) {
       }
+    } else if (item.type === "walkin_sale") {
+      try {
+        await deductWalkinStock(admin, item.items, payment);
+      } catch (e) {
+        console.warn("[payments-webhook] gagal tolak stok Inventori (walk-in):", e);
+      }
     }
   }
   try {
-    await notifyStaffPaymentReceived(admin, patientId, staffLabels, payment.total, receiptRef);
+    await notifyStaffPaymentReceived(admin, patientId, staffLabels, payment.total, receiptRef, payment.buyer_name);
   } catch (_) {
   }
 }
@@ -1345,6 +1362,44 @@ async function deductShopStock(admin, lines, order) {
       reference_id: order.id,
       reference_label: order.order_ref,
       notes: "Order Shop dibayar",
+      actor_id: null,
+      actor_name: "Sistem (pembayaran)"
+    });
+  }
+}
+async function deductWalkinStock(admin, lines, payment) {
+  if (!Array.isArray(lines)) return;
+  const { data: invs } = await admin.from("psy_inventory_items").select("id, name, source_type");
+  const refLabel = payment.receipt_no || payment.receipt_ref;
+  for (const line of lines) {
+    const qty = Math.max(0.01, Number(line?.qty) || 0);
+    if (!line?.id || !qty) continue;
+    const { data: prod } = await admin.from("psy_products").select("name, inventory_item_id").eq("id", line.id).maybeSingle();
+    if (!prod) continue;
+    const inv = (invs || []).find((i) => i.id === prod.inventory_item_id);
+    if (!inv) {
+      console.warn("[payments-webhook] tiada item Inventori utk produk", prod.name);
+      continue;
+    }
+    const { data: rows } = await admin.from("psy_inventory_stock_by_location").select("id, location_id, qty_in_stock").eq("item_id", inv.id).order("qty_in_stock", { ascending: false }).limit(1);
+    const row = rows?.[0];
+    if (!row) {
+      console.warn("[payments-webhook] item Inventori tiada stok berlokasi:", inv.name);
+      continue;
+    }
+    const balanceAfter = Math.max(0, Number(row.qty_in_stock) - qty);
+    await admin.from("psy_inventory_stock_by_location").update({ qty_in_stock: balanceAfter, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", row.id);
+    await admin.from("psy_stock_movements").insert({
+      item_id: inv.id,
+      item_name: inv.name,
+      location_id: row.location_id,
+      movement_type: "out",
+      qty: -qty,
+      balance_after: balanceAfter,
+      reference_type: "walkin_sale",
+      reference_id: payment.id,
+      reference_label: refLabel,
+      notes: "Jualan Walk-in dibayar (HitPay)",
       actor_id: null,
       actor_name: "Sistem (pembayaran)"
     });

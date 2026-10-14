@@ -196,12 +196,13 @@ const PAYMENT_ITEM_LABELS: Record<string, (item: any) => string> = {
   kob_package: () => 'Pakej KOB',
   kob_deposit: (item) => item.mode === 'installment' ? 'Deposit Ansuran Pakej' : 'Bayaran Penuh Pakej (KOB)',
   kob_installment_topup: () => 'Ansuran Pakej (Top-up)',
+  walkin_sale: () => 'Jualan Walk-in',
 }
 
-async function notifyStaffPaymentReceived(admin: any, patientId: string | null, labels: string[], total: number, receiptRef: string) {
+async function notifyStaffPaymentReceived(admin: any, patientId: string | null, labels: string[], total: number, receiptRef: string, buyerName?: string | null) {
   if (!labels.length) return
   const targets = new Set<string>()
-  let patientLabel = 'Pesakit'
+  let patientLabel = buyerName || 'Pesakit'
   if (patientId) {
     const { data: pt } = await admin.from('psy_patients').select('coach_id, full_name, mrn').eq('id', patientId).limit(1)
     const p = pt?.[0]
@@ -215,7 +216,9 @@ async function notifyStaffPaymentReceived(admin: any, patientId: string | null, 
     try {
       await admin.from('psy_notifications').insert({
         user_id: uid, type: 'payment', title: 'Pembayaran Diterima 💳', body,
-        link: patientId ? `../staff/patient-hub.html?id=${patientId}` : 'payment-admin.html',
+        // patientId null = jualan walk-in (tiada akaun pesakit) — bawa staff ke
+        // Payment Management (papar SEMUA bayaran) bukan Patient Payment (khusus pesakit).
+        link: patientId ? `../staff/patient-hub.html?id=${patientId}` : 'payment-ledger.html',
       })
     } catch {}
   }
@@ -474,11 +477,18 @@ async function fulfillOrder(admin: any, payment: any) {
           })
         }
       } catch (_) { /* nota: notifikasi gagal tidak halang fulfillment */ }
+
+    } else if (item.type === 'walkin_sale') {
+      // Jualan walk-in (pembeli bukan pesakit) — tiada "order" berasingan macam
+      // shop_order, baris psy_payments SENDIRI ialah rekod jualan. Tolak stok
+      // Inventori sahaja, guna receipt payment sebagai rujukan.
+      try { await deductWalkinStock(admin, item.items, payment) }
+      catch (e) { console.warn('[payments-webhook] gagal tolak stok Inventori (walk-in):', e) }
     }
   }
 
   try {
-    await notifyStaffPaymentReceived(admin, patientId, staffLabels, payment.total, receiptRef)
+    await notifyStaffPaymentReceived(admin, patientId, staffLabels, payment.total, receiptRef, payment.buyer_name)
   } catch (_) { /* nota: notifikasi gagal tidak halang fulfillment */ }
 }
 
@@ -512,6 +522,42 @@ async function deductShopStock(admin: any, lines: any[], order: { id: string; or
       movement_type: 'out', qty: -qty, balance_after: balanceAfter,
       reference_type: 'shop_order', reference_id: order.id, reference_label: order.order_ref,
       notes: 'Order Shop dibayar', actor_id: null, actor_name: 'Sistem (pembayaran)',
+    })
+  }
+}
+
+// Tolak stok Inventori bagi jualan walk-in (pembeli bukan pesakit) yang baru
+// dibayar via HitPay. Sama corak dgn deductShopStock() — beza: baris
+// psy_payments SENDIRI ialah rekod jualan (tiada psy_orders), dan line.id
+// ialah psy_products.id (UUID) terus — dicipta oleh payments-initiate-walkin,
+// bukan slug product_id macam troli Shop.
+async function deductWalkinStock(admin: any, lines: any[], payment: { id: string; receipt_no?: string | null; receipt_ref: string }) {
+  if (!Array.isArray(lines)) return
+  const { data: invs } = await admin.from('psy_inventory_items').select('id, name, source_type')
+  const refLabel = payment.receipt_no || payment.receipt_ref
+  for (const line of lines) {
+    const qty = Math.max(0.01, Number(line?.qty) || 0)
+    if (!line?.id || !qty) continue
+    const { data: prod } = await admin.from('psy_products')
+      .select('name, inventory_item_id').eq('id', line.id).maybeSingle()
+    if (!prod) continue
+    const inv = (invs || []).find((i: any) => i.id === prod.inventory_item_id)
+    if (!inv) { console.warn('[payments-webhook] tiada item Inventori utk produk', prod.name); continue }
+
+    const { data: rows } = await admin.from('psy_inventory_stock_by_location')
+      .select('id, location_id, qty_in_stock').eq('item_id', inv.id)
+      .order('qty_in_stock', { ascending: false }).limit(1)
+    const row = rows?.[0]
+    if (!row) { console.warn('[payments-webhook] item Inventori tiada stok berlokasi:', inv.name); continue }
+
+    const balanceAfter = Math.max(0, Number(row.qty_in_stock) - qty)
+    await admin.from('psy_inventory_stock_by_location')
+      .update({ qty_in_stock: balanceAfter, updated_at: new Date().toISOString() }).eq('id', row.id)
+    await admin.from('psy_stock_movements').insert({
+      item_id: inv.id, item_name: inv.name, location_id: row.location_id,
+      movement_type: 'out', qty: -qty, balance_after: balanceAfter,
+      reference_type: 'walkin_sale', reference_id: payment.id, reference_label: refLabel,
+      notes: 'Jualan Walk-in dibayar (HitPay)', actor_id: null, actor_name: 'Sistem (pembayaran)',
     })
   }
 }
