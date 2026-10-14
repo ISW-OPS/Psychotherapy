@@ -290,7 +290,7 @@ const isSuperAdmin = () => window.currentUser?.staff_role === 'super_admin';
 
 // payment_method='gateway' (HitPay) tak sepadan mana-mana label di bawah kalau
 // tak diasingkan — fallback dulu papar nilai mentah "gateway", mengelirukan.
-const METHOD_LABEL = { fpx:'FPX', card:'Kad', transfer:'Transfer', ghl:'Maju Jaya', manual:'Manual', gateway:'HitPay' };
+const METHOD_LABEL = { fpx:'FPX', card:'Kad', transfer:'Transfer', manual:'Manual', gateway:'HitPay' };
 // Channel SEBENAR HitPay (psy_payments.gateway_channel, diisi selepas webhook —
 // lihat payments-webhook/index.ts). Rekod LAMA (sebelum migration 14 Okt 2026)
 // tiada medan ni, fallback kekal papar "HitPay" je.
@@ -322,16 +322,16 @@ function renderKpi() {
   const monthStart = today.slice(0,8) + '01';
 
   // is_test DIKECUALIKAN drpd semua KPI kewangan (audit #B1-23) — bayaran ujian/demo
-  // tak patut cemari laporan kutipan sebenar. payment_method='ghl' turut dikecualikan
-  // (13 Okt 2026) — rekod tu sync dari Maju Jaya, bukan kutipan ISW sebenar; biar KPI
-  // ni tulen ISW sahaja. Rekod 'ghl' masih boleh dicari/ditapis dalam jadual di bawah.
-  const realPayments = allPayments.filter(p => !p.is_test && p.payment_method !== 'ghl');
+  // tak patut cemari laporan kutipan sebenar. payment_method='ghl' (Maju Jaya) tak
+  // perlu ditapis di sini lagi — dah dikecualikan terus di query (loadData), halaman
+  // ni 100% ISW, tiada kaitan GHL langsung.
+  const realPayments = allPayments.filter(p => !p.is_test);
   const monthTotal   = realPayments.filter(p => p.status==='completed' && p.paid_at >= monthStart).reduce((s,p)=>s+Number(p.total||0),0);
   const pendingCount = realPayments.filter(p => p.status==='pending').length;
   // Jumlah Keseluruhan dikira dari allTimePayments (muat tanpa had tempoh, lihat
   // loadData) — SENGAJA tak ikut period-filter di atas, supaya kad ni sentiasa
   // tunjuk jumlah betul-betul menyeluruh, bukan terhad 30/90/365 hari dipilih.
-  const allTimeReal  = allTimePayments.filter(p => !p.is_test && p.payment_method !== 'ghl');
+  const allTimeReal  = allTimePayments.filter(p => !p.is_test);
   const grandTotal   = allTimeReal.filter(p => p.status==='completed').reduce((s,p)=>s+Number(p.total||0),0);
 
   const currentStatus = document.getElementById('status-filter')?.value || '';
@@ -493,7 +493,6 @@ function openDetail(id) {
       <div><div class="text-xs text-ink/45">Pesakit</div><div class="font-semibold">${escHtml(pt?.name || '—')}</div><div class="text-xs text-ink/50">${escHtml(pt?.mrn || '')}</div></div>
       <div><div class="text-xs text-ink/45">Tarikh</div><div class="font-semibold">${fmtDate(p.paid_at || p.created_at)}</div><div class="text-xs text-ink/50">${fmtTime(p.paid_at || p.created_at)}</div></div>
       <div><div class="text-xs text-ink/45">Kaedah</div><div class="font-semibold">${escHtml(kaedahLabel(p))}</div></div>
-      <div><div class="text-xs text-ink/45">Ref Maju Jaya</div><div class="font-mono text-xs">${escHtml(p.ghl_transaction_id || '—')}</div></div>
     </div>
     <div id="status-timeline-${p.id}"></div>
     ${items.length ? `<div>
@@ -1034,7 +1033,7 @@ async function loadData() {
     window.db.from('psy_orders').select('status, total'),
     // Jumlah Keseluruhan (kad KPI pertama) SENGAJA tak ikut period-filter di atas —
     // query berasingan, medan minimum sahaja (bukan '*') supaya murah.
-    window.db.from('psy_payments').select('status, total, is_test, payment_method'),
+    window.db.from('psy_payments').select('status, total, is_test').neq('payment_method', 'ghl'),
   ]);
 
   allPayments = payRes.data || [];
