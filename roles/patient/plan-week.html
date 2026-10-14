@@ -382,13 +382,13 @@ function getWeekCoachingItems() {
   return items;
 }
 
-// Auto-simplify paparan Bekalan (audit #144c) — sama logik dgn roles/staff/plan-week.html:
-// kalau senarai supplies SATU minggu (≥3 item) kesemuanya tergolong dlm SATU kit prosedur
-// (psy_procedure_kits.items), papar collapse jadi SATU baris "🧰 Nama Prosedur (N item)" dgn
-// "Lihat butiran" utk expand. Padan ikut NAMA (bukan item_id, sbb templat kit selalunya
+// Sembunyi butiran Bekalan dari pesakit (permintaan management Okt 2026): kalau senarai
+// supplies SATU minggu (≥3 item) kesemuanya tergolong dlm SATU kit prosedur (psy_procedure_kits.items,
+// cth IV Drip Setup → IV Line/Gloves/Alcohol Swab/Cotton Ball/...), pesakit HANYA nampak
+// "🧰 Nama Prosedur" — tiada "Lihat butiran", tiada senarai item individu (staff sahaja nampak
+// penuh di roles/staff/plan-week.html). Padan ikut NAMA (bukan item_id, sbb templat kit selalunya
 // item_id NULL). Tak match mana2 kit → kekal papar satu-satu macam biasa.
 let procKitsCache = null;
-let kitExpandState = {};
 async function loadProcedureKitsCache() {
   if (procKitsCache) return procKitsCache;
   const { data, error } = await window.db.from('psy_procedure_kits').select('id, name, items').eq('is_active', true);
@@ -409,12 +409,6 @@ function matchProcedureKit(values, type) {
   if (names.length < 3) return null;
   return procKitsCache.find(k => names.every(n => k.names.has(n))) || null;
 }
-function toggleKitExpand(key) {
-  kitExpandState[key] = !kitExpandState[key];
-  renderCoachingSchedule();
-}
-window.toggleKitExpand = toggleKitExpand;
-
 function renderCoachingSchedule() {
   const items = getWeekCoachingItems();
   const section = document.getElementById('coaching-schedule-section');
@@ -473,17 +467,13 @@ function renderCoachingSchedule() {
       </div>`;
     }).join('');
 
-    // Kit prosedur padan (≥3 item, SATU kit sahaja) — collapse default utk pesakit,
-    // "Lihat butiran" utk expand (audit #144c).
+    // Kit prosedur padan (≥3 item, SATU kit sahaja) — pesakit nampak nama kit sahaja,
+    // tiada butiran item (cth IV Drip: cotton ball/alcohol swab/gloves disembunyikan).
     const matchedKit = matchProcedureKit(values, type);
-    const kitKey = `${prefix}_${type}_kit`;
-    const kitExpanded = !!kitExpandState[kitKey];
     const body = matchedKit
-      ? `<div class="flex items-center justify-between gap-2 bg-white/70 rounded-lg px-2.5 py-2 border border-ink/10">
-          <span class="text-xs font-semibold text-ink/80 min-w-0 truncate">🧰 ${escHtml(matchedKit.name)} <span class="text-ink/40 font-normal">(${values.length} item)</span></span>
-          <button type="button" onclick="toggleKitExpand('${kitKey}')" class="text-[11px] font-semibold text-navy hover:underline flex-shrink-0">${kitExpanded ? 'Sembunyikan' : 'Lihat butiran'}</button>
-        </div>
-        ${kitExpanded ? `<div class="space-y-2 mt-2">${rows}</div>` : ''}`
+      ? `<div class="flex items-center gap-2 bg-white/70 rounded-lg px-2.5 py-2 border border-ink/10">
+          <span class="text-xs font-semibold text-ink/80 min-w-0 truncate">🧰 ${escHtml(matchedKit.name)}</span>
+        </div>`
       : `<div class="space-y-2">${rows}</div>`;
 
     return `<div class="rounded-lg ${bgClass} border p-3">
@@ -951,7 +941,7 @@ async function uploadPatientWeekDoc(input) {
   try {
     let uploaded = 0;
     for (const f of files) {
-      if (f.size > 20 * 1024 * 1024) { banner(`${f.name} melebihi 20MB`, 'error'); continue; }
+      if (f.size > 50 * 1024 * 1024) { banner(`${f.name} melebihi 50MB`, 'error'); continue; }
       const path = `patient/${patientRecord.id}/week/${activePlan.id}/${weekNumber}/${Date.now()}_${f.name.replace(/[^a-zA-Z0-9.-]/g,'_')}`;
       const { error } = await window.db.storage.from('medical-reports').upload(path, f);
       if (error) throw error;

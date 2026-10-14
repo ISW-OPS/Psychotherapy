@@ -1205,6 +1205,17 @@ function renderHk1Card(type) {
   const st = STATUS_1ON1_MAP[ref.status] || STATUS_1ON1_MAP.pending;
   const dis = editable ? '' : 'disabled';
 
+  // Audit (9 Okt 2026) — saranan Sesi Dr dikunci: hanya doktor yang handle sesi ini
+  // (ref.target_id) atau coach pesakit (coach tetap/coach ganti minggu ini) boleh
+  // kemaskini, elak staf lain ubah arahan perubatan doktor. super_admin tetap boleh.
+  const isDrType = type === 'dr';
+  const sarananPicIds = [ref.target_id, primaryCoachId, weekEntry?.substitute_coach_id].filter(Boolean);
+  const canEditSaranan = !isDrType || window.currentUser?.staff_role === 'super_admin' || sarananPicIds.includes(window.currentUser?.id);
+  const sdis = (editable && canEditSaranan) ? '' : 'disabled';
+  const sarananLockNote = (isDrType && !canEditSaranan)
+    ? `<div class="mb-2 text-[11px] font-semibold text-terracotta bg-terracotta/5 border border-terracotta/20 rounded-lg px-2.5 py-1.5">🔒 Saranan Dr hanya boleh dikemaskini oleh ${escHtml(ref.target_name || 'Dr')} atau coach pesakit (${escHtml(primaryCoachName || 'belum ditetapkan')}).</div>`
+    : '';
+
   return `<div class="bg-white rounded-xl p-5 border border-teal-600/25 mt-3">
     <div class="flex items-center justify-between gap-3 flex-wrap mb-1">
       <h3 class="font-bold text-base flex items-center gap-2">${cfg.emoji} ${cfg.label}
@@ -1249,18 +1260,19 @@ function renderHk1Card(type) {
     <div class="grid lg:grid-cols-2 gap-5 pt-4 border-t border-ink/10">
       <div>
         <label class="block text-[11px] font-bold text-ink/70 mb-1.5">Saranan ringkas</label>
-        <textarea id="hk1-saranan-${type}" rows="4" ${dis} oninput="hk1UpdPreview('${type}')" placeholder="Cth: Sila ambil ubat 2x sehari selepas makan..." class="w-full px-3 py-2 border border-green-300 bg-white rounded-lg text-sm outline-none focus:border-green resize-y">${escHtml(c.saranan || '')}</textarea>
+        ${sarananLockNote}
+        <textarea id="hk1-saranan-${type}" rows="4" ${sdis} oninput="hk1UpdPreview('${type}')" placeholder="Cth: Sila ambil ubat 2x sehari selepas makan..." class="w-full px-3 py-2 border border-green-300 bg-white rounded-lg text-sm outline-none focus:border-green resize-y disabled:bg-ink/[0.03] disabled:text-ink/50">${escHtml(c.saranan || '')}</textarea>
         <div class="grid grid-cols-2 gap-2 mt-2">
           <div>
             <label class="block text-[11px] font-bold text-ink/70 mb-1">Tempoh (hari)</label>
-            <input id="hk1-days-${type}" type="number" min="1" max="90" value="${c.saranan_days || ''}" ${dis} oninput="hk1UpdPreview('${type}')" placeholder="cth: 4" class="w-full px-2.5 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy">
+            <input id="hk1-days-${type}" type="number" min="1" max="90" value="${c.saranan_days || ''}" ${sdis} oninput="hk1UpdPreview('${type}')" placeholder="cth: 4" class="w-full px-2.5 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy disabled:bg-ink/[0.03] disabled:text-ink/50">
           </div>
           <div>
             <label class="block text-[11px] font-bold text-ink/70 mb-1">Tarikh mula</label>
-            <input id="hk1-start-${type}" type="date" value="${c.saranan_start || hk1TodayYmd()}" ${dis} onchange="hk1UpdPreview('${type}')" class="w-full px-2.5 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy">
+            <input id="hk1-start-${type}" type="date" value="${c.saranan_start || hk1TodayYmd()}" ${sdis} onchange="hk1UpdPreview('${type}')" class="w-full px-2.5 py-2 border border-ink/15 rounded-lg text-sm outline-none focus:border-navy disabled:bg-ink/[0.03] disabled:text-ink/50">
           </div>
         </div>
-        ${editable ? `<button type="button" data-rbac="rujukan.edit" id="hk1-send-btn-${type}" onclick="hk1Send('${type}')" class="mt-3 inline-flex items-center gap-2 bg-green text-white text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-green-dark disabled:opacity-60">📱 Hantar ke WhatsApp</button>` : ''}
+        ${(editable && canEditSaranan) ? `<button type="button" data-rbac="rujukan.edit" id="hk1-send-btn-${type}" onclick="hk1Send('${type}')" class="mt-3 inline-flex items-center gap-2 bg-green text-white text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-green-dark disabled:opacity-60">📱 Hantar ke WhatsApp</button>` : ''}
         <span id="hk1-wa-sent-${type}" class="block text-[11px] text-ink/50 mt-2">${c.saranan_sent_at ? ('✅ Dihantar ' + hk1FmtDT(c.saranan_sent_at)) : ''}</span>
       </div>
       <div class="flex flex-col h-full">
@@ -1504,7 +1516,7 @@ async function hk1UploadDoc(type, input) {
   const atts = Array.isArray(ref.consultation?.attachments) ? ref.consultation.attachments.slice() : [];
   let ok = 0, errMsg = '';
   for (const f of files) {
-    if (f.size > 10 * 1024 * 1024) { errMsg = `${f.name}: melebihi 10MB`; continue; }
+    if (f.size > 50 * 1024 * 1024) { errMsg = `${f.name}: melebihi 50MB`; continue; }
     const path = `${ref.id}/consult_${Date.now()}_${f.name.replace(/[^\w.\-]/g, '_')}`;
     const { error } = await window.db.storage.from('referral-docs').upload(path, f, { contentType: f.type || undefined });
     if (error) { errMsg = error.message; continue; }
@@ -3776,7 +3788,7 @@ async function uploadWeekDocs(input) {
   try {
     let uploaded = 0;
     for (const f of files) {
-      if (f.size > 20 * 1024 * 1024) { banner(`${f.name} melebihi 20MB`, 'error'); continue; }
+      if (f.size > 50 * 1024 * 1024) { banner(`${f.name} melebihi 50MB`, 'error'); continue; }
       const path = `staff/${patientId}/week/${activePlan.id}/${weekNumber}/${Date.now()}_${f.name.replace(/[^a-zA-Z0-9.-]/g,'_')}`;
       const { error } = await window.db.storage.from('medical-reports').upload(path, f);
       if (error) throw error;

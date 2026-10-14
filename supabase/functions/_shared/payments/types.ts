@@ -48,6 +48,10 @@ export interface PaymentProvider {
   createCardAuthorization?(intent: CardAuthIntent): Promise<CardAuthResult>;
   chargeSavedCard?(authRef: string, amount: string, currency: string): Promise<ChargeResult>;
   verifyRecurringWebhook?(req: Request): Promise<RecurringWebhookResult>;
+  // Channel SEBENAR pesakit guna (fpx/card/paynow_online/dll) — webhook form-encoded
+  // lama (verifyWebhook) TAK bawa medan ni, kena panggil API berasingan selepas
+  // webhook sah. Opsyenal — provider yang tak sokong/tak perlu boleh tinggalkan.
+  getPaymentChannel?(gatewayRef: string): Promise<{ channel: string | null; raw: unknown }>;
 }
 
 // ── Kad Tersimpan (Recurring Billing on-demand) — HitPay sahaja buat masa ini ──

@@ -164,6 +164,7 @@ const STAFF_NAV_MASTER = [
         { id: 'inventory_overview', url: 'inventory-overview.html', label: 'Overview' },
         { id: 'inventory',          url: 'inventory.html',          label: 'Inventori' },
         { id: 'pemberian_stok',     url: 'pemberian-stok.html',     label: 'Pemberian Stok' },
+        { id: 'walkin_sale',        url: 'jualan-walkin.html',      label: 'Jualan Walk-in' },
         { id: 'bekalan_kob',        url: 'tetapan.html?tab=bekalan_kob', label: 'Bekalan KOB', saOnly: true },
         { id: 'purchase_requests',  url: 'purchase-requests.html',  label: 'Purchase Requests' },
         { id: 'ready_to_buy',       url: 'ready-to-buy.html',       label: 'Ready to Buy' },

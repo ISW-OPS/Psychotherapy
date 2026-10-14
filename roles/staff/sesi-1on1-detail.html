@@ -232,6 +232,17 @@ function hk1Block(r) {
   const meta = HK1_META_HP[r.session_type] || { emoji: '', fallback: r.session_type };
   const st = HK1_STATUS_HP[r.status] || HK1_STATUS_HP.pending;
   const atts = Array.isArray(c.attachments) ? c.attachments : [];
+
+  // Audit (9 Okt 2026) — saranan Sesi Dr dikunci: hanya doktor yang handle sesi ini
+  // (r.target_id) atau coach pesakit (patient.coach_id) boleh kemaskini, elak staf
+  // lain ubah arahan perubatan doktor. super_admin tetap boleh.
+  const isDrType = r.session_type === 'dr';
+  const sarananPicIds = [r.target_id, patient?.coach_id].filter(Boolean);
+  const canEditSaranan = !isDrType || window.currentUser?.staff_role === 'super_admin' || sarananPicIds.includes(window.currentUser?.id);
+  const sdis = canEditSaranan ? '' : 'disabled';
+  const sarananLockNote = (isDrType && !canEditSaranan)
+    ? `<div class="mb-1.5 text-[10px] font-semibold text-terracotta bg-terracotta/5 border border-terracotta/20 rounded-lg px-2 py-1.5">🔒 Saranan Dr hanya boleh dikemaskini oleh ${escHtml(r.target_name || 'Dr')} atau coach pesakit.</div>`
+    : '';
   return `<div class="border-t border-ink/5 py-3.5 text-xs first:border-t-0 first:pt-0" id="hk1-card-${r.id}">
       <div class="flex items-center gap-2 flex-wrap mb-2">
         <b class="text-ink/80">${meta.emoji} ${formatDate(r.meet_date || r.created_at)}</b>
@@ -261,20 +272,21 @@ function hk1Block(r) {
       <div class="grid md:grid-cols-2 gap-3 mt-3 pt-3 border-t border-ink/8" data-rbac="rujukan.edit">
         <div>
           <label class="block text-[10px] font-bold text-ink/60 mb-1">Saranan ringkas</label>
-          <textarea id="hk1-saranan-${r.id}" rows="3" oninput="hphUpdPreview('${r.id}')" placeholder="Cth: Sila ambil ubat 2x sehari selepas makan..." class="w-full px-2.5 py-2 border border-green-300 bg-white rounded-lg text-xs outline-none focus:border-green resize-y">${escHtml(c.saranan || '')}</textarea>
+          ${sarananLockNote}
+          <textarea id="hk1-saranan-${r.id}" rows="3" ${sdis} oninput="hphUpdPreview('${r.id}')" placeholder="Cth: Sila ambil ubat 2x sehari selepas makan..." class="w-full px-2.5 py-2 border border-green-300 bg-white rounded-lg text-xs outline-none focus:border-green resize-y disabled:bg-ink/[0.03] disabled:text-ink/50">${escHtml(c.saranan || '')}</textarea>
           <div class="grid grid-cols-2 gap-1.5 mt-1.5">
-            <input id="hk1-days-${r.id}" type="number" min="1" max="90" value="${c.saranan_days || ''}" oninput="hphUpdPreview('${r.id}')" placeholder="Tempoh (hari)" class="w-full px-2 py-1.5 border border-ink/15 rounded-lg text-[11px] outline-none focus:border-navy">
-            <input id="hk1-start-${r.id}" type="date" value="${c.saranan_start || hphToday()}" onchange="hphUpdPreview('${r.id}')" class="w-full px-2 py-1.5 border border-ink/15 rounded-lg text-[11px] outline-none focus:border-navy">
+            <input id="hk1-days-${r.id}" type="number" min="1" max="90" value="${c.saranan_days || ''}" ${sdis} oninput="hphUpdPreview('${r.id}')" placeholder="Tempoh (hari)" class="w-full px-2 py-1.5 border border-ink/15 rounded-lg text-[11px] outline-none focus:border-navy disabled:bg-ink/[0.03] disabled:text-ink/50">
+            <input id="hk1-start-${r.id}" type="date" value="${c.saranan_start || hphToday()}" ${sdis} onchange="hphUpdPreview('${r.id}')" class="w-full px-2 py-1.5 border border-ink/15 rounded-lg text-[11px] outline-none focus:border-navy disabled:bg-ink/[0.03] disabled:text-ink/50">
           </div>
           <div class="flex items-center gap-2 mt-1.5">
             <label class="inline-flex items-center gap-1.5 text-[11px] text-ink/60 cursor-pointer">
-              <input type="checkbox" id="hk1-remind-on-${r.id}" ${r.reminder_time ? 'checked' : ''} onchange="hphToggleReminder('${r.id}')" class="w-3.5 h-3.5">
+              <input type="checkbox" id="hk1-remind-on-${r.id}" ${r.reminder_time ? 'checked' : ''} ${sdis} onchange="hphToggleReminder('${r.id}')" class="w-3.5 h-3.5">
               ⏰ Perlu reminder harian?
             </label>
-            <input type="time" id="hk1-remind-time-${r.id}" value="${r.reminder_time ? String(r.reminder_time).slice(0, 5) : ''}" onchange="hphSaveReminder('${r.id}')" class="${r.reminder_time ? '' : 'hidden'} w-28 px-2 py-1 border border-ink/15 rounded-lg text-[11px] outline-none focus:border-navy">
+            <input type="time" id="hk1-remind-time-${r.id}" value="${r.reminder_time ? String(r.reminder_time).slice(0, 5) : ''}" ${sdis} onchange="hphSaveReminder('${r.id}')" class="${r.reminder_time ? '' : 'hidden'} w-28 px-2 py-1 border border-ink/15 rounded-lg text-[11px] outline-none focus:border-navy disabled:bg-ink/[0.03] disabled:text-ink/50">
           </div>
           ${r.reminder_time ? `<p class="text-[10px] text-ink/40 mt-0.5">Reminder dihantar setiap hari ${String(r.reminder_time).slice(0, 5)} sepanjang tempoh saranan.${r.reminder_last_sent_date ? ' Terakhir: ' + hphPretty(r.reminder_last_sent_date) : ''}</p>` : ''}
-          <button type="button" id="hk1-send-btn-${r.id}" onclick="hphSend('${r.id}')" class="mt-2 inline-flex items-center gap-1.5 bg-green text-white text-[11px] font-semibold px-3 py-2 rounded-lg hover:bg-green-dark disabled:opacity-60">📱 Hantar ke WhatsApp</button>
+          ${canEditSaranan ? `<button type="button" id="hk1-send-btn-${r.id}" onclick="hphSend('${r.id}')" class="mt-2 inline-flex items-center gap-1.5 bg-green text-white text-[11px] font-semibold px-3 py-2 rounded-lg hover:bg-green-dark disabled:opacity-60">📱 Hantar ke WhatsApp</button>` : ''}
           <span id="hk1-wa-sent-${r.id}" class="block text-[10px] text-ink/50 mt-1.5">${c.saranan_sent_at ? ('✅ Dihantar ' + formatDateTime(c.saranan_sent_at)) : ''}</span>
         </div>
         <div>
@@ -474,7 +486,7 @@ async function hphUploadDoc(id, input) {
   const atts = Array.isArray(ref?.consultation?.attachments) ? ref.consultation.attachments.slice() : [];
   let ok = 0, errMsg = '';
   for (const f of files) {
-    if (f.size > 10 * 1024 * 1024) { errMsg = `${f.name}: melebihi 10MB`; continue; }
+    if (f.size > 50 * 1024 * 1024) { errMsg = `${f.name}: melebihi 50MB`; continue; }
     const path = `${id}/consult_${Date.now()}_${f.name.replace(/[^\w.\-]/g, '_')}`;
     const { error } = await window.db.storage.from('referral-docs').upload(path, f, { contentType: f.type || undefined });
     if (error) { errMsg = error.message; continue; }

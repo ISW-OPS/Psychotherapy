@@ -111,6 +111,30 @@ export const hitpay: PaymentProvider = {
     }
   },
 
+  // Channel sebenar (fpx/card/paynow_online/dll) — webhook form-encoded lama
+  // (verifyWebhook di atas) TAK bawa medan ni, cuma status/amount/reference.
+  // Panggilan BERASINGAN ke GET /payment-requests/{id} (respons JSON penuh,
+  // ada array `payments[]`, setiap satu ada `payment_type`). Dipanggil SELEPAS
+  // webhook disahkan — best-effort, kegagalan di sini TAK patut gagalkan
+  // fulfillment bayaran (lihat pemanggil, payments-webhook/index.ts).
+  async getPaymentChannel(gatewayRef: string): Promise<{ channel: string | null; raw: unknown }> {
+    const apiKey = Deno.env.get('HITPAY_API_KEY')
+    if (!apiKey || !gatewayRef) return { channel: null, raw: null }
+
+    const res = await fetch(`${BASE()}/payment-requests/${encodeURIComponent(gatewayRef)}`, {
+      method: 'GET',
+      headers: { 'X-BUSINESS-API-KEY': apiKey, 'X-Requested-With': 'XMLHttpRequest' },
+    })
+    if (!res.ok) return { channel: null, raw: { status: res.status } }
+
+    const data = await res.json().catch(() => null)
+    const payments: any[] = Array.isArray(data?.payments) ? data.payments : []
+    // Pilih bayaran yang berjaya kalau ada lebih dari satu cubaan (retry pesakit) —
+    // fallback ke yang pertama kalau tiada status 'succeeded' ditemui.
+    const chosen = payments.find((p) => String(p?.status || '').toLowerCase() === 'succeeded') || payments[0]
+    return { channel: chosen?.payment_type ? String(chosen.payment_type) : null, raw: data }
+  },
+
   // Cipta sesi "lampir kad" (recurring-billing, save_payment_method=true) —
   // pesakit isi kad SEKALI di hosted page HitPay, tiada cycle/subscription
   // (kita caj ON-DEMAND kemudian ikut checkpoint, bukan HitPay punya jadual).

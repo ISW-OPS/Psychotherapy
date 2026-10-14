@@ -43,11 +43,17 @@ CREATE TABLE IF NOT EXISTS psy_payments (
   discount NUMERIC(10,2) NOT NULL DEFAULT 0,  -- diskaun pada bayaran ini (papar di resit; subtotal = total + discount)
   receipt_url TEXT,                           -- bayaran manual — resit yang di-upload
   notes TEXT,
+  -- Ditambah 14 Okt 2026 — jualan walk-in (pembeli bukan pesakit, cth datang terus
+  -- ke HQ). patient_id KEKAL NULL untuk baris ni; nama/telefon disimpan di sini
+  -- (bukan psy_patients) sbb pembeli tiada akaun pesakit. Lihat roles/staff/jualan-walkin.html.
+  buyer_name TEXT,
+  buyer_phone TEXT,
   -- gateway bayaran (HitPay/Fiuu) — pending row dicipta sebelum redirect,
   -- webhook padankan gateway_ref & jalankan fulfillment ikut intent
   gateway_provider TEXT,                      -- 'hitpay' | 'fiuu' | NULL (manual)
   gateway_ref      TEXT,                      -- id rujukan dari gateway
   gateway_status   TEXT,                      -- status mentah dari gateway
+  gateway_channel  TEXT,                      -- channel SEBENAR (fpx/card/paynow_online/dll) — diisi selepas webhook, lihat 20261014_payment_gateway_channel.sql
   checkout_url     TEXT,                      -- pautan checkout gateway (utk staff share/salin semula bila status pending)
   intent           JSONB DEFAULT '{}'::jsonb, -- niat bayaran utk fulfillment
   fulfilled_at     TIMESTAMPTZ,               -- bila fulfillment benar-benar jalan
@@ -465,7 +471,7 @@ SELECT
   'ISW'                             AS source,
   COALESCE(p.paid_at, p.created_at) AS tx_date,
   p.patient_id,
-  COALESCE(pt.full_name, 'Pesakit') AS contact_name,
+  COALESCE(pt.full_name, p.buyer_name, CASE WHEN p.patient_id IS NULL THEN 'Walk-in' ELSE 'Pesakit' END) AS contact_name,
   p.total                          AS amount,
   p.payment_method                 AS method,
   COALESCE(p.gateway_provider, p.payment_method) AS provider,

@@ -45,7 +45,22 @@
         </div>
 
         <!-- KPI Row -->
-        <div id="kpi-row" class="grid grid-cols-2 lg:grid-cols-5 gap-4"></div>
+        <div id="kpi-row" class="grid grid-cols-2 lg:grid-cols-4 gap-4"></div>
+        <div id="unpaid-invoices-panel" class="hidden bg-white rounded-2xl border border-terracotta/20 shadow-sm overflow-hidden -mt-2"></div>
+
+        <!-- Status Ansuran + Ringkasan Kedai — kedua-dua merentasi semua tempoh, tidak terikat tapisan psy_payments di atas -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+            <h2 class="text-sm font-bold text-ink mb-1">Status Ansuran (HitPay Auto-charge)</h2>
+            <p class="text-xs text-ink/40 mb-4">Merentasi semua pakej ansuran aktif, tidak terhad tempoh/tapisan di atas</p>
+            <div id="installment-stats" class="grid grid-cols-2 gap-3"></div>
+          </div>
+          <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5">
+            <h2 class="text-sm font-bold text-ink mb-1">Ringkasan Kedai (Shop/Orders)</h2>
+            <p class="text-xs text-ink/40 mb-4">Bayaran pesanan produk — jadual berasingan (psy_orders), tiada senarai pesanan di sini</p>
+            <div id="shop-stats" class="grid grid-cols-2 gap-3"></div>
+          </div>
+        </div>
 
         <!-- Void/Refund/Correction menunggu kelulusan (super_admin sahaja, audit #B1-24) -->
         <div id="pending-adj-card" class="hidden bg-white rounded-2xl border border-terracotta/30 shadow-sm p-5"></div>
@@ -70,6 +85,12 @@
             <option value="ghl">Maju Jaya</option>
             <option value="manual">Manual</option>
           </select>
+          <select id="kind-filter" onchange="renderTable()"
+            class="px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-navy/20">
+            <option value="">Semua Jenis</option>
+            <option value="full">Bayaran Penuh</option>
+            <option value="ansuran">Ansuran</option>
+          </select>
           <select id="period-filter" onchange="loadData()"
             class="px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-navy/20">
             <option value="7">7 Hari</option>
@@ -85,10 +106,11 @@
 
         <!-- Table -->
         <div class="bg-white rounded-2xl border border-ink/10 shadow-sm overflow-hidden">
-          <div class="px-5 py-2 border-b border-ink/5 grid gap-3 items-center" style="grid-template-columns:120px 1fr 100px 110px 100px 100px 90px">
+          <div class="px-5 py-2 border-b border-ink/5 grid gap-3 items-center" style="grid-template-columns:minmax(110px,1.1fr) minmax(180px,2.2fr) minmax(80px,0.9fr) minmax(100px,1fr) minmax(90px,1fr) minmax(80px,0.9fr) minmax(90px,1fr) minmax(80px,0.9fr)">
             <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Receipt</span>
             <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Pesakit</span>
             <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Kaedah</span>
+            <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Jenis</span>
             <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider text-right">Jumlah</span>
             <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Status</span>
             <span class="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Tarikh</span>
@@ -248,6 +270,10 @@
 let allPayments = [];
 let patientLookup = {};
 let unpaidInvoices = []; // Audit #F-23 (Tier 5) — psy_invoices unpaid/partially_paid
+let allCheckpoints = [];
+let allCardAuths = [];
+let allOrders = [];
+let allTimePayments = [];
 
 function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function fmtRM(n) { return 'RM ' + Number(n||0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -263,22 +289,54 @@ const STATUS_META = {
 };
 const isSuperAdmin = () => window.currentUser?.staff_role === 'super_admin';
 
-const METHOD_LABEL = { fpx:'FPX', card:'Kad', transfer:'Transfer', ghl:'Maju Jaya', manual:'Manual' };
+// payment_method='gateway' (HitPay) tak sepadan mana-mana label di bawah kalau
+// tak diasingkan — fallback dulu papar nilai mentah "gateway", mengelirukan.
+const METHOD_LABEL = { fpx:'FPX', card:'Kad', transfer:'Transfer', ghl:'Maju Jaya', manual:'Manual', gateway:'HitPay' };
+// Channel SEBENAR HitPay (psy_payments.gateway_channel, diisi selepas webhook —
+// lihat payments-webhook/index.ts). Rekod LAMA (sebelum migration 14 Okt 2026)
+// tiada medan ni, fallback kekal papar "HitPay" je.
+const CHANNEL_LABEL = { card:'Kad', fpx:'FPX', paynow_online:'PayNow', grabpay:'GrabPay', alipay:'Alipay', wechatpay:'WeChat Pay' };
+function kaedahLabel(p) {
+  if (p.payment_method === 'gateway' && p.gateway_channel) return CHANNEL_LABEL[p.gateway_channel] || p.gateway_channel;
+  return METHOD_LABEL[p.payment_method] || p.payment_method || '—';
+}
+
+// Jenis bayaran — 2 kategori sahaja (Bayaran Penuh / Ansuran), diertikan dari
+// psy_payments.intent (bukan kolum tersendiri). Ansuran = ada penanda installment
+// (mode/type) ATAU id bayaran ni dirujuk sbg auto-charge checkpoint ansuran
+// (psy_kob_installment_checkpoints.autocharge_payment_id — kad pengesahan +
+// caj bulanan automatik tergolong "Ansuran" sebab tu tujuan dia, bukan bayaran
+// pakej penuh). Semua yg lain (termasuk tambahan sesi/manual am) = Bayaran Penuh.
+function paymentKind(p) {
+  const items = p.intent?.items || [];
+  const isInstallment = items.some(it => it.mode === 'installment' || it.type === 'kob_deposit' || it.type === 'kob_card_attach')
+    || allCheckpoints.some(c => c.autocharge_payment_id === p.id);
+  return isInstallment ? 'ansuran' : 'full';
+}
+const KIND_LABEL = {
+  full:    { label: 'Bayaran Penuh', cls: 'bg-navy/10 text-navy' },
+  ansuran: { label: 'Ansuran',       cls: 'bg-[#6366f1]/10 text-[#6366f1]' },
+};
 
 function renderKpi() {
   const _td = new Date(); const today = `${_td.getFullYear()}-${String(_td.getMonth()+1).padStart(2,'0')}-${String(_td.getDate()).padStart(2,'0')}`;
   const monthStart = today.slice(0,8) + '01';
 
   // is_test DIKECUALIKAN drpd semua KPI kewangan (audit #B1-23) — bayaran ujian/demo
-  // tak patut cemari laporan kutipan sebenar.
-  const realPayments = allPayments.filter(p => !p.is_test);
-  const todayTotal  = realPayments.filter(p => p.status==='completed' && p.paid_at >= today).reduce((s,p)=>s+Number(p.total||0),0);
-  const monthTotal  = realPayments.filter(p => p.status==='completed' && p.paid_at >= monthStart).reduce((s,p)=>s+Number(p.total||0),0);
+  // tak patut cemari laporan kutipan sebenar. payment_method='ghl' turut dikecualikan
+  // (13 Okt 2026) — rekod tu sync dari Maju Jaya, bukan kutipan ISW sebenar; biar KPI
+  // ni tulen ISW sahaja. Rekod 'ghl' masih boleh dicari/ditapis dalam jadual di bawah.
+  const realPayments = allPayments.filter(p => !p.is_test && p.payment_method !== 'ghl');
+  const monthTotal   = realPayments.filter(p => p.status==='completed' && p.paid_at >= monthStart).reduce((s,p)=>s+Number(p.total||0),0);
   const pendingCount = realPayments.filter(p => p.status==='pending').length;
-  const txCount      = realPayments.filter(p => p.status==='completed').length;
+  // Jumlah Keseluruhan dikira dari allTimePayments (muat tanpa had tempoh, lihat
+  // loadData) — SENGAJA tak ikut period-filter di atas, supaya kad ni sentiasa
+  // tunjuk jumlah betul-betul menyeluruh, bukan terhad 30/90/365 hari dipilih.
+  const allTimeReal  = allTimePayments.filter(p => !p.is_test && p.payment_method !== 'ghl');
+  const grandTotal   = allTimeReal.filter(p => p.status==='completed').reduce((s,p)=>s+Number(p.total||0),0);
 
   const currentStatus = document.getElementById('status-filter')?.value || '';
-  const card = (label, value, sub, icon, bg, clr, statusKey) => {
+  const card = (label, value, sub, icon, bg, clr, onClick, active) => {
     const body = `
       <div class="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${bg}">
         <svg class="w-5 h-5 ${clr}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="${icon}"/></svg>
@@ -288,40 +346,56 @@ function renderKpi() {
         <div class="text-2xl font-bold text-ink mt-0.5">${value}</div>
         <div class="text-[11px] text-ink/40 mt-0.5">${sub}</div>
       </div>`;
-    if (statusKey === undefined) {
-      return `<div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex items-center gap-4">${body}</div>`;
-    }
-    const active = currentStatus === statusKey;
-    return `<button type="button" onclick="pmtFilterStatus('${statusKey}')" class="w-full text-left bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex items-center gap-4 cursor-pointer hover:shadow-md transition-shadow ${active ? 'ring-2 ring-navy' : ''}">${body}</button>`;
+    return `<button type="button" onclick="${onClick}" class="w-full text-left bg-white rounded-2xl border border-ink/10 shadow-sm p-5 flex items-center gap-4 cursor-pointer hover:shadow-md transition-shadow ${active ? 'ring-2 ring-navy' : ''}">${body}</button>`;
   };
 
   document.getElementById('kpi-row').innerHTML = [
-    card('Kutipan Hari Ini', fmtRM(todayTotal), 'Pembayaran selesai sahaja',
+    card('Jumlah Keseluruhan', fmtRM(grandTotal), 'Kesemua pembayaran selesai (ISW)',
       'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
-      'bg-green-50','text-green-600'),
+      'bg-green-50','text-green-600', `pmtFilterStatus('completed', true)`, currentStatus === 'completed'),
     card('Kutipan Bulan Ini', fmtRM(monthTotal), 'Dari awal bulan',
       'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z',
-      'bg-[#6366f1]/10','text-[#6366f1]'),
+      'bg-[#6366f1]/10','text-[#6366f1]', `pmtFilterStatus('completed')`, currentStatus === 'completed'),
     card('Pending', pendingCount, pendingCount ? 'Perlu disahkan' : 'Tiada pending',
       'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
-      pendingCount ? 'bg-amber-50' : 'bg-ink/5', pendingCount ? 'text-amber-500' : 'text-ink/30', 'pending'),
-    card('Jumlah Transaksi', txCount, 'Pembayaran selesai',
-      'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
-      'bg-[#6366f1]/10','text-[#6366f1]', 'completed'),
+      pendingCount ? 'bg-amber-50' : 'bg-ink/5', pendingCount ? 'text-amber-500' : 'text-ink/30',
+      `pmtFilterStatus('pending')`, currentStatus === 'pending'),
     // Audit #F-23 (Tier 5) — invois psy_invoices (amaun tertunggak SEBELUM sebarang
     // percubaan bayaran, cth denda tidak hadir) — berasingan drpd "Pending" di atas
-    // (tu percubaan bayaran/gateway yg dah dimulakan, konsep lain). Tiada senarai invois
-    // di halaman ni, jadi kad ni kekal bukan-boleh-tekan.
+    // (tu percubaan bayaran/gateway yg dah dimulakan, konsep lain).
     card('Invois Belum Bayar', unpaidInvoices.length,
       unpaidInvoices.length ? fmtRM(unpaidInvoices.reduce((s,i)=>s+Number(i.amount||0),0)) + ' tertunggak' : 'Tiada invois tertunggak',
       'M9 17v-2a4 4 0 014-4h6M9 17H5a2 2 0 01-2-2V7a2 2 0 012-2h9l4 4v6a2 2 0 01-2 2h-1M9 17v2a2 2 0 002 2h6a2 2 0 002-2v-2',
-      unpaidInvoices.length ? 'bg-terracotta/10' : 'bg-ink/5', unpaidInvoices.length ? 'text-terracotta' : 'text-ink/30'),
+      unpaidInvoices.length ? 'bg-terracotta/10' : 'bg-ink/5', unpaidInvoices.length ? 'text-terracotta' : 'text-ink/30',
+      'toggleUnpaidInvoices()', false),
   ].join('');
 }
 
-function pmtFilterStatus(status) {
+// Invois Belum Bayar tiada jadual psy_payments sendiri (psy_invoices berasingan) —
+// klik kad buka/tutup panel ringkas terus di sini, bukan tapis jadual di bawah.
+function toggleUnpaidInvoices() {
+  const box = document.getElementById('unpaid-invoices-panel');
+  box.classList.toggle('hidden');
+  if (box.classList.contains('hidden')) return;
+  if (!unpaidInvoices.length) { box.innerHTML = '<div class="px-5 py-6 text-center text-sm text-ink/35">Tiada invois tertunggak</div>'; return; }
+  box.innerHTML = `<div class="divide-y divide-ink/5">${unpaidInvoices.map(inv => `
+    <div class="px-5 py-2.5 flex items-center justify-between gap-3 text-sm">
+      <div class="min-w-0">
+        <div class="font-semibold text-ink truncate">${escHtml(patientLookup[inv.patient_id]?.name || '—')}</div>
+        <div class="text-[11px] text-ink/40 truncate">${escHtml(inv.invoice_no || '—')} · ${escHtml(inv.description || '')}</div>
+      </div>
+      <div class="font-bold text-terracotta whitespace-nowrap">${fmtRM(inv.amount)}</div>
+    </div>`).join('')}</div>`;
+}
+window.toggleUnpaidInvoices = toggleUnpaidInvoices;
+
+function pmtFilterStatus(status, forceAllPeriod) {
   const sel = document.getElementById('status-filter');
   sel.value = (sel.value === status) ? '' : status;
+  if (forceAllPeriod && sel.value === status) {
+    const per = document.getElementById('period-filter');
+    if (per.value !== 'all') { per.value = 'all'; loadData(); return; }
+  }
   renderKpi();
   renderTable();
 }
@@ -331,10 +405,12 @@ function renderTable() {
   const search   = (document.getElementById('search-input').value || '').toLowerCase().trim();
   const statusF  = document.getElementById('status-filter').value;
   const methodF  = document.getElementById('method-filter').value;
+  const kindF    = document.getElementById('kind-filter').value;
 
   const filtered = allPayments.filter(p => {
     if (statusF && p.status !== statusF) return false;
     if (methodF && p.payment_method !== methodF) return false;
+    if (kindF && paymentKind(p) !== kindF) return false;
     if (search) {
       const name = patientLookup[p.patient_id]?.name || '';
       const hay = `${p.receipt_no || ''} ${p.invoice_no || ''} ${p.invoice_number || ''} ${p.receipt_ref || ''} ${name}`.toLowerCase();
@@ -358,7 +434,7 @@ function renderTable() {
     const name = pt?.name || '—';
     const mrn  = pt?.mrn || '';
     const info = STATUS_META[p.status] || STATUS_META.completed;
-    return `<div class="grid gap-3 items-center px-5 py-3 hover:bg-ink/[0.015] transition-colors" style="grid-template-columns:120px 1fr 100px 110px 100px 100px 90px">
+    return `<div class="grid gap-3 items-center px-5 py-3 hover:bg-ink/[0.015] transition-colors" style="grid-template-columns:minmax(110px,1.1fr) minmax(180px,2.2fr) minmax(80px,0.9fr) minmax(100px,1fr) minmax(90px,1fr) minmax(80px,0.9fr) minmax(90px,1fr) minmax(80px,0.9fr)">
       <div class="min-w-0">
         <div class="text-xs font-mono font-semibold text-ink/80 truncate">${escHtml(p.receipt_no || p.receipt_ref || '—')}</div>
         ${p.invoice_no || p.invoice_number ? `<div class="text-[10px] font-mono text-ink/40 truncate">${escHtml(p.invoice_no || p.invoice_number)}</div>` : ''}
@@ -367,7 +443,8 @@ function renderTable() {
         <div class="text-sm font-semibold text-ink truncate">${escHtml(name)}${p.is_test ? ' <span class="text-[9px] font-bold px-1 py-0.5 rounded bg-amber-100 text-amber-700 align-middle">🧪 TEST</span>' : ''}</div>
         <div class="text-[10px] text-ink/40">${escHtml(mrn)}</div>
       </div>
-      <div class="text-xs text-ink/65">${METHOD_LABEL[p.payment_method] || p.payment_method || '—'}</div>
+      <div class="text-xs text-ink/65">${escHtml(kaedahLabel(p))}</div>
+      <div class="text-xs text-ink/65">${KIND_LABEL[paymentKind(p)].label}</div>
       <div class="text-sm font-bold text-ink text-right">${fmtRM(p.total)}</div>
       <div><span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${info.cls}">${info.label}</span></div>
       <div class="text-[11px] text-ink/55">
@@ -416,7 +493,7 @@ function openDetail(id) {
     <div class="grid grid-cols-2 gap-3 text-sm">
       <div><div class="text-xs text-ink/45">Pesakit</div><div class="font-semibold">${escHtml(pt?.name || '—')}</div><div class="text-xs text-ink/50">${escHtml(pt?.mrn || '')}</div></div>
       <div><div class="text-xs text-ink/45">Tarikh</div><div class="font-semibold">${fmtDate(p.paid_at || p.created_at)}</div><div class="text-xs text-ink/50">${fmtTime(p.paid_at || p.created_at)}</div></div>
-      <div><div class="text-xs text-ink/45">Kaedah</div><div class="font-semibold">${METHOD_LABEL[p.payment_method] || '—'}</div></div>
+      <div><div class="text-xs text-ink/45">Kaedah</div><div class="font-semibold">${escHtml(kaedahLabel(p))}</div></div>
       <div><div class="text-xs text-ink/45">Ref Maju Jaya</div><div class="font-mono text-xs">${escHtml(p.ghl_transaction_id || '—')}</div></div>
     </div>
     <div id="status-timeline-${p.id}"></div>
@@ -912,7 +989,7 @@ function exportCsv() {
       p.receipt_ref || '',
       pt?.name || '',
       pt?.mrn || '',
-      METHOD_LABEL[p.payment_method] || p.payment_method || '',
+      kaedahLabel(p),
       STATUS_META[p.status]?.label || p.status,
       Number(p.subtotal||0).toFixed(2),
       Number(p.total||0).toFixed(2),
@@ -932,25 +1009,38 @@ function exportCsv() {
 
 async function loadData() {
   const period = document.getElementById('period-filter').value;
-  let query = window.db.from('psy_payments').select('*').order('created_at', { ascending: false }).limit(1000);
+  // patient_id IS NOT NULL — halaman ni khusus bayaran PESAKIT; jualan walk-in (tiada
+  // akaun pesakit, direkod via jualan-walkin.html) muncul di Payment Management sahaja.
+  let query = window.db.from('psy_payments').select('*').not('patient_id', 'is', null).order('created_at', { ascending: false }).limit(1000);
 
   if (period !== 'all') {
     const d = new Date(); d.setDate(d.getDate() - Number(period));
     query = query.gte('created_at', d.toISOString());
   }
 
-  const [payRes, patRes, invRes] = await Promise.all([
+  const [payRes, patRes, invRes, checkRes, cardRes, orderRes, allTimeRes] = await Promise.all([
     query,
     // Semua pesakit (bukan 'active' sahaja) supaya nama sentiasa boleh dipadankan pada resit/invois
     // psy_patients ada DUA FK ke psy_profiles (user_id + coach_id) — embed
     // psy_profiles(...) tanpa disambiguasi punca PostgREST error diam-diam.
     window.db.from('psy_patients').select('id, mrn, status, full_name, user_id, psy_profiles!user_id(full_name)'),
-    // Audit #F-23 (Tier 5) — invois psy_invoices belum settle, kad KPI berasingan
-    window.db.from('psy_invoices').select('amount').in('status', ['unpaid', 'partially_paid']).then(r => r, () => ({ data: [] })),
+    // Audit #F-23 (Tier 5) — invois psy_invoices belum settle, kad KPI berasingan.
+    // Medan penuh (bukan 'amount' je) — dipaparkan dalam panel "Invois Belum Bayar".
+    window.db.from('psy_invoices').select('id, invoice_no, patient_id, description, amount').in('status', ['unpaid', 'partially_paid']).then(r => r, () => ({ data: [] })),
+    window.db.from('psy_kob_installment_checkpoints').select('status, due_date, autocharge_status, autocharge_payment_id'),
+    window.db.from('psy_kob_card_authorizations').select('status, detached_at'),
+    window.db.from('psy_orders').select('status, total'),
+    // Jumlah Keseluruhan (kad KPI pertama) SENGAJA tak ikut period-filter di atas —
+    // query berasingan, medan minimum sahaja (bukan '*') supaya murah.
+    window.db.from('psy_payments').select('status, total, is_test, payment_method'),
   ]);
 
   allPayments = payRes.data || [];
   unpaidInvoices = invRes.data || [];
+  allCheckpoints = checkRes.data || [];
+  allCardAuths = cardRes.data || [];
+  allOrders = orderRes.data || [];
+  allTimePayments = allTimeRes.data || [];
   patientLookup = {};
   (patRes.data || []).forEach(p => {
     patientLookup[p.id] = { name: p.psy_profiles?.full_name || p.full_name || p.mrn || 'Pesakit', mrn: p.mrn, status: p.status, user_id: p.user_id };
@@ -965,7 +1055,55 @@ async function loadData() {
         `<option value="${id}">${escHtml(p.name)} (${escHtml(p.mrn || '')})</option>`).join('');
 
   renderKpi();
+  renderInstallmentStats();
+  renderShopStats();
   renderTable();
+}
+
+function addDays(dateStr, n) { const d = new Date(dateStr); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
+
+// psy_orders — jadual BERASINGAN dari psy_payments (tiada FK antara dua-dua), jadi
+// ringkasan ni dikira terus dari psy_orders, bukan dari allPayments/realPayments.
+function renderShopStats() {
+  const paidStatuses = ['paid', 'packed', 'shipped', 'delivered'];
+  const paidOrders = allOrders.filter(o => paidStatuses.includes(o.status));
+  const pendingOrders = allOrders.filter(o => o.status === 'pending');
+  const collected = paidOrders.reduce((s,o) => s + Number(o.total||0), 0);
+  const pendingAmt = pendingOrders.reduce((s,o) => s + Number(o.total||0), 0);
+
+  const tile = (label, value, cls) => `
+    <div class="rounded-xl border border-ink/10 p-3">
+      <div class="text-[10px] text-ink/45 font-medium uppercase tracking-wide">${label}</div>
+      <div class="text-xl font-bold mt-0.5 ${cls||'text-ink'}">${value}</div>
+    </div>`;
+
+  document.getElementById('shop-stats').innerHTML = [
+    tile('Terkumpul', fmtRM(collected), ''),
+    tile('Pending', fmtRM(pendingAmt), pendingOrders.length ? 'text-amber-600' : ''),
+    tile('Jumlah Pesanan', allOrders.length, ''),
+    tile('Belum Bayar', pendingOrders.length, pendingOrders.length ? 'text-amber-600' : ''),
+  ].join('');
+}
+
+function renderInstallmentStats() {
+  const today = new Date().toISOString().slice(0,10);
+  const activeCards = allCardAuths.filter(a => !a.detached_at).length;
+  const dueSoon = allCheckpoints.filter(c => c.status === 'pending' && c.due_date >= today && c.due_date <= addDays(today,7)).length;
+  const overdue = allCheckpoints.filter(c => c.status === 'overdue' || (c.status === 'pending' && c.due_date < today)).length;
+  const autoFailed = allCheckpoints.filter(c => c.autocharge_status === 'failed').length;
+
+  const tile = (label, value, cls) => `
+    <div class="rounded-xl border border-ink/10 p-3">
+      <div class="text-[10px] text-ink/45 font-medium uppercase tracking-wide">${label}</div>
+      <div class="text-xl font-bold mt-0.5 ${cls||'text-ink'}">${value}</div>
+    </div>`;
+
+  document.getElementById('installment-stats').innerHTML = [
+    tile('Kad Tersimpan Aktif', activeCards),
+    tile('Due ≤7 Hari', dueSoon, dueSoon ? 'text-amber-600' : ''),
+    tile('Tertunggak', overdue, overdue ? 'text-red-600' : ''),
+    tile('Auto-charge Gagal', autoFailed, autoFailed ? 'text-red-600' : ''),
+  ].join('');
 }
 
 function subscribePaymentsRealtime() {

@@ -84,6 +84,25 @@ var hitpay = {
       raw: fields
     };
   },
+  // Channel sebenar (fpx/card/paynow_online/dll) — webhook form-encoded lama
+  // (verifyWebhook di atas) TAK bawa medan ni, cuma status/amount/reference.
+  // Panggilan BERASINGAN ke GET /payment-requests/{id} (respons JSON penuh,
+  // ada array `payments[]`, setiap satu ada `payment_type`). Dipanggil SELEPAS
+  // webhook disahkan — best-effort, kegagalan di sini TAK patut gagalkan
+  // fulfillment bayaran.
+  async getPaymentChannel(gatewayRef) {
+    const apiKey = Deno.env.get("HITPAY_API_KEY");
+    if (!apiKey || !gatewayRef) return { channel: null, raw: null };
+    const res = await fetch(`${BASE()}/payment-requests/${encodeURIComponent(gatewayRef)}`, {
+      method: "GET",
+      headers: { "X-BUSINESS-API-KEY": apiKey, "X-Requested-With": "XMLHttpRequest" }
+    });
+    if (!res.ok) return { channel: null, raw: { status: res.status } };
+    const data = await res.json().catch(() => null);
+    const payments = Array.isArray(data?.payments) ? data.payments : [];
+    const chosen = payments.find((p) => String(p?.status || "").toLowerCase() === "succeeded") || payments[0];
+    return { channel: chosen?.payment_type ? String(chosen.payment_type) : null, raw: data };
+  },
   // Cipta sesi "lampir kad" (recurring-billing, save_payment_method=true) —
   // pesakit isi kad SEKALI di hosted page HitPay, tiada cycle/subscription
   // (kita caj ON-DEMAND kemudian ikut checkpoint, bukan HitPay punya jadual).
@@ -975,6 +994,15 @@ Deno.serve(async (req) => {
       status: "completed",
       paid_at: (/* @__PURE__ */ new Date()).toISOString()
     }).eq("id", payment.id);
+    try {
+      const provider = getProvider();
+      if (provider.getPaymentChannel) {
+        const { channel } = await provider.getPaymentChannel(result.gatewayRef);
+        if (channel) await admin.from("psy_payments").update({ gateway_channel: channel }).eq("id", payment.id);
+      }
+    } catch (e) {
+      console.warn("payments-webhook: getPaymentChannel gagal —", e.message);
+    }
     if (payment.user_id) {
       try {
         await admin.from("psy_notifications").insert({

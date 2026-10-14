@@ -34,7 +34,7 @@ VALUES ('wa-outbox', 'wa-outbox', true)
 ON CONFLICT (id) DO UPDATE SET public = true;
 
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES ('avatars', 'avatars', true, 5242880, ARRAY['image/png','image/jpeg','image/jpg','image/webp','image/gif'])
+VALUES ('avatars', 'avatars', true, 15728640, ARRAY['image/png','image/jpeg','image/jpg','image/webp','image/gif'])
 ON CONFLICT (id) DO UPDATE
   SET public = EXCLUDED.public,
       file_size_limit = EXCLUDED.file_size_limit,
@@ -83,7 +83,7 @@ ON CONFLICT (id) DO NOTHING;
 -- Gambar produk inventori — public (dipaparkan terus di senarai/detail produk).
 -- Turut dikongsi oleh Produk & Bahan Luar (psy_recommended_products.image_url).
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES ('inventory-images', 'inventory-images', true, 2097152, ARRAY['image/png','image/jpeg','image/jpg','image/webp'])
+VALUES ('inventory-images', 'inventory-images', true, 15728640, ARRAY['image/png','image/jpeg','image/jpg','image/webp'])
 ON CONFLICT (id) DO UPDATE
   SET file_size_limit = EXCLUDED.file_size_limit,
       allowed_mime_types = EXCLUDED.allowed_mime_types;
@@ -108,7 +108,7 @@ ON CONFLICT (id) DO NOTHING;
 -- psy_inventory_items.print_file_url (14_products_inventory.sql), staff cetak terus
 -- dari inventory-detail.html bila perlu restock.
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES ('inventory-print-files', 'inventory-print-files', true, 10485760, ARRAY['application/pdf','image/png'])
+VALUES ('inventory-print-files', 'inventory-print-files', true, 52428800, ARRAY['application/pdf','image/png'])
 ON CONFLICT (id) DO UPDATE
   SET public = EXCLUDED.public,
       file_size_limit = EXCLUDED.file_size_limit,

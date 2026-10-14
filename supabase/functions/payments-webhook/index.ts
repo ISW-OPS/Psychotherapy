@@ -143,6 +143,19 @@ Deno.serve(async (req) => {
       paid_at: new Date().toISOString(),
     }).eq('id', payment.id)
 
+    // Channel sebenar (fpx/card/dll) — panggilan TAMBAHAN, best-effort. Webhook
+    // form-encoded (result di atas) tak bawa medan ni. Kegagalan di sini TAK
+    // patut gagalkan webhook — bayaran dah fulfill & ditanda completed di atas.
+    try {
+      const provider = getProvider()
+      if (provider.getPaymentChannel) {
+        const { channel } = await provider.getPaymentChannel(result.gatewayRef)
+        if (channel) await admin.from('psy_payments').update({ gateway_channel: channel }).eq('id', payment.id)
+      }
+    } catch (e) {
+      console.warn('payments-webhook: getPaymentChannel gagal —', (e as Error).message)
+    }
+
     await auditLog(admin, 'payment.gateway_completed', payment.id, { receipt_ref: payment.receipt_ref, amount: payment.total, provider: result.status })
 
     // Notifikasi pesakit

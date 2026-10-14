@@ -75,7 +75,7 @@ window.PAGE_MODULE = {
   inventory:        'inventory', kit_prosedur: 'inventory', suppliers: 'inventory',
   purchase_requests: 'inventory', stock_in: 'inventory', stock_out: 'inventory', stock_alerts: 'inventory',
   inventory_overview: 'inventory', stock_movement: 'inventory', pemberian_stok: 'inventory',
-  ready_to_buy: 'inventory',
+  ready_to_buy: 'inventory', walkin_sale: 'inventory',
   equipment: 'equipment', equipment_maintenance: 'equipment',
   pulangan:         'pulangan',
   psy_orders:       'orders',

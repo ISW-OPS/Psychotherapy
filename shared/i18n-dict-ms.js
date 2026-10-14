@@ -741,6 +741,8 @@ window.ISW_I18N_EXTRA_MS = {
   "Maintenance Cycle": "Kitaran Penyelenggaraan",
   "Maintenance Remarks": "Catatan Penyelenggaraan",
   "Equipment Information": "Maklumat Peralatan",
+  "Clinical Equipment": "Peralatan Klinikal",
+  "General Equipment": "Peralatan Am",
   "Back to List": "Kembali ke Senarai",
   "Add Equipment": "Tambah Peralatan",
   "Save Equipment": "Simpan Peralatan",
