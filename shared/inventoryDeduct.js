@@ -54,6 +54,7 @@ window.deductSessionSupplies = async function (sessionId) {
     if (!supplies.length) { result.skipped.push('Tiada bekalan disetkan untuk minggu ini'); return result; }
 
     const coachingChecks = sess.coaching_checks || {};
+    const movementIds = [];
 
     // Process each supply
     for (let idx = 0; idx < supplies.length; idx++) {
@@ -89,10 +90,11 @@ window.deductSessionSupplies = async function (sessionId) {
       // terus di sini sebelum ni bypass sistem lokasi & boleh ditimpa semula oleh trigger
       // psy_sync_item_stock_total() pada Stock In/adjustment seterusnya.
       try {
-        await window.addStockToLocation(itemId, actualDelta, null, {
+        const movementId = await window.addStockToLocation(itemId, actualDelta, null, {
           type: 'out', refType: 'patient_package', refId: sess.patient_id,
           note: `Sesi minggu ${sess.week_number}`, itemName: item.name,
         });
+        if (movementId) movementIds.push(movementId);
       } catch (e) { result.errors.push(`Update ${item.name}: ${e.message}`); continue; }
 
       const newQty = Math.max(0, currentQty + actualDelta);
@@ -110,6 +112,29 @@ window.deductSessionSupplies = async function (sessionId) {
       // Barang yang sama juga dijual berasingan di Shop (psy_products, dipadan ikut
       // nama) — tanpa ni, stok Shop jadi lapuk selepas auto-tolak sesi coaching.
       try { await window.syncStockToProducts?.(item.name, newQty); } catch (e) { console.warn('syncStockToProducts gagal:', e); }
+    }
+
+    // Cipta psy_supply_invoices — TANPA ni, bekalan yg auto-ditolak di sini tak
+    // pernah muncul di "Invois Bekalan Pakej" (shared/invoice.js, dibuka dari
+    // plan-week.html "📄 Lihat Invois"), walaupun stok dah betul2 ditolak di atas.
+    // Sama laluan dgn applySupplyStock() (plan-week.html, tick manual checklist
+    // Bekalan) — lihat shared/supplyInvoice.js createSupplyInvoice(). Gagal cipta
+    // invois TAK sekat/rollback potongan stok yg dah berjaya (createSupplyInvoice()
+    // pulang null senyap kalau gagal).
+    if (result.deducted.length) {
+      try {
+        const givenForInvoice = result.deducted.map(d => ({
+          item_id: d.item_id, name: d.item_name, unit: d.unit, qty_given: d.qty,
+        }));
+        const supplyInvoice = await window.createSupplyInvoice?.(givenForInvoice, {
+          patientId: sess.patient_id, activePlan: plan, planId: sess.plan_id,
+          weekNumber: sess.week_number, source: 'auto_weekly',
+          notes: `Sesi minggu ${sess.week_number}`,
+        });
+        if (supplyInvoice && movementIds.length) {
+          await window.db.from('psy_stock_movements').update({ supply_invoice_id: supplyInvoice.id }).in('id', movementIds);
+        }
+      } catch (e) { console.warn('[deductSessionSupplies] gagal cipta invois bekalan:', e); }
     }
 
     // Audit log (one entry per session, listing all deductions)
