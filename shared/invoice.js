@@ -321,7 +321,7 @@
     modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
     modal.innerHTML = `
       <div class="absolute inset-0 bg-black/50" onclick="this.parentElement.remove()"></div>
-      <div class="relative bg-white rounded-2xl max-w-3xl w-full max-h-[92vh] overflow-hidden flex flex-col">
+      <div class="relative bg-white rounded-2xl max-w-6xl w-full max-h-[92vh] overflow-hidden flex flex-col">
         <div class="p-4 border-b border-ink/10 flex items-center justify-between">
           <h3 class="font-bold">${L('Invois', 'Invoice')}</h3>
           <div class="flex gap-2">
@@ -355,7 +355,7 @@
   // 43_package_supply_invoices.sql, dicipta lazy via shared/supplyInvoice.js
   // getOrCreatePackageSupplyInvoiceNo()). `override` = {full_name, phone, mrn, address}
   // — laluan staff (tiada window.currentUser/patientRecord pesakit).
-  async function buildPackageSupplyInvoiceInner(patientId, planId, override) {
+  async function buildPackageSupplyInvoiceInner(patientId, planId, override, weekScope) {
     const doc = D();
     if (!doc) throw new Error('shared/receipt.js belum dimuat / not loaded');
     const { esc, dateLong, header, TEAL, L } = doc;
@@ -369,21 +369,28 @@
       ? { full_name: override.full_name, phone: override.phone, mrn: override.mrn }
       : { full_name: patient?.full_name, phone: patient?.phone, mrn: patient?.mrn };
 
-    const list = rows || [];
+    // weekScope.weekSupplies diberi (dari plan-week.html getWeekCoachingItems(),
+    // dah selesaikan supplies/supplies_2 + override ikut sesi aktif) — invois skop
+    // SATU MINGGU sahaja (bukan seluruh pakej). Tanpa weekScope = laluan asal,
+    // seluruh pakej (patient-hub.html "Invois Bekalan Pakej →").
+    const isWeekScoped = !!weekScope?.weekSupplies;
+    const list = isWeekScoped ? (rows || []).filter(r => r.week_number === weekScope.weekNumber) : (rows || []);
 
     // key produk = item_id (atau nama kalau tiada) + unit — snapshot TERKINI (baris
     // terakhir yg sentuh produk ni) utk jumlah, + senarai setiap transaksi utk ledger.
     const productMap = new Map();
     const ledgerMap = new Map();
 
-    // SEED dari senarai DIRANCANG pakej (coaching_schedule) dulu — supaya item yg
-    // BELUM PERNAH diberi pun tetap muncul dlm invois (qty_given=0, baki=jumlah
-    // asal, status "Belum Diberi"), bukan hilang terus sehingga staff rekod
-    // pemberian pertama. Sebelum ni invois HANYA baca psy_supply_invoices (ledger
-    // transaksi) — pakej yg langsung tiada transaksi (cth sebab item_id dlm
-    // coaching_schedule "yatim" drpd Inventori — lihat database/schema/14_products_inventory.sql)
-    // papar terus "Tiada bekalan direkod" walhal pakej tu MEMANG ada senarai Bekalan.
-    (Array.isArray(plan?.coaching_schedule) ? plan.coaching_schedule : []).forEach(w => {
+    // SEED dari senarai DIRANCANG dulu — supaya item yg BELUM PERNAH diberi pun
+    // tetap muncul dlm invois (qty_given=0, baki=jumlah asal, status "Belum
+    // Diberi"), bukan hilang terus sehingga staff rekod pemberian pertama. Sebelum
+    // ni invois HANYA baca psy_supply_invoices (ledger transaksi) — pakej yg
+    // langsung tiada transaksi (cth sebab item_id dlm coaching_schedule "yatim"
+    // drpd Inventori — lihat database/schema/14_products_inventory.sql) papar
+    // terus "Tiada bekalan direkod" walhal pakej/minggu tu MEMANG ada senarai Bekalan.
+    const plannedWeeks = isWeekScoped ? [{ supplies: weekScope.weekSupplies }]
+      : (Array.isArray(plan?.coaching_schedule) ? plan.coaching_schedule : []);
+    plannedWeeks.forEach(w => {
       [...(w.supplies || []), ...(w.supplies_2 || [])].forEach(s => {
         const name = s.item_name || s.name || (typeof s === 'string' ? s : null);
         if (!name) return;
@@ -397,9 +404,10 @@
       });
     });
 
-    // OVERLAY data SEBENAR diberi (psy_supply_invoices) di atas seed dirancang —
-    // snapshot TERKINI (baris terakhir yg sentuh produk ni) utk jumlah, + senarai
-    // setiap transaksi utk ledger mingguan.
+    // OVERLAY data SEBENAR diberi (psy_supply_invoices, dah ditapis ikut minggu
+    // kalau isWeekScoped) di atas seed dirancang — snapshot TERKINI (baris
+    // terakhir yg sentuh produk ni) utk jumlah, + senarai setiap transaksi utk
+    // ledger mingguan.
     list.forEach(r => {
       (Array.isArray(r.items) ? r.items : []).forEach(it => {
         const key = (it.item_id || it.name) + '|' + (it.unit || 'unit');
@@ -412,10 +420,15 @@
       });
     });
     const products = Array.from(productMap.values());
+    const invoiceTitle = isWeekScoped
+      ? L(`INVOIS BEKALAN — MINGGU ${weekScope.weekNumber}`, `SUPPLY INVOICE — WEEK ${weekScope.weekNumber}`)
+      : L('INVOIS BEKALAN PAKEJ', 'PACKAGE SUPPLY INVOICE');
 
     if (!products.length) {
-      return `${header(L('INVOIS BEKALAN PAKEJ', 'PACKAGE SUPPLY INVOICE'))}
-        <div class="mt-10 text-center text-sm text-ink/50 italic py-16">${L('Tiada bekalan dirancang atau direkod untuk pakej ini.', 'No supplies planned or recorded for this package.')}</div>`;
+      return `${header(invoiceTitle)}
+        <div class="mt-10 text-center text-sm text-ink/50 italic py-16">${isWeekScoped
+          ? L('Tiada bekalan dirancang atau direkod untuk minggu ini.', 'No supplies planned or recorded for this week.')
+          : L('Tiada bekalan dirancang atau direkod untuk pakej ini.', 'No supplies planned or recorded for this package.')}</div>`;
     }
 
     // Nombor invois TETAP seluruh pakej — idempoten, backfill kalau header belum wujud lagi.
@@ -455,9 +468,9 @@
     const statusBadge = (p) => {
       const given = Number(p.qty_given_cumulative || 0);
       const planned = Number(p.qty_planned_total || 0);
-      if (given <= 0) return `<span class="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full" style="background:#fef3c7;color:#b45309">${L('Belum Diberi', 'Not Given Yet')}</span>`;
-      if (planned > 0 && given < planned) return `<span class="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full" style="background:#dbeafe;color:#1d4ed8">${L('Sebahagian', 'Partial')}</span>`;
-      return `<span class="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full" style="background:#d1fae5;color:#047857">${L('Sudah Diberi', 'Given')}</span>`;
+      if (given <= 0) return `<span class="text-xs font-bold" style="color:#b45309">${L('Belum Diberi', 'Not Given Yet')}</span>`;
+      if (planned > 0 && given < planned) return `<span class="text-xs font-bold" style="color:#1d4ed8">${L('Sebahagian', 'Partial')}</span>`;
+      return `<span class="text-xs font-bold" style="color:#047857">${L('Sudah Diberi', 'Given')}</span>`;
     };
 
     const productTable = `
@@ -520,7 +533,7 @@
     }).join('');
 
     return `
-      ${header(L('INVOIS BEKALAN PAKEJ', 'PACKAGE SUPPLY INVOICE'))}
+      ${header(invoiceTitle)}
 
       <div class="border-t border-ink/10 mt-6 pt-5 grid grid-cols-2 md:grid-cols-3 gap-6 text-sm">
         <div>
@@ -530,7 +543,8 @@
         <div><div class="font-semibold text-ink">${L('No. Invois', 'Invoice No')}</div><div class="text-ink/60 text-xs mt-2">${esc(headerRow?.invoice_no || '—')}</div></div>
         <div>
           <div class="font-semibold text-ink">${L('Nama Pakej', 'Package Name')}</div><div class="text-ink/60 text-xs mt-1">${esc(plan?.name || '—')}</div>
-          ${startDate ? `<div class="font-semibold text-ink mt-3">${L('Tempoh', 'Duration')}</div><div class="text-ink/60 text-xs mt-1">${dateLong(startDate)}${endDate ? ' – ' + dateLong(endDate) : ''}</div>` : ''}
+          ${isWeekScoped ? `<div class="font-semibold text-ink mt-3">${L('Minggu', 'Week')}</div><div class="text-ink/60 text-xs mt-1">${esc(String(weekScope.weekNumber))}</div>`
+            : startDate ? `<div class="font-semibold text-ink mt-3">${L('Tempoh', 'Duration')}</div><div class="text-ink/60 text-xs mt-1">${dateLong(startDate)}${endDate ? ' – ' + dateLong(endDate) : ''}</div>` : ''}
         </div>
       </div>
 
@@ -543,10 +557,10 @@
       </div>`;
   }
 
-  async function viewPackageSupplyInvoice(patientId, planId, override) {
+  async function viewPackageSupplyInvoice(patientId, planId, override, weekScope) {
     const L = (window.iswDoc && window.iswDoc.L) || ((ms, en) => en);
     let inner;
-    try { inner = await buildPackageSupplyInvoiceInner(patientId, planId, override); }
+    try { inner = await buildPackageSupplyInvoiceInner(patientId, planId, override, weekScope); }
     catch (e) { alert(L('Gagal muat invois: ', 'Failed to load invoice: ') + e.message); return; }
     showInvoiceModal(inner);
   }
