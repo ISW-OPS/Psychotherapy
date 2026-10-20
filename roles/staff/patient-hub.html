@@ -287,7 +287,8 @@
                         class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-purple-400 text-purple-600 hover:bg-purple-500 hover:text-white transition whitespace-nowrap"
                         title="Pesakit belum pernah log masuk/pilih hari rawatan lagi — staff boleh setup jadual (hari + tarikh mula) bagi pihak pesakit di sini, sama macam wizard pesakit di Treatment Plan.">📅 Setup Jadual Rawatan</button>
                       <button id="ov-autoschedule-btn" onclick="openAutoScheduleModal()"
-                        class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-emerald-400 text-emerald-600 hover:bg-emerald-500 hover:text-white transition whitespace-nowrap">📅 Jadualkan Semua Sesi</button>
+                        class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-emerald-400 text-emerald-600 hover:bg-emerald-500 hover:text-white transition whitespace-nowrap"
+                        title="Isi tarikh sesi berturutan (D1..Dn) untuk pakej harian — tiada pattern hari tetap, sesi dijadualkan hari demi hari.">📅 Isi Tarikh Sesi Harian</button>
                       <button id="ov-add-week-btn" data-rbac="patient.create" onclick="openAddWeekModal()"
                         class="hidden text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-navy text-navy hover:bg-navy hover:text-white transition whitespace-nowrap">➕ Tambah Minggu</button>
                       <button id="ov-add-session-btn" data-rbac="patient.create" onclick="openAddSessionModal()"
@@ -3094,7 +3095,11 @@
       document.getElementById('ov-reset-attendance-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
       document.getElementById('ov-reset-sessions-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
       document.getElementById('ov-hardreset-sessions-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
-      document.getElementById('ov-autoschedule-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan));
+      // Pakej mingguan: "Setup Jadual Rawatan" sahaja (sila lihat ov-schedule-setup-btn) — laluan ni
+      // (isi tarikh ikut cadence +7 hari, tiada pattern hari tetap) cuma utk pakej HARIAN yang
+      // Setup Jadual Rawatan tak sokong langsung. Disorokkan utk mingguan elak staff tersilap guna
+      // laluan ni & pecahkan preferred_days/schedule_setup_at yang fitur lain bergantung padanya.
+      document.getElementById('ov-autoschedule-btn')?.classList.toggle('hidden', !(window.currentUser?.staff_role === 'super_admin' && activePlan && activePlan.duration_unit === 'day'));
 
       // ─── KPI: Minggu Semasa + Kehadiran ───
       if (activePlan) {
@@ -6773,7 +6778,7 @@
       m.innerHTML = `
     <div class="absolute inset-0 bg-black/50" onclick="document.getElementById('autosched-modal').remove()"></div>
     <div class="relative bg-white rounded-2xl max-w-sm w-full p-6 space-y-4">
-      <h3 class="font-bold text-base">📅 Jadualkan Semua Sesi</h3>
+      <h3 class="font-bold text-base">📅 Isi Tarikh Sesi Harian</h3>
       <p class="text-sm text-ink/60">Pilih <span class="font-semibold">tarikh & slot sesi pertama</span>. Sistem tempah setiap minggu (${baseWeeks} minggu) — hanya slot rawatan yang dibuka & elak tarikh penutupan klinik. Minggu yang sudah ditempah / hadir <span class="font-semibold">dilangkau</span>.</p>
       <div>
         <label class="text-xs font-semibold text-ink/60 uppercase">Tarikh sesi pertama</label>
@@ -7189,9 +7194,10 @@
     // Ramai pesakit belum pernah log masuk sistem lagi — semuanya diurus staff. Ni
     // REPLIKA TEPAT tingkah laku wizard pesakit (plan.html initSetupWizard/
     // confirmScheduleSetup), BUKAN "Tukar Hari Sesi" (tu untuk UBAH jadual SEDIA ADA,
-    // perlukan sesi bertarikh dulu) atau "Jadualkan Semua Sesi" (tu tak simpan
+    // perlukan sesi bertarikh dulu) atau "Isi Tarikh Sesi Harian" (tu tak simpan
     // preferred_days/schedule_setup_at — pecahkan fitur pesakit yg bergantung padanya,
-    // cth auto-mark-missed/extension). Block (bukan anjak) pada cuti/slot tertutup —
+    // cth auto-mark-missed/extension; kini disorok utk pakej mingguan — pakej HARIAN sahaja).
+    // Block (bukan anjak) pada cuti/slot tertutup —
     // padan ketat dgn wizard pesakit, supaya hasil sama tak kira staff atau pesakit
     // sendiri yang buat setup. Pakej harian (duration_unit='day') TAK disokong di sini
     // — sama had macam Tukar Hari Sesi (weekly sahaja).
@@ -7629,7 +7635,7 @@
 
     // Cipta treatment plan dari pakej pesakit bila label pakej ada tapi tiada baris plan.
     // Cipta skeleton mingguan (bilangan sesi ikut pakej, pending). Tarikh ditempah kemudian
-    // via "Jadualkan Semua Sesi". Inactive → plan 'completed' (rekod sejarah).
+    // via "Setup Jadual Rawatan" (mingguan) / "Isi Tarikh Sesi Harian" (harian). Inactive → plan 'completed' (rekod sejarah).
     async function createMissingPlan() {
       if (activePlan) return;
       if (!(canEdit || window.currentUser?.staff_role === 'super_admin')) { banner('Anda hanya boleh melihat rekod pesakit ini.', 'error'); return; }
@@ -7715,11 +7721,16 @@
           const { error: insErr } = await window.db.from('psy_plan_weekly_progress').insert(rows);
           if (insErr) throw insErr;
         }
-        await window.db.from('psy_treatment_plans').update({ current_week: 1 }).eq('id', activePlan.id);
-        activePlan.current_week = 1;
+        // Kosongkan state "dah setup" juga — kalau tak, ov-schedule-setup-btn kekal tersorok
+        // (syarat !schedule_setup_at) walaupun semua baris dah kembali 'pending' kosong di atas.
+        await window.db.from('psy_treatment_plans').update({
+          current_week: 1, schedule_setup_at: null, preferred_days: null, preferred_pair: null, schedule_auto_alt_day: null,
+        }).eq('id', activePlan.id);
+        Object.assign(activePlan, { current_week: 1, schedule_setup_at: null, preferred_days: null, preferred_pair: null, schedule_auto_alt_day: null });
 
         await auditLog('plan.hard_reset', activePlan.id, { weeks: durationWeeks, rows: rows.length });
-        banner('Hard reset selesai — skeleton dijana semula ikut pakej. Tekan "📅 Jadualkan Semua Sesi" untuk tetapkan tarikh. ✅');
+        const nextBtn = activePlan.duration_unit === 'day' ? '📅 Isi Tarikh Sesi Harian' : '📅 Setup Jadual Rawatan';
+        banner(`Hard reset selesai — skeleton dijana semula ikut pakej. Tekan "${nextBtn}" untuk tetapkan tarikh. ✅`);
         await loadOverview();
       } catch (e) {
         banner('Ralat: ' + e.message, 'error');
