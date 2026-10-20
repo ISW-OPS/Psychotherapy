@@ -2581,7 +2581,7 @@
         // akaun/sesi log masuk (dicipta terus oleh doktor), jadi laluan pulang mesti
         // halaman awam tanpa login. Lihat payment-receipt-public (Edge Function).
         const returnUrl = `${location.origin}/roles/patient/payment-receipt.html`;
-        const tier = wizPayTier || (kob.package_payment_status === 'declined' ? 'now' : 'today');
+        const tier = wizResolveTier();
         const saveCard = mode === 'installment' && wizSaveCard;
         const { data, error } = await window.db.functions.invoke('payments-kob-initiate', {
           body: { kobSessionId: kobId, mode, returnUrl, tier, saveCard },
@@ -2715,7 +2715,7 @@
         // akaun/sesi log masuk (dicipta terus oleh doktor), jadi laluan pulang mesti
         // halaman awam tanpa login. Lihat payment-receipt-public (Edge Function).
         const returnUrl = `${location.origin}/roles/patient/payment-receipt.html`;
-        const tier = wizPayTier || (kob.package_payment_status === 'declined' ? 'now' : 'today');
+        const tier = wizResolveTier();
         const saveCard = mode === 'installment' && wizSaveCard;
         const { data, error } = await window.db.functions.invoke('payments-kob-initiate', {
           body: { kobSessionId: kobId, mode, returnUrl, tier, saveCard },
@@ -3085,13 +3085,71 @@
       window.db.from('psy_kob_sessions').update({ intended_payment_mode: plan }).eq('id', kobId)
         .then(({ error }) => { if (error) console.warn('[wizSelectPlan] gagal simpan intended_payment_mode:', error.message); });
     }
+    // Tier SEBENAR dipakai utk bayaran/jadual/pautan HitPay sesi ni — ikut Kunci Harga
+    // (kob.locked_price_tier, DB, kekal walau refresh/pakej diedit lepas ni) KALAU dah
+    // dikunci; jika tidak ikut pilihan semasa (wizPayTier) atau default ikut status.
+    // Satu tempat tunggal — semua pengiraan harga/bayaran panggil fungsi ni.
+    function wizResolveTier() {
+      return kob.locked_price_tier || wizPayTier || (kob.package_payment_status === 'declined' ? 'now' : 'today');
+    }
     // Klik kad "Harga Sekarang"/"Harga Hari Ini" di Langkah 3 — doktor override
     // harga utk bayaran ni terus, tak kira status 'pending'/'declined'. Reset
     // plan/method (harga berubah, elak jadual lama tak padan tier baharu).
+    // Tiada kesan kalau harga dah dikunci — mesti buka kunci dulu (wizUnlockPrice).
     function wizSelectPayTier(tier) {
+      if (kob.locked_price_tier) return;
       wizPayTier = tier; wizPlan = null; wizMethod = null;
       wizManualDeposit = null; wizManualPeriods = []; wizManualDates = []; wizManualExtraRows = 0;
       renderPaymentMethodSection();
+    }
+    // Staff klik "🔒 Kunci Harga" di Langkah 3 — snapshot tier+amaun semasa terus ke
+    // DB (psy_kob_sessions.locked_price_*) supaya kekal walau harga pakej diedit lepas
+    // ni di pakej-edit.html atau page direfresh. wizUnlockPrice() buka balik kalau
+    // staff tersilap.
+    let wizLockingPrice = false;
+    async function wizLockPrice(tier, pkgMeta) {
+      if (wizLockingPrice || kob.locked_price_tier) return;
+      wizLockingPrice = true;
+      renderPaymentMethodSection();
+      try {
+        const amount = tierFullPrice(pkgMeta, tier);
+        const payload = {
+          locked_price_tier: tier,
+          locked_price_amount: amount,
+          locked_at: new Date().toISOString(),
+          locked_by: window.currentUser?.id || null,
+          locked_by_name: window.currentUser?.full_name || null,
+        };
+        const { error } = await window.db.from('psy_kob_sessions').update(payload).eq('id', kobId);
+        if (error) throw new Error(error.message);
+        Object.assign(kob, payload);
+        wizPayTier = tier;
+        await auditLog('kob.price_locked', kobId, { tier, amount });
+        banner(iswL(`🔒 Harga dikunci: ${fmtRM(amount)} (${tier === 'today' ? 'Harga Hari Ini' : 'Harga Sekarang'}) ✅`, `🔒 Price locked: ${fmtRM(amount)} ✅`));
+      } catch (e) {
+        banner('Gagal kunci harga: ' + e.message, 'error');
+      } finally {
+        wizLockingPrice = false;
+        renderPaymentMethodSection();
+      }
+    }
+    async function wizUnlockPrice() {
+      if (wizLockingPrice || !kob.locked_price_tier) return;
+      wizLockingPrice = true;
+      renderPaymentMethodSection();
+      try {
+        const payload = { locked_price_tier: null, locked_price_amount: null, locked_at: null, locked_by: null, locked_by_name: null };
+        const { error } = await window.db.from('psy_kob_sessions').update(payload).eq('id', kobId);
+        if (error) throw new Error(error.message);
+        Object.assign(kob, payload);
+        await auditLog('kob.price_unlocked', kobId, {});
+        banner(iswL('🔓 Kunci harga dibuka — boleh pilih harga lain semula.', '🔓 Price lock removed — you can pick another tier again.'));
+      } catch (e) {
+        banner('Gagal buka kunci harga: ' + e.message, 'error');
+      } finally {
+        wizLockingPrice = false;
+        renderPaymentMethodSection();
+      }
     }
     function wizSetManualDeposit(value) {
       wizManualDeposit = Math.max(0, parseMoneyVal(value));
@@ -3193,24 +3251,41 @@
       const todayPrice = tierFullPrice(pkgMeta, 'today');
       const hasToday = !!pkgMeta.today_price;
       const isSelectMode = selectedTier !== undefined;
-      const tierCardHtml = (t, label, price, note, active) => decisionHandler ? `
+      // Kunci Harga — hanya terpakai di mod bayaran (isSelectMode, decisionHandler=
+      // 'wizSelectPayTier') dari renderPaymentMethodSection(). Bila dikunci, kad JADI
+      // paparan sahaja (tiada onclick) tak kira decisionHandler yg diberi.
+      const isLocked = isSelectMode && !!kob?.locked_price_tier;
+      const clickable = decisionHandler && !isLocked;
+      const tierCardHtml = (t, label, price, note, active) => clickable ? `
     <button type="button" onclick="${decisionHandler}('${t}')" data-rbac="kob.edit"
       class="text-left p-4 border-2 rounded-xl cursor-pointer hover:shadow-md transition-shadow ${active ? 'border-green bg-green-light/30 hover:bg-green-light/50' : 'border-ink/10 hover:border-ink/25 hover:bg-ink/5'}">
       <div class="flex items-center gap-1.5 text-xs font-bold ${t === 'today' ? 'text-gold-dark' : 'text-ink/60'}">${t === 'today' ? '⭐' : '🏷️'} ${label}</div>
       <div class="text-xl font-bold text-navy mt-1">${fmtRM(price)}</div>
       <div class="text-[11px] text-ink/45 mt-0.5">${note}</div>
     </button>` : `
-    <div class="text-left p-4 border-2 rounded-xl ${active ? 'border-green bg-green-light/30' : 'border-ink/10'}">
-      <div class="flex items-center gap-1.5 text-xs font-bold ${t === 'today' ? 'text-gold-dark' : 'text-ink/60'}">${t === 'today' ? '⭐' : '🏷️'} ${label}</div>
+    <div class="text-left p-4 border-2 rounded-xl ${active ? 'border-green bg-green-light/30' : 'border-ink/10'} ${isLocked && active ? 'opacity-100' : isLocked ? 'opacity-50' : ''}">
+      <div class="flex items-center gap-1.5 text-xs font-bold ${t === 'today' ? 'text-gold-dark' : 'text-ink/60'}">${t === 'today' ? '⭐' : '🏷️'} ${label}${isLocked && active ? ' 🔒' : ''}</div>
       <div class="text-xl font-bold text-navy mt-1">${fmtRM(price)}</div>
       <div class="text-[11px] text-ink/45 mt-0.5">${note}</div>
     </div>`;
-      const nowNote = isSelectMode ? 'Klik utk guna harga ni bagi bayaran ini.'
+      const nowNote = isLocked ? (selectedTier === 'now' ? 'Harga ini DIKUNCI utk bayaran ini.' : 'Tidak dipilih.')
+        : isSelectMode ? 'Klik utk guna harga ni bagi bayaran ini.'
         : decisionHandler ? 'Klik kalau patient TIDAK teruskan hari ini.' : 'Terpakai KALAU patient tidak teruskan hari ini.';
-      const todayNote = isSelectMode ? 'Klik utk guna harga ni bagi bayaran ini.'
+      const todayNote = isLocked ? (selectedTier === 'today' ? 'Harga ini DIKUNCI utk bayaran ini.' : 'Tidak dipilih.')
+        : isSelectMode ? 'Klik utk guna harga ni bagi bayaran ini.'
         : decisionHandler ? 'Klik kalau patient TERUSKAN & bayar hari ini.' : 'Istimewa — sah & terpakai semasa sesi KOB hari ini.';
       const nowActive = isSelectMode ? selectedTier === 'now' : !hasToday;
       const todayActive = isSelectMode ? selectedTier === 'today' : true;
+      const lockBarHtml = !isSelectMode ? '' : isLocked ? `
+      <div class="flex items-center justify-between gap-3 bg-navy-light/20 border border-navy/20 rounded-lg px-3 py-2 mt-3 text-xs">
+        <span>🔒 <strong>Harga dikunci:</strong> ${fmtRM(kob.locked_price_amount)} (${kob.locked_price_tier === 'today' ? 'Harga Hari Ini' : 'Harga Sekarang'})${kob.locked_by_name ? ` — oleh ${escapeHtml(kob.locked_by_name)}` : ''}${kob.locked_at ? `, ${fmtScheduleDate(kob.locked_at)}` : ''}</span>
+        <button type="button" onclick="wizUnlockPrice()" data-rbac="kob.edit" ${wizLockingPrice ? 'disabled' : ''}
+          class="text-[11px] font-semibold text-terracotta border border-terracotta/25 rounded-lg px-2.5 py-1 hover:bg-terracotta/10 whitespace-nowrap shrink-0">🔓 Buka Kunci</button>
+      </div>` : `
+      <div class="flex justify-end mt-3">
+        <button type="button" onclick="wizLockPrice('${selectedTier}', allPackagesCache.find(p=>p.package_id==='${pkgMeta.package_id}'))" data-rbac="kob.edit" ${wizLockingPrice ? 'disabled' : ''}
+          class="text-[11px] font-semibold text-navy border border-navy/25 rounded-lg px-2.5 py-1 hover:bg-navy-light/20">🔒 Kunci Harga Ini</button>
+      </div>`;
       return `
     <div>
       <div class="text-[11px] font-semibold text-ink/50 uppercase mb-2">3. Harga Sekarang / Hari Ini <span class="text-ink/35 normal-case font-medium">(Full Payment)</span></div>
@@ -3218,8 +3293,11 @@
         ${tierCardHtml('now', 'Harga Sekarang (Now)', nowPrice, nowNote, nowActive)}
         ${hasToday ? tierCardHtml('today', 'Harga Hari Ini (Today)', todayPrice, todayNote, todayActive) : ''}
       </div>
-      <p class="text-[10px] text-ink/40 mt-1.5">ℹ️ ${isSelectMode
-          ? 'Staff pilih harga mana nak digunakan utk bayaran ini — plan pembayaran di Langkah 4 dikira ikut harga yang dipilih.'
+      ${lockBarHtml}
+      <p class="text-[10px] text-ink/40 mt-1.5">ℹ️ ${isLocked
+          ? 'Harga bayaran ini dikunci — buka kunci dulu kalau nak tukar harga lain.'
+          : isSelectMode
+          ? 'Staff pilih harga mana nak digunakan utk bayaran ini — plan pembayaran di Langkah 4 dikira ikut harga yang dipilih. Klik "Kunci Harga Ini" supaya harga tak berubah walau pakej diedit kemudian.'
           : decisionHandler
             ? 'Tunjuk perbandingan ni kat pesakit dulu, lepas tu klik kad yang sepadan dengan keputusan dia.'
             : `Plan pembayaran di bawah dikira guna ${hasToday ? 'Harga Hari Ini' : 'Harga Sekarang'} — perbandingan ni sekadar tunjuk kat pesakit, bukan pilihan.`}</p>
@@ -3710,12 +3788,11 @@
 
       if (!pkgMeta) { wizMain.innerHTML = ''; wizSidebar.innerHTML = ''; return; }
 
-      // tier utk bayaran ni: ikut pilihan doktor di Langkah 3 (wizPayTier, klik
-      // kad "Harga Sekarang"/"Harga Hari Ini" — bebas, tak terkunci pada status
-      // pending/declined), default ikut status ('now' utk declined, 'today' utk
-      // pending) sehingga doktor override.
-      const defaultTier = isDeclinedInfo ? 'now' : 'today';
-      const tier = wizPayTier || defaultTier;
+      // tier utk bayaran ni: ikut Kunci Harga (kob.locked_price_tier) kalau dikunci,
+      // jika tidak ikut pilihan doktor di Langkah 3 (wizPayTier, klik kad "Harga
+      // Sekarang"/"Harga Hari Ini"), default ikut status ('now' utk declined, 'today'
+      // utk pending) sehingga doktor override. Lihat wizResolveTier().
+      const tier = wizResolveTier();
 
       // Pulihkan plan Langkah 4 (wizPlan) dari intended_payment_mode (DB) lepas
       // reload — wizPlan cuma pembolehubah JS, hilang tiap reload (cth. auto-reload
@@ -3787,7 +3864,7 @@
       if (kob.package_payment_status !== 'pending' && kob.package_payment_status !== 'declined') {
         throw new Error('Status bayaran sesi ini bukan lagi pending/declined — muat semula halaman.');
       }
-      const payTier = wizPayTier || (kob.package_payment_status === 'declined' ? 'now' : 'today');
+      const payTier = wizResolveTier();
       if (!(Number(wizManualDeposit) > 0) || !wizManualPeriods.length || !wizManualPeriods.every(v => Number(v) > 0)
         || !wizManualDates.length || !wizManualDates.every(v => !!v)) {
         throw new Error('Sila isi Deposit & kesemua baris Tarikh/Jumlah di Langkah 4 dahulu');
@@ -3919,9 +3996,10 @@
       const dateProblem = iswPaidAtProblem(paidAtVal);
       if (dateProblem) { banner(dateProblem, 'error'); return; }
 
-      // Ikut pilihan doktor di Langkah 3 (wizPayTier); default 'today' utk pending,
-      // 'now' utk declined bila doktor belum override.
-      const payTier = wizPayTier || (kob.package_payment_status === 'declined' ? 'now' : 'today');
+      // Ikut Kunci Harga (kob.locked_price_tier) kalau dikunci, jika tidak ikut pilihan
+      // doktor di Langkah 3 (wizPayTier); default 'today' utk pending, 'now' utk declined
+      // bila doktor belum override. Lihat wizResolveTier().
+      const payTier = wizResolveTier();
 
       const isManualInstallment = wizPlan === 'manual_installment';
       const isInstallmentStart = (wizPlan === 'installment' || isManualInstallment)

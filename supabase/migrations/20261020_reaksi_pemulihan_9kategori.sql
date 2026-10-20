@@ -390,3 +390,27 @@ DO $$ BEGIN
     ALTER TABLE psy_reaksi_item ADD CONSTRAINT chk_reaksi_item_pilih_teruk_wajib CHECK (boleh_pilih_teruk = true);
   END IF;
 END $$;
+
+-- ════════════════════════════════════════════════════════════════
+-- FASA G (20 Okt 2026, susulan #2) — Kunci Harga di KOB. Staff klik "Kunci
+-- Harga" di Langkah 3 (kob-detail.html) supaya harga Now/Today bayaran sesi
+-- KOB ni TAK berubah lagi walaupun harga pakej diedit kemudian di pakej-edit.html.
+-- locked_price_amount snapshot harga sebenar masa dikunci. NULL = belum dikunci
+-- (default — tak jejas sesi KOB sedia ada langsung).
+-- ════════════════════════════════════════════════════════════════
+ALTER TABLE psy_kob_sessions ADD COLUMN IF NOT EXISTS locked_price_tier TEXT;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'psy_kob_sessions_locked_price_tier_check') THEN
+    ALTER TABLE psy_kob_sessions ADD CONSTRAINT psy_kob_sessions_locked_price_tier_check CHECK (locked_price_tier IN ('now','today'));
+  END IF;
+END $$;
+ALTER TABLE psy_kob_sessions ADD COLUMN IF NOT EXISTS locked_price_amount NUMERIC(12,2);
+ALTER TABLE psy_kob_sessions ADD COLUMN IF NOT EXISTS locked_at TIMESTAMPTZ;
+ALTER TABLE psy_kob_sessions ADD COLUMN IF NOT EXISTS locked_by UUID REFERENCES psy_profiles(id) ON DELETE SET NULL;
+ALTER TABLE psy_kob_sessions ADD COLUMN IF NOT EXISTS locked_by_name TEXT;
+
+COMMENT ON COLUMN psy_kob_sessions.locked_price_tier IS
+  'Staff-locked price tier (now/today) for this KOB payment, set via "Kunci Harga" button in
+   kob-detail.html Langkah 3. When set, overrides wizPayTier in UI + payments-kob-initiate tier
+   param, and keeps working even if the package price changes afterwards (snapshot in
+   locked_price_amount). NULL = not locked, staff can still freely switch tiers.';

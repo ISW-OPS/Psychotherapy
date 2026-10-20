@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-10-20T07:06:47.103539Z
+-- Generated: 2026-10-20T07:41:35.514032Z
 -- Jumlah fail: 41
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -3402,6 +3402,16 @@ CREATE TABLE IF NOT EXISTS psy_kob_sessions (
   package_payment_mode      TEXT CHECK (package_payment_mode IN ('full','installment')),
   intended_payment_mode     TEXT CHECK (intended_payment_mode IN ('full','installment','manual_installment')),
 
+  -- Kunci Harga — staff klik "Kunci Harga" di Langkah 3 (kob-detail.html) utk tetapkan
+  -- harga Now/Today bayaran ini TAK boleh berubah lagi (walaupun harga pakej diedit
+  -- kemudian di pakej-edit.html). locked_price_amount snapshot harga sebenar masa
+  -- dikunci (bukan dikira semula dari pkgMeta tiap kali). NULL = belum dikunci.
+  locked_price_tier         TEXT CHECK (locked_price_tier IN ('now','today')),
+  locked_price_amount       NUMERIC(12,2),
+  locked_at                 TIMESTAMPTZ,
+  locked_by                 UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  locked_by_name            TEXT,
+
   reschedule_count    INT NOT NULL DEFAULT 0,
   reschedule_reason   TEXT,
 
@@ -3414,6 +3424,12 @@ COMMENT ON COLUMN psy_kob_sessions.questionnaire IS
 
 COMMENT ON COLUMN psy_kob_sessions.recommended_package_id IS
   'Package recommended by doctor during KOB. Patient must pay before agreement signing.';
+
+COMMENT ON COLUMN psy_kob_sessions.locked_price_tier IS
+  'Staff-locked price tier (now/today) for this KOB payment, set via "Kunci Harga" button in
+   kob-detail.html Langkah 3. When set, overrides wizPayTier in UI + payments-kob-initiate tier
+   param, and keeps working even if the package price changes afterwards (snapshot in
+   locked_price_amount). NULL = not locked, staff can still freely switch tiers.';
 
 COMMENT ON COLUMN psy_kob_sessions.intended_payment_mode IS
   'Plan staff PILIH utk pesakit di wizard kob-detail.html (wizSelectPlan, Langkah 4) — SEBELUM
