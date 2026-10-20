@@ -3110,9 +3110,9 @@
         // "Setup Jadual Rawatan" — hanya bila pesakit/staff belum PERNAH setup jadual sebenar
         // lagi (schedule_setup_at kosong, semua row psy_plan_weekly_progress sedia ada
         // masih placeholder 'pending' — sama syarat dgn needsSetup di plan.html). Pakej harian
-        // tak disokong di sini (sama had macam Tukar Hari Sesi).
+        // tak disokong di sini (sama had macam Tukar Hari Sesi). Dibuka kepada admin & coach juga.
         document.getElementById('ov-schedule-setup-btn')?.classList.toggle('hidden', !(
-          window.currentUser?.staff_role === 'super_admin' && activePlan.duration_unit !== 'day' && !activePlan.schedule_setup_at
+          ssSetupAllowedRole() && activePlan.duration_unit !== 'day' && !activePlan.schedule_setup_at
           && !ovWeeklyRows.some(r => r.status !== 'pending')
         ));
 
@@ -7202,9 +7202,14 @@
     // sendiri yang buat setup. Pakej harian (duration_unit='day') TAK disokong di sini
     // — sama had macam Tukar Hari Sesi (weekly sahaja).
     let _ssVariants = [], _ssSessions = [], _ssWarnings = [], _ssClosures = [], _ssAutoFallback = false;
+    // Setup Jadual Rawatan (setup PERTAMA KALI) dibuka kepada admin & coach juga, bukan super_admin
+    // sahaja — tak macam Tukar Hari Sesi/Hard Reset/Reset Sesi (tu kekal super_admin, lebih berisiko
+    // sbb ubah/padam data sedia ada). Fungsi (bukan const) — selamat dipanggil tak kira susunan
+    // deklarasi dlm fail (function hoisting), tak macam const yang terikat susunan eksekusi skrip.
+    function ssSetupAllowedRole() { return ['super_admin', 'admin', 'coach'].includes(window.currentUser?.staff_role); }
 
     async function openStaffScheduleSetupModal() {
-      if (window.currentUser?.staff_role !== 'super_admin') { banner(iswL('Fungsi ini terhad kepada Super Admin.', 'This function is restricted to Super Admin.'), 'error'); return; }
+      if (!ssSetupAllowedRole()) { banner(iswL('Fungsi ini tidak dibenarkan untuk peranan anda.', 'This function is not available for your role.'), 'error'); return; }
       await loadRawatanAvailability();
       const { data: closureRows } = await window.db.from('psy_clinic_closures').select('closure_date, is_recurring, label');
       _ssClosures = closureRows || [];
