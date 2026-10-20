@@ -414,3 +414,133 @@ COMMENT ON COLUMN psy_kob_sessions.locked_price_tier IS
    kob-detail.html Langkah 3. When set, overrides wizPayTier in UI + payments-kob-initiate tier
    param, and keeps working even if the package price changes afterwards (snapshot in
    locked_price_amount). NULL = not locked, staff can still freely switch tiers.';
+
+-- ════════════════════════════════════════════════════════════════
+-- FASA H (20 Okt 2026, susulan #3) — BAIKI rujukan item_id "YATIM" di Bekalan Pakej.
+--
+-- PUNCA: database/schema/14_products_inventory.sql ada "DELETE FROM psy_inventory_items;"
+-- tanpa skop, diikuti INSERT ~35 item hardcode TANPA id tetap (gen_random_uuid() lalai).
+-- Setiap kali schema/master_migration ni di-run, SEMUA item Inventori sedia ada dipadam
+-- & diganti SEMULA dgn UUID RAWAK baharu — memecahkan SEMUA rujukan item_id yg disimpan
+-- sbg snapshot di psy_treatment_plans.coaching_schedule, psy_packages.coaching_schedule,
+-- psy_plan_week_overrides.supplies_override & psy_procedure_kits.items. Disahkan 20 Okt
+-- 2026 via Supabase MCP: 100% (45/45) rujukan item_id unik dlm sistem jadi yatim — tiada
+-- pergerakan stok "out" PERNAH berjaya utk Bekalan Pakej sejak awal. Punca dah dibetulkan
+-- (14_products_inventory.sql kini idempoten, TAK PERNAH padam baris sedia ada lagi — lihat
+-- [[project_inventory_seed_destructive_delete]]) — FASA ni BAIKI DATA sedia ada.
+--
+-- PENDEKATAN: (1) cipta 17 item Inventori baharu utk produk yg langsung tiada padanan
+-- sekarang (Tier C — disahkan user), (2) ganti SEMUA id lama ke id btul (sedia ada ATAU
+-- baharu) merentas 4 jadual, guna replace() teks jsonb (SELAMAT — UUID rentetan unik,
+-- tak mungkin lencong padan data lain). Padanan Tier B (nama/saiz berbeza tapi disahkan
+-- produk sama oleh user) turut disertakan.
+-- ════════════════════════════════════════════════════════════════
+
+-- (1) Cipta item Inventori baharu — Tier C, langsung tiada dalam katalog sekarang.
+INSERT INTO psy_inventory_items (name, category, unit, qty_in_stock, min_qty, requires_approval, notes)
+SELECT v.name, v.category, v.unit, 0, v.min_qty, v.requires_approval, v.notes
+FROM (VALUES
+  ('Akses Portal ISW', 'Starter Kit', 'Unit', 10, false, 'Dicipta semula 20 Okt 2026 — item_id asal yatim drpd Inventori (lihat FASA H)'),
+  ('Alcohol Swab', 'Peralatan Klinik', 'Pek', 10, false, 'Dicipta semula 20 Okt 2026 — item_id asal yatim drpd Inventori'),
+  ('Biopsychosocial-Spiritual (BPS-S)', 'Buku & Bahan Cetak', 'Naskhah', 10, false, 'Dicipta semula 20 Okt 2026 — item_id asal yatim drpd Inventori'),
+  ('BNP & NSS Pesakit Gastrik, Gerd, Radang Usus, Sembelit', 'Starter Kit', 'Unit', 5, false, 'Dicipta semula 20 Okt 2026 — item_id asal yatim drpd Inventori'),
+  ('Cotton Ball', 'Peralatan Klinik', 'Pek', 10, false, 'Dicipta semula 20 Okt 2026 — item_id asal yatim drpd Inventori'),
+  ('Intravenous (IV) Infusion Set', 'Peralatan Klinik', 'Set', 5, false, 'Dicipta semula 20 Okt 2026 — item_id asal yatim drpd Inventori'),
+  ('Normal Saline (NS)', 'Peralatan Klinik', 'Botol', 5, false, 'Dicipta semula 20 Okt 2026 — item_id asal yatim drpd Inventori'),
+  ('P101 Jilid 1', 'Buku & Bahan Cetak', 'Naskhah', 10, false, 'Dicipta semula 20 Okt 2026 — item_id asal yatim drpd Inventori'),
+  ('P101 Jilid 2', 'Buku & Bahan Cetak', 'Naskhah', 10, false, 'Dicipta semula 20 Okt 2026 — item_id asal yatim drpd Inventori'),
+  ('P101 Jilid 3', 'Buku & Bahan Cetak', 'Naskhah', 10, false, 'Dicipta semula 20 Okt 2026 — item_id asal yatim drpd Inventori'),
+  ('P101 Jilid 4', 'Buku & Bahan Cetak', 'Naskhah', 10, false, 'Dicipta semula 20 Okt 2026 — item_id asal yatim drpd Inventori'),
+  ('P101 Jilid 5', 'Buku & Bahan Cetak', 'Naskhah', 10, false, 'Dicipta semula 20 Okt 2026 — item_id asal yatim drpd Inventori'),
+  ('P101 Jilid 6', 'Buku & Bahan Cetak', 'Naskhah', 10, false, 'Dicipta semula 20 Okt 2026 — item_id asal yatim drpd Inventori'),
+  ('P101 Jilid 7', 'Buku & Bahan Cetak', 'Naskhah', 10, false, 'Dicipta semula 20 Okt 2026 — item_id asal yatim drpd Inventori'),
+  ('Panduan Peminuman Madu (IB & YHPG)', 'Buku & Bahan Cetak', 'Naskhah', 10, false, 'Dicipta semula 20 Okt 2026 — item_id asal yatim drpd Inventori'),
+  ('Panduan Peminuman Madu (LTH & LTHPG)', 'Buku & Bahan Cetak', 'Naskhah', 10, false, 'Dicipta semula 20 Okt 2026 — item_id asal yatim drpd Inventori'),
+  ('Panduan Pengamalan Zikir Bersanad', 'Buku & Bahan Cetak', 'Naskhah', 10, false, 'Dicipta semula 20 Okt 2026 — item_id asal yatim drpd Inventori')
+) AS v(name, category, unit, min_qty, requires_approval, notes)
+WHERE NOT EXISTS (SELECT 1 FROM psy_inventory_items existing WHERE existing.name = v.name);
+
+-- (2) Ganti SEMUA rujukan item_id lama (yatim) → id betul (sedia ada/baharu), merentas
+-- SEMUA jadual yg simpan snapshot item_id dalam JSONB. Guna CTE utk selesaikan id baharu
+-- (dari INSERT di atas) & id sedia ada (Tier A/B, padanan nama) dalam SATU jadual mapping,
+-- lepas tu replace() teks jsonb berjujukan (idempoten — lepas run sekali, id lama dah tak
+-- wujud dlm teks, replace seterusnya jadi no-op selamat).
+DO $$
+DECLARE
+  m RECORD;
+  new_id UUID;
+BEGIN
+  FOR m IN SELECT * FROM (VALUES
+    -- Tier A — nama jelas sama (eja/Brochure vs Brosur sahaja)
+    ('4230596e-7413-42e7-b76e-eaeb0108eaef', 'Air Afiyah'),
+    ('91e88c83-6322-42ec-abaf-d30b4d603d95', 'Air Za''afaran'),
+    ('61b712c4-b517-4ffd-83c4-78c95d4a1e9e', 'BNP'),
+    ('6952718e-dd28-4279-975e-4364013fb77c', 'Brochure ISW'),
+    ('fa385232-7670-44c9-8207-e73c451c4066', 'Brochure OB'),
+    ('98190809-0aca-403b-88cc-8b934c453c8f', 'Buku Gaya Hidup Fitrah'),
+    ('11477fc9-4647-41bf-894b-2896f1c917ba', 'GHF'),
+    ('603ede96-8105-475e-b056-67958c06b5cc', 'Herba Kolon'),
+    ('2fee174d-97cb-489b-aa80-82aca604787c', 'Jadual Terapi Mingguan'),
+    ('e270bc74-acd0-41a8-9ac8-b591c02ad186', 'List Pantang'),
+    ('09456229-bd9c-47fb-924e-de0586b63a07', 'Mesin Ozon'),
+    ('2f33119b-4ca8-42e3-8494-0bc21d4f5743', 'NSS'),
+    ('0eb505ff-2ec4-4fa4-9d82-bf7466a02f1c', 'Peta OB'),
+    ('63ff8bb2-efa1-4391-83a4-3abd042e53a7', 'Resepi Superenergi'),
+    ('0622e67e-f7a6-4cb3-9af2-6d1d2718faae', 'Resepi Superimun'),
+    ('4797d035-ad0d-4a86-8ce1-159fa4ddb05d', 'SDS OB'),
+    ('04645201-fd4c-4aba-8e3c-e4dcad47e423', 'Voucher Konsultasi'),
+    ('6f88519d-4890-4811-8ea4-5734dec604c2', 'DNA Test Kit'),
+    ('c8f49e92-d5b8-4940-bbec-8185c17c4ff5', 'Enema Kit'),
+    -- Tier B — produk sama disahkan user, nama/saiz berbeza
+    ('5d86d796-81bf-43c4-97ed-6c08a976e7e7', 'Brochure Madu'),
+    ('372b70c9-68d4-4b22-a6b2-548a16d1c953', 'Lebah Thoharah (LTH)'),
+    ('e04db28e-d264-4b4f-bfe7-9c109ae44dde', 'Lebah Thoharah (LTH)'),
+    ('e142aad7-c823-48aa-a965-91e6a634ae41', 'LTH Plus Green (LTHPG)'),
+    ('d73ee889-7b41-498c-aa5e-75847542c142', 'Ibu Bumi (IB)'),
+    ('85c994b6-049d-42c7-943f-a549e4443c6e', 'Ibu Bumi (IB)'),
+    ('9e42bf82-3ed3-4ef9-bf9b-cc9a3abb25a4', 'Young & Healthy Plus Green (YHPG)'),
+    ('8dc3e6cd-408f-49aa-852d-68d5101ca602', 'Young & Healthy Plus Green (YHPG)'),
+    ('185dcfd8-83a7-4d0f-9e8b-567efd70a2aa', 'Young & Healthy Plus Green (YHPG)'),
+    -- Tier C — item baharu dicipta di (1) atas, padan ikut NAMA PERSIS
+    ('e5cd31ff-61a5-42f9-86bc-cce84fe29faa', 'Akses Portal ISW'),
+    ('a7a59db8-0b05-4df8-96e3-aa9c0b156ebf', 'Alcohol Swab'),
+    ('403cef31-4e3f-4f80-85ce-57394389162c', 'Biopsychosocial-Spiritual (BPS-S)'),
+    ('74925977-99a5-4d40-8f3d-3dd785ff2206', 'BNP & NSS Pesakit Gastrik, Gerd, Radang Usus, Sembelit'),
+    ('a395dce5-18d4-4df0-8609-dd638f5a35fb', 'Cotton Ball'),
+    ('4b5d1e39-e29e-4918-8b30-1faa00b2e951', 'Intravenous (IV) Infusion Set'),
+    ('44fb3caf-dcc5-4832-92ac-f9cb288fde93', 'Normal Saline (NS)'),
+    ('72585ef1-1d7a-45c2-a847-f18f996df8f2', 'P101 Jilid 1'),
+    ('6cbaffe4-9124-4cff-86c5-4b5f4ecf2675', 'P101 Jilid 2'),
+    ('046f99c4-b346-4d60-84de-89ef4b698434', 'P101 Jilid 3'),
+    ('79afb226-32ed-46ab-bfa9-67ac2510322a', 'P101 Jilid 4'),
+    ('368e9d88-d2f9-4d74-a6e6-a239eb8b0ade', 'P101 Jilid 5'),
+    ('7ed7b5f7-082c-4168-941c-7bc09ce7d8d2', 'P101 Jilid 6'),
+    ('bf69ac8c-6a04-4759-ad6c-f200549f14a0', 'P101 Jilid 7'),
+    ('8cb86aeb-34b8-4355-879e-265efa617d46', 'Panduan Peminuman Madu (IB & YHPG)'),
+    ('5d474884-8cec-4ee2-8ae7-811de8e6a4d5', 'Panduan Peminuman Madu (LTH & LTHPG)'),
+    ('9ac1fde0-57d5-4ddb-b494-9e5e7eebfa24', 'Panduan Pengamalan Zikir Bersanad')
+  ) AS t(old_id, target_name)
+  LOOP
+    SELECT id INTO new_id FROM psy_inventory_items WHERE name = m.target_name LIMIT 1;
+    IF new_id IS NULL THEN
+      RAISE WARNING 'FASA H: tiada padanan Inventori utk % (old_id %), dilangkau', m.target_name, m.old_id;
+      CONTINUE;
+    END IF;
+    IF new_id::text = m.old_id THEN CONTINUE; END IF;
+
+    UPDATE psy_treatment_plans SET coaching_schedule = replace(coaching_schedule::text, m.old_id, new_id::text)::jsonb
+      WHERE coaching_schedule::text LIKE '%' || m.old_id || '%';
+    UPDATE psy_packages SET coaching_schedule = replace(coaching_schedule::text, m.old_id, new_id::text)::jsonb
+      WHERE coaching_schedule::text LIKE '%' || m.old_id || '%';
+    UPDATE psy_plan_week_overrides SET supplies_override = replace(supplies_override::text, m.old_id, new_id::text)::jsonb
+      WHERE supplies_override::text LIKE '%' || m.old_id || '%';
+    UPDATE psy_procedure_kits SET items = replace(items::text, m.old_id, new_id::text)::jsonb
+      WHERE items::text LIKE '%' || m.old_id || '%';
+  END LOOP;
+END $$;
+
+-- (3) Semakan pantas lepas run — patut pulangkan 0 baris (tiada lagi item_id yatim).
+-- SELECT DISTINCT s->>'item_id' AS item_id, s->>'item_name' AS item_name
+-- FROM psy_treatment_plans p, jsonb_array_elements(p.coaching_schedule) w,
+--      jsonb_array_elements(coalesce(w->'supplies','[]'::jsonb) || coalesce(w->'supplies_2','[]'::jsonb)) s
+-- WHERE s ? 'item_id' AND NOT EXISTS (SELECT 1 FROM psy_inventory_items i WHERE i.id::text = s->>'item_id');

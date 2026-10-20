@@ -492,11 +492,20 @@ INSERT INTO psy_products (product_id, name, description, category, price, icon, 
   ('doa-syifa-book',   'Kitab Doa Syifa',          'Tafsir + transliterasi',             'Books',          28,  '📖', 'bg-terracotta-light', 9)
 ON CONFLICT (product_id) DO NOTHING;
 
--- ──── Seed: item inventori lalai ISW (re-seed penuh) ────
-DELETE FROM psy_inventory_items;
-
+-- ──── Seed: item inventori lalai ISW (IDEMPOTEN — insert HANYA kalau nama belum
+-- wujud, TAK PERNAH padam baris sedia ada). SEBELUM NI fail ni ada "DELETE FROM
+-- psy_inventory_items;" tanpa skop di atas INSERT — setiap kali schema/migration
+-- ni di-run, SEMUA item sebenar (stok+ID) dipadam & diganti BARIS INI SAHAJA dgn
+-- UUID RAWAK baharu. psy_inventory_items.id dirujuk sbg snapshot di BANYAK tempat
+-- (coaching_schedule pakej, psy_stock_movements, psy_supply_invoices, kob_default_
+-- supplies) — padam+insert semula = SEMUA rujukan tu jadi yatim SENYAP (tiada
+-- error, cuma potong stok/invois bekalan senyap tak pernah berfungsi). Insiden ni
+-- disahkan punca 100% rujukan item_id pakej jadi yatim (20 Okt 2026) — lihat
+-- [[project_inventory_seed_destructive_delete]]. JANGAN tambah DELETE FROM balik
+-- kat sini.
 INSERT INTO psy_inventory_items (name, category, unit, qty_in_stock, min_qty, requires_approval, notes)
-VALUES
+SELECT v.name, v.category, v.unit, v.qty_in_stock, v.min_qty, v.requires_approval, v.notes
+FROM (VALUES
 
 -- ── MADU & PRODUK ─────────────────────────────────────────
 ('Lebah Thoharah (LTH)',            'Madu & Produk', 'Kg',     0, 5,  false, 'Program NLC / JS / JS+ / EOL'),
@@ -547,9 +556,31 @@ VALUES
 -- ── PERALATAN KLINIK ──────────────────────────────────────
 ('DNA Test Kit',                    'Peralatan Klinik', 'Set',  0, 2, true,  'Perlu kelulusan · hantar ke lab luar'),
 ('Enema Kit',                       'Peralatan Klinik', 'Set',  0, 3, true,  'Perlu kelulusan'),
-('Mesin Ozon',                      'Peralatan Klinik', 'Unit', 0, 1, true,  'Rekod nombor siri setiap unit')
+('Mesin Ozon',                      'Peralatan Klinik', 'Unit', 0, 1, true,  'Rekod nombor siri setiap unit'),
+('Alcohol Swab',                    'Peralatan Klinik', 'Pek',  0, 10, false, NULL),
+('Cotton Ball',                     'Peralatan Klinik', 'Pek',  0, 10, false, NULL),
+('Intravenous (IV) Infusion Set',   'Peralatan Klinik', 'Set',  0, 5,  false, NULL),
+('Normal Saline (NS)',              'Peralatan Klinik', 'Botol',0, 5,  false, NULL),
 
-;
+-- ── BUKU & BAHAN CETAK (tambahan 20 Okt 2026 — susulan item yatim) ────────
+('P101 Jilid 1',                    'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, NULL),
+('P101 Jilid 2',                    'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, NULL),
+('P101 Jilid 3',                    'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, NULL),
+('P101 Jilid 4',                    'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, NULL),
+('P101 Jilid 5',                    'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, NULL),
+('P101 Jilid 6',                    'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, NULL),
+('P101 Jilid 7',                    'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, NULL),
+('Biopsychosocial-Spiritual (BPS-S)', 'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, NULL),
+('Panduan Peminuman Madu (IB & YHPG)', 'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, NULL),
+('Panduan Peminuman Madu (LTH & LTHPG)', 'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, NULL),
+('Panduan Pengamalan Zikir Bersanad', 'Buku & Bahan Cetak', 'Naskhah', 0, 10, false, NULL),
+
+-- ── STARTER KIT (tambahan 20 Okt 2026) ────────────────────
+('Akses Portal ISW',                'Starter Kit', 'Unit', 0, 10, false, 'Diedarkan semasa onboarding'),
+('BNP & NSS Pesakit Gastrik, Gerd, Radang Usus, Sembelit', 'Starter Kit', 'Unit', 0, 5, false, NULL)
+
+) AS v(name, category, unit, qty_in_stock, min_qty, requires_approval, notes)
+WHERE NOT EXISTS (SELECT 1 FROM psy_inventory_items existing WHERE existing.name = v.name);
 
 -- ──── Seed: contoh kit prosedur ────
 INSERT INTO psy_procedure_kits (name, description, category, items) VALUES

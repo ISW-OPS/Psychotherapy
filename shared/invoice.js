@@ -362,7 +362,7 @@
 
     const [{ data: patient }, { data: plan }, { data: rows }] = await Promise.all([
       window.db.from('psy_patients').select('full_name, mrn, phone, address, home_address').eq('id', patientId).maybeSingle(),
-      window.db.from('psy_treatment_plans').select('name, start_date, duration_weeks, status').eq('id', planId).maybeSingle(),
+      window.db.from('psy_treatment_plans').select('name, start_date, duration_weeks, status, coaching_schedule').eq('id', planId).maybeSingle(),
       window.db.from('psy_supply_invoices').select('*').eq('patient_id', patientId).eq('plan_id', planId).order('created_at', { ascending: true }),
     ]);
     const pt = override
@@ -375,10 +375,35 @@
     // terakhir yg sentuh produk ni) utk jumlah, + senarai setiap transaksi utk ledger.
     const productMap = new Map();
     const ledgerMap = new Map();
+
+    // SEED dari senarai DIRANCANG pakej (coaching_schedule) dulu — supaya item yg
+    // BELUM PERNAH diberi pun tetap muncul dlm invois (qty_given=0, baki=jumlah
+    // asal, status "Belum Diberi"), bukan hilang terus sehingga staff rekod
+    // pemberian pertama. Sebelum ni invois HANYA baca psy_supply_invoices (ledger
+    // transaksi) — pakej yg langsung tiada transaksi (cth sebab item_id dlm
+    // coaching_schedule "yatim" drpd Inventori — lihat database/schema/14_products_inventory.sql)
+    // papar terus "Tiada bekalan direkod" walhal pakej tu MEMANG ada senarai Bekalan.
+    (Array.isArray(plan?.coaching_schedule) ? plan.coaching_schedule : []).forEach(w => {
+      [...(w.supplies || []), ...(w.supplies_2 || [])].forEach(s => {
+        const name = s.item_name || s.name || (typeof s === 'string' ? s : null);
+        if (!name) return;
+        const unit = s.item_unit || s.unit || 'unit';
+        const qty = Number(s.qty || s.quantity || 0);
+        const key = (s.item_id || name) + '|' + unit;
+        const existing = productMap.get(key);
+        if (existing) existing.qty_planned_total = Number(existing.qty_planned_total || 0) + qty;
+        else productMap.set(key, { item_id: s.item_id || null, name, unit, qty_planned_total: qty, qty_given_cumulative: 0, qty_remaining: qty });
+        if (!ledgerMap.has(key)) ledgerMap.set(key, []);
+      });
+    });
+
+    // OVERLAY data SEBENAR diberi (psy_supply_invoices) di atas seed dirancang —
+    // snapshot TERKINI (baris terakhir yg sentuh produk ni) utk jumlah, + senarai
+    // setiap transaksi utk ledger mingguan.
     list.forEach(r => {
       (Array.isArray(r.items) ? r.items : []).forEach(it => {
         const key = (it.item_id || it.name) + '|' + (it.unit || 'unit');
-        productMap.set(key, it);
+        productMap.set(key, { ...productMap.get(key), ...it });
         if (!ledgerMap.has(key)) ledgerMap.set(key, []);
         ledgerMap.get(key).push({
           week_number: r.week_number, created_at: r.created_at,
@@ -390,7 +415,7 @@
 
     if (!products.length) {
       return `${header(L('INVOIS BEKALAN PAKEJ', 'PACKAGE SUPPLY INVOICE'))}
-        <div class="mt-10 text-center text-sm text-ink/50 italic py-16">${L('Tiada bekalan direkod lagi untuk pakej ini.', 'No supplies recorded yet for this package.')}</div>`;
+        <div class="mt-10 text-center text-sm text-ink/50 italic py-16">${L('Tiada bekalan dirancang atau direkod untuk pakej ini.', 'No supplies planned or recorded for this package.')}</div>`;
     }
 
     // Nombor invois TETAP seluruh pakej — idempoten, backfill kalau header belum wujud lagi.
@@ -425,6 +450,16 @@
         </div>
       </div>` : '';
 
+    // Status per baris — "Belum Diberi" (tiada transaksi langsung), "Sebahagian"
+    // (ada diberi tapi belum cukup jumlah dirancang), "Sudah Diberi" (cukup/lebih).
+    const statusBadge = (p) => {
+      const given = Number(p.qty_given_cumulative || 0);
+      const planned = Number(p.qty_planned_total || 0);
+      if (given <= 0) return `<span class="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full" style="background:#fef3c7;color:#b45309">${L('Belum Diberi', 'Not Given Yet')}</span>`;
+      if (planned > 0 && given < planned) return `<span class="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full" style="background:#dbeafe;color:#1d4ed8">${L('Sebahagian', 'Partial')}</span>`;
+      return `<span class="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full" style="background:#d1fae5;color:#047857">${L('Sudah Diberi', 'Given')}</span>`;
+    };
+
     const productTable = `
       <table class="w-full mt-10 text-sm">
         <thead>
@@ -434,6 +469,7 @@
             <th class="${th} text-right px-3 text-white">${L('Jumlah Asal', 'Original Qty')}</th>
             <th class="${th} text-right px-3 text-white">${L('Telah Diberi', 'Given')}</th>
             <th class="${th} text-right px-3 text-white">${L('Baki', 'Remaining')}</th>
+            <th class="${th} text-left px-3 text-white">${L('Status', 'Status')}</th>
           </tr>
         </thead>
         <tbody>
@@ -443,13 +479,15 @@
             <td class="py-4 px-3 text-xs text-ink/70 text-right">${esc(String(p.qty_planned_total))}</td>
             <td class="py-4 px-3 text-xs text-ink/70 text-right">${esc(String(p.qty_given_cumulative))}</td>
             <td class="py-4 px-3 text-xs font-bold text-ink text-right">${esc(String(p.qty_remaining))}</td>
+            <td class="py-4 px-3">${statusBadge(p)}</td>
           </tr>`).join('')}
         </tbody>
       </table>`;
 
-    // Satu jadual "Rekod Penyerahan Mingguan" per produk — Baki Sebelum dikira
-    // berjujukan dari Jumlah Asal produk tu (ikut tertib created_at menaik).
-    const weeklyTables = Array.from(ledgerMap.entries()).map(([key, entries]) => {
+    // Satu jadual "Rekod Penyerahan Mingguan" per produk YG ADA sejarah transaksi
+    // sahaja (item dirancang tapi belum pernah diberi tiada entri ledger — tiada
+    // gunanya papar jadual kosong utk item tu, status dah cukup jelas di jadual atas).
+    const weeklyTables = Array.from(ledgerMap.entries()).filter(([, entries]) => entries.length > 0).map(([key, entries]) => {
       const p = productMap.get(key);
       let baki = Number(p.qty_planned_total || 0);
       const rowsHtml = entries.map(e => {
