@@ -230,6 +230,10 @@ DROP POLICY IF EXISTS "Staff update purchases" ON psy_package_purchases;
 CREATE POLICY "Staff update purchases" ON psy_package_purchases FOR UPDATE
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
+DROP POLICY IF EXISTS "Staff insert purchases" ON psy_package_purchases;
+CREATE POLICY "Staff insert purchases" ON psy_package_purchases FOR INSERT
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
 -- ──────────────────────────────────────────────────────────────
 -- psy_package_categories — kategori pakej dinamik (CRUD dari UI)
 -- ──────────────────────────────────────────────────────────────

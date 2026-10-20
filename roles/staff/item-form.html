@@ -73,7 +73,8 @@
           <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
             <div>
               <label class="text-sm font-semibold text-ink">Category <span class="text-terracotta">*</span></label>
-              <select id="item-category" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none"></select>
+              <select id="item-category" onchange="onCategorySelectChange()" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none"></select>
+              <input id="item-category-new" type="text" placeholder="Nama kategori baharu" class="hidden w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none">
             </div>
             <div>
               <label class="text-sm font-semibold text-ink">Unit of Measurement <span class="text-terracotta">*</span></label>
@@ -223,9 +224,9 @@ function updateQtyUnitSuffix() {
 }
 
 
-// Kategori: cadangan tetap + gabung nilai sedia ada dari DB (elak "hilang" kategori lama
-// yang tak ada dlm senarai cadangan bila item tu di-edit).
-const CATEGORY_SUGGESTIONS = ['Bekalan Coaching', 'Bekalan Rawatan', 'Brosur & Baucar', 'Produk', 'Buku', 'Peralatan Klinik'];
+// Kategori: SEBENAR sahaja (nilai sedia ada dari DB) — ikut corak sama dengan
+// filter "All Categories" di inventory.html, elak kategori hantu yang tiada
+// barang sebenar guna.
 // Unit: senarai TETAP (bukan cadangan) — kongsi dengan Products/Stock In lain via
 // shared/inventoryUnits.js supaya konsisten. Nilai lama item sedia ada yg tak ada
 // dlm senarai ni disuntik semula sbg option tambahan masa loadForEdit() (elak silently reset ke kosong).
@@ -233,10 +234,24 @@ const UNIT_FIXED = window.ISW_UNITS || ['Unit'];
 
 async function populateSuggestions() {
   const { data } = await window.db.from('psy_inventory_items').select('category');
-  const cats = new Set(CATEGORY_SUGGESTIONS);
-  (data || []).forEach(i => { if (i.category) cats.add(i.category); });
-  document.getElementById('item-category').innerHTML = [...cats].sort().map(c => `<option value="${escHtml(c)}">${escHtml(c)}</option>`).join('');
+  const cats = [...new Set((data || []).map(i => i.category).filter(Boolean))].sort();
+  document.getElementById('item-category').innerHTML = cats.map(c => `<option value="${escHtml(c)}">${escHtml(c)}</option>`).join('')
+    + '<option value="__new__">+ Tambah Kategori Baharu</option>';
   document.getElementById('item-unit').innerHTML = UNIT_FIXED.map(u => `<option value="${escHtml(u)}">${escHtml(u)}</option>`).join('');
+}
+
+function onCategorySelectChange() {
+  const sel = document.getElementById('item-category');
+  const newInput = document.getElementById('item-category-new');
+  const isNew = sel.value === '__new__';
+  newInput.classList.toggle('hidden', !isNew);
+  if (isNew) { newInput.value = ''; newInput.focus(); }
+}
+window.onCategorySelectChange = onCategorySelectChange;
+
+function getCategoryValue() {
+  const sel = document.getElementById('item-category');
+  return sel.value === '__new__' ? document.getElementById('item-category-new').value.trim() : sel.value.trim();
 }
 
 async function loadLocations() {
@@ -354,7 +369,11 @@ async function loadForEdit(id) {
   const { data: shopRows } = await window.db.from('psy_products').select('name').eq('inventory_item_id', data.id).limit(1);
   document.getElementById('item-shop-name').value = shopRows?.[0]?.name || '';
   document.getElementById('item-shopee-url').value = data.shopee_url || '';
-  document.getElementById('item-category').value  = data.category || '';
+  { const sel = document.getElementById('item-category'); sel.value = data.category || '';
+    if (data.category && sel.value !== data.category) {
+      sel.value = '__new__'; document.getElementById('item-category-new').classList.remove('hidden');
+      document.getElementById('item-category-new').value = data.category;
+    } }
   const unitSel = document.getElementById('item-unit');
   if (data.unit && ![...unitSel.options].some(o => o.value === data.unit)) {
     unitSel.insertAdjacentHTML('afterbegin', `<option value="${escHtml(data.unit)}">${escHtml(data.unit)} (lama)</option>`);
@@ -414,7 +433,7 @@ async function saveItem() {
   if (!name) { banner('Nama produk diperlukan', 'error'); document.getElementById('item-name').focus(); return; }
   const description = document.getElementById('item-notes').value.trim();
   if (!description) { banner('Product Description diperlukan', 'error'); document.getElementById('item-notes').focus(); return; }
-  const category = document.getElementById('item-category').value.trim();
+  const category = getCategoryValue();
   if (!category) { banner('Kategori diperlukan', 'error'); document.getElementById('item-category').focus(); return; }
   const unit = document.getElementById('item-unit').value.trim();
   if (!unit) { banner('Unit diperlukan', 'error'); document.getElementById('item-unit').focus(); return; }
@@ -550,7 +569,6 @@ async function saveItem() {
     const codeEl = document.getElementById('if-item-code');
     codeEl.textContent = 'Kod: dijana automatik lepas simpan';
     codeEl.classList.remove('hidden');
-    document.getElementById('item-category').value = 'Bekalan Coaching';
     document.getElementById('item-qty').value = 0;
     document.getElementById('item-min').value = 5;
     document.getElementById('item-requires-approval').value = 'false';

@@ -2968,6 +2968,12 @@
     let wizManualDeposit = null;
     let wizManualPeriods = [];     // amaun tiap baris LEPAS deposit, index 0 = baris 1
     let wizManualDates = [];       // tarikh bayaran (YYYY-MM-DD) tiap baris LEPAS deposit, sepadan indeks dgn wizManualPeriods
+    // Baris TAMBAHAN staff klik "+ Tambah" melebihi tempoh asas pakej (cth. pakej
+    // 3 bulan tapi staff nak pecah jadi 5-6 bayaran lebih kecil). Had 10 baris
+    // tambahan — jumlah keseluruhan (deposit + semua baris) tetap mesti padan
+    // `commitment` (sasaran IPP), staff cuma agih ke lebih banyak baris lebih kecil.
+    let wizManualExtraRows = 0;
+    const WIZ_MANUAL_MAX_EXTRA = 10;
 
     // Jumlah baris (TERMASUK deposit) ikut tempoh pakej + frekuensi dipilih.
     function wizManualSlotCount(pkgMeta, tier, freq) {
@@ -2984,11 +2990,11 @@
       else d.setMonth(d.getMonth() + (idx + 1));
       return d.toISOString().slice(0, 10);
     }
-    // Saiz semula wizManualPeriods/wizManualDates ikut pakej+frekuensi semasa —
-    // kekalkan nilai sedia ada, tambah slot baharu (tarikh diisi default) / potong
-    // lebihan kalau tempoh berkurang.
+    // Saiz semula wizManualPeriods/wizManualDates ikut pakej+frekuensi+baris tambahan
+    // semasa — kekalkan nilai sedia ada, tambah slot baharu (tarikh diisi default) /
+    // potong lebihan kalau tempoh berkurang.
     function wizSyncManualPeriods(pkgMeta, tier) {
-      const total = wizManualSlotCount(pkgMeta, tier, wizManualFreq);
+      const total = wizManualSlotCount(pkgMeta, tier, wizManualFreq) + wizManualExtraRows;
       const need = Math.max(0, total - 1); // tolak slot deposit
       if (wizManualPeriods.length !== need) {
         wizManualPeriods = Array.from({ length: need }, (_, i) => wizManualPeriods[i] ?? null);
@@ -3001,7 +3007,23 @@
       wizManualFreq = freq;
       wizManualPeriods = []; // tukar frekuensi = bina semula jadual dari kosong (bilangan baris berubah)
       wizManualDates = [];
+      wizManualExtraRows = 0;
       wizSyncManualPeriods(pkgMeta, tier);
+      renderPaymentMethodSection();
+    }
+    // Staff klik "+ Tambah Bulan/Minggu" — tambah SATU baris lagi (had WIZ_MANUAL_MAX_EXTRA).
+    function wizAddManualRow(pkgMeta, tier) {
+      if (wizManualExtraRows >= WIZ_MANUAL_MAX_EXTRA) return;
+      wizManualExtraRows++;
+      wizSyncManualPeriods(pkgMeta, tier);
+      renderPaymentMethodSection();
+    }
+    // Buang baris TERAKHIR (baris tambahan sahaja, bukan baris asas ikut tempoh pakej).
+    function wizRemoveManualRow(pkgMeta, tier) {
+      if (wizManualExtraRows <= 0) return;
+      wizManualExtraRows--;
+      wizManualPeriods.pop();
+      wizManualDates.pop();
       renderPaymentMethodSection();
     }
     function wizSetManualPeriodAmount(idx, value) {
@@ -3048,7 +3070,7 @@
 
     function wizSelectPlan(plan) {
       wizPlan = plan; wizMethod = null;
-      if (plan !== 'manual_installment') { wizManualDeposit = null; wizManualPeriods = []; wizManualDates = []; }
+      if (plan !== 'manual_installment') { wizManualDeposit = null; wizManualPeriods = []; wizManualDates = []; wizManualExtraRows = 0; }
       renderPaymentMethodSection();
       // Simpan plan yang staff pilih SEBELUM sebarang bayaran cuba dibuat — supaya
       // borang pesakit (kob.html renderRecommendedPackageDetail) boleh papar butang
@@ -3068,7 +3090,7 @@
     // plan/method (harga berubah, elak jadual lama tak padan tier baharu).
     function wizSelectPayTier(tier) {
       wizPayTier = tier; wizPlan = null; wizMethod = null;
-      wizManualDeposit = null; wizManualPeriods = []; wizManualDates = [];
+      wizManualDeposit = null; wizManualPeriods = []; wizManualDates = []; wizManualExtraRows = 0;
       renderPaymentMethodSection();
     }
     function wizSetManualDeposit(value) {
@@ -3273,7 +3295,7 @@
           <input type="radio" name="wiz-manual-freq" value="month" ${wizManualFreq === 'month' ? 'checked' : ''}
             onchange="wizSetManualFreq('month', allPackagesCache.find(p=>p.package_id==='${pkgMeta.package_id}'), '${tier}')"> Bulanan
         </label>
-        <span class="text-[11px] text-ink/40 ml-auto">Tempoh keseluruhan tetap: ${manualSlotCount} ${wizManualFreq === 'week' ? 'minggu' : 'bulan'} (ikut pakej)</span>
+        <span class="text-[11px] text-ink/40 ml-auto">Tempoh asas pakej: ${manualSlotCount} ${wizManualFreq === 'week' ? 'minggu' : 'bulan'}${wizManualExtraRows > 0 ? ` + ${wizManualExtraRows} baris tambahan` : ''}</span>
       </div>
       <div class="flex items-center justify-between gap-3 bg-navy-light/20 rounded-lg px-3 py-2 mb-3 text-xs">
         <span>🎯 Sasaran Jumlah Komitmen <span class="text-ink/40">(sama macam Installment Plan)</span></span>
@@ -3302,6 +3324,15 @@
                 class="w-full px-2.5 py-1.5 border border-ink/15 rounded-lg text-sm font-semibold bg-white">
             </div>
           </div>`).join('')}
+      </div>
+      <div class="flex items-center gap-2 mt-2.5">
+        ${wizManualExtraRows < WIZ_MANUAL_MAX_EXTRA ? `<button type="button"
+          onclick="wizAddManualRow(allPackagesCache.find(p=>p.package_id==='${pkgMeta.package_id}'), '${tier}')"
+          class="text-[11px] font-semibold text-navy border border-navy/25 rounded-lg px-2.5 py-1 hover:bg-navy-light/20">+ Tambah ${wizManualFreq === 'week' ? 'Minggu' : 'Bulan'}</button>` : ''}
+        ${wizManualExtraRows > 0 ? `<button type="button"
+          onclick="wizRemoveManualRow(allPackagesCache.find(p=>p.package_id==='${pkgMeta.package_id}'), '${tier}')"
+          class="text-[11px] font-semibold text-terracotta border border-terracotta/25 rounded-lg px-2.5 py-1 hover:bg-terracotta/10">− Buang baris terakhir</button>` : ''}
+        <span class="text-[10px] text-ink/40">(${wizManualExtraRows}/${WIZ_MANUAL_MAX_EXTRA} baris tambahan)</span>
       </div>
       <div class="flex justify-between items-center text-xs mt-2 px-1">
         <span class="text-ink/50">Jumlah diagihkan setakat ini: <strong class="text-ink">${fmtRM(mAllocated)}</strong></span>
@@ -3481,7 +3512,7 @@
         <div class="text-[10px] font-semibold text-ink/45 uppercase mb-1">Ringkasan Plan</div>
         ${row('Pelan Pembayaran', wizPlan === 'installment' ? 'Installment (IPP)' : isManual ? 'Ansuran Manual' : 'Full Payment (FPP)')}
         ${wizPlan === 'installment' ? row('Tempoh', `${duration} Bulan`) : ''}
-        ${isManual ? row('Tempoh', `${wizManualSlotCount(pkgMeta, tier, wizManualFreq)} ${wizManualFreq === 'week' ? 'Minggu' : 'Bulan'}`) : ''}
+        ${isManual ? row('Tempoh', `${wizManualPeriods.length + 1} ${wizManualFreq === 'week' ? 'Minggu' : 'Bulan'}`) : ''}
         <div class="flex justify-between text-sm pt-1"><span class="font-bold text-navy">Jumlah Komitmen</span><span class="font-bold text-navy">${fmtRM(komitmen)}</span></div>
       </div>` : ''}
       ${savedPct != null ? `
@@ -3542,6 +3573,7 @@
       <div>
         <span class="font-semibold">${escapeHtml(p.receipt_no || p.receipt_ref)}</span>${p.bank_reference ? ` <span class="text-ink/40 text-[10px]">Ref: ${escapeHtml(p.bank_reference)}</span>` : ''}
         <span class="text-ink/40 ml-2">${new Date(p.paid_at || p.created_at).toLocaleDateString(LCALE())}</span>
+        ${p.is_partial ? `<span class="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-gold/20 text-gold-dark">${iswL('Belum Cukup', 'Not fully paid')}</span>` : ''}
       </div>
       <div class="flex items-center gap-2">
         <span class="font-semibold">${fmtRM(p.total)}</span>
@@ -3586,7 +3618,7 @@
       if (status === 'partial') {
         wizSidebar.innerHTML = '';
         const { data } = await window.db.from('psy_payments')
-          .select('id, invoice_number, receipt_no, receipt_ref, receipt_url, total, paid_at, created_at, payment_method, gateway_provider, bank_reference')
+          .select('id, invoice_number, receipt_no, receipt_ref, receipt_url, total, paid_at, created_at, payment_method, gateway_provider, bank_reference, is_partial')
           .eq('status', 'completed').eq('intent->>kob_session_id', kobId)
           .order('created_at', { ascending: false });
         const payments = data || [];
@@ -3665,7 +3697,7 @@
       if (isPaidInfo) {
         wizSidebar.innerHTML = '';
         const { data } = await window.db.from('psy_payments')
-          .select('id, invoice_number, receipt_no, receipt_ref, receipt_url, total, paid_at, created_at, payment_method, gateway_provider, bank_reference')
+          .select('id, invoice_number, receipt_no, receipt_ref, receipt_url, total, paid_at, created_at, payment_method, gateway_provider, bank_reference, is_partial')
           .eq('status', 'completed').eq('intent->>kob_session_id', kobId)
           .order('created_at', { ascending: false });
         const payments = data || [];
@@ -3843,7 +3875,12 @@
         if (error) throw error;
         if (!upd?.length) throw new Error(iswL('Tak dapat edit (disekat oleh kebenaran database).', 'Cannot edit (blocked by database permissions).'));
         await auditLog('kob.payment_edited', kobId, { payment_id: paymentId, from: { invoice: p.invoice_number, total: p.total }, to: { invoice, total: amount }, reason });
-        await recalcKobPaymentStatus();
+        const { status: recalcStatus } = await recalcKobPaymentStatus();
+        // Bayaran 'full' (bukan ansuran) — benderakan is_partial ikut status baharu selepas edit;
+        // ansuran dikecualikan sbb 'partial' semasa tempoh ansuran adalah normal, bukan isu.
+        if (kob.package_payment_mode !== 'installment') {
+          await window.db.from('psy_payments').update({ is_partial: recalcStatus !== 'paid' }).eq('id', paymentId);
+        }
         banner(iswL('Bayaran dikemaskini ✅', 'Payment updated ✅'));
         setTimeout(() => location.reload(), 800);
       } catch (e) { banner(iswL('Ralat: ', 'Error: ') + e.message, 'error'); }
@@ -4011,6 +4048,11 @@
           kobUpdates.package_payment_status = isFullyPaid ? 'paid' : 'partial';
           kobUpdates.package_payment_mode = 'full';
           if (isFullyPaid) kobUpdates.package_paid_at = new Date().toISOString();
+          // Benderakan is_partial sama macam Pesakit Hub (payment-admin.html) — baki tak cukup
+          // perlu kelihatan pada rekod bayaran ni sendiri, bukan hanya status sesi KOB.
+          if (!isFullyPaid) {
+            await window.db.from('psy_payments').update({ is_partial: true }).eq('id', payRow.id);
+          }
           bannerMsg = isFullyPaid ? 'Bayaran penuh disahkan ✅' : `Bayaran disimpan ✅ Baki: RM ${(packagePrice - totalPaid).toFixed(2)}`;
         }
 

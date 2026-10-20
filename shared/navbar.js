@@ -100,7 +100,7 @@ const STAFF_NAV_ICONS = {
   inventory:        'inventory.png',
   inventory_group:  'inventory.png',
   announcements:    'announce.png',
-  events_admin:     'event-class.png',
+  events_group:     'event-class.png',
   auto_messages:    'chatbot.png',
   closures:         'penutupan klinik.png',
   kob_slots:        'slot konsultasi.png',
@@ -182,7 +182,10 @@ const STAFF_NAV_MASTER = [
   {
     group: 'KOMUNIKASI', collapsible: true, items: [
       { id: 'announcements', url: 'announcements.html', icon: '📢', label: 'Pengumuman' },
-      { id: 'events_admin', url: 'events.html', icon: '📅', label: 'Acara & Kelas' },
+      { id: 'events_group', url: 'events.html', icon: '📅', label: 'Acara & Kelas', children: [
+        { id: 'events_admin',     url: 'events.html',           label: 'Senarai Acara' },
+        { id: 'persediaan_event', url: 'persediaan-event.html', label: 'Persediaan Event' },
+      ] },
       { id: 'auto_messages', url: 'automation-dashboard.html', icon: '🤖', label: 'Mesej Automatik', children: [
         { id: 'auto_dashboard', url: 'automation-dashboard.html', label: 'Dashboard' },
         { id: 'auto_list',      url: 'automations.html', label: 'Senarai Automasi' },

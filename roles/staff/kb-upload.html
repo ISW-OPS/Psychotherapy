@@ -55,6 +55,11 @@
       </div>
 
       <div>
+        <label class="lbl">Subkategori</label>
+        <select id="f-subcat" class="fld"><option value="">Pilih kategori dahulu</option></select>
+      </div>
+
+      <div>
         <label class="lbl">Fail</label>
         <div id="drop" class="drop">
           <div class="text-2xl mb-1">☁️</div>
@@ -119,7 +124,15 @@
 <script src="_kb.js"></script>
 <script>
 let EDIT_ID = null, pickedFile = null, existing = null;
-let STAFF = [], pickedUsers = new Set();
+let STAFF = [], pickedUsers = new Set(), SUBCATS = [];
+
+function renderSubcatSelect(categoryId, selected) {
+  const sel = document.getElementById('f-subcat');
+  const list = SUBCATS.filter(s => s.category_id === categoryId);
+  sel.innerHTML = list.length
+    ? '<option value="">Tiada subkategori</option>' + list.map(s => `<option value="${s.id}" ${s.id === selected ? 'selected' : ''}>${s.icon || ''} ${kbEsc(s.name)}</option>`).join('')
+    : '<option value="">Tiada subkategori untuk kategori ini</option>';
+}
 
 const VIS_HINT = {
   public: 'Kelihatan kepada semua staf.',
@@ -162,6 +175,7 @@ function selectVis(vis) {
 async function save() {
   const title = document.getElementById('f-title').value.trim();
   const catId = document.getElementById('f-cat').value;
+  const subcatId = document.getElementById('f-subcat').value || null;
   if (!title) return banner('Sila masukkan tajuk.', 'error');
   if (!catId) return banner('Sila pilih kategori.', 'error');
 
@@ -181,7 +195,7 @@ async function save() {
     const users = vis === 'user' ? [...pickedUsers] : [];
 
     const row = {
-      title, category_id: catId, res_type: deriveType(link),
+      title, category_id: catId, subcategory_id: subcatId, res_type: deriveType(link),
       file_url: fileUrl, external_url: link || null, file_size: fileSize, file_ext: fileExt,
       visibility: vis, allowed_roles: roles, allowed_users: users,
       version: existing?.version || 'v1.0',
@@ -221,13 +235,15 @@ async function boot() {
   if (!u) return;
   if (!kbCanAuthor()) { alert('Anda tiada kebenaran untuk memuat naik sumber.'); location.href = 'kb-dashboard.html'; return; }
 
-  const [cats, staffRes] = await Promise.all([
+  const [cats, subcats, staffRes] = await Promise.all([
     kbCategories().catch(() => []),
+    kbSubcategories().catch(() => []),
     window.db.from('psy_profiles').select('id,full_name,staff_role').eq('role', 'staff').order('full_name').then(r => r.data || []).catch(() => []),
   ]);
-  STAFF = staffRes;
+  STAFF = staffRes; SUBCATS = subcats;
   document.getElementById('f-cat').innerHTML = '<option value="">Pilih kategori</option>' +
     cats.map(c => `<option value="${c.id}">${kbEsc(c.name)}</option>`).join('');
+  document.getElementById('f-cat').addEventListener('change', e => renderSubcatSelect(e.target.value, null));
   renderStaff('');
   document.getElementById('user-search').addEventListener('input', e => renderStaff(e.target.value));
 
@@ -258,6 +274,7 @@ async function boot() {
       document.getElementById('btn-publish').textContent = 'Simpan';
       document.getElementById('f-title').value = r.title || '';
       document.getElementById('f-cat').value = r.category_id || '';
+      renderSubcatSelect(r.category_id || '', r.subcategory_id || null);
       document.getElementById('f-link').value = r.external_url || '';
       if (r.file_url) document.getElementById('drop-text').innerHTML = `<span class="text-green-dark font-semibold">✓ Fail sedia ada</span><br>Muat naik fail baru untuk ganti`;
       pickedUsers = new Set(r.allowed_users || []);

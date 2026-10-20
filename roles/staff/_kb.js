@@ -25,6 +25,8 @@ const KB_CAT_CLS = {
   terracotta: 'bg-terracotta/15 text-terracotta',
   teal:       'bg-teal/10 text-teal',
   grey:       'bg-ink/10 text-ink/60',
+  purple:     'bg-[#EDE9FE] text-[#6D28D9]',
+  blue:       'bg-[#DBEAFE] text-[#1D4ED8]',
 };
 function kbCatCls(color) { return KB_CAT_CLS[color] || KB_CAT_CLS.grey; }
 
@@ -75,11 +77,22 @@ function kbCanDelete() {
 async function kbCategories() {
   return dbQuery('psy_kb_categories', { eq: { is_active: true }, order: { col: 'sort_order', asc: true } });
 }
+async function kbSubcategories(categoryId) {
+  const opts = { eq: { is_active: true }, order: { col: 'sort_order', asc: true } };
+  if (categoryId) opts.eq.category_id = categoryId;
+  return dbQuery('psy_kb_subcategories', opts);
+}
+async function kbSubcategoryCounts() {
+  const { data } = await window.db.from('psy_kb_resources').select('subcategory_id').eq('is_archived', false);
+  const map = {};
+  (data || []).forEach(r => { if (r.subcategory_id) map[r.subcategory_id] = (map[r.subcategory_id] || 0) + 1; });
+  return map;
+}
 // Resources with category joined, non-archived by default.
 // Visibiliti dikuatkuasa client-side (respectVis); `all:true` (halaman admin) langkau.
 async function kbResources({ includeArchived = false, all = false } = {}) {
   let q = window.db.from('psy_kb_resources')
-    .select('*, category:psy_kb_categories(id,name,slug,color,icon), uploader:uploaded_by(id,full_name)')
+    .select('*, category:psy_kb_categories(id,name,slug,color,icon), subcategory:psy_kb_subcategories(id,name,slug,icon), uploader:uploaded_by(id,full_name)')
     .order('updated_at', { ascending: false });
   if (!includeArchived) q = q.eq('is_archived', false);
   const { data, error } = await q;

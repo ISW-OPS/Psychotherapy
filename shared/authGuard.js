@@ -86,6 +86,7 @@ window.PAGE_MODULE = {
   // KOMUNIKASI
   announcements:    'announcements',
   events_admin:     'events',
+  persediaan_event: 'events', persediaan_event_detail: 'events', persediaan_event_keluar: 'events',
   auto_messages:    'auto_messages',
   // sub-pages Mesej Automatik — semua ikut modul induk auto_messages
   auto_dashboard:   'auto_messages', auto_list:      'auto_messages',

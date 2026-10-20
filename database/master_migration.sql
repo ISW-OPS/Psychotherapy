@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-10-09T07:43:49.961095Z
+-- Generated: 2026-10-20T07:06:47.103539Z
 -- Jumlah fail: 41
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -1665,6 +1665,10 @@ DROP POLICY IF EXISTS "Staff update purchases" ON psy_package_purchases;
 CREATE POLICY "Staff update purchases" ON psy_package_purchases FOR UPDATE
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
+DROP POLICY IF EXISTS "Staff insert purchases" ON psy_package_purchases;
+CREATE POLICY "Staff insert purchases" ON psy_package_purchases FOR INSERT
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
 -- ──────────────────────────────────────────────────────────────
 -- psy_package_categories — kategori pakej dinamik (CRUD dari UI)
 -- ──────────────────────────────────────────────────────────────
@@ -1925,11 +1929,17 @@ CREATE TABLE IF NOT EXISTS psy_payments (
   discount NUMERIC(10,2) NOT NULL DEFAULT 0,  -- diskaun pada bayaran ini (papar di resit; subtotal = total + discount)
   receipt_url TEXT,                           -- bayaran manual — resit yang di-upload
   notes TEXT,
+  -- Ditambah 14 Okt 2026 — jualan walk-in (pembeli bukan pesakit, cth datang terus
+  -- ke HQ). patient_id KEKAL NULL untuk baris ni; nama/telefon disimpan di sini
+  -- (bukan psy_patients) sbb pembeli tiada akaun pesakit. Lihat roles/staff/jualan-walkin.html.
+  buyer_name TEXT,
+  buyer_phone TEXT,
   -- gateway bayaran (HitPay/Fiuu) — pending row dicipta sebelum redirect,
   -- webhook padankan gateway_ref & jalankan fulfillment ikut intent
   gateway_provider TEXT,                      -- 'hitpay' | 'fiuu' | NULL (manual)
   gateway_ref      TEXT,                      -- id rujukan dari gateway
   gateway_status   TEXT,                      -- status mentah dari gateway
+  gateway_channel  TEXT,                      -- channel SEBENAR (fpx/card/paynow_online/dll) — diisi selepas webhook, lihat 20261014_payment_gateway_channel.sql
   checkout_url     TEXT,                      -- pautan checkout gateway (utk staff share/salin semula bila status pending)
   intent           JSONB DEFAULT '{}'::jsonb, -- niat bayaran utk fulfillment
   fulfilled_at     TIMESTAMPTZ,               -- bila fulfillment benar-benar jalan
@@ -2347,7 +2357,7 @@ SELECT
   'ISW'                             AS source,
   COALESCE(p.paid_at, p.created_at) AS tx_date,
   p.patient_id,
-  COALESCE(pt.full_name, 'Pesakit') AS contact_name,
+  COALESCE(pt.full_name, p.buyer_name, CASE WHEN p.patient_id IS NULL THEN 'Walk-in' ELSE 'Pesakit' END) AS contact_name,
   p.total                          AS amount,
   p.payment_method                 AS method,
   COALESCE(p.gateway_provider, p.payment_method) AS provider,
@@ -4263,7 +4273,10 @@ CREATE TABLE IF NOT EXISTS psy_reaksi_item (
   boleh_pilih_anggota BOOLEAN NOT NULL DEFAULT false,
   created_at       TIMESTAMPTZ DEFAULT now(),
   updated_at       TIMESTAMPTZ DEFAULT now(),
-  CONSTRAINT chk_reaksi_item_tahap CHECK (tahap_risiko IN ('rendah','sederhana','tinggi'))
+  CONSTRAINT chk_reaksi_item_tahap CHECK (tahap_risiko IN ('rendah','sederhana','tinggi')),
+  -- Biasa/Teruk WAJIB ada pada semua reaksi (20 Okt 2026, arahan management) —
+  -- kunci di DB supaya tiada laluan (termasuk SQL/import terus) boleh set false.
+  CONSTRAINT chk_reaksi_item_pilih_teruk_wajib CHECK (boleh_pilih_teruk = true)
 );
 
 CREATE INDEX IF NOT EXISTS idx_reaksi_item_tahap ON psy_reaksi_item(tahap_risiko);
@@ -4281,7 +4294,7 @@ CREATE POLICY "Authenticated boleh baca reaksi item" ON psy_reaksi_item FOR SELE
   TO authenticated USING (true);
 
 COMMENT ON COLUMN psy_reaksi_item.tahap_risiko  IS 'rendah (Green) / sederhana (Yellow) / tinggi (Red)';
-COMMENT ON COLUMN psy_reaksi_item.boleh_pilih_teruk IS 'true = pesakit tanda Biasa/Teruk di Catatan Harian (Teruk→Merah terus, apa-apa tahap_risiko pun); false = tiada pilihan, terus ikut tahap_risiko';
+COMMENT ON COLUMN psy_reaksi_item.boleh_pilih_teruk IS 'WAJIB true pada semua baris (CHECK constraint, 20 Okt 2026) — pesakit sentiasa tanda Biasa/Teruk di Catatan Harian (Teruk→Merah terus, apa-apa tahap_risiko pun). Kolum dikekalkan (bukan dibuang) supaya kod baca sedia ada (!== false) terus berfungsi.';
 COMMENT ON COLUMN psy_reaksi_item.markah_risiko IS 'Julat 1-100, semakin tinggi semakin berisiko';
 COMMENT ON COLUMN psy_reaksi_item.contoh        IS 'Array string — contoh bagaimana simptom dirasai pesakit';
 COMMENT ON COLUMN psy_reaksi_item.is_emergency  IS 'Simptom kecemasan: advice log ditanda emergency (tidak auto-hantar WA)';
@@ -4716,6 +4729,401 @@ BEGIN
   IF s_berdebar IS NOT NULL THEN
     INSERT INTO psy_reaksi_action_map (symptom_id, action_id) VALUES
       (s_berdebar, a_pernafasan);
+  END IF;
+END $$;
+
+-- ════════════════════════════════════════════════════════════════
+-- Reaksi Pemulihan — taksonomi 9 kumpulan penuh (ikut jadual reference
+-- client, 20 Okt 2026). REPLACE 100%: item sedia ada yang padan DINAMA
+-- SEMULA (ID + mapping tindakan psy_reaksi_action_map dikekalkan), item
+-- yang TIADA dalam jadual reference DIBUANG terus (arahan eksplisit user
+-- — "yang takde dalam gambar tu dan ada dalam sistem kira buang"), item
+-- baharu DITAMBAH. Kumpulan baharu: Sistem kencing & saluran urinari
+-- (tiada padanan lama langsung).
+--
+-- Pemetaan kumpulan lama → baharu:
+--   Pencernaan                 → Pencernaan (nama kekal, item diselaraskan)
+--   Jantung                    → Jantung & Peredaran darah
+--   Otot & Saraf                → Otot, sendi & saraf
+--   Detoksifikasi               → Kulit & Perubahan badan
+--   Emosi & Tenaga               → Emosi, tidur & tenaga
+--   Pernafasan                  → Sistem pernafasan
+--   Bengkak & Cecair              → Bengkak & perubahan cecair
+--   Wanita                      → Kesihatan wanita
+--   (tiada)                     → Sistem kencing & saluran urinari (BAHARU)
+--
+-- Nota: tahap_risiko/markah_risiko/boleh_pilih_teruk/is_emergency item
+-- BAHARU kekal nilai default (rendah) — staff perlu tetapkan sendiri
+-- tahap risiko (terutama item berkaitan darah: Najis Berdarah, Batuk
+-- berdarah, Kencing berdarah, Pendarahan selepas menopaus, dll) di
+-- reaksi-item.html selepas migration ni jalan.
+-- ════════════════════════════════════════════════════════════════
+
+-- ──── FASA A: Nama semula label (kekal ID + mapping tindakan) ────
+UPDATE psy_reaksi_item SET label='Perut Kembung' WHERE kumpulan='Pencernaan' AND label='Kembung perut';
+UPDATE psy_reaksi_item SET label='Banyak angin (kentut)' WHERE kumpulan='Pencernaan' AND label='Banyak angin';
+UPDATE psy_reaksi_item SET label='Kerap sendawa' WHERE kumpulan='Pencernaan' AND label='Banyak sendawa';
+UPDATE psy_reaksi_item SET label='Kerap buang air besar' WHERE kumpulan='Pencernaan' AND label='Banyak membuang air besar';
+UPDATE psy_reaksi_item SET label='Cirit birit' WHERE kumpulan='Pencernaan' AND label='Cirit-birit';
+UPDATE psy_reaksi_item SET label='Tiada masalah' WHERE kumpulan='Pencernaan' AND label='Tiada simptom';
+UPDATE psy_reaksi_item SET label='Najis Berdarah' WHERE kumpulan='Pencernaan' AND label='Najis berdarah';
+UPDATE psy_reaksi_item SET label='Buasir semakin pulih' WHERE kumpulan='Pencernaan' AND label='Buasir dah pulih';
+
+UPDATE psy_reaksi_item SET label='Jantung berdebar-debar' WHERE kumpulan='Jantung' AND label='Berdebar-debar';
+UPDATE psy_reaksi_item SET label='Tiada Masalah' WHERE kumpulan='Jantung' AND label='Tiada simptom';
+
+UPDATE psy_reaksi_item SET label='Kejang otot' WHERE kumpulan='Otot & Saraf' AND label='Kejang';
+UPDATE psy_reaksi_item SET label='Tiada Masalah' WHERE kumpulan='Otot & Saraf' AND label='Tiada simptom';
+
+UPDATE psy_reaksi_item SET label='Jerawat muncul' WHERE kumpulan='Detoksifikasi' AND label='Jerawat keluar';
+UPDATE psy_reaksi_item SET label='Ruam muncul' WHERE kumpulan='Detoksifikasi' AND label='Ruam';
+UPDATE psy_reaksi_item SET label='Badan terasa panas' WHERE kumpulan='Detoksifikasi' AND label='Badan panas';
+UPDATE psy_reaksi_item SET label='Badan terasa sejuk' WHERE kumpulan='Detoksifikasi' AND label='Badan sejuk';
+UPDATE psy_reaksi_item SET label='Tiada Masalah' WHERE kumpulan='Detoksifikasi' AND label='Tiada simptom';
+
+UPDATE psy_reaksi_item SET label='Susah tidur' WHERE kumpulan='Emosi & Tenaga' AND label='Susah nak tidur (insomnia)';
+UPDATE psy_reaksi_item SET label='Mudah sebak/menangis' WHERE kumpulan='Emosi & Tenaga' AND label='Mudah sebak';
+UPDATE psy_reaksi_item SET label='Tiada masalah' WHERE kumpulan='Emosi & Tenaga' AND label='Tiada simptom';
+
+UPDATE psy_reaksi_item SET label='Semput/nafas berbunyi' WHERE kumpulan='Pernafasan' AND label='Semput';
+UPDATE psy_reaksi_item SET label='Tiada masalah' WHERE kumpulan='Pernafasan' AND label='Tiada simptom';
+
+UPDATE psy_reaksi_item SET label='Kawasan badan merah, panas atau bengkak' WHERE kumpulan='Bengkak & Cecair' AND label='Keradangan';
+UPDATE psy_reaksi_item SET label='Tiada masalah' WHERE kumpulan='Bengkak & Cecair' AND label='Tiada simptom';
+
+UPDATE psy_reaksi_item SET label='Keputihan' WHERE kumpulan='Wanita' AND label='Keputihan (discharge)';
+UPDATE psy_reaksi_item SET label='Haid lewat datang' WHERE kumpulan='Wanita' AND label='Period lambat datang';
+UPDATE psy_reaksi_item SET label='Haid lebih lama dari biasa' WHERE kumpulan='Wanita' AND label='Tempoh haid lama';
+UPDATE psy_reaksi_item SET label='Keluar ketulan darah ketika haid' WHERE kumpulan='Wanita' AND label='Keluar ketulan darah';
+UPDATE psy_reaksi_item SET label='Keluar cecair dari puting payudara' WHERE kumpulan='Wanita' AND label='Keluar lendir/darah/air di payudara';
+UPDATE psy_reaksi_item SET label='Pendarahan selepas menopaus' WHERE kumpulan='Wanita' AND label='Keluar darah selepas menopaus';
+UPDATE psy_reaksi_item SET label='Tiada Masalah' WHERE kumpulan='Wanita' AND label='Tiada simptom';
+
+-- ──── FASA B: Buang item yang TIADA dalam jadual reference ────
+DELETE FROM psy_reaksi_item WHERE kumpulan='Pencernaan' AND label NOT IN (
+  'Perut Kembung','Banyak angin (kentut)','Kerap sendawa','Sakit perut','Sakit bahagian kanan atas perut',
+  'Batu hempedu','Hilang selera makan','Kerap buang air besar','Loya','Muntah','Sembelit','Cirit birit',
+  'Najis hitam','Najis Berdarah','Buasir semakin pulih','Lendir keluar bersama najis','Pedih ulu hati','Buasir','Tiada masalah');
+
+DELETE FROM psy_reaksi_item WHERE kumpulan='Jantung' AND label NOT IN (
+  'Tekanan darah tinggi','Tekanan darah rendah','Jantung berdebar-debar','Sakit dada',
+  'Pening/hampir pengsan','Pengsan','Denyutan jantung tidak teratur','Tiada Masalah');
+
+DELETE FROM psy_reaksi_item WHERE kumpulan='Otot & Saraf' AND label NOT IN (
+  'Sakit badan','Sakit sendi','Sakit otot','Sakit belikat','Sakit tengkuk','Sakit pinggang','Sakit belakang',
+  'Kejang otot','Kebas','Sakit lutut','Sakit bahu','Rasa mencucuk-cucuk','Lemah anggota badan','Tiada Masalah');
+
+DELETE FROM psy_reaksi_item WHERE kumpulan='Detoksifikasi' AND label NOT IN (
+  'Gatal-gatal','Jerawat muncul','Ruam muncul','Kulit mengelupas','Kulit menjadi lebih sensitif',
+  'Kulit kemerahan','Kulit kering','Badan terasa panas','Badan terasa sejuk','Tiada Masalah');
+
+DELETE FROM psy_reaksi_item WHERE kumpulan='Emosi & Tenaga' AND label NOT IN (
+  'Susah tidur','Mengantuk luar biasa','Cepat letih','Lemah badan','Mudah sebak/menangis','Gelisah',
+  'Badan terasa berat','Mudah marah','Sukar fokus','Tidur lebih baik','Tenaga bertambah baik','Emosi lebih stabil','Tiada masalah');
+
+DELETE FROM psy_reaksi_item WHERE kumpulan='Pernafasan' AND label NOT IN (
+  'Hidung berair/banyak hingus','Hidung tersumbat','Batuk','Batuk berkahak','Batuk berdarah',
+  'Sesak nafas','Semput/nafas berbunyi','Tercungap-cungap','Tiada masalah');
+
+DELETE FROM psy_reaksi_item WHERE kumpulan='Bengkak & Cecair' AND label NOT IN (
+  'Bengkak kaki','Bengkak tangan','Bengkak muka','Bengkak sekitar mata','Perut membengkak',
+  'Kawasan badan merah, panas atau bengkak','Bengkak semakin berkurang','Tiada masalah');
+
+DELETE FROM psy_reaksi_item WHERE kumpulan='Wanita' AND label NOT IN (
+  'Keputihan','Haid lewat datang','Haid lebih lama dari biasa','Keluar ketulan darah ketika haid',
+  'Keluar cecair dari puting payudara','Keluar darah dari puting payudara','Senggugut',
+  'Pendarahan selepas menopaus','Darah haid terlalu banyak','Tiada Masalah');
+
+-- ──── FASA C: Nama semula kumpulan (kategori) ────
+UPDATE psy_reaksi_item SET kumpulan='Jantung & Peredaran darah' WHERE kumpulan='Jantung';
+UPDATE psy_reaksi_item SET kumpulan='Otot, sendi & saraf' WHERE kumpulan='Otot & Saraf';
+UPDATE psy_reaksi_item SET kumpulan='Kulit & Perubahan badan' WHERE kumpulan='Detoksifikasi';
+UPDATE psy_reaksi_item SET kumpulan='Emosi, tidur & tenaga' WHERE kumpulan='Emosi & Tenaga';
+UPDATE psy_reaksi_item SET kumpulan='Sistem pernafasan' WHERE kumpulan='Pernafasan';
+UPDATE psy_reaksi_item SET kumpulan='Bengkak & perubahan cecair' WHERE kumpulan='Bengkak & Cecair';
+UPDATE psy_reaksi_item SET kumpulan='Kesihatan wanita' WHERE kumpulan='Wanita';
+
+-- ──── FASA D: Tambah item baharu + selaras urutan/ikon SEMUA item (sedia ada + baharu) ────
+-- Nota: SENGAJA guna WITH...AS(VALUES...) inline (bukan TEMP TABLE) — sesetengah
+-- runner SQL (cth Supabase SQL editor/MCP) laksana setiap statement pada sambungan
+-- berasingan, jadi TEMP TABLE hilang antara statement ("relation does not exist").
+-- Senarai sama diulang 2x (INSERT + UPDATE) supaya setiap statement berdiri sendiri.
+INSERT INTO psy_reaksi_item (kumpulan, ikon, label, urutan)
+SELECT t.kumpulan, t.ikon, t.label, t.urutan FROM (VALUES
+  ('Pencernaan','Perut Kembung',10,'🍽️'),
+  ('Pencernaan','Banyak angin (kentut)',20,'🍽️'),
+  ('Pencernaan','Kerap sendawa',30,'🍽️'),
+  ('Pencernaan','Sakit perut',40,'🍽️'),
+  ('Pencernaan','Sakit bahagian kanan atas perut',50,'🍽️'),
+  ('Pencernaan','Batu hempedu',60,'🍽️'),
+  ('Pencernaan','Hilang selera makan',70,'🍽️'),
+  ('Pencernaan','Kerap buang air besar',80,'🍽️'),
+  ('Pencernaan','Loya',90,'🍽️'),
+  ('Pencernaan','Muntah',100,'🍽️'),
+  ('Pencernaan','Sembelit',110,'🍽️'),
+  ('Pencernaan','Cirit birit',120,'🍽️'),
+  ('Pencernaan','Najis hitam',130,'🍽️'),
+  ('Pencernaan','Najis Berdarah',140,'🍽️'),
+  ('Pencernaan','Buasir semakin pulih',150,'🍽️'),
+  ('Pencernaan','Lendir keluar bersama najis',160,'🍽️'),
+  ('Pencernaan','Pedih ulu hati',170,'🍽️'),
+  ('Pencernaan','Buasir',180,'🍽️'),
+  ('Pencernaan','Tiada masalah',190,'🍽️'),
+
+  ('Jantung & Peredaran darah','Tekanan darah tinggi',1010,'❤️'),
+  ('Jantung & Peredaran darah','Tekanan darah rendah',1020,'❤️'),
+  ('Jantung & Peredaran darah','Jantung berdebar-debar',1030,'❤️'),
+  ('Jantung & Peredaran darah','Sakit dada',1040,'❤️'),
+  ('Jantung & Peredaran darah','Pening/hampir pengsan',1050,'❤️'),
+  ('Jantung & Peredaran darah','Pengsan',1060,'❤️'),
+  ('Jantung & Peredaran darah','Denyutan jantung tidak teratur',1070,'❤️'),
+  ('Jantung & Peredaran darah','Tiada Masalah',1080,'❤️'),
+
+  ('Otot, sendi & saraf','Sakit badan',2010,'💪'),
+  ('Otot, sendi & saraf','Sakit sendi',2020,'💪'),
+  ('Otot, sendi & saraf','Sakit otot',2030,'💪'),
+  ('Otot, sendi & saraf','Sakit belikat',2040,'💪'),
+  ('Otot, sendi & saraf','Sakit tengkuk',2050,'💪'),
+  ('Otot, sendi & saraf','Sakit pinggang',2060,'💪'),
+  ('Otot, sendi & saraf','Sakit belakang',2070,'💪'),
+  ('Otot, sendi & saraf','Kejang otot',2080,'💪'),
+  ('Otot, sendi & saraf','Kebas',2090,'💪'),
+  ('Otot, sendi & saraf','Sakit lutut',2100,'💪'),
+  ('Otot, sendi & saraf','Sakit bahu',2110,'💪'),
+  ('Otot, sendi & saraf','Rasa mencucuk-cucuk',2120,'💪'),
+  ('Otot, sendi & saraf','Lemah anggota badan',2130,'💪'),
+  ('Otot, sendi & saraf','Tiada Masalah',2140,'💪'),
+
+  ('Kulit & Perubahan badan','Gatal-gatal',3010,'🧴'),
+  ('Kulit & Perubahan badan','Jerawat muncul',3020,'🧴'),
+  ('Kulit & Perubahan badan','Ruam muncul',3030,'🧴'),
+  ('Kulit & Perubahan badan','Kulit mengelupas',3040,'🧴'),
+  ('Kulit & Perubahan badan','Kulit menjadi lebih sensitif',3050,'🧴'),
+  ('Kulit & Perubahan badan','Kulit kemerahan',3060,'🧴'),
+  ('Kulit & Perubahan badan','Kulit kering',3070,'🧴'),
+  ('Kulit & Perubahan badan','Badan terasa panas',3080,'🧴'),
+  ('Kulit & Perubahan badan','Badan terasa sejuk',3090,'🧴'),
+  ('Kulit & Perubahan badan','Tiada Masalah',3100,'🧴'),
+
+  ('Emosi, tidur & tenaga','Susah tidur',4010,'⚡'),
+  ('Emosi, tidur & tenaga','Mengantuk luar biasa',4020,'⚡'),
+  ('Emosi, tidur & tenaga','Cepat letih',4030,'⚡'),
+  ('Emosi, tidur & tenaga','Lemah badan',4040,'⚡'),
+  ('Emosi, tidur & tenaga','Mudah sebak/menangis',4050,'⚡'),
+  ('Emosi, tidur & tenaga','Gelisah',4060,'⚡'),
+  ('Emosi, tidur & tenaga','Badan terasa berat',4070,'⚡'),
+  ('Emosi, tidur & tenaga','Mudah marah',4080,'⚡'),
+  ('Emosi, tidur & tenaga','Sukar fokus',4090,'⚡'),
+  ('Emosi, tidur & tenaga','Tidur lebih baik',4100,'⚡'),
+  ('Emosi, tidur & tenaga','Tenaga bertambah baik',4110,'⚡'),
+  ('Emosi, tidur & tenaga','Emosi lebih stabil',4120,'⚡'),
+  ('Emosi, tidur & tenaga','Tiada masalah',4130,'⚡'),
+
+  ('Sistem pernafasan','Hidung berair/banyak hingus',5010,'🫁'),
+  ('Sistem pernafasan','Hidung tersumbat',5020,'🫁'),
+  ('Sistem pernafasan','Batuk',5030,'🫁'),
+  ('Sistem pernafasan','Batuk berkahak',5040,'🫁'),
+  ('Sistem pernafasan','Batuk berdarah',5050,'🫁'),
+  ('Sistem pernafasan','Sesak nafas',5060,'🫁'),
+  ('Sistem pernafasan','Semput/nafas berbunyi',5070,'🫁'),
+  ('Sistem pernafasan','Tercungap-cungap',5080,'🫁'),
+  ('Sistem pernafasan','Tiada masalah',5090,'🫁'),
+
+  ('Bengkak & perubahan cecair','Bengkak kaki',6010,'💧'),
+  ('Bengkak & perubahan cecair','Bengkak tangan',6020,'💧'),
+  ('Bengkak & perubahan cecair','Bengkak muka',6030,'💧'),
+  ('Bengkak & perubahan cecair','Bengkak sekitar mata',6040,'💧'),
+  ('Bengkak & perubahan cecair','Perut membengkak',6050,'💧'),
+  ('Bengkak & perubahan cecair','Kawasan badan merah, panas atau bengkak',6060,'💧'),
+  ('Bengkak & perubahan cecair','Bengkak semakin berkurang',6070,'💧'),
+  ('Bengkak & perubahan cecair','Tiada masalah',6080,'💧'),
+
+  ('Kesihatan wanita','Keputihan',7010,'🌸'),
+  ('Kesihatan wanita','Haid lewat datang',7020,'🌸'),
+  ('Kesihatan wanita','Haid lebih lama dari biasa',7030,'🌸'),
+  ('Kesihatan wanita','Keluar ketulan darah ketika haid',7040,'🌸'),
+  ('Kesihatan wanita','Keluar cecair dari puting payudara',7050,'🌸'),
+  ('Kesihatan wanita','Keluar darah dari puting payudara',7060,'🌸'),
+  ('Kesihatan wanita','Senggugut',7070,'🌸'),
+  ('Kesihatan wanita','Pendarahan selepas menopaus',7080,'🌸'),
+  ('Kesihatan wanita','Darah haid terlalu banyak',7090,'🌸'),
+  ('Kesihatan wanita','Tiada Masalah',7100,'🌸'),
+
+  ('Sistem kencing & saluran urinari','Kerap kencing',8010,'🚰'),
+  ('Sistem kencing & saluran urinari','Kerap bangun malam untuk kencing',8020,'🚰'),
+  ('Sistem kencing & saluran urinari','Sukar kencing',8030,'🚰'),
+  ('Sistem kencing & saluran urinari','Kencing tidak lawas',8040,'🚰'),
+  ('Sistem kencing & saluran urinari','Kencing berbuih',8050,'🚰'),
+  ('Sistem kencing & saluran urinari','Kencing berpasir',8060,'🚰'),
+  ('Sistem kencing & saluran urinari','Keluar ketulan seperti batu ketika kencing',8070,'🚰'),
+  ('Sistem kencing & saluran urinari','Pedih atau sakit ketika kencing',8080,'🚰'),
+  ('Sistem kencing & saluran urinari','Kencing berdarah',8090,'🚰'),
+  ('Sistem kencing & saluran urinari','Air kencing keruh',8100,'🚰'),
+  ('Sistem kencing & saluran urinari','Air kencing berbau kuat',8110,'🚰'),
+  ('Sistem kencing & saluran urinari','Kencing sedikit daripada biasa',8120,'🚰'),
+  ('Sistem kencing & saluran urinari','Tidak boleh kencing',8130,'🚰'),
+  ('Sistem kencing & saluran urinari','Tidak dapat menahan kencing',8140,'🚰'),
+  ('Sistem kencing & saluran urinari','Sakit di bahagian tepi pinggang',8150,'🚰'),
+  ('Sistem kencing & saluran urinari','Tiada masalah',8160,'🚰')
+) AS t(kumpulan, label, urutan, ikon)
+WHERE NOT EXISTS (
+  SELECT 1 FROM psy_reaksi_item i WHERE i.kumpulan = t.kumpulan AND i.label = t.label
+);
+
+-- Selaraskan urutan + ikon semua item (sedia ada + baharu) ikut susunan jadual reference
+UPDATE psy_reaksi_item i SET urutan = t.urutan, ikon = t.ikon
+FROM (VALUES
+  ('Pencernaan','Perut Kembung',10,'🍽️'),
+  ('Pencernaan','Banyak angin (kentut)',20,'🍽️'),
+  ('Pencernaan','Kerap sendawa',30,'🍽️'),
+  ('Pencernaan','Sakit perut',40,'🍽️'),
+  ('Pencernaan','Sakit bahagian kanan atas perut',50,'🍽️'),
+  ('Pencernaan','Batu hempedu',60,'🍽️'),
+  ('Pencernaan','Hilang selera makan',70,'🍽️'),
+  ('Pencernaan','Kerap buang air besar',80,'🍽️'),
+  ('Pencernaan','Loya',90,'🍽️'),
+  ('Pencernaan','Muntah',100,'🍽️'),
+  ('Pencernaan','Sembelit',110,'🍽️'),
+  ('Pencernaan','Cirit birit',120,'🍽️'),
+  ('Pencernaan','Najis hitam',130,'🍽️'),
+  ('Pencernaan','Najis Berdarah',140,'🍽️'),
+  ('Pencernaan','Buasir semakin pulih',150,'🍽️'),
+  ('Pencernaan','Lendir keluar bersama najis',160,'🍽️'),
+  ('Pencernaan','Pedih ulu hati',170,'🍽️'),
+  ('Pencernaan','Buasir',180,'🍽️'),
+  ('Pencernaan','Tiada masalah',190,'🍽️'),
+
+  ('Jantung & Peredaran darah','Tekanan darah tinggi',1010,'❤️'),
+  ('Jantung & Peredaran darah','Tekanan darah rendah',1020,'❤️'),
+  ('Jantung & Peredaran darah','Jantung berdebar-debar',1030,'❤️'),
+  ('Jantung & Peredaran darah','Sakit dada',1040,'❤️'),
+  ('Jantung & Peredaran darah','Pening/hampir pengsan',1050,'❤️'),
+  ('Jantung & Peredaran darah','Pengsan',1060,'❤️'),
+  ('Jantung & Peredaran darah','Denyutan jantung tidak teratur',1070,'❤️'),
+  ('Jantung & Peredaran darah','Tiada Masalah',1080,'❤️'),
+
+  ('Otot, sendi & saraf','Sakit badan',2010,'💪'),
+  ('Otot, sendi & saraf','Sakit sendi',2020,'💪'),
+  ('Otot, sendi & saraf','Sakit otot',2030,'💪'),
+  ('Otot, sendi & saraf','Sakit belikat',2040,'💪'),
+  ('Otot, sendi & saraf','Sakit tengkuk',2050,'💪'),
+  ('Otot, sendi & saraf','Sakit pinggang',2060,'💪'),
+  ('Otot, sendi & saraf','Sakit belakang',2070,'💪'),
+  ('Otot, sendi & saraf','Kejang otot',2080,'💪'),
+  ('Otot, sendi & saraf','Kebas',2090,'💪'),
+  ('Otot, sendi & saraf','Sakit lutut',2100,'💪'),
+  ('Otot, sendi & saraf','Sakit bahu',2110,'💪'),
+  ('Otot, sendi & saraf','Rasa mencucuk-cucuk',2120,'💪'),
+  ('Otot, sendi & saraf','Lemah anggota badan',2130,'💪'),
+  ('Otot, sendi & saraf','Tiada Masalah',2140,'💪'),
+
+  ('Kulit & Perubahan badan','Gatal-gatal',3010,'🧴'),
+  ('Kulit & Perubahan badan','Jerawat muncul',3020,'🧴'),
+  ('Kulit & Perubahan badan','Ruam muncul',3030,'🧴'),
+  ('Kulit & Perubahan badan','Kulit mengelupas',3040,'🧴'),
+  ('Kulit & Perubahan badan','Kulit menjadi lebih sensitif',3050,'🧴'),
+  ('Kulit & Perubahan badan','Kulit kemerahan',3060,'🧴'),
+  ('Kulit & Perubahan badan','Kulit kering',3070,'🧴'),
+  ('Kulit & Perubahan badan','Badan terasa panas',3080,'🧴'),
+  ('Kulit & Perubahan badan','Badan terasa sejuk',3090,'🧴'),
+  ('Kulit & Perubahan badan','Tiada Masalah',3100,'🧴'),
+
+  ('Emosi, tidur & tenaga','Susah tidur',4010,'⚡'),
+  ('Emosi, tidur & tenaga','Mengantuk luar biasa',4020,'⚡'),
+  ('Emosi, tidur & tenaga','Cepat letih',4030,'⚡'),
+  ('Emosi, tidur & tenaga','Lemah badan',4040,'⚡'),
+  ('Emosi, tidur & tenaga','Mudah sebak/menangis',4050,'⚡'),
+  ('Emosi, tidur & tenaga','Gelisah',4060,'⚡'),
+  ('Emosi, tidur & tenaga','Badan terasa berat',4070,'⚡'),
+  ('Emosi, tidur & tenaga','Mudah marah',4080,'⚡'),
+  ('Emosi, tidur & tenaga','Sukar fokus',4090,'⚡'),
+  ('Emosi, tidur & tenaga','Tidur lebih baik',4100,'⚡'),
+  ('Emosi, tidur & tenaga','Tenaga bertambah baik',4110,'⚡'),
+  ('Emosi, tidur & tenaga','Emosi lebih stabil',4120,'⚡'),
+  ('Emosi, tidur & tenaga','Tiada masalah',4130,'⚡'),
+
+  ('Sistem pernafasan','Hidung berair/banyak hingus',5010,'🫁'),
+  ('Sistem pernafasan','Hidung tersumbat',5020,'🫁'),
+  ('Sistem pernafasan','Batuk',5030,'🫁'),
+  ('Sistem pernafasan','Batuk berkahak',5040,'🫁'),
+  ('Sistem pernafasan','Batuk berdarah',5050,'🫁'),
+  ('Sistem pernafasan','Sesak nafas',5060,'🫁'),
+  ('Sistem pernafasan','Semput/nafas berbunyi',5070,'🫁'),
+  ('Sistem pernafasan','Tercungap-cungap',5080,'🫁'),
+  ('Sistem pernafasan','Tiada masalah',5090,'🫁'),
+
+  ('Bengkak & perubahan cecair','Bengkak kaki',6010,'💧'),
+  ('Bengkak & perubahan cecair','Bengkak tangan',6020,'💧'),
+  ('Bengkak & perubahan cecair','Bengkak muka',6030,'💧'),
+  ('Bengkak & perubahan cecair','Bengkak sekitar mata',6040,'💧'),
+  ('Bengkak & perubahan cecair','Perut membengkak',6050,'💧'),
+  ('Bengkak & perubahan cecair','Kawasan badan merah, panas atau bengkak',6060,'💧'),
+  ('Bengkak & perubahan cecair','Bengkak semakin berkurang',6070,'💧'),
+  ('Bengkak & perubahan cecair','Tiada masalah',6080,'💧'),
+
+  ('Kesihatan wanita','Keputihan',7010,'🌸'),
+  ('Kesihatan wanita','Haid lewat datang',7020,'🌸'),
+  ('Kesihatan wanita','Haid lebih lama dari biasa',7030,'🌸'),
+  ('Kesihatan wanita','Keluar ketulan darah ketika haid',7040,'🌸'),
+  ('Kesihatan wanita','Keluar cecair dari puting payudara',7050,'🌸'),
+  ('Kesihatan wanita','Keluar darah dari puting payudara',7060,'🌸'),
+  ('Kesihatan wanita','Senggugut',7070,'🌸'),
+  ('Kesihatan wanita','Pendarahan selepas menopaus',7080,'🌸'),
+  ('Kesihatan wanita','Darah haid terlalu banyak',7090,'🌸'),
+  ('Kesihatan wanita','Tiada Masalah',7100,'🌸'),
+
+  ('Sistem kencing & saluran urinari','Kerap kencing',8010,'🚰'),
+  ('Sistem kencing & saluran urinari','Kerap bangun malam untuk kencing',8020,'🚰'),
+  ('Sistem kencing & saluran urinari','Sukar kencing',8030,'🚰'),
+  ('Sistem kencing & saluran urinari','Kencing tidak lawas',8040,'🚰'),
+  ('Sistem kencing & saluran urinari','Kencing berbuih',8050,'🚰'),
+  ('Sistem kencing & saluran urinari','Kencing berpasir',8060,'🚰'),
+  ('Sistem kencing & saluran urinari','Keluar ketulan seperti batu ketika kencing',8070,'🚰'),
+  ('Sistem kencing & saluran urinari','Pedih atau sakit ketika kencing',8080,'🚰'),
+  ('Sistem kencing & saluran urinari','Kencing berdarah',8090,'🚰'),
+  ('Sistem kencing & saluran urinari','Air kencing keruh',8100,'🚰'),
+  ('Sistem kencing & saluran urinari','Air kencing berbau kuat',8110,'🚰'),
+  ('Sistem kencing & saluran urinari','Kencing sedikit daripada biasa',8120,'🚰'),
+  ('Sistem kencing & saluran urinari','Tidak boleh kencing',8130,'🚰'),
+  ('Sistem kencing & saluran urinari','Tidak dapat menahan kencing',8140,'🚰'),
+  ('Sistem kencing & saluran urinari','Sakit di bahagian tepi pinggang',8150,'🚰'),
+  ('Sistem kencing & saluran urinari','Tiada masalah',8160,'🚰')
+) AS t(kumpulan, label, urutan, ikon)
+WHERE i.kumpulan = t.kumpulan AND i.label = t.label;
+
+-- ──── FASA E: Selaras psy_reaksi_kategori (nama kumpulan + kumpulan baharu) ────
+UPDATE psy_reaksi_kategori SET nama='Jantung & Peredaran darah' WHERE nama='Jantung';
+UPDATE psy_reaksi_kategori SET nama='Otot, sendi & saraf' WHERE nama='Otot & Saraf';
+UPDATE psy_reaksi_kategori SET nama='Kulit & Perubahan badan', ikon='🧴' WHERE nama='Detoksifikasi';
+UPDATE psy_reaksi_kategori SET nama='Emosi, tidur & tenaga' WHERE nama='Emosi & Tenaga';
+UPDATE psy_reaksi_kategori SET nama='Sistem pernafasan' WHERE nama='Pernafasan';
+UPDATE psy_reaksi_kategori SET nama='Bengkak & perubahan cecair' WHERE nama='Bengkak & Cecair';
+UPDATE psy_reaksi_kategori SET nama='Kesihatan wanita' WHERE nama='Wanita';
+
+INSERT INTO psy_reaksi_kategori (nama, ikon, urutan)
+SELECT 'Sistem kencing & saluran urinari', '🚰', 950
+WHERE NOT EXISTS (SELECT 1 FROM psy_reaksi_kategori WHERE nama='Sistem kencing & saluran urinari');
+
+-- Kategori yang mungkin belum ada langsung (DB lama belum pernah run seed psy_reaksi_kategori
+-- penuh) — jana dari kumpulan psy_reaksi_item terkini sebagai jaring keselamatan.
+INSERT INTO psy_reaksi_kategori (nama, ikon, urutan)
+SELECT kumpulan, MAX(COALESCE(ikon, '')), MIN(COALESCE(urutan, 100))
+FROM psy_reaksi_item GROUP BY kumpulan
+ON CONFLICT (nama) DO NOTHING;
+
+-- ════════════════════════════════════════════════════════════════
+-- FASA F (20 Okt 2026, susulan) — "Biasa/Teruk wajib ada dekat semua jawapan"
+-- (arahan management). Togol "Benarkan pesakit tanda Biasa/Teruk" dibuang drpd
+-- borang reaksi-item.html (staff tak boleh matikan lagi); CHECK di DB kunci
+-- supaya tiada laluan lain (import/SQL terus) boleh set false pada masa depan.
+-- Guard ni perlu utk jadual sedia ada (CREATE TABLE IF NOT EXISTS di atas tak
+-- tambah constraint baharu pada jadual yang dah wujud).
+-- ════════════════════════════════════════════════════════════════
+UPDATE psy_reaksi_item SET boleh_pilih_teruk = true WHERE boleh_pilih_teruk IS DISTINCT FROM true;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_reaksi_item_pilih_teruk_wajib') THEN
+    ALTER TABLE psy_reaksi_item ADD CONSTRAINT chk_reaksi_item_pilih_teruk_wajib CHECK (boleh_pilih_teruk = true);
   END IF;
 END $$;
 
@@ -7962,6 +8370,139 @@ INSERT INTO psy_announcements (title, body, tag, bg, cta_label, cta_url, sort_or
   ('Pakej Ramadan Khas', 'Rawatan holistik dengan fokus spiritual — promosi sehingga hujung bulan.', 'Promosi', 'from-navy to-green-dark', 'Lihat Pakej', 'pakej.html', 3)
 ON CONFLICT DO NOTHING;
 
+-- ═══════════════════════════════════════════════════════════════════
+-- Persediaan Event (Inventory Event) — Modul Persediaan Event v1
+-- Checklist peralatan/bahan untuk setiap Acara & Kelas. Murni perancangan —
+-- TIADA potong/pulang stok automatik. "Stok Sedia Ada" dikira LIVE dari
+-- psy_inventory_items.qty_in_stock masa paparan (bukan snapshot di sini).
+-- Migration: supabase/migrations/20261014_event_prep_items.sql
+-- ═══════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS psy_event_prep_items (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id         UUID NOT NULL REFERENCES psy_events(id) ON DELETE CASCADE,
+  source           TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('inventory','manual')),
+  inventory_item_id UUID REFERENCES psy_inventory_items(id) ON DELETE SET NULL,
+  item_name        TEXT NOT NULL,
+  category         TEXT,
+  unit             TEXT,
+  qty_needed       NUMERIC(10,2) NOT NULL DEFAULT 1,
+  pic_id           UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  deadline_date    DATE,
+  status           TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('ready','preparing','pending','not_available')),
+  notes            TEXT,
+  created_by       UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  created_at       TIMESTAMPTZ DEFAULT now(),
+  updated_at       TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_psy_event_prep_items_event ON psy_event_prep_items(event_id);
+
+ALTER TABLE psy_event_prep_items ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage event prep items" ON psy_event_prep_items;
+CREATE POLICY "Staff manage event prep items" ON psy_event_prep_items FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+COMMENT ON TABLE psy_event_prep_items IS
+  'Checklist persediaan peralatan/bahan untuk Acara & Kelas (psy_events) — Modul Persediaan Event v1. Tiada kaitan pergerakan stok automatik.';
+COMMENT ON COLUMN psy_event_prep_items.source IS
+  '''inventory'' = dipautkan ke psy_inventory_items (stok sedia ada dikira live); ''manual'' = item bebas, tiada pautan inventori.';
+COMMENT ON COLUMN psy_event_prep_items.status IS
+  'Ditetapkan staff sendiri: pending (baru/belum mula) -> preparing (sedang disiapkan) -> ready (sedia); not_available = tak dapat disediakan.';
+-- Persediaan Event v2: Checklist Setup, Template, Nota, Pengeluaran & Pemulangan
+-- Susulan kepada 20261014_event_prep_items.sql (psy_event_prep_items, v1)
+
+-- ── Checklist Setup (tugasan persediaan — bukan barang fizikal) ──
+CREATE TABLE IF NOT EXISTS psy_event_checklist_tasks (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id    UUID NOT NULL REFERENCES psy_events(id) ON DELETE CASCADE,
+  task        TEXT NOT NULL,
+  pic_id      UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  target_date DATE,
+  status      TEXT NOT NULL DEFAULT 'belum_mula' CHECK (status IN ('belum_mula','dalam_proses','selesai')),
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  updated_at  TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_psy_event_checklist_tasks_event ON psy_event_checklist_tasks(event_id);
+ALTER TABLE psy_event_checklist_tasks ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Staff manage event checklist tasks" ON psy_event_checklist_tasks;
+CREATE POLICY "Staff manage event checklist tasks" ON psy_event_checklist_tasks FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ── Template persediaan (senarai barang guna-semula) ──
+CREATE TABLE IF NOT EXISTS psy_event_prep_templates (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        TEXT NOT NULL,
+  description TEXT,
+  created_by  UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE psy_event_prep_templates ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Staff manage event prep templates" ON psy_event_prep_templates;
+CREATE POLICY "Staff manage event prep templates" ON psy_event_prep_templates FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+CREATE TABLE IF NOT EXISTS psy_event_prep_template_items (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  template_id       UUID NOT NULL REFERENCES psy_event_prep_templates(id) ON DELETE CASCADE,
+  source            TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('inventory','manual')),
+  inventory_item_id UUID REFERENCES psy_inventory_items(id) ON DELETE SET NULL,
+  item_name         TEXT NOT NULL,
+  category          TEXT,
+  unit              TEXT,
+  qty_needed        NUMERIC(10,2) NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_psy_event_prep_template_items_template ON psy_event_prep_template_items(template_id);
+ALTER TABLE psy_event_prep_template_items ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Staff manage event prep template items" ON psy_event_prep_template_items;
+CREATE POLICY "Staff manage event prep template items" ON psy_event_prep_template_items FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ── Metadata persediaan 1:1 per acara (template digunakan, nota, tarikh akhir persediaan) ──
+CREATE TABLE IF NOT EXISTS psy_event_prep_meta (
+  event_id      UUID PRIMARY KEY REFERENCES psy_events(id) ON DELETE CASCADE,
+  template_id   UUID REFERENCES psy_event_prep_templates(id) ON DELETE SET NULL,
+  notes         TEXT,
+  deadline_date DATE,
+  updated_at    TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE psy_event_prep_meta ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Staff manage event prep meta" ON psy_event_prep_meta;
+CREATE POLICY "Staff manage event prep meta" ON psy_event_prep_meta FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- ── Pengeluaran & Pemulangan barang (stok keluar untuk event + rekod pulangan) ──
+CREATE TABLE IF NOT EXISTS psy_event_stock_issuance (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id          UUID NOT NULL REFERENCES psy_events(id) ON DELETE CASCADE,
+  prep_item_id      UUID REFERENCES psy_event_prep_items(id) ON DELETE SET NULL,
+  inventory_item_id UUID REFERENCES psy_inventory_items(id) ON DELETE SET NULL,
+  item_name         TEXT NOT NULL,
+  qty               NUMERIC(10,2) NOT NULL,
+  location_id       UUID REFERENCES psy_inventory_locations(id) ON DELETE SET NULL,
+  borrowed_by       UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  issued_by         UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  issued_at         TIMESTAMPTZ DEFAULT now(),
+  status            TEXT NOT NULL DEFAULT 'dikeluarkan' CHECK (status IN ('dikeluarkan','dipulangkan')),
+  returned_at       TIMESTAMPTZ,
+  notes             TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_psy_event_stock_issuance_event ON psy_event_stock_issuance(event_id);
+ALTER TABLE psy_event_stock_issuance ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Staff manage event stock issuance" ON psy_event_stock_issuance;
+CREATE POLICY "Staff manage event stock issuance" ON psy_event_stock_issuance FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+-- Sambung Persediaan & Peralatan ke modul Equipment (psy_equipment — aset
+-- bertag EQ-xxxx, berasingan dari psy_inventory_items yang pukal/konsumsi).
+ALTER TABLE psy_event_prep_items DROP CONSTRAINT IF EXISTS psy_event_prep_items_source_check;
+ALTER TABLE psy_event_prep_items ADD CONSTRAINT psy_event_prep_items_source_check
+  CHECK (source IN ('inventory','manual','equipment'));
+
+ALTER TABLE psy_event_prep_items
+  ADD COLUMN IF NOT EXISTS equipment_id UUID REFERENCES psy_equipment(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_psy_event_prep_items_equipment ON psy_event_prep_items(equipment_id);
+
 
 -- ════════════════════════════════════════════════════════════════
 -- schema/20_referrals.sql
@@ -8262,12 +8803,33 @@ CREATE POLICY "kb_cat_read"  ON psy_kb_categories FOR SELECT USING (kb_is_staff(
 DROP POLICY IF EXISTS "kb_cat_write" ON psy_kb_categories;
 CREATE POLICY "kb_cat_write" ON psy_kb_categories FOR ALL    USING (kb_is_staff()) WITH CHECK (kb_is_staff());
 
+-- ──── psy_kb_subcategories (subkategori utama dalam setiap kategori) ────
+CREATE TABLE IF NOT EXISTS psy_kb_subcategories (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category_id UUID NOT NULL REFERENCES psy_kb_categories(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  slug        TEXT UNIQUE NOT NULL,
+  icon        TEXT DEFAULT '📄',
+  sort_order  INT  DEFAULT 100,
+  is_active   BOOLEAN DEFAULT true,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_kb_subcategories_category ON psy_kb_subcategories(category_id);
+
+ALTER TABLE psy_kb_subcategories ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "kb_subcat_read" ON psy_kb_subcategories;
+CREATE POLICY "kb_subcat_read"  ON psy_kb_subcategories FOR SELECT USING (kb_is_staff());
+DROP POLICY IF EXISTS "kb_subcat_write" ON psy_kb_subcategories;
+CREATE POLICY "kb_subcat_write" ON psy_kb_subcategories FOR ALL    USING (kb_is_staff()) WITH CHECK (kb_is_staff());
+
 -- ──── psy_kb_resources ────
 CREATE TABLE IF NOT EXISTS psy_kb_resources (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title         TEXT NOT NULL,
   description   TEXT,
   category_id   UUID REFERENCES psy_kb_categories(id) ON DELETE SET NULL,
+  subcategory_id UUID REFERENCES psy_kb_subcategories(id) ON DELETE SET NULL,
   res_type      TEXT NOT NULL DEFAULT 'pdf'
                 CHECK (res_type IN ('pdf','document','spreadsheet','presentation','video','image','link')),
   file_url      TEXT,          -- untuk fail yang dimuat naik (bucket kb-media)
@@ -8292,6 +8854,7 @@ CREATE TABLE IF NOT EXISTS psy_kb_resources (
 );
 
 CREATE INDEX IF NOT EXISTS idx_kb_res_category ON psy_kb_resources(category_id);
+CREATE INDEX IF NOT EXISTS idx_kb_res_subcategory ON psy_kb_resources(subcategory_id);
 CREATE INDEX IF NOT EXISTS idx_kb_res_type     ON psy_kb_resources(res_type);
 CREATE INDEX IF NOT EXISTS idx_kb_res_archived ON psy_kb_resources(is_archived);
 CREATE INDEX IF NOT EXISTS idx_kb_res_tags     ON psy_kb_resources USING GIN(tags);
@@ -8467,18 +9030,83 @@ CREATE OR REPLACE FUNCTION kb_bump_view(res UUID) RETURNS void AS $$
   UPDATE psy_kb_resources SET view_count = view_count + 1 WHERE id = res;
 $$ LANGUAGE sql SECURITY DEFINER;
 
--- ──── seed: kategori (11) ────
+-- ──── seed: kategori (8) ────
 INSERT INTO psy_kb_categories (name, slug, description, icon, color, sort_order) VALUES
-  ('SOP',                  'sop',                  'Standard Operating Procedures dan arahan kerja.',       '📄', 'navy',       10),
-  ('Clinical Guidelines',  'clinical-guidelines',  'Garis panduan klinikal, protokol dan amalan terbaik.',  '🩺', 'green',      20),
-  ('Training Materials',   'training-materials',   'Modul latihan, slaid pembentangan dan bahan belajar.',  '🎓', 'gold',       30),
-  ('Video Tutorials',      'video-tutorials',      'Panduan video langkah demi langkah.',                    '🎬', 'terracotta', 40),
-  ('Forms & Templates',    'forms-templates',      'Template borang dan dokumen.',                           '📋', 'teal',       50),
-  ('Medication References','medication-references','Maklumat ubat, interaksi dan rujukan.',                 '💊', 'navy',       60),
-  ('Psychotherapy Modules','psychotherapy-modules','Modul terapi, teknik dan pendekatan rawatan.',          '🧠', 'teal',       70),
-  ('FAQ',                  'faq',                  'Soalan lazim dan jawapan.',                              '❓', 'gold',       80),
-  ('Announcements',        'kb-announcements',     'Pengumuman dan notis penting.',                          '📢', 'green',     100),
-  ('Other Resources',      'other-resources',      'Sumber dan rujukan lain yang berguna.',                  '📦', 'grey',      110)
+  ('SOP & Operations',                      'sop-operations',
+   'SOP operasi, polisi dan aliran kerja pentadbiran dan prosedur harian pusat.',                         '📄', 'navy',       10),
+  ('Clinical Guidelines & Protocols',       'clinical-guidelines-protocols',
+   'Garis panduan klinikal, keselamatan pesakit dan protokol rawatan yang diluluskan.',                   '🩺', 'green',      20),
+  ('Clinical & Therapy Modules',            'clinical-therapy-modules',
+   'Modul fisioterapi, kaunseling, bekam dan akupunktur mengikut bidang perkhidmatan.',                   '❤️', 'terracotta', 30),
+  ('Forms & Templates',                     'forms-templates',
+   'Borang pendaftaran, persetujuan termaklum, template laporan dan checklist.',                          '📋', 'gold',       40),
+  ('Staff Training & Development',          'staff-training-development',
+   'Modul latihan staf, orientasi pekerja baharu, kemahiran komunikasi dan pembangunan profesional.',      '🎓', 'purple',     50),
+  ('Offers, Packages & Sales Workflows',    'offers-packages-sales',
+   'Bahan stack tawaran, pakej, harga, aliran kerja jualan dan skrip objection-handling.',                 '🏷️', 'blue',       60),
+  ('Client Education & Wellness Resources', 'client-education-wellness',
+   'Bahan pendidikan klien, panduan penjagaan selepas rawatan dan sumber kesejahteraan.',                  '📖', 'teal',       70),
+  ('Announcements & FAQ',                   'announcements-faq',
+   'Pengumuman rasmi, notis staf dan soalan lazim panduan sistem.',                                       '📢', 'grey',       80)
+ON CONFLICT (slug) DO NOTHING;
+
+-- ──── seed: subkategori (5-6 setiap kategori) ────
+INSERT INTO psy_kb_subcategories (category_id, name, slug, icon, sort_order)
+SELECT c.id, v.name, v.slug, v.icon, v.sort_order
+FROM (VALUES
+  ('sop-operations','Polisi & Prosedur','sop-polisi-prosedur','📜',10),
+  ('sop-operations','Pengurusan Janji Temu','sop-janji-temu','📅',20),
+  ('sop-operations','Operasi Harian','sop-operasi-harian','🗂️',30),
+  ('sop-operations','Keselamatan & Kerahsiaan','sop-keselamatan-kerahsiaan','🔐',40),
+  ('sop-operations','Pengurusan Fasiliti','sop-pengurusan-fasiliti','🏢',50),
+
+  ('clinical-guidelines-protocols','Penilaian & Saringan','cgp-penilaian-saringan','🔎',10),
+  ('clinical-guidelines-protocols','Protokol Rawatan','cgp-protokol-rawatan','📘',20),
+  ('clinical-guidelines-protocols','Pengurusan Risiko','cgp-pengurusan-risiko','⚠️',30),
+  ('clinical-guidelines-protocols','Kriteria Rujukan','cgp-kriteria-rujukan','📎',40),
+  ('clinical-guidelines-protocols','Standard Keselamatan','cgp-standard-keselamatan','🛡️',50),
+
+  ('clinical-therapy-modules','Fisioterapi','ctm-fisioterapi','🦵',10),
+  ('clinical-therapy-modules','Kaunseling & Psikoterapi','ctm-kaunseling-psikoterapi','🧠',20),
+  ('clinical-therapy-modules','Bekam','ctm-bekam','🩹',30),
+  ('clinical-therapy-modules','Akupunktur','ctm-akupunktur','📍',40),
+  ('clinical-therapy-modules','Latihan & Praktikal','ctm-latihan-praktikal','🏋️',50),
+
+  ('forms-templates','Borang Pesakit','ft-borang-pesakit','📝',10),
+  ('forms-templates','Persetujuan Termaklum','ft-persetujuan-termaklum','✍️',20),
+  ('forms-templates','Template Laporan','ft-template-laporan','📊',30),
+  ('forms-templates','Checklist','ft-checklist','☑️',40),
+  ('forms-templates','Dokumen Pentadbiran','ft-dokumen-pentadbiran','🗃️',50),
+
+  ('staff-training-development','Staff Onboarding','std-staff-onboarding','👋',10),
+  ('staff-training-development','Customer Service & Communication','std-customer-service-comm','💬',20),
+  ('staff-training-development','System & Software Training','std-system-software','💻',30),
+  ('staff-training-development','Clinical Skills Training','std-clinical-skills','🩺',40),
+  ('staff-training-development','Sales & Service Training','std-sales-service','🎯',50),
+  ('staff-training-development','Competency & Assessment','std-competency-assessment','✅',60),
+
+  ('offers-packages-sales','Offer Stack','ops-offer-stack','🎁',10),
+  ('offers-packages-sales','Pakej & Harga','ops-pakej-harga','💰',20),
+  ('offers-packages-sales','Sales Workflow','ops-sales-workflow','🔁',30),
+  ('offers-packages-sales','Upsell & Cross-sell','ops-upsell-crosssell','📈',40),
+  ('offers-packages-sales','Skrip & Objection Handling','ops-skrip-objection','🗣️',50),
+  ('offers-packages-sales','Customer Journey','ops-customer-journey','🧭',60),
+
+  ('client-education-wellness','Psikoedukasi','cew-psikoedukasi','🧩',10),
+  ('client-education-wellness','Bahan Kesejahteraan','cew-bahan-kesejahteraan','🌿',20),
+  ('client-education-wellness','Lembaran Kerja & Aktiviti','cew-lembaran-aktiviti','📑',30),
+  ('client-education-wellness','Panduan Penjagaan Selepas Rawatan','cew-penjagaan-selepas-rawatan','🩺',40),
+  ('client-education-wellness','Video & Infografik','cew-video-infografik','🎞️',50),
+  ('client-education-wellness','Rujukan & Sumber Bacaan','cew-rujukan-sumber','📚',60),
+
+  ('announcements-faq','Pengumuman Rasmi','af-pengumuman-rasmi','📢',10),
+  ('announcements-faq','Notis & Kemas Kini','af-notis-kemaskini','🔔',20),
+  ('announcements-faq','Soalan Lazim (FAQ)','af-soalan-lazim','❓',30),
+  ('announcements-faq','Panduan Sistem','af-panduan-sistem','🖥️',40),
+  ('announcements-faq','Maklumat Penting','af-maklumat-penting','❗',50),
+  ('announcements-faq','Arkib Pengumuman','af-arkib-pengumuman','🗄️',60)
+) AS v(cat_slug, name, slug, icon, sort_order)
+JOIN psy_kb_categories c ON c.slug = v.cat_slug
 ON CONFLICT (slug) DO NOTHING;
 
 
@@ -8625,7 +9253,7 @@ VALUES ('wa-outbox', 'wa-outbox', true)
 ON CONFLICT (id) DO UPDATE SET public = true;
 
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES ('avatars', 'avatars', true, 5242880, ARRAY['image/png','image/jpeg','image/jpg','image/webp','image/gif'])
+VALUES ('avatars', 'avatars', true, 15728640, ARRAY['image/png','image/jpeg','image/jpg','image/webp','image/gif'])
 ON CONFLICT (id) DO UPDATE
   SET public = EXCLUDED.public,
       file_size_limit = EXCLUDED.file_size_limit,
@@ -8674,7 +9302,7 @@ ON CONFLICT (id) DO NOTHING;
 -- Gambar produk inventori — public (dipaparkan terus di senarai/detail produk).
 -- Turut dikongsi oleh Produk & Bahan Luar (psy_recommended_products.image_url).
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES ('inventory-images', 'inventory-images', true, 2097152, ARRAY['image/png','image/jpeg','image/jpg','image/webp'])
+VALUES ('inventory-images', 'inventory-images', true, 15728640, ARRAY['image/png','image/jpeg','image/jpg','image/webp'])
 ON CONFLICT (id) DO UPDATE
   SET file_size_limit = EXCLUDED.file_size_limit,
       allowed_mime_types = EXCLUDED.allowed_mime_types;
@@ -8699,7 +9327,7 @@ ON CONFLICT (id) DO NOTHING;
 -- psy_inventory_items.print_file_url (14_products_inventory.sql), staff cetak terus
 -- dari inventory-detail.html bila perlu restock.
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES ('inventory-print-files', 'inventory-print-files', true, 10485760, ARRAY['application/pdf','image/png'])
+VALUES ('inventory-print-files', 'inventory-print-files', true, 52428800, ARRAY['application/pdf','image/png'])
 ON CONFLICT (id) DO UPDATE
   SET public = EXCLUDED.public,
       file_size_limit = EXCLUDED.file_size_limit,

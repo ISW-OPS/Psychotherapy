@@ -46,6 +46,7 @@
     </div>
     <div class="flex flex-wrap items-center gap-2">
       <select id="f-cat" class="kb-sel"><option value="">Semua Kategori</option></select>
+      <select id="f-subcat" class="kb-sel"><option value="">Semua Subkategori</option></select>
       <select id="f-type" class="kb-sel"><option value="">Semua Jenis</option></select>
       <select id="f-vis" class="kb-sel">
         <option value="">Semua Visibiliti</option>
@@ -99,8 +100,8 @@
 <script src="_kb.js"></script>
 <script>
 const PAGE_SIZE = 10;
-let ALL = [], BM = { set: new Set() };
-const state = { q: '', cat: '', type: '', vis: '', sort: 'updated', page: 1 };
+let ALL = [], BM = { set: new Set() }, SUBCATS = [];
+const state = { q: '', cat: '', subcat: '', type: '', vis: '', sort: 'updated', page: 1 };
 let openMenu = null;
 
 function applyFilters() {
@@ -114,6 +115,7 @@ function applyFilters() {
       (r.category?.name || '').toLowerCase().includes(q));
   }
   if (state.cat) list = list.filter(r => r.category_id === state.cat);
+  if (state.subcat) list = list.filter(r => r.subcategory_id === state.subcat);
   if (state.type) list = list.filter(r => r.res_type === state.type);
   if (state.vis) list = list.filter(r => r.visibility === state.vis);
   if (state.sort === 'title') list.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
@@ -141,7 +143,7 @@ function render() {
           <div class="text-[11px] text-ink/45 truncate max-w-[320px]">${kbEsc(r.description||'')}</div></div>
         </a>
       </td>
-      <td class="px-3 py-3 text-xs text-ink/70">${cat ? kbEsc(cat.name) : '—'}</td>
+      <td class="px-3 py-3 text-xs text-ink/70">${cat ? kbEsc(cat.name) : '—'}${r.subcategory ? `<div class="text-[10px] text-ink/45">${r.subcategory.icon||''} ${kbEsc(r.subcategory.name)}</div>` : ''}</td>
       <td class="px-3 py-3 text-xs text-ink/60">${t.ext}</td>
       <td class="px-3 py-3 text-xs text-ink/55 hidden md:table-cell whitespace-nowrap">${timeAgo(r.updated_at)}</td>
       <td class="px-3 py-3 text-xs text-ink/55 hidden lg:table-cell whitespace-nowrap">${kbFileSize(r.file_size)}</td>
@@ -206,32 +208,46 @@ async function boot() {
   const params = new URLSearchParams(location.search);
   state.q = params.get('q') || '';
   state.cat = params.get('cat') || '';
+  state.subcat = params.get('subcat') || '';
   document.getElementById('f-search').value = state.q;
 
-  const [cats, resources, bm] = await Promise.all([
+  const [cats, subcats, resources, bm] = await Promise.all([
     kbCategories().catch(() => []),
+    kbSubcategories().catch(() => []),
     kbResources().catch(() => []),
     kbMyBookmarkIds().catch(() => ({ set: new Set() })),
   ]);
-  ALL = resources; BM = bm;
+  ALL = resources; BM = bm; SUBCATS = subcats;
 
   // populate filters
   document.getElementById('f-cat').innerHTML = '<option value="">Semua Kategori</option>' +
     cats.map(c => `<option value="${c.id}" ${c.id === state.cat ? 'selected' : ''}>${kbEsc(c.name)}</option>`).join('');
   document.getElementById('f-type').innerHTML = '<option value="">Semua Jenis</option>' +
     Object.entries(KB_TYPES).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
+  renderSubcatOptions();
 
   const bind = (id, key) => document.getElementById(id).addEventListener('change', e => { state[key] = e.target.value; state.page = 1; render(); });
-  bind('f-cat', 'cat'); bind('f-type', 'type'); bind('f-vis', 'vis'); bind('f-sort', 'sort');
+  bind('f-type', 'type'); bind('f-vis', 'vis'); bind('f-sort', 'sort');
+  document.getElementById('f-cat').addEventListener('change', e => {
+    state.cat = e.target.value; state.subcat = ''; state.page = 1;
+    renderSubcatOptions(); render();
+  });
+  document.getElementById('f-subcat').addEventListener('change', e => { state.subcat = e.target.value; state.page = 1; render(); });
   document.getElementById('f-search').addEventListener('input', e => { state.q = e.target.value; state.page = 1; render(); });
   document.getElementById('f-clear').addEventListener('click', () => {
-    state.q = state.cat = state.type = state.vis = ''; state.page = 1;
+    state.q = state.cat = state.subcat = state.type = state.vis = ''; state.page = 1;
     document.getElementById('f-search').value = '';
-    ['f-cat', 'f-type', 'f-vis'].forEach(i => document.getElementById(i).value = '');
+    ['f-cat', 'f-subcat', 'f-type', 'f-vis'].forEach(i => document.getElementById(i).value = '');
     render();
   });
 
   render();
+}
+
+function renderSubcatOptions() {
+  const list = state.cat ? SUBCATS.filter(s => s.category_id === state.cat) : SUBCATS;
+  document.getElementById('f-subcat').innerHTML = '<option value="">Semua Subkategori</option>' +
+    list.map(s => `<option value="${s.id}" ${s.id === state.subcat ? 'selected' : ''}>${s.icon || ''} ${kbEsc(s.name)}</option>`).join('');
 }
 boot();
 </script>

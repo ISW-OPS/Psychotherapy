@@ -39,12 +39,33 @@ CREATE POLICY "kb_cat_read"  ON psy_kb_categories FOR SELECT USING (kb_is_staff(
 DROP POLICY IF EXISTS "kb_cat_write" ON psy_kb_categories;
 CREATE POLICY "kb_cat_write" ON psy_kb_categories FOR ALL    USING (kb_is_staff()) WITH CHECK (kb_is_staff());
 
+-- ──── psy_kb_subcategories (subkategori utama dalam setiap kategori) ────
+CREATE TABLE IF NOT EXISTS psy_kb_subcategories (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category_id UUID NOT NULL REFERENCES psy_kb_categories(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  slug        TEXT UNIQUE NOT NULL,
+  icon        TEXT DEFAULT '📄',
+  sort_order  INT  DEFAULT 100,
+  is_active   BOOLEAN DEFAULT true,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_kb_subcategories_category ON psy_kb_subcategories(category_id);
+
+ALTER TABLE psy_kb_subcategories ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "kb_subcat_read" ON psy_kb_subcategories;
+CREATE POLICY "kb_subcat_read"  ON psy_kb_subcategories FOR SELECT USING (kb_is_staff());
+DROP POLICY IF EXISTS "kb_subcat_write" ON psy_kb_subcategories;
+CREATE POLICY "kb_subcat_write" ON psy_kb_subcategories FOR ALL    USING (kb_is_staff()) WITH CHECK (kb_is_staff());
+
 -- ──── psy_kb_resources ────
 CREATE TABLE IF NOT EXISTS psy_kb_resources (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title         TEXT NOT NULL,
   description   TEXT,
   category_id   UUID REFERENCES psy_kb_categories(id) ON DELETE SET NULL,
+  subcategory_id UUID REFERENCES psy_kb_subcategories(id) ON DELETE SET NULL,
   res_type      TEXT NOT NULL DEFAULT 'pdf'
                 CHECK (res_type IN ('pdf','document','spreadsheet','presentation','video','image','link')),
   file_url      TEXT,          -- untuk fail yang dimuat naik (bucket kb-media)
@@ -69,6 +90,7 @@ CREATE TABLE IF NOT EXISTS psy_kb_resources (
 );
 
 CREATE INDEX IF NOT EXISTS idx_kb_res_category ON psy_kb_resources(category_id);
+CREATE INDEX IF NOT EXISTS idx_kb_res_subcategory ON psy_kb_resources(subcategory_id);
 CREATE INDEX IF NOT EXISTS idx_kb_res_type     ON psy_kb_resources(res_type);
 CREATE INDEX IF NOT EXISTS idx_kb_res_archived ON psy_kb_resources(is_archived);
 CREATE INDEX IF NOT EXISTS idx_kb_res_tags     ON psy_kb_resources USING GIN(tags);
@@ -244,16 +266,81 @@ CREATE OR REPLACE FUNCTION kb_bump_view(res UUID) RETURNS void AS $$
   UPDATE psy_kb_resources SET view_count = view_count + 1 WHERE id = res;
 $$ LANGUAGE sql SECURITY DEFINER;
 
--- ──── seed: kategori (11) ────
+-- ──── seed: kategori (8) ────
 INSERT INTO psy_kb_categories (name, slug, description, icon, color, sort_order) VALUES
-  ('SOP',                  'sop',                  'Standard Operating Procedures dan arahan kerja.',       '📄', 'navy',       10),
-  ('Clinical Guidelines',  'clinical-guidelines',  'Garis panduan klinikal, protokol dan amalan terbaik.',  '🩺', 'green',      20),
-  ('Training Materials',   'training-materials',   'Modul latihan, slaid pembentangan dan bahan belajar.',  '🎓', 'gold',       30),
-  ('Video Tutorials',      'video-tutorials',      'Panduan video langkah demi langkah.',                    '🎬', 'terracotta', 40),
-  ('Forms & Templates',    'forms-templates',      'Template borang dan dokumen.',                           '📋', 'teal',       50),
-  ('Medication References','medication-references','Maklumat ubat, interaksi dan rujukan.',                 '💊', 'navy',       60),
-  ('Psychotherapy Modules','psychotherapy-modules','Modul terapi, teknik dan pendekatan rawatan.',          '🧠', 'teal',       70),
-  ('FAQ',                  'faq',                  'Soalan lazim dan jawapan.',                              '❓', 'gold',       80),
-  ('Announcements',        'kb-announcements',     'Pengumuman dan notis penting.',                          '📢', 'green',     100),
-  ('Other Resources',      'other-resources',      'Sumber dan rujukan lain yang berguna.',                  '📦', 'grey',      110)
+  ('SOP & Operations',                      'sop-operations',
+   'SOP operasi, polisi dan aliran kerja pentadbiran dan prosedur harian pusat.',                         '📄', 'navy',       10),
+  ('Clinical Guidelines & Protocols',       'clinical-guidelines-protocols',
+   'Garis panduan klinikal, keselamatan pesakit dan protokol rawatan yang diluluskan.',                   '🩺', 'green',      20),
+  ('Clinical & Therapy Modules',            'clinical-therapy-modules',
+   'Modul fisioterapi, kaunseling, bekam dan akupunktur mengikut bidang perkhidmatan.',                   '❤️', 'terracotta', 30),
+  ('Forms & Templates',                     'forms-templates',
+   'Borang pendaftaran, persetujuan termaklum, template laporan dan checklist.',                          '📋', 'gold',       40),
+  ('Staff Training & Development',          'staff-training-development',
+   'Modul latihan staf, orientasi pekerja baharu, kemahiran komunikasi dan pembangunan profesional.',      '🎓', 'purple',     50),
+  ('Offers, Packages & Sales Workflows',    'offers-packages-sales',
+   'Bahan stack tawaran, pakej, harga, aliran kerja jualan dan skrip objection-handling.',                 '🏷️', 'blue',       60),
+  ('Client Education & Wellness Resources', 'client-education-wellness',
+   'Bahan pendidikan klien, panduan penjagaan selepas rawatan dan sumber kesejahteraan.',                  '📖', 'teal',       70),
+  ('Announcements & FAQ',                   'announcements-faq',
+   'Pengumuman rasmi, notis staf dan soalan lazim panduan sistem.',                                       '📢', 'grey',       80)
+ON CONFLICT (slug) DO NOTHING;
+
+-- ──── seed: subkategori (5-6 setiap kategori) ────
+INSERT INTO psy_kb_subcategories (category_id, name, slug, icon, sort_order)
+SELECT c.id, v.name, v.slug, v.icon, v.sort_order
+FROM (VALUES
+  ('sop-operations','Polisi & Prosedur','sop-polisi-prosedur','📜',10),
+  ('sop-operations','Pengurusan Janji Temu','sop-janji-temu','📅',20),
+  ('sop-operations','Operasi Harian','sop-operasi-harian','🗂️',30),
+  ('sop-operations','Keselamatan & Kerahsiaan','sop-keselamatan-kerahsiaan','🔐',40),
+  ('sop-operations','Pengurusan Fasiliti','sop-pengurusan-fasiliti','🏢',50),
+
+  ('clinical-guidelines-protocols','Penilaian & Saringan','cgp-penilaian-saringan','🔎',10),
+  ('clinical-guidelines-protocols','Protokol Rawatan','cgp-protokol-rawatan','📘',20),
+  ('clinical-guidelines-protocols','Pengurusan Risiko','cgp-pengurusan-risiko','⚠️',30),
+  ('clinical-guidelines-protocols','Kriteria Rujukan','cgp-kriteria-rujukan','📎',40),
+  ('clinical-guidelines-protocols','Standard Keselamatan','cgp-standard-keselamatan','🛡️',50),
+
+  ('clinical-therapy-modules','Fisioterapi','ctm-fisioterapi','🦵',10),
+  ('clinical-therapy-modules','Kaunseling & Psikoterapi','ctm-kaunseling-psikoterapi','🧠',20),
+  ('clinical-therapy-modules','Bekam','ctm-bekam','🩹',30),
+  ('clinical-therapy-modules','Akupunktur','ctm-akupunktur','📍',40),
+  ('clinical-therapy-modules','Latihan & Praktikal','ctm-latihan-praktikal','🏋️',50),
+
+  ('forms-templates','Borang Pesakit','ft-borang-pesakit','📝',10),
+  ('forms-templates','Persetujuan Termaklum','ft-persetujuan-termaklum','✍️',20),
+  ('forms-templates','Template Laporan','ft-template-laporan','📊',30),
+  ('forms-templates','Checklist','ft-checklist','☑️',40),
+  ('forms-templates','Dokumen Pentadbiran','ft-dokumen-pentadbiran','🗃️',50),
+
+  ('staff-training-development','Staff Onboarding','std-staff-onboarding','👋',10),
+  ('staff-training-development','Customer Service & Communication','std-customer-service-comm','💬',20),
+  ('staff-training-development','System & Software Training','std-system-software','💻',30),
+  ('staff-training-development','Clinical Skills Training','std-clinical-skills','🩺',40),
+  ('staff-training-development','Sales & Service Training','std-sales-service','🎯',50),
+  ('staff-training-development','Competency & Assessment','std-competency-assessment','✅',60),
+
+  ('offers-packages-sales','Offer Stack','ops-offer-stack','🎁',10),
+  ('offers-packages-sales','Pakej & Harga','ops-pakej-harga','💰',20),
+  ('offers-packages-sales','Sales Workflow','ops-sales-workflow','🔁',30),
+  ('offers-packages-sales','Upsell & Cross-sell','ops-upsell-crosssell','📈',40),
+  ('offers-packages-sales','Skrip & Objection Handling','ops-skrip-objection','🗣️',50),
+  ('offers-packages-sales','Customer Journey','ops-customer-journey','🧭',60),
+
+  ('client-education-wellness','Psikoedukasi','cew-psikoedukasi','🧩',10),
+  ('client-education-wellness','Bahan Kesejahteraan','cew-bahan-kesejahteraan','🌿',20),
+  ('client-education-wellness','Lembaran Kerja & Aktiviti','cew-lembaran-aktiviti','📑',30),
+  ('client-education-wellness','Panduan Penjagaan Selepas Rawatan','cew-penjagaan-selepas-rawatan','🩺',40),
+  ('client-education-wellness','Video & Infografik','cew-video-infografik','🎞️',50),
+  ('client-education-wellness','Rujukan & Sumber Bacaan','cew-rujukan-sumber','📚',60),
+
+  ('announcements-faq','Pengumuman Rasmi','af-pengumuman-rasmi','📢',10),
+  ('announcements-faq','Notis & Kemas Kini','af-notis-kemaskini','🔔',20),
+  ('announcements-faq','Soalan Lazim (FAQ)','af-soalan-lazim','❓',30),
+  ('announcements-faq','Panduan Sistem','af-panduan-sistem','🖥️',40),
+  ('announcements-faq','Maklumat Penting','af-maklumat-penting','❗',50),
+  ('announcements-faq','Arkib Pengumuman','af-arkib-pengumuman','🗄️',60)
+) AS v(cat_slug, name, slug, icon, sort_order)
+JOIN psy_kb_categories c ON c.slug = v.cat_slug
 ON CONFLICT (slug) DO NOTHING;
