@@ -1,14 +1,27 @@
 // ============================================================
 // INVOIS BEKALAN PRODUK — psy_supply_invoices (database/schema/42_supply_invoices.sql)
-// createSupplyInvoice() dipanggil SELEPAS addStockToLocation() (shared/inventoryStock.js)
-// berjaya — supaya "jumlah diberi setakat ini" yg dikira di sini turut kira movement
-// yang baru ditulis. Dua laluan panggil fungsi ni:
+// createSupplyInvoice() boleh dipanggil SELEPAS addStockToLocation() (shared/
+// inventoryStock.js) berjaya (laluan NORMAL, tolak stok sebenar), ATAU terus tanpa
+// addStockToLocation langsung (laluan SEJARAH/catch-up — markSupplyHistorical() di
+// plan-week.html, pesakit lama yg data kertas baru dimasukkan, barang dah diberi
+// fizikal lama dulu, elak tolak baki stok semasa). TIGA laluan panggil fungsi ni:
 //   - roles/staff/patient-hub.html submitSupply()      (manual, "+ Bagi Bekalan")
 //   - roles/staff/plan-week.html applySupplyStock()      (auto-deduct lepas Hadir)
+//   - roles/staff/plan-week.html markSupplyHistorical()   (rekod sejarah, TIADA tolak stok)
+//
+// "Jumlah diberi setakat ini" dikira dari SNAPSHOT psy_supply_invoices terkini
+// (bukan jumlah psy_stock_movements) — supaya kekal konsisten tak kira laluan mana
+// yg cipta baris tu (ada/tiada movement sekali pun).
 //
 // Kekunci padanan "dirancang vs diberi" SAMA dgn KPI "Baki Bekalan" di
 // patient-hub.html renderSupplyKpiAndItems() — nama+unit (bukan item_id, sbb
-// entri coaching_schedule.supplies kadang tiada item_id yg konsisten).
+// entri coaching_schedule.supplies kadang tiada item_id yg konsisten). GOTCHA: kalau
+// SATU item_id Inventori dirujuk guna BEBERAPA nama/unit berlainan merentas minggu/
+// pakej (cth lepas konsolidasi semula Inventori — lihat
+// project_inventory_seed_destructive_delete), baris2 tu akan dikira sbg "produk"
+// berasingan di sini (key = text, bukan id) — jumlah/baki per produk boleh terpecah
+// tak tepat. Belum dibetulkan (skop besar, perlu ubah kekunci ke item_id merentas
+// fail ni + renderSupplyKpiAndItems() + invoice.js sekali).
 // ============================================================
 
 // givenItems: [{ item_id, name, unit, qty_given }]
@@ -41,19 +54,24 @@ async function createSupplyInvoice(givenItems, opts) {
       });
     });
 
-    const { data: hist } = await window.db.from('psy_stock_movements')
-      .select('item_name, qty, psy_inventory_items(unit)')
-      .eq('reference_type', 'patient_package').eq('reference_id', opts.patientId).eq('movement_type', 'out');
+    // Kumulatif "diberi setakat ini" — dari SNAPSHOT psy_supply_invoices TERKINI
+    // (baris psy_supply_invoices SEBELUM transaksi ni), bukan jumlah psy_stock_movements
+    // terus. Supaya kekal betul walau ada campuran rekod sebenar (tolak stok) & rekod
+    // sejarah/catch-up (tiada tolak stok — lihat markSupplyHistorical() di
+    // plan-week.html, utk pesakit lama yg data kertas dimasukkan lewat) — rekod
+    // sejarah ni TIADA baris psy_stock_movements, jadi asas lama (stock_movements)
+    // akan senyap abaikan sumbangan dia.
+    const { data: priorRows } = await window.db.from('psy_supply_invoices')
+      .select('items').eq('patient_id', opts.patientId).order('created_at', { ascending: true });
     const givenCum = {};
-    (hist || []).forEach(h => {
-      const k = key(h.item_name, h.psy_inventory_items?.unit);
-      givenCum[k] = (givenCum[k] || 0) + Math.abs(Number(h.qty || 0));
-    });
+    (priorRows || []).forEach(r => (Array.isArray(r.items) ? r.items : []).forEach(it => {
+      givenCum[key(it.name, it.unit)] = Number(it.qty_given_cumulative || 0); // snapshot TERKINI, bukan tambah
+    }));
 
     const items = list.map(g => {
       const k = key(g.name, g.unit);
       const plannedTotal = planned[k] || 0;
-      const cumulative = givenCum[k] || 0;
+      const cumulative = (givenCum[k] || 0) + Number(g.qty_given);
       return {
         item_id: g.item_id || null, name: g.name, unit: g.unit || 'unit',
         qty_given: Number(g.qty_given),
