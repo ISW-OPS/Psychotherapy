@@ -149,11 +149,24 @@ Deno.serve(async (req) => {
     try {
       const provider = getProvider()
       if (provider.getPaymentChannel) {
-        const { channel } = await provider.getPaymentChannel(result.gatewayRef)
-        if (channel) await admin.from('psy_payments').update({ gateway_channel: channel }).eq('id', payment.id)
+        const { channel, raw } = await provider.getPaymentChannel(result.gatewayRef)
+        if (channel) {
+          await admin.from('psy_payments').update({ gateway_channel: channel }).eq('id', payment.id)
+        } else {
+          // Audit #B1-30 — sebelum ni senyap (console.warn sahaja, hilang lepas log
+          // expire). Log ke psy_audit_log supaya staf nampak dlm audit.html (modul
+          // Pembayaran) & punca sebenar (raw respons HitPay) boleh disemak kemudian.
+          await auditLog(admin, 'payment.gateway_channel_unknown', payment.id, {
+            receipt_ref: payment.receipt_ref, gateway_ref: result.gatewayRef,
+            raw: JSON.stringify(raw ?? null).slice(0, 2000),
+          })
+        }
       }
     } catch (e) {
       console.warn('payments-webhook: getPaymentChannel gagal —', (e as Error).message)
+      await auditLog(admin, 'payment.gateway_channel_unknown', payment.id, {
+        receipt_ref: payment.receipt_ref, gateway_ref: result.gatewayRef, error: (e as Error).message,
+      })
     }
 
     await auditLog(admin, 'payment.gateway_completed', payment.id, { receipt_ref: payment.receipt_ref, amount: payment.total, provider: result.status })

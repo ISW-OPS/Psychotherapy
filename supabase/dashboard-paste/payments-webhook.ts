@@ -101,7 +101,8 @@ var hitpay = {
     const data = await res.json().catch(() => null);
     const payments = Array.isArray(data?.payments) ? data.payments : [];
     const chosen = payments.find((p) => String(p?.status || "").toLowerCase() === "succeeded") || payments[0];
-    return { channel: chosen?.payment_type ? String(chosen.payment_type) : null, raw: data };
+    const raw = chosen?.payment_type ?? chosen?.method ?? chosen?.channel;
+    return { channel: raw ? String(raw) : null, raw: data };
   },
   // Cipta sesi "lampir kad" (recurring-billing, save_payment_method=true) —
   // pesakit isi kad SEKALI di hosted page HitPay, tiada cycle/subscription
@@ -1004,11 +1005,21 @@ Deno.serve(async (req) => {
     try {
       const provider = getProvider();
       if (provider.getPaymentChannel) {
-        const { channel } = await provider.getPaymentChannel(result.gatewayRef);
-        if (channel) await admin.from("psy_payments").update({ gateway_channel: channel }).eq("id", payment.id);
+        const { channel, raw } = await provider.getPaymentChannel(result.gatewayRef);
+        if (channel) {
+          await admin.from("psy_payments").update({ gateway_channel: channel }).eq("id", payment.id);
+        } else {
+          await auditLog(admin, "payment.gateway_channel_unknown", payment.id, {
+            receipt_ref: payment.receipt_ref, gateway_ref: result.gatewayRef,
+            raw: JSON.stringify(raw ?? null).slice(0, 2000),
+          });
+        }
       }
     } catch (e) {
       console.warn("payments-webhook: getPaymentChannel gagal \u2014", e.message);
+      await auditLog(admin, "payment.gateway_channel_unknown", payment.id, {
+        receipt_ref: payment.receipt_ref, gateway_ref: result.gatewayRef, error: e.message,
+      });
     }
     await auditLog(admin, "payment.gateway_completed", payment.id, { receipt_ref: payment.receipt_ref, amount: payment.total, provider: result.status });
     if (payment.user_id) {

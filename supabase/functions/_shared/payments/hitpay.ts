@@ -132,7 +132,12 @@ export const hitpay: PaymentProvider = {
     // Pilih bayaran yang berjaya kalau ada lebih dari satu cubaan (retry pesakit) —
     // fallback ke yang pertama kalau tiada status 'succeeded' ditemui.
     const chosen = payments.find((p) => String(p?.status || '').toLowerCase() === 'succeeded') || payments[0]
-    return { channel: chosen?.payment_type ? String(chosen.payment_type) : null, raw: data }
+    // payment_type = nama medan ikut dokumentasi HitPay semasa kod ni ditulis —
+    // method/channel disimpan sbg fallback sekiranya API HitPay guna nama medan
+    // berbeza (audit #B1-30: gateway_channel kekal NULL utk semua rekod sedia ada,
+    // punca sebenar tak dapat disahkan tanpa log masa kegagalan — defensif sahaja).
+    const raw = chosen?.payment_type ?? chosen?.method ?? chosen?.channel
+    return { channel: raw ? String(raw) : null, raw: data }
   },
 
   // Cipta sesi "lampir kad" (recurring-billing, save_payment_method=true) —
