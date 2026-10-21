@@ -1036,6 +1036,30 @@ async function notify(userId, type, title, body, link) {
   catch (e) { console.warn('notify failed:', e.message); }
 }
 
+// Popup amaran buah pinggang/dialisis (lanjutan audit #20, 21 Okt 2026) — papar
+// SETIAP KALI halaman berkaitan pesakit ni dibuka (bukan setakat banner dalam
+// skrin yang senang terlepas pandang/scroll lepas). Ikut pola skrin-penuh
+// "Faham" sedia ada (rujuk kfShowZonBanner di kepatuhan.html pesakit) — tiada
+// dismiss klik-luar, staf WAJIB sedar amaran ni sebelum teruskan. Reusable:
+// panggil `showKidneyAlertPopup(patient)` pada mana-mana halaman staf yang
+// muatkan rekod SATU pesakit (patient-hub.html, plan-week.html, dll).
+function showKidneyAlertPopup(patient) {
+  if (!patient || !patient.has_kidney_condition) return;
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px';
+  const name = (patient.full_name || 'Pesakit ini').replace(/</g, '&lt;');
+  el.innerHTML = `
+    <div style="background:#fff;border-radius:20px;max-width:440px;width:100%;padding:28px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.3)">
+      <div style="font-size:44px;line-height:1">⚠️</div>
+      <div style="font-size:18px;font-weight:800;color:#b3402a;margin-top:10px">Pesakit Buah Pinggang / Dialisis</div>
+      <p style="font-size:13.5px;color:#333;line-height:1.65;margin-top:10px">${name} ada masalah buah pinggang/dialisis — perhatikan kadar peminuman air pesakit &amp; <b>ELAK</b> penyuntikan/pengambilan darah di lengan yang ada akses dialisis (fistula/kolaps vena).</p>
+      <button style="margin-top:18px;background:#b3402a;color:#fff;border:none;border-radius:12px;padding:11px 32px;font-weight:700;font-size:13.5px;cursor:pointer">Faham</button>
+    </div>`;
+  el.querySelector('button').onclick = () => el.remove();
+  document.body.appendChild(el);
+}
+window.showKidneyAlertPopup = showKidneyAlertPopup;
+
 function closeNotifPanel() {
   const panel = document.getElementById('notif-panel');
   const drawer = document.getElementById('notif-drawer');

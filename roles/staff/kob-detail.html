@@ -843,6 +843,8 @@
         .select('*, psy_profiles!psy_patients_user_id_fkey(full_name, phone, email)')
         .eq('id', kob.patient_id).single().then(r => r, () => ({ data: null }));
       patient = patData;
+      // Lanjutan audit #20 (21 Okt 2026) — popup amaran buah pinggang/dialisis.
+      try { window.showKidneyAlertPopup?.(patient); } catch (_) { }
 
       await loadKobRoleStaff();
 
@@ -2221,6 +2223,17 @@
         }).eq('id', kobId);
         if (error) throw error;
         kob.questionnaire = payload;
+        // Audit #20 follow-up (21 Okt 2026) — soalan B3 "Buah Pinggang" dlm KOB ni
+        // dulu tersadai dlm psy_kob_sessions.questionnaire, tak pernah sync ke
+        // psy_patients.has_kidney_condition (staf kena re-tick manual kemudian di
+        // patient-form.html). Sync terus di sini — trigger DB auto dedup (hanya
+        // notify bila false→true atau coach berubah), jadi selamat panggil berulang
+        // kali tiap autosave tanpa spam.
+        if (mk.pinggang?.checked && patient && patient.has_kidney_condition !== true) {
+          const { error: kidErr } = await window.db.from('psy_patients')
+            .update({ has_kidney_condition: true }).eq('id', patient.id);
+          if (!kidErr) patient.has_kidney_condition = true;
+        }
         if (!silent) await auditLog('kob.questionnaire_saved', kobId);
         if (info) {
           const when = new Date().toLocaleString(LCALE());
