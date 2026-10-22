@@ -73,6 +73,35 @@ CREATE TABLE IF NOT EXISTS psy_kob_sessions (
   locked_by                 UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
   locked_by_name            TEXT,
 
+  -- "OB Lock Harga" (reservation) — pesakit bayar OB Lock Harga hari ni utk "freeze"
+  -- harga semasa SEBELUM pakej rasmi mula (beza drpd Ansuran Manual di Langkah 4,
+  -- yang untuk pesakit yg DAH mula pakej). Tiada tarikh/jadual bayaran seterusnya
+  -- di sini — cuma satu OB Lock Harga + tempoh lock. TAKDE REFUND kalau tempoh luput
+  -- tanpa bayaran penuh (lock_status 'forfeited').
+  lock_deposit_amount          NUMERIC(12,2),
+  -- Rujuk terus psy_payments.id rekod OB Lock Harga ni — elak ambiguiti bila lock
+  -- diluputkan+dikunci semula (byk baris 'kob_price_lock_deposit' sepanjang masa),
+  -- supaya saveManualPayment() tahu TEPAT baris mana nak reclassify ke 'kob_package'
+  -- bila pesakit akhirnya mula pakej.
+  lock_deposit_payment_id      UUID REFERENCES psy_payments(id) ON DELETE SET NULL,
+  lock_deposit_paid_at         TIMESTAMPTZ,
+  -- 'gateway' = dibayar via pautan HitPay (payments-kob-initiate mode='price_lock'),
+  -- rekod oleh webhook (fulfillKobPriceLock), bukan staff terus.
+  lock_deposit_method          TEXT CHECK (lock_deposit_method IN ('cash','transfer','gateway')),
+  lock_deposit_reference       TEXT,
+  lock_deposit_recorded_by     UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  lock_deposit_recorded_by_name TEXT,
+  lock_expiry_date             DATE,
+  -- active = dalam tempoh; tempoh_tamat = tarikh dah sampai, menunggu staff lanjutkan/
+  -- luputkan; forfeited = staff dah luputkan (OB Lock Harga burn, harga dibuka balik);
+  -- completed = pesakit dah bayar penuh/mula ansuran dalam tempoh (OB Lock Harga
+  -- dikreditkan ke harga pakej).
+  lock_status                   TEXT CHECK (lock_status IN ('active','tempoh_tamat','forfeited','completed')),
+  lock_extended_count           INT NOT NULL DEFAULT 0,
+  lock_forfeited_at             TIMESTAMPTZ,
+  lock_forfeited_by             UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  lock_forfeited_by_name        TEXT,
+
   reschedule_count    INT NOT NULL DEFAULT 0,
   reschedule_reason   TEXT,
 
@@ -91,6 +120,19 @@ COMMENT ON COLUMN psy_kob_sessions.locked_price_tier IS
    kob-detail.html Langkah 3. When set, overrides wizPayTier in UI + payments-kob-initiate tier
    param, and keeps working even if the package price changes afterwards (snapshot in
    locked_price_amount). NULL = not locked, staff can still freely switch tiers.';
+
+COMMENT ON COLUMN psy_kob_sessions.lock_deposit_amount IS
+  '"OB Lock Harga" — reservation amount paid to lock the price (separate from the Langkah 4
+   payment plan — no schedule/dates attached, just one upfront amount). Credited toward the
+   package price ONLY while lock_status is still active/tempoh_tamat (not forfeited) when the
+   real payment is finally recorded. NEVER refunded if the lock lapses (lock_status = forfeited).';
+
+COMMENT ON COLUMN psy_kob_sessions.lock_status IS
+  'active = within lock_expiry_date. tempoh_tamat = date reached, awaiting staff action
+   (wizExtendLock to push the date out, or wizForfeitLock to burn the OB Lock Harga + release
+   the locked price). forfeited = terminal, OB Lock Harga kept (no refund), locked_price_*
+   cleared. completed = terminal, real package payment recorded while lock was still valid
+   (OB Lock Harga credited toward the price — see getKobLockDepositCredit() in kob-detail.html).';
 
 COMMENT ON COLUMN psy_kob_sessions.intended_payment_mode IS
   'Plan staff PILIH utk pesakit di wizard kob-detail.html (wizSelectPlan, Langkah 4) — SEBELUM

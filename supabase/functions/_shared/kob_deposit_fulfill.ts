@@ -193,3 +193,64 @@ export async function fulfillKobDeposit(admin: any, item: any, patientId: string
     await activatePackageForPatient(admin, patientId, kobRow?.recommended_package_id, kobRow?.recommended_package_name, Number(item.amount || 0))
   }
 }
+
+// item.type === 'kob_price_lock' — OB Lock Harga dibayar via HitPay. Ganti
+// terus apa yang wizConfirmLockPrice() (kob-detail.html) buat client-side utk
+// laluan Bayaran Manual — freeze locked_price_*, rekod lock_deposit_*/
+// lock_expiry_date, lock_status='active'. tier/lockDays/amount DIPERCAYAI dari
+// item sebab mode ni staff-only (disahkan payments-kob-initiate SEBELUM
+// createKobPriceLockLink dipanggil — sama tahap amanah macam staff taip jumlah
+// di borang Bayaran Manual, BUKAN kes amount pesakit boleh usik).
+export async function fulfillKobPriceLock(admin: any, item: any, receiptRef: string, paymentId: string) {
+  const kobSessionId = item.kobSessionId
+  const now = new Date().toISOString()
+  const { data: kobRows } = await admin.from('psy_kob_sessions')
+    .select('recommended_package_id, recommended_package_price, locked_price_tier')
+    .eq('id', kobSessionId).limit(1)
+  const kobRow = kobRows?.[0]
+  // Idempotent/race-safe — kalau sesi dah dikunci (cth staff sempat kunci manual
+  // semasa pesakit tengah bayar via pautan), JANGAN timpa; deposit tetap
+  // direkod (psy_payments), cuma kob_sessions tak diubah lagi.
+  if (!kobRow || kobRow.locked_price_tier) return
+
+  const tier: 'today' | 'now' = item.tier === 'now' ? 'now' : 'today'
+  let packagePrice: number
+  if (tier === 'today') {
+    packagePrice = Number(kobRow.recommended_package_price || 0)
+  } else {
+    const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)
+    let pkgQ = admin.from('psy_packages').select('price')
+    pkgQ = isUuid(String(kobRow.recommended_package_id))
+      ? pkgQ.or(`id.eq.${kobRow.recommended_package_id},package_id.eq.${kobRow.recommended_package_id}`)
+      : pkgQ.eq('package_id', kobRow.recommended_package_id)
+    const { data: pkgRows } = await pkgQ.limit(1)
+    packagePrice = Number(pkgRows?.[0]?.price || 0)
+  }
+
+  const days = Number(item.lockDays || 0)
+  const expiry = new Date(); expiry.setDate(expiry.getDate() + days)
+
+  await admin.from('psy_kob_sessions').update({
+    locked_price_tier: tier,
+    locked_price_amount: packagePrice,
+    locked_at: now,
+    locked_by: item.initiatedByUserId || null,
+    locked_by_name: item.initiatedByName || null,
+    lock_deposit_amount: Number(item.amount || 0),
+    lock_deposit_payment_id: paymentId,
+    lock_deposit_paid_at: now,
+    lock_deposit_method: 'gateway',
+    lock_deposit_reference: receiptRef,
+    lock_deposit_recorded_by: item.initiatedByUserId || null,
+    lock_deposit_recorded_by_name: item.initiatedByName || null,
+    lock_expiry_date: expiry.toISOString().slice(0, 10),
+    lock_status: 'active',
+    lock_extended_count: 0,
+    lock_forfeited_at: null, lock_forfeited_by: null, lock_forfeited_by_name: null,
+  }).eq('id', kobSessionId)
+
+  await admin.from('psy_audit_log').insert({
+    actor_name: 'Gateway (HitPay)', actor_role: 'system', action: 'kob.price_locked',
+    target: kobSessionId, meta: { tier, amount: packagePrice, deposit: Number(item.amount || 0), via: 'hitpay' },
+  }).catch(() => { /* audit gagal tak patut gagalkan webhook */ })
+}

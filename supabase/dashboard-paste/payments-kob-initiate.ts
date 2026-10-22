@@ -84,6 +84,26 @@ var hitpay = {
       raw: fields
     };
   },
+  // Channel sebenar (fpx/card/paynow_online/dll) — webhook form-encoded lama
+  // (verifyWebhook di atas) TAK bawa medan ni, cuma status/amount/reference.
+  // Panggilan BERASINGAN ke GET /payment-requests/{id} (respons JSON penuh,
+  // ada array `payments[]`, setiap satu ada `payment_type`). Dipanggil SELEPAS
+  // webhook disahkan — best-effort, kegagalan di sini TAK patut gagalkan
+  // fulfillment bayaran (lihat pemanggil, payments-webhook/index.ts).
+  async getPaymentChannel(gatewayRef) {
+    const apiKey = Deno.env.get("HITPAY_API_KEY");
+    if (!apiKey || !gatewayRef) return { channel: null, raw: null };
+    const res = await fetch(`${BASE()}/payment-requests/${encodeURIComponent(gatewayRef)}`, {
+      method: "GET",
+      headers: { "X-BUSINESS-API-KEY": apiKey, "X-Requested-With": "XMLHttpRequest" }
+    });
+    if (!res.ok) return { channel: null, raw: { status: res.status } };
+    const data = await res.json().catch(() => null);
+    const payments = Array.isArray(data?.payments) ? data.payments : [];
+    const chosen = payments.find((p) => String(p?.status || "").toLowerCase() === "succeeded") || payments[0];
+    const raw = chosen?.payment_type ?? chosen?.method ?? chosen?.channel;
+    return { channel: raw ? String(raw) : null, raw: data };
+  },
   // Cipta sesi "lampir kad" (recurring-billing, save_payment_method=true) —
   // pesakit isi kad SEKALI di hosted page HitPay, tiada cycle/subscription
   // (kita caj ON-DEMAND kemudian ikut checkpoint, bukan HitPay punya jadual).
@@ -494,6 +514,74 @@ async function createKobCardAttachLink(admin, kobSessionId, returnUrl) {
   return { checkoutUrl: created.checkoutUrl, receiptRef };
 }
 
+// supabase/functions/_shared/kob_price_lock_link.ts
+var money3 = (n) => (Math.round(n * 100) / 100).toFixed(2);
+async function createKobPriceLockLink(admin, opts) {
+  const { kobSessionId, tier, amount, days, returnUrl, initiatedByUserId, initiatedByName } = opts;
+  const { data: kobRows } = await admin.from("psy_kob_sessions").select("id, patient_id, recommended_package_id, recommended_package_name, locked_price_tier").eq("id", kobSessionId).limit(1);
+  const kob = kobRows?.[0];
+  if (!kob) throw new Error("Sesi KOB tidak dijumpai");
+  if (!kob.recommended_package_id) throw new Error("Sesi KOB ini tiada pakej dicadangkan");
+  if (kob.locked_price_tier) throw new Error("Harga sesi ini sudah dikunci");
+  const { data: ptRows } = await admin.from("psy_patients").select("user_id, full_name, phone, email").eq("id", kob.patient_id).limit(1);
+  const patient = ptRows?.[0];
+  let patientEmail = patient?.email || void 0;
+  if (!patientEmail && patient?.user_id) {
+    const { data: au } = await admin.auth.admin.getUserById(patient.user_id).catch(() => ({ data: null }));
+    patientEmail = au?.user?.email || void 0;
+  }
+  const receiptRef = "RCP-" + Date.now().toString(36).toUpperCase() + "-" + Math.floor(performance.now()).toString(36).toUpperCase();
+  const provider = activeProviderName();
+  const itemTitle = `OB Lock Harga - ${kob.recommended_package_name || "Pakej"}`;
+  await admin.from("psy_payments").update({ status: "failed", gateway_status: "superseded", notes: "Digantikan oleh pautan HitPay baharu" }).eq("patient_id", kob.patient_id).eq("status", "pending").eq("intent->>kob_session_id", kobSessionId).eq("intent->>type", "kob_price_lock_deposit");
+  const { error: insErr } = await admin.from("psy_payments").insert({
+    receipt_ref: receiptRef,
+    patient_id: kob.patient_id,
+    user_id: patient?.user_id || null,
+    items: [{ title: itemTitle, amount }],
+    subtotal: amount,
+    total: amount,
+    payment_method: "gateway",
+    status: "pending",
+    gateway_provider: provider,
+    gateway_status: "pending",
+    paid_for_type: "price_lock",
+    intent: {
+      type: "kob_price_lock_deposit",
+      items: [{
+        type: "kob_price_lock",
+        title: itemTitle,
+        amount,
+        kobSessionId,
+        tier,
+        lockDays: days,
+        initiatedByUserId: initiatedByUserId || null,
+        initiatedByName: initiatedByName || null
+      }],
+      patientId: kob.patient_id,
+      userId: patient?.user_id || null,
+      kob_session_id: kobSessionId,
+      initiated_by: "staff"
+    }
+  });
+  if (insErr) throw new Error("Gagal simpan bayaran pending: " + insErr.message);
+  const redirectUrl = `${returnUrl}${returnUrl.includes("?") ? "&" : "?"}ref=${encodeURIComponent(receiptRef)}`;
+  const providerImpl = getProvider(provider);
+  const webhookUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/payments-webhook`;
+  const created = await providerImpl.createPayment({
+    reference: receiptRef,
+    amount: money3(amount),
+    currency: "MYR",
+    email: patientEmail,
+    name: patient?.full_name || void 0,
+    purpose: itemTitle,
+    redirectUrl,
+    webhookUrl
+  });
+  await admin.from("psy_payments").update({ gateway_ref: created.gatewayRef, checkout_url: created.checkoutUrl }).eq("receipt_ref", receiptRef);
+  return { checkoutUrl: created.checkoutUrl, receiptRef, amount };
+}
+
 // supabase/functions/payments-kob-initiate/index.ts
 var corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -512,7 +600,7 @@ Deno.serve(async (req) => {
     const userClient = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authHeader } } });
     const { data: { user } } = await userClient.auth.getUser();
     if (!user) return json({ error: "Tidak dibenarkan (sila log masuk)" }, 401);
-    const { data: profile } = await userClient.from("psy_profiles").select("role").eq("id", user.id).single();
+    const { data: profile } = await userClient.from("psy_profiles").select("role, full_name").eq("id", user.id).single();
     const isStaff = profile?.role === "staff";
     const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
     const body = await req.json().catch(() => ({}));
@@ -520,8 +608,8 @@ Deno.serve(async (req) => {
     const mode = String(body.mode || "");
     const returnUrl = String(body.returnUrl || "");
     if (!kobSessionId) return json({ error: "kobSessionId diperlukan" }, 400);
-    if (mode !== "full" && mode !== "installment" && mode !== "manual_installment" && mode !== "topup" && mode !== "attach_card") {
-      return json({ error: "mode mesti 'full', 'installment', 'manual_installment', 'topup' atau 'attach_card'" }, 400);
+    if (mode !== "full" && mode !== "installment" && mode !== "manual_installment" && mode !== "topup" && mode !== "attach_card" && mode !== "price_lock") {
+      return json({ error: "mode mesti 'full', 'installment', 'manual_installment', 'topup', 'attach_card' atau 'price_lock'" }, 400);
     }
     if (!returnUrl) return json({ error: "returnUrl diperlukan" }, 400);
     if (!isStaff) {
@@ -545,6 +633,27 @@ Deno.serve(async (req) => {
       try {
         const link = await createKobCardAttachLink(admin, kobSessionId, returnUrl);
         return json({ ok: true, checkoutUrl: link.checkoutUrl, receiptRef: link.receiptRef });
+      } catch (err) {
+        return json({ error: err.message || "Ralat tidak diketahui" }, 400);
+      }
+    }
+    if (mode === "price_lock") {
+      const lockAmount = Number(body.amount || 0);
+      const lockDays = parseInt(body.days, 10);
+      const tier = body.tier === "now" ? "now" : "today";
+      if (!(lockAmount > 0)) return json({ error: "Jumlah OB Lock Harga tidak sah" }, 400);
+      if (!(lockDays > 0)) return json({ error: "Tempoh lock tidak sah" }, 400);
+      try {
+        const link = await createKobPriceLockLink(admin, {
+          kobSessionId,
+          tier,
+          amount: lockAmount,
+          days: lockDays,
+          returnUrl,
+          initiatedByUserId: user.id,
+          initiatedByName: profile?.full_name || null
+        });
+        return json({ ok: true, checkoutUrl: link.checkoutUrl, receiptRef: link.receiptRef, amount: link.amount });
       } catch (err) {
         return json({ error: err.message || "Ralat tidak diketahui" }, 400);
       }

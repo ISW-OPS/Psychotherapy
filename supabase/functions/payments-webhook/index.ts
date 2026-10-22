@@ -29,7 +29,7 @@ import { sendPaymentReceiptWhatsApp } from '../_shared/receipt_pdf.ts'
 import { sendWhatsApp } from '../_shared/ghl.ts'
 import { createKobDepositLink } from '../_shared/kob_retry_link.ts'
 import { applyInstallmentPayment } from '../_shared/kob_autocharge.ts'
-import { fulfillKobDeposit, fulfillKobPackage, getPlanTemplate, seedPlanWeeklyProgress } from '../_shared/kob_deposit_fulfill.ts'
+import { fulfillKobDeposit, fulfillKobPackage, fulfillKobPriceLock, getPlanTemplate, seedPlanWeeklyProgress } from '../_shared/kob_deposit_fulfill.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -209,6 +209,7 @@ const PAYMENT_ITEM_LABELS: Record<string, (item: any) => string> = {
   kob_package: () => 'Pakej KOB',
   kob_deposit: (item) => item.mode === 'installment' ? 'Deposit Ansuran Pakej' : 'Bayaran Penuh Pakej (KOB)',
   kob_installment_topup: () => 'Ansuran Pakej (Top-up)',
+  kob_price_lock: () => 'OB Lock Harga',
   walkin_sale: () => 'Jualan Walk-in',
 }
 
@@ -462,6 +463,12 @@ async function fulfillOrder(admin: any, payment: any) {
       // dah met" dikongsi dgn auto-caj cron (event-reminders) — lihat
       // applyInstallmentPayment() di _shared/kob_autocharge.ts.
       await applyInstallmentPayment(admin, item.kobSessionId, patientId, Number(item.amount || 0))
+
+    } else if (item.type === 'kob_price_lock') {
+      // OB Lock Harga dibayar via HitPay — freeze harga + rekod deposit/tempoh.
+      // Laluan Bayaran Manual (kob-detail.html wizConfirmLockPrice) buat kerja
+      // sama client-side; ni versi async (webhook) utk laluan HitPay.
+      await fulfillKobPriceLock(admin, item, receiptRef, payment.id)
 
     } else if (item.type === 'shop_order') {
       const { data: newOrder, error: orderErr } = await admin.from('psy_orders').insert({

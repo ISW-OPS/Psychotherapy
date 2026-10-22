@@ -106,6 +106,36 @@ function isKobRelevantStatus(status: string): boolean {
   return s.startsWith('KOB') || s.startsWith('SU') || s.startsWith('OB ')
 }
 
+// GOTCHA dibetulkan 22 Okt 2026: EXCLUDED_STATUS_EXACT/KIV di atas dulu
+// buat isKobRelevantStatus() pulang false, dan DUA-DUA tempat panggil
+// (loop cursor sistematik + processOneContact) terus `continue`/`return`
+// pada titik tu — sesi 'booked'/'reschedule' ISW lama TAK PERNAH dibatalkan
+// bila GHL ISW STATUS contact tu bertukar ke CANCEL/NO SHOW/KIV, sebab
+// tiada laluan sampai cancelStaleKobSessions() langsung. Contoh sebenar:
+// Pn. Azlina Ahmad (KOB'26-00153) tersangkut 'booked' 21 hari walaupun
+// cron jalan tiap 15 minit — contact dia "dijumpai" beratus kali tapi
+// terus di-skip setiap kali. Fungsi ni padankan label GHL terus ke status
+// sesi ISW SEBELUM gate di atas sempat skip terus.
+function excludedStatusToSessionStatus(statusUpper: string): 'cancelled' | 'no_show' | 'kiv' | null {
+  if (statusUpper === 'KOB CANCEL') return 'cancelled'
+  if (statusUpper === 'KOB NO SHOW') return 'no_show'
+  if (statusUpper.includes('KIV')) return 'kiv'
+  return null
+}
+
+async function syncExcludedStatusToSession(
+  svc: any, phone: string | null | undefined, targetStatus: 'cancelled' | 'no_show' | 'kiv',
+): Promise<number> {
+  const patientId = await findPatientIdByPhone(svc, phone).catch(() => null)
+  if (!patientId) return 0
+  const { data } = await svc.from('psy_kob_sessions')
+    .update({ status: targetStatus })
+    .eq('patient_id', patientId)
+    .in('status', ['booked', 'reschedule'])
+    .select('id')
+  return data?.length || 0
+}
+
 const PAID_STATUSES = ['paid', 'completed', 'succeeded', 'success']
 
 function isKobProductName(name: string): boolean {
@@ -205,6 +235,11 @@ async function processOneContact(svc: any, locationId: string, c: any, requirePa
 }> {
   try {
     const iswStatus = getCustomFieldById(c.customFields, ISW_STATUS_FIELD_ID)
+    const excludedTarget = excludedStatusToSessionStatus(iswStatus.toUpperCase().trim())
+    if (excludedTarget) {
+      const sessionsCancelled = await syncExcludedStatusToSession(svc, c.phone, excludedTarget).catch(() => 0)
+      return { status: 'not_relevant', sessionsCancelled }
+    }
     if (!isKobRelevantStatus(iswStatus)) return { status: 'not_relevant' }
 
     let latestKobAppt: any = null
@@ -410,6 +445,8 @@ Deno.serve(async (req: Request) => {
           scanned += cs.length
           for (const c of cs) {
             const iswStatus = getCustomFieldById(c.customFields, ISW_STATUS_FIELD_ID)
+            const excludedTarget = excludedStatusToSessionStatus(iswStatus.toUpperCase().trim())
+            if (excludedTarget) { await syncExcludedStatusToSession(svc, c.phone, excludedTarget).catch(() => 0); continue }
             if (!isKobRelevantStatus(iswStatus)) continue
             kobRel++
             const r = await processOneContact(svc, locationId, c, requirePayment, requireAppointment)
@@ -610,6 +647,46 @@ Deno.serve(async (req: Request) => {
         const reachedEnd = scanned < pages * PAGE_LIMIT
         return json({ debug: true, action: 'cleanup_excluded_status', totalGhlPatients: (patients || []).length, scanned, deleted, reachedEnd, nextCursor: reachedEnd ? null : { startAfterId: sAfterId, startAfter: sAfter } })
       }
+      if (body.action === 'backfill_excluded_sessions') {
+        // Pembetulan SEKALI SAHAJA (22 Okt 2026) — betulkan rekod SEDIA ADA
+        // yang tersangkut 'booked'/'reschedule' di ISW walaupun GHL ISW STATUS
+        // contact tu DAH CANCEL/NO SHOW/KIV, sebab gate isKobRelevantStatus()
+        // dulu terus skip (lihat excludedStatusToSessionStatus/syncExcludedStatusToSession
+        // di atas — fix cron akan datang, tapi contact lama ni statusnya dah
+        // STABIL, cron biasa takkan "jumpa perubahan" lagi utk proses dia).
+        // TAK padam/sentuh psy_patients langsung (beza drpd cleanup_excluded_status
+        // di atas) — cuma betulkan status psy_kob_sessions sahaja.
+        const pages = Math.min(Number(body.pages) || 10, 25)
+        let sAfterId: string | undefined = body.startAfterId
+        let sAfter: number | undefined = body.startAfter
+        let scanned = 0, matched = 0, sessionsFixed = 0
+        const fixedList: any[] = []
+        for (let pg = 0; pg < pages; pg++) {
+          let path = `/contacts/?locationId=${locationId}&limit=${PAGE_LIMIT}`
+          if (sAfterId) path += `&startAfterId=${sAfterId}`
+          if (sAfter) path += `&startAfter=${sAfter}`
+          const d = await ghl(path, { method: 'GET' }).catch(() => null)
+          if (!d) break
+          const cs = d?.contacts || []
+          scanned += cs.length
+          for (const c of cs) {
+            const status = getCustomFieldById(c.customFields, ISW_STATUS_FIELD_ID)
+            const target = excludedStatusToSessionStatus(status.toUpperCase().trim())
+            if (!target) continue
+            matched++
+            const n = await syncExcludedStatusToSession(svc, c.phone, target).catch(() => 0)
+            if (n > 0) {
+              sessionsFixed += n
+              fixedList.push({ name: c.contactName, phone: c.phone, target, sessionsFixed: n })
+            }
+          }
+          if (cs.length < PAGE_LIMIT) { sAfterId = undefined; sAfter = undefined; break }
+          const last = cs[cs.length - 1]
+          sAfterId = last?.id
+          sAfter = last?.dateAdded ? new Date(last.dateAdded).getTime() : undefined
+        }
+        return json({ debug: true, action: 'backfill_excluded_sessions', scanned, matched, sessionsFixed, fixed: fixedList, nextCursor: sAfterId ? { startAfterId: sAfterId, startAfter: sAfter } : null })
+      }
       if (body.action === 'restore_raw_names') {
         // Pembetulan SEKALI SAHAJA — kebalikan cleanup_names. Beberapa
         // rekod pesakit "terkunci" dgn nama BERSIH dari sebelum cleaning
@@ -758,6 +835,11 @@ Deno.serve(async (req: Request) => {
 
       for (const c of contacts) {
         const iswStatus = getCustomFieldById(c.customFields, ISW_STATUS_FIELD_ID)
+        const excludedTarget = excludedStatusToSessionStatus(iswStatus.toUpperCase().trim())
+        if (excludedTarget) {
+          sessionsCancelled += await syncExcludedStatusToSession(svc, c.phone, excludedTarget).catch(() => 0)
+          continue
+        }
         if (!isKobRelevantStatus(iswStatus)) continue
         kobRelevant++
 

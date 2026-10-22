@@ -207,10 +207,14 @@ async function loadReceiptContext(admin: any, payment: any) {
   if (extra > 0.005) discountLines.push({ label: 'Discount', amount: extra })
   const discTotal = discountLines.reduce((a, l) => a + l.amount, 0)
 
-  // Pecahan bayaran pakej KOB
+  // Pecahan bayaran pakej KOB — HANYA utk bayaran pakej sebenar (intent.type
+  // 'kob_package'). OB Lock Harga (intent.type 'kob_price_lock_deposit') turut bawa
+  // kob_session_id (utk kaitan rekod) tapi BUKAN bayaran pakej — kalau breakdown ni
+  // dijana utknya, resit akan tersilap papar "Balance Remaining" macam ia dah
+  // separuh bayar pakej, sedangkan ia cuma reservation. Lihat kob-detail.html.
   let kob: KobBreakdown | null = null
   let kobName = ''
-  const kobId = intent.kob_session_id
+  const kobId = intent.type === 'kob_package' ? intent.kob_session_id : null
   if (kobId) {
     const [{ data: ks }, { data: cps }, { data: pays }] = await Promise.all([
       admin.from('psy_kob_sessions')

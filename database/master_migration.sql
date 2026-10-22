@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-10-21T06:21:33.002972Z
+-- Generated: 2026-10-22T04:41:53.661369Z
 -- Jumlah fail: 41
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -3484,6 +3484,35 @@ CREATE TABLE IF NOT EXISTS psy_kob_sessions (
   locked_by                 UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
   locked_by_name            TEXT,
 
+  -- "OB Lock Harga" (reservation) — pesakit bayar OB Lock Harga hari ni utk "freeze"
+  -- harga semasa SEBELUM pakej rasmi mula (beza drpd Ansuran Manual di Langkah 4,
+  -- yang untuk pesakit yg DAH mula pakej). Tiada tarikh/jadual bayaran seterusnya
+  -- di sini — cuma satu OB Lock Harga + tempoh lock. TAKDE REFUND kalau tempoh luput
+  -- tanpa bayaran penuh (lock_status 'forfeited').
+  lock_deposit_amount          NUMERIC(12,2),
+  -- Rujuk terus psy_payments.id rekod OB Lock Harga ni — elak ambiguiti bila lock
+  -- diluputkan+dikunci semula (byk baris 'kob_price_lock_deposit' sepanjang masa),
+  -- supaya saveManualPayment() tahu TEPAT baris mana nak reclassify ke 'kob_package'
+  -- bila pesakit akhirnya mula pakej.
+  lock_deposit_payment_id      UUID REFERENCES psy_payments(id) ON DELETE SET NULL,
+  lock_deposit_paid_at         TIMESTAMPTZ,
+  -- 'gateway' = dibayar via pautan HitPay (payments-kob-initiate mode='price_lock'),
+  -- rekod oleh webhook (fulfillKobPriceLock), bukan staff terus.
+  lock_deposit_method          TEXT CHECK (lock_deposit_method IN ('cash','transfer','gateway')),
+  lock_deposit_reference       TEXT,
+  lock_deposit_recorded_by     UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  lock_deposit_recorded_by_name TEXT,
+  lock_expiry_date             DATE,
+  -- active = dalam tempoh; tempoh_tamat = tarikh dah sampai, menunggu staff lanjutkan/
+  -- luputkan; forfeited = staff dah luputkan (OB Lock Harga burn, harga dibuka balik);
+  -- completed = pesakit dah bayar penuh/mula ansuran dalam tempoh (OB Lock Harga
+  -- dikreditkan ke harga pakej).
+  lock_status                   TEXT CHECK (lock_status IN ('active','tempoh_tamat','forfeited','completed')),
+  lock_extended_count           INT NOT NULL DEFAULT 0,
+  lock_forfeited_at             TIMESTAMPTZ,
+  lock_forfeited_by             UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  lock_forfeited_by_name        TEXT,
+
   reschedule_count    INT NOT NULL DEFAULT 0,
   reschedule_reason   TEXT,
 
@@ -3502,6 +3531,19 @@ COMMENT ON COLUMN psy_kob_sessions.locked_price_tier IS
    kob-detail.html Langkah 3. When set, overrides wizPayTier in UI + payments-kob-initiate tier
    param, and keeps working even if the package price changes afterwards (snapshot in
    locked_price_amount). NULL = not locked, staff can still freely switch tiers.';
+
+COMMENT ON COLUMN psy_kob_sessions.lock_deposit_amount IS
+  '"OB Lock Harga" — reservation amount paid to lock the price (separate from the Langkah 4
+   payment plan — no schedule/dates attached, just one upfront amount). Credited toward the
+   package price ONLY while lock_status is still active/tempoh_tamat (not forfeited) when the
+   real payment is finally recorded. NEVER refunded if the lock lapses (lock_status = forfeited).';
+
+COMMENT ON COLUMN psy_kob_sessions.lock_status IS
+  'active = within lock_expiry_date. tempoh_tamat = date reached, awaiting staff action
+   (wizExtendLock to push the date out, or wizForfeitLock to burn the OB Lock Harga + release
+   the locked price). forfeited = terminal, OB Lock Harga kept (no refund), locked_price_*
+   cleared. completed = terminal, real package payment recorded while lock was still valid
+   (OB Lock Harga credited toward the price — see getKobLockDepositCredit() in kob-detail.html).';
 
 COMMENT ON COLUMN psy_kob_sessions.intended_payment_mode IS
   'Plan staff PILIH utk pesakit di wizard kob-detail.html (wizSelectPlan, Langkah 4) — SEBELUM
@@ -8352,6 +8394,7 @@ CREATE TABLE IF NOT EXISTS psy_event_registrations (
 
 CREATE INDEX IF NOT EXISTS idx_event_regs_event   ON psy_event_registrations(event_id);
 CREATE INDEX IF NOT EXISTS idx_event_regs_patient ON psy_event_registrations(patient_id);
+ALTER TABLE psy_event_registrations ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'portal';
 
 ALTER TABLE psy_event_registrations ENABLE ROW LEVEL SECURITY;
 
@@ -8407,6 +8450,47 @@ DROP TRIGGER IF EXISTS trg_enforce_event_capacity ON psy_event_registrations;
 CREATE TRIGGER trg_enforce_event_capacity
   BEFORE INSERT OR UPDATE ON psy_event_registrations
   FOR EACH ROW EXECUTE FUNCTION trg_enforce_event_capacity();
+
+-- ──── Tetingkap Pendaftaran (bila dibuka/ditutup) + Keperluan custom ────
+-- registration_deadline (atas) = bila ditutup, NULL = default tutup pada start_at.
+ALTER TABLE psy_events ADD COLUMN IF NOT EXISTS registration_opens_at TIMESTAMPTZ;
+ALTER TABLE psy_events ADD COLUMN IF NOT EXISTS requirements TEXT;
+
+-- ──── PIC (Person In Charge) acara — koordinator, berasingan dari host ────
+ALTER TABLE psy_events ADD COLUMN IF NOT EXISTS pic_id UUID REFERENCES psy_profiles(id) ON DELETE SET NULL;
+
+CREATE OR REPLACE FUNCTION trg_enforce_registration_window()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_opens_at   TIMESTAMPTZ;
+  v_closes_at  TIMESTAMPTZ;
+  v_start_at   TIMESTAMPTZ;
+  v_is_staff   BOOLEAN;
+BEGIN
+  IF NEW.status = 'batal' THEN RETURN NEW; END IF;
+  SELECT EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff') INTO v_is_staff;
+  IF v_is_staff THEN RETURN NEW; END IF;
+
+  SELECT registration_opens_at, registration_deadline, start_at
+    INTO v_opens_at, v_closes_at, v_start_at
+    FROM psy_events WHERE id = NEW.event_id;
+
+  IF v_opens_at IS NOT NULL AND now() < v_opens_at THEN
+    RAISE EXCEPTION 'Pendaftaran acara ini belum dibuka.';
+  END IF;
+  IF now() > COALESCE(v_closes_at, v_start_at) THEN
+    RAISE EXCEPTION 'Pendaftaran acara ini telah ditutup.';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_enforce_registration_window ON psy_event_registrations;
+CREATE TRIGGER trg_enforce_registration_window
+  BEFORE INSERT OR UPDATE ON psy_event_registrations
+  FOR EACH ROW EXECUTE FUNCTION trg_enforce_registration_window();
 
 -- ──── psy_event_materials (bahan / rakaman acara) ────
 CREATE TABLE IF NOT EXISTS psy_event_materials (
@@ -8590,6 +8674,9 @@ DROP POLICY IF EXISTS "Staff manage event prep meta" ON psy_event_prep_meta;
 CREATE POLICY "Staff manage event prep meta" ON psy_event_prep_meta FOR ALL
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
+-- Submit Senarai Persediaan — tab Pemulangan Barang muncul lepas ni disi.
+ALTER TABLE psy_event_prep_meta ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMPTZ;
+
 -- ── Pengeluaran & Pemulangan barang (stok keluar untuk event + rekod pulangan) ──
 CREATE TABLE IF NOT EXISTS psy_event_stock_issuance (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -8621,6 +8708,29 @@ ALTER TABLE psy_event_prep_items
   ADD COLUMN IF NOT EXISTS equipment_id UUID REFERENCES psy_equipment(id) ON DELETE SET NULL;
 
 CREATE INDEX IF NOT EXISTS idx_psy_event_prep_items_equipment ON psy_event_prep_items(equipment_id);
+
+-- ──── PIC kembali ke Persediaan & Peralatan (per-barang) ────
+ALTER TABLE psy_event_prep_items ADD COLUMN IF NOT EXISTS pic_id UUID REFERENCES psy_profiles(id) ON DELETE SET NULL;
+
+-- ──── Pemulangan Barang (gantikan persediaan-event-keluar.html) ────
+CREATE TABLE IF NOT EXISTS psy_event_item_returns (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id      UUID NOT NULL REFERENCES psy_events(id) ON DELETE CASCADE,
+  prep_item_id  UUID NOT NULL REFERENCES psy_event_prep_items(id) ON DELETE CASCADE,
+  qty_borrowed  NUMERIC(10,2) NOT NULL DEFAULT 0,
+  qty_returned  NUMERIC(10,2) NOT NULL DEFAULT 0,
+  condition     TEXT CHECK (condition IS NULL OR condition IN ('baik','rosak','hilang')),
+  returned_at   TIMESTAMPTZ,
+  pic_id        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  created_at    TIMESTAMPTZ DEFAULT now(),
+  updated_at    TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (prep_item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_psy_event_item_returns_event ON psy_event_item_returns(event_id);
+ALTER TABLE psy_event_item_returns ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Staff manage event item returns" ON psy_event_item_returns;
+CREATE POLICY "Staff manage event item returns" ON psy_event_item_returns FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
 
 -- ════════════════════════════════════════════════════════════════

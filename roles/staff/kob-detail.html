@@ -2957,6 +2957,24 @@
     // Langkah 3, tak terikat pada status 'pending'/'declined'. null = ikut default
     // (Today utk pending, Now utk declined) sehingga doktor klik kad utk override.
     let wizPayTier = null;   // 'now' | 'today' | null
+    // Borang inline "Kunci Harga Ini" — 2 sub-langkah: (1) Jumlah OB Lock Harga +
+    // Tempoh Lock sahaja, (2) borang bayaran standard (manualPaymentFormHtml, SAMA
+    // dgn Langkah 5 — Kaedah/Bank Reference/Resit) utk betul-betul kutip duit tu.
+    // Selagi wizLockFormOpen aktif, Langkah 4/5/Keputusan Patient DISEMBUNYIKAN (tak
+    // relevan — Kunci Harga berdiri sendiri, bukan sebahagian plan pembayaran).
+    let wizLockFormOpen = false;      // false | tier semasa dikunci
+    let wizLockPaymentOpen = false;   // true = dah di sub-langkah 2 (borang bayaran)
+    let wizLockPendingAmount = null;
+    let wizLockPendingDays = null;
+    // Kaedah bayaran OB Lock Harga: null (belum pilih) | 'manual' | 'hitpay'. Pautan
+    // HitPay disahkan ASYNC via payments-webhook (fulfillKobPriceLock) — kob.locked_price_tier
+    // jadi isyarat "dah selesai" (lihat syncLockHitpayPolling()).
+    let wizLockMethod = null;
+    let wizLockHitpaySending = false;
+    let wizLockHitpayCopying = false;
+    let wizLockHitpayLinkSentAt = null;
+    let wizLockHitpayPollInterval = null;
+    let wizExtendLockOpen = false;
     // Ansuran Manual — jumlah TEMPOH kekal ikut tetapan pakej (installment_duration_months,
     // ditukar ke minggu ×4 kalau frekuensi mingguan dipilih — "3 bulan = 12 minggu"),
     // tapi kekerapan (minggu/bulan) DAN amaun SETIAP baris (deposit + tiap minggu/bulan
@@ -3094,37 +3112,147 @@
     // Klik kad "Harga Sekarang"/"Harga Hari Ini" di Langkah 3 — doktor override
     // harga utk bayaran ni terus, tak kira status 'pending'/'declined'. Reset
     // plan/method (harga berubah, elak jadual lama tak padan tier baharu).
-    // Tiada kesan kalau harga dah dikunci — mesti buka kunci dulu (wizUnlockPrice).
+    // Tiada kesan kalau harga dah dikunci — mesti luputkan dulu (wizForfeitLock).
     function wizSelectPayTier(tier) {
       if (kob.locked_price_tier) return;
       wizPayTier = tier; wizPlan = null; wizMethod = null;
       wizManualDeposit = null; wizManualPeriods = []; wizManualDates = []; wizManualExtraRows = 0;
       renderPaymentMethodSection();
     }
-    // Staff klik "🔒 Kunci Harga" di Langkah 3 — snapshot tier+amaun semasa terus ke
-    // DB (psy_kob_sessions.locked_price_*) supaya kekal walau harga pakej diedit lepas
-    // ni di pakej-edit.html atau page direfresh. wizUnlockPrice() buka balik kalau
-    // staff tersilap.
+    // Staff klik "🔒 Kunci Harga Ini" di Langkah 3 — buka borang inline 2 sub-langkah
+    // (1 — Jumlah+Tempoh, 2 — borang bayaran standard) SEBELUM apa-apa disimpan. Kunci
+    // Harga = OB Lock Harga reservation: pesakit bayar OB Lock Harga hari ni utk freeze
+    // harga, diberi tempoh utk settle baki & mula pakej. Tiada jadual/tarikh bayaran
+    // seterusnya di sini (tu bahagian Langkah 4 bila pesakit betul-betul mula) — cuma
+    // satu OB Lock Harga + satu tarikh luput tempoh.
+    function wizOpenLockForm(tier) {
+      if (kob.locked_price_tier) return;
+      wizLockFormOpen = tier;
+      wizLockPaymentOpen = false;
+      wizLockPendingAmount = null;
+      wizLockPendingDays = null;
+      wizLockMethod = null;
+      wizLockHitpayLinkSentAt = null;
+      renderPaymentMethodSection();
+    }
+    function wizCancelLockForm() {
+      wizLockFormOpen = false;
+      wizLockPaymentOpen = false;
+      wizLockPendingAmount = null;
+      wizLockPendingDays = null;
+      wizLockMethod = null;
+      wizLockHitpayLinkSentAt = null;
+      renderPaymentMethodSection();
+    }
+    function wizSelectLockMethod(method) {
+      wizLockMethod = method;
+      wizLockHitpaySending = false;
+      wizLockHitpayLinkSentAt = null;
+      renderPaymentMethodSection();
+    }
+    // Sub-langkah 1 → 2: sahkan Jumlah+Tempoh dulu, BARU tunjuk borang bayaran standard
+    // (Kaedah/Bank Reference/Resit sama macam Langkah 5 — elak duplikat field).
+    function wizLockFormNext() {
+      const amount = parseMoneyVal(document.getElementById('lock-deposit-amount')?.value);
+      const days = parseInt(document.getElementById('lock-expiry-days')?.value, 10);
+      if (!(amount > 0)) { banner(iswL('Sila isi Jumlah OB Lock Harga yang sah', 'Please enter a valid OB Lock Harga amount'), 'error'); return; }
+      if (!(days > 0)) { banner(iswL('Sila isi Tempoh Lock (bilangan hari)', 'Please enter the lock duration in days'), 'error'); return; }
+      wizLockPendingAmount = amount;
+      wizLockPendingDays = days;
+      wizLockPaymentOpen = true;
+      renderPaymentMethodSection();
+    }
+    function wizLockFormBack() {
+      wizLockPaymentOpen = false;
+      wizLockMethod = null;
+      wizLockHitpayLinkSentAt = null;
+      renderPaymentMethodSection();
+    }
     let wizLockingPrice = false;
-    async function wizLockPrice(tier, pkgMeta) {
+    async function wizConfirmLockPrice(tier, pkgMeta) {
       if (wizLockingPrice || kob.locked_price_tier) return;
+      const depositAmount = wizLockPendingAmount;
+      const days = wizLockPendingDays;
+      if (!(depositAmount > 0) || !(days > 0)) { banner('Sila isi Jumlah & Tempoh dahulu', 'error'); return; }
+      const method = document.getElementById('mp-method')?.value || 'transfer';
+      const reference = document.getElementById('mp-invoice')?.value.trim() || '';
+      const paidAtVal = document.getElementById('mp-paidat')?.value || '';
+      const file = document.getElementById('mp-receipt')?.files?.[0];
+      if (!file && method !== 'cash') { banner(iswL('Sila upload bukti bayaran (wajib kecuali tunai)', 'Please upload proof of payment (required unless cash)'), 'error'); return; }
+      if (method === 'transfer' && !reference) { banner(iswL('Bank Reference wajib untuk Bank Transfer.', 'Bank Reference is required for Bank Transfer.'), 'error'); return; }
+      const dateProblem = iswPaidAtProblem(paidAtVal);
+      if (dateProblem) { banner(dateProblem, 'error'); return; }
+
       wizLockingPrice = true;
       renderPaymentMethodSection();
       try {
         const amount = tierFullPrice(pkgMeta, tier);
+        const nowIso = new Date().toISOString();
+        const paidAtIso = iswLocalInputToIso(paidAtVal);
+        const expiry = new Date(); expiry.setDate(expiry.getDate() + days);
+        const expiryStr = expiry.toISOString().slice(0, 10);
+
+        let signed = null;
+        if (file) {
+          const path = `${patient.id}/${kobId}/lock_receipt_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+          const { error: upErr } = await window.db.storage.from('kob-documents').upload(path, file);
+          if (upErr) throw upErr;
+          ({ data: signed } = await window.db.storage.from('kob-documents').createSignedUrl(path, 3600 * 24 * 365));
+        }
+
+        const { data: payRow, error: payErr } = await window.db.from('psy_payments').insert({
+          receipt_ref: `KOB-LOCK-${Date.now()}`,
+          patient_id: patient.id,
+          user_id: patient.user_id,
+          total: depositAmount,
+          payment_method: 'manual',
+          manual_method: method,
+          status: 'completed',
+          bank_reference: reference || null,
+          paid_at: paidAtIso,
+          recorded_by: window.currentUser?.id || null,
+          paid_for_type: 'price_lock',
+          receipt_url: signed?.signedUrl || null,
+          notes: `OB Lock Harga pakej "${kob.recommended_package_name || ''}" — reservation ${days} hari`,
+          // items eksplisit (bukan biar resit teka dari notes) — label jelas "OB Lock
+          // Harga" supaya pesakit tak keliru ini pembayaran pakej (lihat receipt_pdf.ts).
+          items: [{ title: `OB Lock Harga - ${kob.recommended_package_name || 'Pakej'}`, amount: depositAmount }],
+          intent: { type: 'kob_price_lock_deposit', kob_session_id: kobId },
+        }).select('id').single();
+        if (payErr) throw new Error(payErr.message);
+        Promise.resolve(window.db.functions.invoke('payments-send-receipt', { body: { paymentId: payRow.id } })).catch(() => { /* notifikasi gagal tidak halang OB Lock Harga */ });
+
         const payload = {
           locked_price_tier: tier,
           locked_price_amount: amount,
-          locked_at: new Date().toISOString(),
+          locked_at: nowIso,
           locked_by: window.currentUser?.id || null,
           locked_by_name: window.currentUser?.full_name || null,
+          lock_deposit_amount: depositAmount,
+          lock_deposit_payment_id: payRow.id,
+          lock_deposit_paid_at: paidAtIso,
+          lock_deposit_method: method,
+          lock_deposit_reference: reference || null,
+          lock_deposit_recorded_by: window.currentUser?.id || null,
+          lock_deposit_recorded_by_name: window.currentUser?.full_name || null,
+          lock_expiry_date: expiryStr,
+          lock_status: 'active',
+          lock_extended_count: 0,
+          lock_forfeited_at: null,
+          lock_forfeited_by: null,
+          lock_forfeited_by_name: null,
         };
         const { error } = await window.db.from('psy_kob_sessions').update(payload).eq('id', kobId);
         if (error) throw new Error(error.message);
         Object.assign(kob, payload);
         wizPayTier = tier;
-        await auditLog('kob.price_locked', kobId, { tier, amount });
-        banner(iswL(`🔒 Harga dikunci: ${fmtRM(amount)} (${tier === 'today' ? 'Harga Hari Ini' : 'Harga Sekarang'}) ✅`, `🔒 Price locked: ${fmtRM(amount)} ✅`));
+        wizLockFormOpen = false;
+        wizLockPaymentOpen = false;
+        wizLockPendingAmount = null;
+        wizLockPendingDays = null;
+        wizLockMethod = null;
+        await auditLog('kob.price_locked', kobId, { tier, amount, deposit: depositAmount, expiry: expiryStr });
+        banner(iswL(`🔒 Harga dikunci: ${fmtRM(amount)} (${tier === 'today' ? 'Harga Hari Ini' : 'Harga Sekarang'}) — OB Lock Harga ${fmtRM(depositAmount)} diterima, tempoh sehingga ${fmtScheduleDate(expiryStr)} ✅`, `🔒 Price locked: ${fmtRM(amount)} — OB Lock Harga ${fmtRM(depositAmount)} received, valid until ${fmtScheduleDate(expiryStr)} ✅`));
       } catch (e) {
         banner('Gagal kunci harga: ' + e.message, 'error');
       } finally {
@@ -3132,19 +3260,162 @@
         renderPaymentMethodSection();
       }
     }
-    async function wizUnlockPrice() {
-      if (wizLockingPrice || !kob.locked_price_tier) return;
+    // Staff jana pautan HitPay utk OB Lock Harga & hantar ke WhatsApp pesakit —
+    // amount/tempoh (wizLockPendingAmount/Days) dihantar ke server (payments-kob-initiate
+    // mode='price_lock'); fulfillment (freeze harga + rekod lock_deposit_*) berlaku di
+    // payments-webhook SELEPAS gateway sahkan (lihat fulfillKobPriceLock). Sama pattern
+    // sendKobHitpayLink() tapi mod berasingan sepenuhnya drpd bayaran pakej biasa.
+    async function sendKobLockHitpayLink(tier) {
+      if (wizLockHitpaySending) return;
+      wizLockHitpaySending = true;
+      renderPaymentMethodSection();
+      try {
+        const phone = patient?.psy_profiles?.phone || patient?.phone || '';
+        const cleanPhone = phone.replace(/\D/g, '').replace(/^0/, '60');
+        if (!cleanPhone) throw new Error('Pesakit tiada nombor telefon untuk hantar WhatsApp');
+        const patName = patient?.psy_profiles?.full_name || patient?.full_name || 'Pesakit';
+
+        const returnUrl = `${location.origin}/roles/patient/payment-receipt.html`;
+        const { data, error } = await window.db.functions.invoke('payments-kob-initiate', {
+          body: { kobSessionId: kobId, mode: 'price_lock', returnUrl, tier, amount: wizLockPendingAmount, days: wizLockPendingDays },
+        });
+        if (error) {
+          let msg = error.message;
+          try { const ctx = await error.context?.json(); if (ctx?.error) msg = ctx.error; } catch (_) { }
+          throw new Error(msg);
+        }
+        if (data?.error) throw new Error(data.error);
+
+        const ec = await ghlInvoke('ensurecontact', { phone: cleanPhone, name: patName });
+        const contactId = ec?.contact?.contactId;
+        if (!contactId) throw new Error('Tak dapat sediakan contact Maju Jaya untuk nombor ini.');
+        await ghlInvoke('send', {
+          contactId,
+          message: `Salam ${patName} 👋\n\nSila selesaikan bayaran OB Lock Harga (${fmtRM(wizLockPendingAmount)}) utk kunci harga pakej rawatan anda melalui pautan selamat di bawah:\n\n${data.checkoutUrl}\n\n— ISW`,
+        });
+
+        wizLockHitpayLinkSentAt = new Date().toISOString();
+        banner(iswL('Pautan HitPay OB Lock Harga dihantar ke WhatsApp pesakit ✅', 'OB Lock Harga HitPay link sent to the patient on WhatsApp ✅'));
+      } catch (e) {
+        banner('Gagal jana/hantar pautan HitPay: ' + e.message, 'error');
+      } finally {
+        wizLockHitpaySending = false;
+        renderPaymentMethodSection();
+      }
+    }
+    async function copyKobLockHitpayLink(tier) {
+      if (wizLockHitpayCopying) return;
+      wizLockHitpayCopying = true;
+      renderPaymentMethodSection();
+      try {
+        const returnUrl = `${location.origin}/roles/patient/payment-receipt.html`;
+        const { data, error } = await window.db.functions.invoke('payments-kob-initiate', {
+          body: { kobSessionId: kobId, mode: 'price_lock', returnUrl, tier, amount: wizLockPendingAmount, days: wizLockPendingDays },
+        });
+        if (error) {
+          let msg = error.message;
+          try { const ctx = await error.context?.json(); if (ctx?.error) msg = ctx.error; } catch (_) { }
+          throw new Error(msg);
+        }
+        if (data?.error) throw new Error(data.error);
+        if (!data?.checkoutUrl) throw new Error('Pautan tidak diterima daripada server.');
+        try {
+          await navigator.clipboard.writeText(data.checkoutUrl);
+          banner('Pautan HitPay disalin ke clipboard ✅');
+        } catch (_) {
+          window.prompt('Pautan dijana tapi auto-salin gagal (tab tak fokus) — salin manual dari sini:', data.checkoutUrl);
+        }
+      } catch (e) {
+        banner('Gagal jana/salin pautan HitPay: ' + e.message, 'error');
+      } finally {
+        wizLockHitpayCopying = false;
+        renderPaymentMethodSection();
+      }
+    }
+    // Auto-poll (sama pattern syncHitpayPolling()) selagi staff tengah tunggu
+    // confirmation HitPay utk OB Lock Harga — berhenti automatik bila kob.locked_price_tier
+    // dah di-set (webhook fulfillKobPriceLock dah jalan) ATAU staff tutup borang.
+    function syncLockHitpayPolling() {
+      const shouldPoll = wizLockFormOpen && wizLockMethod === 'hitpay' && !!wizLockHitpayLinkSentAt && !kob?.locked_price_tier;
+      if (shouldPoll && !wizLockHitpayPollInterval) {
+        wizLockHitpayPollInterval = setInterval(() => { loadKob(); }, 10000);
+      } else if (!shouldPoll && wizLockHitpayPollInterval) {
+        clearInterval(wizLockHitpayPollInterval);
+        wizLockHitpayPollInterval = null;
+      }
+    }
+    // Status efektif lock — dikira client-side drpd lock_expiry_date supaya tak
+    // bergantung pada cron: bila tarikh dah lepas tapi DB masih 'active', papar
+    // sbg 'tempoh_tamat' terus (maybeFlagLockExpired() sync balik ke DB secara senyap).
+    function lockEffectiveStatus() {
+      if (!kob?.locked_price_tier) return null;
+      if (kob.lock_status === 'tempoh_tamat' || kob.lock_status === 'completed' || kob.lock_status === 'forfeited') return kob.lock_status;
+      if (kob.lock_expiry_date) {
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const exp = new Date(kob.lock_expiry_date + 'T00:00:00');
+        if (exp < today) return 'tempoh_tamat';
+      }
+      return 'active';
+    }
+    let wizFlaggingLockExpiry = false;
+    async function maybeFlagLockExpired() {
+      if (wizFlaggingLockExpiry || kob.lock_status !== 'active' || lockEffectiveStatus() !== 'tempoh_tamat') return;
+      wizFlaggingLockExpiry = true;
+      try {
+        await window.db.from('psy_kob_sessions').update({ lock_status: 'tempoh_tamat' }).eq('id', kobId);
+        kob.lock_status = 'tempoh_tamat';
+        renderPaymentMethodSection();
+      } catch (_) { /* senyap — papar status efektif dah betul walau sync DB gagal */ }
+    }
+    function wizOpenExtendLock() { wizExtendLockOpen = true; renderPaymentMethodSection(); }
+    function wizCancelExtendLock() { wizExtendLockOpen = false; renderPaymentMethodSection(); }
+    async function wizConfirmExtendLock() {
+      if (wizLockingPrice) return;
+      const newDate = document.getElementById('lock-extend-date')?.value;
+      if (!newDate) { banner(iswL('Sila pilih tarikh luput baharu', 'Please choose a new expiry date'), 'error'); return; }
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      if (new Date(newDate + 'T00:00:00') <= today) { banner(iswL('Tarikh baharu mesti selepas hari ini', 'The new date must be after today'), 'error'); return; }
       wizLockingPrice = true;
       renderPaymentMethodSection();
       try {
-        const payload = { locked_price_tier: null, locked_price_amount: null, locked_at: null, locked_by: null, locked_by_name: null };
+        const payload = { lock_expiry_date: newDate, lock_status: 'active', lock_extended_count: Number(kob.lock_extended_count || 0) + 1 };
         const { error } = await window.db.from('psy_kob_sessions').update(payload).eq('id', kobId);
         if (error) throw new Error(error.message);
         Object.assign(kob, payload);
-        await auditLog('kob.price_unlocked', kobId, {});
-        banner(iswL('🔓 Kunci harga dibuka — boleh pilih harga lain semula.', '🔓 Price lock removed — you can pick another tier again.'));
+        wizExtendLockOpen = false;
+        await auditLog('kob.price_lock_extended', kobId, { new_expiry: newDate });
+        banner(iswL(`🔄 Tempoh lock dilanjutkan sehingga ${fmtScheduleDate(newDate)} ✅`, `🔄 Lock extended until ${fmtScheduleDate(newDate)} ✅`));
       } catch (e) {
-        banner('Gagal buka kunci harga: ' + e.message, 'error');
+        banner('Gagal lanjutkan tempoh: ' + e.message, 'error');
+      } finally {
+        wizLockingPrice = false;
+        renderPaymentMethodSection();
+      }
+    }
+    // Luputkan (burn) — staff rasmi tamatkan lock: harga dibuka balik (boleh pilih tier
+    // lain semula), OB Lock Harga KEKAL sbg rekod forfeited (TAKDE REFUND — duit dah masuk
+    // psy_payments, cuma tak lagi dikira sbg kredit bila bayaran pakej direkod lepas ni).
+    async function wizForfeitLock() {
+      if (wizLockingPrice || !kob.locked_price_tier) return;
+      if (!confirm(iswL(
+        `Luputkan Kunci Harga ini? OB Lock Harga ${fmtRM(kob.lock_deposit_amount)} KEKAL (tiada refund) tapi harga dibuka balik — pesakit perlu pilih harga semula kalau nak teruskan.`,
+        `Forfeit this price lock? The OB Lock Harga of ${fmtRM(kob.lock_deposit_amount)} stays (no refund) but the price is released — the patient must pick a price again to proceed.`))) return;
+      wizLockingPrice = true;
+      renderPaymentMethodSection();
+      try {
+        const payload = {
+          locked_price_tier: null, locked_price_amount: null, locked_at: null, locked_by: null, locked_by_name: null,
+          lock_status: 'forfeited', lock_forfeited_at: new Date().toISOString(),
+          lock_forfeited_by: window.currentUser?.id || null, lock_forfeited_by_name: window.currentUser?.full_name || null,
+        };
+        const { error } = await window.db.from('psy_kob_sessions').update(payload).eq('id', kobId);
+        if (error) throw new Error(error.message);
+        Object.assign(kob, payload);
+        wizExtendLockOpen = false;
+        await auditLog('kob.price_lock_forfeited', kobId, { deposit: kob.lock_deposit_amount });
+        banner(iswL('🔥 Kunci harga diluputkan — OB Lock Harga forfeited, harga dibuka balik.', '🔥 Price lock forfeited — OB Lock Harga kept, price released.'));
+      } catch (e) {
+        banner('Gagal luputkan kunci harga: ' + e.message, 'error');
       } finally {
         wizLockingPrice = false;
         renderPaymentMethodSection();
@@ -3188,8 +3459,21 @@
     function tierMonthlyAmount(pkgMeta, tier) {
       return tier === 'today' ? (pkgMeta.today_installment_monthly_amount ?? pkgMeta.installment_monthly_amount) : pkgMeta.installment_monthly_amount;
     }
+    // Kalau tier ni yang DIKUNCI (Kunci Harga), pakai snapshot locked_price_amount
+    // terus — JANGAN kira semula dari pkgMeta (harga pakej mungkin dah diedit lepas
+    // dikunci). Inilah yang buat Kunci Harga betul-betul "freeze" angka, bukan
+    // cuma pin pilihan tier. Tier lain (utk perbandingan di Langkah 3) tetap
+    // kira semula ikut harga semasa pakej.
     function tierFullPrice(pkgMeta, tier) {
+      if (kob?.locked_price_tier === tier && kob.locked_price_amount != null) return Number(kob.locked_price_amount);
       return tier === 'today' ? Number(pkgMeta.today_price ?? pkgMeta.price ?? 0) : Number(pkgMeta.price ?? 0);
+    }
+    // OB Lock Harga yg dah dibayar, dikira sbg sebahagian harga pakej BILA
+    // bayaran sebenar akhirnya direkod (Langkah 4/5) — HANYA selagi lock tu masih
+    // aktif/tempoh_tamat (bukan forfeited; forfeit dah clear locked_price_tier jadi
+    // auto jadi 0 di sini tanpa semak lock_status lagi).
+    function getKobLockDepositCredit() {
+      return kob?.locked_price_tier ? Number(kob.lock_deposit_amount || 0) : 0;
     }
     function tierInstallmentAllowed(pkgMeta, tier) {
       return !!pkgMeta.installment_allowed && Number(tierDeposit(pkgMeta, tier)) > 0
@@ -3275,14 +3559,105 @@
         : decisionHandler ? 'Klik kalau patient TERUSKAN & bayar hari ini.' : 'Istimewa — sah & terpakai semasa sesi KOB hari ini.';
       const nowActive = isSelectMode ? selectedTier === 'now' : !hasToday;
       const todayActive = isSelectMode ? selectedTier === 'today' : true;
-      const lockBarHtml = !isSelectMode ? '' : isLocked ? `
-      <div class="flex items-center justify-between gap-3 bg-navy-light/20 border border-navy/20 rounded-lg px-3 py-2 mt-3 text-xs">
-        <span>🔒 <strong>Harga dikunci:</strong> ${fmtRM(kob.locked_price_amount)} (${kob.locked_price_tier === 'today' ? 'Harga Hari Ini' : 'Harga Sekarang'})${kob.locked_by_name ? ` — oleh ${escapeHtml(kob.locked_by_name)}` : ''}${kob.locked_at ? `, ${fmtScheduleDate(kob.locked_at)}` : ''}</span>
-        <button type="button" onclick="wizUnlockPrice()" data-rbac="kob.edit" ${wizLockingPrice ? 'disabled' : ''}
-          class="text-[11px] font-semibold text-terracotta border border-terracotta/25 rounded-lg px-2.5 py-1 hover:bg-terracotta/10 whitespace-nowrap shrink-0">🔓 Buka Kunci</button>
+      if (isLocked) maybeFlagLockExpired();
+      const lockStatus = isLocked ? lockEffectiveStatus() : null;
+      const lockDaysLeft = (isLocked && kob.lock_expiry_date)
+        ? Math.ceil((new Date(kob.lock_expiry_date + 'T00:00:00') - new Date(new Date().toDateString())) / 86400000) : null;
+      const lockForfeitBtn = `
+        <button type="button" onclick="wizForfeitLock()" data-rbac="kob.edit" ${wizLockingPrice ? 'disabled' : ''}
+          class="text-[11px] font-semibold text-terracotta border border-terracotta/25 rounded-lg px-2.5 py-1 hover:bg-terracotta/10 whitespace-nowrap shrink-0">🔥 Luputkan</button>`;
+      const lockExtendFormHtml = `
+      <div class="mt-2 p-2.5 bg-white border border-ink/10 rounded-lg space-y-2">
+        <label class="text-[10px] font-semibold text-ink/50 uppercase">Tarikh Luput Baharu</label>
+        <input type="date" id="lock-extend-date" class="w-full border border-ink/15 rounded-lg px-2.5 py-1.5 text-sm">
+        <div class="flex gap-2">
+          <button type="button" onclick="wizConfirmExtendLock()" data-rbac="kob.edit" ${wizLockingPrice ? 'disabled' : ''}
+            class="text-[11px] font-semibold text-white bg-navy rounded-lg px-3 py-1.5 hover:bg-navy-light disabled:opacity-50">✅ Sahkan Lanjutan</button>
+          <button type="button" onclick="wizCancelExtendLock()" class="text-[11px] text-ink/50 hover:underline">Batal</button>
+        </div>
+      </div>`;
+      const lockBarHtml = !isSelectMode ? '' : isLocked ? (
+        lockStatus === 'completed' ? `
+      <div class="flex items-center gap-2 bg-green-light/30 border border-green/20 rounded-lg px-3 py-2 mt-3 text-xs">
+        <span>✅ <strong>OB Lock Harga digunakan:</strong> ${fmtRM(kob.lock_deposit_amount)} dikreditkan ke bayaran pakej.</span>
+      </div>` : lockStatus === 'tempoh_tamat' ? `
+      <div class="bg-gold-light/30 border border-gold/30 rounded-lg px-3 py-2 mt-3 text-xs space-y-1.5">
+        <div class="flex items-center justify-between gap-3">
+          <span>⏰ <strong>Tempoh Lock Tamat:</strong> ${fmtRM(kob.locked_price_amount)} (${kob.locked_price_tier === 'today' ? 'Harga Hari Ini' : 'Harga Sekarang'}) — OB Lock Harga ${fmtRM(kob.lock_deposit_amount)} dah dibayar, luput ${fmtScheduleDate(kob.lock_expiry_date)}.</span>
+        </div>
+        ${wizExtendLockOpen ? lockExtendFormHtml : `
+        <div class="flex gap-2">
+          <button type="button" onclick="wizOpenExtendLock()" data-rbac="kob.edit" ${wizLockingPrice ? 'disabled' : ''}
+            class="text-[11px] font-semibold text-navy border border-navy/25 rounded-lg px-2.5 py-1 hover:bg-navy-light/20">🔄 Lanjutkan Tempoh</button>
+          ${lockForfeitBtn}
+        </div>`}
       </div>` : `
+      <div class="flex items-center justify-between gap-3 bg-navy-light/20 border border-navy/20 rounded-lg px-3 py-2 mt-3 text-xs">
+        <span>🔒 <strong>Harga dikunci:</strong> ${fmtRM(kob.locked_price_amount)} (${kob.locked_price_tier === 'today' ? 'Harga Hari Ini' : 'Harga Sekarang'}) — OB Lock Harga ${fmtRM(kob.lock_deposit_amount)} dah dibayar${kob.locked_by_name ? `, oleh ${escapeHtml(kob.locked_by_name)}` : ''}. Luput ${fmtScheduleDate(kob.lock_expiry_date)} (${lockDaysLeft} hari lagi).</span>
+        ${lockForfeitBtn}
+      </div>`
+      ) : wizLockFormOpen === selectedTier ? (
+        wizLockPaymentOpen ? `
+      <div class="mt-3 p-3 bg-navy-light/10 border border-navy/15 rounded-lg">
+        <div class="text-[11px] font-semibold text-navy uppercase mb-2">🔒 OB Lock Harga: ${fmtRM(wizLockPendingAmount)} — Tempoh ${wizLockPendingDays} hari</div>
+        ${!wizLockMethod ? `
+        <div class="flex gap-3 max-w-md">
+          <button type="button" onclick="wizSelectLockMethod('manual')" class="flex-1 px-4 py-2.5 border border-ink/15 rounded-lg text-sm font-semibold hover:bg-ink/5 bg-white">💳 Bayaran Manual</button>
+          <button type="button" onclick="wizSelectLockMethod('hitpay')" class="flex-1 px-4 py-2.5 border border-ink/15 rounded-lg text-sm font-semibold hover:bg-ink/5 bg-white">🔗 HitPay</button>
+        </div>
+        <button type="button" onclick="wizLockFormBack()" class="text-[11px] text-ink/50 hover:underline mt-2">← Kembali</button>
+        ` : wizLockMethod === 'manual' ? manualPaymentFormHtml(wizLockPendingAmount, true, 'OB Lock Harga', {
+            saveFn: `wizConfirmLockPrice('${selectedTier}', allPackagesCache.find(p=>p.package_id==='${pkgMeta.package_id}'))`,
+            saveBtnId: 'btn-save-lock-deposit', saveLabel: '✅ Sahkan OB Lock Harga',
+            cancelFn: 'wizSelectLockMethod(null)', showCancel: true,
+          }) : (
+          wizLockHitpayLinkSentAt ? `
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <p class="text-xs text-green-dark">✅ Pautan HitPay dihantar ke WhatsApp pesakit (${new Date(wizLockHitpayLinkSentAt).toLocaleTimeString(LCALE())}) — menunggu bayaran <span class="text-ink/40">(auto-semak setiap 10 saat)</span>.</p>
+          <div class="flex gap-2 items-center">
+            <button type="button" ${wizLockHitpayCopying ? 'disabled' : ''} onclick="copyKobLockHitpayLink('${selectedTier}')" class="text-[11px] text-navy hover:underline disabled:opacity-50">${wizLockHitpayCopying ? 'Menjana…' : '📋 Salin Pautan'}</button>
+            <button type="button" onclick="recheckKobPaymentStatus()" class="text-[11px] text-navy hover:underline">🔄 Semak Sekarang</button>
+            <button type="button" onclick="wizSelectLockMethod(null)" class="text-[11px] text-ink/50 hover:underline">Tukar →</button>
+          </div>
+        </div>` : `
+        <div class="flex gap-2 flex-wrap items-center">
+          <button type="button" ${(wizLockHitpaySending || wizLockHitpayCopying) ? 'disabled' : ''} onclick="sendKobLockHitpayLink('${selectedTier}')"
+            class="px-4 py-2.5 border border-ink/15 rounded-lg text-sm font-semibold hover:bg-ink/5 disabled:opacity-50">
+            ${wizLockHitpaySending ? iswL('Menghantar…', 'Sending…') : `🔗 ${iswL('Hantar Pautan', 'Send Link')} (${fmtRM(wizLockPendingAmount)})`}
+          </button>
+          <button type="button" ${(wizLockHitpaySending || wizLockHitpayCopying) ? 'disabled' : ''} onclick="copyKobLockHitpayLink('${selectedTier}')"
+            class="px-4 py-2.5 border border-ink/15 rounded-lg text-sm font-semibold hover:bg-ink/5 disabled:opacity-50">
+            ${wizLockHitpayCopying ? 'Menjana…' : '📋 Salin Pautan'}
+          </button>
+          <button type="button" onclick="wizSelectLockMethod(null)" class="text-[11px] text-ink/50 hover:underline">← Tukar kaedah</button>
+        </div>`
+        )}
+      </div>` : `
+      <div class="mt-3 p-3 bg-navy-light/10 border border-navy/15 rounded-lg space-y-2">
+        <div class="text-[11px] font-semibold text-navy uppercase">🔒 Kunci Harga Ini — OB Lock Harga</div>
+        <p class="text-[10px] text-ink/45">Pesakit bayar OB Lock Harga hari ini utk freeze harga ni; diberi tempoh utk settle baki &amp; mula pakej. Tiada refund kalau tempoh luput tanpa bayaran penuh.</p>
+        <div class="grid sm:grid-cols-2 gap-2">
+          <div>
+            <label class="text-[10px] font-semibold text-ink/50 uppercase">Jumlah OB Lock Harga (RM)</label>
+            <input type="text" id="lock-deposit-amount" placeholder="cth: 5,000.00" onblur="formatMoneyInputEl(this)"
+              value="${wizLockPendingAmount != null ? fmtMoneyPlain(wizLockPendingAmount) : ''}"
+              class="w-full border border-ink/15 rounded-lg px-2.5 py-1.5 text-sm mt-0.5">
+          </div>
+          <div>
+            <label class="text-[10px] font-semibold text-ink/50 uppercase">Tempoh Lock (hari)</label>
+            <input type="number" min="1" id="lock-expiry-days" placeholder="cth: 30" value="${wizLockPendingDays ?? ''}"
+              class="w-full border border-ink/15 rounded-lg px-2.5 py-1.5 text-sm mt-0.5">
+          </div>
+        </div>
+        <div class="flex gap-2 pt-1">
+          <button type="button" onclick="wizLockFormNext()" data-rbac="kob.edit"
+            class="text-[11px] font-semibold text-white bg-navy rounded-lg px-3 py-1.5 hover:bg-navy-light">Seterusnya →</button>
+          <button type="button" onclick="wizCancelLockForm()" class="text-[11px] text-ink/50 hover:underline">Batal</button>
+        </div>
+      </div>`
+      ) : `
       <div class="flex justify-end mt-3">
-        <button type="button" onclick="wizLockPrice('${selectedTier}', allPackagesCache.find(p=>p.package_id==='${pkgMeta.package_id}'))" data-rbac="kob.edit" ${wizLockingPrice ? 'disabled' : ''}
+        <button type="button" onclick="wizOpenLockForm('${selectedTier}')" data-rbac="kob.edit" ${wizLockingPrice ? 'disabled' : ''}
           class="text-[11px] font-semibold text-navy border border-navy/25 rounded-lg px-2.5 py-1 hover:bg-navy-light/20">🔒 Kunci Harga Ini</button>
       </div>`;
       return `
@@ -3465,9 +3840,19 @@
       const fullPrice = tierFullPrice(pkgMeta, tier);
       const deposit = Number(tierDeposit(pkgMeta, tier) || 0);
       const isManual = wizPlan === 'manual_installment';
+      // OB Lock Harga dah dibayar ditolak dari jumlah dikutip HARI INI — TAPI
+      // HANYA utk laluan "Bayaran Manual" (manualAmount di bawah). HitPay (`amount`,
+      // tak ditolak) disahkan via webhook server-side yg tak reclassify baris lock tu,
+      // jadi kredit TAK diambil kira di situ buat masa ni — caj jumlah PENUH. Rekod
+      // psy_payments baris lock akan di-reclassify ke 'kob_package' bila Bayaran Manual
+      // berjaya (lihat saveManualPayment), jadi jumlah keseluruhan tetap padan target
+      // penuh — bukan double-count. Lihat getKobLockDepositCredit().
+      const lockCredit = getKobLockDepositCredit();
       const amount = wizPlan === 'installment' ? deposit : isManual ? Number(wizManualDeposit || 0) : fullPrice;
-      const label = wizPlan === 'installment' ? 'Deposit (Bayaran Pertama)'
-        : isManual ? 'Deposit (Bayaran Pertama) — Ansuran Manual' : 'Bayaran Penuh';
+      const manualAmount = Math.max(0, amount - lockCredit);
+      const label = (wizPlan === 'installment' ? 'Deposit (Bayaran Pertama)'
+        : isManual ? 'Deposit (Bayaran Pertama) — Ansuran Manual' : 'Bayaran Penuh')
+        + (lockCredit > 0 ? ` (Baki selepas OB Lock Harga ${fmtRM(lockCredit)})` : '');
 
       if (!wizMethod) {
         // Ansuran Manual mesti agih TEPAT jumlah sama dgn IPP (`commitment`) —
@@ -3502,7 +3887,7 @@
       const backBtn = `<button type="button" onclick="wizSelectMethod(null)" class="text-[11px] text-ink/50 hover:underline mb-2">← Tukar kaedah</button>`;
 
       if (wizMethod === 'manual') {
-        return `<div>${backBtn}${manualPaymentFormHtml(amount, true, label)}</div>`;
+        return `<div>${backBtn}${manualPaymentFormHtml(manualAmount, true, label)}</div>`;
       }
 
       // HitPay — Ansuran Manual guna mode berasingan 'manual_installment' sebab amount
@@ -3540,6 +3925,7 @@
           ${hitpayCopying ? 'Menjana…' : '📋 Salin Pautan'}
         </button>
       </div>
+      ${lockCredit > 0 ? `<p class="text-[10px] text-gold-dark mt-1.5">⚠️ HitPay caj jumlah PENUH (${fmtRM(amount)}) — kredit OB Lock Harga ${fmtRM(lockCredit)} belum ditolak automatik di sini. Guna "Bayaran Manual" kalau nak kredit tu diambil kira.</p>` : ''}
     </div>`;
     }
 
@@ -3583,6 +3969,7 @@
       </div>
       <div class="border-t border-ink/10 pt-2">
         ${row('Harga Digunakan', fmtRM(digunakan))}
+        ${getKobLockDepositCredit() > 0 ? row('🔒 OB Lock Harga (dah dibayar)', `-${fmtRM(getKobLockDepositCredit())}`) : ''}
       </div>
       ${wizPlan ? `
       <div class="border-t border-ink/10 pt-2">
@@ -3602,13 +3989,18 @@
     </div>`;
     }
 
-    function manualPaymentFormHtml(amount, locked, label) {
+    function manualPaymentFormHtml(amount, locked, label, opts = {}) {
+      const cancelFn = opts.cancelFn || 'wizSelectMethod(null)';
+      const showCancel = opts.showCancel !== undefined ? opts.showCancel
+        : (kob.package_payment_status === 'pending' || kob.package_payment_status === 'declined');
+      const saveFn = opts.saveFn || 'saveManualPayment()';
+      const saveBtnId = opts.saveBtnId || 'btn-save-manual-payment';
+      const saveLabel = opts.saveLabel || 'Sahkan Bayaran';
       return `
     <div class="mt-3 space-y-3">
       <div class="flex items-center justify-between">
         <div class="text-sm font-bold text-navy">💳 Bayaran Manual${label ? ` — ${escapeHtml(label)}` : ''}</div>
-        ${(kob.package_payment_status === 'pending' || kob.package_payment_status === 'declined')
-          ? `<button type="button" onclick="wizSelectMethod(null)" class="text-xs text-ink/50 hover:underline">← Batal</button>` : ''}
+        ${showCancel ? `<button type="button" onclick="${cancelFn}" class="text-xs text-ink/50 hover:underline">← Batal</button>` : ''}
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>
@@ -3637,8 +4029,8 @@
             class="w-full text-xs text-ink/60 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-navy file:text-white">
         </div>
       </div>
-      <button type="button" onclick="saveManualPayment()" id="btn-save-manual-payment"
-        class="bg-navy text-white px-6 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">Sahkan Bayaran</button>
+      <button type="button" onclick="${saveFn}" id="${saveBtnId}"
+        class="bg-navy text-white px-6 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">${saveLabel}</button>
     </div>
   `;
     }
@@ -3676,6 +4068,14 @@
       const el = document.getElementById('payment-method-card');
       if (!el) return;
       syncHitpayPolling();
+      syncLockHitpayPolling();
+      // Pautan HitPay OB Lock Harga disahkan async lewat webhook — kalau kob.locked_price_tier
+      // dah muncul (polling loadKob() jumpa) semasa borang lock masih terbuka, tutup borang
+      // terus supaya Langkah 4/5 muncul semula & lockBarHtml papar status "dikunci" terkini.
+      if (wizLockFormOpen && kob.locked_price_tier) {
+        wizLockFormOpen = false; wizLockPaymentOpen = false; wizLockMethod = null;
+        wizLockPendingAmount = null; wizLockPendingDays = null; wizLockHitpayLinkSentAt = null;
+      }
       const status = kob.package_payment_status;
       const needsPayment = kob.recommended_package_id && (status === 'pending' || status === 'partial');
       const isDeclinedInfo = kob.recommended_package_id && status === 'declined';
@@ -3829,14 +4229,19 @@
         }
       }
 
+      // Selagi borang Kunci Harga Ini aktif (wizLockFormOpen), SEMBUNYIKAN Langkah 4
+      // (Pilih Plan)/Keputusan Patient/Langkah 5 — tak relevan, OB Lock Harga berdiri
+      // sendiri (sekadar reservation, bukan sebahagian plan pembayaran hari ni).
       wizMain.innerHTML = [
         isDeclinedInfo
           ? `<div class="text-xs text-navy bg-navy-light/20 border border-navy/20 rounded p-2">📞 Patient kembali lepas tidak teruskan — pilih harga di bawah utk bayaran ini.</div>` : '',
         wizStep12Html(pkgMeta),
         wizStep3Html(pkgMeta, 'wizSelectPayTier', tier),
-        wizStep4Html(pkgMeta, wizPlan, 'wizSelectPlan', tier, true),
-        recDecisionButtonsHtml(),
-        wizPlan ? wizStep5Html(pkgMeta, tier) : '',
+        ...(wizLockFormOpen ? [] : [
+          wizStep4Html(pkgMeta, wizPlan, 'wizSelectPlan', tier, true),
+          recDecisionButtonsHtml(),
+          wizPlan ? wizStep5Html(pkgMeta, tier) : '',
+        ]),
       ].filter(Boolean).join('<div class="border-t border-ink/10 my-2"></div>');
       wizSidebar.innerHTML = wizSidebarHtml(pkgMeta, tier);
       // Warna btn Teruskan/Tidak Teruskan ikut status semasa (chosen/active/grey/
@@ -3847,8 +4252,12 @@
     // Jumlah keseluruhan yang dah dibayar setakat ni untuk sesi KOB ni (jumlah
     // semua ansuran psy_payments completed, bukan hanya bayaran terkini).
     async function getKobPaymentsPaid() {
+      // intent->>type='kob_package' — kecualikan OB Lock Harga (intent type
+      // 'kob_price_lock_deposit'), yg direkod berasingan & dikira sendiri melalui
+      // getKobLockDepositCredit(). Elak OB Lock Harga silap dikira sbg bayaran pakej
+      // SEBELUM pesakit betul-betul mula (lihat saveManualPayment()).
       const { data, error } = await window.db.from('psy_payments')
-        .select('total').eq('status', 'completed').eq('intent->>kob_session_id', kobId);
+        .select('total').eq('status', 'completed').eq('intent->>kob_session_id', kobId).eq('intent->>type', 'kob_package');
       if (error) { console.warn('[getKobPaymentsPaid] gagal:', error.message); return 0; }
       return (data || []).reduce((sum, p) => sum + Number(p.total || 0), 0);
     }
@@ -3879,6 +4288,10 @@
       if (Math.abs(targetCommitment - allocated) >= 0.01) {
         throw new Error(`Jumlah kesemua baris (${fmtRM(allocated)}) tak padan sasaran Installment Plan (${fmtRM(targetCommitment)}). Sila laraskan di Langkah 4.`);
       }
+      // NOTA: kredit OB Lock Harga (getKobLockDepositCredit()) TAK ditolak di sini —
+      // laluan HitPay disahkan via webhook server-side yg tak reclassify baris OB Lock
+      // Harga tu (lihat saveManualPayment() utk laluan yg disokong). Guna "Bayaran Manual"
+      // kalau nak kredit lock tu diambil kira; HitPay caj jumlah PENUH buat masa ni.
       const depositAmount = Number(wizManualDeposit);
       const resolved = buildCustomInstallmentSchedule(depositAmount, wizManualPeriods, wizManualDates);
       const rows = [
@@ -4032,11 +4445,12 @@
         banner(iswL(`Bayaran KOB sudah direkod (${fmtRM(alreadyPaid)}). Baki/ansuran seterusnya direkod di Pesakit Hub. Kalau salah, edit atau batalkan bayaran sedia ada.`, `The KOB payment is already recorded (${fmtRM(alreadyPaid)}). The balance/further instalments are recorded in Patient Hub. If it was a mistake, edit or cancel the existing payment.`), 'error');
         return;
       }
+      const lockCredit = getKobLockDepositCredit();
       if (!isInstallmentStart) {
         const pkgMetaCap = allPackagesCache.find(p => p.package_id === kob.recommended_package_id);
         const capPrice = payTier === 'today' ? Number(kob.recommended_package_price || 0) : tierFullPrice(pkgMetaCap, 'now');
-        if (capPrice > 0 && amount > capPrice + 0.005) {
-          const msg = iswL(`Jumlah melebihi harga pakej (${fmtRM(capPrice)}).`, `Amount exceeds the package price (${fmtRM(capPrice)}).`);
+        if (capPrice > 0 && (amount + lockCredit) > capPrice + 0.005) {
+          const msg = iswL(`Jumlah (+ OB Lock Harga ${fmtRM(lockCredit)} yang dah dibayar) melebihi harga pakej (${fmtRM(capPrice)}).`, `Amount (+ the already-paid OB Lock Harga of ${fmtRM(lockCredit)}) exceeds the package price (${fmtRM(capPrice)}).`);
           banner(msg, 'error'); return;
         }
       }
@@ -4121,7 +4535,7 @@
           const packagePrice = payTier === 'today'
             ? Number(kob.recommended_package_price || 0)
             : tierFullPrice(pkgMetaPrice, 'now');
-          const isFullyPaid = packagePrice > 0 && totalPaid >= packagePrice;
+          const isFullyPaid = packagePrice > 0 && (totalPaid + lockCredit) >= packagePrice;
           kobUpdates.package_payment_status = isFullyPaid ? 'paid' : 'partial';
           kobUpdates.package_payment_mode = 'full';
           if (isFullyPaid) kobUpdates.package_paid_at = new Date().toISOString();
@@ -4130,7 +4544,20 @@
           if (!isFullyPaid) {
             await window.db.from('psy_payments').update({ is_partial: true }).eq('id', payRow.id);
           }
-          bannerMsg = isFullyPaid ? 'Bayaran penuh disahkan ✅' : `Bayaran disimpan ✅ Baki: RM ${(packagePrice - totalPaid).toFixed(2)}`;
+          bannerMsg = isFullyPaid ? 'Bayaran penuh disahkan ✅' : `Bayaran disimpan ✅ Baki: RM ${(packagePrice - totalPaid - lockCredit).toFixed(2)}`;
+        }
+
+        // Pesakit betul-betul mula pakej sekarang — OB Lock Harga (kalau ada)
+        // "selesai" tugasnya: reclassify baris psy_payments tu dari 'kob_price_lock_deposit'
+        // ke 'kob_package' supaya terus dikira getKobPaymentsPaid() macam bayaran biasa
+        // merentas seluruh sistem (Pesakit Hub dll), bukan logik berasingan tiap tempat.
+        if (lockCredit > 0 && kob.lock_deposit_payment_id) {
+          await window.db.from('psy_payments').update({
+            paid_for_type: 'package', paid_for_seq: 0,
+            intent: { type: 'kob_package', kob_session_id: kobId },
+            notes: `OB Lock Harga pakej "${kob.recommended_package_name || ''}" — dikreditkan bila pakej dimulakan`,
+          }).eq('id', kob.lock_deposit_payment_id);
+          kobUpdates.lock_status = 'completed';
         }
 
         const { error: kobErr } = await window.db.from('psy_kob_sessions').update(kobUpdates).eq('id', kobId);

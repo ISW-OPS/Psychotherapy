@@ -40,6 +40,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { createKobInstallmentTopupLink } from '../_shared/kob_topup.ts'
 import { createKobDepositLink } from '../_shared/kob_retry_link.ts'
 import { createKobCardAttachLink } from '../_shared/kob_autocharge.ts'
+import { createKobPriceLockLink } from '../_shared/kob_price_lock_link.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -63,7 +64,7 @@ Deno.serve(async (req) => {
     const userClient = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authHeader } } })
     const { data: { user } } = await userClient.auth.getUser()
     if (!user) return json({ error: 'Tidak dibenarkan (sila log masuk)' }, 401)
-    const { data: profile } = await userClient.from('psy_profiles').select('role').eq('id', user.id).single()
+    const { data: profile } = await userClient.from('psy_profiles').select('role, full_name').eq('id', user.id).single()
     const isStaff = profile?.role === 'staff'
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
@@ -74,8 +75,8 @@ Deno.serve(async (req) => {
     const mode: string = String(body.mode || '')
     const returnUrl: string = String(body.returnUrl || '')
     if (!kobSessionId) return json({ error: 'kobSessionId diperlukan' }, 400)
-    if (mode !== 'full' && mode !== 'installment' && mode !== 'manual_installment' && mode !== 'topup' && mode !== 'attach_card') {
-      return json({ error: "mode mesti 'full', 'installment', 'manual_installment', 'topup' atau 'attach_card'" }, 400)
+    if (mode !== 'full' && mode !== 'installment' && mode !== 'manual_installment' && mode !== 'topup' && mode !== 'attach_card' && mode !== 'price_lock') {
+      return json({ error: "mode mesti 'full', 'installment', 'manual_installment', 'topup', 'attach_card' atau 'price_lock'" }, 400)
     }
     if (!returnUrl) return json({ error: 'returnUrl diperlukan' }, 400)
 
@@ -113,6 +114,28 @@ Deno.serve(async (req) => {
       try {
         const link = await createKobCardAttachLink(admin, kobSessionId, returnUrl)
         return json({ ok: true, checkoutUrl: link.checkoutUrl, receiptRef: link.receiptRef })
+      } catch (err) {
+        return json({ error: (err as Error).message || 'Ralat tidak diketahui' }, 400)
+      }
+    }
+
+    // Mod 'price_lock' — OB Lock Harga (Kunci Harga, kob-detail.html Langkah 3).
+    // Staff-only (disahkan oleh semakan isStaff di atas — mode !== 'installment'
+    // ditolak utk pesakit). amount/days DIPERCAYAI dari client di sini sebab staff
+    // yang taip (sama tahap amanah macam borang Bayaran Manual) — BUKAN formula
+    // pakej yang perlu derive server-side macam full/installment.
+    if (mode === 'price_lock') {
+      const lockAmount = Number(body.amount || 0)
+      const lockDays = parseInt(body.days, 10)
+      const tier: 'today' | 'now' = body.tier === 'now' ? 'now' : 'today'
+      if (!(lockAmount > 0)) return json({ error: 'Jumlah OB Lock Harga tidak sah' }, 400)
+      if (!(lockDays > 0)) return json({ error: 'Tempoh lock tidak sah' }, 400)
+      try {
+        const link = await createKobPriceLockLink(admin, {
+          kobSessionId, tier, amount: lockAmount, days: lockDays, returnUrl,
+          initiatedByUserId: user.id, initiatedByName: profile?.full_name || null,
+        })
+        return json({ ok: true, checkoutUrl: link.checkoutUrl, receiptRef: link.receiptRef, amount: link.amount })
       } catch (err) {
         return json({ error: (err as Error).message || 'Ralat tidak diketahui' }, 400)
       }

@@ -481,7 +481,7 @@ async function loadReceiptContext(admin, payment) {
   const discTotal = discountLines.reduce((a, l) => a + l.amount, 0);
   let kob = null;
   let kobName = "";
-  const kobId = intent.kob_session_id;
+  const kobId = intent.type === "kob_package" ? intent.kob_session_id : null;
   if (kobId) {
     const [{ data: ks }, { data: cps }, { data: pays }] = await Promise.all([
       admin.from("psy_kob_sessions").select("recommended_package_name, recommended_package_price, package_discount, package_payment_mode, invoice_no").eq("id", kobId).limit(1),
@@ -925,6 +925,55 @@ async function fulfillKobDeposit(admin, item, patientId, receiptRef) {
     await activatePackageForPatient(admin, patientId, kobRow?.recommended_package_id, kobRow?.recommended_package_name, Number(item.amount || 0));
   }
 }
+async function fulfillKobPriceLock(admin, item, receiptRef, paymentId) {
+  const kobSessionId = item.kobSessionId;
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const { data: kobRows } = await admin.from("psy_kob_sessions").select("recommended_package_id, recommended_package_price, locked_price_tier").eq("id", kobSessionId).limit(1);
+  const kobRow = kobRows?.[0];
+  if (!kobRow || kobRow.locked_price_tier) return;
+  const tier = item.tier === "now" ? "now" : "today";
+  let packagePrice;
+  if (tier === "today") {
+    packagePrice = Number(kobRow.recommended_package_price || 0);
+  } else {
+    const isUuid3 = (s) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+    let pkgQ = admin.from("psy_packages").select("price");
+    pkgQ = isUuid3(String(kobRow.recommended_package_id)) ? pkgQ.or(`id.eq.${kobRow.recommended_package_id},package_id.eq.${kobRow.recommended_package_id}`) : pkgQ.eq("package_id", kobRow.recommended_package_id);
+    const { data: pkgRows } = await pkgQ.limit(1);
+    packagePrice = Number(pkgRows?.[0]?.price || 0);
+  }
+  const days = Number(item.lockDays || 0);
+  const expiry = /* @__PURE__ */ new Date();
+  expiry.setDate(expiry.getDate() + days);
+  await admin.from("psy_kob_sessions").update({
+    locked_price_tier: tier,
+    locked_price_amount: packagePrice,
+    locked_at: now,
+    locked_by: item.initiatedByUserId || null,
+    locked_by_name: item.initiatedByName || null,
+    lock_deposit_amount: Number(item.amount || 0),
+    lock_deposit_payment_id: paymentId,
+    lock_deposit_paid_at: now,
+    lock_deposit_method: "gateway",
+    lock_deposit_reference: receiptRef,
+    lock_deposit_recorded_by: item.initiatedByUserId || null,
+    lock_deposit_recorded_by_name: item.initiatedByName || null,
+    lock_expiry_date: expiry.toISOString().slice(0, 10),
+    lock_status: "active",
+    lock_extended_count: 0,
+    lock_forfeited_at: null,
+    lock_forfeited_by: null,
+    lock_forfeited_by_name: null
+  }).eq("id", kobSessionId);
+  await admin.from("psy_audit_log").insert({
+    actor_name: "Gateway (HitPay)",
+    actor_role: "system",
+    action: "kob.price_locked",
+    target: kobSessionId,
+    meta: { tier, amount: packagePrice, deposit: Number(item.amount || 0), via: "hitpay" }
+  }).catch(() => {
+  });
+}
 
 // supabase/functions/payments-webhook/index.ts
 var corsHeaders = {
@@ -1010,15 +1059,18 @@ Deno.serve(async (req) => {
           await admin.from("psy_payments").update({ gateway_channel: channel }).eq("id", payment.id);
         } else {
           await auditLog(admin, "payment.gateway_channel_unknown", payment.id, {
-            receipt_ref: payment.receipt_ref, gateway_ref: result.gatewayRef,
-            raw: JSON.stringify(raw ?? null).slice(0, 2000),
+            receipt_ref: payment.receipt_ref,
+            gateway_ref: result.gatewayRef,
+            raw: JSON.stringify(raw ?? null).slice(0, 2e3)
           });
         }
       }
     } catch (e) {
       console.warn("payments-webhook: getPaymentChannel gagal \u2014", e.message);
       await auditLog(admin, "payment.gateway_channel_unknown", payment.id, {
-        receipt_ref: payment.receipt_ref, gateway_ref: result.gatewayRef, error: e.message,
+        receipt_ref: payment.receipt_ref,
+        gateway_ref: result.gatewayRef,
+        error: e.message
       });
     }
     await auditLog(admin, "payment.gateway_completed", payment.id, { receipt_ref: payment.receipt_ref, amount: payment.total, provider: result.status });
@@ -1054,6 +1106,7 @@ var PAYMENT_ITEM_LABELS = {
   kob_package: () => "Pakej KOB",
   kob_deposit: (item) => item.mode === "installment" ? "Deposit Ansuran Pakej" : "Bayaran Penuh Pakej (KOB)",
   kob_installment_topup: () => "Ansuran Pakej (Top-up)",
+  kob_price_lock: () => "OB Lock Harga",
   walkin_sale: () => "Jualan Walk-in"
 };
 async function notifyStaffPaymentReceived(admin, patientId, labels, total, receiptRef, buyerName) {
@@ -1295,6 +1348,8 @@ async function fulfillOrder(admin, payment) {
       await fulfillKobDeposit(admin, item, patientId, receiptRef);
     } else if (item.type === "kob_installment_topup") {
       await applyInstallmentPayment(admin, item.kobSessionId, patientId, Number(item.amount || 0));
+    } else if (item.type === "kob_price_lock") {
+      await fulfillKobPriceLock(admin, item, receiptRef, payment.id);
     } else if (item.type === "shop_order") {
       const { data: newOrder, error: orderErr } = await admin.from("psy_orders").insert({
         order_ref: item.orderRef,
