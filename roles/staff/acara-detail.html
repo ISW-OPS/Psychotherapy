@@ -8,6 +8,8 @@
 <script src="../../shared/theme.js"></script>
 <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
 <link href="_styles.css" rel="stylesheet">
 </head>
 <body class="min-h-screen bg-[#f7f8fa]">
@@ -23,12 +25,44 @@
       <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
 
       <div class="p-4 md:p-6">
-        <button onclick="history.back()" class="inline-flex items-center gap-2 text-sm font-semibold text-ink/60 hover:text-navy mb-4">← Kembali ke Acara &amp; Kelas</button>
+        <div class="flex items-center justify-between gap-3 flex-wrap mb-4">
+          <button onclick="history.back()" class="inline-flex items-center gap-2 text-sm font-semibold text-ink/60 hover:text-navy">← Kembali ke Acara &amp; Kelas</button>
+          <div id="top-actions" class="flex items-center gap-2 flex-wrap"></div>
+        </div>
         <div id="wrap" class="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
           <div class="lg:col-span-3 text-center py-16 text-ink/40 text-sm">Memuatkan...</div>
         </div>
       </div>
     </main>
+  </div>
+</div>
+
+<!-- Tukar Gambar (inline, dari tab Maklumat Asas) -->
+<input id="banner-file" type="file" accept="image/*" class="hidden" onchange="previewBanner(this)">
+<div id="crop-modal" class="hidden fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl max-w-2xl w-full overflow-hidden flex flex-col">
+    <div class="px-5 py-4 border-b border-ink/10 flex items-center justify-between">
+      <h3 class="font-bold text-lg">Laras Banner</h3>
+      <button onclick="closeCrop()" class="text-ink/50 text-xl leading-none">&times;</button>
+    </div>
+    <div class="p-4">
+      <div class="bg-ink/5 rounded-xl overflow-hidden" style="max-height:58vh"><img id="crop-img" class="block max-w-full"></div>
+      <div class="flex items-center justify-center gap-1.5 mt-3 flex-wrap">
+        <button onclick="cropper&&cropper.zoom(0.1)" class="px-3 py-1.5 border border-ink/20 rounded-lg text-sm font-semibold hover:bg-ink/5">🔍 Zoom +</button>
+        <button onclick="cropper&&cropper.zoom(-0.1)" class="px-3 py-1.5 border border-ink/20 rounded-lg text-sm font-semibold hover:bg-ink/5">🔍 Zoom −</button>
+        <span class="w-px h-5 bg-ink/15 mx-1"></span>
+        <button onclick="cropper&&cropper.move(-25,0)" class="w-9 h-9 border border-ink/20 rounded-lg hover:bg-ink/5" title="Kiri">←</button>
+        <button onclick="cropper&&cropper.move(25,0)" class="w-9 h-9 border border-ink/20 rounded-lg hover:bg-ink/5" title="Kanan">→</button>
+        <button onclick="cropper&&cropper.move(0,-25)" class="w-9 h-9 border border-ink/20 rounded-lg hover:bg-ink/5" title="Atas">↑</button>
+        <button onclick="cropper&&cropper.move(0,25)" class="w-9 h-9 border border-ink/20 rounded-lg hover:bg-ink/5" title="Bawah">↓</button>
+        <button onclick="cropper&&cropper.reset()" class="px-3 py-1.5 border border-ink/20 rounded-lg text-sm font-semibold hover:bg-ink/5">↺ Reset</button>
+      </div>
+      <p class="text-[11px] text-ink/45 text-center mt-2">Seret gambar untuk gerak · butang untuk zoom &amp; arah. Nisbah 2:1.</p>
+    </div>
+    <div class="px-5 py-4 border-t border-ink/10 flex gap-2">
+      <button onclick="closeCrop()" class="flex-1 border border-ink/20 text-ink/60 py-2.5 rounded-xl text-sm font-semibold hover:bg-ink/5">Batal</button>
+      <button onclick="applyCrop()" class="flex-1 bg-navy text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-dark">✓ Simpan Banner</button>
+    </div>
   </div>
 </div>
 
@@ -38,6 +72,7 @@
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
 <script src="_shared.js"></script>
+<script src="../../shared/inventoryStock.js"></script>
 <script>
     function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
 const TYPE = {
@@ -52,43 +87,839 @@ const TYPE = {
 function ty() { return TYPE[EV.type] || TYPE.default; }
 function fmtDate(d){ return d?new Date(d).toLocaleDateString(LCALE(),{weekday:'long',day:'2-digit',month:'long',year:'numeric'}):'—'; }
 function fmtT(d){ return d?new Date(d).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):''; }
+function fmtDateTime(d){ return d?new Date(d).toLocaleDateString(LCALE(),{day:'2-digit',month:'short',year:'numeric'})+' '+new Date(d).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):''; }
 function timeRange(){ const t1=fmtT(EV.start_at), t2=EV.end_at?fmtT(EV.end_at):''; let dur=''; if(EV.end_at){const m=Math.round((new Date(EV.end_at)-new Date(EV.start_at))/60000); dur=' ('+(m>=60?Math.floor(m/60)+' Jam '+(m%60?(m%60)+' Minit':''):m+' Minit').trim()+')';} return `${t1}${t2?' – '+t2:''}${dur}`; }
 function statusDisp(){ if(EV.status==='draft')return{l:'Draft',c:'text-ink/55'}; if(EV.status==='cancelled')return{l:'Dibatalkan',c:'text-terracotta'}; if(EV.status==='completed')return{l:'Selesai',c:'text-navy'}; return new Date(EV.start_at)>new Date()?{l:'Scheduled',c:'text-[#1d4ed8]'}:{l:'Published',c:'text-green-dark'}; }
 function audLabel(a){ if(!Array.isArray(a)||!a.length)return'Semua Pengguna'; if(a.includes('patient')&&a.length===1)return'Semua Pesakit'; const m={patient:'Pesakit',staff:'Staff',doctor:'Doktor',coach:'Coach',admin:'Admin'}; return a.length>=5?'Semua Pengguna':a.map(x=>m[x]||x).join(', '); }
 
 let EV = null, REGS = [], CREATOR = '', TAB = 'info', MATERIALS = [];
+let PIC_PROFILE = null, CANCELLED_COUNT = 0, cropper = null;
+let pkSearch = '', pkStatusFilter = '', pkAttFilter = '', pkPage = 1;
+const PK_PAGE_SIZE = 10;
+let PREP_ITEMS = [], TASKS = [], INV_ITEMS = [], EQUIP_ITEMS = [], PREP_META = { notes: '', deadline_date: null };
+let prepFilter = 'all', prepChecked = new Set();
+let TEMPLATES = [], TEMPLATE_ITEMS = {};
+let STAFF_LIST = [];
+let ITEM_RETURNS = [];
+let retFilter = 'all';
+
+const EQUIP_STATUS_META = {
+  available:         { label: '🟢 Available',         key: 'ready' },
+  in_use:            { label: '🔵 In Use',             key: 'notready' },
+  under_maintenance: { label: '🔧 Maintenance',        key: 'notready' },
+  damaged:           { label: '🔴 Damaged',            key: 'notready' },
+  lost:              { label: '🔴 Lost',               key: 'notready' },
+  retired:           { label: '⚪ Retired',             key: 'notready' },
+};
+const MANUAL_STATUS_META = {
+  ready:         { label: '✅ Selesai',       cls: 'bg-green-100 text-green-700' },
+  preparing:     { label: '🔄 Dalam Proses',  cls: 'bg-amber-100 text-amber-700' },
+  pending:       { label: '⏳ Belum Mula',    cls: 'bg-ink/10 text-ink/50' },
+  not_available: { label: '🔴 Tak Dapat',     cls: 'bg-red-100 text-red-600' },
+};
+const TASK_STATUS_META = {
+  selesai:        { label: '✅ Selesai',       cls: 'bg-green-100 text-green-700' },
+  dalam_proses:   { label: '🔄 Dalam Proses',  cls: 'bg-amber-100 text-amber-700' },
+  belum_mula:     { label: '⏳ Belum Mula',    cls: 'bg-ink/10 text-ink/50' },
+};
+const TASK_PRESETS = [
+  'Cetak borang pendaftaran',
+  'Sediakan tag nama peserta',
+  'Pasang kerusi & meja',
+  'Pasang backdrop / banner',
+  'Uji projektor & sistem bunyi',
+  'Sediakan borang maklum balas',
+  'Hubungi vendor katering',
+  'Hantar reminder WhatsApp kepada peserta',
+  'Semak senarai kehadiran',
+  'Bersihkan & susun lokasi selepas acara',
+];
+function prepUid() { return 'tmp_' + Math.random().toString(36).slice(2) + Date.now(); }
+function prepEscHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function prepInvStock(id) { const it = INV_ITEMS.find(i => i.id === id); return it ? Number(it.qty_in_stock || 0) : null; }
+
+// Senarai gabungan item (psy_event_prep_items) + tugasan (psy_event_checklist_tasks)
+// jadi SATU jadual, dibezakan ikut Sumber: Inventory ISW (inventory/equipment) /
+// Pembelian Event (manual) / Persediaan (tugasan).
+function prepRows() {
+  const items = PREP_ITEMS.map(it => ({ _key: it.id, _kind: 'item', ...it }));
+  const tasks = TASKS.map(t => ({ _key: t.id, _kind: 'task', ...t }));
+  return [...items, ...tasks];
+}
+function prepSumber(row) {
+  if (row._kind === 'task') return { label: 'Persediaan', cls: 'bg-teal/10 text-teal' };
+  if (row.source === 'manual') return { label: 'Pembelian Event', cls: 'bg-purple-100 text-purple-700' };
+  return { label: 'Inventory ISW', cls: 'bg-navy/10 text-navy' };
+}
+function prepRowStatus(row) {
+  if (row._kind === 'task') {
+    const m = TASK_STATUS_META[row.status] || TASK_STATUS_META.belum_mula;
+    return { ...m, bucket: row.status === 'selesai' ? 'ready' : row.status === 'dalam_proses' ? 'progress' : 'pending' };
+  }
+  if (row.source === 'equipment' && row.equipment_id) {
+    const eq = EQUIP_ITEMS.find(e => e.id === row.equipment_id);
+    const m = eq ? (EQUIP_STATUS_META[eq.status] || { label: eq.status, key: 'notready' }) : { label: '—', key: 'notready' };
+    return { label: m.label, cls: m.key === 'ready' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600', bucket: m.key === 'ready' ? 'ready' : 'notready' };
+  }
+  if (row.source === 'inventory' && row.inventory_item_id) {
+    const stock = prepInvStock(row.inventory_item_id);
+    const cukup = stock === null || stock >= Number(row.qty_needed);
+    return cukup
+      ? { label: '🟢 Mencukupi', cls: 'bg-green-100 text-green-700', bucket: 'ready' }
+      : { label: '🔴 Tidak Cukup', cls: 'bg-red-100 text-red-600', bucket: 'notready' };
+  }
+  // manual (Pembelian Event) — status ditetapkan staff sendiri
+  const m = MANUAL_STATUS_META[row.status] || MANUAL_STATUS_META.pending;
+  const bucket = row.status === 'ready' ? 'ready' : row.status === 'preparing' ? 'progress' : row.status === 'not_available' ? 'notready' : 'pending';
+  return { ...m, bucket };
+}
+function prepStats() {
+  const rows = prepRows();
+  const total = rows.length;
+  const counts = { ready: 0, progress: 0, pending: 0, notready: 0 };
+  rows.forEach(r => { counts[prepRowStatus(r).bucket]++; });
+  const pct = total ? Math.round((counts.ready / total) * 100) : 0;
+  return { total, pct, ...counts };
+}
 
 function counts() {
-  const pendaftar = REGS.length;
-  const hadir = REGS.filter(r => r.status === 'hadir').length;
-  const tdk = REGS.filter(r => r.status === 'tak_hadir').length;
+  const active = REGS.filter(r => r.status !== 'batal');
+  const pendaftar = active.length;
+  const hadir = active.filter(r => r.status === 'hadir').length;
+  const tdk = active.filter(r => r.status === 'tak_hadir').length;
   const rate = pendaftar ? Math.round(hadir / pendaftar * 100) : 0;
   return { pendaftar, hadir, tdk, rate, kapasiti: EV.capacity || '∞' };
 }
 
-function statBox(icon, val, label, tone) {
-  return `<div class="bg-cream/40 rounded-xl p-3.5"><div class="text-ink/35 mb-1">${icon}</div><div class="text-xl font-extrabold ${tone||'text-ink'}">${val}</div><div class="text-[10px] text-ink/50 mt-0.5">${label}</div></div>`;
-}
-
 function setTab(t) { TAB = t; render(); }
 
-function tabPanel() {
-  const c = counts();
-  if (TAB === 'peserta' || TAB === 'kehadiran') {
-    const rows = TAB === 'kehadiran' ? REGS : REGS;
-    if (!rows.length) return '<div class="text-center py-12 text-ink/40 text-sm">Belum ada pendaftar.</div>';
-    return `<div class="divide-y divide-ink/5">${rows.map(r => {
-      const p = r.psy_patients || {};
-      return `<div class="flex items-center gap-3 py-3">
-        <div class="w-9 h-9 rounded-full bg-navy/10 text-navy flex items-center justify-center font-bold text-xs flex-shrink-0">${(p.full_name||'?').slice(0,2).toUpperCase()}</div>
-        <div class="flex-1 min-w-0"><div class="text-sm font-semibold text-ink truncate">${p.full_name||'Pesakit'}</div><div class="text-[10px] text-ink/45">${p.mrn||''} · daftar ${new Date(r.registered_at).toLocaleDateString(LCALE(),{day:'2-digit',month:'short'})}</div></div>
-        ${TAB === 'kehadiran' ? `<div class="flex items-center gap-1.5">
-          <button onclick="mark('${r.id}','hadir')" data-rbac="events.edit" class="text-[11px] font-bold px-2.5 py-1 rounded-lg ${r.status==='hadir'?'bg-green text-white':'bg-ink/5 text-ink/60 hover:bg-green/15'}">✓ Hadir</button>
-          <button onclick="mark('${r.id}','tak_hadir')" data-rbac="events.edit" class="text-[11px] font-bold px-2.5 py-1 rounded-lg ${r.status==='tak_hadir'?'bg-terracotta text-white':'bg-ink/5 text-ink/60 hover:bg-terracotta/15'}">✗ Tidak</button>
-        </div>` : `<span class="text-[11px] font-semibold px-2.5 py-1 rounded-full ${r.status==='hadir'?'bg-green/12 text-green-dark':r.status==='tak_hadir'?'bg-terracotta/12 text-terracotta':'bg-navy/8 text-navy'}">${r.status==='hadir'?'Hadir':r.status==='tak_hadir'?'Tidak Hadir':'Berdaftar'}</span>`}
-      </div>`;
-    }).join('')}</div>`;
+// ── Persediaan Event: toolbar + filter chip + jadual gabungan ──────
+function prepFilterCounts() {
+  const rows = prepRows();
+  return {
+    all: rows.length,
+    inv: rows.filter(r => r._kind === 'item' && r.source !== 'manual').length,
+    manual: rows.filter(r => r._kind === 'item' && r.source === 'manual').length,
+    task: rows.filter(r => r._kind === 'task').length,
+  };
+}
+function prepFilteredRows() {
+  const rows = prepRows();
+  if (prepFilter === 'inv') return rows.filter(r => r._kind === 'item' && r.source !== 'manual');
+  if (prepFilter === 'manual') return rows.filter(r => r._kind === 'item' && r.source === 'manual');
+  if (prepFilter === 'task') return rows.filter(r => r._kind === 'task');
+  return rows;
+}
+function prepChip(key, label, n) {
+  return `<button onclick="prepSetFilter('${key}')" class="px-3 py-1.5 rounded-lg text-xs font-semibold ${prepFilter===key?'bg-navy text-white':'bg-ink/5 text-ink/60 hover:bg-ink/10'}">${label} (${n})</button>`;
+}
+function prepTypePickOpts(row) {
+  const eqByCat = {};
+  EQUIP_ITEMS.filter(e => e.status !== 'retired').forEach(eq => { (eqByCat[eq.category || 'Lain-lain'] = eqByCat[eq.category || 'Lain-lain'] || []).push(eq); });
+  const eqGroups = Object.keys(eqByCat).sort().map(cat => `<optgroup label="🔧 ${prepEscHtml(cat)}">${
+    eqByCat[cat].map(eq => `<option value="eq:${eq.id}" ${row.equipment_id === eq.id ? 'selected' : ''}>${prepEscHtml(eq.name)} (${prepEscHtml(eq.code)}) — ${(EQUIP_STATUS_META[eq.status]||{label:eq.status}).label}</option>`).join('')
+  }</optgroup>`).join('');
+  const invByCat = {};
+  INV_ITEMS.forEach(inv => { (invByCat[inv.category || 'Lain-lain'] = invByCat[inv.category || 'Lain-lain'] || []).push(inv); });
+  const invGroups = Object.keys(invByCat).sort().map(cat => `<optgroup label="📦 ${prepEscHtml(cat)}">${
+    invByCat[cat].map(inv => `<option value="${inv.id}" ${row.source === 'inventory' && row.inventory_item_id === inv.id ? 'selected' : ''}>${prepEscHtml(inv.name)}</option>`).join('')
+  }</optgroup>`).join('');
+  return `<option value="">— Pilih —</option>`
+    + `<option value="__manual__" ${row.source === 'manual' ? 'selected' : ''}>🛍️ Pembelian Event (taip nama)</option>`
+    + eqGroups + invGroups;
+}
+function prepRowHtml(row) {
+  const checked = prepChecked.has(row._key);
+  const st = prepRowStatus(row);
+  if (row._kind === 'task') {
+    const statusOpts = Object.keys(TASK_STATUS_META).map(k => `<option value="${k}" ${row.status===k?'selected':''}>${TASK_STATUS_META[k].label}</option>`).join('');
+    const isCustom = row._customMode || (row.task && !TASK_PRESETS.includes(row.task));
+    const taskOpts = `<option value="">— Pilih tugasan —</option>`
+      + TASK_PRESETS.map(p => `<option value="${prepEscHtml(p)}" ${row.task===p?'selected':''}>${prepEscHtml(p)}</option>`).join('')
+      + `<option value="__custom__" ${isCustom?'selected':''}>✏️ Tugasan Lain (taip sendiri)</option>`;
+    return `<div class="grid gap-2 items-center px-4 py-2.5 hover:bg-ink/[0.015]" style="grid-template-columns:28px 2fr 130px 90px 80px 110px 120px 150px 50px">
+      <div><input type="checkbox" ${checked?'checked':''} onchange="prepToggleCheck('${row._key}')" class="w-4 h-4"></div>
+      <div>
+        <select onchange="prepOnTaskPicked('${row._key}', this.value)" class="w-full px-1.5 py-1 border border-ink/15 rounded-lg text-sm bg-white">${taskOpts}</select>
+        ${isCustom ? `<input type="text" placeholder="Taip tugasan" value="${prepEscHtml(row.task||'')}" onchange="prepUpdateTask('${row._key}','task', this.value)" class="w-full mt-1 px-1.5 py-1 border border-ink/15 rounded-lg text-sm">` : ''}
+      </div>
+      <div><span class="text-[10px] font-semibold px-2 py-1 rounded-full ${prepSumber(row).cls}">${prepSumber(row).label}</span></div>
+      <div class="text-center text-ink/30">—</div>
+      <div class="text-center text-ink/30">—</div>
+      <div><input type="date" value="${row.target_date||''}" onchange="prepUpdateTask('${row._key}','target_date', this.value||null)" class="w-full px-1.5 py-1 border border-ink/15 rounded-lg text-[11px]"></div>
+      <div class="text-center text-ink/30">—</div>
+      <div><select onchange="prepUpdateTask('${row._key}','status', this.value)" class="w-full text-[11px] font-semibold px-1.5 py-1 rounded-lg border-0 ${st.cls}">${statusOpts}</select></div>
+      <div class="text-right"><button onclick="prepDeleteRow('${row._key}','task')" class="text-ink/30 hover:text-terracotta text-sm">✕</button></div>
+    </div>`;
   }
+  const stock = row.source === 'inventory' ? prepInvStock(row.inventory_item_id) : null;
+  const manualStatusOpts = Object.keys(MANUAL_STATUS_META).map(k => `<option value="${k}" ${row.status===k?'selected':''}>${MANUAL_STATUS_META[k].label}</option>`).join('');
+  const picOpts = '<option value="">—</option>' + STAFF_LIST.map(s => `<option value="${s.id}" ${row.pic_id===s.id?'selected':''}>${prepEscHtml(s.full_name||'—')}</option>`).join('');
+  return `<div class="grid gap-2 items-center px-4 py-2.5 hover:bg-ink/[0.015]" style="grid-template-columns:28px 2fr 130px 90px 80px 110px 120px 150px 50px">
+    <div><input type="checkbox" ${checked?'checked':''} onchange="prepToggleCheck('${row._key}')" class="w-4 h-4"></div>
+    <div>
+      <select onchange="prepOnTypePicked('${row._key}', this.value)" class="w-full px-1.5 py-1 border border-ink/15 rounded-lg text-sm bg-white">${prepTypePickOpts(row)}</select>
+      ${row.source === 'manual' ? `<input type="text" placeholder="Nama barang" value="${prepEscHtml(row.item_name||'')}" onchange="prepUpdateItem('${row._key}','item_name', this.value)" class="w-full mt-1 px-1.5 py-1 border border-ink/15 rounded-lg text-sm">` : ''}
+    </div>
+    <div><span class="text-[10px] font-semibold px-2 py-1 rounded-full ${prepSumber(row).cls}">${prepSumber(row).label}</span></div>
+    <div class="text-center"><input type="number" min="0.01" step="0.01" value="${Number(row.qty_needed||1)}" onchange="prepUpdateItem('${row._key}','qty_needed', this.value)" class="w-16 text-center px-1 py-1 border border-ink/15 rounded-lg text-sm"></div>
+    <div class="text-center text-sm ${st.bucket==='notready'?'font-bold text-red-600':'text-ink/60'}">${row.source==='manual'?'—':(stock===null?'—':stock)}</div>
+    <div><input type="date" value="${row.deadline_date||''}" onchange="prepUpdateItem('${row._key}','deadline_date', this.value||null)" class="w-full px-1.5 py-1 border border-ink/15 rounded-lg text-[11px]"></div>
+    <div><select onchange="prepUpdateItem('${row._key}','pic_id', this.value||null)" class="w-full text-[11px] px-1.5 py-1 border border-ink/15 rounded-lg bg-white">${picOpts}</select></div>
+    <div>${row.source === 'manual'
+      ? `<select onchange="prepUpdateItem('${row._key}','status', this.value)" class="w-full text-[11px] font-semibold px-1.5 py-1 rounded-lg border-0 ${st.cls}">${manualStatusOpts}</select>`
+      : `<span class="text-[11px] font-semibold px-2 py-1 rounded-full ${st.cls}">${st.label}</span>`}</div>
+    <div class="text-right"><button onclick="prepDeleteRow('${row._key}','item')" class="text-ink/30 hover:text-terracotta text-sm">✕</button></div>
+  </div>`;
+}
+function prepTabHtml() {
+  const fc = prepFilterCounts();
+  const rows = prepFilteredRows();
+  return `
+    <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
+      <div>
+        <h2 class="text-sm font-bold text-ink">Senarai Persediaan Event</h2>
+        <p class="text-[11px] text-ink/40 mt-0.5">Senarai barang dan tugasan yang perlu disediakan sebelum acara bermula.</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="prepAddRow('item')" class="bg-navy text-white px-3 py-2 rounded-lg text-xs font-semibold hover:bg-navy-dark">+ Tambah Item</button>
+        <button onclick="prepAddRow('task')" class="border border-teal/30 text-teal px-3 py-2 rounded-lg text-xs font-semibold hover:bg-teal hover:text-white">+ Tambah Tugasan</button>
+        <button onclick="prepOpenSaveTemplateModal()" ${prepRows().length?'':'disabled'} class="border border-ink/15 text-ink/70 px-3 py-2 rounded-lg text-xs font-semibold hover:bg-ink/5 disabled:opacity-40 disabled:cursor-not-allowed">💾 Simpan Template</button>
+      </div>
+    </div>
+    <div class="flex items-center gap-2 flex-wrap mb-3 bg-cream/50 border border-ink/5 rounded-xl px-3 py-2">
+      <label class="flex items-center gap-1.5 text-[12px] font-semibold text-ink/70 cursor-pointer">
+        <input type="checkbox" id="prep-use-tpl" class="w-4 h-4 accent-navy" onchange="prepToggleTemplateUse(this.checked)"> Gunakan template persediaan
+      </label>
+      <select id="prep-tpl-select" disabled class="px-2 py-1.5 border border-ink/15 rounded-lg text-xs bg-white disabled:opacity-40">
+        <option value="">— Pilih template —</option>
+        ${TEMPLATES.map(t => `<option value="${t.id}">${prepEscHtml(t.name)} (${(TEMPLATE_ITEMS[t.id]||[]).length} barang)</option>`).join('')}
+      </select>
+      <button onclick="prepApplyTemplate()" class="bg-navy/90 text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-navy">Guna Template</button>
+      ${!TEMPLATES.length ? '<span class="text-[11px] text-ink/35">Tiada template lagi — simpan satu dulu.</span>' : ''}
+    </div>
+    <div class="flex items-center gap-2 flex-wrap mb-3">
+      ${prepChip('all', 'Semua', fc.all)}
+      ${prepChip('inv', 'Inventory ISW', fc.inv)}
+      ${prepChip('manual', 'Pembelian Event', fc.manual)}
+      ${prepChip('task', 'Persediaan', fc.task)}
+      ${prepChecked.size ? `<button onclick="prepBulkDelete()" class="ml-auto text-[11px] font-semibold text-terracotta border border-terracotta/30 px-3 py-1.5 rounded-lg hover:bg-terracotta hover:text-white">🗑 Padam ${prepChecked.size} dipilih</button>` : ''}
+    </div>
+    <div id="prep-tpl-save-modal" class="hidden fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <div class="absolute inset-0 bg-black/50" onclick="prepCloseSaveTemplateModal()"></div>
+      <div class="relative bg-white rounded-2xl max-w-md w-full">
+        <div class="p-5 border-b border-ink/10 flex items-center justify-between">
+          <h3 class="font-bold text-ink">Simpan Senarai Sebagai Template</h3>
+          <button onclick="prepCloseSaveTemplateModal()" class="text-ink/50 text-2xl leading-none hover:text-ink">×</button>
+        </div>
+        <div class="p-5 space-y-2">
+          <div><label class="text-[11px] text-ink/50">Nama Template *</label><input id="prep-tpl-name" type="text" placeholder="Cth: Webinar Standard" class="w-full px-2 py-1.5 border border-ink/15 rounded-lg text-sm"></div>
+          <div><label class="text-[11px] text-ink/50">Penerangan</label><input id="prep-tpl-desc" type="text" class="w-full px-2 py-1.5 border border-ink/15 rounded-lg text-sm"></div>
+          <p class="text-[11px] text-ink/40">Hanya barang (Inventory ISW / Pembelian Event) disalin — tugasan &amp; equipment tak termasuk.</p>
+        </div>
+        <div class="p-5 border-t border-ink/10 flex justify-end gap-2">
+          <button onclick="prepCloseSaveTemplateModal()" class="px-4 py-2 rounded-lg text-sm font-semibold text-ink/60 hover:bg-ink/5">Batal</button>
+          <button onclick="prepSubmitSaveTemplate()" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">Simpan</button>
+        </div>
+      </div>
+    </div>
+    <div class="bg-white rounded-2xl border border-ink/10 overflow-hidden">
+      <div class="px-4 py-2 border-b border-ink/5 grid gap-2 items-center text-[10px] font-bold text-ink/40 uppercase tracking-wider" style="grid-template-columns:28px 2fr 130px 90px 80px 110px 120px 150px 50px">
+        <span></span><span>Item / Tugasan</span><span>Sumber</span><span class="text-center">Perlu</span><span class="text-center">Stok</span><span>Tarikh Akhir</span><span>PIC</span><span>Status</span><span></span>
+      </div>
+      <div class="divide-y divide-ink/5">${rows.length ? rows.map(prepRowHtml).join('') : '<div class="px-5 py-12 text-center text-sm text-ink/35">Tiada rekod lagi — tekan "+ Tambah Item" atau "+ Tambah Tugasan"</div>'}</div>
+    </div>
+
+    <div class="flex items-center justify-end gap-2 mt-4">
+      ${PREP_META.submitted_at
+        ? `<span class="text-[11px] font-semibold text-green-dark bg-green/10 px-3 py-2 rounded-lg">✅ Disubmit ${fmtDateTime(PREP_META.submitted_at)}</span>
+           <button onclick="prepUnsubmit()" class="text-[11px] font-semibold text-ink/50 hover:text-terracotta px-1">Buka Semula</button>`
+        : `<button onclick="prepSubmit()" ${prepReturnableRows().length?'':'disabled'} class="bg-green text-white px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-green-dark disabled:opacity-40 disabled:cursor-not-allowed">✅ Submit Senarai Persediaan</button>`}
+    </div>`;
+}
+
+async function prepPersistItem(row) {
+  if (!row.source) return;
+  const payload = {
+    source: row.source, inventory_item_id: row.inventory_item_id || null, equipment_id: row.equipment_id || null,
+    item_name: row.item_name, category: row.category || null, unit: row.unit || null,
+    qty_needed: row.qty_needed, deadline_date: row.deadline_date || null, status: row.status || 'pending',
+    pic_id: row.pic_id || null,
+  };
+  if (row.id) {
+    await window.db.from('psy_event_prep_items').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', row.id);
+  } else if (row.source === 'inventory' || row.source === 'equipment' || row.item_name) {
+    const { data, error } = await window.db.from('psy_event_prep_items').insert({ event_id: EV.id, ...payload }).select().single();
+    if (!error) { row.id = data.id; row._key = data.id; }
+  }
+}
+async function prepPersistTask(row) {
+  const payload = { task: row.task, target_date: row.target_date || null, status: row.status || 'belum_mula' };
+  if (row.id) {
+    await window.db.from('psy_event_checklist_tasks').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', row.id);
+  } else if (row.task) {
+    const { data, error } = await window.db.from('psy_event_checklist_tasks').insert({ event_id: EV.id, ...payload }).select().single();
+    if (!error) { row.id = data.id; row._key = data.id; }
+  }
+}
+
+function prepAddRow(kind) {
+  if (kind === 'task') {
+    TASKS.push({ _key: prepUid(), id: null, task: '', target_date: null, status: 'belum_mula' });
+  } else {
+    PREP_ITEMS.push({ _key: prepUid(), id: null, source: null, inventory_item_id: null, equipment_id: null, item_name: '', category: null, unit: null, qty_needed: 1, deadline_date: null, status: 'pending', pic_id: null });
+  }
+  render();
+}
+window.prepAddRow = prepAddRow;
+
+async function prepOnTypePicked(key, value) {
+  const row = PREP_ITEMS.find(i => i._key === key);
+  if (!row) return;
+  if (!value) { row.source = null; row.inventory_item_id = null; row.equipment_id = null; row.item_name = ''; row.category = null; row.unit = null; }
+  else if (value === '__manual__') { row.source = 'manual'; row.inventory_item_id = null; row.equipment_id = null; row.item_name = ''; row.category = null; row.unit = null; row.status = row.status || 'pending'; }
+  else if (value.startsWith('eq:')) {
+    const eq = EQUIP_ITEMS.find(e => e.id === value.slice(3));
+    row.source = 'equipment'; row.inventory_item_id = null; row.equipment_id = eq?.id || null;
+    row.item_name = eq?.name || ''; row.category = eq?.category || null; row.unit = null;
+  } else {
+    const it = INV_ITEMS.find(i => i.id === value);
+    row.source = 'inventory'; row.inventory_item_id = value; row.equipment_id = null;
+    row.item_name = it?.name || ''; row.category = it?.category || null; row.unit = it?.unit || null;
+  }
+  await prepPersistItem(row);
+  render();
+}
+window.prepOnTypePicked = prepOnTypePicked;
+
+async function prepUpdateItem(key, field, value) {
+  const row = PREP_ITEMS.find(i => i._key === key);
+  if (!row) return;
+  row[field] = value;
+  await prepPersistItem(row);
+  render();
+}
+window.prepUpdateItem = prepUpdateItem;
+
+async function prepUpdateTask(key, field, value) {
+  const row = TASKS.find(t => t._key === key);
+  if (!row) return;
+  row[field] = value;
+  await prepPersistTask(row);
+  render();
+}
+window.prepUpdateTask = prepUpdateTask;
+
+async function prepOnTaskPicked(key, value) {
+  const row = TASKS.find(t => t._key === key);
+  if (!row) return;
+  row._customMode = value === '__custom__';
+  row.task = row._customMode ? '' : value;
+  await prepPersistTask(row);
+  render();
+}
+window.prepOnTaskPicked = prepOnTaskPicked;
+
+async function prepDeleteRow(key, kind) {
+  if (!confirm('Padam rekod ni?')) return;
+  if (kind === 'task') {
+    const row = TASKS.find(t => t._key === key);
+    if (row?.id) { const { error } = await window.db.from('psy_event_checklist_tasks').delete().eq('id', row.id); if (error) { banner('Ralat: ' + error.message, 'error'); return; } }
+    TASKS = TASKS.filter(t => t._key !== key);
+  } else {
+    const row = PREP_ITEMS.find(i => i._key === key);
+    if (row?.id) { const { error } = await window.db.from('psy_event_prep_items').delete().eq('id', row.id); if (error) { banner('Ralat: ' + error.message, 'error'); return; } }
+    PREP_ITEMS = PREP_ITEMS.filter(i => i._key !== key);
+  }
+  prepChecked.delete(key);
+  render();
+}
+window.prepDeleteRow = prepDeleteRow;
+
+function prepToggleCheck(key) {
+  if (prepChecked.has(key)) prepChecked.delete(key); else prepChecked.add(key);
+  render();
+}
+window.prepToggleCheck = prepToggleCheck;
+
+async function prepBulkDelete() {
+  if (!confirm(`Padam ${prepChecked.size} rekod dipilih?`)) return;
+  const keys = [...prepChecked];
+  for (const key of keys) {
+    const taskRow = TASKS.find(t => t._key === key);
+    if (taskRow) {
+      if (taskRow.id) await window.db.from('psy_event_checklist_tasks').delete().eq('id', taskRow.id);
+      TASKS = TASKS.filter(t => t._key !== key);
+      continue;
+    }
+    const itemRow = PREP_ITEMS.find(i => i._key === key);
+    if (itemRow) {
+      if (itemRow.id) await window.db.from('psy_event_prep_items').delete().eq('id', itemRow.id);
+      PREP_ITEMS = PREP_ITEMS.filter(i => i._key !== key);
+    }
+  }
+  prepChecked.clear();
+  render();
+}
+window.prepBulkDelete = prepBulkDelete;
+
+function prepSetFilter(f) { prepFilter = f; render(); }
+window.prepSetFilter = prepSetFilter;
+
+// ── Template Persediaan ──────────────────────────────────────────
+function prepToggleTemplateUse(checked) {
+  document.getElementById('prep-tpl-select').disabled = !checked;
+  if (!checked) document.getElementById('prep-tpl-select').value = '';
+}
+window.prepToggleTemplateUse = prepToggleTemplateUse;
+
+async function prepApplyTemplate() {
+  const templateId = document.getElementById('prep-tpl-select').value;
+  if (!templateId) { banner('Sila pilih template dulu', 'error'); return; }
+  const tItems = TEMPLATE_ITEMS[templateId] || [];
+  if (!tItems.length) { banner('Template ini tiada barang', 'error'); return; }
+  if (!confirm(`Import ${tItems.length} barang dari template ini ke senarai sekarang?`)) return;
+  for (const it of tItems) {
+    const payload = {
+      event_id: EV.id, source: it.source, inventory_item_id: it.inventory_item_id,
+      item_name: it.item_name, category: it.category, unit: it.unit, qty_needed: it.qty_needed, status: 'pending',
+    };
+    const { data, error } = await window.db.from('psy_event_prep_items').insert(payload).select().single();
+    if (!error) PREP_ITEMS.push({ ...data, _key: data.id });
+  }
+  await window.db.from('psy_event_prep_meta').upsert({ event_id: EV.id, template_id: templateId, notes: PREP_META.notes, deadline_date: PREP_META.deadline_date, updated_at: new Date().toISOString() }, { onConflict: 'event_id' });
+  PREP_META.template_id = templateId;
+  banner(`${tItems.length} barang diimport dari template ✓`, 'ok');
+  render();
+}
+window.prepApplyTemplate = prepApplyTemplate;
+
+function prepOpenSaveTemplateModal() {
+  document.getElementById('prep-tpl-name').value = '';
+  document.getElementById('prep-tpl-desc').value = '';
+  document.getElementById('prep-tpl-save-modal').classList.remove('hidden');
+}
+window.prepOpenSaveTemplateModal = prepOpenSaveTemplateModal;
+function prepCloseSaveTemplateModal() { document.getElementById('prep-tpl-save-modal').classList.add('hidden'); }
+window.prepCloseSaveTemplateModal = prepCloseSaveTemplateModal;
+
+async function prepSubmitSaveTemplate() {
+  const name = document.getElementById('prep-tpl-name').value.trim();
+  if (!name) { banner('Sila isi nama template', 'error'); return; }
+  const { data: tpl, error } = await window.db.from('psy_event_prep_templates')
+    .insert({ name, description: document.getElementById('prep-tpl-desc').value.trim() || null, created_by: window.currentUser?.id || null }).select().single();
+  if (error) { banner('Ralat simpan: ' + error.message, 'error'); return; }
+  const srcItems = PREP_ITEMS.filter(it => it.source === 'inventory' || it.source === 'manual');
+  const rows = srcItems.map(it => ({
+    template_id: tpl.id, source: it.source, inventory_item_id: it.inventory_item_id,
+    item_name: it.item_name, category: it.category, unit: it.unit, qty_needed: it.qty_needed,
+  }));
+  if (rows.length) await window.db.from('psy_event_prep_template_items').insert(rows);
+  TEMPLATES.unshift(tpl);
+  TEMPLATE_ITEMS[tpl.id] = rows;
+  prepCloseSaveTemplateModal();
+  banner('Template disimpan ✓', 'ok');
+  render();
+}
+window.prepSubmitSaveTemplate = prepSubmitSaveTemplate;
+
+async function prepSaveDeadline(val) {
+  PREP_META.deadline_date = val || null;
+  await window.db.from('psy_event_prep_meta').upsert({ event_id: EV.id, deadline_date: PREP_META.deadline_date, notes: PREP_META.notes, updated_at: new Date().toISOString() }, { onConflict: 'event_id' });
+  render();
+}
+window.prepSaveDeadline = prepSaveDeadline;
+
+async function prepSubmit() {
+  if (!confirm('Submit senarai persediaan? Tab "Pemulangan Barang" akan dibuka selepas ni.')) return;
+  const nowIso = new Date().toISOString();
+  const { error } = await window.db.from('psy_event_prep_meta').upsert({ event_id: EV.id, submitted_at: nowIso, notes: PREP_META.notes, deadline_date: PREP_META.deadline_date, updated_at: nowIso }, { onConflict: 'event_id' });
+  if (error) { banner('Ralat submit: ' + error.message, 'error'); return; }
+  PREP_META.submitted_at = nowIso;
+  banner('Senarai persediaan disubmit ✓', 'ok');
+  render();
+}
+window.prepSubmit = prepSubmit;
+
+async function prepUnsubmit() {
+  if (!confirm('Buka semula senarai persediaan? Tab "Pemulangan Barang" akan disorok semula.')) return;
+  const { error } = await window.db.from('psy_event_prep_meta').update({ submitted_at: null, updated_at: new Date().toISOString() }).eq('event_id', EV.id);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  PREP_META.submitted_at = null;
+  if (TAB === 'pemulangan') TAB = 'persediaan';
+  banner('Senarai persediaan dibuka semula', 'ok');
+  render();
+}
+window.prepUnsubmit = prepUnsubmit;
+
+function prepEditNotes() {
+  const val = prompt('Nota Persediaan (satu baris = satu nota):', PREP_META.notes || '');
+  if (val === null) return;
+  PREP_META.notes = val;
+  window.db.from('psy_event_prep_meta').upsert({ event_id: EV.id, notes: val, deadline_date: PREP_META.deadline_date, updated_at: new Date().toISOString() }, { onConflict: 'event_id' }).then(() => render());
+}
+window.prepEditNotes = prepEditNotes;
+
+function prepSidebarHtml() {
+  const s = prepStats();
+  return `
+    <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+      <h3 class="font-bold text-ink mb-3 text-sm">Status Persediaan</h3>
+      <div class="flex items-center gap-4">
+        <div class="relative w-20 h-20 rounded-full flex items-center justify-center flex-shrink-0" style="background:conic-gradient(#16a34a ${s.pct}%, #e5e7eb ${s.pct}% 100%)">
+          <div class="w-14 h-14 rounded-full bg-white flex items-center justify-center text-base font-extrabold text-ink">${s.pct}%</div>
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="text-xs text-ink/50 mb-1.5">${s.ready} / ${s.total} item selesai</div>
+          <div class="space-y-1 text-[12px]">
+            <div class="flex items-center justify-between"><span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-green-600"></span>Selesai</span><span class="font-semibold">${s.ready}</span></div>
+            <div class="flex items-center justify-between"><span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-amber-500"></span>Dalam Proses</span><span class="font-semibold">${s.progress}</span></div>
+            <div class="flex items-center justify-between"><span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-ink/20"></span>Belum Mula</span><span class="font-semibold">${s.pending}</span></div>
+            <div class="flex items-center justify-between"><span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-red-500"></span>Tidak Cukup</span><span class="font-semibold">${s.notready}</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+      <h3 class="font-bold text-ink mb-3 text-sm">Tarikh Penting</h3>
+      <div class="space-y-2.5 text-[12px]">
+        <div class="flex items-center gap-2"><span>📅</span><div><div class="text-ink/45">Tarikh Acara</div><div class="font-semibold text-ink">${fmtDateTime(EV.start_at)}</div></div></div>
+        <div class="flex items-center gap-2">
+          <span>⏰</span>
+          <div class="flex-1"><div class="text-ink/45">Tarikh Akhir Persediaan</div>
+            <input type="date" value="${PREP_META.deadline_date||''}" onchange="prepSaveDeadline(this.value)" class="font-semibold text-ink border border-ink/15 rounded-lg px-2 py-1 text-[12px] mt-0.5">
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+      <h3 class="font-bold text-ink mb-2 text-sm">Template Digunakan</h3>
+      ${PREP_META.template_id && TEMPLATES.find(t=>t.id===PREP_META.template_id)
+        ? `<div class="text-[12px] text-ink/70 font-semibold">${prepEscHtml(TEMPLATES.find(t=>t.id===PREP_META.template_id).name)}</div>`
+        : '<div class="text-[12px] text-ink/35">Tiada template digunakan lagi.</div>'}
+    </div>
+    <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+      <div class="flex items-center justify-between mb-2"><h3 class="font-bold text-ink text-sm">Nota Persediaan</h3><button onclick="prepEditNotes()" class="text-[11px] font-semibold text-navy hover:underline">Edit</button></div>
+      <div class="text-[12px] text-ink/60 space-y-1">${(PREP_META.notes||'').split('\n').map(l=>l.trim()).filter(Boolean).map(l=>`<div class="flex gap-1.5"><span>•</span><span>${prepEscHtml(l)}</span></div>`).join('') || '<div class="text-ink/35">Tiada nota lagi.</div>'}</div>
+    </div>
+    ${PREP_META.submitted_at ? `<button onclick="setTab('pemulangan')" class="block w-full border border-ink/15 text-ink/70 font-semibold py-2.5 rounded-xl text-sm text-center hover:bg-ink/5">↩ Pemulangan Barang</button>` : ''}`;
+}
+
+// ── Peserta & Kehadiran (tab gabungan) ─────────────────────────
+function pkRegStatus(r) {
+  return r.status === 'batal' ? { label: 'Batal', cls: 'bg-terracotta/10 text-terracotta' } : { label: 'Berdaftar', cls: 'bg-green/10 text-green-dark' };
+}
+function pkAttStatus(r) {
+  if (r.status === 'batal') return { label: '—', cls: 'text-ink/30' };
+  if (r.status === 'hadir') return { label: 'Hadir', cls: 'bg-green/10 text-green-dark' };
+  if (r.status === 'tak_hadir') return { label: 'Tidak Hadir', cls: 'bg-terracotta/10 text-terracotta' };
+  return { label: 'Belum Direkodkan', cls: 'bg-amber-100 text-amber-700' };
+}
+function pkSumber(r) { return r.source === 'manual' ? 'Staf Manual' : r.source === 'portal' ? 'Portal Patient' : '—'; }
+
+function pkFilteredRows() {
+  const q = pkSearch.toLowerCase().trim();
+  return REGS.filter(r => {
+    const p = r.psy_patients || {};
+    if (pkStatusFilter === 'berdaftar' && r.status === 'batal') return false;
+    if (pkStatusFilter === 'batal' && r.status !== 'batal') return false;
+    if (pkAttFilter && pkAttFilter !== (r.status === 'batal' ? '' : r.status === 'hadir' ? 'hadir' : r.status === 'tak_hadir' ? 'tak_hadir' : 'belum')) return false;
+    if (q && !`${p.full_name||''} ${p.mrn||''} ${p.phone||''}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+function pkStats() {
+  const total = REGS.length;
+  const batal = REGS.filter(r => r.status === 'batal').length;
+  const berdaftar = total - batal;
+  const hadir = REGS.filter(r => r.status === 'hadir').length;
+  const belum = REGS.filter(r => r.status !== 'batal' && r.status !== 'hadir' && r.status !== 'tak_hadir').length;
+  const capacity = EV.capacity || null;
+  return {
+    total, batal, berdaftar, hadir, belum,
+    berdaftarPct: capacity ? Math.round(berdaftar / capacity * 100) : null,
+    hadirPct: berdaftar ? Math.round(hadir / berdaftar * 100) : 0,
+  };
+}
+
+function pkChip(label, val, sub, tone, kind, active, handler) {
+  const clickable = !!kind;
+  const tag = clickable ? 'button' : 'div';
+  const onclick = clickable ? ` onclick="${handler||'pkToggleChip'}('${kind}')"` : '';
+  const activeCls = active ? 'border-navy ring-2 ring-navy/15' : 'border-ink/8 hover:border-ink/20';
+  return `<${tag} type="${clickable?'button':''}"${onclick} class="bg-white rounded-2xl border ${activeCls} shadow-sm px-4 py-3 flex-1 min-w-[120px] text-left ${clickable?'cursor-pointer transition-colors':''}">
+    <div class="text-xl font-extrabold ${tone||'text-ink'}">${val}${sub?` <span class="text-[11px] font-semibold text-ink/40">${sub}</span>`:''}</div>
+    <div class="text-[11px] text-ink/50 mt-0.5">${label}</div>
+  </${tag}>`;
+}
+function pkToggleChip(kind) {
+  if (kind === 'berdaftar') { pkStatusFilter = pkStatusFilter === 'berdaftar' ? '' : 'berdaftar'; pkAttFilter = ''; }
+  else if (kind === 'batal') { pkStatusFilter = pkStatusFilter === 'batal' ? '' : 'batal'; pkAttFilter = ''; }
+  else if (kind === 'hadir') { pkAttFilter = pkAttFilter === 'hadir' ? '' : 'hadir'; pkStatusFilter = ''; }
+  else if (kind === 'belum') { pkAttFilter = pkAttFilter === 'belum' ? '' : 'belum'; pkStatusFilter = ''; }
+  pkPage = 1;
+  render();
+}
+window.pkToggleChip = pkToggleChip;
+
+function pkTabHtml() {
+  const s = pkStats();
+  const filtered = pkFilteredRows();
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PK_PAGE_SIZE));
+  if (pkPage > totalPages) pkPage = totalPages;
+  const pageRows = filtered.slice((pkPage-1)*PK_PAGE_SIZE, pkPage*PK_PAGE_SIZE);
+
+  return `
+    <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
+      <div>
+        <h2 class="text-sm font-bold text-ink">Senarai Peserta &amp; Kehadiran</h2>
+        <p class="text-[11px] text-ink/40 mt-0.5">Senarai peserta yang mendaftar untuk acara ini dan rekod kehadiran pada hari acara.</p>
+      </div>
+      <button onclick="pkOpenAddModal()" data-rbac="events.edit" class="bg-navy text-white px-3 py-2 rounded-lg text-xs font-semibold hover:bg-navy-dark">+ Tambah Peserta</button>
+    </div>
+    <div class="flex gap-3 flex-wrap mb-3">
+      ${pkChip('Kapasiti', EV.capacity || '∞')}
+      ${pkChip('Berdaftar', s.berdaftar, s.berdaftarPct!==null?`(${s.berdaftarPct}%)`:'', 'text-navy', 'berdaftar', pkStatusFilter==='berdaftar')}
+      ${pkChip('Hadir', s.hadir, `(${s.hadirPct}%)`, 'text-green-dark', 'hadir', pkAttFilter==='hadir')}
+      ${pkChip('Belum Direkodkan', s.belum, '', 'text-amber-600', 'belum', pkAttFilter==='belum')}
+      ${pkChip('Batal', s.batal, '', 'text-terracotta', 'batal', pkStatusFilter==='batal')}
+    </div>
+    <div class="flex items-center gap-2 flex-wrap mb-3">
+      <input type="text" value="${prepEscHtml(pkSearch)}" oninput="pkOnSearch(this.value)" placeholder="Cari nama, ID pesakit atau no. telefon..." class="flex-1 min-w-[180px] px-3 py-2 border border-ink/15 rounded-lg text-sm">
+      <select onchange="pkOnStatusFilter(this.value)" class="px-2.5 py-2 border border-ink/15 rounded-lg text-sm bg-white">
+        <option value="" ${pkStatusFilter===''?'selected':''}>Semua Status Pendaftaran</option>
+        <option value="berdaftar" ${pkStatusFilter==='berdaftar'?'selected':''}>Berdaftar</option>
+        <option value="batal" ${pkStatusFilter==='batal'?'selected':''}>Batal</option>
+      </select>
+      <select onchange="pkOnAttFilter(this.value)" class="px-2.5 py-2 border border-ink/15 rounded-lg text-sm bg-white">
+        <option value="" ${pkAttFilter===''?'selected':''}>Semua Status Kehadiran</option>
+        <option value="hadir" ${pkAttFilter==='hadir'?'selected':''}>Hadir</option>
+        <option value="tak_hadir" ${pkAttFilter==='tak_hadir'?'selected':''}>Tidak Hadir</option>
+        <option value="belum" ${pkAttFilter==='belum'?'selected':''}>Belum Direkodkan</option>
+      </select>
+    </div>
+    <div class="bg-white rounded-2xl border border-ink/10 overflow-hidden">
+      <div class="px-4 py-2 border-b border-ink/5 grid gap-2 items-center text-[10px] font-bold text-ink/40 uppercase tracking-wider" style="grid-template-columns:2fr 100px 110px 90px 110px 130px 110px 70px">
+        <span>Nama Peserta</span><span>ID Pesakit</span><span>No. Telefon</span><span>Tarikh Daftar</span><span>Status Pendaftaran</span><span>Status Kehadiran</span><span>Sumber</span><span></span>
+      </div>
+      <div class="divide-y divide-ink/5">${pageRows.length ? pageRows.map(r => {
+        const p = r.psy_patients || {};
+        const rs = pkRegStatus(r), as = pkAttStatus(r);
+        return `<div class="grid gap-2 items-center px-4 py-2.5 hover:bg-ink/[0.015]" style="grid-template-columns:2fr 100px 110px 90px 110px 130px 110px 70px">
+          <div class="flex items-center gap-2.5 min-w-0">
+            <div class="w-8 h-8 rounded-full bg-navy/10 text-navy flex items-center justify-center font-bold text-[11px] flex-shrink-0">${(p.full_name||'?').slice(0,2).toUpperCase()}</div>
+            <div class="text-sm font-semibold text-ink truncate">${prepEscHtml(p.full_name||'Pesakit')}</div>
+          </div>
+          <div class="text-xs text-ink/60">${prepEscHtml(p.mrn||'—')}</div>
+          <div class="text-xs text-ink/60">${prepEscHtml(p.phone||'—')}</div>
+          <div class="text-xs text-ink/50">${new Date(r.registered_at).toLocaleDateString(LCALE(),{day:'2-digit',month:'short'})}</div>
+          <div><span class="text-[11px] font-semibold px-2 py-1 rounded-full ${rs.cls}">${rs.label}</span></div>
+          <div>${r.status === 'batal' ? `<span class="text-[11px] ${as.cls}">${as.label}</span>` : `
+            <select onchange="mark('${r.id}', this.value==='belum'?'registered':this.value)" class="text-[11px] font-semibold px-1.5 py-1 rounded-lg border-0 ${as.cls}">
+              <option value="belum" ${r.status!=='hadir'&&r.status!=='tak_hadir'?'selected':''}>Belum Direkodkan</option>
+              <option value="hadir" ${r.status==='hadir'?'selected':''}>Hadir</option>
+              <option value="tak_hadir" ${r.status==='tak_hadir'?'selected':''}>Tidak Hadir</option>
+            </select>`}</div>
+          <div class="text-xs text-ink/45">${pkSumber(r)}</div>
+          <div class="text-right">${r.status !== 'batal' ? `<button onclick="pkCancelReg('${r.id}')" data-rbac="events.edit" class="text-ink/30 hover:text-terracotta text-sm" title="Batalkan pendaftaran">✕</button>` : ''}</div>
+        </div>`;
+      }).join('') : '<div class="px-5 py-12 text-center text-sm text-ink/35">Tiada peserta ditemui.</div>'}</div>
+      ${filtered.length ? `<div class="flex items-center justify-between px-4 py-3 border-t border-ink/5 text-[12px] text-ink/50">
+        <span>${(pkPage-1)*PK_PAGE_SIZE+1}-${Math.min(pkPage*PK_PAGE_SIZE, filtered.length)} dari ${filtered.length}</span>
+        <div class="flex items-center gap-1.5">
+          <button onclick="pkGoPage(${pkPage-1})" ${pkPage<=1?'disabled':''} class="px-2.5 py-1 border border-ink/15 rounded-lg disabled:opacity-30">‹</button>
+          <span class="px-2">${pkPage} / ${totalPages}</span>
+          <button onclick="pkGoPage(${pkPage+1})" ${pkPage>=totalPages?'disabled':''} class="px-2.5 py-1 border border-ink/15 rounded-lg disabled:opacity-30">›</button>
+        </div>
+      </div>` : ''}
+    </div>
+
+    <div id="pk-add-modal" class="hidden fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <div class="absolute inset-0 bg-black/50" onclick="pkCloseAddModal()"></div>
+      <div class="relative bg-white rounded-2xl max-w-md w-full max-h-[80vh] flex flex-col">
+        <div class="p-5 border-b border-ink/10 flex items-center justify-between">
+          <h3 class="font-bold text-ink">Tambah Peserta</h3>
+          <button onclick="pkCloseAddModal()" class="text-ink/50 text-2xl leading-none hover:text-ink">×</button>
+        </div>
+        <div class="p-4">
+          <input id="pk-patient-search" type="text" placeholder="Cari nama, MRN atau telefon pesakit..." oninput="pkRenderPatientPicker()" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm">
+        </div>
+        <div id="pk-patient-list" class="flex-1 overflow-y-auto px-4 pb-4 space-y-1"></div>
+      </div>
+    </div>`;
+}
+
+// ── Pemulangan Barang ───────────────────────────────────────────
+const RETURN_CONDITION_META = {
+  baik:   { label: '✅ Baik',   cls: 'bg-green-100 text-green-700' },
+  rosak:  { label: '🔴 Rosak',  cls: 'bg-red-100 text-red-600' },
+  hilang: { label: '⚫ Hilang', cls: 'bg-ink/10 text-ink/60' },
+};
+function prepReturnableRows() {
+  return PREP_ITEMS.filter(it => it.source === 'inventory' || it.source === 'equipment' || it.source === 'manual');
+}
+function retFor(prepItemId) { return ITEM_RETURNS.find(r => r.prep_item_id === prepItemId) || null; }
+function retStaffName(id) { return STAFF_LIST.find(s => s.id === id)?.full_name || '—'; }
+function retBucket(it) {
+  const r = retFor(it.id);
+  if (!r || !r.returned_at) return 'notReturned';
+  if (r.condition === 'rosak' || r.condition === 'hilang') return 'lostDamaged';
+  return 'returned';
+}
+function retStats() {
+  const rows = prepReturnableRows();
+  const total = rows.length;
+  let returned = 0, notReturned = 0, lostDamaged = 0;
+  rows.forEach(it => {
+    const b = retBucket(it);
+    if (b === 'returned') returned++; else if (b === 'notReturned') notReturned++; else lostDamaged++;
+  });
+  return { total, returned, notReturned, lostDamaged };
+}
+function retFilteredRows() {
+  const rows = prepReturnableRows();
+  if (retFilter === 'all') return rows;
+  return rows.filter(it => retBucket(it) === retFilter);
+}
+function retToggleChip(kind) { retFilter = retFilter === kind ? 'all' : kind; render(); }
+window.retToggleChip = retToggleChip;
+
+function returnsTabHtml() {
+  const allRows = prepReturnableRows();
+  const rows = retFilteredRows();
+  const s = retStats();
+  const itemOpts = '<option value="">— Pilih barang —</option>' + allRows.map(it => `<option value="${it.id}">${prepEscHtml(it.item_name)}</option>`).join('');
+  const picOpts = '<option value="">— Tiada —</option>' + STAFF_LIST.map(st => `<option value="${st.id}">${prepEscHtml(st.full_name||'—')}</option>`).join('');
+
+  return `
+    <div class="mb-3">
+      <h2 class="text-sm font-bold text-ink">Status Pemulangan Barang</h2>
+      <p class="text-[11px] text-ink/40 mt-0.5">Rekod barang yang dipulangkan selepas event selesai.</p>
+    </div>
+    <div class="flex gap-3 flex-wrap mb-4">
+      ${pkChip('Jumlah Item', s.total, '', 'text-ink', 'all', retFilter==='all', 'retToggleChip')}
+      ${pkChip('Dipulangkan', s.returned, '', 'text-green-dark', 'returned', retFilter==='returned', 'retToggleChip')}
+      ${pkChip('Belum Dipulangkan', s.notReturned, '', 'text-amber-600', 'notReturned', retFilter==='notReturned', 'retToggleChip')}
+      ${pkChip('Rosak / Hilang', s.lostDamaged, '', 'text-terracotta', 'lostDamaged', retFilter==='lostDamaged', 'retToggleChip')}
+    </div>
+    <div class="mb-3">
+      <h3 class="text-sm font-bold text-ink">Senarai Pemulangan Barang</h3>
+      <p class="text-[11px] text-ink/40 mt-0.5">Bandingkan senarai barang yang disediakan dengan status pemulangan.</p>
+    </div>
+    <div class="bg-white rounded-2xl border border-ink/10 overflow-hidden mb-5">
+      <div class="px-4 py-2 border-b border-ink/5 grid gap-2 items-center text-[10px] font-bold text-ink/40 uppercase tracking-wider" style="grid-template-columns:2fr 1fr 90px 110px 100px 140px 110px 50px">
+        <span>Item</span><span>Kategori</span><span class="text-center">Dipinjam</span><span class="text-center">Dipulangkan</span><span>Keadaan</span><span>Tarikh Pulang</span><span>PIC</span><span></span>
+      </div>
+      <div class="divide-y divide-ink/5">${rows.length ? rows.map(it => {
+        const r = retFor(it.id);
+        const cond = r?.condition ? RETURN_CONDITION_META[r.condition] : null;
+        return `<div class="grid gap-2 items-center px-4 py-2.5 hover:bg-ink/[0.015]" style="grid-template-columns:2fr 1fr 90px 110px 100px 140px 110px 50px">
+          <div class="text-sm font-semibold text-ink truncate">${prepEscHtml(it.item_name)}</div>
+          <div class="text-xs text-ink/60 truncate">${prepEscHtml(it.category||'—')}</div>
+          <div class="text-center text-sm text-ink/70">${Number(it.qty_needed)} ${prepEscHtml(it.unit||'')}</div>
+          <div class="text-center text-sm ${r&&Number(r.qty_returned)<Number(it.qty_needed)?'font-bold text-amber-600':'text-ink/70'}">${r&&r.returned_at ? Number(r.qty_returned) : '—'}</div>
+          <div>${cond ? `<span class="text-[11px] font-semibold px-2 py-1 rounded-full ${cond.cls}">${cond.label}</span>` : '<span class="text-ink/30 text-xs">—</span>'}</div>
+          <div class="text-xs text-ink/50">${r&&r.returned_at ? fmtDateTime(r.returned_at) : '—'}</div>
+          <div class="text-xs text-ink/60">${r&&r.pic_id ? prepEscHtml(retStaffName(r.pic_id)) : '—'}</div>
+          <div class="text-right"><button onclick="retPrefillForm('${it.id}')" class="text-ink/30 hover:text-navy text-sm" title="Rekod pemulangan">✏️</button></div>
+        </div>`;
+      }).join('') : `<div class="px-5 py-12 text-center text-sm text-ink/35">${allRows.length ? 'Tiada barang sepadan dengan filter ni.' : 'Tiada barang fizikal dalam senarai Persediaan Event.'}</div>`}</div>
+    </div>
+
+    <div class="bg-white rounded-2xl border border-ink/10 p-5">
+      <h3 class="text-sm font-bold text-ink mb-1">↩ Rekod Pemulangan Barang</h3>
+      <p class="text-[11px] text-ink/40 mb-3">Isi maklumat pemulangan barang selepas event selesai.</p>
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-2.5 items-end">
+        <div><label class="text-[11px] text-ink/50">Pilih Barang *</label><select id="ret-item" class="w-full px-2 py-2 border border-ink/15 rounded-lg text-sm bg-white">${itemOpts}</select></div>
+        <div><label class="text-[11px] text-ink/50">Kuantiti Dipulangkan *</label><input id="ret-qty" type="number" min="0" step="0.01" value="0" class="w-full px-2 py-2 border border-ink/15 rounded-lg text-sm"></div>
+        <div><label class="text-[11px] text-ink/50">Keadaan Barang *</label><select id="ret-condition" class="w-full px-2 py-2 border border-ink/15 rounded-lg text-sm bg-white"><option value="">— Pilih —</option><option value="baik">Baik</option><option value="rosak">Rosak</option><option value="hilang">Hilang</option></select></div>
+        <div><label class="text-[11px] text-ink/50">Tarikh Pulang *</label><input id="ret-date" type="date" value="${new Date().toISOString().slice(0,10)}" class="w-full px-2 py-2 border border-ink/15 rounded-lg text-sm"></div>
+        <div><label class="text-[11px] text-ink/50">PIC</label><select id="ret-pic" class="w-full px-2 py-2 border border-ink/15 rounded-lg text-sm bg-white">${picOpts}</select></div>
+      </div>
+      <div class="flex justify-end mt-3">
+        <button onclick="retSubmit()" class="bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-navy-dark">+ Tambah Rekod</button>
+      </div>
+    </div>`;
+}
+
+function retPrefillForm(prepItemId) {
+  setTimeout(() => {
+    const r = retFor(prepItemId);
+    document.getElementById('ret-item').value = prepItemId;
+    document.getElementById('ret-qty').value = r ? Number(r.qty_returned) : 0;
+    document.getElementById('ret-condition').value = r?.condition || '';
+    document.getElementById('ret-date').value = r?.returned_at ? r.returned_at.slice(0,10) : new Date().toISOString().slice(0,10);
+    document.getElementById('ret-pic').value = r?.pic_id || '';
+    document.getElementById('ret-item').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 0);
+}
+window.retPrefillForm = retPrefillForm;
+
+async function retSubmit() {
+  const prepItemId = document.getElementById('ret-item').value;
+  if (!prepItemId) { banner('Sila pilih barang', 'error'); return; }
+  const item = PREP_ITEMS.find(i => i.id === prepItemId);
+  const qtyReturned = Number(document.getElementById('ret-qty').value) || 0;
+  const condition = document.getElementById('ret-condition').value;
+  if (!condition) { banner('Sila pilih keadaan barang', 'error'); return; }
+  const dateVal = document.getElementById('ret-date').value;
+  const picId = document.getElementById('ret-pic').value || null;
+  const existing = retFor(prepItemId);
+
+  const payload = {
+    event_id: EV.id, prep_item_id: prepItemId, qty_borrowed: Number(item.qty_needed),
+    qty_returned: qtyReturned, condition, returned_at: dateVal ? new Date(dateVal).toISOString() : new Date().toISOString(),
+    pic_id: picId, updated_at: new Date().toISOString(),
+  };
+  const { data, error } = await window.db.from('psy_event_item_returns').upsert(payload, { onConflict: 'prep_item_id' }).select().single();
+  if (error) { banner('Ralat simpan: ' + error.message, 'error'); return; }
+  ITEM_RETURNS = ITEM_RETURNS.filter(r => r.prep_item_id !== prepItemId);
+  ITEM_RETURNS.push(data);
+
+  // Baik → pulangkan stok/status; rosak/hilang (equipment) → tandakan rosak/hilang.
+  try {
+    if (condition === 'baik' && qtyReturned > 0) {
+      if (item.source === 'inventory' && item.inventory_item_id) {
+        await window.addStockToLocation(item.inventory_item_id, qtyReturned, null, { type: 'in', refType: 'event_return', refId: data.id, refLabel: 'EVT-' + EV.id.slice(0,8), note: `Pemulangan dari acara: ${EV.title}` });
+      } else if (item.source === 'equipment' && item.equipment_id) {
+        await window.db.from('psy_equipment').update({ status: 'available' }).eq('id', item.equipment_id);
+      }
+    } else if (item.source === 'equipment' && item.equipment_id && (condition === 'rosak' || condition === 'hilang')) {
+      await window.db.from('psy_equipment').update({ status: condition === 'rosak' ? 'damaged' : 'lost' }).eq('id', item.equipment_id);
+      const eq = EQUIP_ITEMS.find(e => e.id === item.equipment_id); if (eq) eq.status = condition === 'rosak' ? 'damaged' : 'lost';
+    }
+  } catch (e) { console.warn('[Pemulangan] gagal kemaskini stok/status:', e); }
+
+  banner('Rekod pemulangan disimpan ✓', 'ok');
+  render();
+}
+window.retSubmit = retSubmit;
+
+function returnsSidebarHtml() {
+  return `
+    <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+      <h3 class="font-bold text-ink mb-3 text-sm">Maklumat Event</h3>
+      <div class="space-y-2.5 text-[12px]">
+        <div class="flex items-center gap-2"><span>📅</span><div><div class="text-ink/45">Tarikh Acara</div><div class="font-semibold text-ink">${new Date(EV.start_at).toLocaleDateString(LCALE(),{day:'2-digit',month:'long',year:'numeric'})}</div></div></div>
+        <div class="flex items-center gap-2"><span>🕒</span><div><div class="text-ink/45">Masa</div><div class="font-semibold text-ink">${timeRange()}</div></div></div>
+        <div class="flex items-center gap-2"><span>📍</span><div><div class="text-ink/45">Lokasi</div><div class="font-semibold text-ink">${EV.mode==='f2f'?(EV.location||'—'):'Online'}</div></div></div>
+        <div class="flex items-center gap-2"><span>●</span><div><div class="text-ink/45">Status</div><div class="font-semibold ${statusDisp().c}">${statusDisp().l}</div></div></div>
+      </div>
+    </div>
+    <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+      <h3 class="font-bold text-ink mb-3 text-sm">Tindakan Pantas</h3>
+      <div class="space-y-2">
+        <button onclick="document.getElementById('ret-item').scrollIntoView({behavior:'smooth',block:'center'})" class="w-full bg-navy text-white font-semibold py-2.5 rounded-xl text-sm hover:bg-navy-dark">+ Rekod Pemulangan Barang</button>
+        <button onclick="setTab('persediaan')" class="w-full border border-ink/15 text-ink/70 font-semibold py-2.5 rounded-xl text-sm hover:bg-ink/5">🧰 Lihat Persediaan Event</button>
+      </div>
+    </div>`;
+}
+
+function tabPanel() {
+  if (TAB === 'persediaan') return prepTabHtml();
+  if (TAB === 'pemulangan') return PREP_META.submitted_at ? returnsTabHtml() : prepTabHtml();
+  if (TAB === 'peserta') return pkTabHtml();
   if (TAB === 'rakaman') {
     const matIcon = { nota:'📄', video:'🎥', slaid:'📊', imej:'🖼️', pautan:'🔗' };
     const items = [];
@@ -116,40 +947,165 @@ function tabPanel() {
     return addForm + '<div class="space-y-2">' + list + '</div>';
   }
   // info
+  return infoTabHtml();
+}
+
+function infoRow(icon, label, value) {
+  return `<div class="flex items-start gap-2.5 py-2 border-b border-ink/5 last:border-0">
+    <span class="text-ink/35 mt-0.5 text-sm">${icon}</span>
+    <div class="flex-1 min-w-0"><div class="text-[11px] text-ink/45">${label}</div><div class="text-[13px] font-semibold text-ink">${value}</div></div>
+  </div>`;
+}
+function regWindow() {
+  const now = new Date();
+  const opensAt = EV.registration_opens_at ? new Date(EV.registration_opens_at) : null;
+  const closesAt = EV.registration_deadline ? new Date(EV.registration_deadline) : new Date(EV.start_at);
+  if (opensAt && now < opensAt) return { cls: 'text-amber-700', txt: `🟡 Akan dibuka pada ${fmtDateTime(opensAt)}.` };
+  if (now > closesAt) return { cls: 'text-ink/50', txt: `🔴 Pendaftaran telah ditutup${EV.registration_deadline ? ' pada ' + fmtDateTime(closesAt) : ''}.` };
+  return { cls: 'text-green-dark', txt: `🟢 Dibuka kepada ${audLabel(EV.audience).toLowerCase()}${EV.registration_deadline ? ' sehingga ' + fmtDateTime(closesAt) : ''}.` };
+}
+function statusAcaraMeta() {
+  if (EV.status === 'cancelled') return { cls: 'bg-terracotta/10 border-terracotta/20', icon: '⊘', iconCls: 'bg-terracotta text-white', label: 'Dibatalkan', desc: 'Acara ini telah dibatalkan.' };
+  if (EV.status === 'completed' || new Date(EV.start_at) < new Date()) return { cls: 'bg-ink/5 border-ink/10', icon: '✓', iconCls: 'bg-ink/30 text-white', label: 'Selesai', desc: 'Acara ini telah selesai berlangsung.' };
+  if (EV.status === 'draft') return { cls: 'bg-ink/5 border-ink/10', icon: '📄', iconCls: 'bg-ink/30 text-white', label: 'Draft', desc: 'Acara ini belum dipublish.' };
+  return { cls: 'bg-green/10 border-green/20', icon: '✓', iconCls: 'bg-green text-white', label: 'Akan Datang', desc: 'Acara ini belum bermula.' };
+}
+
+function infoTabHtml() {
   const tags = (EV.tag || '').split(/[,;]+/).map(t => t.trim()).filter(Boolean);
-  const joinSteps = EV.mode === 'online'
-    ? ['Klik "Masuk ke Google Meet" di bawah.', 'Log masuk dengan akaun Google.', 'Sertai 5 minit lebih awal.']
-    : ['Hadir di lokasi yang ditetapkan.', 'Sampai 10 minit lebih awal untuk pendaftaran.'];
-  return `<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-    <div class="space-y-4">
-      <div><h3 class="font-bold text-ink mb-2">Tentang Event</h3><div class="text-sm text-ink/70 leading-relaxed">${EV.description || '<span class="text-ink/40">Tiada penerangan.</span>'}</div></div>
-      ${tags.length ? `<div><h3 class="font-bold text-ink mb-2 text-sm">Tag</h3><div class="flex flex-wrap gap-1.5">${tags.map(t => `<span class="text-[10px] font-semibold px-2.5 py-1 rounded-full bg-green/10 text-green-dark">${t}</span>`).join('')}</div></div>` : ''}
-      <div class="text-[12px] ${new Date(EV.start_at) > new Date() ? 'bg-green/10 text-green-dark' : 'bg-ink/5 text-ink/55'} rounded-lg px-3 py-2">${new Date(EV.start_at) > new Date() ? '🟢 Pendaftaran masih dibuka sehingga acara bermula.' : '🔴 Pendaftaran telah ditutup.'}</div>
-    </div>
-    <div class="space-y-4">
-      <div>
-        <h3 class="font-bold text-ink mb-2 text-sm">Cara Penyertaan</h3>
-        <ol class="space-y-1.5">${joinSteps.map((s,i)=>`<li class="flex items-start gap-2 text-[12px] text-ink/70"><span class="w-4 h-4 rounded-full bg-navy text-white text-[9px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">${i+1}</span> ${s}</li>`).join('')}</ol>
+  const requirements = (EV.requirements || '').split('\n').map(r => r.trim()).filter(Boolean);
+  const rw = regWindow();
+  const sa = statusAcaraMeta();
+  const pendaftar = counts().pendaftar;
+  const hasCapacity = !!EV.capacity;
+  const pct = hasCapacity ? Math.min(100, Math.round((pendaftar / EV.capacity) * 100)) : 0;
+  const baki = hasCapacity ? Math.max(0, EV.capacity - pendaftar) : null;
+  const picInitials = (PIC_PROFILE?.full_name || '?').slice(0, 2).toUpperCase();
+
+  return `<div class="grid grid-cols-1 lg:grid-cols-[2fr_2fr_1.4fr] gap-5">
+    <div class="lg:col-span-2 space-y-5">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+          <h3 class="font-bold text-ink mb-1 flex items-center gap-2">📄 Maklumat Acara</h3>
+          ${infoRow('📝', 'Nama Acara', EV.title)}
+          ${infoRow('🏷️', 'Jenis Acara', ty().l.charAt(0) + ty().l.slice(1).toLowerCase())}
+          ${infoRow('🏷️', 'Kategori', tags.length ? tags.join(', ') : '<span class="text-ink/35 font-normal">Tiada</span>')}
+          ${infoRow('💻', 'Platform', EV.mode === 'f2f' ? 'In-Person (Physical)' : 'Online (Google Meet)')}
+          ${infoRow('👥', 'Sasaran Peserta', audLabel(EV.audience))}
+          ${infoRow('🎟️', 'Kapasiti Peserta', hasCapacity ? EV.capacity + ' peserta' : 'Tiada had')}
+          ${infoRow('📝', 'Jumlah Pendaftaran', pendaftar + ' peserta')}
+          ${infoRow('🎤', 'Program Host', EV.host ? (EV.host_role || 'Host') + ': ' + EV.host : '<span class="text-ink/35 font-normal">Tiada</span>')}
+          <div class="pt-3 mt-1">
+            <div class="text-[11px] text-ink/45 mb-1 flex items-center gap-1.5">📋 Penerangan Acara</div>
+            <div class="text-[13px] text-ink/70 leading-relaxed">${EV.description || '<span class="text-ink/40">Tiada penerangan.</span>'}</div>
+          </div>
+          ${requirements.length ? `<div class="pt-3 mt-1">
+            <div class="text-[11px] text-ink/45 mb-1 flex items-center gap-1.5">✅ Keperluan</div>
+            <ul class="space-y-1 text-[13px] text-ink/70">${requirements.map(r => `<li>✓ ${r}</li>`).join('')}</ul>
+          </div>` : ''}
+        </div>
+
+        <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+          <h3 class="font-bold text-ink mb-1 flex items-center gap-2">📅 Tarikh &amp; Lokasi</h3>
+          ${infoRow('📅', 'Tarikh Acara', new Date(EV.start_at).toLocaleDateString(LCALE(),{weekday:'long',day:'2-digit',month:'long',year:'numeric'}))}
+          ${infoRow('🕒', 'Masa', timeRange())}
+          ${EV.mode === 'f2f' ? infoRow('📍', 'Lokasi Nama', EV.location || '<span class="text-ink/35 font-normal">Tiada</span>') : ''}
+          ${EV.mode === 'f2f' ? infoRow('📍', 'Alamat', EV.address || '<span class="text-ink/35 font-normal">Tiada</span>') : ''}
+          <div class="pt-3 mt-1">
+            <div class="text-[11px] text-ink/45 mb-1">🗺 Google Maps URL <span class="font-normal">(Opsyenal)</span></div>
+            <div class="flex items-center gap-1.5">
+              <input id="maps-url-inline" type="text" value="${(EV.maps_url||'').replace(/"/g,'&quot;')}" placeholder="https://maps.app.goo.gl/example" onchange="saveMapsUrl(this.value)" class="flex-1 min-w-0 px-2.5 py-2 border border-ink/15 rounded-lg text-[13px]">
+              ${EV.maps_url ? `<a href="${EV.maps_url}" target="_blank" rel="noopener" class="w-9 h-9 flex-shrink-0 flex items-center justify-center border border-ink/15 rounded-lg hover:bg-ink/5" title="Buka pautan">↗</a>` : ''}
+            </div>
+          </div>
+        </div>
       </div>
-      <div>
-        <h3 class="font-bold text-ink mb-2 text-sm">Keperluan</h3>
-        <ul class="space-y-1 text-[12px] text-ink/65">
-          <li>✓ ${EV.mode==='online'?'Peranti dengan internet stabil':'Hadir di lokasi'}</li>
-          ${EV.mode==='online'?'<li>✓ Mikrofon (disyorkan)</li><li>✓ Speaker atau headphone</li>':'<li>✓ Sampai awal untuk pendaftaran</li>'}
-        </ul>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+          <h3 class="font-bold text-ink mb-1 flex items-center gap-2">👥 Penganjur &amp; Sasaran Peserta</h3>
+          <div class="flex items-center gap-3 py-2.5 border-b border-ink/5">
+            <div class="w-9 h-9 rounded-full bg-navy/10 text-navy flex items-center justify-center font-bold text-xs flex-shrink-0">${picInitials}</div>
+            <div class="flex-1 min-w-0">
+              <div class="text-[11px] text-ink/45">PIC (Person In Charge)</div>
+              ${PIC_PROFILE ? `<div class="text-[13px] font-semibold text-ink">${prepEscHtml(PIC_PROFILE.full_name)}</div>
+                <div class="text-[11px] text-ink/50 flex flex-wrap gap-x-3">${PIC_PROFILE.phone ? '📞 '+PIC_PROFILE.phone : ''}${PIC_PROFILE.email ? ' · ✉️ '+PIC_PROFILE.email : ''}</div>`
+                : '<div class="text-[13px] text-ink/35">Tiada PIC ditetapkan</div>'}
+            </div>
+          </div>
+          ${infoRow('👥', 'Sasaran Peserta', audLabel(EV.audience))}
+          <div class="flex items-start gap-2.5 py-2 border-b border-ink/5">
+            <span class="text-ink/35 mt-0.5 text-sm">📝</span>
+            <div class="flex-1 min-w-0"><div class="text-[11px] text-ink/45">Pendaftaran</div><div class="text-[13px] font-semibold ${rw.cls}">${rw.txt}</div></div>
+          </div>
+          ${infoRow('📅', 'Tarikh Buka Pendaftaran', EV.registration_opens_at ? fmtDateTime(EV.registration_opens_at) : 'Serta-merta')}
+          ${infoRow('📅', 'Tarikh Tutup Pendaftaran', EV.registration_deadline ? fmtDateTime(EV.registration_deadline) : 'Bila acara bermula')}
+        </div>
+
+        <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+          <h3 class="font-bold text-ink mb-3 flex items-center gap-2">🖼️ Banner Acara</h3>
+          <div class="banner-img relative rounded-xl overflow-hidden aspect-[2/1] bg-gradient-to-br ${ty().grad} flex items-center justify-center text-white" ${EV.cover_image?`style="background-image:url('${EV.cover_image}');background-size:cover;background-position:center;"`:''}>
+            ${EV.cover_image?'':`<div class="text-4xl">${ty().emoji}</div>`}
+          </div>
+          <button type="button" onclick="document.getElementById('banner-file').click()" class="w-full mt-3 border border-navy/25 text-navy font-semibold py-2 rounded-xl text-sm hover:bg-navy hover:text-white">✏️ Tukar Gambar</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="space-y-5">
+      <div class="rounded-2xl border p-5 ${sa.cls}">
+        <h3 class="font-bold text-ink mb-3 text-sm flex items-center gap-2">🗓 Status Acara</h3>
+        <div class="flex items-center gap-3">
+          <div class="w-11 h-11 rounded-full flex items-center justify-center text-lg flex-shrink-0 ${sa.iconCls}">${sa.icon}</div>
+          <div><div class="font-bold text-ink">${sa.label}</div><div class="text-[12px] text-ink/55">${sa.desc}</div></div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+        <h3 class="font-bold text-ink mb-3 text-sm flex items-center gap-2">👥 Statistik Pendaftaran</h3>
+        ${hasCapacity ? `
+        <div class="flex items-center gap-4">
+          <div class="relative w-20 h-20 rounded-full flex items-center justify-center flex-shrink-0" style="background:conic-gradient(#16a34a ${pct}%, #e5e7eb ${pct}% 100%)">
+            <div class="w-14 h-14 rounded-full bg-white flex items-center justify-center text-base font-extrabold text-ink">${pct}%</div>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="text-xs text-ink/50 mb-1.5">${pendaftar} / ${EV.capacity} peserta telah berdaftar</div>
+            <div class="space-y-1 text-[12px]">
+              <div class="flex items-center justify-between"><span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-green-600"></span>Berdaftar</span><span class="font-semibold">${pendaftar}</span></div>
+              <div class="flex items-center justify-between"><span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-amber-500"></span>Baki Tempat</span><span class="font-semibold">${baki}</span></div>
+              <div class="flex items-center justify-between"><span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-ink/20"></span>Dibatalkan</span><span class="font-semibold">${CANCELLED_COUNT}</span></div>
+            </div>
+          </div>
+        </div>` : `<div class="text-[12px] text-ink/50">${pendaftar} peserta telah berdaftar · tiada had kapasiti.</div>`}
+      </div>
+
+      <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
+        <h3 class="font-bold text-ink mb-3 text-sm flex items-center gap-2">📅 Tarikh Penting</h3>
+        <div class="space-y-2.5 text-[12px]">
+          <div class="flex items-center gap-2"><span>📅</span><div><div class="text-ink/45">Tarikh Buka Pendaftaran</div><div class="font-semibold text-ink">${EV.registration_opens_at ? fmtDateTime(EV.registration_opens_at) : 'Serta-merta'}</div></div></div>
+          <div class="flex items-center gap-2"><span>📅</span><div><div class="text-ink/45">Tarikh Tutup Pendaftaran</div><div class="font-semibold text-ink">${EV.registration_deadline ? fmtDateTime(EV.registration_deadline) : 'Bila acara bermula'}</div></div></div>
+          <div class="flex items-center gap-2 bg-navy/5 rounded-lg px-2.5 py-2 -mx-1"><span>📅</span><div><div class="text-ink/45">Tarikh Acara</div><div class="font-semibold text-ink">${fmtDateTime(EV.start_at)}</div></div></div>
+        </div>
       </div>
     </div>
   </div>`;
 }
 
 function render() {
-  const t = ty(), sd = statusDisp(), c = counts();
+  const t = ty(), sd = statusDisp();
   const cover = EV.cover_image ? `style="background-image:url('${EV.cover_image}');background-size:cover;background-position:center;"` : '';
   const tabBtn = (k, label) => `<button onclick="setTab('${k}')" class="px-1 pb-2.5 text-sm font-semibold border-b-2 ${TAB===k?'border-navy text-navy':'border-transparent text-ink/50 hover:text-ink'}">${label}</button>`;
 
+  document.getElementById('top-actions').innerHTML = `
+    <a href="acara-edit.html?id=${EV.id}" data-rbac="events.edit" class="text-xs font-semibold text-navy border border-navy/25 px-3 py-2 rounded-lg hover:bg-navy hover:text-white">✏️ Edit Event</a>
+    <button onclick="exportPeserta()" data-rbac="events.export" class="text-xs font-semibold text-ink/70 border border-ink/20 px-3 py-2 rounded-lg hover:bg-ink/5">⬇ Export</button>
+    <button onclick="kongsi()" class="text-xs font-semibold text-ink/70 border border-ink/20 px-3 py-2 rounded-lg hover:bg-ink/5">🔗 Kongsi</button>
+    <button onclick="batal()" data-rbac="events.edit" class="text-xs font-semibold text-terracotta border border-terracotta/30 px-3 py-2 rounded-lg hover:bg-terracotta hover:text-white">⊘ Batalkan</button>
+  `;
+
   document.getElementById('wrap').innerHTML = `
     <!-- LEFT -->
-    <div class="lg:col-span-2 space-y-5">
+    <div class="${TAB === 'persediaan' || TAB === 'pemulangan' ? 'lg:col-span-2' : 'lg:col-span-3'} space-y-5">
       <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5 md:p-6">
         <div class="flex flex-col md:flex-row gap-5">
           <div class="relative w-full md:w-64 h-40 rounded-2xl overflow-hidden flex-shrink-0 ${EV.cover_image?'':'bg-gradient-to-br '+t.grad}" ${cover}>
@@ -175,55 +1131,21 @@ function render() {
 
         <div class="flex items-center gap-5 border-b border-ink/10 mt-5 overflow-x-auto">
           ${tabBtn('info','ⓘ Maklumat Event')}
-          ${tabBtn('peserta','👥 Peserta ('+c.pendaftar+')')}
-          ${tabBtn('kehadiran','✓ Kehadiran ('+c.hadir+')')}
+          ${tabBtn('peserta','👥 Peserta & Kehadiran ('+REGS.length+')')}
+          ${tabBtn('persediaan','🧰 Persediaan Event ('+prepRows().length+')')}
+          ${PREP_META.submitted_at ? tabBtn('pemulangan','↩ Pemulangan Barang ('+prepReturnableRows().length+')') : ''}
           ${tabBtn('rakaman','▶️ Rakaman & Bahan ('+(MATERIALS.length+(EV.recording_url?1:0))+')')}
         </div>
         <div class="pt-5">${tabPanel()}</div>
       </div>
     </div>
 
-    <!-- RIGHT -->
-    <div class="space-y-5">
-      <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
-        <h3 class="font-bold text-ink mb-3">Ringkasan Event</h3>
-        <div class="grid grid-cols-2 gap-2.5">
-          ${statBox('👥', c.kapasiti, 'Kapasiti')}
-          ${statBox('📝', c.pendaftar, 'Pendaftaran', 'text-navy')}
-          ${statBox('✓', c.hadir, 'Hadir', 'text-green-dark')}
-          ${statBox('✗', c.tdk, 'Tidak Hadir', 'text-terracotta')}
-        </div>
-        <div class="mt-3">
-          <div class="flex justify-between text-[11px] mb-1"><span class="text-ink/55">Attendance Rate</span><span class="font-bold text-ink">${c.rate}%</span></div>
-          <div class="h-2 bg-ink/10 rounded-full overflow-hidden"><div class="h-full bg-green rounded-full" style="width:${c.rate}%"></div></div>
-        </div>
-      </div>
-
-      <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
-        <h3 class="font-bold text-ink mb-2">Lokasi / Platform</h3>
-        <div class="text-sm text-ink/70 mb-3">${EV.mode==='f2f'?('📍 '+(EV.location||'Bersemuka')+(EV.address?'<div class=\"text-[11px] text-ink/45 mt-0.5\">'+EV.address+'</div>':'')):'💻 Online (Google Meet)<div class="text-[11px] text-ink/45 mt-0.5">Pautan aktif 15 minit sebelum sesi bermula.</div>'}</div>
-        ${EV.meet_link?`<a href="${EV.meet_link}" target="_blank" rel="noopener" class="w-full bg-green hover:bg-green-dark text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 mb-2">📹 Masuk ke Google Meet</a>
-        <button onclick="copyTxt('${EV.meet_link}')" class="w-full border border-ink/20 text-ink/70 font-semibold py-2.5 rounded-xl text-sm hover:bg-ink/5">📋 Salin Pautan</button>`:''}
-        ${EV.mode==='f2f'&&EV.maps_url?`<a href="${EV.maps_url}" target="_blank" rel="noopener" class="w-full border border-navy/25 text-navy font-semibold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2 hover:bg-navy hover:text-white">🗺 Lihat Peta</a>`:''}
-      </div>
-
-      <div class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5">
-        <h3 class="font-bold text-ink mb-3">Tindakan</h3>
-        <div class="space-y-2">
-          <a href="acara-edit.html?id=${EV.id}" data-rbac="events.edit" class="w-full border border-navy/25 text-navy font-semibold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2 hover:bg-navy hover:text-white">✏️ Edit Event</a>
-          <a href="persediaan-event-detail.html?event_id=${EV.id}" class="w-full border border-teal/30 text-teal font-semibold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2 hover:bg-teal hover:text-white">🧰 Checklist &amp; Template Persediaan</a>
-          <a href="persediaan-event-keluar.html?event_id=${EV.id}" class="w-full border border-ink/15 text-ink/70 font-semibold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2 hover:bg-ink/5">📦 Pengeluaran &amp; Pemulangan</a>
-          <button onclick="exportPeserta()" data-rbac="events.export" class="w-full border border-ink/20 text-ink/70 font-semibold py-2.5 rounded-xl text-sm hover:bg-ink/5 flex items-center justify-center gap-2">⬇ Export Peserta</button>
-          <button onclick="kongsi()" class="w-full border border-ink/20 text-ink/70 font-semibold py-2.5 rounded-xl text-sm hover:bg-ink/5 flex items-center justify-center gap-2">🔗 Kongsi Event</button>
-          <button onclick="batal()" data-rbac="events.edit" class="w-full border border-terracotta/30 text-terracotta font-semibold py-2.5 rounded-xl text-sm hover:bg-terracotta hover:text-white flex items-center justify-center gap-2">⊘ Batalkan Event</button>
-        </div>
-      </div>
-
-      <div class="bg-amber-50 border border-amber-200 rounded-2xl p-5">
-        <div class="flex items-center gap-2 font-bold text-amber-700 mb-1">📌 Nota</div>
-        <p class="text-[12px] text-ink/60 leading-relaxed">Semua peserta berdaftar akan menerima peringatan 1 jam sebelum acara bermula (bila modul peringatan diaktifkan).</p>
-      </div>
-    </div>
+    ${TAB === 'persediaan' || (TAB === 'pemulangan' && !PREP_META.submitted_at) ? `
+    <!-- RIGHT (Persediaan Event sahaja) -->
+    <div class="space-y-5">${prepSidebarHtml()}</div>` : ''}
+    ${TAB === 'pemulangan' && PREP_META.submitted_at ? `
+    <!-- RIGHT (Pemulangan Barang sahaja) -->
+    <div class="space-y-5">${returnsSidebarHtml()}</div>` : ''}
   `;
 }
 
@@ -235,6 +1157,74 @@ async function mark(regId, status) {
   if (r) r.status = nv;
   render();
 }
+
+function pkOnSearch(v) { pkSearch = v; pkPage = 1; renderPkTabOnly(); }
+window.pkOnSearch = pkOnSearch;
+function pkOnStatusFilter(v) { pkStatusFilter = v; pkPage = 1; render(); }
+window.pkOnStatusFilter = pkOnStatusFilter;
+function pkOnAttFilter(v) { pkAttFilter = v; pkPage = 1; render(); }
+window.pkOnAttFilter = pkOnAttFilter;
+function pkGoPage(p) { pkPage = p; render(); }
+window.pkGoPage = pkGoPage;
+// Search input re-render tanpa ganti seluruh DOM (elak hilang fokus taip)
+function renderPkTabOnly() {
+  const panel = document.querySelector('#wrap .pt-5');
+  if (panel) panel.innerHTML = pkTabHtml();
+}
+window.renderPkTabOnly = renderPkTabOnly;
+
+async function pkCancelReg(regId) {
+  if (!confirm('Batalkan pendaftaran peserta ni?')) return;
+  const { error } = await window.db.from('psy_event_registrations').update({ status: 'batal' }).eq('id', regId);
+  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
+  const r = REGS.find(x => x.id === regId);
+  if (r) r.status = 'batal';
+  banner('Pendaftaran dibatalkan', 'ok');
+  render();
+}
+window.pkCancelReg = pkCancelReg;
+
+function pkOpenAddModal() {
+  document.getElementById('pk-patient-search').value = '';
+  document.getElementById('pk-patient-list').innerHTML = '<div class="text-center text-xs text-ink/35 py-6">Taip untuk cari pesakit...</div>';
+  document.getElementById('pk-add-modal').classList.remove('hidden');
+  document.getElementById('pk-patient-search').focus();
+}
+window.pkOpenAddModal = pkOpenAddModal;
+function pkCloseAddModal() { document.getElementById('pk-add-modal').classList.add('hidden'); }
+window.pkCloseAddModal = pkCloseAddModal;
+
+let pkSearchSeq = 0;
+async function pkRenderPatientPicker() {
+  const q = document.getElementById('pk-patient-search').value.trim();
+  const box = document.getElementById('pk-patient-list');
+  if (!q) { box.innerHTML = '<div class="text-center text-xs text-ink/35 py-6">Taip untuk cari pesakit...</div>'; return; }
+  const seq = ++pkSearchSeq;
+  const { data } = await window.db.from('psy_patients').select('id, full_name, mrn, phone')
+    .or(`full_name.ilike.%${q}%,mrn.ilike.%${q}%,phone.ilike.%${q}%`).limit(20);
+  if (seq !== pkSearchSeq) return;   // elak race condition carian lapuk
+  const regPatientIds = new Set(REGS.filter(r => r.status !== 'batal').map(r => r.patient_id));
+  const list = (data || []).filter(p => !regPatientIds.has(p.id));
+  box.innerHTML = list.length ? list.map(p => `
+    <button type="button" onclick="pkAddPatient('${p.id}')" class="w-full text-left px-3 py-2.5 rounded-lg hover:bg-ink/5 flex items-center gap-2.5">
+      <div class="w-8 h-8 rounded-full bg-navy/10 text-navy flex items-center justify-center font-bold text-[11px] flex-shrink-0">${(p.full_name||'?').slice(0,2).toUpperCase()}</div>
+      <div class="min-w-0"><div class="text-sm font-semibold text-ink truncate">${prepEscHtml(p.full_name||'—')}</div><div class="text-[11px] text-ink/45">${prepEscHtml(p.mrn||'')} ${p.phone?'· '+prepEscHtml(p.phone):''}</div></div>
+    </button>`).join('') : '<div class="text-center text-xs text-ink/35 py-6">Tiada pesakit ditemui / dah berdaftar.</div>';
+}
+window.pkRenderPatientPicker = pkRenderPatientPicker;
+
+async function pkAddPatient(patientId) {
+  const { data, error } = await window.db.from('psy_event_registrations')
+    .upsert({ event_id: EV.id, patient_id: patientId, status: 'registered', source: 'manual' }, { onConflict: 'event_id,patient_id' })
+    .select('id, status, registered_at, source, patient_id, psy_patients(full_name, mrn, phone)').single();
+  if (error) { banner('Ralat tambah peserta: ' + error.message, 'error'); return; }
+  REGS = REGS.filter(r => r.patient_id !== patientId);
+  REGS.push(data);
+  pkCloseAddModal();
+  banner('Peserta ditambah ✓', 'ok');
+  render();
+}
+window.pkAddPatient = pkAddPatient;
 const MAT_BUCKET = 'library-media';   // bucket awam sedia ada (RLS: staff tulis, semua baca)
 function inferMatType(url) {
   const u = (url || '').toLowerCase();
@@ -314,7 +1304,7 @@ function kongsi() {
 function exportPeserta() {
   if (!REGS.length) { banner('Tiada peserta', 'error'); return; }
   const head = ['Nama', 'MRN', 'Status', 'Tarikh Daftar'];
-  const lines = REGS.map(r => { const p = r.psy_patients || {}; return [p.full_name||'', p.mrn||'', r.status==='hadir'?'Hadir':r.status==='tak_hadir'?'Tidak Hadir':'Berdaftar', new Date(r.registered_at).toLocaleString(LCALE())]; });
+  const lines = REGS.map(r => { const p = r.psy_patients || {}; return [p.full_name||'', p.mrn||'', r.status==='batal'?'Batal':r.status==='hadir'?'Hadir':r.status==='tak_hadir'?'Tidak Hadir':'Berdaftar (Belum Direkodkan)', new Date(r.registered_at).toLocaleString(LCALE())]; });
   const csv = [head, ...lines].map(row => row.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿'+csv], { type:'text/csv;charset=utf-8;' }));
   a.download = `peserta-${(EV.title||'acara').replace(/[^a-z0-9]+/gi,'-').toLowerCase()}.csv`; a.click();
@@ -326,6 +1316,51 @@ async function batal() {
   EV.status = 'cancelled'; banner('Acara dibatalkan'); render();
 }
 
+// ── Tukar Gambar (banner) terus dari tab Maklumat Asas ───────────
+function previewBanner(input) {
+  const f = input.files[0]; if (!f) return;
+  if (f.size > 15 * 1024 * 1024) { banner('Gambar melebihi 15MB', 'error'); input.value = ''; return; }
+  const r = new FileReader();
+  r.onload = e => openCrop(e.target.result);
+  r.readAsDataURL(f);
+  input.value = '';
+}
+window.previewBanner = previewBanner;
+function openCrop(src) {
+  const img = document.getElementById('crop-img');
+  img.src = src;
+  document.getElementById('crop-modal').classList.remove('hidden');
+  if (cropper) { cropper.destroy(); cropper = null; }
+  cropper = new Cropper(img, { aspectRatio: 2, viewMode: 1, autoCropArea: 1, dragMode: 'move', background: false });
+}
+function closeCrop() {
+  document.getElementById('crop-modal').classList.add('hidden');
+  if (cropper) { cropper.destroy(); cropper = null; }
+}
+window.closeCrop = closeCrop;
+async function applyCrop() {
+  if (!cropper) return;
+  const canvas = cropper.getCroppedCanvas({ width: 1200, height: 600, imageSmoothingQuality: 'high' });
+  const data = canvas.toDataURL('image/jpeg', 0.85);
+  const { error } = await window.db.from('psy_events').update({ cover_image: data, updated_at: new Date().toISOString() }).eq('id', EV.id);
+  closeCrop();
+  if (error) { banner('Ralat simpan banner: ' + error.message, 'error'); return; }
+  EV.cover_image = data;
+  banner('Banner dikemaskini ✓', 'ok');
+  render();
+}
+window.applyCrop = applyCrop;
+
+async function saveMapsUrl(val) {
+  const url = val.trim() || null;
+  const { error } = await window.db.from('psy_events').update({ maps_url: url, updated_at: new Date().toISOString() }).eq('id', EV.id);
+  if (error) { banner('Ralat simpan: ' + error.message, 'error'); return; }
+  EV.maps_url = url;
+  banner('Google Maps URL dikemaskini ✓', 'ok');
+  render();
+}
+window.saveMapsUrl = saveMapsUrl;
+
 (async () => {
   const user = await initStaff('events_admin', 'Detail acara & kehadiran');
   if (!user) return;
@@ -336,16 +1371,46 @@ async function batal() {
     if (!ev) { document.getElementById('wrap').innerHTML = '<div class="lg:col-span-3 text-center py-16 text-ink/40">Acara tidak dijumpai.</div>'; return; }
     EV = ev;
     const { data: regs } = await window.db.from('psy_event_registrations')
-      .select('id, status, registered_at, psy_patients(full_name, mrn)')
-      .eq('event_id', id).neq('status', 'batal').order('registered_at', { ascending: true });
+      .select('id, status, registered_at, source, patient_id, psy_patients(full_name, mrn, phone)')
+      .eq('event_id', id).order('registered_at', { ascending: true });
     REGS = regs || [];
     const { data: mats } = await window.db.from('psy_event_materials').select('*').eq('event_id', id).order('created_at', { ascending: true });
     MATERIALS = mats || [];
     if (EV.created_by) { const { data: prof } = await window.db.from('psy_profiles').select('full_name').eq('id', EV.created_by).maybeSingle(); CREATOR = prof?.full_name || ''; }
+    if (EV.pic_id) { const { data: pic } = await window.db.from('psy_profiles').select('full_name, phone, email').eq('id', EV.pic_id).maybeSingle(); PIC_PROFILE = pic || null; }
+    const { count: cancelledCount } = await window.db.from('psy_event_registrations').select('id', { count: 'exact', head: true }).eq('event_id', id).eq('status', 'batal');
+    CANCELLED_COUNT = cancelledCount || 0;
     // Audit #H-36 (Tier 5) — meet_link kini di psy_event_meet_links (staf full access)
     try { const { data: ml } = await window.db.from('psy_event_meet_links').select('meet_link').eq('event_id', id).maybeSingle(); EV.meet_link = ml?.meet_link || null; } catch (_) {}
+
+    // Persediaan Event — item + tugasan + rujukan inventori/equipment + template
+    const [itemRes, taskRes, invRes, eqRes, metaRes, tplRes, staffRes, returnsRes] = await Promise.all([
+      window.db.from('psy_event_prep_items').select('*').eq('event_id', id).order('created_at'),
+      window.db.from('psy_event_checklist_tasks').select('*').eq('event_id', id).order('created_at'),
+      window.db.from('psy_inventory_items').select('id, name, category, unit, qty_in_stock').eq('is_active', true).order('name'),
+      window.db.from('psy_equipment').select('id, name, code, category, status').order('name'),
+      window.db.from('psy_event_prep_meta').select('*').eq('event_id', id).maybeSingle(),
+      window.db.from('psy_event_prep_templates').select('*').order('created_at', { ascending: false }),
+      window.db.from('psy_profiles').select('id, full_name').eq('role', 'staff').eq('is_active', true).order('full_name'),
+      window.db.from('psy_event_item_returns').select('*').eq('event_id', id),
+    ]);
+    PREP_ITEMS = (itemRes.data || []).map(r => ({ ...r, _key: r.id }));
+    TASKS = (taskRes.data || []).map(r => ({ ...r, _key: r.id }));
+    INV_ITEMS = invRes.data || [];
+    EQUIP_ITEMS = eqRes.data || [];
+    PREP_META = metaRes.data || { notes: '', deadline_date: null };
+    TEMPLATES = tplRes.data || [];
+    STAFF_LIST = staffRes.data || [];
+    ITEM_RETURNS = returnsRes.data || [];
+    if (TEMPLATES.length) {
+      const { data: tItems } = await window.db.from('psy_event_prep_template_items').select('*').in('template_id', TEMPLATES.map(t => t.id));
+      TEMPLATE_ITEMS = {};
+      (tItems || []).forEach(it => { (TEMPLATE_ITEMS[it.template_id] = TEMPLATE_ITEMS[it.template_id] || []).push(it); });
+    }
+
     const hashTab = (location.hash || '').replace('#', '');
-    if (['peserta','kehadiran','rakaman'].includes(hashTab)) TAB = hashTab;
+    if (hashTab === 'kehadiran') TAB = 'peserta';   // tab lama digabung ke Peserta & Kehadiran
+    else if (['peserta','rakaman','persediaan','pemulangan'].includes(hashTab)) TAB = hashTab;
     render();
   } catch (e) {
     document.getElementById('wrap').innerHTML = `<div class="lg:col-span-3 bg-terracotta/10 text-terracotta rounded-xl p-4 text-sm">Ralat: ${e.message}</div>`;

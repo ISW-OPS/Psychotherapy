@@ -22,13 +22,19 @@
 //      bila follow_up_date sampai, dedup follow_up_sent_at
 //   12) reminderTimeSend    — Sesi 1:1 (audit #17c): reminder harian ikut reminder_time
 //      per-saranan, dedup reminder_last_sent_date, henti bila tempoh saranan tamat
-// Konfig 1-10 dari psy_auto_messages (boleh ubah di UI); 11-12 per-rekod psy_clinical_referrals.
+//   13) productionMilestones — Jadual Rakaman Production (audit 21 Okt 2026): pesakit
+//      capai milestone W3/W5/W7/W9/W12 (sesi mingguan sebenar) atau M1/M2/M3/Q1/Q2/Q3
+//      (fasa sambungan) → insert psy_production_recordings + WA Team Production
+// Konfig 1-10 dari psy_auto_messages (boleh ubah di UI); 11-12 per-rekod psy_clinical_referrals;
+// 13 nombor dari psy_settings (production_whatsapp_number, diisi di Tetapan Sistem).
 // Secrets: GHL_ISW_TOKEN, GHL_ISW_LOCATION_ID, CRON_SECRET, PUBLIC_APP_URL
 // ============================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { createKobInstallmentTopupLink } from '../_shared/kob_topup.ts'
 import { applyInstallmentPayment } from '../_shared/kob_autocharge.ts'
 import { getProvider } from '../_shared/payments/index.ts'
+import { sendWhatsApp } from '../_shared/ghl.ts'
+import { buildProductionRecordingsPdf } from '../_shared/production_recordings_pdf.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -1120,6 +1126,207 @@ async function runReminderTimeSend(supabase, locationId) {
   return res
 }
 
+// ───────── 13) Jadual Rakaman Production — milestone → WA Team Production ─────────
+// Pesakit buat SATU rakaman progress report bersama Team Production (luar sistem,
+// TIADA akaun ISW) pada milestone tertentu: W3/W5/W7/W9/W12 (sesi mingguan DALAM
+// pakej rawatan asal 12 minggu — dikesan bila sesi tu sebenar BERLAKU, status
+// hadir/consultation_done, bukan setakat dijadualkan) dan M1/M2/M3/Q1/Q2/Q3 (fasa
+// sambungan/continuity SELEPAS minggu 12 — dikira dari package_expires_at +
+// 30/60/90/180/270/365 hari, selagi pesakit kekal status='active' iaitu sambung).
+// Baris psy_production_recordings dicipta status='pending' sekali per (patient,
+// milestone) — UNIQUE constraint + upsert ignoreDuplicates elak duplicate. Row
+// 'pending' lepas tu dihantar WA ke nombor psy_settings.production_whatsapp_number
+// (kosong → SKIP hantar, row kekal pending utk cuba lagi cron seterusnya — JANGAN
+// crash). Staf jejak/urus senarai di production-queue.html (Tandakan Selesai Rakam
+// / Skip) — baca modul RBAC 'production_recordings'.
+const PR_WEEK_MILESTONE = { 3: 'w3', 5: 'w5', 7: 'w7', 9: 'w9', 12: 'w12' }
+const PR_LABELS = {
+  w3: 'Minggu 3', w5: 'Minggu 5', w7: 'Minggu 7', w9: 'Minggu 9', w12: 'Minggu 12',
+  m1: 'M1', m2: 'M2', m3: 'M3', q1: 'Q1', q2: 'Q2', q3: 'Q3',
+}
+const PR_EXT_THRESHOLDS = [
+  { days: 30, key: 'm1' }, { days: 60, key: 'm2' }, { days: 90, key: 'm3' },
+  { days: 180, key: 'q1' }, { days: 270, key: 'q2' }, { days: 365, key: 'q3' },
+]
+// Kategori B3 Masalah Kesihatan Soalan KOB — duplicate SENGAJA dari roles/staff/_shared.js
+// (MK_CATEGORIES). Edge function runtime berasingan, tiada akses ke fail client-side ni,
+// jadi disalin kecil di sini (sumber sebenar tetap _shared.js — kemaskini DUA-DUA tempat
+// kalau kategori berubah).
+const PR_MK_CATEGORIES = [
+  { key: 'kanser', label: 'Kanser', subs: ['Buah Pinggang', 'Jantung', 'Hati', 'Paru-paru', 'Limfoma', 'Prostat', 'Payudara', 'Ovari', 'Rahim', 'Serviks', 'Perut', 'Usus', 'Pankreas'] },
+  { key: 'jantung', label: 'Jantung', subs: ['Salur Sumbat', 'Berlubang', 'Bengkak', 'Berair', 'Denyutan (Aritmia)', 'Otot Mengeras', 'Serangan Jantung'] },
+  { key: 'hati', label: 'Hati', subs: ['Sirosis', 'Berlemak', 'Bengkak', 'Ekzema', 'Berparut', 'Batu Hempedu', 'HIV', 'Hepatitis', 'Jaundis'] },
+  { key: 'paru', label: 'Paru-paru', subs: ['Asma', 'Resdung', 'Covid-19', 'Tuberculosis (Tibi)', 'Bronkitis', 'Pneumonia'] },
+  { key: 'rahim', label: 'Rahim / Wanita', subs: ['Cyst', 'Fibroid', 'Anemia', 'Senggugut', 'Mandul', 'Polip', 'PCOS', 'Haid Tak Teratur', 'Adenomiosis', 'Endometriosis'] },
+  { key: 'gastrousus', label: 'Perut & Sistem Gastrousus', subs: ['Sembelit', 'Buasir', 'Gastrik', 'Refluks Asid', 'Gerd', 'Ulser'] },
+  { key: 'pinggang', label: 'Buah Pinggang', subs: ['Bocor', 'Bengkak', 'Kegagalan', 'Radang', 'Batu Karang', 'Ketumbuhan'] },
+  { key: 'serangkai', label: '3 Serangkai', subs: ['Kencing Manis', 'Darah Tinggi', 'Kolesterol'] },
+  { key: 'stres', label: 'Stress / Anxiety / Depresi / Panic Attack', subs: ['Stres', 'Anxiety', 'Depresi', 'Panic Attack', 'Murung'] },
+  { key: 'lelaki', label: 'Masalah Lelaki', subs: ['Lemah / Tenaga Batin', 'Angin Pasang'] },
+  { key: 'strok', label: 'Strok', subs: [] },
+  { key: 'autoimun', label: 'AutoImun', subs: [] },
+  { key: 'sihir', label: 'Sihir / Saka', subs: [] },
+  { key: 'sendi', label: 'Sendi / Tulang / Otot', subs: ['Sakit Sendi', 'Osteoarthritis', 'Gout', 'Sakit Belakang', 'Osteoporosis', 'Sengal Otot'] },
+]
+function prConditionSummary(questionnaire) {
+  const q = questionnaire || {}
+  const mk = q.masalah_kesihatan || {}
+  const parts = []
+  const cats = PR_MK_CATEGORIES.filter((cat) => mk[cat.key]?.checked).map((cat) => {
+    const d = mk[cat.key]
+    const subs = d.subs ? cat.subs.filter((s) => d.subs[s]) : []
+    let s = cat.label
+    if (subs.length) s += ` (${subs.join(', ')})`
+    if (d.lain) s += ` - ${d.lain}`
+    return s
+  })
+  if (cats.length) parts.push(cats.join(', '))
+  if (q.mk_lain_lain) parts.push(q.mk_lain_lain)
+  if (q.penyakit) parts.push(q.penyakit)
+  return parts.length ? parts.join('; ') : null
+}
+async function runProductionMilestoneCheck(supabase) {
+  const res = { detectedWeekly: 0, detectedExtension: 0, inserted: 0, pending: 0, notified: 0, failed: 0, skippedNoNumber: 0, waitingForDate: 0, errors: [] }
+  const todayStr = new Date().toISOString().slice(0, 10)
+  const tomorrowStr = new Date(Date.now() + 86400000).toISOString().slice(0, 10)
+
+  // 1) W3/W5/W7/W9/W12 — dikesan dari TARIKH SESI BERJADUAL minggu tu (bukan
+  // tunggu sesi berlaku — kena dikesan SEBELUM tarikh supaya "sehari sebelum"
+  // ada makna). Ambil session_date APA-APA PUN statusnya (termasuk yg dah
+  // berlaku, utk kes cron baru mula/ketinggalan — hantar lewat lebih baik drpd
+  // tak hantar langsung), due_date = tarikh sesi tu sendiri.
+  const { data: wRows, error: wErr } = await supabase.from('psy_plan_weekly_progress')
+    .select('patient_id, week_number, session_date, psy_treatment_plans!inner(status)')
+    .in('week_number', [3, 5, 7, 9, 12])
+    .not('session_date', 'is', null)
+    .eq('psy_treatment_plans.status', 'active')
+    .limit(2000)
+  if (wErr) res.errors.push('weekly-detect: ' + String(wErr.message || wErr))
+  const wCandidates = (wRows || []).map((r) => {
+    const milestone = PR_WEEK_MILESTONE[r.week_number]
+    return milestone ? { patient_id: r.patient_id, milestone, milestone_label: PR_LABELS[milestone], due_date: r.session_date.slice(0, 10), status: 'pending' } : null
+  }).filter(Boolean)
+  res.detectedWeekly = wCandidates.length
+
+  // 2) M1/M2/M3/Q1/Q2/Q3 — fasa sambungan. due_date = package_expires_at + N
+  // hari, DIKIRA TERUS (bukan tunggu threshold tercapai dulu baru rekod) supaya
+  // milestone akan datang pun dah masuk queue awal-awal, cron "hantar esok" yg
+  // kawal bila sebenarnya WA keluar.
+  const { data: activePats, error: pErr } = await supabase.from('psy_patients')
+    .select('id, package_expires_at').eq('status', 'active').not('package_expires_at', 'is', null).limit(5000)
+  if (pErr) res.errors.push('extension-detect: ' + String(pErr.message || pErr))
+  const mCandidates = []
+  for (const p of activePats || []) {
+    const expDate = new Date(p.package_expires_at)
+    if (isNaN(expDate.getTime())) continue
+    for (const th of PR_EXT_THRESHOLDS) {
+      const due = new Date(expDate.getTime() + th.days * 86400000).toISOString().slice(0, 10)
+      mCandidates.push({ patient_id: p.id, milestone: th.key, milestone_label: PR_LABELS[th.key], due_date: due, status: 'pending' })
+    }
+  }
+  res.detectedExtension = mCandidates.length
+
+  // 3) Upsert gabungan (dedup ikut UNIQUE(patient_id, milestone); ignoreDuplicates
+  // supaya row sedia ada — termasuk yg dah 'notified' — tak ditimpa, due_date
+  // asal dikekalkan walau sesi reschedule lepas ni).
+  const dedup = new Map()
+  for (const c of [...wCandidates, ...mCandidates]) dedup.set(c.patient_id + '|' + c.milestone, c)
+  const candidates = [...dedup.values()]
+  if (candidates.length) {
+    const { data: upserted, error: upErr } = await supabase.from('psy_production_recordings')
+      .upsert(candidates, { onConflict: 'patient_id,milestone', ignoreDuplicates: true }).select('id')
+    if (upErr) res.errors.push('upsert: ' + String(upErr.message || upErr))
+    else res.inserted = (upserted || []).length
+  }
+
+  // 4) Hantar WA utk row 'pending' yg due_date <= ESOK (sehari sebelum, + tangkap
+  // mana-mana yg terlepas/lewat drpd cron sblm ni) — yg due_date masih jauh di
+  // depan kekal 'pending', dicuba lagi cron seterusnya.
+  const { data: pendingRows, error: pendErr } = await supabase.from('psy_production_recordings')
+    .select('id, patient_id, milestone_label, due_date, psy_patients(full_name, mrn)')
+    .eq('status', 'pending').limit(500)
+  if (pendErr) { res.errors.push('pending-fetch: ' + String(pendErr.message || pendErr)); return res }
+  res.pending = (pendingRows || []).length
+  if (!res.pending) return res
+
+  const dueRows = pendingRows.filter((r) => !r.due_date || r.due_date <= tomorrowStr)
+  res.waitingForDate = res.pending - dueRows.length
+  if (!dueRows.length) return res
+
+  const patientIds = [...new Set(dueRows.map((r) => r.patient_id))]
+  const { data: kobRows } = await supabase.from('psy_kob_sessions')
+    .select('patient_id, questionnaire, created_at').in('patient_id', patientIds)
+    .neq('status', 'cancelled').order('created_at', { ascending: false })
+  const kobByPatient = {}
+  for (const k of (kobRows || [])) { if (!(k.patient_id in kobByPatient)) kobByPatient[k.patient_id] = k }
+
+  const { data: patRows } = await supabase.from('psy_patients')
+    .select('id, full_name, active_package_name').in('id', patientIds)
+  const patByPatient = {}
+  for (const p of (patRows || [])) patByPatient[p.id] = p
+
+  const { data: numSetting } = await supabase.from('psy_settings').select('value').eq('key', 'production_whatsapp_number').maybeSingle()
+  const waNumber = typeof numSetting?.value === 'string' ? numSetting.value.trim() : ''
+  if (!waNumber) { res.skippedNoNumber = dueRows.length; return res }
+
+  // Satu PDF + SATU mesej WhatsApp merangkumi SEMUA pesakit due (21 Okt 2026,
+  // lanjutan) — bukan satu mesej per-pesakit. Susun ikut due_date (yg paling
+  // awal dulu) supaya Production nampak urutan jelas kalau ada gabungan
+  // esok+hari-ini+lewat dlm satu batch.
+  const sorted = [...dueRows].sort((a, b) => String(a.due_date || '').localeCompare(String(b.due_date || '')))
+  const pdfRows = sorted.map((row) => {
+    const p = patByPatient[row.patient_id] || row.psy_patients || {}
+    return {
+      patientName: p.full_name || 'Pesakit',
+      packageName: p.active_package_name || '-',
+      milestoneLabel: row.milestone_label,
+      condition: prConditionSummary(kobByPatient[row.patient_id]?.questionnaire) || 'Tiada maklumat diisi',
+      dueDate: row.due_date || '',
+    }
+  })
+  const labelDate = new Date().toLocaleDateString('ms-MY', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'Asia/Kuala_Lumpur' })
+
+  let pdfUrl: string | null = null
+  try {
+    const bytes = await buildProductionRecordingsPdf(pdfRows, `Dijana ${labelDate}`)
+    const bucket = 'production-recordings'
+    await supabase.storage.createBucket(bucket, { public: false }).catch(() => {})
+    const path = `jadual-${todayStr}-${Date.now()}.pdf`
+    const { error: upErr } = await supabase.storage.from(bucket).upload(path, bytes, { contentType: 'application/pdf', upsert: true })
+    if (upErr) throw upErr
+    const { data: signed, error: sgErr } = await supabase.storage.from(bucket).createSignedUrl(path, 7 * 24 * 3600)
+    if (sgErr || !signed?.signedUrl) throw (sgErr || new Error('signed URL kosong'))
+    pdfUrl = signed.signedUrl
+  } catch (pdfErr) {
+    res.errors.push('pdf-build: ' + String((pdfErr as Error)?.message || pdfErr))
+  }
+
+  const dueLabel = dueRows.every((r) => r.due_date === tomorrowStr) ? 'esok' : dueRows.every((r) => r.due_date === todayStr) ? 'hari ini' : 'tidak lama lagi'
+  const msg = pdfUrl
+    ? `📹 Jadual Rakaman Production — ${dueRows.length} pesakit sedia untuk rakaman progress report ${dueLabel} (${labelDate}). Lihat PDF dilampirkan.`
+    : `📹 Jadual Rakaman Production — ${dueRows.length} pesakit sedia untuk rakaman ${dueLabel}, tapi PDF gagal dijana. Sila semak halaman Jadual Rakaman Production di sistem.`
+
+  try {
+    await sendWhatsApp(supabase, {
+      phone: waNumber, name: 'Team Production', message: msg,
+      attachments: pdfUrl ? [pdfUrl] : undefined,
+      sentByName: 'Auto — Jadual Rakaman Production', sentBy: null,
+    })
+    const ids = dueRows.map((r) => r.id)
+    await supabase.from('psy_production_recordings').update({
+      status: 'notified', wa_sent_at: new Date().toISOString(), wa_send_status: 'sent',
+    }).in('id', ids)
+    res.notified = ids.length
+  } catch (e) {
+    res.failed = dueRows.length
+    res.errors.push(String((e as Error)?.message || e))
+    try {
+      await supabase.from('psy_production_recordings').update({ wa_send_status: 'failed' }).in('id', dueRows.map((r) => r.id))
+    } catch (_) { /* jangan halang */ }
+  }
+  return res
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   try {
@@ -1141,7 +1348,8 @@ Deno.serve(async (req) => {
     const installmentReminder = await runInstallmentReminderCheck(supabase, locationId)
     const followUpSend = await runFollowUpSend(supabase, locationId)
     const reminderTimeSend = await runReminderTimeSend(supabase, locationId)
-    return new Response(JSON.stringify({ success: true, eventReminders, broadcasts, catatanHarian, kepatuhanAlerts, automations, sessionConfirm, autoAbsence, dnaSampleReminder, installmentAutoCharge, installmentOverdue, installmentReminder, followUpSend, reminderTimeSend }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    const productionMilestones = await runProductionMilestoneCheck(supabase)
+    return new Response(JSON.stringify({ success: true, eventReminders, broadcasts, catatanHarian, kepatuhanAlerts, automations, sessionConfirm, autoAbsence, dnaSampleReminder, installmentAutoCharge, installmentOverdue, installmentReminder, followUpSend, reminderTimeSend, productionMilestones }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
   } catch (err) {
     console.error('event-reminders error:', err)
     return new Response(JSON.stringify({ error: String(err?.message || err) }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })

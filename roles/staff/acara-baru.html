@@ -166,16 +166,35 @@
                 </div>
               </div>
               <div>
+                <label class="lbl">🧑‍💼 PIC (Person In Charge) <span class="font-normal text-ink/40">(Opsyenal)</span></label>
+                <select id="f-pic" class="fld"><option value="">— Tiada —</option></select>
+                <div class="text-[11px] text-ink/45 mt-1">Staff yang menyelaras acara ini (berasingan dari Pengendali Program/penceramah).</div>
+              </div>
+              <div>
                 <label class="lbl">👥 Kapasiti Peserta <span class="font-normal text-ink/40">(Opsyenal)</span></label>
                 <input id="f-capacity" type="number" min="1" class="fld" placeholder="50">
                 <div class="text-[11px] text-ink/45 mt-1">Kosongkan jika tiada had kapasiti.</div>
               </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label class="lbl">🟢 Pendaftaran Dibuka <span class="font-normal text-ink/40">(Opsyenal)</span></label>
+                  <input id="f-reg-opens" type="datetime-local" class="fld">
+                  <div class="text-[11px] text-ink/45 mt-1">Kosongkan = terus dibuka bila disimpan.</div>
+                </div>
+                <div>
+                  <label class="lbl">🔴 Pendaftaran Ditutup <span class="font-normal text-ink/40">(Opsyenal)</span></label>
+                  <input id="f-reg-closes" type="datetime-local" class="fld">
+                  <div class="text-[11px] text-ink/45 mt-1">Kosongkan = tutup automatik bila acara bermula.</div>
+                </div>
+              </div>
+              <div>
+                <label class="lbl">✅ Keperluan <span class="font-normal text-ink/40">(Opsyenal)</span></label>
+                <textarea id="f-requirements" rows="3" class="fld resize-none" placeholder="Satu keperluan setiap baris, cth:&#10;Hadir di lokasi&#10;Sampai 10 minit awal"></textarea>
+                <div class="text-[11px] text-ink/45 mt-1">Dipaparkan sebagai senarai di tab Maklumat Event. Kosongkan untuk sorok seksyen ni.</div>
+              </div>
             </div>
           </div>
         </div>
-
-        <!-- Persediaan & Peralatan -->
-        <div id="ep-container"></div>
 
         <!-- Actions -->
         <div id="form-error" class="hidden text-sm text-terracotta bg-terracotta/10 rounded-xl px-4 py-2.5"></div>
@@ -247,7 +266,6 @@
 <script src="../../shared/logout.js"></script>
 <script src="../../shared/navbar.js"></script>
 <script src="_shared.js"></script>
-<script src="../../shared/eventPrepSection.js"></script>
 <script>
     function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
 function cnt(inId, outId, max) { document.getElementById(outId).textContent = document.getElementById(inId).value.length; }
@@ -371,6 +389,8 @@ async function submitForm(statusVal) {
     const startAt = new Date(`${date}T${start}`).toISOString();
     const endAt = end ? new Date(`${date}T${end}`).toISOString() : null;
     const mapurl = document.getElementById('f-mapurl').value.trim() || null;
+    const regOpensVal = document.getElementById('f-reg-opens').value;
+    const regClosesVal = document.getElementById('f-reg-closes').value;
     const payload = {
       title, description: summary, type: document.getElementById('f-type').value, mode,
       start_at: startAt, end_at: endAt,
@@ -380,7 +400,11 @@ async function submitForm(statusVal) {
       capacity: document.getElementById('f-capacity').value ? parseInt(document.getElementById('f-capacity').value) : null,
       host: document.getElementById('f-host').value.trim() || null,
       host_role: document.getElementById('f-host').value.trim() ? document.getElementById('f-host-role').value : null,
+      pic_id: document.getElementById('f-pic').value || null,
       cover_image: image, tag: category || null, audience, package_ids: packageIds,
+      registration_opens_at: regOpensVal ? new Date(regOpensVal).toISOString() : null,
+      registration_deadline: regClosesVal ? new Date(regClosesVal).toISOString() : null,
+      requirements: document.getElementById('f-requirements').value.trim() || null,
       status: statusVal === 'published' ? 'published' : 'draft',
       created_by: window.currentUser.id,
     };
@@ -391,7 +415,6 @@ async function submitForm(statusVal) {
     if (mode === 'online' && mapurl) {
       await window.db.from('psy_event_meet_links').upsert({ event_id: inserted.id, meet_link: mapurl, updated_at: new Date().toISOString() });
     }
-    await window.EventPrep.flushToEvent(inserted.id);
     banner('Acara disimpan ✅');
     setTimeout(() => location.href = 'acara-detail.html?id=' + inserted.id, 700);
   } catch (e) {
@@ -489,12 +512,17 @@ async function delCat(id){
   banner('Kategori dipadam');
 }
 
+async function loadPicOptions() {
+  const { data } = await window.db.from('psy_profiles').select('id, full_name').eq('role', 'staff').eq('is_active', true).order('full_name');
+  document.getElementById('f-pic').innerHTML = '<option value="">— Tiada —</option>' + (data || []).map(s => `<option value="${s.id}">${escOpt(s.full_name||'—')}</option>`).join('');
+}
+
 (async () => {
   const user = await initStaff('events_admin', 'Cipta acara / kelas baharu');
   if (!user) return;
   toggleMode();
   await loadCategories();
-  await EventPrep.init({ eventId: null, containerId: 'ep-container' });
+  await loadPicOptions();
 })();
 </script>
 </body>

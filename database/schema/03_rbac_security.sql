@@ -342,6 +342,7 @@ INSERT INTO psy_modules (code, label, icon, scope, sort_order) VALUES
   ('emergency',        'Red Emergency Protocol','🚨', 'staff',  80),
   ('patient_events',   'Peristiwa Pesakit',    '🏥', 'staff',  82),
   ('dna_test',         'DNA Test',             '🧬', 'staff',  84),
+  ('production_recordings', 'Jadual Rakaman Production', '🎥', 'staff', 86),
   -- OPERASI
   ('package',          'Pakej & Pembayaran',   '🗂️', 'staff',  90),
   ('products',         'Produk',               '🛍️', 'staff', 100),
@@ -521,6 +522,18 @@ INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
 SELECT r.role_code, 'rujukan', a.action_code
 FROM (VALUES ('super_admin'), ('manager'), ('admin'), ('doctor'), ('coach')) AS r(role_code)
 CROSS JOIN (VALUES ('reschedule'), ('complete')) AS a(action_code)
+ON CONFLICT DO NOTHING;
+
+-- 3c) Modul "Jadual Rakaman Production" (audit 21 Okt 2026) — notifikasi WhatsApp
+-- Team Production (luar sistem) bila pesakit capai milestone rakaman progress
+-- report. Halaman ni LOG BACA-SAHAJA (lanjutan 21 Okt — tiada butang tindakan,
+-- Team Production tiada akaun ISW & tiada staf ditugaskan follow-up balik),
+-- jadi 'view' je yg bermakna utk semua role. Coach diberi eksplisit di sini
+-- (SELEPAS langkah 3 sweep di atas) supaya tak ter-kembang; super_admin/manager/
+-- admin pula dapat 'view' automatik (sweep scope='staff') — create/edit/delete/
+-- export turut terkembang sekali ikut sweep tu tapi tiada UI guna pun, harmless.
+INSERT INTO psy_role_module_actions (role_code, module_code, action_code)
+VALUES ('coach', 'production_recordings', 'view')
 ON CONFLICT DO NOTHING;
 
 -- 4) Grant portal pesakit (role 'patient').

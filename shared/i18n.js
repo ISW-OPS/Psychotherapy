@@ -539,7 +539,28 @@
     '⭐ Feedback Hari Ini': "⭐ Today's Feedback",
 
     // — PWA install chip —
-    'Pasang': 'Install'
+    'Pasang': 'Install',
+
+    // — Jadual Rakaman Production (production-queue.html) — added 21 Okt —
+    'Jadual Rakaman Production': 'Production Recording Queue',
+    'Jejak & urus notifikasi WhatsApp kepada Team Production bila pesakit capai milestone rakaman progress report.':
+      'Track & manage WhatsApp notifications to Team Production when a patient reaches a progress report recording milestone.',
+    'Pesakit yang capai milestone (Minggu 3/5/7/9/12, Bulan 1-3, Suku 1-3) — Team Production (luar sistem) dimaklumkan via WhatsApp, jejak status rakaman di sini.':
+      'Patients who reach a milestone (Week 3/5/7/9/12, Month 1-3, Quarter 1-3) — Team Production (outside the system) is notified via WhatsApp; track recording status here.',
+    'Notified': 'Notified',
+    'Recorded': 'Recorded',
+    'Cari nama atau MRN pesakit...': 'Search patient name or MRN...',
+    'Kondisi (KOB)': 'Condition (KOB)',
+    '✅ Selesai Rakam': '✅ Mark Recorded',
+    '⏭️ Skip': '⏭️ Skip',
+    'Tiada rekod untuk filter ini.': 'No records for this filter.',
+    'Tiada maklumat diisi': 'No information filled in',
+    'Team Production tiada akaun log masuk ISW — notifikasi dihantar automatik via WhatsApp (cron) ke nombor yang disetkan di Tetapan Sistem → Klinik. Baris Pending bermaksud belum sempat/gagal dihantar (nombor kosong atau WA gagal) — akan cuba lagi secara automatik.':
+      'Team Production has no ISW login — notifications are sent automatically via WhatsApp (cron) to the number set under System Settings → Clinic. A Pending row means it hasn\'t been sent yet or failed (empty number or WA failure) — it will retry automatically.',
+    'Nombor WhatsApp Team Production': 'Team Production WhatsApp Number',
+    'Team Production (Rakaman Progress Report)': 'Team Production (Progress Report Recording)',
+    'Team Production tiada akaun log masuk ISW — notifikasi milestone rakaman (Minggu 3/5/7/9/12, Bulan 1-3, Suku 1-3) dihantar ke nombor WhatsApp ini. Kosong = sistem tidak hantar (rekod kekal menunggu di Jadual Rakaman Production).':
+      'Team Production has no ISW login — recording milestone notifications (Week 3/5/7/9/12, Month 1-3, Quarter 1-3) are sent to this WhatsApp number. Empty = the system will not send (records stay queued in the Production Recording Queue).'
   };
 
   // Merge the auto-generated full-site glossary. Curated seed above WINS,

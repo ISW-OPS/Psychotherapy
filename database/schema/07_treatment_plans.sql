@@ -210,6 +210,65 @@ COMMENT ON COLUMN psy_plan_weekly_progress.reaksi_pemulihan IS
 -- 18_notifications_automations.sql bersama fungsinya.
 
 -- ──────────────────────────────────────────────────────────────
+-- psy_production_recordings — jejak notifikasi Team Production (luar sistem,
+-- hantar WhatsApp sahaja) bila pesakit capai milestone rakaman progress
+-- report. Milestone: w3/w5/w7/w9/w12 (sesi mingguan dalam pakej asal 12 minggu,
+-- dikesan bila sesi tu sebenar berlaku — status hadir/consultation_done) dan
+-- m1/m2/m3/q1/q2/q3 (fasa sambungan selepas minggu 12, dikira dari
+-- package_expires_at + 30/60/90/180/270/365 hari, selagi pesakit kekal active).
+-- Diisi oleh cron event-reminders (runProductionMilestoneCheck) — audit 21 Okt 2026.
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS psy_production_recordings (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id      UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  milestone       TEXT NOT NULL
+                   CONSTRAINT psy_production_recordings_milestone_check
+                   CHECK (milestone IN ('w3','w5','w7','w9','w12','m1','m2','m3','q1','q2','q3')),
+  milestone_label TEXT,
+  -- Tarikh sasaran rakaman (21 Okt 2026, lanjutan) — utk W3-W12 = tarikh sesi
+  -- berjadual minggu tu (psy_plan_weekly_progress.session_date); utk M1-Q3 =
+  -- psy_patients.package_expires_at + bilangan hari threshold. Cron hantar WA
+  -- SEHARI SEBELUM due_date (bukan terus bila dikesan) — lihat
+  -- runProductionMilestoneCheck() di supabase/functions/event-reminders/index.ts.
+  due_date        DATE,
+  -- Permudahkan (21 Okt 2026, lanjutan) — Team Production tiada akaun ISW &
+  -- tiada staf ditugaskan follow-up/kemaskini balik, jadi jadual ni sekadar LOG
+  -- PENGHANTARAN notis (pending/notified), BUKAN papan kerja status rakaman.
+  -- Kolum recorded_at/recorded_by & status 'recorded'/'skipped' DIBUANG sengaja.
+  status          TEXT NOT NULL DEFAULT 'pending'
+                   CONSTRAINT psy_production_recordings_status_check
+                   CHECK (status IN ('pending','notified')),
+  wa_sent_at      TIMESTAMPTZ,
+  wa_send_status  TEXT,
+  created_at      TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT psy_production_recordings_patient_milestone_key UNIQUE (patient_id, milestone)
+);
+
+CREATE INDEX IF NOT EXISTS idx_psy_production_recordings_status
+  ON psy_production_recordings(status);
+
+CREATE INDEX IF NOT EXISTS idx_psy_production_recordings_patient
+  ON psy_production_recordings(patient_id);
+
+ALTER TABLE psy_production_recordings ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Staff manage production recordings" ON psy_production_recordings;
+CREATE POLICY "Staff manage production recordings" ON psy_production_recordings FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+COMMENT ON TABLE psy_production_recordings IS
+  'Queue notifikasi WhatsApp kpd Team Production (luar sistem, tiada akaun ISW) bila pesakit capai milestone rakaman progress report. Diisi auto oleh cron, diurus staf di production-queue.html.';
+
+COMMENT ON COLUMN psy_production_recordings.milestone_label IS
+  'Label paparan diisi masa insert, cth "Minggu 3" / "Bulan 1" / "Suku 1" — senang papar tanpa perlu map semula di UI.';
+
+COMMENT ON COLUMN psy_production_recordings.status IS
+  'pending = dikesan, belum/gagal hantar WA; notified = WA dah hantar; recorded = staf sahkan rakaman dah dibuat; skipped = staf pilih langkau.';
+
+COMMENT ON COLUMN psy_production_recordings.wa_send_status IS
+  'Status penghantaran WA terakhir (sent/failed) — rujukan debug, bukan status rekod (lihat column status).';
+
+-- ──────────────────────────────────────────────────────────────
 -- Trigger: pesakit stop/tamat rawatan → buang sesi akan datang yang
 -- belum berlaku (pending/booked/reschedule) supaya jadual tak tinggal
 -- bersepah & tak trigger reminder/escalation palsu. Rekod SEJARAH

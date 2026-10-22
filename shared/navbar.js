@@ -142,6 +142,7 @@ const STAFF_NAV_MASTER = [
       { id: 'emergency', url: 'emergency.html', icon: '🚨', label: 'Red Emergency Protocol' },
       { id: 'peristiwa', url: 'peristiwa.html', icon: '🏥', label: 'Rekod Klinikal Pesakit' },
       { id: 'dna_test', url: 'dna-test-list.html', icon: '🧬', label: 'DNA Test' },
+      { id: 'production_queue', url: 'production-queue.html', icon: '🎥', label: 'Jadual Rakaman Production' },
     ]
   },
   {

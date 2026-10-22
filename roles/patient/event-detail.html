@@ -123,6 +123,17 @@ function actionHtml() {
   if (EV.capacity && (EV.registered_count || 0) >= EV.capacity) {
     return `<div class="w-full bg-ink/5 text-ink/50 font-semibold py-3.5 rounded-xl text-center">🚫 Acara Penuh (${EV.capacity}/${EV.capacity} peserta)</div>`;
   }
+  // Tetingkap pendaftaran (bila dibuka/ditutup) — dikuatkuasa server-side juga
+  // (trg_enforce_registration_window), ni cuma elak butang aktif percuma.
+  const now = new Date();
+  const opensAt = EV.registration_opens_at ? new Date(EV.registration_opens_at) : null;
+  const closesAt = EV.registration_deadline ? new Date(EV.registration_deadline) : new Date(EV.start_at);
+  if (opensAt && now < opensAt) {
+    return `<div class="w-full bg-amber-50 text-amber-700 font-semibold py-3.5 rounded-xl text-center">🟡 Pendaftaran dibuka ${opensAt.toLocaleDateString(LCALE(),{day:'2-digit',month:'short'})}, ${opensAt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>`;
+  }
+  if (now > closesAt) {
+    return `<div class="w-full bg-ink/5 text-ink/50 font-semibold py-3.5 rounded-xl text-center">🔴 Pendaftaran telah ditutup</div>`;
+  }
   return `<button onclick="toggleReg()" class="w-full bg-navy hover:bg-navy-dark text-white font-bold py-3.5 rounded-xl flex items-center justify-center gap-2">📝 Daftar Sekarang <span>→</span></button>`;
 }
 
@@ -287,7 +298,7 @@ async function loadOthers() {
     // bukan sekadar sorok butang di UI (dulu meet_link ADA dlm respons API walau
     // pesakit tak daftar, cuma disorok client-side — RLS "bocor").
     const { data: ev } = await window.db.from('psy_events')
-      .select('id, title, description, type, start_at, end_at, mode, location, address, maps_url, capacity, registration_deadline, cover_image, tag, host, host_role, price, status, recording_url, audience, package_ids, created_at')
+      .select('id, title, description, type, start_at, end_at, mode, location, address, maps_url, capacity, registration_opens_at, registration_deadline, cover_image, tag, host, host_role, price, status, recording_url, audience, package_ids, created_at')
       .eq('id', id).maybeSingle();
     if (!ev) { document.getElementById('detail-wrap').innerHTML = '<div class="lg:col-span-3 text-center py-16 text-ink/40">Acara tidak dijumpai.</div>'; return; }
     EV = ev;

@@ -61,6 +61,7 @@ window.PAGE_MODULE = {
   kehadiran:        'kehadiran',
   peristiwa:          'patient_events',
   dna_test:           'dna_test',
+  production_queue:   'production_recordings',
 
   // OPERASI
   pakej:            'package',

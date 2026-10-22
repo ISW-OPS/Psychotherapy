@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibnu Sina Wellness — Jadual Rakaman Production</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="../../shared/theme.js"></script>
+<script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="_styles.css" rel="stylesheet">
+<style>
+  .stat-card { transition: all 0.15s; cursor: pointer; }
+  .stat-card.active { box-shadow: 0 0 0 2px var(--rpm, #1a3a5c); background: #fffaf0; }
+  .stat-card:hover:not(.active) { background: #fcfaf5; }
+  .pq-table thead th { background: transparent; text-align: left; font-size: 11px; color: rgba(0,0,0,0.55); font-weight: 600; padding: 14px 16px; border-bottom: 1px solid rgba(0,0,0,0.08); }
+  .pq-table tbody td { padding: 14px 16px; border-bottom: 1px solid rgba(0,0,0,0.05); font-size: 13px; vertical-align: top; }
+  .pq-table tbody tr:hover td { background: #fcfaf5; }
+  .chip-status { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div id="app-loading" class="min-h-screen flex items-center justify-center">
+  <div class="text-center"><div class="text-4xl mb-3">🎥</div><p class="text-ink/60 text-sm">Memuatkan...</p></div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="sidebar w-64 bg-navy-dark text-white flex-col sticky top-0 h-screen"></aside>
+    <main class="main-content flex-1 min-w-0">
+      <header id="page-header" class="bg-white border-b border-ink/10 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"></header>
+
+      <div class="p-4 md:p-8 space-y-5">
+
+        <div class="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h2 class="text-xl font-bold text-navy">Jadual Rakaman Production</h2>
+            <p class="text-xs text-ink/50 mt-0.5">Pesakit yang capai milestone (Minggu 3/5/7/9/12, M1-M3, Q1-Q3) — Team Production (luar sistem) dimaklumkan via WhatsApp. Log penghantaran sahaja; Team Production tiada akaun ISW jadi status rakaman sebenar tidak dijejak di sini.</p>
+          </div>
+        </div>
+
+        <!-- Stat cards (3) -->
+        <div class="grid grid-cols-3 gap-3">
+          <div class="stat-card bg-white rounded-2xl border border-ink/10 p-4 flex items-center gap-3" data-st="all" onclick="filterStatus('all')">
+            <div class="w-11 h-11 rounded-xl bg-navy-light text-navy flex items-center justify-center text-lg">🎥</div>
+            <div>
+              <div class="text-[11px] text-ink/55 font-semibold">Semua</div>
+              <div id="stat-all" class="text-2xl font-bold mt-0.5">0</div>
+            </div>
+          </div>
+          <div class="stat-card bg-white rounded-2xl border border-ink/10 p-4 flex items-center gap-3" data-st="pending" onclick="filterStatus('pending')">
+            <div class="w-11 h-11 rounded-xl bg-gold/20 text-gold-dark flex items-center justify-center text-lg">⏳</div>
+            <div>
+              <div class="text-[11px] text-ink/55 font-semibold">Pending</div>
+              <div id="stat-pending" class="text-2xl font-bold mt-0.5">0</div>
+            </div>
+          </div>
+          <div class="stat-card bg-white rounded-2xl border border-ink/10 p-4 flex items-center gap-3" data-st="notified" onclick="filterStatus('notified')">
+            <div class="w-11 h-11 rounded-xl bg-teal/15 text-teal flex items-center justify-center text-lg">📲</div>
+            <div>
+              <div class="text-[11px] text-ink/55 font-semibold">Notified</div>
+              <div id="stat-notified" class="text-2xl font-bold mt-0.5">0</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Filter row -->
+        <div class="flex gap-2 flex-wrap items-center">
+          <input id="f-search" type="text" placeholder="Cari nama atau MRN pesakit..." oninput="renderList()"
+            class="flex-1 min-w-[260px] border border-ink/15 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-navy">
+          <button onclick="resetFilters()" class="border border-ink/15 rounded-xl px-4 py-2.5 text-sm text-navy hover:bg-cream font-semibold">↻ Reset</button>
+        </div>
+
+        <!-- Table -->
+        <div class="bg-white rounded-2xl border border-ink/10 overflow-x-auto">
+          <table class="pq-table w-full">
+            <thead>
+              <tr>
+                <th>Nama</th>
+                <th>Package</th>
+                <th>Week</th>
+                <th>Penyakit</th>
+                <th>Tarikh Rawatan</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="pq-body"></tbody>
+          </table>
+          <div class="px-5 py-3 border-t border-ink/8 flex items-center justify-between text-xs text-ink/55">
+            <span id="pq-count">—</span>
+            <div class="flex gap-2">
+              <button id="page-prev" onclick="changePage(-1)" class="px-3 py-1.5 border border-ink/15 rounded-lg hover:bg-cream disabled:opacity-40" disabled>←</button>
+              <span id="page-info">—</span>
+              <button id="page-next" onclick="changePage(1)" class="px-3 py-1.5 border border-ink/15 rounded-lg hover:bg-cream disabled:opacity-40" disabled>→</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-navy-light/30 border border-navy/10 rounded-xl p-4 text-xs text-ink/60 leading-relaxed">
+          ℹ️ Team Production tiada akaun log masuk ISW — notifikasi dihantar automatik via WhatsApp (cron) ke nombor yang disetkan di <a href="tetapan.html" class="text-navy font-semibold hover:underline">Tetapan Sistem → Klinik</a>. Baris <b>Pending</b> bermaksud belum sempat/gagal dihantar (nombor kosong atau WA gagal) — akan cuba lagi secara automatik.
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="/shared/supabase.js"></script>
+<script src="../../config/supabase.js"></script>
+<script src="../../shared/authGuard.js"></script>
+<script src="../../shared/logout.js"></script>
+<script src="../../shared/navbar.js"></script>
+<script src="_shared.js"></script>
+<script>
+    function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
+const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const PAGE_SIZE = 25;
+
+let ALL_ROWS = [];
+let currentStatusFilter = 'all';
+let currentPage = 0;
+
+async function loadData() {
+  // due_date disimpan terus pada rekod (ditetapkan masa cron kesan milestone) —
+  // utk W3-W12 ia tarikh sesi minggu tu, utk M1-Q3 ia package_expires_at +
+  // threshold hari. SATU sumber sahaja, sama dgn yg dipakai cron utk tentukan
+  // bila hantar WA "sehari sebelum" — rujuk runProductionMilestoneCheck() di
+  // supabase/functions/event-reminders/index.ts.
+  const { data, error } = await window.db.from('psy_production_recordings')
+    .select('id, patient_id, milestone, milestone_label, due_date, status, wa_sent_at, wa_send_status, created_at, psy_patients(full_name, mrn, active_package_name)')
+    .order('due_date', { ascending: true, nullsFirst: false }).limit(1000);
+  if (error) { banner(iswL('Ralat: ', 'Error: ') + error.message, 'error'); return; }
+  ALL_ROWS = data || [];
+
+  // Kondisi (B3 Masalah Kesihatan) — sesi KOB TERBARU setiap pesakit dalam senarai,
+  // sumber sama dgn renderKobSummary() di patient-hub.html (MK_CATEGORIES dari _shared.js).
+  const patientIds = [...new Set(ALL_ROWS.map(r => r.patient_id).filter(Boolean))];
+  window.__pqKobByPatient = {};
+  if (patientIds.length) {
+    const { data: kobRows } = await window.db.from('psy_kob_sessions')
+      .select('patient_id, questionnaire, created_at')
+      .in('patient_id', patientIds).neq('status', 'cancelled')
+      .order('created_at', { ascending: false });
+    (kobRows || []).forEach(k => { if (!(k.patient_id in window.__pqKobByPatient)) window.__pqKobByPatient[k.patient_id] = k; });
+  }
+
+  renderStats();
+  renderList();
+}
+
+function treatmentDateLabel(dueDate) {
+  if (!dueDate) return null;
+  return new Date(dueDate + 'T00:00:00').toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function conditionSummary(patientId) {
+  const kob = window.__pqKobByPatient?.[patientId];
+  const q = kob?.questionnaire;
+  if (!q) return null;
+  const mk = q.masalah_kesihatan || {};
+  const parts = [];
+  if (typeof MK_CATEGORIES !== 'undefined') {
+    const cats = MK_CATEGORIES.filter(cat => mk[cat.key]?.checked).map(cat => {
+      const d = mk[cat.key];
+      const subs = d.subs ? cat.subs.filter(s => d.subs[s]) : [];
+      let s = cat.label;
+      if (subs.length) s += ` (${subs.join(', ')})`;
+      if (d.lain) s += ` - ${d.lain}`;
+      return s;
+    });
+    if (cats.length) parts.push(cats.join(', '));
+  }
+  if (q.mk_lain_lain) parts.push(q.mk_lain_lain);
+  if (q.penyakit) parts.push(q.penyakit);
+  return parts.length ? parts.join('; ') : null;
+}
+
+function resetFilters() {
+  document.getElementById('f-search').value = '';
+  currentStatusFilter = 'all';
+  document.querySelectorAll('.stat-card').forEach(c => c.classList.toggle('active', c.dataset.st === 'all'));
+  currentPage = 0;
+  renderList();
+}
+window.resetFilters = resetFilters;
+
+function filterStatus(st) {
+  currentStatusFilter = st;
+  document.querySelectorAll('.stat-card').forEach(c => c.classList.toggle('active', c.dataset.st === st));
+  currentPage = 0;
+  renderList();
+}
+window.filterStatus = filterStatus;
+
+function renderStats() {
+  const pending  = ALL_ROWS.filter(r => r.status === 'pending').length;
+  const notified = ALL_ROWS.filter(r => r.status === 'notified').length;
+  document.getElementById('stat-all').textContent      = ALL_ROWS.length;
+  document.getElementById('stat-pending').textContent  = pending;
+  document.getElementById('stat-notified').textContent = notified;
+  if (!document.querySelector('.stat-card.active')) {
+    document.querySelector('[data-st="all"]').classList.add('active');
+  }
+}
+
+function patName(r)    { return r.psy_patients?.full_name || 'Pesakit'; }
+function patMrn(r)     { return r.psy_patients?.mrn || ''; }
+function patPackage(r) { return r.psy_patients?.active_package_name || '—'; }
+
+function statusChip(st) {
+  switch (st) {
+    case 'pending':  return '<span class="chip-status bg-gold/30 text-gold-dark">⏳ Pending</span>';
+    case 'notified': return '<span class="chip-status bg-teal/20 text-teal">📲 Notified</span>';
+    default:         return `<span class="chip-status bg-ink/10 text-ink/60">${esc(st)}</span>`;
+  }
+}
+
+function renderList() {
+  let list = ALL_ROWS;
+  if (currentStatusFilter !== 'all') list = list.filter(r => r.status === currentStatusFilter);
+  const q = (document.getElementById('f-search')?.value || '').toLowerCase().trim();
+  if (q) list = list.filter(r => patName(r).toLowerCase().includes(q) || patMrn(r).toLowerCase().includes(q));
+
+  document.getElementById('pq-count').textContent = `${list.length} rekod`;
+
+  if (!list.length) {
+    document.getElementById('pq-body').innerHTML =
+      `<tr><td colspan="6" class="text-center py-10 text-ink/40">Tiada rekod untuk filter ini.</td></tr>`;
+    document.getElementById('page-prev').disabled = true;
+    document.getElementById('page-next').disabled = true;
+    document.getElementById('page-info').textContent = '0';
+    return;
+  }
+
+  const start = currentPage * PAGE_SIZE;
+  const end   = start + PAGE_SIZE;
+  const page  = list.slice(start, end);
+
+  document.getElementById('pq-body').innerHTML = page.map((r, i) => {
+    const cond = conditionSummary(r.patient_id);
+    const dueLabel = treatmentDateLabel(r.due_date);
+    return `<tr>
+      <td><div class="font-semibold text-ink">${esc(patName(r))}</div></td>
+      <td class="text-xs text-ink/75">${esc(patPackage(r))}</td>
+      <td><span class="font-semibold text-navy">${esc(r.milestone_label || r.milestone)}</span></td>
+      <td class="max-w-[220px]"><span class="text-xs ${cond ? 'text-ink/75' : 'text-ink/35 italic'}">${esc(cond || 'Tiada maklumat diisi')}</span></td>
+      <td class="text-xs whitespace-nowrap ${dueLabel ? 'text-ink' : 'text-ink/35 italic'}">${esc(dueLabel || 'Belum ditetapkan')}</td>
+      <td>${statusChip(r.status)}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('page-prev').disabled = currentPage === 0;
+  document.getElementById('page-next').disabled = end >= list.length;
+  document.getElementById('page-info').textContent = `${currentPage + 1} / ${Math.ceil(list.length / PAGE_SIZE)}`;
+}
+
+function changePage(delta) {
+  currentPage = Math.max(0, currentPage + delta);
+  renderList();
+}
+window.changePage = changePage;
+
+(async () => {
+  const user = await initStaff('production_queue', 'Jejak & urus notifikasi WhatsApp kepada Team Production bila pesakit capai milestone rakaman progress report.', 'production_recordings');
+  if (!user) return;
+  await loadData();
+})();
+</script>
+</body>
+</html>

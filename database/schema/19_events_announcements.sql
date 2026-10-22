@@ -148,6 +148,7 @@ CREATE TABLE IF NOT EXISTS psy_event_registrations (
 
 CREATE INDEX IF NOT EXISTS idx_event_regs_event   ON psy_event_registrations(event_id);
 CREATE INDEX IF NOT EXISTS idx_event_regs_patient ON psy_event_registrations(patient_id);
+ALTER TABLE psy_event_registrations ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'portal';
 
 ALTER TABLE psy_event_registrations ENABLE ROW LEVEL SECURITY;
 
@@ -203,6 +204,47 @@ DROP TRIGGER IF EXISTS trg_enforce_event_capacity ON psy_event_registrations;
 CREATE TRIGGER trg_enforce_event_capacity
   BEFORE INSERT OR UPDATE ON psy_event_registrations
   FOR EACH ROW EXECUTE FUNCTION trg_enforce_event_capacity();
+
+-- ──── Tetingkap Pendaftaran (bila dibuka/ditutup) + Keperluan custom ────
+-- registration_deadline (atas) = bila ditutup, NULL = default tutup pada start_at.
+ALTER TABLE psy_events ADD COLUMN IF NOT EXISTS registration_opens_at TIMESTAMPTZ;
+ALTER TABLE psy_events ADD COLUMN IF NOT EXISTS requirements TEXT;
+
+-- ──── PIC (Person In Charge) acara — koordinator, berasingan dari host ────
+ALTER TABLE psy_events ADD COLUMN IF NOT EXISTS pic_id UUID REFERENCES psy_profiles(id) ON DELETE SET NULL;
+
+CREATE OR REPLACE FUNCTION trg_enforce_registration_window()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_opens_at   TIMESTAMPTZ;
+  v_closes_at  TIMESTAMPTZ;
+  v_start_at   TIMESTAMPTZ;
+  v_is_staff   BOOLEAN;
+BEGIN
+  IF NEW.status = 'batal' THEN RETURN NEW; END IF;
+  SELECT EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff') INTO v_is_staff;
+  IF v_is_staff THEN RETURN NEW; END IF;
+
+  SELECT registration_opens_at, registration_deadline, start_at
+    INTO v_opens_at, v_closes_at, v_start_at
+    FROM psy_events WHERE id = NEW.event_id;
+
+  IF v_opens_at IS NOT NULL AND now() < v_opens_at THEN
+    RAISE EXCEPTION 'Pendaftaran acara ini belum dibuka.';
+  END IF;
+  IF now() > COALESCE(v_closes_at, v_start_at) THEN
+    RAISE EXCEPTION 'Pendaftaran acara ini telah ditutup.';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_enforce_registration_window ON psy_event_registrations;
+CREATE TRIGGER trg_enforce_registration_window
+  BEFORE INSERT OR UPDATE ON psy_event_registrations
+  FOR EACH ROW EXECUTE FUNCTION trg_enforce_registration_window();
 
 -- ──── psy_event_materials (bahan / rakaman acara) ────
 CREATE TABLE IF NOT EXISTS psy_event_materials (
@@ -386,6 +428,9 @@ DROP POLICY IF EXISTS "Staff manage event prep meta" ON psy_event_prep_meta;
 CREATE POLICY "Staff manage event prep meta" ON psy_event_prep_meta FOR ALL
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
+-- Submit Senarai Persediaan — tab Pemulangan Barang muncul lepas ni disi.
+ALTER TABLE psy_event_prep_meta ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMPTZ;
+
 -- ── Pengeluaran & Pemulangan barang (stok keluar untuk event + rekod pulangan) ──
 CREATE TABLE IF NOT EXISTS psy_event_stock_issuance (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -417,3 +462,26 @@ ALTER TABLE psy_event_prep_items
   ADD COLUMN IF NOT EXISTS equipment_id UUID REFERENCES psy_equipment(id) ON DELETE SET NULL;
 
 CREATE INDEX IF NOT EXISTS idx_psy_event_prep_items_equipment ON psy_event_prep_items(equipment_id);
+
+-- ──── PIC kembali ke Persediaan & Peralatan (per-barang) ────
+ALTER TABLE psy_event_prep_items ADD COLUMN IF NOT EXISTS pic_id UUID REFERENCES psy_profiles(id) ON DELETE SET NULL;
+
+-- ──── Pemulangan Barang (gantikan persediaan-event-keluar.html) ────
+CREATE TABLE IF NOT EXISTS psy_event_item_returns (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id      UUID NOT NULL REFERENCES psy_events(id) ON DELETE CASCADE,
+  prep_item_id  UUID NOT NULL REFERENCES psy_event_prep_items(id) ON DELETE CASCADE,
+  qty_borrowed  NUMERIC(10,2) NOT NULL DEFAULT 0,
+  qty_returned  NUMERIC(10,2) NOT NULL DEFAULT 0,
+  condition     TEXT CHECK (condition IS NULL OR condition IN ('baik','rosak','hilang')),
+  returned_at   TIMESTAMPTZ,
+  pic_id        UUID REFERENCES psy_profiles(id) ON DELETE SET NULL,
+  created_at    TIMESTAMPTZ DEFAULT now(),
+  updated_at    TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (prep_item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_psy_event_item_returns_event ON psy_event_item_returns(event_id);
+ALTER TABLE psy_event_item_returns ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Staff manage event item returns" ON psy_event_item_returns;
+CREATE POLICY "Staff manage event item returns" ON psy_event_item_returns FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
