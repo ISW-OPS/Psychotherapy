@@ -187,7 +187,7 @@
       <table class="data w-full">
         <thead><tr>
           <th>Pesakit</th><th>MRN</th><th>Tarikh KOB</th><th>Status Sesi</th>
-          <th>Pakej Dicadang</th><th>Closer</th><th>Collector</th><th class="text-right">Tindakan</th>
+          <th>Pakej Dicadang</th><th>Status Bayaran</th><th>Closer</th><th>Collector</th><th class="text-right">Tindakan</th>
         </tr></thead>
         <tbody id="drill-body"></tbody>
       </table>
@@ -568,10 +568,26 @@ async function renderCollectorTable(kob){
 const DRILL_META = {
   total:   { title: 'Total KOB',           filter: () => true,                         sub: 'Semua rekod KOB dalam julat tarikh dipilih.' },
   closed:  { title: 'Sign Up (Closed)',    filter: k => bucketOf(k) === 'closed',      sub: 'kob_status pesakit = "completed" DAN ada active_package_id.' },
-  inprog:  { title: 'In Progress',         filter: k => bucketOf(k) === 'inprog',      sub: 'Status sesi bukan cancelled/no_show/kiv, dan kob_status pesakit belum "completed" — masih dlm funnel.' },
+  inprog:  { title: 'In Progress',         filter: k => bucketOf(k) === 'inprog',      sub: 'Masih dlm funnel — termasuk sesi "completed" tapi pakej belum dibayar (lihat lajur Status Bayaran).' },
   notconv: { title: 'Not Converted',       filter: k => bucketOf(k) === 'notconv',     sub: 'Status sesi = cancelled/no_show/kiv, ATAU kob_status pesakit = "completed" tapi tiada active_package_id.' },
 };
 function fmtDrillDate(d){ if(!d) return '—'; return new Date(d).toLocaleDateString(LCALE(), { day:'2-digit', month:'short', year:'numeric' }); }
+// Label status bayaran pakej — supaya sesi "completed" tapi belum bayar (tersekat In
+// Progress) terus nampak SEBAB-nya, tak payah buka kob-detail.html utk semak.
+const PAY_STATUS_META = {
+  pending:  { label: 'Tunggu Bayaran',    cls: 'bg-gold/15 text-gold-dark' },
+  partial:  { label: 'Bayaran Sebahagian',cls: 'bg-gold/15 text-gold-dark' },
+  paid:     { label: 'Dah Bayar',         cls: 'bg-green/15 text-green-dark' },
+  skipped:  { label: 'Dilangkau',         cls: 'bg-ink/8 text-ink/50' },
+  declined: { label: 'Ditolak Pesakit',   cls: 'bg-terracotta/15 text-terracotta' },
+  na:       { label: '—',                 cls: 'bg-ink/8 text-ink/40' },
+};
+function payStatusBadge(k){
+  const st = k.package_payment_status;
+  if (!st || !k.recommended_package_name) return '<span class="text-ink/30">—</span>';
+  const meta = PAY_STATUS_META[st] || { label: st, cls: 'bg-ink/8 text-ink/50' };
+  return `<span class="text-[11px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${meta.cls}">${esc(meta.label)}</span>`;
+}
 function openDrill(key){
   const meta = DRILL_META[key];
   if (!meta) return;
@@ -580,7 +596,7 @@ function openDrill(key){
   document.getElementById('drill-sub').textContent = meta.sub;
   const body = document.getElementById('drill-body');
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="8" class="text-center text-ink/40 py-8">Tiada rekod</td></tr>';
+    body.innerHTML = '<tr><td colspan="9" class="text-center text-ink/40 py-8">Tiada rekod</td></tr>';
   } else {
     body.innerHTML = rows.map(k=>{
       const pat = patientMap[k.patient_id] || {};
@@ -590,6 +606,7 @@ function openDrill(key){
         <td class="text-xs">${fmtDrillDate(k.scheduled_at)}</td>
         <td class="text-xs">${esc(k.status || '—')}</td>
         <td class="text-sm">${esc(k.recommended_package_name || pat.active_package_name || '—')}</td>
+        <td class="text-xs">${payStatusBadge(k)}</td>
         <td class="text-xs">${esc(k.closer_name || '—')}</td>
         <td class="text-xs">${esc(k.collector_name || '—')}</td>
         <td class="text-right whitespace-nowrap"><a href="kob-detail.html?id=${k.id}" target="_blank" class="text-xs text-navy font-semibold hover:underline">Buka →</a></td>
