@@ -1,14 +1,15 @@
 // ============================================================
 // Edge Function: sync-ghl
-// Fasa 1 — Sync sehala status KOB (ISW → GoHighLevel).
-//
-// Dicetuskan oleh Supabase Database Webhook pada UPDATE/INSERT
-// psy_patients. Bila kob_status bertukar, function ni:
-//   1. Upsert contact dalam GHL ikut no. telefon (E.164)
-//   2. Set custom fields (kob_stage, pakej, tarikh, MRN ...)
-//   3. Gerak / cipta Opportunity ke pipeline stage yang padan
-//
-// Closer kekal di inbox WhatsApp GHL — konteks KOB auto-masuk.
+// Sync ISW → GoHighLevel (PT→GHL). Dua cabang, dua Database Webhook
+// berasingan (lihat README.md):
+//   1. psy_patients UPDATE/INSERT (kob_status/status) — isi mrn/
+//      isw_registration_status/pt_in_system + gerak Opportunity (Fasa 1,
+//      pipeline stage belum dikonfigur — lihat STAGE_MAP).
+//   2. psy_kob_sessions UPDATE/INSERT (handleKobSession) — 7 medan operasi
+//      KOB (22 Okt 2026): kob_date, kob_time, mode, isw_status_2026,
+//      collector_kob, closer_kob, ob_package. Collector/Closer/Pakej
+//      Dicadang SEHALA ISW→GHL (ISW sumber kebenaran, staff assign di
+//      kob-list.html/kob-detail.html — GHL tak pernah bekalkan nilai ni).
 //
 // Secrets diperlukan (set via `supabase secrets set`):
 //   GHL_ISW_TOKEN        — Private Integration token ISW (Bearer); nama tersendiri
@@ -41,18 +42,39 @@ const STAGE_MAP: Record<string, { label: string; stageId: string }> = {
 }
 
 // ── Custom field KEYS dalam GHL ─────────────────────────────
-// Cipta dulu custom fields ni di GHL (Settings → Custom Fields),
-// guna key persis macam bawah (GHL prefix dgn "contact.").
+// Skop dikecilkan 22 Okt 2026 (keputusan user) — fokus SEMATA-MATA pada
+// 7 medan operasi KOB (tarikh/waktu/mode/status/collector/closer/pakej).
+// kob_stage/kob_status_raw/kob_package(lama)/kob_package_expires DIBUANG —
+// field tu tak pernah wujud di GHL, tiada faedah push ke field yang tiada.
 const CF = {
-  kobStage:     'kob_stage',
-  kobStatus:    'kob_status_raw',
-  package:      'kob_package',
-  packageEnds:  'kob_package_expires',
   mrn:          'isw_mrn',
-  kobDate:      'kob_session_date',
+  kobDate:      'kob_date',           // DIBETULKAN — dulu 'kob_session_date' (field tu TAK WUJUD di GHL)
+  kobTime:      'kob_time',
+  mode:         'mod_sesi_kob',
   regStatus:    'isw_registration_status',
   inSystem:     'pt_in_system',
-  iswStatus:    'isw_status_2026',
+  iswStatus:    'isw_status_2026',    // TEXTBOX_LIST — field_value MESTI array, lihat ghlCustomField()
+  // 3 field baharu (22 Okt 2026) — SEHALA ISW→GHL sahaja (ISW ialah sumber
+  // kebenaran; Collector/Closer/Pakej Dicadang semua staff assign/pilih
+  // dalam ISW, GHL cuma papar). collector_kob REPURPOSE field lama (yang
+  // dulu papar nama Kaunselor, silap konfig) — user dah padam & cipta semula.
+  collector:    'collector_kob',
+  closer:       'closer_kob',
+  obPackage:    'ob_package',
+}
+
+// isw_status_2026 jenis GHL TEXTBOX_LIST — API jangka field_value array,
+// BUKAN string tunggal macam field TEXT biasa. Field lain semua TEXT.
+function ghlCustomField(key: string, value: string) {
+  return key === CF.iswStatus
+    ? { key, field_value: value ? [value] : [] }
+    : { key, field_value: value }
+}
+
+// mode ISW ('f2f'/'online') → label dropdown GHL "mod_sesi_kob" (pilihan
+// sebenar "F2F"/"Online", disahkan 22 Okt 2026).
+function modeLabel(mode: string | null | undefined): string {
+  return mode === 'online' ? 'Online' : 'F2F'
 }
 
 // ── MAPPING: psy_kob_sessions.status → label "ISW STATUS" di GHL ──
@@ -71,10 +93,6 @@ const KOB_STATUS_TO_ISW: Record<string, string> = {
   hadir:      'SU KOB A',
 }
 
-// Status yang bermakna slot ni TAK LAGI aktif/akan datang — kosongkan
-// tarikh sesi di GHL (booked/hadir kekal tunjuk tarikh sebenar).
-const CLEAR_DATE_STATUSES = ['cancelled', 'kiv', 'no_show', 'reschedule']
-
 // Status akaun pesakit (psy_patients.status) → binari mudah untuk
 // automation GHL filter. BEZA dari kob_status (peringkat funnel KOB) —
 // ni jawab "pesakit tu dah SIGNUP/daftar dalam ISW atau tak". Hanya
@@ -92,25 +110,6 @@ function toE164(raw: string | null | undefined): string | null {
   if (n.startsWith('60')) return '+' + n
   if (n.startsWith('0')) return '+60' + n.slice(1)
   return '+' + n
-}
-
-// Format timestamp → waktu Malaysia, mudah dibaca closer: "26/07/2026, 10:00 am"
-function fmtMYT(iso: string | null | undefined): string {
-  if (!iso) return ''
-  try {
-    return new Intl.DateTimeFormat('en-GB', {
-      timeZone: 'Asia/Kuala_Lumpur',
-      day: '2-digit', month: '2-digit', year: 'numeric',
-      hour: '2-digit', minute: '2-digit', hour12: true,
-    }).format(new Date(iso))
-  } catch { return String(iso) }
-}
-
-// Label tarikh sesi KOB utk custom field: tarikh + mod ("... (online)")
-function kobDateLabel(scheduledAt: string | null | undefined, mode: string | null | undefined): string {
-  const d = fmtMYT(scheduledAt)
-  if (!d) return ''
-  return `${d} (${mode === 'online' ? 'online' : 'fizikal'})`
 }
 
 function json(body: unknown, status = 200) {
@@ -201,17 +200,9 @@ Deno.serve(async (req: Request) => {
     }
 
     // ── 3. Upsert contact ikut phone + set custom fields ────
-    // Tarikh sesi KOB terkini (booked/reschedule/hadir/completed) — jangan
-    // gagalkan sync utama kalau lookup gagal.
-    let kobDate = ''
-    try {
-      const sessions = await sbSelect(
-        `psy_kob_sessions?patient_id=eq.${record.id}` +
-        `&status=in.(booked,reschedule,hadir,completed)` +
-        `&order=scheduled_at.desc&limit=1&select=scheduled_at,mode`,
-      )
-      if (sessions?.[0]) kobDate = kobDateLabel(sessions[0].scheduled_at, sessions[0].mode)
-    } catch (e) { console.error('sync-ghl: kob date lookup failed:', e) }
+    // Tarikh/waktu sesi KOB TAK disentuh di sini lagi (22 Okt 2026) — itu
+    // tanggungjawab handleKobSession() sepenuhnya (dicetus terus bila
+    // psy_kob_sessions berubah, data lagi tepat drpd lookup berasingan ni).
 
     // JANGAN hantar firstName/lastName — Workflow "SU KOB Auto ID" GHL letak
     // KOD KOB dalam first_name (bukan nama), nama sebenar dalam last_name
@@ -221,12 +212,7 @@ Deno.serve(async (req: Request) => {
       locationId,
       phone,
       customFields: [
-        { key: CF.kobStage,    field_value: stageInfo.label },
-        { key: CF.kobStatus,   field_value: status },
-        { key: CF.package,     field_value: record.active_package_name || '' },
-        { key: CF.packageEnds, field_value: record.package_expires_at || '' },
         { key: CF.mrn,         field_value: record.mrn || '' },
-        { key: CF.kobDate,     field_value: kobDate },
         { key: CF.regStatus,   field_value: registrationLabel(record.status) },
         // Sentiasa 'Yes' — fungsi ni cuma jalan bila rekod psy_patients
         // MEMANG wujud (webhook dicetus oleh perubahan pada rekod tu).
@@ -285,21 +271,22 @@ Deno.serve(async (req: Request) => {
   }
 })
 
-// ── Webhook psy_kob_sessions: sync tarikh booking → GHL ─────
-// Dicetus bila patient tempah / reschedule / batal slot KOB.
-// Hanya update custom field tarikh pada contact — Opportunity stage
-// diuruskan oleh aliran psy_patients (kob_status → 'booked').
+// ── Webhook psy_kob_sessions: sync 7 medan operasi KOB → GHL ─
+// Dicetus bila patient tempah/reschedule/batal slot KOB, ATAU staff
+// tukar Collector/Closer/Mode/Pakej Dicadang di ISW (kob-list.html/
+// kob-detail.html). ISW ialah SUMBER KEBENARAN utk Collector/Closer/
+// Pakej Dicadang — GHL cuma papar (sehala ISW→GHL utk 3 field tu).
 async function handleKobSession(record: any, oldRecord: any): Promise<Response> {
   if (!record?.patient_id) return json({ skipped: 'no patient_id' })
 
-  // Skip kalau tarikh & status tak berubah (elak spam GHL pada update lain)
-  if (oldRecord &&
-      oldRecord.scheduled_at === record.scheduled_at &&
-      oldRecord.status === record.status) {
-    return json({ skipped: 'session unchanged' })
+  // Skip kalau TIADA satu pun medan relevan berubah (elak spam GHL pada
+  // update lain, cth notes/questionnaire yang tak kena dgn GHL langsung).
+  const watched = ['scheduled_at', 'status', 'mode', 'collector_name', 'closer_name', 'recommended_package_name']
+  if (oldRecord && watched.every(f => oldRecord[f] === record[f])) {
+    return json({ skipped: 'no watched field changed' })
   }
 
-  const relevant = ['booked', 'reschedule', 'cancelled', 'kiv', 'no_show', 'hadir']
+  const relevant = ['booked', 'reschedule', 'cancelled', 'kiv', 'no_show', 'hadir', 'completed']
   if (!relevant.includes(record.status)) {
     return json({ skipped: `status ${record.status}` })
   }
@@ -312,17 +299,38 @@ async function handleKobSession(record: any, oldRecord: any): Promise<Response> 
   const phone = toE164(patient.phone)
   if (!phone) return json({ skipped: 'no phone', patient: patient.id })
 
-  const dateValue = CLEAR_DATE_STATUSES.includes(record.status)
-    ? ''
-    : kobDateLabel(record.scheduled_at, record.mode)
+  // Tarikh+waktu tetap tunjuk SEBENAR walau slot tak lagi aktif (cancel/kiv/
+  // no_show/reschedule) — beza drpd label gabungan kobDateLabel() lama (yang
+  // kosongkan terus), sebab kob_date/kob_time kini 2 field BERASINGAN
+  // (bukan satu label teks) — biar staff GHL nampak tarikh asal utk rujukan,
+  // ISW STATUS field (bawah) dah cukup tunjuk slot tu tak aktif lagi.
+  const dt = record.scheduled_at ? new Date(record.scheduled_at) : null
+  // kob_date jenis GHL DATE tulen (bukan TEXT) — API GHL jangka ISO
+  // "YYYY-MM-DD", BUKAN format paparan DD/MM/YYYY (akan gagal/senyap kalau salah).
+  // en-CA locale bagi terus format tu (sv-SE pun boleh, en-CA lebih biasa).
+  const kobDateValue = dt && !Number.isNaN(dt.getTime())
+    ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kuala_Lumpur', day: '2-digit', month: '2-digit', year: 'numeric' }).format(dt)
+    : ''
+  const kobTimeValue = dt && !Number.isNaN(dt.getTime())
+    ? new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kuala_Lumpur', hour: '2-digit', minute: '2-digit', hour12: true }).format(dt)
+    : ''
 
   const locationId = Deno.env.get('GHL_ISW_LOCATION_ID')!
   const iswStatusLabel = KOB_STATUS_TO_ISW[record.status]
   const customFields = [
-    { key: CF.kobDate, field_value: dateValue },
-    { key: CF.mrn,     field_value: patient.mrn || '' },
+    ghlCustomField(CF.kobDate, kobDateValue),
+    ghlCustomField(CF.kobTime, kobTimeValue),
+    ghlCustomField(CF.mode, modeLabel(record.mode)),
+    ghlCustomField(CF.mrn, patient.mrn || ''),
+    ghlCustomField(CF.collector, record.collector_name || ''),
+    ghlCustomField(CF.closer, record.closer_name || ''),
+    ghlCustomField(CF.obPackage, record.recommended_package_name || ''),
   ]
-  if (iswStatusLabel) customFields.push({ key: CF.iswStatus, field_value: iswStatusLabel })
+  // 'completed' sengaja tak ada dlm KOB_STATUS_TO_ISW (lihat komen jadual
+  // di atas) — field ISW STATUS tak disentuh utk status tu, field lain
+  // (tarikh/waktu/mode/collector/closer/pakej) tetap push macam biasa.
+  if (iswStatusLabel) customFields.push(ghlCustomField(CF.iswStatus, iswStatusLabel))
+
   const upsert = await ghl('/contacts/upsert', {
     method: 'POST',
     body: JSON.stringify({
@@ -335,5 +343,10 @@ async function handleKobSession(record: any, oldRecord: any): Promise<Response> 
     }),
   })
   const contactId = upsert?.contact?.id || upsert?.id
-  return json({ success: true, contactId, kob_session_date: dateValue, session_status: record.status })
+  return json({
+    success: true, contactId, session_status: record.status,
+    kob_date: kobDateValue, kob_time: kobTimeValue, mode: modeLabel(record.mode),
+    collector: record.collector_name || null, closer: record.closer_name || null,
+    ob_package: record.recommended_package_name || null,
+  })
 }
