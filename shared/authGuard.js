@@ -52,6 +52,8 @@ window.PAGE_MODULE = {
   plan_week:        'plan_week',
   kob_list:         'kob',
   kob_report:       'kob',
+  kob_dashboard:    'kob',
+  financial_dashboard: 'payment',
   kepatuhan:        'kepatuhan',
   emergency:        'emergency',
   reaksi_advice:    'reaksi',  reaksi_item: 'reaksi',

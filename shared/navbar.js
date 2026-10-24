@@ -213,6 +213,8 @@ const STAFF_NAV_MASTER = [
         { id: 'staff_stats',  url: 'staff-stats.html',   label: 'Statistik' },
         { id: 'kehadiran',    url: 'kehadiran.html',     label: 'Laporan Kehadiran' },
         { id: 'pakej_laporan',url: 'pakej-laporan.html', label: 'Laporan Pakej' },
+        { id: 'kob_dashboard',url: 'dashboard-kob.html', label: 'Team KOB Dashboard' },
+        { id: 'financial_dashboard', url: 'dashboard-financial.html', label: 'Financial Progress Dashboard' },
         { id: 'kob_report',   url: 'kob-report.html',    label: 'KOB Report' },
         { id: 'issue',        url: 'issue.html',         label: 'Report Issue' },
       ] },
