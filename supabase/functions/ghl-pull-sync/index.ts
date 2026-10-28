@@ -287,6 +287,12 @@ async function processOneContact(svc: any, locationId: string, c: any, requirePa
       address: getCustomFieldById(c.customFields, HOME_ADDRESS_FIELD_ID) || c.address1 || null,
       emergencyContactName: getCustomFieldById(c.customFields, WARIS_FIELD_ID) || null,
       referredByAffiliateName,
+      // 28 Okt 2026 — GAP LAMA dibetulkan: c.id (ID contact GHL) tak pernah
+      // dihantar dari laluan scan utama ni, jadi psy_patients.ghl_contact_id
+      // kekal kosong untuk SEMUA pesakit GHL (perlukan backfill sekali,
+      // lihat action 'backfill_ghl_contact_id'). Diperlukan utk
+      // detect_deleted_contacts berfungsi.
+      ghlContactId: c.id || null,
     })
 
     // Cuba atribut rujukan kpd affiliate GHL (28 Okt 2026, padan ikut nama,
@@ -422,6 +428,7 @@ Deno.serve(async (req: Request) => {
             address: getCustomFieldById(c.customFields, HOME_ADDRESS_FIELD_ID) || c.address1 || null,
             emergencyContactName: getCustomFieldById(c.customFields, WARIS_FIELD_ID) || null,
             referredByAffiliateName: getCustomFieldById(c.customFields, REFERRED_BY_AFFILIATE_FIELD_ID) || null,
+            ghlContactId: c.id || null,
           })
           return json({ debug: true, action: 'sync_one', contact: { id: c.id, phone: c.phone, fullName }, result })
         } catch (e) {
@@ -698,6 +705,49 @@ Deno.serve(async (req: Request) => {
           sAfter = last?.dateAdded ? new Date(last.dateAdded).getTime() : undefined
         }
         return json({ debug: true, action: 'backfill_excluded_sessions', scanned, matched, sessionsFixed, fixed: fixedList, nextCursor: sAfterId ? { startAfterId: sAfterId, startAfter: sAfter } : null })
+      }
+      if (body.action === 'backfill_ghl_contact_id') {
+        // Pembetulan SEKALI SAHAJA (28 Okt 2026) — processOneContact()/
+        // sync_one dulu tak pernah hantar c.id ke syncContactToPatient(),
+        // jadi psy_patients.ghl_contact_id kekal kosong utk SEMUA pesakit
+        // GHL sedia ada (disahkan 241 pesakit, 0 ada ghl_contact_id).
+        // Diperlukan utk detect_deleted_contacts berfungsi. Padan ikut
+        // phone, isi ghl_contact_id KOSONG SAHAJA (fill-empty, sama
+        // peraturan dgn syncContactToPatient()).
+        const pages = Math.min(Number(body.pages) || 10, 25)
+        const { data: patients } = await svc.from('psy_patients')
+          .select('id, phone').eq('referral_source', 'GHL').is('ghl_contact_id', null).limit(2000)
+        const byPhone: Record<string, any> = {}
+        for (const p of patients || []) {
+          const key = phoneKey(p.phone)
+          if (key) byPhone[key] = p
+        }
+        let sAfterId: string | undefined = body.startAfterId
+        let sAfter: number | undefined = body.startAfter
+        let scanned = 0, updated = 0
+        for (let pg = 0; pg < pages; pg++) {
+          let path = `/contacts/?locationId=${locationId}&limit=${PAGE_LIMIT}`
+          if (sAfterId) path += `&startAfterId=${sAfterId}`
+          if (sAfter) path += `&startAfter=${sAfter}`
+          const d = await ghl(path, { method: 'GET' }).catch(() => null)
+          if (!d) break
+          const cs = d?.contacts || []
+          scanned += cs.length
+          for (const c of cs) {
+            const key = phoneKey(c.phone)
+            const match = key ? byPhone[key] : null
+            if (!match) continue
+            await svc.from('psy_patients').update({ ghl_contact_id: c.id }).eq('id', match.id)
+            updated++
+            delete byPhone[key]
+          }
+          if (cs.length < PAGE_LIMIT) { sAfterId = undefined; sAfter = undefined; break }
+          const last = cs[cs.length - 1]
+          sAfterId = last?.id
+          sAfter = last?.dateAdded ? new Date(last.dateAdded).getTime() : undefined
+        }
+        const reachedEnd = scanned < pages * PAGE_LIMIT
+        return json({ debug: true, action: 'backfill_ghl_contact_id', totalMissing: (patients || []).length, scanned, updated, reachedEnd, nextCursor: reachedEnd ? null : { startAfterId: sAfterId, startAfter: sAfter } })
       }
       if (body.action === 'detect_deleted_contacts') {
         // (28 Okt 2026) Kesan pesakit ISW yang contact GHL dia DAH DIPADAM
