@@ -156,9 +156,7 @@ const STAFF_NAV_MASTER = [
       { id: 'ganjaran', url: 'promo-codes.html', icon: '🎁', label: 'Ganjaran', children: [
         { id: 'promo_codes',   url: 'promo-codes.html',   icon: '🏷️', label: 'Kod Promo' },
         { id: 'promo_vouchers', url: 'promo-vouchers.html', icon: '🎟️', label: 'Voucher Pesakit' },
-        { id: 'promo_redemptions', url: 'promo-redemptions.html', icon: '🧾', label: 'Penggunaan Promo' },
-        { id: 'point_rewards', url: 'point-rewards.html', icon: '🏆', label: 'Ganjaran Mata' },
-        { id: 'missions',      url: 'missions.html',      icon: '🎯', label: 'Mission' },
+        { id: 'point_rewards', url: 'point-rewards.html', icon: '🏆', label: 'Mata & Mission' },
         { id: 'affiliate',     url: 'affiliate.html',     icon: '🤝', label: 'Affiliate' },
       ] },
       { id: 'inventory_group', url: 'inventory.html', icon: '🏭', label: 'Inventori', children: [
@@ -251,7 +249,9 @@ const SETTINGS_SUBNAV = [
   { id: 'notifikasi', icon: '🔔', label: 'Notifikasi' },
   { id: 'integrasi', icon: '🧩', label: 'Integrasi' },
   { id: 'keselamatan', icon: '🛡️', label: 'Keselamatan' },
-  { id: 'affiliate', icon: '🤝', label: 'Affiliate' },
+  // 'Affiliate' DIBUANG dari sini 27 Okt 2026 — kadar komisen kini urus terus
+  // dalam affiliate.html (panel ⚙️ Tetapan Komisen, super_admin sahaja), bukan
+  // bersepah dalam Tetapan Sistem umum. Lihat roles/staff/affiliate.html.
   { id: 'vitals', icon: '🩺', label: 'Ambang Vitals' },
   // 'Bekalan KOB' SENGAJA tiada di sini — ia tetap satu tab dalam tetapan.html (TABS
   // array), tapi diakses dari grupan Inventori (inventory_group di bawah), bukan dari

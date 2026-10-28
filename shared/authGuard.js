@@ -72,7 +72,6 @@ window.PAGE_MODULE = {
   promo_vouchers:   'products',
   promo_redemptions:'products',
   point_rewards:    'products',
-  missions:         'products',
   produk_bahan:       'produk_bahan',
   produk_seller:      'produk_bahan',
   inventory:        'inventory', kit_prosedur: 'inventory', suppliers: 'inventory',

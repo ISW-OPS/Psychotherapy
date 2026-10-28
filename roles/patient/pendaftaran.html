@@ -1170,6 +1170,20 @@ async function submitKYC() {
       await window.db.from('psy_profiles').update({
         full_name: finalName, phone: payload.phone,
       }).eq('id', currentUser.id);
+
+      // Pautan rujukan senyap (?ref=KOD ditangkap di auth/login.html) — sambung
+      // rujukan SELEPAS patientRecord.id sah (RPC check milik akaun sendiri).
+      // Best-effort sepenuhnya — kegagalan TAK patut gagalkan pendaftaran.
+      try {
+        const refCode = localStorage.getItem('isw_referral_code');
+        if (refCode) {
+          const { data: refResult } = await window.db.rpc('create_patient_referral', {
+            p_code: refCode, p_referee_patient_id: patientRecord.id,
+          });
+          if (refResult?.[0]?.ok) localStorage.removeItem('isw_referral_code');
+          else console.warn('[submitKYC] rujukan tidak disambung:', refResult?.[0]?.message);
+        }
+      } catch (e) { console.warn('[submitKYC] create_patient_referral gagal:', e.message); }
     }
 
     // Advance KOB lifecycle. Pakej rawatan aktif sedia ada (cth. rekod GHL/staff

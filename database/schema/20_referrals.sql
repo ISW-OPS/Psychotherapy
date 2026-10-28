@@ -9,16 +9,18 @@
 -- ──── assign_referral_code (auto-jana kod rujukan pesakit) ────
 -- Client (JS) akan set kod cantik (nama+MRN) sebelum insert; jika
 -- masih NULL, fungsi trigger ini jamin satu kod unik tetap wujud.
--- Nota: trigger MRN (trg_assign_patient_mrn) berjalan dulu ikut abjad
--- nama, jadi NEW.mrn sudah diisi bila trigger ini berjalan.
+-- Kod 6 huruf RAWAK (bukan ISW+MRN) — elak corak boleh diteka (cth
+-- ISW019 mendedahkan MRN pesakit secara tak langsung dlm pautan rujukan
+-- awam, lihat 20261027_referral_silent_link.sql). Nota: trigger MRN
+-- (trg_assign_patient_mrn) berjalan dulu ikut abjad nama, jadi NEW.mrn
+-- sudah diisi bila trigger ini berjalan (tak lagi digunakan di sini,
+-- dikekalkan sbb komen trigger order di atas masih relevan).
 CREATE OR REPLACE FUNCTION assign_referral_code()
 RETURNS TRIGGER
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
 AS $$
 DECLARE
-  base      TEXT;
   candidate TEXT;
-  n         INT := 1;
 BEGIN
   -- Kod sudah diset client — normalkan ke huruf besar & biarkan
   IF NEW.referral_code IS NOT NULL AND length(trim(NEW.referral_code)) > 0 THEN
@@ -26,16 +28,10 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  -- Fallback: 'ISW' + digit MRN (cth P-019 -> ISW019)
-  base := 'ISW' || regexp_replace(COALESCE(NEW.mrn, ''), '\D', '', 'g');
-  IF base = 'ISW' THEN
-    base := 'ISW' || to_char((random() * 9000 + 1000)::int, 'FM0000');
-  END IF;
-
-  candidate := base;
-  WHILE EXISTS (SELECT 1 FROM psy_patients WHERE referral_code = candidate) LOOP
-    n := n + 1;
-    candidate := base || n;
+  LOOP
+    SELECT string_agg(substr('ABCDEFGHIJKLMNOPQRSTUVWXYZ', (random() * 25 + 1)::int, 1), '')
+    INTO candidate FROM generate_series(1, 6);
+    EXIT WHEN NOT EXISTS (SELECT 1 FROM psy_patients WHERE referral_code = candidate);
   END LOOP;
 
   NEW.referral_code := candidate;

@@ -63,7 +63,7 @@
         </div>
 
         <!-- KPI strip -->
-        <div class="grid grid-cols-2 lg:grid-cols-6 gap-4">
+        <div class="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4">
           <div onclick="openDrill('total')" class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5 cursor-pointer hover:border-navy/30 hover:shadow-md transition-shadow">
             <div class="flex items-start justify-between"><div class="w-10 h-10 rounded-xl bg-navy/10 text-navy flex items-center justify-center text-base">👥</div><span id="d-total" class="text-[11px] font-bold"></span></div>
             <div class="text-[22px] font-extrabold text-ink mt-2.5" id="k-total">—</div>
@@ -78,6 +78,11 @@
             <div class="flex items-start justify-between"><div class="w-10 h-10 rounded-xl bg-gold/15 text-gold-dark flex items-center justify-center text-base">🕐</div><span id="d-inprog" class="text-[11px] font-bold"></span></div>
             <div class="text-[22px] font-extrabold text-gold-dark mt-2.5" id="k-inprog">—</div>
             <div class="text-xs text-ink/50 font-medium mt-0.5">In Progress <span class="text-navy/50">↗</span></div>
+          </div>
+          <div onclick="openDrill('awaitpay')" class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5 cursor-pointer hover:border-navy/30 hover:shadow-md transition-shadow">
+            <div class="flex items-start justify-between"><div class="w-10 h-10 rounded-xl flex items-center justify-center text-base" style="background:#7c5ce01a;color:#7c5ce0">💳</div><span id="d-awaitpay" class="text-[11px] font-bold"></span></div>
+            <div class="text-[22px] font-extrabold mt-2.5" style="color:#7c5ce0" id="k-awaitpay">—</div>
+            <div class="text-xs text-ink/50 font-medium mt-0.5">Awaiting Payment <span class="text-navy/50">↗</span></div>
           </div>
           <div onclick="openDrill('notconv')" class="bg-white rounded-2xl border border-ink/8 shadow-sm p-5 cursor-pointer hover:border-navy/30 hover:shadow-md transition-shadow">
             <div class="flex items-start justify-between"><div class="w-10 h-10 rounded-xl bg-terracotta/10 text-terracotta flex items-center justify-center text-base">✗</div><span id="d-notconv" class="text-[11px] font-bold"></span></div>
@@ -103,6 +108,7 @@
               <h3 class="font-bold text-ink text-[15px]">KOB Status Trend (Monthly)</h3>
               <div class="flex items-center gap-3 text-[10px] text-ink/55">
                 <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full" style="background:#2e9e6b"></span>Sign Up</span>
+                <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full" style="background:#7c5ce0"></span>Awaiting Payment</span>
                 <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full" style="background:#d6a33b"></span>In Progress</span>
                 <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full" style="background:#c0533e"></span>Not Converted</span>
               </div>
@@ -132,7 +138,7 @@
               <table class="data w-full">
                 <thead><tr>
                   <th>Closer</th><th class="text-right">Total KOB</th><th class="text-right">Sign Up</th>
-                  <th class="text-right">In Progress</th><th class="text-right">Not Converted</th>
+                  <th class="text-right">Awaiting Payment</th><th class="text-right">In Progress</th><th class="text-right">Not Converted</th>
                   <th class="text-right">Conversion Rate</th><th class="text-right">Package Value (RM)</th>
                 </tr></thead>
                 <tbody id="closer-body"></tbody>
@@ -243,23 +249,22 @@ function lineChart(labels, series){
     ${dots(series,'#d6a33b')}${lbls}</svg>`;
 }
 
-// ── SVG stacked bar chart (3 siri) ──
-function stackedBarChart(labels, closed, inprog, notconv){
+// ── SVG stacked bar chart (N siri) — series = [{values:[...], c:'#hex'}, ...] ──
+function stackedBarChart(labels, series){
   const W=560,H=190,PL=8,PR=8,PT=10,PB=22;
   const iw=W-PL-PR, ih=H-PT-PB;
-  const totals = labels.map((_,i)=> closed[i]+inprog[i]+notconv[i]);
+  const totals = labels.map((_,i)=> series.reduce((s,ser)=>s+ser.values[i],0));
   const max=Math.max(1,...totals);
   const n=labels.length;
   const bw = Math.min(34, iw/n*0.55);
   const cx=i=> PL + (n<=1 ? iw/2 : (i+0.5)/n*iw);
   const grid=[0,.25,.5,.75,1].map(f=>`<line x1="${PL}" x2="${W-PR}" y1="${(PT+ih*f).toFixed(1)}" y2="${(PT+ih*f).toFixed(1)}" stroke="#eceef1" stroke-width="1"/>`).join('');
   const bars = labels.map((lbl,i)=>{
-    const segs=[ {v:closed[i],c:'#2e9e6b'}, {v:inprog[i],c:'#d6a33b'}, {v:notconv[i],c:'#c0533e'} ];
     let yoff = PT+ih;
-    const rects = segs.map(s=>{
-      const h = (s.v/max)*ih;
+    const rects = series.map(ser=>{
+      const h = (ser.values[i]/max)*ih;
       yoff -= h;
-      return h>0 ? `<rect x="${(cx(i)-bw/2).toFixed(1)}" y="${yoff.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${s.c}" rx="2"/>` : '';
+      return h>0 ? `<rect x="${(cx(i)-bw/2).toFixed(1)}" y="${yoff.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${ser.c}" rx="2"/>` : '';
     }).join('');
     return rects + `<text x="${cx(i).toFixed(1)}" y="${H-6}" font-size="9" fill="#9aa3ab" text-anchor="middle">${lbl}</text>`;
   }).join('');
@@ -297,14 +302,21 @@ document.addEventListener('click', e=>{ const pop=document.getElementById('range
 
 // ── Bucket logic: asasnya SAMA dgn signupCategory() di kob-list.html/kob-report.html
 // (kobDone = pesakit dah sampai hujung funnel KOB; hasPkg = pesakit ada pakej aktif),
-// + 1 tambahan: sesi cancelled/no_show/kiv terus dikira Not Converted walaupun kob_status
-// pesakit tak pernah sampai 'completed' (elak rekod terbiar tersangkut "In Progress").
+// + 2 tambahan (22 Okt 2026, atas permintaan user):
+//  1. sesi cancelled/no_show/kiv terus dikira Not Converted walaupun kob_status pesakit
+//     tak pernah sampai 'completed' (elak rekod terbiar tersangkut "In Progress").
+//  2. Bucket ke-4 "Awaiting Payment" diasingkan drpd "In Progress" — pakej DAH dicadang
+//     (recommended_package_name wujud) tapi belum dibayar penuh. Sesi boleh tunjuk status
+//     "hadir"/"completed" (mesyuarat doktor dah jalan) tapi tu ≠ jualan dah tutup — elak
+//     keliru dgn "In Progress" yg kini maksud betul-betul awal funnel (blm sampai cadangan
+//     pakej langsung).
 // kiv = "keep in view" — sesi dah berlaku tapi pesakit parking, tak teruskan pakej (lihat
 // komen psy_kob_sessions.status di 09_kob.sql) — sama makna dgn Not Converted di sini.
-//   status sesi cancelled/no_show/kiv -> Not Converted
-//   kobDone && hasPkg                 -> Sign Up (Closed)
-//   kobDone && !hasPkg                -> Not Converted (KOB selesai tapi tak teruskan pakej)
-//   selebihnya                        -> In Progress (masih dalam funnel)
+//   status sesi cancelled/no_show/kiv            -> Not Converted
+//   kobDone && hasPkg                            -> Sign Up (Closed)
+//   kobDone && !hasPkg                           -> Not Converted (KOB selesai tapi tak teruskan pakej)
+//   pakej dicadang DAN belum 'paid'               -> Awaiting Payment
+//   selebihnya (blm sampai cadangan pakej lagi)   -> In Progress
 let patientMap = {};
 let lastKob = []; // dataset KOB period semasa (lepas filter) — sumber tunggal utk kad KPI + drill-down modal
 function bucketOf(k){
@@ -314,6 +326,7 @@ function bucketOf(k){
   const hasPkg = !!pat?.active_package_id;
   if (kobDone && hasPkg) return 'closed';
   if (kobDone && !hasPkg) return 'notconv';
+  if (k.recommended_package_name && k.package_payment_status !== 'paid') return 'awaitpay';
   return 'inprog';
 }
 function pkgValueOf(k){
@@ -374,6 +387,7 @@ async function load(){
 
   const curB = curKob.map(bucketOf), prevB = prevKob.map(bucketOf);
   const curClosed = curB.filter(b=>b==='closed').length, prevClosed = prevB.filter(b=>b==='closed').length;
+  const curAwaitpay = curB.filter(b=>b==='awaitpay').length, prevAwaitpay = prevB.filter(b=>b==='awaitpay').length;
   const curInprog = curB.filter(b=>b==='inprog').length, prevInprog = prevB.filter(b=>b==='inprog').length;
   const curNotconv = curB.filter(b=>b==='notconv').length, prevNotconv = prevB.filter(b=>b==='notconv').length;
   const curTotal = curKob.length, prevTotal = prevKob.length;
@@ -382,12 +396,14 @@ async function load(){
 
   document.getElementById('k-total').textContent = curTotal.toLocaleString();
   document.getElementById('k-closed').textContent = curClosed.toLocaleString();
+  document.getElementById('k-awaitpay').textContent = curAwaitpay.toLocaleString();
   document.getElementById('k-inprog').textContent = curInprog.toLocaleString();
   document.getElementById('k-notconv').textContent = curNotconv.toLocaleString();
   document.getElementById('k-rate').textContent = Math.round(curRate) + '%';
   document.getElementById('k-value').textContent = rm(curValue);
   document.getElementById('d-total').innerHTML = deltaHtml(curTotal, prevTotal);
   document.getElementById('d-closed').innerHTML = deltaHtml(curClosed, prevClosed);
+  document.getElementById('d-awaitpay').innerHTML = deltaHtml(curAwaitpay, prevAwaitpay);
   document.getElementById('d-inprog').innerHTML = deltaHtml(curInprog, prevInprog);
   document.getElementById('d-notconv').innerHTML = deltaHtml(curNotconv, prevNotconv);
   document.getElementById('d-rate').innerHTML = deltaHtml(curRate, prevRate);
@@ -395,10 +411,10 @@ async function load(){
 
   // Donut
   document.getElementById('donut').innerHTML = donut([
-    { v: curClosed, c: '#2e9e6b' }, { v: curInprog, c: '#d6a33b' }, { v: curNotconv, c: '#c0533e' },
+    { v: curClosed, c: '#2e9e6b' }, { v: curAwaitpay, c: '#7c5ce0' }, { v: curInprog, c: '#d6a33b' }, { v: curNotconv, c: '#c0533e' },
   ]);
   document.getElementById('donut-legend').innerHTML = [
-    ['Sign Up (Closed)', curClosed, '#2e9e6b'], ['In Progress', curInprog, '#d6a33b'], ['Not Converted', curNotconv, '#c0533e'],
+    ['Sign Up (Closed)', curClosed, '#2e9e6b'], ['Awaiting Payment', curAwaitpay, '#7c5ce0'], ['In Progress', curInprog, '#d6a33b'], ['Not Converted', curNotconv, '#c0533e'],
   ].map(([lbl,v,c])=>{
     const pct = curTotal ? Math.round(v/curTotal*100) : 0;
     return `<div class="flex items-center justify-between"><span class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full" style="background:${c}"></span>${lbl}</span><span class="font-semibold text-ink">${v} <span class="text-ink/40 font-normal">(${pct}%)</span></span></div>`;
@@ -411,7 +427,7 @@ async function load(){
     while (d <= end) { months.push(monthKey(d)); d = new Date(d.getFullYear(), d.getMonth()+1, 1); }
     if (!months.length) months.push(monthKey(new Date(rFrom)));
   }
-  const byMonth = {}; months.forEach(m=> byMonth[m] = { closed:0, inprog:0, notconv:0, value:0 });
+  const byMonth = {}; months.forEach(m=> byMonth[m] = { closed:0, awaitpay:0, inprog:0, notconv:0, value:0 });
   curKob.forEach(k=>{
     const mk = monthKey(k.created_at);
     if (!byMonth[mk]) return;
@@ -428,8 +444,12 @@ async function load(){
   } else {
     document.getElementById('trend-empty').classList.add('hidden');
     document.getElementById('value-empty').classList.add('hidden');
-    document.getElementById('trendchart').innerHTML = stackedBarChart(mLabels,
-      months.map(m=>byMonth[m].closed), months.map(m=>byMonth[m].inprog), months.map(m=>byMonth[m].notconv));
+    document.getElementById('trendchart').innerHTML = stackedBarChart(mLabels, [
+      { values: months.map(m=>byMonth[m].closed),   c: '#2e9e6b' },
+      { values: months.map(m=>byMonth[m].awaitpay), c: '#7c5ce0' },
+      { values: months.map(m=>byMonth[m].inprog),   c: '#d6a33b' },
+      { values: months.map(m=>byMonth[m].notconv),  c: '#c0533e' },
+    ]);
     document.getElementById('valuechart').innerHTML = lineChart(mLabels, months.map(m=>byMonth[m].value));
   }
 
@@ -468,7 +488,7 @@ function renderCloserTable(kob){
   const byCloser = {};
   kob.forEach(k=>{
     const name = k.closer_name || '—';
-    byCloser[name] = byCloser[name] || { total:0, closed:0, inprog:0, notconv:0, value:0 };
+    byCloser[name] = byCloser[name] || { total:0, closed:0, awaitpay:0, inprog:0, notconv:0, value:0 };
     const b = bucketOf(k);
     byCloser[name].total++;
     byCloser[name][b]++;
@@ -477,11 +497,12 @@ function renderCloserTable(kob){
   const rows = Object.entries(byCloser).map(([name, s])=> ({ name, ...s, rate: s.total ? s.closed/s.total*100 : 0 }))
     .sort((a,b)=> b.rate - a.rate);
   const body = document.getElementById('closer-body');
-  if (!rows.length) { body.innerHTML = '<tr><td colspan="7" class="text-center text-ink/40 py-6">Tiada data</td></tr>'; return; }
+  if (!rows.length) { body.innerHTML = '<tr><td colspan="8" class="text-center text-ink/40 py-6">Tiada data</td></tr>'; return; }
   body.innerHTML = rows.map(r=> `<tr>
     <td class="font-medium">${esc(r.name)}</td>
     <td class="text-right">${r.total}</td>
     <td class="text-right text-green-dark font-semibold">${r.closed}</td>
+    <td class="text-right" style="color:#7c5ce0">${r.awaitpay}</td>
     <td class="text-right text-gold-dark">${r.inprog}</td>
     <td class="text-right text-terracotta">${r.notconv}</td>
     <td class="text-right font-semibold">${Math.round(r.rate)}%</td>
@@ -566,10 +587,11 @@ async function renderCollectorTable(kob){
 // ── Drill-down modal — tunjuk baris KOB mentah di sebalik setiap kad KPI, supaya
 // angka boleh disahkan terus thd kob-detail.html/kob-list.html. ──
 const DRILL_META = {
-  total:   { title: 'Total KOB',           filter: () => true,                         sub: 'Semua rekod KOB dalam julat tarikh dipilih.' },
-  closed:  { title: 'Sign Up (Closed)',    filter: k => bucketOf(k) === 'closed',      sub: 'kob_status pesakit = "completed" DAN ada active_package_id.' },
-  inprog:  { title: 'In Progress',         filter: k => bucketOf(k) === 'inprog',      sub: 'Masih dlm funnel — termasuk sesi "completed" tapi pakej belum dibayar (lihat lajur Status Bayaran).' },
-  notconv: { title: 'Not Converted',       filter: k => bucketOf(k) === 'notconv',     sub: 'Status sesi = cancelled/no_show/kiv, ATAU kob_status pesakit = "completed" tapi tiada active_package_id.' },
+  total:    { title: 'Total KOB',           filter: () => true,                          sub: 'Semua rekod KOB dalam julat tarikh dipilih.' },
+  closed:   { title: 'Sign Up (Closed)',    filter: k => bucketOf(k) === 'closed',       sub: 'kob_status pesakit = "completed" DAN ada active_package_id.' },
+  awaitpay: { title: 'Awaiting Payment',    filter: k => bucketOf(k) === 'awaitpay',     sub: 'Pakej dah dicadang (lihat lajur Status Bayaran) tapi belum dibayar penuh — perlu di-follow-up.' },
+  inprog:   { title: 'In Progress',         filter: k => bucketOf(k) === 'inprog',       sub: 'Betul-betul awal funnel — belum sampai ke tahap doktor cadang pakej lagi.' },
+  notconv:  { title: 'Not Converted',       filter: k => bucketOf(k) === 'notconv',      sub: 'Status sesi = cancelled/no_show/kiv, ATAU kob_status pesakit = "completed" tapi tiada active_package_id.' },
 };
 function fmtDrillDate(d){ if(!d) return '—'; return new Date(d).toLocaleDateString(LCALE(), { day:'2-digit', month:'short', year:'numeric' }); }
 // Label status bayaran pakej — supaya sesi "completed" tapi belum bayar (tersekat In

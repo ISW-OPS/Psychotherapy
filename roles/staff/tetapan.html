@@ -349,52 +349,8 @@
                 </div>
               </div>
 
-              <!-- TAB: Affiliate -->
-              <div id="tab-affiliate" class="p-5 md:p-6 hidden">
-                <div class="flex items-start justify-between gap-3 flex-wrap mb-4">
-                  <div>
-                    <h3 class="font-bold text-ink">Kadar Komisen Affiliate</h3>
-                    <p class="text-xs text-ink/55 mt-0.5">Kadar komisen rujukan pesakit, boleh beza ikut pakej. Perubahan disimpan serta-merta setiap baris.</p>
-                  </div>
-                  <button onclick="addAffRule()" data-rbac="settings.edit" class="bg-navy text-white text-sm font-semibold px-4 py-2.5 rounded-lg hover:bg-navy-dark">+ Tambah Kadar Pakej</button>
-                </div>
-
-                <div id="aff-default-rate-box" class="mb-5"></div>
-
-                <div class="text-[10px] uppercase tracking-wider text-ink/45 font-semibold px-1 mb-1.5">Kadar Khusus Pakej</div>
-                <div class="overflow-x-auto border border-ink/10 rounded-xl">
-                  <table class="w-full text-sm">
-                    <thead>
-                      <tr class="bg-ink/[0.02] text-[10px] uppercase tracking-wider text-ink/45">
-                        <th class="text-left px-4 py-3">Pakej</th>
-                        <th class="text-left px-3 py-3 w-32">Jenis</th>
-                        <th class="text-left px-3 py-3 w-28">Kadar</th>
-                        <th class="text-left px-3 py-3 w-28">Had Maks (RM)</th>
-                        <th class="text-left px-3 py-3 w-24">Status</th>
-                        <th class="text-right px-4 py-3 w-36">Tindakan</th>
-                      </tr>
-                    </thead>
-                    <tbody id="aff-rules-tbody" class="divide-y divide-ink/6"></tbody>
-                  </table>
-                  <div id="aff-rules-empty" class="hidden py-10 text-center text-sm text-ink/40">Tiada kadar khusus pakej lagi — semua pakej guna Kadar Lalai di atas.</div>
-                </div>
-
-                <div class="mt-3 text-[11px] text-ink/50 leading-relaxed px-1">
-                  Komisen dikira automatik bila pesakit rujukan selesai bayaran pakej pertama.
-                </div>
-
-                <div class="mt-6 pt-6 border-t border-ink/10">
-                  <h3 class="font-bold text-ink">Ganjaran Pesakit Rujukan (Referee)</h3>
-                  <p class="text-xs text-ink/55 mt-0.5 mb-3">Baucar RM automatik untuk pesakit yang DIRUJUK (bukan perujuk) — boleh digunakan untuk mana-mana bayaran akan datang (bukan terhad pakej pertama sahaja).</p>
-                  <div class="max-w-xs">
-                    <label class="text-xs font-semibold text-ink/60 uppercase tracking-wide">Jumlah Baucar (RM)</label>
-                    <input id="s-referral_signup_voucher_amount" type="number" step="0.01" min="0" class="w-full mt-2 px-3 py-2 border border-ink/20 rounded-lg text-sm focus:border-navy outline-none bg-white" placeholder="30.00">
-                  </div>
-                  <div class="save-bar mt-4">
-                    <button onclick="saveReferralVoucherAmount(this)" data-rbac="settings.edit" class="bg-navy text-white text-sm font-semibold px-5 py-2.5 rounded-lg hover:bg-navy-dark">💾 Simpan</button>
-                  </div>
-                </div>
-              </div>
+              <!-- TAB: Affiliate DIBUANG 27 Okt 2026 — kini panel ⚙️ Tetapan Komisen
+                   dalam roles/staff/affiliate.html (super_admin sahaja, kawalan hardcode) -->
 
               <!-- TAB: Ambang Vitals -->
               <div id="tab-vitals" class="p-5 md:p-6 hidden">
@@ -493,7 +449,7 @@
 <script src="../../shared/settings.js"></script>
 <script src="../../shared/vitalsThresholds.js"></script>
 <script>
-const TABS = ['umum','rupa','klinik','peristiwa','notifikasi','integrasi','keselamatan','affiliate','vitals','bekalan_kob'];
+const TABS = ['umum','rupa','klinik','peristiwa','notifikasi','integrasi','keselamatan','vitals','bekalan_kob'];
 let _currentTab = 'umum';
 
 function setTab(t) {
@@ -541,8 +497,6 @@ function fillForm() {
   renderTimeSlots();
   // Jenis Peristiwa Pesakit
   loadPeTypes();
-  // Ganjaran pesakit rujukan (affiliate)
-  setV('s-referral_signup_voucher_amount', val('referral_signup_voucher_amount', 30));
   // Notifikasi
   setC('s-notif_event_reminder', val('notif_event_reminder', true));
   setC('s-notif_daily_checkin',  val('notif_daily_checkin', false));
@@ -787,209 +741,8 @@ window.addPeType = addPeType;
 window.delPeType = delPeType;
 window.savePeTypes = savePeTypes;
 
-// ── Affiliate — kadar komisen per pakej (psy_affiliate_commission_rules) ──
-let _affRules = [];      // dari DB, termasuk 1 baris lalai (package_id null)
-let _affPackages = [];   // psy_packages aktif, utk dropdown
-let _affEditId = -1;     // -1 = tiada, id rule = sedang edit, 'new' = tambah baris
-
-async function loadAffiliateRules() {
-  const [{ data: rules }, { data: pkgs }] = await Promise.all([
-    window.db.from('psy_affiliate_commission_rules').select('*'),
-    window.db.from('psy_packages').select('id, name').eq('is_active', true).order('name'),
-  ]);
-  _affRules = rules || [];
-  _affPackages = pkgs || [];
-  _affEditId = -1;
-  renderAffRules();
-}
-
-function affPkgName(pkgId) {
-  return _affPackages.find(p => p.id === pkgId)?.name || null;
-}
-
-function affEditRow(rule) {
-  const isNew = rule === 'new';
-  const r = isNew ? { commission_type: 'fixed', amount: '', rate_percent: '', cap_amount: '', is_active: true } : rule;
-  const usedPkgIds = new Set(_affRules.filter(x => x.package_id).map(x => x.package_id));
-  const pkgOptions = _affPackages
-    .filter(p => !usedPkgIds.has(p.id) || (!isNew && p.id === r.package_id))
-    .map(p => `<option value="${p.id}" ${!isNew && r.package_id === p.id ? 'selected' : ''}>${peEsc2(p.name)}</option>`).join('');
-
-  return `<tr class="bg-navy/[0.03]">
-    <td class="px-4 py-2.5">
-      ${isNew
-        ? `<select id="aff-ed-pkg" class="w-full border border-ink/20 rounded-lg px-2.5 py-1.5 text-sm focus:border-navy outline-none"><option value="">— Pilih Pakej —</option>${pkgOptions}</select>`
-        : `<span class="font-semibold text-ink">${peEsc2(affPkgName(r.package_id) || 'Pakej dipadam')}</span>`}
-    </td>
-    <td class="px-3 py-2.5">
-      <select id="aff-ed-type" onchange="document.getElementById('aff-ed-amount').placeholder = this.value === 'percent' ? '10 (=10%)' : '50.00'" class="w-full border border-ink/20 rounded-lg px-2.5 py-1.5 text-sm focus:border-navy outline-none">
-        <option value="fixed" ${r.commission_type === 'fixed' ? 'selected' : ''}>RM Tetap</option>
-        <option value="percent" ${r.commission_type === 'percent' ? 'selected' : ''}>Peratus (%)</option>
-      </select>
-    </td>
-    <td class="px-3 py-2.5">
-      <input id="aff-ed-amount" type="number" step="0.01" min="0" value="${r.commission_type === 'percent' ? peEsc2(r.rate_percent ?? '') : peEsc2(r.amount ?? '')}" placeholder="${r.commission_type === 'percent' ? '10 (=10%)' : '50.00'}" class="w-full border border-ink/20 rounded-lg px-2.5 py-1.5 text-sm focus:border-navy outline-none">
-    </td>
-    <td class="px-3 py-2.5">
-      <input id="aff-ed-cap" type="number" step="0.01" min="0" value="${peEsc2(r.cap_amount ?? '')}" placeholder="Tiada had" class="w-full border border-ink/20 rounded-lg px-2.5 py-1.5 text-sm focus:border-navy outline-none">
-    </td>
-    <td class="px-3 py-2.5 text-[11px] text-ink/40">${isNew ? 'Aktif' : ''}</td>
-    <td class="px-4 py-2.5 text-right whitespace-nowrap">
-      <button onclick="affSaveRow(${isNew ? "'new'" : `'${r.id}'`})" class="text-navy font-semibold hover:underline text-xs mr-3">Simpan</button>
-      <button onclick="affCancelRow()" class="text-ink/50 hover:underline text-xs">Batal</button>
-    </td>
-  </tr>`;
-}
-
-function renderDefaultRateBox() {
-  const box = document.getElementById('aff-default-rate-box');
-  const r = _affRules.find(x => !x.package_id);
-  if (!r) { box.innerHTML = ''; return; }
-
-  if (_affEditId === r.id) {
-    box.innerHTML = `<div class="bg-navy-light/40 border border-navy/15 rounded-xl p-4">
-      <div class="text-[10px] uppercase tracking-wider text-navy/70 font-semibold mb-3">Ubah Kadar Lalai</div>
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 items-end">
-        <div>
-          <label class="text-[10px] font-semibold text-ink/50 uppercase tracking-wide">Jenis</label>
-          <select id="aff-ed-type" onchange="document.getElementById('aff-ed-amount').placeholder = this.value === 'percent' ? '10 (=10%)' : '50.00'" class="w-full mt-1 border border-ink/20 rounded-lg px-2.5 py-1.5 text-sm focus:border-navy outline-none bg-white">
-            <option value="fixed" ${r.commission_type === 'fixed' ? 'selected' : ''}>RM Tetap</option>
-            <option value="percent" ${r.commission_type === 'percent' ? 'selected' : ''}>Peratus (%)</option>
-          </select>
-        </div>
-        <div>
-          <label class="text-[10px] font-semibold text-ink/50 uppercase tracking-wide">Kadar</label>
-          <input id="aff-ed-amount" type="number" step="0.01" min="0" value="${r.commission_type === 'percent' ? peEsc2(r.rate_percent ?? '') : peEsc2(r.amount ?? '')}" placeholder="${r.commission_type === 'percent' ? '10 (=10%)' : '50.00'}" class="w-full mt-1 border border-ink/20 rounded-lg px-2.5 py-1.5 text-sm focus:border-navy outline-none bg-white">
-        </div>
-        <div>
-          <label class="text-[10px] font-semibold text-ink/50 uppercase tracking-wide">Had Maks (RM)</label>
-          <input id="aff-ed-cap" type="number" step="0.01" min="0" value="${peEsc2(r.cap_amount ?? '')}" placeholder="Tiada had" class="w-full mt-1 border border-ink/20 rounded-lg px-2.5 py-1.5 text-sm focus:border-navy outline-none bg-white">
-        </div>
-        <div class="flex gap-3 pb-1.5">
-          <button onclick="affSaveRow('${r.id}')" class="text-navy font-semibold hover:underline text-xs">Simpan</button>
-          <button onclick="affCancelRow()" class="text-ink/50 hover:underline text-xs">Batal</button>
-        </div>
-      </div>
-    </div>`;
-    return;
-  }
-
-  const rateTxt = r.commission_type === 'percent'
-    ? `${r.rate_percent ?? 0}%${r.cap_amount ? ' (had ' + fmtRM2(r.cap_amount) + ')' : ''}`
-    : fmtRM2(r.amount);
-  box.innerHTML = `<div class="bg-navy-light/40 border border-navy/15 rounded-xl px-4 py-3.5 flex items-center justify-between gap-3 flex-wrap">
-    <div class="flex items-center gap-3">
-      <span class="text-lg">🔒</span>
-      <div>
-        <div class="text-sm font-semibold text-ink">Kadar Lalai <span class="font-normal text-ink/50">— pakej tanpa kadar khusus</span></div>
-        <div class="text-xs text-ink/55 mt-0.5">${r.commission_type === 'percent' ? 'Peratus' : 'RM Tetap'} · <span class="font-semibold text-ink/80">${rateTxt}</span>${r.is_active === false ? ' · <span class="text-terracotta">Tidak Aktif</span>' : ''}</div>
-      </div>
-    </div>
-    <button data-rbac="settings.edit" onclick="affEditStart('${r.id}')" class="text-navy font-semibold hover:underline text-xs">Edit</button>
-  </div>`;
-  if (typeof applyRbacUI === 'function') applyRbacUI(box);
-}
-
-function renderAffRules() {
-  renderDefaultRateBox();
-
-  const sorted = _affRules.filter(r => r.package_id)
-    .sort((a, b) => (affPkgName(a.package_id) || '').localeCompare(affPkgName(b.package_id) || ''));
-
-  const rows = sorted.map(r => {
-    if (_affEditId === r.id) return affEditRow(r);
-    const rateTxt = r.commission_type === 'percent'
-      ? `${r.rate_percent ?? 0}%`
-      : fmtRM2(r.amount);
-    return `<tr class="${r.is_active === false ? 'opacity-55' : ''} hover:bg-cream/30">
-      <td class="px-4 py-3">
-        <div class="font-semibold text-ink">${peEsc2(affPkgName(r.package_id) || 'Pakej dipadam')}</div>
-      </td>
-      <td class="px-3 py-3 text-ink/70">${r.commission_type === 'percent' ? 'Peratus (%)' : 'RM Tetap'}</td>
-      <td class="px-3 py-3 text-ink/70">${rateTxt}</td>
-      <td class="px-3 py-3 text-ink/70">${r.commission_type === 'percent' && r.cap_amount ? fmtRM2(r.cap_amount) : '<span class="text-ink/30">—</span>'}</td>
-      <td class="px-3 py-3">${peToggleHtml(r.is_active !== false, `affToggleAktif('${r.id}')`, false)}</td>
-      <td class="px-4 py-3 text-right whitespace-nowrap">
-        <button onclick="affEditStart('${r.id}')" class="text-navy font-semibold hover:underline text-xs mr-3">Edit</button>
-        <button onclick="delAffRule('${r.id}')" class="text-terracotta font-semibold hover:underline text-xs">Buang</button>
-      </td>
-    </tr>`;
-  });
-  if (_affEditId === 'new') rows.push(affEditRow('new'));
-  document.getElementById('aff-rules-tbody').innerHTML = rows.join('');
-  document.getElementById('aff-rules-empty').classList.toggle('hidden', rows.length > 0);
-  if (typeof applyRbacUI === 'function') applyRbacUI(document.getElementById('aff-rules-tbody'));
-}
-
-function fmtRM2(n) { return 'RM ' + (Number(n) || 0).toFixed(2); }
-
-function addAffRule() {
-  if (!_affPackages.some(p => !_affRules.some(r => r.package_id === p.id))) {
-    banner('Semua pakej aktif sudah ada kadar sendiri', 'error'); return;
-  }
-  _affEditId = 'new'; renderAffRules();
-}
-window.addAffRule = addAffRule;
-
-function affEditStart(id) { _affEditId = id; renderAffRules(); }
-window.affEditStart = affEditStart;
-function affCancelRow() { _affEditId = -1; renderAffRules(); }
-window.affCancelRow = affCancelRow;
-
-async function affToggleAktif(id) {
-  const r = _affRules.find(x => x.id === id);
-  if (!r) return;
-  const next = r.is_active === false;
-  const { error } = await window.db.from('psy_affiliate_commission_rules').update({ is_active: next, updated_at: new Date().toISOString() }).eq('id', id);
-  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
-  r.is_active = next;
-  renderAffRules();
-}
-window.affToggleAktif = affToggleAktif;
-
-async function affSaveRow(id) {
-  const isNew = id === 'new';
-  const type = document.getElementById('aff-ed-type').value;
-  const amountVal = parseFloat(document.getElementById('aff-ed-amount').value);
-  const capVal = parseFloat(document.getElementById('aff-ed-cap').value);
-
-  if (isNaN(amountVal) || amountVal < 0) { banner('Sila isi kadar yang sah', 'error'); return; }
-
-  let package_id = null;
-  if (isNew) {
-    package_id = document.getElementById('aff-ed-pkg').value;
-    if (!package_id) { banner('Sila pilih pakej', 'error'); return; }
-  }
-
-  const payload = {
-    commission_type: type,
-    amount: type === 'fixed' ? amountVal : null,
-    rate_percent: type === 'percent' ? amountVal : null,
-    cap_amount: !isNaN(capVal) && capVal > 0 ? capVal : null,
-    updated_at: new Date().toISOString(),
-  };
-
-  let error;
-  if (isNew) {
-    ({ error } = await window.db.from('psy_affiliate_commission_rules').insert({ ...payload, package_id, is_active: true }));
-  } else {
-    ({ error } = await window.db.from('psy_affiliate_commission_rules').update(payload).eq('id', id));
-  }
-  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
-  banner('Kadar komisen disimpan ✅');
-  await loadAffiliateRules();
-}
-window.affSaveRow = affSaveRow;
-
-async function delAffRule(id) {
-  const r = _affRules.find(x => x.id === id);
-  if (!r || !r.package_id) return;
-  if (!confirm('Buang kadar khusus pakej ini? Pakej akan guna Kadar Lalai selepas ini.')) return;
-  const { error } = await window.db.from('psy_affiliate_commission_rules').delete().eq('id', id);
-  if (error) { banner('Ralat: ' + error.message, 'error'); return; }
-  banner('Kadar dibuang'); await loadAffiliateRules();
-}
-window.delAffRule = delAffRule;
+// ── Affiliate — kadar komisen DIBUANG dari sini 27 Okt 2026. Kini di
+// roles/staff/affiliate.html (panel ⚙️ Tetapan Komisen, super_admin sahaja).
 
 // ── Slot masa jadual (schedule_time_slots) ───────────────────
 let _timeSlots = [];
@@ -1088,13 +841,6 @@ function saveIntegrasi(btn) {
     whatsapp_provider: document.getElementById('s-whatsapp_provider').value,
   }, btn);
 }
-
-function saveReferralVoucherAmount(btn) {
-  const amt = parseFloat(document.getElementById('s-referral_signup_voucher_amount').value);
-  if (isNaN(amt) || amt < 0) { banner('Sila isi jumlah yang sah', 'error'); return; }
-  saveKeys({ referral_signup_voucher_amount: amt }, btn);
-}
-window.saveReferralVoucherAmount = saveReferralVoucherAmount;
 
 // ── Ambang Vitals (Normal/Kritikal per-vital) — psy_settings.vitals_thresholds ──
 function vtInputId(key, field) { return `vt-${key}-${field}`; }
@@ -1221,7 +967,6 @@ async function loadInfoCounts() {
   }
   await iswLoadSettings();
   fillForm();
-  loadAffiliateRules();
   // Dibuka terus dari tab lain (cth: Inventori → Bekalan KOB) guna ?tab=xxx
   const reqTab = new URLSearchParams(location.search).get('tab');
   if (reqTab && TABS.includes(reqTab)) setTab(reqTab);

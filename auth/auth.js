@@ -45,6 +45,14 @@ async function handleLogin(e) {
     localStorage.setItem('isw_role', profile.role);
     localStorage.setItem('isw_name', profile.full_name);
 
+    window.db.from('psy_audit_log').insert({
+      actor_id: data.user.id,
+      actor_name: profile.full_name,
+      actor_role: profile.role,
+      action: 'auth.login',
+      meta: { user_agent: navigator.userAgent }
+    }).then(() => {}, () => {});
+
     if (profile.role === 'patient') {
       const { data: patient } = await window.db
         .from('psy_patients').select('kob_status').eq('user_id', data.user.id).maybeSingle();
