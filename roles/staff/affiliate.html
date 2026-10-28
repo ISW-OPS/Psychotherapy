@@ -206,6 +206,7 @@ const REF_STATUS_MAP = {
 };
 
 let allReferrals = [];
+let allExternalAffiliates = [];  // SEMUA psy_external_affiliates (termasuk tiada rujukan lagi)
 let agents = [];          // allReferrals dikumpul ikut perujuk (satu baris = satu agent)
 let currentAgentKey = null;
 let me = null;
@@ -252,6 +253,14 @@ async function loadAll() {
     });
   }
 
+  // SEMUA affiliate GHL (28 Okt 2026, keputusan user) — papar walaupun
+  // belum ada rujukan lagi (baru daftar). buildAgents() guna ni untuk
+  // tambah baris RM0.00 bagi affiliate yang tiada dalam allReferrals.
+  const { data: allAffs } = await window.db.from('psy_external_affiliates')
+    .select('id, full_name, phone, ic_number, address, bank_name, bank_account_no, bank_account_holder')
+    .order('created_at', { ascending: false });
+  allExternalAffiliates = allAffs || [];
+
   buildAgents();
   renderStats();
   renderAgentList();
@@ -289,6 +298,21 @@ function buildAgents() {
     }
     map.get(key).referrals.push(r);
   }
+
+  // Tambah affiliate GHL yang BELUM ada rujukan langsung (baru daftar) —
+  // RM0.00 merata, supaya dia tetap nampak dalam senarai (28 Okt 2026).
+  for (const a of allExternalAffiliates) {
+    const key = `a_${a.id}`;
+    if (map.has(key)) continue;
+    map.set(key, {
+      key, isExternal: true, patientId: null, affiliateId: a.id,
+      name: a.full_name || '—', mrn: null, phone: a.phone || null,
+      icNumber: a.ic_number || null, address: a.address || null,
+      bankName: a.bank_name || null, bankAccountNo: a.bank_account_no || null,
+      bankAccountHolder: a.bank_account_holder || null, referrals: [],
+    });
+  }
+
   agents = [...map.values()].map(a => {
     const nonVoid = a.referrals.filter(r => refDisplayStatus(r) !== 'void');
     const unpaidRows = a.referrals.filter(r => ['qualified', 'processing'].includes(refDisplayStatus(r)));
