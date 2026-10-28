@@ -164,11 +164,41 @@ Deno.serve(async (req: Request) => {
     if (secret !== Deno.env.get('GHL_BOOKING_WEBHOOK_SECRET')) return json({ error: 'forbidden' }, 403)
 
     const payload = await req.json().catch(() => ({}))
-    const event = ['order', 'contact', 'affiliate'].includes(payload.event) ? payload.event : 'appointment'
+    // GOTCHA BESAR disahkan 28 Okt 2026 (via log debug, lihat
+    // ghl_booking.raw_payload_debug): Custom Data yang dikonfigurasi dalam
+    // action Webhook GHL Workflow TAK sampai di top-level payload — GHL
+    // bersarangkan semuanya dalam SATU objek `customData`
+    // (cth payload.customData.bank_name, BUKAN payload.bank_name). Top-level
+    // payload cuma "standard data" (field asli GHL — phone/full_name/dll,
+    // nilai/format kadang BEZA drpd versi customData). `pick()` baca
+    // customData DULU, fallback ke top-level & payload.contact — satu
+    // fungsi, semua field guna cara sama, elak drift/silap ulang.
+    const cd = payload.customData || {}
+    const pick = (key: string): any => {
+      const v = cd[key] ?? payload[key] ?? payload.contact?.[key]
+      return (v === undefined || v === null || v === '') ? null : v
+    }
 
-    const phoneRaw = payload.phone || payload.contact?.phone
-    const fullName = String(payload.full_name || payload.contact?.full_name || payload.name || '').trim() || null
-    const email = payload.email || payload.contact?.email || null
+    const rawEvent = pick('pt_event') ?? pick('event')
+    const looksLikeAffiliate = !!(pick('bank_name') || pick('bank_account_no') || pick('affiliate_link') || pick('kob_referal_code'))
+    const event = ['order', 'contact', 'affiliate'].includes(rawEvent)
+      ? rawEvent
+      : (looksLikeAffiliate ? 'affiliate' : 'appointment')
+    // Log payload MENTAH setiap panggilan (debug sementara) — bantu sahkan/
+    // nafi andaian struktur payload GHL tanpa perlu akses Execution Logs
+    // GHL. Best-effort, tak gagalkan webhook kalau log sendiri gagal.
+    try {
+      const svcDbg = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+      await svcDbg.from('psy_audit_log').insert({
+        actor_name: 'GHL', actor_role: 'system', action: 'ghl_booking.raw_payload_debug',
+        target: pick('contact_id') || pick('phone') || 'unknown',
+        meta: { raw_event_field: payload.event ?? null, pt_event_field: payload.pt_event ?? null, resolved_event: event, payload },
+      })
+    } catch (_) { /* debug log tak kritikal */ }
+
+    const phoneRaw = pick('phone')
+    const fullName = String(pick('full_name') || payload.name || '').trim() || null
+    const email = pick('email')
     const phone = toE164(phoneRaw)
     if (!phone) return json({ error: 'phone wajib' }, 400)
 
@@ -181,14 +211,14 @@ Deno.serve(async (req: Request) => {
     if (event === 'affiliate') {
       const { affiliateId, linkedPatientId } = await upsertExternalAffiliate(svc, {
         phone, fullName, email,
-        icNumber: payload.ic_number || null,
-        address: payload.address || null,
-        bankName: payload.bank_name || null,
-        bankAccountNo: payload.bank_account_no || null,
-        bankAccountHolder: payload.bank_account_holder || null,
-        affiliateCode: payload.kob_referal_code || null,
-        affiliateLink: payload.affiliate_link || null,
-        ghlContactId: payload.contact_id || payload.contactId || null,
+        icNumber: pick('ic_number'),
+        address: pick('address'),
+        bankName: pick('bank_name'),
+        bankAccountNo: pick('bank_account_no'),
+        bankAccountHolder: pick('bank_account_holder'),
+        affiliateCode: pick('kob_referal_code'),
+        affiliateLink: pick('affiliate_link'),
+        ghlContactId: pick('contact_id') || pick('contactId'),
       })
       await auditLog(svc, 'ghl_affiliate.received', affiliateId, { linked_patient_id: linkedPatientId, phone })
       return json({ success: true, event, affiliate_id: affiliateId, linked_patient_id: linkedPatientId })
@@ -199,26 +229,26 @@ Deno.serve(async (req: Request) => {
     // dgn event lain juga (fieldMap hanya isi kalau nilai wujud).
     const { patientId, created } = await syncContactToPatient(svc, {
       phone, fullName, email,
-      icNumber: payload.ic_number || null,
-      address: payload.address || null,
-      postcode: payload.postcode || null,
-      city: payload.city || null,
-      state: payload.state || null,
-      dateOfBirth: payload.date_of_birth || null,
-      gender: normalizeGender(payload.gender),
-      maritalStatus: payload.marital_status || null,
-      occupation: payload.occupation || null,
-      company: payload.company || null,
-      emergencyContactName: payload.emergency_contact_name || null,
-      emergencyContactPhone: payload.emergency_contact_phone || null,
-      emergencyContactIc: payload.emergency_contact_ic || null,
-      emergencyContactRelationship: payload.emergency_contact_relationship || null,
-      emergencyContactEmail: payload.emergency_contact_email || null,
-      contactPreference: normalizeContactPreference(payload.peranan_pendaftar),
-      registrantCapacity: deriveCapacityFromRole(payload.peranan_pendaftar) || normalizeRegistrantCapacity(payload.borang_isi_sebagai),
-      ghlContactId: payload.contact_id || payload.contactId || null,
-      kobCode: payload.kob_code || payload.kobCode || null,
-      referredByAffiliateName: payload.referred_by_affiliate || null,
+      icNumber: pick('ic_number'),
+      address: pick('address'),
+      postcode: pick('postcode'),
+      city: pick('city'),
+      state: pick('state'),
+      dateOfBirth: pick('date_of_birth'),
+      gender: normalizeGender(pick('gender')),
+      maritalStatus: pick('marital_status'),
+      occupation: pick('occupation'),
+      company: pick('company'),
+      emergencyContactName: pick('emergency_contact_name'),
+      emergencyContactPhone: pick('emergency_contact_phone'),
+      emergencyContactIc: pick('emergency_contact_ic'),
+      emergencyContactRelationship: pick('emergency_contact_relationship'),
+      emergencyContactEmail: pick('emergency_contact_email'),
+      contactPreference: normalizeContactPreference(pick('peranan_pendaftar')),
+      registrantCapacity: deriveCapacityFromRole(pick('peranan_pendaftar')) || normalizeRegistrantCapacity(pick('borang_isi_sebagai')),
+      ghlContactId: pick('contact_id') || pick('contactId'),
+      kobCode: pick('kob_code') || pick('kobCode'),
+      referredByAffiliateName: pick('referred_by_affiliate'),
     }, { matchOnly: false })
 
     // 'appointment'/'order'/'contact' sentiasa matchOnly=false → patientId
@@ -231,10 +261,11 @@ Deno.serve(async (req: Request) => {
     // dipanggil berulang (webhook retry/setiap event) — tak pernah timpa
     // rujukan sedia ada. Kegagalan di sini TAK gagalkan webhook (fulfillment
     // KOB/bayaran lebih penting drpd attribution komisen).
-    if (payload.referred_by_affiliate) {
+    const referredByAffiliateName = pick('referred_by_affiliate')
+    if (referredByAffiliateName) {
       try {
-        const attr = await attributeReferralToAffiliate(svc, { patientId, affiliateName: payload.referred_by_affiliate })
-        if (attr.attributed) await auditLog(svc, 'ghl_affiliate_attribution.created', patientId, { affiliate_name: payload.referred_by_affiliate })
+        const attr = await attributeReferralToAffiliate(svc, { patientId, affiliateName: referredByAffiliateName })
+        if (attr.attributed) await auditLog(svc, 'ghl_affiliate_attribution.created', patientId, { affiliate_name: referredByAffiliateName })
       } catch (attrErr) { console.error('attributeReferralToAffiliate gagal:', attrErr) }
     }
 
@@ -244,9 +275,9 @@ Deno.serve(async (req: Request) => {
     }
 
     if (event === 'order') {
-      const orderId = String(payload.order_id || payload.orderId || payload.id || '')
-      const amount = payload.amount ?? payload.total ?? 0
-      const status = payload.status || payload.payment_status || ''
+      const orderId = String(pick('order_id') || pick('orderId') || pick('id') || '')
+      const amount = pick('amount') ?? pick('total') ?? 0
+      const status = pick('status') || pick('payment_status') || ''
       const result = await syncOrderToPayment(svc, patientId, { orderId, amount, status })
       await auditLog(svc, 'ghl_order.received', patientId, {
         created_patient: created, order_id: orderId, payment_id: result.paymentId, skipped: result.skipped || null,
@@ -259,15 +290,16 @@ Deno.serve(async (req: Request) => {
     // field berasingan (scheduled_date + scheduled_time, cth "13/08/2026" +
     // "3:30 PM" — padanan dgn merge field only_start_date/only_start_time
     // yang GHL Workflow sedia ada dah guna).
-    const scheduledAtRaw = payload.scheduled_at || payload.scheduledAt || payload.appointment?.start_time
+    const scheduledAtRaw = pick('scheduled_at') || pick('scheduledAt') || payload.appointment?.start_time
     let scheduledAt = scheduledAtRaw ? new Date(scheduledAtRaw) : null
-    if ((!scheduledAt || Number.isNaN(scheduledAt.getTime())) && payload.scheduled_date) {
-      scheduledAt = parseFlexibleDate(payload.scheduled_date, payload.scheduled_time)
+    const scheduledDate = pick('scheduled_date')
+    if ((!scheduledAt || Number.isNaN(scheduledAt.getTime())) && scheduledDate) {
+      scheduledAt = parseFlexibleDate(scheduledDate, pick('scheduled_time'))
     }
     if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) {
       return json({ error: 'scheduled_at (ISO 8601) ATAU scheduled_date+scheduled_time wajib' }, 400)
     }
-    const mode = normalizeMode(payload.mode)
+    const mode = normalizeMode(pick('mode'))
     // Nama staff GHL — label GHL, bukan akaun ISW. Papar terus sbg Collector (teks,
     // read-only) di kob-list.html/kob-detail.html.
     // collector = "{{appointment.booked_by}}" (siapa buat/sahkan booking KOB —
@@ -277,7 +309,7 @@ Deno.serve(async (req: Request) => {
     // closer TIDAK diambil dari GHL langsung — sentiasa manual dropdown di ISW,
     //   sebab closer sebenar (yg tutup jualan pakej) cuma diketahui semasa sesi
     //   KOB berlangsung, GHL tak boleh tahu awal-awal lagi.
-    const collectorName = String(payload.closer || payload.booked_by || payload.bookedBy || '').trim() || null
+    const collectorName = String(pick('closer') || pick('booked_by') || pick('bookedBy') || '').trim() || null
     const closerName = null
 
     const { kobSessionId } = await syncAppointmentToSession(svc, patientId, { scheduledAt, mode, closerName, collectorName })

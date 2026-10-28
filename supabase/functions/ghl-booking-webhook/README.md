@@ -1,5 +1,17 @@
 # ghl-booking-webhook — Push booking + payment + contact (GHL → ISW)
 
+> ⚠️ **GOTCHA KRITIKAL (disahkan 28 Okt 2026) — struktur payload GHL Webhook
+> action:** Custom Data yang dikonfigurasi dalam action Webhook ("Custom
+> Data" rows di Builder) **TIDAK** sampai di top-level JSON body. GHL
+> bersarangkan SEMUANYA dalam satu objek `customData`
+> (`payload.customData.bank_name`, BUKAN `payload.bank_name`). Top-level
+> payload cuma "standard data" (field asli GHL seperti `phone`/`full_name`/
+> `location`/`tags`/`user`/`workflow` — nilai/format kadang BEZA drpd
+> versi `customData`, cth `phone` top-level `+60175655704` vs
+> `customData.phone` `017-565 5704`). **Semua** pembacaan field dalam fail
+> ni guna fungsi `pick()` (baca `customData` dulu, fallback top-level) —
+> JANGAN baca `payload.xxx` terus bila tambah field baharu, guna `pick('xxx')`.
+
 Bila closer/sales di GHL sahkan pesakit dah **bayar**, **tempah tarikh**
 (KOB atau temujanji), atau **kemas kini maklumat**, GHL push maklumat tu
 masuk ISW. Satu fungsi, tiga jenis event (`event` dalam body JSON):
@@ -309,7 +321,7 @@ user 28 Okt 2026)
 - **Action:** Webhook, URL & secret **sama**, body:
 ```json
 {
-  "event": "affiliate",
+  "pt_event": "affiliate",
   "phone": "{{contact.phone}}",
   "full_name": "{{contact.nama_agent}}",
   "email": "{{contact.email}}",
@@ -323,6 +335,11 @@ user 28 Okt 2026)
   "contact_id": "{{contact.id}}"
 }
 ```
+> ⚠️ **Guna key `pt_event`, BUKAN `event`** (disahkan 28 Okt 2026 — key
+> `event` gagal dalam ujian sebenar, disyaki berlanggar dgn "standard
+> data" GHL yang turut ada field `event` tersendiri). Fungsi terima
+> kedua-dua (`pt_event` diutamakan, `event` kekal fallback) tapi `pt_event`
+> yang DISAHKAN berfungsi — guna itu dalam Custom Data.
 
 - **Entiti teras `psy_external_affiliates` (BUKAN `psy_patients`)** —
   orang yang daftar jadi affiliate/duta **tak semestinya pesakit ISW**.
