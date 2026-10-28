@@ -9,12 +9,38 @@ masuk ISW. Satu fungsi, tiga jenis event (`event` dalam body JSON):
 | `appointment` (default — tiada field = ni) | Closer sahkan booking KOB | Padan/cipta pesakit + cipta/kemas kini `psy_kob_sessions` (`status='booked'`) |
 | `order` | Closer sahkan bayaran yuran KOB | Padan/cipta pesakit + cipta rekod `psy_payments` (`payment_method='ghl'`) + `kob_status→'paid'` |
 | `contact` | Maklumat pesakit dikemas kini di GHL | Padan/cipta pesakit sahaja (tiada sesi/bayaran disentuh) |
+| `affiliate` | Orang daftar jadi affiliate/duta di funnel GHL (cth "Duta Sihat Sefitrahnya") | Padan/cipta **`psy_external_affiliates`** (BUKAN `psy_patients`) ikut phone — SELALU direkod (bukan pesakit ISW pun tetap direkod, supaya komisen pakej OB boleh dikira). Kalau phone padan pesakit sedia ada, `linked_patient_id` diisi + bank disync sekali ke `psy_patients` |
+
+**Komisen pakej OB — model TIER (27 Okt 2026, keputusan user "kadar
+komisen OB pun sama macam KOB"):** bila payload `appointment`/`contact`/
+`order` bawa `referred_by_affiliate` (nama affiliate), fungsi cuba padan
+nama tu dgn SATU rekod `psy_external_affiliates` sahaja (exact,
+case-insensitive) — kalau jumpa, auto-cipta rekod `psy_referrals`
+(`status='pending'`, `source='ghl_affiliate'`). Trigger
+`trg_referral_qualify_on_payment` (27_affiliate.sql, **dikemaskini**)
+"qualify" rekod tu jadi 1 **SU** bila DUA syarat dipenuhi: (1) pesakit tu
+**settle sesi KOB** (`psy_kob_sessions.status IN ('hadir','completed')`)
+DAN (2) **bayar pakej OB** (`psy_payments` completed, di ISW — GHL TIADA
+visibiliti laluan bayaran ni). Kadar komisen kemudian ikut **tier volume
+SU affiliate tu BULAN tu** (`psy_affiliate_commission_tiers` — 0-49
+SU=RM20/SU, 50-99=RM30/SU, 100+=RM40/SU, dikira semula retroaktif setiap
+kali SU baharu masuk), BUKAN fixed/percent per pakej macam rujukan
+pesakit-ke-pesakit asal (`source='patient'`, `psy_affiliate_commission_rules`
+— TIDAK terjejas). Bonus TAHUNAN (lepas 1,000+ SU setahun) **belum
+dibina** — tangguh sehingga spec disahkan. Yuran KOB sendiri (GHL)
+dikira terus di GHL Affiliate Manager (kalau produk ditanda
+Commission-Eligible di campaign) — ISW tak sentuh bahagian tu. Lihat
+bahagian "Menghubungkan (d) ↔ (a)/(c)" di bawah.
 
 ```
-GHL Workflow (Appointment Status / Order Submitted / Contact Changed)
-   └─► Webhook action ──► ghl-booking-webhook ──► psy_patients (padan/cipta ikut phone)
-              (x-ghl-booking-secret)                ├─► psy_kob_sessions (event=appointment)
-                                                     └─► psy_payments    (event=order)
+GHL Workflow (Appointment Status / Order Submitted / Contact Changed / Affiliate Registration)
+   └─► Webhook action ──► ghl-booking-webhook ──► psy_patients          (padan/cipta ikut phone, event≠affiliate)
+              (x-ghl-booking-secret)                ├─► psy_kob_sessions   (event=appointment)
+                                                     ├─► psy_payments      (event=order, yuran KOB)
+                                                     ├─► psy_external_affiliates (event=affiliate)
+                                                     └─► psy_referrals     (auto, ikut referred_by_affiliate)
+                                                            └─► trg_referral_qualify_on_payment
+                                                                  (bila psy_payments pakej OB completed)
 ```
 
 **Sehala GHL → ISW.** Tak sentuh `sync-ghl` (ISW → GHL) yang sedia ada;
@@ -83,7 +109,8 @@ tak melalui closer boleh terus tempah slot ISW seperti biasa).
   "emergency_contact_relationship": "{{contact.hubungan_waris_pesakit}}",
   "emergency_contact_email": "{{contact.email_waris_penjaga}}",
   "peranan_pendaftar": "{{contact.peranan_pendaftar}}",
-  "borang_isi_sebagai": "{{contact.anda_mengisi_borang_ini_sebagai}}"
+  "borang_isi_sebagai": "{{contact.anda_mengisi_borang_ini_sebagai}}",
+  "referred_by_affiliate": "{{contact.referred_by_affiliate}}"
 }
 ```
 > Field `"event"` opsyenal — kalau Workflow sedia ada anda TAK menghantar
@@ -170,6 +197,17 @@ tak melalui closer boleh terus tempah slot ISW seperti biasa).
   semak & submit sendiri. Buang mana-mana field yang GHL anda tiada, JANGAN
   hantar merge tag kosong/tak wujud (GHL akan hantar string literal
   `"{{...}}"` kalau tag tu salah/tiada nilai).
+- `referred_by_affiliate` — opsyenal. `{{contact.referred_by_affiliate}}`
+  (custom field GHL, folder "PT Sytem" — **disahkan 27 Okt 2026**) — nama
+  affiliate/duta yang rujuk PESAKIT ni (teks bebas, bukan ID). Disimpan ke
+  `psy_patients.referred_by_affiliate_name` (isi kosong sahaja, papar
+  read-only di kob-detail.html sbg "Dirujuk oleh Affiliate") **DAN**
+  dipadan ke `psy_external_affiliates` utk **auto-cipta rekod komisen**
+  (`psy_referrals`) — lihat bahagian "Menghubungkan (d) ↔ (a)/(c)" di
+  bawah utk logik penuh. **Padanan ikut nama sahaja** (GHL tak bekalkan
+  kod affiliate terus pada contact pesakit) — kalau 2 affiliate kongsi
+  nama sama, tiada rekod komisen auto-dicipta (ambiguous), staff kena
+  padan manual.
 
 ### b) Workflow "Order Submitted" (BAHARU)
 - **Trigger:** *Order Submitted* / *Invoice Paid* (ikut mana tersedia di
@@ -218,7 +256,8 @@ tak melalui closer boleh terus tempah slot ISW seperti biasa).
   "emergency_contact_email": "{{contact.email_waris_penjaga}}",
   "peranan_pendaftar": "{{contact.peranan_pendaftar}}",
   "borang_isi_sebagai": "{{contact.anda_mengisi_borang_ini_sebagai}}",
-  "contact_id": "{{contact.id}}"
+  "contact_id": "{{contact.id}}",
+  "referred_by_affiliate": "{{contact.referred_by_affiliate}}"
 }
 ```
 - Kemaskini pesakit **HANYA kalau field tempatan kosong** — tak timpa
@@ -236,6 +275,106 @@ tak melalui closer boleh terus tempah slot ISW seperti biasa).
   dalam fail tu). Pesakit **tetap** kena semak, edit kalau perlu, dan
   hantar sendiri (termasuk tick consent PDPA) — TIDAK auto-lulus/auto-
   hantar borang KYC dari data GHL.
+
+### d) Workflow "Duta/Affiliate Registration" (BAHARU — GABUNG ke workflow
+"01. Duta Registration" sedia ada, bukan workflow berasingan, keputusan
+user 28 Okt 2026)
+
+**Field key GHL disahkan 28 Okt 2026** (query key borang pendaftaran
+"Duta Sihat Sefitrahnya" sebenar, disahkan user):
+
+| Data | GHL field key |
+|---|---|
+| Nama affiliate | `{{contact.nama_agent}}` |
+| Telefon affiliate | `{{contact.phone}}` |
+| Email affiliate | `{{contact.email}}` |
+| No IC affiliate | `{{contact.no_ic_agent}}` |
+| Alamat affiliate | `{{contact.alamat_agent}}` |
+| Nama bank | `{{contact.nama_bank}}` |
+| No akaun bank | `{{contact.no_akaun_bank}}` |
+| Pautan affiliate | `{{contact.affiliate_link}}` ⚠️ **TAK dikumpul borang** — diisi GHL SENDIRI (langkah "Add To Affiliate Manager"/"Add To Affiliate Campaign") SELEPAS submit, lihat nota Trigger di bawah |
+| Kod rujukan KOB affiliate | `{{contact.kob_referal_code}}` ⚠️ **SATU "r"** — ejaan GHL sebenar, BUKAN "referral"; juga diisi SELEPAS submit (nota sticky GHL: "Create Coupon Code... Key in ke dalam Custom Field AFFILIATION") |
+
+- **Trigger — PENTING, BUKAN "Form Submitted":** `affiliate_link`/
+  `kob_referal_code` **belum wujud** sejurus borang dihantar (GHL
+  Affiliate Manager/Campaign + coupon code baru digenerate SELEPAS tu,
+  ikut langkah dalam workflow "01. Duta Registration" sedia ada —
+  Assign to user → Add To Affiliate Manager → Add To Affiliate
+  Campaign → cipta coupon/referral link → key in custom field). Letak
+  action Webhook ni di **PENGHUJUNG** workflow "01. Duta Registration"
+  sedia ada (lepas SEMUA langkah tu siap, bukan sejurus Form Submitted),
+  **ATAU** kalau nak berasingan, guna trigger *Contact Changed* ditapis
+  khusus `affiliate_link` berubah ke "ada nilai" — supaya payload bawa
+  data LENGKAP, bukan medan kosong.
+- **Action:** Webhook, URL & secret **sama**, body:
+```json
+{
+  "event": "affiliate",
+  "phone": "{{contact.phone}}",
+  "full_name": "{{contact.nama_agent}}",
+  "email": "{{contact.email}}",
+  "ic_number": "{{contact.no_ic_agent}}",
+  "address": "{{contact.alamat_agent}}",
+  "bank_name": "{{contact.nama_bank}}",
+  "bank_account_no": "{{contact.no_akaun_bank}}",
+  "bank_account_holder": "{{contact.nama_agent}}",
+  "affiliate_link": "{{contact.affiliate_link}}",
+  "kob_referal_code": "{{contact.kob_referal_code}}",
+  "contact_id": "{{contact.id}}"
+}
+```
+
+- **Entiti teras `psy_external_affiliates` (BUKAN `psy_patients`)** —
+  orang yang daftar jadi affiliate/duta **tak semestinya pesakit ISW**.
+  Fungsi `upsertExternalAffiliate()` padan ikut 9 digit terakhir `phone`:
+  - **SELALU** cipta/kemas kini `psy_external_affiliates` (nama/email/
+    bank/kod/link) — tiada "matchOnly", affiliate ni WAJIB direkod
+    supaya komisen pakej OB boleh dikira kelak (lihat bahagian
+    "Menghubungkan" di bawah).
+  - **Kalau** phone padan pesakit ISW sedia ada → `linked_patient_id`
+    diisi + bank/kod/link disync SEKALI ke `psy_patients` jua (fill-
+    kosong-sahaja), supaya `affiliate.html`/`profile.html` terus boleh
+    guna TANPA pesakit isi bank 2 kali. **Tiada pesakit BARU dicipta**
+    kalau tiada padanan — itu kekal tingkah laku sama macam sebelum ni.
+- Response: `{ success, event:'affiliate', affiliate_id, linked_patient_id }`.
+
+### Menghubungkan (d) ↔ (a)/(c) — "siapa rujuk siapa" + komisen pakej OB
+
+GHL Affiliate Manager **tertutup sepenuhnya** — tiada API awam, tiada
+Workflow trigger khas, tiada merge tag standard utk attribution
+(disahkan dgn AI GHL 27 Okt 2026). Satu-satunya jambatan yang GHL
+sediakan ialah DUA custom field berasingan di atas (`referred_by_affiliate`
+pada contact pesakit vs `nama_agent`/`kob_referal_code` pada contact
+affiliate). Jadi di ISW (`attributeReferralToAffiliate()`,
+`_shared/ghl-sync.ts`):
+- Bila payload `appointment`/`contact`/`order` bawa `referred_by_affiliate`
+  (nama), fungsi cari **SATU** rekod `psy_external_affiliates` padan nama
+  (case-insensitive EXACT). Jumpa **tepat satu** → auto-cipta
+  `psy_referrals` (`status='pending'`, `referrer_affiliate_id=...`,
+  `source='ghl_affiliate'`). Tiada padanan ATAU >1 padanan (nama sama)
+  → tiada rekod dicipta (senyap, tak gagalkan webhook) — staff kena
+  padan manual di `affiliate.html` (belum ada UI utk ni, lihat nota).
+  **Tak pernah timpa** rujukan sedia ada (UNIQUE `referee_patient_id`).
+- Lepas rekod `psy_referrals` wujud, `trg_referral_qualify_on_payment`
+  (27_affiliate.sql, **dikemaskini** — cawangan baharu khas
+  `source='ghl_affiliate'`, logik `source='patient'` asal tak disentuh)
+  "qualify" rekod tu jadi 1 SU bila pesakit settle KOB **DAN** bayar
+  pakej OB (`psy_payments`, HitPay di ISW), lepas tu panggil
+  `recalc_affiliate_commission_tier()` (kira semula tier bulan tu utk
+  affiliate berkenaan, lihat `psy_affiliate_commission_tiers` di
+  27_affiliate.sql). Payout kemudiannya diproses di `affiliate.html`
+  macam rujukan pesakit-ke-pesakit biasa — bezanya cuma perujuk jadi
+  `psy_external_affiliates` bukan `psy_patients` (`startPayout()` cipta
+  `psy_affiliate_payouts.affiliate_id` bukan `.patient_id`).
+- Kalau kelak GHL ada field kod affiliate pada contact PESAKIT juga
+  (bukan setakat nama), tambah `affiliate_code` ke payload (a)/(c) &
+  padan ikut kod (lebih tepat drpd nama) — **belum wujud lagi**, jangan
+  andaikan ia dihantar.
+- Field lain dalam folder GHL "PT Sytem" (`contact.pt_in_system`,
+  `contact.isw_mrn`, `contact.isw_registration_status`) nampak macam
+  dirancang untuk **ISW tulis BALIK ke GHL** (arah bertentangan drpd
+  webhook ni) — **BELUM dibina**, rujuk `sync-ghl` (fungsi sedia ada,
+  ISW→GHL) kalau nak sambungkan kelak.
 
 ---
 
@@ -257,10 +396,17 @@ Di setiap GHL Workflow → Webhook action:
 
 ## 3. Apa yang berlaku bila dipanggil
 
-**Semua event** mula dengan padan pesakit ikut 9 digit terakhir telefon
-(`phone`/`emergency_contact_phone`). Tiada padanan → cipta `psy_patients`
-baru: `status='pending_kyc'`, `kob_status='paid'`, `referral_source='GHL'`,
-MRN auto-jana, `user_id IS NULL` (belum ada akaun login).
+**`event=appointment`/`order`/`contact`** mula dengan padan pesakit ikut 9
+digit terakhir telefon (`phone`/`emergency_contact_phone`). Tiada padanan
+→ cipta `psy_patients` baru: `status='pending_kyc'`, `kob_status='paid'`,
+`referral_source='GHL'`, MRN auto-jana, `user_id IS NULL` (belum ada akaun
+login). Kalau payload bawa `referred_by_affiliate`, cuba auto-cipta rekod
+komisen `psy_referrals` lepas tu (lihat "Menghubungkan (d) ↔ (a)/(c)").
+
+**`event=affiliate`** entiti teras **`psy_external_affiliates`** (BUKAN
+`psy_patients`) — SELALU direkod (padan/cipta ikut phone), tiada "tiada
+padanan → skip". `linked_patient_id` diisi (+ bank disync ke
+`psy_patients`) kalau phone padan pesakit ISW sedia ada.
 
 **`event=appointment`** — cipta/kemas kini `psy_kob_sessions`
 (`status='booked'`) pada `scheduled_at`. Dedup ikut `patient_id` +
@@ -276,13 +422,15 @@ akaun staff ISW).
 `ghl_transaction_id=order_id`, `status='completed'`) — kini **NAMPAK**
 dalam resit pesakit (`sejarah-pembayaran.html`) & reconciliation staff
 (`payment-admin.html`, kolum "Ref GHL"). Segerak `kob_status→'paid'`
-(guard sama macam di atas).
+(guard sama macam di atas). Ni yuran KOB sahaja — komisen KOB (kalau ada)
+dikira di GHL Affiliate Manager sendiri, bukan sini.
 
 **`event=contact`** — padan/cipta pesakit sahaja, tiada sesi/bayaran.
 
 Semua event log ke `psy_audit_log` (`action='ghl_booking.received'` /
-`'ghl_order.received'` / `'ghl_contact.received'`), best-effort (gagal
-log tak gagalkan webhook).
+`'ghl_order.received'` / `'ghl_contact.received'` / `'ghl_affiliate.received'` /
+`'ghl_affiliate_attribution.created'`), best-effort (gagal log tak
+gagalkan webhook).
 
 Pesakit lengkapkan pendaftaran (KYC) bila login kali pertama
 (`pendaftaran.html`) — alur sedia ada tak berubah. `enforceKyc()` (GATE 1,

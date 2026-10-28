@@ -13,6 +13,14 @@
 //     pesakit & reconciliation staff (sebelum ni senyap/tak direkod).
 //   event: 'contact' — maklumat pesakit dikemas kini di GHL.
 //     Padan/cipta pesakit sahaja (tiada sesi/bayaran disentuh).
+//   event: 'affiliate' — orang daftar jadi affiliate/duta di funnel GHL
+//     (cth "Duta Sihat Sefitrahnya"). PADAN SAHAJA ikut phone — kalau
+//     padan dgn pesakit sedia ada, isi bank_name/bank_account_no/
+//     bank_account_holder (+ ic_number/address kalau kosong) supaya
+//     affiliate.html terus boleh proses payout TANPA pesakit isi bank
+//     2 kali. Kalau TIADA padanan, TIADA pesakit baru dicipta di ISW —
+//     orang tu bukan pesakit, affiliate dia diuruskan 100% di GHL
+//     Affiliate Manager sendiri (elak kerja berganda).
 //
 // PUBLIC (verify-JWT OFF) — GHL panggil tanpa JWT Supabase.
 // Dilindungi rahsia: GHL_BOOKING_WEBHOOK_SECRET (query ?secret=... atau
@@ -49,7 +57,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
 import { toE164 } from '../_shared/ghl.ts'
-import { syncContactToPatient, syncAppointmentToSession, syncOrderToPayment } from '../_shared/ghl-sync.ts'
+import { syncContactToPatient, syncAppointmentToSession, syncOrderToPayment, upsertExternalAffiliate, attributeReferralToAffiliate } from '../_shared/ghl-sync.ts'
 
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
@@ -156,7 +164,7 @@ Deno.serve(async (req: Request) => {
     if (secret !== Deno.env.get('GHL_BOOKING_WEBHOOK_SECRET')) return json({ error: 'forbidden' }, 403)
 
     const payload = await req.json().catch(() => ({}))
-    const event = payload.event === 'order' || payload.event === 'contact' ? payload.event : 'appointment'
+    const event = ['order', 'contact', 'affiliate'].includes(payload.event) ? payload.event : 'appointment'
 
     const phoneRaw = payload.phone || payload.contact?.phone
     const fullName = String(payload.full_name || payload.contact?.full_name || payload.name || '').trim() || null
@@ -165,6 +173,26 @@ Deno.serve(async (req: Request) => {
     if (!phone) return json({ error: 'phone wajib' }, 400)
 
     const svc = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+
+    // event='affiliate' — entiti teras ialah psy_external_affiliates (BUKAN
+    // psy_patients), lihat upsertExternalAffiliate() di _shared/ghl-sync.ts.
+    // SELALU direkod (tiada matchOnly) — affiliate ni mesti wujud di ISW
+    // supaya komisen pakej OB boleh dikira kelak, walaupun dia bukan pesakit.
+    if (event === 'affiliate') {
+      const { affiliateId, linkedPatientId } = await upsertExternalAffiliate(svc, {
+        phone, fullName, email,
+        icNumber: payload.ic_number || null,
+        address: payload.address || null,
+        bankName: payload.bank_name || null,
+        bankAccountNo: payload.bank_account_no || null,
+        bankAccountHolder: payload.bank_account_holder || null,
+        affiliateCode: payload.kob_referal_code || null,
+        affiliateLink: payload.affiliate_link || null,
+        ghlContactId: payload.contact_id || payload.contactId || null,
+      })
+      await auditLog(svc, 'ghl_affiliate.received', affiliateId, { linked_patient_id: linkedPatientId, phone })
+      return json({ success: true, event, affiliate_id: affiliateId, linked_patient_id: linkedPatientId })
+    }
 
     // Field pendaftaran/KYC tambahan — pra-isi sahaja (lihat _shared/ghl-sync.ts).
     // Hanya relevan/dihantar utk event='contact', tapi selamat dihantar sekali
@@ -190,7 +218,25 @@ Deno.serve(async (req: Request) => {
       registrantCapacity: deriveCapacityFromRole(payload.peranan_pendaftar) || normalizeRegistrantCapacity(payload.borang_isi_sebagai),
       ghlContactId: payload.contact_id || payload.contactId || null,
       kobCode: payload.kob_code || payload.kobCode || null,
-    })
+      referredByAffiliateName: payload.referred_by_affiliate || null,
+    }, { matchOnly: false })
+
+    // 'appointment'/'order'/'contact' sentiasa matchOnly=false → patientId
+    // dijamin tak-null (cipta pesakit baru kalau tiada padanan). Guard ni
+    // sekadar jaga TypeScript + keselamatan runtime, secara logik tak boleh capai.
+    if (!patientId) return json({ error: 'internal: pesakit tidak dapat diselesaikan' }, 500)
+
+    // Cuba atribut rujukan kpd affiliate GHL (padan ikut nama, best-effort —
+    // lihat attributeReferralToAffiliate() di _shared/ghl-sync.ts). Selamat
+    // dipanggil berulang (webhook retry/setiap event) — tak pernah timpa
+    // rujukan sedia ada. Kegagalan di sini TAK gagalkan webhook (fulfillment
+    // KOB/bayaran lebih penting drpd attribution komisen).
+    if (payload.referred_by_affiliate) {
+      try {
+        const attr = await attributeReferralToAffiliate(svc, { patientId, affiliateName: payload.referred_by_affiliate })
+        if (attr.attributed) await auditLog(svc, 'ghl_affiliate_attribution.created', patientId, { affiliate_name: payload.referred_by_affiliate })
+      } catch (attrErr) { console.error('attributeReferralToAffiliate gagal:', attrErr) }
+    }
 
     if (event === 'contact') {
       await auditLog(svc, 'ghl_contact.received', patientId, { created_patient: created })

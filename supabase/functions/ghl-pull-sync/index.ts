@@ -55,7 +55,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
 import { ghl, cleanGhlName, phoneKey } from '../_shared/ghl.ts'
-import { syncContactToPatient, syncAppointmentToSession, syncTransactionToPayment, findPatientIdByPhone, cancelStaleKobSessions } from '../_shared/ghl-sync.ts'
+import { syncContactToPatient, syncAppointmentToSession, syncTransactionToPayment, findPatientIdByPhone, cancelStaleKobSessions, attributeReferralToAffiliate } from '../_shared/ghl-sync.ts'
 
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
@@ -74,6 +74,7 @@ const IC_NUMBER_FIELD_ID    = 'vXw0rgtYQEvfxoMY2AjV'  // contact.no_ic
 const HOME_ADDRESS_FIELD_ID = 'l2TcgLHVMKISHgf6R7ps'  // contact.alamat_rumah
 const WARIS_FIELD_ID        = 'f1zSoMogQ9zW7xPmKYg3'  // contact.nama_penuh_waris__pesakit (teks bebas gabungan)
 const KOB_MODE_FIELD_ID      = 'n6SUABcfNkUXbmkAnrEW'  // contact.mod_sesi_kob — dropdown "F2F"/"Online" (dicipta 13 Ogos 2026)
+const REFERRED_BY_AFFILIATE_FIELD_ID = 'lZ08knTmjhhGiMc0NJIQ'  // contact.referred_by_affiliate — folder "PT Sytem" (disahkan 28 Okt 2026 via list_custom_fields)
 
 function getCustomFieldById(customFields: any[], fieldId: string): string {
   if (!Array.isArray(customFields)) return ''
@@ -277,6 +278,7 @@ async function processOneContact(svc: any, locationId: string, c: any, requirePa
     }
 
     const fullName = [c.firstNameRaw, c.lastNameRaw].filter(Boolean).join(' ').trim() || c.contactName || null
+    const referredByAffiliateName = getCustomFieldById(c.customFields, REFERRED_BY_AFFILIATE_FIELD_ID) || null
     const { patientId } = await syncContactToPatient(svc, {
       phone: c.phone,
       fullName,
@@ -284,7 +286,16 @@ async function processOneContact(svc: any, locationId: string, c: any, requirePa
       icNumber: getCustomFieldById(c.customFields, IC_NUMBER_FIELD_ID) || null,
       address: getCustomFieldById(c.customFields, HOME_ADDRESS_FIELD_ID) || c.address1 || null,
       emergencyContactName: getCustomFieldById(c.customFields, WARIS_FIELD_ID) || null,
+      referredByAffiliateName,
     })
+
+    // Cuba atribut rujukan kpd affiliate GHL (28 Okt 2026, padan ikut nama,
+    // best-effort — lihat attributeReferralToAffiliate() di _shared/ghl-sync.ts).
+    // Kegagalan di sini TAK gagalkan sync contact ni.
+    if (referredByAffiliateName) {
+      try { await attributeReferralToAffiliate(svc, { patientId, affiliateName: referredByAffiliateName }) }
+      catch (_) { /* best-effort, tak kritikal */ }
+    }
 
     let appointmentSynced = false
     if (latestKobAppt) {
@@ -410,6 +421,7 @@ Deno.serve(async (req: Request) => {
             icNumber: getCustomFieldById(c.customFields, IC_NUMBER_FIELD_ID) || null,
             address: getCustomFieldById(c.customFields, HOME_ADDRESS_FIELD_ID) || c.address1 || null,
             emergencyContactName: getCustomFieldById(c.customFields, WARIS_FIELD_ID) || null,
+            referredByAffiliateName: getCustomFieldById(c.customFields, REFERRED_BY_AFFILIATE_FIELD_ID) || null,
           })
           return json({ debug: true, action: 'sync_one', contact: { id: c.id, phone: c.phone, fullName }, result })
         } catch (e) {

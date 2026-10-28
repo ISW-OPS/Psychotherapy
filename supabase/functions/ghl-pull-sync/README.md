@@ -48,6 +48,14 @@ drpd `totalContacts`/`kobRelevant`/dll (laluan cursor lama).
 TIDAK DIPERLUKAN LAGI** — boleh dibuang atau tinggalkan sebagai Draft di
 GHL dashboard, tak digunakan oleh seni bina ni.
 
+**KECUALI** Workflow "Duta/Affiliate Registration" (`ghl-booking-webhook`
+event=`affiliate`, lihat README tu bahagian (d)) — ni BERBEZA, bukan
+sync KOB/pesakit berterusan, cuma one-time trigger "borang Duta
+disubmit". Filter `isKobRelevantStatus()` fail ni (ISW STATUS kena
+bermula KOB/SU/OB) TAK PERNAH padan contact affiliate/Duta (dia bukan
+pesakit), jadi `ghl-pull-sync` TAKKAN tangkap pendaftaran affiliate
+baharu langsung — Workflow (d) KEKAL perlu dibina.
+
 ---
 
 ## 1. Custom field IDs — DISAHKAN (10 Ogos 2026)
@@ -79,6 +87,7 @@ Cari field berdasarkan `name`/`fieldKey`, salin `id`.)
 | `HOME_ADDRESS_FIELD_ID` | `l2TcgLHVMKISHgf6R7ps` | `contact.alamat_rumah` | ALAMAT RUMAH | `address` (fallback `c.address1` kalau custom field kosong) |
 | `WARIS_FIELD_ID` | `f1zSoMogQ9zW7xPmKYg3` | `contact.nama_penuh_waris__pesakit` | NAMA PENUH, NO. WARIS & EMAIL WARIS / PESAKIT | `emergency_contact_name` (teks bebas gabungan — TAK dipisah ke name/phone/email berasingan) |
 | `KOB_MODE_FIELD_ID` | `n6SUABcfNkUXbmkAnrEW` | `contact.mod_sesi_kob` | Mod Sesi KOB (dropdown F2F/Online) | `psy_kob_sessions.mode` (default `f2f` kalau kosong — lihat §Nota) |
+| `REFERRED_BY_AFFILIATE_FIELD_ID` | `lZ08knTmjhhGiMc0NJIQ` | `contact.referred_by_affiliate` | Referred By Affiliate (folder "PT Sytem", **disahkan 28 Okt 2026**) | `psy_patients.referred_by_affiliate_name` — lepas tu `attributeReferralToAffiliate()` cuba padan nama ke `psy_external_affiliates` & auto-cipta `psy_referrals` (`status='pending'`, `source='ghl_affiliate'`) utk komisen pakej OB. Lihat `supabase/functions/ghl-booking-webhook/README.md` utk logik penuh. |
 | — (`GET /contacts/:id/appointments`) | — | — | (appointment terkini) | `psy_kob_sessions.scheduled_at` |
 | — (`GET /payments/orders`) | — | — | (order paid/completed) | `psy_payments.total`+`ghl_transaction_id` |
 

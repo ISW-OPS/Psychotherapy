@@ -45,6 +45,12 @@ export interface GhlContactExtra {
   registrantCapacity?: string | null               // GHL "Anda mengisi borang ini sebagai?" (sejauh mana terlibat)
   ghlContactId?: string | null                     // {{contact.id}} — rujukan pantas/debug sahaja, bukan kunci padanan
   kobCode?: string | null                          // GHL {{contact.first_name}} — kod KOB (medan berasingan, SUMBER UTAMA)
+  bankName?: string | null                         // Funnel "Duta Sihat Sefitrahnya" dll — maklumat bank utk payout komisen affiliate
+  bankAccountNo?: string | null
+  bankAccountHolder?: string | null
+  referredByAffiliateName?: string | null          // GHL {{contact.referred_by_affiliate}} — hidup pada contact PESAKIT (siapa rujuk dia)
+  affiliateCode?: string | null                    // GHL {{contact.kob_referal_code}} (SATU "r" — ejaan GHL) — hidup pada contact AFFILIATE itu sendiri
+  affiliateLink?: string | null                    // GHL {{contact.affiliate_link}} — hidup pada contact AFFILIATE itu sendiri
 }
 
 // GHL (Workflow "SU KOB Auto ID") dulu prepend kod macam "KOB'26-000139"
@@ -64,11 +70,17 @@ function splitGhlNameCode(rawName: string | null | undefined): { name: string | 
 }
 
 // ── 1. Padan/cipta pesakit ikut telefon ─────────────────────
+// `matchOnly` (cth. funnel affiliate "Duta Sihat Sefitrahnya") — kalau
+// true, TIADA pesakit baru dicipta bila tiada padanan (orang tu bukan
+// pesakit ISW, cuma affiliate GHL semata-mata — biarkan di GHL sahaja).
+// patientId jadi `null` dalam kes ni. Default (false) kekal tingkah laku
+// asal: tiada padanan → cipta pesakit baru (laluan appointment/order/
+// contact KOB sedia ada, patientId SENTIASA rentetan tak-null).
 export async function syncContactToPatient(svc: any, opts: {
   phone: string | null | undefined
   fullName?: string | null
   email?: string | null
-} & GhlContactExtra): Promise<{ patientId: string; created: boolean }> {
+} & GhlContactExtra, syncOpts: { matchOnly?: boolean } = {}): Promise<{ patientId: string | null; created: boolean }> {
   const phone = toE164(opts.phone)
   if (!phone) throw new Error('phone wajib')
   const key = phoneKey(phone)
@@ -94,7 +106,7 @@ export async function syncContactToPatient(svc: any, opts: {
   // disyaki punca sebenar dedup ni GAGAL SENYAP (PostgREST mungkin tersalah
   // hurai senarai lajur bila ada \n terbenam, `error` pun tak pernah disemak
   // sebelum ni — silap besar). Fix 29 Sept 2026.
-  const selectCols = 'id, phone, emergency_contact_phone, full_name, email, ic_number, address, postcode, city, state, date_of_birth, gender, marital_status, occupation, company, ghl_kob_code, contact_preference, registrant_capacity, ghl_contact_id, emergency_contact_name, emergency_contact_ic, emergency_contact_relationship, emergency_contact_email'
+  const selectCols = 'id, phone, emergency_contact_phone, full_name, email, ic_number, address, postcode, city, state, date_of_birth, gender, marital_status, occupation, company, ghl_kob_code, contact_preference, registrant_capacity, ghl_contact_id, emergency_contact_name, emergency_contact_ic, emergency_contact_relationship, emergency_contact_email, bank_name, bank_account_no, bank_account_holder, referred_by_affiliate_name, affiliate_code, affiliate_link'
   const [byPhone, byEmergency] = await Promise.all([
     svc.from('psy_patients').select(selectCols).ilike('phone', `%${key}`),
     svc.from('psy_patients').select(selectCols).ilike('emergency_contact_phone', `%${key}`),
@@ -136,6 +148,12 @@ export async function syncContactToPatient(svc: any, opts: {
     contact_preference: opts.contactPreference,
     registrant_capacity: opts.registrantCapacity,
     ghl_contact_id: opts.ghlContactId,
+    bank_name: opts.bankName,
+    bank_account_no: opts.bankAccountNo,
+    bank_account_holder: opts.bankAccountHolder,
+    referred_by_affiliate_name: opts.referredByAffiliateName,
+    affiliate_code: opts.affiliateCode,
+    affiliate_link: opts.affiliateLink,
   }
 
   if (match) {
@@ -147,6 +165,10 @@ export async function syncContactToPatient(svc: any, opts: {
       await svc.from('psy_patients').update(patch).eq('id', match.id)
     }
     return { patientId: match.id, created: false }
+  }
+
+  if (syncOpts.matchOnly) {
+    return { patientId: null, created: false }
   }
 
   const insertBody: Record<string, any> = {
@@ -340,4 +362,122 @@ export async function syncTransactionToPayment(svc: any, patientId: string, opts
 
   await advanceKobStatus(svc, patientId, 'paid')
   return { paymentId: inserted.id }
+}
+
+// ── 5. Padan/cipta AFFILIATE GHL (bukan semestinya pesakit ISW) ──────
+// Beza drpd syncContactToPatient(): entiti teras di sini ialah
+// psy_external_affiliates (bukan psy_patients) — affiliate GHL Affiliate
+// Manager (funnel "Duta" dll) boleh jadi SESIAPA SAHAJA, bukan terhad
+// pesakit sedia ada. Padan ikut telefon (9 digit terakhir), SELALU
+// cipta/kemas kini psy_external_affiliates (tiada matchOnly di sini —
+// affiliate ni mesti direkod supaya komisen pakej OB boleh dikira kelak,
+// keputusan user 27 Okt 2026). linked_patient_id diisi kalau affiliate
+// ni kebetulan pesakit ISW juga (bank field turut disync ke psy_patients
+// sbg convenience, guna syncContactToPatient matchOnly=true sedia ada —
+// TIADA pesakit baru dicipta drpd laluan ni).
+export async function upsertExternalAffiliate(svc: any, opts: {
+  phone: string | null | undefined
+  fullName?: string | null
+  email?: string | null
+  icNumber?: string | null
+  address?: string | null
+  bankName?: string | null
+  bankAccountNo?: string | null
+  bankAccountHolder?: string | null
+  affiliateCode?: string | null
+  affiliateLink?: string | null
+  ghlContactId?: string | null
+}): Promise<{ affiliateId: string; linkedPatientId: string | null }> {
+  const phone = toE164(opts.phone)
+  const key = phone ? phoneKey(phone) : null
+
+  let match: any = null
+  if (key) {
+    const { data } = await svc.from('psy_external_affiliates').select('*').ilike('phone', `%${key}`)
+    match = (data || []).find((r: any) => phoneKey(r.phone) === key) || null
+  }
+
+  const fieldMap: Record<string, any> = {
+    full_name: opts.fullName,
+    email: opts.email,
+    ic_number: opts.icNumber,
+    address: opts.address,
+    bank_name: opts.bankName,
+    bank_account_no: opts.bankAccountNo,
+    bank_account_holder: opts.bankAccountHolder,
+    ghl_affiliate_code: opts.affiliateCode,
+    affiliate_link: opts.affiliateLink,
+    ghl_contact_id: opts.ghlContactId,
+  }
+
+  let affiliateId: string
+  if (match) {
+    const patch: Record<string, any> = {}
+    for (const [col, val] of Object.entries(fieldMap)) {
+      if (!match[col] && val) patch[col] = val
+    }
+    if (Object.keys(patch).length) {
+      patch.updated_at = new Date().toISOString()
+      await svc.from('psy_external_affiliates').update(patch).eq('id', match.id)
+    }
+    affiliateId = match.id
+  } else {
+    const insertBody: Record<string, any> = { phone, full_name: (opts.fullName || '').trim() || 'Affiliate (tiada nama)' }
+    for (const [col, val] of Object.entries(fieldMap)) { if (val) insertBody[col] = val }
+    const { data: inserted, error } = await svc.from('psy_external_affiliates').insert(insertBody).select('id').single()
+    if (error) throw error
+    affiliateId = inserted.id
+  }
+
+  let linkedPatientId: string | null = null
+  if (key) {
+    const { patientId } = await syncContactToPatient(svc, {
+      phone, fullName: opts.fullName, email: opts.email,
+      bankName: opts.bankName, bankAccountNo: opts.bankAccountNo, bankAccountHolder: opts.bankAccountHolder,
+      affiliateCode: opts.affiliateCode, affiliateLink: opts.affiliateLink, ghlContactId: opts.ghlContactId,
+    }, { matchOnly: true })
+    linkedPatientId = patientId
+    if (linkedPatientId) {
+      await svc.from('psy_external_affiliates').update({ linked_patient_id: linkedPatientId }).eq('id', affiliateId)
+    }
+  }
+
+  return { affiliateId, linkedPatientId }
+}
+
+// ── 6. Atribut pesakit (referee) kepada affiliate GHL — cipta rujukan
+// 'pending' supaya trg_referral_qualify_on_payment (27_affiliate.sql,
+// TIADA DIUBAH — generic ikut referee_patient_id) auto-kira komisen bila
+// pesakit ni bayar pakej OB kelak. Padanan affiliate ikut NAMA SAHAJA
+// (case-insensitive EXACT — GHL tak bekalkan kod affiliate pada contact
+// pelanggan buat masa ni). Best-effort, SELAMAT dipanggil berulang kali
+// (webhook retry) — tak pernah timpa rujukan sedia ada (UNIQUE
+// referee_patient_id di psy_referrals jamin ni di peringkat DB jua).
+export async function attributeReferralToAffiliate(svc: any, opts: {
+  patientId: string
+  affiliateName: string | null | undefined
+}): Promise<{ attributed: boolean; reason?: string }> {
+  const name = String(opts.affiliateName || '').trim()
+  if (!name) return { attributed: false, reason: 'no_name' }
+
+  const { data: existing } = await svc.from('psy_referrals')
+    .select('id').eq('referee_patient_id', opts.patientId).maybeSingle()
+  if (existing) return { attributed: false, reason: 'already_referred' }
+
+  const { data: candidates } = await svc.from('psy_external_affiliates')
+    .select('id, full_name').ilike('full_name', name)
+  if (!candidates || candidates.length !== 1) {
+    return { attributed: false, reason: candidates?.length ? 'ambiguous' : 'no_match' }
+  }
+
+  const { error } = await svc.from('psy_referrals').insert({
+    referrer_affiliate_id: candidates[0].id,
+    referee_patient_id: opts.patientId,
+    status: 'pending',
+    source: 'ghl_affiliate',
+  })
+  // Unique violation (race condition — referee baru je dapat rujukan lain
+  // serentak) selamat diabaikan, bukan ralat sebenar.
+  if (error) return { attributed: false, reason: 'insert_failed: ' + error.message }
+  return { attributed: true }
 }
