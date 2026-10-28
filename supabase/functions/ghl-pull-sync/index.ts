@@ -699,6 +699,57 @@ Deno.serve(async (req: Request) => {
         }
         return json({ debug: true, action: 'backfill_excluded_sessions', scanned, matched, sessionsFixed, fixed: fixedList, nextCursor: sAfterId ? { startAfterId: sAfterId, startAfter: sAfter } : null })
       }
+      if (body.action === 'detect_deleted_contacts') {
+        // (28 Okt 2026) Kesan pesakit ISW yang contact GHL dia DAH DIPADAM
+        // (GHL tiada webhook "Contact Deleted" — satu-satunya cara ialah
+        // cuba GET /contacts/:id, 404 = dah tiada). HANYA semak pesakit
+        // referral_source='GHL' + ada ghl_contact_id + belum ditanda
+        // deleted. TINDAKAN MANUAL/DEBUG sahaja (bukan sebahagian cron
+        // automatik 15-minit) — elak risiko: kalau GHL API bermasalah
+        // sementara (rate-limit/auth), ralat tu BUKAN 404 sebenar, jadi
+        // TAK ditanda deleted (selamat by design, lihat catch di bawah).
+        // { dryRun:true } (default) — SEKADAR LAPORAN, tiada apa diubah.
+        // { dryRun:false } — betul-betul tanda status='deleted' (soft-delete,
+        // sama pattern dgn cleanup_excluded_status/deletePatient() staff UI).
+        const limit = Math.min(Number(body.limit) || 50, 200)
+        const dryRun = body.dryRun !== false
+        const { data: patients } = await svc.from('psy_patients')
+          .select('id, ghl_contact_id, full_name, phone')
+          .eq('referral_source', 'GHL')
+          .not('ghl_contact_id', 'is', null)
+          .neq('status', 'deleted')
+          .limit(limit)
+        let checked = 0, confirmedDeleted = 0, inconclusiveErrors = 0
+        const deletedList: any[] = []
+        const errorList: any[] = []
+        for (const p of patients || []) {
+          checked++
+          try {
+            await ghl(`/contacts/${p.ghl_contact_id}`, { method: 'GET' })
+            // Contact masih wujud di GHL — tiada tindakan.
+          } catch (e) {
+            const msg = String((e as Error).message || '')
+            if (/→ 404/.test(msg) || /not found/i.test(msg)) {
+              confirmedDeleted++
+              deletedList.push({ id: p.id, full_name: p.full_name, phone: p.phone, ghl_contact_id: p.ghl_contact_id })
+              if (!dryRun) {
+                await svc.from('psy_patients').update({ status: 'deleted' }).eq('id', p.id)
+              }
+            } else {
+              // Ralat LAIN (rangkaian/rate-limit/auth) — BUKAN bukti dipadam,
+              // jangan sentuh rekod ni, cuma lapor utk disemak manual.
+              inconclusiveErrors++
+              errorList.push({ id: p.id, full_name: p.full_name, error: msg })
+            }
+          }
+        }
+        return json({
+          debug: true, action: 'detect_deleted_contacts', dryRun,
+          totalCandidates: (patients || []).length, checked, confirmedDeleted, inconclusiveErrors,
+          deletedList, errorList,
+          note: dryRun ? 'Dry-run — tiada rekod diubah. Hantar {dryRun:false} untuk betul-betul tandakan deleted.' : 'Rekod dalam deletedList dah ditandakan status=deleted.',
+        })
+      }
       if (body.action === 'restore_raw_names') {
         // Pembetulan SEKALI SAHAJA — kebalikan cleanup_names. Beberapa
         // rekod pesakit "terkunci" dgn nama BERSIH dari sebelum cleaning

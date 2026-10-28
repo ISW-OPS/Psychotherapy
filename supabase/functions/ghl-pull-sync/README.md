@@ -216,6 +216,32 @@ minit dengan header `x-cron-secret`.
 
 ---
 
+## 5. Kesan pesakit GHL yang contact dah dipadam (`detect_deleted_contacts`)
+
+**(28 Okt 2026)** GHL tiada webhook "Contact Deleted" — satu-satunya cara
+kesan ialah cuba `GET /contacts/:id` untuk setiap pesakit (`referral_source=
+'GHL'`, ada `ghl_contact_id`), 404 = dah dipadam di GHL. **Tindakan MANUAL
+sahaja** (bukan sebahagian cron 15-minit automatik) — elak risiko kalau
+GHL API bermasalah sementara (rate-limit/auth) disalah anggap "dipadam".
+
+```bash
+# Dry-run DULU (default, tiada apa diubah) — semak deletedList sebelum teruskan
+curl -s -X POST ".../functions/v1/ghl-pull-sync" \
+  -H "x-cron-secret: <SECRET>" -H "Content-Type: application/json" \
+  -d '{"debug":true,"action":"detect_deleted_contacts","limit":50}'
+
+# Lepas sahkan deletedList betul — jalankan sebenar (tandakan status='deleted')
+curl -s -X POST ".../functions/v1/ghl-pull-sync" \
+  -H "x-cron-secret: <SECRET>" -H "Content-Type: application/json" \
+  -d '{"debug":true,"action":"detect_deleted_contacts","limit":50,"dryRun":false}'
+```
+
+Ralat selain 404 (rangkaian/auth/rate-limit) masuk `errorList`, **TAK**
+ditanda deleted — selamat by design. `limit` ikut satu batch (max 200/run),
+ulang panggilan kalau `totalCandidates` penuh had.
+
+---
+
 ## Nota & had
 
 - **Checkpoint/cursor** (psy_settings key `ghl_pull_sync_cursor`) —
