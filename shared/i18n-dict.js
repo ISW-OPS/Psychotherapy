@@ -8301,7 +8301,6 @@ window.ISW_I18N_EXTRA = {
   "Produk berjaya ditambah": "Product successfully added",
   "Akses ditolak. Anda tidak mempunyai kebenaran untuk edit produk.": "Access denied. You do not have permission to edit products.",
   "Akses ditolak. Anda tidak mempunyai kebenaran untuk tambah produk.": "Access denied. You do not have permission to add products.",
-  "Biji (pcs)": "Pieces (pcs)",
   "Pek": "Pack",
   "Tiub": "Tube",
   "Kapsul": "Capsule",

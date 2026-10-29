@@ -166,11 +166,11 @@ WHERE r.qualifying_package_id IS NULL AND r.qualifying_payment_id IS NOT NULL;
 -- ═══════════════════════════════════════════════════════════════════
 ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_unit_check;
 ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_unit_check
-  CHECK (unit IN ('Biji (pcs)','Botol','Kotak','Pek','Tiub','Tablet',
+  CHECK (unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
                    'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
                    'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS issue_unit TEXT
-  CHECK (issue_unit IS NULL OR issue_unit IN ('Biji (pcs)','Botol','Kotak','Pek','Tiub','Tablet',
+  CHECK (issue_unit IS NULL OR issue_unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
                    'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
                    'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS issue_units_per_stock_unit NUMERIC(10,4);
@@ -195,3 +195,22 @@ DROP POLICY IF EXISTS "Staff read locations" ON psy_inventory_locations;
 DROP POLICY IF EXISTS "Staff manage locations" ON psy_inventory_locations;
 CREATE POLICY "Staff manage locations" ON psy_inventory_locations FOR ALL
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- 29 Okt 2026 (bahagian 5) — "Biji (pcs)" -> "Pcs" (nama lagi ringkas).
+-- NOTA: psy_inventory_items_issue_unit_check kena DROP+ADD eksplisit di sini
+-- sbb "ALTER ... ADD COLUMN IF NOT EXISTS issue_unit ... CHECK(...)" di
+-- bahagian 2 TAK re-apply CHECK baharu bila lajur tu dah wujud (no-op) —
+-- row 'Paket' lama pun masih tersekat kat situ walaupun unit_check dah
+-- dibaiki awal ni, punca sebenar kenapa fix "Paket" sebelum ni tak lengkap.
+ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_unit_check;
+ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_issue_unit_check;
+UPDATE psy_inventory_items SET unit = 'Pcs' WHERE unit = 'Biji (pcs)';
+UPDATE psy_inventory_items SET issue_unit = 'Pcs' WHERE issue_unit = 'Biji (pcs)';
+ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_unit_check
+  CHECK (unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
+                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
+                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
+ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_issue_unit_check
+  CHECK (issue_unit IS NULL OR issue_unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
+                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
+                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));

@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS psy_inventory_items (
   shopee_url           TEXT,   -- pautan Shopee untuk beli produk ini
   category             TEXT NOT NULL DEFAULT 'Bekalan Coaching',
   unit                 TEXT NOT NULL DEFAULT 'Unit'
-                       CHECK (unit IN ('Biji (pcs)','Botol','Kotak','Pek','Tiub','Tablet',
+                       CHECK (unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
                                        'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
                                        'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)')),
   -- issue_unit/issue_units_per_stock_unit: bagi item yg dibeli dlm unit besar tapi
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS psy_inventory_items (
   -- guna 1 Inci setiap kali). NULL = tiada tukaran, bagi pesakit kena guna unit sama
   -- macam stok. Lihat shared/inventoryStock.js & roles/staff/patient-hub.html submitSupply().
   issue_unit           TEXT
-                       CHECK (issue_unit IS NULL OR issue_unit IN ('Biji (pcs)','Botol','Kotak','Pek','Tiub','Tablet',
+                       CHECK (issue_unit IS NULL OR issue_unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
                                        'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
                                        'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)')),
   issue_units_per_stock_unit NUMERIC(10,4),
@@ -84,11 +84,11 @@ ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS print_file_size BIGINT;
 -- (cth 1/30 Gulung = 0.0333) akan terkumpul ralat bundaran ketara kalau cuma 2dp.
 ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_unit_check;
 ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_unit_check
-  CHECK (unit IN ('Biji (pcs)','Botol','Kotak','Pek','Tiub','Tablet',
+  CHECK (unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
                    'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
                    'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS issue_unit TEXT
-  CHECK (issue_unit IS NULL OR issue_unit IN ('Biji (pcs)','Botol','Kotak','Pek','Tiub','Tablet',
+  CHECK (issue_unit IS NULL OR issue_unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
                    'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
                    'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS issue_units_per_stock_unit NUMERIC(10,4);
@@ -351,7 +351,7 @@ CREATE TABLE IF NOT EXISTS psy_products (
   stock              INT,
   min_stock          INT DEFAULT 5,
   unit               TEXT DEFAULT 'Unit'
-                     CHECK (unit IN ('Biji (pcs)','Botol','Kotak','Pek','Tiub','Tablet',
+                     CHECK (unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
                                      'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas')),
   track_inventory    BOOLEAN DEFAULT true,
   low_stock_alert    BOOLEAN DEFAULT true,
@@ -584,7 +584,7 @@ FROM (VALUES
 ('Air Afiyah',                      'Bekalan Coaching', 'Botol', 0, 10, false, '1 botol = 1.5L'),
 ('Air Za''afaran',                  'Bekalan Coaching', 'Botol', 0,  5, false, 'Untuk sesi Perubatan Rohani'),
 ('Herba Kolon',                     'Bekalan Coaching', 'Set',   0,  3, false, '1 set = 1 kursus rawatan'),
-('Kurma Ajwa',                      'Bekalan Coaching', 'Biji (pcs)',  0, 50, false, '49 biji per pesakit 777 VIP'),
+('Kurma Ajwa',                      'Bekalan Coaching', 'Pcs',  0, 50, false, '49 biji per pesakit 777 VIP'),
 
 -- ── PERALATAN KLINIK ──────────────────────────────────────
 ('DNA Test Kit',                    'Peralatan Klinik', 'Set',  0, 2, true,  'Perlu kelulusan · hantar ke lab luar'),
