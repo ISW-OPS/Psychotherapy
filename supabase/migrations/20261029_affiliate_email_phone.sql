@@ -166,11 +166,11 @@ WHERE r.qualifying_package_id IS NULL AND r.qualifying_payment_id IS NOT NULL;
 -- ═══════════════════════════════════════════════════════════════════
 ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_unit_check;
 ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_unit_check
-  CHECK (unit IN ('Biji (pcs)','Botol','Kotak','Pek','Paket','Tiub','Tablet',
+  CHECK (unit IN ('Biji (pcs)','Botol','Kotak','Pek','Tiub','Tablet',
                    'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
                    'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS issue_unit TEXT
-  CHECK (issue_unit IS NULL OR issue_unit IN ('Biji (pcs)','Botol','Kotak','Pek','Paket','Tiub','Tablet',
+  CHECK (issue_unit IS NULL OR issue_unit IN ('Biji (pcs)','Botol','Kotak','Pek','Tiub','Tablet',
                    'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
                    'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS issue_units_per_stock_unit NUMERIC(10,4);
