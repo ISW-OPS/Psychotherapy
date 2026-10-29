@@ -81,7 +81,10 @@
               <select id="item-unit" onchange="updateQtyUnitSuffix(); updateIssueRatioHint();" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none"></select>
             </div>
             <div>
-              <label class="text-sm font-semibold text-ink">Storage Location <span class="text-terracotta">*</span></label>
+              <div class="flex items-center justify-between">
+                <label class="text-sm font-semibold text-ink">Storage Location <span class="text-terracotta">*</span></label>
+                <button type="button" onclick="openManageLocations()" class="text-[11px] font-semibold text-teal hover:underline whitespace-nowrap">⚙ Urus Lokasi</button>
+              </div>
               <select id="item-location" onchange="onLocationSelectChange()" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none"></select>
               <input id="item-location-new" type="text" placeholder="Nama lokasi baharu" class="hidden w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none">
             </div>
@@ -331,6 +334,73 @@ function onLocationSelectChange() {
   if (isNew) { newInput.value = ''; newInput.focus(); }
 }
 window.onLocationSelectChange = onLocationSelectChange;
+
+// ── Urus Lokasi (rename / nyahaktif / aktifkan semula) ──────────────────
+// Padam terus TAK dibenarkan (psy_inventory_stock_by_location.location_id
+// ON DELETE RESTRICT, & sejarah psy_stock_movements rujuk lokasi lama) —
+// "nyahaktif" (is_active=false) sahaja, sama corak dgn Product Status.
+// Disekat kalau lokasi tu masih ada stok (kena kosongkan/pindah dulu).
+async function openManageLocations() {
+  document.getElementById('locations-modal').classList.remove('hidden');
+  await renderManageLocationsList();
+}
+window.openManageLocations = openManageLocations;
+
+function closeManageLocations() {
+  document.getElementById('locations-modal').classList.add('hidden');
+}
+window.closeManageLocations = closeManageLocations;
+
+async function renderManageLocationsList() {
+  const list = document.getElementById('locations-list');
+  list.innerHTML = '<p class="text-xs text-ink/40 text-center py-4">Memuatkan...</p>';
+  const [{ data: locs }, { data: stockRows }] = await Promise.all([
+    window.db.from('psy_inventory_locations').select('*').order('is_active', { ascending: false }).order('name'),
+    window.db.from('psy_inventory_stock_by_location').select('location_id, qty_in_stock'),
+  ]);
+  const stockByLoc = {};
+  (stockRows || []).forEach(r => { stockByLoc[r.location_id] = (stockByLoc[r.location_id] || 0) + Number(r.qty_in_stock || 0); });
+
+  list.innerHTML = (locs || []).map(l => {
+    const stock = stockByLoc[l.id] || 0;
+    return `<div class="flex items-center gap-2 py-2.5 border-b border-ink/5 last:border-0 ${l.is_active ? '' : 'opacity-50'}">
+      <input value="${escHtml(l.name)}" data-loc-id="${l.id}" class="loc-rename-input flex-1 px-2.5 py-1.5 border border-ink/15 rounded-lg text-sm focus:border-navy outline-none">
+      ${l.is_default ? '<span class="text-[10px] font-semibold text-navy bg-navy/10 px-2 py-1 rounded-full whitespace-nowrap">Lalai</span>' : ''}
+      <span class="text-[10px] text-ink/40 whitespace-nowrap">${stock} stok</span>
+      <button type="button" onclick="saveLocationRename('${l.id}')" class="text-[11px] font-semibold text-teal hover:underline whitespace-nowrap">Simpan</button>
+      <button type="button" onclick="toggleLocationActive('${l.id}', ${l.is_active}, ${l.is_default}, ${stock})"
+        class="text-[11px] font-semibold whitespace-nowrap ${l.is_active ? 'text-terracotta' : 'text-green-dark'} hover:underline">
+        ${l.is_active ? 'Nyahaktif' : 'Aktifkan'}
+      </button>
+    </div>`;
+  }).join('') || '<p class="text-xs text-ink/40 text-center py-4">Tiada lokasi</p>';
+}
+
+async function saveLocationRename(id) {
+  const input = document.querySelector(`.loc-rename-input[data-loc-id="${id}"]`);
+  const name = input.value.trim();
+  if (!name) { banner('Nama lokasi diperlukan', 'error'); return; }
+  const { error } = await window.db.from('psy_inventory_locations').update({ name }).eq('id', id);
+  if (error) { banner('Gagal kemaskini lokasi: ' + error.message, 'error'); return; }
+  banner('Lokasi dikemaskini');
+  await loadLocations();
+  await renderManageLocationsList();
+}
+window.saveLocationRename = saveLocationRename;
+
+async function toggleLocationActive(id, isActive, isDefault, stock) {
+  if (isActive) {
+    if (isDefault) { banner('Lokasi Lalai tak boleh dinyahaktifkan', 'error'); return; }
+    if (stock > 0) { banner(`Lokasi ni masih ada ${stock} stok — kosongkan/pindah stok dulu sebelum nyahaktifkan`, 'error'); return; }
+    if (!confirm('Nyahaktifkan lokasi ni? Ia akan hilang drpd senarai pilihan (sejarah stok lama kekal).')) return;
+  }
+  const { error } = await window.db.from('psy_inventory_locations').update({ is_active: !isActive }).eq('id', id);
+  if (error) { banner('Gagal kemaskini lokasi: ' + error.message, 'error'); return; }
+  banner(isActive ? 'Lokasi dinyahaktifkan' : 'Lokasi diaktifkan semula');
+  await loadLocations();
+  await renderManageLocationsList();
+}
+window.toggleLocationActive = toggleLocationActive;
 
 async function loadSuppliers() {
   const { data } = await window.db.from('psy_suppliers').select('*').eq('status', 'active').order('name');
@@ -683,5 +753,19 @@ async function saveItem() {
   }
 })();
 </script>
+
+<div id="locations-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/50" onclick="closeManageLocations()"></div>
+  <div class="relative bg-white rounded-2xl max-w-lg w-full flex flex-col overflow-hidden shadow-2xl max-h-[85vh]">
+    <div class="px-5 py-4 border-b border-ink/10 flex items-center justify-between">
+      <h3 class="font-bold">Urus Lokasi Simpanan</h3>
+      <button onclick="closeManageLocations()" class="text-ink/40 text-xl leading-none">×</button>
+    </div>
+    <div id="locations-list" class="p-5 overflow-y-auto"></div>
+    <div class="px-5 py-3 border-t border-ink/10 text-[11px] text-ink/40">
+      Padam terus tak dibenarkan (lokasi lalu dirujuk sejarah stok) — guna "Nyahaktif" sahaja. Lokasi yg masih ada stok tak boleh dinyahaktifkan.
+    </div>
+  </div>
+</div>
 </body>
 </html>
