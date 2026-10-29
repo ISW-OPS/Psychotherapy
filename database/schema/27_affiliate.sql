@@ -69,6 +69,14 @@ ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS referred_by_affiliate_name TEX
 ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS affiliate_code TEXT;
 ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS affiliate_link TEXT;
 
+-- contact.referred_by_affiliate_email / _phone (folder "PT Sytem", disahkan
+-- 29 Okt 2026 via list_custom_fields) — email & no phone affiliate yang
+-- rujuk pesakit ni, sama field group dengan referred_by_affiliate_name di
+-- atas. Dipaparkan terus di kob-detail.html seksyen "Affiliate" (keputusan
+-- user: 3 data ni terus dari GHL, bukan pengiraan psy_referrals).
+ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS referred_by_affiliate_email TEXT;
+ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS referred_by_affiliate_phone TEXT;
+
 -- ──── psy_external_affiliates — affiliate GHL yang BUKAN semestinya pesakit
 -- ISW (keputusan user 27 Okt 2026: komisen pakej OB — bayaran HitPay di ISW,
 -- GHL tiada visibiliti — mesti dikira di ISW utk SEMUA affiliate, pesakit

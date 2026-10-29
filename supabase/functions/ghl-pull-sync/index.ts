@@ -75,6 +75,8 @@ const HOME_ADDRESS_FIELD_ID = 'l2TcgLHVMKISHgf6R7ps'  // contact.alamat_rumah
 const WARIS_FIELD_ID        = 'f1zSoMogQ9zW7xPmKYg3'  // contact.nama_penuh_waris__pesakit (teks bebas gabungan)
 const KOB_MODE_FIELD_ID      = 'n6SUABcfNkUXbmkAnrEW'  // contact.mod_sesi_kob — dropdown "F2F"/"Online" (dicipta 13 Ogos 2026)
 const REFERRED_BY_AFFILIATE_FIELD_ID = 'lZ08knTmjhhGiMc0NJIQ'  // contact.referred_by_affiliate — folder "PT Sytem" (disahkan 28 Okt 2026 via list_custom_fields)
+const REFERRED_BY_AFFILIATE_EMAIL_FIELD_ID = 'shM6C332qCFFl3lrzqox'  // contact.referred_by_affiliate_email — folder "PT Sytem" (disahkan 29 Okt 2026)
+const REFERRED_BY_AFFILIATE_PHONE_FIELD_ID = 'RnC3nMd4BuVsHlywxwww'  // contact.referred_by_affiliate_phone — folder "PT Sytem" (disahkan 29 Okt 2026)
 
 function getCustomFieldById(customFields: any[], fieldId: string): string {
   if (!Array.isArray(customFields)) return ''
@@ -279,6 +281,8 @@ async function processOneContact(svc: any, locationId: string, c: any, requirePa
 
     const fullName = [c.firstNameRaw, c.lastNameRaw].filter(Boolean).join(' ').trim() || c.contactName || null
     const referredByAffiliateName = getCustomFieldById(c.customFields, REFERRED_BY_AFFILIATE_FIELD_ID) || null
+    const referredByAffiliateEmail = getCustomFieldById(c.customFields, REFERRED_BY_AFFILIATE_EMAIL_FIELD_ID) || null
+    const referredByAffiliatePhone = getCustomFieldById(c.customFields, REFERRED_BY_AFFILIATE_PHONE_FIELD_ID) || null
     const { patientId } = await syncContactToPatient(svc, {
       phone: c.phone,
       fullName,
@@ -287,6 +291,8 @@ async function processOneContact(svc: any, locationId: string, c: any, requirePa
       address: getCustomFieldById(c.customFields, HOME_ADDRESS_FIELD_ID) || c.address1 || null,
       emergencyContactName: getCustomFieldById(c.customFields, WARIS_FIELD_ID) || null,
       referredByAffiliateName,
+      referredByAffiliateEmail,
+      referredByAffiliatePhone,
       // 28 Okt 2026 — GAP LAMA dibetulkan: c.id (ID contact GHL) tak pernah
       // dihantar dari laluan scan utama ni, jadi psy_patients.ghl_contact_id
       // kekal kosong untuk SEMUA pesakit GHL (perlukan backfill sekali,
@@ -428,6 +434,8 @@ Deno.serve(async (req: Request) => {
             address: getCustomFieldById(c.customFields, HOME_ADDRESS_FIELD_ID) || c.address1 || null,
             emergencyContactName: getCustomFieldById(c.customFields, WARIS_FIELD_ID) || null,
             referredByAffiliateName: getCustomFieldById(c.customFields, REFERRED_BY_AFFILIATE_FIELD_ID) || null,
+            referredByAffiliateEmail: getCustomFieldById(c.customFields, REFERRED_BY_AFFILIATE_EMAIL_FIELD_ID) || null,
+            referredByAffiliatePhone: getCustomFieldById(c.customFields, REFERRED_BY_AFFILIATE_PHONE_FIELD_ID) || null,
             ghlContactId: c.id || null,
           })
           return json({ debug: true, action: 'sync_one', contact: { id: c.id, phone: c.phone, fullName }, result })

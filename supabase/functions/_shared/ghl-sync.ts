@@ -49,6 +49,8 @@ export interface GhlContactExtra {
   bankAccountNo?: string | null
   bankAccountHolder?: string | null
   referredByAffiliateName?: string | null          // GHL {{contact.referred_by_affiliate}} — hidup pada contact PESAKIT (siapa rujuk dia)
+  referredByAffiliateEmail?: string | null         // GHL {{contact.referred_by_affiliate_email}} — hidup pada contact PESAKIT (29 Okt 2026)
+  referredByAffiliatePhone?: string | null         // GHL {{contact.referred_by_affiliate_phone}} — hidup pada contact PESAKIT (29 Okt 2026)
   affiliateCode?: string | null                    // GHL {{contact.kob_referal_code}} (SATU "r" — ejaan GHL) — hidup pada contact AFFILIATE itu sendiri
   affiliateLink?: string | null                    // GHL {{contact.affiliate_link}} — hidup pada contact AFFILIATE itu sendiri
 }
@@ -106,7 +108,7 @@ export async function syncContactToPatient(svc: any, opts: {
   // disyaki punca sebenar dedup ni GAGAL SENYAP (PostgREST mungkin tersalah
   // hurai senarai lajur bila ada \n terbenam, `error` pun tak pernah disemak
   // sebelum ni — silap besar). Fix 29 Sept 2026.
-  const selectCols = 'id, phone, emergency_contact_phone, full_name, email, ic_number, address, postcode, city, state, date_of_birth, gender, marital_status, occupation, company, ghl_kob_code, contact_preference, registrant_capacity, ghl_contact_id, emergency_contact_name, emergency_contact_ic, emergency_contact_relationship, emergency_contact_email, bank_name, bank_account_no, bank_account_holder, referred_by_affiliate_name, affiliate_code, affiliate_link'
+  const selectCols = 'id, phone, emergency_contact_phone, full_name, email, ic_number, address, postcode, city, state, date_of_birth, gender, marital_status, occupation, company, ghl_kob_code, contact_preference, registrant_capacity, ghl_contact_id, emergency_contact_name, emergency_contact_ic, emergency_contact_relationship, emergency_contact_email, bank_name, bank_account_no, bank_account_holder, referred_by_affiliate_name, referred_by_affiliate_email, referred_by_affiliate_phone, affiliate_code, affiliate_link'
   const [byPhone, byEmergency] = await Promise.all([
     svc.from('psy_patients').select(selectCols).ilike('phone', `%${key}`),
     svc.from('psy_patients').select(selectCols).ilike('emergency_contact_phone', `%${key}`),
@@ -152,6 +154,8 @@ export async function syncContactToPatient(svc: any, opts: {
     bank_account_no: opts.bankAccountNo,
     bank_account_holder: opts.bankAccountHolder,
     referred_by_affiliate_name: opts.referredByAffiliateName,
+    referred_by_affiliate_email: opts.referredByAffiliateEmail,
+    referred_by_affiliate_phone: opts.referredByAffiliatePhone,
     affiliate_code: opts.affiliateCode,
     affiliate_link: opts.affiliateLink,
   }

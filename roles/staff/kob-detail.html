@@ -218,12 +218,12 @@
                   <div class="text-sm text-ink mt-0.5" id="affiliate-ref-name">—</div>
                 </div>
                 <div class="min-w-0">
-                  <div class="text-[10px] font-semibold text-ink/50 uppercase tracking-wide">Referral Phone No</div>
-                  <div class="text-sm text-ink mt-0.5" id="affiliate-ref-phone">—</div>
+                  <div class="text-[10px] font-semibold text-ink/50 uppercase tracking-wide">Referral Email</div>
+                  <div class="text-sm text-ink mt-0.5" id="affiliate-ref-email">—</div>
                 </div>
                 <div class="min-w-0">
-                  <div class="text-[10px] font-semibold text-ink/50 uppercase tracking-wide">Eligible Date</div>
-                  <div class="text-sm text-ink mt-0.5" id="affiliate-ref-eligible">—</div>
+                  <div class="text-[10px] font-semibold text-ink/50 uppercase tracking-wide">Referral Phone No</div>
+                  <div class="text-sm text-ink mt-0.5" id="affiliate-ref-phone">—</div>
                 </div>
               </div>
             </div>
@@ -850,7 +850,6 @@
     let kobId = null;
     let kob = null;
     let patient = null;
-    let affiliateReferral = null;            // psy_referrals (+ psy_external_affiliates) rujukan pesakit ni, kalau ada
     let kobAgreementSignedTemplate = null;   // templat mesej boleh-edit (psy_auto_messages key='kob_agreement_signed')
     let kobAgreementSignedActive = false;    // toggle on/off dari Template Mesej
 
@@ -869,18 +868,6 @@
       patient = patData;
       // Lanjutan audit #20 (21 Okt 2026) — popup amaran buah pinggang/dialisis.
       try { window.showKidneyAlertPopup?.(patient); } catch (_) { }
-
-      // Rujukan (28 Okt 2026) — psy_referrals, DUA sumber mungkin:
-      //   source='ghl_affiliate' → perujuk psy_external_affiliates (affiliate GHL)
-      //   source='patient'       → perujuk psy_patients (rujukan pesakit-ke-pesakit, ?ref=)
-      // Papar SATU seksyen "Affiliate" sama utk kedua-dua (affiliate.html pun
-      // papar kedua-dua jenis sekali dalam satu senarai — kekal konsisten).
-      try {
-        const { data: refRow } = await window.db.from('psy_referrals')
-          .select('status, qualified_at, source, affiliate:referrer_affiliate_id(full_name, phone), referrer_patient:referrer_patient_id(full_name, phone)')
-          .eq('referee_patient_id', patient.id).maybeSingle();
-        affiliateReferral = refRow || null;
-      } catch (_) { affiliateReferral = null; }
 
       await loadKobRoleStaff();
 
@@ -1245,30 +1232,17 @@
       renderAffiliateReferrer();
     }
 
-    // Affiliate GHL yang rujuk pesakit ni ("Referred By Affiliate", folder
-    // "PT Sytem") — Referral Name/Phone dari psy_external_affiliates (bila
-    // padanan nama wujud, lihat attributeReferralToAffiliate() di
-    // _shared/ghl-sync.ts), Eligible Date dari psy_referrals.qualified_at
-    // (dikira sistem automatik). Read-only — tiada edit manual (keputusan
-    // user 28 Okt 2026, elak data komisen tak boleh dipercayai).
+    // Affiliate GHL yang rujuk pesakit ni ("Referred By Affiliate" + Email +
+    // Phone, folder "PT Sytem") — 3 data ni terus dari GHL (medan
+    // referred_by_affiliate_name/_email/_phone di psy_patients, disync oleh
+    // ghl-pull-sync), BUKAN pengiraan psy_referrals (keputusan user 29 Okt
+    // 2026: ringkaskan, papar apa GHL bekalkan terus). Read-only.
     function renderAffiliateReferrer() {
       const nameEl = document.getElementById('affiliate-ref-name');
       if (!nameEl) return;
-      // Perujuk boleh affiliate GHL (psy_external_affiliates) ATAU pesakit
-      // lain (psy_patients, rujukan ?ref= biasa) — guna mana-mana yang wujud.
-      const referrer = affiliateReferral?.affiliate || affiliateReferral?.referrer_patient || null;
-      nameEl.textContent = referrer?.full_name || patient?.referred_by_affiliate_name || '—';
-      document.getElementById('affiliate-ref-phone').textContent = referrer?.phone || '—';
-      const eligibleEl = document.getElementById('affiliate-ref-eligible');
-      if (affiliateReferral?.status === 'qualified' && affiliateReferral?.qualified_at) {
-        eligibleEl.textContent = new Date(affiliateReferral.qualified_at).toLocaleDateString('ms-MY', { day: '2-digit', month: 'short', year: 'numeric' });
-      } else if (affiliateReferral) {
-        eligibleEl.textContent = affiliateReferral.source === 'ghl_affiliate'
-          ? 'Belum layak (menunggu KOB settle + bayaran pakej)'
-          : 'Belum layak (menunggu bayaran pakej)';
-      } else {
-        eligibleEl.textContent = '—';
-      }
+      nameEl.textContent = patient?.referred_by_affiliate_name || '—';
+      document.getElementById('affiliate-ref-email').textContent = patient?.referred_by_affiliate_email || '—';
+      document.getElementById('affiliate-ref-phone').textContent = patient?.referred_by_affiliate_phone || '—';
     }
 
     // Susunan & gaya field sengaja disamakan sebijik dengan roles/patient/pendaftaran.html
