@@ -185,6 +185,15 @@ function banner(msg, type = 'ok') {
   setTimeout(() => el.remove(), type === 'error' ? 6000 : 2500);
 }
 
+// fetch() gagal sepenuhnya (bukan ralat HTTP/RLS dari server) — biasanya internet
+// terputus/tak stabil di peranti staff. Tukar mesej teknikal ni ke BM yang boleh difahami.
+function friendlyErrorMsg(e) {
+  if (e?.name === 'TypeError' && /fetch/i.test(e.message || '')) {
+    return 'Tiada sambungan internet atau server tidak dapat dihubungi. Sila semak internet anda & cuba semula.';
+  }
+  return e?.message || String(e);
+}
+
 // Audit #133 — delivery log penghantaran Pengumuman. Guna semula jadual
 // psy_notification_logs sedia ada (enjin automasi, 18_notifications_automations.sql)
 // — bukan jadual baharu. Pengumuman kini IN-APP SAHAJA (tiada laluan WA/email

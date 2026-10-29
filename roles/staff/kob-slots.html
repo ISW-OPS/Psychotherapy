@@ -704,7 +704,7 @@ async function updateSlotCapacity(slotId, value) {
     if (slot) slot.max_bookings = n;
     await auditLog('clinic_slot.capacity_set', slotId, { max_bookings: n, slot_type: slot?.slot_type, day_of_week: slot?.day_of_week });
     banner('Kapasiti dikemaskini ✅');
-  } catch (e) { banner('Ralat: ' + e.message, 'error'); loadSlots(); }
+  } catch (e) { banner('Ralat: ' + friendlyErrorMsg(e), 'error'); loadSlots(); }
 }
 
 async function toggleSlot(slotId, isActive) {
@@ -717,7 +717,7 @@ async function toggleSlot(slotId, isActive) {
     banner(isActive ? 'Slot diaktifkan ✅' : 'Slot dinyahaktifkan ⛔');
     renderType(slot?.slot_type || 'kob');
     renderKpi();
-  } catch (e) { banner('Ralat: ' + e.message, 'error'); loadSlots(); }
+  } catch (e) { banner('Ralat: ' + friendlyErrorMsg(e), 'error'); loadSlots(); }
 }
 
 // Aktifkan slot untuk hari yang belum ada baris (dari butang OFF) — cipta baris baru ON.
@@ -748,7 +748,7 @@ async function enableSlotDay(slotType, order, day) {
     banner('Slot diaktifkan ✅');
     renderType(slotType);
     renderKpi();
-  } catch (e) { banner('Ralat: ' + e.message, 'error'); loadSlots(); }
+  } catch (e) { banner('Ralat: ' + friendlyErrorMsg(e), 'error'); loadSlots(); }
 }
 
 // ════════════ SLOT MODAL ════════════
@@ -955,15 +955,28 @@ async function submitSlotModal() {
     } else {
       const maxSort = allSlots.filter(s => (s.slot_type || 'kob') === type).reduce((m, s) => Math.max(m, s.sort_order || 0), 0);
       const newOrder = maxSort + 1;
-      const rows = days.map(day => ({ slot_type: type, day_of_week: day, slot_start: start, slot_end: end, label, note: note || null, max_bookings: maxBookings, slot_duration_minutes: sessionDuration, sort_order: newOrder, is_active: isActive }));
-      const { error } = await window.db.from('psy_kob_slot_config').insert(rows);
-      if (error) throw error;
-      await auditLog('clinic_slot.added', null, { type, label, days: days.length });
-      banner('Slot ditambah ✅');
+      // Semak ikut UNIQUE KEY sebenar (slot_type, day_of_week, slot_start) sebelum insert — kalau
+      // hari+masa ni dah ada baris (kumpulan slot lain), kemaskini baris tu supaya sertai kumpulan
+      // baharu ni, bukan cuba insert duplicate (akan kena ralat "duplicate key").
+      let reused = 0;
+      for (const day of days) {
+        const existing = allSlots.find(s => (s.slot_type || 'kob') === type && s.day_of_week === day && (s.slot_start || '').slice(0, 5) === start);
+        const payload = { slot_type: type, day_of_week: day, slot_start: start, slot_end: end, label, note: note || null, max_bookings: maxBookings, slot_duration_minutes: sessionDuration, sort_order: newOrder, is_active: isActive, updated_at: new Date().toISOString() };
+        if (existing) {
+          const { error } = await window.db.from('psy_kob_slot_config').update(payload).eq('id', existing.id);
+          if (error) throw error;
+          reused++;
+        } else {
+          const { error } = await window.db.from('psy_kob_slot_config').insert(payload);
+          if (error) throw error;
+        }
+      }
+      await auditLog('clinic_slot.added', null, { type, label, days: days.length, reused });
+      banner(reused ? `Slot ditambah ✅ (${reused} hari kemaskini drpd slot sedia ada pd masa sama)` : 'Slot ditambah ✅');
     }
     closeSlotModal();
     await loadSlots();
-  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+  } catch (e) { banner('Ralat: ' + friendlyErrorMsg(e), 'error'); }
 }
 
 async function deleteSlotGroup(type, sortOrder) {
@@ -978,7 +991,7 @@ async function deleteSlotGroup(type, sortOrder) {
     await auditLog('clinic_slot.deleted', null, { type, label, count: rows.length });
     banner('Slot dipadam ⛔');
     await loadSlots();
-  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+  } catch (e) { banner('Ralat: ' + friendlyErrorMsg(e), 'error'); }
 }
 
 // ════════════ CUTI / CLOSURES ════════════
@@ -1109,7 +1122,7 @@ async function deleteClosure(id) {
     await auditLog('clinic_closure.deleted', id, { date: c.closure_date, label: c.label });
     banner('Cuti dipadam ⛔');
     await loadClosures();
-  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+  } catch (e) { banner('Ralat: ' + friendlyErrorMsg(e), 'error'); }
 }
 
 // ════════════ OVERRIDE PER-TARIKH ════════════
@@ -1186,7 +1199,7 @@ async function deleteOverride(date, type) {
     await auditLog('slot_override.cleared', null, { date, type });
     banner('Override dipadam ⛔');
     await loadOverrides();
-  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+  } catch (e) { banner('Ralat: ' + friendlyErrorMsg(e), 'error'); }
 }
 
 function openDateOverride() {
@@ -1246,7 +1259,7 @@ async function saveOverrideForDate() {
     await auditLog('slot_override.saved', null, { date, type, count: rows.length });
     banner('Override disimpan ✅');
     await loadOverrides();
-  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+  } catch (e) { banner('Ralat: ' + friendlyErrorMsg(e), 'error'); }
 }
 
 async function clearOverrideForDate() {
@@ -1259,7 +1272,7 @@ async function clearOverrideForDate() {
     banner('Override dibuang ⛔');
     loadOverrideForDate();
     await loadOverrides();
-  } catch (e) { banner('Ralat: ' + e.message, 'error'); }
+  } catch (e) { banner('Ralat: ' + friendlyErrorMsg(e), 'error'); }
 }
 
 // ════════════ LOG PERUBAHAN ════════════
