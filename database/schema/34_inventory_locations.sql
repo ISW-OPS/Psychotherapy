@@ -28,12 +28,16 @@ CREATE TABLE IF NOT EXISTS psy_inventory_stock_by_location (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   item_id       UUID NOT NULL REFERENCES psy_inventory_items(id) ON DELETE CASCADE,
   location_id   UUID NOT NULL REFERENCES psy_inventory_locations(id) ON DELETE RESTRICT,
-  qty_in_stock  NUMERIC(10,2) NOT NULL DEFAULT 0,
+  qty_in_stock  NUMERIC(12,4) NOT NULL DEFAULT 0,
   min_qty       NUMERIC(10,2),
   updated_at    TIMESTAMPTZ DEFAULT now(),
   UNIQUE (item_id, location_id)
 );
 CREATE INDEX IF NOT EXISTS idx_stock_by_location_item ON psy_inventory_stock_by_location(item_id);
+
+-- 29 Okt 2026 — lebarkan ke 4dp supaya deduct pecahan unit (issue_unit, lihat
+-- 14_products_inventory.sql) tak hilang ketepatan (cth 1/30 Gulung = 0.0333).
+ALTER TABLE psy_inventory_stock_by_location ALTER COLUMN qty_in_stock TYPE NUMERIC(12,4);
 
 -- ──── Trigger: kekalkan psy_inventory_items.qty_in_stock = SUM semua lokasi ────
 CREATE OR REPLACE FUNCTION psy_sync_item_stock_total()
@@ -54,13 +58,14 @@ CREATE TRIGGER trg_sync_item_stock_total
 AFTER INSERT OR UPDATE OR DELETE ON psy_inventory_stock_by_location
 FOR EACH ROW EXECUTE FUNCTION psy_sync_item_stock_total();
 
--- ──── Seed 5 lokasi standard ────
+-- ──── Seed lokasi standard ────
 INSERT INTO psy_inventory_locations (name, code, is_default) VALUES
   ('General Inventory',   'GEN',  true),
   ('Clinical Pharmacy',   'PHARM', false),
   ('Shop Warehouse',      'SHOP', false),
   ('Raw Material Store',  'RAW',  false),
-  ('Equipment Store',     'EQUIP', false)
+  ('Equipment Store',     'EQUIP', false),
+  ('Printing',            'PRINT', false)
 ON CONFLICT (name) DO NOTHING;
 
 -- ──── Backfill: pindah qty_in_stock sedia ada ke SATU lokasi (ikut source_type) ────

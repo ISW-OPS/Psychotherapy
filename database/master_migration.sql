@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-10-22T04:41:53.661369Z
+-- Generated: 2026-10-29T07:30:59.473203Z
 -- Jumlah fail: 41
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -5584,8 +5584,18 @@ CREATE TABLE IF NOT EXISTS psy_inventory_items (
   category             TEXT NOT NULL DEFAULT 'Bekalan Coaching',
   unit                 TEXT NOT NULL DEFAULT 'Unit'
                        CHECK (unit IN ('Biji (pcs)','Botol','Kotak','Pek','Paket','Tiub','Tablet',
-                                       'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas')),
-  qty_in_stock         NUMERIC(10,2) NOT NULL DEFAULT 0,
+                                       'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
+                                       'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)')),
+  -- issue_unit/issue_units_per_stock_unit: bagi item yg dibeli dlm unit besar tapi
+  -- diguna pesakit dlm unit kecil (cth: beli 1 Gulung tape = 30 Inci, pesakit
+  -- guna 1 Inci setiap kali). NULL = tiada tukaran, bagi pesakit kena guna unit sama
+  -- macam stok. Lihat shared/inventoryStock.js & roles/staff/patient-hub.html submitSupply().
+  issue_unit           TEXT
+                       CHECK (issue_unit IS NULL OR issue_unit IN ('Biji (pcs)','Botol','Kotak','Pek','Paket','Tiub','Tablet',
+                                       'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
+                                       'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)')),
+  issue_units_per_stock_unit NUMERIC(10,4),
+  qty_in_stock         NUMERIC(12,4) NOT NULL DEFAULT 0,
   min_qty              NUMERIC(10,2) NOT NULL DEFAULT 5,
   requires_approval    BOOLEAN NOT NULL DEFAULT false,
   notes                TEXT,
@@ -5637,6 +5647,29 @@ ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS internal_notes TEXT;
 -- bukan cari dalam senarai dokumen berasingan. Bucket: inventory-print-files.
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS print_file_url TEXT;
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS print_file_size BIGINT;
+
+-- 29 Okt 2026 — unit tukaran (issue_unit) supaya item boleh dibeli dlm unit besar
+-- (cth Gulung) tapi diberi pesakit dlm unit kecil (cth Inci) tanpa tolak 1 Gulung
+-- penuh setiap kali. qty_in_stock dilebarkan ke 4dp (asal 2dp) sebab deduct pecahan
+-- (cth 1/30 Gulung = 0.0333) akan terkumpul ralat bundaran ketara kalau cuma 2dp.
+ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_unit_check;
+ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_unit_check
+  CHECK (unit IN ('Biji (pcs)','Botol','Kotak','Pek','Paket','Tiub','Tablet',
+                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
+                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS issue_unit TEXT
+  CHECK (issue_unit IS NULL OR issue_unit IN ('Biji (pcs)','Botol','Kotak','Pek','Paket','Tiub','Tablet',
+                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
+                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS issue_units_per_stock_unit NUMERIC(10,4);
+ALTER TABLE psy_inventory_items ALTER COLUMN qty_in_stock TYPE NUMERIC(12,4);
+-- NOTA: psy_inventory_stock_by_location.qty_in_stock & psy_stock_movements.qty/balance_after
+-- turut dilebarkan ke NUMERIC(12,4) — lihat ALTER COLUMN TYPE di 34_inventory_locations.sql
+-- & 36_stock_movements.sql (jadual tu ditakrif SELEPAS fail ni, jadi ALTER kena di sana).
+COMMENT ON COLUMN psy_inventory_items.issue_unit IS
+  'Unit diberi kepada pesakit, jika berbeza drpd unit stok (cth stok=Gulung, issue_unit=Inci). NULL = tiada tukaran.';
+COMMENT ON COLUMN psy_inventory_items.issue_units_per_stock_unit IS
+  'Berapa issue_unit dalam 1 unit stok (cth 30 = 1 Gulung ada 30 Inci). Guna utk tukar kuantiti diberi pesakit kpd pecahan unit stok semasa tolak.';
 
 -- status: peringkat lebih halus drpd is_active — 'discontinued' bermaksud dibuang
 -- kekal (bukan cuma nyahaktif sementara). is_active DIKEKALKAN (banyak tempat lain
@@ -8748,16 +8781,18 @@ CREATE POLICY "Staff manage event item returns" ON psy_event_item_returns FOR AL
 -- ──── assign_referral_code (auto-jana kod rujukan pesakit) ────
 -- Client (JS) akan set kod cantik (nama+MRN) sebelum insert; jika
 -- masih NULL, fungsi trigger ini jamin satu kod unik tetap wujud.
--- Nota: trigger MRN (trg_assign_patient_mrn) berjalan dulu ikut abjad
--- nama, jadi NEW.mrn sudah diisi bila trigger ini berjalan.
+-- Kod 6 huruf RAWAK (bukan ISW+MRN) — elak corak boleh diteka (cth
+-- ISW019 mendedahkan MRN pesakit secara tak langsung dlm pautan rujukan
+-- awam, lihat 20261027_referral_silent_link.sql). Nota: trigger MRN
+-- (trg_assign_patient_mrn) berjalan dulu ikut abjad nama, jadi NEW.mrn
+-- sudah diisi bila trigger ini berjalan (tak lagi digunakan di sini,
+-- dikekalkan sbb komen trigger order di atas masih relevan).
 CREATE OR REPLACE FUNCTION assign_referral_code()
 RETURNS TRIGGER
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
 AS $$
 DECLARE
-  base      TEXT;
   candidate TEXT;
-  n         INT := 1;
 BEGIN
   -- Kod sudah diset client — normalkan ke huruf besar & biarkan
   IF NEW.referral_code IS NOT NULL AND length(trim(NEW.referral_code)) > 0 THEN
@@ -8765,16 +8800,10 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  -- Fallback: 'ISW' + digit MRN (cth P-019 -> ISW019)
-  base := 'ISW' || regexp_replace(COALESCE(NEW.mrn, ''), '\D', '', 'g');
-  IF base = 'ISW' THEN
-    base := 'ISW' || to_char((random() * 9000 + 1000)::int, 'FM0000');
-  END IF;
-
-  candidate := base;
-  WHILE EXISTS (SELECT 1 FROM psy_patients WHERE referral_code = candidate) LOOP
-    n := n + 1;
-    candidate := base || n;
+  LOOP
+    SELECT string_agg(substr('ABCDEFGHIJKLMNOPQRSTUVWXYZ', (random() * 25 + 1)::int, 1), '')
+    INTO candidate FROM generate_series(1, 6);
+    EXIT WHEN NOT EXISTS (SELECT 1 FROM psy_patients WHERE referral_code = candidate);
   END LOOP;
 
   NEW.referral_code := candidate;
@@ -10516,16 +10545,97 @@ ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS bank_name TEXT;
 ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS bank_account_no TEXT;
 ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS bank_account_holder TEXT;
 
+-- ──── psy_patients — attribution GHL Affiliate Manager (27 Okt 2026) ────
+-- Skop BAHARU di luar rujukan pesakit-ke-pesakit asal (psy_referrals di
+-- atas): GHL Affiliate Manager (affiliate luar/"Duta", bukan semestinya
+-- pesakit ISW) ada sistem rujukan+komisen SENDIRI (tertutup — tiada API
+-- awam/merge tag standard, disahkan 27 Okt 2026). Custom field GHL
+-- (folder "PT Sytem") bekalkan field keys ni — rujuk
+-- supabase/functions/ghl-booking-webhook/README.md bahagian (d)/(e):
+--   contact.referred_by_affiliate → nama affiliate yang rujuk PESAKIT ni
+--     (hidup pada contact PESAKIT, event='contact'/'appointment'/'order')
+--   contact.kob_referal_code / contact.affiliate_link → kod & pautan
+--     affiliate ITU SENDIRI (hidup pada contact AFFILIATE, event='affiliate')
+-- Padanan affiliate↔pesakit cuma ikut NAMA (text) — GHL tak bekalkan kod
+-- affiliate pada contact pelanggan lagi (boleh ditambah kemudian utk
+-- padanan lebih tepat, lihat README).
+ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS referred_by_affiliate_name TEXT;
+ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS affiliate_code TEXT;
+ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS affiliate_link TEXT;
+
+-- contact.referred_by_affiliate_email / _phone (folder "PT Sytem", disahkan
+-- 29 Okt 2026 via list_custom_fields) — email & no phone affiliate yang
+-- rujuk pesakit ni, sama field group dengan referred_by_affiliate_name di
+-- atas. Dipaparkan terus di kob-detail.html seksyen "Affiliate" (keputusan
+-- user: 3 data ni terus dari GHL, bukan pengiraan psy_referrals).
+ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS referred_by_affiliate_email TEXT;
+ALTER TABLE psy_patients ADD COLUMN IF NOT EXISTS referred_by_affiliate_phone TEXT;
+
+-- ──── psy_external_affiliates — affiliate GHL yang BUKAN semestinya pesakit
+-- ISW (keputusan user 27 Okt 2026: komisen pakej OB — bayaran HitPay di ISW,
+-- GHL tiada visibiliti — mesti dikira di ISW utk SEMUA affiliate, pesakit
+-- atau tidak). `linked_patient_id` diisi automatik kalau telefon affiliate
+-- padan dgn psy_patients sedia ada (dia kebetulan pesakit juga) — rujuk
+-- upsertExternalAffiliate() di ghl-sync.ts.
+CREATE TABLE IF NOT EXISTS psy_external_affiliates (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  full_name           TEXT NOT NULL,
+  phone               TEXT,
+  email               TEXT,
+  bank_name           TEXT,
+  bank_account_no     TEXT,
+  bank_account_holder TEXT,
+  ic_number           TEXT,   -- {{contact.no_ic_agent}} (borang "Duta Sihat Sefitrahnya", 28 Okt 2026)
+  address             TEXT,   -- {{contact.alamat_agent}}
+  ghl_affiliate_code  TEXT,   -- {{contact.kob_referal_code}} (ejaan GHL — SATU "r")
+  affiliate_link      TEXT,   -- {{contact.affiliate_link}}
+  ghl_contact_id      TEXT,
+  linked_patient_id   UUID REFERENCES psy_patients(id) ON DELETE SET NULL,
+  created_at          TIMESTAMPTZ DEFAULT now(),
+  updated_at          TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_psy_external_affiliates_phone
+  ON psy_external_affiliates (phone) WHERE phone IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_psy_external_affiliates_name
+  ON psy_external_affiliates (lower(full_name));
+
+ALTER TABLE psy_external_affiliates ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Staff manage external affiliates" ON psy_external_affiliates;
+CREATE POLICY "Staff manage external affiliates" ON psy_external_affiliates FOR ALL
+  USING      (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+-- Tiada polisi pesakit/login — affiliate luar tiada akaun ISW, staff sahaja nampak.
+
+-- ──── psy_referrals — benarkan perujuk jadi affiliate luar (bukan psy_patients) ────
+-- referrer_patient_id (sedia ada) kekal utk rujukan pesakit-ke-pesakit asal
+-- (laluan ?ref=). referrer_affiliate_id (baharu) utk rujukan dari GHL
+-- Affiliate Manager — TEPAT SATU drpd dua ni wajib diisi (CHECK di bawah).
+ALTER TABLE psy_referrals ADD COLUMN IF NOT EXISTS referrer_affiliate_id UUID REFERENCES psy_external_affiliates(id) ON DELETE CASCADE;
+ALTER TABLE psy_referrals ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'patient' CHECK (source IN ('patient','ghl_affiliate'));
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_psy_referrals_referrer') THEN
+    ALTER TABLE psy_referrals ADD CONSTRAINT chk_psy_referrals_referrer CHECK (
+      (referrer_patient_id IS NOT NULL AND referrer_affiliate_id IS NULL) OR
+      (referrer_patient_id IS NULL AND referrer_affiliate_id IS NOT NULL)
+    );
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_psy_referrals_referrer_affiliate ON psy_referrals (referrer_affiliate_id);
+
 -- ──── psy_referrals — tambah kolum komisen ────
 ALTER TABLE psy_referrals ADD COLUMN IF NOT EXISTS qualifying_payment_id UUID REFERENCES psy_payments(id) ON DELETE SET NULL;
 ALTER TABLE psy_referrals ADD COLUMN IF NOT EXISTS qualifying_package_id UUID REFERENCES psy_packages(id) ON DELETE SET NULL;
 ALTER TABLE psy_referrals ADD COLUMN IF NOT EXISTS commission_amount NUMERIC(10,2) DEFAULT 0;
 ALTER TABLE psy_referrals ADD COLUMN IF NOT EXISTS payout_id UUID; -- FK ditambah di bawah (selepas psy_affiliate_payouts wujud)
 
--- ──── psy_affiliate_payouts — lejar bayaran keluar (batch per pesakit) ────
+-- ──── psy_affiliate_payouts — lejar bayaran keluar (batch per pesakit/affiliate) ────
 CREATE TABLE IF NOT EXISTS psy_affiliate_payouts (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id    UUID NOT NULL REFERENCES psy_patients(id) ON DELETE CASCADE,
+  patient_id    UUID REFERENCES psy_patients(id) ON DELETE CASCADE,
+  affiliate_id  UUID REFERENCES psy_external_affiliates(id) ON DELETE CASCADE, -- (27 Okt 2026) payout utk affiliate GHL luar
   amount        NUMERIC(10,2) NOT NULL,
   -- 'pending' sengaja tak dimasukkan: staff yang cetus bayaran (butang
   -- "Mulakan Bayaran"), payout terus jadi 'processing' — tiada laluan
@@ -10571,7 +10681,25 @@ ALTER TABLE psy_affiliate_payouts ADD CONSTRAINT psy_affiliate_payouts_status_ch
 -- constraint. Paksa default betul secara eksplisit, idempotent.
 ALTER TABLE psy_affiliate_payouts ALTER COLUMN status SET DEFAULT 'processing';
 
+-- (27 Okt 2026) Jadual sedia ada dicipta dgn patient_id NOT NULL — kini
+-- payout boleh jadi affiliate luar pulak (affiliate_id), jadi patient_id
+-- kena jadi opsyenal. affiliate_id ditambah di atas (CREATE TABLE IF NOT
+-- EXISTS tak sentuh jadual sedia ada — ALTER eksplisit di sini jamin ia
+-- wujud jua pada jadual yg dah dicipta sebelum perubahan ni).
+ALTER TABLE psy_affiliate_payouts ALTER COLUMN patient_id DROP NOT NULL;
+ALTER TABLE psy_affiliate_payouts ADD COLUMN IF NOT EXISTS affiliate_id UUID REFERENCES psy_external_affiliates(id) ON DELETE CASCADE;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_psy_affiliate_payouts_target') THEN
+    ALTER TABLE psy_affiliate_payouts ADD CONSTRAINT chk_psy_affiliate_payouts_target CHECK (
+      (patient_id IS NOT NULL AND affiliate_id IS NULL) OR
+      (patient_id IS NULL AND affiliate_id IS NOT NULL)
+    );
+  END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_psy_affiliate_payouts_patient ON psy_affiliate_payouts(patient_id, status);
+CREATE INDEX IF NOT EXISTS idx_psy_affiliate_payouts_affiliate ON psy_affiliate_payouts(affiliate_id, status);
 
 ALTER TABLE psy_affiliate_payouts ENABLE ROW LEVEL SECURITY;
 
@@ -10629,6 +10757,90 @@ BEGIN
   );
 END $$;
 
+-- ──── psy_affiliate_commission_tiers — komisen TIER ikut volume SU/bulan
+-- (27 Okt 2026, keputusan user: "kadar komisen OB pun sama macam KOB")
+-- GANTI model lama (psy_affiliate_commission_rules, fixed/percent PER
+-- PAKEJ) khas utk rujukan GHL affiliate (source='ghl_affiliate') —
+-- kadar kini ikut JUMLAH "SU" (sign-up pakej, lepas KOB settle) affiliate
+-- tu hasilkan BULAN tu, bukan ikut pakej mana dibeli. Rujukan pesakit-ke-
+-- pesakit asal (?ref=, source='patient') KEKAL guna
+-- psy_affiliate_commission_rules — TIDAK terjejas/diubah.
+--
+-- Tier disahkan (poster "Duta Sihat Sefitrahnya"):
+--   0-49 SU/bulan   → RM20/SU, tiada bonus bulanan        = RM20/SU
+--   50-99 SU/bulan  → RM20/SU + RM10 bonus bulanan/SU     = RM30/SU
+--   100+ SU/bulan   → RM20/SU + RM20 bonus bulanan/SU     = RM40/SU
+-- Bonus TAHUNAN (RM10/RM20 extra lepas 1,000+ SU setahun) BELUM dibina —
+-- poster cuma beri 2 titik data ilustrasi (99/bulan, 100/bulan), tak
+-- cukup spec tepat macam mana kadar ditentukan bila volume affiliate
+-- naik-turun merentas bulan. TANGGUH sehingga disahkan.
+CREATE TABLE IF NOT EXISTS psy_affiliate_commission_tiers (
+  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  min_su               INT NOT NULL,
+  max_su               INT,  -- NULL = tiada had atas
+  rate_per_su          NUMERIC(10,2) NOT NULL,
+  bonus_bulanan_per_su NUMERIC(10,2) NOT NULL DEFAULT 0,
+  is_active            BOOLEAN NOT NULL DEFAULT true,
+  created_at           TIMESTAMPTZ DEFAULT now()
+);
+
+INSERT INTO psy_affiliate_commission_tiers (min_su, max_su, rate_per_su, bonus_bulanan_per_su)
+SELECT * FROM (VALUES
+  (0,   49,   20.00, 0.00),
+  (50,  99,   20.00, 10.00),
+  (100, NULL, 20.00, 20.00)
+) AS v(min_su, max_su, rate_per_su, bonus_bulanan_per_su)
+WHERE NOT EXISTS (SELECT 1 FROM psy_affiliate_commission_tiers);
+
+ALTER TABLE psy_affiliate_commission_tiers ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Staff manage commission tiers" ON psy_affiliate_commission_tiers;
+CREATE POLICY "Staff manage commission tiers" ON psy_affiliate_commission_tiers FOR ALL
+  USING      (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+ALTER TABLE psy_referrals ADD COLUMN IF NOT EXISTS commission_month DATE;
+
+-- ──── fn: kira semula tier affiliate utk SATU bulan (retroaktif) ────
+-- Dipanggil lepas SETIAP SU baharu qualify bulan tu — jumlah SU TERKINI
+-- bulan tu ditentukan tier, kadar gabungan (rate_per_su+bonus_bulanan_per_su)
+-- disapu KE SEMUA SU bulan tu (bukan pro-rata). Memandangkan SU tak pernah
+-- "backdate" (qualified_at = now() semasa trigger bayaran), nilai yang
+-- tersimpan pada bila-bila masa SUDAH jadi jawapan akhir bulan tu —
+-- TIADA cron/batch bulanan diperlukan, trigger ni cukup.
+-- Payout yang DAH dicipta (payout_id bukan NULL) TAK disentuh — kunci
+-- amaun selepas staff mula proses bayaran.
+CREATE OR REPLACE FUNCTION recalc_affiliate_commission_tier(p_affiliate_id UUID, p_month DATE)
+RETURNS VOID
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_su_count INT;
+  v_tier     RECORD;
+  v_rate     NUMERIC(10,2);
+BEGIN
+  IF p_affiliate_id IS NULL OR p_month IS NULL THEN RETURN; END IF;
+
+  SELECT count(*) INTO v_su_count FROM psy_referrals
+  WHERE referrer_affiliate_id = p_affiliate_id
+    AND source = 'ghl_affiliate'
+    AND status = 'qualified'
+    AND commission_month = p_month;
+
+  SELECT * INTO v_tier FROM psy_affiliate_commission_tiers
+  WHERE is_active AND min_su <= v_su_count AND (max_su IS NULL OR v_su_count <= max_su)
+  ORDER BY min_su DESC LIMIT 1;
+
+  v_rate := COALESCE(v_tier.rate_per_su, 0) + COALESCE(v_tier.bonus_bulanan_per_su, 0);
+
+  UPDATE psy_referrals SET commission_amount = v_rate
+  WHERE referrer_affiliate_id = p_affiliate_id
+    AND source = 'ghl_affiliate'
+    AND status = 'qualified'
+    AND payout_id IS NULL
+    AND commission_month = p_month;
+END;
+$$;
+
 -- ──── fn: kelayakan & kira komisen bila bayaran pesakit selesai ────
 CREATE OR REPLACE FUNCTION trg_referral_qualify_on_payment()
 RETURNS TRIGGER
@@ -10640,8 +10852,12 @@ DECLARE
   v_pkg_id    UUID;
   v_rule      RECORD;
   v_amount    NUMERIC(10,2);
-  v_referrer_patient_id UUID;
-  v_referrer_user_id    UUID;
+  v_referrer_patient_id   UUID;
+  v_referrer_affiliate_id UUID;
+  v_referrer_user_id      UUID;
+  v_source    TEXT;
+  v_has_kob   BOOLEAN;
+  v_month     DATE;
 BEGIN
   IF NEW.status IS DISTINCT FROM 'completed' OR NEW.patient_id IS NULL THEN
     RETURN NEW;
@@ -10650,17 +10866,35 @@ BEGIN
     RETURN NEW; -- elak kira dua kali
   END IF;
 
-  SELECT id, referrer_patient_id INTO v_ref_id, v_referrer_patient_id FROM psy_referrals
+  SELECT id, referrer_patient_id, referrer_affiliate_id, source
+    INTO v_ref_id, v_referrer_patient_id, v_referrer_affiliate_id, v_source
+  FROM psy_referrals
   WHERE referee_patient_id = NEW.patient_id AND status = 'pending'
   LIMIT 1;
   IF v_ref_id IS NULL THEN
     RETURN NEW;
   END IF;
 
+  -- (27 Okt 2026) Rujukan GHL affiliate — "1 SU" cuma layak lepas pesakit
+  -- SETTLE sesi KOB (hadir/completed), bukan setakat bayar pakej.
+  IF v_source = 'ghl_affiliate' THEN
+    SELECT EXISTS (
+      SELECT 1 FROM psy_kob_sessions WHERE patient_id = NEW.patient_id AND status IN ('hadir','completed')
+    ) INTO v_has_kob;
+    IF NOT v_has_kob THEN
+      RETURN NEW; -- KOB belum settle — belum layak qualify lagi
+    END IF;
+  END IF;
+
   -- Cuba kesan pakej dari baris pertama items[] (teks kod ATAU UUID —
   -- ikut ketidakkonsistenan active_package_id yang direkod dlm memory).
+  -- FIX 29 Okt 2026: kunci JSON SEBENAR yang ditulis setiap laluan insert
+  -- psy_payments (payments-initiate, manual KOB dll.) ialah `reference_id`
+  -- — `packageId` TAK PERNAH wujud dalam items[] (bug lama, qualifying_
+  -- package_id sentiasa NULL utk SEMUA rujukan sebelum ni, bukan isu
+  -- khusus GHL affiliate).
   BEGIN
-    v_pkg_text := NEW.items -> 0 ->> 'packageId';
+    v_pkg_text := COALESCE(NEW.items -> 0 ->> 'reference_id', NEW.items -> 0 ->> 'packageId');
   EXCEPTION WHEN OTHERS THEN
     v_pkg_text := NULL;
   END;
@@ -10671,34 +10905,48 @@ BEGIN
     LIMIT 1;
   END IF;
 
-  SELECT * INTO v_rule FROM psy_affiliate_commission_rules
-  WHERE package_id = v_pkg_id AND is_active LIMIT 1;
-
-  IF NOT FOUND THEN
-    SELECT * INTO v_rule FROM psy_affiliate_commission_rules
-    WHERE package_id IS NULL AND is_active LIMIT 1;
-  END IF;
-
-  IF v_rule.id IS NOT NULL THEN
-    IF v_rule.commission_type = 'fixed' THEN
-      v_amount := COALESCE(v_rule.amount, 0);
-    ELSE
-      v_amount := ROUND(COALESCE(NEW.total, 0) * COALESCE(v_rule.rate_percent, 0) / 100, 2);
-      IF v_rule.cap_amount IS NOT NULL THEN
-        v_amount := LEAST(v_amount, v_rule.cap_amount);
-      END IF;
-    END IF;
-  ELSE
+  IF v_source = 'ghl_affiliate' THEN
+    -- Nilai AWAL sahaja — recalc_affiliate_commission_tier() di bawah
+    -- timpa dgn kadar tier SEBENAR serta-merta (dalam transaksi sama).
     v_amount := 0;
+  ELSE
+    SELECT * INTO v_rule FROM psy_affiliate_commission_rules
+    WHERE package_id = v_pkg_id AND is_active LIMIT 1;
+
+    IF NOT FOUND THEN
+      SELECT * INTO v_rule FROM psy_affiliate_commission_rules
+      WHERE package_id IS NULL AND is_active LIMIT 1;
+    END IF;
+
+    IF v_rule.id IS NOT NULL THEN
+      IF v_rule.commission_type = 'fixed' THEN
+        v_amount := COALESCE(v_rule.amount, 0);
+      ELSE
+        v_amount := ROUND(COALESCE(NEW.total, 0) * COALESCE(v_rule.rate_percent, 0) / 100, 2);
+        IF v_rule.cap_amount IS NOT NULL THEN
+          v_amount := LEAST(v_amount, v_rule.cap_amount);
+        END IF;
+      END IF;
+    ELSE
+      v_amount := 0;
+    END IF;
   END IF;
+
+  v_month := date_trunc('month', now())::date;
 
   UPDATE psy_referrals SET
     status = 'qualified',
     qualified_at = now(),
     qualifying_payment_id = NEW.id,
     qualifying_package_id = v_pkg_id,
-    commission_amount = v_amount
+    commission_amount = v_amount,
+    commission_month = v_month
   WHERE id = v_ref_id;
+
+  IF v_source = 'ghl_affiliate' THEN
+    PERFORM recalc_affiliate_commission_tier(v_referrer_affiliate_id, v_month);
+    SELECT commission_amount INTO v_amount FROM psy_referrals WHERE id = v_ref_id;
+  END IF;
 
   INSERT INTO psy_notifications (user_id, type, title, body, link)
   SELECT id, 'affiliate',
@@ -11656,12 +11904,16 @@ CREATE TABLE IF NOT EXISTS psy_inventory_stock_by_location (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   item_id       UUID NOT NULL REFERENCES psy_inventory_items(id) ON DELETE CASCADE,
   location_id   UUID NOT NULL REFERENCES psy_inventory_locations(id) ON DELETE RESTRICT,
-  qty_in_stock  NUMERIC(10,2) NOT NULL DEFAULT 0,
+  qty_in_stock  NUMERIC(12,4) NOT NULL DEFAULT 0,
   min_qty       NUMERIC(10,2),
   updated_at    TIMESTAMPTZ DEFAULT now(),
   UNIQUE (item_id, location_id)
 );
 CREATE INDEX IF NOT EXISTS idx_stock_by_location_item ON psy_inventory_stock_by_location(item_id);
+
+-- 29 Okt 2026 — lebarkan ke 4dp supaya deduct pecahan unit (issue_unit, lihat
+-- 14_products_inventory.sql) tak hilang ketepatan (cth 1/30 Gulung = 0.0333).
+ALTER TABLE psy_inventory_stock_by_location ALTER COLUMN qty_in_stock TYPE NUMERIC(12,4);
 
 -- ──── Trigger: kekalkan psy_inventory_items.qty_in_stock = SUM semua lokasi ────
 CREATE OR REPLACE FUNCTION psy_sync_item_stock_total()
@@ -11682,13 +11934,14 @@ CREATE TRIGGER trg_sync_item_stock_total
 AFTER INSERT OR UPDATE OR DELETE ON psy_inventory_stock_by_location
 FOR EACH ROW EXECUTE FUNCTION psy_sync_item_stock_total();
 
--- ──── Seed 5 lokasi standard ────
+-- ──── Seed lokasi standard ────
 INSERT INTO psy_inventory_locations (name, code, is_default) VALUES
   ('General Inventory',   'GEN',  true),
   ('Clinical Pharmacy',   'PHARM', false),
   ('Shop Warehouse',      'SHOP', false),
   ('Raw Material Store',  'RAW',  false),
-  ('Equipment Store',     'EQUIP', false)
+  ('Equipment Store',     'EQUIP', false),
+  ('Printing',            'PRINT', false)
 ON CONFLICT (name) DO NOTHING;
 
 -- ──── Backfill: pindah qty_in_stock sedia ada ke SATU lokasi (ikut source_type) ────
@@ -11856,8 +12109,8 @@ CREATE TABLE IF NOT EXISTS psy_stock_movements (
   item_name        TEXT,
   location_id      UUID REFERENCES psy_inventory_locations(id) ON DELETE SET NULL,
   movement_type    TEXT NOT NULL CHECK (movement_type IN ('in','out','adjustment')),
-  qty              NUMERIC(10,2) NOT NULL,  -- delta bertanda: +masuk, -keluar
-  balance_after    NUMERIC(10,2),  -- baki stok di lokasi tu SELEPAS movement ni (utk kolum "Balance After")
+  qty              NUMERIC(12,4) NOT NULL,  -- delta bertanda: +masuk, -keluar
+  balance_after    NUMERIC(12,4),  -- baki stok di lokasi tu SELEPAS movement ni (utk kolum "Balance After")
   reference_type   TEXT,   -- 'stock_in' | 'purchase_request' | 'adjustment' | 'opening_stock' | 'patient_package' | 'transfer'
   reference_id     UUID,
   reference_label  TEXT,   -- KOD rujukan sahaja bila ada, cth: 'RCV-0001', 'PR-0004' (bukan free text)
@@ -11868,6 +12121,10 @@ CREATE TABLE IF NOT EXISTS psy_stock_movements (
 );
 CREATE INDEX IF NOT EXISTS idx_stock_movements_item ON psy_stock_movements(item_id);
 CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON psy_stock_movements(created_at DESC);
+
+-- 29 Okt 2026 — lebarkan ke 4dp (sama sebab di 34_inventory_locations.sql).
+ALTER TABLE psy_stock_movements ALTER COLUMN qty TYPE NUMERIC(12,4);
+ALTER TABLE psy_stock_movements ALTER COLUMN balance_after TYPE NUMERIC(12,4);
 
 ALTER TABLE psy_stock_movements ENABLE ROW LEVEL SECURITY;
 

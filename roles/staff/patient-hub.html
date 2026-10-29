@@ -1481,9 +1481,10 @@
           </div>
         </div>
         <div>
-          <label class="text-xs font-semibold">Kuantiti Diberikan <span class="text-terracotta">*</span></label>
+          <label class="text-xs font-semibold">Kuantiti Diberikan <span id="sup-qty-unit-label" class="text-ink/50 font-normal"></span> <span class="text-terracotta">*</span></label>
           <input id="sup-qty" type="number" min="0.01" step="0.01" placeholder="1"
             class="w-full mt-1 px-3 py-2.5 border border-ink/20 rounded-xl text-sm outline-none focus:border-navy">
+          <div id="sup-issue-hint" class="mt-1.5 text-[11px] text-ink/50 hidden"></div>
         </div>
         <div>
           <label class="text-xs font-semibold">Nota (pilihan)</label>
@@ -6309,7 +6310,7 @@
     async function openGiveSupplyModal() {
       // Always reload inventory fresh to get latest stock levels
       const { data, error: invErr } = await window.db.from('psy_inventory_items')
-        .select('id,name,unit,qty_in_stock,category').order('name');
+        .select('id,name,unit,qty_in_stock,category,issue_unit,issue_units_per_stock_unit').order('name');
       if (invErr) {
         console.error('[Supply] inventory reload error:', invErr);
         banner('Ralat muatkan inventori: ' + invErr.message, 'error');
@@ -6322,7 +6323,8 @@
       } else {
         sel.innerHTML = '<option value="">— Pilih item —</option>' +
           inventoryItems.map(i =>
-            `<option value="${i.id}" data-stock="${i.qty_in_stock}" data-unit="${escHtml(i.unit || '')}">
+            `<option value="${i.id}" data-stock="${i.qty_in_stock}" data-unit="${escHtml(i.unit || '')}"
+              data-issue-unit="${escHtml(i.issue_unit || '')}" data-issue-ratio="${i.issue_units_per_stock_unit || ''}">
           ${escHtml(i.name)} (${Number(i.qty_in_stock)} ${escHtml(i.unit || 'unit')})
         </option>`
           ).join('');
@@ -6330,6 +6332,8 @@
       document.getElementById('sup-qty').value = '';
       document.getElementById('sup-notes').value = '';
       document.getElementById('sup-stock-info').classList.add('hidden');
+      document.getElementById('sup-qty-unit-label').textContent = '';
+      document.getElementById('sup-issue-hint').classList.add('hidden');
       document.getElementById('supply-modal').classList.remove('hidden');
     }
 
@@ -6341,10 +6345,29 @@
       const sel = document.getElementById('sup-item');
       const opt = sel.selectedOptions[0];
       const info = document.getElementById('sup-stock-info');
-      if (!opt || !opt.value) { info.classList.add('hidden'); return; }
+      const qtyUnitLabel = document.getElementById('sup-qty-unit-label');
+      const issueHint = document.getElementById('sup-issue-hint');
+      if (!opt || !opt.value) {
+        info.classList.add('hidden'); qtyUnitLabel.textContent = ''; issueHint.classList.add('hidden');
+        return;
+      }
       const stock = Number(opt.dataset.stock);
       const unit = opt.dataset.unit;
-      document.getElementById('sup-stock-val').textContent = `${stock} ${unit}`;
+      const issueUnit = opt.dataset.issueUnit || '';
+      const issueRatio = Number(opt.dataset.issueRatio) || 0;
+
+      if (issueUnit && issueRatio > 0) {
+        // Item ada unit pecahan (cth stok=Gulung, issue_unit=Inci) — papar stok dlm
+        // KEDUA-DUA unit supaya staff nampak baki sebenar tanpa kira sendiri.
+        document.getElementById('sup-stock-val').textContent = `${stock} ${unit} (≈ ${(stock * issueRatio).toFixed(2)} ${issueUnit})`;
+        qtyUnitLabel.textContent = `(dalam ${issueUnit})`;
+        issueHint.textContent = `1 ${unit} = ${issueRatio} ${issueUnit}`;
+        issueHint.classList.remove('hidden');
+      } else {
+        document.getElementById('sup-stock-val').textContent = `${stock} ${unit}`;
+        qtyUnitLabel.textContent = `(dalam ${unit})`;
+        issueHint.classList.add('hidden');
+      }
       info.classList.remove('hidden');
       info.classList.toggle('text-terracotta', stock === 0);
       info.classList.toggle('text-ink/50', stock > 0);
@@ -6359,11 +6382,27 @@
       const itemName = inventoryItems.find(i => i.id === itemId)?.name || opt.text.trim();
       const unit = opt.dataset.unit;
       const stock = Number(opt.dataset.stock);
-      const qty = parseFloat(document.getElementById('sup-qty').value);
+      const issueUnit = opt.dataset.issueUnit || '';
+      const issueRatio = Number(opt.dataset.issueRatio) || 0;
+      const enteredQty = parseFloat(document.getElementById('sup-qty').value);
       const notes = document.getElementById('sup-notes').value.trim() || null;
 
-      if (!qty || qty <= 0) { banner('Sila masukkan kuantiti yang sah', 'error'); return; }
-      if (qty > stock) { banner(`Stok tidak mencukupi. Stok semasa: ${stock} ${unit}`, 'error'); return; }
+      if (!enteredQty || enteredQty <= 0) { banner('Sila masukkan kuantiti yang sah', 'error'); return; }
+
+      // Jika item ada unit pecahan (issue_unit, cth stok=Gulung bagi pesakit=Inci),
+      // staff taip kuantiti dlm issue_unit — tukar kpd unit stok sebelum tolak stok,
+      // supaya ledger psy_stock_movements & perbandingan "dijangka vs diberi" di
+      // renderSupplyKpiAndItems() (yg guna unit stok dari pakej) kekal konsisten.
+      const hasConversion = issueUnit && issueRatio > 0;
+      const qty = hasConversion ? Math.round((enteredQty / issueRatio) * 10000) / 10000 : enteredQty;
+      const qtyLabel = hasConversion ? `${enteredQty} ${issueUnit} (≈ ${qty} ${unit})` : `${qty} ${unit}`;
+
+      if (qty > stock) {
+        banner(hasConversion
+          ? `Stok tidak mencukupi. Stok semasa: ${stock} ${unit} (≈ ${(stock * issueRatio).toFixed(2)} ${issueUnit})`
+          : `Stok tidak mencukupi. Stok semasa: ${stock} ${unit}`, 'error');
+        return;
+      }
 
       const btn = document.getElementById('sup-save-btn');
       btn.disabled = true; btn.textContent = 'Merekod...';
@@ -6377,15 +6416,17 @@
         console.log('[Supply] deducting stock…', { id: itemId, newQty: stock - qty });
         const movementId = await window.addStockToLocation(itemId, -qty, null, {
           type: 'out', refType: 'patient_package', refId: patientId,
-          note: `Bagi Bekalan${notes ? ': ' + notes : ''}`, itemName,
+          note: `Bagi Bekalan: ${qtyLabel}${notes ? ' — ' + notes : ''}`, itemName,
         });
         console.log('[Supply] stock update OK');
 
         // Keluarkan invois bekalan (snapshot diberi/jumlah pakej/baki) — gagal cipta invois
         // TAK sekat bekalan yg dah direkod (createSupplyInvoice() pulang null senyap kalau gagal).
+        // qty_given & unit kekal dlm unit STOK (bukan issue_unit) supaya selaras dgn
+        // "dijangka" dari coaching_schedule (jugak dlm unit stok).
         const supplyInvoice = await window.createSupplyInvoice(
           [{ item_id: itemId, name: itemName, unit, qty_given: qty }],
-          { patientId, activePlan, source: 'manual', notes }
+          { patientId, activePlan, source: 'manual', notes: hasConversion ? `${enteredQty} ${issueUnit}${notes ? ' — ' + notes : ''}` : notes }
         );
         if (supplyInvoice && movementId) {
           await window.db.from('psy_stock_movements').update({ supply_invoice_id: supplyInvoice.id }).eq('id', movementId);
@@ -6397,7 +6438,7 @@
 
         closeGiveSupplyModal();
         await loadSupply();
-        banner(`Bekalan "${itemName}" (${qty} ${unit}) berjaya direkod ✅${supplyInvoice ? ` · Invois ${supplyInvoice.invoice_no}` : ''}`);
+        banner(`Bekalan "${itemName}" (${qtyLabel}) berjaya direkod ✅${supplyInvoice ? ` · Invois ${supplyInvoice.invoice_no}` : ''}`);
       } catch (err) {
         console.error('[Supply] submitSupply error:', err);
         banner('Ralat: ' + (err.message || JSON.stringify(err)), 'error');

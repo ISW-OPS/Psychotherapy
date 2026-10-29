@@ -19,8 +19,8 @@ CREATE TABLE IF NOT EXISTS psy_stock_movements (
   item_name        TEXT,
   location_id      UUID REFERENCES psy_inventory_locations(id) ON DELETE SET NULL,
   movement_type    TEXT NOT NULL CHECK (movement_type IN ('in','out','adjustment')),
-  qty              NUMERIC(10,2) NOT NULL,  -- delta bertanda: +masuk, -keluar
-  balance_after    NUMERIC(10,2),  -- baki stok di lokasi tu SELEPAS movement ni (utk kolum "Balance After")
+  qty              NUMERIC(12,4) NOT NULL,  -- delta bertanda: +masuk, -keluar
+  balance_after    NUMERIC(12,4),  -- baki stok di lokasi tu SELEPAS movement ni (utk kolum "Balance After")
   reference_type   TEXT,   -- 'stock_in' | 'purchase_request' | 'adjustment' | 'opening_stock' | 'patient_package' | 'transfer'
   reference_id     UUID,
   reference_label  TEXT,   -- KOD rujukan sahaja bila ada, cth: 'RCV-0001', 'PR-0004' (bukan free text)
@@ -31,6 +31,10 @@ CREATE TABLE IF NOT EXISTS psy_stock_movements (
 );
 CREATE INDEX IF NOT EXISTS idx_stock_movements_item ON psy_stock_movements(item_id);
 CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON psy_stock_movements(created_at DESC);
+
+-- 29 Okt 2026 — lebarkan ke 4dp (sama sebab di 34_inventory_locations.sql).
+ALTER TABLE psy_stock_movements ALTER COLUMN qty TYPE NUMERIC(12,4);
+ALTER TABLE psy_stock_movements ALTER COLUMN balance_after TYPE NUMERIC(12,4);
 
 ALTER TABLE psy_stock_movements ENABLE ROW LEVEL SECURITY;
 

@@ -78,7 +78,7 @@
             </div>
             <div>
               <label class="text-sm font-semibold text-ink">Unit of Measurement <span class="text-terracotta">*</span></label>
-              <select id="item-unit" onchange="updateQtyUnitSuffix()" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none"></select>
+              <select id="item-unit" onchange="updateQtyUnitSuffix(); updateIssueRatioHint();" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none"></select>
             </div>
             <div>
               <label class="text-sm font-semibold text-ink">Storage Location <span class="text-terracotta">*</span></label>
@@ -103,6 +103,18 @@
                 <span id="item-qty-unit-suffix" class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-ink/40 pointer-events-none"></span>
               </div>
               <p id="qty-hint" class="text-[11px] text-ink/45 mt-1.5">Jumlah stok sekarang</p>
+            </div>
+            <div>
+              <label class="text-sm font-semibold text-ink">Unit Diberi Kepada Pesakit <span class="text-ink/35 font-normal">(Optional)</span></label>
+              <select id="item-issue-unit" onchange="updateIssueRatioHint()" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none">
+                <option value="">— Sama seperti Unit Stok —</option>
+              </select>
+              <p class="text-[10px] text-ink/40 mt-1">Isi jika pesakit guna unit lebih kecil drpd unit stok (cth: stok "Gulung" tapi bagi pesakit "Inci").</p>
+            </div>
+            <div>
+              <label class="text-sm font-semibold text-ink">Berapa Unit Pesakit Setiap 1 Unit Stok</label>
+              <input id="item-issue-ratio" type="number" min="0.0001" step="0.0001" oninput="updateIssueRatioHint()" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm focus:border-navy outline-none" placeholder="cth: 30">
+              <p id="issue-ratio-hint" class="text-[10px] text-ink/40 mt-1.5">&nbsp;</p>
             </div>
             <div>
               <label class="text-sm font-semibold text-ink">Approval Required for Purchase <span class="text-terracotta">*</span></label>
@@ -238,7 +250,22 @@ async function populateSuggestions() {
   document.getElementById('item-category').innerHTML = cats.map(c => `<option value="${escHtml(c)}">${escHtml(c)}</option>`).join('')
     + '<option value="__new__">+ Tambah Kategori Baharu</option>';
   document.getElementById('item-unit').innerHTML = UNIT_FIXED.map(u => `<option value="${escHtml(u)}">${escHtml(u)}</option>`).join('');
+  document.getElementById('item-issue-unit').innerHTML = '<option value="">— Sama seperti Unit Stok —</option>'
+    + UNIT_FIXED.map(u => `<option value="${escHtml(u)}">${escHtml(u)}</option>`).join('');
 }
+
+// Papar pratonton tukaran cth "1 Gulung = 30 Inci" semasa admin isi unit pesakit.
+function updateIssueRatioHint() {
+  const stockUnit = document.getElementById('item-unit').value;
+  const issueUnit = document.getElementById('item-issue-unit').value;
+  const ratio = document.getElementById('item-issue-ratio').value;
+  const hint = document.getElementById('issue-ratio-hint');
+  if (!issueUnit) { hint.innerHTML = '&nbsp;'; return; }
+  if (issueUnit === stockUnit) { hint.textContent = 'Unit pesakit sama dgn unit stok — kosongkan sahaja.'; return; }
+  if (!ratio || Number(ratio) <= 0) { hint.textContent = `cth: isi 30 jika 1 ${stockUnit || 'unit stok'} = 30 ${issueUnit}`; return; }
+  hint.innerHTML = `<strong>1 ${escHtml(stockUnit || 'unit stok')} = ${escHtml(ratio)} ${escHtml(issueUnit)}</strong>`;
+}
+window.updateIssueRatioHint = updateIssueRatioHint;
 
 function onCategorySelectChange() {
   const sel = document.getElementById('item-category');
@@ -379,6 +406,8 @@ async function loadForEdit(id) {
     unitSel.insertAdjacentHTML('afterbegin', `<option value="${escHtml(data.unit)}">${escHtml(data.unit)} (lama)</option>`);
   }
   unitSel.value = data.unit || 'Unit';
+  document.getElementById('item-issue-unit').value = data.issue_unit || '';
+  document.getElementById('item-issue-ratio').value = data.issue_units_per_stock_unit ?? '';
 
   const primaryLoc = stockLocRes.data?.[0];
   if (primaryLoc) document.getElementById('item-location').value = primaryLoc.location_id;
@@ -411,6 +440,7 @@ async function loadForEdit(id) {
   onSupplierChange();
   document.getElementById('sup-cost').value = data.supplier_info?.cost_per_unit ?? '';
   updateQtyUnitSuffix();
+  updateIssueRatioHint();
 }
 
 function cancelForm() {
@@ -437,6 +467,13 @@ async function saveItem() {
   if (!category) { banner('Kategori diperlukan', 'error'); document.getElementById('item-category').focus(); return; }
   const unit = document.getElementById('item-unit').value.trim();
   if (!unit) { banner('Unit diperlukan', 'error'); document.getElementById('item-unit').focus(); return; }
+  const issueUnit = document.getElementById('item-issue-unit').value.trim() || null;
+  const issueRatioRaw = document.getElementById('item-issue-ratio').value.trim();
+  const issueRatio = issueRatioRaw === '' ? null : parseFloat(issueRatioRaw);
+  if (issueUnit) {
+    if (issueUnit === unit) { banner('Unit Diberi Kepada Pesakit kena berbeza drpd Unit Stok — kosongkan jika sama', 'error'); document.getElementById('item-issue-unit').focus(); return; }
+    if (!issueRatio || issueRatio <= 0) { banner('Sila masukkan "Berapa Unit Pesakit Setiap 1 Unit Stok" yang sah', 'error'); document.getElementById('item-issue-ratio').focus(); return; }
+  }
   const locationId = document.getElementById('item-location').value;
   if (!locationId) { banner('Storage Location diperlukan', 'error'); return; }
   const supplierId = document.getElementById('item-supplier').value;
@@ -455,6 +492,8 @@ async function saveItem() {
     name,
     category,
     unit,
+    issue_unit: issueUnit,
+    issue_units_per_stock_unit: issueUnit ? issueRatio : null,
     min_qty: Number(document.getElementById('item-min').value) || 0,
     requires_approval: requiresApproval,
     notes: description,

@@ -14,8 +14,18 @@ CREATE TABLE IF NOT EXISTS psy_inventory_items (
   category             TEXT NOT NULL DEFAULT 'Bekalan Coaching',
   unit                 TEXT NOT NULL DEFAULT 'Unit'
                        CHECK (unit IN ('Biji (pcs)','Botol','Kotak','Pek','Paket','Tiub','Tablet',
-                                       'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas')),
-  qty_in_stock         NUMERIC(10,2) NOT NULL DEFAULT 0,
+                                       'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
+                                       'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)')),
+  -- issue_unit/issue_units_per_stock_unit: bagi item yg dibeli dlm unit besar tapi
+  -- diguna pesakit dlm unit kecil (cth: beli 1 Gulung tape = 30 Inci, pesakit
+  -- guna 1 Inci setiap kali). NULL = tiada tukaran, bagi pesakit kena guna unit sama
+  -- macam stok. Lihat shared/inventoryStock.js & roles/staff/patient-hub.html submitSupply().
+  issue_unit           TEXT
+                       CHECK (issue_unit IS NULL OR issue_unit IN ('Biji (pcs)','Botol','Kotak','Pek','Paket','Tiub','Tablet',
+                                       'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
+                                       'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)')),
+  issue_units_per_stock_unit NUMERIC(10,4),
+  qty_in_stock         NUMERIC(12,4) NOT NULL DEFAULT 0,
   min_qty              NUMERIC(10,2) NOT NULL DEFAULT 5,
   requires_approval    BOOLEAN NOT NULL DEFAULT false,
   notes                TEXT,
@@ -67,6 +77,29 @@ ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS internal_notes TEXT;
 -- bukan cari dalam senarai dokumen berasingan. Bucket: inventory-print-files.
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS print_file_url TEXT;
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS print_file_size BIGINT;
+
+-- 29 Okt 2026 — unit tukaran (issue_unit) supaya item boleh dibeli dlm unit besar
+-- (cth Gulung) tapi diberi pesakit dlm unit kecil (cth Inci) tanpa tolak 1 Gulung
+-- penuh setiap kali. qty_in_stock dilebarkan ke 4dp (asal 2dp) sebab deduct pecahan
+-- (cth 1/30 Gulung = 0.0333) akan terkumpul ralat bundaran ketara kalau cuma 2dp.
+ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_unit_check;
+ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_unit_check
+  CHECK (unit IN ('Biji (pcs)','Botol','Kotak','Pek','Paket','Tiub','Tablet',
+                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
+                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS issue_unit TEXT
+  CHECK (issue_unit IS NULL OR issue_unit IN ('Biji (pcs)','Botol','Kotak','Pek','Paket','Tiub','Tablet',
+                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
+                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS issue_units_per_stock_unit NUMERIC(10,4);
+ALTER TABLE psy_inventory_items ALTER COLUMN qty_in_stock TYPE NUMERIC(12,4);
+-- NOTA: psy_inventory_stock_by_location.qty_in_stock & psy_stock_movements.qty/balance_after
+-- turut dilebarkan ke NUMERIC(12,4) — lihat ALTER COLUMN TYPE di 34_inventory_locations.sql
+-- & 36_stock_movements.sql (jadual tu ditakrif SELEPAS fail ni, jadi ALTER kena di sana).
+COMMENT ON COLUMN psy_inventory_items.issue_unit IS
+  'Unit diberi kepada pesakit, jika berbeza drpd unit stok (cth stok=Gulung, issue_unit=Inci). NULL = tiada tukaran.';
+COMMENT ON COLUMN psy_inventory_items.issue_units_per_stock_unit IS
+  'Berapa issue_unit dalam 1 unit stok (cth 30 = 1 Gulung ada 30 Inci). Guna utk tukar kuantiti diberi pesakit kpd pecahan unit stok semasa tolak.';
 
 -- status: peringkat lebih halus drpd is_active — 'discontinued' bermaksud dibuang
 -- kekal (bukan cuma nyahaktif sementara). is_active DIKEKALKAN (banyak tempat lain

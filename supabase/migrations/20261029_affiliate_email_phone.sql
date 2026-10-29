@@ -155,3 +155,35 @@ UPDATE psy_referrals r SET qualifying_package_id = (
   LIMIT 1
 )
 WHERE r.qualifying_package_id IS NULL AND r.qualifying_payment_id IS NOT NULL;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 29 Okt 2026 (bahagian 2) — Unit tukaran stok→pesakit (issue_unit)
+-- Contoh: beli 1 "Gulung" surgical tape = 30 "Inci", pesakit guna 1 Inci
+-- setiap kali. Sebelum ni staff WAJIB bagi pesakit dlm unit stok tepat
+-- (kena taip 0.033 Gulung) sebab tiada konsep unit kecil langsung.
+-- qty_in_stock/qty/balance_after dilebarkan 2dp→4dp supaya pecahan macam
+-- 1/30 tak hilang ketepatan bila terkumpul banyak kali.
+-- ═══════════════════════════════════════════════════════════════════
+ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_unit_check;
+ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_unit_check
+  CHECK (unit IN ('Biji (pcs)','Botol','Kotak','Pek','Paket','Tiub','Tablet',
+                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
+                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS issue_unit TEXT
+  CHECK (issue_unit IS NULL OR issue_unit IN ('Biji (pcs)','Botol','Kotak','Pek','Paket','Tiub','Tablet',
+                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
+                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS issue_units_per_stock_unit NUMERIC(10,4);
+ALTER TABLE psy_inventory_items ALTER COLUMN qty_in_stock TYPE NUMERIC(12,4);
+ALTER TABLE psy_inventory_stock_by_location ALTER COLUMN qty_in_stock TYPE NUMERIC(12,4);
+ALTER TABLE psy_stock_movements ALTER COLUMN qty TYPE NUMERIC(12,4);
+ALTER TABLE psy_stock_movements ALTER COLUMN balance_after TYPE NUMERIC(12,4);
+COMMENT ON COLUMN psy_inventory_items.issue_unit IS
+  'Unit diberi kepada pesakit, jika berbeza drpd unit stok (cth stok=Gulung, issue_unit=Inci). NULL = tiada tukaran.';
+COMMENT ON COLUMN psy_inventory_items.issue_units_per_stock_unit IS
+  'Berapa issue_unit dalam 1 unit stok (cth 30 = 1 Gulung ada 30 Inci). Guna utk tukar kuantiti diberi pesakit kpd pecahan unit stok semasa tolak.';
+
+-- 29 Okt 2026 (bahagian 3) — Tambah lokasi stok "Printing" (bahan/cetakan).
+INSERT INTO psy_inventory_locations (name, code, is_default) VALUES
+  ('Printing', 'PRINT', false)
+ON CONFLICT (name) DO NOTHING;
