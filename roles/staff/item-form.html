@@ -87,6 +87,16 @@
             <div>
               <label class="text-sm font-semibold text-ink">Price (RM)</label>
               <input id="sup-cost" type="number" step="0.01" min="0" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm focus:border-navy outline-none" placeholder="0.00">
+              <p class="text-[10px] text-ink/40 mt-1">Nombor ni yg dipakai utk kira nilai stok & jadi harga lalai Purchase Request/Stock In.</p>
+            </div>
+            <div>
+              <label class="text-sm font-semibold text-ink">Harga Anggaran <span class="text-ink/35 font-normal">(Optional)</span></label>
+              <div class="flex items-center gap-1.5 mt-1.5">
+                <input id="item-price-min" type="number" step="0.01" min="0" oninput="onPriceRangeInput()" placeholder="Min" class="w-full px-3 py-2.5 border border-ink/15 rounded-xl text-sm focus:border-navy outline-none">
+                <span class="text-ink/40 text-xs">–</span>
+                <input id="item-price-max" type="number" step="0.01" min="0" oninput="onPriceRangeInput()" placeholder="Maks" class="w-full px-3 py-2.5 border border-ink/15 rounded-xl text-sm focus:border-navy outline-none">
+              </div>
+              <p id="price-range-hint" class="text-[10px] text-ink/40 mt-1">Isi jika harga tak tetap (cth beli dari pembekal lain-lain harga RM1–RM3). Price (RM) auto diisi purata.</p>
             </div>
           </div>
 
@@ -267,6 +277,29 @@ function updateIssueRatioHint() {
 }
 window.updateIssueRatioHint = updateIssueRatioHint;
 
+// Harga Anggaran (Min–Maks) — cth beli dari pembekal lain-lain harga RM1–RM3.
+// Tak gantikan "Price (RM)" (nombor tu yg dipakai utk kira nilai stok & jadi
+// harga lalai PR/Stock In) — cuma auto-isi PURATA kalau Price (RM) kosong,
+// supaya admin tak perlu kira sendiri, tapi tak timpa nilai yg dah ditaip.
+function onPriceRangeInput() {
+  const minRaw = document.getElementById('item-price-min').value;
+  const maxRaw = document.getElementById('item-price-max').value;
+  const hint = document.getElementById('price-range-hint');
+  const min = minRaw === '' ? null : parseFloat(minRaw);
+  const max = maxRaw === '' ? null : parseFloat(maxRaw);
+  if (min === null || max === null) {
+    hint.textContent = 'Isi jika harga tak tetap (cth beli dari pembekal lain-lain harga RM1–RM3). Price (RM) auto diisi purata.';
+    return;
+  }
+  if (min > max) { hint.innerHTML = '<span class="text-terracotta">Min tak boleh lebih drpd Maks</span>'; return; }
+  const avg = Math.round((min + max) / 2 * 100) / 100;
+  const priceInput = document.getElementById('sup-cost');
+  const priceEmpty = !priceInput.value || Number(priceInput.value) === 0;
+  if (priceEmpty) { priceInput.value = avg.toFixed(2); hint.innerHTML = `Purata <strong>RM${avg.toFixed(2)}</strong> diisi terus ke Price (RM) di atas.`; }
+  else { hint.innerHTML = `Purata julat: RM${avg.toFixed(2)} — Price (RM) tak ditimpa sbb dah diisi. Kosongkan dulu kalau nak guna purata.`; }
+}
+window.onPriceRangeInput = onPriceRangeInput;
+
 function onCategorySelectChange() {
   const sel = document.getElementById('item-category');
   const newInput = document.getElementById('item-category-new');
@@ -439,6 +472,8 @@ async function loadForEdit(id) {
   }
   onSupplierChange();
   document.getElementById('sup-cost').value = data.supplier_info?.cost_per_unit ?? '';
+  document.getElementById('item-price-min').value = data.supplier_info?.cost_per_unit_min ?? '';
+  document.getElementById('item-price-max').value = data.supplier_info?.cost_per_unit_max ?? '';
   updateQtyUnitSuffix();
   updateIssueRatioHint();
 }
@@ -481,6 +516,11 @@ async function saveItem() {
   const supCostRaw = document.getElementById('sup-cost').value.trim();
   const supCost = supCostRaw === '' ? null : parseFloat(supCostRaw);
   if (supCost !== null && !(supCost >= 0)) { banner('Price (RM) tidak sah', 'error'); document.getElementById('sup-cost').focus(); return; }
+  const priceMinRaw = document.getElementById('item-price-min').value.trim();
+  const priceMaxRaw = document.getElementById('item-price-max').value.trim();
+  const priceMin = priceMinRaw === '' ? null : parseFloat(priceMinRaw);
+  const priceMax = priceMaxRaw === '' ? null : parseFloat(priceMaxRaw);
+  if (priceMin !== null && priceMax !== null && priceMin > priceMax) { banner('Harga Anggaran: Min tak boleh lebih drpd Maks', 'error'); document.getElementById('item-price-min').focus(); return; }
 
   const loc = allLocations.find(l => l.id === locationId);
   const isFarmasi = loc?.name === 'Clinical Pharmacy';
@@ -501,7 +541,7 @@ async function saveItem() {
     status,
     is_active: status === 'active',
     supplier_id: supplierId,
-    supplier_info: { name: supplier?.name || null, cost_per_unit: supCost ?? null },
+    supplier_info: { name: supplier?.name || null, cost_per_unit: supCost ?? null, cost_per_unit_min: priceMin, cost_per_unit_max: priceMax },
     shopee_url: document.getElementById('item-shopee-url').value.trim() || null,
     updated_at: new Date().toISOString(),
   };
