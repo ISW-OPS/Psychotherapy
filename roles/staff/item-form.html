@@ -82,7 +82,8 @@
             </div>
             <div>
               <label class="text-sm font-semibold text-ink">Storage Location <span class="text-terracotta">*</span></label>
-              <select id="item-location" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none"></select>
+              <select id="item-location" onchange="onLocationSelectChange()" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none"></select>
+              <input id="item-location-new" type="text" placeholder="Nama lokasi baharu" class="hidden w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none">
             </div>
             <div>
               <label class="text-sm font-semibold text-ink">Price (RM)</label>
@@ -318,8 +319,18 @@ async function loadLocations() {
   const { data } = await window.db.from('psy_inventory_locations').select('*').eq('is_active', true).order('name');
   allLocations = data || [];
   const sel = document.getElementById('item-location');
-  sel.innerHTML = allLocations.map(l => `<option value="${l.id}" ${l.is_default ? 'selected' : ''}>${escHtml(l.name)}</option>`).join('');
+  sel.innerHTML = allLocations.map(l => `<option value="${l.id}" ${l.is_default ? 'selected' : ''}>${escHtml(l.name)}</option>`).join('')
+    + '<option value="__new__">+ Tambah Lokasi Baharu</option>';
 }
+
+function onLocationSelectChange() {
+  const sel = document.getElementById('item-location');
+  const newInput = document.getElementById('item-location-new');
+  const isNew = sel.value === '__new__';
+  newInput.classList.toggle('hidden', !isNew);
+  if (isNew) { newInput.value = ''; newInput.focus(); }
+}
+window.onLocationSelectChange = onLocationSelectChange;
 
 async function loadSuppliers() {
   const { data } = await window.db.from('psy_suppliers').select('*').eq('status', 'active').order('name');
@@ -509,8 +520,22 @@ async function saveItem() {
     if (issueUnit === unit) { banner('Unit Diberi Kepada Pesakit kena berbeza drpd Unit Stok — kosongkan jika sama', 'error'); document.getElementById('item-issue-unit').focus(); return; }
     if (!issueRatio || issueRatio <= 0) { banner('Sila masukkan "Berapa Unit Pesakit Setiap 1 Unit Stok" yang sah', 'error'); document.getElementById('item-issue-ratio').focus(); return; }
   }
-  const locationId = document.getElementById('item-location').value;
+  let locationId = document.getElementById('item-location').value;
   if (!locationId) { banner('Storage Location diperlukan', 'error'); return; }
+  if (locationId === '__new__') {
+    const newLocName = document.getElementById('item-location-new').value.trim();
+    if (!newLocName) { banner('Nama lokasi baharu diperlukan', 'error'); document.getElementById('item-location-new').focus(); return; }
+    const { data: newLoc, error: newLocErr } = await window.db.from('psy_inventory_locations')
+      .insert({ name: newLocName }).select('*').single();
+    if (newLocErr) { banner('Gagal tambah lokasi: ' + newLocErr.message, 'error'); return; }
+    allLocations.push(newLoc);
+    locationId = newLoc.id;
+    const optEl = document.createElement('option');
+    optEl.value = newLoc.id; optEl.textContent = newLoc.name;
+    document.getElementById('item-location').insertBefore(optEl, document.getElementById('item-location').lastElementChild);
+    document.getElementById('item-location').value = newLoc.id;
+    onLocationSelectChange();
+  }
   const supplierId = document.getElementById('item-supplier').value;
   if (!supplierId) { banner('Sila pilih supplier', 'error'); document.getElementById('item-supplier').focus(); return; }
   const supCostRaw = document.getElementById('sup-cost').value.trim();

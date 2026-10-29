@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-10-29T07:46:06.997290Z
+-- Generated: 2026-10-29T08:21:15.076371Z
 -- Jumlah fail: 41
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -11956,8 +11956,12 @@ WHERE NOT EXISTS (SELECT 1 FROM psy_inventory_stock_by_location WHERE item_id = 
 ALTER TABLE psy_inventory_locations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE psy_inventory_stock_by_location ENABLE ROW LEVEL SECURITY;
 
+-- 29 Okt 2026 — SELECT-sahaja digantikan FOR ALL, supaya staff boleh tambah
+-- lokasi baharu terus dari item-form.html ("+ Tambah Lokasi Baharu", cth
+-- "Printing") tanpa kena insert manual via SQL/migration setiap kali.
 DROP POLICY IF EXISTS "Staff read locations" ON psy_inventory_locations;
-CREATE POLICY "Staff read locations" ON psy_inventory_locations FOR SELECT
+DROP POLICY IF EXISTS "Staff manage locations" ON psy_inventory_locations;
+CREATE POLICY "Staff manage locations" ON psy_inventory_locations FOR ALL
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
 DROP POLICY IF EXISTS "Staff manage stock by location" ON psy_inventory_stock_by_location;

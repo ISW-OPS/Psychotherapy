@@ -187,3 +187,11 @@ COMMENT ON COLUMN psy_inventory_items.issue_units_per_stock_unit IS
 INSERT INTO psy_inventory_locations (name, code, is_default) VALUES
   ('Printing', 'PRINT', false)
 ON CONFLICT (name) DO NOTHING;
+
+-- 29 Okt 2026 (bahagian 4) — psy_inventory_locations SELECT-sahaja -> FOR ALL,
+-- supaya "+ Tambah Lokasi Baharu" di item-form.html boleh insert (dulu cuma
+-- staff BACA sahaja dibenarkan, tambah lokasi mesti manual via SQL).
+DROP POLICY IF EXISTS "Staff read locations" ON psy_inventory_locations;
+DROP POLICY IF EXISTS "Staff manage locations" ON psy_inventory_locations;
+CREATE POLICY "Staff manage locations" ON psy_inventory_locations FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
