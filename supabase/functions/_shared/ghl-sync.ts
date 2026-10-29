@@ -460,16 +460,39 @@ export async function upsertExternalAffiliate(svc: any, opts: {
 export async function attributeReferralToAffiliate(svc: any, opts: {
   patientId: string
   affiliateName: string | null | undefined
+  affiliateEmail?: string | null
+  affiliatePhone?: string | null
 }): Promise<{ attributed: boolean; reason?: string }> {
   const name = String(opts.affiliateName || '').trim()
-  if (!name) return { attributed: false, reason: 'no_name' }
+  const email = String(opts.affiliateEmail || '').trim()
+  const phoneKeyVal = phoneKey(toE164(opts.affiliatePhone) || '')
+  if (!name && !email && !phoneKeyVal) return { attributed: false, reason: 'no_name' }
 
   const { data: existing } = await svc.from('psy_referrals')
     .select('id').eq('referee_patient_id', opts.patientId).maybeSingle()
   if (existing) return { attributed: false, reason: 'already_referred' }
 
-  const { data: candidates } = await svc.from('psy_external_affiliates')
-    .select('id, full_name').ilike('full_name', name)
+  // Padanan email/phone (29 Okt 2026) — GHL `referred_by_affiliate` (nama)
+  // ialah nama paparan PROFIL AFFILIATE GHL (cth "Testing Syafa."), BOLEH
+  // berbeza drpd full_name yang affiliate isi sendiri di borang pendaftaran
+  // Duta kita (psy_external_affiliates.full_name). Email/phone affiliate
+  // jauh lebih stabil — utamakan padanan ni, nama hanya FALLBACK terakhir
+  // (sebelum ni, nama sahaja — punca "why 0" komisen tak terkait walaupun
+  // kad Affiliate dah papar betul, sebab padanan nama gagal senyap).
+  let candidates: { id: string; full_name: string }[] | null = null
+  if (email) {
+    const { data } = await svc.from('psy_external_affiliates').select('id, full_name').ilike('email', email)
+    candidates = data || null
+  }
+  if ((!candidates || candidates.length !== 1) && phoneKeyVal) {
+    const { data } = await svc.from('psy_external_affiliates').select('id, full_name, phone')
+    const hit = (data || []).filter((a: any) => phoneKey(a.phone) === phoneKeyVal)
+    if (hit.length) candidates = hit
+  }
+  if ((!candidates || candidates.length !== 1) && name) {
+    const { data } = await svc.from('psy_external_affiliates').select('id, full_name').ilike('full_name', name)
+    candidates = data || null
+  }
   if (!candidates || candidates.length !== 1) {
     return { attributed: false, reason: candidates?.length ? 'ambiguous' : 'no_match' }
   }

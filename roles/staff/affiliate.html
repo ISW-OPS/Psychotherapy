@@ -181,6 +181,34 @@
   </div>
 </div>
 
+<!-- Bank Picker (29 Okt 2026) — lepas "Bayar" dimulakan, bantu staff transfer
+     manual: salin butiran akaun affiliate + pautan terus ke portal banking
+     bank pilihan (tab baharu). Tiada API/caj — staff tetap log masuk &
+     transfer sendiri, cuma kurangkan risiko salin nombor akaun secara manual. -->
+<div id="bank-picker-modal" class="hidden fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto" onclick="closeBankPicker()">
+  <div class="bg-white rounded-2xl w-full max-w-md my-16 shadow-xl" onclick="event.stopPropagation()">
+    <div class="px-6 py-4 border-b border-ink/10 flex items-center justify-between gap-4">
+      <h3 class="font-bold text-ink">Bayaran Dimulakan</h3>
+      <button onclick="closeBankPicker()" class="w-8 h-8 rounded-lg hover:bg-ink/5 text-ink/50 flex items-center justify-center text-lg">✕</button>
+    </div>
+    <div class="px-6 py-5 space-y-4">
+      <div class="bg-ink/5 rounded-xl p-4 text-sm space-y-1">
+        <div id="bp-name" class="font-semibold text-ink"></div>
+        <div id="bp-bank" class="text-ink/70"></div>
+        <div id="bp-amount" class="text-navy font-bold"></div>
+      </div>
+      <button onclick="copyBankPickerDetails()" id="bp-copy-btn" class="w-full px-4 py-2.5 rounded-lg text-sm font-semibold border border-navy/30 text-navy hover:bg-navy/5">📋 Salin Butiran Akaun</button>
+      <div>
+        <div class="text-xs font-semibold text-ink/60 mb-2">Pergi terus ke portal banking (log masuk &amp; transfer sendiri):</div>
+        <div id="bp-banks" class="grid grid-cols-2 gap-2"></div>
+      </div>
+    </div>
+    <div class="px-6 py-4 border-t border-ink/10 flex justify-end">
+      <button onclick="closeBankPicker()" class="px-4 py-2 rounded-lg text-sm font-semibold border border-ink/15 text-ink/60 hover:bg-ink/5">Tutup</button>
+    </div>
+  </div>
+</div>
+
 <script src="/shared/supabase.js"></script>
 <script src="../../config/supabase.js"></script>
 <script src="../../shared/authGuard.js"></script>
@@ -381,9 +409,92 @@ async function startPayout(referralId) {
   const { error: e2 } = await window.db.from('psy_referrals').update({ payout_id: payout.id }).eq('id', r.id);
   if (e2) { banner('Ralat: ' + e2.message, 'error'); return; }
   banner('Bayaran dimulakan — klik "Selesai" selepas transfer siap');
+  openBankPicker({ full_name: p.full_name || p.mrn, bank_name: p.bank_name, bank_account_no: p.bank_account_no, bank_account_holder: p.bank_account_holder, amount: r.commission_amount });
   await loadAll();
 }
 window.startPayout = startPayout;
+
+// Senarai bank Malaysia + portal online banking rasmi masing-masing (domain
+// utama, bukan sub-laluan login dalaman yang boleh tukar) — staff klik →
+// bukak tab baharu, log masuk & transfer sendiri. Tiada API/kebenaran
+// diperlukan, jadi senarai ni boleh kekal walau affiliate guna bank apa pun.
+const MALAYSIA_BANKS = [
+  { name: 'Maybank', url: 'https://www.maybank2u.com.my' },
+  { name: 'CIMB', url: 'https://www.cimbclicks.com.my' },
+  { name: 'RHB', url: 'https://rhbnow.rhbgroup.com' },
+  { name: 'Public Bank', url: 'https://www.pbebank.com' },
+  { name: 'Bank Islam', url: 'https://www.bankislam.com' },
+  { name: 'Hong Leong Bank', url: 'https://www.hlb.com.my' },
+  { name: 'AmBank', url: 'https://www.ambank.com.my' },
+  { name: 'Bank Rakyat', url: 'https://www.bankrakyat.com.my' },
+  { name: 'Bank Muamalat', url: 'https://www.muamalat.com.my' },
+  { name: 'Affin Bank', url: 'https://www.affinbank.com.my' },
+  { name: 'Alliance Bank', url: 'https://www.alliancebank.com.my' },
+  { name: 'BSN', url: 'https://www.bsn.com.my' },
+];
+
+let bpCurrent = null;
+
+function openBankPicker(detail) {
+  bpCurrent = detail;
+  document.getElementById('bp-name').textContent = detail.full_name || '—';
+  document.getElementById('bp-bank').textContent = [detail.bank_name, detail.bank_account_no, detail.bank_account_holder].filter(Boolean).join(' · ') || 'Maklumat bank belum lengkap';
+  document.getElementById('bp-amount').textContent = fmtRM(detail.amount);
+  document.getElementById('bp-copy-btn').textContent = '📋 Salin Butiran Akaun';
+  const banksEl = document.getElementById('bp-banks');
+  banksEl.innerHTML = MALAYSIA_BANKS.map(b =>
+    `<button onclick="openBankPortal('${b.url}')" class="px-3 py-2 rounded-lg text-xs font-semibold border border-ink/15 text-ink hover:bg-navy/5 hover:border-navy/30 text-left">${esc(b.name)}</button>`
+  ).join('');
+  document.getElementById('bank-picker-modal').classList.remove('hidden');
+}
+window.openBankPicker = openBankPicker;
+
+// Buka semula bank picker utk payout 'processing' sedia ada — guna
+// bank_snapshot (bank yg disahkan SEMASA "Bayar" dimulakan), bukan data
+// affiliate terkini (elak tak konsisten kalau affiliate tukar bank lepas tu).
+function reopenBankPicker(referralId) {
+  const r = allReferrals.find(x => x.id === referralId);
+  if (!r || !r.payout) return;
+  const snap = r.payout.bank_snapshot || {};
+  const p = r.referrer || {};
+  openBankPicker({ full_name: p.full_name || p.mrn, bank_name: snap.bank_name, bank_account_no: snap.bank_account_no, bank_account_holder: snap.bank_account_holder, amount: r.commission_amount });
+}
+window.reopenBankPicker = reopenBankPicker;
+
+function closeBankPicker() {
+  document.getElementById('bank-picker-modal').classList.add('hidden');
+  bpCurrent = null;
+}
+window.closeBankPicker = closeBankPicker;
+
+function bankPickerDetailsText() {
+  if (!bpCurrent) return '';
+  return [
+    bpCurrent.full_name,
+    bpCurrent.bank_name,
+    bpCurrent.bank_account_no,
+    bpCurrent.bank_account_holder ? `Nama Pemegang: ${bpCurrent.bank_account_holder}` : null,
+    `Jumlah: ${fmtRM(bpCurrent.amount)}`,
+  ].filter(Boolean).join('\n');
+}
+
+async function copyBankPickerDetails() {
+  const text = bankPickerDetailsText();
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    const btn = document.getElementById('bp-copy-btn');
+    btn.textContent = '✅ Disalin!';
+    setTimeout(() => { btn.textContent = '📋 Salin Butiran Akaun'; }, 2000);
+  } catch (_) { banner('Gagal salin — sila salin manual', 'error'); }
+}
+window.copyBankPickerDetails = copyBankPickerDetails;
+
+async function openBankPortal(url) {
+  await copyBankPickerDetails();
+  window.open(url, '_blank', 'noopener');
+}
+window.openBankPortal = openBankPortal;
 
 function csvEscape(v) {
   const s = String(v ?? '');
@@ -528,7 +639,8 @@ function renderAgentDetailTable() {
         <button data-rbac="affiliate.edit" onclick="voidRef('${r.id}')" class="text-[11px] px-2 py-1 rounded-lg border border-terracotta/40 text-terracotta hover:bg-terracotta/5">Cancel</button>`;
     }
     if (ds === 'processing') {
-      actions += `<button data-rbac="affiliate.edit" onclick="openPayModal('${r.payout.id}')" class="text-[11px] px-2 py-1 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 mr-1.5">Selesai</button>
+      actions += `<button data-rbac="affiliate.edit" onclick="reopenBankPicker('${r.id}')" title="Salin butiran bank / pergi ke portal banking" class="text-[11px] px-2 py-1 rounded-lg border border-ink/15 text-ink/70 hover:bg-ink/5 mr-1.5">🏦</button>
+        <button data-rbac="affiliate.edit" onclick="openPayModal('${r.payout.id}')" class="text-[11px] px-2 py-1 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 mr-1.5">Selesai</button>
         <button data-rbac="affiliate.delete" onclick="rejectPayout('${r.payout.id}')" class="text-[11px] px-2 py-1 rounded-lg border border-terracotta/40 text-terracotta hover:bg-terracotta/5">Tolak</button>`;
     }
     if (ds === 'paid') {

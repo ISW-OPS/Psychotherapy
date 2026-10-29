@@ -301,12 +301,19 @@ async function processOneContact(svc: any, locationId: string, c: any, requirePa
       ghlContactId: c.id || null,
     })
 
-    // Cuba atribut rujukan kpd affiliate GHL (28 Okt 2026, padan ikut nama,
-    // best-effort — lihat attributeReferralToAffiliate() di _shared/ghl-sync.ts).
-    // Kegagalan di sini TAK gagalkan sync contact ni.
-    if (referredByAffiliateName) {
-      try { await attributeReferralToAffiliate(svc, { patientId, affiliateName: referredByAffiliateName }) }
-      catch (_) { /* best-effort, tak kritikal */ }
+    // Cuba atribut rujukan kpd affiliate GHL (28 Okt, dikemaskini 29 Okt
+    // 2026 — padan email/phone DULU, nama fallback terakhir sahaja — lihat
+    // attributeReferralToAffiliate() di _shared/ghl-sync.ts). Best-effort,
+    // kegagalan di sini TAK gagalkan sync contact ni.
+    if (referredByAffiliateName || referredByAffiliateEmail || referredByAffiliatePhone) {
+      try {
+        await attributeReferralToAffiliate(svc, {
+          patientId,
+          affiliateName: referredByAffiliateName,
+          affiliateEmail: referredByAffiliateEmail,
+          affiliatePhone: referredByAffiliatePhone,
+        })
+      } catch (_) { /* best-effort, tak kritikal */ }
     }
 
     let appointmentSynced = false

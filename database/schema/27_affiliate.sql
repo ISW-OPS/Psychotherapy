@@ -394,8 +394,13 @@ BEGIN
 
   -- Cuba kesan pakej dari baris pertama items[] (teks kod ATAU UUID —
   -- ikut ketidakkonsistenan active_package_id yang direkod dlm memory).
+  -- FIX 29 Okt 2026: kunci JSON SEBENAR yang ditulis setiap laluan insert
+  -- psy_payments (payments-initiate, manual KOB dll.) ialah `reference_id`
+  -- — `packageId` TAK PERNAH wujud dalam items[] (bug lama, qualifying_
+  -- package_id sentiasa NULL utk SEMUA rujukan sebelum ni, bukan isu
+  -- khusus GHL affiliate).
   BEGIN
-    v_pkg_text := NEW.items -> 0 ->> 'packageId';
+    v_pkg_text := COALESCE(NEW.items -> 0 ->> 'reference_id', NEW.items -> 0 ->> 'packageId');
   EXCEPTION WHEN OTHERS THEN
     v_pkg_text := NULL;
   END;
