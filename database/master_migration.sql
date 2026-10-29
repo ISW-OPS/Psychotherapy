@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-10-29T08:40:45.838702Z
+-- Generated: 2026-10-29T08:58:07.521994Z
 -- Jumlah fail: 41
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -5652,20 +5652,27 @@ ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS print_file_size BIGINT;
 -- (cth Gulung) tapi diberi pesakit dlm unit kecil (cth Inci) tanpa tolak 1 Gulung
 -- penuh setiap kali. qty_in_stock dilebarkan ke 4dp (asal 2dp) sebab deduct pecahan
 -- (cth 1/30 Gulung = 0.0333) akan terkumpul ralat bundaran ketara kalau cuma 2dp.
+-- Susunan penting: DROP constraint lama + UPDATE row sedia ada WAJIB sebelum
+-- ADD constraint baharu (lagi ketat, tiada 'Biji (pcs)'/'Paket') — kalau tak,
+-- ADD akan gagal sbb row sedia ada guna nilai yg dah dibuang.
 ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_unit_check;
-ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_unit_check
-  CHECK (unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
-                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
-                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
-ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS issue_unit TEXT
-  CHECK (issue_unit IS NULL OR issue_unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
-                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
-                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
+ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_issue_unit_check;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS issue_unit TEXT;
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS issue_units_per_stock_unit NUMERIC(10,4);
 ALTER TABLE psy_inventory_items ALTER COLUMN qty_in_stock TYPE NUMERIC(12,4);
 -- NOTA: psy_inventory_stock_by_location.qty_in_stock & psy_stock_movements.qty/balance_after
 -- turut dilebarkan ke NUMERIC(12,4) — lihat ALTER COLUMN TYPE di 34_inventory_locations.sql
 -- & 36_stock_movements.sql (jadual tu ditakrif SELEPAS fail ni, jadi ALTER kena di sana).
+UPDATE psy_inventory_items SET unit = 'Pcs' WHERE unit = 'Biji (pcs)';
+UPDATE psy_inventory_items SET issue_unit = 'Pcs' WHERE issue_unit = 'Biji (pcs)';
+ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_unit_check
+  CHECK (unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
+                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
+                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
+ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_issue_unit_check
+  CHECK (issue_unit IS NULL OR issue_unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
+                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
+                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
 COMMENT ON COLUMN psy_inventory_items.issue_unit IS
   'Unit diberi kepada pesakit, jika berbeza drpd unit stok (cth stok=Gulung, issue_unit=Inci). NULL = tiada tukaran.';
 COMMENT ON COLUMN psy_inventory_items.issue_units_per_stock_unit IS

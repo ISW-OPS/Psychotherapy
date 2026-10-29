@@ -163,21 +163,34 @@ WHERE r.qualifying_package_id IS NULL AND r.qualifying_payment_id IS NOT NULL;
 -- (kena taip 0.033 Gulung) sebab tiada konsep unit kecil langsung.
 -- qty_in_stock/qty/balance_after dilebarkan 2dp→4dp supaya pecahan macam
 -- 1/30 tak hilang ketepatan bila terkumpul banyak kali.
+--
+-- NOTA susunan (fix 29 Okt lewat petang): DROP constraint lama + UPDATE
+-- data WAJIB jalan SEBELUM ADD constraint baharu yg lagi ketat (tiada
+-- lagi 'Biji (pcs)'/'Paket') — kalau tak, ADD constraint akan gagal sbb
+-- row sedia ada masih guna nilai yg dah dibuang drpd senarai dibenarkan.
 -- ═══════════════════════════════════════════════════════════════════
 ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_unit_check;
-ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_unit_check
-  CHECK (unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
-                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
-                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
-ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS issue_unit TEXT
-  CHECK (issue_unit IS NULL OR issue_unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
-                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
-                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
+ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_issue_unit_check;
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS issue_unit TEXT;
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS issue_units_per_stock_unit NUMERIC(10,4);
 ALTER TABLE psy_inventory_items ALTER COLUMN qty_in_stock TYPE NUMERIC(12,4);
 ALTER TABLE psy_inventory_stock_by_location ALTER COLUMN qty_in_stock TYPE NUMERIC(12,4);
 ALTER TABLE psy_stock_movements ALTER COLUMN qty TYPE NUMERIC(12,4);
 ALTER TABLE psy_stock_movements ALTER COLUMN balance_after TYPE NUMERIC(12,4);
+
+-- Nilai lapuk dibuang drpd senarai dibenarkan — tukar row sedia ada DULU
+-- sebelum constraint baharu (lagi ketat) ditambah di bawah.
+UPDATE psy_inventory_items SET unit = 'Pcs' WHERE unit = 'Biji (pcs)';
+UPDATE psy_inventory_items SET issue_unit = 'Pcs' WHERE issue_unit = 'Biji (pcs)';
+
+ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_unit_check
+  CHECK (unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
+                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
+                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
+ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_issue_unit_check
+  CHECK (issue_unit IS NULL OR issue_unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
+                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
+                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
 COMMENT ON COLUMN psy_inventory_items.issue_unit IS
   'Unit diberi kepada pesakit, jika berbeza drpd unit stok (cth stok=Gulung, issue_unit=Inci). NULL = tiada tukaran.';
 COMMENT ON COLUMN psy_inventory_items.issue_units_per_stock_unit IS
@@ -195,22 +208,3 @@ DROP POLICY IF EXISTS "Staff read locations" ON psy_inventory_locations;
 DROP POLICY IF EXISTS "Staff manage locations" ON psy_inventory_locations;
 CREATE POLICY "Staff manage locations" ON psy_inventory_locations FOR ALL
   USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
-
--- 29 Okt 2026 (bahagian 5) — "Biji (pcs)" -> "Pcs" (nama lagi ringkas).
--- NOTA: psy_inventory_items_issue_unit_check kena DROP+ADD eksplisit di sini
--- sbb "ALTER ... ADD COLUMN IF NOT EXISTS issue_unit ... CHECK(...)" di
--- bahagian 2 TAK re-apply CHECK baharu bila lajur tu dah wujud (no-op) —
--- row 'Paket' lama pun masih tersekat kat situ walaupun unit_check dah
--- dibaiki awal ni, punca sebenar kenapa fix "Paket" sebelum ni tak lengkap.
-ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_unit_check;
-ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_issue_unit_check;
-UPDATE psy_inventory_items SET unit = 'Pcs' WHERE unit = 'Biji (pcs)';
-UPDATE psy_inventory_items SET issue_unit = 'Pcs' WHERE issue_unit = 'Biji (pcs)';
-ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_unit_check
-  CHECK (unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
-                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
-                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
-ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_issue_unit_check
-  CHECK (issue_unit IS NULL OR issue_unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
-                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
-                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
