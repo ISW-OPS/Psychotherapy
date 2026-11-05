@@ -1159,6 +1159,23 @@ function renderSuppliesList(wk, items, field = 'supplies') {
     const item = (window._invItems || []).find(it => it.id === s.item_id);
     const itemName = item?.name || s.item_name || '(item tak ditemui)';
     const itemUnit = item?.unit || s.item_unit || '';
+    const ratio = Number(item?.issue_units_per_stock_unit) || 0;
+    // Item ada issue_unit (cth stok=Gulung, pesakit guna Inci) — admin taip
+    // terus dlm unit kecil (cth "1 Inci"), qty DISIMPAN dlm unit STOK (sama
+    // macam sebelum ni) supaya deductSessionSupplies() & perbandingan
+    // dijangka-vs-diberi di patient-hub.html tak perlu ubah langsung.
+    if (item?.issue_unit && ratio > 0) {
+      const issueQty = Math.round((Number(s.qty) || 0) * ratio * 10000) / 10000;
+      return `<div class="flex gap-1 mb-1 items-center">
+        ${pkgDragHandle(wk, field, i)}
+        <span class="flex-1 px-2 py-1 bg-white border border-ink/15 rounded text-xs truncate">${escapeHtml(itemName)}</span>
+        <input type="number" value="${issueQty}" min="0" step="0.5"
+          oninput="updateSupplyQty(${wk}, ${i}, this.value, '${field}', 'issue')"
+          class="w-14 px-1.5 py-1 border border-ink/15 rounded text-xs text-center focus:outline-none focus:border-navy">
+        <span class="text-[10px] text-ink/45 w-10" title="1 ${escapeHtml(itemUnit)} = ${ratio} ${escapeHtml(item.issue_unit)}">${escapeHtml(item.issue_unit)}</span>
+        <button type="button" onclick="removeItem(${wk}, '${field}', ${i})" class="px-2 text-terracotta hover:bg-terracotta/10 rounded text-xs">×</button>
+      </div>`;
+    }
     return `<div class="flex gap-1 mb-1 items-center">
       ${pkgDragHandle(wk, field, i)}
       <span class="flex-1 px-2 py-1 bg-white border border-ink/15 rounded text-xs truncate">${escapeHtml(itemName)}</span>
@@ -1174,10 +1191,19 @@ function renderSuppliesList(wk, items, field = 'supplies') {
       class="text-[10px] font-semibold text-navy border border-dashed border-navy/30 px-2 py-1 rounded hover:bg-navy hover:text-white w-full mt-1">+ Pilih dari Inventory</button>`;
 }
 
-function updateSupplyQty(wk, idx, val, field = 'supplies') {
+function updateSupplyQty(wk, idx, val, field = 'supplies', mode = 'stock') {
   const it = getWeekItem(wk);
   if (!it || !it[field]?.[idx]) return;
-  it[field][idx].qty = parseFloat(val) || 0;
+  const entry = it[field][idx];
+  let qty = parseFloat(val) || 0;
+  if (mode === 'issue') {
+    // val ditaip dlm issue_unit (cth Inci) — tukar kpd unit STOK sebelum simpan,
+    // supaya qty yg disimpan konsisten dgn deductSessionSupplies() & psy_stock_movements.
+    const item = (window._invItems || []).find(i => i.id === entry.item_id);
+    const ratio = Number(item?.issue_units_per_stock_unit) || 1;
+    qty = Math.round((qty / ratio) * 10000) / 10000;
+  }
+  entry.qty = qty;
   saveDraftDebounced();
 }
 
@@ -1361,7 +1387,12 @@ function addSupplyFromPicker(itemId) {
   if (!Array.isArray(wkItem[f])) wkItem[f] = [];
   if (wkItem[f].some(s => typeof s === 'object' && s.item_id === itemId)) return;
   const item = (window._invItems || []).find(it => it.id === itemId);
-  wkItem[f].push({ item_id: itemId, item_name: item?.name || '', item_unit: item?.unit || '', qty: 1 });
+  // Default qty 1 dlm unit STOK — tapi kalau item ada issue_unit (cth pesakit
+  // guna Inci drpd stok Gulung), "1 Gulung" default tak masuk akal (terlalu
+  // banyak), jadi default 1 ISSUE-unit (cth 1 Inci) sebaliknya.
+  const ratio = Number(item?.issue_units_per_stock_unit) || 0;
+  const defaultQty = (item?.issue_unit && ratio > 0) ? Math.round((1 / ratio) * 10000) / 10000 : 1;
+  wkItem[f].push({ item_id: itemId, item_name: item?.name || '', item_unit: item?.unit || '', qty: defaultQty });
   renderCoachingScheduleEditor();
   saveDraftDebounced();
   renderSupplyPickerList();
@@ -2668,7 +2699,7 @@ window.switchETab = switchETab;
   // Load inventory items + procedure kits untuk supply picker
   try {
     const [{ data: invData }, { data: kitsData }] = await Promise.all([
-      window.db.from('psy_inventory_items').select('id, name, unit, category').eq('is_active', true).order('name'),
+      window.db.from('psy_inventory_items').select('id, name, unit, category, issue_unit, issue_units_per_stock_unit').eq('is_active', true).order('name'),
       window.db.from('psy_procedure_kits').select('*').eq('is_active', true).order('category').order('name'),
     ]);
     window._invItems = invData || [];
