@@ -518,3 +518,119 @@ WHERE NOT EXISTS (
 );
 
 DROP TABLE IF EXISTS _import_coaching_supplies;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 5 Nov 2026 (bahagian 10) — Import data: 46 produk "Equipment Event"
+-- (bekalan/peralatan acara Santapan Fitrah + Booth/Seminar — pinggan, pan,
+-- meja lipat, bateri acara, pamplet dll), consumption_type='general'
+-- (Internal Use), min_qty=1, requires_approval=true (ikut corak, tiada
+-- arahan teks eksplisit kali ni). Kategori baharu "Equipment Event".
+-- Lokasi BAHARU "Event Store" (tiada dlm psy_inventory_locations lagi —
+-- berbeza drpd shared/equipmentMasterData.js punya senarai Storage Location
+-- utk MODUL EQUIPMENT berasingan yg turut ada "Event Store"; dua sistem
+-- lain, kebetulan nama sama, tiada konflik).
+--
+-- DIBUANG 2 baris DUPLICATE (nama lain ejaan/huruf besar-kecil tapi data
+-- SAMA — harga, stok, kategori semua padan):
+-- - Baris #40 "Honey Taster Spoon" — duplicate #25 "Honey tester spoon".
+-- - Baris #27 "Kain alas putih" (Booth/Seminar) — duplicate #18 "Kain alas
+--   Putih" (Santapan Fitrah), harga sama RM15-45. Dianggap 1 kain sama
+--   dipakai utk 2 acara, bukan 2 produk berasingan.
+-- Baris #30 "Banting" — item NAMA SAMA PERSIS dah wujud sedia ada (INV-142,
+-- kategori Books & Printed Materials) — WHERE NOT EXISTS akan skip
+-- automatik, TAK duplicate.
+--
+-- UOM asal byk baris letak SAIZ FIZIKAL (cth "18 cm", "42 cm") bukan unit
+-- stok sah — ditukar ke Pcs, saiz disimpan internal_notes bersama konteks
+-- acara asal (lajur "Description" templat asal = "Event: Santapan Fitrah"/
+-- "Event: Booth/Seminar", BUKAN deskripsi produk — jadi dipindah ke
+-- internal_notes, bukan notes/Product Description).
+-- Harga "X per pack/unit/copy/piece" — suffix dibuang, nombor sahaja diambil.
+-- "30+"/"10+" (Opening Stock) — tanda '+' dibuang, nombor dasar diambil.
+-- ═══════════════════════════════════════════════════════════════════
+DROP TABLE IF EXISTS _import_equipment_event;
+CREATE TEMP TABLE _import_equipment_event (
+  name TEXT, internal_notes TEXT, unit TEXT,
+  price_min NUMERIC, price_max NUMERIC, opening_qty NUMERIC
+);
+
+INSERT INTO _import_equipment_event VALUES
+('Pinggan Porselin 18 cm', 'Event: Santapan Fitrah. Saiz 18 cm.', 'Pcs', 3, 20, 1),
+('Mangkuk Porselin 24 cm', 'Event: Santapan Fitrah. Saiz 24 cm.', 'Pcs', 3, 20, 1),
+('Mangkuk Porselin 15 cm', 'Event: Santapan Fitrah. Saiz 15 cm.', 'Pcs', 3, 20, 1),
+('Papan Pemotong Plastik', 'Event: Santapan Fitrah', 'Pcs', 25, 100, 1),
+('Pan 42 cm', 'Event: Santapan Fitrah. Saiz 42 cm.', 'Pcs', 25, 100, 2),
+('Pan 36 cm', 'Event: Santapan Fitrah. Saiz 36 cm.', 'Pcs', 25, 100, 1),
+('Apron', 'Event: Santapan Fitrah', 'Pek', 20, 20, 2),
+('Mangkuk Porcelin kecil', 'Event: Santapan Fitrah', 'Pek', 3, 20, 8),
+('Mangkuk Plastik kecil', 'Event: Santapan Fitrah', 'Pek', 3, 30, 8),
+('Penapis Besi', 'Event: Santapan Fitrah', 'Pcs', 8, 35, 1),
+('Sudip kayu', 'Event: Santapan Fitrah', 'Pcs', 3, 15, 3),
+('Senduk kayu', 'Event: Santapan Fitrah', 'Pcs', 3, 15, 1),
+('Pinggan plastik Hijau 24 cm', 'Event: Santapan Fitrah. Saiz 24 cm.', 'Pcs', 5, 15, 2),
+('Mangkuk plastk hijau 15 cm', 'Event: Santapan Fitrah. Saiz 15 cm.', 'Pcs', 3, 30, 3),
+('Backdrop Santapan Fitrah', 'Event: Santapan Fitrah', 'Pcs', 30, 250, 1),
+('Meja lipat', 'Event: Santapan Fitrah', 'Pcs', 80, 150, 2),
+('Kabinet dapur gas mudah alih', 'Event: Santapan Fitrah', 'Pcs', 150, 250, 1),
+('Kain alas Putih', 'Event: Santapan Fitrah', 'Pcs', 15, 45, 1),
+('Kain alas Hitam', 'Event: Santapan Fitrah', 'Pcs', 15, 45, 1),
+('Portables Stove', 'Event: Santapan Fitrah', 'Unit', 100, 150, 1),
+('Mesin Pengisar elektrik', 'Event: Santapan Fitrah', 'Unit', 50, 180, 1),
+('Alas tahan haba', 'Event: Santapan Fitrah', 'Pcs', 3, 5, 1),
+('Buku Stand', 'Event: Booth/Seminar', 'Pcs', 20, 80, 1),
+('Poster stand', 'Event: Booth/Seminar', 'Pcs', 40, 250, 24),
+('Honey tester spoon', 'Event: Booth/Seminar', 'Pek', 3, 12, 5),
+('Tong sampah kecil', 'Event: Booth/Seminar', 'Pcs', 5, 20, 1),
+('Troli hitam', 'Event: Booth/Seminar', 'Unit', 50, 180, 1),
+('Troli besi biasa', 'Event: Booth/Seminar', 'Unit', 50, 180, 1),
+('Banting', 'Event: Booth/Seminar', 'Pcs', 40, 250, 1),
+('Roll Up Banting', 'Event: Booth/Seminar', 'Gulung', 40, 250, 1),
+('Pamplet @ Brochure Madu', 'Event: Booth/Seminar', 'Pcs', 1, 15, 1),
+('Sudu plastic pakai buang', 'Event: Santapan Fitrah', 'Pcs', 3, 12, 30),
+('Pinggan plastik pakai buang', 'Event: Santapan Fitrah', 'Pek', 5, 15, 10),
+('Cawan kertas', 'Event: Santapan Fitrah', 'Pcs', 5, 15, 10),
+('Tisu gulung', 'Event: Santapan Fitrah', 'Pek', 3, 8, 3),
+('Sarung tangan plastk plastik pakai buang', 'Event: Santapan Fitrah', 'Pcs', 5, 15, 10),
+('Tong gas butana', 'Event: Santapan Fitrah', 'Pcs', 3, 3, 3),
+('Voucher RM 100', 'Event: Santapan Fitrah', 'Pcs', 100, 100, 10),
+('Paparan Qr Pembayaran', 'Event: Booth/Seminar', 'Pcs', 10, 10, 1),
+('Beg sampah', 'Event: Booth/Seminar', 'Pek', 5, 20, 10),
+('Beg Pembelian', 'Event: Booth/Seminar', 'Pek', 5, 10, 10),
+('Poster Madu @ Produk', 'Event: Booth/Seminar', 'Pcs', 1, 20, 10),
+('Flyer', 'Event: Booth/Seminar', 'Pcs', 1, 3, 10),
+('Banner', 'Event: Booth/Seminar', 'Pcs', 40, 250, 10);
+
+INSERT INTO psy_inventory_categories (name) VALUES ('Equipment Event') ON CONFLICT (name) DO NOTHING;
+INSERT INTO psy_inventory_locations (name, is_default) VALUES ('Event Store', false) ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO psy_inventory_items (name, internal_notes, unit, category, consumption_type, min_qty,
+  source_type, status, is_active, requires_approval, supplier_info)
+SELECT ip.name, ip.internal_notes, ip.unit, 'Equipment Event', 'general', 1,
+  'am', 'active', true, true,
+  jsonb_strip_nulls(jsonb_build_object(
+    'cost_per_unit', CASE WHEN ip.price_min = ip.price_max THEN ip.price_min ELSE NULL END,
+    'cost_per_unit_min', CASE WHEN ip.price_min = ip.price_max THEN NULL ELSE ip.price_min END,
+    'cost_per_unit_max', CASE WHEN ip.price_min = ip.price_max THEN NULL ELSE ip.price_max END
+  ))
+FROM _import_equipment_event ip
+WHERE NOT EXISTS (SELECT 1 FROM psy_inventory_items existing WHERE existing.name = ip.name);
+
+INSERT INTO psy_inventory_stock_by_location (item_id, location_id, qty_in_stock)
+SELECT i.id, loc.id, ip.opening_qty
+FROM _import_equipment_event ip
+JOIN psy_inventory_items i ON i.name = ip.name
+JOIN psy_inventory_locations loc ON loc.name = 'Event Store'
+WHERE NOT EXISTS (SELECT 1 FROM psy_inventory_stock_by_location sbl WHERE sbl.item_id = i.id AND sbl.location_id = loc.id);
+
+INSERT INTO psy_stock_movements (item_id, item_name, location_id, movement_type, qty, balance_after, reference_type, notes, actor_name)
+SELECT i.id, i.name, loc.id, 'in', ip.opening_qty, ip.opening_qty, 'opening_stock', 'Import data awal — 46 produk Equipment Event (5 Nov 2026)', 'System Import'
+FROM _import_equipment_event ip
+JOIN psy_inventory_items i ON i.name = ip.name
+JOIN psy_inventory_locations loc ON loc.name = 'Event Store'
+WHERE NOT EXISTS (
+  SELECT 1 FROM psy_stock_movements sm
+  WHERE sm.item_id = i.id AND sm.reference_type = 'opening_stock'
+    AND sm.notes = 'Import data awal — 46 produk Equipment Event (5 Nov 2026)'
+);
+
+DROP TABLE IF EXISTS _import_equipment_event;
