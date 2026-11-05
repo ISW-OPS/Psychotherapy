@@ -45,6 +45,24 @@ ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_issue_unit_ch
                    'Unit','Gram','Kg','Naskhah',
                    'Liter (L)','Mililiter (ml)','Meter (m)','Sentimeter (cm)','Inci (inch)'));
 
+-- 5 Nov 2026 (bahagian 3c) — Jadual urus kategori produk (Add/Rename/Padam) —
+-- psy_inventory_items.category KEKAL TEXT bebas (tiada perubahan di tempat
+-- lain), jadual ni cuma sumber dropdown + "Urus Kategori" di item-form.html,
+-- ganti cara lama (DISTINCT drpd item sedia ada). Padam SELAMAT (tiada FK).
+CREATE TABLE IF NOT EXISTS psy_inventory_categories (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        TEXT NOT NULL UNIQUE,
+  is_active   BOOLEAN NOT NULL DEFAULT true,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE psy_inventory_categories ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Staff manage categories" ON psy_inventory_categories;
+CREATE POLICY "Staff manage categories" ON psy_inventory_categories FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+INSERT INTO psy_inventory_categories (name)
+SELECT DISTINCT category FROM psy_inventory_items WHERE category IS NOT NULL AND category <> ''
+ON CONFLICT (name) DO NOTHING;
+
 -- 5 Nov 2026 (bahagian 4) — Kit Prosedur/jadual pakej (pakej-edit.html) SEBENARNYA
 -- tiada pengiraan issue_unit (cth stok=Gulung tapi pesakit guna Inci) — admin
 -- terpaksa taip pecahan stok manual (cth 0.033 Gulung utk 1 Inci), tiada cara

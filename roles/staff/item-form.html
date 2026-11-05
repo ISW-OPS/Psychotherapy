@@ -67,7 +67,10 @@
 
           <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
             <div>
-              <label class="text-sm font-semibold text-ink">Category <span class="text-terracotta">*</span></label>
+              <div class="flex items-center justify-between">
+                <label class="text-sm font-semibold text-ink">Category <span class="text-terracotta">*</span></label>
+                <button type="button" onclick="openManageCategories()" class="text-[11px] font-semibold text-teal hover:underline whitespace-nowrap">⚙ Urus Kategori</button>
+              </div>
               <select id="item-category" onchange="onCategorySelectChange()" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none"></select>
               <input id="item-category-new" type="text" placeholder="Nama kategori baharu" class="hidden w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none">
             </div>
@@ -268,13 +271,18 @@ function updateQtyUnitSuffix() {
 const UNIT_FIXED = window.ISW_UNITS || ['Unit'];
 
 async function populateSuggestions() {
-  const { data } = await window.db.from('psy_inventory_items').select('category');
-  const cats = [...new Set((data || []).map(i => i.category).filter(Boolean))].sort();
-  document.getElementById('item-category').innerHTML = cats.map(c => `<option value="${escHtml(c)}">${escHtml(c)}</option>`).join('')
-    + '<option value="__new__">+ Tambah Kategori Baharu</option>';
+  await loadCategories();
   document.getElementById('item-unit').innerHTML = UNIT_FIXED.map(u => `<option value="${escHtml(u)}">${escHtml(u)}</option>`).join('');
   document.getElementById('item-issue-unit').innerHTML = '<option value="">— Sama seperti Unit Stok —</option>'
     + UNIT_FIXED.map(u => `<option value="${escHtml(u)}">${escHtml(u)}</option>`).join('');
+}
+
+let allCategories = [];
+async function loadCategories() {
+  const { data } = await window.db.from('psy_inventory_categories').select('*').eq('is_active', true).order('name');
+  allCategories = data || [];
+  document.getElementById('item-category').innerHTML = allCategories.map(c => `<option value="${escHtml(c.name)}">${escHtml(c.name)}</option>`).join('')
+    + '<option value="__new__">+ Tambah Kategori Baharu</option>';
 }
 
 // Papar pratonton tukaran cth "1 Gulung = 30 Inci" semasa admin isi unit pesakit.
@@ -410,6 +418,69 @@ async function toggleLocationActive(id, isActive, isDefault, stock) {
   await renderManageLocationsList();
 }
 window.toggleLocationActive = toggleLocationActive;
+
+// ── Urus Kategori (rename / padam) ──────────────────────────────────────
+// Padam SELAMAT di sini (tiada FK — category cuma TEXT bebas pada
+// psy_inventory_items, bukan rujukan). Kalau ada item sedia ada guna nama
+// kategori ni, nilai TEXT pada item tu kekal walau row kategori dipadam
+// (cuma hilang drpd senarai pilihan utk produk baharu) — beri amaran dulu.
+async function openManageCategories() {
+  document.getElementById('categories-modal').classList.remove('hidden');
+  await renderManageCategoriesList();
+}
+window.openManageCategories = openManageCategories;
+
+function closeManageCategories() {
+  document.getElementById('categories-modal').classList.add('hidden');
+}
+window.closeManageCategories = closeManageCategories;
+
+async function renderManageCategoriesList() {
+  const list = document.getElementById('categories-list');
+  list.innerHTML = '<p class="text-xs text-ink/40 text-center py-4">Memuatkan...</p>';
+  const [{ data: cats }, { data: itemRows }] = await Promise.all([
+    window.db.from('psy_inventory_categories').select('*').order('is_active', { ascending: false }).order('name'),
+    window.db.from('psy_inventory_items').select('category'),
+  ]);
+  const countByCat = {};
+  (itemRows || []).forEach(r => { if (r.category) countByCat[r.category] = (countByCat[r.category] || 0) + 1; });
+
+  list.innerHTML = (cats || []).map(c => {
+    const used = countByCat[c.name] || 0;
+    return `<div class="flex items-center gap-2 py-2.5 border-b border-ink/5 last:border-0 ${c.is_active ? '' : 'opacity-50'}">
+      <input value="${escHtml(c.name)}" data-cat-id="${c.id}" class="cat-rename-input flex-1 px-2.5 py-1.5 border border-ink/15 rounded-lg text-sm focus:border-navy outline-none">
+      <span class="text-[10px] text-ink/40 whitespace-nowrap">${used} item</span>
+      <button type="button" onclick="saveCategoryRename('${c.id}')" class="text-[11px] font-semibold text-teal hover:underline whitespace-nowrap">Simpan</button>
+      <button type="button" onclick="deleteCategoryRow('${c.id}', '${escHtml(c.name)}', ${used})"
+        class="text-[11px] font-semibold text-terracotta hover:underline whitespace-nowrap">Padam</button>
+    </div>`;
+  }).join('') || '<p class="text-xs text-ink/40 text-center py-4">Tiada kategori</p>';
+}
+
+async function saveCategoryRename(id) {
+  const input = document.querySelector(`.cat-rename-input[data-cat-id="${id}"]`);
+  const name = input.value.trim();
+  if (!name) { banner('Nama kategori diperlukan', 'error'); return; }
+  const { error } = await window.db.from('psy_inventory_categories').update({ name }).eq('id', id);
+  if (error) { banner('Gagal kemaskini kategori: ' + error.message, 'error'); return; }
+  banner('Kategori dikemaskini');
+  await loadCategories();
+  await renderManageCategoriesList();
+}
+window.saveCategoryRename = saveCategoryRename;
+
+async function deleteCategoryRow(id, name, used) {
+  const msg = used > 0
+    ? `Padam kategori "${name}"? ${used} item sedia ada masih guna nama ni — item tu TAK terjejas (nama kategori kekal sbg teks pada item), cuma tak lagi ada dlm senarai pilihan utk produk baharu.`
+    : `Padam kategori "${name}"?`;
+  if (!confirm(msg)) return;
+  const { error } = await window.db.from('psy_inventory_categories').delete().eq('id', id);
+  if (error) { banner('Gagal padam kategori: ' + error.message, 'error'); return; }
+  banner('Kategori dipadam');
+  await loadCategories();
+  await renderManageCategoriesList();
+}
+window.deleteCategoryRow = deleteCategoryRow;
 
 async function loadSuppliers() {
   const { data } = await window.db.from('psy_suppliers').select('*').eq('status', 'active').order('name');
@@ -592,6 +663,11 @@ async function saveItem() {
   const description = document.getElementById('item-notes').value.trim();
   const category = getCategoryValue();
   if (!category) { banner('Kategori diperlukan', 'error'); document.getElementById('item-category').focus(); return; }
+  const isNewCategory = document.getElementById('item-category').value === '__new__';
+  if (isNewCategory) {
+    const { error: catErr } = await window.db.from('psy_inventory_categories').insert({ name: category }).select('id').single();
+    if (catErr && !catErr.message.includes('duplicate')) { banner('Gagal tambah kategori: ' + catErr.message, 'error'); return; }
+  }
   const unit = document.getElementById('item-unit').value.trim();
   if (!unit) { banner('Unit diperlukan', 'error'); document.getElementById('item-unit').focus(); return; }
   const issueUnit = document.getElementById('item-issue-unit').value.trim() || null;
@@ -777,6 +853,20 @@ async function saveItem() {
     <div id="locations-list" class="p-5 overflow-y-auto"></div>
     <div class="px-5 py-3 border-t border-ink/10 text-[11px] text-ink/40">
       Padam terus tak dibenarkan (lokasi lalu dirujuk sejarah stok) — guna "Nyahaktif" sahaja. Lokasi yg masih ada stok tak boleh dinyahaktifkan.
+    </div>
+  </div>
+</div>
+
+<div id="categories-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/50" onclick="closeManageCategories()"></div>
+  <div class="relative bg-white rounded-2xl max-w-lg w-full flex flex-col overflow-hidden shadow-2xl max-h-[85vh]">
+    <div class="px-5 py-4 border-b border-ink/10 flex items-center justify-between">
+      <h3 class="font-bold">Urus Kategori</h3>
+      <button onclick="closeManageCategories()" class="text-ink/40 text-xl leading-none">×</button>
+    </div>
+    <div id="categories-list" class="p-5 overflow-y-auto"></div>
+    <div class="px-5 py-3 border-t border-ink/10 text-[11px] text-ink/40">
+      Padam selamat — nama kategori lama pada item sedia ada tak terjejas, cuma hilang drpd senarai pilihan utk produk baharu.
     </div>
   </div>
 </div>

@@ -622,6 +622,31 @@ FROM (VALUES
 ) AS v(name, category, unit, qty_in_stock, min_qty, requires_approval, notes)
 WHERE NOT EXISTS (SELECT 1 FROM psy_inventory_items existing WHERE existing.name = v.name);
 
+-- ──── psy_inventory_categories ────
+-- Jadual urus kategori (Add/Rename/Padam) — BUKAN rujukan FK, psy_inventory_
+-- items.category KEKAL TEXT bebas spt sebelum ni (tiada perubahan di tempat
+-- lain yg baca item.category terus, cth laporan/dashboard/filter). Jadual ni
+-- cuma sumber senarai dropdown + "Urus Kategori" di item-form.html, ganti
+-- cara lama (DISTINCT drpd item sedia ada) supaya kategori boleh diurus
+-- (termasuk PADAM — selamat sbb tiada FK, item lama kekal guna nama TEXT tu
+-- walau row kategori dah dibuang) tanpa perlu ada produk guna dia dulu.
+CREATE TABLE IF NOT EXISTS psy_inventory_categories (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        TEXT NOT NULL UNIQUE,
+  is_active   BOOLEAN NOT NULL DEFAULT true,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE psy_inventory_categories ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Staff manage categories" ON psy_inventory_categories;
+CREATE POLICY "Staff manage categories" ON psy_inventory_categories FOR ALL
+  USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
+-- Seed drpd kategori sedia ada pada item (supaya tiada apa hilang drpd dropdown)
+INSERT INTO psy_inventory_categories (name)
+SELECT DISTINCT category FROM psy_inventory_items WHERE category IS NOT NULL AND category <> ''
+ON CONFLICT (name) DO NOTHING;
+
 -- ──── Seed: contoh kit prosedur ────
 INSERT INTO psy_procedure_kits (name, description, category, items) VALUES
 (
