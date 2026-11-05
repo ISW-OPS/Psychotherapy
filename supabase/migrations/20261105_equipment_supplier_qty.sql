@@ -72,3 +72,87 @@ ON CONFLICT (name) DO NOTHING;
 -- dikemaskini di kod) supaya admin boleh taip terus dlm Inci, auto ditukar &
 -- disimpan dlm unit stok (qty tetap unit stok — TIADA perubahan skema/data,
 -- cuma UI input). Tiada migration SQL diperlukan utk bahagian ni.
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 5 Nov 2026 (bahagian 5) — Import data: 26 produk "Clinical Equipment"
+-- (Oxygen Concentrator, Wheelchair, BP Monitor, dll) ke psy_inventory_items,
+-- semua lokasi "Clinical Store". Harga julat (cth "2000-4500") -> Harga
+-- Anggaran Min/Maks (supplier_info.cost_per_unit_min/max), Price (RM) tunggal
+-- dibiarkan kosong (cost_per_unit NULL) ikut keputusan "Harga Anggaran
+-- berdiri sendiri" hari ni. Harga "500+"/"1000+" (open-ended) -> Min sahaja,
+-- Maks NULL. Gambar produk TIADA fail sebenar diberi — image_url kekal NULL,
+-- perlu upload manual lepas ni. Opening stock masuk ke psy_inventory_stock_
+-- by_location (trigger psy_sync_item_stock_total auto-kemaskini qty_in_stock
+-- aggregate) + ledger psy_stock_movements (reference_type='opening_stock'),
+-- SAMA laluan dgn addStockToLocation() yg item-form.html guna — JANGAN set
+-- qty_in_stock terus pada INSERT psy_inventory_items. requires_approval=true
+-- utk SEMUA 26 produk ni (per arahan). Idempoten (boleh run semula selamat
+-- — skip baris yg nama/stok/ledger dah wujud).
+-- ═══════════════════════════════════════════════════════════════════
+-- NOTA: TANPA "ON COMMIT DROP" (meskipun TEMP) — Supabase SQL editor boleh
+-- auto-commit tiap statement berasingan, jadi "ON COMMIT DROP" boleh buang
+-- jadual ni SEBELUM statement INSERT seterusnya sempat baca. Jadual sementara
+-- ni hilang sendiri bila sesi/connection tamat; DROP eksplisit di hujung utk
+-- kemas serta-merta.
+DROP TABLE IF EXISTS _import_clinical_equipment;
+CREATE TEMP TABLE _import_clinical_equipment (
+  name TEXT, notes TEXT, unit TEXT, category TEXT, consumption_type TEXT,
+  min_qty NUMERIC, price NUMERIC, price_min NUMERIC, price_max NUMERIC, opening_qty NUMERIC
+);
+
+INSERT INTO _import_clinical_equipment VALUES
+('Oxygen Concentrator', 'Device that concentrates oxygen from ambient air for supplemental oxygen delivery.', 'Pcs', 'Clinical Equipment', 'general', 1, NULL, 2000, 4500, 1),
+('Humidifier Bottle', 'Bottle used with an oxygen concentrator to humidify the oxygen supply.', 'Botol', 'Clinical Equipment', 'general', 1, NULL, 15, 45, 1),
+('Oxygen Nasal Cannula', 'Nasal cannula for low-flow supplemental oxygen delivery.', 'Pek', 'Clinical Equipment', 'package', 1, NULL, 3, 10, 1),
+('Oxygen Tubing (Tiub)', 'Tubing connecting oxygen equipment to the patient delivery interface.', 'Pek', 'Clinical Equipment', 'package', 1, NULL, 5, 20, 1),
+('Oxygen Mask', 'Mask for supplemental oxygen delivery.', 'Pek', 'Clinical Equipment', 'package', 1, NULL, 3, 15, 1),
+('IV Infusion Stand', 'Stand for supporting IV fluid containers during infusion.', 'Pcs', 'Clinical Equipment', 'general', 1, 150, NULL, NULL, 3),
+('Venous Tourniquet', 'Reusable tourniquet for venous access and blood collection.', 'Pcs', 'Clinical Equipment', 'general', 1, 10, NULL, NULL, 2),
+('Digital Blood Pressure Monitor', 'Digital device for non-invasive blood pressure measurement.', 'Unit', 'Clinical Equipment', 'general', 1, 120, NULL, NULL, 2),
+('Blood Pressure Cuff (BP Cuff)', 'Inflatable cuff used with a blood pressure monitor.', 'Pcs', 'Clinical Equipment', 'general', 1, 50, NULL, NULL, 2),
+('Oximeter', 'Pulse oximeter for measuring oxygen saturation and pulse rate.', 'Unit', 'Clinical Equipment', 'general', 1, 60, NULL, NULL, 1),
+('Thermometer', 'Digital thermometer for body temperature measurement.', 'Unit', 'Clinical Equipment', 'general', 1, 20, NULL, NULL, 1),
+('Glucometer Machine', 'Blood glucose meter for capillary blood glucose testing.', 'Unit', 'Clinical Equipment', 'general', 1, NULL, 40, 150, 1),
+('Electronic Body Weight Scale', 'Electronic scale for measuring body weight.', 'Unit', 'Clinical Equipment', 'general', 1, 70, NULL, NULL, 1),
+('Plastic Kidney Tray', 'Kidney-shaped tray for holding clinical materials.', 'Unit', 'Clinical Equipment', 'general', 1, 10, NULL, NULL, 2),
+('Wheelchair', 'Mobility chair for patients with mobility difficulties.', 'Unit', 'Clinical Equipment', 'general', 1, 350, NULL, NULL, 1),
+('Nebuliser Machine / Compressor', 'Compressor unit for nebulised treatment.', 'Unit', 'Clinical Equipment', 'general', 1, NULL, 500, NULL, 1),
+('Nebuliser Cup / Chamber', 'Medication chamber or cup used with a nebuliser.', 'Pek', 'Clinical Equipment', 'package', 1, 8, NULL, NULL, 1),
+('Hydrogen Inhalation Machine', 'Clinical equipment for hydrogen inhalation treatment.', 'Unit', 'Clinical Equipment', 'general', 1, NULL, 1000, NULL, 1),
+('Adjustable Hospital Bed', 'Adjustable hospital bed for patient care and positioning.', 'Unit', 'Clinical Equipment', 'general', 1, NULL, 1200, 3500, 1),
+('Medical Air Mattress', 'Air mattress for patient care and support.', 'Unit', 'Clinical Equipment', 'general', 1, NULL, 250, 700, 1),
+('Mattress', 'Mattress for patient care and treatment support.', 'Unit', 'Clinical Equipment', 'general', 1, NULL, 150, 600, 1),
+('Nebuliser Mask', 'Mask interface for nebuliser treatment.', 'Pek', 'Clinical Equipment', 'package', 1, 10, NULL, NULL, 1),
+('Nebuliser Tubing', 'Tubing connecting the nebuliser to the patient interface.', 'Pek', 'Clinical Equipment', 'package', 1, 8, NULL, NULL, 1),
+('Hydrogen Nasal Cannula', 'Nasal cannula interface for hydrogen equipment.', 'Pek', 'Clinical Equipment', 'package', 1, 30, NULL, NULL, 1),
+('Hydrogen Tubing', 'Tubing connecting hydrogen equipment to the patient interface.', 'Pek', 'Clinical Equipment', 'package', 1, 25, NULL, NULL, 1),
+('C-Shape Overbed Table', 'C-shaped overbed table designed to fit around a patient''s bed.', 'Unit', 'Clinical Equipment', 'general', 1, 250, NULL, NULL, 1);
+
+INSERT INTO psy_inventory_categories (name) VALUES ('Clinical Equipment') ON CONFLICT (name) DO NOTHING;
+INSERT INTO psy_inventory_locations (name, is_default) VALUES ('Clinical Store', false) ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO psy_inventory_items (name, notes, unit, category, consumption_type, min_qty, source_type, status, is_active, requires_approval, supplier_info)
+SELECT ip.name, ip.notes, ip.unit, ip.category, ip.consumption_type, ip.min_qty, 'am', 'active', true, true,
+  jsonb_strip_nulls(jsonb_build_object('cost_per_unit', ip.price, 'cost_per_unit_min', ip.price_min, 'cost_per_unit_max', ip.price_max))
+FROM _import_clinical_equipment ip
+WHERE NOT EXISTS (SELECT 1 FROM psy_inventory_items existing WHERE existing.name = ip.name);
+
+INSERT INTO psy_inventory_stock_by_location (item_id, location_id, qty_in_stock)
+SELECT i.id, loc.id, ip.opening_qty
+FROM _import_clinical_equipment ip
+JOIN psy_inventory_items i ON i.name = ip.name
+JOIN psy_inventory_locations loc ON loc.name = 'Clinical Store'
+WHERE NOT EXISTS (SELECT 1 FROM psy_inventory_stock_by_location sbl WHERE sbl.item_id = i.id AND sbl.location_id = loc.id);
+
+INSERT INTO psy_stock_movements (item_id, item_name, location_id, movement_type, qty, balance_after, reference_type, notes, actor_name)
+SELECT i.id, i.name, loc.id, 'in', ip.opening_qty, ip.opening_qty, 'opening_stock', 'Import data awal — 26 produk Clinical Equipment (5 Nov 2026)', 'System Import'
+FROM _import_clinical_equipment ip
+JOIN psy_inventory_items i ON i.name = ip.name
+JOIN psy_inventory_locations loc ON loc.name = 'Clinical Store'
+WHERE NOT EXISTS (
+  SELECT 1 FROM psy_stock_movements sm
+  WHERE sm.item_id = i.id AND sm.reference_type = 'opening_stock'
+    AND sm.notes = 'Import data awal — 26 produk Clinical Equipment (5 Nov 2026)'
+);
+
+DROP TABLE IF EXISTS _import_clinical_equipment;
