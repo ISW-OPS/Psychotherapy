@@ -156,3 +156,108 @@ WHERE NOT EXISTS (
 );
 
 DROP TABLE IF EXISTS _import_clinical_equipment;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 5 Nov 2026 (bahagian 6) — Import data: 16 produk "Clinical Inventory"
+-- (bekalan/consumables pesakit — tape, saline, sarung tangan, cannula dll),
+-- semua lokasi "Clinical Store", consumption_type='package' (Patient Usage,
+-- default templat asal) utk SEMUA 16, requires_approval=true, min_qty=1
+-- (sama corak dgn bahagian 5). Kategori BAHARU "Clinical Inventory" (bukan
+-- "Clinical Equipment" bahagian 5 — ikut nama literal dlm templat asal).
+--
+-- Harga: bila price_min=price_max (cth Normal Saline RM3.50-RM3.50, Tegaderm,
+-- Sharp Bin, Yellow Biohazard Bag) dikesan sbg harga TETAP -> cost_per_unit
+-- diisi, Min/Maks kosong (bukan "julat" RM3.50-RM3.50 yg tak bermakna).
+-- Lain-lain (min<>max) -> cost_per_unit kosong, Harga Anggaran Min/Maks diisi.
+--
+-- Unit BAHARU "Ampoule" & "Nebule" ditambah ke CHECK constraint (templat
+-- asal guna unit ni utk Vitamin C IV & Ventolin Nebules — tiada padanan
+-- sedia ada dlm senarai 18 unit kita).
+--
+-- "Surgical Tape (1 inch)" KEMUNGKINAN BESAR dah wujud (item tes awal hari
+-- ni, issue_unit Gulung->Inci) — WHERE NOT EXISTS by name skip row ni kalau
+-- dah ada, TAK ditimpa/duplicate.
+--
+-- opening_stock_note templat asal (cth "100 pieces per box", "10L = 80
+-- patients") disimpan dlm internal_notes (staf sahaja, tiada UI expose lagi)
+-- — bukan notes (Product Description pesakit-facing).
+--
+-- Supplier: psy_suppliers TIADA UNIQUE(name), jadi guna WHERE NOT EXISTS
+-- (bukan ON CONFLICT) utk elak duplicate bila migration ni run >1 kali.
+-- ═══════════════════════════════════════════════════════════════════
+ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_unit_check;
+ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_issue_unit_check;
+ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_unit_check
+  CHECK (unit IN ('Pcs','Botol','Kotak','Pek','Set','Gulung','Beg','Karton','Pasang',
+                   'Unit','Gram','Kg','Naskhah','Ampoule','Nebule',
+                   'Liter (L)','Mililiter (ml)','Meter (m)','Sentimeter (cm)','Inci (inch)'));
+ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_issue_unit_check
+  CHECK (issue_unit IS NULL OR issue_unit IN ('Pcs','Botol','Kotak','Pek','Set','Gulung','Beg','Karton','Pasang',
+                   'Unit','Gram','Kg','Naskhah','Ampoule','Nebule',
+                   'Liter (L)','Mililiter (ml)','Meter (m)','Sentimeter (cm)','Inci (inch)'));
+
+DROP TABLE IF EXISTS _import_clinical_inventory;
+CREATE TEMP TABLE _import_clinical_inventory (
+  name TEXT, notes TEXT, internal_notes TEXT, unit TEXT,
+  price_min NUMERIC, price_max NUMERIC, opening_qty NUMERIC, supplier_name TEXT
+);
+
+INSERT INTO _import_clinical_inventory VALUES
+('Surgical Tape (1 inch)', 'Medical adhesive tape, 1 inch wide, with 3 metres per roll.', '3M = 30 patients', 'Gulung', 3, 8, 3, 'Caring Pharmacy'),
+('Alcohol (Surface Disinfectant) (250 mL)', 'Surface disinfectant for sanitising clinical surfaces.', '250 mL', 'Botol', 10, 15, 250, 'Caring Pharmacy'),
+('Normal Saline (0.9% Sodium Chloride)', '0.9% sodium chloride solution.', NULL, 'Botol', 3.50, 3.50, 26, 'Caring Pharmacy'),
+('Vitamin C IV Infusion', 'Intravenous ascorbic acid, 500 mg/2 mL.', '5 ampoules', 'Ampoule', 1.30, 2.00, 5, 'Pharmacy/Shopee'),
+('Ventolin Nebules (Salbutamol)', 'Sterile solution of salbutamol supplied in nebules.', '5 nebules', 'Nebule', 2, 8, 5, 'Pharmacy/Shopee'),
+('Alcohol Swab', 'Isopropyl Alcohol 70%, 50 gsm, for skin cleaning before procedures.', NULL, 'Kotak', 5, 10, 20, 'Caring Pharmacy'),
+('Infusion Set (Length: 134 cm)', 'Infusion set with a tubing length of 134 cm.', NULL, 'Pcs', 3, 6, 20, 'Caring Pharmacy'),
+('Cotton Ball (50 pieces - 1 pack)', 'Sterile or clean cotton balls for routine cleaning.', '100+', 'Pek', 3, 6, 100, 'Caring Pharmacy'),
+('Examination Glove (Medium)', 'Examination gloves, medium size, 100 pieces per box.', '100 pieces per box', 'Kotak', 18, 25, 15, 'Caring Pharmacy'),
+('Surgical Face Mask (50 pieces - 1 pack)', 'Three-ply surgical face masks, 50 pieces per pack.', '50 pieces per pack', 'Pek', 10, 22, 10, 'Caring Pharmacy'),
+('Tegaderm Transparent IV Frame Dressing', 'Transparent adhesive dressing for protecting IV access sites, 6 cm x 7 cm.', NULL, 'Pcs', 1.30, 1.30, 10, 'Shopee'),
+('IV Cannula (22G)', 'IV cannula, 22G, 0.9 x 25 mm, flow rate 36 mL/min.', '100+', 'Pcs', 2, 5, 100, 'Shopee'),
+('IV Cannula (Kids) (24G)', 'Paediatric IV cannula, 24G, 0.8 x 19 mm, flow rate 25 mL/min.', NULL, 'Pcs', 2, 10, 10, 'Shopee'),
+('Sharp Bin (10 L)', '10-litre sharps container for safe disposal of needles and other sharps.', '10L = 80 patients', 'Unit', 30, 30, 10, 'Shopee'),
+('Yellow Biohazard Bag', 'Yellow clinical waste bag for safe clinical waste disposal.', '10L', 'Pcs', 0.55, 0.55, 10, 'Shopee'),
+('Lancets & Test Strips Blood Glucose', 'Blood glucose testing consumables, including lancets and compatible test strips.', NULL, 'Pek', 25, 80, 10, 'Shopee');
+
+INSERT INTO psy_inventory_categories (name) VALUES ('Clinical Inventory') ON CONFLICT (name) DO NOTHING;
+INSERT INTO psy_inventory_locations (name, is_default) VALUES ('Clinical Store', false) ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO psy_suppliers (name, status)
+SELECT DISTINCT ip.supplier_name, 'active'
+FROM _import_clinical_inventory ip
+WHERE NOT EXISTS (SELECT 1 FROM psy_suppliers existing WHERE existing.name = ip.supplier_name);
+
+INSERT INTO psy_inventory_items (name, notes, internal_notes, unit, category, consumption_type, min_qty,
+  source_type, status, is_active, requires_approval, supplier_id, supplier_info)
+SELECT ip.name, ip.notes, ip.internal_notes, ip.unit, 'Clinical Inventory', 'package', 1,
+  'am', 'active', true, true, sup.id,
+  jsonb_strip_nulls(jsonb_build_object(
+    'name', sup.name,
+    'cost_per_unit', CASE WHEN ip.price_min = ip.price_max THEN ip.price_min ELSE NULL END,
+    'cost_per_unit_min', CASE WHEN ip.price_min = ip.price_max THEN NULL ELSE ip.price_min END,
+    'cost_per_unit_max', CASE WHEN ip.price_min = ip.price_max THEN NULL ELSE ip.price_max END
+  ))
+FROM _import_clinical_inventory ip
+JOIN psy_suppliers sup ON sup.name = ip.supplier_name
+WHERE NOT EXISTS (SELECT 1 FROM psy_inventory_items existing WHERE existing.name = ip.name);
+
+INSERT INTO psy_inventory_stock_by_location (item_id, location_id, qty_in_stock)
+SELECT i.id, loc.id, ip.opening_qty
+FROM _import_clinical_inventory ip
+JOIN psy_inventory_items i ON i.name = ip.name
+JOIN psy_inventory_locations loc ON loc.name = 'Clinical Store'
+WHERE NOT EXISTS (SELECT 1 FROM psy_inventory_stock_by_location sbl WHERE sbl.item_id = i.id AND sbl.location_id = loc.id);
+
+INSERT INTO psy_stock_movements (item_id, item_name, location_id, movement_type, qty, balance_after, reference_type, notes, actor_name)
+SELECT i.id, i.name, loc.id, 'in', ip.opening_qty, ip.opening_qty, 'opening_stock', 'Import data awal — 16 produk Clinical Inventory (5 Nov 2026)', 'System Import'
+FROM _import_clinical_inventory ip
+JOIN psy_inventory_items i ON i.name = ip.name
+JOIN psy_inventory_locations loc ON loc.name = 'Clinical Store'
+WHERE NOT EXISTS (
+  SELECT 1 FROM psy_stock_movements sm
+  WHERE sm.item_id = i.id AND sm.reference_type = 'opening_stock'
+    AND sm.notes = 'Import data awal — 16 produk Clinical Inventory (5 Nov 2026)'
+);
+
+DROP TABLE IF EXISTS _import_clinical_inventory;
