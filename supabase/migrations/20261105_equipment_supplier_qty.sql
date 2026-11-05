@@ -336,3 +336,85 @@ WHERE NOT EXISTS (
 );
 
 DROP TABLE IF EXISTS _import_general_inventory;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 5 Nov 2026 (bahagian 8) — Import data: 8 produk "Raw Inventory" (bekalan
+-- mentah pembuatan — botol/balang kosong + bahan mentah cecair), consumption
+-- _type='general' (Internal Use*), requires_approval=true (ikut corak batch
+-- sebelum, TIADA arahan teks eksplisit kali ni — sila betulkan kalau silap).
+--
+-- Lokasi: templat letak "Raw Inventory" sbg Storage Location (SAMA teks dgn
+-- Category) — bukan dicipta lokasi baharu, DIPADANKAN ke lokasi "Raw Material
+-- Store" yg SEDIA ADA dari seed asal sistem (34_inventory_locations.sql) sbb
+-- maksud jelas sama (stor bahan mentah) — elak 2 lokasi raw material hampir
+-- same nama. Kategori "Raw Inventory" pula memang baharu dicipta (jadual
+-- berlainan drpd lokasi, tiada konflik).
+--
+-- Unit BAHARU "Balang" (Jar) ditambah — 4 produk Glass Jar tiada padanan unit
+-- sedia ada (bekas, bukan botol). "Plastic Bottle"/"Colon Herbs" (1.5L) kekal
+-- Botol sbb bekas cecair biasa.
+--
+-- NOTA anggapan ketara (SILA SEMAK):
+-- - Olive Oil & Colon Herbs: UOM asal "2 L"/"1.5 L" tafsir sbg SAIZ BEKAS beli
+--   (disimpan dlm internal_notes), tapi unit SEBENAR utk jejak stok bahan
+--   mentah cecair ni ditukar ke Liter (L) (bukan "botol") — opening stock
+--   diambil terus drpd lajur Opening Stock asal (1 utk Olive Oil).
+-- - "Colon Herbs" deskripsi dualistik ("raw material OR packaging item") —
+--   saya anggap bahan mentah cecair (sama corak Olive Oil), BUKAN bekas
+--   kosong (tu dah ada baris berasingan "Plastic Bottle (Herba Kolon)").
+-- - Glass Jar 4 baris: unit "Balang", kapasiti (250mL/500g/1kg/2kg) disimpan
+--   internal_notes sahaja (bukan unit sah utk balang kosong — balang dikira
+--   per keping, bukan per isipadu/berat kandungan).
+-- - "Raw Herbs" harga "1,100" ditafsir RM1,100 (koma = pemisah ribu), BUKAN
+--   julat/berbilang nombor.
+-- ═══════════════════════════════════════════════════════════════════
+DROP TABLE IF EXISTS _import_raw_inventory;
+CREATE TEMP TABLE _import_raw_inventory (
+  name TEXT, notes TEXT, internal_notes TEXT, unit TEXT,
+  price_min NUMERIC, price_max NUMERIC, opening_qty NUMERIC
+);
+
+INSERT INTO _import_raw_inventory VALUES
+('Plastic Bottle (Herba Kolon)', 'Plastic bottle for Herba Kolon.', 'Kapasiti 1.5 Liter', 'Botol', 50, 150, 5),
+('Glass Jar 250 mL (Olive Oil)', 'Glass jar with 250 mL capacity for Olive Oil.', 'Kapasiti 250 mL', 'Balang', 5, 25, 5),
+('Glass Jar 500 g', 'Glass jar with 500 g capacity.', 'Kapasiti 500 g', 'Balang', 5, 25, 10),
+('Glass Jar 1 kg', 'Glass jar with 1 kg capacity.', 'Kapasiti 1 kg', 'Balang', 5, 25, 10),
+('Glass Jar 2 kg', 'Glass jar with 2 kg capacity.', 'Kapasiti 2 kg', 'Balang', 5, 25, 10),
+('Olive Oil', 'Olive oil used as a raw material.', 'Dibeli dlm bekas 2 Liter', 'Liter (L)', 35, 120, 1),
+('Raw Herbs', 'Raw herbs used as production materials.', NULL, 'Pek', 1100, 1100, 10),
+('Colon Herbs', 'Raw material or packaging item for Colon Herbs.', 'Anggap bahan mentah cecair (bukan bekas kosong) — kapasiti rujukan 1.5L, SILA SAHKAN.', 'Liter (L)', 110, 110, 5);
+
+INSERT INTO psy_inventory_categories (name) VALUES ('Raw Inventory') ON CONFLICT (name) DO NOTHING;
+INSERT INTO psy_inventory_locations (name, is_default) VALUES ('Raw Material Store', false) ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO psy_inventory_items (name, notes, internal_notes, unit, category, consumption_type, min_qty,
+  source_type, status, is_active, requires_approval, supplier_info)
+SELECT ip.name, ip.notes, ip.internal_notes, ip.unit, 'Raw Inventory', 'general', 1,
+  'am', 'active', true, true,
+  jsonb_strip_nulls(jsonb_build_object(
+    'cost_per_unit', CASE WHEN ip.price_min = ip.price_max THEN ip.price_min ELSE NULL END,
+    'cost_per_unit_min', CASE WHEN ip.price_min = ip.price_max THEN NULL ELSE ip.price_min END,
+    'cost_per_unit_max', CASE WHEN ip.price_min = ip.price_max THEN NULL ELSE ip.price_max END
+  ))
+FROM _import_raw_inventory ip
+WHERE NOT EXISTS (SELECT 1 FROM psy_inventory_items existing WHERE existing.name = ip.name);
+
+INSERT INTO psy_inventory_stock_by_location (item_id, location_id, qty_in_stock)
+SELECT i.id, loc.id, ip.opening_qty
+FROM _import_raw_inventory ip
+JOIN psy_inventory_items i ON i.name = ip.name
+JOIN psy_inventory_locations loc ON loc.name = 'Raw Material Store'
+WHERE NOT EXISTS (SELECT 1 FROM psy_inventory_stock_by_location sbl WHERE sbl.item_id = i.id AND sbl.location_id = loc.id);
+
+INSERT INTO psy_stock_movements (item_id, item_name, location_id, movement_type, qty, balance_after, reference_type, notes, actor_name)
+SELECT i.id, i.name, loc.id, 'in', ip.opening_qty, ip.opening_qty, 'opening_stock', 'Import data awal — 8 produk Raw Inventory (5 Nov 2026)', 'System Import'
+FROM _import_raw_inventory ip
+JOIN psy_inventory_items i ON i.name = ip.name
+JOIN psy_inventory_locations loc ON loc.name = 'Raw Material Store'
+WHERE NOT EXISTS (
+  SELECT 1 FROM psy_stock_movements sm
+  WHERE sm.item_id = i.id AND sm.reference_type = 'opening_stock'
+    AND sm.notes = 'Import data awal — 8 produk Raw Inventory (5 Nov 2026)'
+);
+
+DROP TABLE IF EXISTS _import_raw_inventory;

@@ -12,6 +12,6 @@
 // Baharu: Karton (Carton), Meter (m).
 window.ISW_UNITS = [
   'Pcs', 'Botol', 'Kotak', 'Pek', 'Set', 'Gulung', 'Beg', 'Karton', 'Pasang', 'Unit',
-  'Gram', 'Kg', 'Naskhah', 'Ampoule', 'Nebule',
+  'Gram', 'Kg', 'Naskhah', 'Ampoule', 'Nebule', 'Balang',
   'Liter (L)', 'Mililiter (ml)', 'Meter (m)', 'Sentimeter (cm)', 'Inci (inch)',
 ];
