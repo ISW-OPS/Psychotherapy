@@ -76,7 +76,7 @@
             </div>
             <div>
               <label class="text-sm font-semibold text-ink">Jenis Penggunaan <span class="text-terracotta">*</span></label>
-              <select id="item-consumption-type" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none">
+              <select id="item-consumption-type" onchange="onConsumptionTypeChange()" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none">
                 <option value="package">Kegunaan Pesakit</option>
                 <option value="general">Penggunaan Dalaman/Am</option>
               </select>
@@ -123,14 +123,14 @@
               </div>
               <p id="qty-hint" class="text-[11px] text-ink/45 mt-1.5">Jumlah stok sekarang</p>
             </div>
-            <div>
+            <div id="item-issue-unit-wrap" class="hidden">
               <label class="text-sm font-semibold text-ink">Unit Diberi Kepada Pesakit <span class="text-ink/35 font-normal">(Optional)</span></label>
               <select id="item-issue-unit" onchange="updateIssueRatioHint();" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none">
                 <option value="">— Sama seperti Unit Stok —</option>
               </select>
               <p class="text-[10px] text-ink/40 mt-1">Isi jika pesakit guna unit lebih kecil drpd unit stok (cth: stok "Gulung" tapi bagi pesakit "Inci").</p>
             </div>
-            <div>
+            <div id="item-issue-ratio-wrap" class="hidden">
               <label class="text-sm font-semibold text-ink">Berapa Unit Pesakit Setiap 1 Unit Stok</label>
               <input id="item-issue-ratio" type="number" min="0.0001" step="0.0001" oninput="updateIssueRatioHint();" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm focus:border-navy outline-none" placeholder="cth: 30">
               <p id="issue-ratio-hint" class="text-[10px] text-ink/40 mt-1.5">&nbsp;</p>
@@ -298,6 +298,21 @@ function updateIssueRatioHint() {
   hint.innerHTML = `<strong>1 ${escHtml(stockUnit || 'unit stok')} = ${escHtml(ratio)} ${escHtml(issueUnit)}</strong>`;
 }
 window.updateIssueRatioHint = updateIssueRatioHint;
+
+// "Unit Diberi Kepada Pesakit" & nisbah tukaran cuma relevan bila item ni
+// memang digunakan pesakit — item Penggunaan Dalaman/Am (cth sabun tandas)
+// tak perlu konsep "unit pesakit" langsung.
+function onConsumptionTypeChange() {
+  const isPatientUsage = document.getElementById('item-consumption-type').value === 'package';
+  document.getElementById('item-issue-unit-wrap').classList.toggle('hidden', !isPatientUsage);
+  document.getElementById('item-issue-ratio-wrap').classList.toggle('hidden', !isPatientUsage);
+  if (!isPatientUsage) {
+    document.getElementById('item-issue-unit').value = '';
+    document.getElementById('item-issue-ratio').value = '';
+    updateIssueRatioHint();
+  }
+}
+window.onConsumptionTypeChange = onConsumptionTypeChange;
 
 // Harga Anggaran (Min–Maks) — cth beli dari pembekal lain-lain harga RM1–RM3.
 // Tak gantikan "Price (RM)" (nombor tu yg dipakai utk kira nilai stok & jadi
@@ -641,6 +656,7 @@ async function loadForEdit(id) {
   document.getElementById('item-price-max').value = data.supplier_info?.cost_per_unit_max ?? '';
   updateQtyUnitSuffix();
   updateIssueRatioHint();
+  onConsumptionTypeChange();
 }
 
 function cancelForm() {
@@ -840,6 +856,7 @@ async function saveItem() {
     const nameParam = qs.get('name');
     if (nameParam) document.getElementById('item-name').value = nameParam;
     updateQtyUnitSuffix();
+    onConsumptionTypeChange();
   }
 })();
 </script>
