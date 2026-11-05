@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-11-05T01:48:25.748590Z
+-- Generated: 2026-11-05T01:57:11.193557Z
 -- Jumlah fail: 41
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -5583,17 +5583,17 @@ CREATE TABLE IF NOT EXISTS psy_inventory_items (
   shopee_url           TEXT,   -- pautan Shopee untuk beli produk ini
   category             TEXT NOT NULL DEFAULT 'Bekalan Coaching',
   unit                 TEXT NOT NULL DEFAULT 'Unit'
-                       CHECK (unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
-                                       'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
-                                       'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)')),
+                       CHECK (unit IN ('Pcs','Botol','Kotak','Pek','Set','Gulung','Beg','Karton','Pasang',
+                                       'Unit','Gram','Kg','Naskhah',
+                                       'Liter (L)','Mililiter (ml)','Meter (m)','Sentimeter (cm)','Inci (inch)')),
   -- issue_unit/issue_units_per_stock_unit: bagi item yg dibeli dlm unit besar tapi
   -- diguna pesakit dlm unit kecil (cth: beli 1 Gulung tape = 30 Inci, pesakit
   -- guna 1 Inci setiap kali). NULL = tiada tukaran, bagi pesakit kena guna unit sama
   -- macam stok. Lihat shared/inventoryStock.js & roles/staff/patient-hub.html submitSupply().
   issue_unit           TEXT
-                       CHECK (issue_unit IS NULL OR issue_unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
-                                       'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
-                                       'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)')),
+                       CHECK (issue_unit IS NULL OR issue_unit IN ('Pcs','Botol','Kotak','Pek','Set','Gulung','Beg','Karton','Pasang',
+                                       'Unit','Gram','Kg','Naskhah',
+                                       'Liter (L)','Mililiter (ml)','Meter (m)','Sentimeter (cm)','Inci (inch)')),
   issue_units_per_stock_unit NUMERIC(10,4),
   qty_in_stock         NUMERIC(12,4) NOT NULL DEFAULT 0,
   min_qty              NUMERIC(10,2) NOT NULL DEFAULT 5,
@@ -5666,13 +5666,13 @@ ALTER TABLE psy_inventory_items ALTER COLUMN qty_in_stock TYPE NUMERIC(12,4);
 UPDATE psy_inventory_items SET unit = 'Pcs' WHERE unit = 'Biji (pcs)';
 UPDATE psy_inventory_items SET issue_unit = 'Pcs' WHERE issue_unit = 'Biji (pcs)';
 ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_unit_check
-  CHECK (unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
-                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
-                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
+  CHECK (unit IN ('Pcs','Botol','Kotak','Pek','Set','Gulung','Beg','Karton','Pasang',
+                   'Unit','Gram','Kg','Naskhah',
+                   'Liter (L)','Mililiter (ml)','Meter (m)','Sentimeter (cm)','Inci (inch)'));
 ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_issue_unit_check
-  CHECK (issue_unit IS NULL OR issue_unit IN ('Pcs','Botol','Kotak','Pek','Tiub','Tablet',
-                   'Kapsul','Set','Gulung','Beg','Pasang','Unit','Gram','Kg','Naskhah','Gelas',
-                   'Liter (L)','Mililiter (ml)','Inci (inch)','Sentimeter (cm)','Milimeter (mm)'));
+  CHECK (issue_unit IS NULL OR issue_unit IN ('Pcs','Botol','Kotak','Pek','Set','Gulung','Beg','Karton','Pasang',
+                   'Unit','Gram','Kg','Naskhah',
+                   'Liter (L)','Mililiter (ml)','Meter (m)','Sentimeter (cm)','Inci (inch)'));
 COMMENT ON COLUMN psy_inventory_items.issue_unit IS
   'Unit diberi kepada pesakit, jika berbeza drpd unit stok (cth stok=Gulung, issue_unit=Inci). NULL = tiada tukaran.';
 COMMENT ON COLUMN psy_inventory_items.issue_units_per_stock_unit IS

@@ -23,6 +23,22 @@ ALTER TABLE psy_inventory_items DROP COLUMN IF EXISTS qty_per_patient;
 ALTER TABLE psy_inventory_items DROP COLUMN IF EXISTS usage_frequency;
 ALTER TABLE psy_inventory_items DROP COLUMN IF EXISTS usage_notes;
 
+-- 5 Nov 2026 (bahagian 3b) — Selaraskan senarai unit ikut spec "Stock Unit"
+-- (Unit/Piece/Pack/Box/Bottle/Roll/Set/Pair/Bag/Carton/Kg/Gram/Liter/ml/
+-- Meter/cm/inch). Dibuang: Tiub/Tablet/Kapsul/Gelas/Milimeter (disahkan 0
+-- item psy_inventory_items guna — selamat). DIKEKALKAN Naskhah walau tiada
+-- dlm spec sbb 19 item sedia ada (bahan cetak) guna dia. Baharu: Karton, Meter.
+ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_unit_check;
+ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_issue_unit_check;
+ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_unit_check
+  CHECK (unit IN ('Pcs','Botol','Kotak','Pek','Set','Gulung','Beg','Karton','Pasang',
+                   'Unit','Gram','Kg','Naskhah',
+                   'Liter (L)','Mililiter (ml)','Meter (m)','Sentimeter (cm)','Inci (inch)'));
+ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_issue_unit_check
+  CHECK (issue_unit IS NULL OR issue_unit IN ('Pcs','Botol','Kotak','Pek','Set','Gulung','Beg','Karton','Pasang',
+                   'Unit','Gram','Kg','Naskhah',
+                   'Liter (L)','Mililiter (ml)','Meter (m)','Sentimeter (cm)','Inci (inch)'));
+
 -- 5 Nov 2026 (bahagian 4) — Kit Prosedur/jadual pakej (pakej-edit.html) SEBENARNYA
 -- tiada pengiraan issue_unit (cth stok=Gulung tapi pesakit guna Inci) — admin
 -- terpaksa taip pecahan stok manual (cth 0.033 Gulung utk 1 Inci), tiada cara
