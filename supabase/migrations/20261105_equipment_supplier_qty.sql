@@ -261,3 +261,78 @@ WHERE NOT EXISTS (
 );
 
 DROP TABLE IF EXISTS _import_clinical_inventory;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 5 Nov 2026 (bahagian 7) — Import data: 12 produk "General Inventory"
+-- (bekalan dalaman — plastik sampah, sabun tandas, air mineral, bubble wrap,
+-- bateri dll), consumption_type='general' (Internal Use) + requires_approval
+-- =true utk SEMUA 12 (per arahan). Lokasi "General Store" (BAHARU — beza drpd
+-- lokasi "General Inventory" yg dah sedia ada dari seed asal; kategori
+-- "General Inventory" pula memang nama sengaja sama tapi jadual BERLAINAN
+-- (psy_inventory_categories vs psy_inventory_locations), tiada konflik).
+--
+-- NOTA data bersih: templat asal letak SAIZ/DIMENSI fizikal dlm lajur UOM
+-- utk beberapa baris (cth '18" x 22"', '1.05cm x 4.45cm') — ni BUKAN unit
+-- stok sah (gagal CHECK constraint terus). Saya anggar unit SEBENAR ikut
+-- konteks produk (cth beg sampah -> Pek, bateri AAA pek 16 -> Pek) &
+-- simpan saiz/dimensi asal dlm internal_notes supaya info tak hilang.
+-- Row #3 "Toilet Soap (2 Liter)": Opening Stock asal data literal '2 L'
+-- (nampak tersalin drpd lajur UOM) — DIANGGAP 2 unit botol, SILA SEMAK &
+-- betulkan di item-form.html kalau silap anggapan.
+-- Tiada supplier diberi dlm templat ni (lain drpd batch sebelum) —
+-- supplier_id/name kekal kosong.
+-- ═══════════════════════════════════════════════════════════════════
+DROP TABLE IF EXISTS _import_general_inventory;
+CREATE TEMP TABLE _import_general_inventory (
+  name TEXT, notes TEXT, internal_notes TEXT, unit TEXT,
+  price_min NUMERIC, price_max NUMERIC, opening_qty NUMERIC
+);
+
+INSERT INTO _import_general_inventory VALUES
+('Garbage Plastic (Toilet) – Small (S)', 'General consumable for routine toilet waste disposal.', 'Saiz 18" x 22"', 'Pek', 3, 5, 10),
+('T-Shirt Plastic – Small (S)', 'Small plastic bags for general packing and daily use.', 'Saiz 18" x 22"', 'Pek', 3, 6, 10),
+('Toilet Soap (2 Liter)', 'Liquid soap for routine toilet and hand washing use.', 'Botol 2 Liter. NOTA: opening stock asal data ''2 L'' — dianggap 2 unit, sila semak.', 'Botol', 12, 18, 2),
+('Toilet Tissue Roll (1 Packet)', 'Toilet tissue rolls for restroom use.', 'Diameter/saiz roll: 10cm', 'Pek', 10, 15, 10),
+('Mineral Water (250 mL)', 'Bottled mineral water for general consumption.', '250 mL setiap botol', 'Botol', 2, 3, 24),
+('Mineral Water (1.5 L)', 'Bottled mineral water, 1.5-litre size.', '1.5 Liter setiap botol', 'Botol', 2, 3, 10),
+('Pocket Tissue', 'Pocket-sized tissue for daily use.', 'Saiz 10 x 5 x 2 cm', 'Pek', 2, 5, 10),
+('Honey Tablespoon (Plastic)', 'Plastic tablespoon for handling or serving honey.', NULL, 'Pcs', 1, 3, 10),
+('Bubble Wrap (1 M)', 'Protective bubble wrap for packing and protecting items.', NULL, 'Meter (m)', 65, 65, 10),
+('Beg Hijau (1 Box – 300 pcs)', 'Green bags, 300 pieces per box.', '300 keping setiap kotak', 'Kotak', 5, 25, 50),
+('Battery AAA (Energizer / Eveready)', 'AAA batteries, 16 pieces per pack.', '16 keping setiap pek. Saiz bateri: 1.05cm x 4.45cm', 'Pek', 20, 30, 10),
+('Cell Battery (Panasonic)', 'Panasonic cell battery, 20 mm diameter and 3.2 mm thickness.', '20mm diameter, 3.2mm ketebalan', 'Pcs', 4, 8, 5);
+
+INSERT INTO psy_inventory_categories (name) VALUES ('General Inventory') ON CONFLICT (name) DO NOTHING;
+INSERT INTO psy_inventory_locations (name, is_default) VALUES ('General Store', false) ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO psy_inventory_items (name, notes, internal_notes, unit, category, consumption_type, min_qty,
+  source_type, status, is_active, requires_approval, supplier_info)
+SELECT ip.name, ip.notes, ip.internal_notes, ip.unit, 'General Inventory', 'general', 1,
+  'am', 'active', true, true,
+  jsonb_strip_nulls(jsonb_build_object(
+    'cost_per_unit', CASE WHEN ip.price_min = ip.price_max THEN ip.price_min ELSE NULL END,
+    'cost_per_unit_min', CASE WHEN ip.price_min = ip.price_max THEN NULL ELSE ip.price_min END,
+    'cost_per_unit_max', CASE WHEN ip.price_min = ip.price_max THEN NULL ELSE ip.price_max END
+  ))
+FROM _import_general_inventory ip
+WHERE NOT EXISTS (SELECT 1 FROM psy_inventory_items existing WHERE existing.name = ip.name);
+
+INSERT INTO psy_inventory_stock_by_location (item_id, location_id, qty_in_stock)
+SELECT i.id, loc.id, ip.opening_qty
+FROM _import_general_inventory ip
+JOIN psy_inventory_items i ON i.name = ip.name
+JOIN psy_inventory_locations loc ON loc.name = 'General Store'
+WHERE NOT EXISTS (SELECT 1 FROM psy_inventory_stock_by_location sbl WHERE sbl.item_id = i.id AND sbl.location_id = loc.id);
+
+INSERT INTO psy_stock_movements (item_id, item_name, location_id, movement_type, qty, balance_after, reference_type, notes, actor_name)
+SELECT i.id, i.name, loc.id, 'in', ip.opening_qty, ip.opening_qty, 'opening_stock', 'Import data awal — 12 produk General Inventory (5 Nov 2026)', 'System Import'
+FROM _import_general_inventory ip
+JOIN psy_inventory_items i ON i.name = ip.name
+JOIN psy_inventory_locations loc ON loc.name = 'General Store'
+WHERE NOT EXISTS (
+  SELECT 1 FROM psy_stock_movements sm
+  WHERE sm.item_id = i.id AND sm.reference_type = 'opening_stock'
+    AND sm.notes = 'Import data awal — 12 produk General Inventory (5 Nov 2026)'
+);
+
+DROP TABLE IF EXISTS _import_general_inventory;
