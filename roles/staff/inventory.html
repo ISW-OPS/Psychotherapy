@@ -105,8 +105,6 @@
             </select>
             <select id="inv-filter-source" onchange="renderItems()" class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:outline-none focus:border-navy">
               <option value="">All Locations</option>
-              <option value="farmasi_klinikal">Farmasi Klinikal</option>
-              <option value="am">Inventori Am</option>
             </select>
             <select id="inv-filter-supplier" onchange="renderItems()" class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:outline-none focus:border-navy">
               <option value="">All Suppliers</option>
@@ -230,12 +228,13 @@ let currentUser = null;
 // loadAll: full reload (on page init only)
 async function loadAll() {
   try {
-    const [itemsRes, reqsRes, pkgRes, patRes, kitsRes] = await Promise.all([
+    const [itemsRes, reqsRes, pkgRes, patRes, kitsRes, stockLocRes] = await Promise.all([
       window.db.from('psy_inventory_items').select('*').order('name'),
       window.db.from('psy_inventory_request_items').select('item_id, psy_inventory_requests(status)'),
       window.db.from('psy_packages').select('package_id, name, duration_weeks, coaching_schedule').eq('is_active', true),
       window.db.from('psy_patients').select('active_package_id').eq('status', 'active').not('active_package_id', 'is', null),
       window.db.from('psy_procedure_kits').select('*').eq('is_active', true),
+      window.db.from('psy_inventory_stock_by_location').select('item_id, psy_inventory_locations(name)'),
     ]);
 
     allItems    = itemsRes.data || [];
@@ -243,6 +242,18 @@ async function loadAll() {
     allKits     = kitsRes.data  || [];
     _cachedPkgs = pkgRes.data   || [];
     _cachedPats = patRes.data   || [];
+
+    // Lokasi stok per item (boleh >1 lokasi) — utk filter "All Locations" sebenar
+    // (psy_inventory_locations), gantikan source_type (Farmasi Klinikal/Inventori
+    // Am) yg sebelum ni silap guna label "Locations" tapi bukan lokasi sebenar.
+    const locByItem = {};
+    (stockLocRes.data || []).forEach(r => {
+      const name = r.psy_inventory_locations?.name;
+      if (!name) return;
+      if (!locByItem[r.item_id]) locByItem[r.item_id] = new Set();
+      locByItem[r.item_id].add(name);
+    });
+    allItems.forEach(i => { i.location_names = [...(locByItem[i.id] || [])]; });
 
     await loadMovementTotals();
     await window.attachInventoryForecast(allItems);
@@ -261,12 +272,21 @@ async function loadAll() {
 // refreshInventory: lightweight reload after actions — reuses cached demand data
 async function refreshInventory() {
   try {
-    const [itemsRes, reqsRes] = await Promise.all([
+    const [itemsRes, reqsRes, stockLocRes] = await Promise.all([
       window.db.from('psy_inventory_items').select('*').order('name'),
       window.db.from('psy_inventory_request_items').select('item_id, psy_inventory_requests(status)'),
+      window.db.from('psy_inventory_stock_by_location').select('item_id, psy_inventory_locations(name)'),
     ]);
     allItems    = itemsRes.data || [];
     allRequests = reqsRes.data  || [];
+    const locByItem = {};
+    (stockLocRes.data || []).forEach(r => {
+      const name = r.psy_inventory_locations?.name;
+      if (!name) return;
+      if (!locByItem[r.item_id]) locByItem[r.item_id] = new Set();
+      locByItem[r.item_id].add(name);
+    });
+    allItems.forEach(i => { i.location_names = [...(locByItem[i.id] || [])]; });
     await loadMovementTotals();
     await window.attachInventoryForecast(allItems);
     await window.attachPackageMappingFlag(allItems); // audit #E-21 (Tier 4)
@@ -477,6 +497,16 @@ async function updateStats() {
   document.getElementById('stat-empty').textContent    = statuses.filter(s => s === 'empty').length;
   document.getElementById('stat-insufficient').textContent = statuses.filter(s => s === 'critical').length;
 
+  // Populate location filter — psy_inventory_locations SEBENAR (sama senarai dgn
+  // "⚙ Urus Lokasi" item-form.html), gantikan source_type lama (Farmasi Klinikal/
+  // Inventori Am) yg silap guna label "Locations" tapi bukan lokasi sebenar.
+  const { data: locRows } = await window.db.from('psy_inventory_locations').select('name').eq('is_active', true).order('name');
+  const locs = (locRows || []).map(l => l.name);
+  const locSel = document.getElementById('inv-filter-source');
+  const curLoc = locSel.value;
+  locSel.innerHTML = '<option value="">All Locations</option>' + locs.map(l => `<option value="${escHtml(l)}">${escHtml(l)}</option>`).join('');
+  locSel.value = curLoc;
+
   // Populate category filter — sumber sama dgn item-form.html (psy_inventory_categories,
   // bukan DISTINCT drpd item sedia ada) supaya kategori baharu yg belum ada produk
   // lagi pun tetap muncul di sini, konsisten merentas sistem.
@@ -598,7 +628,7 @@ function renderItems() {
   let list = allItems;
   if (q)         list = list.filter(i => (i.name||'').toLowerCase().includes(q) || (i.notes||'').toLowerCase().includes(q) || (i.category||'').toLowerCase().includes(q) || (i.item_code||'').toLowerCase().includes(q));
   if (catFilter) list = list.filter(i => i.category === catFilter);
-  if (srcFilter) list = list.filter(i => (i.source_type || 'am') === srcFilter);
+  if (srcFilter) list = list.filter(i => (i.location_names || []).includes(srcFilter));
   if (supFilter) list = list.filter(i => i.supplier_info?.name === supFilter);
   if (apvFilter) list = list.filter(i => apvFilter === 'yes' ? i.requires_approval : !i.requires_approval);
   if (actFilter === 'not_active') list = list.filter(i => getItemStatus(i) !== 'active');
