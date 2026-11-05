@@ -418,3 +418,103 @@ WHERE NOT EXISTS (
 );
 
 DROP TABLE IF EXISTS _import_raw_inventory;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 5 Nov 2026 (bahagian 9) — Import data: 17 "produk" Coaching Supplies
+-- (POSTER/bahan cetak panduan dos madu + panduan coaching lain),
+-- consumption_type='package' (Patient Usage), min_qty=1, requires_approval
+-- =true (ikut corak). Kategori "Coaching Supplies" SEDIA ADA (tiada perlu
+-- cipta).
+--
+-- NOTA KRITIKAL — nama produk templat asal (baris 1-15) DUPLICATE SAMA
+-- PERSIS merentas pelbagai baris (cth 4 baris "Poster Saranan Peminuman
+-- Madu Lote Tree Honey & Lote Tree Honey Pearl Garlic" — cuma beza di lajur
+-- Description "Table spoon 10x/8x/4x/2x", bukan nama produk). Kalau diimport
+-- ikut nama ASAL, WHERE NOT EXISTS (padanan nama) akan SKIP 3 drpd 4 baris
+-- (dianggap "dah wujud"), hilang data senyap. Jadi nama produk DITAMBAH
+-- sufiks dos (10x)/(8x)/(4x)/(2x)/(1x) supaya UNIK — SILA SEMAK nama
+-- akhir ni padan cara awak nak panggil item ni.
+--
+-- Unit: UOM asal "1 Piece"/"A4"/"2 kg"/"500 g" SEMUA ditukar ke "Naskhah"
+-- (unit piawai sistem utk bahan cetak/poster — sama corak dgn seed sedia
+-- ada "Panduan Peminuman Madu", "Buku & Bahan Cetak"). "2 kg"/"500 g" dlm
+-- UOM asal sekadar rujukan SAIZ PRODUK MADU yg poster tu terangkan (dah
+-- ada dlm nama produk sendiri), BUKAN berat/isipadu poster — tak dipakai
+-- sbg unit.
+--
+-- Harga: hanya baris #3 ada harga sebenar ("1-15 per copy" -> RM1-RM15).
+-- Baki 16 baris "Not specified" -> Price (RM) & Harga Anggaran DUA-DUA
+-- kosong (tiada anggapan harga dibuat).
+--
+-- Storage Location: templat tulis "Other Location" (SAMA teks dgn salah 1
+-- pilihan di modul Equipment, BUKAN lokasi sedia ada di Inventory) —
+-- DIPADANKAN ke lokasi "Printing" yg SEDIA ADA (dicipta awal hari ni khusus
+-- utk bahan cetak) sbb lebih sesuai dr segi makna drpd cipta "Other
+-- Location" generik baharu. SILA SEMAK/betulkan kalau silap anggapan.
+--
+-- NOTA: baris #16 "Poster Panduan Pengamalan Zikir Bersanad (A4 Thick
+-- Paper)" nama HAMPIR SAMA dgn item sedia ada "Panduan Pengamalan Zikir
+-- Bersanad" (seed asal, kategori Buku & Bahan Cetak) — nama BERBEZA jadi
+-- TAK dikesan sbg duplicate, kedua-dua akan wujud berasingan. Mungkin
+-- sebenarnya produk sama (versi poster vs buku) — sila semak & gabung
+-- manual kalau perlu.
+-- ═══════════════════════════════════════════════════════════════════
+DROP TABLE IF EXISTS _import_coaching_supplies;
+CREATE TEMP TABLE _import_coaching_supplies (
+  name TEXT, notes TEXT, unit TEXT,
+  price_min NUMERIC, price_max NUMERIC, opening_qty NUMERIC
+);
+
+INSERT INTO _import_coaching_supplies VALUES
+('Poster Saranan Peminuman Madu Lote Tree Honey & Lote Tree Honey Pearl Garlic (10x)', 'Table spoon 10x', 'Naskhah', NULL, NULL, 10),
+('Poster Saranan Peminuman Madu Lote Tree Honey & Lote Tree Honey Pearl Garlic (8x)', 'Table spoon 8x', 'Naskhah', NULL, NULL, 10),
+('Poster Saranan Peminuman Madu Lote Tree Honey & Lote Tree Honey Pearl Garlic (4x)', 'Table spoon 4x', 'Naskhah', 1, 15, 10),
+('Poster Saranan Peminuman Madu Lote Tree Honey & Lote Tree Honey Pearl Garlic (2x)', 'Table spoon 2x', 'Naskhah', NULL, NULL, 10),
+('Poster Saranan Peminuman Madu Immune Booster & Young & Healthy Pearl Garlic (2 kg) (10x)', 'Table spoon 10x', 'Naskhah', NULL, NULL, 10),
+('Poster Saranan Peminuman Madu Immune Booster & Young & Healthy Pearl Garlic (2 kg) (8x)', 'Table spoon 8x', 'Naskhah', NULL, NULL, 10),
+('Poster Saranan Peminuman Madu Immune Booster & Young & Healthy Pearl Garlic (2 kg) (4x)', 'Table spoon 4x', 'Naskhah', NULL, NULL, 10),
+('Poster Saranan Peminuman Madu Immune Booster (500g) (2x)', 'Table spoon 2x', 'Naskhah', NULL, NULL, 10),
+('Poster Saranan Peminuman Young & Healthy Honey (500g) (2x)', 'Tablespoon 2x', 'Naskhah', NULL, NULL, 10),
+('Poster Saranan Peminuman Breath & Digest Honey (500g) (2x)', 'Tablespoon 2x', 'Naskhah', NULL, NULL, 10),
+('Poster Saranan Peminuman Brainy Kidz Honey (500g) (2x)', 'Tablespoon 2x', 'Naskhah', NULL, NULL, 10),
+('Poster Saranan Peminuman Madu Immune Booster (500g) (1x)', 'Table spoon 1x', 'Naskhah', NULL, NULL, 10),
+('Poster Saranan Peminuman Young & Healthy Honey (500g) (1x)', 'Tablespoon 1x', 'Naskhah', NULL, NULL, 10),
+('Poster Saranan Peminuman Breath & Digest Honey (500g) (1x)', 'Tablespoon 1x', 'Naskhah', NULL, NULL, 10),
+('Poster Saranan Peminuman Brainy Kidz Honey (500g) (1x)', 'Tablespoon 1x', 'Naskhah', NULL, NULL, 10),
+('Poster Panduan Pengamalan Zikir Bersanad (A4 Thick Paper)', 'Coaching and patient-education material for wellness guidance.', 'Naskhah', NULL, NULL, 10),
+('Senarai Nikmat Selera Sel dan Bahaya Nafsu Perut (A4 Paper)', 'Coaching and patient-education material for wellness guidance.', 'Naskhah', NULL, NULL, 10);
+
+INSERT INTO psy_inventory_categories (name) VALUES ('Coaching Supplies') ON CONFLICT (name) DO NOTHING;
+INSERT INTO psy_inventory_locations (name, is_default) VALUES ('Printing', false) ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO psy_inventory_items (name, notes, unit, category, consumption_type, min_qty,
+  source_type, status, is_active, requires_approval, supplier_info)
+SELECT ip.name, ip.notes, ip.unit, 'Coaching Supplies', 'package', 1,
+  'am', 'active', true, true,
+  jsonb_strip_nulls(jsonb_build_object(
+    'cost_per_unit', CASE WHEN ip.price_min = ip.price_max THEN ip.price_min ELSE NULL END,
+    'cost_per_unit_min', CASE WHEN ip.price_min = ip.price_max THEN NULL ELSE ip.price_min END,
+    'cost_per_unit_max', CASE WHEN ip.price_min = ip.price_max THEN NULL ELSE ip.price_max END
+  ))
+FROM _import_coaching_supplies ip
+WHERE NOT EXISTS (SELECT 1 FROM psy_inventory_items existing WHERE existing.name = ip.name);
+
+INSERT INTO psy_inventory_stock_by_location (item_id, location_id, qty_in_stock)
+SELECT i.id, loc.id, ip.opening_qty
+FROM _import_coaching_supplies ip
+JOIN psy_inventory_items i ON i.name = ip.name
+JOIN psy_inventory_locations loc ON loc.name = 'Printing'
+WHERE NOT EXISTS (SELECT 1 FROM psy_inventory_stock_by_location sbl WHERE sbl.item_id = i.id AND sbl.location_id = loc.id);
+
+INSERT INTO psy_stock_movements (item_id, item_name, location_id, movement_type, qty, balance_after, reference_type, notes, actor_name)
+SELECT i.id, i.name, loc.id, 'in', ip.opening_qty, ip.opening_qty, 'opening_stock', 'Import data awal — 17 produk Coaching Supplies (5 Nov 2026)', 'System Import'
+FROM _import_coaching_supplies ip
+JOIN psy_inventory_items i ON i.name = ip.name
+JOIN psy_inventory_locations loc ON loc.name = 'Printing'
+WHERE NOT EXISTS (
+  SELECT 1 FROM psy_stock_movements sm
+  WHERE sm.item_id = i.id AND sm.reference_type = 'opening_stock'
+    AND sm.notes = 'Import data awal — 17 produk Coaching Supplies (5 Nov 2026)'
+);
+
+DROP TABLE IF EXISTS _import_coaching_supplies;
