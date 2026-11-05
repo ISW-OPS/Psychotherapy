@@ -34,6 +34,14 @@ CREATE TABLE IF NOT EXISTS psy_inventory_items (
   last_auto_po_at      TIMESTAMPTZ,
   consumption_type     TEXT DEFAULT 'package'
                        CHECK (consumption_type IN ('package','service','general')),
+  -- Konfigurasi Penggunaan Pesakit — hanya relevan bila consumption_type IN
+  -- ('package','service') ("Jenis Penggunaan" di UI). qty_per_patient + issue_unit/
+  -- issue_units_per_stock_unit (atas) sama-sama bentuk anggaran kapasiti pesakit:
+  -- (qty_in_stock * issue_units_per_stock_unit) / qty_per_patient.
+  qty_per_patient      NUMERIC(10,4),
+  usage_frequency      TEXT CHECK (usage_frequency IS NULL OR usage_frequency IN
+                       ('per_session','per_day','per_week','per_package','one_time')),
+  usage_notes          TEXT,
   supplier_info        JSONB DEFAULT '{}'::jsonb,
   source_type          TEXT NOT NULL DEFAULT 'am'
                        CHECK (source_type IN ('farmasi_klinikal','am')),
@@ -72,6 +80,12 @@ ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS barcode TEXT;
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS shelf_life_days INT;
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS image_url TEXT;
 ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS internal_notes TEXT;
+-- 5 Nov 2026 — Konfigurasi Penggunaan Pesakit (item-form.html "Jenis Penggunaan"
+-- guna consumption_type sedia ada, kini terdedah di UI buat kali pertama).
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS qty_per_patient NUMERIC(10,4);
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS usage_frequency TEXT
+  CHECK (usage_frequency IS NULL OR usage_frequency IN ('per_session','per_day','per_week','per_package','one_time'));
+ALTER TABLE psy_inventory_items ADD COLUMN IF NOT EXISTS usage_notes TEXT;
 -- Fail print-ready (PDF) item ni — cth reka bentuk Brochure BNP. Staff buka
 -- inventory-detail.html item ni terus untuk cetak semula bila nak restock,
 -- bukan cari dalam senarai dokumen berasingan. Bucket: inventory-print-files.
