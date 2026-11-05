@@ -6,6 +6,12 @@
 -- drpd situ) — diisi nama supplier yg dipilih drpd dropdown baharu.
 ALTER TABLE psy_equipment ADD COLUMN IF NOT EXISTS supplier_id UUID REFERENCES psy_suppliers(id) ON DELETE SET NULL;
 
+-- 5 Nov 2026 (bahagian 1b) — Equipment Category (18 pilihan) + Storage Location
+-- (22 pilihan, kolum TEXT baharu — BERBEZA drpd location_id lama yg rujuk
+-- psy_inventory_locations/gudang stok, tak pernah terdedah di UI). Senarai
+-- tetap kat shared/equipmentMasterData.js, dipakai equipment-add.html.
+ALTER TABLE psy_equipment ADD COLUMN IF NOT EXISTS storage_location TEXT;
+
 -- 5 Nov 2026 (bahagian 2) — Jenis Penggunaan "Kegunaan Pesakit" vs "Dalaman/Am"
 -- guna consumption_type SEDIA ADA (kini terdedah buat kali pertama di
 -- item-form.html, dulu tak boleh diubah staff langsung).

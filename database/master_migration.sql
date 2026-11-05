@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-11-05T01:57:11.193557Z
+-- Generated: 2026-11-05T02:04:18.959181Z
 -- Jumlah fail: 41
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -12400,6 +12400,12 @@ CREATE TABLE IF NOT EXISTS psy_equipment (
   code                     TEXT UNIQUE DEFAULT 'EQ-' || lpad(nextval('psy_equipment_code_seq')::text, 4, '0'),
   location_id              UUID REFERENCES psy_inventory_locations(id) ON DELETE SET NULL,
   category                 TEXT,
+  -- storage_location: lokasi fizikal/bilik peralatan (cth "IT Room", "Treatment
+  -- Room") dari senarai tetap shared/equipmentMasterData.js — BERBEZA drpd
+  -- location_id (rujuk psy_inventory_locations, gudang stok konsumabel spt
+  -- "General Inventory"/"Clinical Pharmacy", bukan bilik). location_id tak
+  -- pernah terdedah di UI (equipment-add.html) setakat ni.
+  storage_location         TEXT,
   brand                    TEXT,
   model                    TEXT,
   serial_no                TEXT,
@@ -12431,6 +12437,7 @@ CREATE TABLE IF NOT EXISTS psy_equipment (
 -- (equipment-detail.html papar terus drpd situ, tiada join perlu), cuma
 -- diisi dari nama supplier yg dipilih.
 ALTER TABLE psy_equipment ADD COLUMN IF NOT EXISTS supplier_id UUID REFERENCES psy_suppliers(id) ON DELETE SET NULL;
+ALTER TABLE psy_equipment ADD COLUMN IF NOT EXISTS storage_location TEXT;
 
 CREATE TABLE IF NOT EXISTS psy_equipment_documents (
   id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
