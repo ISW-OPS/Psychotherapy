@@ -368,6 +368,20 @@ DROP TABLE IF EXISTS _import_general_inventory;
 -- - "Raw Herbs" harga "1,100" ditafsir RM1,100 (koma = pemisah ribu), BUKAN
 --   julat/berbilang nombor.
 -- ═══════════════════════════════════════════════════════════════════
+-- FIX (push susulan): CHECK constraint sebenar tertinggal tak dikemaskini
+-- masa bahagian 8 asal ditulis (cuma schema file + JS dikemaskini, bukan
+-- migration SQL ni) — INSERT Glass Jar gagal sbb 'Balang' belum dibenarkan.
+ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_unit_check;
+ALTER TABLE psy_inventory_items DROP CONSTRAINT IF EXISTS psy_inventory_items_issue_unit_check;
+ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_unit_check
+  CHECK (unit IN ('Pcs','Botol','Kotak','Pek','Set','Gulung','Beg','Karton','Pasang',
+                   'Unit','Gram','Kg','Naskhah','Ampoule','Nebule','Balang',
+                   'Liter (L)','Mililiter (ml)','Meter (m)','Sentimeter (cm)','Inci (inch)'));
+ALTER TABLE psy_inventory_items ADD CONSTRAINT psy_inventory_items_issue_unit_check
+  CHECK (issue_unit IS NULL OR issue_unit IN ('Pcs','Botol','Kotak','Pek','Set','Gulung','Beg','Karton','Pasang',
+                   'Unit','Gram','Kg','Naskhah','Ampoule','Nebule','Balang',
+                   'Liter (L)','Mililiter (ml)','Meter (m)','Sentimeter (cm)','Inci (inch)'));
+
 DROP TABLE IF EXISTS _import_raw_inventory;
 CREATE TEMP TABLE _import_raw_inventory (
   name TEXT, notes TEXT, internal_notes TEXT, unit TEXT,
