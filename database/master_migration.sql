@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-10-29T08:58:07.521994Z
+-- Generated: 2026-11-05T00:48:38.744203Z
 -- Jumlah fail: 41
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -12409,6 +12409,7 @@ CREATE TABLE IF NOT EXISTS psy_equipment (
   warranty_expiry          DATE,
   condition                TEXT CHECK (condition IS NULL OR condition IN ('good','fair','poor')),
   supplier                 TEXT,
+  supplier_id              UUID REFERENCES psy_suppliers(id) ON DELETE SET NULL,
   invoice_no               TEXT,
   po_no                    TEXT,
   remarks                  TEXT,
@@ -12424,6 +12425,12 @@ CREATE TABLE IF NOT EXISTS psy_equipment (
   created_at               TIMESTAMPTZ DEFAULT now(),
   updated_at               TIMESTAMPTZ DEFAULT now()
 );
+
+-- 5 Nov 2026 — supplier_id FK (equipment-add.html Pembekal kini dropdown dari
+-- psy_suppliers, bukan free text) — kolum `supplier` TEXT lama DIKEKALKAN
+-- (equipment-detail.html papar terus drpd situ, tiada join perlu), cuma
+-- diisi dari nama supplier yg dipilih.
+ALTER TABLE psy_equipment ADD COLUMN IF NOT EXISTS supplier_id UUID REFERENCES psy_suppliers(id) ON DELETE SET NULL;
 
 CREATE TABLE IF NOT EXISTS psy_equipment_documents (
   id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),

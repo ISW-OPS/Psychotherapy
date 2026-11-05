@@ -54,6 +54,11 @@
                 </select>
               </div>
               <div>
+                <label class="text-sm font-semibold text-ink">Kuantiti</label>
+                <input id="f-qty" type="number" min="1" step="1" value="1" oninput="updateAssetIdPreview()" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm focus:border-navy outline-none">
+                <p class="text-[10px] text-ink/40 mt-1">Daftar beberapa unit serupa sekaligus (cth: 5 Toilet Dustbin) — setiap satu dapat kod EQ- &amp; direkod berasingan.</p>
+              </div>
+              <div>
                 <label class="text-sm font-semibold text-ink">Brand</label>
                 <input id="f-brand" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm focus:border-navy outline-none" placeholder="Dell">
               </div>
@@ -103,7 +108,22 @@
               </div>
               <div>
                 <label class="text-sm font-semibold text-ink">Pembekal</label>
-                <input id="f-supplier" class="w-full mt-1.5 px-3 py-2.5 border border-ink/15 rounded-xl text-sm focus:border-navy outline-none" placeholder="ABC Computer Sdn Bhd">
+                <div class="flex items-center gap-2 mt-1.5">
+                  <select id="f-supplier" class="w-full px-3 py-2.5 border border-ink/15 rounded-xl text-sm bg-white focus:border-navy outline-none">
+                    <option value="">— Pilih supplier —</option>
+                  </select>
+                  <button type="button" onclick="toggleQuickAddSupplier()" class="text-xs font-semibold text-teal hover:underline whitespace-nowrap">+ Add New</button>
+                </div>
+                <div id="quick-add-supplier" class="hidden space-y-2 mt-3 p-3 border border-ink/10 rounded-xl bg-ink/[0.02]">
+                  <input id="qas-name" placeholder="Nama supplier *" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white focus:border-navy outline-none">
+                  <input id="qas-phone" placeholder="Telefon" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white focus:border-navy outline-none">
+                  <input id="qas-email" placeholder="E-mel" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white focus:border-navy outline-none">
+                  <input id="qas-location-url" placeholder="Lokasi (Waze URL)" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm bg-white focus:border-navy outline-none">
+                  <div class="flex justify-end gap-2">
+                    <button type="button" onclick="toggleQuickAddSupplier()" class="px-3 py-1.5 border border-ink/20 rounded-lg text-xs font-semibold bg-white hover:bg-ink/5">Batal</button>
+                    <button type="button" onclick="quickAddSupplier()" class="px-3 py-1.5 bg-teal text-white rounded-lg text-xs font-semibold hover:opacity-90">Simpan Supplier</button>
+                  </div>
+                </div>
               </div>
             </div>
           </section>
@@ -149,7 +169,65 @@
 const v = id => document.getElementById(id).value.trim();
 const orNull = s => s === '' ? null : s;
 
+function escHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 let stagedPhoto = null;
+let allSuppliers = [];
+let nextCodeNum = 1;
+
+async function loadSuppliers() {
+  const { data } = await window.db.from('psy_suppliers').select('*').eq('status', 'active').order('name');
+  allSuppliers = data || [];
+  document.getElementById('f-supplier').innerHTML = '<option value="">— Pilih supplier —</option>'
+    + allSuppliers.map(s => `<option value="${s.id}">${escHtml(s.name)}</option>`).join('');
+}
+
+function toggleQuickAddSupplier() {
+  const wrap = document.getElementById('quick-add-supplier');
+  wrap.classList.toggle('hidden');
+  if (!wrap.classList.contains('hidden')) {
+    document.getElementById('qas-name').value = '';
+    document.getElementById('qas-phone').value = '';
+    document.getElementById('qas-email').value = '';
+    document.getElementById('qas-location-url').value = '';
+    document.getElementById('qas-name').focus();
+  }
+}
+window.toggleQuickAddSupplier = toggleQuickAddSupplier;
+
+async function quickAddSupplier() {
+  const name = document.getElementById('qas-name').value.trim();
+  if (!name) { banner('Nama supplier diperlukan', 'error'); document.getElementById('qas-name').focus(); return; }
+  const phone = document.getElementById('qas-phone').value.trim() || null;
+  const email = document.getElementById('qas-email').value.trim() || null;
+  const location_url = document.getElementById('qas-location-url').value.trim() || null;
+  try {
+    const { data, error } = await window.db.from('psy_suppliers').insert({
+      name, phone, email, location_url,
+      created_by: window.currentUser?.id,
+      created_by_name: window.currentUser?.full_name || '',
+    }).select('id').single();
+    if (error) throw error;
+    await loadSuppliers();
+    document.getElementById('f-supplier').value = data.id;
+    toggleQuickAddSupplier();
+    banner('Supplier ditambah');
+  } catch (e) {
+    banner('Gagal tambah supplier: ' + e.message, 'error');
+  }
+}
+window.quickAddSupplier = quickAddSupplier;
+
+function updateAssetIdPreview() {
+  const qty = Math.max(1, Number(document.getElementById('f-qty').value) || 1);
+  const first = `EQ-${String(nextCodeNum).padStart(4, '0')}`;
+  const last = `EQ-${String(nextCodeNum + qty - 1).padStart(4, '0')}`;
+  document.getElementById('f-asset-id').value = qty > 1 ? `${first} – ${last}` : first;
+}
+window.updateAssetIdPreview = updateAssetIdPreview;
 
 function onPhotoSelected(e) {
   const f = e.target.files?.[0];
@@ -168,12 +246,18 @@ async function saveEquipment() {
   const category = v('f-category');
   if (!name) { banner('Equipment Name diperlukan', 'error'); document.getElementById('f-name').focus(); return; }
   if (!category) { banner('Sila pilih Category', 'error'); document.getElementById('f-category').focus(); return; }
+  const qty = Math.max(1, Number(v('f-qty')) || 1);
+  const supplierId = document.getElementById('f-supplier').value || null;
+  const supplierName = allSuppliers.find(s => s.id === supplierId)?.name || null;
 
   const btn = document.getElementById('btn-save');
   btn.disabled = true; btn.textContent = 'Menyimpan...';
   try {
-    // Kod (EQ-xxxx) dijana DB — tak dihantar
-    const { data, error } = await window.db.from('psy_equipment').insert({
+    // Kod (EQ-xxxx) dijana DB per-row (sequence) — tak dihantar. Kuantiti > 1 =
+    // daftar beberapa unit serupa sekaligus, setiap satu dapat kod EQ- sendiri
+    // (bukan 1 row dgn qty — peralatan ditrack per-unit: status/assign/maintenance
+    // berasingan utk setiap unit).
+    const baseRow = {
       name,
       category,
       brand: orNull(v('f-brand')),
@@ -182,27 +266,36 @@ async function saveEquipment() {
       description: orNull(v('f-description')),
       purchase_date: orNull(v('f-purchase-date')),
       purchase_cost: orNull(v('f-cost')),
-      supplier: orNull(v('f-supplier')),
+      supplier_id: supplierId,
+      supplier: supplierName,
       next_maintenance_date: orNull(v('f-next-maint')),
       maintenance_cycle_months: v('f-cycle') ? Number(v('f-cycle')) : null,
       maintenance_remarks: orNull(v('f-maint-remarks')),
       status: v('f-status'),
-    }).select('id, code').single();
+    };
+    const rows = Array.from({ length: qty }, () => ({ ...baseRow }));
+    const { data, error } = await window.db.from('psy_equipment').insert(rows).select('id, code');
     if (error) throw error;
 
-    // Gambar (pilihan) — disimpan dalam bucket inventory-images, URL disimpan pada peralatan
+    // Gambar (pilihan) — disimpan dalam bucket inventory-images, URL sama dikongsi
+    // ke semua unit yg didaftar sekali (sama produk/foto).
     if (stagedPhoto) {
       const ext = (stagedPhoto.name.split('.').pop() || 'jpg').toLowerCase();
-      const path = `equipment/${data.id}/${Date.now()}.${ext}`;
+      const path = `equipment/${data[0].id}/${Date.now()}.${ext}`;
       const { error: upErr } = await window.db.storage.from('inventory-images').upload(path, stagedPhoto, { upsert: true });
       if (upErr) banner('Peralatan disimpan, tetapi gambar gagal dimuat naik: ' + upErr.message, 'error');
       else {
         const { data: pub } = window.db.storage.from('inventory-images').getPublicUrl(path);
-        await window.db.from('psy_equipment').update({ image_url: pub.publicUrl }).eq('id', data.id);
+        await window.db.from('psy_equipment').update({ image_url: pub.publicUrl }).in('id', data.map(r => r.id));
       }
     }
-    banner(`Peralatan ditambah (${data.code})`);
-    location.href = `equipment-detail.html?id=${data.id}`;
+    if (data.length > 1) {
+      banner(`${data.length} peralatan ditambah (${data[0].code} – ${data[data.length - 1].code})`);
+      location.href = 'equipment-list.html';
+    } else {
+      banner(`Peralatan ditambah (${data[0].code})`);
+      location.href = `equipment-detail.html?id=${data[0].id}`;
+    }
   } catch (e) {
     banner('Gagal simpan: ' + e.message, 'error');
     btn.disabled = false; btn.textContent = '💾 Save Equipment';
@@ -215,11 +308,13 @@ window.saveEquipment = saveEquipment;
   if (!user) return;
   if (!can('equipment', 'edit')) { banner('Anda tiada kebenaran tambah peralatan', 'error'); document.getElementById('btn-save').disabled = true; }
 
+  await loadSuppliers();
+
   // Papar ID seterusnya (anggaran: kod tertinggi + 1). Kod sebenar dijana DB masa simpan.
   const { data: last } = await window.db.from('psy_equipment').select('code').not('code', 'is', null).order('code', { ascending: false }).limit(1);
   const m = /^EQ-(\d+)$/.exec(last?.[0]?.code || '');
-  const next = m ? Number(m[1]) + 1 : 1;
-  document.getElementById('f-asset-id').value = `EQ-${String(next).padStart(4, '0')}`;
+  nextCodeNum = m ? Number(m[1]) + 1 : 1;
+  updateAssetIdPreview();
 })();
 </script>
 </body>

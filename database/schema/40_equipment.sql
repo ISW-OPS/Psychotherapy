@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS psy_equipment (
   warranty_expiry          DATE,
   condition                TEXT CHECK (condition IS NULL OR condition IN ('good','fair','poor')),
   supplier                 TEXT,
+  supplier_id              UUID REFERENCES psy_suppliers(id) ON DELETE SET NULL,
   invoice_no               TEXT,
   po_no                    TEXT,
   remarks                  TEXT,
@@ -40,6 +41,12 @@ CREATE TABLE IF NOT EXISTS psy_equipment (
   created_at               TIMESTAMPTZ DEFAULT now(),
   updated_at               TIMESTAMPTZ DEFAULT now()
 );
+
+-- 5 Nov 2026 — supplier_id FK (equipment-add.html Pembekal kini dropdown dari
+-- psy_suppliers, bukan free text) — kolum `supplier` TEXT lama DIKEKALKAN
+-- (equipment-detail.html papar terus drpd situ, tiada join perlu), cuma
+-- diisi dari nama supplier yg dipilih.
+ALTER TABLE psy_equipment ADD COLUMN IF NOT EXISTS supplier_id UUID REFERENCES psy_suppliers(id) ON DELETE SET NULL;
 
 CREATE TABLE IF NOT EXISTS psy_equipment_documents (
   id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
