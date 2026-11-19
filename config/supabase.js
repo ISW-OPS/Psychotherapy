@@ -119,3 +119,76 @@ async function auditLog(action, target, meta = {}) {
     });
   } catch (_) {}
 }
+
+// ── Multi-domain routing (prod cPanel) ──────────────────────────────────────
+// login.ibnusinawellness.com = log masuk sahaja; healme.ibnusinawellness.com = pesakit;
+// pt.ibnusinawellness.com = staff/admin. Ketiga-tiga simpan SALINAN fail yang sama.
+// Sesi Supabase (localStorage) tak dikongsi automatik merentas subdomain, jadi bila
+// pindah domain kita bawa access/refresh token SEKALI dalam hash URL (bukan query —
+// tak masuk log server) dan sahkan semula di destinasi via setSession().
+// Di luar 3 domain ni (localhost, preview Vercel/Railway) — kekal 1 domain macam asal.
+window.ISW_DOMAINS = {
+  login: 'login.ibnusinawellness.com',
+  patient: 'healme.ibnusinawellness.com',
+  staff: 'pt.ibnusinawellness.com'
+};
+
+function _iswManagedHost(host) { return Object.values(window.ISW_DOMAINS).includes(host); }
+function _iswRoleHome(role) { return role === 'patient' ? window.ISW_DOMAINS.patient : window.ISW_DOMAINS.staff; }
+
+// Betul ke tidak role ni berada pada domain lain daripada domain rasminya (hanya relevan
+// bila kita memang berada pada salah satu 3 domain terurus; localhost/preview diabaikan).
+window.iswIsWrongDomain = function (role) {
+  return _iswManagedHost(window.location.hostname) && window.location.hostname !== _iswRoleHome(role);
+};
+
+// Pergi ke `path` (root-absolute, cth "/roles/patient/kob.html") sebagai `role`.
+// Pindah domain automatik (bawa sesi) kalau domain semasa bukan domain rasmi role tu.
+window.iswGoToRolePage = async function (role, path) {
+  const targetHost = _iswRoleHome(role);
+  if (!_iswManagedHost(window.location.hostname) || window.location.hostname === targetHost) {
+    window.location.href = path;
+    return;
+  }
+  const { data: { session } } = await window.db.auth.getSession();
+  const url = new URL(path, 'https://' + targetHost);
+  if (session) {
+    url.hash = 'isw_transfer=1&access_token=' + encodeURIComponent(session.access_token) +
+               '&refresh_token=' + encodeURIComponent(session.refresh_token);
+  }
+  window.location.href = url.toString();
+};
+
+// Origin domain log masuk rasmi — guna ini (bukan window.location.origin) bila jana
+// pautan kongsi/rujukan supaya ia sentiasa bawa ke login.ibnusinawellness.com walaupun
+// dijana dari domain healme/pt.
+window.iswLoginOrigin = function () {
+  return _iswManagedHost(window.location.hostname)
+    ? 'https://' + window.ISW_DOMAINS.login
+    : window.location.origin;
+};
+
+// Ke domain log masuk (login.ibnusinawellness.com). Tiada sesi dipindah sengaja.
+window.iswGoToLogin = function (path) {
+  path = path || '/auth/login.html';
+  if (!_iswManagedHost(window.location.hostname) || window.location.hostname === window.ISW_DOMAINS.login) {
+    window.location.href = path;
+    return;
+  }
+  window.location.href = 'https://' + window.ISW_DOMAINS.login + path;
+};
+
+// Panggil di awal halaman bootstrap (index.html) utk terima sesi yg dipindah dari domain lain.
+window.iswReceiveTransfer = async function () {
+  const hash = window.location.hash.startsWith('#') ? window.location.hash.substring(1) : '';
+  if (!hash) return false;
+  const params = new URLSearchParams(hash);
+  if (params.get('isw_transfer') !== '1') return false;
+  const access_token = params.get('access_token');
+  const refresh_token = params.get('refresh_token');
+  if (access_token && refresh_token && window.db) {
+    try { await window.db.auth.setSession({ access_token, refresh_token }); } catch (_) {}
+  }
+  history.replaceState(null, '', window.location.pathname + window.location.search);
+  return true;
+};

@@ -2,7 +2,8 @@ async function checkAuth(requiredRole) {
   const { data: { session } } = await window.db.auth.getSession();
 
   if (!session) {
-    window.location.href = '../../auth/login.html';
+    if (window.iswGoToLogin) window.iswGoToLogin('/auth/login.html');
+    else window.location.href = '../../auth/login.html';
     return null;
   }
 
@@ -17,7 +18,15 @@ async function checkAuth(requiredRole) {
     localStorage.removeItem('isw_role');
     localStorage.removeItem('isw_name');
     alert('Akses tidak dibenarkan');
-    window.location.href = '../../auth/login.html';
+    if (window.iswGoToLogin) window.iswGoToLogin('/auth/login.html');
+    else window.location.href = '../../auth/login.html';
+    return null;
+  }
+
+  // Domain semasa bukan domain rasmi role ni (cth pautan/bookmark lama merentas
+  // subdomain) — pindah ke domain betul, bawa sesi, kekal pada halaman yang sama.
+  if (window.iswIsWrongDomain && window.iswIsWrongDomain(profile.role)) {
+    await window.iswGoToRolePage(profile.role, window.location.pathname + window.location.search);
     return null;
   }
 

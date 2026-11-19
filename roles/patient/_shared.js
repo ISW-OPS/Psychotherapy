@@ -187,7 +187,8 @@ async function initPatient(pageId, titleSub) {
     localStorage.removeItem('isw_role');
     localStorage.removeItem('isw_name');
     alert('Akaun ini tidak lagi aktif. Sila hubungi pentadbir.');
-    window.location.href = '../../auth/login.html';
+    if (window.iswGoToLogin) window.iswGoToLogin('/auth/login.html');
+    else window.location.href = '../../auth/login.html';
     return null;
   }
 

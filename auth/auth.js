@@ -57,19 +57,19 @@ async function handleLogin(e) {
       const { data: patient } = await window.db
         .from('psy_patients').select('kob_status').eq('user_id', data.user.id).maybeSingle();
       const ks = patient?.kob_status;
-      let dest = '../roles/patient/dashboard.html';
+      let dest = '/roles/patient/dashboard.html';
       if (!patient || ks === 'paid' || ks === 'pending_payment') {
         const { data: kyc } = await window.db
           .from('psy_kyc_submissions').select('id, status').eq('user_id', data.user.id)
           .order('created_at', { ascending: false }).limit(1);
         const kycOk = kyc?.length && kyc[0].status !== 'rejected';
-        dest = kycOk ? '../roles/patient/kob.html' : '../roles/patient/pendaftaran.html';
+        dest = kycOk ? '/roles/patient/kob.html' : '/roles/patient/pendaftaran.html';
       } else if (['kyc_done', 'hadir', 'package_recommended', 'package_paid'].includes(ks)) {
-        dest = '../roles/patient/kob.html';
+        dest = '/roles/patient/kob.html';
       }
-      window.location.href = dest;
+      await window.iswGoToRolePage('patient', dest);
     } else {
-      window.location.href = `../roles/${profile.role}/dashboard.html`;
+      await window.iswGoToRolePage(profile.role, `/roles/${profile.role}/dashboard.html`);
     }
   } catch (err) {
     errEl.textContent = err.message === 'Invalid login credentials'
