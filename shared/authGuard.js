@@ -1,4 +1,8 @@
 async function checkAuth(requiredRole) {
+  // Terima sesi yg dipindah dari domain lain (cth login.* -> healme.*/pt.* lepas log
+  // masuk) SEBELUM semak sesi — destinasi sebenar ialah halaman ni terus, bukan index.html.
+  if (window.iswReceiveTransfer) await window.iswReceiveTransfer();
+
   const { data: { session } } = await window.db.auth.getSession();
 
   if (!session) {
