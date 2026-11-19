@@ -534,7 +534,7 @@ function renderTable(){
       <td class="py-3 px-2 max-w-[140px]"><div class="text-[12px] text-ink/70 truncate">${escHtml(r.pakej)}</div></td>
       <td class="py-3 px-2 max-w-[120px]"><div class="text-[12px] text-ink/70 truncate">${escHtml(r.coachName)}</div></td>
       <td class="py-3 px-2 whitespace-nowrap">
-        <span class="inline-block text-[11px] font-bold px-2 py-0.5 rounded-full ${t.chip}">${t.label}</span>${r.override?'<span class="text-[9px] text-ink/40 ml-1">(ubah)</span>':''}
+        <span class="inline-block text-[11px] font-bold px-2 py-0.5 rounded-full ${t.chip}">${t.label}</span>${r.override?'<span class="text-[9px] text-ink/40 ml-1">(ubah)</span>':''}${r.note?`<span class="text-[11px] ml-1" title="${escHtml(r.note)}">📝</span>`:''}
       </td>
       <td class="py-3 px-2 min-w-[84px]">
         <div class="text-sm font-bold text-ink">${r.avgFilled!=null?r.avgFilled+'%':'—'}</div>
@@ -724,6 +724,13 @@ async function openModal(id, week){
             </div>
           </div>
         </div>
+        <div class="px-4 py-3 rounded-xl border border-ink/8">
+          <div class="text-[11px] text-ink/45 mb-1.5">Nota Coach <span class="text-ink/30">(minggu ${fmtRange(modalWeek)})</span></div>
+          <textarea id="nota-coach-input" rows="2" class="w-full px-3 py-2 border border-ink/15 rounded-lg text-sm focus:border-navy outline-none resize-none" placeholder="Cth: Pesakit kurang patuh minum madu minggu ini, perlu tindak susul...">${escHtml(r.note||'')}</textarea>
+          <div class="flex justify-end mt-1.5">
+            <button data-rbac="kepatuhan.edit" onclick="saveNotaCoach()" class="text-xs font-semibold bg-navy text-white px-3 py-1.5 rounded-lg hover:bg-navy-dark">Simpan Nota</button>
+          </div>
+        </div>
         <div>
           <div class="text-xs font-semibold text-ink/50 mb-2">Peratus Setiap Amalan (Minggu Ini) <span class="font-normal text-ink/35">· merah = ≤50% tidak cukup</span></div>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5 bg-ink/[0.02] rounded-lg p-3">${pctHtml || '<span class="text-[12px] text-ink/35">Tiada data</span>'}</div>
@@ -854,6 +861,18 @@ async function setOverride(kelas){
   renderTable();
   openModal(currentRow.id, modalWeek);
 }
+
+async function saveNotaCoach(){
+  const val = document.getElementById('nota-coach-input')?.value.trim() || '';
+  const ok = await upsertWeekly({ nota_coach: val || null });
+  if (!ok) return;
+  currentRow.note = val;
+  const row = rows.find(x => x.id === currentRow.id);
+  if (row) row.note = val;
+  renderTable();
+  banner('Nota coach disimpan ✓');
+}
+window.saveNotaCoach = saveNotaCoach;
 
 
 // ════════════ LAPORAN KESELURUHAN (tidak patuh ikut amalan) ════════════
@@ -1056,7 +1075,7 @@ function patientExportData(r){
 function exportPatientExcel(){
   const r=currentRow; if(!r) return;
   const d=patientExportData(r);
-  const summary=[['Pesakit',r.name],['ID',r.mrn],['Minggu',fmtRange(modalWeek)],['Hari diisi',`${r.filled}/7`],['Skor mingguan',r.avg!=null?r.avg+'%':'—'],['Kelas',effClass(r)||'Belum isi']];
+  const summary=[['Pesakit',r.name],['ID',r.mrn],['Minggu',fmtRange(modalWeek)],['Hari diisi',`${r.filled}/7`],['Skor mingguan',r.avg!=null?r.avg+'%':'—'],['Kelas',effClass(r)||'Belum isi'],['Nota Coach',r.note||'—']];
   exportExcel(`Kepatuhan_${safeName(r.mrn||r.name)}_${safeName(fmtRange(modalWeek))}.xlsx`, [
     {name:'Ringkasan', aoa:summary},
     {name:'Peratus Amalan', aoa:[['Amalan','% Minggu Ini'], ...d.pctList.map(p=>[p[0],p[1]])]},

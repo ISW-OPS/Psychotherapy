@@ -88,7 +88,7 @@ window.PAGE_MODULE = {
   produk_bahan:       'produk_bahan',
   produk_seller:      'produk_bahan',
   inventory:        'inventory', kit_prosedur: 'inventory', suppliers: 'inventory',
-  purchase_requests: 'inventory', stock_in: 'inventory', stock_out: 'inventory', stock_alerts: 'inventory',
+  purchase_requests: 'inventory', stock_in: 'inventory', stock_in_list: 'inventory', stock_out: 'inventory', stock_alerts: 'inventory',
   inventory_overview: 'inventory', stock_movement: 'inventory', pemberian_stok: 'inventory',
   ready_to_buy: 'inventory', walkin_sale: 'inventory',
   equipment: 'equipment', equipment_maintenance: 'equipment',

@@ -167,6 +167,7 @@ const STAFF_NAV_MASTER = [
         { id: 'bekalan_kob',        url: 'tetapan.html?tab=bekalan_kob', label: 'Bekalan KOB', saOnly: true },
         { id: 'purchase_requests',  url: 'purchase-requests.html',  label: 'Purchase Requests' },
         { id: 'ready_to_buy',       url: 'ready-to-buy.html',       label: 'Ready to Buy' },
+        { id: 'stock_in_list',      url: 'stock-in-list.html',      label: 'Stock In History' },
         { id: 'suppliers',          url: 'suppliers.html',          label: 'Suppliers' },
         { id: 'equipment',          url: 'equipment-list.html',     label: 'Senarai Peralatan' },
       ] },
