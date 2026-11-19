@@ -158,8 +158,8 @@ async function handleSignup(e) {
 
     document.getElementById('signup-form').classList.add('hidden');
     document.getElementById('otp-email').value = email;
-    document.getElementById('otp-email-display').textContent = email;
-    document.getElementById('otp-code').value = '';
+    document.getElementById('otp-email-display').textContent = window.maskEmail ? window.maskEmail(email) : email;
+    if (window.clearOtpBoxes) window.clearOtpBoxes();
     document.getElementById('otp-form').classList.remove('hidden');
     btn.disabled = false;
     btn.textContent = 'Daftar Akaun';
@@ -247,6 +247,7 @@ async function handleResendOtp() {
   try {
     const { error } = await window.db.auth.resend({ type: 'signup', email });
     if (error) throw error;
+    if (window.clearOtpBoxes) window.clearOtpBoxes();
     resendBtn.textContent = 'Kod baharu dihantar!';
     setTimeout(() => {
       resendBtn.disabled = false;
