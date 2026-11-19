@@ -156,14 +156,20 @@ window.iswGoToRolePage = async function (role, path) {
     url.hash = 'isw_transfer=1&access_token=' + encodeURIComponent(session.access_token) +
                '&refresh_token=' + encodeURIComponent(session.refresh_token);
   }
-  // Sesi dah disalin ke hash untuk domain destinasi — buang salinan tempatan di
-  // domain semasa (cth login.*) supaya ia tak "logged in" secara senyap buat
-  // selama-lamanya dan punca glitch bila logout/login semula kemudian. scope:'local'
-  // sahaja (bukan revoke refresh token di server) sebab token dalam hash masih sah.
-  if (session) {
-    try { await window.db.auth.signOut({ scope: 'local' }); } catch (_) {}
-  }
   window.location.href = url.toString();
+  // Sesi dah disalin ke hash (token di atas ialah string yang dah ditangkap, tak
+  // terjejas apa-apa berlaku lepas ni) — bersihkan salinan tempatan di domain
+  // semasa (cth login.*) secara best-effort SELEPAS navigasi bermula, supaya ia
+  // tak "logged in" secara senyap buat selama-lamanya (punca glitch logout/login
+  // semula). Padam localStorage terus (bukan auth.signOut()) supaya tiada
+  // kesan sampingan GoTrueClient yang boleh ganggu token yang sedang dipindah.
+  setTimeout(() => {
+    try {
+      Object.keys(localStorage)
+        .filter((k) => k.startsWith('sb-') && k.includes('-auth-token'))
+        .forEach((k) => localStorage.removeItem(k));
+    } catch (_) {}
+  }, 0);
 };
 
 // Origin domain log masuk rasmi — guna ini (bukan window.location.origin) bila jana
