@@ -125,22 +125,33 @@ async function handleSignup(e) {
   if (e) e.preventDefault();
   const name = document.getElementById('signup-name').value.trim();
   const email = document.getElementById('signup-email').value.trim();
+  const phoneCode = document.getElementById('signup-phone-code')?.value || '+60';
+  const phoneNum = document.getElementById('signup-phone')?.value.trim() || '';
   const password = document.getElementById('signup-password').value;
+  const confirmPassword = document.getElementById('signup-password-confirm')?.value || '';
   const role = document.getElementById('signup-role')?.value || 'patient';
   const errEl = document.getElementById('signup-error');
   errEl.classList.add('hidden');
 
-  if (!name || !email || !password) {
+  if (!name || !email || !phoneNum || !password || !confirmPassword) {
     errEl.textContent = 'Semua ruangan wajib diisi';
     errEl.classList.remove('hidden');
     return;
   }
 
-  if (password.length < 6) {
-    errEl.textContent = 'Kata laluan mestilah sekurang-kurangnya 6 aksara';
+  if (!/^(?=.*[A-Za-z])(?=.*\d).{8,}$/.test(password)) {
+    errEl.textContent = 'Kata laluan mestilah sekurang-kurangnya 8 aksara dengan gabungan huruf dan nombor';
     errEl.classList.remove('hidden');
     return;
   }
+
+  if (password !== confirmPassword) {
+    errEl.textContent = 'Kata laluan dan pengesahan kata laluan tidak sepadan';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  const phone = phoneCode + phoneNum;
 
   const btn = document.getElementById('signup-btn');
   btn.disabled = true;
@@ -151,13 +162,15 @@ async function handleSignup(e) {
       email,
       password,
       options: {
-        data: { full_name: name, role }
+        data: { full_name: name, role, phone }
       }
     });
     if (error) throw error;
 
     document.getElementById('signup-form').classList.add('hidden');
     document.getElementById('otp-email').value = email;
+    const otpPhoneEl = document.getElementById('otp-phone');
+    if (otpPhoneEl) otpPhoneEl.value = phone;
     document.getElementById('otp-email-display').textContent = window.maskEmail ? window.maskEmail(email) : email;
     if (window.clearOtpBoxes) window.clearOtpBoxes();
     document.getElementById('otp-form').classList.remove('hidden');
@@ -202,6 +215,11 @@ async function handleVerifyOtp(e) {
   try {
     const { data, error } = await window.db.auth.verifyOtp({ email, token, type: 'signup' });
     if (error) throw error;
+
+    const phone = document.getElementById('otp-phone')?.value;
+    if (phone) {
+      window.db.from('psy_profiles').update({ phone }).eq('id', data.user.id).then(() => {}, () => {});
+    }
 
     const { data: profile } = await window.db
       .from('psy_profiles')
