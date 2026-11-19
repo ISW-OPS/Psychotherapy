@@ -202,8 +202,8 @@ async function handleVerifyOtp(e) {
   const errEl = document.getElementById('otp-error');
   errEl.classList.add('hidden');
 
-  if (!/^\d{6,8}$/.test(token)) {
-    errEl.textContent = 'Sila masukkan kod yang dihantar ke email anda';
+  if (!/^\d{6}$/.test(token)) {
+    errEl.textContent = 'Sila masukkan kod 6 digit yang dihantar ke email anda';
     errEl.classList.remove('hidden');
     return;
   }
