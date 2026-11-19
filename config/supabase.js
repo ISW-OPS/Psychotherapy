@@ -156,6 +156,13 @@ window.iswGoToRolePage = async function (role, path) {
     url.hash = 'isw_transfer=1&access_token=' + encodeURIComponent(session.access_token) +
                '&refresh_token=' + encodeURIComponent(session.refresh_token);
   }
+  // Sesi dah disalin ke hash untuk domain destinasi — buang salinan tempatan di
+  // domain semasa (cth login.*) supaya ia tak "logged in" secara senyap buat
+  // selama-lamanya dan punca glitch bila logout/login semula kemudian. scope:'local'
+  // sahaja (bukan revoke refresh token di server) sebab token dalam hash masih sah.
+  if (session) {
+    try { await window.db.auth.signOut({ scope: 'local' }); } catch (_) {}
+  }
   window.location.href = url.toString();
 };
 
@@ -171,11 +178,16 @@ window.iswLoginOrigin = function () {
 // Ke domain log masuk (login.ibnusinawellness.com). Tiada sesi dipindah sengaja.
 window.iswGoToLogin = function (path) {
   path = path || '/auth/login.html';
+  // Flag supaya login.html tahu ni pengalihan sengaja (logout/akses ditolak/tiada
+  // sesi) dan jangan auto-redirect balik berdasarkan sesi lama yang mungkin masih
+  // tersimpan tempatan di domain login — punca glitch logout/login sebelum ni.
+  const sep = path.includes('?') ? '&' : '?';
+  const pathWithFlag = path + sep + 'fresh=1';
   if (!_iswManagedHost(window.location.hostname) || window.location.hostname === window.ISW_DOMAINS.login) {
-    window.location.href = path;
+    window.location.href = pathWithFlag;
     return;
   }
-  window.location.href = 'https://' + window.ISW_DOMAINS.login + path;
+  window.location.href = 'https://' + window.ISW_DOMAINS.login + pathWithFlag;
 };
 
 // Panggil di awal halaman bootstrap (index.html) utk terima sesi yg dipindah dari domain lain.
