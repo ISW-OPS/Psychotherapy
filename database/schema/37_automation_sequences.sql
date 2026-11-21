@@ -37,8 +37,8 @@ create policy "auto_msgs staff read" on psy_automation_messages for select
 
 drop policy if exists "auto_msgs mgr manage" on psy_automation_messages;
 create policy "auto_msgs mgr manage" on psy_automation_messages for all
-  using (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager')))
-  with check (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager')));
+  using (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager','admin','coach','doctor')))
+  with check (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager','admin','coach','doctor')));
 
 -- Kaitkan log hantaran dengan mesej tertentu dalam sequence (dedup + statistik per-mesej).
 -- NULL utk log lama/broadcast tunggal (message_template).

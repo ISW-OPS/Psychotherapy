@@ -709,8 +709,8 @@ create policy "auto_msg staff read" on psy_auto_messages for select
 
 drop policy if exists "auto_msg super manage" on psy_auto_messages;
 create policy "auto_msg super manage" on psy_auto_messages for all
-  using (auth.uid() in (select id from psy_profiles where staff_role = 'super_admin'))
-  with check (auth.uid() in (select id from psy_profiles where staff_role = 'super_admin'));
+  using (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager','admin','coach','doctor')))
+  with check (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager','admin','coach','doctor')));
 
 -- Pesakit perlu BACA template reaksi sahaja (client jana mesej semasa submit
 -- Poll Harian). Template auto-mesej lain kekal staff-only.
@@ -766,8 +766,8 @@ create policy "automations staff read" on psy_automations for select
 
 drop policy if exists "automations mgr manage" on psy_automations;
 create policy "automations mgr manage" on psy_automations for all
-  using (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager')))
-  with check (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager')));
+  using (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager','admin','coach','doctor')))
+  with check (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager','admin','coach','doctor')));
 
 -- ──── psy_notification_logs — log hantaran enjin automasi ────
 create table if not exists psy_notification_logs (
@@ -823,8 +823,8 @@ create policy "audiences staff read" on psy_audiences for select
 
 drop policy if exists "audiences mgr manage" on psy_audiences;
 create policy "audiences mgr manage" on psy_audiences for all
-  using (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager')))
-  with check (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager')));
+  using (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager','admin','coach','doctor')))
+  with check (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager','admin','coach','doctor')));
 
 -- ──── psy_adherence_alerts — alert kepatuhan pesakit (madu, dll) ────
 -- Coach dapat notif bila patient kurang madu 4+ hari berturut.
