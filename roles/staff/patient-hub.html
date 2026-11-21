@@ -1586,6 +1586,64 @@
     // pesakit ni (boleh >1 sejarah per jenis, tak macam plan-week.html yg cuma 1 aktif/minggu).
     let hk1Rows = [];
     let hk1SarananTpl = null;
+
+    // Auto-cipta Sesi 1:1 wajib (hk1_types, ditetapkan di pakej-edit.html Timeline Rawatan)
+    // utk MINGGU SEMASA pesakit — sama logik dgn loadHk1() di plan-week.html, tapi staff
+    // selalu buka Patient Hub (bukan plan-week.html per-minggu terus), jadi rekod wajib
+    // sebelum ni x pernah auto-cipta melainkan seseorang kebetulan buka URL minggu tu
+    // secara eksplisit. Dipanggil dari loadOverview() — current_week sahaja (bukan semua
+    // minggu) supaya tak spam insert utk sejarah/future jauh.
+    const HK1_HUB_TYPES = {
+      hakeema:     { role: 'manager', nameLike: 'hakeema', exclude: null,      fallback: 'Hakeema' },
+      hakeem:      { role: 'manager', nameLike: 'hakeem',  exclude: 'hakeema', fallback: 'Hakeem' },
+      dr:          { role: 'doctor',  nameLike: null,      exclude: null,      fallback: 'Dr' },
+      fisioterapi: { role: 'coach',   nameLike: null,      exclude: null,      fallback: 'Fisioterapi' },
+      kaunselor:   { role: 'coach',   nameLike: null,      exclude: null,      fallback: 'Kaunselor' },
+      bekam:       { role: 'coach',   nameLike: null,      exclude: null,      fallback: 'Bekam' },
+      masseur:     { role: 'coach',   nameLike: null,      exclude: null,      fallback: 'Tukang Urut' },
+    };
+    let _hk1HubStaffCache = null;
+    async function hk1HubResolveTarget(type) {
+      const cfg = HK1_HUB_TYPES[type];
+      if (!_hk1HubStaffCache) {
+        const { data } = await window.db.from('psy_profiles').select('id, full_name, staff_role').eq('role', 'staff');
+        _hk1HubStaffCache = data || [];
+      }
+      const list = _hk1HubStaffCache.filter(p => p.staff_role === cfg.role);
+      let match = cfg.nameLike ? list.find(p => {
+        const nm = (p.full_name || '').toLowerCase();
+        if (!nm.includes(cfg.nameLike)) return false;
+        if (cfg.exclude && nm.includes(cfg.exclude)) return false;
+        return true;
+      }) : null;
+      if (!match && list.length === 1) match = list[0];
+      return { id: match?.id || null, name: match?.full_name || cfg.fallback };
+    }
+    async function ensureHk1ForCurrentWeek(w) {
+      if (!activePlan?.id || !w) return;
+      try {
+        const sched = (activePlan.coaching_schedule || []).find(it => Number(it.week || it.day) === w);
+        const required = (sched?.hk1_types || []).filter(t => HK1_HUB_TYPES[t]);
+        if (!required.length) return;
+        const { data: existing } = await window.db.from('psy_clinical_referrals')
+          .select('session_type').eq('plan_id', activePlan.id).eq('week_number', w).eq('source', 'plan_1on1');
+        const have = new Set((existing || []).map(r => r.session_type));
+        const missing = required.filter(t => !have.has(t));
+        if (!missing.length) return;
+        const anchor = ovWeeklyRows.find(r => Number(r.week_number) === w && r.session_date);
+        const sessYmd = anchor ? phYmd(new Date(anchor.session_date)) : phYmd(new Date());
+        for (const type of missing) {
+          const target = await hk1HubResolveTarget(type);
+          const { error } = await window.db.from('psy_clinical_referrals').insert({
+            patient_id: patientId, plan_id: activePlan.id, week_number: w, source: 'plan_1on1', session_type: type,
+            referred_by: window.currentUser?.id, referred_by_name: window.currentUser?.full_name,
+            target_role: HK1_HUB_TYPES[type].role, target_id: target.id, target_name: target.name,
+            reason: `Sesi 1:1 ${type} — ${iswPeriodLabel(w)} (Wajib ikut Pakej)`, meet_date: sessYmd, priority: 'sederhana',
+          });
+          if (error) console.error('[hk1-hub] auto-cipta gagal:', type, error);
+        }
+      } catch (e) { console.error('[hk1-hub] ensureHk1ForCurrentWeek gagal:', e); }
+    }
     let canEdit = false; // true if user is admin/doctor/manager OR assigned coach
     let canEditVitals = true; // vitals: mana-mana staff boleh rekod/edit (halaman ini staff-only)
 
@@ -3167,6 +3225,7 @@
           activePlan.current_week = cur;
           await window.db.from('psy_treatment_plans').update({ current_week: cur }).eq('id', activePlan.id);
         }
+        ensureHk1ForCurrentWeek(cur);
 
         const done = ovWeeklyRows.filter(p => ['hadir', 'consultation_done'].includes(p.status)).length;
         // Penyebut Kehadiran = jumlah SESI dalam plan (bukan bilangan minggu) — minggu 2-sesi
