@@ -79,6 +79,26 @@ async function dbQuery(table, { select = '*', eq, order, limit, single } = {}) {
   return data;
 }
 
+// Macam dbQuery() tapi tarik SEMUA baris, atasi had lalai 1000 baris/respons
+// PostgREST — guna utk jadual besar (cth psy_plan_weekly_progress merentas semua
+// pesakit) supaya data terkini/akan datang tak terpotong senyap bila jadual membesar.
+async function dbQueryAll(table, { select = '*', eq, order } = {}) {
+  const PAGE = 1000;
+  let from = 0, all = [];
+  while (true) {
+    let q = window.db.from(table).select(select);
+    if (eq) Object.entries(eq).forEach(([k, v]) => { q = q.eq(k, v); });
+    if (order) q = q.order(order.col, { ascending: order.asc ?? false });
+    q = q.range(from, from + PAGE - 1);
+    const { data, error } = await q;
+    if (error) throw error;
+    all = all.concat(data || []);
+    if (!data || data.length < PAGE) break;
+    from += PAGE;
+  }
+  return all;
+}
+
 async function dbInsert(table, row) {
   const { data, error } = await window.db.from(table).insert(row).select().single();
   if (error) throw error;
