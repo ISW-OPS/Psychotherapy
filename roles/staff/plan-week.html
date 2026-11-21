@@ -2281,7 +2281,9 @@ async function maybeAutoInactivePatient() {
 }
 
 // ── Denda tidak hadir ─────────────────────────────────
-// Kenakan denda (jumlah = extension_price_per_session dalam Tetapan Pakej) ATAU tak kena denda. Reschedule tak disekat.
+// Kenakan denda (jumlah = absence_fee_amount dalam Tetapan Pakej, field berasingan drpd
+// extension_price_per_session supaya tak bercampur dgn harga "Tambah Sesi") ATAU tak kena
+// denda. Reschedule tak disekat.
 // Denda = invois tertunggak (psy_payments status 'pending') pada akaun pesakit — dibayar bersama baki pakej.
 const absFee = { for: null, amount: 25, row: null, waived: false };
 // Audit #F-23 (Tier 5) — denda tidak hadir kini guna psy_invoices SEBENAR (dulu
@@ -2291,8 +2293,8 @@ async function ensureAbsenceFee() {
   absFee.for = sid; absFee.row = null; absFee.waived = false;
   try {
     if (activePlan?.template) {
-      const { data: pkg } = await window.db.from('psy_packages').select('extension_price_per_session').eq('package_id', activePlan.template).maybeSingle();
-      absFee.amount = Number(pkg?.extension_price_per_session) || 25;
+      const { data: pkg } = await window.db.from('psy_packages').select('absence_fee_amount, extension_price_per_session').eq('package_id', activePlan.template).maybeSingle();
+      absFee.amount = Number(pkg?.absence_fee_amount ?? pkg?.extension_price_per_session) || 25;
     }
     const [{ data: rows }, { data: aud }] = await Promise.all([
       window.db.from('psy_invoices').select('id, status, amount, invoice_no').eq('patient_id', patientId)

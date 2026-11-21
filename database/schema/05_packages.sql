@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS psy_packages (
   -- lain-lain
   extension_price_per_week NUMERIC(10,2) DEFAULT 50,
   extension_price_per_session NUMERIC(10,2) DEFAULT 25,
+  absence_fee_amount NUMERIC(10,2) DEFAULT 25,
   meet_link TEXT,
   -- Ditambah 24 Sept 2026 (audit management #B1-7/8 Tier 4) — keperluan DNA Test
   -- datang dari config pakej (pola sama macam hk1_types Sesi 1:1), bukan hard-code
@@ -168,6 +169,9 @@ COMMENT ON COLUMN psy_packages.extension_price_per_week IS
 
 COMMENT ON COLUMN psy_packages.extension_price_per_session IS
   'Harga (RM) untuk tambah SATU sesi tunggal (bukan minggu penuh) pada minggu sedia ada — cth butang "Tambah Sesi" di patient-hub.html. Default RM 25.';
+
+COMMENT ON COLUMN psy_packages.absence_fee_amount IS
+  'Denda (RM) bila pesakit Tidak Hadir sesi — butang "Kenakan Denda" di plan-week.html. Field berasingan drpd extension_price_per_session (dulu guna field sama, bercampur niat); default RM 25.';
 
 COMMENT ON COLUMN psy_packages.installment_full_price IS
   'Harga "Penuh" rujukan utk pelan Ansuran tier Now — BUKAN sama dgn price (Harga Bayaran Penuh/Full Payment), biasanya LEBIH TINGGI (kos bayar ansuran). Jumlah Komitmen (deposit + baki bulanan) mesti sepadan dgn nilai ni, disahkan di editor pakej-edit.html.';
