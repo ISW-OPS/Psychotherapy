@@ -507,6 +507,13 @@ DROP POLICY IF EXISTS "Staff update returns" ON psy_bottle_returns;
 CREATE POLICY "Staff update returns" ON psy_bottle_returns
   FOR UPDATE USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
+-- Staff boleh key-in rekod bagi pihak pesakit yang hantar/bawa botol terus
+-- tanpa guna borang app (pulangan.html → butang "Rekod Pulangan (Staff)").
+DROP POLICY IF EXISTS "Staff insert returns" ON psy_bottle_returns;
+CREATE POLICY "Staff insert returns" ON psy_bottle_returns
+  FOR INSERT
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
 -- Komen
 COMMENT ON TABLE psy_bottle_returns IS
   'Permohonan pulangan botol madu patient. Chat thread guna psy_audit_log dengan meta.return_id.';

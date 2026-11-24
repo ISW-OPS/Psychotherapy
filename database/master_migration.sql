@@ -1,7 +1,7 @@
 -- ISW System — master_migration.sql
 -- DIJANA AUTOMATIK daripada database/schema/*.sql — JANGAN edit fail ini terus.
 -- Edit fail domain dalam database/schema/, kemudian jalankan: python database/_generate_master.py
--- Generated: 2026-11-05T07:06:16.474838Z
+-- Generated: 2026-11-23T03:37:29.282678Z
 -- Jumlah fail: 41
 -- Selamat dijalankan pada projek Supabase kosong (SQL Editor).
 
@@ -1496,6 +1496,7 @@ CREATE TABLE IF NOT EXISTS psy_packages (
   -- lain-lain
   extension_price_per_week NUMERIC(10,2) DEFAULT 50,
   extension_price_per_session NUMERIC(10,2) DEFAULT 25,
+  absence_fee_amount NUMERIC(10,2) DEFAULT 25,
   meet_link TEXT,
   -- Ditambah 24 Sept 2026 (audit management #B1-7/8 Tier 4) — keperluan DNA Test
   -- datang dari config pakej (pola sama macam hk1_types Sesi 1:1), bukan hard-code
@@ -1616,6 +1617,9 @@ COMMENT ON COLUMN psy_packages.extension_price_per_week IS
 
 COMMENT ON COLUMN psy_packages.extension_price_per_session IS
   'Harga (RM) untuk tambah SATU sesi tunggal (bukan minggu penuh) pada minggu sedia ada — cth butang "Tambah Sesi" di patient-hub.html. Default RM 25.';
+
+COMMENT ON COLUMN psy_packages.absence_fee_amount IS
+  'Denda (RM) bila pesakit Tidak Hadir sesi — butang "Kenakan Denda" di plan-week.html. Field berasingan drpd extension_price_per_session (dulu guna field sama, bercampur niat); default RM 25.';
 
 COMMENT ON COLUMN psy_packages.installment_full_price IS
   'Harga "Penuh" rujukan utk pelan Ansuran tier Now — BUKAN sama dgn price (Harga Bayaran Penuh/Full Payment), biasanya LEBIH TINGGI (kos bayar ansuran). Jumlah Komitmen (deposit + baki bulanan) mesti sepadan dgn nilai ni, disahkan di editor pakej-edit.html.';
@@ -6077,6 +6081,13 @@ DROP POLICY IF EXISTS "Staff update returns" ON psy_bottle_returns;
 CREATE POLICY "Staff update returns" ON psy_bottle_returns
   FOR UPDATE USING (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
 
+-- Staff boleh key-in rekod bagi pihak pesakit yang hantar/bawa botol terus
+-- tanpa guna borang app (pulangan.html → butang "Rekod Pulangan (Staff)").
+DROP POLICY IF EXISTS "Staff insert returns" ON psy_bottle_returns;
+CREATE POLICY "Staff insert returns" ON psy_bottle_returns
+  FOR INSERT
+  WITH CHECK (EXISTS (SELECT 1 FROM psy_profiles WHERE id = auth.uid() AND role = 'staff'));
+
 -- Komen
 COMMENT ON TABLE psy_bottle_returns IS
   'Permohonan pulangan botol madu patient. Chat thread guna psy_audit_log dengan meta.return_id.';
@@ -7650,8 +7661,8 @@ create policy "auto_msg staff read" on psy_auto_messages for select
 
 drop policy if exists "auto_msg super manage" on psy_auto_messages;
 create policy "auto_msg super manage" on psy_auto_messages for all
-  using (auth.uid() in (select id from psy_profiles where staff_role = 'super_admin'))
-  with check (auth.uid() in (select id from psy_profiles where staff_role = 'super_admin'));
+  using (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager','admin','coach','doctor')))
+  with check (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager','admin','coach','doctor')));
 
 -- Pesakit perlu BACA template reaksi sahaja (client jana mesej semasa submit
 -- Poll Harian). Template auto-mesej lain kekal staff-only.
@@ -7707,8 +7718,8 @@ create policy "automations staff read" on psy_automations for select
 
 drop policy if exists "automations mgr manage" on psy_automations;
 create policy "automations mgr manage" on psy_automations for all
-  using (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager')))
-  with check (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager')));
+  using (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager','admin','coach','doctor')))
+  with check (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager','admin','coach','doctor')));
 
 -- ──── psy_notification_logs — log hantaran enjin automasi ────
 create table if not exists psy_notification_logs (
@@ -7764,8 +7775,8 @@ create policy "audiences staff read" on psy_audiences for select
 
 drop policy if exists "audiences mgr manage" on psy_audiences;
 create policy "audiences mgr manage" on psy_audiences for all
-  using (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager')))
-  with check (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager')));
+  using (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager','admin','coach','doctor')))
+  with check (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager','admin','coach','doctor')));
 
 -- ──── psy_adherence_alerts — alert kepatuhan pesakit (madu, dll) ────
 -- Coach dapat notif bila patient kurang madu 4+ hari berturut.
@@ -12215,8 +12226,8 @@ create policy "auto_msgs staff read" on psy_automation_messages for select
 
 drop policy if exists "auto_msgs mgr manage" on psy_automation_messages;
 create policy "auto_msgs mgr manage" on psy_automation_messages for all
-  using (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager')))
-  with check (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager')));
+  using (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager','admin','coach','doctor')))
+  with check (auth.uid() in (select id from psy_profiles where staff_role in ('super_admin','manager','admin','coach','doctor')));
 
 -- Kaitkan log hantaran dengan mesej tertentu dalam sequence (dedup + statistik per-mesej).
 -- NULL utk log lama/broadcast tunggal (message_template).
