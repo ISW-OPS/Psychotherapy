@@ -241,11 +241,19 @@ const MK_CATEGORIES = [
 // minggu mod online + item auto_stock:false TIDAK dikira (xde bekalan fizikal). Dah Diberi =
 // jumlah bersih ledger psy_stock_movements ('patient_package' tolak 'patient_package_reversal'
 // — pulangan di pemberian-stok.html kena tolak balik, bukan kekal dikira "given").
+//
+// Kunci UTAMA ialah NAMA produk (bukan item_id) — sesetengah pakej lama (cth OBDY1) ada
+// item_id SAMA tersalah-guna merentas DUA produk berlainan dlm coaching_schedule (bug
+// copy-paste entry semasa setup pakej, "Herba Thoharah" & "Lote Tree Honey" kongsi satu
+// item_id). Kunci ikut item_id akan silap campur dua produk ni jadi satu baris. Nama ialah
+// label SEBENAR yg dipaparkan di semua skrin lain (Belum Bagi, ledger item_name) — paling
+// selamat utk kumpul, sepadan dgn konvensyen asal patient-hub.html sebelum refactor ni.
 window.computePatientPackageBalance = async function (patientId) {
   const { data: plans } = await window.db.from('psy_treatment_plans')
     .select('id, coaching_schedule').eq('patient_id', patientId).eq('status', 'active');
 
-  const entitlement = new Map(); // key (itemId ATAU nama lowercase) -> {itemId, name, unit, qty}
+  const entitlement = new Map(); // key: nama lowercase trim -> {itemId, name, unit, qty}
+  const idOnly = []; // entri tiada nama terus (pakej lama simpan item_id sahaja) -> resolve lepas ni
   (plans || []).forEach(pl => {
     const schedule = Array.isArray(pl.coaching_schedule) ? pl.coaching_schedule : [];
     schedule.forEach(weekObj => {
@@ -254,27 +262,33 @@ window.computePatientPackageBalance = async function (patientId) {
         (Array.isArray(suppliesRaw) ? suppliesRaw : [])
           .filter(sup => sup?.auto_stock !== false && Number(sup?.qty || sup?.quantity || 0) > 0)
           .forEach(sup => {
-            const name = sup.item_name || sup.name || '';
-            const key = sup.item_id || name.trim().toLowerCase();
-            if (!key) return;
-            if (!entitlement.has(key)) entitlement.set(key, { itemId: sup.item_id || null, name, unit: sup.item_unit || sup.unit || '', qty: 0 });
-            entitlement.get(key).qty += Number(sup.qty || sup.quantity || 0);
+            const name = (sup.item_name || sup.name || '').trim();
+            const qty = Number(sup.qty || sup.quantity || 0);
+            if (name) {
+              const key = name.toLowerCase();
+              if (!entitlement.has(key)) entitlement.set(key, { itemId: sup.item_id || null, name, unit: sup.item_unit || sup.unit || '', qty: 0 });
+              entitlement.get(key).qty += qty;
+            } else if (sup.item_id) {
+              idOnly.push({ itemId: sup.item_id, qty });
+            }
           });
       });
     });
   });
 
-  // Pakej lama simpan item_id sahaja (tiada nama terus dlm coaching_schedule) — resolve
-  // nama/unit sebenar dari katalog Inventori supaya item ni TAK senyap hilang dari Baki.
-  const itemIds = [...entitlement.values()].map(e => e.itemId).filter(Boolean);
-  if (itemIds.length) {
-    const { data: items } = await window.db.from('psy_inventory_items').select('id, name, unit').in('id', itemIds);
+  // Resolve nama/unit sebenar utk entri item_id-sahaja dari katalog Inventori, BARU gabung
+  // ikut nama tu (bukan id) supaya konsisten dgn baris lain & elak isu item_id tersalah guna.
+  if (idOnly.length) {
+    const ids = [...new Set(idOnly.map(p => p.itemId))];
+    const { data: items } = await window.db.from('psy_inventory_items').select('id, name, unit').in('id', ids);
     const byId = {}; (items || []).forEach(it => { byId[it.id] = it; });
-    entitlement.forEach(e => {
-      if (e.itemId && byId[e.itemId]) {
-        if (!e.name) e.name = byId[e.itemId].name;
-        if (!e.unit) e.unit = byId[e.itemId].unit || '';
-      }
+    idOnly.forEach(p => {
+      const cat = byId[p.itemId];
+      const name = (cat?.name || '').trim();
+      if (!name) return; // item tak ditemui langsung dlm katalog — tiada cara nak label, skip
+      const key = name.toLowerCase();
+      if (!entitlement.has(key)) entitlement.set(key, { itemId: p.itemId, name, unit: cat.unit || '', qty: 0 });
+      entitlement.get(key).qty += p.qty;
     });
   }
 
@@ -282,24 +296,23 @@ window.computePatientPackageBalance = async function (patientId) {
     .select('item_id, item_name, qty, movement_type, psy_inventory_items(unit)')
     .in('reference_type', ['patient_package', 'patient_package_reversal'])
     .eq('reference_id', patientId);
-  const givenById = new Map(), givenByName = new Map();
+  const givenByName = new Map();
   (moves || []).forEach(m => {
+    const nameKey = (m.item_name || '').trim().toLowerCase();
+    if (!nameKey) return;
     const abs = Math.abs(Number(m.qty));
     const delta = m.movement_type === 'out' ? abs : -abs;
-    if (m.item_id) givenById.set(m.item_id, (givenById.get(m.item_id) || 0) + delta);
-    const nameKey = (m.item_name || '').trim().toLowerCase();
-    if (nameKey) givenByName.set(nameKey, (givenByName.get(nameKey) || 0) + delta);
+    givenByName.set(nameKey, (givenByName.get(nameKey) || 0) + delta);
     // Item diberi tapi TIDAK sebahagian jadual pakej (cth "+ Bagi Bekalan" manual utk
     // item luar senarai) — tetap papar (totalPakej=0) supaya staff nampak, bukan hilang senyap.
-    const key = m.item_id || nameKey;
-    if (key && !entitlement.has(key)) {
-      entitlement.set(key, { itemId: m.item_id || null, name: m.item_name || '', unit: m.psy_inventory_items?.unit || '', qty: 0 });
+    if (!entitlement.has(nameKey)) {
+      entitlement.set(nameKey, { itemId: m.item_id || null, name: m.item_name.trim(), unit: m.psy_inventory_items?.unit || '', qty: 0 });
     }
   });
 
   const out = [];
   entitlement.forEach((e, key) => {
-    const diberi = (e.itemId && givenById.get(e.itemId)) ?? givenByName.get(key) ?? 0;
+    const diberi = givenByName.get(key) || 0;
     out.push({ itemId: e.itemId, name: e.name || '(item tak ditemui)', unit: e.unit, totalPakej: e.qty, diberi, baki: e.qty - diberi });
   });
   return out.sort((a, b) => a.name.localeCompare(b.name));
