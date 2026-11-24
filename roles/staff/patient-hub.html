@@ -6171,7 +6171,7 @@
       // manual. Dua-dua laluan tulis ke psy_stock_movements dgn reference_type='patient_package'.
       const [itemsRes, histRes] = await Promise.all([
         window.db.from('psy_inventory_items').select('id,name,unit,qty_in_stock,category').eq('is_active', true).order('name'),
-        window.db.from('psy_stock_movements').select('item_name, qty, notes, created_at, actor_name, supply_invoice_id, psy_inventory_items(unit)')
+        window.db.from('psy_stock_movements').select('item_id, item_name, qty, notes, created_at, actor_name, supply_invoice_id, psy_inventory_items(unit)')
           .eq('reference_type', 'patient_package').eq('reference_id', patientId).eq('movement_type', 'out')
           .order('created_at', { ascending: false }).limit(50),
       ]);
@@ -6179,62 +6179,37 @@
       if (histRes.error) console.error('[Supply] history load error:', histRes.error);
       inventoryItems = itemsRes.data || [];
       supplyHistory = (histRes.data || []).map(r => ({
-        item_name: r.item_name, qty: Math.abs(Number(r.qty)), unit: r.psy_inventory_items?.unit,
+        item_id: r.item_id, item_name: r.item_name, qty: Math.abs(Number(r.qty)), unit: r.psy_inventory_items?.unit,
         notes: r.notes, created_at: r.created_at, given_by_name: r.actor_name, supply_invoice_id: r.supply_invoice_id,
       }));
       renderSupplyHistory();
-      renderSupplyKpiAndItems();
+      await renderSupplyKpiAndItems();
     }
 
     let spItemsShowAll = false;
 
-    function renderSupplyKpiAndItems() {
-      // Derive expected supplies from coaching_schedule (all weeks supplies summed)
-      const expected = {};
-      if (activePlan?.coaching_schedule && Array.isArray(activePlan.coaching_schedule)) {
-        activePlan.coaching_schedule.forEach(w => {
-          [...(w.supplies || []), ...(w.supplies_2 || [])].forEach(s => {
-            const name = s.item_name || s.name || (typeof s === 'string' ? s : null);
-            if (!name) return;
-            const qty = Number(s.qty || s.quantity || 0);
-            const unit = s.item_unit || s.unit || 'unit';
-            const key = name + '|' + unit;
-            if (!expected[key]) expected[key] = { name, unit, total_planned: 0 };
-            expected[key].total_planned += qty;
-          });
-        });
-      }
+    async function renderSupplyKpiAndItems() {
+      // Baki ikut pakej yang pesakit AMBIK — SATU logik dikongsi dgn pemberian-stok.html
+      // (panel "Baki Stok Pesakit") via window.computePatientPackageBalance() (roles/staff/
+      // _shared.js), supaya dua-dua tak sekali-kali drift/tak sync antara satu sama lain.
+      const balance = await window.computePatientPackageBalance(patientId);
 
-      // Sum given from disbursement history
-      const given = {};
+      // last_date (bila kali terakhir diberi) — paparan sahaja, bukan sebahagian logik baki
+      // dikongsi — dikira dari supplyHistory (senarai "out" sahaja, sama yg drive timeline).
+      const lastDateByKey = {};
       supplyHistory.forEach(d => {
-        const name = d.item_name;
-        const unit = d.unit || 'unit';
-        const key = name + '|' + unit;
-        if (!given[key]) given[key] = { name, unit, total_given: 0, last_date: null };
-        given[key].total_given += Number(d.qty || 0);
+        const key = d.item_id || (d.item_name || '').trim().toLowerCase();
+        if (!key) return;
         const dt = new Date(d.created_at || d.given_at);
-        if (!given[key].last_date || dt > given[key].last_date) given[key].last_date = dt;
+        if (!lastDateByKey[key] || dt > lastDateByKey[key]) lastDateByKey[key] = dt;
       });
 
-      // Merge: items = union of expected + given
-      const allKeys = new Set([...Object.keys(expected), ...Object.keys(given)]);
-      const items = Array.from(allKeys).map(k => {
-        const e = expected[k] || { name: '', unit: 'unit', total_planned: 0 };
-        const g = given[k] || { name: e.name, unit: e.unit, total_given: 0, last_date: null };
-        const totalPlanned = e.total_planned;
-        const totalGiven = g.total_given;
-        const used = Math.max(0, totalGiven - totalPlanned + (totalPlanned - totalGiven > 0 ? 0 : 0));
-        // Simpler: assume "used" = given - remaining; "remaining" = planned - given (if given<planned, remaining=planned-given) else 0
-        const remaining = Math.max(0, totalPlanned - totalGiven);
+      const items = balance.map(b => {
+        const key = b.itemId || (b.name || '').trim().toLowerCase();
         return {
-          name: e.name || g.name,
-          unit: e.unit || g.unit,
-          planned: totalPlanned,
-          given: totalGiven,
-          used: Math.min(totalGiven, totalPlanned),
-          remaining,
-          last_date: g.last_date,
+          name: b.name, unit: b.unit || 'unit', planned: b.totalPakej, given: b.diberi,
+          used: Math.min(b.diberi, b.totalPakej), remaining: Math.max(0, b.baki),
+          last_date: lastDateByKey[key] || null,
         };
       }).filter(it => it.name);
 
@@ -6357,7 +6332,7 @@
         : '<div class="text-xs text-emerald-600 italic">Semua item mencukupi ✓</div>';
     }
 
-    function toggleSpItemsAll() { spItemsShowAll = !spItemsShowAll; renderSupplyKpiAndItems(); }
+    function toggleSpItemsAll() { spItemsShowAll = !spItemsShowAll; renderSupplyKpiAndItems(); } // async fire-and-forget: cuma toggle paparan show-all, tiada state lain bergantung padanya
 
     function renderSupplyHistory() {
       const tbody = document.getElementById('supply-tbody');

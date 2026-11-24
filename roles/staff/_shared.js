@@ -233,3 +233,74 @@ const MK_CATEGORIES = [
   { key: 'sihir', label: 'Sihir / Saka', subs: [] },
   { key: 'sendi', label: 'Sendi / Tulang / Otot', subs: ['Sakit Sendi', 'Osteoarthritis', 'Gout', 'Sakit Belakang', 'Osteoporosis', 'Sengal Otot'] },
 ];
+
+// Baki Stok Pesakit (ikut pakej yang pesakit AMBIK) — SATU sumber dikongsi antara
+// pemberian-stok.html (panel "Baki Stok Pesakit") & patient-hub.html (jadual
+// "Senarai Bekalan & Item Rawatan") supaya dua-dua tak pernah drift/tak sync.
+// Total Pakej = jumlah supplies merentas SEMUA minggu plan AKTIF pesakit (coaching_schedule),
+// minggu mod online + item auto_stock:false TIDAK dikira (xde bekalan fizikal). Dah Diberi =
+// jumlah bersih ledger psy_stock_movements ('patient_package' tolak 'patient_package_reversal'
+// — pulangan di pemberian-stok.html kena tolak balik, bukan kekal dikira "given").
+window.computePatientPackageBalance = async function (patientId) {
+  const { data: plans } = await window.db.from('psy_treatment_plans')
+    .select('id, coaching_schedule').eq('patient_id', patientId).eq('status', 'active');
+
+  const entitlement = new Map(); // key (itemId ATAU nama lowercase) -> {itemId, name, unit, qty}
+  (plans || []).forEach(pl => {
+    const schedule = Array.isArray(pl.coaching_schedule) ? pl.coaching_schedule : [];
+    schedule.forEach(weekObj => {
+      if (!weekObj || weekObj.mode === 'online') return;
+      [weekObj.supplies, weekObj.supplies_2].forEach(suppliesRaw => {
+        (Array.isArray(suppliesRaw) ? suppliesRaw : [])
+          .filter(sup => sup?.auto_stock !== false && Number(sup?.qty || sup?.quantity || 0) > 0)
+          .forEach(sup => {
+            const name = sup.item_name || sup.name || '';
+            const key = sup.item_id || name.trim().toLowerCase();
+            if (!key) return;
+            if (!entitlement.has(key)) entitlement.set(key, { itemId: sup.item_id || null, name, unit: sup.item_unit || sup.unit || '', qty: 0 });
+            entitlement.get(key).qty += Number(sup.qty || sup.quantity || 0);
+          });
+      });
+    });
+  });
+
+  // Pakej lama simpan item_id sahaja (tiada nama terus dlm coaching_schedule) — resolve
+  // nama/unit sebenar dari katalog Inventori supaya item ni TAK senyap hilang dari Baki.
+  const itemIds = [...entitlement.values()].map(e => e.itemId).filter(Boolean);
+  if (itemIds.length) {
+    const { data: items } = await window.db.from('psy_inventory_items').select('id, name, unit').in('id', itemIds);
+    const byId = {}; (items || []).forEach(it => { byId[it.id] = it; });
+    entitlement.forEach(e => {
+      if (e.itemId && byId[e.itemId]) {
+        if (!e.name) e.name = byId[e.itemId].name;
+        if (!e.unit) e.unit = byId[e.itemId].unit || '';
+      }
+    });
+  }
+
+  const { data: moves } = await window.db.from('psy_stock_movements')
+    .select('item_id, item_name, qty, movement_type, psy_inventory_items(unit)')
+    .in('reference_type', ['patient_package', 'patient_package_reversal'])
+    .eq('reference_id', patientId);
+  const givenById = new Map(), givenByName = new Map();
+  (moves || []).forEach(m => {
+    const abs = Math.abs(Number(m.qty));
+    const delta = m.movement_type === 'out' ? abs : -abs;
+    if (m.item_id) givenById.set(m.item_id, (givenById.get(m.item_id) || 0) + delta);
+    const nameKey = (m.item_name || '').trim().toLowerCase();
+    if (nameKey) givenByName.set(nameKey, (givenByName.get(nameKey) || 0) + delta);
+    // Item diberi tapi TIDAK sebahagian jadual pakej (cth "+ Bagi Bekalan" manual utk
+    // item luar senarai) — tetap papar (totalPakej=0) supaya staff nampak, bukan hilang senyap.
+    const key = m.item_id || nameKey;
+    if (key && !entitlement.has(key)) {
+      entitlement.set(key, { itemId: m.item_id || null, name: m.item_name || '', unit: m.psy_inventory_items?.unit || '', qty: 0 });
+    }
+  });
+
+  const out = [];
+  entitlement.forEach((e, key) => {
+    const diberi = (e.itemId && givenById.get(e.itemId)) ?? givenByName.get(key) ?? 0;
+    out.push({ itemId: e.itemId, name: e.name || '(item tak ditemui)', unit: e.unit, totalPakej: e.qty, diberi, baki: e.qty - diberi });
+  });
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+};

@@ -540,80 +540,20 @@ function populateFilterOptions() {
 function onFilterChange() { psPage = 1; render(); }
 window.onFilterChange = onFilterChange;
 
-// ── Baki Stok Pesakit — Total Pakej (jumlah keseluruhan supplies dlm coaching_schedule
-// plan AKTIF pesakit, semua minggu, bukan setakat "Belum Bagi") tolak Dah Diberi (jumlah
-// bersih ledger psy_stock_movements sepanjang pakej, 'patient_package' - 'patient_package_
-// reversal', TIDAK terikat tapisan tarikh semasa sebab ni baki keseluruhan pakej). ──
+// ── Baki Stok Pesakit — guna window.computePatientPackageBalance() (roles/staff/_shared.js),
+// SATU logik dikongsi dgn patient-hub.html ("Senarai Bekalan & Item Rawatan") supaya dua-dua
+// tak sekali-kali drift/tak sync antara satu sama lain. TIDAK terikat tapisan tarikh semasa
+// sebab ni baki keseluruhan pakej (bukan setakat "Belum Bagi" dlm julat tarikh terpilih). ──
 async function onPatientFilterChange() {
   const patientId = document.getElementById('ps-pesakit').value;
   const wrap = document.getElementById('pb-wrap');
   if (!patientId) { wrap.classList.add('hidden'); return; }
   wrap.classList.remove('hidden');
   document.getElementById('pb-tbody').innerHTML = '<tr><td colspan="4" class="text-center py-6 text-ink/40 text-sm italic">Memuatkan...</td></tr>';
-  const rows = await computePatientBalance(patientId);
+  const rows = await window.computePatientPackageBalance(patientId);
   renderPatientBalance(rows);
 }
 window.onPatientFilterChange = onPatientFilterChange;
-
-async function computePatientBalance(patientId) {
-  const { data: plans } = await window.db.from('psy_treatment_plans')
-    .select('id, coaching_schedule').eq('patient_id', patientId).eq('status', 'active');
-
-  // itemId tersedia → kunci guna itemId; kalau tidak (pakej lama simpan nama sahaja),
-  // fallback kunci nama (lowercase trim) — sama fallback dgn loadPendingRows().
-  const entitlement = new Map(); // key -> {itemId, name, unit, qty}
-  (plans || []).forEach(pl => {
-    const schedule = Array.isArray(pl.coaching_schedule) ? pl.coaching_schedule : [];
-    schedule.forEach(weekObj => {
-      if (!weekObj || weekObj.mode === 'online') return;
-      [weekObj.supplies, weekObj.supplies_2].forEach(suppliesRaw => {
-        (Array.isArray(suppliesRaw) ? suppliesRaw : [])
-          .filter(sup => sup?.auto_stock !== false && Number(sup?.qty || sup?.quantity || 0) > 0)
-          .forEach(sup => {
-            const name = sup.item_name || sup.name || '';
-            const key = sup.item_id || name.trim().toLowerCase();
-            if (!key) return;
-            if (!entitlement.has(key)) entitlement.set(key, { itemId: sup.item_id || null, name, unit: sup.item_unit || sup.unit || '', qty: 0 });
-            entitlement.get(key).qty += Number(sup.qty || sup.quantity || 0);
-          });
-      });
-    });
-  });
-
-  // Resolve nama/unit utk entri yang cuma ada item_id (coaching_schedule tak simpan nama
-  // terus) — sama fallback dgn loadPendingRows().
-  const itemIds = [...entitlement.values()].map(e => e.itemId).filter(Boolean);
-  if (itemIds.length) {
-    const { data: items } = await window.db.from('psy_inventory_items').select('id, name, unit').in('id', itemIds);
-    const byId = {}; (items || []).forEach(it => { byId[it.id] = it; });
-    entitlement.forEach(e => {
-      if (e.itemId && byId[e.itemId]) {
-        if (!e.name) e.name = byId[e.itemId].name;
-        if (!e.unit) e.unit = byId[e.itemId].unit || '';
-      }
-    });
-  }
-
-  const { data: moves } = await window.db.from('psy_stock_movements')
-    .select('item_id, item_name, qty, movement_type')
-    .in('reference_type', ['patient_package', 'patient_package_reversal'])
-    .eq('reference_id', patientId);
-  const givenById = new Map(), givenByName = new Map();
-  (moves || []).forEach(m => {
-    const abs = Math.abs(Number(m.qty));
-    const delta = m.movement_type === 'out' ? abs : -abs;
-    if (m.item_id) givenById.set(m.item_id, (givenById.get(m.item_id) || 0) + delta);
-    const nameKey = (m.item_name || '').trim().toLowerCase();
-    if (nameKey) givenByName.set(nameKey, (givenByName.get(nameKey) || 0) + delta);
-  });
-
-  const out = [];
-  entitlement.forEach((e, key) => {
-    const diberi = (e.itemId && givenById.get(e.itemId)) ?? givenByName.get(key) ?? 0;
-    out.push({ name: e.name || '(item tak ditemui)', unit: e.unit, totalPakej: e.qty, diberi, baki: e.qty - diberi });
-  });
-  return out.sort((a, b) => a.name.localeCompare(b.name));
-}
 
 function renderPatientBalance(rows) {
   const tbody = document.getElementById('pb-tbody');
@@ -735,14 +675,14 @@ function render() {
       <td class="px-4 py-3 text-xs text-ink/55 whitespace-nowrap">${fmtDate(r.date)}</td>
       <td class="px-4 py-3 text-sm font-medium text-ink">${escHtml(r.patientName)}</td>
       <td class="px-4 py-3 text-sm text-ink/80">${escHtml(r.productName)}</td>
-      <td class="px-4 py-3 text-sm text-right font-semibold whitespace-nowrap border-l border-ink/5">${escHtml(baki)}</td>
+      <td class="px-4 py-3 text-sm text-right font-semibold whitespace-nowrap border-l border-ink/8">${escHtml(baki)}</td>
       <td class="px-4 py-3 text-sm text-right text-green-dark whitespace-nowrap">${escHtml(stokMasuk)}</td>
       <td class="px-4 py-3 text-sm text-right text-terracotta whitespace-nowrap">${escHtml(stokKeluar)}</td>
       <td class="pl-4 pr-6 py-3 text-sm text-right text-ink/60 whitespace-nowrap">${escHtml(totalStok)}</td>
-      <td class="px-4 py-3 text-sm text-ink/70 whitespace-nowrap border-l border-ink/5">${escHtml(r.coachName)}</td>
+      <td class="px-4 py-3 text-sm text-ink/70 whitespace-nowrap border-l border-ink/8">${escHtml(r.coachName)}</td>
       <td class="px-4 py-3 text-sm text-ink/70 whitespace-nowrap">${escHtml(r.pakejCode)}</td>
       <td class="px-4 py-3 text-sm text-ink/70 whitespace-nowrap">${escHtml(r.weekLabel)}</td>
-      <td class="px-4 py-3 border-l border-ink/5">${statusChip(r)}</td>
+      <td class="px-4 py-3 border-l border-ink/8">${statusChip(r)}</td>
       <td class="px-4 py-3">${actions}</td>
     </tr>`;
   }).join('') : '<tr><td colspan="12" class="text-center py-12 text-ink/40 text-sm">Tiada rekod sepadan</td></tr>';
