@@ -77,7 +77,7 @@
           </div>
           <div>
             <label class="block text-[10px] font-semibold text-ink/40 uppercase tracking-wide mb-1">Nama Pesakit</label>
-            <select id="ps-pesakit" onchange="onFilterChange()" class="w-full px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:outline-none focus:border-navy">
+            <select id="ps-pesakit" onchange="onFilterChange(); onPatientFilterChange()" class="w-full px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:outline-none focus:border-navy">
               <option value="">Semua Pesakit</option>
             </select>
           </div>
@@ -100,6 +100,31 @@
           </div>
           <div class="lg:col-span-7 flex justify-end">
             <button onclick="clearFilters()" class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm text-ink/50 hover:bg-ink/5 bg-white flex items-center gap-1.5">✕ Kosongkan Filter</button>
+          </div>
+        </div>
+
+        <!-- Baki Stok Pesakit — berbeza drpd "Ringkasan Stok per Produk" (yang itu baki
+             GUDANG/warehouse). Ni baki TINGGAL pesakit terpilih bagi tiap produk: jumlah
+             keseluruhan pakej (semua minggu dlm coaching_schedule) tolak apa yg dah diberi
+             sepanjang pakej (bukan terikat tapisan tarikh semasa). Nampak hanya bila satu
+             pesakit dipilih (filter "Nama Pesakit") — bukan untuk "Semua Pesakit". -->
+        <div id="pb-wrap" class="bg-white rounded-2xl border border-ink/10 overflow-hidden shadow-sm hidden">
+          <div class="px-5 py-3 border-b border-ink/8">
+            <h3 class="text-sm font-bold text-navy">Baki Stok Pesakit</h3>
+            <p class="text-[11px] text-ink/40 mt-0.5">Jumlah keseluruhan pakej tolak apa yang sudah diberi — baki tinggal pesakit ini bagi setiap produk (tidak terikat tapisan tarikh).</p>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="bg-ink/[0.02] border-b border-ink/10 text-left">
+                  <th class="px-5 py-2.5 text-[10px] font-bold text-ink/40 uppercase tracking-widest">Nama Produk</th>
+                  <th class="px-4 py-2.5 text-right text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Total Pakej</th>
+                  <th class="px-4 py-2.5 text-right text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Dah Diberi</th>
+                  <th class="px-4 py-2.5 text-right text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Baki Tinggal</th>
+                </tr>
+              </thead>
+              <tbody id="pb-tbody"></tbody>
+            </table>
           </div>
         </div>
 
@@ -514,6 +539,91 @@ function populateFilterOptions() {
 
 function onFilterChange() { psPage = 1; render(); }
 window.onFilterChange = onFilterChange;
+
+// ── Baki Stok Pesakit — Total Pakej (jumlah keseluruhan supplies dlm coaching_schedule
+// plan AKTIF pesakit, semua minggu, bukan setakat "Belum Bagi") tolak Dah Diberi (jumlah
+// bersih ledger psy_stock_movements sepanjang pakej, 'patient_package' - 'patient_package_
+// reversal', TIDAK terikat tapisan tarikh semasa sebab ni baki keseluruhan pakej). ──
+async function onPatientFilterChange() {
+  const patientId = document.getElementById('ps-pesakit').value;
+  const wrap = document.getElementById('pb-wrap');
+  if (!patientId) { wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden');
+  document.getElementById('pb-tbody').innerHTML = '<tr><td colspan="4" class="text-center py-6 text-ink/40 text-sm italic">Memuatkan...</td></tr>';
+  const rows = await computePatientBalance(patientId);
+  renderPatientBalance(rows);
+}
+window.onPatientFilterChange = onPatientFilterChange;
+
+async function computePatientBalance(patientId) {
+  const { data: plans } = await window.db.from('psy_treatment_plans')
+    .select('id, coaching_schedule').eq('patient_id', patientId).eq('status', 'active');
+
+  // itemId tersedia → kunci guna itemId; kalau tidak (pakej lama simpan nama sahaja),
+  // fallback kunci nama (lowercase trim) — sama fallback dgn loadPendingRows().
+  const entitlement = new Map(); // key -> {itemId, name, unit, qty}
+  (plans || []).forEach(pl => {
+    const schedule = Array.isArray(pl.coaching_schedule) ? pl.coaching_schedule : [];
+    schedule.forEach(weekObj => {
+      if (!weekObj || weekObj.mode === 'online') return;
+      [weekObj.supplies, weekObj.supplies_2].forEach(suppliesRaw => {
+        (Array.isArray(suppliesRaw) ? suppliesRaw : [])
+          .filter(sup => sup?.auto_stock !== false && Number(sup?.qty || sup?.quantity || 0) > 0)
+          .forEach(sup => {
+            const name = sup.item_name || sup.name || '';
+            const key = sup.item_id || name.trim().toLowerCase();
+            if (!key) return;
+            if (!entitlement.has(key)) entitlement.set(key, { itemId: sup.item_id || null, name, unit: sup.item_unit || sup.unit || '', qty: 0 });
+            entitlement.get(key).qty += Number(sup.qty || sup.quantity || 0);
+          });
+      });
+    });
+  });
+
+  // Resolve nama/unit utk entri yang cuma ada item_id (coaching_schedule tak simpan nama
+  // terus) — sama fallback dgn loadPendingRows().
+  const itemIds = [...entitlement.values()].map(e => e.itemId).filter(Boolean);
+  if (itemIds.length) {
+    const { data: items } = await window.db.from('psy_inventory_items').select('id, name, unit').in('id', itemIds);
+    const byId = {}; (items || []).forEach(it => { byId[it.id] = it; });
+    entitlement.forEach(e => {
+      if (e.itemId && byId[e.itemId]) {
+        if (!e.name) e.name = byId[e.itemId].name;
+        if (!e.unit) e.unit = byId[e.itemId].unit || '';
+      }
+    });
+  }
+
+  const { data: moves } = await window.db.from('psy_stock_movements')
+    .select('item_id, item_name, qty, movement_type')
+    .in('reference_type', ['patient_package', 'patient_package_reversal'])
+    .eq('reference_id', patientId);
+  const givenById = new Map(), givenByName = new Map();
+  (moves || []).forEach(m => {
+    const abs = Math.abs(Number(m.qty));
+    const delta = m.movement_type === 'out' ? abs : -abs;
+    if (m.item_id) givenById.set(m.item_id, (givenById.get(m.item_id) || 0) + delta);
+    const nameKey = (m.item_name || '').trim().toLowerCase();
+    if (nameKey) givenByName.set(nameKey, (givenByName.get(nameKey) || 0) + delta);
+  });
+
+  const out = [];
+  entitlement.forEach((e, key) => {
+    const diberi = (e.itemId && givenById.get(e.itemId)) ?? givenByName.get(key) ?? 0;
+    out.push({ name: e.name || '(item tak ditemui)', unit: e.unit, totalPakej: e.qty, diberi, baki: e.qty - diberi });
+  });
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function renderPatientBalance(rows) {
+  const tbody = document.getElementById('pb-tbody');
+  tbody.innerHTML = rows.length ? rows.map(r => `<tr class="border-b border-ink/5 last:border-0">
+    <td class="px-5 py-2.5 text-sm text-ink/80">${escHtml(r.name)}</td>
+    <td class="px-4 py-2.5 text-sm text-right text-ink/60 whitespace-nowrap">${escHtml(String(r.totalPakej))}${escHtml(r.unit)}</td>
+    <td class="px-4 py-2.5 text-sm text-right text-terracotta whitespace-nowrap">${escHtml(String(r.diberi))}${escHtml(r.unit)}</td>
+    <td class="px-4 py-2.5 text-sm text-right font-semibold whitespace-nowrap ${r.baki < 0 ? 'text-terracotta' : 'text-green-dark'}">${escHtml(String(r.baki))}${escHtml(r.unit)}</td>
+  </tr>`).join('') : '<tr><td colspan="4" class="text-center py-6 text-ink/40 text-sm italic">Pesakit ini tiada pakej aktif / bekalan berjadual.</td></tr>';
+}
 
 // Tarikh diubah — kena tarik semula dari server (bukan setakat render semula) sebab
 // ALL_ROWS terikat kepada julat tarikh lama.
