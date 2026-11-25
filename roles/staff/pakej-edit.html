@@ -3460,33 +3460,51 @@ function pvInstallmentAllowed(p, tier) {
 function buildPvPricingHtml(p) {
   const hasToday = !!p.today_price;
   if (!Number(p.price) && !hasToday) return '';
-  const installmentBlock = (tier) => {
-    const ip = pvInstallmentAllowed(p, tier);
-    if (!ip) return '';
-    return `<div class="mt-2 pt-2 border-t border-ink/10"><div class="text-[9px] text-ink/45 uppercase font-semibold">📅 Installment Payment Plan (IPP)</div><div class="text-xs font-bold text-ink mt-0.5">${ip.duration} Bulan — 1 × ${pvFmtRM(ip.deposit)} + ${ip.duration - 1} × ${pvFmtRM(ip.monthly)}</div></div>`;
-  };
   const asal = Number(p.harga_asal || 0);
   const nilaiProgram = Number(p.nilai_program || 0);
+  const pct = price => asal ? Math.round((1 - price / asal) * 100) : 0;
+  const save = price => asal ? Math.max(0, asal - price) : 0;
+
+  const fppCard = (price, isToday) => `
+    <div class="relative rounded-xl border ${isToday ? 'border-gold/40 bg-gold/5' : 'border-navy-light bg-navy-light/10'} p-3.5">
+      ${isToday ? `<span class="absolute -top-2 right-3 bg-terracotta text-white text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap">★ HARI INI SAHAJA</span>` : ''}
+      <div class="flex items-center gap-1.5 mb-1"><span class="text-sm">💳</span><h4 class="font-bold text-xs text-ink">Full Payment Plan (FPP)</h4></div>
+      ${asal ? `<div class="text-[10px] text-ink/55">Diskaun <span class="font-bold ${isToday ? 'text-gold-dark' : 'text-navy'}">${pct(price)}%</span> drpd harga asal</div>` : ''}
+      <div class="text-xl font-extrabold text-green-dark mt-1">${pvFmtRM(price)}</div>
+      ${asal ? `<div class="inline-block mt-1.5 px-2.5 py-0.5 rounded-full bg-green-light text-green-dark text-[10px] font-semibold">Jimat ${pvFmtRM(save(price))}</div>` : ''}
+    </div>`;
+
+  const ippCard = (tier, isToday) => {
+    const ip = pvInstallmentAllowed(p, tier);
+    if (!ip) return '';
+    const total = ip.deposit + (ip.duration - 1) * ip.monthly;
+    return `
+      <div class="rounded-xl border ${isToday ? 'border-gold/40 bg-gold/5' : 'border-navy-light bg-navy-light/10'} p-3.5">
+        <div class="flex items-center gap-1.5 mb-1"><span class="text-sm">📅</span><h4 class="font-bold text-xs text-ink">Installment Payment Plan (IPP)</h4></div>
+        ${asal ? `<div class="text-[10px] text-ink/55">Diskaun <span class="font-bold ${isToday ? 'text-gold-dark' : 'text-navy'}">${pct(total)}%</span> drpd harga asal</div>` : ''}
+        <div class="text-xl font-extrabold text-green-dark mt-1">${pvFmtRM(total)}</div>
+        <div class="mt-1.5 bg-white/70 rounded-lg px-2.5 py-1.5 text-[10px] text-ink/70"><span class="font-bold text-ink">${ip.duration} Bulan</span> — 1 × ${pvFmtRM(ip.deposit)} + ${ip.duration - 1} × ${pvFmtRM(ip.monthly)}</div>
+      </div>`;
+  };
+
   return `
-    <div class="bg-white rounded-xl border border-ink/10 overflow-hidden">
-      <div class="px-4 py-3 text-center bg-cream/60 border-b border-ink/10">
-        ${nilaiProgram ? `<div class="text-[10px] text-ink/50 uppercase font-semibold">Jumlah Nilai Keseluruhan Program</div><div class="text-xl font-extrabold text-navy">${pvFmtRM(nilaiProgram)}</div>` : ''}
-        ${asal ? `<div class="text-[11px] text-ink/50 mt-1">Harga Asal ${pvFmtRM(asal)} · Anda jimat lebih dari separuh nilai sebenar program ini.</div>` : ''}
-      </div>
-      <div class="divide-y divide-ink/10">
-        <div class="p-4">
-          <div class="text-[10px] font-bold text-ink/50 uppercase mb-1.5">🏷️ Harga Sekarang (Now Price)</div>
-          <div class="text-xl font-extrabold text-navy">${pvFmtRM(p.price)}</div>
-          <div class="text-[9px] text-ink/45 mt-0.5">Full Payment Plan (FPP)</div>
-          ${installmentBlock('now')}
+    <div class="bg-white rounded-xl border border-ink/10 p-4">
+      <h3 class="font-bold text-sm text-navy-dark flex items-center gap-1.5 mb-3">📊 Ringkasan Nilai & Harga</h3>
+      ${nilaiProgram || asal ? `
+      <div class="bg-navy-light/30 rounded-xl p-3 flex flex-wrap items-center gap-3 mb-3 text-xs">
+        ${nilaiProgram ? `<div><div class="text-[9px] text-ink/55 font-semibold">💎 Nilai Keseluruhan</div><div class="text-base font-extrabold text-navy-dark">${pvFmtRM(nilaiProgram)}</div></div>` : ''}
+        ${asal ? `<div class="border-l border-navy-light pl-3"><div class="text-[9px] text-ink/55">Harga Asal</div><div class="font-semibold text-ink/40 line-through">${pvFmtRM(asal)}</div></div>` : ''}
+        ${asal && Number(p.price) ? `<div class="ml-auto bg-green-light text-green-dark rounded-lg px-2.5 py-1.5"><div class="text-[9px] font-semibold">🏷️ Jimat</div><div class="font-extrabold">${pvFmtRM(save(p.price))} (${pct(p.price)}%)</div></div>` : ''}
+      </div>` : ''}
+      <div class="grid ${hasToday ? 'sm:grid-cols-2' : ''} gap-3">
+        <div class="space-y-2">
+          <div class="text-[10px] font-bold text-navy uppercase text-center">Harga Sekarang (Now Price)</div>
+          ${fppCard(p.price, false)}${ippCard('now', false)}
         </div>
         ${hasToday ? `
-        <div class="p-4 bg-gold/5">
-          <div class="text-[10px] font-bold text-gold-dark uppercase mb-1.5">⭐ Harga Hari Ini (Today Price)</div>
-          <p class="text-[9px] text-ink/40 mb-1.5 -mt-1">Eksklusif semasa sesi konsultasi sahaja.</p>
-          <div class="text-xl font-extrabold text-navy">${pvFmtRM(p.today_price)}</div>
-          <div class="text-[9px] text-ink/45 mt-0.5">Full Payment Plan (FPP)</div>
-          ${installmentBlock('today')}
+        <div class="space-y-2">
+          <div class="text-[10px] font-bold text-gold-dark uppercase text-center">⭐ Harga Hari Ini (Today Price)</div>
+          ${fppCard(p.today_price, true)}${ippCard('today', true)}
         </div>` : ''}
       </div>
     </div>`;
