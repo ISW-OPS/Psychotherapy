@@ -9,6 +9,11 @@
 <script>tailwind.config = window.ISW_TAILWIND_CONFIG;</script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="_styles.css" rel="stylesheet">
+<style>
+.tab-btn { padding:9px 18px; font-size:13px; font-weight:600; border-bottom:2px solid transparent;
+           color:rgba(60,79,92,0.5); cursor:pointer; transition:all 0.18s; white-space:nowrap; background:none; border-top:none; border-left:none; border-right:none; }
+.tab-btn.active { color:#1a3a5c; border-bottom-color:#1a3a5c; }
+</style>
 </head>
 <body class="min-h-screen">
 
@@ -33,23 +38,24 @@
           <p class="text-xs text-ink/50 mt-0.5">Bekalan yang sudah diberi (auto-potong sesi Hadir + manual "Bagi Bekalan") dan yang masih tertunggak.</p>
         </div>
 
-        <!-- Stat Cards — ikut tapisan semasa (bukan jumlah keseluruhan tanpa tapis). Boleh
-             diklik: terus tapis jadual bawah ikut Status (sama konsep dgn dashboard lain). -->
+        <!-- Stat Cards — ikut tapisan semasa (carian/produk/pesakit, bukan tab) supaya kad
+             sentiasa tunjuk gambaran keseluruhan merentas 3 tab. Boleh diklik: tukar terus
+             ke tab berkaitan (sama konsep dgn dashboard lain). -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <button type="button" onclick="filterByStatCard('')" id="card-total" class="text-left bg-white rounded-2xl border border-ink/10 shadow-sm p-4 hover:shadow-md transition-shadow cursor-pointer">
-            <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Jumlah Item</div>
-            <div id="ps-stat-total" class="text-2xl font-bold text-ink">—</div>
-            <div id="ps-stat-total-sub" class="text-[10px] text-ink/40 mt-0.5">—</div>
+          <button type="button" onclick="switchTab('pending')" id="card-pending" class="text-left bg-white rounded-2xl border border-ink/10 shadow-sm p-4 hover:shadow-md transition-shadow cursor-pointer">
+            <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">⏳ Belum Bagi</div>
+            <div id="ps-stat-pending" class="text-2xl font-bold text-amber-600">—</div>
+            <div id="ps-stat-pending-sub" class="text-[10px] text-ink/40 mt-0.5">—</div>
           </button>
-          <button type="button" onclick="filterByStatCard('given')" id="card-given" class="text-left bg-white rounded-2xl border border-ink/10 shadow-sm p-4 hover:shadow-md transition-shadow cursor-pointer">
+          <button type="button" onclick="switchTab('given')" id="card-given" class="text-left bg-white rounded-2xl border border-ink/10 shadow-sm p-4 hover:shadow-md transition-shadow cursor-pointer">
             <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">✅ Dah Bagi</div>
             <div id="ps-stat-given" class="text-2xl font-bold text-green-dark">—</div>
             <div id="ps-stat-given-sub" class="text-[10px] text-ink/40 mt-0.5">—</div>
           </button>
-          <button type="button" onclick="filterByStatCard('pending')" id="card-pending" class="text-left bg-white rounded-2xl border border-ink/10 shadow-sm p-4 hover:shadow-md transition-shadow cursor-pointer">
-            <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">⏳ Belum Bagi</div>
-            <div id="ps-stat-pending" class="text-2xl font-bold text-amber-600">—</div>
-            <div id="ps-stat-pending-sub" class="text-[10px] text-ink/40 mt-0.5">—</div>
+          <button type="button" onclick="switchTab('other')" id="card-other" class="text-left bg-white rounded-2xl border border-ink/10 shadow-sm p-4 hover:shadow-md transition-shadow cursor-pointer">
+            <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">📦 Pergerakan Lain</div>
+            <div id="ps-stat-other" class="text-2xl font-bold text-ink/60">—</div>
+            <div id="ps-stat-other-sub" class="text-[10px] text-ink/40 mt-0.5">—</div>
           </button>
           <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4">
             <div class="text-[10px] text-ink/40 font-semibold uppercase tracking-wide">Pesakit Terlibat</div>
@@ -58,9 +64,17 @@
           </div>
         </div>
 
+        <!-- Tab — 3 jenis event sangat berlainan (unjuran/rekod sebenar/pergerakan bukan
+             pesakit) diasingkan supaya kolum jadual relevan 100% ikut jenis, bukan gabung
+             1 jadual dgn banyak "—" (kolum tak relevan ikut jenis baris). -->
+        <div class="border-b border-ink/10 flex gap-0 flex-wrap">
+          <button class="tab-btn active" id="tab-pending" onclick="switchTab('pending')">⏳ Belum Bagi</button>
+          <button class="tab-btn" id="tab-given" onclick="switchTab('given')">✅ Dah Bagi</button>
+          <button class="tab-btn" id="tab-other" onclick="switchTab('other')">📦 Pergerakan Lain</button>
+        </div>
 
         <!-- Filters -->
-        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-3">
+        <div class="bg-white rounded-2xl border border-ink/10 shadow-sm p-4 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
           <div class="lg:col-span-2">
             <label class="block text-[10px] font-semibold text-ink/40 uppercase tracking-wide mb-1">Cari</label>
             <div class="relative">
@@ -82,15 +96,6 @@
             </select>
           </div>
           <div>
-            <label class="block text-[10px] font-semibold text-ink/40 uppercase tracking-wide mb-1">Status</label>
-            <select id="ps-status" onchange="onFilterChange()" class="w-full px-3 py-2.5 border border-ink/20 rounded-xl text-sm bg-white focus:outline-none focus:border-navy">
-              <option value="">Semua Status</option>
-              <option value="given">✅ Dah Bagi</option>
-              <option value="pending">⏳ Belum Bagi</option>
-              <option value="other">📦 Pergerakan Lain</option>
-            </select>
-          </div>
-          <div>
             <label class="block text-[10px] font-semibold text-ink/40 uppercase tracking-wide mb-1">Tarikh Dari</label>
             <input id="ps-date-from" type="date" onchange="onDateFilterChange()" class="w-full px-3 py-2.5 border border-ink/20 rounded-xl text-sm focus:outline-none focus:border-navy">
           </div>
@@ -98,7 +103,7 @@
             <label class="block text-[10px] font-semibold text-ink/40 uppercase tracking-wide mb-1">Tarikh Hingga</label>
             <input id="ps-date-to" type="date" onchange="onDateFilterChange()" class="w-full px-3 py-2.5 border border-ink/20 rounded-xl text-sm focus:outline-none focus:border-navy">
           </div>
-          <div class="lg:col-span-7 flex justify-end">
+          <div class="lg:col-span-6 flex justify-end">
             <button onclick="clearFilters()" class="px-3 py-2.5 border border-ink/20 rounded-xl text-sm text-ink/50 hover:bg-ink/5 bg-white flex items-center gap-1.5">✕ Kosongkan Filter</button>
           </div>
         </div>
@@ -151,37 +156,10 @@
           </div>
         </div>
 
-        <!-- Table -->
+        <!-- Table — kolum berbeza ikut tab aktif (dijana oleh JS, bukan satu set kolum
+             gabungan dgn banyak "—" utk kolum yg tak relevan ikut jenis baris). -->
         <div class="bg-white rounded-2xl border border-ink/10 overflow-hidden shadow-sm">
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm table-fixed">
-              <colgroup>
-                <col style="width:8%"><col style="width:10%"><col style="width:12%">
-                <col style="width:7%"><col style="width:7%"><col style="width:7%"><col style="width:8%">
-                <col style="width:10%"><col style="width:8%"><col style="width:6%">
-                <col style="width:9%"><col style="width:8%">
-              </colgroup>
-              <thead>
-                <tr class="bg-ink/[0.02] border-b border-ink/10 text-left">
-                  <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Tarikh</th>
-                  <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest">Nama Pesakit</th>
-                  <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest">Nama Produk</th>
-                  <th class="px-4 py-3 text-right text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap border-l border-ink/8">Baki Stok</th>
-                  <th class="px-4 py-3 text-right text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Stok Masuk</th>
-                  <th class="px-4 py-3 text-right text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Stok Keluar</th>
-                  <th class="pl-4 pr-6 py-3 text-right text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Total Stok</th>
-                  <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap border-l border-ink/8">Coach</th>
-                  <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Pakej</th>
-                  <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Minggu</th>
-                  <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest border-l border-ink/8">Status</th>
-                  <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest">Tindakan</th>
-                </tr>
-              </thead>
-              <tbody id="ps-tbody">
-                <tr><td colspan="12" class="text-center py-12 text-ink/40 text-sm italic">Memuatkan...</td></tr>
-              </tbody>
-            </table>
-          </div>
+          <div id="ps-table-wrap" class="overflow-x-auto"></div>
           <div class="px-5 py-3 border-t border-ink/8 flex items-center justify-between flex-wrap gap-2">
             <div id="ps-page-info" class="text-xs text-ink/40"></div>
             <div id="ps-page-btns" class="flex items-center gap-1"></div>
@@ -203,8 +181,19 @@
 <script>
 let ALL_ROWS = [];
 let psPage = 1;
+let psTab = 'pending'; // 'pending' | 'given' | 'other' — tab aktif, gantikan dropdown Status lama
 const PS_PAGE_SIZE = 20;
 let PS_ITEM_LOOKUP = {}; // movementId -> {itemId, productName, qty, unit, patientId, patientName}
+
+function switchTab(tab) {
+  psTab = tab;
+  ['pending', 'given', 'other'].forEach(t => {
+    document.getElementById('tab-' + t)?.classList.toggle('active', t === tab);
+  });
+  psPage = 1;
+  render();
+}
+window.switchTab = switchTab;
 
 // ── Pulangkan bekalan "Dah Bagi" (salah bagi / terlebih / tak jadi) — balik ke
 // Stok Masuk dengan sebab, pesakit & tarikh direkod terus dalam ledger. Rekod
@@ -446,7 +435,10 @@ async function loadAll() {
   const relevantItemIds = [...new Set([...given, ...pending].map(r => r.itemId).filter(Boolean))];
   const other = await loadOtherMovements(relevantItemIds, from, to);
   const combined = [...pending, ...given, ...other]; // belum bagi (akan datang) dulu, dah bagi (lepas) lepas tu
-  const { nameMap, coachByPatient, pkgByPatient } = await resolvePatientExtras(combined);
+  const [{ nameMap, coachByPatient, pkgByPatient }, balanceByPatient] = await Promise.all([
+    resolvePatientExtras(combined),
+    loadPendingBalances(pending),
+  ]);
   ALL_ROWS = combined.map(r => ({
     ...r,
     patientName: r.patientId ? (nameMap[r.patientId] || 'Pesakit') : '—',
@@ -460,53 +452,62 @@ async function loadAll() {
     // tiada pakej/minggu yg bermakna.
     pakejCode: r.status === 'pending' ? (r.pkgCode || pkgByPatient[r.patientId] || '—') : (pkgByPatient[r.patientId] || '—'),
     weekLabel: r.status === 'pending' && r.weekNumber ? 'W' + r.weekNumber : '—',
+    // Baki PAKEJ (bukan baki gudang) bagi produk ni — kita DAH tahu jumlah keseluruhan
+    // pakej pesakit sejak awal (coaching_schedule), jadi "Belum Bagi" pun boleh tunjuk baki
+    // tanpa tunggu movement sebenar. Guna window.computePatientPackageBalance() SAMA logik
+    // dgn panel "Baki Stok Pesakit" supaya nombor ni tak sekali-kali drift drpd panel tu.
+    bakiPakej: r.status === 'pending' ? (balanceByPatient[r.patientId] || []).find(
+      b => b.name.trim().toLowerCase() === (r.productName || '').trim().toLowerCase()
+    ) || null : null,
   }));
-  ALL_ROWS.sort((a, b) => new Date(b.date) - new Date(a.date));
+  // Tertib sebenar (menaik utk "Belum Bagi", menurun utk lain) dikira per-tab dlm
+  // getFiltered() — bukan di sini, sebab arah tertib yg betul berbeza ikut tab aktif.
   populateFilterOptions();
   render();
 }
 
-// Stat cards ikut TAPISAN SEMASA (bukan jumlah keseluruhan data dimuatkan) — supaya
-// nombor konsisten dgn apa yang staff nampak dalam jadual + ringkasan di bawah.
-function renderStats(filteredList) {
-  const given = filteredList.filter(r => r.status === 'given');
-  const pending = filteredList.filter(r => r.status === 'pending');
-  const patientIds = new Set(filteredList.map(r => r.patientId).filter(Boolean));
+// Baki Pakej per baris "Belum Bagi" — satu panggilan computePatientPackageBalance() per
+// pesakit TERLIBAT sahaja (bukan semua pesakit sistem), dijalankan selari.
+async function loadPendingBalances(pending) {
+  const ids = [...new Set(pending.map(r => r.patientId).filter(Boolean))];
+  const map = {};
+  await Promise.all(ids.map(async pid => { map[pid] = await window.computePatientPackageBalance(pid); }));
+  return map;
+}
 
-  document.getElementById('ps-stat-total').textContent = filteredList.length;
-  document.getElementById('ps-stat-total-sub').textContent = `${given.length} dah bagi · ${pending.length} belum bagi`;
+// Stat cards ikut tapisan Carian/Produk/Pesakit SAHAJA (bukan tab) — supaya kad sentiasa
+// tunjuk gambaran MERENTAS ketiga-tiga tab, bukan terkunci pada tab yg sedang aktif.
+function renderStats(baseList) {
+  const given = baseList.filter(r => r.status === 'given');
+  const pending = baseList.filter(r => r.status === 'pending');
+  const other = baseList.filter(r => r.status === 'other');
+  const patientIds = new Set(baseList.map(r => r.patientId).filter(Boolean));
+
   document.getElementById('ps-stat-given').textContent = given.length;
   document.getElementById('ps-stat-given-sub').textContent = `${new Set(given.map(r => r.patientId)).size} pesakit`;
   document.getElementById('ps-stat-pending').textContent = pending.length;
   document.getElementById('ps-stat-pending-sub').textContent = `${new Set(pending.map(r => r.patientId)).size} pesakit`;
+  document.getElementById('ps-stat-other').textContent = other.length;
+  document.getElementById('ps-stat-other-sub').textContent = `${new Set(other.map(r => r.productName)).size} produk`;
   document.getElementById('ps-stat-patients').textContent = patientIds.size;
 
-  // Highlight kad yang sepadan dgn tapisan Status semasa
-  const curStatus = document.getElementById('ps-status').value;
-  const cardByStatus = { '': 'card-total', given: 'card-given', pending: 'card-pending' };
-  Object.entries(cardByStatus).forEach(([v, id]) => {
-    document.getElementById(id)?.classList.toggle('ring-2', v === curStatus);
-    document.getElementById(id)?.classList.toggle('ring-navy/40', v === curStatus);
-    document.getElementById(id)?.classList.toggle('border-navy/30', v === curStatus);
+  // Highlight kad yang sepadan dgn tab aktif
+  ['pending', 'given', 'other'].forEach(t => {
+    const el = document.getElementById('card-' + t);
+    el?.classList.toggle('ring-2', t === psTab);
+    el?.classList.toggle('ring-navy/40', t === psTab);
+    el?.classList.toggle('border-navy/30', t === psTab);
   });
 }
 
-// Kad stat diklik → terus tapis jadual ikut Status, sama konsep dgn kad dashboard lain.
-function filterByStatCard(status) {
-  document.getElementById('ps-status').value = status;
-  onFilterChange();
-}
-window.filterByStatCard = filterByStatCard;
-
 // Tarikh dah ditapis di SERVER (loadAll() hantar from/to terus ke query) — ALL_ROWS
-// sentiasa dalam julat yang dipilih, jadi di sini cuma tapis status + carian teks.
-function getFiltered() {
+// sentiasa dalam julat yang dipilih, jadi di sini cuma tapis carian/produk/pesakit teks.
+// TIADA tapisan status di sini — ni dipakai utk stat cards (perlu merentas 3 tab).
+function getFilteredBase() {
   const q = document.getElementById('ps-search').value.trim().toLowerCase();
-  const status = document.getElementById('ps-status').value;
   const produk = document.getElementById('ps-produk').value;
   const pesakit = document.getElementById('ps-pesakit').value;
   return ALL_ROWS.filter(r => {
-    if (status && r.status !== status) return false;
     if (produk && r.productName !== produk) return false;
     if (pesakit && r.patientId !== pesakit) return false;
     if (q) {
@@ -515,6 +516,15 @@ function getFiltered() {
     }
     return true;
   });
+}
+
+// Utk jadual — base + terhad kpd tab aktif. Tertib ikut tab: "Belum Bagi" = akan datang,
+// jadi tarikh PALING HAMPIR/sekarang kena di atas (menaik) supaya staff terus nampak apa
+// nak bagi dulu — "Dah Bagi"/"Pergerakan Lain" = sejarah, terbaru di atas (menurun) macam biasa.
+function getFiltered() {
+  const list = getFilteredBase().filter(r => r.status === psTab);
+  list.sort((a, b) => psTab === 'pending' ? new Date(a.date) - new Date(b.date) : new Date(b.date) - new Date(a.date));
+  return list;
 }
 
 // Isi dropdown Nama Produk/Nama Pesakit ikut data yg dimuatkan (julat tarikh semasa) —
@@ -574,23 +584,12 @@ function clearFilters() {
   document.getElementById('ps-search').value = '';
   document.getElementById('ps-produk').value = '';
   document.getElementById('ps-pesakit').value = '';
-  document.getElementById('ps-status').value = '';
   document.getElementById('ps-date-from').value = '';
   document.getElementById('ps-date-to').value = '';
+  onPatientFilterChange(); // pesakit dikosongkan — sembunyikan panel Baki Stok Pesakit
   onDateFilterChange(); // tarikh berubah (dikosongkan) — reload dari server
 }
 window.clearFilters = clearFilters;
-
-const STATUS_CHIP = {
-  given:   '<span class="text-xs font-semibold text-green-dark whitespace-nowrap">✅ Dah Bagi</span>',
-  pending: '<span class="text-xs font-semibold text-amber-700 whitespace-nowrap">⏳ Belum Bagi</span>',
-};
-// "other" = pergerakan BUKAN-pesakit (terima stok/jualan/pelarasan) — label ikut
-// reference_type sebenar (REF_TYPE_LABEL), bukan satu teks generik je.
-function statusChip(r) {
-  if (STATUS_CHIP[r.status]) return STATUS_CHIP[r.status];
-  return `<span class="text-xs font-semibold text-ink/50 whitespace-nowrap">📦 ${escHtml(r.refTypeLabel || 'Pergerakan Lain')}</span>`;
-}
 
 // Ringkasan per-produk (Baki Awal | Stok Masuk | Stok Keluar | Baki Akhir) — dikira dari
 // movement SEBENAR (status='given' ATAU 'other', dua-dua ada balance_after sebenar) dalam
@@ -632,60 +631,140 @@ function renderSummary(filteredList) {
   </tr>`).join('');
 }
 
+// Baki Stok/Total Stok (movement SEBENAR, balance_after-derived) — dikongsi oleh tab
+// Dah Bagi & Pergerakan Lain (dua-dua baca ledger psy_stock_movements yg sama).
+function realMovementCols(r) {
+  const qtyLbl = `${r.qty}${r.unit}`;
+  const stokMasuk = r.movementType === 'in' ? qtyLbl : '—';
+  const stokKeluar = r.movementType === 'out' ? qtyLbl : '—';
+  // Baki Stok = baki SEBELUM transaksi ni (buang semula kesan movement dari balance_after).
+  // Total Stok = baki selepas = Baki Stok + Stok Masuk − Stok Keluar (= balance_after sebenar).
+  const bakiAwal = r.balanceAfter != null
+    ? (r.movementType === 'out' ? Number(r.balanceAfter) + Number(r.qty) : Number(r.balanceAfter) - Number(r.qty))
+    : null;
+  return {
+    baki: bakiAwal != null ? `${bakiAwal}${r.unit}` : '—',
+    stokMasuk, stokKeluar,
+    totalStok: r.balanceAfter != null ? `${r.balanceAfter}${r.unit}` : '—',
+  };
+}
+
+const PS_TAB_CONFIG = {
+  pending: {
+    colgroup: '<col style="width:8%"><col style="width:15%"><col style="width:18%"><col style="width:8%"><col style="width:9%"><col style="width:12%"><col style="width:7%"><col style="width:6%"><col style="width:14%">',
+    head: `<th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Tarikh</th>
+      <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest">Nama Pesakit</th>
+      <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest">Nama Produk</th>
+      <th class="px-4 py-3 text-right text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap border-l border-ink/8">Kuantiti</th>
+      <th class="px-4 py-3 text-right text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Baki Pakej</th>
+      <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap border-l border-ink/8">Coach</th>
+      <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Pakej</th>
+      <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Minggu</th>
+      <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest border-l border-ink/8">Tindakan</th>`,
+    colspan: 9,
+    row: r => {
+      const baki = r.bakiPakej ? `${r.bakiPakej.baki}${r.bakiPakej.unit}` : '—';
+      const bakiCls = r.bakiPakej && r.bakiPakej.baki <= 0 ? 'text-terracotta' : 'text-ink/70';
+      return `<tr class="border-b border-ink/5 last:border-0 hover:bg-ink/[0.015] cursor-pointer" onclick="location.href='${r.goto}'">
+      <td class="px-4 py-3 text-xs text-ink/55 whitespace-nowrap">${fmtDate(r.date)}</td>
+      <td class="px-4 py-3 text-sm font-medium text-ink">${escHtml(r.patientName)}</td>
+      <td class="px-4 py-3 text-sm text-ink/80">${escHtml(r.productName)}</td>
+      <td class="px-4 py-3 text-sm text-right font-semibold whitespace-nowrap border-l border-ink/8">${escHtml(r.qty + r.unit)}</td>
+      <td class="px-4 py-3 text-sm text-right font-semibold whitespace-nowrap ${bakiCls}">${escHtml(baki)}</td>
+      <td class="px-4 py-3 text-sm text-ink/70 whitespace-nowrap border-l border-ink/8">${escHtml(r.coachName)}</td>
+      <td class="px-4 py-3 text-sm text-ink/70 whitespace-nowrap">${escHtml(r.pakejCode)}</td>
+      <td class="px-4 py-3 text-sm text-ink/70 whitespace-nowrap">${escHtml(r.weekLabel)}</td>
+      <td class="px-4 py-3 border-l border-ink/8"><a href="${r.goto}" onclick="event.stopPropagation()" class="text-[11px] font-semibold text-navy hover:underline whitespace-nowrap">🔍 Jadual Minggu</a></td>
+    </tr>`;
+    },
+  },
+  given: {
+    colgroup: '<col style="width:8%"><col style="width:14%"><col style="width:15%"><col style="width:8%"><col style="width:8%"><col style="width:8%"><col style="width:8%"><col style="width:11%"><col style="width:7%"><col style="width:13%">',
+    head: `<th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Tarikh</th>
+      <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest">Nama Pesakit</th>
+      <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest">Nama Produk</th>
+      <th class="px-4 py-3 text-right text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap border-l border-ink/8">Baki Stok</th>
+      <th class="px-4 py-3 text-right text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Stok Masuk</th>
+      <th class="px-4 py-3 text-right text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Stok Keluar</th>
+      <th class="pl-4 pr-6 py-3 text-right text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Total Stok</th>
+      <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap border-l border-ink/8">Dibuat Oleh</th>
+      <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Pakej</th>
+      <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest border-l border-ink/8">Tindakan</th>`,
+    colspan: 10,
+    row: r => {
+      const c = realMovementCols(r);
+      PS_ITEM_LOOKUP[r.movementId] = { itemId: r.itemId, productName: r.productName, qty: r.qty, unit: r.unit, patientId: r.patientId, patientName: r.patientName };
+      return `<tr class="border-b border-ink/5 last:border-0 hover:bg-ink/[0.015] cursor-pointer" onclick="location.href='${r.goto}'">
+        <td class="px-4 py-3 text-xs text-ink/55 whitespace-nowrap">${fmtDate(r.date)}</td>
+        <td class="px-4 py-3 text-sm font-medium text-ink">${escHtml(r.patientName)}</td>
+        <td class="px-4 py-3 text-sm text-ink/80">${escHtml(r.productName)}</td>
+        <td class="px-4 py-3 text-sm text-right font-semibold whitespace-nowrap border-l border-ink/8">${escHtml(c.baki)}</td>
+        <td class="px-4 py-3 text-sm text-right text-green-dark whitespace-nowrap">${escHtml(c.stokMasuk)}</td>
+        <td class="px-4 py-3 text-sm text-right text-terracotta whitespace-nowrap">${escHtml(c.stokKeluar)}</td>
+        <td class="pl-4 pr-6 py-3 text-sm text-right text-ink/60 whitespace-nowrap">${escHtml(c.totalStok)}</td>
+        <td class="px-4 py-3 text-sm text-ink/70 whitespace-nowrap border-l border-ink/8">${escHtml(r.coachName)}</td>
+        <td class="px-4 py-3 text-sm text-ink/70 whitespace-nowrap">${escHtml(r.pakejCode)}</td>
+        <td class="px-4 py-3 border-l border-ink/8">
+          <div class="flex items-center gap-2">
+            <a href="inventory-detail.html?id=${r.itemId}&patient=${r.patientId}" onclick="event.stopPropagation()" class="text-[11px] font-semibold text-navy hover:underline whitespace-nowrap">🔍 Pergerakan</a>
+            ${r.movementType === 'out' ? `<button type="button" onclick="event.stopPropagation(); openReverseModal('${r.movementId}')" data-rbac="inventory.edit" class="text-[11px] font-semibold text-terracotta hover:underline whitespace-nowrap">↩ Pulangkan</button>` : ''}
+          </div>
+        </td>
+      </tr>`;
+    },
+  },
+  other: {
+    colgroup: '<col style="width:10%"><col style="width:20%"><col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:12%"><col style="width:13%"><col style="width:15%">',
+    head: `<th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Tarikh</th>
+      <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest">Nama Produk</th>
+      <th class="px-4 py-3 text-right text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap border-l border-ink/8">Baki Stok</th>
+      <th class="px-4 py-3 text-right text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Stok Masuk</th>
+      <th class="px-4 py-3 text-right text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Stok Keluar</th>
+      <th class="pl-4 pr-6 py-3 text-right text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap">Total Stok</th>
+      <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest whitespace-nowrap border-l border-ink/8">Jenis</th>
+      <th class="px-4 py-3 text-[10px] font-bold text-ink/40 uppercase tracking-widest border-l border-ink/8">Tindakan</th>`,
+    colspan: 8,
+    row: r => {
+      const c = realMovementCols(r);
+      PS_ITEM_LOOKUP[r.movementId] = { itemId: r.itemId, productName: r.productName, qty: r.qty, unit: r.unit, patientId: r.patientId, patientName: r.patientName };
+      return `<tr class="border-b border-ink/5 last:border-0 hover:bg-ink/[0.015] cursor-pointer" onclick="location.href='${r.goto}'">
+        <td class="px-4 py-3 text-xs text-ink/55 whitespace-nowrap">${fmtDate(r.date)}</td>
+        <td class="px-4 py-3 text-sm text-ink/80">${escHtml(r.productName)}</td>
+        <td class="px-4 py-3 text-sm text-right font-semibold whitespace-nowrap border-l border-ink/8">${escHtml(c.baki)}</td>
+        <td class="px-4 py-3 text-sm text-right text-green-dark whitespace-nowrap">${escHtml(c.stokMasuk)}</td>
+        <td class="px-4 py-3 text-sm text-right text-terracotta whitespace-nowrap">${escHtml(c.stokKeluar)}</td>
+        <td class="pl-4 pr-6 py-3 text-sm text-right text-ink/60 whitespace-nowrap">${escHtml(c.totalStok)}</td>
+        <td class="px-4 py-3 text-sm text-ink/70 whitespace-nowrap border-l border-ink/8">${escHtml(r.refTypeLabel || 'Lain-lain')}</td>
+        <td class="px-4 py-3 border-l border-ink/8"><a href="${r.goto}" onclick="event.stopPropagation()" class="text-[11px] font-semibold text-navy hover:underline whitespace-nowrap">🔍 Pergerakan</a></td>
+      </tr>`;
+    },
+  },
+};
+
 // Satu baris jadual = satu transaksi/item (bukan gabung macam dulu) — baki/masuk/keluar
 // per baris cuma bermakna bila ia tak dicampur dengan item lain dalam sel yang sama.
+// Kolum jadual berbeza ikut tab aktif (PS_TAB_CONFIG) — setiap tab cuma papar kolum yg
+// relevan utk jenis event tu, bukan satu set kolum gabungan dgn banyak "—".
 function render() {
+  const base = getFilteredBase();
+  renderStats(base);
+  renderSummary(base);
   const filtered = getFiltered();
-  renderStats(filtered);
-  renderSummary(filtered);
+  const cfg = PS_TAB_CONFIG[psTab];
   const pages = Math.max(1, Math.ceil(filtered.length / PS_PAGE_SIZE));
   if (psPage > pages) psPage = pages;
   const start = (psPage - 1) * PS_PAGE_SIZE;
   const pageRows = filtered.slice(start, start + PS_PAGE_SIZE);
 
-  const tbody = document.getElementById('ps-tbody');
   PS_ITEM_LOOKUP = {};
-  tbody.innerHTML = pageRows.length ? pageRows.map(r => {
-    const qtyLbl = `${r.qty}${r.unit}`;
-    // "given"/"other" = pergerakan SEBENAR dlm ledger (arah ikut movement_type, baki ikut
-    // balance_after). "pending" = sekadar unjuran (belum berlaku), baki belum diketahui.
-    const isReal = r.status === 'given' || r.status === 'other';
-    const stokMasuk = isReal && r.movementType === 'in' ? qtyLbl : '—';
-    const stokKeluar = isReal ? (r.movementType === 'out' ? qtyLbl : '—') : qtyLbl;
-    // Baki Stok = baki SEBELUM transaksi ni (buang semula kesan movement dari balance_after).
-    // Total Stok = baki selepas = Baki Stok + Stok Masuk − Stok Keluar (= balance_after sebenar).
-    const bakiAwal = isReal && r.balanceAfter != null
-      ? (r.movementType === 'out' ? Number(r.balanceAfter) + Number(r.qty) : Number(r.balanceAfter) - Number(r.qty))
-      : null;
-    const baki = bakiAwal != null ? `${bakiAwal}${r.unit}` : '—';
-    const totalStok = isReal && r.balanceAfter != null ? `${r.balanceAfter}${r.unit}` : '—';
-    // "🔍 Pergerakan" — buka Detail Item terus di Pergerakan Stok (utk "given", pra-tapis
-    // ikut pesakit tu). "↩ Pulangkan" — hanya utk bagi asal pesakit (status='given',
-    // movement_type='out'), bukan utk pulangan sedia ada atau pergerakan bukan-pesakit.
-    let actions = '<span class="text-ink/20">—</span>';
-    if (isReal && r.movementId && r.itemId) {
-      PS_ITEM_LOOKUP[r.movementId] = { itemId: r.itemId, productName: r.productName, qty: r.qty, unit: r.unit, patientId: r.patientId, patientName: r.patientName };
-      const detailHref = r.status === 'given' ? `inventory-detail.html?id=${r.itemId}&patient=${r.patientId}` : `inventory-detail.html?id=${r.itemId}`;
-      actions = `<div class="flex items-center gap-2">
-        <a href="${detailHref}" onclick="event.stopPropagation()" class="text-[11px] font-semibold text-navy hover:underline whitespace-nowrap">🔍 Pergerakan</a>
-        ${r.status === 'given' && r.movementType === 'out' ? `<button type="button" onclick="event.stopPropagation(); openReverseModal('${r.movementId}')" data-rbac="inventory.edit" class="text-[11px] font-semibold text-terracotta hover:underline whitespace-nowrap">↩ Pulangkan</button>` : ''}
-      </div>`;
-    }
-    return `<tr class="border-b border-ink/5 last:border-0 hover:bg-ink/[0.015] ${r.goto ? 'cursor-pointer' : ''}" ${r.goto ? `onclick="location.href='${r.goto}'"` : ''}>
-      <td class="px-4 py-3 text-xs text-ink/55 whitespace-nowrap">${fmtDate(r.date)}</td>
-      <td class="px-4 py-3 text-sm font-medium text-ink">${escHtml(r.patientName)}</td>
-      <td class="px-4 py-3 text-sm text-ink/80">${escHtml(r.productName)}</td>
-      <td class="px-4 py-3 text-sm text-right font-semibold whitespace-nowrap border-l border-ink/8">${escHtml(baki)}</td>
-      <td class="px-4 py-3 text-sm text-right text-green-dark whitespace-nowrap">${escHtml(stokMasuk)}</td>
-      <td class="px-4 py-3 text-sm text-right text-terracotta whitespace-nowrap">${escHtml(stokKeluar)}</td>
-      <td class="pl-4 pr-6 py-3 text-sm text-right text-ink/60 whitespace-nowrap">${escHtml(totalStok)}</td>
-      <td class="px-4 py-3 text-sm text-ink/70 whitespace-nowrap border-l border-ink/8">${escHtml(r.coachName)}</td>
-      <td class="px-4 py-3 text-sm text-ink/70 whitespace-nowrap">${escHtml(r.pakejCode)}</td>
-      <td class="px-4 py-3 text-sm text-ink/70 whitespace-nowrap">${escHtml(r.weekLabel)}</td>
-      <td class="px-4 py-3 border-l border-ink/8">${statusChip(r)}</td>
-      <td class="px-4 py-3">${actions}</td>
-    </tr>`;
-  }).join('') : '<tr><td colspan="12" class="text-center py-12 text-ink/40 text-sm">Tiada rekod sepadan</td></tr>';
+  const bodyHtml = pageRows.length
+    ? pageRows.map(cfg.row).join('')
+    : `<tr><td colspan="${cfg.colspan}" class="text-center py-12 text-ink/40 text-sm">Tiada rekod sepadan</td></tr>`;
+  document.getElementById('ps-table-wrap').innerHTML = `<table class="w-full text-sm table-fixed">
+    <colgroup>${cfg.colgroup}</colgroup>
+    <thead><tr class="bg-ink/[0.02] border-b border-ink/10 text-left">${cfg.head}</tr></thead>
+    <tbody>${bodyHtml}</tbody>
+  </table>`;
 
   const infoEl = document.getElementById('ps-page-info');
   infoEl.textContent = filtered.length ? `Papar ${start + 1}–${Math.min(start + PS_PAGE_SIZE, filtered.length)} daripada ${filtered.length} rekod` : '0 rekod';
