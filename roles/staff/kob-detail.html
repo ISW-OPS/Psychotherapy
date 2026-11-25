@@ -158,7 +158,7 @@
               </div>
               <div>
                 <div class="text-xs text-ink/50">STATUS</div>
-                <div id="status-chip" class="mt-1">—</div>
+                <div id="status-cell" class="mt-1">—</div>
               </div>
               <div>
                 <div class="text-xs text-ink/50">COLLECTOR</div>
@@ -918,6 +918,42 @@
     }
     const KOB_ROLE_LABEL = { collector: 'Collector', closer: 'Closer' };
 
+    function renderStatusCell() {
+      const cell = document.getElementById('status-cell');
+      if (!cell) return;
+      const st = STATUS_LABEL[kob.status] || STATUS_LABEL.booked;
+      if (!can('kob', 'edit')) { cell.innerHTML = `<span class="chip ${st.cls}">${st.label}</span>`; return; }
+      const opts = Object.keys(STATUS_LABEL).map(code =>
+        `<option value="${code}" ${code === kob.status ? 'selected' : ''}>${STATUS_LABEL[code].label}</option>`).join('');
+      cell.innerHTML = `
+        <select class="finput" data-rbac="kob.edit" onchange="onKobStatusChange(this)">
+          ${opts}
+        </select>
+      `;
+    }
+
+    async function onKobStatusChange(sel) {
+      const fromStatus = kob.status;
+      const toStatus = sel.value;
+      if (toStatus === fromStatus) return;
+      const fromLabel = (STATUS_LABEL[fromStatus] || STATUS_LABEL.booked).label;
+      const toLabel = (STATUS_LABEL[toStatus] || STATUS_LABEL.booked).label;
+      if (!confirm(`Tukar status KOB dari "${fromLabel}" kepada "${toLabel}"?\n\nIni akan ubah paparan butang tindakan sesi.`)) {
+        sel.value = fromStatus;
+        return;
+      }
+      sel.disabled = true;
+      const { error } = await window.db.from('psy_kob_sessions')
+        .update({ status: toStatus, updated_at: new Date().toISOString() })
+        .eq('id', kobId);
+      sel.disabled = false;
+      if (error) { banner('Ralat: ' + error.message, 'error'); sel.value = fromStatus; return; }
+      await auditLog('kob.status_changed', kobId, { patient_id: patient.id, from_status: fromStatus, to_status: toStatus });
+      kob.status = toStatus;
+      banner(`Status KOB ditukar kepada ${toLabel} ✅`);
+      await render();
+    }
+
     function renderRoleCell(field) {
       const idKey = `${field}_id`, nameKey = `${field}_name`;
       const cell = document.getElementById(`${field}-cell`);
@@ -984,8 +1020,7 @@
         modeGroup.classList.add('hidden');
         modeEl.textContent = kob.mode === 'online' ? '💻 Online' : '🏥 F2F';
       }
-      const st = STATUS_LABEL[kob.status] || STATUS_LABEL.booked;
-      document.getElementById('status-chip').innerHTML = `<span class="chip ${st.cls}">${st.label}</span>`;
+      renderStatusCell();
       renderRoleCell('collector');
       renderRoleCell('closer');
 
@@ -5044,15 +5079,15 @@
         pg.drawImage(img, { x: boxX + (boxW - w) / 2, y: boxBottomY, width: w, height: h });
       };
       const drawSigContain = (pg, boxX, boxBottomY, boxW, boxMaxH) => drawImgContain(pg, sigImg, boxX, boxBottomY, boxW, boxMaxH);
-      // Logo syarikat di atas tajuk (m/s pertama sahaja).
+      // Logo syarikat di penjuru kiri-atas, jarak sebelum tajuk kontrak.
       if (window.LOGO_ISW_PNG_BASE64) {
         try {
           const logoBytes = Uint8Array.from(atob(window.LOGO_ISW_PNG_BASE64), c => c.charCodeAt(0));
           const logoImg = await pdfDoc.embedPng(logoBytes);
           const logoH = 40;
           const logoW = (logoImg.width / logoImg.height) * logoH;
-          page.drawImage(logoImg, { x: (PAGE_W - logoW) / 2, y: y - logoH, width: logoW, height: logoH });
-          y -= logoH + 14;
+          page.drawImage(logoImg, { x: MARGIN_X, y: y - logoH, width: logoW, height: logoH });
+          y -= logoH + 20;
         } catch (_) { /* logo gagal — teruskan tanpa imej */ }
       }
       const titleText = sanitize(opts.title || 'Kontrak Pelaburan Kesihatan');
