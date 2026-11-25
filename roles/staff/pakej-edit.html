@@ -1968,15 +1968,22 @@ async function buildAgreementPreviewPdf(opts) {
     pg.drawImage(img, { x: boxX + (boxW - w) / 2, y: boxBottomY, width: w, height: h });
   };
   const drawSigContain = (pg, boxX, boxBottomY, boxW, boxMaxH) => drawImgContain(pg, sigImg, boxX, boxBottomY, boxW, boxMaxH);
-  // Logo syarikat di atas tajuk (m/s pertama sahaja).
+  // Logo + blok syarikat (letterhead) di penjuru kiri-atas, jarak sebelum tajuk kontrak.
   if (window.LOGO_ISW_PNG_BASE64) {
     try {
       const logoBytes = Uint8Array.from(atob(window.LOGO_ISW_PNG_BASE64), c => c.charCodeAt(0));
       const logoImg = await pdfDoc.embedPng(logoBytes);
-      const logoH = 40;
+      const logoH = 32;
       const logoW = (logoImg.width / logoImg.height) * logoH;
-      page.drawImage(logoImg, { x: (PAGE_W - logoW) / 2, y: y - logoH, width: logoW, height: logoH });
-      y -= logoH + 14;
+      const blockTop = y;
+      page.drawImage(logoImg, { x: MARGIN_X, y: blockTop - logoH, width: logoW, height: logoH });
+      const textX = MARGIN_X + logoW + 10;
+      let ly = blockTop - 2;
+      page.drawText('Ibnu Sina Wellness', { x: textX, y: ly, size: 13, font: fontBold, color: COLOR });
+      ly -= 15;
+      ['Ibnu Sina Wellness Sdn Bhd (1319021-P)', 'Lot 331, Lorong Senyum Matahari B, Country Heights,', '43000 Kajang, Selangor.', 'Tel: 03-8966 3702']
+        .forEach(line => { page.drawText(line, { x: textX, y: ly, size: 8, font, color: MUTED }); ly -= 10; });
+      y = Math.min(blockTop - logoH, ly) - 20;
     } catch (_) { /* logo gagal — teruskan tanpa imej */ }
   }
   const titleText = sanitize(opts.title || 'Kontrak Pelaburan Kesihatan');
@@ -3139,7 +3146,15 @@ window.switchETab = switchETab;
     const { data: pkg } = await window.db.from('psy_packages').select('*').eq('id', editId).single();
     if (!pkg) { banner('Pakej tidak ditemui', 'error'); return; }
     window._originalPkg = pkg;  // simpan utk diff "apa yang berubah" bila savePackage()
-    populateForm(pkg);
+    try {
+      populateForm(pkg);
+    } catch (e) {
+      // Kalau satu bahagian populateForm() ralat (cth field baharu yg tiada di DOM),
+      // jangan biar seluruh init selepas ni (restoreDraft/pratonton/dsb) turut terhenti
+      // senyap — staff ingat data hilang sedangkan ia ralat JS di bahagian lain.
+      console.error('populateForm ralat:', e);
+      banner('Sebahagian borang gagal dimuat: ' + e.message, 'error');
+    }
     const deepLinkTab = params.get('tab');
     if (deepLinkTab) switchETab(deepLinkTab);
   } else {
@@ -3497,7 +3512,14 @@ function buildPatientPreviewHtml(p) {
 function renderPatientPreview() {
   const body = document.getElementById('patient-preview-body');
   if (!body) return;
-  body.innerHTML = buildPatientPreviewHtml(gatherPatientPreviewData());
+  try {
+    body.innerHTML = buildPatientPreviewHtml(gatherPatientPreviewData());
+  } catch (e) {
+    // Jangan biar kad terus kosong senyap kalau ada ralat — tunjuk mesej supaya
+    // nampak sebab, drpd staff ingat pakej "takde data" sedangkan ia ralat JS.
+    console.error('Pratonton Patient ralat:', e);
+    body.innerHTML = `<div class="p-4 text-xs text-terracotta bg-white rounded-xl border border-terracotta/30">⚠ Pratonton gagal dijana: ${escapeHtml(e.message)}</div>`;
+  }
 }
 </script>
 </body>
