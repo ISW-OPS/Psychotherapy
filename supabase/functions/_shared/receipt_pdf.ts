@@ -182,7 +182,7 @@ export async function buildReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
 }
 
 // ---- Bina data resit dari baris psy_payments (nama item, baris diskaun, pecahan KOB) ----
-async function loadReceiptContext(admin: any, payment: any) {
+export async function loadReceiptContext(admin: any, payment: any) {
   // Muat semula baris — receipt_no ditetapkan trigger DB sebaik status jadi 'completed'
   const { data: fresh } = await admin.from('psy_payments')
     .select('receipt_no, receipt_ref, discount, notes, intent, items, total, paid_at, id, manual_method, payment_method, bank_reference')
