@@ -43,24 +43,21 @@ Deno.serve(async (req) => {
     if (!ref) return json({ error: 'ref diperlukan' }, 400)
 
     const { data: rows } = await admin.from('psy_payments')
-      .select('id, status, total, items, paid_at, created_at, patient_id, buyer_name, buyer_phone, gateway_provider, payment_method')
+      .select('id, status, total, items, paid_at, created_at, patient_id, buyer_name, gateway_provider, payment_method')
       .eq('receipt_ref', ref).limit(1)
     const p = rows?.[0]
     if (!p) return json({ found: false })
 
     let patientName: string | null = null
-    let patientPhone: string | null = null
     if (p.patient_id) {
       const { data: ptRows } = await admin.from('psy_patients')
-        .select('full_name, phone').eq('id', p.patient_id).limit(1)
+        .select('full_name').eq('id', p.patient_id).limit(1)
       patientName = ptRows?.[0]?.full_name || null
-      patientPhone = ptRows?.[0]?.phone || null
     }
 
-    // Jualan walk-in (patient_id null) — tiada nama pesakit, guna buyer_name/phone
-    // (psy_payments.buyer_name/buyer_phone) supaya page resit awam ni tak papar "—" je.
+    // Jualan walk-in (patient_id null) — tiada nama pesakit, guna buyer_name
+    // (psy_payments.buyer_name) supaya page resit awam ni tak papar "—" je.
     const buyerName: string | null = p.buyer_name || null
-    const buyerPhone: string | null = p.buyer_phone || null
 
     // itemTitle: cart pesakit (package/shop_order/dll) simpan `.title`; jualan
     // walk-in (payments-initiate-walkin) simpan `.name` — sokong dua-dua.
@@ -90,7 +87,6 @@ Deno.serve(async (req) => {
       total: p.total,
       itemTitle,
       patientName,
-      patientPhone: patientPhone || buyerPhone,
       buyerName,
       paidAt: p.paid_at || p.created_at,
       pdfUrl,
