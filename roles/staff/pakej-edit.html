@@ -245,7 +245,7 @@
 
             <!-- Hidden carriers for removed sections (save logic compat) -->
             <div class="hidden">
-              <tbody id="bekalan-editor"></tbody>
+              <div id="bekalan-editor"></div>
               <div id="bekalan-empty"></div>
               <div id="addons-editor"></div>
               <div id="addons-empty"></div>
@@ -2509,6 +2509,19 @@ let valueBonusItems = [];
 
 function vsNewItem() { return { category: '', title_bm: '', title_en: '', description: '', bullets_text: '', value: 0 }; }
 
+// Staff selalu copy-paste dari dokumen Word asal yg dah ada tanda bullet (✦/•/-/*)
+// pada setiap baris — kalau dibiar, tanda tu ikut masuk sbg teks lalu "+" auto kita
+// tambah plak bila papar, jadi bertindih/dua kali. Bersihkan bila keluar dari field.
+function cleanBulletsOnBlur(ta, arrName, i) {
+  const cleaned = ta.value.split('\n').map(l => l.replace(/^[\s]*[•✦◆▪·‣∙*+\-–—]\s+/, '').trimEnd()).join('\n');
+  if (cleaned === ta.value) return;
+  ta.value = cleaned;
+  const arr = arrName === 'valueBonusItems' ? valueBonusItems : valueStackItems;
+  if (arr[i]) arr[i].bullets_text = cleaned;
+  schedulePatientPreviewRefresh();
+  saveDraftDebounced();
+}
+
 function vsCardHtml(it, i, arrName, accentCls) {
   const title = (it.title_bm || 'Komponen baharu').replace(/"/g, '&quot;');
   return `
@@ -2546,8 +2559,8 @@ function vsCardHtml(it, i, arrName, accentCls) {
           <textarea rows="2" oninput="${arrName}[${i}].description=this.value" class="w-full mt-0.5 px-2.5 py-1.5 border border-ink/15 rounded-lg text-sm resize-y" placeholder="1-2 ayat penerangan...">${(it.description || '').replace(/</g, '&lt;')}</textarea>
         </div>
         <div>
-          <label class="text-[10px] font-semibold text-ink/55">Bullet (1 baris = 1 bullet)</label>
-          <textarea rows="3" oninput="${arrName}[${i}].bullets_text=this.value" class="w-full mt-0.5 px-2.5 py-1.5 border border-ink/15 rounded-lg text-sm resize-y font-mono" placeholder="22 sesi rawatan fizikal di ISW&#10;Sesi Online: 36 sesi bimbingan">${(it.bullets_text || '').replace(/</g, '&lt;')}</textarea>
+          <label class="text-[10px] font-semibold text-ink/55">Bullet (1 baris = 1 bullet) <span class="font-normal text-ink/35">— "+" ditambah automatik, tak perlu taip/paste tanda bullet sendiri</span></label>
+          <textarea rows="3" oninput="${arrName}[${i}].bullets_text=this.value" onblur="cleanBulletsOnBlur(this, '${arrName}', ${i})" class="w-full mt-0.5 px-2.5 py-1.5 border border-ink/15 rounded-lg text-sm resize-y font-mono" placeholder="22 sesi rawatan fizikal di ISW&#10;Sesi Online: 36 sesi bimbingan">${(it.bullets_text || '').replace(/</g, '&lt;')}</textarea>
         </div>
       </div>
     </details>`;
