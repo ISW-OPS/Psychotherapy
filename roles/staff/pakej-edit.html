@@ -1968,22 +1968,15 @@ async function buildAgreementPreviewPdf(opts) {
     pg.drawImage(img, { x: boxX + (boxW - w) / 2, y: boxBottomY, width: w, height: h });
   };
   const drawSigContain = (pg, boxX, boxBottomY, boxW, boxMaxH) => drawImgContain(pg, sigImg, boxX, boxBottomY, boxW, boxMaxH);
-  // Logo + blok syarikat (letterhead) di penjuru kiri-atas, jarak sebelum tajuk kontrak.
+  // Logo syarikat di penjuru kiri-atas, jarak sebelum tajuk kontrak.
   if (window.LOGO_ISW_PNG_BASE64) {
     try {
       const logoBytes = Uint8Array.from(atob(window.LOGO_ISW_PNG_BASE64), c => c.charCodeAt(0));
       const logoImg = await pdfDoc.embedPng(logoBytes);
-      const logoH = 32;
+      const logoH = 40;
       const logoW = (logoImg.width / logoImg.height) * logoH;
-      const blockTop = y;
-      page.drawImage(logoImg, { x: MARGIN_X, y: blockTop - logoH, width: logoW, height: logoH });
-      const textX = MARGIN_X + logoW + 10;
-      let ly = blockTop - 2;
-      page.drawText('Ibnu Sina Wellness', { x: textX, y: ly, size: 13, font: fontBold, color: COLOR });
-      ly -= 15;
-      ['Ibnu Sina Wellness Sdn Bhd (1319021-P)', 'Lot 331, Lorong Senyum Matahari B, Country Heights,', '43000 Kajang, Selangor.', 'Tel: 03-8966 3702']
-        .forEach(line => { page.drawText(line, { x: textX, y: ly, size: 8, font, color: MUTED }); ly -= 10; });
-      y = Math.min(blockTop - logoH, ly) - 20;
+      page.drawImage(logoImg, { x: MARGIN_X, y: y - logoH, width: logoW, height: logoH });
+      y -= logoH + 20;
     } catch (_) { /* logo gagal — teruskan tanpa imej */ }
   }
   const titleText = sanitize(opts.title || 'Kontrak Pelaburan Kesihatan');
@@ -3392,15 +3385,18 @@ function gatherPatientPreviewData() {
   };
 }
 
-function pvValueCardHtml(it, accentCls, bgCls) {
+function pvValueCardHtml(it, accentCls, bgCls, isBonus) {
+  const titleCls = isBonus ? 'font-bold italic text-ink text-sm leading-snug' : 'font-bold text-ink text-sm leading-snug';
+  const subtitleCls = isBonus ? `text-[10px] italic font-semibold ${accentCls}` : 'text-[10px] italic text-ink/50';
+  const valueCls = isBonus ? accentCls : 'text-ink';
   return `
     <div class="border border-ink/10 rounded-xl p-3 ${bgCls || 'bg-white'}">
-      ${it.category ? `<div class="text-[9px] font-bold uppercase tracking-wide text-ink/40 mb-1">${escapeHtml(it.category)}</div>` : ''}
-      <div class="font-bold text-ink text-sm leading-snug">${escapeHtml(it.title_bm || '—')}</div>
-      ${it.title_en ? `<div class="text-[10px] italic text-gold-dark mt-0.5">${escapeHtml(it.title_en)}</div>` : ''}
+      ${it.category ? `<div class="text-[9px] font-extrabold uppercase tracking-wide text-ink/70 mb-1">${escapeHtml(it.category)}</div>` : ''}
+      <div class="${titleCls}">${escapeHtml(it.title_bm || '—')}</div>
+      ${it.title_en ? `<div class="${subtitleCls} mt-0.5">${escapeHtml(it.title_en)}</div>` : ''}
       ${it.description ? `<p class="text-xs text-ink/60 mt-1.5 leading-relaxed">${escapeHtml(it.description)}</p>` : ''}
-      ${(it.bullets || []).length ? `<ul class="mt-2 space-y-1">${it.bullets.map(b => `<li class="flex items-start gap-1.5 text-xs text-ink/75"><span class="${accentCls} mt-0.5">✦</span><span>${escapeHtml(b)}</span></li>`).join('')}</ul>` : ''}
-      <div class="mt-2 pt-1.5 border-t border-ink/8 text-right"><span class="text-[9px] text-ink/40 uppercase font-semibold">Nilai</span> <span class="font-bold text-green-700 text-xs ml-1">${pvFmtRM(it.value)}</span></div>
+      ${(it.bullets || []).length ? `<ul class="mt-2 space-y-1">${it.bullets.map(b => `<li class="flex items-start gap-1.5 text-xs text-ink/75"><span class="${accentCls} font-bold mt-0.5">+</span><span>${escapeHtml(b)}</span></li>`).join('')}</ul>` : ''}
+      <div class="mt-2 pt-1.5 border-t border-ink/8 text-right"><span class="text-[9px] text-ink/40 uppercase font-semibold">Nilai</span> <span class="font-bold ${valueCls} text-xs ml-1">${pvFmtRM(it.value)}</span></div>
     </div>`;
 }
 
@@ -3408,26 +3404,26 @@ function buildPvValueStackHtml(p) {
   const components = p.value_stack || [];
   const bonuses = p.value_bonuses || [];
   if (!components.length && !bonuses.length) return '';
-  const allRows = [...components, ...bonuses];
-  const total = allRows.reduce((s, it) => s + (Number(it.value) || 0), 0);
+  const allRows = [...components.map(it => ({ it, isBonus: false })), ...bonuses.map(it => ({ it, isBonus: true }))];
+  const total = allRows.reduce((s, r) => s + (Number(r.it.value) || 0), 0);
   return `
     ${components.length ? `
     <div class="bg-white rounded-xl p-4 border border-ink/10">
       <h3 class="font-bold text-sm mb-2.5">🎁 Inilah Yang Anda Terima</h3>
-      <div class="space-y-2.5">${components.map(it => pvValueCardHtml(it, 'text-navy')).join('')}</div>
+      <div class="space-y-2.5">${components.map(it => pvValueCardHtml(it, 'text-green-dark')).join('')}</div>
     </div>` : ''}
     ${bonuses.length ? `
     <div class="bg-white rounded-xl p-4 border border-ink/10">
       <div class="text-center mb-2.5"><span class="inline-block px-3 py-1 rounded-full bg-gold/15 text-gold-dark text-[10px] font-bold uppercase tracking-wide">✦ Bonus Eksklusif Peserta ✦</span></div>
-      <div class="space-y-2.5">${bonuses.map(it => pvValueCardHtml(it, 'text-gold-dark', 'bg-gold/5')).join('')}</div>
+      <div class="space-y-2.5">${bonuses.map(it => pvValueCardHtml(it, 'text-gold-dark', 'bg-gold/5', true)).join('')}</div>
     </div>` : ''}
     <div class="bg-white rounded-xl border border-ink/10 overflow-hidden">
-      <div class="px-3 py-2 bg-navy text-white text-[10px] font-bold uppercase tracking-wide">Ringkasan Nilai Keseluruhan</div>
+      <div class="px-3 py-2 bg-green-dark text-white text-[10px] font-bold uppercase tracking-wide">Ringkasan Nilai Keseluruhan</div>
       <table class="w-full text-xs">
         <tbody class="divide-y divide-ink/5">
-          ${allRows.map(it => `<tr><td class="px-3 py-2 font-medium text-ink align-top">${escapeHtml(it.title_bm || '—')}</td><td class="px-3 py-2 text-right font-semibold text-ink align-top whitespace-nowrap">${pvFmtRM(it.value)}</td></tr>`).join('')}
+          ${allRows.map(({ it, isBonus }) => `<tr><td class="px-3 py-2 ${isBonus ? 'font-bold italic' : 'font-medium'} text-ink align-top">${escapeHtml(it.title_bm || '—')}</td><td class="px-3 py-2 text-right font-semibold align-top whitespace-nowrap ${isBonus ? 'text-gold-dark' : 'text-ink'}">${pvFmtRM(it.value)}</td></tr>`).join('')}
         </tbody>
-        <tfoot><tr class="bg-cream/60 font-bold"><td class="px-3 py-2.5">Jumlah Nilai</td><td class="px-3 py-2.5 text-right text-green-700">${pvFmtRM(total)}</td></tr></tfoot>
+        <tfoot><tr class="bg-green-dark font-bold"><td class="px-3 py-2.5 text-white">Jumlah Nilai</td><td class="px-3 py-2.5 text-right text-gold">${pvFmtRM(total)}</td></tr></tfoot>
       </table>
     </div>`;
 }
