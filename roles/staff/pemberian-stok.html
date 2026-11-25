@@ -262,6 +262,15 @@ function escHtml(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 function fmtDate(d) { return d ? new Date(d).toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; }
+// Tarikh sesi dah lepas tapi status masih "Belum Bagi" — bermakna pesakit tak datang/sesi
+// tertunggak, bukan setakat belum tiba giliran lagi. Staff patut nampak ni dulu drpd yg
+// akan datang tapi belum due.
+function isOverdue(dateStr) {
+  if (!dateStr) return false;
+  const d = new Date(dateStr); d.setHours(0, 0, 0, 0);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return d < today;
+}
 function LCALE() { try { return (window.iswGetLang && window.iswGetLang() === 'ms') ? 'ms-MY' : 'en-GB'; } catch (e) { return 'en-GB'; } }
 
 // ── "Dah Bagi" — dari ledger psy_stock_movements (auto-potong sesi Hadir + manual
@@ -665,8 +674,12 @@ const PS_TAB_CONFIG = {
     row: r => {
       const baki = r.bakiPakej ? `${r.bakiPakej.baki}${r.bakiPakej.unit}` : '—';
       const bakiCls = r.bakiPakej && r.bakiPakej.baki <= 0 ? 'text-terracotta' : 'text-ink/70';
-      return `<tr class="border-b border-ink/5 last:border-0 hover:bg-ink/[0.015] cursor-pointer" onclick="location.href='${r.goto}'">
-      <td class="px-4 py-3 text-xs text-ink/55 whitespace-nowrap">${fmtDate(r.date)}</td>
+      const overdue = isOverdue(r.date);
+      return `<tr class="border-b border-ink/5 last:border-0 hover:bg-ink/[0.015] cursor-pointer ${overdue ? 'bg-terracotta/5' : ''}" onclick="location.href='${r.goto}'">
+      <td class="px-4 py-3 text-xs whitespace-nowrap ${overdue ? 'text-terracotta font-semibold' : 'text-ink/55'}">
+        ${fmtDate(r.date)}
+        ${overdue ? '<div class="text-[9px] font-bold">⚠ Tertunggak</div>' : ''}
+      </td>
       <td class="px-4 py-3 text-sm font-medium text-ink">${escHtml(r.patientName)}</td>
       <td class="px-4 py-3 text-sm text-ink/80">${escHtml(r.productName)}</td>
       <td class="px-4 py-3 text-sm text-right font-semibold whitespace-nowrap border-l border-ink/8">${escHtml(r.qty + r.unit)}</td>
@@ -779,22 +792,11 @@ function render() {
 function goPage(p) { psPage = p; render(); }
 window.goPage = goPage;
 
-// Default bila page dibuka: minggu ini (Isnin–Ahad) sahaja — untuk minggu/bulan lepas
-// atau julat lain, staff tukar sendiri guna filter Tarikh Dari/Hingga di atas.
-function setDefaultWeekFilter() {
-  const today = new Date();
-  const dow = today.getDay(); // 0=Ahad..6=Sabtu
-  const monday = new Date(today); monday.setDate(today.getDate() + (dow === 0 ? -6 : 1 - dow));
-  const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
-  const ymd = d => d.toISOString().slice(0, 10);
-  document.getElementById('ps-date-from').value = ymd(monday);
-  document.getElementById('ps-date-to').value = ymd(sunday);
-}
-
 (async () => {
   const user = await initStaff('pemberian_stok', 'Pemberian Stok', 'inventory');
   if (!user) return;
-  setDefaultWeekFilter();
+  // Filter tarikh biar kosong dari awal (semua rekod, tak terhad minggu ini) — staff
+  // tukar sendiri guna Tarikh Dari/Hingga kalau nak sempitkan julat.
   await loadAll();
 })();
 </script>

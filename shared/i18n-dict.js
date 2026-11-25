@@ -3749,6 +3749,7 @@ window.ISW_I18N_EXTRA = {
   "Dibuat Oleh": "Done By",
   "🔍 Jadual Minggu": "🔍 Week Schedule",
   "Baki Pakej": "Package Balance",
+  "⚠ Tertunggak": "⚠ Overdue",
   "Kuantiti Auto-PO": "Auto-PO Quantity",
   "Kuantiti Botol": "Bottle Quantity",
   "Kuantiti Diberi": "Quantity Given",
