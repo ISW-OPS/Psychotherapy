@@ -119,6 +119,10 @@ async function dbDelete(table, id) {
 }
 
 async function getCurrentUser() {
+  // window.currentUser dah di-set oleh checkAuth() (authGuard.js) waktu page load —
+  // guna cache tu dulu drpd hit auth.getUser() + psy_profiles lagi (2 round trip
+  // network setiap panggilan auditLog() = sebab save/actions rasa perlahan).
+  if (window.currentUser) return window.currentUser;
   const { data: { user } } = await window.db.auth.getUser();
   if (!user) return null;
   const profile = await dbQuery('psy_profiles', { eq: { id: user.id }, single: true });

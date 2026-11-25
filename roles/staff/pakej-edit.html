@@ -45,6 +45,7 @@
           </div>
           <div class="flex items-center gap-2 flex-wrap">
             <span id="draft-indicator" class="hidden text-[10px] text-ink/45 italic mr-1">✓ Draf disimpan</span>
+            <button type="button" onclick="togglePatientPreview()" class="px-4 py-2 border border-navy/30 text-navy rounded-xl text-sm font-semibold hover:bg-navy/5 transition-colors flex items-center gap-1.5">👁️ Pratonton Patient</button>
             <button onclick="cancelEdit()" class="px-4 py-2 border border-ink/20 rounded-xl text-sm font-semibold text-ink/65 hover:bg-ink/5 transition-colors flex items-center gap-1.5">✕ Batal</button>
             <button data-rbac="package.edit" onclick="saveAsDraft()" class="px-4 py-2 border border-ink/20 rounded-xl text-sm font-semibold text-ink/65 hover:bg-ink/5 transition-colors flex items-center gap-1.5">💾 Simpan Draft</button>
             <button data-rbac="package.edit" id="btn-save" onclick="savePackage()" class="bg-green-600 text-white px-5 py-2 rounded-xl text-sm font-semibold hover:bg-green-700 transition-colors flex items-center gap-1.5 shadow-sm">💾 Simpan Perubahan</button>
@@ -189,9 +190,10 @@
                   <h3 class="font-bold text-sm text-ink flex items-center gap-2"><span class="w-6 h-6 rounded-md bg-green-100 text-green-700 text-xs font-bold flex items-center justify-center">2</span> Value Stack</h3>
                   <p class="text-[10px] text-ink/45 mt-0.5">Pecahan komponen "Apa Yang Anda Terima" + bonus — dipaparkan sbg kad + jadual ringkasan nilai kepada patient &amp; staff di halaman Detail Pakej.</p>
                 </div>
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-wrap justify-end">
                   <select id="vs-copy-source" class="px-2.5 py-1.5 border border-ink/20 rounded-lg text-xs bg-white"><option value="">Salin dari pakej lain…</option></select>
                   <button type="button" onclick="copyValueStackFromSource()" class="text-[11px] font-semibold text-navy border border-navy/30 px-3 py-1.5 rounded hover:bg-navy hover:text-white whitespace-nowrap">📋 Salin</button>
+                  <button type="button" id="btn-save-vs" onclick="saveValueStackOnly()" class="text-[11px] font-semibold text-white bg-green-600 px-3 py-1.5 rounded hover:bg-green-700 whitespace-nowrap">💾 Simpan Value Stack</button>
                 </div>
               </div>
 
@@ -2261,11 +2263,48 @@ function collectValueItems(arr) {
   }));
 }
 
-function addValueStackItem() { valueStackItems.push(vsNewItem()); renderValueStackEditor(); }
-function addValueBonusItem() { valueBonusItems.push(vsNewItem()); renderValueBonusEditor(); }
+// Simpan Value Stack sahaja — UPDATE scoped ke value_stack/value_bonuses je,
+// tak sentuh/validate tab lain & tak redirect keluar (beza drpd savePackage() penuh).
+async function saveValueStackOnly() {
+  const editId = document.getElementById('edit-id').value;
+  if (!editId) { banner('Simpan pakej ni dulu (butang "Simpan Perubahan") sebelum boleh guna Simpan Value Stack berasingan', 'error'); return; }
+
+  const vsMissingTitle = it => !it.title_bm?.trim() && (it.category?.trim() || it.description?.trim() || it.bullets_text?.trim() || Number(it.value) > 0);
+  if (valueStackItems.some(vsMissingTitle) || valueBonusItems.some(vsMissingTitle)) {
+    banner('Ada komponen/bonus yang belum diisi "Tajuk (BM)" — sila lengkapkan atau buang (✕), kalau tidak ia akan hilang bila disimpan', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('btn-save-vs');
+  const originalLabel = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
+  try {
+    const payload = {
+      value_stack: collectValueItems(valueStackItems),
+      value_bonuses: collectValueItems(valueBonusItems),
+      updated_at: new Date().toISOString(),
+    };
+    await dbUpdate('psy_packages', editId, payload);
+    if (window._originalPkg) {
+      window._originalPkg.value_stack = payload.value_stack;
+      window._originalPkg.value_bonuses = payload.value_bonuses;
+    }
+    auditLog('package.updated', editId, { name: document.getElementById('f-name').value.trim(), changes: ['Value Stack dikemaskini'] });
+    banner('Value Stack disimpan');
+  } catch (err) {
+    banner('Ralat: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = originalLabel;
+  }
+}
+
+function addValueStackItem() { valueStackItems.push(vsNewItem()); renderValueStackEditor(); schedulePatientPreviewRefresh(); saveDraftDebounced(); }
+function addValueBonusItem() { valueBonusItems.push(vsNewItem()); renderValueBonusEditor(); schedulePatientPreviewRefresh(); saveDraftDebounced(); }
 function removeValueItem(arrName, i) {
   (arrName === 'valueBonusItems' ? valueBonusItems : valueStackItems).splice(i, 1);
   if (arrName === 'valueBonusItems') renderValueBonusEditor(); else renderValueStackEditor();
+  schedulePatientPreviewRefresh();
+  saveDraftDebounced();
 }
 
 // Salin value_stack/value_bonuses dari pakej lain sbg titik mula (bukan warisan
@@ -2289,6 +2328,8 @@ async function copyValueStackFromSource() {
   valueBonusItems = (data.value_bonuses || []).map(v => ({ ...v, bullets_text: (v.bullets || []).join('\n') }));
   renderValueStackEditor();
   renderValueBonusEditor();
+  schedulePatientPreviewRefresh();
+  saveDraftDebounced();
   banner('Value stack disalin — sunting ikut keperluan pakej ni');
 }
 
@@ -2310,6 +2351,7 @@ function syncHeader() {
   hdrIcon.className = `w-16 h-16 rounded-xl ${bg} flex items-center justify-center flex-shrink-0 text-3xl cursor-pointer hover:ring-2 hover:ring-navy/30`;
 
   checkVersionConflictDebounced();
+  schedulePatientPreviewRefresh();
 }
 
 function checkVersionConflictDebounced() {
@@ -2796,6 +2838,11 @@ window.switchETab = switchETab;
 
   document.getElementById('f-weeks').addEventListener('input', () => { renderCoachingScheduleEditor(true); saveDraftDebounced(); });
   attachDraftAutoSave();
+  // Value Stack guna kad dinamik (oninput inline, bukan id statik) — delegasi di sini
+  // supaya edit kat situ turut masuk draf auto-save (dulu tak masuk langsung, jadi
+  // kalau staff tambah komponen tapi tutup tab sblm klik Simpan, data terus hilang).
+  document.getElementById('value-stack-editor')?.addEventListener('input', saveDraftDebounced);
+  document.getElementById('value-bonus-editor')?.addEventListener('input', saveDraftDebounced);
 })();
 
 // ──────── DRAFT AUTO-SAVE ─────────
@@ -2830,6 +2877,8 @@ function saveDraft() {
       agreement_clauses:   collectClauses(),
       coaching_schedule: coachingSchedule,
       daily_schedule: dailySchedule,
+      value_stack_items: valueStackItems,
+      value_bonus_items: valueBonusItems,
       saved_at: Date.now(),
     };
     localStorage.setItem(window._draftKey, JSON.stringify(snap));
@@ -2878,6 +2927,14 @@ function restoreDraft() {
     if (Array.isArray(snap.daily_schedule) && snap.daily_schedule.length) {
       dailySchedule = snap.daily_schedule;
       renderDailySchedule();
+    }
+    if (Array.isArray(snap.value_stack_items) && snap.value_stack_items.length) {
+      valueStackItems = snap.value_stack_items;
+      renderValueStackEditor();
+    }
+    if (Array.isArray(snap.value_bonus_items) && snap.value_bonus_items.length) {
+      valueBonusItems = snap.value_bonus_items;
+      renderValueBonusEditor();
     }
     if (typeof updateSchedUI === 'function') updateSchedUI();
     if (typeof renderAgreementStatus === 'function') renderAgreementStatus();
@@ -2936,6 +2993,209 @@ function attachDraftAutoSave() {
     };
   }
 });
+</script>
+
+<!-- ───────── Pratonton Patient (live) — macam mana patient nampak pakej ni ───────── -->
+<div id="patient-preview-overlay" class="hidden fixed inset-0 bg-black/40 z-40" onclick="closePatientPreview()"></div>
+<aside id="patient-preview-panel" class="hidden fixed top-0 right-0 h-screen w-full sm:w-[460px] bg-cream z-50 shadow-2xl flex flex-col">
+  <div class="bg-white border-b border-ink/10 px-4 py-3 flex items-center justify-between gap-2 flex-shrink-0">
+    <div>
+      <div class="font-bold text-sm text-ink">👁️ Pratonton Patient</div>
+      <div class="text-[10px] text-ink/45">Live — ikut apa yang anda taip, belum tentu dah disimpan</div>
+    </div>
+    <button type="button" onclick="closePatientPreview()" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-ink/5 text-ink/50 flex-shrink-0">✕</button>
+  </div>
+  <div id="patient-preview-body" class="flex-1 overflow-y-auto p-4 space-y-4"></div>
+</aside>
+
+<script>
+let patientPreviewOpen = false;
+
+function togglePatientPreview() {
+  if (patientPreviewOpen) closePatientPreview(); else openPatientPreview();
+}
+function openPatientPreview() {
+  patientPreviewOpen = true;
+  document.getElementById('patient-preview-overlay').classList.remove('hidden');
+  document.getElementById('patient-preview-panel').classList.remove('hidden');
+  renderPatientPreview();
+}
+function closePatientPreview() {
+  patientPreviewOpen = false;
+  document.getElementById('patient-preview-overlay').classList.add('hidden');
+  document.getElementById('patient-preview-panel').classList.add('hidden');
+}
+
+let _pvRefreshTimer = null;
+function schedulePatientPreviewRefresh() {
+  if (!patientPreviewOpen) return;
+  clearTimeout(_pvRefreshTimer);
+  _pvRefreshTimer = setTimeout(renderPatientPreview, 250);
+}
+// Delegasi — tangkap SEMUA input/change dlm borang (termasuk kad Value Stack yg
+// guna inline oninput) supaya pratonton kekal "live" tanpa kena wire field satu-satu.
+document.addEventListener('input', schedulePatientPreviewRefresh, true);
+document.addEventListener('change', schedulePatientPreviewRefresh, true);
+
+function pvFmtRM(n) { return Number(n || 0) === 0 ? 'Percuma' : 'RM ' + Number(n).toLocaleString('en-MY'); }
+
+function gatherPatientPreviewData() {
+  const durationUnit = getDurationUnit();
+  const durationValue = getScheduleCount();
+  const products = toArray(document.getElementById('f-products').value);
+  const bimbingan = toArray(document.getElementById('f-bimbingan').value);
+  const installmentAllowed = document.getElementById('f-installment-allowed')?.checked;
+  const todayToggle = document.getElementById('f-today-installment-toggle')?.checked;
+  return {
+    name: document.getElementById('f-name').value.trim() || 'Pakej Baru',
+    desc: document.getElementById('f-desc').value.trim(),
+    icon: document.getElementById('f-icon')?.value || '📦',
+    bg: document.getElementById('f-bg-color')?.value || 'bg-cream',
+    tier: document.getElementById('f-tier')?.value || 'standard',
+    image_url: document.getElementById('f-image-url')?.value || null,
+    duration: durationValue + (durationUnit === 'day' ? ' Hari' : ' Minggu'),
+    price: parseMoneyVal(document.getElementById('f-price').value),
+    today_price: parseMoneyVal(document.getElementById('f-today-price').value) || null,
+    nilai_program: parseMoneyVal(document.getElementById('f-nilai-program').value) || null,
+    harga_asal: parseMoneyVal(document.getElementById('f-harga-asal').value) || null,
+    products, bimbingan,
+    inclusions: [...products, ...bimbingan],
+    value_stack: collectValueItems(valueStackItems),
+    value_bonuses: collectValueItems(valueBonusItems),
+    installment_allowed: !!installmentAllowed,
+    installment_full_price: installmentAllowed ? (parseMoneyVal(document.getElementById('f-installment-full-price-now')?.value) || null) : null,
+    installment_deposit_amount: installmentAllowed ? (parseMoneyVal(document.getElementById('f-installment-deposit-now')?.value) || null) : null,
+    installment_duration_months: installmentAllowed ? (parseInt(document.getElementById('f-installment-duration-now')?.value) || null) : null,
+    installment_monthly_amount: installmentAllowed ? (parseMoneyVal(document.getElementById('f-installment-monthly-now')?.value) || null) : null,
+    today_installment_full_price: (installmentAllowed && todayToggle) ? (parseMoneyVal(document.getElementById('f-installment-full-price-today')?.value) || null) : null,
+    today_installment_deposit_amount: (installmentAllowed && todayToggle) ? (parseMoneyVal(document.getElementById('f-installment-deposit-today')?.value) || null) : null,
+    today_installment_duration_months: (installmentAllowed && todayToggle) ? (parseInt(document.getElementById('f-installment-duration-today')?.value) || null) : null,
+    today_installment_monthly_amount: (installmentAllowed && todayToggle) ? (parseMoneyVal(document.getElementById('f-installment-monthly-today')?.value) || null) : null,
+  };
+}
+
+function pvValueCardHtml(it, accentCls, bgCls) {
+  return `
+    <div class="border border-ink/10 rounded-xl p-3 ${bgCls || 'bg-white'}">
+      ${it.category ? `<div class="text-[9px] font-bold uppercase tracking-wide text-ink/40 mb-1">${escapeHtml(it.category)}</div>` : ''}
+      <div class="font-bold text-ink text-sm leading-snug">${escapeHtml(it.title_bm || '—')}</div>
+      ${it.title_en ? `<div class="text-[10px] italic text-gold-dark mt-0.5">${escapeHtml(it.title_en)}</div>` : ''}
+      ${it.description ? `<p class="text-xs text-ink/60 mt-1.5 leading-relaxed">${escapeHtml(it.description)}</p>` : ''}
+      ${(it.bullets || []).length ? `<ul class="mt-2 space-y-1">${it.bullets.map(b => `<li class="flex items-start gap-1.5 text-xs text-ink/75"><span class="${accentCls} mt-0.5">✦</span><span>${escapeHtml(b)}</span></li>`).join('')}</ul>` : ''}
+      <div class="mt-2 pt-1.5 border-t border-ink/8 text-right"><span class="text-[9px] text-ink/40 uppercase font-semibold">Nilai</span> <span class="font-bold text-green-700 text-xs ml-1">${pvFmtRM(it.value)}</span></div>
+    </div>`;
+}
+
+function buildPvValueStackHtml(p) {
+  const components = p.value_stack || [];
+  const bonuses = p.value_bonuses || [];
+  if (!components.length && !bonuses.length) return '';
+  const allRows = [...components, ...bonuses];
+  const total = allRows.reduce((s, it) => s + (Number(it.value) || 0), 0);
+  return `
+    ${components.length ? `
+    <div class="bg-white rounded-xl p-4 border border-ink/10">
+      <h3 class="font-bold text-sm mb-2.5">🎁 Inilah Yang Anda Terima</h3>
+      <div class="space-y-2.5">${components.map(it => pvValueCardHtml(it, 'text-navy')).join('')}</div>
+    </div>` : ''}
+    ${bonuses.length ? `
+    <div class="bg-white rounded-xl p-4 border border-ink/10">
+      <div class="text-center mb-2.5"><span class="inline-block px-3 py-1 rounded-full bg-gold/15 text-gold-dark text-[10px] font-bold uppercase tracking-wide">✦ Bonus Eksklusif Peserta ✦</span></div>
+      <div class="space-y-2.5">${bonuses.map(it => pvValueCardHtml(it, 'text-gold-dark', 'bg-gold/5')).join('')}</div>
+    </div>` : ''}
+    <div class="bg-white rounded-xl border border-ink/10 overflow-hidden">
+      <div class="px-3 py-2 bg-navy text-white text-[10px] font-bold uppercase tracking-wide">Ringkasan Nilai Keseluruhan</div>
+      <table class="w-full text-xs">
+        <tbody class="divide-y divide-ink/5">
+          ${allRows.map(it => `<tr><td class="px-3 py-2 font-medium text-ink align-top">${escapeHtml(it.title_bm || '—')}</td><td class="px-3 py-2 text-right font-semibold text-ink align-top whitespace-nowrap">${pvFmtRM(it.value)}</td></tr>`).join('')}
+        </tbody>
+        <tfoot><tr class="bg-cream/60 font-bold"><td class="px-3 py-2.5">Jumlah Nilai</td><td class="px-3 py-2.5 text-right text-green-700">${pvFmtRM(total)}</td></tr></tfoot>
+      </table>
+    </div>`;
+}
+
+function pvInstallmentAllowed(p, tier) {
+  const deposit = tier === 'today' ? (p.today_installment_deposit_amount ?? p.installment_deposit_amount) : p.installment_deposit_amount;
+  const duration = tier === 'today' ? (p.today_installment_duration_months ?? p.installment_duration_months) : p.installment_duration_months;
+  const monthly = tier === 'today' ? (p.today_installment_monthly_amount ?? p.installment_monthly_amount) : p.installment_monthly_amount;
+  return !!p.installment_allowed && Number(deposit) > 0 && Number(duration) > 1 && Number(monthly) > 0
+    ? { deposit: Number(deposit), duration: Number(duration), monthly: Number(monthly) } : null;
+}
+
+function buildPvPricingHtml(p) {
+  const hasToday = !!p.today_price;
+  if (!Number(p.price) && !hasToday) return '';
+  const installmentBlock = (tier) => {
+    const ip = pvInstallmentAllowed(p, tier);
+    if (!ip) return '';
+    return `<div class="mt-2 pt-2 border-t border-ink/10"><div class="text-[9px] text-ink/45 uppercase font-semibold">📅 Installment Payment Plan (IPP)</div><div class="text-xs font-bold text-ink mt-0.5">${ip.duration} Bulan — 1 × ${pvFmtRM(ip.deposit)} + ${ip.duration - 1} × ${pvFmtRM(ip.monthly)}</div></div>`;
+  };
+  const asal = Number(p.harga_asal || 0);
+  const nilaiProgram = Number(p.nilai_program || 0);
+  return `
+    <div class="bg-white rounded-xl border border-ink/10 overflow-hidden">
+      <div class="px-4 py-3 text-center bg-cream/60 border-b border-ink/10">
+        ${nilaiProgram ? `<div class="text-[10px] text-ink/50 uppercase font-semibold">Jumlah Nilai Keseluruhan Program</div><div class="text-xl font-extrabold text-navy">${pvFmtRM(nilaiProgram)}</div>` : ''}
+        ${asal ? `<div class="text-[11px] text-ink/50 mt-1">Harga Asal ${pvFmtRM(asal)} · Anda jimat lebih dari separuh nilai sebenar program ini.</div>` : ''}
+      </div>
+      <div class="divide-y divide-ink/10">
+        <div class="p-4">
+          <div class="text-[10px] font-bold text-ink/50 uppercase mb-1.5">🏷️ Harga Sekarang (Now Price)</div>
+          <div class="text-xl font-extrabold text-navy">${pvFmtRM(p.price)}</div>
+          <div class="text-[9px] text-ink/45 mt-0.5">Full Payment Plan (FPP)</div>
+          ${installmentBlock('now')}
+        </div>
+        ${hasToday ? `
+        <div class="p-4 bg-gold/5">
+          <div class="text-[10px] font-bold text-gold-dark uppercase mb-1.5">⭐ Harga Hari Ini (Today Price)</div>
+          <p class="text-[9px] text-ink/40 mb-1.5 -mt-1">Eksklusif semasa sesi konsultasi sahaja.</p>
+          <div class="text-xl font-extrabold text-navy">${pvFmtRM(p.today_price)}</div>
+          <div class="text-[9px] text-ink/45 mt-0.5">Full Payment Plan (FPP)</div>
+          ${installmentBlock('today')}
+        </div>` : ''}
+      </div>
+    </div>`;
+}
+
+function buildPatientPreviewHtml(p) {
+  const priceDisplay = pvFmtRM(p.price);
+  const tierBadge = p.tier === 'vip' ? '<span class="chip bg-gold text-white">VIP</span>' : p.tier === 'free' ? '<span class="chip bg-green text-white">FREE</span>' : '';
+  const hero = p.image_url
+    ? `<div class="rounded-2xl overflow-hidden relative"><img src="${p.image_url}" class="w-full h-40 object-cover"><div class="absolute inset-0 bg-gradient-to-t from-black/65 to-transparent flex flex-col justify-end p-4 text-white">${tierBadge ? `<div class="mb-1.5">${tierBadge}</div>` : ''}<h1 class="text-lg font-bold">${escapeHtml(p.name)}</h1><p class="text-xs opacity-80 mt-1">${escapeHtml(p.desc)}</p></div></div>`
+    : `<div class="${p.bg} rounded-2xl p-6 text-center"><div class="text-5xl mb-2">${p.icon}</div><div class="flex items-center justify-center gap-2">${tierBadge}</div><h1 class="text-lg font-bold mt-1">${escapeHtml(p.name)}</h1><p class="text-xs text-ink/70 mt-1">${escapeHtml(p.desc)}</p></div>`;
+
+  const productsHtml = p.products.length ? `
+    <div class="bg-white rounded-xl p-4 border border-ink/10">
+      <h3 class="font-bold text-sm mb-2">🎁 Produk yang anda terima</h3>
+      <div class="space-y-1.5">${p.products.map(pr => `<div class="flex items-start gap-2 p-1.5 bg-green-light/30 rounded-lg text-xs"><span class="text-green mt-0.5">✓</span><span>${escapeHtml(pr)}</span></div>`).join('')}</div>
+    </div>` : '';
+
+  const bimbinganHtml = p.bimbingan.length ? `
+    <div class="bg-white rounded-xl p-4 border border-ink/10">
+      <h3 class="font-bold text-sm mb-2">🎯 Bimbingan & Terapi</h3>
+      <div class="space-y-1.5">${p.bimbingan.map(b => `<div class="flex items-start gap-2 p-1.5 bg-navy-light/30 rounded-lg text-xs"><span class="text-navy mt-0.5">●</span><span>${escapeHtml(b)}</span></div>`).join('')}</div>
+    </div>` : '';
+
+  return `
+    ${hero}
+    <div class="grid grid-cols-3 gap-2">
+      <div class="bg-white rounded-xl p-3 border border-ink/10 text-center"><div class="text-[9px] text-ink/60 uppercase font-semibold">Tempoh</div><div class="text-sm font-bold mt-0.5 text-navy">${escapeHtml(p.duration)}</div></div>
+      <div class="bg-white rounded-xl p-3 border border-ink/10 text-center"><div class="text-[9px] text-ink/60 uppercase font-semibold">Jumlah Item</div><div class="text-sm font-bold mt-0.5 text-navy">${p.inclusions.length} item</div></div>
+      <div class="bg-white rounded-xl p-3 border border-ink/10 text-center"><div class="text-[9px] text-ink/60 uppercase font-semibold">Harga</div><div class="text-sm font-bold mt-0.5 text-navy">${priceDisplay}</div></div>
+    </div>
+    ${productsHtml}
+    ${bimbinganHtml}
+    ${buildPvValueStackHtml(p)}
+    ${buildPvPricingHtml(p)}
+    <div class="bg-cream text-ink/50 text-[11px] italic text-center rounded-xl border border-ink/10 p-3">Butang "Beli Pakej" hanya muncul utk patient lepas KOB siap — tak ditunjuk dlm pratonton ni</div>
+  `;
+}
+
+function renderPatientPreview() {
+  const body = document.getElementById('patient-preview-body');
+  if (!body) return;
+  body.innerHTML = buildPatientPreviewHtml(gatherPatientPreviewData());
+}
 </script>
 </body>
 </html>
