@@ -6697,7 +6697,26 @@
         });
       });
 
-      allMedicalReports = [...(data || []), ...dnaSynthetic]
+      // Dokumen pesakit (termasuk "Dokumen Minggu Ini" di plan-week.html) — supaya
+      // semua fail yg pernah dimuat naik pesakit kelihatan jugak di sini, bukan
+      // cuma laporan rasmi psy_medical_reports. Guna bucket+file_path sama
+      // ('medical-reports'), jadi openMedReport() boleh buka terus tanpa cawangan khas.
+      const { data: patientDocs } = await window.db.from('psy_patient_documents')
+        .select('*').eq('patient_id', patientId);
+      const docSynthetic = (patientDocs || []).map(d => ({
+        id: 'doc:' + d.id,
+        report_type: 'lain',
+        title: d.doc_label || d.file_name,
+        file_name: d.file_name || d.doc_label,
+        uploaded_at: d.uploaded_at,
+        uploaded_by_name: d.uploaded_by_name || '—',
+        file_path: d.file_path,
+        file_url: d.file_url,
+        _isPatientDoc: true,
+        _weekNumber: d.week_number || null,
+      }));
+
+      allMedicalReports = [...(data || []), ...dnaSynthetic, ...docSynthetic]
         .sort((a, b) => new Date(b.uploaded_at) - new Date(a.uploaded_at));
       renderDnaList();
     }
@@ -6771,9 +6790,11 @@
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2 flex-wrap">
             <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${meta.cls}">${meta.lbl}</span>
-            ${reviewed
-            ? '<span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">💬 Dikomen</span>'
-            : '<span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-ink/8 text-ink/55">Belum dikomen</span>'}
+            ${r._isPatientDoc
+            ? `<span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-ink/8 text-ink/55">📎 ${r._weekNumber ? `Dokumen Minggu ${r._weekNumber}` : 'Dokumen Pesakit'}</span>`
+            : reviewed
+              ? '<span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">💬 Dikomen</span>'
+              : '<span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-ink/8 text-ink/55">Belum dikomen</span>'}
           </div>
           <div class="text-sm font-semibold text-ink truncate mt-1">${escapeHtml(r.title || r.file_name)}</div>
           <div class="text-[10px] text-ink/45 mt-0.5">${escapeHtml(r.uploaded_by_name || '')} · ${d.toLocaleDateString(LCALE(), { day: '2-digit', month: 'short', year: 'numeric' })}</div>
@@ -6781,7 +6802,7 @@
         </div>
         <div class="flex flex-col items-end gap-1.5 flex-shrink-0">
           <button onclick="openMedReport('${encodeURIComponent(r.id)}')" class="text-xs font-semibold text-navy hover:underline whitespace-nowrap">👁️ Lihat</button>
-          <button data-rbac="patient.create" onclick="commentReport('${encodeURIComponent(r.id)}')" class="text-xs font-semibold text-[#6366f1] hover:underline whitespace-nowrap">💬 Tambah Komen</button>
+          ${r._isPatientDoc ? '' : `<button data-rbac="patient.create" onclick="commentReport('${encodeURIComponent(r.id)}')" class="text-xs font-semibold text-[#6366f1] hover:underline whitespace-nowrap">💬 Tambah Komen</button>`}
         </div>
       </div>
     </div>`;
@@ -6791,7 +6812,7 @@
     async function commentReport(id) {
       id = decodeURIComponent(id);
       const r = allMedicalReports.find(x => x.id === id);
-      if (!r || r._isDna) return;
+      if (!r || r._isDna || r._isPatientDoc) return;
       const txt = prompt('Tambah komen doktor untuk laporan ini (pesakit akan nampak):', '');
       if (txt === null) return;
       const comment = txt.trim();
